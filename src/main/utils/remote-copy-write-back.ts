@@ -12,7 +12,9 @@
  * - The remote write is conditional: it lands only if the remote file still
  *   holds the bytes this copy was fetched from (or last wrote). Otherwise the
  *   remote is left alone, the user's version is kept beside the copy, and a
- *   toast says where.
+ *   toast says where. From then on the copy no longer saves back (every later
+ *   save would conflict again); the toast says so once, and opening the file
+ *   again starts over from the remote's bytes.
  * - A fetch of the same file again (a second Open) does not replace a copy that
  *   holds a change the remote does not have yet: the copy stays, and the
  *   write is tried again.
@@ -47,6 +49,8 @@ export class RemoteCopyTooLargeError extends Error {
 export type RemoteCopyWriteBackEvent =
 	| { kind: 'saved'; remotePath: string; sshRemoteId: string }
 	| { kind: 'conflict'; remotePath: string; sshRemoteId: string; keptAt: string }
+	/** A copy that no longer saved back was fetched again; the change it held is kept here. */
+	| { kind: 'kept'; remotePath: string; sshRemoteId: string; keptAt: string }
 	| { kind: 'failed'; remotePath: string; sshRemoteId: string; message: string };
 
 /** A watcher on one local file; `close()` stops it. */
@@ -123,6 +127,11 @@ interface WatchedCopy {
 	baseline: string;
 	/** Hash of the copy's bytes last kept beside it after a conflict (safe to replace). */
 	kept: string | null;
+	/**
+	 * Why this copy no longer saves back, once the user was told: the remote
+	 * changed under it, or it grew past the cap. A fresh fetch clears it.
+	 */
+	halted: 'conflict' | 'too-large' | null;
 	watcher: RemoteCopyWatcher;
 	timer: ReturnType<typeof setTimeout> | null;
 }
@@ -215,7 +224,10 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 			if (!local) return;
 			const localHash = hashOf(local);
 			if (localHash === entry.baseline || localHash === entry.kept) return;
+			// Said once already; a fresh Open starts over from the remote's bytes.
+			if (entry.halted) return;
 			if (local.length > maxBytes) {
+				entry.halted = 'too-large';
 				deps.notify({
 					kind: 'failed',
 					remotePath,
@@ -238,6 +250,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 			}
 			const keptAt = await keepVersion(localPath, local);
 			entry.kept = localHash;
+			entry.halted = 'conflict';
 			deps.notify({ kind: 'conflict', remotePath, sshRemoteId, keptAt });
 		} catch (error) {
 			deps.notify({ kind: 'failed', remotePath, sshRemoteId, message: messageOf(error) });
@@ -272,6 +285,8 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					// The baseline is already right: a refetch set it, or kept the copy's change.
 					existing.remotePath = remotePath;
 					existing.sshRemoteId = sshRemoteId;
+					// The fetch just put a copy too large to send back here.
+					if (existing.halted === 'too-large') throw new RemoteCopyTooLargeError(maxBytes);
 					return;
 				}
 				const fetched = await deps.readLocal(localPath);
@@ -282,6 +297,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					sshRemoteId,
 					baseline: hashOf(fetched),
 					kept: null,
+					halted: null,
 					watcher: { close: () => undefined },
 					timer: null,
 				};
@@ -299,9 +315,19 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 				const local = await readCopy(localPath);
 				if (!local) return 'fetch' as const;
 				const localHash = hashOf(local);
-				return localHash === entry.baseline || localHash === entry.kept
-					? ('fetch' as const)
-					: ('keep' as const);
+				if (localHash === entry.baseline || localHash === entry.kept) return 'fetch' as const;
+				if (!entry.halted) return 'keep' as const;
+				// This copy no longer saves back, and it holds a change kept nowhere
+				// else: keep that beside it, say where, and let the fetch start over.
+				const keptAt = await keepVersion(localPath, local);
+				entry.kept = localHash;
+				deps.notify({
+					kind: 'kept',
+					remotePath: entry.remotePath,
+					sshRemoteId: entry.sshRemoteId,
+					keptAt,
+				});
+				return 'fetch' as const;
 			});
 			if (verdict === 'keep') {
 				// A save still waiting, or one that failed: send it now instead.
@@ -317,6 +343,8 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 			await queue.enqueue(localPath, async () => {
 				entry.baseline = hashOf(bytes);
 				entry.kept = null;
+				// A fresh copy saves back again, unless it is too large to.
+				entry.halted = bytes.length > maxBytes ? 'too-large' : null;
 			});
 		},
 		idle: settle,

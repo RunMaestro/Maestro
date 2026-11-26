@@ -597,12 +597,21 @@ function announceWriteBack(
 		});
 		return;
 	}
+	if (event.kind === 'kept') {
+		safeSend('remote:notifyToast', {
+			title: 'Your change was kept',
+			message: `${name} was opened again, so the copy now holds the remote file. Your change, which was not saved there, is kept at ${event.keptAt}.`,
+			color: 'yellow',
+			dismissible: true,
+		});
+		return;
+	}
 	safeSend('remote:notifyToast', {
 		title:
 			event.kind === 'conflict' ? 'Not saved to the remote host' : 'Save to the remote host failed',
 		message:
 			event.kind === 'conflict'
-				? `${name} changed on the remote host since it was opened, so your change was not written there. Your version is kept at ${event.keptAt}.`
+				? `${name} changed on the remote host since it was opened, so your change was not written there. Your version is kept at ${event.keptAt}. Later changes to this copy are not saved back: open the file again to start from the remote version.`
 				: `${name}: ${event.message}. Your change is still in the copy on this computer.`,
 		color: 'red',
 		dismissible: true,

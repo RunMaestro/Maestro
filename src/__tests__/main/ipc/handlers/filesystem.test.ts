@@ -382,8 +382,17 @@ describe('filesystem handlers', () => {
 			expect(kept[2]).toEqual({ flag: 'wx' });
 			expect(safeSend).toHaveBeenCalledWith(
 				'remote:notifyToast',
-				expect.objectContaining({ title: 'Not saved to the remote host', color: 'red' })
+				expect.objectContaining({
+					title: 'Not saved to the remote host',
+					color: 'red',
+					message: expect.stringContaining('Later changes to this copy are not saved back'),
+				})
 			);
+			// A later save is not sent, and no second toast says so again.
+			safeSend.mockClear();
+			await saveCopyAs('edited again');
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledTimes(1);
+			expect(safeSend).not.toHaveBeenCalled();
 		});
 
 		it('a second Open keeps a copy whose saved change has not reached the remote', async () => {

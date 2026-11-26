@@ -133,14 +133,40 @@ describe('remote copy write-back', () => {
 		expect(events.map((e) => e.kind)).toEqual(['conflict']);
 	});
 
-	it('keeps both versions of two conflicts in one second', async () => {
+	it('after a conflict, stops saving that copy back and says so only once', async () => {
 		const writeBack = await watched();
 		remoteFile = Buffer.from('someone else');
 		await saveCopy(writeBack, 'first');
 		await saveCopy(writeBack, 'second');
+		await saveCopy(writeBack, 'third');
+		expect(writeRemote).toHaveBeenCalledTimes(1);
+		expect(events.map((e) => e.kind)).toEqual(['conflict']);
+		expect(remoteFile.toString()).toBe('someone else');
+		// One kept version, and the later saves are still in the copy.
 		expect(localFiles.get(keptVersionPath(LOCAL, WHEN))?.toString()).toBe('first');
-		expect(localFiles.get(keptVersionPath(LOCAL, WHEN, 2))?.toString()).toBe('second');
-		expect(events.at(-1)).toMatchObject({ keptAt: keptVersionPath(LOCAL, WHEN, 2) });
+		expect(localFiles.has(keptVersionPath(LOCAL, WHEN, 2))).toBe(false);
+		expect(localFiles.get(LOCAL)?.toString()).toBe('third');
+	});
+
+	it('a fresh Open after a conflict keeps the unsent change beside the copy and saves back again', async () => {
+		const writeBack = await watched();
+		remoteFile = Buffer.from('someone else');
+		await saveCopy(writeBack, 'first');
+		await saveCopy(writeBack, 'second');
+
+		// Open again: the change in the copy is kept under a name no earlier version holds.
+		await expect(writeBack.beforeRefetch(LOCAL)).resolves.toBe('fetch');
+		const keptAt = keptVersionPath(LOCAL, WHEN, 2);
+		expect(localFiles.get(keptAt)?.toString()).toBe('second');
+		expect(events.at(-1)).toEqual({ kind: 'kept', remotePath: REMOTE, sshRemoteId: 'r1', keptAt });
+
+		// The fetch puts the remote's bytes in the copy: a new baseline.
+		localFiles.set(LOCAL, remoteFile);
+		await writeBack.noteFetched(LOCAL, remoteFile);
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await saveCopy(writeBack, 'edited on top of theirs');
+		expect(remoteFile.toString()).toBe('edited on top of theirs');
+		expect(events.at(-1)).toEqual({ kind: 'saved', remotePath: REMOTE, sshRemoteId: 'r1' });
 	});
 
 	it('sends nothing when the copy is replaced by a fresh fetch', async () => {
@@ -251,6 +277,20 @@ describe('remote copy write-back', () => {
 			},
 		]);
 		expect(localFiles.get(LOCAL)?.toString()).toBe('far too long to send');
+		// Said once: the next save is not sent and not announced again.
+		await saveCopy(writeBack, 'still far too long');
+		expect(events).toHaveLength(1);
+	});
+
+	it('a fresh Open that fetches a copy too large to send back says so', async () => {
+		const writeBack = service({ maxBytes: 8 });
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		remoteFile = Buffer.from('now far too long');
+		localFiles.set(LOCAL, remoteFile);
+		await writeBack.noteFetched(LOCAL, remoteFile);
+		await expect(
+			writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' })
+		).rejects.toBeInstanceOf(RemoteCopyTooLargeError);
 	});
 
 	it('sends a save still waiting out its debounce when its watch is evicted at the cap', async () => {
