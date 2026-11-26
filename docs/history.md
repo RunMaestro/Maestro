@@ -189,7 +189,7 @@ This enables:
 - **Same user, multiple machines** - see your work from any machine you use
 - **Team collaboration** - see what teammates have done on a shared project
 
-Enable this per-session via the **Sync history to remote** toggle in the SSH Remote Execution dropdown. See [Collaborating over SSH](/ssh-remote-execution#collaborating-over-ssh) for full details.
+Enable this per agent with the **Share history in the project folder** toggle under SSH Remote Execution in Edit Agent. The toggle reads the same for a local, a remote, and a hosted agent. See [Collaborating over SSH](/ssh-remote-execution#collaborating-over-ssh) for full details.
 
 ## Storage
 

@@ -432,7 +432,10 @@ describe('useWizardHandlers', () => {
 									next.cwd,
 									next.customPath,
 									undefined,
-									...(toolType === 'codex' ? [next.customEnvVars] : []),
+									// The agent's own vars pick its account for Codex and Claude.
+									...(toolType === 'codex' || toolType === 'claude-code'
+										? [next.customEnvVars]
+										: []),
 								],
 							];
 				expect(discover.mock.calls).toEqual(expectedCalls);
@@ -891,6 +894,147 @@ describe('useWizardHandlers', () => {
 			await act(async () => {});
 			expect(useSessionStore.getState().sessions[0].agentCommands).toEqual([]);
 			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
+		});
+
+		// The `/` menu lists the commands found on the machine the agent runs on:
+		// this one for a local agent, the SSH remote (asked over SSH) for an SSH or
+		// hosted one. This machine's command folders never fill a remote agent's menu.
+		it.each(AGENT_MODES)('lists the commands found where a %s Claude agent runs', async (mode) => {
+			const session = createMockSession({ agentCommands: undefined, ...agentModeFields(mode) });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const discover = (window as any).maestro.agents.discoverSlashCommands;
+			discover.mockResolvedValue([{ name: '/review' }, { name: 'deploy' }]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			const remoteId = mode === 'local' ? undefined : 'r1';
+			expect(discover).toHaveBeenCalledWith('claude-code', session.cwd, undefined, remoteId);
+			expect((window as any).maestro.claude.getCommands).toHaveBeenCalledTimes(
+				mode === 'local' ? 1 : 0
+			);
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/review',
+				'/deploy',
+			]);
+		});
+
+		it.each(['ssh', 'hosted'] as const)(
+			"replaces a %s Claude agent's stored list with the remote's, once per selection",
+			async (mode) => {
+				const session = createMockSession({
+					...agentModeFields(mode),
+					agentCommands: [{ command: '/this-machine-only', description: 'Stale' }],
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+				const discover = (window as any).maestro.agents.discoverSlashCommands;
+				discover.mockResolvedValue([{ name: '/remote-only' }]);
+
+				renderHook(() => useWizardHandlers(createMockDeps()));
+				await act(async () => {});
+
+				expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual(
+					['/remote-only']
+				);
+				// Its own write does not start another discovery.
+				expect(discover).toHaveBeenCalledTimes(1);
+			}
+		);
+
+		it("drops a remote Claude agent's stale list when its remote cannot be asked", async () => {
+			const session = createMockSession({
+				...agentModeFields('ssh'),
+				agentCommands: [{ command: '/this-machine-only', description: 'Stale' }],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(window as any).maestro.agents.discoverSlashCommands.mockRejectedValue(
+				new Error('bridge closed')
+			);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			expect(useSessionStore.getState().sessions[0].agentCommands).toEqual([]);
+		});
+
+		it('finds the commands again here when a Claude agent moves off its remote', async () => {
+			const session = createMockSession({ ...agentModeFields('ssh'), agentCommands: undefined });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const discover = (window as any).maestro.agents.discoverSlashCommands;
+			discover.mockResolvedValue([{ name: '/remote-only' }]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/remote-only',
+			]);
+
+			discover.mockResolvedValue([{ name: '/local-only' }]);
+			await act(async () => {
+				useSessionStore.getState().updateSession(session.id, {
+					sshRemoteId: undefined,
+					sessionSshRemoteConfig: undefined,
+				});
+			});
+			await act(async () => {});
+
+			expect(discover).toHaveBeenLastCalledWith('claude-code', session.cwd, undefined, undefined);
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/local-only',
+			]);
+		});
+
+		it("finds a local Claude agent's commands again when its account changes", async () => {
+			const session = createMockSession({
+				agentCommands: undefined,
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/cfg/work' },
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const discover = (window as any).maestro.agents.discoverSlashCommands;
+			discover.mockResolvedValue([{ name: '/work-only' }]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/work-only',
+			]);
+			const callsForWork = discover.mock.calls.length;
+
+			discover.mockResolvedValue([{ name: '/home-only' }]);
+			await act(async () => {
+				useSessionStore.getState().updateSession(session.id, {
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/cfg/home' },
+				});
+			});
+			await act(async () => {});
+
+			expect(discover).toHaveBeenLastCalledWith('claude-code', session.cwd, undefined, undefined, {
+				CLAUDE_CONFIG_DIR: '/cfg/home',
+			});
+			expect(discover.mock.calls.length).toBeGreaterThan(callsForWork);
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/home-only',
+			]);
+		});
+
+		it("never reads this machine's command folders for a remote agent whose remote id is not set", async () => {
+			const session = createMockSession({
+				agentCommands: undefined,
+				sessionSshRemoteConfig: { enabled: true, remoteId: null },
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([
+				{ command: '/this-machine-only', description: 'Local' },
+			]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			expect((window as any).maestro.claude.getCommands).not.toHaveBeenCalled();
 		});
 
 		it('fetches custom commands and agent commands for claude-code sessions', async () => {

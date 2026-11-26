@@ -155,6 +155,16 @@ export function createFsApi() {
 			ipcRenderer.invoke('fs:downloadRemoteFile', remotePath, sshRemoteId, localDestPath),
 
 		/**
+		 * Watch the temp copy `downloadRemoteFile` fetched for a remote file (no
+		 * destination), and write a change saved in another app back to the remote
+		 * file. A remote file that changed since the fetch is never overwritten: the
+		 * user's version is kept beside the copy and a toast says so. Call it right
+		 * after the fetch. Resolves with the copy's path.
+		 */
+		watchRemoteCopy: (remotePath: string, sshRemoteId: string): Promise<{ path: string }> =>
+			ipcRenderer.invoke('fs:watchRemoteCopy', remotePath, sshRemoteId),
+
+		/**
 		 * Download a remote SSH folder (its whole tree) to a temp folder on this
 		 * machine. Rejects when the folder is too large to copy whole. Resolves with
 		 * the local folder path and how many files it holds.

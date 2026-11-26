@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
+	agentEnvOverRemote,
 	buildSshCommand,
 	buildRemoteCommand,
 	buildSshCommandWithStdin,
@@ -443,6 +444,33 @@ describe('ssh-command-builder', () => {
 		});
 	});
 
+	describe('agentEnvOverRemote', () => {
+		// The real builder: a value the agent blanked is never exported, and one it
+		// set wins over the remote's.
+		it("lets the agent's vars win over the remote's in the command the builder makes", async () => {
+			const remote = {
+				...baseConfig,
+				remoteEnv: { CLAUDE_CONFIG_DIR: '/cfg/work', CODEX_HOME: '/srv/codex', KEEP: 'yes' },
+			};
+			const target = agentEnvOverRemote(remote, { CLAUDE_CONFIG_DIR: '', CODEX_HOME: '/mine' });
+			const result = await buildSshCommand(target.config, {
+				command: 'claude',
+				args: ['--print'],
+				env: target.env,
+			});
+			const remoteCommand = result.args.at(-1)!;
+
+			expect(remoteCommand).not.toContain('/cfg/work');
+			expect(remoteCommand).not.toContain('CLAUDE_CONFIG_DIR');
+			expect(remoteCommand).toContain('CODEX_HOME=');
+			expect(remoteCommand).toContain('/mine');
+			expect(remoteCommand).not.toContain('/srv/codex');
+			expect(remoteCommand).toContain('KEEP=');
+			// The remote record itself is untouched.
+			expect(remote.remoteEnv.CLAUDE_CONFIG_DIR).toBe('/cfg/work');
+		});
+	});
+
 	describe('buildSshCommand', () => {
 		it('builds basic SSH command', async () => {
 			const result = await buildSshCommand(baseConfig, {
@@ -796,6 +824,24 @@ describe('ssh-command-builder', () => {
 		// Note: The command name itself is NOT escaped because it comes from
 		// agent configuration (system-controlled, not user input). This is
 		// intentional - escaping it would break PATH resolution.
+
+		it('never writes an env value to the log, while the command still carries it', async () => {
+			const info = vi.spyOn(logger, 'info');
+			try {
+				const result = await buildSshCommand(baseConfig, {
+					command: 'claude',
+					args: ['--print', '--', '/help'],
+					cwd: '/srv/project',
+					env: { ANTHROPIC_API_KEY: 'sk-secret-value-1234' },
+				});
+				expect(result.args.at(-1)).toContain('sk-secret-value-1234');
+				const logged = JSON.stringify(info.mock.calls);
+				expect(logged).not.toContain('sk-secret-value-1234');
+				expect(logged).toContain('ANTHROPIC_API_KEY');
+			} finally {
+				info.mockRestore();
+			}
+		});
 
 		it('prevents command injection via args', async () => {
 			const result = buildRemoteCommand({

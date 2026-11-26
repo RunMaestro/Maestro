@@ -577,7 +577,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	setupLoggerEventForwarding(deps.getMainWindow);
 
 	// Register filesystem handlers (extracted to handlers/filesystem.ts)
-	registerFilesystemHandlers();
+	registerFilesystemHandlers({ safeSend: deps.safeSend });
 
 	// Parquet preview handlers. Registered HERE, not only in registerAllHandlers()
 	// - that function is dead code, so a registration that lives solely there

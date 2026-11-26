@@ -13,6 +13,7 @@ import {
 	buildSpawnConfigForAgent,
 	createSessionForAgent,
 	agentSupportsContextTransfer,
+	buildSharedHistoryContext,
 	getAgentInfo,
 	getSessionSshRemoteId,
 	isSessionRemote,
@@ -702,6 +703,26 @@ describe('sessionHelpers', () => {
 			// CORRECT: Use the helper function
 			const correctIsRemote = isSessionRemote(preSpawnSession);
 			expect(correctIsRemote).toBe(true); // Correct!
+		});
+	});
+
+	describe('buildSharedHistoryContext', () => {
+		const config = (extra: Record<string, unknown>) =>
+			({ enabled: true, remoteId: 'r1', shareHistoryToProjectDir: true, ...extra }) as any;
+
+		it("uses the agent's working directory on the remote when one is set", () => {
+			expect(
+				buildSharedHistoryContext({
+					cwd: '/home/me/default',
+					sessionSshRemoteConfig: config({ workingDirOverride: '/srv/project' }),
+				})
+			).toEqual({ sshRemoteId: 'r1', remoteCwd: '/srv/project' });
+		});
+
+		it('falls back to the agent folder when no remote working directory is set', () => {
+			expect(
+				buildSharedHistoryContext({ cwd: '/srv/app', sessionSshRemoteConfig: config({}) })
+			).toEqual({ sshRemoteId: 'r1', remoteCwd: '/srv/app' });
 		});
 	});
 });
