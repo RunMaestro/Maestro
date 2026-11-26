@@ -88,6 +88,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Live tokens-per-second rate:** `createThroughputTracker()`, `THROUGHPUT_WINDOWS_MS` in `src/shared/throughputRate.ts`
 - **Tokens per second:** `extractClaudeSpeedSamples()`, `computeClaudeTokenSpeed()`, `CodexTokenSpeedTracker`, `StreamCallTimer`, `summarizeTokenSpeed()` in `src/shared/tokenSpeed.ts`; `formatTokensPerSecond()` in `src/shared/formatters.ts`
 - **Usage, cost and message count of a Claude transcript:** `computeClaudeSessionUsage()`, `computeClaudeUsageWithSubagents()`, `readClaudeSubagentTranscripts()` in `src/shared/claudeSessionUsage.ts`; `countClaudeTranscriptMessages()` in `src/shared/claudeTranscriptMessages.ts`
+- **Token usage of projects on another computer:** `projectTokenUsage()`, `collectProjectBreakdowns()` in `src/main/stats/token-usage/project-breakdowns.ts`; `collectRemoteBreakdowns()` in `src/main/stats/token-usage/remote-breakdowns.ts`; wire in `src/shared/projectTokenUsage.ts`
 
 #### Paths, files, and strings
 

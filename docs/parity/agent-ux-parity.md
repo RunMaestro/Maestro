@@ -252,11 +252,11 @@ Each workstream has its own pull request into `rc`. A row is closed when its pul
 
 ### Token totals for agents on another computer (workstream I)
 
-| Surface                                       | Status | Code path                       | Test | Notes                                               |
-| --------------------------------------------- | ------ | ------------------------------- | ---- | --------------------------------------------------- |
-| I1 Token totals of a hosted agent             | ❌     | `main/stats/`, the host runtime |      | Row N3 was locked: the transcripts are on the host. |
-| I2 Token totals of an SSH agent               | ❌     | `main/stats/`                   |      | The transcripts are on the remote.                  |
-| I3 The dashboard reads the same in every mode | ❌     | `UsageDashboard/TokenStats.tsx` |      | The "Not counted" note.                             |
+| Surface                                       | Status | Code path                       | Test                                                                                                   | Notes                                                                                                                                                                                                                                 |
+| --------------------------------------------- | ------ | ------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| I1 Token totals of a hosted agent             | ✅     | `main/stats/`, the host runtime | `tokenUsageModeParity.test.ts` "draws the same totals, rows, and per-day series in every mode"         | Fixed (#2128): a hosted agent's conversations are counted ON its host (`get_project_token_usage`, answered by a desktop host and a headless one) and only totals come back. An older host names the agent as not counted.             |
+| I2 Token totals of an SSH agent               | ✅     | `main/stats/`                   | same test, ssh mode; `remote-breakdowns.test.ts`                                                       | Fixed for a remote that runs `maestro-cli host` (the same op). Lock for a remote with no host: no provider ships a tool that gives the deduplicated numbers, and copying transcripts is not allowed; that agent is named in the note. |
+| I3 The dashboard reads the same in every mode | ✅     | `UsageDashboard/TokenStats.tsx` | `TokenStatsLegend.test.tsx` "says nothing is left out once every agent on another computer is counted" | Fixed (#2128): one aggregate path and one note in every mode. Local totals return at once; a remote count is served from its last result and refreshed in the background (review fix). New verb `maestro-cli stats-project-tokens`.   |
 
 ## Round 3: what the live pass found
 
