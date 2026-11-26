@@ -9,8 +9,11 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+	fileOpRemoteId,
 	pathPickerRemoteId,
 	pickDirectory,
+	UNRESOLVED_REMOTE_MESSAGE,
+	UnresolvedRemoteError,
 	pickFile,
 	usePathPickerStore,
 } from '../../../renderer/services/pathPicker';
@@ -19,6 +22,7 @@ import {
 	remoteParentPath,
 } from '../../../renderer/components/PathPicker/PathPickerModal';
 import { AGENT_MODES, createModeSession } from '../../helpers';
+import { getSessionSshRemoteId } from '../../../renderer/utils/sessionHelpers';
 import { browseAndPick, resetPathPicker } from '../../helpers/pathPicker';
 import { mockTheme } from '../../helpers/mockTheme';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
@@ -98,6 +102,26 @@ describe('pathPicker service: mode parity (local, SSH, hosted)', () => {
 				createModeSession('local', { sessionSshRemoteConfig: { enabled: false, remoteId: 'r1' } })
 			)
 		).toBeUndefined();
+	});
+
+	it.each(AGENT_MODES)('%s: a file operation goes where Browse looks', (mode) => {
+		const session = createModeSession(mode);
+		expect(fileOpRemoteId(pathPickerRemoteId(session))).toBe(getSessionSshRemoteId(session));
+		expect(fileOpRemoteId(pathPickerRemoteId(session))).toBe(mode === 'local' ? undefined : 'r1');
+	});
+
+	// The transport for an unresolved remote fails loudly instead of running on this machine.
+	it('a file operation for an SSH agent with no remote resolved yet throws the reason', () => {
+		expect(() => fileOpRemoteId(null)).toThrow(UnresolvedRemoteError);
+		expect(() => fileOpRemoteId(null)).toThrow(UNRESOLVED_REMOTE_MESSAGE);
+	});
+
+	it('a stale remote id on an agent with SSH off is never a file operation target', () => {
+		const session = createModeSession('local', {
+			sessionSshRemoteConfig: { enabled: false, remoteId: 'r1' },
+		});
+		expect(getSessionSshRemoteId(session)).toBeUndefined();
+		expect(fileOpRemoteId(pathPickerRemoteId(session))).toBeUndefined();
 	});
 
 	it.each(AGENT_MODES)('%s: pickDirectory returns the picked folder', async (mode) => {
