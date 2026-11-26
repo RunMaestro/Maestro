@@ -99,6 +99,7 @@ import {
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
 import { handleListAgentModels } from './models';
+import { handleListRollbackTargets, handleRollbackUpdate } from './updates';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
@@ -821,6 +822,14 @@ export class WebSocketMessageHandler {
 
 			case 'list_agent_models':
 				void handleListAgentModels(this.ctx, client, message);
+				break;
+
+			case 'list_rollback_targets':
+				void handleListRollbackTargets(this.ctx, client, message);
+				break;
+
+			case 'rollback_update':
+				void handleRollbackUpdate(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

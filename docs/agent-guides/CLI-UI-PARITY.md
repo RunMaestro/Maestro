@@ -283,6 +283,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Feedback: Running as (account picker)                                                                                     | `feedback accounts [--use <key> \| --clear]`                                                     |
 | Feedback: Log in to GitHub / Check Again                                                                                  | `feedback login`, `feedback auth --fresh`                                                        |
 | Agent error: Install <provider> (CLI missing)                                                                             | `install-command <provider> [--platform] [--json]` (prints the line)                             |
+| Check for Updates: Roll Back (list earlier releases, download one)                                                        | `rollback [version] [--prerelease] [--json]`; also `open updates --tab rollback`                 |
 | Feedback: live self-diagnosis                                                                                             | `feedback diagnose`                                                                              |
 | Feedback: Submit now (early exit)                                                                                         | `feedback submit` (the caller supplies whatever fields it has)                                   |
 | Create Debug Package (support package)                                                                                    | `support-package -o <dir> [--no-logs ...]`                                                       |
@@ -452,7 +453,8 @@ still missing. Grouped, highest value first:
 - **SSH remotes:** test, edit, enable/disable, set default.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
 - **Web access:** QR pairing, persistent token (`live on/off/status` and the tunnel are covered).
-- **Updates:** check/download/install. A CLI install verb must call
+- **Updates:** check/download/install. (Rollback's list and download are covered by
+  `rollback`; its restart is the same install verb missing here.) A CLI install verb must call
   `saveAutoRunsForRestart('update')` (`src/renderer/services/autoRunRestartResume.ts`) first, the
   same as the modal's Restart and Resume, or running Auto Runs will not resume.
 - **Quit:** there is no `maestro-cli` quit verb. One must call `saveAutoRunsForRestart('quit')`

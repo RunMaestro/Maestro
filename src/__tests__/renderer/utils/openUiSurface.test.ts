@@ -7,7 +7,11 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openUiSurface } from '../../../renderer/utils/openUiSurface';
-import { selectModalOpen, useModalStore } from '../../../renderer/stores/modalStore';
+import {
+	selectModalData,
+	selectModalOpen,
+	useModalStore,
+} from '../../../renderer/stores/modalStore';
 import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
 
 describe('openUiSurface - feedback', () => {
@@ -29,5 +33,22 @@ describe('openUiSurface - feedback', () => {
 
 		expect(useFeedbackDraftStore.getState().isMinimized).toBe(false);
 		expect(selectModalOpen('feedback')(useModalStore.getState())).toBe(true);
+	});
+});
+
+describe('openUiSurface - updates', () => {
+	beforeEach(() => {
+		useModalStore.getState().closeModal('updateCheck');
+	});
+
+	it('opens Check for Updates on its updates page by default', () => {
+		expect(openUiSurface('updates')).toEqual({ ok: true });
+		expect(selectModalOpen('updateCheck')(useModalStore.getState())).toBe(true);
+		expect(selectModalData('updateCheck')(useModalStore.getState())?.initialView).toBe('updates');
+	});
+
+	it('deep-links to the rollback list', () => {
+		expect(openUiSurface('updates', 'rollback')).toEqual({ ok: true });
+		expect(selectModalData('updateCheck')(useModalStore.getState())?.initialView).toBe('rollback');
 	});
 });

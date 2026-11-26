@@ -276,6 +276,19 @@ export const UI_SURFACES: UiSurface[] = [
 		click: 'the Feedback button at the bottom of the Left Bar',
 	},
 	{
+		id: 'updates',
+		label: 'Check for Updates',
+		aliases: ['update', 'update-check', 'rollback'],
+		modal: 'updateCheck',
+		description: 'Newer releases to install, or an earlier one to roll back to.',
+		tabs: [
+			{ id: 'updates', label: 'Updates' },
+			{ id: 'rollback', label: 'Roll Back' },
+		],
+		commandPalette: 'Check for Updates',
+		click: 'the Maestro menu → Check for Updates',
+	},
+	{
 		id: 'about',
 		label: 'About Maestro',
 		modal: 'about',
