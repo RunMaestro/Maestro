@@ -120,6 +120,7 @@ import { fileTimestampSlug, getBasename } from '../../../shared/formatters';
 import { buildFileTreeFromPaths } from '../../utils/fileTree';
 import { countMarkdownTasks } from '../FilePreview/filePreviewUtils';
 import { logger } from '../../utils/logger';
+import { fileOpRemoteId } from '../../services/pathPicker';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
@@ -205,8 +206,13 @@ export interface DocumentGraphViewProps {
 	defaultLayoutType?: MindMapLayoutType;
 	/** Callback to persist layout type changes */
 	onLayoutTypeChange?: (type: MindMapLayoutType) => void;
-	/** Optional SSH remote ID - if provided, shows unavailable message (can't scan remote filesystem) */
-	sshRemoteId?: string;
+	/**
+	 * Where the graph's files live, as `pathPickerRemoteId(session)` returns it: `undefined` for
+	 * this machine, a remote id for that remote, and `null` for an SSH agent whose remote is not
+	 * resolved yet. A `null` graph reads nothing and shows the words a file operation shows
+	 * (`UNRESOLVED_REMOTE_MESSAGE`), so it never draws this machine's files for a remote agent.
+	 */
+	sshRemoteId?: string | null;
 	/**
 	 * What to call this graph in the header, the dialog label, and the close
 	 * prompt. Same component either way - a graph over the agent's memory
@@ -214,6 +220,16 @@ export interface DocumentGraphViewProps {
 	 * there makes it look like the wrong surface opened.
 	 */
 	title?: string;
+}
+
+/** One document in the preview panel, with the remote it was read from. */
+interface PreviewEntry {
+	path: string;
+	relativePath: string;
+	name: string;
+	content: string;
+	/** The resolved remote the content came from, so its links and images read the same disk. */
+	remoteId: string | undefined;
 }
 
 /**
@@ -318,19 +334,12 @@ export function DocumentGraphView({
 	const [searchQuery, setSearchQuery] = useState('');
 
 	// Preview panel state
-	const [previewFile, setPreviewFile] = useState<{
-		path: string;
-		relativePath: string;
-		name: string;
-		content: string;
-	} | null>(null);
+	const [previewFile, setPreviewFile] = useState<PreviewEntry | null>(null);
 	const [previewError, setPreviewError] = useState<string | null>(null);
 	const [previewLoading, setPreviewLoading] = useState(false);
 
 	// Preview navigation history (for back/forward through wiki link clicks)
-	const [previewHistory, setPreviewHistory] = useState<
-		Array<{ path: string; relativePath: string; name: string; content: string }>
-	>([]);
+	const [previewHistory, setPreviewHistory] = useState<PreviewEntry[]>([]);
 	const [previewHistoryIndex, setPreviewHistoryIndex] = useState(-1);
 
 	// All markdown files discovered during scanning (for wiki-link resolution)
@@ -706,7 +715,8 @@ export function DocumentGraphView({
 					maxNodes: resetPagination ? defaultMaxNodes : maxNodes,
 					onProgress: handleProgress,
 					onPartialUpdate: handlePartialUpdate,
-					sshRemoteId,
+					// Throws for an unresolved remote; the catch below shows its words.
+					sshRemoteId: fileOpRemoteId(sshRemoteId),
 				});
 
 				// Store reference to current graph data for backlink scanning
@@ -963,10 +973,18 @@ export function DocumentGraphView({
 		}
 
 		const fullPath = `${rootPath}/${selectedNode.filePath}`;
+		let remoteId: string | undefined;
+		try {
+			remoteId = fileOpRemoteId(sshRemoteId);
+		} catch {
+			setSelectedNodeStats(null);
+			setSelectedNodeTasks(null);
+			return;
+		}
 
 		// Load file stats (created/modified dates)
 		window.maestro.fs
-			.stat(fullPath, sshRemoteId)
+			.stat(fullPath, remoteId)
 			.then((stats) => {
 				// stat returns null for a phantom target (e.g. an unresolved [[wiki]]
 				// link that points nowhere) - treat it as "no stats" like the catch.
@@ -985,7 +1003,7 @@ export function DocumentGraphView({
 
 		// Load file content to count tasks
 		window.maestro.fs
-			.readFile(fullPath, sshRemoteId)
+			.readFile(fullPath, remoteId)
 			.then((content) => {
 				if (!content) return;
 				const { open, closed } = countMarkdownTasks(content);
@@ -1205,7 +1223,7 @@ export function DocumentGraphView({
 				focusFile: activeFocusFile || focusFilePath,
 				maxDepth: neighborDepth > 0 ? neighborDepth : 10,
 				maxNodes: newMaxNodes,
-				sshRemoteId,
+				sshRemoteId: fileOpRemoteId(sshRemoteId),
 			});
 
 			setTotalDocuments(graphData.totalDocuments);
@@ -1349,17 +1367,19 @@ export function DocumentGraphView({
 			setPreviewError(null);
 
 			try {
-				const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
+				const remoteId = fileOpRemoteId(sshRemoteId);
+				const content = await window.maestro.fs.readFile(fullPath, remoteId);
 
 				if (content === null) {
 					throw new Error('Unable to read file contents.');
 				}
 
-				const newEntry = {
+				const newEntry: PreviewEntry = {
 					path: fullPath,
 					relativePath,
 					name: relativePath.split('/').pop() || relativePath,
 					content,
+					remoteId,
 				};
 
 				setPreviewFile(newEntry);
@@ -2479,7 +2499,7 @@ export function DocumentGraphView({
 										projectRoot={rootPath}
 										cwd={previewFile.relativePath.split('/').slice(0, -1).join('/')}
 										onFileClick={handlePreviewFile}
-										sshRemoteId={sshRemoteId}
+										sshRemoteId={previewFile.remoteId}
 										enableBionifyReadingMode={bionifyReadingMode}
 									/>
 								) : null}
