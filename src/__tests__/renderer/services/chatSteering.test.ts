@@ -862,6 +862,30 @@ describe('steering a hosted agent', () => {
 		);
 	});
 
+	it('says why when the host declines a steer this side offered (M4)', async () => {
+		useSessionStore.setState({ sessions: [hostedSession([item({ hostQueued: true })])] });
+		act$.mockResolvedValue({
+			ok: true,
+			result: {
+				kind: 'steer-queued',
+				itemId: 'item-a',
+				result: { outcome: 'not-steerable', blockedReason: 'api-token-source' },
+			},
+		});
+
+		// The Steer button's path (useQueueHandlers).
+		const result = await steerQueuedItemOrExplain('sess-1', 'item-a');
+
+		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'api-token-source' });
+		expect(notifyToast).toHaveBeenCalledTimes(1);
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: 'Could not steer this turn',
+				message: expect.stringMatching(/The message stays queued\.$/),
+			})
+		);
+	});
+
 	it('asks nothing of the host for a message that cannot be steered', async () => {
 		useSessionStore.setState({
 			sessions: [hostedSession([item({ hostQueued: true, paused: true })])],
