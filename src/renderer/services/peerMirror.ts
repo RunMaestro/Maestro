@@ -461,13 +461,17 @@ export async function reopenMirrorClosedTab(
 		: null;
 }
 
-/** Close a mirrored tab on its host: it moves to the host's closed-tab history. */
+/**
+ * Close a mirrored tab on its host: it moves to the host's closed-tab history. Whether the host
+ * took it (a refusal is a red toast).
+ */
 export async function closeMirrorTab(
 	peerId: string,
 	agentId: string,
 	tabId: string
-): Promise<void> {
-	await actOnMirroredAgent(peerId, agentId, { kind: 'close-tab', tabId });
+): Promise<boolean> {
+	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'close-tab', tabId });
+	return result !== null;
 }
 
 /** Star or unstar a mirrored tab on its host. */

@@ -374,6 +374,25 @@ describe('runtime Auto Run', () => {
 			expect(env.MAESTRO_QUERY_SOURCE).toBe('auto');
 		});
 
+		it('starts its progress frame from the tasks already checked, as the desktop runner does', async () => {
+			// One task was checked before the run: it counts as done, and is the pace's baseline.
+			const file = doc('tasks', tasks(3, 1));
+			script = [2, 3].map((n) => ({ text: `Finished task ${n}.`, tick: file }));
+			const runtime = await start();
+			const run = watchRun(runtime);
+
+			expect(value(await runtime.autoRun.launch('a1', { documents: [{ file }] }))).toBeUndefined();
+			expect(runtime.runs.latestState('a1')).toMatchObject({
+				isRunning: true,
+				totalTasksAcrossAllDocs: 3,
+				completedTasksAcrossAllDocs: 1,
+				initialCompletedTasks: 1,
+			});
+			expect(runtime.runs.latestState('a1')?.startTime).toEqual(expect.any(Number));
+			await run.ended();
+			expect(read(file)).toBe(tasks(3, 3));
+		});
+
 		it('copies each History row to the project shared History through the runtime writer', async () => {
 			const file = doc('tasks', tasks(2));
 			script = [1, 2].map((n) => ({ text: `Finished task ${n}. Details.`, tick: file }));
