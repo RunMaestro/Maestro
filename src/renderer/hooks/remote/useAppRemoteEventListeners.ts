@@ -73,6 +73,8 @@ import {
 import { isCodexTransport } from '../../../shared/codexTransport';
 import { isHarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { TAB_EDITABLE_KEYS, withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import { setTabThinkingMode } from '../../services/tabThinkingMode';
+import { starHostedTab, updateHostedTab } from '../../services/hostedTurns';
 import { liftBusyReason, readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
 import {
 	readReturnedFromHost,
@@ -2000,6 +2002,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
+			// A Thinking change takes the one write every Thinking control takes
+			// (`setTabThinkingMode()`): it drops the stored reasoning when the mode goes off and
+			// tells a hosted agent's host, which runs the turn. `null` clears it to off.
+			const thinking =
+				'showThinking' in tabPatch ? (asThinkingMode(tabPatch.showThinking) ?? 'off') : undefined;
+			delete tabPatch.showThinking;
+
 			const applyTabPatch = (s: Session): Session => ({
 				...s,
 				aiTabs: s.aiTabs.map((t) => {
@@ -2014,12 +2023,28 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				}),
 			});
 
-			setSessions((prev: Session[]) =>
-				prev.map((s) => (s.id === sessionId ? applyTabPatch(s) : s))
-			);
+			if (Object.keys(tabPatch).length > 0) {
+				setSessions((prev: Session[]) =>
+					prev.map((s) => (s.id === sessionId ? applyTabPatch(s) : s))
+				);
+			}
+			if (thinking !== undefined) setTabThinkingMode(sessionId, targetTabId, thinking);
+			// The rest of what a hosted tab's host holds goes there as the UI control sends it: a
+			// star through the tab strip's own call, a provider session as a finished wizard hands
+			// it over. The composer settings (read-only, model, effort, history, enter-to-send) and
+			// a merged context ride the next send, as they do from the composer.
+			if (typeof tabPatch.starred === 'boolean') {
+				starHostedTab(session, targetTabId, tabPatch.starred);
+			}
+			if (typeof tabPatch.agentSessionId === 'string') {
+				updateHostedTab(session, targetTabId, { agentSessionId: tabPatch.agentSessionId });
+			}
 
 			try {
-				await window.maestro.sessions.setMany([applyTabPatch(session) as any], []);
+				// The store's record holds every write above; a window that has not applied the
+				// thinking write yet falls back to the patch.
+				const stored = selectSessionById(sessionId)(useSessionStore.getState());
+				await window.maestro.sessions.setMany([(stored ?? applyTabPatch(session)) as any], []);
 			} catch (persistErr) {
 				logger.error('[Remote] Failed to persist tab config:', undefined, persistErr);
 			}

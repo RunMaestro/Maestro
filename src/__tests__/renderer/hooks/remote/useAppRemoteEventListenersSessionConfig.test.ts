@@ -20,7 +20,13 @@ import type { Session } from '../../../../renderer/types';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: Object.assign(vi.fn(), { getState: vi.fn(() => ({})) }),
-	selectSessionById: vi.fn(),
+	selectSessionById: (id: string) => (state: { sessions?: Array<{ id: string }> }) =>
+		state.sessions?.find((session) => session.id === id),
+}));
+// The one Thinking write (T6); its own effect on the store is covered in tabThinkingMode.test.ts.
+const setTabThinkingMode = vi.fn();
+vi.mock('../../../../renderer/services/tabThinkingMode', () => ({
+	setTabThinkingMode: (...args: unknown[]) => setTabThinkingMode(...args),
 }));
 vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: Object.assign(vi.fn(), { getState: vi.fn(() => ({})) }),
@@ -312,7 +318,8 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 		await flush();
 
 		const [updated] = applyUpdate(setSessions, sessions);
-		expect(updated.aiTabs[1].showThinking).toBe('sticky');
+		// Thinking takes the one Thinking write, which also tells a hosted agent's host (T6).
+		expect(setTabThinkingMode).toHaveBeenCalledWith('session-1', 'tab-2', 'sticky');
 		expect(updated.aiTabs[1].readOnlyMode).toBe(true);
 		expect(updated.aiTabs[1].customModel).toBe('opus');
 		expect(updated.aiTabs[1].customEffort).toBe('high');
