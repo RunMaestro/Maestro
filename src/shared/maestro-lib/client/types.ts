@@ -26,6 +26,7 @@ import type {
 } from '../../types';
 import type { CodexTransport } from '../../codexTransport';
 import type { QueueSteerResult } from '../../chatSteering';
+import type { ProjectTokenUsage, ProjectTokenUsageProject } from '../../projectTokenUsage';
 import type { HarnessControlMode } from '../providers/native-control';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
@@ -109,6 +110,7 @@ export type ClientMethod =
 	| 'history.list'
 	| 'history.remove'
 	| 'history.update'
+	| 'usage.projectTokens'
 	| 'autoRun.launch'
 	| 'autoRun.launchGoal'
 	| 'autoRun.stop'
@@ -984,6 +986,22 @@ export interface EventsApi {
 	subscribe(listener: (event: MaestroEvent) => void, filter?: EventFilter): Unsubscribe;
 }
 
+/**
+ * Reads about what the host's providers used, computed on the host where the transcripts are. A
+ * host older than this answers `unsupported`.
+ */
+export interface UsageApi {
+	/**
+	 * The token usage of these projects' conversations on the host, one numeric breakdown per
+	 * conversation (`get_project_token_usage`). The reply is parsed as untrusted input
+	 * (`parseProjectTokenUsageReply()`); no transcript text is sent.
+	 */
+	projectTokens(
+		projects: readonly ProjectTokenUsageProject[],
+		options?: { timeoutMs?: number }
+	): Promise<ClientResult<ProjectTokenUsage>>;
+}
+
 export interface MaestroClient {
 	readonly connection: ConnectionApi;
 	readonly agents: AgentsApi;
@@ -994,6 +1012,8 @@ export interface MaestroClient {
 	readonly groupChats: GroupChatsApi;
 	readonly consults: ConsultsApi;
 	readonly history: HistoryApi;
+	/** Served by the WebSocket client; an in-process runtime has no remote usage to read. */
+	readonly usage?: UsageApi;
 	readonly settings: SettingsApi;
 	readonly providers: ProvidersApi;
 	readonly events: EventsApi;

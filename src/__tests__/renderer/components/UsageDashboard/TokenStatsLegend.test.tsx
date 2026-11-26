@@ -88,7 +88,7 @@ const aggregate: TokenUsageAggregate = {
 	} as TokenUsageAggregate['series'],
 	speed: emptyTokenSpeedSummary(),
 	coverageByAgent: {},
-	excluded: { unsupportedAgents: [], remoteProjects: 0 },
+	excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] },
 	granularity: 'day',
 	windowStartMs: 1_700_000_000_000,
 	windowEndMs: 1_700_086_400_000,
@@ -415,7 +415,7 @@ describe('Grok token presentation', () => {
 		expect(screen.getByRole('group', { name: 'Input Tokens: 60' })).toBeInTheDocument();
 		expect(screen.getByText('30% of input served from cache')).toBeInTheDocument();
 		expect(screen.getByTestId('token-stats')).toHaveTextContent(
-			'2 conversations read from local agent transcripts.'
+			'2 conversations read from agent transcripts.'
 		);
 		for (const a of ['alpha', 'beta']) {
 			const row = within(screen.getByTestId('token-by-account')).getByText(`Grok ${a}`);
@@ -460,15 +460,22 @@ describe('TokenStats framing', () => {
 	it('lists partial providers and what is not counted', async () => {
 		mountWith({
 			coverageByAgent: { 'claude-code': 'full', codex: 'partial' },
-			excluded: { unsupportedAgents: ['grok'], remoteProjects: 1 },
+			excluded: { unsupportedAgents: ['grok'], remoteProjects: 1, notCountedAgents: ['Build Box'] },
 		});
 		const coverage = await screen.findByTestId('token-stats-coverage');
 		expect(coverage.textContent).toContain('Partial token data for Codex');
 		expect(coverage.textContent).toContain(
-			'agents whose conversations are stored on another computer'
+			'Not counted: Build Box, 1 removed agent (conversations on another computer that could not be read); Grok CLI (no transcripts to read).'
 		);
 		expect(coverage.textContent).not.toMatch(/SSH|remote|hosted/i);
-		expect(coverage.textContent).toContain('Grok');
+	});
+
+	it('says nothing is left out once every agent on another computer is counted', async () => {
+		mountWith({
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] },
+		});
+		const coverage = await screen.findByTestId('token-stats-coverage');
+		expect(coverage.textContent).not.toContain('Not counted');
 	});
 
 	it('shows the error, not an empty state, when the read fails', async () => {

@@ -8,7 +8,7 @@ import { providerProfileKey } from '../../../shared/providerProfiles';
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 vi.mock('../../../cli/services/session-command', () => ({ exitIfMaestroNotRunning: vi.fn() }));
 
-import { statsTokens } from '../../../cli/commands/stats';
+import { statsProjectTokens, statsTokens } from '../../../cli/commands/stats';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 
 describe('stats-tokens accounting', () => {
@@ -249,4 +249,89 @@ describe('stats-tokens accounting', () => {
 				});
 		}
 	);
+});
+
+describe('stats-project-tokens (the host op behind remote and hosted agents)', () => {
+	const sendCommand = vi.fn();
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
+	const record = {
+		sessionId: 's1',
+		agentType: 'claude-code',
+		projectPath: '/srv/app',
+		accountKey: 'default',
+		timestampMs: 5,
+		byModel: [],
+		inputTokens: 1500,
+		outputTokens: 500,
+		cacheReadTokens: 0,
+		cacheCreationTokens: 0,
+		costUsd: 1.25,
+		costEstimated: true,
+		coverage: 'full',
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('process.exit');
+		});
+		vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+			action({ sendCommand } as never)
+		);
+	});
+
+	afterEach(() => vi.restoreAllMocks());
+
+	it("sends get_project_token_usage to this machine's host and prints what it answers", async () => {
+		sendCommand.mockResolvedValue({
+			type: 'project_token_usage_result',
+			success: true,
+			breakdowns: [record, { ...record, sessionId: 's2', inputTokens: -1 }],
+			unsupportedProviders: [],
+		});
+		await statsProjectTokens({ provider: 'claude-code', project: ['/srv/app'] });
+		expect(sendCommand).toHaveBeenCalledWith(
+			{
+				type: 'get_project_token_usage',
+				projects: [{ provider: 'claude-code', projectPath: '/srv/app' }],
+			},
+			'project_token_usage_result'
+		);
+		const out = logSpy.mock.calls[0][0] as string;
+		expect(out).toContain('Conversations:   1');
+		expect(out).toContain('1.5K in');
+		expect(out).toContain('~$1.25');
+	});
+
+	it('prints the parsed answer as JSON', async () => {
+		sendCommand.mockResolvedValue({
+			type: 'project_token_usage_result',
+			success: true,
+			breakdowns: [record],
+			unsupportedProviders: ['claude-code'],
+		});
+		await statsProjectTokens({ provider: 'claude-code', project: ['/srv/app'], json: true });
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+			breakdowns: [record],
+			unsupportedProviders: ['claude-code'],
+		});
+	});
+
+	it("fails with the host's error, never a zero summary", async () => {
+		sendCommand.mockResolvedValue({
+			type: 'project_token_usage_result',
+			success: false,
+			error: 'Failed to read token usage: disk gone',
+		});
+		await expect(
+			statsProjectTokens({ provider: 'codex', project: ['/x'], json: true })
+		).rejects.toThrow('process.exit');
+		expect(logSpy).not.toHaveBeenCalled();
+		expect(JSON.parse(errorSpy.mock.calls[0][0] as string)).toEqual({
+			error: 'Failed to read token usage: disk gone',
+		});
+	});
 });

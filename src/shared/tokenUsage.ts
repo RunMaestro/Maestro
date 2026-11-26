@@ -175,8 +175,8 @@ export interface TokenUsageAggregate {
 	coverageByAgent: Record<string, TokenCoverage>;
 	/**
 	 * What the totals leave out: agent types Maestro has run that have no
-	 * readable transcript storage, and how many agent/project pairs ran over
-	 * SSH (their transcripts live on the remote host). The Tokens tab states
+	 * readable transcript storage, and the agents whose conversations are on
+	 * another computer that could not be read this time. The Tokens tab states
 	 * both, so a total is never read as covering every agent.
 	 */
 	excluded: TokenUsageExclusions;
@@ -196,8 +196,18 @@ export interface TokenUsageAggregate {
 export interface TokenUsageExclusions {
 	/** Agent types with recorded activity but no transcript storage to read. */
 	unsupportedAgents: string[];
-	/** Distinct remote (SSH) agent type + project pairs, skipped entirely. */
+	/**
+	 * Distinct remote agent type + project pairs from the activity record that
+	 * belong to no stored agent (an agent since removed), so nothing can ask the
+	 * computer they ran on.
+	 */
 	remoteProjects: number;
+	/**
+	 * Names of the agents whose conversations are on another computer that could
+	 * not be read this time (no host there, an older host, a provider the host
+	 * cannot read, or no answer in time). Every other such agent is counted.
+	 */
+	notCountedAgents: string[];
 }
 
 /**

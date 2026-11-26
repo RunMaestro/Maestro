@@ -24,6 +24,11 @@ import {
 	writeCliServerInfoTo,
 } from '../../../shared/maestro-lib';
 import { BridgeConnection } from '../../../shared/maestro-lib/client/bridge-connection';
+import { createHostTokenUsageAnswer } from '../../../cli/services/host-token-usage';
+import {
+	PROJECT_TOKEN_USAGE_REPLY,
+	projectTokenUsageRequest,
+} from '../../../shared/projectTokenUsage';
 
 describe('startRuntimeHost', () => {
 	let dir: string;
@@ -193,6 +198,29 @@ describe('startRuntimeHost', () => {
 			await expect(
 				connection.sendCommand({ type: 'get_cue_activity' }, 'cue_activity')
 			).rejects.toMatchObject({ name: 'UnsupportedCommandError', hostKind: 'headless' });
+		} finally {
+			connection.disconnect();
+		}
+	});
+
+	it('answers a peer dashboard asking for its projects token usage, before Cue', async () => {
+		const read = vi.fn(async () => ({ breakdowns: [], unsupportedProviders: ['opencode'] }));
+		const host = await startRuntimeHost(options(), {
+			...noCue,
+			tokenUsage: createHostTokenUsageAnswer(read),
+		});
+		running.push(host);
+
+		const connection = new BridgeConnection({ userDataDir: dir });
+		await connection.connect();
+		try {
+			await expect(
+				connection.sendCommand(
+					projectTokenUsageRequest([{ provider: 'opencode', projectPath: dir }]),
+					PROJECT_TOKEN_USAGE_REPLY
+				)
+			).resolves.toMatchObject({ success: true, unsupportedProviders: ['opencode'] });
+			expect(read).toHaveBeenCalledWith([{ provider: 'opencode', projectPath: dir }]);
 		} finally {
 			connection.disconnect();
 		}

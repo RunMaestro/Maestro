@@ -241,6 +241,7 @@ import {
 import {
 	handleGetStatsAggregation,
 	handleGetTokenUsage,
+	handleGetProjectTokenUsage,
 	handleGetStatsIndexing,
 	handleStatsQuery,
 	handleGetAchievements,
@@ -903,6 +904,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_token_usage':
 				handleGetTokenUsage(this.ctx, client, message);
+				break;
+
+			case 'get_project_token_usage':
+				handleGetProjectTokenUsage(this.ctx, client, message);
 				break;
 
 			case 'get_stats_indexing':

@@ -2,15 +2,23 @@
  * Stats domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles:
- * get_stats_aggregation, get_token_usage, get_stats_indexing, stats_query, get_achievements,
- * generate_director_notes_synopsis.
+ * get_stats_aggregation, get_token_usage, get_project_token_usage, get_stats_indexing,
+ * stats_query, get_achievements, generate_director_notes_synopsis.
  */
 
 import { getStatsDB } from '../../../stats/singleton';
 import { runReadonlyStatsQuery } from '../../../stats/readonly-query';
 import type { StatsTimeRange } from '../../../../shared/stats-types';
 import { tokenUsageQueryForRange } from '../../../../shared/tokenUsage';
-import { getTokenUsageAggregate } from '../../../stats/token-usage/token-usage-accessor';
+import {
+	getProjectTokenUsage,
+	getTokenUsageAggregate,
+} from '../../../stats/token-usage/token-usage-accessor';
+import {
+	parseProjectTokenUsageRequest,
+	projectTokenUsageFailureFrame,
+	projectTokenUsageReplyFrame,
+} from '../../../../shared/projectTokenUsage';
 import { getSettingsStore } from '../../../stores';
 import { isEncoreFeatureEnabled } from '../../../../shared/encoreFeatureDefaults';
 import { getStatsIndexingState } from '../../../stats/stats-indexing';
@@ -101,6 +109,37 @@ export function handleGetTokenUsage(
 			ctx.sendError(
 				client,
 				`Failed to get token usage: ${error instanceof Error ? error.message : String(error)}`
+			);
+		});
+}
+
+/**
+ * Handle get_project_token_usage - a Federation peer asking for the token usage
+ * of its agents' projects on this machine (`projectTokenUsage()` over this
+ * desktop's own session storages). Only numbers go back, never transcript text.
+ * Not gated on this machine's Usage & Stats: the peer's dashboard is the one
+ * reading, and the read touches no stats table.
+ */
+export function handleGetProjectTokenUsage(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const projects = parseProjectTokenUsageRequest(message as Record<string, unknown>);
+	const reply = (frame: Record<string, unknown>): void => {
+		ctx.send(client, { ...frame, requestId: message.requestId, timestamp: Date.now() });
+	};
+	if (projects.length === 0) {
+		reply(projectTokenUsageFailureFrame('Name at least one project (provider and path).'));
+		return;
+	}
+	getProjectTokenUsage(projects)
+		.then((usage) => reply(projectTokenUsageReplyFrame(usage)))
+		.catch((error) => {
+			reply(
+				projectTokenUsageFailureFrame(
+					`Failed to read token usage: ${error instanceof Error ? error.message : String(error)}`
+				)
 			);
 		});
 }

@@ -265,11 +265,12 @@ describe('aggregate', () => {
 	});
 
 	it('reports what the totals leave out', () => {
-		const excluded = { unsupportedAgents: ['grok'], remoteProjects: 2 };
+		const excluded = { unsupportedAgents: ['grok'], remoteProjects: 2, notCountedAgents: ['Box'] };
 		expect(aggregate([breakdown()], {}, excluded).excluded).toEqual(excluded);
 		expect(aggregate([breakdown()], {}).excluded).toEqual({
 			unsupportedAgents: [],
 			remoteProjects: 0,
+			notCountedAgents: [],
 		});
 	});
 

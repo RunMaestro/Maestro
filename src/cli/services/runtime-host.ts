@@ -30,6 +30,11 @@ import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { hostSharedHistoryLabel } from '../../shared/maestro-lib/store/shared-history';
 import { cueEngineLockOwnerToken } from '../../main/cue/cue-engine-lock';
 import { startHostCue, type HostCue } from './host-cue';
+import {
+	createHeadlessTokenUsageReader,
+	createHostTokenUsageAnswer,
+	type HostTokenUsageAnswer,
+} from './host-token-usage';
 import { createHostSleepGuard, type HostSleepGuard } from './host-sleep-guard';
 
 /** The runtime refused the directory: another host, a desktop, a held lock, a corrupt store. */
@@ -76,6 +81,8 @@ export interface RuntimeHostDeps {
 	startServer: typeof startRuntimeServer;
 	startCue: typeof startHostCue;
 	createSleepGuard: typeof createHostSleepGuard;
+	/** Answers `get_project_token_usage` from this machine's transcripts. */
+	tokenUsage: HostTokenUsageAnswer;
 	/** Can the runtime load its bundled prompts, looked for the way it looks for them? */
 	promptsLoad(moduleDirectory: string, userDataDir: string): boolean;
 	randomToken(): string;
@@ -101,6 +108,7 @@ const defaultDeps: RuntimeHostDeps = {
 	startServer: startRuntimeServer,
 	startCue: startHostCue,
 	createSleepGuard: createHostSleepGuard,
+	tokenUsage: createHostTokenUsageAnswer(createHeadlessTokenUsageReader()),
 	promptsLoad: (moduleDirectory, userDataDir) =>
 		createPromptLoaderFor({ userDataDir, moduleDirectory })?.get(
 			PROMPT_IDS.MAESTRO_SYSTEM_PROMPT
@@ -223,7 +231,8 @@ export async function startRuntimeHost(
 			port: options.port,
 			onStopRequested: () => void stop(),
 			// `cue list`, `cue activity`, `cue enable|disable`: the host runs the engine they ask about.
-			answer: (message) => cue.answer(message),
+			// A peer's dashboard asks for the token usage of its agents' conversations kept here.
+			answer: async (message) => (await deps.tokenUsage(message)) ?? cue.answer(message),
 			describe: () => ({
 				cue: cue.state(),
 				cueRuns: cue.activeRuns(),

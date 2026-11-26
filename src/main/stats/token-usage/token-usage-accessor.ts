@@ -6,6 +6,8 @@
  *
  * 1. Enumerate the distinct (agentType, projectPath) pairs Maestro has tracked,
  *    from the stats `session_lifecycle` table (skipping remote sessions).
+ *    Agents whose conversations are on another computer (SSH and hosted) are
+ *    counted there instead (`remote-breakdowns.ts`) and merged in.
  * 2. `listSessions(projectPath)` per pair - now carrying a per-model `byModel`
  *    split - and turn each into a {@link SessionTokenBreakdown}, served from the
  *    per-session {@link TokenUsageCache} when the fingerprint is unchanged.
@@ -20,8 +22,11 @@
 import { getStatsDB } from '../singleton';
 import { getSessionStorage } from '../../agents';
 import { AGENT_CAPABILITIES } from '../../agents/capabilities';
-import type { AgentSessionInfo } from '../../agents/session-storage';
 import { getProviderAccountDirs } from '../../agents/provider-account-dirs';
+import { getLiveSessions } from '../../stores/getters';
+import { isInitialized as storesInitialized } from '../../stores/instances';
+import { getPeerMirrorService } from '../../federation';
+import { withStatsIndexing } from '../stats-indexing';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import {
@@ -51,31 +56,28 @@ import {
 	tokenSliceStarts,
 	type TokenSpeedSource,
 } from '../../../shared/tokenSpeed';
+import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
+import { getTokenUsageCache, type TokenUsageCache } from './token-usage-cache';
 import {
-	getTokenUsageCache,
-	sessionFingerprint,
-	tokenCacheKey,
-	type TokenUsageCache,
-} from './token-usage-cache';
+	COVERAGE_BY_AGENT,
+	collectProjectBreakdowns,
+	projectTokenUsage,
+	toBreakdown,
+} from './project-breakdowns';
+import type {
+	ProjectTokenUsage,
+	ProjectTokenUsageProject,
+} from '../../../shared/projectTokenUsage';
+import {
+	collectRemoteBreakdowns,
+	remoteProjectPairKey,
+	remoteTokenAgentsOf,
+	type RemoteBreakdowns,
+	type RemoteTokenAgent,
+	type RemoteTokenUsageRequest,
+} from './remote-breakdowns';
 
 const LOG_CONTEXT = '[TokenUsageAccessor]';
-
-/**
- * Per-agent base coverage, matching the Cue accessor's classification so both
- * dashboards label partial data identically. Agents absent here are reported as
- * `unsupported`.
- */
-const COVERAGE_BY_AGENT: Record<string, TokenCoverage> = {
-	'claude-code': 'full',
-	opencode: 'full',
-	kilo: 'full', // Fork of OpenCode: same storage schema, same token fields
-	'factory-droid': 'full',
-	grok: 'full',
-	codex: 'partial',
-	'copilot-cli': 'partial',
-	// No cost and no model id on disk: tokens only.
-	antigravity: 'partial',
-};
 
 /** How long collected breakdowns stay fresh in memory before a re-collect. */
 const MEMO_TTL_MS = 30_000;
@@ -111,38 +113,40 @@ export function invalidateTokenUsageMemo(): void {
 
 /** No exclusions: the default for callers (tests) that build breakdowns directly. */
 function noExclusions(): TokenUsageExclusions {
-	return { unsupportedAgents: [], remoteProjects: 0 };
+	return { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] };
 }
 
 /**
  * Distinct (agentType -> set of projectPaths) Maestro has tracked locally.
- * Remote sessions are skipped (their transcripts live on the remote host), and
- * so are agent types with no transcript storage; both are counted into
- * `excluded` so the dashboard can say what its totals leave out.
+ * Remote sessions are left to the remote's own count (their transcripts live
+ * there) and returned as `remotePairs`; agent types with no transcript storage
+ * are counted into `excluded` so the dashboard can say what its totals leave out.
  */
 function enumerateAgentProjects(): {
 	byAgent: Map<string, Set<string>>;
 	excluded: TokenUsageExclusions;
+	/** `agentType|projectPath` of every remote lifecycle row. */
+	remotePairs: Set<string>;
 } {
 	const byAgent = new Map<string, Set<string>>();
 	const excluded = noExclusions();
+	const remote = new Set<string>();
 	const db = getStatsDB();
-	if (!db.isReady()) return { byAgent, excluded };
+	if (!db.isReady()) return { byAgent, excluded, remotePairs: remote };
 
 	let events;
 	try {
 		events = db.getSessionLifecycleEvents('all');
 	} catch (error) {
 		void captureException(error);
-		return { byAgent, excluded };
+		return { byAgent, excluded, remotePairs: remote };
 	}
 
-	const remote = new Set<string>();
 	const unsupported = new Set<string>();
 	for (const ev of events) {
 		if (!ev.projectPath) continue;
 		if (ev.isRemote) {
-			remote.add(`${ev.agentType}|${ev.projectPath}`);
+			remote.add(remoteProjectPairKey(ev.agentType, ev.projectPath));
 			continue;
 		}
 		if (!getSessionStorage(ev.agentType)) {
@@ -160,238 +164,73 @@ function enumerateAgentProjects(): {
 	}
 	excluded.remoteProjects = remote.size;
 	excluded.unsupportedAgents = [...unsupported].sort();
-	return { byAgent, excluded };
+	return { byAgent, excluded, remotePairs: remote };
 }
 
 // ---------------------------------------------------------------------------
 // Derivation
 // ---------------------------------------------------------------------------
 
-/** Sum a per-model split into the four token totals. */
-function sumModels(byModel: ModelTokenUsage[]): {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadTokens: number;
-	cacheCreationTokens: number;
-	costUsd: number;
-	costEstimated: boolean;
-} {
-	let inputTokens = 0;
-	let outputTokens = 0;
-	let cacheReadTokens = 0;
-	let cacheCreationTokens = 0;
-	let costUsd = 0;
-	let costEstimated = false;
-	for (const m of byModel) {
-		inputTokens += m.inputTokens;
-		outputTokens += m.outputTokens;
-		cacheReadTokens += m.cacheReadTokens;
-		cacheCreationTokens += m.cacheCreationTokens;
-		costUsd += m.costUsd;
-		if (m.costEstimated) costEstimated = true;
+/**
+ * The agents whose conversations are on another computer, from the stored agents. Empty before
+ * the stores exist (tests, a very early call).
+ */
+function readRemoteTokenAgents(): RemoteTokenAgent[] {
+	if (!storesInitialized()) return [];
+	try {
+		return remoteTokenAgentsOf(getLiveSessions() as AgentRecord[]);
+	} catch (error) {
+		void captureException(error, { operation: 'tokenUsage:readRemoteAgents' });
+		return [];
 	}
-	return {
-		inputTokens,
-		outputTokens,
-		cacheReadTokens,
-		cacheCreationTokens,
-		costUsd,
-		costEstimated,
-	};
 }
 
-/**
- * Agents whose transcripts count cached input tokens INSIDE `inputTokens`
- * (`cacheReadTokens` is a subset of it, not an addition). Their input is
- * reduced to the fresh part so every provider's token fields add up the same
- * way: `input + output + cacheRead + cacheCreation` counts each token once.
- */
-const CACHE_READ_INSIDE_INPUT = new Set(['codex']);
+/** Ask a remote's host, over the peer mirror's connection, for its projects' usage. */
+const requestRemoteTokenUsage: RemoteTokenUsageRequest = async (remoteId, projects, timeoutMs) =>
+	(await getPeerMirrorService()?.projectTokenUsage(remoteId, projects, timeoutMs)) ?? undefined;
 
 /**
- * Rewrite one model bucket so its input is fresh tokens only. The cost was
- * computed from the provider's own counts (with subset-aware pricing) before
- * this point, so it is carried over untouched.
+ * The usage of the agents whose conversations are on another computer, counted on that computer.
+ * Shows on the stats indexing surface while a remote is slow to answer.
  */
-function withFreshInput(m: ModelTokenUsage): ModelTokenUsage {
-	return { ...m, inputTokens: Math.max(0, m.inputTokens - m.cacheReadTokens) };
-}
-
-/**
- * Turn one `AgentSessionInfo` into a {@link SessionTokenBreakdown}. When the
- * native accounting exists, lifetime totals remain authoritative even when model
- * detail is partial. Legacy providers retain their existing model projections.
- */
-function toBreakdown(
-	agentType: string,
-	info: AgentSessionInfo,
-	accountKey: string = DEFAULT_ACCOUNT_KEY
-): SessionTokenBreakdown {
-	const coverage: TokenCoverage =
-		agentType === 'grok' &&
-		(info.accounting?.completeness !== 'complete' || info.accounting.cost.status !== 'exact')
-			? 'partial'
-			: (COVERAGE_BY_AGENT[agentType] ?? 'unsupported');
-	const timestampMs = Date.parse(info.modifiedAt || info.timestamp) || 0;
-
-	let byModel: ModelTokenUsage[];
-	if (info.accounting?.models?.length) {
-		byModel = info.accounting.models.map((detail) => ({
-			model: detail.model,
-			rawModel: detail.model,
-			accounting: structuredClone(detail),
-			inputTokens: detail.inputTokens ?? 0,
-			outputTokens: detail.outputTokens ?? 0,
-			cacheReadTokens: detail.cacheReadInputTokens ?? 0,
-			cacheCreationTokens: detail.cacheCreationInputTokens ?? 0,
-			costUsd: usageCostUsd(detail.cost) ?? 0,
-			costEstimated: detail.cost.status === 'estimated',
-		}));
-	} else if (info.accounting) {
-		// No model attribution: retain the lifetime amount in an unknown bucket.
-		byModel = [
-			{
-				model: '',
-				inputTokens: info.inputTokens,
-				outputTokens: info.outputTokens,
-				cacheReadTokens: info.cacheReadTokens,
-				cacheCreationTokens: info.cacheCreationTokens,
-				costUsd: usageCostUsd(info.accounting.cost) ?? 0,
-				costEstimated: info.accounting.cost.status === 'estimated',
-				accounting: {
-					completeness: info.accounting.completeness,
-					cost: structuredClone(info.accounting.cost),
-				},
-			},
-		];
-	} else if (info.byModel && info.byModel.length > 0) {
-		byModel = info.byModel;
-	} else if (
-		info.inputTokens ||
-		info.outputTokens ||
-		info.cacheReadTokens ||
-		info.cacheCreationTokens
-	) {
-		// No model split available: one bucket, cost from the session's own figure
-		// when the agent reports it, else rate-table estimated at aggregate time.
-		const hasReportedCost = typeof info.costUsd === 'number';
-		byModel = [
-			{
-				model: '',
-				inputTokens: info.inputTokens,
-				outputTokens: info.outputTokens,
-				cacheReadTokens: info.cacheReadTokens,
-				cacheCreationTokens: info.cacheCreationTokens,
-				costUsd: hasReportedCost ? (info.costUsd as number) : 0,
-				costEstimated: !hasReportedCost,
-			},
-		];
-	} else {
-		byModel = [];
-	}
-
-	if (CACHE_READ_INSIDE_INPUT.has(agentType)) {
-		byModel = byModel.map(withFreshInput);
-	}
-
-	const totals = info.accounting
-		? {
-				inputTokens: info.inputTokens,
-				outputTokens: info.outputTokens,
-				cacheReadTokens: info.cacheReadTokens,
-				cacheCreationTokens: info.cacheCreationTokens,
-				costUsd: usageCostUsd(info.accounting.cost) ?? 0,
-				costEstimated: info.accounting.cost.status === 'estimated',
-			}
-		: sumModels(byModel);
-	return {
-		sessionId: info.sessionId,
-		agentType,
-		projectPath: info.projectPath,
-		accountKey,
-		timestampMs,
-		origin: info.origin,
-		byModel,
-		...(info.accounting
-			? {
-					accounting: {
-						...structuredClone(info.accounting),
-						scopeId:
-							info.accounting.scopeId ??
-							canonicalJson([agentType, accountKey, info.projectPath, info.sessionId]),
-					},
-				}
-			: {}),
-		inputTokens: totals.inputTokens,
-		outputTokens: totals.outputTokens,
-		cacheReadTokens: totals.cacheReadTokens,
-		cacheCreationTokens: totals.cacheCreationTokens,
-		costUsd: totals.costUsd,
-		costEstimated: totals.costEstimated,
-		coverage,
-		...(info.speed && info.speed.length > 0 ? { speed: info.speed } : {}),
-	};
+async function collectRemoteAgentBreakdowns(): Promise<RemoteBreakdowns> {
+	const agents = readRemoteTokenAgents();
+	if (agents.length === 0) return { breakdowns: [], notCounted: [], pairs: new Set() };
+	return withStatsIndexing(
+		{ id: 'remote-token-usage', label: 'Token usage on other computers', reason: 'index' },
+		async (progress) => {
+			progress.addWork(new Set(agents.map((agent) => agent.remoteId)).size, 0);
+			return collectRemoteBreakdowns(agents, requestRemoteTokenUsage, {
+				onRemoteDone: () => progress.advance(1, 0),
+				onError: (error) => void captureException(error, { operation: 'tokenUsage:remote' }),
+			});
+		}
+	);
 }
 
 /**
  * Collect one breakdown per known session, using the cache for unchanged ones.
- * Live keys are tracked so the cache can prune sessions deleted on disk.
+ * Live keys are tracked so the cache can prune sessions deleted on disk. The
+ * conversations of agents on another computer are counted there, beside the
+ * local scan, and merged in.
  */
 async function collectBreakdowns(cache: TokenUsageCache): Promise<Collection> {
-	const { byAgent, excluded } = enumerateAgentProjects();
-	const breakdowns: SessionTokenBreakdown[] = [];
-	const liveKeys = new Set<string>();
-
-	for (const [agentType, projects] of byAgent) {
-		const storage = getSessionStorage(agentType);
-		if (!storage) continue;
-
-		// Users routinely run one provider under several accounts, each a separate
-		// config dir with its own transcript tree. Reading only the default root
-		// would undercount them, so fan out across every discovered account dir.
-		// A provider with no account-selecting env var yields no dirs and gets a
-		// single default pass, filed under DEFAULT_ACCOUNT_KEY.
-		const accountDirs = await getProviderAccountDirs(agentType);
-		const accounts: Array<string | undefined> = accountDirs.length ? accountDirs : [undefined];
-
-		for (const projectPath of projects) {
-			for (const accountDir of accounts) {
-				const accountKey = accountDir ?? DEFAULT_ACCOUNT_KEY;
-				let sessions: AgentSessionInfo[];
-				try {
-					sessions = await storage.listSessions(projectPath, undefined, accountDir);
-				} catch (error) {
-					void captureException(error);
-					continue;
-				}
-				for (const info of sessions) {
-					// Grok IDs are scoped to account/cwd, and aliased project queries
-					// can return the same native directory more than once.
-					const key = tokenCacheKey(
-						agentType === 'grok'
-							? canonicalJson([agentType, accountKey, info.projectPath])
-							: `${agentType}@${accountKey}`,
-						info.sessionId
-					);
-					if (agentType === 'grok' && liveKeys.has(key)) continue;
-					liveKeys.add(key);
-					const fingerprint = sessionFingerprint(info.modifiedAt, info.sizeBytes);
-					// A Grok usage.json update need not change the transcript size or
-					// summary timestamp. Storage already sampled all native files;
-					// never replace that observation with a stale single-file cache.
-					let breakdown = agentType === 'grok' ? undefined : cache.get(key, fingerprint);
-					if (!breakdown) {
-						breakdown = toBreakdown(agentType, info, accountKey);
-						cache.set(key, fingerprint, breakdown);
-					}
-					breakdowns.push(breakdown);
-				}
-			}
-		}
-	}
-
-	cache.prune(liveKeys);
-	return { breakdowns, excluded };
+	const { byAgent, excluded, remotePairs } = enumerateAgentProjects();
+	const [local, remote] = await Promise.all([
+		collectProjectBreakdowns(byAgent, {
+			storageFor: getSessionStorage,
+			accountDirsFor: (agentType) => getProviderAccountDirs(agentType),
+			cache,
+			onError: (error) => void captureException(error),
+		}),
+		collectRemoteAgentBreakdowns(),
+	]);
+	cache.prune(local.liveKeys);
+	// A remote pair of a stored agent is now either counted or named below; what
+	// is left belongs to agents that no longer exist here.
+	excluded.remoteProjects = [...remotePairs].filter((pair) => !remote.pairs.has(pair)).length;
+	excluded.notCountedAgents = remote.notCounted.map((agent) => agent.name);
+	return { breakdowns: [...local.breakdowns, ...remote.breakdowns], excluded };
 }
 
 /**
@@ -843,6 +682,21 @@ export async function getTokenUsageAggregate(
 		LOG_CONTEXT
 	);
 	return result;
+}
+
+/**
+ * The usage of `projects` on this machine, for a Federation peer that asked
+ * (`get_project_token_usage`): the same storages and account dirs this
+ * machine's own dashboard reads.
+ */
+export function getProjectTokenUsage(
+	projects: readonly ProjectTokenUsageProject[]
+): Promise<ProjectTokenUsage> {
+	return projectTokenUsage(projects, {
+		storageFor: getSessionStorage,
+		accountDirsFor: (agentType) => getProviderAccountDirs(agentType),
+		onError: (error) => void captureException(error, { operation: 'tokenUsage:peerProjects' }),
+	});
 }
 
 /** Test seam: expose internals for unit tests. */

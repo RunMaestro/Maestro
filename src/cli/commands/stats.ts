@@ -37,6 +37,11 @@ import {
 } from '../../shared/statsIndexing';
 import type { PromptCadence } from '../../shared/promptCadence';
 import type { TokenUsageAggregate } from '../../shared/tokenUsage';
+import {
+	PROJECT_TOKEN_USAGE_REPLY,
+	parseProjectTokenUsageReply,
+	projectTokenUsageRequest,
+} from '../../shared/projectTokenUsage';
 import { usageCostUsd } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TokenSpeedStats } from '../../shared/tokenSpeed';
 import { exitIfMaestroNotRunning } from '../services/session-command';
@@ -77,6 +82,12 @@ interface TokenUsageResponse {
 
 interface StatsTokensOptions extends StatsOptions {
 	refresh?: boolean;
+}
+
+interface StatsProjectTokensOptions {
+	provider: string;
+	project: string[];
+	json?: boolean;
 }
 
 interface StatsQueryResponse {
@@ -155,6 +166,74 @@ export async function statsTokens(options: StatsTokensOptions): Promise<void> {
 
 		printTokenUsageSummary(range, result.data);
 	} catch (error) {
+		handleCommandError(error, options.json);
+	}
+}
+
+/**
+ * `maestro-cli stats-project-tokens` - what this machine's host (the desktop or a headless
+ * `maestro-cli host`) answers a Federation peer that asks for the token usage of projects whose
+ * conversations are kept here (`get_project_token_usage`). The same numbers a peer's Usage
+ * Dashboard merges in for an SSH or hosted agent on this machine.
+ */
+export async function statsProjectTokens(options: StatsProjectTokensOptions): Promise<void> {
+	const projects = (options.project ?? []).map((projectPath) => ({
+		provider: options.provider,
+		projectPath,
+	}));
+	if (!options.provider || projects.length === 0) {
+		handleCommandError(
+			new Error('Name a provider (--provider) and at least one project path (--project).'),
+			options.json
+		);
+	}
+	try {
+		const request = projectTokenUsageRequest(projects);
+		const reply = await withMaestroClient((client) =>
+			client.sendCommand<Record<string, unknown>>({ ...request }, PROJECT_TOKEN_USAGE_REPLY)
+		);
+		if (reply.success !== true) {
+			throw new Error(
+				typeof reply.error === 'string' ? reply.error : 'The host did not answer token usage.'
+			);
+		}
+		const usage = parseProjectTokenUsageReply(reply, request.projects);
+		if (!usage) throw new Error('The host did not answer token usage.');
+		if (options.json) {
+			console.log(JSON.stringify(usage, null, 2));
+			return;
+		}
+		const totals = usage.breakdowns.reduce(
+			(sum, b) => ({
+				inputTokens: sum.inputTokens + b.inputTokens,
+				outputTokens: sum.outputTokens + b.outputTokens,
+				cacheReadTokens: sum.cacheReadTokens + b.cacheReadTokens,
+				cacheCreationTokens: sum.cacheCreationTokens + b.cacheCreationTokens,
+				costUsd: sum.costUsd + b.costUsd,
+				costEstimated: sum.costEstimated || b.costEstimated,
+			}),
+			{
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0,
+				costEstimated: false,
+			}
+		);
+		const lines = [
+			`Token usage of ${projects.length === 1 ? projects[0].projectPath : `${projects.length} projects`} (${options.provider})`,
+			`  Conversations:   ${usage.breakdowns.length}`,
+			`  Tokens:          ${formatTokensCompact(totals.inputTokens)} in / ${formatTokensCompact(totals.outputTokens)} out / ` +
+				`${formatTokensCompact(totals.cacheReadTokens)} cache read / ${formatTokensCompact(totals.cacheCreationTokens)} cache creation`,
+			`  API-equivalent cost: ${totals.costEstimated ? '~' : ''}${formatCost(totals.costUsd)}`,
+		];
+		if (usage.unsupportedProviders.length > 0) {
+			lines.push(`  Not readable on this host: ${usage.unsupportedProviders.join(', ')}`);
+		}
+		console.log(lines.join('\n'));
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json, stderrJson: true });
 		handleCommandError(error, options.json);
 	}
 }

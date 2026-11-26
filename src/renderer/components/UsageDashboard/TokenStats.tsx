@@ -14,11 +14,12 @@
  * - **Cost evidence.** Reported amounts, partial ledgers and unavailable costs
  *   remain distinct; a compatibility zero never overrides canonical
  *   missing-cost evidence.
- * - **Coverage.** The totals read local transcripts only: agents whose
- *   conversations are stored on another computer (an SSH remote or a
- *   Federation host) and providers with no transcript storage are not counted, and some providers
- *   report partial token data. The footer says which, from the aggregate's
- *   `excluded` and `coverageByAgent`.
+ * - **Coverage.** An agent whose conversations are stored on another computer
+ *   is counted on that computer and merged in, so every agent adds up the same
+ *   way. The footer names what is still not counted (an agent whose computer
+ *   could not answer, a provider with no transcript storage) and which
+ *   providers report partial token data, from the aggregate's `excluded` and
+ *   `coverageByAgent`.
  * - **Attribution.** A conversation's tokens land on the slice of its LAST
  *   activity (the per-session parse has no per-message timestamps to split by),
  *   and the footer says so.
@@ -449,8 +450,8 @@ const Timeline = memo(function Timeline({ data, theme, colorBlindMode }: Timelin
  * The footer's coverage sentences: what the totals leave out and where the
  * data is partial, read from the aggregate rather than hard-coded so a new
  * provider (or a user whose agents all run here) gets an accurate line. The
- * line names where the transcripts are, never the agent's mode: a remote and a
- * hosted agent read the same.
+ * line names agents and where their transcripts are, never the agent's mode: a
+ * remote and a hosted agent read the same.
  */
 export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
 	const notes: string[] = [];
@@ -463,13 +464,22 @@ export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
 		);
 	}
 	const skipped: string[] = [];
-	if (data.excluded.remoteProjects > 0)
-		skipped.push('agents whose conversations are stored on another computer');
+	// Agents on another computer are counted there; only the ones that computer
+	// could not answer for are named, and removed agents whose computer nothing
+	// here can reach are counted as one group.
+	const unread = [...(data.excluded.notCountedAgents ?? [])];
+	const removed = data.excluded.remoteProjects;
+	if (removed > 0) unread.push(removed === 1 ? '1 removed agent' : `${removed} removed agents`);
+	if (unread.length > 0) {
+		skipped.push(`${unread.join(', ')} (conversations on another computer that could not be read)`);
+	}
 	if (data.excluded.unsupportedAgents.length > 0) {
-		skipped.push(data.excluded.unsupportedAgents.map(getAgentDisplayName).join(', '));
+		skipped.push(
+			`${data.excluded.unsupportedAgents.map(getAgentDisplayName).join(', ')} (no transcripts to read)`
+		);
 	}
 	if (skipped.length > 0) {
-		notes.push(`Not counted: ${skipped.join('; ')} (no local transcripts to read).`);
+		notes.push(`Not counted: ${skipped.join('; ')}.`);
 	}
 	return notes;
 }
@@ -636,9 +646,8 @@ export const TokenStats = memo(function TokenStats({
 				>
 					<div className="flex flex-col gap-0.5 min-w-0 flex-1" data-testid="token-stats-coverage">
 						<span>
-							{formatNumber(totals.sessionCount)} conversations read from local agent transcripts.
-							Each conversation&apos;s tokens count toward the {data.granularity} of its last
-							activity.
+							{formatNumber(totals.sessionCount)} conversations read from agent transcripts. Each
+							conversation&apos;s tokens count toward the {data.granularity} of its last activity.
 						</span>
 						{totals.costEstimated && (
 							<span>Costs marked ~ are estimated from published model rates.</span>
