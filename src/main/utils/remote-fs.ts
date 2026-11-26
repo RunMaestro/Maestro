@@ -1941,6 +1941,53 @@ export interface ListTreeOptions {
 	 * to `maxDepth`. Omit for unlimited.
 	 */
 	maxFiles?: number;
+	/**
+	 * Fail instead of leaving out a part of the tree the walk cannot read. Without it an
+	 * unreadable subfolder is skipped quietly (the file explorer's view: show what can be read).
+	 * With it the listing fails with a message that names the first unreadable path, which is
+	 * what a copy of the folder needs: a copy that silently lacks a subfolder is a wrong copy.
+	 * The symlink-loop reports of `find -L` are not failures: the loop is listed once, as the
+	 * walk without `strict` lists it.
+	 */
+	strict?: boolean;
+	/**
+	 * Also report each listed file's size in bytes (`ListTreeResult.fileSizes`), so a caller can
+	 * refuse a tree that is too large before it fetches a byte. Read by a separate `stat` walk: a
+	 * file `stat` cannot read keeps its place in `files` with an unknown (`null`) size.
+	 */
+	withSizes?: boolean;
+}
+
+/**
+ * Whether one `find -L` error line (under `LC_ALL=C`) is a symlink-loop report, which the walk
+ * already skipped. Read from the line's structure, never from words anywhere in it: a path is
+ * remote text, and a folder named "causes a cycle" must not hide its own permission error.
+ * GNU opens the line with the diagnostic (every path in it starts with a quote or `./`); BSD and
+ * the ELOOP case end it with the reason, after the final `: `, which a quoted path cannot reach.
+ */
+function isFindLoopReport(line: string): boolean {
+	if (line.startsWith('find: File system loop detected; ')) return true;
+	const reason = line.slice(line.lastIndexOf(': ') + 2);
+	return reason === 'directory causes a cycle' || reason === 'Too many levels of symbolic links';
+}
+
+/**
+ * The first real failure in a strict walk's `find` errors (run under `LC_ALL=C`), as a message
+ * that names the path, or `null` when every report is a symlink loop. The path comes off the
+ * remote, so it is only ever shown, quoted, and cut to a readable length.
+ */
+export function strictListingFailure(stderr: string, rootPath: string): string | null {
+	for (const raw of stderr.split('\n')) {
+		const line = raw.replace(/\r$/, '').trim();
+		if (!line || isFindLoopReport(line)) continue;
+		// GNU: find: './secret': Permission denied. BSD: find: ./secret: Permission denied.
+		const match = /^find:\s*['\u2018`"]?(.*?)['\u2019`"]?:\s*([^:]+)$/.exec(line);
+		const where = match ? match[1].replace(/^\.\/?/, '') : '';
+		const why = match ? match[2].trim() : line;
+		const shown = (where || rootPath).slice(0, 200);
+		return `Cannot read "${shown}" in ${rootPath} (${why}), so the folder cannot be copied whole`;
+	}
+	return null;
 }
 
 /**
@@ -1954,6 +2001,11 @@ export interface ListTreeResult {
 	files: string[];
 	/** True iff the file list was truncated by the `maxFiles` cap. */
 	truncated: boolean;
+	/**
+	 * With `withSizes`: each file's size in bytes, in the order of `files`, or `null` when the
+	 * remote could not report it.
+	 */
+	fileSizes?: (number | null)[];
 }
 
 /**
@@ -2010,17 +2062,33 @@ export async function listTreeRemote(
 
 	const pruneClause = pruneTerms.length > 0 ? `\\( ${pruneTerms.join(' -o ')} \\) -prune -o` : '';
 
-	const dirFind = `find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type d -print 2>/dev/null`;
+	// Both finds walk the same tree with the same prune and depth, so the directory walk's
+	// errors are every unreadable folder. A strict walk keeps them (in a remote temp file, so they
+	// never mix into the listing) and prints them after the files; `LC_ALL=C` keeps the wording
+	// the loop filter reads. A file that cannot be read is not the walk's to find: the read fails.
+	const strict = options.strict === true;
+	const dirErrors = strict ? '2>"$__maestro_err"' : '2>/dev/null';
+	const dirFind = `${strict ? 'LC_ALL=C ' : ''}find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type d -print ${dirErrors}`;
 
 	const headTail = maxFiles !== undefined ? ` | head -n ${maxFiles + 1}` : '';
 	const fileFind = `find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type f -print 2>/dev/null${headTail}`;
 
 	const SEP = '__MAESTRO_FIND_SEP__';
+	const ERR_SEP = '__MAESTRO_FIND_ERR__';
+	const SIZE_SEP = '__MAESTRO_FIND_SIZES__';
+	// Sizes: GNU `stat -c` first, then BSD `stat -f` (macOS), as `listFilesWithStatsRemote()`.
+	const withSizes = options.withSizes === true;
+	const sizeFind =
+		`if stat -c %s . >/dev/null 2>&1; then __o=-c; __f='%s %n'; else __o=-f; __f='%z %N'; fi; ` +
+		`find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type f -exec stat -L "$__o" "$__f" {} + 2>/dev/null${headTail}`;
 	const remoteCommand =
 		`cd ${escapedRoot} 2>/dev/null || { echo "__CD_ERROR__"; exit 0; }; ` +
+		(strict ? `__maestro_err=$(mktemp 2>/dev/null) || { echo "__TMP_ERROR__"; exit 0; }; ` : '') +
 		`${dirFind}; ` +
 		`echo "${SEP}"; ` +
-		`${fileFind}`;
+		`${fileFind}` +
+		(withSizes ? `; echo "${SIZE_SEP}"; ${sizeFind}` : '') +
+		(strict ? `; echo "${ERR_SEP}"; cat "$__maestro_err"; rm -f "$__maestro_err"` : '');
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
 
@@ -2034,16 +2102,46 @@ export async function listTreeRemote(
 	if (result.stdout.startsWith('__CD_ERROR__')) {
 		return { success: false, error: `Directory not found or not accessible: ${rootPath}` };
 	}
+	if (strict && result.stdout.startsWith('__TMP_ERROR__')) {
+		return { success: false, error: `Could not check every folder under ${rootPath} is readable` };
+	}
+
+	let stdout = result.stdout;
+	if (strict) {
+		// Every listed line starts with `./`, so the first marker line is the real one.
+		const errLine = `\n${ERR_SEP}\n`;
+		const errIdx = `\n${stdout}`.indexOf(errLine);
+		if (errIdx < 0) {
+			return {
+				success: false,
+				error: `Could not check every folder under ${rootPath} is readable`,
+			};
+		}
+		const failure = strictListingFailure(`\n${stdout}`.slice(errIdx + errLine.length), rootPath);
+		if (failure) return { success: false, error: failure };
+		stdout = `\n${stdout}`.slice(1, errIdx + 1);
+	}
 
 	// A root with no subdirectories prints the separator as the FIRST line, with
 	// no newline before it. Prefix one so the separator is always found;
 	// otherwise every file lands in the directory section and the file list is
 	// empty (a flat Auto Run playbook folder showed no documents over SSH).
-	const output = `\n${result.stdout}`;
+	const output = `\n${stdout}`;
 	const sepLine = `\n${SEP}\n`;
 	const sepIdx = output.indexOf(sepLine);
 	const dirSection = sepIdx >= 0 ? output.slice(0, sepIdx) : output;
-	const fileSection = sepIdx >= 0 ? output.slice(sepIdx + sepLine.length) : '';
+	let fileSection = sepIdx >= 0 ? output.slice(sepIdx + sepLine.length) : '';
+	// Every listed line starts with `./`, so the first marker line is the real one.
+	let sizeSection = '';
+	if (withSizes) {
+		const sizeLine = `\n${SIZE_SEP}\n`;
+		const padded = `\n${fileSection}`;
+		const sizeIdx = padded.indexOf(sizeLine);
+		if (sizeIdx >= 0) {
+			sizeSection = padded.slice(sizeIdx + sizeLine.length);
+			fileSection = padded.slice(1, sizeIdx + 1);
+		}
+	}
 
 	const stripPrefix = (line: string): string => (line.startsWith('./') ? line.slice(2) : line);
 
@@ -2058,7 +2156,14 @@ export async function listTreeRemote(
 	}
 	const files = fileLines.map(stripPrefix).filter(Boolean);
 
-	return { success: true, data: { directories, files, truncated } };
+	if (!withSizes) return { success: true, data: { directories, files, truncated } };
+	const sizeOf = new Map<string, number>();
+	for (const line of sizeSection.split('\n')) {
+		const match = /^(\d+) \.\/(.+)$/.exec(line.replace(/\r$/, ''));
+		if (match) sizeOf.set(match[2], parseInt(match[1], 10));
+	}
+	const fileSizes = files.map((file) => sizeOf.get(file) ?? null);
+	return { success: true, data: { directories, files, truncated, fileSizes } };
 }
 
 /** One regular file from {@link listFilesWithStatsRemote}. Times are milliseconds. */

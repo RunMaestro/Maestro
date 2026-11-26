@@ -4,7 +4,10 @@ import { usePlaybookImportActions } from '../../../../../renderer/components/Mar
 import { makePlaybook } from '../_fixtures';
 import { AGENT_MODES } from '../../../../helpers/mockSession';
 import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../../../helpers/pathPicker';
-import { usePathPickerStore } from '../../../../../renderer/services/pathPicker';
+import {
+	UNRESOLVED_REMOTE_MESSAGE,
+	usePathPickerStore,
+} from '../../../../../renderer/services/pathPicker';
 
 const notifyToastMock = vi.fn();
 const loggerErrorMock = vi.fn();
@@ -71,6 +74,23 @@ describe('usePlaybookImportActions', () => {
 		);
 		expect(result.onImportComplete).toHaveBeenCalledWith('target-folder');
 		expect(result.onClose).toHaveBeenCalledTimes(1);
+	});
+
+	it('an SSH agent with no remote resolved yet fails the import loudly and writes nothing', async () => {
+		const result = setup({ sshRemoteId: null });
+
+		await act(async () => {
+			await result.result.current.handleImport();
+		});
+
+		expect(result.importPlaybook).not.toHaveBeenCalled();
+		expect(result.onImportComplete).not.toHaveBeenCalled();
+		expect(notifyToastMock).toHaveBeenCalledWith({
+			color: 'red',
+			title: 'Import failed',
+			message: UNRESOLVED_REMOTE_MESSAGE,
+			dismissible: true,
+		});
 	});
 
 	it('forwards sshRemoteId for remote imports', async () => {

@@ -3,7 +3,7 @@ import { Folder, FileText, Play, CheckSquare } from 'lucide-react';
 import type { Theme } from '../../types';
 import { Modal, ModalFooter, FormInput } from '../ui';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
-import { pickDirectory } from '../../services/pathPicker';
+import { fileOpRemoteId, pickDirectory, UnresolvedRemoteError } from '../../services/pathPicker';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { isImeComposing } from '../../utils/ime';
 
@@ -16,8 +16,10 @@ interface AutoRunSetupModalProps {
 	/**
 	 * The agent's SSH remote (`pathPickerRemoteId()`), set for an SSH and a hosted agent alike.
 	 * It only decides where the folder is read and browsed; the modal looks the same in every mode.
+	 * `null` is an SSH agent whose remote is not resolved yet: Browse says so and the folder check
+	 * fails with that reason, so nothing reads this machine's disk for it.
 	 */
-	sshRemoteId?: string;
+	sshRemoteId?: string | null;
 }
 
 export function AutoRunSetupModal({
@@ -41,7 +43,7 @@ export function AutoRunSetupModal({
 	// Fetch home directory on mount for tilde expansion. A remote folder keeps its `~`: the
 	// remote's shell expands it (this machine's home is the wrong one there).
 	useEffect(() => {
-		if (sshRemoteId) return;
+		if (sshRemoteId !== undefined) return;
 		window.maestro.fs.homeDir().then(setHomeDir);
 	}, [sshRemoteId]);
 
@@ -61,7 +63,7 @@ export function AutoRunSetupModal({
 		}
 
 		// If path starts with ~ but homeDir isn't loaded yet, wait
-		if (selectedFolder.startsWith('~') && !homeDir && !sshRemoteId) {
+		if (selectedFolder.startsWith('~') && !homeDir && sshRemoteId === undefined) {
 			setFolderValidation({ checking: true, valid: false, docCount: 0 });
 			return;
 		}
@@ -81,7 +83,10 @@ export function AutoRunSetupModal({
 					}
 				}
 
-				const result = await window.maestro.autorun.listDocs(expandedPath, sshRemoteId);
+				const result = await window.maestro.autorun.listDocs(
+					expandedPath,
+					fileOpRemoteId(sshRemoteId)
+				);
 
 				if (result.success) {
 					setFolderValidation({
@@ -97,12 +102,12 @@ export function AutoRunSetupModal({
 						error: 'Folder not found or not accessible',
 					});
 				}
-			} catch {
+			} catch (err) {
 				setFolderValidation({
 					checking: false,
 					valid: false,
 					docCount: 0,
-					error: 'Failed to access folder',
+					error: err instanceof UnresolvedRemoteError ? err.message : 'Failed to access folder',
 				});
 			}
 		}, 300);
@@ -126,6 +131,9 @@ export function AutoRunSetupModal({
 	};
 
 	const handleContinue = () => {
+		// An agent whose SSH remote is not resolved has no machine to read the folder from, so
+		// the folder is not committed (Continue and Enter alike); the check row says why.
+		if (sshRemoteId === null) return;
 		if (selectedFolder) {
 			// Expand tilde before passing to callback
 			const expandedPath = expandTilde(selectedFolder.trim());
@@ -170,7 +178,7 @@ export function AutoRunSetupModal({
 						onCancel={onClose}
 						onConfirm={handleContinue}
 						confirmLabel="Continue"
-						confirmDisabled={!selectedFolder}
+						confirmDisabled={!selectedFolder || sshRemoteId === null}
 						confirmButtonRef={continueButtonRef}
 					/>
 				}
