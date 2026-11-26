@@ -225,6 +225,18 @@ export interface UseWizardHandlersReturn {
 // Hook implementation
 // ============================================================================
 
+/**
+ * Whether the agent's discovered command list is refreshed every time it is
+ * selected and replaced whole: Codex (its skills change with its account), and
+ * Claude on an SSH remote (the list comes from the remote, cached in main, and
+ * must never keep commands found on this machine).
+ */
+function refreshesStoredCommands(session: Session): boolean {
+	return (
+		session.toolType === 'codex' || (session.toolType === 'claude-code' && isSessionRemote(session))
+	);
+}
+
 export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandlersReturn {
 	const {
 		inlineWizardContext,
@@ -245,10 +257,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	const activeToolType = useSessionStore((s) => selectActiveSession(s)?.toolType);
 	const activeCwd = useSessionStore((s) => selectActiveSession(s)?.cwd);
 	const activeCustomPath = useSessionStore((s) => selectActiveSession(s)?.customPath);
-	// Codex refreshes persisted command lists on focus; its own write must not retrigger discovery.
+	// Codex, and Claude on an SSH remote, refresh their persisted command lists on
+	// focus; their own write must not retrigger discovery.
 	const activeAgentCommands = useSessionStore((s) => {
 		const session = selectActiveSession(s);
-		return session?.toolType === 'codex' ? undefined : session?.agentCommands;
+		return session && refreshesStoredCommands(session) ? undefined : session?.agentCommands;
 	});
 	// The agent's own vars pick its account (CODEX_HOME, CLAUDE_CONFIG_DIR), so
 	// discovery runs with them, on this machine or on the remote.
@@ -383,7 +396,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			currentSession.toolType !== 'codex'
 		)
 			return;
-		if (currentSession.toolType !== 'codex' && currentSession.agentCommands?.length) return;
+		// A list that is refreshed on focus is replaced whole. For a remote Claude
+		// agent that also drops commands an older build collected on this machine.
+		const replacesStored = refreshesStoredCommands(currentSession);
+		if (!replacesStored && currentSession.agentCommands?.length) return;
 
 		const sessionId = currentSession.id;
 		const projectRoot = currentSession.projectRoot;
@@ -457,17 +473,15 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				if (
 					agentCommandObjects.length > 0 ||
-					(currentSession.toolType === 'codex' &&
-						(agentSlashCommands !== null || activeSshRemoteId !== undefined))
+					(replacesStored && (agentSlashCommands !== null || activeSshRemoteId !== undefined))
 				) {
 					updateSessionWith(sessionId, (s) => {
 						const existingCommands = s.agentCommands || [];
 						return {
 							...s,
-							agentCommands:
-								currentSession.toolType === 'codex'
-									? agentCommandObjects
-									: mergeCommands(existingCommands, agentCommandObjects),
+							agentCommands: replacesStored
+								? agentCommandObjects
+								: mergeCommands(existingCommands, agentCommandObjects),
 						};
 					});
 				}

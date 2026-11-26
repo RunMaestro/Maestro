@@ -920,6 +920,28 @@ describe('useWizardHandlers', () => {
 			]);
 		});
 
+		it.each(['ssh', 'hosted'] as const)(
+			"replaces a %s Claude agent's stored list with the remote's, once per selection",
+			async (mode) => {
+				const session = createMockSession({
+					...agentModeFields(mode),
+					agentCommands: [{ command: '/this-machine-only', description: 'Stale' }],
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+				const discover = (window as any).maestro.agents.discoverSlashCommands;
+				discover.mockResolvedValue([{ name: '/remote-only' }]);
+
+				renderHook(() => useWizardHandlers(createMockDeps()));
+				await act(async () => {});
+
+				expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual(
+					['/remote-only']
+				);
+				// Its own write does not start another discovery.
+				expect(discover).toHaveBeenCalledTimes(1);
+			}
+		);
+
 		it('fetches custom commands and agent commands for claude-code sessions', async () => {
 			const session = createMockSession({ agentCommands: undefined });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
