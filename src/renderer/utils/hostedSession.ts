@@ -134,6 +134,11 @@ function withAnswerDelivery(entries: LogEntry[], fromHost: ReadonlySet<string>):
 	return out ?? entries;
 }
 
+/** Whether two entries carry the same tool card data. */
+function sameMetadata(a: LogEntry['metadata'], b: LogEntry['metadata']): boolean {
+	return a === b || canonicalJson(a ?? null) === canonicalJson(b ?? null);
+}
+
 /**
  * A tab's transcript with the host's folded in. `persisted` undefined (never read) keeps the local
  * entries; the live tail still shows. Returns `local` itself when nothing changed. A host user
@@ -159,10 +164,12 @@ export function mergeHostedLogs(
 	const next = withAnswerDelivery([...byTime(older, hostEntries), ...live], fromHost);
 	if (sameIds(next, local)) {
 		// Same entries in the same order: keep the old array unless a live entry's text moved on,
-		// or a message's delivered tick did.
+		// its tool card did, or a message's delivered tick did. `mirrorLogEntry()` builds a new
+		// `metadata` object on every pass, so a tool card is compared by value: by identity it would
+		// never match, every pass would write, and the sync that follows the store would never settle.
 		const liveChanged = live.some((entry, i) => {
 			const prior = local[older.length + hostEntries.length + i];
-			return prior?.text !== entry.text || prior?.metadata !== entry.metadata;
+			return prior?.text !== entry.text || !sameMetadata(prior?.metadata, entry.metadata);
 		});
 		const tickChanged = next.some((entry, i) => !!entry.delivered !== !!local[i].delivered);
 		if (!liveChanged && !tickChanged) return local;

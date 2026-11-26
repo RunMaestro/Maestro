@@ -7,11 +7,15 @@
 import { describe, expect, it } from 'vitest';
 import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
-import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
+import type {
+	LogEntryRecord,
+	LogEntryToolState,
+} from '../../../shared/maestro-lib/store/transcript';
 import {
 	mergeHostedLogs,
 	projectHostedSession,
 	releaseHostedSession,
+	type HostedProjectionInput,
 } from '../../../renderer/utils/hostedSession';
 import { isRunnableQueueItem, nextRunnableQueueItem } from '../../../renderer/utils/executionQueue';
 import type { LogEntry } from '../../../renderer/types';
@@ -97,6 +101,25 @@ describe('mergeHostedLogs', () => {
 		const first = mergeHostedLogs([], [record('a')], [record('live', 'x')]);
 		expect(mergeHostedLogs(first, [record('a')], [record('live', 'x')])).toBe(first);
 		expect(mergeHostedLogs(first, [record('a')], [record('live', 'xy')])).not.toBe(first);
+	});
+
+	// Live pass L8: a hosted tool call froze the window. The mirror builds a new tool card object on
+	// every pass, so an identity check never settled and the sync rewrote the record forever.
+	it('settles on a live tool card, and still redraws it when its state changes', () => {
+		const tool = (status: LogEntryToolState['status'], output?: string): LogEntryRecord => ({
+			id: 'tool-1',
+			timestamp: 2,
+			source: 'tool',
+			text: 'Read',
+			metadata: { toolState: { status, input: { file_path: '/p/README.md' }, output } },
+		});
+		const first = mergeHostedLogs([], [record('a')], [tool('running')]);
+		expect(first[1].metadata?.toolState?.status).toBe('running');
+		expect(mergeHostedLogs(first, [record('a')], [tool('running')])).toBe(first);
+		const done = mergeHostedLogs(first, [record('a')], [tool('completed', '# Parity')]);
+		expect(done).not.toBe(first);
+		expect(done[1].metadata?.toolState).toMatchObject({ status: 'completed', output: '# Parity' });
+		expect(mergeHostedLogs(done, [record('a')], [tool('completed', '# Parity')])).toBe(done);
 	});
 
 	// Parity round 3, N3: the tick follows the local rule (the answer arrived), not the host's flag.
@@ -386,6 +409,32 @@ describe('projectHostedSession', () => {
 	it('returns the same record when it already matches the host', () => {
 		const first = projectHostedSession(hostedRow(), { agent: host() });
 		expect(projectHostedSession(first, { agent: host() })).toBe(first);
+	});
+
+	it('returns the same record while a live tool call runs, so the sync settles', () => {
+		const key = liveTurnKey('h1', 't1');
+		const input: HostedProjectionInput = {
+			agent: host(),
+			transcripts: { [key]: { entries: [record('old')], loaded: true } },
+			liveTurns: {
+				[key]: {
+					startedAt: 1,
+					busy: true,
+					entries: [
+						{
+							id: 'tool-1',
+							timestamp: 2,
+							source: 'tool',
+							text: 'Read',
+							metadata: { toolState: { status: 'running', input: { file_path: 'README.md' } } },
+						},
+					],
+				},
+			},
+		};
+		const first = projectHostedSession(hostedRow(), input);
+		expect(first.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['old', 'tool-1']);
+		expect(projectHostedSession(first, input)).toBe(first);
 	});
 
 	describe('the error banner', () => {
