@@ -29,6 +29,7 @@ const up: SshReachabilityEvent = {
 };
 
 let push: (event: SshReachabilityEvent) => void;
+let federationReset: (() => void) | undefined;
 
 beforeEach(() => {
 	notifyToast.mockReset();
@@ -40,6 +41,14 @@ beforeEach(() => {
 			onReachability: (cb: (event: SshReachabilityEvent) => void) => {
 				push = cb;
 				return () => {};
+			},
+		},
+		federation: {
+			onReset: (cb: () => void) => {
+				federationReset = cb;
+				return () => {
+					federationReset = undefined;
+				};
 			},
 		},
 	};
@@ -71,5 +80,58 @@ describe('useSshReachability', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({ type: 'success', title: 'SSH connection restored' })
 		);
+	});
+
+	it('drops a cleared outage (the remote was deleted) without a recovery toast', () => {
+		renderHook(() => useSshReachability());
+		push(down);
+		useSshOutageStore.getState().surface('r1');
+		push({ ...up, cleared: true });
+		expect(notifyToast).not.toHaveBeenCalled();
+		expect(useSshOutageStore.getState().outages).toEqual({});
+	});
+
+	it('announces a host coming back through the same toast, naming the host (ssh worked throughout)', () => {
+		renderHook(() => useSshReachability());
+		push({ ...down, cause: 'host', message: 'The Maestro host on "pedtome" stopped answering.' });
+		useSshOutageStore.getState().surface('r1');
+		push({ ...up, cause: 'host' });
+		expect(notifyToast).toHaveBeenCalledWith({
+			type: 'success',
+			title: 'Host connection restored',
+			message: 'The Maestro host on "pedtome" is reachable again.',
+		});
+		// The dialog closes with it.
+		expect(useSshOutageStore.getState().outages).toEqual({});
+	});
+
+	it('words the SSH and the host recovery from one place, the same shape for both', () => {
+		renderHook(() => useSshReachability());
+		for (const cause of [undefined, 'host'] as const) {
+			notifyToast.mockReset();
+			push({ ...down, ...(cause ? { cause } : {}) });
+			useSshOutageStore.getState().surface('r1');
+			push({ ...up, ...(cause ? { cause } : {}) });
+			expect(notifyToast).toHaveBeenCalledTimes(1);
+			expect(Object.keys(notifyToast.mock.calls[0][0]).sort()).toEqual([
+				'message',
+				'title',
+				'type',
+			]);
+		}
+	});
+
+	it('drops every host outage, with no toast, when the Federation mirror resets; an SSH outage stays', () => {
+		const { unmount } = renderHook(() => useSshReachability());
+		push({ ...down, cause: 'host', message: 'The Maestro host on "pedtome" stopped answering.' });
+		push({ ...down, remoteId: 'r2', remoteName: 'other' });
+		useSshOutageStore.getState().surface('r1');
+
+		federationReset?.();
+		expect(notifyToast).not.toHaveBeenCalled();
+		expect(Object.keys(useSshOutageStore.getState().outages)).toEqual(['r2']);
+
+		unmount();
+		expect(federationReset).toBeUndefined();
 	});
 });

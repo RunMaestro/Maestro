@@ -45,12 +45,6 @@ const MODE_CONDITION = new RegExp(
  * the line contains and why it draws nothing different.
  */
 const ALLOWED: Record<string, Array<{ line: string; why: string }>> = {
-	'SshUnreachableModal.tsx': [
-		{
-			line: 'isSessionRemote(active) ? getSessionSshRemoteId(active) : undefined',
-			why: 'Reads which remote the active agent is on, to pick the outage to show. Connection loss exists only where a connection exists (matrix row B2.12).',
-		},
-	],
 	'NewInstanceModal/NewInstanceModal.tsx': [
 		{
 			line: 'source?.sshRemoteId ? { enabled: true, remoteId: source.sshRemoteId } : undefined',

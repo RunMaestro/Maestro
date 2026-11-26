@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockCheck = vi.fn();
 const mockList = vi.fn();
 vi.mock('../../../../main/ssh-reachability', () => ({
-	checkSshRemote: (...args: unknown[]) => mockCheck(...args),
+	checkRemoteLink: (...args: unknown[]) => mockCheck(...args),
 	getUnreachableSshRemotes: () => mockList(),
 }));
 

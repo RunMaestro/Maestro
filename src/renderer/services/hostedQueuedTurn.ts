@@ -16,7 +16,9 @@
  * A slash command goes as the typed text (`/commit args`); the host resolves it, as it does for a
  * typed one. A held item goes held (the host queues it paused). A host that refuses (it is down,
  * or the tab is gone) has already said so in a toast; the item comes back into this queue held,
- * in the place it left, so nothing is lost and Resume sends it again.
+ * in the place it left, so nothing is lost and Resume sends it again. A host that is not connected
+ * (nothing was sent) is the one exception: the item is kept for an automatic retry, as an SSH
+ * agent's turn is when its link is down (`keepTurnForHost()`).
  *
  * An `@mention` runs HERE, as a local agent's does: the mentioned agent is in this machine's
  * roster, not the host's. A queued message that mentions one waits in this queue for its turn
@@ -27,15 +29,24 @@
  * its transcript shows what a local one shows. A host that refuses the turn consults nobody.
  */
 
-import type { QueuedItem, Session } from '../types';
+import type { AgentError, QueuedItem, Session } from '../types';
 import type { TurnOverrides, TurnSendReceipt } from '../../shared/maestro-lib/client/types';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
+import { notifyToast } from '../stores/notificationStore';
+import {
+	clearRetryIfSettled,
+	failInFlightRetry,
+	getRetryEntry,
+	noteDirectDispatch,
+	raiseAgentError,
+} from '../stores/retryStore';
 import {
 	applyQueuedItemAbort,
 	applyQueuedItemRelease,
 	queuedItemOwnerTabId,
 	recoverQueuedItem,
 } from '../utils/executionQueue';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import { withoutDesignPickPageText } from '../utils/designModePicker';
 import {
 	dispatchCrossAgentMentions,
@@ -109,6 +120,86 @@ function holdRefusedItem(sessionId: string, item: QueuedItem, index: number): vo
 }
 
 /**
+ * The error a send its host could not take is raised as: the `network_error` an SSH agent's turn
+ * reports when ssh cannot reach its remote, on the same remote, so the same retry and the same
+ * outage dialog follow.
+ */
+function hostUnavailableError(session: Session, message: string): AgentError {
+	const sshRemoteId = getSessionSshRemoteId(session);
+	return {
+		type: 'network_error',
+		message,
+		recoverable: true,
+		agentId: session.toolType,
+		sessionId: session.id,
+		timestamp: Date.now(),
+		...(sshRemoteId ? { sshRemoteId } : {}),
+	};
+}
+
+/** Hosted sends per tab, chained so each settles (sent, kept, or refused) before the next starts. */
+const tabSendChains = new Map<string, Promise<void>>();
+
+/**
+ * Run a hosted send for one tab after every earlier one of that tab has settled. A message whose
+ * images take longer to hand over must not lose its place to one typed after it: when the host is
+ * down, the first refusal to land becomes the kept head, so refusals must land in typed order.
+ */
+export function inHostTabOrder<T>(key: string, task: () => Promise<T>): Promise<T> {
+	const prior = tabSendChains.get(key) ?? Promise.resolve();
+	const run = prior.then(task);
+	const tail = run.then(
+		() => undefined,
+		() => undefined
+	);
+	tabSendChains.set(key, tail);
+	void tail.then(() => {
+		if (tabSendChains.get(key) === tail) tabSendChains.delete(key);
+	});
+	return run;
+}
+
+/** Put `item` at the end of this agent's queue, waiting (not held), unless it is already there. */
+function queueBehind(sessionId: string, item: QueuedItem): void {
+	updateSessionWith(sessionId, (session) => {
+		const queue = session.executionQueue ?? [];
+		if (queue.some((queued) => queued.id === item.id)) return session;
+		return { ...session, executionQueue: [...queue, recoverQueuedItem(item)] };
+	});
+}
+
+/**
+ * Keep a message the host could not take because it was not connected (nothing was sent), the way
+ * an SSH agent's message is kept when its link is down: the failure is raised as that turn's
+ * error (`raiseAgentError()`), so Agent Resilience parks it at the head of its tab's queue with the
+ * auto-retry card, retries it with the same backoff, and sends it when the host is back. Its
+ * resend comes back through `forwardToHost()`, so a second refusal continues the same outage.
+ *
+ * A message sent while an earlier one of the same tab waits for its retry queues behind it, so
+ * the two reach the host in the order they were typed.
+ *
+ * Answers whether the message is kept. False (Agent Resilience off for the agent, or no listener):
+ * the caller keeps it its own way.
+ */
+export function keepTurnForHost(sessionId: string, item: QueuedItem, message: string): boolean {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	if (!session) return false;
+	const waiting = getRetryEntry(sessionId, item.tabId);
+	if (waiting && waiting.heldItemId !== item.id) {
+		queueBehind(sessionId, item);
+		return true;
+	}
+	// The prompt the retry resends. A resend of this same item keeps its snapshot.
+	noteDirectDispatch(sessionId, item);
+	if (!raiseAgentError(`${sessionId}-ai-${item.tabId}`, hostUnavailableError(session, message))) {
+		// No listener to report it: say so here, as the refusal's own toast would have.
+		notifyToast({ color: 'red', title: 'Message not sent', message });
+		return false;
+	}
+	return getRetryEntry(sessionId, item.tabId)?.heldItemId === item.id;
+}
+
+/**
  * The `@mentions` a queued message names, resolved now as the local drain resolves them: from the
  * text without its Design Mode chips' page text, with the routing the user picked. Null when it
  * names nobody (or was not queued as a mention).
@@ -153,6 +244,7 @@ function forwardToHost(
 	}
 	// Named from the message as the local drain names a tab it runs (`queuedItemNamingText()`).
 	const namingText = queuedItemNamingText(item);
+	let kept = false;
 	// What the consult will tell the turn, before it fires: a refused turn consults nobody.
 	const agentNotes = mention ? mentionTurnNotes(previewMentionDispatch(mention)) : undefined;
 	// The model, effort, and read-only it was queued with, as the local drain runs it on them.
@@ -163,13 +255,29 @@ function forwardToHost(
 		...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
 		...(item.agentContext ? { agentContext: item.agentContext } : {}),
 		...(agentNotes ? { agentNotes } : {}),
+		// A held item is the user's to send; only one on its way now is kept for a retry.
+		...(item.paused === true
+			? {}
+			: {
+					onHostUnavailable: (message: string) => {
+						kept = keepTurnForHost(sessionId, item, message);
+					},
+				}),
 	}).then(
 		(receipt) => {
-			if (!receipt) holdRefusedItem(sessionId, item, index);
-			else if (mention) fireMentionsForHostTurn(sessionId, item, mention, receipt);
+			if (receipt) {
+				// The host took a resend: the outage it was kept through is over.
+				clearRetryIfSettled(sessionId, item.tabId);
+				if (mention) fireMentionsForHostTurn(sessionId, item, mention, receipt);
+			} else if (!kept) {
+				// Refused for another reason (already toasted): a resend ends its outage here.
+				failInFlightRetry(sessionId, item.tabId, 'The host did not take the message.');
+				holdRefusedItem(sessionId, item, index);
+			}
 			return receipt;
 		},
 		(error: unknown) => {
+			failInFlightRetry(sessionId, item.tabId, 'The message could not be sent to the host.');
 			holdRefusedItem(sessionId, item, index);
 			throw error;
 		}
@@ -298,6 +406,9 @@ export function handQueuedItemToHost(sessionId: string, itemId: string): boolean
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const item = session?.executionQueue?.find((queued) => queued.id === itemId);
 	if (!session || !item || !isQueuedItemForHost(session, item)) return false;
+	// An earlier message of this tab waits for its retry: this one waits behind it, and the drain
+	// sends it once the retry went through, so the host gets them in the order they were queued.
+	if (getRetryEntry(sessionId, item.tabId)) return false;
 	// A message that mentions another agent waits here for the drain, which consults as it sends.
 	if (item.crossAgentMention) return false;
 	type Taken = { item: QueuedItem; index: number };
