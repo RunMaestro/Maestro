@@ -555,6 +555,16 @@ describe('sessionHelpers', () => {
 			expect(getSessionSshRemoteId(session)).toBe('spawned-remote-id');
 		});
 
+		it('ignores a remote id left on an agent with SSH switched off (a local agent)', () => {
+			const session: SessionSshInfo = {
+				sessionSshRemoteConfig: {
+					enabled: false,
+					remoteId: 'stale-remote-id',
+				},
+			};
+			expect(getSessionSshRemoteId(session)).toBeUndefined();
+		});
+
 		it('returns undefined when sessionSshRemoteConfig.remoteId is null', () => {
 			const session: SessionSshInfo = {
 				sessionSshRemoteConfig: {

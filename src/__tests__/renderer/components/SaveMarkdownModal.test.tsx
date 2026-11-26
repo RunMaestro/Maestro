@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SaveMarkdownModal } from '../../../renderer/components/SaveMarkdownModal';
 import type { Theme } from '../../../renderer/types';
 import { AGENT_MODES } from '../../helpers';
+import { UNRESOLVED_REMOTE_MESSAGE } from '../../../renderer/services/pathPicker';
 import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../helpers/pathPicker';
 
 // Mock createPortal to render inline for testing
@@ -176,6 +177,18 @@ describe('SaveMarkdownModal', () => {
 				'# Test Markdown\n\nThis is test content.',
 				'ssh-remote-123'
 			);
+		});
+
+		it('an SSH agent with no remote resolved yet fails Save with the reason and writes nothing', async () => {
+			render(<SaveMarkdownModal {...defaultProps} sshRemoteId={null} />);
+			fireEvent.change(screen.getByPlaceholderText('document.md'), {
+				target: { value: 'doc.md' },
+			});
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+			});
+			expect(mockWriteFile).not.toHaveBeenCalled();
+			expect(screen.getByText(UNRESOLVED_REMOTE_MESSAGE)).toBeInTheDocument();
 		});
 
 		it('saves without sshRemoteId when not provided', async () => {
