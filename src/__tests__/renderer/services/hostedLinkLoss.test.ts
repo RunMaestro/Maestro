@@ -17,6 +17,7 @@ import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
 import { __resetHostedLinkLossForTests } from '../../../renderer/services/hostedLinkLoss';
+import { keepTurnForHost } from '../../../renderer/services/hostedQueuedTurn';
 import { interruptTurn } from '../../../renderer/services/turnInterrupt';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
@@ -26,6 +27,7 @@ import {
 	registerDispatchDepsProvider,
 	retryNow,
 	scheduleRetryForError,
+	stopRetriesForAgent,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
 import { parseSessionId } from '../../../renderer/utils/sessionIdParser';
@@ -673,6 +675,75 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(sends()).toHaveLength(0);
 		expect(getRetryEntry('row', 't1')).toBeUndefined();
 		expect(queue()).toHaveLength(0);
+	});
+
+	/** The host is back and its transcript read is still out; `land` answers it. */
+	function hostBackReadPending() {
+		let land: (entries: LogEntry[]) => void = () => undefined;
+		transcript.mockReturnValue(new Promise<LogEntry[]>((resolve) => (land = resolve)));
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		hostReports('idle', 'connected');
+		syncHostedAgents();
+		return (entries: LogEntry[]) => land(entries);
+	}
+
+	it('sends nothing when Stop lands while a resend waits for the host, and parks the message held', async () => {
+		cut();
+		const land = hostBackReadPending();
+		retryNow('row', 't1');
+		await flush();
+		stopRetriesForAgent('row', 't1');
+
+		// The host says the turn died: the message would go, but the user stopped it.
+		land([QUESTION]);
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(queue().map((item) => [item.text, item.paused === true])).toEqual([
+			[QUESTION.text, true],
+		]);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+	});
+
+	it('sends a message edited while it was kept as its own message, even when the host had the original', async () => {
+		cut();
+		const edited = 'Summarize the docs, briefly';
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((session) => ({
+				...session,
+				executionQueue: (session.executionQueue ?? []).map((item) => ({ ...item, text: edited })),
+			})),
+		}));
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		await hostBack('idle', [
+			QUESTION,
+			{ id: 'a1', timestamp: 20, source: 'ai', text: 'The docs say...' },
+		]);
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: edited });
+		expect(sends()[0][2]).not.toHaveProperty('entryId');
+		expect(queue()).toHaveLength(0);
+	});
+
+	it('drops the kept copy that waits behind another retry when the host had it, and leaves that retry alone', async () => {
+		// An earlier message of this tab already waits for its retry.
+		keepTurnForHost(
+			'row',
+			{ id: 'b1', timestamp: 1, tabId: 't1', type: 'message', text: 'earlier' },
+			'down'
+		);
+		const other = getRetryEntry('row', 't1')!;
+		cut();
+		expect(queue().map((item) => item.text)).toEqual(['earlier', QUESTION.text]);
+
+		await hostBack('busy', [QUESTION]);
+		expect(queue().map((item) => item.text)).toEqual(['earlier']);
+		expect(getRetryEntry('row', 't1')).toMatchObject({
+			outageId: other.outageId,
+			heldItemId: 'b1',
+		});
+		expect(sends()).toHaveLength(0);
 	});
 
 	it('a resend while the host is still down stays kept under the same card', async () => {

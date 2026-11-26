@@ -270,7 +270,11 @@ function sameQueue(a: readonly QueuedItem[], b: readonly QueuedItem[]): boolean 
 	);
 }
 
-function sameImages(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+/** Whether two image lists hold the same images in the same order (absent reads as none). */
+export function sameImages(
+	a: readonly string[] | undefined,
+	b: readonly string[] | undefined
+): boolean {
 	const left = a ?? [];
 	const right = b ?? [];
 	return left.length === right.length && left.every((image, i) => image === right[i]);

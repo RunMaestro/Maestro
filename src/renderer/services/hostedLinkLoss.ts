@@ -33,6 +33,7 @@ import { getRetryEntry, retryNow, settleRetryOnHost } from '../stores/retryStore
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { useSshOutageStore } from '../stores/sshOutageStore';
 import type { AgentError, LogEntry, QueuedItem, Session } from '../types';
+import { sameImages } from '../utils/hostedSession';
 import { generateId } from '../utils/ids';
 import { settleTabThinkingState } from '../utils/tabHelpers';
 import { keepTurnForHost } from './hostedQueuedTurn';
@@ -227,19 +228,31 @@ export function hostedCutsKept(sessionId: string): ReadonlySet<string> | undefin
 	return tabs;
 }
 
+/** Whether `item` is still the cut turn's message as it was: not edited while it was kept. */
+function sameAsCut(item: Pick<QueuedItem, 'text' | 'images'>, cut: CutTurn): boolean {
+	return (
+		!!cut.message &&
+		(item.text ?? '') === cut.message.text &&
+		sameImages(item.images, cut.message.images)
+	);
+}
+
 /**
  * Whether the resend of `item` must wait for the host to say how the turn it repeats ended, and if
- * so, that answer. Null: send now (not a cut turn's message, already decided, or the host is not
- * connected, so the send is refused and the message stays kept).
+ * so, that answer. Null: send now (not a cut turn's message, already decided, edited while kept so
+ * it is a message of its own, or the host is not connected, so the send is refused and the message
+ * stays kept).
  */
 export function cutTurnFate(
 	sessionId: string,
-	item: Pick<QueuedItem, 'tabId' | 'hostEntryId'>,
+	item: Pick<QueuedItem, 'tabId' | 'hostEntryId' | 'text' | 'images'>,
 	connected: boolean
 ): Promise<CutTurnFate> | null {
 	if (!item.hostEntryId || !connected) return null;
 	const cut = cutTurns.get(cutKey(sessionId, item.tabId));
 	if (!cut || cut.stopped || cut.message?.id !== item.hostEntryId) return null;
+	// Edited while it was kept: the user's own message now, sent as one whatever the turn did.
+	if (!sameAsCut(item, cut)) return null;
 	if (cut.awaitingRead) return Promise.resolve('unknown');
 	return new Promise<CutTurnFate>((resolve) => {
 		const timer = setTimeout(() => {
@@ -254,11 +267,39 @@ export function cutTurnFate(
 	});
 }
 
-/** A kept cut message is not owed: the host had it. Its retry ends, and nothing is sent. */
+/**
+ * A kept cut message is not owed: the host had it. Its copy leaves the queue and nothing is sent,
+ * whether its retry counts down or it waits behind another message's retry (that one is left
+ * alone). A copy the user edited while it was kept is their own message now: it stays, no longer
+ * named as the host's entry, and goes as one.
+ */
 function settleKeptCut(cut: CutTurn): void {
 	answerWaiters(cut, 'answered');
-	if (cut.keptItemId && getRetryEntry(cut.sessionId, cut.tabId)?.heldItemId === cut.keptItemId) {
+	const keptId = cut.keptItemId;
+	if (!keptId) return;
+	const holdsIt = getRetryEntry(cut.sessionId, cut.tabId)?.heldItemId === keptId;
+	const queued = selectSessionById(cut.sessionId)(useSessionStore.getState())?.executionQueue?.find(
+		(item) => item.id === keptId
+	);
+	if (queued && !sameAsCut(queued, cut)) {
+		updateSessionWith(cut.sessionId, (session) => ({
+			...session,
+			executionQueue: (session.executionQueue ?? []).map((item) =>
+				item.id === keptId ? { ...item, hostEntryId: undefined } : item
+			),
+		}));
+		if (holdsIt) retryNow(cut.sessionId, cut.tabId);
+		return;
+	}
+	if (holdsIt) {
 		settleRetryOnHost(cut.sessionId, cut.tabId);
+		return;
+	}
+	if (queued) {
+		updateSessionWith(cut.sessionId, (session) => ({
+			...session,
+			executionQueue: (session.executionQueue ?? []).filter((item) => item.id !== keptId),
+		}));
 	}
 }
 

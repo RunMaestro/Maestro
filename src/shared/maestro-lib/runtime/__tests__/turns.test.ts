@@ -1533,6 +1533,30 @@ describe('runtime turns', () => {
 				}
 			);
 
+			it('gives a message edited while it waited its own entry, keeping the one it repeated', async () => {
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				const held = value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'Summarize the docs',
+						entryId: 'u1',
+						held: true,
+					})
+				);
+				if (held.status !== 'queued') throw new Error('expected queued');
+				value(
+					await runtime.turns.queue.edit('a1', held.itemId, { text: 'Summarize the docs, briefly' })
+				);
+				value(await runtime.turns.queue.setPaused('a1', held.itemId, false));
+				await turn.outcome();
+				const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(users.map((entry) => entry.text)).toEqual([
+					'Summarize the docs',
+					'Summarize the docs, briefly',
+				]);
+				expect(users[1].id).not.toBe('u1');
+			});
+
 			it('ignores an id it cannot take', async () => {
 				const runtime = await start();
 				const turn = watch(runtime);

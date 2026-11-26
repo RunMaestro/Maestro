@@ -302,15 +302,23 @@ function forwardToHost(
 	// may have run on, or finished (`cutTurnFate()`). Never sent twice.
 	const connected = usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';
 	const fate = cutTurnFate(sessionId, item, connected);
+	// The retry this resend belongs to: a Stop while it waits ends that retry, and then nothing goes.
+	const retry = getRetryEntry(sessionId, item.tabId);
+	const retryOutage = retry?.heldItemId === item.id ? retry.outageId : undefined;
 	const send = !fate
 		? sendToHost()
 		: fate.then((decided) => {
-				if (decided === 'send') return sendToHost();
 				if (decided === 'answered') {
 					// The host had it: the retry ends here, nothing is sent or held.
 					settleRetryOnHost(sessionId, item.tabId);
 					return null;
 				}
+				if (retryOutage && getRetryEntry(sessionId, item.tabId)?.outageId !== retryOutage) {
+					// Stopped while it waited: parked held, one click from Force Send, as Stop parks it.
+					holdRefusedItem(sessionId, item, index);
+					return null;
+				}
+				if (decided === 'send') return sendToHost();
 				// The host could not say (its transcript did not load): kept for the next try.
 				kept = keepTurnForHost(
 					sessionId,
