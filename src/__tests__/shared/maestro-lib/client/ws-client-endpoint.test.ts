@@ -102,6 +102,28 @@ describe('createWsMaestroClient with an explicit endpoint', () => {
 		expect(resolver).toHaveBeenCalledTimes(2);
 	});
 
+	it('joins the attempt already dialing when reconnect() is called during the backoff', async () => {
+		let release: (() => void) | undefined;
+		let calls = 0;
+		const resolver = vi.fn(async () => {
+			calls += 1;
+			// Hold the backoff's own attempt in discovery, so a caller's reconnect lands beside it.
+			if (calls === 2) await new Promise<void>((resolve) => (release = resolve));
+			return endpointOf();
+		});
+		const client = makeClient(resolver);
+		expect(await client.connection.connect()).toMatchObject({ ok: true });
+		bridge.dropAll();
+		await vi.waitFor(() => expect(release).toBeDefined());
+		const asked = client.connection.reconnect();
+		release?.();
+		expect(await asked).toMatchObject({ ok: true });
+		expect(client.connection.state()).toBe('connected');
+		// One attempt dialed, never a second socket beside it.
+		expect(resolver).toHaveBeenCalledTimes(2);
+		expect(bridge.connections).toHaveLength(2);
+	});
+
 	it('follows a host that restarted on a new port', async () => {
 		let current = bridge;
 		const client = makeClient(() => Promise.resolve(endpointOf({}, current)));

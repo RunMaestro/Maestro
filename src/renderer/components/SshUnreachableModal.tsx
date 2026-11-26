@@ -1,5 +1,8 @@
 /**
- * SshUnreachableModal - an SSH remote stopped answering.
+ * SshUnreachableModal - an SSH remote, or the Maestro host behind it, stopped answering.
+ *
+ * A hosted agent's turns run on the Maestro host of its remote, so that host going away is told
+ * here too, through the same store and the same controls, worded for what is down (`cause`).
  *
  * One dialog per remote, whatever failed first: an agent turn, a file save, the
  * file tree, a git poll, a shell command or a Cue run. The main process has
@@ -23,30 +26,60 @@
 
 import { memo, useEffect, useMemo, useState } from 'react';
 import { Users } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 
 import { Modal } from './ui/Modal';
 import { getErrorIcon } from './AgentErrorModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { selectOpenSshOutages, useSshOutageStore } from '../stores/sshOutageStore';
+import {
+	agentsStoppedBy,
+	outageScopeOf,
+	selectOpenSshOutages,
+	useSshOutageStore,
+} from '../stores/sshOutageStore';
 import { selectActiveSession, useSessionStore } from '../stores/sessionStore';
-import { getSessionSshRemoteId, isSessionRemote } from '../utils/sessionHelpers';
 import { formatRelativeTime } from '../../shared/formatters';
 import { ipcErrorMessage } from '../../shared/serializeError';
-import { SSH_RECOVERY_PROBE_INTERVAL_SECONDS } from '../../shared/sshConnection';
+import {
+	outageCause,
+	SSH_RECOVERY_PROBE_INTERVAL_SECONDS,
+	type SshReachabilityEvent,
+} from '../../shared/sshConnection';
 import type { Session, Theme } from '../types';
+
+export { agentsOnRemote } from '../stores/sshOutageStore';
 
 export interface SshUnreachableModalProps {
 	theme: Theme;
 	sessions: Session[];
 }
 
-/** Agents whose work runs through `remoteId`. */
-export function agentsOnRemote(sessions: Session[], remoteId: string): Session[] {
-	return sessions.filter(
-		(s) =>
-			(s.sessionSshRemoteConfig?.enabled && s.sessionSshRemoteConfig.remoteId === remoteId) ||
-			s.sshRemoteId === remoteId
-	);
+/**
+ * The dialog's words for an outage: what is down. ssh down stops every agent on the remote; a
+ * host down (ssh works, the Maestro host does not answer) stops the hosted agents on it.
+ */
+export function outageWording(event: Pick<SshReachabilityEvent, 'remoteName' | 'cause'>): {
+	title: string;
+	lost: string;
+	stopped: string;
+	advice: string;
+} {
+	if (outageCause(event) === 'host') {
+		return {
+			title: `Can't reach the Maestro host on "${event.remoteName}"`,
+			lost: 'Maestro lost the connection to the host',
+			stopped:
+				'Agents that run on this host cannot run turns or stop a running one until it answers again.',
+			advice: 'Check that the Maestro host is running on the remote.',
+		};
+	}
+	return {
+		title: `Can't reach "${event.remoteName}" over SSH`,
+		lost: 'Maestro lost the connection',
+		stopped:
+			'Agents on this remote cannot run turns, open or save files, or refresh their file tree and git status until it answers again.',
+		advice: 'Check that the host is on and its network or tunnel is up.',
+	};
 }
 
 export const SshUnreachableModal = memo(function SshUnreachableModal({
@@ -56,13 +89,11 @@ export const SshUnreachableModal = memo(function SshUnreachableModal({
 	// Select the stable record and derive: a selector returning a fresh array
 	// re-renders forever under useSyncExternalStore.
 	const outages = useSshOutageStore((s) => s.outages);
-	const activeRemoteId = useSessionStore((s) => {
-		const active = selectActiveSession(s);
-		return isSessionRemote(active) ? getSessionSshRemoteId(active) : undefined;
-	});
+	// Shallow-compared: the scope is a fresh object on every store change.
+	const activeScope = useSessionStore(useShallow((s) => outageScopeOf(selectActiveSession(s))));
 	const openOutages = useMemo(
-		() => selectOpenSshOutages({ outages }, activeRemoteId),
-		[outages, activeRemoteId]
+		() => selectOpenSshOutages({ outages }, activeScope),
+		[outages, activeScope]
 	);
 	const dismiss = useSshOutageStore((s) => s.dismiss);
 	const surface = useSshOutageStore((s) => s.surface);
@@ -74,9 +105,10 @@ export const SshUnreachableModal = memo(function SshUnreachableModal({
 	const [checking, setChecking] = useState(false);
 	const [checkResult, setCheckResult] = useState<string | null>(null);
 
+	const event = outage?.event;
 	const affected = useMemo(
-		() => (remoteId ? agentsOnRemote(sessions, remoteId) : []),
-		[sessions, remoteId]
+		() => (event ? agentsStoppedBy(sessions, event) : []),
+		[sessions, event]
 	);
 
 	// Once on screen, the outage stays the user's business: it announces its
@@ -86,7 +118,8 @@ export const SshUnreachableModal = memo(function SshUnreachableModal({
 	}, [remoteId, surface]);
 
 	if (!outage || !remoteId) return null;
-	const { remoteName, message, since } = outage.event;
+	const { message, since } = outage.event;
+	const wording = outageWording(outage.event);
 
 	const handleCheckNow = async () => {
 		setChecking(true);
@@ -117,7 +150,7 @@ export const SshUnreachableModal = memo(function SshUnreachableModal({
 	return (
 		<Modal
 			theme={theme}
-			title={`Can't reach "${remoteName}" over SSH`}
+			title={wording.title}
 			priority={MODAL_PRIORITIES.SSH_UNREACHABLE}
 			onClose={handleDismiss}
 			width={480}
@@ -163,9 +196,7 @@ export const SshUnreachableModal = memo(function SshUnreachableModal({
 		>
 			<div className="flex flex-col gap-3 text-sm" style={{ color: theme.colors.textMain }}>
 				<p>
-					Maestro lost the connection {formatRelativeTime(since)}. Agents on this remote cannot run
-					turns, open or save files, or refresh their file tree and git status until it answers
-					again.
+					{wording.lost} {formatRelativeTime(since)}. {wording.stopped}
 				</p>
 
 				{message && (
@@ -186,7 +217,7 @@ export const SshUnreachableModal = memo(function SshUnreachableModal({
 
 				<p className="text-xs" style={{ color: theme.colors.textDim }}>
 					Maestro checks again every {SSH_RECOVERY_PROBE_INTERVAL_SECONDS} seconds and closes this
-					when the connection comes back. Check that the host is on and its network or tunnel is up.
+					when the connection comes back. {wording.advice}
 				</p>
 			</div>
 		</Modal>

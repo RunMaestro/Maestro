@@ -370,6 +370,11 @@ export async function sendHostedTurn(
 		overrides?: TurnOverrides;
 		nameFrom?: { text: string; label?: string };
 		/**
+		 * Takes a refusal that sent nothing because the host is not connected, instead of the red
+		 * toast, so the caller can keep the message for a retry (`keepTurnForHost()`).
+		 */
+		onHostUnavailable?: (message: string) => void;
+		/**
 		 * Agent-only text for this one turn: ahead of the message (a released consult's replies,
 		 * `QueuedItem.agentContext`) and behind it (the `@mention` notes). The host's transcript
 		 * shows `text` alone, as a local transcript does.
@@ -380,12 +385,16 @@ export async function sendHostedTurn(
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
-	if (!target.agent) {
-		notifyToast({
-			color: 'red',
-			title: 'Message not sent',
-			message: `${session.name} runs on peer "${target.peerId}", which is not connected. Nothing was sent.`,
-		});
+	const connection = usePeerMirrorStore.getState().peers[target.peerId]?.connection;
+	if (!target.agent || (opts.onHostUnavailable && connection !== 'connected')) {
+		// Nothing is sent to a host that is not connected, including the steps ahead of the send
+		// (a new host tab, merged context): the caller keeps the message for a retry, or it is told.
+		const message = `${session.name} runs on peer "${target.peerId}", which is not connected${connection ? ` (${connection})` : ''}. Nothing was sent.`;
+		if (opts.onHostUnavailable) {
+			opts.onHostUnavailable(message);
+			return null;
+		}
+		notifyToast({ color: 'red', title: 'Message not sent', message });
 		return null;
 	}
 	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
@@ -402,7 +411,12 @@ export async function sendHostedTurn(
 	// Merge context, Send to Agent, and session recovery leave context for the tab's next turn. A
 	// local send prepends it to the prompt (`takePendingMergedContext()`); the host does the same
 	// from its own tab, so it goes there first and the transcript shows only the typed message.
-	const mergedContext = tab?.pendingMergedContext;
+	// Read from the store, not the caller's snapshot: a send that waited behind an earlier one of
+	// this tab must not hand over context that send already spent.
+	const liveTab = selectSessionById(session.id)(useSessionStore.getState())?.aiTabs.find(
+		(candidate) => candidate.id === tabId
+	);
+	const mergedContext = (liveTab ?? tab)?.pendingMergedContext;
 	if (mergedContext) {
 		const handed = await actOnMirroredAgent(target.peerId, target.agentId, {
 			kind: 'update-tab',
@@ -428,7 +442,8 @@ export async function sendHostedTurn(
 		{
 			...(opts.agentContext ? { agentContext: opts.agentContext } : {}),
 			...(opts.agentNotes ? { agentNotes: opts.agentNotes } : {}),
-		}
+		},
+		opts.onHostUnavailable
 	);
 	// Spent here once the host took the turn, as a local send spends it at spawn. A refused send
 	// keeps it, so the retry hands it over again (the host's copy is overwritten, not doubled).

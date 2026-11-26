@@ -9,6 +9,7 @@
 import * as os from 'os';
 import { describe, expect, it, vi } from 'vitest';
 import {
+	MIRROR_ACT_RECONNECT_WAIT_MS,
 	MIRROR_TURN_COALESCE_MS,
 	PeerMirrorService,
 	type PeerMirrorServiceDeps,
@@ -832,11 +833,93 @@ describe('PeerMirrorService', () => {
 			await settle();
 			a.emit({ type: 'host.lost', reason: 'socket closed' });
 			const answer = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
-			expect(answer).toMatchObject({ ok: false, code: 'host-unavailable' });
+			// `notSent`: refused before the client saw it, so a caller may keep it for a retry.
+			expect(answer).toMatchObject({ ok: false, code: 'host-unavailable', notSent: true });
 			expect(answer.ok ? '' : answer.error).toContain('Nothing was sent');
 			// Back up: the refused message is not delivered late.
 			a.emit({ type: 'host.connected', host: { kind: 'headless', label: 'h' }, resumed: true });
 			await settle();
+			expect(turns.send).not.toHaveBeenCalled();
+		});
+
+		/** The host came back after discovery found none: the client is reconnecting, the old error kept. */
+		function reconnectingAfterNoHost(a: FakeHost): void {
+			a.emitLease({
+				status: 'down',
+				error: new SshForwardError('not-running', 'No maestro-cli host is running on a.'),
+				attempt: 1,
+				retryInMs: 1000,
+			});
+			a.emit({ type: 'host.reconnecting', attempt: 1, delayMs: 15_000 });
+		}
+
+		it('waits for a reconnect in progress and sends once the host is back (R3)', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			const { turns } = withInput(a);
+			h.service.start();
+			await settle();
+			reconnectingAfterNoHost(a);
+			expect(h.service.peers()[0].connection).toBe('reconnecting');
+			a.reconnect.mockImplementationOnce(async () => {
+				a.setState('connected');
+				a.emit({ type: 'host.connected', host: { kind: 'headless', label: 'h' }, resumed: true });
+				return { ok: true, value: {} };
+			});
+			const answer = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+			expect(answer).toEqual({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+			// Asked to try at once, not at the client's next backoff step; sent exactly once.
+			expect(a.reconnect).toHaveBeenCalledTimes(1);
+			expect(turns.send).toHaveBeenCalledTimes(1);
+		});
+
+		it('says the reconnect is still under way, never the old no-host error, when the wait runs out (R3)', async () => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			try {
+				const a = fakeHost('a');
+				const h = harness([remoteOf('a')], { a });
+				const { turns } = withInput(a);
+				h.service.start();
+				await settle();
+				reconnectingAfterNoHost(a);
+				a.reconnect.mockImplementationOnce(() => new Promise(() => undefined));
+				const pending = h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+				await settle();
+				vi.advanceTimersByTime(MIRROR_ACT_RECONNECT_WAIT_MS);
+				const answer = await pending;
+				expect(answer).toMatchObject({ ok: false, code: 'host-unavailable', notSent: true });
+				const error = answer.ok ? '' : answer.error;
+				expect(error).toBe('Still reconnecting to peer "a". Nothing was sent.');
+				expect(error).not.toContain('No maestro-cli host is running');
+				expect(turns.send).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('gives what discovery found when the reconnect tried for the send fails (R3)', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			const { turns } = withInput(a);
+			h.service.start();
+			await settle();
+			reconnectingAfterNoHost(a);
+			a.reconnect.mockResolvedValueOnce({
+				ok: false,
+				error: {
+					code: 'host-unavailable',
+					message: 'No maestro-cli host is running on a.',
+					method: 'connection.reconnect',
+				},
+			} as never);
+			const answer = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+			expect(answer).toMatchObject({ ok: false, code: 'host-unavailable', notSent: true });
+			expect(answer.ok ? '' : answer.error).toBe(
+				'Could not reconnect to peer "a". Nothing was sent. No maestro-cli host is running on a.'
+			);
 			expect(turns.send).not.toHaveBeenCalled();
 		});
 
