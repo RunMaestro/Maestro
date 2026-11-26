@@ -230,6 +230,30 @@ describe('remote copy write-back', () => {
 		expect(events.map((e) => e.kind)).toEqual(['kept', 'saved', 'saved']);
 	});
 
+	it('sends a save made while an unknown copy is kept, even when the fetched file is too large to send back', async () => {
+		localFiles.set(LOCAL, Buffer.from('unsent change'));
+		remoteFile = Buffer.from('a remote file past the cap');
+		const writeBack = createRemoteCopyWriteBack({
+			...baseDeps({ maxBytes: 16 }),
+			createLocal: async (keptAt, bytes) => {
+				localFiles.set(keptAt, bytes);
+				localFiles.set(LOCAL, Buffer.from('small save'));
+			},
+		});
+		await expect(reopen(writeBack)).resolves.toBe('kept');
+		await writeBack.idle();
+		// The copy holds the save, which is within the cap: it is sent.
+		expect(writeRemote).toHaveBeenCalledWith(
+			REMOTE,
+			Buffer.from('small save'),
+			'r1',
+			sha(Buffer.from('a remote file past the cap'))
+		);
+		await expect(
+			writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' })
+		).resolves.toBeUndefined();
+	});
+
 	it('an Open with no record of the copy sends a save made before its watch starts', async () => {
 		const writeBack = service();
 		await expect(reopen(writeBack)).resolves.toBe('fetched');

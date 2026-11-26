@@ -419,18 +419,20 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	 * Know a copy a refetch fetched with no record of it: `fetched` is what the
 	 * remote holds, so it is the baseline, never the copy's bytes at the next
 	 * `watch()` (a save made in between would read as already sent). No watcher
-	 * yet; the next `watch()` starts one.
+	 * yet; the next `watch()` starts one. `copySize`: the copy's size, when a save
+	 * kept it from being replaced; whether it is too large to send is its own.
 	 */
 	function remember(
 		copy: { localPath: string; remotePath: string; sshRemoteId: string },
-		fetched: Buffer
+		fetched: Buffer,
+		copySize = fetched.length
 	): WatchedCopy {
 		const entry: WatchedCopy = {
 			...copy,
 			baseline: hashOf(fetched),
 			kept: null,
 			unconfirmed: null,
-			halted: fetched.length > maxBytes ? 'too-large' : null,
+			halted: copySize > maxBytes ? 'too-large' : null,
 			watcher: { close: () => undefined },
 			watcherLost: true,
 			forgotten: false,
@@ -671,7 +673,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 							if (after && hashOf(after) !== hashOf(local)) {
 								// That save is not on the remote: known from now on over the
 								// fetched bytes, it is sent like any save.
-								remember({ localPath, remotePath, sshRemoteId }, bytes);
+								remember({ localPath, remotePath, sshRemoteId }, bytes, after.length);
 								return 'saved-during-fetch' as const;
 							}
 						}
