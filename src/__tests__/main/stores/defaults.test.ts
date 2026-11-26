@@ -122,6 +122,11 @@ describe('stores/defaults', () => {
 	});
 
 	describe('SETTINGS_DEFAULTS', () => {
+		it('should keep Federation hosting and automatic moves off by default (opt-in)', () => {
+			expect(SETTINGS_DEFAULTS.federationHostedAgents).toBe(false);
+			expect(SETTINGS_DEFAULTS.federationAutoMove).toBe(false);
+		});
+
 		it('should have correct default theme', () => {
 			expect(SETTINGS_DEFAULTS.activeThemeId).toBe('dracula');
 		});

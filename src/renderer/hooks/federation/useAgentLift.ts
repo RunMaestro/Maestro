@@ -25,7 +25,7 @@ export function useAgentFederationStatus(
 	const order = usePeerMirrorStore((s) => s.order);
 	const peers = usePeerMirrorStore((s) => s.peers);
 	// Hosted agents switched off: a hosted agent stands as the SSH agent it was.
-	const hostingOn = useSettingsStore((s) => s.federationHostedAgents !== false);
+	const hostingOn = useSettingsStore((s) => s.federationHostedAgents === true);
 	const liftedTo = hostingOn ? agent?.liftedTo : undefined;
 	const ssh = agent?.sessionSshRemoteConfig;
 	const sshEnabled = ssh?.enabled === true;

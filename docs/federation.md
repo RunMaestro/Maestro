@@ -68,7 +68,7 @@ A remote with Federation on and a running host is called a **peer**. Its peer na
 
 ## Setup
 
-There is nothing to set up. With **Move SSH agents to their host automatically** on (the default, in **Settings > SSH Hosts > Federation automation**), Maestro does the whole job on its own, one remote and one agent at a time:
+Hosting is opt-in. Both **Run hosted agents on their host** and **Move SSH agents to their host automatically** are off by default (in **Settings > SSH Hosts > Federation automation**), so every SSH agent stays a plain SSH agent until you turn them on. With both on, Maestro does the whole job on its own, one remote and one agent at a time:
 
 1. It checks each SSH remote for a Maestro host.
 2. Where a remote has an SSH agent but no host, it installs its own `maestro-cli` there. A `maestro-cli` too old to run a host is upgraded the same way. See [What Maestro installs on the remote](#what-maestro-installs-on-the-remote).
@@ -296,11 +296,11 @@ A lift refuses, and moves nothing, while a tab is running a turn, when no host r
 
 ## Switch hosting off
 
-To go back to plain SSH agents without changing anything, turn off **Run hosted agents on their host** in Settings > SSH Hosts, or run **Turn Hosted Agents Off** from the command palette. Every hosted agent then works as the SSH agent it was, from this machine: its turns run over SSH, nothing is sent to its host, and nothing moves onto a host automatically. Nothing on the host or in the agent changes, so turning the switch back on restores hosting. From the CLI:
+Hosting is off by default. If you turned it on and want to go back to plain SSH agents without changing anything, turn off **Run hosted agents on their host** in Settings > SSH Hosts, or run **Turn Hosted Agents Off** from the command palette. Every hosted agent then works as the SSH agent it was, from this machine: its turns run over SSH, nothing is sent to its host, and nothing moves onto a host automatically. Nothing on the host or in the agent changes, so turning the switch back on restores hosting. From the CLI:
 
 ```bash
-maestro-cli settings set federationHostedAgents false   # hosting off
-maestro-cli settings set federationHostedAgents true    # hosting on again
+maestro-cli settings set federationHostedAgents false   # hosting off (the default)
+maestro-cli settings set federationHostedAgents true    # hosting on
 ```
 
 While hosting is off, do not drive the same agent from its host too: both would continue the same provider conversation.

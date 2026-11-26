@@ -381,6 +381,7 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 
 // Import MainPanel after mocks
 import { MainPanel } from '../../../renderer/components/MainPanel';
+import { INLINE_ERROR_MAX_CHARS } from '../../../shared/failureScreen';
 
 describe('MainPanel', () => {
 	const theme: Theme = {
@@ -3687,8 +3688,12 @@ describe('MainPanel', () => {
 
 			renderMainPanel({ activeSession: session });
 
-			// The error message should be displayed (the component doesn't truncate, but CSS might)
-			expect(screen.getByText(longMessage)).toBeInTheDocument();
+			// The banner never shows the whole message: it cuts it and clamps to
+			// two lines. The full text lives behind View Details.
+			expect(screen.queryByText(longMessage)).not.toBeInTheDocument();
+			const shown = screen.getByText(/^A+…$/);
+			expect(shown.textContent!.length).toBeLessThanOrEqual(INLINE_ERROR_MAX_CHARS);
+			expect(shown.className).toContain('line-clamp-2');
 		});
 
 		it('should still display error banner when file tab is active', () => {

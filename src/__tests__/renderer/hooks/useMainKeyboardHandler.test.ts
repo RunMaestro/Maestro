@@ -28,6 +28,7 @@ const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession:
 vi.mock('../../../renderer/services/tileNewTabAction', () => ({
 	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
 }));
+import { eventMatchesShortcutKeys } from '../../../renderer/utils/shortcutMatch';
 import { publishGitShortcutActions } from '../../../renderer/services/gitShortcutActions';
 import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
 
@@ -3932,6 +3933,72 @@ describe('useMainKeyboardHandler', () => {
 
 			expect(mockOpenTerminalSearch).toHaveBeenCalledTimes(1);
 			xtermInput.remove();
+		});
+
+		it('should not fire paneCyclePrev on German Option+5 ([ on Digit5) when xterm has focus, while non-editable targets still cycle', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockCyclePane = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				activeSessionId: 'test-session',
+				activeSession: {
+					id: 'test-session',
+					name: 'Test',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+					activeGroupId: 'group-1',
+					tabGroups: [{ id: 'group-1' }],
+				},
+				activeGroupChatId: null,
+				activeFocus: 'main',
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					eventMatchesShortcutKeys(
+						e,
+						DEFAULT_SHORTCUTS[actionId as keyof typeof DEFAULT_SHORTCUTS]?.keys
+					),
+				tilingShortcuts: {
+					cyclePane: mockCyclePane,
+				},
+			});
+
+			const xtermInput = document.createElement('textarea');
+			xtermInput.className = 'xterm-helper-textarea';
+			document.body.appendChild(xtermInput);
+			xtermInput.focus();
+
+			act(() => {
+				xtermInput.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '[',
+						code: 'Digit5',
+						altKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+
+			expect(mockCyclePane).not.toHaveBeenCalled();
+			xtermInput.remove();
+
+			// Positive control: with an active tiled group and real matcher, a
+			// non-editable target still cycles the pane on Alt+[.
+			const nonEditable = document.createElement('div');
+			document.body.appendChild(nonEditable);
+			act(() => {
+				nonEditable.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '[',
+						code: 'BracketLeft',
+						altKey: true,
+						bubbles: true,
+						cancelable: true,
+					})
+				);
+			});
+
+			expect(mockCyclePane).toHaveBeenCalledWith('prev');
+			nonEditable.remove();
 		});
 	});
 

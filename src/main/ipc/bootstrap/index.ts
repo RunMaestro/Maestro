@@ -152,8 +152,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		// With hosted agents off, nothing moves onto a host on its own either.
 		readAutoMove: () =>
-			deps.settingsStore.get('federationAutoMove', true) !== false &&
-			deps.settingsStore.get('federationHostedAgents', true) !== false,
+			deps.settingsStore.get('federationAutoMove', false) === true &&
+			deps.settingsStore.get('federationHostedAgents', false) === true,
 		watchSessions: (onChange) => deps.sessionsStore.onDidChange('sessions', () => onChange()),
 		safeSend: deps.safeSend,
 	});

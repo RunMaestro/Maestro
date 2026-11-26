@@ -142,6 +142,9 @@ export interface AgentError {
 		stdout?: string;
 		errorLine?: string;
 	};
+	parsedJson?: unknown;
+	/** The agent's last terminal screen, for the error modal only. */
+	failureScreen?: string;
 }
 
 /**

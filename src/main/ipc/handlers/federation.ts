@@ -69,7 +69,7 @@ import type { HistoryGraphData } from '../../utils/history-bucket-builder';
 
 /** What `federation:lift` reads: the stores, the live processes, and the window. */
 export type FederationHandlerDeps = Omit<DesktopLiftRuntime, 'service'> & {
-	/** The `federationAutoMove` setting (on by default). */
+	/** The `federationAutoMove` setting (off by default; on only once the person opts in). */
 	readAutoMove(): boolean;
 	/** Call `onChange` when the stored agents change. Returns the unsubscribe. */
 	watchSessions?(onChange: () => void): () => void;

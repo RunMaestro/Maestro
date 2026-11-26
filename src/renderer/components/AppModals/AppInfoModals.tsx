@@ -167,6 +167,7 @@ export const AppInfoModals = memo(function AppInfoModals({
 		() => filterLiveAgents(sessions, { pianola: pianolaEnabled }),
 		[sessions, pianolaEnabled]
 	);
+	const updateCheckData = useModalStore(selectModalData('updateCheck'));
 	return (
 		<>
 			{/* --- SHORTCUTS HELP MODAL --- */}
@@ -212,7 +213,15 @@ export const AppInfoModals = memo(function AppInfoModals({
 			)}
 
 			{/* --- UPDATE CHECK MODAL --- */}
-			{updateCheckModalOpen && <UpdateCheckModal theme={theme} onClose={onCloseUpdateCheckModal} />}
+			{updateCheckModalOpen && (
+				<UpdateCheckModal
+					// Re-opening on the other page (menu "Roll Back" while it is open) remounts it there.
+					key={updateCheckData?.initialView ?? 'updates'}
+					theme={theme}
+					onClose={onCloseUpdateCheckModal}
+					initialView={updateCheckData?.initialView}
+				/>
+			)}
 
 			{/* --- PROCESS MONITOR (lazy-loaded) --- */}
 			{processMonitorOpen && (

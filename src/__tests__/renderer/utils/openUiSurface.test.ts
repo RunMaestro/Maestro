@@ -301,3 +301,20 @@ describe('openUiSurface - Encore-gated tabs', () => {
 		expect(selectModalOpen('usageDashboard')(useModalStore.getState())).toBe(false);
 	});
 });
+
+describe('openUiSurface - updates', () => {
+	beforeEach(() => {
+		useModalStore.getState().closeModal('updateCheck');
+	});
+
+	it('opens Check for Updates on its updates page by default', () => {
+		expect(openUiSurface({ surface: 'updates' })).toEqual({ ok: true });
+		expect(selectModalOpen('updateCheck')(useModalStore.getState())).toBe(true);
+		expect(selectModalData('updateCheck')(useModalStore.getState())?.initialView).toBe('updates');
+	});
+
+	it('deep-links to the rollback list', () => {
+		expect(openUiSurface({ surface: 'updates', tab: 'rollback' })).toEqual({ ok: true });
+		expect(selectModalData('updateCheck')(useModalStore.getState())?.initialView).toBe('rollback');
+	});
+});

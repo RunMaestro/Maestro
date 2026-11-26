@@ -137,7 +137,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	hasCapability,
 }: MainPanelHeaderProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
-	const hostingOn = useSettingsStore((s) => s.federationHostedAgents !== false);
+	const hostingOn = useSettingsStore((s) => s.federationHostedAgents === true);
 	const showAgentName = useSettingsStore((s) => s.showAgentName);
 	const showSessionIdPill = useSettingsStore((s) => s.showSessionIdPill);
 	const showSessionCostPill = useSettingsStore((s) => s.showSessionCostPill);

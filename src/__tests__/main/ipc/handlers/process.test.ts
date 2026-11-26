@@ -730,6 +730,10 @@ describe('process IPC handlers', () => {
 			mockSessionsStore.get.mockImplementation((key, fallback) =>
 				key === 'sessions' ? [lifted] : fallback
 			);
+			// Hosting is opt-in: the refusal applies only once it is switched on.
+			mockSettingsStore.get.mockImplementation((key, fallback) =>
+				key === 'federationHostedAgents' ? true : fallback
+			);
 			mockAgentDetector.getAgent.mockResolvedValue({
 				id: 'claude-code',
 				path: '/usr/bin/claude',
@@ -755,6 +759,39 @@ describe('process IPC handlers', () => {
 				(error: Error) => error
 			);
 			expect(shell instanceof Error ? shell.message : '').not.toContain('build-box');
+		});
+
+		it('runs a lifted agent as its SSH agent while hosting was never switched on', async () => {
+			const lifted = {
+				id: 'lifted-agent',
+				name: 'Lifted',
+				toolType: 'claude-code',
+				cwd: '/project',
+				aiTabs: [{ id: 'tab' }],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [lifted] : fallback
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+
+			const outcome = await handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'lifted-agent-ai-tab',
+					toolType: 'claude-code',
+					cwd: '/project',
+					command: 'claude',
+					args: [],
+				}
+			).catch((error: Error) => error);
+
+			expect(outcome instanceof Error ? outcome.message : '').not.toContain('build-box');
 		});
 
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {

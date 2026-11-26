@@ -46,6 +46,7 @@ import {
 	readSettingValue,
 	readLiveSessions,
 	readGroups,
+	readSettings,
 } from '../../../cli/services/storage';
 import { admitCliConsult } from '../../../cli/services/consult-budget-guard';
 import { CONSULT_BUDGET_EXHAUSTED_CODE } from '../../../shared/consultBudget';
@@ -1041,6 +1042,7 @@ describe('dispatch command', () => {
 		});
 
 		it('refuses a lifted agent with AGENT_LIFTED before reaching the desktop', async () => {
+			vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
 			vi.mocked(resolveAgentId).mockReturnValue('lifted-agent');
 			vi.mocked(getSessionById).mockReturnValueOnce({
 				id: 'lifted-agent',

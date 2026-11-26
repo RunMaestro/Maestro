@@ -278,7 +278,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			const lifted = liftedOwnerOfProcess(deps.sessionsStore.get('sessions', []), config.sessionId);
 			const refusal =
 				lifted &&
-				liftedSendRefusal(lifted, settingsStore.get(HOSTED_AGENTS_SETTING, true) !== false);
+				liftedSendRefusal(lifted, settingsStore.get(HOSTED_AGENTS_SETTING, false) === true);
 			if (refusal) throw new Error(refusal);
 		}
 		// A web/CLI caller cannot assert the native renderer's submitted log boundary.

@@ -27,7 +27,7 @@ import { clearSystemLogs } from '../../system-logs';
 import type { LogSourceReadOptions } from '../../../shared/logSources';
 import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
-import { checkForUpdates } from '../../update-checker';
+import { checkForUpdates, listRollbackTargets } from '../../update-checker';
 import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
 import { getLiveModeController } from '../../web-server/live-mode';
@@ -557,6 +557,13 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		const currentVersion = app.getVersion();
 		return checkForUpdates(currentVersion, includePrerelease);
 	});
+
+	// Earlier releases the user can roll back to (Check for Updates -> Roll Back).
+	ipcMain.handle(
+		'updates:listRollbackTargets',
+		async (_event, includePrerelease: boolean = false) =>
+			listRollbackTargets(app.getVersion(), includePrerelease)
+	);
 
 	// Anonymous DAU/MAU check-in ping. Fired by the renderer alongside the update
 	// check, gated by the same "check for updates" preference. Fire-and-forget:

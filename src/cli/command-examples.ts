@@ -83,6 +83,7 @@ export const COMMAND_EXAMPLES: Readonly<Record<string, readonly string[]>> = {
 		'maestro-cli install-command codex',
 		'maestro-cli install-command claude-code --platform linux --json',
 	],
+	rollback: ['maestro-cli rollback', 'maestro-cli rollback 1.0.3 --json'],
 	// Dataview commands introduced by RC also participate in the CLI help audit.
 	'dataview query': ['maestro-cli dataview query <file> --agent <agent-id> --json'],
 	'dataview eval': ['maestro-cli dataview eval <file> "LIST FROM #meeting" --json'],

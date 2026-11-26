@@ -23,6 +23,7 @@ import type { AgentSettingsTabId } from '../components/AgentSettings/agentSettin
 import { UI_SURFACES } from '../../shared/uiSurfaces';
 import type { DelegationGraphScope } from '../../shared/delegationGraph';
 import type { LogSourceId } from '../../shared/logSources';
+import type { UpdateCheckView } from '../../shared/updateRollback';
 import { logger } from '../utils/logger';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
@@ -318,6 +319,11 @@ export interface DirectorNotesData {
 export interface DelegationGraphModalData {
 	/** The scope the graph opens on, e.g. one group. Absent, every agent. */
 	scope?: DelegationGraphScope;
+}
+
+/** Check for Updates modal data: which page it opens on. */
+export interface UpdateCheckModalData {
+	initialView: UpdateCheckView;
 }
 
 /** Quit confirmation modal data */
@@ -719,6 +725,7 @@ export interface ModalDataMap {
 	delegationGraph: DelegationGraphModalData;
 	quitConfirm: QuitConfirmModalData;
 	logViewer: LogViewerModalData;
+	updateCheck: UpdateCheckModalData;
 }
 
 // Helper type to get data type for a modal ID
@@ -1039,8 +1046,9 @@ export function getModalActions() {
 			open ? openModal('feedback') : closeModal('feedback'),
 
 		// Update Check Modal
-		setUpdateCheckModalOpen: (open: boolean) =>
-			open ? openModal('updateCheck') : closeModal('updateCheck'),
+		// `view` opens it straight on the rollback list (menu, palette, `open updates --tab rollback`).
+		setUpdateCheckModalOpen: (open: boolean, view: UpdateCheckView = 'updates') =>
+			open ? openModal('updateCheck', { initialView: view }) : closeModal('updateCheck'),
 
 		// Leaderboard Registration Modal
 		setLeaderboardRegistrationOpen: (open: boolean) =>

@@ -107,6 +107,7 @@ import {
 	addHistoryEntry,
 	readHarnessTierDefaults,
 	readStoredAiTabs,
+	readSettings,
 } from '../../../cli/services/storage';
 import { autoTurnReport } from '../../../shared/autoTurn';
 import { listDesktopTabs } from '../../../cli/services/session-command';
@@ -722,6 +723,7 @@ describe('send command', () => {
 	});
 
 	it('refuses a lifted agent with AGENT_LIFTED and a pointer at peer:agentId', async () => {
+		vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
 		vi.mocked(getSessionById).mockReturnValueOnce(
 			mockAgent({ liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 } })
@@ -734,6 +736,23 @@ describe('send command', () => {
 		expect(output.code).toBe('AGENT_LIFTED');
 		expect(output.error).toContain('build-box:host-1');
 		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('lets a lifted agent through as an SSH agent while hosting was never switched on', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-term-1');
+		vi.mocked(getSessionById).mockReturnValue(
+			mockAgent({
+				id: 'agent-term-1',
+				toolType: 'terminal',
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			})
+		);
+
+		await send('agent-term', 'Hello', {});
+
+		// Past the lifted gate: the next check (agent type) answers instead.
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.code).toBe('AGENT_UNSUPPORTED');
 	});
 
 	it('should exit with error for unsupported agent type', async () => {

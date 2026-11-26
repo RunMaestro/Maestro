@@ -122,7 +122,7 @@ export function FederationAutomationSection({ theme }: { theme: Theme }) {
 				<ToggleSettingRow
 					theme={theme}
 					title="Run hosted agents on their host"
-					description="Off: every hosted agent works as the SSH agent it was, from this machine. Nothing on the host or in the agent changes, so turning it back on restores hosting."
+					description="Off by default. Off: every hosted agent works as the SSH agent it was, from this machine. Nothing on the host or in the agent changes, so turning it on restores hosting."
 					checked={hostedAgents}
 					onChange={setHostedAgents}
 					ariaLabel="Run hosted agents on their host"
@@ -130,7 +130,7 @@ export function FederationAutomationSection({ theme }: { theme: Theme }) {
 				<ToggleSettingRow
 					theme={theme}
 					title="Move SSH agents to their host automatically"
-					description="Off: Move to Host stays a right-click. Hosts are kept running either way."
+					description="Off by default. Off: Move to Host stays a right-click. Hosts are kept running either way."
 					checked={autoMove}
 					onChange={setAutoMove}
 					ariaLabel="Move SSH agents to their host automatically"

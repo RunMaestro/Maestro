@@ -82,9 +82,24 @@ export function safeDecodeURIComponent(value: string): string {
 	}
 }
 
-export function stripAnsiCodes(text: string): string {
+export interface StripAnsiOptions {
+	/**
+	 * Also remove CSI sequences written out as text: `\033[1;30m`, `\x1b[0m`,
+	 * `\u001b[31m`, `\e[0m`. A shell prompt with a mis-quoted color prints these
+	 * literally, and a captured terminal screen then carries them as visible
+	 * junk. Off by default: in ordinary agent output the same text is usually a
+	 * code sample explaining ANSI colors, and must survive.
+	 */
+	escapedLiterals?: boolean;
+}
+
+export function stripAnsiCodes(text: string, options: StripAnsiOptions = {}): string {
 	// Matches ANSI CSI sequences, including DEC private modes like ESC[?1h.
 	let result = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+
+	if (options.escapedLiterals) {
+		result = result.replace(/\\+(?:033|x1[bB]|u001[bB]|e)\[[0-?]*[ -/]*[@-~]/g, '');
+	}
 
 	// Remove standalone keypad/application mode toggles used by interactive CLIs.
 	result = result.replace(/\x1b[=>]/g, '');

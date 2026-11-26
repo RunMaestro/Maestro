@@ -126,6 +126,7 @@ import { collectRepeatable } from './services/peer-flags';
 import { PICKABLE_AGENT_IDS } from '../shared/agentMetadata';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { listModels } from './commands/list-models';
+import { rollback } from './commands/rollback';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
@@ -2611,6 +2612,19 @@ program
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((provider: string, options) => installCommand(provider, options));
+
+// Rollback - Check for Updates -> Roll Back: list earlier releases, or download one
+program
+	.command('rollback [version]')
+	.description(
+		'List earlier Maestro releases you can roll back to, or download one (e.g. 1.0.3) so the next restart installs it'
+	)
+	.option(
+		'--prerelease',
+		'Include beta and RC releases (default: the "Include pre-release updates" setting)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((version: string | undefined, options) => rollback(version, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program

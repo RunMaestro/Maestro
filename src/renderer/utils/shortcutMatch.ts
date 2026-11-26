@@ -67,18 +67,36 @@ const CODE_TO_KEY: Record<string, string> = {
 	equal: '=',
 };
 
+/** Options controlling how `eventMatchesShortcutKeys` evaluates a chord. */
+export interface ShortcutMatchOptions {
+	/**
+	 * When true and `e.altKey` is pressed (with `e.code` present), match strictly
+	 * on the physical key (`e.code`) and never on the produced `e.key`.
+	 *
+	 * Used by XTerminal so Option/Alt-composed characters on non-US layouts
+	 * (e.g., German Option+5 producing `[` on `Digit5`, or Option+8 producing `{`
+	 * on `Digit8`) are not misidentified as `Alt+[`.
+	 */
+	altByCodeOnly?: boolean;
+}
+
 /**
  * True when `e` is the key combination described by `keys`.
  *
- * @param e    - The keyboard event (native or React synthetic)
- * @param keys - A `Shortcut.keys` array, e.g. `['Meta', 'Shift', '.']`. The
- *               last entry is the main key; the rest are modifiers.
+ * @param e       - The keyboard event (native or React synthetic)
+ * @param keys    - A `Shortcut.keys` array, e.g. `['Meta', 'Shift', '.']`. The
+ *                  last entry is the main key; the rest are modifiers.
+ * @param options - Optional matching overrides (see `ShortcutMatchOptions`)
  *
  * An EMPTY or missing `keys` never matches. An unassigned action reads as "no
  * modifiers and no main key", so without this a bare keypress would fire an
  * action the user deliberately left unbound.
  */
-export function eventMatchesShortcutKeys(e: ShortcutKeyEvent, keys: string[] | undefined): boolean {
+export function eventMatchesShortcutKeys(
+	e: ShortcutKeyEvent,
+	keys: string[] | undefined,
+	options?: ShortcutMatchOptions
+): boolean {
 	if (!keys?.length) return false;
 	const wanted = keys.map((k) => k.toLowerCase());
 
@@ -92,6 +110,11 @@ export function eventMatchesShortcutKeys(e: ShortcutKeyEvent, keys: string[] | u
 	if (e.altKey !== wanted.includes('alt')) return false;
 
 	const mainKey = wanted[wanted.length - 1];
+
+	if (options?.altByCodeOnly && e.altKey && e.code) {
+		const codeKey = e.code.replace(/^(Key|Digit)/, '').toLowerCase();
+		return (CODE_TO_KEY[codeKey] || codeKey) === mainKey;
+	}
 
 	// Shift-rewritten punctuation: the binding names the unshifted character.
 	if (mainKey === '[' && (key === '[' || key === '{')) return true;

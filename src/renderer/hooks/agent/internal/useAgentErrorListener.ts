@@ -40,6 +40,7 @@ import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
 import { isValidAgentId } from '../../../../shared/agentIds';
+import { inlineErrorText } from '../../../../shared/failureScreen';
 import {
 	classifyAgentErrorMissingBinary,
 	missingRuntimeLabel,
@@ -100,6 +101,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				timestamp: error.timestamp,
 				raw: error.raw,
 				parsedJson: error.parsedJson,
+				failureScreen: error.failureScreen,
 				// Lets an ssh failure defer to the one outage dialog for its remote.
 				sshRemoteId: error.sshRemoteId,
 			};
@@ -578,8 +580,8 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 							? `Auto Run: retrying (${errorTitle})`
 							: `Auto Run: ${errorTitle}`,
 						message: willAutoRetryBatch
-							? `${agentError.message} Auto Run will continue automatically.`
-							: agentError.message,
+							? `${inlineErrorText(agentError.message)} Auto Run will continue automatically.`
+							: inlineErrorText(agentError.message),
 						sessionId: actualSessionId,
 					});
 				}

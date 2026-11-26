@@ -342,6 +342,24 @@ The same applies when you quit Maestro with an Auto Run going. Confirm the quit,
 
 The quit dialog has a **Resume Auto Runs on next launch** checkbox, on by default. Clear it to use the quit as an emergency stop: every Auto Run stops and none of them comes back. This is the fastest way to stop a batch of runs you started by mistake. Press `Cmd+Q` / `Ctrl+Q`, clear the box, and choose **Quit Anyway**.
 
+### Rolling Back to an Earlier Version
+
+If an update causes a problem, you can go back to an earlier release:
+
+- **Quick Actions:** `Cmd+K` / `Ctrl+K` → "Roll Back to an Earlier Version"
+- **Menu:** Click the hamburger menu (☰) → "Roll Back Version"
+- **Check for Updates:** Click **Having trouble with this version? Roll back to an earlier one** at the bottom of the window.
+- **CLI:** `maestro-cli rollback` lists the earlier releases, and `maestro-cli rollback 1.0.3` downloads one.
+
+The list shows up to 15 earlier releases that can be installed on your platform, newest first, each with its release notes. Pre-release builds appear only when **Include pre-release updates** is on. Click **Roll Back** beside a release to download it, then **Restart to Roll Back** to install it. A downloaded rollback also installs the next time Maestro quits, the same as a downloaded update.
+
+Keep these points in mind:
+
+- Your agents, settings, and history stay in place. An older version may not read data that a newer version wrote, so roll back only as far as you need to.
+- Auto Runs in progress do not resume after a rollback, because an older version may not have that feature. Let them finish first, or use **Restart App When Idle**.
+- Check for Updates offers the newest version again, so you can move forward when the fix ships.
+- A rollback can be started only from the desktop app or `maestro-cli`, never from the web interface, because an older version can bring back problems that a newer release fixed.
+
 ### Anonymous Check-in
 
 Alongside each update check, Maestro sends a small anonymous ping so we can count how many installs are active and which platforms and themes people actually use. It is the only usage data the app reports about itself.

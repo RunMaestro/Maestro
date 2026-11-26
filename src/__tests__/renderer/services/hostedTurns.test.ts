@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	closeHostedTab,
 	hostedTargetOf,
+	hostingEnabled,
 	hostedTurnOverrides,
 	interruptHostedTurn,
 	openHostedTab,
@@ -62,6 +63,13 @@ describe('hostedTurns', () => {
 
 	afterEach(() => {
 		delete maestro.federation;
+	});
+
+	it('finds no host target while hosted agents were never switched on (undefined is off)', () => {
+		hydrateHost();
+		useSettingsStore.setState({ federationHostedAgents: undefined as unknown as boolean });
+		expect(hostingEnabled()).toBe(false);
+		expect(hostedTargetOf(row())).toBeUndefined();
 	});
 
 	it('finds no host target while hosted agents are switched off', () => {

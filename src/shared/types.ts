@@ -1194,6 +1194,14 @@ export interface AgentError {
 	parsedJson?: unknown;
 
 	/**
+	 * The last screen of a terminal UI the agent ran in (maestro-p's
+	 * `last_screen`), already cleaned by `formatFailureScreen()`. Evidence for
+	 * the error modal only: never part of `message`, never shown inline, never
+	 * read to classify the error.
+	 */
+	failureScreen?: string;
+
+	/**
 	 * For limit/credit/rate-limit errors: epoch ms when the provider window is
 	 * expected to reopen. Used by auto-resume to schedule the next probe. May be
 	 * undefined when the reset time is unknown (probe on the fixed interval instead).

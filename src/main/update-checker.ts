@@ -4,6 +4,11 @@
  */
 
 import { compareVersions } from '../shared/pathUtils';
+import {
+	ROLLBACK_LIST_LIMIT,
+	updaterChannelFile,
+	type RollbackTargetsResult,
+} from '../shared/updateRollback';
 import { logger } from './utils/logger';
 import { fetchWithTimeout } from './utils/fetchWithTimeout';
 
@@ -11,6 +16,7 @@ import { fetchWithTimeout } from './utils/fetchWithTimeout';
 const GITHUB_OWNER = 'RunMaestro';
 const GITHUB_REPO = 'Maestro';
 const RELEASES_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
+const RELEASES_PAGE_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
 
 /** Request budget for the GitHub releases poll. */
 const RELEASES_FETCH_TIMEOUT_MS = 15_000;
@@ -188,7 +194,7 @@ export async function checkForUpdates(
 	currentVersion: string,
 	includePrerelease: boolean = false
 ): Promise<UpdateCheckResult> {
-	const releasesUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
+	const releasesUrl = RELEASES_PAGE_URL;
 
 	logger.info(
 		`Checking for updates (current: ${currentVersion}, includePrerelease: ${includePrerelease}, platform: ${process.platform})`,
@@ -258,5 +264,52 @@ export async function checkForUpdates(
 			assetsReady: false,
 			error: errorMessage,
 		};
+	}
+}
+
+/**
+ * True when electron-updater can install this release in place on this
+ * platform: it must carry the channel file the updater reads to find the
+ * installer. See `updaterChannelFile()`.
+ */
+function hasUpdaterChannelFile(release: Release): boolean {
+	const channelFile = updaterChannelFile(process.platform, process.arch);
+	if (!channelFile) return false;
+	return (release.assets ?? []).some((asset) => asset.name.toLowerCase() === channelFile);
+}
+
+/**
+ * List the releases the user can roll back to: older than `currentVersion`,
+ * installable on this platform, newest first, capped at `ROLLBACK_LIST_LIMIT`.
+ * Prereleases are included only when `includePrerelease` is set, matching the
+ * Check for Updates toggle.
+ */
+export async function listRollbackTargets(
+	currentVersion: string,
+	includePrerelease: boolean = false
+): Promise<RollbackTargetsResult> {
+	try {
+		const allReleases = await fetchReleases(includePrerelease);
+		const releases = allReleases
+			.filter((r) => compareVersions(r.tag_name, currentVersion) < 0 && hasUpdaterChannelFile(r))
+			.slice(0, ROLLBACK_LIST_LIMIT)
+			.map((r) => ({
+				tag_name: r.tag_name,
+				name: r.name,
+				body: r.body,
+				html_url: r.html_url,
+				published_at: r.published_at,
+				prerelease: r.prerelease,
+			}));
+		logger.info(
+			`Found ${releases.length} rollback target(s) below v${currentVersion}`,
+			'UpdateChecker',
+			{ versions: releases.map((r) => r.tag_name) }
+		);
+		return { currentVersion, releases, releasesUrl: RELEASES_PAGE_URL };
+	} catch (error) {
+		const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+		logger.error(`Listing rollback targets failed: ${errorMessage}`, 'UpdateChecker');
+		return { currentVersion, releases: [], releasesUrl: RELEASES_PAGE_URL, error: errorMessage };
 	}
 }

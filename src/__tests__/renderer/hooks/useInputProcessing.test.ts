@@ -1838,6 +1838,12 @@ describe('useInputProcessing', () => {
 
 		beforeEach(() => {
 			useNotificationStore.setState({ toasts: [] });
+			// Hosting is opt-in: these cases run with it switched on.
+			useSettingsStore.setState({ federationHostedAgents: true });
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ federationHostedAgents: false });
 		});
 
 		it('sends an AI message to the host, spawns nothing here, and clears the draft once taken', async () => {
