@@ -245,6 +245,13 @@ export function planPipeSpawn(
 				return saveImageToTempFile(image, index);
 			}
 		);
+		if (delivery.via === 'files' && delivery.dropped > 0) {
+			// A turn that runs without one of its images answers as if it had seen them all.
+			removeTempFiles(delivery.tempFiles);
+			throw new Error(
+				'An attached image could not be written for the agent to read, so the turn was not started.'
+			);
+		}
 		if (delivery.via === 'files') {
 			finalArgs = delivery.args;
 			tempFiles = delivery.tempFiles;

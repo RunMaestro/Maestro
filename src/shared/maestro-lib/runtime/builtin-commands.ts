@@ -84,6 +84,12 @@ export interface RuntimeBuiltinCommands {
 	 * written to the tab, as the desktop writes it).
 	 */
 	run(agentId: string, tabId: string, command: MaestroBuiltinCommand): Promise<void>;
+	/**
+	 * Stop the `/history` synopses of an agent's tab, of every tab of the agent (no `tabId`), or of
+	 * every agent (no `agentId`): a tab that closes, an agent that is removed, and a host that shuts
+	 * down or is fenced leave no synopsis running or about to start.
+	 */
+	stop(agentId?: string, tabId?: string): void;
 }
 
 export function createRuntimeBuiltinCommands(
@@ -96,6 +102,11 @@ export function createRuntimeBuiltinCommands(
 	 * client wire has no field to write it, so a host restart starts the count again.
 	 */
 	const lastSynopsisAt = new Map<string, number>();
+	/** The stop signal of each tab's synopsis in flight, by `slotKey`. */
+	const inFlight = new Map<
+		string,
+		{ agentId: string; tabId: string; controller: AbortController }
+	>();
 	const slotKey = (agentId: string, tabId: string) => `${agentId}\u0000${tabId}`;
 	let loaderLooked = false;
 	let loader: ReturnType<typeof createPromptLoaderFor>;
@@ -143,10 +154,13 @@ export function createRuntimeBuiltinCommands(
 		}
 		await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.pending);
 		let release: (() => void) | undefined;
+		const key = slotKey(agentId, tabId);
+		const controller = new AbortController();
 		try {
 			// One writer per provider session: the synopsis holds it once the tab's turn has ended,
 			// and a send waits for the hold.
 			release = await options.reserveTabSession(agentId, tabId);
+			inFlight.set(key, { agentId, tabId, controller });
 			// What the wait may have changed: the turn that ran can have moved the tab to a new
 			// session, which is the conversation to summarize.
 			const current = repository.getTab(agentId, tabId);
@@ -186,7 +200,10 @@ export function createRuntimeBuiltinCommands(
 				resumeSessionId: sessionNow,
 				model: cheap.model,
 				effort: cheap.effort,
+				signal: controller.signal,
 			});
+			// Stopped (the tab closed, the host is going): nothing more is written for it.
+			if (controller.signal.aborted) return;
 			if (!result.success || !result.response) {
 				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.failed);
 				return;
@@ -228,6 +245,7 @@ export function createRuntimeBuiltinCommands(
 				HISTORY_COMMAND_TEXT.error(error instanceof Error ? error.message : String(error))
 			);
 		} finally {
+			if (inFlight.get(key)?.controller === controller) inFlight.delete(key);
 			release?.();
 		}
 	}
@@ -252,6 +270,13 @@ export function createRuntimeBuiltinCommands(
 	}
 
 	return {
+		stop(agentId, tabId) {
+			for (const entry of inFlight.values()) {
+				if (agentId !== undefined && entry.agentId !== agentId) continue;
+				if (tabId !== undefined && entry.tabId !== tabId) continue;
+				entry.controller.abort();
+			}
+		},
 		async run(agentId, tabId, command) {
 			try {
 				if (command.name === '/history') await history(agentId, tabId);

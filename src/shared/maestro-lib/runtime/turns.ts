@@ -814,7 +814,10 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				const queue = queues.get(event.agentId);
 				queue?.dispose();
 				queues.delete(event.agentId);
+				builtins.stop(event.agentId);
 			} else if (event.type === 'tab.removed') {
+				// A closed tab's `/history` synopsis has nowhere to write: it stops with the tab.
+				builtins.stop(event.agentId, event.tabId);
 				const queue = queues.get(event.agentId);
 				for (const item of queue?.items() ?? []) {
 					if (item.tabId === event.tabId) queue?.remove(item.id);
@@ -1064,6 +1067,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		dispose() {
 			disposed = true;
 			unsubscribeLifecycle();
+			builtins.stop();
 			for (const queue of queues.values()) queue.dispose();
 			queues.clear();
 			// Nothing runs any more, so nothing is left to wait for.

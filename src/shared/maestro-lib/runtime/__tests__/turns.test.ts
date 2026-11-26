@@ -692,6 +692,27 @@ describe('runtime turns', () => {
 				);
 			});
 
+			it("stops a tab's synopsis when the tab closes, and when the host shuts down", async () => {
+				const seeded = () =>
+					seedAgent({
+						aiTabs: [
+							{ id: 't1', agentSessionId: 'session-1', name: null, logs: [] },
+							{ id: 't2', agentSessionId: 'session-2', name: null, logs: [] },
+						],
+					});
+				hold = true;
+				const runtime = await start([seeded()]);
+				value(await runtime.turns.send('a1', 't2', { text: '/history' }));
+				await vi.waitFor(() => expect(live.now).toBe(1), { timeout: 8_000 });
+				value(await runtime.tabs.close('a1', 't2'));
+				await vi.waitFor(() => expect(live.now).toBe(0), { timeout: 8_000 });
+
+				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
+				await vi.waitFor(() => expect(live.now).toBe(1), { timeout: 8_000 });
+				await runtime.connection.close();
+				await vi.waitFor(() => expect(live.now).toBe(0), { timeout: 8_000 });
+			});
+
 			it('queues a held /history as a message, as Queue Held does on a desktop', async () => {
 				const runtime = await start();
 				const held = value(await runtime.turns.send('a1', 't1', { text: '/history', held: true }));

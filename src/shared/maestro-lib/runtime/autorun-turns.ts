@@ -73,7 +73,7 @@ export type AutoRunStreamEvent =
 export interface AutoRunTurnRunnerOptions {
 	agentId: string;
 	paths: MaestroPaths;
-	repository: Pick<AgentRepository, 'getAgent'>;
+	repository: Pick<AgentRepository, 'getAgent'> & Partial<Pick<AgentRepository, 'writeRefusal'>>;
 	registry: ProcessRegistry;
 	statsRecorder: Pick<StatsRecorder, 'recordQuery'>;
 	/** What the host told the runtime about prompts, the CLI script, and maestro-p. */
@@ -168,6 +168,11 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 		const turn = assembled.turn;
 		const provider = turn.settings.provider;
 
+		// Nothing starts once the turn was stopped, or the host stopped being the data directory's
+		// writer (shutdown, fencing): the process would outlive the lock it was started under.
+		if (request.signal?.aborted) return attempt(failure('The turn was stopped before it started.'));
+		const fenced = repository.writeRefusal?.();
+		if (fenced) return attempt(failure(fenced));
 		const sessionId = `${agentId}-batch-${deps.now()}`;
 		const started = await startTurn(turn, {
 			sessionId,
