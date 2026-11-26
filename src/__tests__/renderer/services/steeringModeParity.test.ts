@@ -180,6 +180,38 @@ describe('Auto Run Steer across modes (P5)', () => {
 		});
 	});
 
+	it('keeps showing a note the host has not answered while an earlier list lands', async () => {
+		setUp('hosted');
+		let releaseList!: () => void;
+		const held = new Promise<void>((resolve) => {
+			releaseList = resolve;
+		});
+		const answer = act.getMockImplementation()!;
+		act.mockImplementationOnce(async (peer: string, agent: string, action: any) => {
+			await held;
+			return answer(peer, agent, action);
+		});
+		// A list is in flight when the note is sent; it answers with the host's state before the send.
+		const reading = refreshHostedSteering(SID);
+		submitSteeringNote({ sessionId: SID, text: 'Sent mid-read', announce: false });
+		releaseList();
+		await reading;
+		expect(useAutoRunSteeringStore.getState().notes[SID]?.map((note) => note.text)).toEqual([
+			'Sent mid-read',
+		]);
+		await settled();
+		expect(useAutoRunSteeringStore.getState().notes[SID]).toEqual([
+			{ id: 'host-1', text: 'Sent mid-read', timestamp: 7 },
+		]);
+	});
+
+	it('holds one waiting list read per agent, however many frames ask for one', async () => {
+		setUp('hosted');
+		const reads = [1, 2, 3, 4, 5].map(() => refreshHostedSteering(SID));
+		await Promise.all(reads);
+		expect(act).toHaveBeenCalledTimes(1);
+	});
+
 	it('still refuses a run another client owns, and sends nothing for a local or SSH run', async () => {
 		setUp('ssh');
 		useBatchStore.setState({ batchRunStates: { [SID]: runFor('hosted') } } as never);

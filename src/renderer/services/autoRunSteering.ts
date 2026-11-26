@@ -133,17 +133,39 @@ function hostDelivered(raw: unknown): DeliveredSteeringNote[] {
 	return delivered.slice(-MAX_DELIVERED_STEERING_NOTES);
 }
 
-/** Replace what this window shows for a hosted agent with the host's own list. */
+/** Notes this window shows whose send the host has not answered yet, by agent. */
+const unansweredNotes = new Map<string, Set<string>>();
+
+/**
+ * Replace what this window shows for a hosted agent with the host's own list. A note whose send
+ * the host has not answered yet stays, after the host's: a list read before the send reached the
+ * host cannot know it.
+ */
 function applyHostList(sessionId: string, result: SteeringCommandResult): void {
-	const pending = (Array.isArray(result.pending) ? result.pending : [])
+	const hostPending = (Array.isArray(result.pending) ? result.pending : [])
 		.map(hostNote)
-		.filter((note): note is AutoRunSteeringNote => note !== undefined)
-		.slice(0, MAX_PENDING_STEERING_NOTES);
-	const delivered = hostDelivered(result.deliveries);
-	useAutoRunSteeringStore.setState((state) => ({
-		notes: { ...state.notes, [sessionId]: pending },
-		delivered: { ...state.delivered, [sessionId]: delivered },
-	}));
+		.filter((note): note is AutoRunSteeringNote => note !== undefined);
+	const unanswered = unansweredNotes.get(sessionId);
+	useAutoRunSteeringStore.setState((state) => {
+		const waiting = unanswered
+			? (state.notes[sessionId] ?? []).filter((note) => unanswered.has(note.id))
+			: [];
+		return {
+			notes: {
+				...state.notes,
+				[sessionId]: [...hostPending, ...waiting].slice(0, MAX_PENDING_STEERING_NOTES),
+			},
+			delivered: { ...state.delivered, [sessionId]: hostDelivered(result.deliveries) },
+		};
+	});
+}
+
+function markUnanswered(sessionId: string, noteId: string, waiting: boolean): void {
+	const notes = unansweredNotes.get(sessionId) ?? new Set<string>();
+	if (waiting) notes.add(noteId);
+	else notes.delete(noteId);
+	if (notes.size) unansweredNotes.set(sessionId, notes);
+	else unansweredNotes.delete(sessionId);
 }
 
 /** The host's id for a note this window showed first under its own, by that id. */
@@ -176,6 +198,8 @@ function forwardToHost(
 		let answer: SteeringCommandResult | null = null;
 		if (ask.action !== 'list') {
 			answer = (await steerHostedAutoRun(session, ask)) ?? null;
+			// Answered (or out of reach): from here the host's list says whether it waits.
+			if (options.localNoteId) markUnanswered(sessionId, options.localNoteId, false);
 			if (answer?.success && options.localNoteId && answer.note?.id) {
 				hostNoteIds.set(options.localNoteId, answer.note.id);
 			}
@@ -205,9 +229,29 @@ function forwardToHost(
  * first sees the host's run and as the run moves on (a task took the notes, or replied to them).
  * No-op for any other agent.
  */
-export async function refreshHostedSteering(sessionId: string): Promise<void> {
-	await forwardToHost(sessionId, { action: 'list' }, { quiet: true });
+export function refreshHostedSteering(sessionId: string): Promise<void> {
+	// One read waiting per agent is enough: frames faster than the host answers must not queue
+	// reads ahead of a note the person sends.
+	const queued = queuedRefreshes.get(sessionId);
+	if (queued) return queued;
+	const read = forwardToHost(
+		sessionId,
+		() => {
+			queuedRefreshes.delete(sessionId);
+			return { action: 'list' };
+		},
+		{ quiet: true }
+	)
+		.then(() => undefined)
+		.finally(() => {
+			if (queuedRefreshes.get(sessionId) === read) queuedRefreshes.delete(sessionId);
+		});
+	queuedRefreshes.set(sessionId, read);
+	return read;
 }
+
+/** The list read waiting its turn for each hosted agent, if one is. */
+const queuedRefreshes = new Map<string, Promise<void>>();
 
 /**
  * Answer one steering verb from outside the panel (`maestro-cli steer-auto-run`). A hosted agent's
@@ -275,6 +319,7 @@ export function submitSteeringNote(args: SubmitSteeringNoteArgs): AutoRunSteerin
 	// A hosted agent's run is on its host: the note goes there, and the host's list replaces this
 	// one when it answers (the note shows as pending meanwhile, as a local one does).
 	if (hostedSessionOf(sessionId)) {
+		markUnanswered(sessionId, note.id, true);
 		void forwardToHost(
 			sessionId,
 			{ action: 'send', text: note.text },
