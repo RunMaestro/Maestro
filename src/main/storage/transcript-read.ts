@@ -20,10 +20,14 @@ export function isMissingFileError(error: unknown): boolean {
 	return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
-/** True when a remote read failed because the file does not exist (`readFileRemote`'s wording). */
-export function isMissingRemoteFile(error: string | undefined): boolean {
+/**
+ * True when a remote read failed because the file does not exist (`readFileRemote`'s wording).
+ * The read's own path is taken out first, so a folder named like an error never decides it.
+ */
+export function isMissingRemoteFile(error: string | undefined, filePath?: string): boolean {
 	if (!error) return false;
-	const lower = error.toLowerCase();
+	const reason = filePath ? error.split(filePath).join('') : error;
+	const lower = reason.toLowerCase();
 	return (
 		lower.startsWith('file not found') ||
 		lower.includes('no such file') ||
@@ -74,6 +78,6 @@ export async function readRemoteTranscript(
 ): Promise<string | null> {
 	const result = await readFileRemote(filePath, sshConfig);
 	if (result.success) return result.data ?? '';
-	if (isMissingRemoteFile(result.error)) return null;
+	if (isMissingRemoteFile(result.error, filePath)) return null;
 	throw new Error(result.error || `Failed to read transcript: ${filePath}`);
 }

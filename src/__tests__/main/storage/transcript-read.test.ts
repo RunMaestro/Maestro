@@ -112,6 +112,15 @@ describe('the transcript readers', () => {
 		expect(await readRemoteTranscript('/t.jsonl', sshConfig)).toBe('');
 	});
 
+	it('rejects an unreadable remote transcript under a folder named like a missing-file error', async () => {
+		const odd = '/x/no such file/t.jsonl';
+		vi.mocked(readFileRemote).mockResolvedValueOnce({
+			success: false,
+			error: `Permission denied: ${odd}`,
+		});
+		await expect(readRemoteTranscript(odd, sshConfig)).rejects.toThrow('Permission denied');
+	});
+
 	it('rejects a remote read that failed for any reason but a missing file, with its words', async () => {
 		vi.mocked(readFileRemote).mockResolvedValueOnce({
 			success: false,
@@ -135,5 +144,9 @@ describe('the transcript readers', () => {
 		expect(isMissingRemoteFile('Permission denied: /x')).toBe(false);
 		expect(isMissingRemoteFile('Path is a directory: /x')).toBe(false);
 		expect(isMissingRemoteFile(undefined)).toBe(false);
+		// The path is not the reason: a folder named like an error decides nothing.
+		const odd = '/x/not a directory/t.jsonl';
+		expect(isMissingRemoteFile(`Permission denied: ${odd}`, odd)).toBe(false);
+		expect(isMissingRemoteFile(`File not found: ${odd}`, odd)).toBe(true);
 	});
 });
