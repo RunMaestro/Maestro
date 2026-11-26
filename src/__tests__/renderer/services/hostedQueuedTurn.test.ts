@@ -38,7 +38,7 @@ import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import type { QueuedItem } from '../../../renderer/types';
+import type { LogEntry, QueuedItem } from '../../../renderer/types';
 import type { QueueExit } from '../../../shared/maestro-lib/client/types';
 import {
 	createMirroredPeer,
@@ -480,37 +480,68 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		];
 		// Queued behind the turn that started at 100.
 		const queued = { stage: 'sent', queueItemId: 'h9', turnStartedAt: 100 };
-		const busyWith = (thinkingStartTime: number, hostTurn: object) => ({
+		const busyWith = (thinkingStartTime: number, hostTurn: object, logs: LogEntry[] = []) => ({
 			state: 'busy' as const,
 			thinkingStartTime,
-			logs: [],
+			logs,
 			pendingMentionHandoff: handoff(hostTurn),
 		});
+		// What the host streams as its turn starts: the message's own user entry.
+		const ownEntry: LogEntry[] = [
+			{ id: 'u-live', timestamp: 3, source: 'user', text: 'm', hostLive: true },
+		];
+		const otherEntry: LogEntry[] = [
+			{ id: 'o-live', timestamp: 3, source: 'user', text: 'another message', hostLive: true },
+		];
 		expect(hostedHandoffStep(busyWith(100, queued), new Set(['h9']))).toBe('seen-queued');
 		const seen = { ...queued, seenQueued: true };
 		expect(hostedHandoffStep(busyWith(100, seen), new Set(['h9']))).toBe('wait');
 		// The turn ahead is recorded once: a busy state that lands before the queue change is this
 		// item's own turn, never a new turn ahead (M14).
 		expect(hostedHandoffStep(busyWith(150, seen), new Set(['h9']))).toBe('wait');
-		// Its own turn started: a new start time on the tab.
-		expect(hostedHandoffStep(busyWith(200, seen), new Set())).toBe('running');
-		// Gone from the queue while the turn ahead still runs, or with the tab idle: the tab's state
-		// may still come, so it waits a short time for its start (any number of syncs), then counts
-		// as removed and nothing goes out (Greptile on #2148).
+		// Its own turn started: the host wrote its message on the tab.
+		expect(hostedHandoffStep(busyWith(200, seen, ownEntry), new Set())).toBe('running');
+		// Gone from the queue while the turn ahead still runs, or with the tab idle, or while another
+		// message's turn runs: its own entry may still come, so it waits a short time (any number of
+		// syncs). Another message's start is never its start (CodeRabbit on #2148).
 		expect(hostedHandoffStep(busyWith(100, seen), new Set())).toBe('left-queue');
 		expect(hostedHandoffStep({ ...busyWith(100, seen), state: 'idle' }, new Set())).toBe(
 			'left-queue'
 		);
+		expect(hostedHandoffStep(busyWith(200, seen, otherEntry), new Set())).toBe('left-queue');
 		const left = { ...seen, goneAt: 1_000 };
 		const soon = 1_000 + HOST_QUEUE_START_GRACE_MS;
 		const late = soon + 1;
 		expect(hostedHandoffStep(busyWith(100, left), new Set(), false, undefined, soon)).toBe('wait');
-		expect(hostedHandoffStep(busyWith(200, left), new Set(), false, undefined, soon)).toBe(
-			'running'
-		);
+		expect(
+			hostedHandoffStep(busyWith(200, left, otherEntry), new Set(), false, undefined, soon)
+		).toBe('wait');
+		expect(
+			hostedHandoffStep(busyWith(200, left, ownEntry), new Set(), false, undefined, soon)
+		).toBe('running');
+		// Still on the turn it was queued behind after the window: it was removed.
 		expect(hostedHandoffStep(busyWith(100, left), new Set(), false, undefined, late)).toBe('drop');
-		// A start seen after the window is not its turn: it was removed.
-		expect(hostedHandoffStep(busyWith(200, left), new Set(), false, undefined, late)).toBe('drop');
+		// Another message's turn after the window: that turn's end and saved transcript decide.
+		const idleLate = (logs: LogEntry[], current: boolean) =>
+			hostedHandoffStep(
+				{ ...busyWith(200, left, logs), state: 'idle' },
+				new Set(),
+				current,
+				undefined,
+				late
+			);
+		expect(
+			hostedHandoffStep(busyWith(200, left, otherEntry), new Set(), false, undefined, late)
+		).toBe('wait');
+		expect(idleLate(otherEntry, false)).toBe('read');
+		expect(idleLate(otherEntry, true)).toBe('drop');
+		// Its turn ran and ended while this window was not attached: the saved transcript shows its
+		// message, so it runs, and its own answer releases it (CodeRabbit on #2148).
+		const ranWhileDetached: LogEntry[] = [
+			{ id: 'u', timestamp: 3, source: 'user', text: 'm' },
+			{ id: 'a', timestamp: 4, source: 'ai', text: 'done' },
+		];
+		expect(idleLate(ranWhileDetached, true)).toBe('running');
 		// The turn ended but the tab still draws what it streamed: read the saved transcript first.
 		expect(
 			hostedHandoffStep(
@@ -638,13 +669,32 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			crossAgentMention: true,
 			mentionRouting: 'parallel',
 		});
-		const withHost = (hostQueued: boolean, thinkingStartTime: number) =>
+		const withHost = (hostQueued: boolean, thinkingStartTime: number, ran = false) =>
 			useSessionStore.setState((current) => ({
 				sessions: current.sessions.map((s) =>
 					s.id === 'row'
 						? {
 								...s,
-								aiTabs: s.aiTabs.map((t) => ({ ...t, state: 'busy', thinkingStartTime })),
+								aiTabs: s.aiTabs.map((t) => ({
+									...t,
+									state: 'busy',
+									thinkingStartTime,
+									// Its turn started: the host streams the message's own user entry.
+									...(ran
+										? {
+												logs: [
+													...t.logs,
+													{
+														id: 'u-live',
+														timestamp: 3,
+														source: 'user' as const,
+														text: item.text ?? '',
+														hostLive: true,
+													},
+												],
+											}
+										: {}),
+								})),
 								executionQueue: hostQueued
 									? [queuedMessage({ id: 'h9', hostQueued: true, text: item.text })]
 									: s.executionQueue.filter((q) => !q.hostQueued),
@@ -661,7 +711,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		withHost(true, 100);
 		fireHostStartedMentions(row());
 		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-		withHost(false, 200);
+		withHost(false, 200, true);
 		fireHostStartedMentions(row());
 		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 		expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({ targetSessionId: 'backend' });
@@ -752,22 +802,40 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		}));
 		fireHostStartedMentions(row());
 		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-		// The host started it before any queue frame arrived: a turn that began after the receipt.
+		// The host started it before any queue frame arrived: a turn that began after the receipt,
+		// and with it the message's own user entry.
 		const startedAfter = Date.now() + 1;
-		useSessionStore.setState((current) => ({
-			sessions: current.sessions.map((s) =>
-				s.id === 'row'
-					? {
-							...s,
-							aiTabs: s.aiTabs.map((t) => ({
-								...t,
-								state: 'busy',
-								thinkingStartTime: startedAfter,
-							})),
-						}
-					: s
-			),
-		}));
+		const busyWithLogs = (logs: LogEntry[]) =>
+			useSessionStore.setState((current) => ({
+				sessions: current.sessions.map((s) =>
+					s.id === 'row'
+						? {
+								...s,
+								aiTabs: s.aiTabs.map((t) => ({
+									...t,
+									state: 'busy',
+									thinkingStartTime: startedAfter,
+									logs: [...t.logs, ...logs],
+								})),
+							}
+						: s
+				),
+			}));
+		// Another message's turn is not its start.
+		busyWithLogs([
+			{ id: 'o', timestamp: 3, source: 'user', text: 'something else', hostLive: true },
+		]);
+		fireHostStartedMentions(row());
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		busyWithLogs([
+			{
+				id: 'u-live',
+				timestamp: 4,
+				source: 'user',
+				text: 'look into the cache with @Backend',
+				hostLive: true,
+			},
+		]);
 
 		fireHostStartedMentions(row());
 		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
@@ -784,7 +852,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		// The first hand-off's turn still runs on the host.
 		setTab({
 			state: 'busy',
-			logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'first' }],
+			logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'first, then tell @Backend' }],
 			pendingMentionHandoff: {
 				targets: [{ targetSessionId: 'backend', targetAgentName: 'Backend' }],
 				message: 'first, then tell @Backend',
@@ -812,9 +880,9 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		setTab({
 			state: 'idle',
 			logs: [
-				{ id: 'u1', timestamp: 1, source: 'user', text: 'first' },
+				{ id: 'u1', timestamp: 1, source: 'user', text: 'first, then tell @Backend' },
 				{ id: 'a1', timestamp: 2, source: 'ai', text: 'first answer' },
-				{ id: 'u2', timestamp: 3, source: 'user', text: 'second' },
+				{ id: 'u2', timestamp: 3, source: 'user', text: 'second, then tell @Backend' },
 				{ id: 'a2', timestamp: 4, source: 'ai', text: 'second answer' },
 			],
 		});
@@ -891,7 +959,8 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 	});
 
 	describe('a turn the host queued, whose queue change and tab state arrive apart (M14)', () => {
-		type HostView = { queued: boolean; busy?: number; logs?: boolean };
+		/** `ran`: the host wrote this message's user entry (live, as its turn starts). */
+		type HostView = { queued: boolean; busy?: number; logs?: boolean; ran?: boolean };
 		/** One host message: the queue change, or the tab's state, as its own store update. */
 		const hostSays = (itemId: string, text: string, view: HostView) =>
 			useSessionStore.setState((current) => ({
@@ -903,6 +972,20 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 									...t,
 									state: view.busy === undefined ? 'idle' : 'busy',
 									thinkingStartTime: view.busy,
+									...(view.ran && !t.logs.some((entry) => entry.id === 'u-live')
+										? {
+												logs: [
+													...t.logs,
+													{
+														id: 'u-live',
+														timestamp: 3,
+														source: 'user' as const,
+														text,
+														hostLive: true,
+													},
+												],
+											}
+										: {}),
 									...(view.logs
 										? {
 												logs: [
@@ -954,10 +1037,10 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				hostSays(id, text, { queued: true, busy: 100 });
 				fireHostStartedMentions(row());
 				// The tab reads its own turn while the queue change has not come yet.
-				hostSays(id, text, { queued: true, busy: 200 });
+				hostSays(id, text, { queued: true, busy: 200, ran: true });
 				fireHostStartedMentions(row());
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-				hostSays(id, text, { queued: false, busy: 200 });
+				hostSays(id, text, { queued: false, busy: 200, ran: true });
 				fireHostStartedMentions(row());
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 				expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
@@ -973,7 +1056,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				hostSays(id, text, { queued: false });
 				fireHostStartedMentions(row());
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-				hostSays(id, text, { queued: false, busy: 200 });
+				hostSays(id, text, { queued: false, busy: 200, ran: true });
 				fireHostStartedMentions(row());
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 			});
@@ -986,7 +1069,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				hostSays(id, text, { queued: false, busy: 100 });
 				fireHostStartedMentions(row());
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-				hostSays(id, text, { queued: false, busy: 200 });
+				hostSays(id, text, { queued: false, busy: 200, ran: true });
 				fireHostStartedMentions(row());
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 			});
@@ -1000,7 +1083,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				// The projection's write, a hand-off's write, any store change: the same host state.
 				for (let n = 0; n < 4; n++) fireHostStartedMentions(row());
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-				hostSays(id, text, { queued: false, busy: 200 });
+				hostSays(id, text, { queued: false, busy: 200, ran: true });
 				fireHostStartedMentions(row());
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 			});
@@ -1012,12 +1095,44 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				fireHostStartedMentions(row());
 				hostSays(id, text, { queued: false });
 				fireHostStartedMentions(row());
+				// Another message's turn runs after the window: that turn's end and saved transcript
+				// decide, never its start (CodeRabbit on #2148).
+				const late = Date.now() + HOST_QUEUE_START_GRACE_MS + 1;
+				const current = { read: vi.fn(), isCurrent: () => true };
+				const removedNote = 'Nothing was asked of Backend: the message was removed before it ran.';
 				hostSays(id, text, { queued: false, busy: 300 });
-				fireHostStartedMentions(row(), undefined, Date.now() + HOST_QUEUE_START_GRACE_MS + 1);
+				fireHostStartedMentions(row(), undefined, late, 0, current);
+				expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(removedNote);
+				// It ended, and the current saved transcript never shows this message.
+				hostSays(id, text, { queued: false });
+				const stale = { read: vi.fn(), isCurrent: () => false };
+				fireHostStartedMentions(row(), undefined, late, 0, stale);
+				expect(stale.read).toHaveBeenCalledWith('t1');
+				expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(removedNote);
+				fireHostStartedMentions(row(), undefined, late, 0, current);
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-				expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(
-					'Nothing was asked of Backend: the message was removed before it ran.'
-				);
+				expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(removedNote);
+			});
+
+			it('one whose turn ran and ended while this window was not attached consults once, from the saved transcript (CodeRabbit on #2148)', async () => {
+				const id = `t-${routing}`;
+				const text = await drainQueued(id, routing);
+				hostSays(id, text, { queued: true, busy: 100 });
+				fireHostStartedMentions(row(), [], Date.now(), 0);
+				// Detached: it started and ended. The reconnect reads the queue whole and the tab idle.
+				hostSays(id, text, { queued: false });
+				const late = Date.now() + HOST_QUEUE_START_GRACE_MS + 1;
+				const stale = { read: vi.fn(), isCurrent: () => false };
+				fireHostStartedMentions(row(), [], Date.now(), 1, stale);
+				fireHostStartedMentions(row(), [], late, 1, stale);
+				expect(stale.read).toHaveBeenCalledWith('t1');
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				// The saved transcript shows its message and answer.
+				hostSays(id, text, { queued: false, logs: true });
+				fireHostStartedMentions(row(), [], late, 1, { read: vi.fn(), isCurrent: () => true });
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				fireHostStartedMentions(row(), [], late, 1, { read: vi.fn(), isCurrent: () => true });
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 			});
 
 			it('a host that names its exits: the named start consults in either order, a named removal never', async () => {
@@ -1026,7 +1141,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				hostSays(id, text, { queued: true, busy: 100 });
 				fireHostStartedMentions(row(), []);
 				// Busy state first: nothing is inferred from it.
-				hostSays(id, text, { queued: true, busy: 200 });
+				hostSays(id, text, { queued: true, busy: 200, ran: true });
 				fireHostStartedMentions(row(), []);
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 				// The queue change that names it, with the tab still idle between turns.
@@ -1054,7 +1169,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				fireHostStartedMentions(row(), [], Date.now(), 0);
 				// Disconnected: the host starts it, and that named start never reaches this window.
 				// The reconnect reads the queue whole (one read): it lacks the item and names nothing.
-				hostSays(id, text, { queued: false, busy: 200 });
+				hostSays(id, text, { queued: false, busy: 200, ran: true });
 				fireHostStartedMentions(row(), [], Date.now(), 1);
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 				fireHostStartedMentions(row(), [], Date.now(), 1);
@@ -1068,7 +1183,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				fireHostStartedMentions(row(), [], Date.now(), 0);
 				// Detached: this item starts unseen. On reconnect B starts during the queue read; that
 				// change names only B, and main counts the read it replaced (one read).
-				hostSays(id, text, { queued: false, busy: 300 });
+				hostSays(id, text, { queued: false, busy: 300, ran: true });
 				fireHostStartedMentions(row(), [started('B')], Date.now(), 1);
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 				fireHostStartedMentions(row(), [started('B')], Date.now(), 1);
@@ -1093,7 +1208,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 					'Nothing was asked of Backend: the message was removed before it ran.'
 				);
 				// Then its start is named.
-				hostSays(id, text, { queued: false, busy: 200 });
+				hostSays(id, text, { queued: false, busy: 200, ran: true });
 				fireHostStartedMentions(row(), [started(id)]);
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 			});
@@ -1115,12 +1230,12 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				const text = await drainQueued('h-a', 'handoff');
 				hostSays('h-a', text, { queued: true, busy: 100 });
 				followHostedHandoffs(row());
-				hostSays('h-a', text, { queued: true, busy: 200 });
+				hostSays('h-a', text, { queued: true, busy: 200, ran: true });
 				followHostedHandoffs(row());
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn).toMatchObject({
 					turnStartedAt: 100,
 				});
-				hostSays('h-a', text, { queued: false, busy: 200 });
+				hostSays('h-a', text, { queued: false, busy: 200, ran: true });
 				followHostedHandoffs(row());
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
 				releasesWithItsAnswer(text);
@@ -1133,7 +1248,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				hostSays('h-b', text, { queued: false });
 				followHostedHandoffs(row());
 				expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
-				hostSays('h-b', text, { queued: false, busy: 200 });
+				hostSays('h-b', text, { queued: false, busy: 200, ran: true });
 				followHostedHandoffs(row());
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
 				releasesWithItsAnswer(text);
@@ -1146,7 +1261,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				hostSays('h-g', text, { queued: false });
 				for (let n = 0; n < 4; n++) followHostedHandoffs(row());
 				expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
-				hostSays('h-g', text, { queued: false, busy: 200 });
+				hostSays('h-g', text, { queued: false, busy: 200, ran: true });
 				followHostedHandoffs(row());
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
 				releasesWithItsAnswer(text);
@@ -1156,7 +1271,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				const text = await drainQueued('h-c', 'handoff');
 				hostSays('h-c', text, { queued: true, busy: 100 });
 				followHostedHandoffs(row(), undefined, []);
-				hostSays('h-c', text, { queued: false, busy: 200 });
+				hostSays('h-c', text, { queued: false, busy: 200, ran: true });
 				followHostedHandoffs(row(), undefined, [started('h-c')]);
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
 				releasesWithItsAnswer(text, [started('h-c')]);
@@ -1166,7 +1281,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				const text = await drainQueued('h-m18', 'handoff');
 				hostSays('h-m18', text, { queued: true, busy: 100 });
 				followHostedHandoffs(row(), undefined, [], Date.now(), 0);
-				hostSays('h-m18', text, { queued: false, busy: 200 });
+				hostSays('h-m18', text, { queued: false, busy: 200, ran: true });
 				// Without a read since it was seen, a missing item with no name waits for its name...
 				followHostedHandoffs(row(), undefined, [], Date.now(), 0);
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('sent');
@@ -1184,12 +1299,39 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				followHostedHandoffs(row(), undefined, [], Date.now(), 0);
 				// Detached: it starts unseen; B starts during the reconnect read, named alone, and main
 				// counts the replaced read.
-				hostSays('h-m19', text, { queued: false, busy: 300 });
+				hostSays('h-m19', text, { queued: false, busy: 300, ran: true });
 				followHostedHandoffs(row(), undefined, [started('B')], Date.now(), 1);
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
 				followHostedHandoffs(row(), undefined, [started('B')], Date.now(), 1);
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
 				releasesWithItsAnswer(text, [started('B')]);
+			});
+
+			it('a hand-off whose turn ran and ended while this window was not attached releases once, with its own answer (CodeRabbit on #2148)', async () => {
+				const text = await drainQueued('h-t', 'handoff');
+				hostSays('h-t', text, { queued: true, busy: 100 });
+				followHostedHandoffs(row(), undefined, [], Date.now(), 0);
+				// Detached: it started and ended. The reconnect reads the queue whole and the tab idle.
+				hostSays('h-t', text, { queued: false });
+				const late = Date.now() + HOST_QUEUE_START_GRACE_MS + 1;
+				const stale = { read: vi.fn(), isCurrent: () => false };
+				followHostedHandoffs(row(), stale, [], Date.now(), 1);
+				followHostedHandoffs(row(), stale, [], late, 1);
+				expect(stale.read).toHaveBeenCalledWith('t1');
+				expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
+				// The saved transcript shows its message and answer: it ran, and its answer goes out.
+				hostSays('h-t', text, { queued: false, logs: true });
+				const current = { read: vi.fn(), isCurrent: () => true };
+				followHostedHandoffs(row(), current, [], late, 1);
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
+				followHostedHandoffs(row(), current, [], late, 1);
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
+					targetSessionId: 'backend',
+					handoffAnswer: 'The cache is stale.',
+				});
+				followHostedHandoffs(row(), current, [], late, 1);
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 			});
 
 			it('a named start on a tab that still reads idle never releases from a transcript older than it (CodeRabbit on #2148)', async () => {
@@ -1245,7 +1387,8 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			row()
 				.aiTabs[0].logs.filter((entry) => entry.source === 'system')
 				.map((entry) => entry.text);
-		const busy = (thinkingStartTime: number | undefined, hostQueuedId?: string) =>
+		/** `ran`: the host wrote the queued message's user entry, as its turn starts. */
+		const busy = (thinkingStartTime: number | undefined, hostQueuedId?: string, ran = false) =>
 			useSessionStore.setState((current) => ({
 				sessions: current.sessions.map((s) =>
 					s.id === 'row'
@@ -1255,6 +1398,20 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 									...t,
 									state: thinkingStartTime === undefined ? 'idle' : 'busy',
 									thinkingStartTime,
+									...(ran
+										? {
+												logs: [
+													...t.logs,
+													{
+														id: `u-live-${t.logs.length}`,
+														timestamp: 3,
+														source: 'user' as const,
+														text: 'look into the cache with @Backend',
+														hostLive: true,
+													},
+												],
+											}
+										: {}),
 								})),
 								executionQueue: hostQueuedId
 									? [queuedMessage({ id: hostQueuedId, hostQueued: true })]
@@ -1292,7 +1449,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			busy(100);
 			fireHostStartedMentions(row());
 			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
-			busy(150);
+			busy(150, undefined, true);
 			fireHostStartedMentions(row());
 			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 		});
@@ -1383,7 +1540,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			busy(100, 'm15-waits');
 			fireHostStartedMentions(row());
 			dropStoppedHostStartMentions('row');
-			busy(300);
+			busy(300, undefined, true);
 			fireHostStartedMentions(row());
 			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 		});

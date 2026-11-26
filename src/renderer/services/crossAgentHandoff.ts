@@ -29,6 +29,7 @@
 
 import type { QueueExit, TurnSendReceipt } from '../../shared/maestro-lib/client/types';
 import { queueExitOf } from '../../shared/maestro-lib/client/peer-mirror';
+import { PROMPT_LAYER_SEPARATOR } from '../../shared/maestro-lib/turns/prompt';
 import type { AITab, ConsultHoldTarget, LogEntry, MentionHandoff, Session } from '../types';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { sendCrossAgentRequest } from '../hooks/agent/useCrossAgentDispatch';
@@ -271,17 +272,94 @@ function entriesAfter(logs: LogEntry[], afterEntryId: string | undefined): LogEn
 }
 
 /**
- * The one turn a hosted hand-off waits on: from the first user message the host wrote after the
- * send boundary up to the next one. A later turn that ended before the same sync is not its turn,
- * and the end of a turn that was still running at the send (before that message) is not either.
- * Empty until the host wrote the turn's message.
+ * Where, in `entries`, the host wrote the user entry of `message`: the first user entry whose text
+ * is the message, or holds it as one whole layer (an older host that takes no agent-only text gets
+ * the consult's replies and notes laid around the message, `withTurnAgentText()`). A message with
+ * no text (images only) cannot be told apart: the first user entry is taken. -1 while none.
  */
-function ownTurnEntries(logs: LogEntry[], afterEntryId: string | undefined): LogEntry[] {
+function userEntryIndexOf(entries: LogEntry[], message: string | undefined): number {
+	const wanted = message?.trim();
+	return entries.findIndex((entry) => {
+		if (entry.source !== 'user') return false;
+		if (!wanted) return true;
+		const text = (entry.text ?? '').trim();
+		return (
+			text === wanted || text.split(PROMPT_LAYER_SEPARATOR).some((layer) => layer.trim() === wanted)
+		);
+	});
+}
+
+/**
+ * The one turn a hosted hand-off waits on: from the user entry the host wrote for its message after
+ * the send boundary (`message`; the first user entry when unknown) up to the next user entry. The
+ * turn the message was queued behind, a later turn that ended before the same sync, and the end of
+ * a turn still running at the send are none of them. Empty until the host wrote the message.
+ */
+function ownTurnEntries(
+	logs: LogEntry[],
+	afterEntryId: string | undefined,
+	message?: string
+): LogEntry[] {
 	const after = entriesAfter(logs, afterEntryId);
-	const start = after.findIndex((entry) => entry.source === 'user');
+	const start = userEntryIndexOf(after, message);
 	if (start === -1) return [];
 	const next = after.findIndex((entry, index) => index > start && entry.source === 'user');
 	return after.slice(start, next === -1 ? undefined : next);
+}
+
+/** Whether the host wrote `message`'s user entry on the tab after the send boundary: it ran. */
+export function hostRanMessage(
+	logs: LogEntry[],
+	afterEntryId: string | undefined,
+	message: string | undefined
+): boolean {
+	return userEntryIndexOf(entriesAfter(logs, afterEntryId), message) !== -1;
+}
+
+/** A hosted tab's saved transcript, as the sync reads it for a turn's own entries. */
+export interface HostedTranscriptAccess {
+	/** Ask for the tab's saved transcript (once; a failed read waits for a new trigger). */
+	read: (tabId: string) => void;
+	/** The tab's saved transcript is loaded and nothing marked it stale since. */
+	isCurrent: (tabId: string) => boolean;
+}
+
+/**
+ * How a message the host queued, now gone from the host's queue with no exit named for it (a host
+ * that names none, or a reconnect read that may have missed the name), stands. A start belongs to
+ * the message only when the host wrote the message's own user entry after its send boundary
+ * (`hostRanMessage()`, live as the turn starts, or in the saved transcript after it): another
+ * message's turn, or a turn that started at another time, never counts as its start.
+ * - `started`: its user entry is on the tab.
+ * - `left`: first seen gone (the caller records `goneAt`).
+ * - `wait`: its start may still show (inside `HOST_QUEUE_START_GRACE_MS`), or the tab runs a turn
+ *   whose own entry has not come (a host that does not stream it): the saved transcript decides
+ *   once that turn ends.
+ * - `read`: the tab is idle and its saved transcript is not current: read it before deciding.
+ * - `removed`: past the grace, the tab still runs the turn it was queued behind, or is idle with a
+ *   current transcript that never shows the message.
+ */
+export function judgeUnnamedHostStart(
+	tab: Pick<AITab, 'state' | 'logs' | 'thinkingStartTime'> | undefined,
+	waiting: {
+		afterEntryId: string | undefined;
+		message: string | undefined;
+		/** The turn it was queued behind is recorded (`turnStartedAt`, the host's clock). */
+		aheadKnown: boolean;
+		turnStartedAt?: number;
+		goneAt?: number;
+	},
+	now: number,
+	transcriptCurrent: boolean
+): 'started' | 'left' | 'wait' | 'read' | 'removed' {
+	if (tab && hostRanMessage(tab.logs, waiting.afterEntryId, waiting.message)) return 'started';
+	if (waiting.goneAt === undefined) return 'left';
+	if (now - waiting.goneAt <= HOST_QUEUE_START_GRACE_MS) return 'wait';
+	if (tab?.state === 'busy') {
+		const ahead = waiting.aheadKnown && tab.thinkingStartTime === waiting.turnStartedAt;
+		return ahead ? 'removed' : 'wait';
+	}
+	return transcriptCurrent ? 'removed' : 'read';
 }
 
 /**
@@ -296,11 +374,11 @@ function ownTurnEntries(logs: LogEntry[], afterEntryId: string | undefined): Log
  *   read busy counts once its answer follows the entry the tab ended on when it was sent.
  *
  * A turn the host queued starts as `fireHostStartedMentions()` reads it: named by a host that names
- * how each item leaves its queue (`hostExits`), else inferred from the tab's state with the turn
- * ahead recorded once (`seen-queued`), and a turn that left the queue (`left-queue`) dropped unless
- * its tab reads busy with it within `HOST_QUEUE_START_GRACE_MS`. A named start runs once the tab
- * reads busy with a turn that is not the one ahead; until then only its own saved answer ends it,
- * never a transcript that was current before the start.
+ * how each item leaves its queue (`hostExits`), else by the user entry the host wrote for its own
+ * message (`judgeUnnamedHostStart()`), with the turn ahead recorded once (`seen-queued`) and the
+ * time it left the queue (`left-queue`); one whose message never shows is dropped. A named start
+ * runs once the tab reads busy with a turn that is not the one ahead; until then only its own saved
+ * answer ends it, never a transcript that was current before the start.
  */
 export function hostedHandoffStep(
 	tab: Pick<AITab, 'state' | 'pendingMentionHandoff' | 'logs' | 'thinkingStartTime'>,
@@ -313,6 +391,7 @@ export function hostedHandoffStep(
 ): 'wait' | 'running' | 'read' | 'release' | 'drop' | 'seen-queued' | 'left-queue' {
 	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
 	if (!hostTurn) return 'wait';
+	const message = tab.pendingMentionHandoff?.message;
 	// A whole read of the host queue since it was last seen waiting (a reconnect) may have missed
 	// its named exit: from here the tab's state decides, as for a host that names none.
 	const readSince = hostReads > (hostTurn.readsAtSeen ?? 0);
@@ -328,7 +407,9 @@ export function hostedHandoffStep(
 		// Idle while it still draws a stream: a turn ended whose saved answer is not here yet. The
 		// read is safe: only this turn's own entries after the send can release it.
 		if (tab.logs.some((entry) => entry.hostLive)) return 'read';
-		if (collectHandoffTurn(ownTurnEntries(tab.logs, hostTurn.afterEntryId))) return 'release';
+		if (collectHandoffTurn(ownTurnEntries(tab.logs, hostTurn.afterEntryId, message))) {
+			return 'release';
+		}
 		return transcriptCurrent ? 'wait' : 'read';
 	}
 	if (hostTurn.queueItemId && hostQueueItemIds.has(hostTurn.queueItemId)) {
@@ -339,17 +420,30 @@ export function hostedHandoffStep(
 	if (queued) {
 		// Named exits: gone without a name, its start (or its first frame) is still coming.
 		if (hostExits && !readSince) return 'wait';
-		// Inferred: it runs once the tab is busy with a turn that started at another time, soon
-		// after it left the queue. Later than that it was removed: nothing it never ran is handed off.
-		const goneFor = hostTurn.goneAt === undefined ? 0 : now - hostTurn.goneAt;
-		if (goneFor > HOST_QUEUE_START_GRACE_MS) return 'drop';
-		if (tab.state === 'busy' && tab.thinkingStartTime !== hostTurn.turnStartedAt) return 'running';
-		if (!hostTurn.seenQueued) return 'wait';
-		return hostTurn.goneAt === undefined ? 'left-queue' : 'wait';
+		// Unnamed: it ran only when the host wrote its own message on the tab; another message's
+		// turn is never its start, and nothing it never ran is handed off.
+		const verdict = judgeUnnamedHostStart(
+			tab,
+			{
+				afterEntryId: hostTurn.afterEntryId,
+				message,
+				aheadKnown: !!hostTurn.seenQueued,
+				turnStartedAt: hostTurn.turnStartedAt,
+				goneAt: hostTurn.goneAt,
+			},
+			now,
+			transcriptCurrent
+		);
+		if (verdict === 'started') return 'running';
+		if (verdict === 'removed') return 'drop';
+		if (verdict === 'read') return 'read';
+		return verdict === 'left' && hostTurn.seenQueued ? 'left-queue' : 'wait';
 	}
 	if (tab.state === 'busy') return hostTurn.stage === 'sent' ? 'running' : 'wait';
 	if (tab.logs.some((entry) => entry.hostLive)) return 'read';
-	if (collectHandoffTurn(ownTurnEntries(tab.logs, hostTurn.afterEntryId))) return 'release';
+	if (collectHandoffTurn(ownTurnEntries(tab.logs, hostTurn.afterEntryId, message))) {
+		return 'release';
+	}
 	// Not started yet, or ended between two syncs: a stale transcript is read to tell them apart.
 	if (hostTurn.stage === 'sent') return transcriptCurrent ? 'wait' : 'read';
 	return transcriptCurrent ? 'release' : 'read';
@@ -362,19 +456,21 @@ export function hostedHandoffStep(
  */
 export function hostedHandoffTurn(
 	logs: LogEntry[],
-	afterEntryId: string | undefined
+	afterEntryId: string | undefined,
+	/** The hand-off's message: its turn starts at the user entry the host wrote for it. */
+	message?: string
 ): HandoffTurn | null {
-	const fromSend = collectHandoffTurn(ownTurnEntries(logs, afterEntryId));
+	const fromSend = collectHandoffTurn(ownTurnEntries(logs, afterEntryId, message));
 	if (!fromSend) return null;
 	return { answer: fromSend.answer, priorLogs: collectHandoffTurn(logs)?.priorLogs ?? [] };
 }
 
 /** Release a hosted tab's armed hand-off now, with the answer its turn left after the send. */
 export function releaseHostedHandoff(sessionId: string, tab: AITab): void {
-	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
+	const handoff = tab.pendingMentionHandoff;
 	void releaseMentionHandoff(sessionId, tab.id, {
 		failed: !!tab.agentError,
-		turn: hostedHandoffTurn(tab.logs, hostTurn?.afterEntryId),
+		turn: hostedHandoffTurn(tab.logs, handoff?.hostTurn?.afterEntryId, handoff?.message),
 	});
 }
 
@@ -425,12 +521,7 @@ function armDeferredHostedHandoffs(sessionId: string): void {
  */
 export function followHostedHandoffs(
 	session: Session,
-	transcript: {
-		/** Ask for the tab's saved transcript (once; a failed read waits for a new trigger). */
-		read: (tabId: string) => void;
-		/** The tab's saved transcript is loaded and nothing marked it stale since. */
-		isCurrent: (tabId: string) => boolean;
-	} = { read: () => {}, isCurrent: () => false },
+	transcript: HostedTranscriptAccess = { read: () => {}, isCurrent: () => false },
 	/** How the host queue items that last left it left, when the host names that. */
 	hostExits?: readonly QueueExit[],
 	now = Date.now(),

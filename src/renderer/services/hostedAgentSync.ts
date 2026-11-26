@@ -43,7 +43,11 @@ import {
 import { applyAutoRunMirrorFrame } from '../hooks/batch/useAutoRunStateMirror';
 import { useBatchStore } from '../stores/batchStore';
 import { mirroredRunCompleteInfo, notifyAutoRunComplete } from './autoRunCompletion';
-import { followHostedHandoffs, nextHostedHandoffDeadline } from './crossAgentHandoff';
+import {
+	followHostedHandoffs,
+	nextHostedHandoffDeadline,
+	type HostedTranscriptAccess,
+} from './crossAgentHandoff';
 import {
 	fireHostStartedMentions,
 	nextHostStartDeadline,
@@ -261,35 +265,31 @@ export function syncHostedAgents(): void {
 				current === session ? next : projectHostedSession(current, input)
 			);
 		}
-		// A consult of a turn the host queued fires as that turn starts.
-		fireHostStartedMentions(next, hosted.queueExits, Date.now(), hosted.queueReads);
-		// A hand-off armed on a turn the host runs releases when the host's turn ends, with the
-		// answer the host saved: a background tab's transcript is read for it.
+		// A background tab's saved transcript, read when a turn's own entries are not here yet.
 		const slotOf = (tabId: string) =>
 			usePeerMirrorStore.getState().transcripts[hosted.peerId]?.[
 				liveTurnKey(hosted.agentId, tabId)
 			];
-		followHostedHandoffs(
-			next,
-			{
-				// The rule the shown tab's read follows: never while one is out, never again after one
-				// failed (the next stale mark or reconnect asks again), so a failing host is not polled.
-				read: (tabId) => {
-					const slot = slotOf(tabId);
-					if (!hosted.connected || slot?.loading || slot?.error) return;
-					if (!slot || slot.stale || !slot.loaded) {
-						void readMirrorTranscript(hosted.peerId, hosted.agentId, tabId);
-					}
-				},
-				isCurrent: (tabId) => {
-					const slot = slotOf(tabId);
-					return !!slot?.loaded && !slot.stale && !slot.loading && !slot.error;
-				},
+		const transcript: HostedTranscriptAccess = {
+			// The rule the shown tab's read follows: never while one is out, never again after one
+			// failed (the next stale mark or reconnect asks again), so a failing host is not polled.
+			read: (tabId) => {
+				const slot = slotOf(tabId);
+				if (!hosted.connected || slot?.loading || slot?.error) return;
+				if (!slot || slot.stale || !slot.loaded) {
+					void readMirrorTranscript(hosted.peerId, hosted.agentId, tabId);
+				}
 			},
-			hosted.queueExits,
-			Date.now(),
-			hosted.queueReads
-		);
+			isCurrent: (tabId) => {
+				const slot = slotOf(tabId);
+				return !!slot?.loaded && !slot.stale && !slot.loading && !slot.error;
+			},
+		};
+		// A consult of a turn the host queued fires as that turn starts.
+		fireHostStartedMentions(next, hosted.queueExits, Date.now(), hosted.queueReads, transcript);
+		// A hand-off armed on a turn the host runs releases when the host's turn ends, with the
+		// answer the host saved.
+		followHostedHandoffs(next, transcript, hosted.queueExits, Date.now(), hosted.queueReads);
 		if (session.id !== activeSessionId || !hosted.connected) continue;
 		const tabId = next.activeTabId;
 		if (!hosted.input.agent.aiTabs?.some((tab) => tab.id === tabId)) continue;

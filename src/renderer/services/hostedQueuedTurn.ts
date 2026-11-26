@@ -64,8 +64,10 @@ import {
 	handoffSendBoundary,
 	hasDeferredHostedHandoff,
 	HOST_QUEUE_START_GRACE_MS,
+	judgeUnnamedHostStart,
 	markHandoffSentToHost,
 	noteSkippedMention,
+	type HostedTranscriptAccess,
 } from './crossAgentHandoff';
 import { resolveConsultTargets } from './crossAgentConsultHold';
 import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
@@ -325,6 +327,9 @@ function fireMentionsForHostTurn(
 		// this machine's clock, and never this tab, which the drain just marked and released). A
 		// tab the host shows idle is read again when the item is seen queued.
 		const ahead = hostTurnAhead(sessionId, item.tabId);
+		const queuedOn = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
+			(tab) => tab.id === item.tabId
+		);
 		awaitHostStart(receipt.itemId, {
 			sessionId,
 			item,
@@ -332,6 +337,7 @@ function fireMentionsForHostTurn(
 			seenQueued: false,
 			queuedAt: Date.now(),
 			readsAtSeen: ahead.queueReads,
+			afterEntryId: handoffSendBoundary(queuedOn?.logs ?? []),
 			...(ahead.busy ? { aheadKnown: true, turnStartedAt: ahead.startedAt } : {}),
 		});
 		return;
@@ -390,8 +396,8 @@ const mentionsAwaitingHostStart = new Map<
 		turnStartedAt?: number;
 		/**
 		 * When it left the host queue with no start seen, from a host that does not name its starts
-		 * (this machine's clock): a start within `HOST_QUEUE_START_GRACE_MS` is its own, after it
-		 * the message was removed.
+		 * (this machine's clock): its message may show within `HOST_QUEUE_START_GRACE_MS`; after it,
+		 * only the tab's saved transcript can still show it ran (`judgeUnnamedHostStart()`).
 		 */
 		goneAt?: number;
 		/** When the host's receipt said it was queued (this machine's clock; only for the time limit). */
@@ -403,6 +409,11 @@ const mentionsAwaitingHostStart = new Map<
 		 * receipt). A read since then may have missed its named exit, so it is judged by the tab.
 		 */
 		readsAtSeen?: number;
+		/**
+		 * The send boundary at the receipt (`handoffSendBoundary()`): an unnamed start is its own only
+		 * when the host wrote its message's user entry after it (`judgeUnnamedHostStart()`).
+		 */
+		afterEntryId?: string;
 	}
 >();
 
@@ -487,12 +498,14 @@ export function dropStoppedHostStartMentions(sessionId: string, tabId?: string):
  * missing, so that item is judged by the rules below.
  *
  * An older headless host, and a desktop host, name none. Then the item started when it is not in
- * the host's queue and its tab reads busy with a turn that is not the one it was queued behind (the
- * turn the tab ran at the receipt, or when it was first seen waiting; never overwritten after, and
- * only ever compared with another start time from the host). The queue change and the tab's busy
- * state arrive as separate messages, so one that left the queue while the tab is idle, or still
- * busy with the turn ahead, waits up to `HOST_QUEUE_START_GRACE_MS` for its start before it counts
- * as removed (time, not syncs: this window's own writes run the sync again in between).
+ * the host's queue and the host wrote its own message's user entry on the tab after the send
+ * boundary (`judgeUnnamedHostStart()`): live as its turn starts, or in the saved transcript, read
+ * once the tab is idle, when it ran while this window was not attached. A turn of another message
+ * never counts. One that left the queue waits `HOST_QUEUE_START_GRACE_MS` for its entry (time, not
+ * syncs: this window's own writes run the sync again in between), then counts as removed when the
+ * tab still runs the turn it was queued behind (recorded once, in the host's clock) or is idle with
+ * a current transcript that does not show it; while the tab runs another turn, that turn's end and
+ * saved transcript decide.
  *
  * A consult that is let go without running (removed, or not in the host's queue for
  * `HOST_START_MENTION_TTL_MS` since it was last seen there) leaves the note a local mention that
@@ -503,7 +516,9 @@ export function fireHostStartedMentions(
 	hostExits?: readonly QueueExit[],
 	now = Date.now(),
 	/** The mirror's count of whole reads of this agent's host queue (`MirroredPeer.queueReads`). */
-	hostReads = 0
+	hostReads = 0,
+	/** The tabs' saved transcripts: an unnamed start is confirmed by its message in them. */
+	transcript: HostedTranscriptAccess = { read: () => {}, isCurrent: () => false }
 ): void {
 	if (mentionsAwaitingHostStart.size === 0) return;
 	const hostQueued = new Set(
@@ -536,20 +551,30 @@ export function fireHostStartedMentions(
 			}
 			// Named exits: gone without a name, its start (or its first frame) is still coming.
 			// Unless the queue was read whole since it was last seen waiting (a reconnect): a start
-			// named while this window was not attached never comes, so the tab's state decides.
+			// named while this window was not attached never comes, so the tab decides.
 			if (hostExits && hostReads <= (waiting.readsAtSeen ?? 0)) continue;
-			// Its turn is one that started at another time than the turn ahead, both in the host's
-			// clock. With no turn ahead known (the tab read idle), the next turn it runs is it.
-			const started =
-				tab?.state === 'busy' &&
-				(!waiting.aheadKnown || tab.thinkingStartTime !== waiting.turnStartedAt);
-			// Gone from the queue longer than a start takes to show: it was removed.
-			if (waiting.goneAt !== undefined && now - waiting.goneAt > HOST_QUEUE_START_GRACE_MS) {
+			// Unnamed: it ran only when the host wrote its own message on the tab (live as it starts,
+			// or in the saved transcript after it ran while this window was not attached). Another
+			// message's turn is never its start.
+			const verdict = judgeUnnamedHostStart(
+				tab,
+				{
+					afterEntryId: waiting.afterEntryId,
+					message: waiting.item.text,
+					aheadKnown: !!waiting.aheadKnown,
+					turnStartedAt: waiting.turnStartedAt,
+					goneAt: waiting.goneAt,
+				},
+				now,
+				!!tabId && transcript.isCurrent(tabId)
+			);
+			if (verdict === 'removed') {
 				letGoOfHostStart(hostItemId, waiting, 'the message was removed before it ran.');
 				continue;
 			}
-			if (!started) {
-				if (waiting.seenQueued && waiting.goneAt === undefined) waiting.goneAt = now;
+			if (verdict !== 'started') {
+				if (verdict === 'left' && waiting.seenQueued) waiting.goneAt = now;
+				if (verdict === 'read' && tabId) transcript.read(tabId);
 				continue;
 			}
 		}
