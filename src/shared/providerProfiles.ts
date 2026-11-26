@@ -190,6 +190,14 @@ export function resolveAgentAccountKey(
 	return homeDir ? helpers.normalizeKey(`${homeDir}/${config.defaultSubdir}`) : null;
 }
 
+/**
+ * The home directory an account key is resolved against for an agent whose
+ * turns run on an SSH remote. This machine does not know the remote's real
+ * `$HOME`, so both the main-process probe that records a remote account's data
+ * and the renderer that looks it up name the default account `~/<subdir>`.
+ */
+export const REMOTE_ACCOUNT_HOME_DIR = '~';
+
 /** Dropdown value meaning "do not narrow by provider profile". */
 export const ALL_PROFILES_VALUE = '__all_profiles__';
 
