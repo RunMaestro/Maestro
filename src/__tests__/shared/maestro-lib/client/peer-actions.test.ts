@@ -723,6 +723,32 @@ describe('parsePeerAgentAction', () => {
 		}
 	});
 
+	// Parity M7: the agent-only text a hosted agent's `@mention` adds to its turn.
+	it("carries an @mention's agent-only text to turns.send, and refuses one it cannot take", async () => {
+		const { client, asClient } = fakeClient();
+		await runPeerAgentAction(asClient, agent, {
+			kind: 'send',
+			tabId: 't2',
+			text: 'hi',
+			agentContext: 'REPLIES',
+			agentNotes: 'NOTES',
+		});
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', {
+			text: 'hi',
+			agentContext: 'REPLIES',
+			agentNotes: 'NOTES',
+		});
+		expect(
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', agentNotes: 'NOTES' })
+		).toEqual({ kind: 'send', tabId: 't1', text: 'hi', agentNotes: 'NOTES' });
+		expect(
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', agentContext: '  ' })
+		).toEqual({ kind: 'send', tabId: 't1', text: 'hi' });
+		expect(() =>
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', agentContext: 7 })
+		).toThrow('agentContext must be text.');
+	});
+
 	it('reads a send with turn overrides: checked fields kept, an empty set dropped', () => {
 		expect(
 			parsePeerAgentAction({

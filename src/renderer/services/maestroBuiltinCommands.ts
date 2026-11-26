@@ -17,6 +17,8 @@ import {
 	runsOutsideComposer,
 	type MaestroBuiltinCommand,
 } from '../../shared/maestroBuiltinCommands';
+import { logger } from '../utils/logger';
+import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
 
 /** The tab a built-in runs for. */
 export interface BuiltinCommandTarget {
@@ -53,6 +55,31 @@ export function runMaestroBuiltinCommand(
 ): boolean {
 	if (!handlers || !runsOutsideComposer(command)) return false;
 	const run = command.name === '/history' ? handlers.history : handlers.skills;
-	void run(target);
+	const running = run(target);
+	// What the command wrote before its first wait (the `/skills` row, "Generating history
+	// synopsis..."), then what it wrote at the end, reach the client at once, as a headless host's do.
+	announceTranscriptChanged(target);
+	void running.then(
+		() => announceTranscriptChanged(target),
+		() => announceTranscriptChanged(target)
+	);
 	return true;
+}
+
+/**
+ * Tell this Maestro's Federation clients that `target`'s transcript grew outside a turn, so the
+ * client that sent the command draws its rows now instead of at the tab's next turn. A client reads
+ * the stored tab, so the store is flushed first.
+ */
+function announceTranscriptChanged(target: BuiltinCommandTarget): void {
+	void flushSessionPersistenceNow()
+		.then(() =>
+			window.maestro?.process?.broadcastTranscriptChanged?.(target.sessionId, target.tabId)
+		)
+		.catch((error: unknown) => {
+			// The rows are written either way: a client that misses this reads them at the next turn.
+			logger.warn('[runMaestroBuiltinCommand] could not tell clients the tab changed', undefined, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		});
 }

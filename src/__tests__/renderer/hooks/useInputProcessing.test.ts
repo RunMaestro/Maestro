@@ -97,10 +97,16 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 	QueuedItem,
+	LogEntry,
 } from '../../../renderer/types';
 import type { GrokCommandDiscoveryResult } from '../../../main/agents/grok-skills';
 import { createMockAITab, createMockDesignPick } from '../../helpers/mockTab';
-import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	createModeSession,
+	createMockSession as baseCreateMockSession,
+	type AgentMode,
+} from '../../helpers/mockSession';
 
 // Create a mock AITab
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
@@ -5014,6 +5020,145 @@ describe('useInputProcessing', () => {
 	// message that lands in the execution queue carries `crossAgentMention` and is
 	// consulted at dequeue time instead.
 	describe('cross-agent @mention dispatch', () => {
+		// Parity M7: a hosted agent's `@mention` plans and consults on this machine, as a local
+		// agent's does (the mentioned agent is in this machine's roster); only its turn goes to the
+		// host, through this machine's queue (`sendTakenItemToHost()`, hostedQueuedTurn.test.ts).
+		describe('in every mode (M7)', () => {
+			beforeEach(() => useSettingsStore.setState({ federationHostedAgents: true }));
+			afterEach(() => useSettingsStore.setState({ federationHostedAgents: false }));
+
+			const modeSession = (mode: AgentMode) => {
+				const tab = createMockTab();
+				return createModeSession(mode, {
+					state: 'idle',
+					aiPid: 1234,
+					aiTabs: [tab],
+					activeTabId: tab.id,
+				});
+			};
+
+			it.each(AGENT_MODES)(
+				'%s: a message that leads with an @mention consults now, draws the bubble, and sends the agent nothing',
+				async (mode) => {
+					vi.mocked(sendHostedTurn).mockClear();
+					const plan = { targetSessionIds: ['backend'], suppressLocal: true };
+					const onPlanCrossAgentMentions = vi.fn().mockReturnValue(plan);
+					const onDispatchCrossAgentMentions = vi.fn();
+					const session = modeSession(mode);
+					const deps = createDeps({
+						activeSession: session,
+						activeSessionId: session.id,
+						sessionsRef: { current: [session] },
+						inputValue: '@Backend does this look right?',
+						onPlanCrossAgentMentions,
+						onDispatchCrossAgentMentions,
+					});
+					const { result } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+
+					expect(onDispatchCrossAgentMentions).toHaveBeenCalledWith(
+						plan,
+						'@Backend does this look right?',
+						session,
+						session.activeTabId,
+						[]
+					);
+					expect(sendHostedTurn).not.toHaveBeenCalled();
+					expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+					const bubble = mockSetSessions.mock.calls
+						.map(([update]) => update([session])[0])
+						.flatMap((s: Session) => s.aiTabs[0].logs)
+						.find((entry: LogEntry) => entry.source === 'user');
+					expect(bubble?.text).toBe('@Backend does this look right?');
+					expect(mockSetInputValue).toHaveBeenCalledWith('');
+				}
+			);
+
+			it.each(AGENT_MODES)(
+				'%s: a follow-up waits behind the consult hold of the turn before it',
+				async (mode) => {
+					vi.mocked(sendHostedTurn).mockClear();
+					const session = modeSession(mode);
+					session.executionQueue = [
+						{
+							id: 'hold',
+							timestamp: 1,
+							tabId: session.activeTabId,
+							type: 'message',
+							text: 'Waiting for Backend to reply before finishing this answer.',
+							awaitingConsult: {
+								pending: [{ targetSessionId: 'backend', targetAgentName: 'Backend' }],
+								replies: [],
+							},
+						},
+					];
+					const deps = createDeps({
+						activeSession: session,
+						activeSessionId: session.id,
+						sessionsRef: { current: [session] },
+						inputValue: 'and one more thing',
+						onPlanCrossAgentMentions: vi.fn().mockReturnValue(null),
+					});
+					const { result } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+
+					expect(sendHostedTurn).not.toHaveBeenCalled();
+					expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+					const queue = mockSetSessions.mock.calls
+						.map(([update]) => update([session])[0])
+						.map((s: Session) => s.executionQueue.map((item: QueuedItem) => item.id));
+					expect(queue.at(-1)?.[0]).toBe('hold');
+					expect(queue.at(-1)).toHaveLength(2);
+				}
+			);
+
+			it.each(AGENT_MODES)(
+				'%s: a message that also mentions an agent keeps the mention for the turn that runs it',
+				async (mode) => {
+					vi.mocked(sendHostedTurn).mockClear();
+					const plan = { targetSessionIds: ['backend'], suppressLocal: false };
+					const onPlanCrossAgentMentions = vi.fn().mockReturnValue(plan);
+					const onDispatchCrossAgentMentions = vi.fn();
+					const session = modeSession(mode);
+					const deps = createDeps({
+						activeSession: session,
+						activeSessionId: session.id,
+						sessionsRef: { current: [session] },
+						inputValue: 'does this look right to @Backend?',
+						onPlanCrossAgentMentions,
+						onDispatchCrossAgentMentions,
+					});
+					const { result } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+
+					// Never the literal text to the host with the mention dropped.
+					expect(sendHostedTurn).not.toHaveBeenCalled();
+					if (mode === 'hosted') {
+						// Its turn runs on the host: it queues here, still carrying the mention, and the
+						// drain consults as it hands the turn over.
+						expect(onDispatchCrossAgentMentions).not.toHaveBeenCalled();
+						expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+						const queued = mockSetSessions.mock.calls
+							.map(([update]) => update([session])[0])
+							.flatMap((s: Session) => s.executionQueue)
+							.find((item: QueuedItem) => item.text === 'does this look right to @Backend?');
+						expect(queued?.crossAgentMention).toBe(true);
+						expect(queued?.crossAgentOnly).toBeUndefined();
+					} else {
+						expect(onDispatchCrossAgentMentions).toHaveBeenCalledTimes(1);
+						expect(window.maestro.process.spawn).toHaveBeenCalled();
+					}
+					expect(mockSetInputValue).toHaveBeenCalledWith('');
+				}
+			);
+		});
+
 		it('suppresses the local send when the plan says the message is addressed elsewhere', async () => {
 			const onPlanCrossAgentMentions = vi
 				.fn()

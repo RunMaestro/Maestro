@@ -632,6 +632,22 @@ describe('dispatch messages', () => {
 			expect(host.named('turns.send')[0].args.slice(0, 2)).toEqual(['a1', 't2']);
 		});
 
+		it.each(['enqueue_command', 'send_command'])(
+			'%s: says a command the host ran (`/skills`, `/history`) started no turn, as a desktop host says (M13)',
+			async (type) => {
+				const host = recordingClient({
+					activeTabId: 't-active',
+					send: () => ok({ status: 'ran' as const }),
+				});
+				expect(await host.handle({ ...base, type, command: '/skills' })).toMatchObject({
+					success: true,
+					tabId: 't-active',
+					queued: false,
+					ran: true,
+				});
+			}
+		);
+
 		it('falls back to the first tab of an agent with no active tab, and says when there is none', async () => {
 			const withTabs = recordingClient({ tabs: ['t1', 't2'] });
 			expect(await withTabs.handle(base)).toMatchObject({ success: true, tabId: 't1' });

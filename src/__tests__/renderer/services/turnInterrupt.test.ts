@@ -471,4 +471,28 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 		expect(ssh).toEqual(local);
 		expect(hosted).toEqual(local);
 	});
+
+	// Parity M7: a hosted agent's `@mentions` run on this machine, so Stop ends them here as it
+	// does for a local agent: the consults, and the hand-off armed for the turn.
+	it.each(AGENT_MODES)("%s: Stop ends the turn's consults and drops its hand-off", async (mode) => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		vi.clearAllMocks();
+		processApi.interrupt.mockResolvedValue(true);
+		processApi.getActiveProcesses.mockResolvedValue([]);
+		crossAgentApi.cancel.mockResolvedValue({ canceled: 1 });
+		const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+		seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
+
+		const result = await interruptTurn('agent-1', { tabId: 'tab-a' });
+
+		expect(crossAgentApi.cancel).toHaveBeenCalledWith('agent-1', 'tab-a');
+		expect(dropMentionHandoffs).toHaveBeenCalledWith('agent-1', 'tab-a');
+		// Before any await: a host update meanwhile cannot release the stopped hand-off.
+		if (mode === 'hosted') {
+			expect(vi.mocked(dropMentionHandoffs).mock.invocationCallOrder[0]).toBeLessThan(
+				vi.mocked(interruptMirroredAgent).mock.invocationCallOrder[0]
+			);
+		}
+		expect(result).toMatchObject({ success: true, wasBusy: true, interrupted: true });
+	});
 });
