@@ -35,6 +35,7 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { buildSharedHistoryContext } from '../utils/sessionHelpers';
 import { createTab, isSessionIdLabel } from '../utils/tabHelpers';
+import { hostedTargetOf } from './hostedTurns';
 import { isAiTabHidden } from '../utils/unifiedTabOrderUtils';
 import {
 	loadResumableSession,
@@ -96,6 +97,9 @@ export function resetQuickChatRouterForTests(): void {
  * rest many times over.
  */
 async function readClosedConversations(session: Session): Promise<ClosedConversation[]> {
+	// A hosted agent's conversations run on its host, which keeps its own closed tabs. One reopened
+	// here would be a tab only this machine has, so the host could not continue it.
+	if (hostedTargetOf(session)) return [];
 	const cached = closedCache.get(session.id);
 	const selectionKey = resumeSelectionKey(session);
 	if (cached?.selectionKey === selectionKey && Date.now() - cached.at < CLOSED_CACHE_TTL_MS)
@@ -320,6 +324,8 @@ export async function reopenClosedConversation(
 	const find = () => useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	const session = find();
 	if (!session) return null;
+	// Not offered for a hosted agent (see readClosedConversations): the caller opens a host tab.
+	if (hostedTargetOf(session)) return null;
 	const selectionKey = resumeSelectionKey(session);
 	const binding =
 		conversation.nativeSessionBinding && structuredClone(conversation.nativeSessionBinding);

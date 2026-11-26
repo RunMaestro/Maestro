@@ -36,6 +36,15 @@ export function registerMaestroBuiltinCommandHandlers(
 }
 
 /**
+ * Whether `command` is one a send from outside the composer runs for its tab (`/history`,
+ * `/skills`), wherever the agent runs: here through `runMaestroBuiltinCommand()`, or on a hosted
+ * agent's host, which runs the typed text the same way. `/wizard` and `/btw` need the composer.
+ */
+export function runsOutsideComposer(command: MaestroBuiltinCommand): boolean {
+	return command.name === '/history' || command.name === '/skills';
+}
+
+/**
  * Start `command` for `target`. Answers true when it started (the caller must not also send the
  * text as a message), false when this window cannot run it: no handlers yet, or a command that
  * needs the composer. A failure inside the command is written to the tab's transcript by the
@@ -45,14 +54,8 @@ export function runMaestroBuiltinCommand(
 	command: MaestroBuiltinCommand,
 	target: BuiltinCommandTarget
 ): boolean {
-	if (!handlers) return false;
-	const run =
-		command.name === '/history'
-			? handlers.history
-			: command.name === '/skills'
-				? handlers.skills
-				: null;
-	if (!run) return false;
+	if (!handlers || !runsOutsideComposer(command)) return false;
+	const run = command.name === '/history' ? handlers.history : handlers.skills;
 	void run(target);
 	return true;
 }

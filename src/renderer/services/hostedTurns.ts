@@ -81,9 +81,21 @@ export function hostedTargetOf(
 	return { peerId: pointer.peer, agentId: pointer.agentId, ...(agent ? { agent } : {}) };
 }
 
+/**
+ * Tabs `openHostedTab()` opened, by `peer/agent/tab`. The host's answer can reach this machine
+ * before its update lists the tab; a send to it in that moment must not open a second one.
+ */
+const openedHostTabs = new Set<string>();
+const hostTabKey = (target: HostedTarget, tabId: string) =>
+	`${target.peerId}/${target.agentId}/${tabId}`;
+
 /** Whether `tabId` is one of the host's tabs (a lift keeps tab ids, so most local tabs are). */
 export function isHostTab(target: HostedTarget, tabId: string | undefined): boolean {
-	return !!tabId && !!target.agent?.aiTabs?.some((tab) => tab.id === tabId);
+	if (!tabId) return false;
+	return (
+		openedHostTabs.has(hostTabKey(target, tabId)) ||
+		!!target.agent?.aiTabs?.some((tab) => tab.id === tabId)
+	);
 }
 
 /** The tab's own composer settings as this sender's overrides for one turn. */
@@ -180,6 +192,7 @@ export async function openHostedTab(
 	if (!target) return null;
 	const result = await actOnMirroredAgent(target.peerId, target.agentId, { kind: 'new-tab' });
 	if (result?.kind !== 'new-tab') return null;
+	openedHostTabs.add(hostTabKey(target, result.tabId));
 	focusHostTab(session.id, result.tabId, placement);
 	return result.tabId;
 }
@@ -248,13 +261,15 @@ export async function startHostedConversation(
  * when it took the message (ran, queued, or held), null when it did not; the caller clears the
  * composer on a receipt. A `queued` receipt names the host's queue item (what a steer acts on).
  * `opts.held` is Queue Held: the host queues the message paused, even on an idle tab.
+ * `opts.overrides` are a sender's own chips for this one message (a Federation client's
+ * `TurnInput.overrides`); they win over the tab's settings, as they do on a local queued item.
  */
 export async function sendHostedTurn(
 	session: Session,
 	tabId: string | undefined,
 	text: string,
 	images: readonly string[],
-	opts: { held?: boolean } = {}
+	opts: { held?: boolean; overrides?: TurnOverrides } = {}
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
@@ -294,7 +309,7 @@ export async function sendHostedTurn(
 		target.agentId,
 		hostTabId as string,
 		text,
-		hostedTurnOverrides(tab),
+		opts.overrides ? { ...hostedTurnOverrides(tab), ...opts.overrides } : hostedTurnOverrides(tab),
 		images,
 		opts.held
 	);
@@ -322,7 +337,9 @@ export async function interruptHostedTurn(
 /** Close a host tab too (the local close is the caller's). A kept local tab has none. */
 export function closeHostedTab(session: Pick<Session, 'liftedTo'>, tabId: string): void {
 	const target = hostedTargetOf(session);
-	if (target && isHostTab(target, tabId)) void closeMirrorTab(target.peerId, target.agentId, tabId);
+	if (!target || !isHostTab(target, tabId)) return;
+	openedHostTabs.delete(hostTabKey(target, tabId));
+	void closeMirrorTab(target.peerId, target.agentId, tabId);
 }
 
 /** Rename a host tab too. An empty name clears it. */

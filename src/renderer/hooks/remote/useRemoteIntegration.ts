@@ -44,6 +44,7 @@ import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSideQuestion } from '../../services/sideQuestion';
 import { runMaestroBuiltinCommand } from '../../services/maestroBuiltinCommands';
+import { hostedTargetOf, openHostedTab, sendHostedTurn } from '../../services/hostedTurns';
 import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
@@ -82,7 +83,12 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { steerQueuedItem } from '../../services/chatSteering';
 import { interruptTurn } from '../../services/turnInterrupt';
 import { interruptTurnFailure, type InterruptTurnResult } from '../../../shared/turnInterrupt';
-import { updateAiTab, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
+import {
+	selectSessionById,
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../stores/sessionStore';
 import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
 import { buildThinkingItems } from '../../utils/thinkingItems';
@@ -813,6 +819,35 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						ack({ success: false, error: 'A terminal agent cannot receive a new AI tab prompt' });
 						return;
 					}
+					// A hosted agent's tabs and turns are its host's: the new tab opens there, placed
+					// and shown (or hidden) as a local one is, and the prompt runs there as typed (the
+					// host expands a slash command). A managed Pianola admission stays with its owner.
+					if (!control && hostedTargetOf(targetSession)) {
+						const hostTabId = await openHostedTab(targetSession, {
+							fields: {
+								saveToHistory: defaultSaveToHistory,
+								showThinking: defaultShowThinking,
+								...(background && hidden === true ? { hidden: true } : {}),
+							},
+							...(background ? { background: true } : {}),
+						});
+						if (!hostTabId) {
+							ack({ success: false, error: 'The host did not open a new tab' });
+							return;
+						}
+						if (!background) {
+							setActiveSessionId(sessionId);
+							noteDesktopAiTabSelection(sessionId, hostTabId);
+						}
+						const live = selectSessionById(sessionId)(useSessionStore.getState()) ?? targetSession;
+						const receipt = await sendHostedTurn(live, hostTabId, prompt, []);
+						ack(
+							receipt
+								? { success: true, tabId: hostTabId, queued: receipt.status === 'queued' }
+								: { success: false, tabId: hostTabId, error: 'The host did not take the prompt' }
+						);
+						return;
+					}
 					const commandName = prompt.trim().split(/\s/, 1)[0];
 					const isMaestroCommand =
 						commandName.startsWith('/') &&
@@ -1472,6 +1507,37 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							queueLength: updated.executionQueue.length,
 							queuePosition: updated.executionQueue.length,
 						});
+						return;
+					}
+
+					// A hosted agent's line is its host's queue: the message goes there as typed, with
+					// the sender's chips, and the host runs it now, runs `/history` or `/skills` for the
+					// tab, or queues it (held when held), as this handler does below for a local agent.
+					// Nothing waits here for a drain.
+					if (hostedTargetOf(session)) {
+						const receipt = await sendHostedTurn(session, resolvedTabId, command, images ?? [], {
+							held,
+							overrides: turnOverrides,
+						});
+						if (!receipt) {
+							reply({ success: false, tabId: resolvedTabId, error: 'The host did not take it' });
+						} else if (receipt.status === 'queued') {
+							reply({
+								success: true,
+								tabId: resolvedTabId,
+								queued: true,
+								itemId: receipt.itemId,
+								queuePosition: receipt.position,
+								queueLength: receipt.queueLength,
+							});
+						} else {
+							reply({
+								success: true,
+								tabId: resolvedTabId,
+								queued: false,
+								...(receipt.status === 'ran' ? { ran: true } : {}),
+							});
+						}
 						return;
 					}
 

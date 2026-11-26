@@ -35,6 +35,12 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useQueueProcessing } from '../../../renderer/hooks/agent/useQueueProcessing';
 import { buildUnifiedTabs } from '../../../renderer/utils/tabHelpers';
 import { captureException } from '../../../renderer/utils/sentry';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
+import { AGENT_MODES, agentModeFields, type AgentMode } from '../../helpers';
 
 // The planner's verdict is the seam under test: a queued CLI prompt must carry
 // it as the same flags a composer-queued message does.
@@ -5664,6 +5670,182 @@ describe('useRemoteIntegration', () => {
 				'response-channel-2',
 				false
 			);
+		});
+	});
+
+	// A send from a web or phone client, a CLI dispatch, and a new tab with a prompt reach the
+	// machine that runs the agent's turns, with the same answer in every mode. Local and SSH run
+	// here (the remote-command path spawns); a hosted agent's go to its host (`sendHostedTurn()`,
+	// `openHostedTab()`), never to a local-only tab or a spawn main would refuse.
+	describe('mode parity: a remote send reaches the machine that runs the turn', () => {
+		const act$ = vi.fn();
+		const hostSends = () => act$.mock.calls.filter(([, , action]) => action?.kind === 'send');
+		let receipt: Record<string, unknown>;
+
+		beforeEach(() => {
+			usePeerMirrorStore.setState(usePeerMirrorStore.getInitialState());
+			useSettingsStore.setState({ federationHostedAgents: true });
+			receipt = { status: 'started' };
+			act$.mockReset();
+			act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+				action.kind === 'new-tab'
+					? { ok: true, result: { kind: 'new-tab', tabId: 'host-tab' } }
+					: { ok: true, result: { kind: 'send', receipt } }
+			);
+			const { peer } = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+				[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+				[],
+				1
+			);
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		});
+
+		afterEach(() => {
+			usePeerMirrorStore.setState(usePeerMirrorStore.getInitialState());
+			useSettingsStore.setState({ federationHostedAgents: false });
+		});
+
+		const seed = (mode: AgentMode, tabState: 'idle' | 'busy' = 'idle') => {
+			const session = createMockSession({
+				...agentModeFields(mode),
+				id: 'session-1',
+				aiTabs: [createMockTab({ id: 'tab-1', state: tabState })],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+			});
+			// `window.maestro` is rebuilt in the outer beforeEach; add the host link after it.
+			(window.maestro as unknown as Record<string, unknown>).federation = { act: act$ };
+			return session;
+		};
+		const remoteCommands = (spy: { mock: { calls: unknown[][] } }) =>
+			spy.mock.calls
+				.map(([event]) => event as CustomEvent<{ command: string; tabId?: string }>)
+				.filter((event) => event.type === 'maestro:remoteCommand')
+				.map((event) => ({ command: event.detail.command, tabId: event.detail.tabId }));
+		// Where the turn went: spawned here (the remote-command path) or sent to the host.
+		const ranOn = (mode: AgentMode, spy: { mock: { calls: unknown[][] } }) =>
+			mode === 'hosted'
+				? hostSends().map(([, , action]) => ({ command: action.text, tabId: action.tabId }))
+				: remoteCommands(spy);
+
+		it.each(AGENT_MODES)('%s: an idle tab runs a dispatched message now', async (mode) => {
+			const session = seed(mode);
+			const spy = vi.spyOn(window, 'dispatchEvent');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			await act(async () => {
+				await onRemoteEnqueueCommandHandler?.('session-1', 'hello', 'chan', 'ai', 'tab-1');
+			});
+
+			expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith('chan', {
+				success: true,
+				tabId: 'tab-1',
+				queued: false,
+			});
+			expect(ranOn(mode, spy)).toEqual([{ command: 'hello', tabId: 'tab-1' }]);
+			if (mode === 'hosted') expect(remoteCommands(spy)).toEqual([]);
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+			spy.mockRestore();
+		});
+
+		it.each(AGENT_MODES)(
+			'%s: a busy tab puts the message first in line and answers its place',
+			async (mode) => {
+				const session = seed(mode, 'busy');
+				receipt = { status: 'queued', itemId: 'host-item', position: 1, queueLength: 1 };
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				await act(async () => {
+					await onRemoteEnqueueCommandHandler?.('session-1', 'later', 'chan', 'ai', 'tab-1');
+				});
+
+				const [, answer] = mockProcess.sendRemoteEnqueueCommandResponse.mock.calls[0];
+				expect(answer).toMatchObject({
+					success: true,
+					tabId: 'tab-1',
+					queued: true,
+					queuePosition: 1,
+					queueLength: 1,
+				});
+				// The line is the queue of the machine that runs the turn: this one, or the host's.
+				const local = useSessionStore.getState().sessions[0].executionQueue;
+				expect(local.map((item) => item.text)).toEqual(mode === 'hosted' ? [] : ['later']);
+				expect(hostSends()).toHaveLength(mode === 'hosted' ? 1 : 0);
+			}
+		);
+
+		it.each(AGENT_MODES)(
+			'%s: /history runs for the named tab and answers that it ran',
+			async (mode) => {
+				const history = vi.fn().mockResolvedValue(undefined);
+				registerMaestroBuiltinCommandHandlers({ history, skills: vi.fn() });
+				const session = seed(mode);
+				receipt = { status: 'ran' };
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				await act(async () => {
+					await onRemoteEnqueueCommandHandler?.('session-1', '/history', 'chan', 'ai', 'tab-1');
+				});
+
+				expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith('chan', {
+					success: true,
+					tabId: 'tab-1',
+					queued: false,
+					ran: true,
+				});
+				// Run where the tab's transcript lives: here, or by the host for its own tab.
+				expect(history).toHaveBeenCalledTimes(mode === 'hosted' ? 0 : 1);
+				expect(hostSends().map(([, , action]) => action.text)).toEqual(
+					mode === 'hosted' ? ['/history'] : []
+				);
+				registerMaestroBuiltinCommandHandlers(null);
+			}
+		);
+
+		it.each(AGENT_MODES)(
+			'%s: a new tab with a prompt opens hidden in the background and runs the prompt there',
+			async (mode) => {
+				const session = seed(mode);
+				const spy = vi.spyOn(window, 'dispatchEvent');
+				const deps = createDeps({ sessions: [session] });
+				renderHook(() => useRemoteIntegration(deps));
+
+				await act(async () => {
+					await onRemoteNewAITabWithPromptHandler?.('session-1', 'go', 'chan', true, true);
+				});
+
+				const [, answer] = mockProcess.sendRemoteNewAITabWithPromptResponse.mock.calls[0];
+				expect(answer).toMatchObject({ success: true });
+				const created = useSessionStore
+					.getState()
+					.sessions[0].aiTabs.find((tab) => tab.id === answer.tabId);
+				expect(created).toMatchObject({ hidden: true });
+				expect(useSessionStore.getState().sessions[0].activeTabId).toBe('tab-1');
+				expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+				expect(ranOn(mode, spy)).toEqual([{ command: 'go', tabId: answer.tabId }]);
+				if (mode === 'hosted') {
+					expect(answer.tabId).toBe('host-tab');
+					expect(remoteCommands(spy)).toEqual([]);
+				}
+				spy.mockRestore();
+			}
+		);
+
+		it('hosted: a host that refuses the new tab fails the dispatch and makes no local tab', async () => {
+			const session = seed('hosted');
+			act$.mockResolvedValue(null);
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			await act(async () => {
+				await onRemoteNewAITabWithPromptHandler?.('session-1', 'go', 'chan', true, true);
+			});
+
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('chan', {
+				success: false,
+				error: 'The host did not open a new tab',
+			});
+			expect(useSessionStore.getState().sessions[0].aiTabs.map((tab) => tab.id)).toEqual(['tab-1']);
 		});
 	});
 });

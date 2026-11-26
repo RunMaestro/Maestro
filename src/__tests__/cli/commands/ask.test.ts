@@ -120,9 +120,16 @@ describe('ask command', () => {
 		expect(exitSpy).toHaveBeenCalledWith(1);
 	});
 
-	it('refuses a lifted agent with AGENT_LIFTED before touching the desktop', async () => {
+	// Addressed by its local id, a hosted agent answers where it runs: the question goes to its
+	// host over the `peer:agent` route, never refused and never asked of the local copy.
+	it('asks a hosted agent on its host by the local id', async () => {
 		vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
-		const sendCommand = mockClient({ type: 'cross_agent_ask_result', success: true });
+		const localSend = mockClient({ type: 'cross_agent_ask_result', success: true });
+		const peerSend = vi.fn().mockResolvedValue({
+			type: 'cross_agent_ask_result',
+			success: true,
+			answer: 'in main',
+		});
 		vi.mocked(getSessionById).mockReturnValueOnce({
 			id: 'resolved-builder',
 			name: 'Builder',
@@ -131,15 +138,25 @@ describe('ask command', () => {
 			projectRoot: '/p',
 			liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
 		});
+		peerBridge.sendCommand = peerSend;
+		try {
+			await ask('builder', 'Where is the gate?', { json: true });
+		} finally {
+			peerBridge.sendCommand = null;
+		}
 
-		await ask('builder', 'Where is the gate?', { json: true });
-
-		const output = JSON.parse(logSpy.mock.calls[0][0]);
-		expect(output.success).toBe(false);
-		expect(output.code).toBe('AGENT_LIFTED');
-		expect(output.error).toContain('build-box:host-1');
-		expect(exitSpy).toHaveBeenCalledWith(1);
-		expect(sendCommand).not.toHaveBeenCalled();
+		expect(localSend).not.toHaveBeenCalled();
+		expect(peerSend.mock.calls[0][0]).toMatchObject({
+			type: 'cross_agent_ask',
+			sessionId: 'host-agent-1',
+			question: 'Where is the gate?',
+		});
+		expect(JSON.parse(logSpy.mock.calls[0][0])).toMatchObject({
+			success: true,
+			answer: 'in main',
+			peer: 'build-box',
+		});
+		expect(exitSpy).not.toHaveBeenCalled();
 	});
 
 	it('rejects an empty question', async () => {
