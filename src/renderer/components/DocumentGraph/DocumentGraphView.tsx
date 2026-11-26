@@ -230,6 +230,8 @@ interface PreviewEntry {
 	content: string;
 	/** The resolved remote the content came from, so its links and images read the same disk. */
 	remoteId: string | undefined;
+	/** The graph root the entry was read under, so its relative links resolve against it. */
+	rootPath: string;
 }
 
 /**
@@ -1361,12 +1363,11 @@ export function DocumentGraphView({
 		 * reads the graph's own remote.
 		 */
 		async (filePath: string, from?: PreviewEntry) => {
+			const root = from ? from.rootPath : rootPath;
 			const isAbsolutePath = filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath);
-			const fullPath = isAbsolutePath ? filePath : `${rootPath}/${filePath}`;
+			const fullPath = isAbsolutePath ? filePath : `${root}/${filePath}`;
 			const relativePath =
-				rootPath && fullPath.startsWith(`${rootPath}/`)
-					? fullPath.slice(rootPath.length + 1)
-					: filePath;
+				root && fullPath.startsWith(`${root}/`) ? fullPath.slice(root.length + 1) : filePath;
 
 			setPreviewLoading(true);
 			setPreviewError(null);
@@ -1385,6 +1386,7 @@ export function DocumentGraphView({
 					name: relativePath.split('/').pop() || relativePath,
 					content,
 					remoteId,
+					rootPath: root,
 				};
 
 				setPreviewFile(newEntry);
@@ -2501,7 +2503,7 @@ export function DocumentGraphView({
 											await safeClipboardWrite(text);
 										}}
 										fileTree={previewFileTree}
-										projectRoot={rootPath}
+										projectRoot={previewFile.rootPath}
 										cwd={previewFile.relativePath.split('/').slice(0, -1).join('/')}
 										onFileClick={(path) => handlePreviewFile(path, previewFile)}
 										sshRemoteId={previewFile.remoteId}

@@ -154,16 +154,16 @@ describe('Document Graph across agent modes', () => {
 		expect(buildGraphData).not.toHaveBeenCalled();
 	});
 
-	it('reads a link inside a preview from the remote that preview came from', async () => {
+	it('reads a link inside a preview from the remote and root that preview came from', async () => {
 		mindMapNodes.current = [{ id: 'a.md', nodeType: 'document', filePath: 'a.md' }];
 		const readFile = vi.fn().mockResolvedValue('# Doc');
 		(window as any).maestro.fs = { ...(window as any).maestro.fs, readFile };
-		const view = (sshRemoteId: string) => (
+		const view = (sshRemoteId: string, rootPath = '/test') => (
 			<DocumentGraphView
 				isOpen
 				onClose={vi.fn()}
 				theme={theme}
-				rootPath="/test"
+				rootPath={rootPath}
 				focusFilePath="/test/index.md"
 				sshRemoteId={sshRemoteId}
 			/>
@@ -172,8 +172,8 @@ describe('Document Graph across agent modes', () => {
 		fireEvent.click(await screen.findByTestId('mind-map-mock'));
 		await waitFor(() => expect(readFile).toHaveBeenCalledWith('/test/a.md', 'r1'));
 
-		// The agent's remote changes while the preview of r1's document stays open.
-		rerender(view('r2'));
+		// The agent's remote and root change while the preview of r1's document stays open.
+		rerender(view('r2', '/other'));
 		fireEvent.click(await screen.findByTestId('preview-link'));
 
 		await waitFor(() => expect(readFile).toHaveBeenCalledTimes(2));
