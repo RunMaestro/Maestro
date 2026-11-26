@@ -70,6 +70,31 @@ describe('IPC handler wiring parity', () => {
 		expect(missing).toEqual([]);
 	});
 
+	it('hands the live History and Federation handlers the Cue queries, so Cue runs reach every History panel', () => {
+		// Cue runs live in `cue_events`, never in the JSONL History. Without these the History
+		// panel of every agent (local, SSH, or hosted) lists no Cue run at all.
+		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf8'));
+		const call = (name: string) => {
+			const start = source.indexOf(`${name}({`);
+			expect(start).toBeGreaterThan(-1);
+			return source.slice(start, source.indexOf('});', start));
+		};
+		const history = call('registerHistoryHandlers');
+		for (const query of [
+			'getAllSessions',
+			'getCueHistoryEntries',
+			'getCueHistoryGroups',
+			'getCueHistoryGroupRuns',
+			'getCueHistoryBuckets',
+			'getCueHistoryFingerprint',
+		]) {
+			expect(history).toContain(query);
+		}
+		const federation = call('registerFederationHandlers');
+		expect(federation).toContain('getCueHistoryEntries');
+		expect(federation).toContain('getCueHistoryGroups');
+	});
+
 	it('uses the composed post-flush Pianola consumer in the live bootstrap', () => {
 		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf8'));
 		expect(source).toContain(

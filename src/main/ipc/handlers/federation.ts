@@ -58,7 +58,17 @@ import {
 } from '../../federation/lift';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { setFederationWindow } from '../../federation/federation-window';
-import { isHistoryEntryType, type PaginatedResult } from '../../../shared/history';
+import {
+	historyLookbackCutoff,
+	isHistoryEntryType,
+	type PaginatedResult,
+} from '../../../shared/history';
+import {
+	hostedCueScopeAgents,
+	withHostedCueRuns,
+	type CueHistoryEntriesQuery,
+	type CueHistoryGroupsQuery,
+} from '../../utils/cue-history-merge';
 import type { HistoryEntry, HistoryEntryType } from '../../../shared/types';
 import {
 	pagePeerHistory,
@@ -76,6 +86,14 @@ export type FederationHandlerDeps = Omit<DesktopLiftRuntime, 'service'> & {
 	watchSessions?(onChange: () => void): () => void;
 	/** The all-windows push, for the automatic Federation snapshot. */
 	safeSend?: SafeSendFn;
+	/**
+	 * This machine's Cue runs, as History rows (`getCueHistoryEntries()`, `getCueHistoryGroups()`).
+	 * A hosted agent's Cue subscriptions run here, so its History panel lists them beside the
+	 * host's entries, as a local agent's panel does. Injected for the reason `history.ts` gives:
+	 * no static edge to the Cue SQLite layer.
+	 */
+	getCueHistoryEntries?: CueHistoryEntriesQuery;
+	getCueHistoryGroups?: CueHistoryGroupsQuery;
 };
 
 const LOG_CONTEXT = '[Federation]';
@@ -145,6 +163,13 @@ function readTail(options: unknown): TranscriptReadOptions {
 	return { tail };
 }
 
+/** The stored agent records, as plain objects: anything else in the list is skipped. */
+function arrayOfRecords(value: unknown): Array<Record<string, unknown>> {
+	return Array.isArray(value)
+		? value.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+		: [];
+}
+
 /** A lookback in hours, or null for all time. Anything else is all time. */
 function readLookback(value: unknown): number | null {
 	return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
@@ -168,6 +193,7 @@ function readHistoryQuery(query: unknown): PeerHistoryPageQuery {
 		lookbackHours: readLookback(raw.lookbackHours),
 		...(types ? { types } : {}),
 		hostKey: typeof raw.hostKey === 'string' && raw.hostKey ? raw.hostKey : null,
+		...(raw.groupCue === true ? { groupCue: true } : {}),
 		...(offset !== undefined || limit !== undefined
 			? {
 					pagination: {
@@ -230,6 +256,26 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				)
 		)
 	);
+	// A hosted agent's History: the host's entries, and this machine's Cue runs of the agent's
+	// local record (a host serves no Cue runs), merged before the page, graph, and bar jump.
+	const hostedHistory = async (
+		peerId: unknown,
+		agentId: unknown,
+		lookbackHours: number | null | undefined,
+		groupCue?: boolean
+	): Promise<HistoryEntry[]> => {
+		const peer = requireId(peerId, 'peer id');
+		const agent = requireId(agentId, 'agent id');
+		const entries = await requireService().history(peer, agent);
+		const records = arrayOfRecords(deps.readSessions());
+		const cutoff = historyLookbackCutoff(lookbackHours);
+		return withHostedCueRuns(
+			entries,
+			{ entries: deps.getCueHistoryEntries, groups: deps.getCueHistoryGroups },
+			hostedCueScopeAgents(records, peer, agent),
+			{ groupCue, since: cutoff > 0 ? cutoff : undefined }
+		);
+	};
 	ipcMain.handle(
 		'federation:historyPage',
 		withIpcErrorLogging(
@@ -239,11 +285,9 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				agentId: unknown,
 				query?: unknown
 			): Promise<PaginatedResult<HistoryEntry>> => {
-				const entries = await requireService().history(
-					requireId(peerId, 'peer id'),
-					requireId(agentId, 'agent id')
-				);
-				return pagePeerHistory(entries, readHistoryQuery(query));
+				const read = readHistoryQuery(query);
+				const entries = await hostedHistory(peerId, agentId, read.lookbackHours, read.groupCue);
+				return pagePeerHistory(entries, read);
 			}
 		)
 	);
@@ -257,12 +301,10 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				bucketCount: unknown,
 				lookbackHours: unknown
 			): Promise<HistoryGraphData> => {
-				const entries = await requireService().history(
-					requireId(peerId, 'peer id'),
-					requireId(agentId, 'agent id')
-				);
+				const lookback = readLookback(lookbackHours);
+				const entries = await hostedHistory(peerId, agentId, lookback);
 				const buckets = typeof bucketCount === 'number' ? bucketCount : 24;
-				return peerHistoryGraph(entries, buckets, readLookback(lookbackHours));
+				return peerHistoryGraph(entries, buckets, lookback);
 			}
 		)
 	);
@@ -280,11 +322,9 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
 					throw new Error('timestamp must be a number');
 				}
-				const entries = await requireService().history(
-					requireId(peerId, 'peer id'),
-					requireId(agentId, 'agent id')
-				);
-				return peerHistoryOffset(entries, timestamp, readLookback(lookbackHours), readTypes(types));
+				const lookback = readLookback(lookbackHours);
+				const entries = await hostedHistory(peerId, agentId, lookback);
+				return peerHistoryOffset(entries, timestamp, lookback, readTypes(types));
 			}
 		)
 	);

@@ -20,7 +20,10 @@ export interface HistorySourceQuery {
 	lookbackHours: number | null;
 	types: HistoryEntryType[];
 	hostKey: string | null;
-	/** Collapse repeated Cue triggers (local only: a host serves no Cue runs). */
+	/**
+	 * Collapse repeated Cue triggers. A hosted agent's Cue runs run on this machine, so its host's
+	 * History is merged with them and collapsed the same way.
+	 */
 	groupCue: boolean;
 	pagination: { offset: number; limit: number };
 }
@@ -123,6 +126,7 @@ export function mirrorHistorySource(peerId: string, agentId: string): HistorySou
 				lookbackHours: query.lookbackHours,
 				types: query.types,
 				hostKey: query.hostKey,
+				groupCue: query.groupCue,
 				pagination: query.pagination,
 			});
 			return { entries: result.entries, hasMore: result.hasMore, total: result.total };

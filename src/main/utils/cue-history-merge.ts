@@ -21,6 +21,7 @@
 
 import type { CueHistoryGroup, HistoryEntry } from '../../shared/types';
 import { mergeEntriesById } from '../../shared/history';
+import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { logger } from './logger';
 import { captureException } from './sentry';
 import type {
@@ -135,6 +136,47 @@ export function readCueEntries(
 		}
 	}
 	return entries;
+}
+
+/**
+ * The local records a Federation host now runs as `agentId` on `peerId` (their `liftedTo`). Cue
+ * runs a hosted agent's subscriptions start still run on this machine, so `cue_events` holds them
+ * under the local record's id, not the host's.
+ */
+export function hostedCueScopeAgents(
+	records: Array<Record<string, unknown>>,
+	peerId: string,
+	agentId: string
+): CueScopeAgent[] {
+	const agents: CueScopeAgent[] = [];
+	for (const record of records) {
+		const id = sessionField(record, 'id');
+		const pointer = readLiftedTo(record?.liftedTo);
+		if (id && pointer?.peer === peerId && pointer.agentId === agentId) {
+			agents.push(cueScopeAgentFromRecord(id, record));
+		}
+	}
+	return agents;
+}
+
+/**
+ * A hosted agent's History, as its panel lists it: the host's entries plus this machine's Cue
+ * runs of the agent, the same rows `history:getAllPaginated` folds into a local agent's list (a
+ * host serves no Cue runs). `groupCue` collapses them per trigger, as the local read does. The
+ * graph and the bar jump read the runs ungrouped, as the local graph and offset do.
+ */
+export function withHostedCueRuns(
+	hostEntries: HistoryEntry[],
+	queries: { entries?: CueHistoryEntriesQuery; groups?: CueHistoryGroupsQuery },
+	agents: CueScopeAgent[],
+	options: { groupCue?: boolean; since?: number } = {}
+): HistoryEntry[] {
+	if (agents.length === 0) return hostEntries;
+	const read = { since: options.since };
+	const cueEntries = options.groupCue
+		? readCueGroupedEntries(queries.groups, agents, read)
+		: readCueEntries(queries.entries, agents, read);
+	return mergeEntriesById(hostEntries, cueEntries);
 }
 
 /**

@@ -168,12 +168,15 @@ describe('historySource', () => {
 	});
 
 	describe('mirrorHistorySource', () => {
-		it('pages through federation.historyPage without the local-only Cue grouping', async () => {
+		it('pages through federation.historyPage with the Cue grouping a local read takes', async () => {
+			// A hosted agent's Cue runs run on this machine and are merged into the host's page,
+			// so the grouping setting reaches them as it does a local agent's.
 			const page = await mirrorHistorySource('buildbox', 'a1').getPage(query);
 			expect(federation.historyPage).toHaveBeenCalledWith('buildbox', 'a1', {
 				lookbackHours: 24,
 				types: ['USER', 'AUTO'],
 				hostKey: 'laptop',
+				groupCue: true,
 				pagination: { offset: 10, limit: 5 },
 			});
 			expect(page).toEqual({ entries: [entry], hasMore: false, total: 1 });
