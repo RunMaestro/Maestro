@@ -45,6 +45,7 @@ import type { MaestroPaths } from '../paths/resolve';
 import { estimateContextUsage } from '../parsers/usage-aggregator';
 import { createPromptLoaderFor } from '../prompts/load';
 import type { AgentRecord, AITabRecord } from '../store/records';
+import { historyEntryTabName } from '../store/tab-display';
 import type { LogEntryRecord } from '../store/transcript';
 import type { HistoryWriter } from '../turns/history';
 import type { TurnSummaryHandoff } from '../turns/record-turn';
@@ -351,8 +352,16 @@ export function createRuntimeBuiltinCommands(
 				...(entry.agentSessionId ? { resumeSessionId: entry.agentSessionId } : {}),
 				buildEntry: (synopsis) => {
 					const { usageStats: _turnUsage, contextUsage: _turnContext, ...turnFields } = entry;
+					// The tab's name as it is now: a hosted tab is named by its client once the host took
+					// the message, so the name can land while the turn runs. A local tab is named
+					// as its message is sent and reads it at exit (`historyEntryTabName()` on both).
+					const sessionName = historyEntryTabName(
+						repository.getTab(agentId, tabId) ?? synopsis.tab,
+						synopsis.agentSessionId
+					);
 					return {
 						...turnFields,
+						...(sessionName ? { sessionName } : {}),
 						timestamp: synopsis.synopsisTime,
 						summary: synopsis.shortSummary,
 						fullResponse: synopsis.fullSynopsis,
