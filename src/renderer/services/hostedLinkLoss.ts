@@ -24,7 +24,7 @@ import type { PeerMirrorConnection } from '../../shared/maestro-lib/client/peer-
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import { notifyToast } from '../stores/notificationStore';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
-import { updateSessionWith } from '../stores/sessionStore';
+import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { useSshOutageStore } from '../stores/sshOutageStore';
 import type { AgentError, LogEntry, QueuedItem, Session } from '../types';
 import { generateId } from '../utils/ids';
@@ -99,6 +99,18 @@ interface CutTurn {
 /** By `sessionId:tabId`. */
 const cutTurns = new Map<string, CutTurn>();
 
+/**
+ * Turns the user stopped here while the host could not be told, by `sessionId:tabId`: the id of
+ * the message each answers (empty when the tab had none). Kept until the host reports the tab
+ * idle, so the same turn cut again by a later outage is still never sent again.
+ */
+const stoppedTurns = new Map<string, string>();
+
+/** Whether the turn answering `messageId` on this tab was stopped here. */
+function stoppedHere(key: string, messageId: string | undefined): boolean {
+	return stoppedTurns.has(key) && stoppedTurns.get(key) === (messageId ?? '');
+}
+
 const cutKey = (sessionId: string, tabId: string) => `${sessionId}:${tabId}`;
 
 /** The newest message the user sent in a tab: the one its running turn answers. */
@@ -124,6 +136,7 @@ export function noteHostedTurnsCut(session: Session, link: HostLink): void {
 			sessionId: session.id,
 			tabId: hostTab.id,
 			remoteName: link.remoteName,
+			...(stoppedHere(key, message?.id) ? { stopped: true } : {}),
 			...(message
 				? {
 						message: {
@@ -169,7 +182,13 @@ function decideCutTurn(key: string, link: HostLink): void {
 		?.aiTabs?.find((tab) => tab.id === cut.tabId);
 	// Closed on the host, still running there (it draws Thinking again), stopped by the user, or
 	// no message to send: nothing to settle.
-	if (!hostTab || hostTab.state === 'busy' || cut.stopped || !cut.message) {
+	if (
+		!hostTab ||
+		hostTab.state === 'busy' ||
+		cut.stopped ||
+		stoppedHere(key, cut.message?.id) ||
+		!cut.message
+	) {
 		cutTurns.delete(key);
 		return;
 	}
@@ -201,6 +220,13 @@ function decideCutTurn(key: string, link: HostLink): void {
  * read once, and the host's report after it decides (`decideCutTurn()`).
  */
 export function settleCutHostedTurns(sessionId: string, link: HostLink): void {
+	// A stopped turn the host reports idle (or no longer lists) is over: its stop is settled.
+	for (const key of [...stoppedTurns.keys()]) {
+		if (!key.startsWith(`${sessionId}:`)) continue;
+		const tabId = key.slice(sessionId.length + 1);
+		const hostTab = link.agent.aiTabs?.find((tab) => tab.id === tabId);
+		if (hostTab?.state !== 'busy') stoppedTurns.delete(key);
+	}
 	for (const [key, cut] of cutTurns) {
 		if (cut.sessionId !== sessionId || cut.reading) continue;
 		if (cut.stopped) {
@@ -249,11 +275,14 @@ export function endHostedTurnsHere(
 ): void {
 	if (tabIds.length === 0) return;
 	const tabs = endedHere.get(sessionId) ?? new Set<string>();
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	for (const tabId of tabIds) {
 		tabs.add(tabId);
 		// Stop means stop: when the host is back, this turn's message is not sent again, whether
-		// the link loss was confirmed before the Stop or after it.
+		// the link loss was confirmed before the Stop or after it, or again by a later outage.
 		const key = cutKey(sessionId, tabId);
+		const tabLogs = session?.aiTabs.find((tab) => tab.id === tabId)?.logs;
+		stoppedTurns.set(key, lastUserMessage(tabLogs)?.id ?? '');
 		const cut = cutTurns.get(key);
 		if (cut) cut.stopped = true;
 		else cutTurns.set(key, { sessionId, tabId, remoteName, stopped: true });
@@ -273,5 +302,6 @@ export function endHostedTurnsHere(
 export function __resetHostedLinkLossForTests(): void {
 	linkErrors.clear();
 	cutTurns.clear();
+	stoppedTurns.clear();
 	endedHere.clear();
 }

@@ -311,6 +311,31 @@ describe('a turn cut by a lost link', () => {
 		}
 	);
 
+	it('never sends again a stopped turn the host still ran, cut again by a later outage', async () => {
+		hostReports('busy', 'reconnecting');
+		syncHostedAgents();
+		await interruptTurn('row', { tabId: 't1' });
+
+		// Back, and the host still runs the stopped turn: Thinking again.
+		transcript.mockResolvedValue([QUESTION]);
+		hostReports('busy', 'connected');
+		syncHostedAgents();
+		await flush();
+		expect(tab().state).toBe('busy');
+
+		// The link drops again, the outage is confirmed, and the host comes back idle with no answer.
+		hostReports('busy', 'reconnecting');
+		confirmOutage();
+		syncHostedAgents();
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		hostReports('idle', 'connected');
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(raised).toEqual([]);
+	});
+
 	it('Stop while the host is not connected ends the turn here and says the host was not told', async () => {
 		hostReports('busy', 'reconnecting');
 		syncHostedAgents();
