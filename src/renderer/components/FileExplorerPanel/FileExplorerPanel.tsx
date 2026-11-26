@@ -526,6 +526,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	// "move to root" receptacle - gate on isExternalDrag so the whole-panel import
 	// outline fires only for the former; the receptacle highlights itself.
 	const isRootDropTarget = dragOverFolder === '' && isExternalDrag;
+	// The size walk stopped counting files at its cap: the count and size are at least these.
+	const atLeast = session.fileTreeStats?.fileCountCapped ? '+' : '';
 
 	return (
 		<div
@@ -1026,11 +1028,12 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				>
 					<span
 						className="flex items-center gap-1"
-						title={`${session.fileTreeStats.fileCount.toLocaleString()} file${session.fileTreeStats.fileCount !== 1 ? 's' : ''}`}
+						title={`${session.fileTreeStats.fileCount.toLocaleString()}${atLeast} file${session.fileTreeStats.fileCount !== 1 ? 's' : ''}${session.fileTreeStats.fileCountCapped ? ' (counting stops there)' : ''}`}
 					>
 						<FileText className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
 						<span style={{ color: theme.colors.accent }}>
 							{session.fileTreeStats.fileCount.toLocaleString()}
+							{atLeast}
 						</span>
 						<span className="file-stats-label opacity-60">
 							file{session.fileTreeStats.fileCount !== 1 ? 's' : ''},
@@ -1050,12 +1053,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					</span>
 					<span
 						className="flex items-center gap-1"
-						title={`Total size: ${formatBytes(session.fileTreeStats.totalSize)}`}
+						title={`Total size: ${formatBytes(session.fileTreeStats.totalSize)}${atLeast}`}
 					>
 						<HardDrive className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
 						<span className="file-stats-label opacity-60">Size:</span>
 						<span style={{ color: theme.colors.accent }}>
 							{formatBytes(session.fileTreeStats.totalSize)}
+							{atLeast}
 						</span>
 					</span>
 				</div>
