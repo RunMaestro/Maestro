@@ -9,6 +9,7 @@ import { noteEffortRejection, resetEffortRejections } from '../../shared/effortR
 import {
 	TIER_LEVELS,
 	asTierLevel,
+	cheapResumeLadderEffort,
 	cheapResumeTurnSettings,
 	cheapTurnSettings,
 	isLadderEffortValue,
@@ -278,6 +279,29 @@ describe('cheap synopsis turn resumed on its session', () => {
 	it('works with nothing configured on the session', () => {
 		expect(cheapResumeTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
 		expect(cheapResumeTurnSettings('opencode')).toEqual({ model: undefined, effort: undefined });
+	});
+
+	it('resolves cheapResumeLadderEffort against the session model for shared-thread providers', () => {
+		try {
+			expect(
+				cheapResumeLadderEffort('antigravity', { model: 'gpt-oss-120b', effort: 'medium' })
+			).toBe('low');
+			expect(cheapResumeLadderEffort('claude-code', { model: 'opus', effort: 'max' })).toBe('low');
+
+			noteEffortRejection('antigravity', {
+				value: 'low',
+				model: 'gpt-oss-120b',
+				supported: ['medium'],
+			});
+
+			expect(
+				cheapResumeLadderEffort('antigravity', { model: 'gpt-oss-120b', effort: 'medium' })
+			).toBeUndefined();
+			expect(cheapTurnSettings('antigravity').effort).toBe('low');
+			expect(cheapResumeLadderEffort('claude-code', { model: 'opus', effort: 'max' })).toBe('low');
+		} finally {
+			resetEffortRejections();
+		}
 	});
 });
 

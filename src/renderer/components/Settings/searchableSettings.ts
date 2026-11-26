@@ -100,13 +100,20 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
 	...PROMPTS_SETTINGS,
 ];
 
+const SETTING_BY_ID = new Map(ALL_SEARCHABLE_SETTINGS.map((s) => [s.id, s] as const));
+
+/** The built-in entry with this id (plugin panels are not in the registry). */
+export function findSearchableSetting(settingId: string): SearchableSetting | undefined {
+	return SETTING_BY_ID.get(settingId);
+}
+
 /**
  * The Plugins tile a jump to `settingId` has to open, or undefined when the
  * anchor is not inside one. Sub-settings live in their feature's tile, so
  * `requiresEncore` names it; a tile's own entry names it with `encoreTile`.
  */
 export function encoreTileForSetting(settingId: string): keyof EncoreFeatureFlags | undefined {
-	const entry = ALL_SEARCHABLE_SETTINGS.find((s) => s.id === settingId);
+	const entry = findSearchableSetting(settingId);
 	if (entry?.tab !== 'encore') return undefined;
 	return entry.encoreTile ?? entry.requiresEncore;
 }
