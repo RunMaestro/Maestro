@@ -145,10 +145,11 @@ export async function interruptTurn(
 		const hostRunsAutoRun =
 			!scopedTab && useBatchStore.getState().batchRunStates[sessionId]?.isRunning === true;
 		const forward = hostBusy.length > 0 || hostRunsAutoRun;
-		if (forward) await interruptHostedTurn(session, scopeTabId);
 		// The agent's `@mentions` run here, as a local agent's do: Stop ends them and the hand-off
-		// armed for the turn, the same as below.
+		// armed for the turn, the same as below. The hand-off goes first, before any await, so a
+		// host update that lands meanwhile cannot release it.
 		dropMentionHandoffs(sessionId, scopeTabId);
+		if (forward) await interruptHostedTurn(session, scopeTabId);
 		const consultsCanceled = await cancelConsults(sessionId, scopeTabId);
 		const wasBusy = forward || consultsCanceled > 0;
 		return {

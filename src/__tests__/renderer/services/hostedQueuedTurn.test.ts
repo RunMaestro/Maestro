@@ -25,6 +25,7 @@ import {
 	followHostedHandoffs,
 	hostedHandoffStep,
 } from '../../../renderer/services/crossAgentHandoff';
+import { fireHostStartedMentions } from '../../../renderer/services/hostedQueuedTurn';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -447,34 +448,169 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		expect(row().aiTabs[0].pendingMentionHandoff).toBeUndefined();
 	});
 
-	it('a hand-off waits while its turn still sits in the host queue', () => {
-		const tab = {
-			state: 'busy' as const,
-			pendingMentionHandoff: {
-				targets: [],
-				message: 'm',
-				hostTurn: { stage: 'sent' as const, queueItemId: 'h9' },
-			},
-		};
-		expect(hostedHandoffStep(tab, new Set(['h9']))).toBe('wait');
-		expect(hostedHandoffStep(tab, new Set())).toBe('running');
-		expect(hostedHandoffStep({ ...tab, state: 'idle' }, new Set())).toBe('wait');
+	it('a hand-off waits while its turn still sits in the host queue, and hands off the saved answer', () => {
+		const handoff = (hostTurn: object) => ({ targets: [], message: 'm', hostTurn }) as never;
+		const answer = [
+			{ id: 'u', timestamp: 1, source: 'user' as const, text: 'm' },
+			{ id: 'a', timestamp: 2, source: 'ai' as const, text: 'done' },
+		];
+		const queued = { stage: 'sent', queueItemId: 'h9' };
+		expect(
+			hostedHandoffStep(
+				{ state: 'busy', logs: [], pendingMentionHandoff: handoff(queued) },
+				new Set(['h9'])
+			)
+		).toBe('wait');
+		expect(
+			hostedHandoffStep(
+				{ state: 'busy', logs: [], pendingMentionHandoff: handoff(queued) },
+				new Set()
+			)
+		).toBe('running');
+		// The turn ended but the tab still draws what it streamed: read the saved transcript first.
 		expect(
 			hostedHandoffStep(
 				{
 					state: 'idle',
-					pendingMentionHandoff: { ...tab.pendingMentionHandoff, hostTurn: { stage: 'running' } },
+					logs: [{ ...answer[1], hostLive: true }],
+					pendingMentionHandoff: handoff({ stage: 'running' }),
 				},
 				new Set()
 			)
-		).toBe('release');
-		// A local hand-off is released by its process exit, never here.
+		).toBe('read');
 		expect(
 			hostedHandoffStep(
-				{ state: 'idle', pendingMentionHandoff: { targets: [], message: 'm' } },
+				{ state: 'idle', logs: answer, pendingMentionHandoff: handoff({ stage: 'running' }) },
+				new Set()
+			)
+		).toBe('release');
+		// A turn so short the tab never read busy: its saved answer after the send releases it...
+		expect(
+			hostedHandoffStep(
+				{ state: 'idle', logs: answer, pendingMentionHandoff: handoff({ stage: 'sent' }) },
+				new Set()
+			)
+		).toBe('release');
+		// ...but an idle tab with nothing new since the send is a turn that has not started.
+		expect(
+			hostedHandoffStep(
+				{
+					state: 'idle',
+					logs: answer,
+					pendingMentionHandoff: handoff({ stage: 'sent', afterEntryId: 'a' }),
+				},
 				new Set()
 			)
 		).toBe('wait');
+		// A local hand-off is released by its process exit, never here.
+		expect(
+			hostedHandoffStep(
+				{ state: 'idle', logs: answer, pendingMentionHandoff: { targets: [], message: 'm' } },
+				new Set()
+			)
+		).toBe('wait');
+	});
+
+	it("hosted: a hand-off asks for the saved transcript while the tab still draws the turn's stream", () => {
+		seedWithBackend('hosted');
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((s) =>
+				s.id === 'row'
+					? {
+							...s,
+							aiTabs: s.aiTabs.map((t) => ({
+								...t,
+								state: 'idle',
+								logs: [{ id: 'l', timestamp: 1, source: 'ai', text: 'narration', hostLive: true }],
+								pendingMentionHandoff: {
+									targets: [{ targetSessionId: 'backend', targetAgentName: 'Backend' }],
+									message: 'm',
+									hostTurn: { stage: 'running' },
+								},
+							})),
+						}
+					: s
+			),
+		}));
+		const readTranscript = vi.fn();
+		followHostedHandoffs(row(), readTranscript);
+		expect(readTranscript).toHaveBeenCalledWith('t1');
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
+	});
+
+	it('hosted: a drained turn runs on the model, effort, and read-only it was queued with', async () => {
+		seedWithBackend('hosted');
+		const item = queuedMessage({
+			text: 'look into the cache with @Backend',
+			crossAgentMention: true,
+			mentionRouting: 'parallel',
+			turnSettings: { model: 'sonnet', effort: 'low' },
+			readOnlyMode: true,
+		});
+		await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+		await flush();
+		// The live tab says `opus`; the message keeps what it was queued with.
+		expect(sends()[0][2].overrides).toMatchObject({
+			model: 'sonnet',
+			effort: 'low',
+			readOnly: true,
+		});
+	});
+
+	it('hosted: a turn the host queued consults only once that turn starts', async () => {
+		act$.mockResolvedValue({
+			ok: true,
+			result: {
+				kind: 'send',
+				receipt: { status: 'queued', itemId: 'h9', position: 1, queueLength: 1 },
+			},
+		});
+		seedWithBackend('hosted');
+		const item = queuedMessage({
+			text: 'look into the cache with @Backend',
+			crossAgentMention: true,
+			mentionRouting: 'parallel',
+		});
+		await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+		await flush();
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+
+		const withHost = (hostQueued: boolean, state: 'busy' | 'idle') =>
+			useSessionStore.setState((current) => ({
+				sessions: current.sessions.map((s) =>
+					s.id === 'row'
+						? {
+								...s,
+								aiTabs: s.aiTabs.map((t) => ({ ...t, state })),
+								executionQueue: hostQueued
+									? [queuedMessage({ id: 'h9', hostQueued: true, text: item.text })]
+									: s.executionQueue.filter((q) => !q.hostQueued),
+							}
+						: s
+				),
+			}));
+		withHost(true, 'busy');
+		fireHostStartedMentions(row());
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		withHost(false, 'busy');
+		fireHostStartedMentions(row());
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({ targetSessionId: 'backend' });
+	});
+
+	it('hosted: a message addressed only at an agent that is gone sends this agent nothing', async () => {
+		seed('hosted');
+		const item = queuedMessage({
+			text: '@Backend does this look right?',
+			crossAgentMention: true,
+			crossAgentOnly: true,
+		});
+		const dispatched = await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+		await flush();
+		expect(dispatched).toBe(true);
+		expect(sends()).toEqual([]);
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 	});
 
 	it('hosted: a queued message that mentions an agent waits for the drain instead of going at once', () => {

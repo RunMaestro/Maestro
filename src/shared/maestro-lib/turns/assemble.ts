@@ -34,6 +34,7 @@ import {
 	expandCommandArguments,
 	prependMergedContext,
 	appendAgentNotes,
+	PROMPT_LAYER_SEPARATOR,
 } from './prompt';
 
 /** The environment variable that names the data directory a process should use. */
@@ -304,10 +305,15 @@ export function assembleTurn(
 		// A command that is the tab's first turn opens a provider session, so the agent's standing
 		// instructions ride it like a typed message. Agent-only: the transcript keeps the bare
 		// command prompt.
-		userPrompt = prependNewSessionMessageOnFirstTurn(
-			commandPrompt,
-			agent.newSessionMessage,
-			tab.agentSessionId
+		userPrompt = appendAgentNotes(
+			prependNewSessionMessageOnFirstTurn(
+				message.agentContext
+					? `${message.agentContext}${PROMPT_LAYER_SEPARATOR}${commandPrompt}`
+					: commandPrompt,
+				agent.newSessionMessage,
+				tab.agentSessionId
+			),
+			message.agentNotes
 		);
 		entry = {
 			text: commandPrompt,

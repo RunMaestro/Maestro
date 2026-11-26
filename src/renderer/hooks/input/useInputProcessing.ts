@@ -658,6 +658,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const tabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
 				return onPlanCrossAgentMentions(planText, activeSession, tabId) !== null;
 			};
+			// This machine holds a line for the tab (a consult's hold, a mention waiting its turn):
+			// the message waits behind it, as it would for a local agent, instead of overtaking it.
+			const hostedTabHasLocalLine = (): boolean => {
+				const tabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
+				return (activeSession.executionQueue ?? []).some(
+					(item) => item.tabId === tabId && !item.hostQueued
+				);
+			};
 			if (
 				activeSession.inputMode === 'ai' &&
 				hostedTargetOf(activeSession) &&
@@ -666,7 +674,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					isWizardActive: !!isWizardActive,
 					handles: { wizard: !!onWizardCommand },
 				}) &&
-				!hostedMessageMentions()
+				!hostedMessageMentions() &&
+				!hostedTabHasLocalLine()
 			) {
 				const text = stripShellCommandEscape(effectiveInputValue);
 

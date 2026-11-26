@@ -30,6 +30,7 @@ import {
 } from '../utils/hostedSession';
 import { applyAutoRunMirrorFrame } from '../hooks/batch/useAutoRunStateMirror';
 import { followHostedHandoffs } from './crossAgentHandoff';
+import { fireHostStartedMentions } from './hostedQueuedTurn';
 import { hostingEnabled } from './hostedTurns';
 import { readMirrorTranscript } from './peerMirror';
 
@@ -126,8 +127,18 @@ export function syncHostedAgents(): void {
 				current === session ? next : projectHostedSession(current, input)
 			);
 		}
-		// A hand-off armed on a turn the host runs releases when the host's turn ends.
-		followHostedHandoffs(next);
+		// A consult of a turn the host queued fires as that turn starts.
+		fireHostStartedMentions(next);
+		// A hand-off armed on a turn the host runs releases when the host's turn ends, with the
+		// answer the host saved: a background tab's transcript is read for it.
+		followHostedHandoffs(next, (tabId) => {
+			if (!hosted.connected) return;
+			const slot =
+				usePeerMirrorStore.getState().transcripts[hosted.peerId]?.[
+					liveTurnKey(hosted.agentId, tabId)
+				];
+			if (!slot?.loading) void readMirrorTranscript(hosted.peerId, hosted.agentId, tabId);
+		});
 		if (session.id !== activeSessionId || !hosted.connected) continue;
 		const tabId = next.activeTabId;
 		if (!hosted.input.agent.aiTabs?.some((tab) => tab.id === tabId)) continue;

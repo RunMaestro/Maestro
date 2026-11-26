@@ -487,6 +487,12 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 
 		expect(crossAgentApi.cancel).toHaveBeenCalledWith('agent-1', 'tab-a');
 		expect(dropMentionHandoffs).toHaveBeenCalledWith('agent-1', 'tab-a');
+		// Before any await: a host update meanwhile cannot release the stopped hand-off.
+		if (mode === 'hosted') {
+			expect(vi.mocked(dropMentionHandoffs).mock.invocationCallOrder[0]).toBeLessThan(
+				vi.mocked(interruptMirroredAgent).mock.invocationCallOrder[0]
+			);
+		}
 		expect(result).toMatchObject({ success: true, wasBusy: true, interrupted: true });
 	});
 });

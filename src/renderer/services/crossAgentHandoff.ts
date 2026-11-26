@@ -194,43 +194,60 @@ export function markHandoffSentToHost(
 	tabId: string,
 	receipt: TurnSendReceipt
 ): void {
-	updateAiTab(sessionId, tabId, (tab) =>
-		tab.pendingMentionHandoff
-			? {
-					...tab,
-					pendingMentionHandoff: {
-						...tab.pendingMentionHandoff,
-						hostTurn: {
-							stage: 'sent',
-							...(receipt.status === 'queued' ? { queueItemId: receipt.itemId } : {}),
-						},
-					},
-				}
-			: tab
-	);
+	updateAiTab(sessionId, tabId, (tab) => {
+		if (!tab.pendingMentionHandoff) return tab;
+		const afterEntryId = [...tab.logs].reverse().find((entry) => !entry.hostLive)?.id;
+		return {
+			...tab,
+			pendingMentionHandoff: {
+				...tab.pendingMentionHandoff,
+				hostTurn: {
+					stage: 'sent',
+					...(receipt.status === 'queued' ? { queueItemId: receipt.itemId } : {}),
+					...(afterEntryId ? { afterEntryId } : {}),
+				},
+			},
+		};
+	});
+}
+
+/** The entries a host wrote after `afterEntryId` (all of them when it is unknown or gone). */
+function entriesAfter(logs: LogEntry[], afterEntryId: string | undefined): LogEntry[] {
+	const at = afterEntryId ? logs.findIndex((entry) => entry.id === afterEntryId) : -1;
+	return at === -1 ? logs : logs.slice(at + 1);
 }
 
 /**
- * What a hosted tab's armed hand-off does on this sync: `running` once the tab reads busy with
- * the turn (not while it still waits in the host's queue), `release` once a running turn's tab
- * reads idle again, else `wait`. A hand-off no host took (`hostTurn` absent) is a local one.
+ * What a hosted tab's armed hand-off does on this sync. A hand-off no host took (`hostTurn`
+ * absent) is a local one, released by its process exit: `wait`.
+ * - `running`: the tab reads busy with the turn (not while it still waits in the host's queue).
+ * - `read`: the turn ended but the tab still draws its streamed entries: read the saved
+ *   transcript first, so the answer handed off is the one the host recorded.
+ * - `release`: the turn ended and its saved answer is here. A turn so short the tab never read
+ *   busy counts once its answer follows the entry the tab ended on when it was sent.
  */
 export function hostedHandoffStep(
-	tab: Pick<AITab, 'state' | 'pendingMentionHandoff'>,
+	tab: Pick<AITab, 'state' | 'pendingMentionHandoff' | 'logs'>,
 	hostQueueItemIds: ReadonlySet<string>
-): 'wait' | 'running' | 'release' {
+): 'wait' | 'running' | 'read' | 'release' {
 	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
 	if (!hostTurn) return 'wait';
-	if (hostTurn.stage === 'running') return tab.state === 'busy' ? 'wait' : 'release';
 	if (hostTurn.queueItemId && hostQueueItemIds.has(hostTurn.queueItemId)) return 'wait';
-	return tab.state === 'busy' ? 'running' : 'wait';
+	if (tab.state === 'busy') return hostTurn.stage === 'sent' ? 'running' : 'wait';
+	if (tab.logs.some((entry) => entry.hostLive)) return 'read';
+	if (hostTurn.stage === 'running') return 'release';
+	return collectHandoffTurn(entriesAfter(tab.logs, hostTurn.afterEntryId)) ? 'release' : 'wait';
 }
 
 /**
  * Move every hand-off a hosted agent's tabs wait on: a turn its host started, then ended, releases
  * as a local exit does (`releaseMentionHandoff()`), failed when the tab ended on an error.
+ * `readTranscript` asks for a tab's saved transcript when the turn's streamed entries still stand.
  */
-export function followHostedHandoffs(session: Session): void {
+export function followHostedHandoffs(
+	session: Session,
+	readTranscript: (tabId: string) => void = () => {}
+): void {
 	if (!session.aiTabs.some((tab) => tab.pendingMentionHandoff?.hostTurn)) return;
 	const hostQueueItemIds = new Set(
 		(session.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
@@ -249,6 +266,8 @@ export function followHostedHandoffs(session: Session): void {
 						}
 					: current
 			);
+		} else if (step === 'read') {
+			readTranscript(tab.id);
 		} else if (step === 'release') {
 			void releaseMentionHandoff(session.id, tab.id, { failed: !!tab.agentError });
 		}

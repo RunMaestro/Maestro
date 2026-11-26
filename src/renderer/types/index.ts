@@ -523,9 +523,10 @@ export interface MentionHandoff {
 	/**
 	 * A hosted agent's turn runs on its host, so no local exit releases the hand-off: the host's
 	 * tab state does (`followHostedHandoffs()`). `sent` once the host took the turn (`queueItemId`
-	 * when it waits in the host's queue), `running` once the host tab reads busy with it.
+	 * when it waits in the host's queue; `afterEntryId` the tab's last entry then), `running` once
+	 * the host tab reads busy with it.
 	 */
-	hostTurn?: { stage: 'sent' | 'running'; queueItemId?: string };
+	hostTurn?: { stage: 'sent' | 'running'; queueItemId?: string; afterEntryId?: string };
 }
 
 export interface QueuedItem {

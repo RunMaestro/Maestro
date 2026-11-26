@@ -130,6 +130,21 @@ describe('the user prompt (PA1: composer rules for every message)', () => {
 		expect(turn.entry.text).toBe('hello');
 		expect(assemble().prompt).not.toContain('CONSULTING');
 	});
+
+	it('carries the agent-only text on a Maestro command too, and keeps the entry the command (M7)', () => {
+		const turn = assemble({
+			message: {
+				text: '/review a.ts',
+				command: { command: '/review', prompt: 'Review $ARGUMENTS', args: 'a.ts' },
+				agentContext: 'REPLIES',
+				agentNotes: 'CONSULTING',
+			},
+			toolType: 'codex',
+			context: { prompts: { imageOnlyDefault: '', maestroSystem: undefined } },
+		});
+		expect(turn.prompt).toBe(`REPLIES${SEP}Review a.ts${SEP}CONSULTING`);
+		expect(turn.entry.text).toBe('Review a.ts');
+	});
 });
 
 describe('a Maestro command', () => {

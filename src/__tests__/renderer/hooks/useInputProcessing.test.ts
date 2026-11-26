@@ -4941,6 +4941,46 @@ describe('useInputProcessing', () => {
 			);
 
 			it.each(AGENT_MODES)(
+				'%s: a follow-up waits behind the consult hold of the turn before it',
+				async (mode) => {
+					vi.mocked(sendHostedTurn).mockClear();
+					const session = modeSession(mode);
+					session.executionQueue = [
+						{
+							id: 'hold',
+							timestamp: 1,
+							tabId: session.activeTabId,
+							type: 'message',
+							text: 'Waiting for Backend to reply before finishing this answer.',
+							awaitingConsult: {
+								pending: [{ targetSessionId: 'backend', targetAgentName: 'Backend' }],
+								replies: [],
+							},
+						},
+					];
+					const deps = createDeps({
+						activeSession: session,
+						activeSessionId: session.id,
+						sessionsRef: { current: [session] },
+						inputValue: 'and one more thing',
+						onPlanCrossAgentMentions: vi.fn().mockReturnValue(null),
+					});
+					const { result } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+
+					expect(sendHostedTurn).not.toHaveBeenCalled();
+					expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+					const queue = mockSetSessions.mock.calls
+						.map(([update]) => update([session])[0])
+						.map((s: Session) => s.executionQueue.map((item: QueuedItem) => item.id));
+					expect(queue.at(-1)?.[0]).toBe('hold');
+					expect(queue.at(-1)).toHaveLength(2);
+				}
+			);
+
+			it.each(AGENT_MODES)(
 				'%s: a message that also mentions an agent keeps the mention for the turn that runs it',
 				async (mode) => {
 					vi.mocked(sendHostedTurn).mockClear();
