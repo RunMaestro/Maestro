@@ -34,30 +34,30 @@ describe('liveTurnKey', () => {
 });
 
 describe('foldLiveTurn', () => {
-	// T2 review: a Claude partial is a thinking chunk and the same words as answer text
-	// (`partialTextRoute()`). A local or SSH tab draws one thinking stream for it; so does a
-	// hosted tab's live tail, which skips the answer copy.
-	it('draws a partial that is both thinking and answer once, as one thinking stream', () => {
-		const turn = foldAll([
-			{ kind: 'thinking', at: 1, text: 'First part. ' },
-			{ kind: 'text', at: 1, text: 'First part. ' },
-			{ kind: 'thinking', at: 2, text: 'Second part.' },
-			{ kind: 'text', at: 2, text: 'Second part.' },
+	// T2 review: the host's mapper says a Claude partial once, as thinking, so the live fold has
+	// no copy to skip, and an answer equal to the thinking before it is still drawn.
+	it('folds a coalesced thinking burst and its answer as the burst itself folds', () => {
+		const events: TurnEvent[] = [
+			{ kind: 'thinking', at: 1, text: 'Reasoning. ' },
+			{ kind: 'thinking', at: 1, text: 'First part.' },
+			{ kind: 'text', at: 2, text: 'First part.' },
+		];
+		const strip = (turn: LiveTurn | undefined) => turn?.entries.map((e) => [e.source, e.text]);
+		expect(strip(foldAll(coalesceTurnEvents(events)))).toEqual(strip(foldAll(events)));
+		expect(strip(foldAll(events))).toEqual([
+			['thinking', 'Reasoning. First part.'],
+			['stdout', 'First part.'],
 		]);
-		expect(turn?.entries.map((entry) => [entry.source, entry.text])).toEqual([
-			['thinking', 'First part. Second part.'],
-		]);
-		expect(turn?.thinkingTail).toBeUndefined();
 	});
 
-	it('still draws answer text that is not a copy of the thinking before it', () => {
+	it('draws an answer even when it equals the thinking before it', () => {
 		const turn = foldAll([
-			{ kind: 'thinking', at: 1, text: 'Plan it.' },
-			{ kind: 'text', at: 2, text: 'Done.' },
+			{ kind: 'thinking', at: 1, text: '42' },
+			{ kind: 'text', at: 2, text: '42' },
 		]);
 		expect(turn?.entries.map((entry) => [entry.source, entry.text])).toEqual([
-			['thinking', 'Plan it.'],
-			['stdout', 'Done.'],
+			['thinking', '42'],
+			['stdout', '42'],
 		]);
 	});
 

@@ -439,23 +439,10 @@ describe('runtime turns', () => {
 		);
 
 		// P12: the host folds the cards only a sticky tab keeps, never the answer text, and nothing
-		// for any other tab. T2: each Claude text partial is a thinking chunk as well; the fold skips
-		// its answer copy (`thinkingTail`), so the chunks of one block stay one card, as on the desktop.
+		// for any other tab. T2: each Claude text partial is a thinking chunk (`partialTextRoute()`),
+		// said once, so the chunks of one block stay one card; the result's answer closes the block.
 		it.each([
-			[
-				'sticky',
-				[
-					'thinking',
-					'thinking',
-					'text',
-					'thinking',
-					'text',
-					'tool',
-					'thinking',
-					'thinking',
-					'text',
-				],
-			],
+			['sticky', ['thinking', 'thinking', 'thinking', 'tool', 'thinking', 'thinking', 'text']],
 			['on', []],
 			['off', []],
 		])('folds only what a %s tab keeps past the turn', async (showThinking, folded) => {

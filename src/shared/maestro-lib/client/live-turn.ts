@@ -24,13 +24,6 @@ export interface LiveTurn {
 	busy: boolean;
 	/** The latest usage report, as received. Not a total. */
 	usage?: UsageStats;
-	/**
-	 * The text of the event just folded, when it was a thinking chunk. A provider whose partials are
-	 * both a thinking chunk and answer text (`partialTextRoute()`) sends the same words as `text`
-	 * right after: that copy is not drawn again, and does not close the thinking entry, as the
-	 * desktop draws one stream for a local or SSH turn.
-	 */
-	thinkingTail?: string;
 }
 
 export interface LiveTurnContext {
@@ -140,20 +133,6 @@ export function foldLiveTurn(
 	event: TurnEvent,
 	ctx: LiveTurnContext
 ): LiveTurn | undefined {
-	const folded = foldEvent(turn, event, ctx);
-	if (!folded) return folded;
-	const tail = event.kind === 'thinking' && event.text ? event.text : undefined;
-	if (tail !== undefined) return { ...folded, thinkingTail: tail };
-	if (folded.thinkingTail === undefined) return folded;
-	const { thinkingTail: _tail, ...rest } = folded;
-	return rest;
-}
-
-function foldEvent(
-	turn: LiveTurn | undefined,
-	event: TurnEvent,
-	ctx: LiveTurnContext
-): LiveTurn | undefined {
 	switch (event.kind) {
 		case 'user': {
 			const next = begin(turn, event.at);
@@ -165,8 +144,6 @@ function foldEvent(
 			return turn;
 		case 'text': {
 			if (!event.text) return turn;
-			// The answer copy of the thinking chunk just folded: one stream, drawn once.
-			if (turn?.thinkingTail === event.text) return turn;
 			const next = begin(turn, event.at);
 			return { ...next, entries: appendStream(next.entries, 'stdout', event.text, event.at, ctx) };
 		}

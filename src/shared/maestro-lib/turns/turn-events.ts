@@ -11,8 +11,10 @@
  *   is the same words again, so it is dropped. A provider that sends only a `result` (no partials)
  *   is read from the result. This is `TurnCapture`'s fallback order, applied as the events go by.
  * - **Reasoning is `thinking`, never answer text.** A partial event marked `isReasoning` is thought.
- *   Which partials are ALSO a thinking chunk is `partialTextRoute()`, the rule the desktop's
- *   `StdoutHandler` reads too, so a sticky tab keeps the same `thinking` entries in every mode.
+ *   Which partials are a thinking chunk is `partialTextRoute()`, the rule the desktop's
+ *   `StdoutHandler` reads too, so a sticky tab keeps the same `thinking` entries in every mode. A
+ *   partial that is a thinking chunk and answer text both (Claude) is said as thinking only, and
+ *   the answer is read from the `result`, as the desktop draws it.
  * - **Usage is passed on as the provider reported it.** A client must not sum these (see `TurnEvent`).
  *
  * Stateful by design: one mapper per turn, because "has answer text been seen" is a fact about the
@@ -281,8 +283,13 @@ export function createTurnEventMapper(options: TurnEventMapperOptions): TurnEven
 					if (event.isPartial) {
 						if (event.text) {
 							const route = partialTextRoute(options.agentId, event.isReasoning);
-							if (route.thinking) out.push({ kind: 'thinking', text: event.text });
-							if (route.answer) {
+							if (route.thinking) {
+								// A partial that is a thinking chunk is said once, as thinking, even when it is
+								// also answer text (Claude's assistant messages): the desktop streams it to the
+								// thinking display and draws the answer from the `result`, which this mapper then
+								// says, so a client never gets the same words twice.
+								out.push({ kind: 'thinking', text: event.text });
+							} else if (route.answer) {
 								answerTextSeen = true;
 								out.push({ kind: 'text', text: event.text });
 							}

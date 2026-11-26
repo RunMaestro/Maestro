@@ -30,12 +30,17 @@ describe('createTurnEventMapper', () => {
 			],
 			{ agentId: 'claude-code' }
 		);
-		// A Claude partial is also a thinking chunk (`partialTextRoute()`), as on the desktop.
+		// A Claude partial is a thinking chunk (`partialTextRoute()`), said once as thinking; the
+		// answer is the result's, as the desktop draws it.
 		expect(out).toEqual([
 			{ kind: 'session', providerSessionId: 'S1' },
 			{ kind: 'thinking', text: 'Paris' },
 			{ kind: 'text', text: 'Paris' },
 		]);
+		const partialOnly = run([{ type: 'text', text: 'Paris', isPartial: true }], {
+			agentId: 'claude-code',
+		}).out;
+		expect(partialOnly).toEqual([{ kind: 'thinking', text: 'Paris' }]);
 	});
 
 	it('reads a provider that never streams from its result', () => {

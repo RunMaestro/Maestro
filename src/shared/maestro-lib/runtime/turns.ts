@@ -795,8 +795,6 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 					}
 					const sent = emitTurn(agentId, tabId, event);
 					if (sent.kind === 'tool') ranTool = true;
-					// The fold a client's live tail runs too: the answer copy of a partial that is also a
-					// thinking chunk (`partialTextRoute()`) neither shows twice nor closes the block.
 					if (keepsCards(sent, streamed) && isStickyTab(agentId, tabId)) {
 						streamed = foldLiveTurn(streamed, sent, foldContext) ?? streamed;
 					}
