@@ -1106,12 +1106,15 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		}
 	});
 
-	// Kill all managed processes before the renderer reloads after a crash.
-	// Without this, the new renderer restores sessions with pid:0 and spawns fresh
-	// PTYs, but only the *active* tab's old PTY gets killed (via spawn-before-kill).
-	// Non-active tabs' orphaned PTYs survive indefinitely, leaking PTY file descriptors.
+	// Restored terminal tabs start with pid:0 and create fresh shells. Retire
+	// their old PTYs, including those for background tabs, to avoid leaking them.
+	// The main process owns AI turns across renderer reloads. Session restoration
+	// queries the running process table to reconnect to those turns.
 	mainWindow.webContents.on('render-process-gone', () => {
-		processManager?.killAll();
+		if (!processManager) return;
+		for (const { sessionId, isTerminal } of processManager.getAll()) {
+			if (isTerminal) processManager.kill(sessionId, { sync: true });
+		}
 	});
 }
 
