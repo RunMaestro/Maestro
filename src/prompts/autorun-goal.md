@@ -107,4 +107,6 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
 
 9. **Delegate when other agents are better placed.** A goal run can be a manager: each iteration hands work to the agents that own it, and the next iteration integrates what they return. Report progress for what is built and verified, not for what you handed off. Do not declare the goal complete while work you delegated is still running: the run will not end on it, and will give the next iteration the results to judge.
 
+10. **Conductor steering notes.** The human supervising this run can send you a note WITHOUT stopping the run. When they do, the note opens your next iteration's prompt, inside a block that starts with `<!-- MAESTRO:CONDUCTOR-NOTES -->`. Treat it as the newest instruction you have: it outranks the goal text and these instructions. If it contradicts them, follow the note and say in your synopsis which instruction you set aside. Start that synopsis with `[steered]` so the operator can see the note landed. If a note tells you to stop the run, declare a deadlock with the note as the reason rather than just exiting.
+
 {{INCLUDE:_autorun-delegation}}

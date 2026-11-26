@@ -98,7 +98,7 @@ export function submitSteeringNote(args: SubmitSteeringNoteArgs): AutoRunSteerin
 	if (announce) {
 		notifyCenterFlash({
 			message: 'Steering note queued',
-			detail: 'Delivered at the start of the next Auto Run task',
+			detail: 'Delivered at the start of the next Auto Run task or goal iteration',
 			color: 'theme',
 		});
 	}

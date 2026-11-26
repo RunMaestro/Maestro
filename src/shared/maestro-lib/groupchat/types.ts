@@ -285,7 +285,8 @@ export interface GroupChatEventSink {
 	historyEntry(chatId: string, entry: GroupChatHistoryEntry): void;
 	participantState(chatId: string, name: string, state: ParticipantState): void;
 	moderatorSessionIdChanged(chatId: string, sessionId: string): void;
-	autoRunTriggered(chatId: string, name: string, filename?: string): void;
+	/** `agentId` is the participant's Maestro agent (`Session.id`) when the router resolved it. */
+	autoRunTriggered(chatId: string, name: string, filename?: string, agentId?: string): void;
 	autoRunBatchComplete(chatId: string, name: string): void;
 	participantLiveOutput(chatId: string, name: string, chunk: string): void;
 }

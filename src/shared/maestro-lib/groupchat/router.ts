@@ -2225,7 +2225,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					logger.debug(`[GroupChat:Debug] Emitted state change: agent-working`);
 				}
 				// Now emit the trigger - renderer will start the batch run
-				events.autoRunTriggered(groupChatId, participant.name, targetFilename);
+				events.autoRunTriggered(groupChatId, participant.name, targetFilename, matchingSession.id);
 				logger.debug(
 					`[GroupChat:Debug] Emitted autoRunTriggered for @${participant.name}${targetFilename ? `:${targetFilename}` : ''} in chat ${groupChatId}`
 				);
