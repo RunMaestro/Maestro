@@ -544,8 +544,11 @@ export interface MentionHandoff {
 		 * first seen waiting; never overwritten).
 		 */
 		turnStartedAt?: number;
-		/** It left the host queue with no start seen: one more sync before it counts as removed. */
-		goneOnce?: boolean;
+		/**
+		 * When it left the host queue with no start seen (this machine's clock, compared only with
+		 * it): past `HOST_QUEUE_START_GRACE_MS` it counts as removed.
+		 */
+		goneAt?: number;
 	};
 }
 

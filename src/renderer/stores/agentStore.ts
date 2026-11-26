@@ -1037,11 +1037,15 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						command: commandToUse,
 						args: spawnArgs,
 						// Agent-only, like the message branch: the log entry above keeps
-						// the bare command prompt.
-						prompt: prependNewSessionMessageOnFirstTurn(
-							substitutedPrompt,
-							session.newSessionMessage,
-							tabAgentSessionId
+						// the bare command prompt. A Federation sender's agent-only text
+						// lays around it as a headless host lays it (`assembleTurn()`).
+						prompt: appendAgentNotes(
+							prependNewSessionMessageOnFirstTurn(
+								withTurnAgentText(substitutedPrompt, { agentContext: item.agentContext }),
+								session.newSessionMessage,
+								tabAgentSessionId
+							),
+							item.agentNotes
 						),
 						images: hasImages ? item.images : undefined,
 						appendSystemPrompt: appendSystemPromptForCommand,

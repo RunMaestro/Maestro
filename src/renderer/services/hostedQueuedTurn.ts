@@ -48,6 +48,7 @@ import {
 	deferHostedHandoff,
 	handoffSendBoundary,
 	hasDeferredHostedHandoff,
+	HOST_QUEUE_START_GRACE_MS,
 	markHandoffSentToHost,
 	noteSkippedMention,
 } from './crossAgentHandoff';
@@ -265,10 +266,11 @@ const mentionsAwaitingHostStart = new Map<
 		/** When the turn the host queued it behind started (the tab's `thinkingStartTime` then). */
 		turnStartedAt?: number;
 		/**
-		 * It left the host queue with no start seen, from a host that does not name its starts: the
-		 * next sync tells a start whose tab state comes later from a removal.
+		 * When it left the host queue with no start seen, from a host that does not name its starts
+		 * (this machine's clock): a start within `HOST_QUEUE_START_GRACE_MS` is its own, after it
+		 * the message was removed.
 		 */
-		goneOnce?: boolean;
+		goneAt?: number;
 		/** When the host's receipt said it was queued (this machine's clock; only for the time limit). */
 		queuedAt: number;
 	}
@@ -333,7 +335,7 @@ export function pruneHostStartedMentions(hostedSessionIds: ReadonlySet<string>):
  */
 export function dropStoppedHostStartMentions(sessionId: string, tabId?: string): void {
 	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
-		if (waiting.sessionId !== sessionId || !waiting.goneOnce) continue;
+		if (waiting.sessionId !== sessionId || waiting.goneAt === undefined) continue;
 		if (tabId && waiting.item.tabId && waiting.item.tabId !== tabId) continue;
 		letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 	}
@@ -351,7 +353,8 @@ export function dropStoppedHostStartMentions(sessionId: string, tabId?: string):
  * turn the tab ran at the receipt, or when it was first seen waiting; never overwritten after, and
  * only ever compared with another start time from the host). The queue change and the tab's busy
  * state arrive as separate messages, so one that left the queue while the tab is idle, or still
- * busy with the turn ahead, waits one more sync before it counts as removed.
+ * busy with the turn ahead, waits up to `HOST_QUEUE_START_GRACE_MS` for its start before it counts
+ * as removed (time, not syncs: this window's own writes run the sync again in between).
  *
  * A consult that is let go without running (removed, or not in the host's queue for
  * `HOST_START_MENTION_TTL_MS`) leaves the note a local mention that cannot run leaves.
@@ -395,11 +398,13 @@ export function fireHostStartedMentions(
 			const started =
 				tab?.state === 'busy' &&
 				(!waiting.aheadKnown || tab.thinkingStartTime !== waiting.turnStartedAt);
+			// Gone from the queue longer than a start takes to show: it was removed.
+			if (waiting.goneAt !== undefined && now - waiting.goneAt > HOST_QUEUE_START_GRACE_MS) {
+				letGoOfHostStart(hostItemId, waiting, 'the message was removed before it ran.');
+				continue;
+			}
 			if (!started) {
-				if (!waiting.seenQueued) continue;
-				if (waiting.goneOnce) {
-					letGoOfHostStart(hostItemId, waiting, 'the message was removed before it ran.');
-				} else waiting.goneOnce = true;
+				if (waiting.seenQueued && waiting.goneAt === undefined) waiting.goneAt = now;
 				continue;
 			}
 		}

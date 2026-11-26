@@ -24,6 +24,7 @@ import { loadCrossAgentConsultPrompts } from '../../../renderer/services/crossAg
 import {
 	dropMentionHandoffs,
 	followHostedHandoffs,
+	HOST_QUEUE_START_GRACE_MS,
 	hostedHandoffStep,
 	hostedHandoffTurn,
 } from '../../../renderer/services/crossAgentHandoff';
@@ -490,16 +491,22 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		// Its own turn started: a new start time on the tab.
 		expect(hostedHandoffStep(busyWith(200, seen), new Set())).toBe('running');
 		// Gone from the queue while the turn ahead still runs, or with the tab idle: the tab's state
-		// may still come, so one more sync before it counts as removed and nothing goes out.
-		expect(hostedHandoffStep(busyWith(100, seen), new Set())).toBe('gone-once');
+		// may still come, so it waits a short time for its start (any number of syncs), then counts
+		// as removed and nothing goes out (Greptile on #2148).
+		expect(hostedHandoffStep(busyWith(100, seen), new Set())).toBe('left-queue');
 		expect(hostedHandoffStep({ ...busyWith(100, seen), state: 'idle' }, new Set())).toBe(
-			'gone-once'
+			'left-queue'
 		);
-		const goneOnce = { ...seen, goneOnce: true };
-		expect(hostedHandoffStep(busyWith(100, goneOnce), new Set())).toBe('drop');
-		expect(hostedHandoffStep({ ...busyWith(100, goneOnce), state: 'idle' }, new Set())).toBe(
-			'drop'
+		const left = { ...seen, goneAt: 1_000 };
+		const soon = 1_000 + HOST_QUEUE_START_GRACE_MS;
+		const late = soon + 1;
+		expect(hostedHandoffStep(busyWith(100, left), new Set(), false, undefined, soon)).toBe('wait');
+		expect(hostedHandoffStep(busyWith(200, left), new Set(), false, undefined, soon)).toBe(
+			'running'
 		);
+		expect(hostedHandoffStep(busyWith(100, left), new Set(), false, undefined, late)).toBe('drop');
+		// A start seen after the window is not its turn: it was removed.
+		expect(hostedHandoffStep(busyWith(200, left), new Set(), false, undefined, late)).toBe('drop');
 		// The turn ended but the tab still draws what it streamed: read the saved transcript first.
 		expect(
 			hostedHandoffStep(
@@ -692,9 +699,9 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		// Gone while the turn ahead runs: one more sync, in case the tab's state comes later...
 		withHost(false, 100);
 		fireHostStartedMentions(row());
-		// ...and still on the turn ahead: it was removed.
+		// ...and still on the turn ahead, as long as a start takes to show: it was removed.
 		withHost(false, 100);
-		fireHostStartedMentions(row());
+		fireHostStartedMentions(row(), undefined, Date.now() + HOST_QUEUE_START_GRACE_MS + 1);
 		// A later turn on the tab is not this message either.
 		withHost(false, 300);
 		fireHostStartedMentions(row());
@@ -980,6 +987,35 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 			});
 
+			it("this window's own re-syncs between the queue change and the busy state never drop it (Greptile on #2148)", async () => {
+				const id = `g-${routing}`;
+				const text = await drainQueued(id, routing);
+				hostSays(id, text, { queued: true, busy: 100 });
+				fireHostStartedMentions(row());
+				hostSays(id, text, { queued: false });
+				// The projection's write, a hand-off's write, any store change: the same host state.
+				for (let n = 0; n < 4; n++) fireHostStartedMentions(row());
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				hostSays(id, text, { queued: false, busy: 200 });
+				fireHostStartedMentions(row());
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+			});
+
+			it('one that left the queue and never started is let go with a note, and a later turn is not it', async () => {
+				const id = `r-${routing}`;
+				const text = await drainQueued(id, routing);
+				hostSays(id, text, { queued: true, busy: 100 });
+				fireHostStartedMentions(row());
+				hostSays(id, text, { queued: false });
+				fireHostStartedMentions(row());
+				hostSays(id, text, { queued: false, busy: 300 });
+				fireHostStartedMentions(row(), undefined, Date.now() + HOST_QUEUE_START_GRACE_MS + 1);
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(
+					'Nothing was asked of Backend: the message was removed before it ran.'
+				);
+			});
+
 			it('a host that names its starts: the named item consults in either order, a removal never', async () => {
 				const id = `d-${routing}`;
 				const text = await drainQueued(id, routing);
@@ -1043,6 +1079,19 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				followHostedHandoffs(row());
 				expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
 				hostSays('h-b', text, { queued: false, busy: 200 });
+				followHostedHandoffs(row());
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
+				releasesWithItsAnswer(text);
+			});
+
+			it("this window's own re-syncs before the busy state never drop it (Greptile on #2148)", async () => {
+				const text = await drainQueued('h-g', 'handoff');
+				hostSays('h-g', text, { queued: true, busy: 100 });
+				followHostedHandoffs(row());
+				hostSays('h-g', text, { queued: false });
+				for (let n = 0; n < 4; n++) followHostedHandoffs(row());
+				expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
+				hostSays('h-g', text, { queued: false, busy: 200 });
 				followHostedHandoffs(row());
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
 				releasesWithItsAnswer(text);

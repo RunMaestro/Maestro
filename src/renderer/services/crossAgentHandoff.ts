@@ -229,6 +229,14 @@ export function markHandoffSentToHost(
 	});
 }
 
+/**
+ * How long a turn the host queued may take, after it left the host's queue, before its tab reads
+ * busy with it (a host that does not name its starts). The queue change and the tab state arrive
+ * as separate messages, and this window's own writes run the sync again in between, so the wait is
+ * time, never a count of syncs. A start seen later is not taken for it: it was removed.
+ */
+export const HOST_QUEUE_START_GRACE_MS = 15_000;
+
 /** The send boundary of a hosted turn: the last entry the tab holds that is not live. */
 export function handoffSendBoundary(logs: LogEntry[]): string | undefined {
 	return [...logs].reverse().find((entry) => !entry.hostLive)?.id;
@@ -267,14 +275,16 @@ function ownTurnEntries(logs: LogEntry[], afterEntryId: string | undefined): Log
  *
  * A turn the host queued starts as `fireHostStartedMentions()` reads it: named by a host that names
  * its starts (`hostStarts`), else inferred from the tab's state with the turn ahead recorded once
- * (`seen-queued`) and one more sync (`gone-once`) before a turn that left the queue is dropped.
+ * (`seen-queued`), and a turn that left the queue (`left-queue`) dropped unless its tab reads busy
+ * with it within `HOST_QUEUE_START_GRACE_MS`.
  */
 export function hostedHandoffStep(
 	tab: Pick<AITab, 'state' | 'pendingMentionHandoff' | 'logs' | 'thinkingStartTime'>,
 	hostQueueItemIds: ReadonlySet<string>,
 	transcriptCurrent = false,
-	hostStarts?: readonly string[]
-): 'wait' | 'running' | 'read' | 'release' | 'drop' | 'seen-queued' | 'gone-once' {
+	hostStarts?: readonly string[],
+	now = Date.now()
+): 'wait' | 'running' | 'read' | 'release' | 'drop' | 'seen-queued' | 'left-queue' {
 	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
 	if (!hostTurn) return 'wait';
 	const queued = hostTurn.stage === 'sent' ? hostTurn.queueItemId : undefined;
@@ -287,12 +297,13 @@ export function hostedHandoffStep(
 	if (queued) {
 		// Named starts: gone unnamed after it was seen waiting, it was taken out of the queue.
 		if (hostStarts) return hostTurn.seenQueued ? 'drop' : 'wait';
-		// Inferred: it runs once the tab is busy with a turn that started at another time. Gone
-		// with the tab idle or still on the turn ahead, one more sync tells a start from a removal:
-		// nothing it never ran is handed off.
+		// Inferred: it runs once the tab is busy with a turn that started at another time, soon
+		// after it left the queue. Later than that it was removed: nothing it never ran is handed off.
+		const goneFor = hostTurn.goneAt === undefined ? 0 : now - hostTurn.goneAt;
+		if (goneFor > HOST_QUEUE_START_GRACE_MS) return 'drop';
 		if (tab.state === 'busy' && tab.thinkingStartTime !== hostTurn.turnStartedAt) return 'running';
 		if (!hostTurn.seenQueued) return 'wait';
-		return hostTurn.goneOnce ? 'drop' : 'gone-once';
+		return hostTurn.goneAt === undefined ? 'left-queue' : 'wait';
 	}
 	if (tab.state === 'busy') return hostTurn.stage === 'sent' ? 'running' : 'wait';
 	if (tab.logs.some((entry) => entry.hostLive)) return 'read';
@@ -379,7 +390,8 @@ export function followHostedHandoffs(
 		isCurrent: (tabId: string) => boolean;
 	} = { read: () => {}, isCurrent: () => false },
 	/** The host queue items that last started, when the host names its starts. */
-	hostStarts?: readonly string[]
+	hostStarts?: readonly string[],
+	now = Date.now()
 ): void {
 	armDeferredHostedHandoffs(session.id);
 	if (!session.aiTabs.some((tab) => tab.pendingMentionHandoff?.hostTurn)) return;
@@ -387,7 +399,13 @@ export function followHostedHandoffs(
 		(session.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
 	);
 	for (const tab of session.aiTabs) {
-		const step = hostedHandoffStep(tab, hostQueueItemIds, transcript.isCurrent(tab.id), hostStarts);
+		const step = hostedHandoffStep(
+			tab,
+			hostQueueItemIds,
+			transcript.isCurrent(tab.id),
+			hostStarts,
+			now
+		);
 		if (step === 'running') {
 			updateAiTab(session.id, tab.id, (current) =>
 				current.pendingMentionHandoff?.hostTurn
@@ -417,14 +435,14 @@ export function followHostedHandoffs(
 						}
 					: current
 			);
-		} else if (step === 'gone-once') {
+		} else if (step === 'left-queue') {
 			updateAiTab(session.id, tab.id, (current) =>
 				current.pendingMentionHandoff?.hostTurn
 					? {
 							...current,
 							pendingMentionHandoff: {
 								...current.pendingMentionHandoff,
-								hostTurn: { ...current.pendingMentionHandoff.hostTurn, goneOnce: true },
+								hostTurn: { ...current.pendingMentionHandoff.hostTurn, goneAt: now },
 							},
 						}
 					: current

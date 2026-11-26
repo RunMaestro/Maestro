@@ -1742,6 +1742,53 @@ describe('agentStore', () => {
 			}
 		);
 
+		it("lays a received command's agent-only text around its expanded prompt, as assembleTurn() does (Greptile on #2148)", async () => {
+			useSessionStore.getState().setSessions([
+				createMockSession({
+					id: 'session-1',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: 'existing-conv-id',
+							name: null,
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'tab-1',
+				}),
+			]);
+			await useAgentStore.getState().processQueuedItem(
+				'session-1',
+				createQueuedItem({
+					tabId: 'tab-1',
+					type: 'command',
+					command: '/read',
+					agentContext: 'Replies:\nBackend: fine.',
+					agentNotes: 'Your answer goes to Backend.',
+				}),
+				{
+					...defaultDeps,
+					customAICommands: [
+						{
+							id: 'read',
+							command: '/read',
+							description: 'Read mail',
+							prompt: 'Read authorized mail',
+						},
+					],
+				}
+			);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(mockSpawn.mock.calls[0][0].prompt).toBe(
+				'Replies:\nBackend: fine.\n\n---\n\nRead authorized mail\n\n---\n\nYour answer goes to Backend.'
+			);
+		});
+
 		// A queued message that @mentions another agent must consult that agent HERE,
 		// as the message becomes this agent's turn - not when the user typed it into
 		// a queue that was several messages deep.
