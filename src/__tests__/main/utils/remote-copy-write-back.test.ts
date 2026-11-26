@@ -253,6 +253,35 @@ describe('remote copy write-back', () => {
 		expect(localFiles.get(LOCAL)?.toString()).toBe('far too long to send');
 	});
 
+	it('sends a save still waiting out its debounce when its watch is evicted at the cap', async () => {
+		const writeBack = service({ maxWatched: 1 });
+		const other = path.join('tmp', 'maestro-remote-downloads', 'abc', 'other.md');
+		localFiles.set(other, Buffer.from('x'));
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		localFiles.set(LOCAL, Buffer.from('saved just before'));
+		onChange?.();
+		// A second Open evicts the first watch before its debounce runs out.
+		await writeBack.watch({ localPath: other, remotePath: '/home/me/other.md', sshRemoteId: 'r1' });
+		await writeBack.idle();
+		expect(remoteFile.toString()).toBe('saved just before');
+		expect(events).toEqual([{ kind: 'saved', remotePath: REMOTE, sshRemoteId: 'r1' }]);
+	});
+
+	it('dispose sends every change not sent yet, even one no event reported, and resolves after', async () => {
+		const writeBack = await watched();
+		// Saved, but the watcher has not reported it (or its debounce is still waiting).
+		localFiles.set(LOCAL, Buffer.from('saved at quit'));
+		await writeBack.dispose();
+		expect(remoteFile.toString()).toBe('saved at quit');
+		expect(close).toHaveBeenCalledTimes(1);
+		// Nothing more is sent once the watch is gone.
+		localFiles.set(LOCAL, Buffer.from('after'));
+		onChange?.();
+		await vi.advanceTimersByTimeAsync(60);
+		await writeBack.idle();
+		expect(remoteFile.toString()).toBe('saved at quit');
+	});
+
 	it('names the kept version beside the copy', () => {
 		expect(keptVersionPath(LOCAL, WHEN)).toBe(
 			path.join(path.dirname(LOCAL), 'notes (your version 20261126-101500).md')

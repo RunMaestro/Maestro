@@ -57,6 +57,13 @@ const FORCE_EXIT_GRACE_MS = 750;
 const UPDATE_EXIT_GRACE_MS = 2000;
 
 /**
+ * The longest a quit waits for {@link QuitHandlerDependencies.flushPendingRemoteWrites}
+ * before the hard exit. Those writes go over SSH, so they cannot be landed
+ * synchronously like the stores; a dead connection must not hold the quit.
+ */
+export const REMOTE_WRITE_FLUSH_MAX_MS = 5000;
+
+/**
  * Terminates the process immediately, bypassing Electron's Node-environment
  * teardown.
  *
@@ -127,6 +134,12 @@ export interface QuitHandlerDependencies {
 	windowStateStore?: Store<WindowState>;
 	/** Registry of every open window, the source of truth for the saved layout. */
 	getWindowRegistry?: () => WindowRegistry | null;
+	/**
+	 * Send the changes the user saved in opened remote copies that have not
+	 * reached the remote yet. The hard exit waits for it, at most
+	 * {@link REMOTE_WRITE_FLUSH_MAX_MS}.
+	 */
+	flushPendingRemoteWrites?: () => Promise<unknown>;
 }
 
 /** Quit handler state */
@@ -188,7 +201,36 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		getPersistedSessions,
 		windowStateStore,
 		getWindowRegistry,
+		flushPendingRemoteWrites,
 	} = deps;
+
+	/**
+	 * Start the remote-copy writes, bounded: `done` resolves when they settle or
+	 * the bound runs out, and `settled` says which has happened by now. Null when
+	 * there is nothing to flush.
+	 */
+	function startRemoteWriteFlush(): { settled: boolean; done: Promise<void> } | null {
+		if (!flushPendingRemoteWrites) return null;
+		const flush = { settled: false, done: Promise.resolve() };
+		flush.done = new Promise<void>((resolve) => {
+			const finish = () => {
+				clearTimeout(bound);
+				flush.settled = true;
+				resolve();
+			};
+			const bound = setTimeout(() => {
+				logger.warn('Quit stopped waiting for remote copy writes', 'Shutdown');
+				finish();
+			}, REMOTE_WRITE_FLUSH_MAX_MS);
+			void Promise.resolve()
+				.then(flushPendingRemoteWrites)
+				.catch((err) =>
+					logger.error(`Error flushing remote copy writes on quit: ${err}`, 'Shutdown')
+				)
+				.finally(finish);
+		});
+		return flush;
+	}
 
 	const state: QuitHandlerState = {
 		quitConfirmed: false,
@@ -283,6 +325,10 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				}
 				state.cleanupStarted = true;
 
+				// Start the remote-copy writes first: they run over SSH while cleanup
+				// runs, and the hard exit below waits for them (bounded).
+				const remoteWrites = startRemoteWriteFlush();
+
 				// Proceed with cleanup (async operations are fire-and-forget).
 				performCleanup();
 
@@ -306,7 +352,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				if (!state.installingUpdate || forceExitOnInstall) {
 					event.preventDefault();
 					const graceMs = state.installingUpdate ? UPDATE_EXIT_GRACE_MS : FORCE_EXIT_GRACE_MS;
-					setTimeout(() => {
+					const exit = () => {
 						logger.info(
 							forceExitOnInstall
 								? 'Hard-exiting after update-install grace window (ShipIt armed; dodging teardown deadlock)'
@@ -314,6 +360,12 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 							'Shutdown'
 						);
 						hardExit();
+					};
+					setTimeout(() => {
+						// A remote-copy write still going holds the exit until it lands
+						// (or its bound runs out); otherwise exit now.
+						if (!remoteWrites || remoteWrites.settled) exit();
+						else void remoteWrites.done.then(exit);
 					}, graceMs);
 				}
 			});

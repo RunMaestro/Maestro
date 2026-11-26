@@ -665,13 +665,21 @@ function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopy
 
 let remoteCopyWriteBack: RemoteCopyWriteBack | null = null;
 
+/**
+ * On quit: send every opened remote copy's change not sent yet, then stop the
+ * watches. Resolves when those writes are done; the quit path bounds the wait.
+ */
+export function flushRemoteCopyWriteBack(): Promise<void> {
+	return remoteCopyWriteBack?.dispose() ?? Promise.resolve();
+}
+
 export interface FilesystemHandlerDependencies {
 	/** Broadcast to the renderers: the write-back of a remote copy reports through it. */
 	safeSend?: SafeSendFn;
 }
 
 export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies = {}): void {
-	remoteCopyWriteBack?.dispose();
+	void remoteCopyWriteBack?.dispose();
 	remoteCopyWriteBack = createFilesystemWriteBack(deps.safeSend);
 	const writeBack = remoteCopyWriteBack;
 

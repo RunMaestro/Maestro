@@ -221,6 +221,7 @@ import { runSettingsMigrations } from './stores/migrations';
 import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
 import {
 	ensureCliServer,
+	flushRemoteCopyWriteBack,
 	startCliDiscoveryWatchdog,
 	stopCliDiscoveryWatchdog,
 } from './ipc/handlers';
@@ -4142,6 +4143,7 @@ quitHandler = createQuitHandler({
 	getHistoryManager,
 	tunnelManager,
 	closeStatsDB,
+	flushPendingRemoteWrites: flushRemoteCopyWriteBack,
 	stopCliWatcher: () => {
 		cliWatcher.stop();
 		// Tear down the discovery-file watchdog so it doesn't try to rewrite

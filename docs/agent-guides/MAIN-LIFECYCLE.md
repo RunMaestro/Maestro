@@ -662,6 +662,8 @@ The `performCleanup()` function runs synchronously from `before-quit` (async ope
 6. **Stop web server** - `webServer.stop()` (fire and forget)
 7. **Close stats database** - `closeStatsDB()` (synchronous)
 
+Before cleanup, the quit also starts `flushPendingRemoteWrites` (`flushRemoteCopyWriteBack()`): a change saved in an opened remote copy that has not reached the remote yet is sent over SSH. Those writes cannot land synchronously, so the hard exit waits for them, at most `REMOTE_WRITE_FLUSH_MAX_MS` (5 s).
+
 ### Platform-Specific Quit Behavior
 
 - **macOS**: `window-all-closed` does not quit the app (standard macOS behavior). App stays in dock.

@@ -107,8 +107,12 @@ export interface RemoteCopyWriteBack {
 	noteFetched(localPath: string, bytes: Buffer): Promise<void>;
 	/** Resolves once every change seen so far has been handled. */
 	idle(): Promise<void>;
-	/** Stop every watch. */
-	dispose(): void;
+	/**
+	 * Stop every watch. Each copy's change not sent yet (one waiting out the
+	 * debounce, or one no event reported) is sent first; resolves when those are
+	 * done. The app's quit waits on it, for a bounded time.
+	 */
+	dispose(): Promise<void>;
 }
 
 interface WatchedCopy {
@@ -165,8 +169,15 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	const queue = createKeyedWriteQueue();
 	const pending = new Set<Promise<void>>();
 
+	/**
+	 * Stop one watch (evicted at the cap, or disposed). A save the user made just
+	 * before must still reach the remote: the copy is read once more and any
+	 * change not sent yet goes now, instead of being dropped with its timer.
+	 */
 	function stop(entry: WatchedCopy): void {
 		if (entry.timer) clearTimeout(entry.timer);
+		entry.timer = null;
+		runSync(entry);
 		entry.watcher.close();
 		watched.delete(entry.localPath);
 	}
@@ -241,6 +252,10 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 		void run.finally(() => pending.delete(run));
 	}
 
+	async function settle(): Promise<void> {
+		while (pending.size > 0) await Promise.all([...pending]);
+	}
+
 	function schedule(entry: WatchedCopy): void {
 		if (entry.timer) clearTimeout(entry.timer);
 		entry.timer = setTimeout(() => {
@@ -304,11 +319,10 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 				entry.kept = null;
 			});
 		},
-		async idle() {
-			while (pending.size > 0) await Promise.all([...pending]);
-		},
-		dispose() {
+		idle: settle,
+		async dispose() {
 			for (const entry of [...watched.values()]) stop(entry);
+			await settle();
 		},
 	};
 }
