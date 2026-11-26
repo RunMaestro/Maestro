@@ -123,24 +123,29 @@ describe('get_token_usage handler', () => {
 describe('get_project_token_usage handler (the desktop as a Federation host)', () => {
 	const projects = [{ provider: 'claude-code', projectPath: '/srv/app' }];
 	const usage = {
-		breakdowns: [
+		projects: [
 			{
-				sessionId: 's1',
-				agentType: 'claude-code',
-				projectPath: '/srv/app',
-				accountKey: 'default',
-				timestampMs: 5,
-				byModel: [],
-				inputTokens: 3,
-				outputTokens: 4,
-				cacheReadTokens: 0,
-				cacheCreationTokens: 0,
-				costUsd: 0,
-				costEstimated: false,
-				coverage: 'full',
+				status: 'read' as const,
+				complete: true,
+				breakdowns: [
+					{
+						sessionId: 's1',
+						agentType: 'claude-code',
+						projectPath: '/srv/app',
+						accountKey: 'default',
+						timestampMs: 5,
+						byModel: [],
+						inputTokens: 3,
+						outputTokens: 4,
+						cacheReadTokens: 0,
+						cacheCreationTokens: 0,
+						costUsd: 0,
+						costEstimated: false,
+						coverage: 'full' as const,
+					},
+				],
 			},
 		],
-		unsupportedProviders: [],
 	};
 
 	beforeEach(() => {

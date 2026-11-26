@@ -39,8 +39,12 @@ import type { PromptCadence } from '../../shared/promptCadence';
 import type { TokenUsageAggregate } from '../../shared/tokenUsage';
 import {
 	PROJECT_TOKEN_USAGE_REPLY,
+	REMOTE_TOKEN_USAGE_TIMEOUT_MS,
+	chunkProjects,
 	parseProjectTokenUsageReply,
 	projectTokenUsageRequest,
+	type ProjectTokenUsageProject,
+	type ProjectTokenUsageResult,
 } from '../../shared/projectTokenUsage';
 import { usageCostUsd } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TokenSpeedStats } from '../../shared/tokenSpeed';
@@ -83,6 +87,12 @@ interface TokenUsageResponse {
 interface StatsTokensOptions extends StatsOptions {
 	refresh?: boolean;
 }
+
+/**
+ * How long `stats-tokens` waits: the desktop's longest wait on a remote's host, plus the time a
+ * read of this machine's own transcripts takes.
+ */
+const TOKEN_USAGE_TIMEOUT_MS = REMOTE_TOKEN_USAGE_TIMEOUT_MS + 30_000;
 
 interface StatsProjectTokensOptions {
 	provider: string;
@@ -153,9 +163,11 @@ export async function statsTokens(options: StatsTokensOptions): Promise<void> {
 
 	try {
 		const result = await withMaestroClient(async (client) => {
+			// The desktop may wait on the hosts of its SSH and hosted agents before it answers.
 			return client.sendCommand<TokenUsageResponse>(
 				{ type: 'get_token_usage', range, force: options.refresh === true },
-				'token_usage'
+				'token_usage',
+				TOKEN_USAGE_TIMEOUT_MS
 			);
 		});
 
@@ -177,9 +189,10 @@ export async function statsTokens(options: StatsTokensOptions): Promise<void> {
  * Dashboard merges in for an SSH or hosted agent on this machine.
  */
 export async function statsProjectTokens(options: StatsProjectTokensOptions): Promise<void> {
+	// The paths are on this machine, where the host reads them, so a relative one is from here.
 	const projects = (options.project ?? []).map((projectPath) => ({
 		provider: options.provider,
-		projectPath,
+		projectPath: resolveCliPath(projectPath),
 	}));
 	if (!options.provider || projects.length === 0) {
 		handleCommandError(
@@ -188,22 +201,48 @@ export async function statsProjectTokens(options: StatsProjectTokensOptions): Pr
 		);
 	}
 	try {
-		const request = projectTokenUsageRequest(projects);
-		const reply = await withMaestroClient((client) =>
-			client.sendCommand<Record<string, unknown>>({ ...request }, PROJECT_TOKEN_USAGE_REPLY)
-		);
-		if (reply.success !== true) {
-			throw new Error(
-				typeof reply.error === 'string' ? reply.error : 'The host did not answer token usage.'
-			);
-		}
-		const usage = parseProjectTokenUsageReply(reply, request.projects);
-		if (!usage) throw new Error('The host did not answer token usage.');
+		// A host reads a bounded number of projects per request: ask in chunks and merge.
+		const answers: Array<{ project: ProjectTokenUsageProject; result: ProjectTokenUsageResult }> =
+			[];
+		await withMaestroClient(async (client) => {
+			for (const chunk of chunkProjects(projects)) {
+				const request = projectTokenUsageRequest(chunk);
+				const reply = await client.sendCommand<Record<string, unknown>>(
+					{ ...request },
+					PROJECT_TOKEN_USAGE_REPLY,
+					REMOTE_TOKEN_USAGE_TIMEOUT_MS
+				);
+				if (reply.success !== true) {
+					throw new Error(
+						typeof reply.error === 'string' ? reply.error : 'The host did not answer token usage.'
+					);
+				}
+				const usage = parseProjectTokenUsageReply(reply, request.projects);
+				if (!usage) throw new Error('The host did not answer token usage.');
+				request.projects.forEach((project, index) =>
+					answers.push({ project, result: usage.projects[index] })
+				);
+			}
+		});
 		if (options.json) {
-			console.log(JSON.stringify(usage, null, 2));
+			console.log(
+				JSON.stringify(
+					{
+						projects: answers.map(({ project, result }) => ({
+							...project,
+							status: result.status,
+							complete: result.complete,
+							breakdowns: result.breakdowns,
+						})),
+					},
+					null,
+					2
+				)
+			);
 			return;
 		}
-		const totals = usage.breakdowns.reduce(
+		const breakdowns = answers.flatMap(({ result }) => result.breakdowns);
+		const totals = breakdowns.reduce(
 			(sum, b) => ({
 				inputTokens: sum.inputTokens + b.inputTokens,
 				outputTokens: sum.outputTokens + b.outputTokens,
@@ -221,15 +260,24 @@ export async function statsProjectTokens(options: StatsProjectTokensOptions): Pr
 				costEstimated: false,
 			}
 		);
+		const subject =
+			answers.length === 1 ? answers[0].project.projectPath : `${answers.length} projects`;
 		const lines = [
-			`Token usage of ${projects.length === 1 ? projects[0].projectPath : `${projects.length} projects`} (${options.provider})`,
-			`  Conversations:   ${usage.breakdowns.length}`,
+			`Token usage of ${subject} (${options.provider})`,
+			`  Conversations:   ${breakdowns.length}`,
 			`  Tokens:          ${formatTokensCompact(totals.inputTokens)} in / ${formatTokensCompact(totals.outputTokens)} out / ` +
 				`${formatTokensCompact(totals.cacheReadTokens)} cache read / ${formatTokensCompact(totals.cacheCreationTokens)} cache creation`,
 			`  API-equivalent cost: ${totals.costEstimated ? '~' : ''}${formatCost(totals.costUsd)}`,
 		];
-		if (usage.unsupportedProviders.length > 0) {
-			lines.push(`  Not readable on this host: ${usage.unsupportedProviders.join(', ')}`);
+		for (const { project, result } of answers) {
+			if (result.complete) continue;
+			const why =
+				result.status === 'unsupported'
+					? 'this host has no reader for the provider'
+					: result.status === 'failed'
+						? 'this host could not read it'
+						: 'only part of it was read';
+			lines.push(`  Not counted in full: ${project.projectPath} (${why})`);
 		}
 		console.log(lines.join('\n'));
 	} catch (error) {

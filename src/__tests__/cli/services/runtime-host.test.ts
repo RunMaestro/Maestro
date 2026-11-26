@@ -204,10 +204,12 @@ describe('startRuntimeHost', () => {
 	});
 
 	it('answers a peer dashboard asking for its projects token usage, before Cue', async () => {
-		const read = vi.fn(async () => ({ breakdowns: [], unsupportedProviders: ['opencode'] }));
+		const read = vi.fn(async () => ({
+			projects: [{ status: 'unsupported' as const, breakdowns: [], complete: false }],
+		}));
 		const host = await startRuntimeHost(options(), {
 			...noCue,
-			tokenUsage: createHostTokenUsageAnswer(read),
+			createTokenUsage: () => createHostTokenUsageAnswer(read),
 		});
 		running.push(host);
 
@@ -219,7 +221,10 @@ describe('startRuntimeHost', () => {
 					projectTokenUsageRequest([{ provider: 'opencode', projectPath: dir }]),
 					PROJECT_TOKEN_USAGE_REPLY
 				)
-			).resolves.toMatchObject({ success: true, unsupportedProviders: ['opencode'] });
+			).resolves.toMatchObject({
+				success: true,
+				projects: [{ status: 'unsupported', breakdowns: [] }],
+			});
 			expect(read).toHaveBeenCalledWith([{ provider: 'opencode', projectPath: dir }]);
 		} finally {
 			connection.disconnect();

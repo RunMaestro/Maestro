@@ -5,31 +5,40 @@
  *
  * A requester (the desktop, for its SSH and hosted agents) sends `get_project_token_usage` with the
  * provider and the host-side working directory of each agent. The host reads its own transcripts
- * with the same session storages its own dashboard reads (`collectProjectBreakdowns()` in
- * `src/main/stats/token-usage/project-breakdowns.ts`) and answers one numeric breakdown per
- * conversation. No transcript text crosses the wire: only ids, a model name, and numbers.
+ * with the same session storages its own dashboard reads (`projectTokenUsage()` in
+ * `src/main/stats/token-usage/project-breakdowns.ts`) and answers, per project in the order asked,
+ * whether it read it and one numeric breakdown per conversation. No transcript text crosses the
+ * wire: only ids, a model name, and numbers.
  *
  * Both host kinds answer it: the desktop (`WebSocketMessageHandler`) and a headless
  * `maestro-cli host` (`src/cli/services/host-token-usage.ts`). A host that does not know the
  * message answers `unsupported`, and the requester leaves that agent "not counted".
  *
  * Every number from another machine is untrusted input: `parseProjectTokenUsageReply()` reads it
- * field by field, keeps only finite, non-negative, bounded values, and drops a record that does
- * not hold together. Pure: no I/O, no Electron.
+ * field by field and keeps only finite, non-negative, bounded values. A project counts as read only
+ * when the host says it read it whole AND every record of it held together; anything less leaves
+ * its agent "not counted", so a total is never quietly short. Pure: no I/O, no Electron.
  */
 
 import type { ModelTokenUsage, SessionTokenBreakdown, TokenCoverage } from './tokenUsage';
+import type { UsageAccounting, UsageCost } from './types';
 
 /** The request message type. */
 export const PROJECT_TOKEN_USAGE_MESSAGE = 'get_project_token_usage';
 /** The reply message type. */
 export const PROJECT_TOKEN_USAGE_REPLY = 'project_token_usage_result';
 
-/** The most projects one request may name. */
+/**
+ * How long a requester waits for one remote's host before leaving its agents "not counted". A
+ * read of the token totals that may ask remotes waits this long plus its own margin.
+ */
+export const REMOTE_TOKEN_USAGE_TIMEOUT_MS = 30_000;
+
+/** The most projects one request may name. A caller with more asks in chunks (`chunkProjects`). */
 export const MAX_PROJECT_TOKEN_USAGE_PROJECTS = 64;
-/** The most conversations one reply may carry. Past this the rest are dropped, not trusted. */
+/** The most conversations one reply may carry, over all its projects. */
 export const MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS = 50_000;
-/** The most model buckets one conversation may carry. */
+/** The most model buckets one conversation may carry; the rest fold into one unnamed bucket. */
 const MAX_MODELS_PER_SESSION = 64;
 /** A token count past this is not a real conversation. */
 const MAX_TOKENS = 1e13;
@@ -41,6 +50,9 @@ const MAX_ID_LENGTH = 512;
 const MAX_PATH_LENGTH = 4096;
 const MAX_MODEL_LENGTH = 256;
 const MAX_PROVIDER_LENGTH = 64;
+const MAX_LABEL_LENGTH = 128;
+/** USD ticks (10^-10 USD) as the canonical accounting writes them: digits only. */
+const TICKS_PATTERN = /^\d{1,30}$/;
 
 /** One project a requester asks about: which provider, and its working directory on the host. */
 export interface ProjectTokenUsageProject {
@@ -48,11 +60,27 @@ export interface ProjectTokenUsageProject {
 	projectPath: string;
 }
 
-/** What a host answers: one breakdown per conversation, and the providers it cannot read. */
-export interface ProjectTokenUsage {
+/**
+ * What a host did with one project. `read`: every conversation of it is in `breakdowns`.
+ * `failed`: the host could not read it (or part of it). `unsupported`: the host has no reader for
+ * the provider.
+ */
+export type ProjectTokenUsageStatus = 'read' | 'failed' | 'unsupported';
+
+/** The answer for one project. */
+export interface ProjectTokenUsageResult {
+	status: ProjectTokenUsageStatus;
 	breakdowns: SessionTokenBreakdown[];
-	/** Providers asked about that this host has no transcript reader for. */
-	unsupportedProviders: string[];
+	/**
+	 * Whether these numbers are the project's whole usage: read, not cut at the reply cap, and (on
+	 * the requester) every record held together.
+	 */
+	complete: boolean;
+}
+
+/** What a host answers: one result per project, in the order the request named them. */
+export interface ProjectTokenUsage {
+	projects: ProjectTokenUsageResult[];
 }
 
 type Json = Record<string, unknown>;
@@ -74,18 +102,13 @@ function boundedNumber(value: unknown, max: number): number | undefined {
 
 const COVERAGES = new Set<TokenCoverage>(['full', 'partial', 'unsupported']);
 const ORIGINS = new Set(['user', 'auto', 'relay']);
+const COMPLETENESS = new Set(['complete', 'partial', 'unknown']);
+const SOURCES = new Set(['gateway', 'provider-billing', 'runtime-stream', 'none']);
+const STATUSES = new Set<ProjectTokenUsageStatus>(['read', 'failed', 'unsupported']);
 
 // ---------------------------------------------------------------------------
 // Request
 // ---------------------------------------------------------------------------
-
-/** The request message for `projects`. Duplicates are sent once. */
-export function projectTokenUsageRequest(projects: readonly ProjectTokenUsageProject[]): {
-	type: typeof PROJECT_TOKEN_USAGE_MESSAGE;
-	projects: ProjectTokenUsageProject[];
-} {
-	return { type: PROJECT_TOKEN_USAGE_MESSAGE, projects: uniqueProjects(projects) };
-}
 
 /** `projects` without repeats, in first-seen order. */
 export function uniqueProjects(
@@ -102,32 +125,78 @@ export function uniqueProjects(
 	return unique;
 }
 
+/** `projects` without repeats, in requests a host accepts whole. */
+export function chunkProjects(
+	projects: readonly ProjectTokenUsageProject[]
+): ProjectTokenUsageProject[][] {
+	const unique = uniqueProjects(projects);
+	const chunks: ProjectTokenUsageProject[][] = [];
+	for (let i = 0; i < unique.length; i += MAX_PROJECT_TOKEN_USAGE_PROJECTS) {
+		chunks.push(unique.slice(i, i + MAX_PROJECT_TOKEN_USAGE_PROJECTS));
+	}
+	return chunks;
+}
+
+/** The request message for `projects`. Duplicates are sent once. */
+export function projectTokenUsageRequest(projects: readonly ProjectTokenUsageProject[]): {
+	type: typeof PROJECT_TOKEN_USAGE_MESSAGE;
+	projects: ProjectTokenUsageProject[];
+} {
+	return { type: PROJECT_TOKEN_USAGE_MESSAGE, projects: uniqueProjects(projects) };
+}
+
 /**
- * The projects a request names, as a host reads them: each needs a provider id and a path, the
- * list is deduplicated and capped. A request that names none is refused by the caller.
+ * The projects a request names, as a host reads them, in order: each needs a provider id and a
+ * path. Undefined for a request the host must refuse (none named, one malformed, or more than a
+ * host reads at once), so a host never answers a different list than the one asked.
  */
-export function parseProjectTokenUsageRequest(message: Json): ProjectTokenUsageProject[] {
-	if (!Array.isArray(message.projects)) return [];
+export function parseProjectTokenUsageRequest(
+	message: Json
+): ProjectTokenUsageProject[] | undefined {
+	if (!Array.isArray(message.projects) || message.projects.length === 0) return undefined;
+	if (message.projects.length > MAX_PROJECT_TOKEN_USAGE_PROJECTS) return undefined;
 	const projects: ProjectTokenUsageProject[] = [];
 	for (const raw of message.projects) {
-		if (!isObject(raw)) continue;
+		if (!isObject(raw)) return undefined;
 		const provider = boundedString(raw.provider, MAX_PROVIDER_LENGTH);
 		const projectPath = boundedString(raw.projectPath, MAX_PATH_LENGTH);
-		if (!provider || !projectPath) continue;
+		if (!provider || !projectPath) return undefined;
 		projects.push({ provider, projectPath });
 	}
-	return uniqueProjects(projects).slice(0, MAX_PROJECT_TOKEN_USAGE_PROJECTS);
+	return projects;
 }
 
 // ---------------------------------------------------------------------------
-// Reply
+// Reply (host side)
 // ---------------------------------------------------------------------------
 
-/** One model bucket as the wire carries it: names and numbers, no canonical accounting. */
+/** A cost as the wire carries it: the status and its amount, nothing else. */
+function costToWire(cost: UsageCost): Json {
+	const wire: Json = { status: cost.status };
+	if ('costUsd' in cost && cost.costUsd !== undefined) wire.costUsd = cost.costUsd;
+	if ('costUsdTicks' in cost && cost.costUsdTicks !== undefined)
+		wire.costUsdTicks = cost.costUsdTicks;
+	if (cost.status === 'estimated') {
+		wire.model = cost.model;
+		wire.pricingRevision = cost.pricingRevision;
+		wire.completeness = cost.completeness;
+	}
+	return wire;
+}
+
+/** One model bucket as the wire carries it. */
 function modelToWire(model: ModelTokenUsage): Json {
 	return {
 		model: model.model,
 		...(model.rawModel !== undefined ? { rawModel: model.rawModel } : {}),
+		...(model.accounting
+			? {
+					lifetime: {
+						completeness: model.accounting.completeness,
+						cost: costToWire(model.accounting.cost),
+					},
+				}
+			: {}),
 		inputTokens: model.inputTokens,
 		outputTokens: model.outputTokens,
 		cacheReadTokens: model.cacheReadTokens,
@@ -138,9 +207,31 @@ function modelToWire(model: ModelTokenUsage): Json {
 }
 
 /**
- * One conversation as the wire carries it. The provider's canonical accounting and the per-call
- * speed buckets stay on the host: the totals and the per-model split are what the dashboard's
- * token totals add up, and they are all a requester can check.
+ * The model buckets of one conversation, at most `MAX_MODELS_PER_SESSION`: past that the rest are
+ * summed into one unnamed bucket, so the session's numbers stay whole.
+ */
+function modelsToWire(byModel: readonly ModelTokenUsage[]): Json[] {
+	if (byModel.length <= MAX_MODELS_PER_SESSION) return byModel.map(modelToWire);
+	const kept = byModel.slice(0, MAX_MODELS_PER_SESSION - 1).map(modelToWire);
+	const rest = byModel.slice(MAX_MODELS_PER_SESSION - 1);
+	kept.push(
+		modelToWire({
+			model: '',
+			inputTokens: rest.reduce((sum, m) => sum + m.inputTokens, 0),
+			outputTokens: rest.reduce((sum, m) => sum + m.outputTokens, 0),
+			cacheReadTokens: rest.reduce((sum, m) => sum + m.cacheReadTokens, 0),
+			cacheCreationTokens: rest.reduce((sum, m) => sum + m.cacheCreationTokens, 0),
+			costUsd: rest.reduce((sum, m) => sum + m.costUsd, 0),
+			costEstimated: rest.some((m) => m.costEstimated),
+		})
+	);
+	return kept;
+}
+
+/**
+ * One conversation as the wire carries it. A session with native lifetime accounting carries its
+ * completeness and cost (`lifetime`), so the requester counts its lifetime totals the way this
+ * machine does, not the sum of its model detail. Per-call speed buckets stay on the host.
  */
 function breakdownToWire(breakdown: SessionTokenBreakdown): Json {
 	return {
@@ -150,7 +241,16 @@ function breakdownToWire(breakdown: SessionTokenBreakdown): Json {
 		accountKey: breakdown.accountKey,
 		timestampMs: breakdown.timestampMs,
 		...(breakdown.origin ? { origin: breakdown.origin } : {}),
-		byModel: breakdown.byModel.slice(0, MAX_MODELS_PER_SESSION).map(modelToWire),
+		...(breakdown.accounting
+			? {
+					lifetime: {
+						source: breakdown.accounting.source,
+						completeness: breakdown.accounting.completeness,
+						cost: costToWire(breakdown.accounting.cost),
+					},
+				}
+			: {}),
+		byModel: modelsToWire(breakdown.byModel),
 		inputTokens: breakdown.inputTokens,
 		outputTokens: breakdown.outputTokens,
 		cacheReadTokens: breakdown.cacheReadTokens,
@@ -161,26 +261,104 @@ function breakdownToWire(breakdown: SessionTokenBreakdown): Json {
 	};
 }
 
-/** The reply frame a host sends for `usage`. */
+/**
+ * The reply frame a host sends for `usage`. Past the reply cap the remaining conversations are
+ * left out and their project says so (`truncated`), so the requester never reads it as whole.
+ */
 export function projectTokenUsageReplyFrame(usage: ProjectTokenUsage): Json {
+	let room = MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS;
 	return {
 		type: PROJECT_TOKEN_USAGE_REPLY,
 		success: true,
-		breakdowns: usage.breakdowns.slice(0, MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS).map(breakdownToWire),
-		unsupportedProviders: [...usage.unsupportedProviders],
+		projects: usage.projects.map((project) => {
+			const kept = project.breakdowns.slice(0, Math.max(0, room));
+			room -= kept.length;
+			return {
+				status: project.status,
+				breakdowns: kept.map(breakdownToWire),
+				...(kept.length < project.breakdowns.length || !project.complete
+					? { truncated: true }
+					: {}),
+			};
+		}),
 	};
 }
 
-/** The reply frame a host sends when it could not read the usage. */
+/** The reply frame a host sends when it could not read the usage at all. */
 export function projectTokenUsageFailureFrame(error: string): Json {
 	return { type: PROJECT_TOKEN_USAGE_REPLY, success: false, error };
+}
+
+// ---------------------------------------------------------------------------
+// Reply (requester side)
+// ---------------------------------------------------------------------------
+
+/** A cost from the wire, or undefined when it does not hold together. */
+function parseCost(raw: unknown): UsageCost | undefined {
+	if (!isObject(raw)) return undefined;
+	const costUsd = boundedNumber(raw.costUsd, MAX_COST_USD);
+	const ticks =
+		typeof raw.costUsdTicks === 'string' && TICKS_PATTERN.test(raw.costUsdTicks)
+			? raw.costUsdTicks
+			: undefined;
+	if (raw.costUsd !== undefined && costUsd === undefined) return undefined;
+	if (raw.costUsdTicks !== undefined && ticks === undefined) return undefined;
+	switch (raw.status) {
+		case 'unknown':
+			return { status: 'unknown' };
+		case 'exact':
+			if (ticks !== undefined) return { status: 'exact', costUsdTicks: ticks, costUsd };
+			if (costUsd !== undefined) return { status: 'exact', costUsd };
+			return undefined;
+		case 'partial':
+			return {
+				status: 'partial',
+				...(costUsd !== undefined ? { costUsd } : {}),
+				...(ticks !== undefined ? { costUsdTicks: ticks } : {}),
+			};
+		case 'estimated': {
+			const model = typeof raw.model === 'string' && raw.model.length <= MAX_MODEL_LENGTH;
+			const revision = boundedString(raw.pricingRevision, MAX_LABEL_LENGTH);
+			const completeness =
+				typeof raw.completeness === 'string' && COMPLETENESS.has(raw.completeness)
+					? (raw.completeness as 'complete' | 'partial' | 'unknown')
+					: undefined;
+			if (costUsd === undefined || !model || !revision || !completeness) return undefined;
+			return {
+				status: 'estimated',
+				costUsd,
+				model: raw.model as string,
+				pricingRevision: revision,
+				completeness,
+			};
+		}
+		default:
+			return undefined;
+	}
+}
+
+/** `lifetime` from the wire as completeness and cost, or undefined when it does not hold together. */
+function parseLifetime(
+	raw: unknown
+):
+	| { completeness: 'complete' | 'partial' | 'unknown'; cost: UsageCost; source?: string }
+	| undefined {
+	if (!isObject(raw)) return undefined;
+	const completeness =
+		typeof raw.completeness === 'string' && COMPLETENESS.has(raw.completeness)
+			? (raw.completeness as 'complete' | 'partial' | 'unknown')
+			: undefined;
+	const cost = parseCost(raw.cost);
+	if (!completeness || !cost) return undefined;
+	const source = typeof raw.source === 'string' && SOURCES.has(raw.source) ? raw.source : undefined;
+	return { completeness, cost, ...(source ? { source } : {}) };
 }
 
 /** One model bucket from the wire, or undefined when it does not hold together. */
 function parseModel(raw: unknown): ModelTokenUsage | undefined {
 	if (!isObject(raw)) return undefined;
 	const model =
-		typeof raw.model === 'string' && raw.model.length <= MAX_MODEL_LENGTH ? raw.model : '';
+		typeof raw.model === 'string' && raw.model.length <= MAX_MODEL_LENGTH ? raw.model : undefined;
 	const rawModel =
 		typeof raw.rawModel === 'string' && raw.rawModel.length <= MAX_MODEL_LENGTH
 			? raw.rawModel
@@ -190,18 +368,24 @@ function parseModel(raw: unknown): ModelTokenUsage | undefined {
 	const cacheReadTokens = boundedNumber(raw.cacheReadTokens, MAX_TOKENS);
 	const cacheCreationTokens = boundedNumber(raw.cacheCreationTokens, MAX_TOKENS);
 	const costUsd = boundedNumber(raw.costUsd, MAX_COST_USD);
+	const lifetime = raw.lifetime === undefined ? null : parseLifetime(raw.lifetime);
 	if (
+		model === undefined ||
 		inputTokens === undefined ||
 		outputTokens === undefined ||
 		cacheReadTokens === undefined ||
 		cacheCreationTokens === undefined ||
-		costUsd === undefined
+		costUsd === undefined ||
+		lifetime === undefined
 	) {
 		return undefined;
 	}
 	return {
 		model,
 		...(rawModel !== undefined ? { rawModel } : {}),
+		...(lifetime
+			? { accounting: { model, completeness: lifetime.completeness, cost: lifetime.cost } }
+			: {}),
 		inputTokens,
 		outputTokens,
 		cacheReadTokens,
@@ -211,17 +395,10 @@ function parseModel(raw: unknown): ModelTokenUsage | undefined {
 	};
 }
 
-/**
- * One conversation from the wire, or undefined when it does not hold together. `providers` are the
- * ones the request asked about: a record for any other provider is not an answer to this request.
- */
-function parseBreakdown(
-	raw: unknown,
-	providers: ReadonlySet<string>
-): SessionTokenBreakdown | undefined {
+/** One conversation from the wire for a project of `provider`, or undefined when it does not hold together. */
+function parseBreakdown(raw: unknown, provider: string): SessionTokenBreakdown | undefined {
 	if (!isObject(raw)) return undefined;
 	const sessionId = boundedString(raw.sessionId, MAX_ID_LENGTH);
-	const agentType = boundedString(raw.agentType, MAX_PROVIDER_LENGTH);
 	const projectPath = boundedString(raw.projectPath, MAX_PATH_LENGTH);
 	const accountKey = boundedString(raw.accountKey, MAX_PATH_LENGTH);
 	const timestampMs = boundedNumber(raw.timestampMs, MAX_TIMESTAMP_MS);
@@ -230,10 +407,10 @@ function parseBreakdown(
 	const cacheReadTokens = boundedNumber(raw.cacheReadTokens, MAX_TOKENS);
 	const cacheCreationTokens = boundedNumber(raw.cacheCreationTokens, MAX_TOKENS);
 	const costUsd = boundedNumber(raw.costUsd, MAX_COST_USD);
+	const lifetime = raw.lifetime === undefined ? null : parseLifetime(raw.lifetime);
 	if (
 		!sessionId ||
-		!agentType ||
-		!providers.has(agentType) ||
+		raw.agentType !== provider ||
 		!projectPath ||
 		!accountKey ||
 		timestampMs === undefined ||
@@ -242,6 +419,7 @@ function parseBreakdown(
 		cacheReadTokens === undefined ||
 		cacheCreationTokens === undefined ||
 		costUsd === undefined ||
+		lifetime === undefined ||
 		!Array.isArray(raw.byModel) ||
 		raw.byModel.length > MAX_MODELS_PER_SESSION
 	) {
@@ -261,14 +439,31 @@ function parseBreakdown(
 		typeof raw.origin === 'string' && ORIGINS.has(raw.origin)
 			? (raw.origin as SessionTokenBreakdown['origin'])
 			: undefined;
+	// Lifetime totals are authoritative over the model detail, as on the host: the aggregate counts
+	// a session with accounting by its own totals. The rebuilt record holds only what was checked.
+	const accounting: UsageAccounting | undefined = lifetime
+		? {
+				source: (lifetime.source ?? 'none') as UsageAccounting['source'],
+				scope: 'native-session',
+				reporting: 'snapshot',
+				cacheReadCounting: 'beside-input',
+				cacheCreationCounting: 'beside-input',
+				completeness: lifetime.completeness,
+				cost: lifetime.cost,
+				// Unknown here: the host's totals already hold whatever children it counted.
+				childInclusion: 'unknown',
+				childCompleteness: 'unknown',
+			}
+		: undefined;
 	return {
 		sessionId,
-		agentType,
+		agentType: provider,
 		projectPath,
 		accountKey,
 		timestampMs: Math.floor(timestampMs),
 		...(origin ? { origin } : {}),
 		byModel,
+		...(accounting ? { accounting } : {}),
 		inputTokens,
 		outputTokens,
 		cacheReadTokens,
@@ -280,27 +475,44 @@ function parseBreakdown(
 }
 
 /**
- * A host's reply, read as untrusted input. `asked` is what the request named: only those providers
- * are accepted. Records that do not hold together are dropped one by one; a reply that is not a
- * success yields undefined, which the caller treats as "not counted".
+ * A host's reply, read as untrusted input against `asked` (the projects the request named, in
+ * order). Undefined when the reply is not a success or does not answer exactly the projects asked:
+ * the caller then leaves all of them "not counted". A record that does not hold together is dropped
+ * and makes its project incomplete.
  */
 export function parseProjectTokenUsageReply(
 	reply: unknown,
 	asked: readonly ProjectTokenUsageProject[]
 ): ProjectTokenUsage | undefined {
-	if (!isObject(reply) || reply.success !== true || !Array.isArray(reply.breakdowns)) {
+	if (!isObject(reply) || reply.success !== true || !Array.isArray(reply.projects)) {
 		return undefined;
 	}
-	const providers = new Set(asked.map((project) => project.provider));
-	const breakdowns: SessionTokenBreakdown[] = [];
-	for (const raw of reply.breakdowns.slice(0, MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS)) {
-		const breakdown = parseBreakdown(raw, providers);
-		if (breakdown) breakdowns.push(breakdown);
+	if (reply.projects.length !== asked.length) return undefined;
+	const projects: ProjectTokenUsageResult[] = [];
+	let room = MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS;
+	for (let i = 0; i < asked.length; i++) {
+		const raw = reply.projects[i];
+		if (!isObject(raw) || !Array.isArray(raw.breakdowns)) return undefined;
+		const status =
+			typeof raw.status === 'string' && STATUSES.has(raw.status as ProjectTokenUsageStatus)
+				? (raw.status as ProjectTokenUsageStatus)
+				: 'failed';
+		let complete = status === 'read' && raw.truncated !== true;
+		const breakdowns: SessionTokenBreakdown[] = [];
+		for (const entry of raw.breakdowns) {
+			if (room <= 0) {
+				complete = false;
+				break;
+			}
+			const breakdown = parseBreakdown(entry, asked[i].provider);
+			if (breakdown) {
+				breakdowns.push(breakdown);
+				room--;
+			} else {
+				complete = false;
+			}
+		}
+		projects.push({ status, breakdowns, complete });
 	}
-	const unsupportedProviders = Array.isArray(reply.unsupportedProviders)
-		? reply.unsupportedProviders.filter(
-				(provider): provider is string => typeof provider === 'string' && providers.has(provider)
-			)
-		: [];
-	return { breakdowns, unsupportedProviders: [...new Set(unsupportedProviders)] };
+	return { projects };
 }

@@ -15,6 +15,7 @@ import {
 	getTokenUsageAggregate,
 } from '../../../stats/token-usage/token-usage-accessor';
 import {
+	MAX_PROJECT_TOKEN_USAGE_PROJECTS,
 	parseProjectTokenUsageRequest,
 	projectTokenUsageFailureFrame,
 	projectTokenUsageReplyFrame,
@@ -129,8 +130,12 @@ export function handleGetProjectTokenUsage(
 	const reply = (frame: Record<string, unknown>): void => {
 		ctx.send(client, { ...frame, requestId: message.requestId, timestamp: Date.now() });
 	};
-	if (projects.length === 0) {
-		reply(projectTokenUsageFailureFrame('Name at least one project (provider and path).'));
+	if (!projects) {
+		reply(
+			projectTokenUsageFailureFrame(
+				`Name 1 to ${MAX_PROJECT_TOKEN_USAGE_PROJECTS} projects, each with a provider and a path.`
+			)
+		);
 		return;
 	}
 	getProjectTokenUsage(projects)

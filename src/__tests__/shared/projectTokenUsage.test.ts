@@ -1,16 +1,20 @@
 /**
- * The `get_project_token_usage` wire: a host's numbers are untrusted input, read field by field.
+ * The `get_project_token_usage` wire: a host's numbers are untrusted input, read field by field,
+ * and a project counts as read only when the host read it whole and every record checked out.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
+	MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS,
 	MAX_PROJECT_TOKEN_USAGE_PROJECTS,
 	PROJECT_TOKEN_USAGE_MESSAGE,
 	PROJECT_TOKEN_USAGE_REPLY,
+	chunkProjects,
 	parseProjectTokenUsageReply,
 	parseProjectTokenUsageRequest,
 	projectTokenUsageReplyFrame,
 	projectTokenUsageRequest,
+	type ProjectTokenUsage,
 } from '../../shared/projectTokenUsage';
 import type { SessionTokenBreakdown } from '../../shared/tokenUsage';
 
@@ -46,53 +50,135 @@ function breakdown(overrides: Partial<SessionTokenBreakdown> = {}): SessionToken
 	};
 }
 
-/** A reply as it arrives: the frame, through JSON, with one record replaced. */
+function read(breakdowns: SessionTokenBreakdown[]): ProjectTokenUsage['projects'][number] {
+	return { status: 'read', breakdowns, complete: true };
+}
+
+/** A frame as it arrives: through JSON. */
+function wire(usage: ProjectTokenUsage): Record<string, unknown> {
+	return JSON.parse(JSON.stringify(projectTokenUsageReplyFrame(usage)));
+}
+
+/** A reply whose one record has `raw` laid over it. */
 function replyWith(raw: Record<string, unknown>): unknown {
-	const frame = JSON.parse(
-		JSON.stringify(
-			projectTokenUsageReplyFrame({ breakdowns: [breakdown()], unsupportedProviders: [] })
-		)
-	);
-	frame.breakdowns[0] = { ...frame.breakdowns[0], ...raw };
+	const frame = wire({ projects: [read([breakdown()])] }) as {
+		projects: Array<{ breakdowns: Array<Record<string, unknown>> }>;
+	};
+	frame.projects[0].breakdowns[0] = { ...frame.projects[0].breakdowns[0], ...raw };
 	return frame;
 }
 
 describe('project token usage request', () => {
-	it('sends each project once', () => {
-		const request = projectTokenUsageRequest([...ASKED, ...ASKED]);
-		expect(request).toEqual({ type: PROJECT_TOKEN_USAGE_MESSAGE, projects: ASKED });
-	});
-
-	it('reads only projects that name a provider and a path, capped', () => {
+	it('sends each project once, and chunks a long list into requests a host accepts', () => {
+		expect(projectTokenUsageRequest([...ASKED, ...ASKED])).toEqual({
+			type: PROJECT_TOKEN_USAGE_MESSAGE,
+			projects: ASKED,
+		});
 		const many = Array.from({ length: MAX_PROJECT_TOKEN_USAGE_PROJECTS + 5 }, (_, i) => ({
 			provider: 'codex',
 			projectPath: `/p/${i}`,
 		}));
-		expect(
-			parseProjectTokenUsageRequest({ projects: [{ provider: 'codex' }, 7, ...many] })
-		).toHaveLength(MAX_PROJECT_TOKEN_USAGE_PROJECTS);
-		expect(parseProjectTokenUsageRequest({ projects: 'all' })).toEqual([]);
+		expect(chunkProjects([...many, ...many]).map((chunk) => chunk.length)).toEqual([
+			MAX_PROJECT_TOKEN_USAGE_PROJECTS,
+			5,
+		]);
+	});
+
+	it('refuses a request it cannot answer as asked, rather than answering a different list', () => {
+		const many = Array.from({ length: MAX_PROJECT_TOKEN_USAGE_PROJECTS + 1 }, (_, i) => ({
+			provider: 'codex',
+			projectPath: `/p/${i}`,
+		}));
+		expect(parseProjectTokenUsageRequest({ projects: many })).toBeUndefined();
+		expect(parseProjectTokenUsageRequest({ projects: [{ provider: 'codex' }] })).toBeUndefined();
+		expect(parseProjectTokenUsageRequest({ projects: [] })).toBeUndefined();
+		expect(parseProjectTokenUsageRequest({ projects: ASKED })).toEqual(ASKED);
 	});
 });
 
 describe('project token usage reply', () => {
-	it('round-trips a breakdown, leaving canonical accounting and speed on the host', () => {
-		const frame = projectTokenUsageReplyFrame({
-			breakdowns: [
-				breakdown({
-					accounting: { completeness: 'complete' } as never,
-					speed: [{ startMs: 1 } as never],
-				}),
-			],
-			unsupportedProviders: ['opencode'],
+	it('round-trips a read project; per-call speed stays on the host', () => {
+		const parsed = parseProjectTokenUsageReply(
+			wire({ projects: [read([breakdown({ speed: [{ startMs: 1 } as never] })])] }),
+			ASKED
+		);
+		expect(parsed).toEqual({ projects: [read([breakdown()])] });
+	});
+
+	it('keeps lifetime accounting, so the requester counts lifetime totals over partial model detail', () => {
+		const grok = breakdown({
+			agentType: 'grok',
+			inputTokens: 300,
+			byModel: [{ ...breakdown().byModel[0], inputTokens: 120 }],
+			accounting: {
+				source: 'provider-billing',
+				scope: 'native-session',
+				reporting: 'snapshot',
+				cacheReadCounting: 'beside-input',
+				cacheCreationCounting: 'beside-input',
+				completeness: 'partial',
+				cost: { status: 'exact', costUsdTicks: '12500000000', costUsd: 1.25 },
+				childInclusion: 'all',
+				childCompleteness: 'complete',
+			},
 		});
-		expect(frame.type).toBe(PROJECT_TOKEN_USAGE_REPLY);
-		const parsed = parseProjectTokenUsageReply(JSON.parse(JSON.stringify(frame)), [
-			...ASKED,
-			{ provider: 'opencode', projectPath: '/srv/app' },
+		const parsed = parseProjectTokenUsageReply(wire({ projects: [read([grok])] }), [
+			{ provider: 'grok', projectPath: '/srv/app' },
 		]);
-		expect(parsed?.breakdowns).toEqual([breakdown()]);
-		expect(parsed?.unsupportedProviders).toEqual(['opencode']);
+		const [got] = parsed!.projects[0].breakdowns;
+		expect(got.inputTokens).toBe(300);
+		expect(got.accounting).toMatchObject({
+			completeness: 'partial',
+			cost: { status: 'exact', costUsdTicks: '12500000000' },
+		});
+		expect(parsed!.projects[0].complete).toBe(true);
+	});
+
+	it('carries a failed or unsupported project as not complete', () => {
+		const parsed = parseProjectTokenUsageReply(
+			wire({
+				projects: [
+					{ status: 'failed', breakdowns: [], complete: false },
+					{ status: 'unsupported', breakdowns: [], complete: false },
+				],
+			}),
+			[ASKED[0], { provider: 'opencode', projectPath: '/srv/app' }]
+		);
+		expect(parsed!.projects.map((p) => [p.status, p.complete])).toEqual([
+			['failed', false],
+			['unsupported', false],
+		]);
+	});
+
+	it('marks a project cut at the reply cap as not complete', () => {
+		const frame = projectTokenUsageReplyFrame({
+			projects: [
+				read(
+					Array.from({ length: MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS + 1 }, (_, i) =>
+						breakdown({ sessionId: `s${i}`, byModel: [] })
+					)
+				),
+			],
+		}) as { projects: Array<{ breakdowns: unknown[]; truncated?: boolean }> };
+		expect(frame.projects[0].breakdowns).toHaveLength(MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS);
+		expect(frame.projects[0].truncated).toBe(true);
+		expect(parseProjectTokenUsageReply(frame, ASKED)!.projects[0].complete).toBe(false);
+	});
+
+	it('folds model buckets past the cap into one, keeping the session whole', () => {
+		const byModel = Array.from({ length: 70 }, (_, i) => ({
+			...breakdown().byModel[0],
+			model: `m${i}`,
+			inputTokens: 1,
+		}));
+		const parsed = parseProjectTokenUsageReply(
+			wire({ projects: [read([breakdown({ byModel, inputTokens: 70 })])] }),
+			ASKED
+		);
+		const models = parsed!.projects[0].breakdowns[0].byModel;
+		expect(models).toHaveLength(64);
+		expect(models.reduce((sum, m) => sum + m.inputTokens, 0)).toBe(70);
+		expect(parsed!.projects[0].complete).toBe(true);
 	});
 
 	it.each([
@@ -100,15 +186,21 @@ describe('project token usage reply', () => {
 		['a non-finite count', { outputTokens: Number.POSITIVE_INFINITY }],
 		['a count no conversation reaches', { cacheReadTokens: 1e20 }],
 		['a string count', { costUsd: '5' }],
-		['a provider the request did not ask about', { agentType: 'codex' }],
+		['another provider than the project asked about', { agentType: 'codex' }],
 		['no session id', { sessionId: '' }],
+		[
+			'a malformed lifetime cost',
+			{ lifetime: { completeness: 'complete', cost: { status: 'free' } } },
+		],
 		['a model bucket that does not hold together', { byModel: [{ model: 'x', inputTokens: -5 }] }],
 		[
 			'too many model buckets',
 			{ byModel: Array.from({ length: 65 }, () => breakdown().byModel[0]) },
 		],
-	])('drops a record with %s', (_label, raw) => {
-		expect(parseProjectTokenUsageReply(replyWith(raw), ASKED)?.breakdowns).toEqual([]);
+	])('drops a record with %s and leaves its project not complete', (_label, raw) => {
+		const parsed = parseProjectTokenUsageReply(replyWith(raw), ASKED);
+		expect(parsed!.projects[0].breakdowns).toEqual([]);
+		expect(parsed!.projects[0].complete).toBe(false);
 	});
 
 	it('keeps only known coverage and origin words', () => {
@@ -116,13 +208,16 @@ describe('project token usage reply', () => {
 			replyWith({ coverage: 'everything', origin: 'robot' }),
 			ASKED
 		);
-		expect(parsed?.breakdowns[0].coverage).toBe('unsupported');
-		expect(parsed?.breakdowns[0].origin).toBeUndefined();
+		expect(parsed!.projects[0].breakdowns[0].coverage).toBe('unsupported');
+		expect(parsed!.projects[0].breakdowns[0].origin).toBeUndefined();
 	});
 
-	it('reads a failure or a malformed reply as no answer', () => {
+	it('reads a failure, a malformed reply, or one answering other projects as no answer', () => {
 		expect(parseProjectTokenUsageReply({ success: false, error: 'x' }, ASKED)).toBeUndefined();
 		expect(parseProjectTokenUsageReply({ success: true }, ASKED)).toBeUndefined();
 		expect(parseProjectTokenUsageReply('nope', ASKED)).toBeUndefined();
+		const frame = wire({ projects: [read([]), read([])] });
+		expect(frame.type).toBe(PROJECT_TOKEN_USAGE_REPLY);
+		expect(parseProjectTokenUsageReply(frame, ASKED)).toBeUndefined();
 	});
 });

@@ -10,6 +10,7 @@ import {
 	type RemoteTokenAgent,
 } from '../../../../main/stats/token-usage/remote-breakdowns';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
+import { projectTokenUsage } from '../../../../main/stats/token-usage/project-breakdowns';
 import type { SessionTokenBreakdown } from '../../../../shared/tokenUsage';
 import { AGENT_MODES, createModeSession } from '../../../helpers/mockSession';
 
@@ -71,12 +72,28 @@ describe('remoteTokenAgentsOf', () => {
 	});
 });
 
+/** A host answer: each project of the request read whole, with `byProject` conversations. */
+function answered(
+	projects: Array<{ projectPath: string }>,
+	byProject: (projectPath: string) => SessionTokenBreakdown[] = () => []
+) {
+	return {
+		projects: projects.map(({ projectPath }) => ({
+			status: 'read' as const,
+			breakdowns: byProject(projectPath),
+			complete: true,
+		})),
+	};
+}
+
 describe('collectRemoteBreakdowns', () => {
 	it('asks each remote once for its projects and merges the answers', async () => {
-		const request = vi.fn(async (remoteId: string, _projects: unknown, _timeoutMs: number) => ({
-			breakdowns: remoteId === 'r1' ? [breakdown('s1'), breakdown('s1')] : [breakdown('s2', '/b')],
-			unsupportedProviders: [],
-		}));
+		const request = vi.fn(
+			async (remoteId: string, projects: Array<{ projectPath: string }>, _timeoutMs: number) =>
+				answered(projects, (projectPath) =>
+					remoteId === 'r1' ? [breakdown('s1'), breakdown('s1')] : [breakdown('s2', projectPath)]
+				)
+		);
 		const result = await collectRemoteBreakdowns(
 			[
 				agent(),
@@ -100,7 +117,7 @@ describe('collectRemoteBreakdowns', () => {
 		const request = vi.fn(
 			async (_remoteId: string, projects: Array<{ projectPath: string }>, _timeoutMs: number) =>
 				projects.length === 64
-					? { breakdowns: [breakdown('s0', '/p/0')], unsupportedProviders: [] }
+					? answered(projects, (path) => (path === '/p/0' ? [breakdown('s0', '/p/0')] : []))
 					: undefined
 		);
 		const result = await collectRemoteBreakdowns(many, request);
@@ -111,7 +128,28 @@ describe('collectRemoteBreakdowns', () => {
 		);
 	});
 
-	it('names every agent whose remote did not answer, answered late, threw, or cannot read its provider', async () => {
+	it('names an agent whose project its host failed to read, cut short, or cannot read, and merges none of it', async () => {
+		const result = await collectRemoteBreakdowns(
+			[
+				agent({ id: 'failed', projectPath: '/f' }),
+				agent({ id: 'cut', projectPath: '/c' }),
+				agent({ id: 'other', provider: 'opencode', projectPath: '/o' }),
+				agent({ id: 'fine', projectPath: '/ok' }),
+			],
+			async () => ({
+				projects: [
+					{ status: 'failed' as const, breakdowns: [], complete: false },
+					{ status: 'read' as const, breakdowns: [breakdown('partial', '/c')], complete: false },
+					{ status: 'unsupported' as const, breakdowns: [], complete: false },
+					{ status: 'read' as const, breakdowns: [breakdown('s1', '/ok')], complete: true },
+				],
+			})
+		);
+		expect(result.notCounted.map((a) => a.id)).toEqual(['failed', 'cut', 'other']);
+		expect(result.breakdowns.map((b) => b.sessionId)).toEqual(['s1']);
+	});
+
+	it('names every agent whose remote did not answer, answered late, or threw', async () => {
 		vi.useFakeTimers();
 		try {
 			const onError = vi.fn();
@@ -120,24 +158,48 @@ describe('collectRemoteBreakdowns', () => {
 					agent({ id: 'down', remoteId: 'down' }),
 					agent({ id: 'slow', remoteId: 'slow' }),
 					agent({ id: 'broken', remoteId: 'broken' }),
-					agent({ id: 'other', remoteId: 'ok', provider: 'opencode' }),
 					agent({ id: 'fine', remoteId: 'ok' }),
 				],
-				async (remoteId) => {
+				async (remoteId, projects) => {
 					if (remoteId === 'down') return undefined;
 					if (remoteId === 'slow') return new Promise(() => undefined);
 					if (remoteId === 'broken') throw new Error('bug');
-					return { breakdowns: [breakdown('s1')], unsupportedProviders: ['opencode'] };
+					return answered(projects, () => [breakdown('s1')]);
 				},
 				{ timeoutMs: 1000, onError }
 			);
 			await vi.advanceTimersByTimeAsync(1000);
 			const result = await pending;
-			expect(result.notCounted.map((a) => a.id)).toEqual(['down', 'slow', 'broken', 'other']);
+			expect(result.notCounted.map((a) => a.id)).toEqual(['down', 'slow', 'broken']);
 			expect(result.breakdowns.map((b) => b.sessionId)).toEqual(['s1']);
 			expect(onError).toHaveBeenCalledTimes(1);
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe('projectTokenUsage (the host side)', () => {
+	it('answers per project in the order asked, and a project a storage failed to list as failed', async () => {
+		const listSessions = vi.fn(async (projectPath: string, _ssh: unknown, account?: string) => {
+			if (projectPath === '/bad' && account === '/acct/2') throw new Error('EACCES');
+			return [];
+		});
+		const usage = await projectTokenUsage(
+			[
+				{ provider: 'claude-code', projectPath: '/ok' },
+				{ provider: 'claude-code', projectPath: '/bad' },
+				{ provider: 'opencode', projectPath: '/ok' },
+			],
+			{
+				storageFor: (agentType) => (agentType === 'claude-code' ? { listSessions } : null),
+				accountDirsFor: async () => ['/acct/1', '/acct/2'],
+			}
+		);
+		expect(usage.projects.map((p) => [p.status, p.complete])).toEqual([
+			['read', true],
+			['failed', false],
+			['unsupported', false],
+		]);
 	});
 });

@@ -506,13 +506,22 @@ export const TokenStats = memo(function TokenStats({
 
 	const empty = !data || data.totals.sessionCount === 0;
 	if (loading || empty) {
+		// Nothing counted can still mean something was left out (every agent is on a computer
+		// that did not answer), so the empty state names it too.
+		const notCounted = data
+			? tokenCoverageNotes(data).filter((note) => note.startsWith('Not counted'))
+			: [];
 		return (
 			<DashboardPanelState
 				theme={theme}
 				loading={loading}
 				error={error}
 				empty={empty}
-				emptyMessage="No token usage in this range. Run an agent and its token consumption shows up here."
+				emptyMessage={
+					notCounted.length > 0
+						? `No token usage in this range. ${notCounted.join(' ')}`
+						: 'No token usage in this range. Run an agent and its token consumption shows up here.'
+				}
 				loadingMessage="Reading agent transcripts..."
 				onRetry={() => void forceRefresh()}
 				testId="token-stats"

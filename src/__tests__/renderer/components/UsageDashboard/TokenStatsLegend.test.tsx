@@ -470,6 +470,17 @@ describe('TokenStats framing', () => {
 		expect(coverage.textContent).not.toMatch(/SSH|remote|hosted/i);
 	});
 
+	it('names what is not counted even when nothing was counted', async () => {
+		mountWith({
+			totals: makeTotals({ sessionCount: 0 }),
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: ['Build Box'] },
+		});
+		const empty = await screen.findByText(/No token usage in this range\./);
+		expect(empty.textContent).toContain(
+			'Not counted: Build Box (conversations on another computer that could not be read).'
+		);
+	});
+
 	it('says nothing is left out once every agent on another computer is counted', async () => {
 		mountWith({
 			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] },

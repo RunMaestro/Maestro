@@ -33,6 +33,7 @@ import { startHostCue, type HostCue } from './host-cue';
 import {
 	createHeadlessTokenUsageReader,
 	createHostTokenUsageAnswer,
+	headlessAccountSources,
 	type HostTokenUsageAnswer,
 } from './host-token-usage';
 import { createHostSleepGuard, type HostSleepGuard } from './host-sleep-guard';
@@ -81,8 +82,8 @@ export interface RuntimeHostDeps {
 	startServer: typeof startRuntimeServer;
 	startCue: typeof startHostCue;
 	createSleepGuard: typeof createHostSleepGuard;
-	/** Answers `get_project_token_usage` from this machine's transcripts. */
-	tokenUsage: HostTokenUsageAnswer;
+	/** Answers `get_project_token_usage` from this machine's transcripts, with the runtime's account sources. */
+	createTokenUsage(runtime: MaestroRuntime, productionDataDir: string): HostTokenUsageAnswer;
 	/** Can the runtime load its bundled prompts, looked for the way it looks for them? */
 	promptsLoad(moduleDirectory: string, userDataDir: string): boolean;
 	randomToken(): string;
@@ -108,7 +109,10 @@ const defaultDeps: RuntimeHostDeps = {
 	startServer: startRuntimeServer,
 	startCue: startHostCue,
 	createSleepGuard: createHostSleepGuard,
-	tokenUsage: createHostTokenUsageAnswer(createHeadlessTokenUsageReader()),
+	createTokenUsage: (runtime, productionDataDir) =>
+		createHostTokenUsageAnswer(
+			createHeadlessTokenUsageReader(() => headlessAccountSources(runtime, productionDataDir))
+		),
 	promptsLoad: (moduleDirectory, userDataDir) =>
 		createPromptLoaderFor({ userDataDir, moduleDirectory })?.get(
 			PROMPT_IDS.MAESTRO_SYSTEM_PROMPT
@@ -145,6 +149,7 @@ export async function startRuntimeHost(
 	});
 	if (!started.ok) throw new HostStartError(started.refusal);
 	const { runtime } = started;
+	const tokenUsage = deps.createTokenUsage(runtime, paths.productionDataDir);
 
 	let cue: HostCue = {
 		state: () => ({ state: 'disabled' }),
@@ -232,7 +237,7 @@ export async function startRuntimeHost(
 			onStopRequested: () => void stop(),
 			// `cue list`, `cue activity`, `cue enable|disable`: the host runs the engine they ask about.
 			// A peer's dashboard asks for the token usage of its agents' conversations kept here.
-			answer: async (message) => (await deps.tokenUsage(message)) ?? cue.answer(message),
+			answer: async (message) => (await tokenUsage(message)) ?? cue.answer(message),
 			describe: () => ({
 				cue: cue.state(),
 				cueRuns: cue.activeRuns(),

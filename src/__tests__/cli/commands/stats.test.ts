@@ -8,7 +8,9 @@ import { providerProfileKey } from '../../../shared/providerProfiles';
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 vi.mock('../../../cli/services/session-command', () => ({ exitIfMaestroNotRunning: vi.fn() }));
 
+import * as path from 'path';
 import { statsProjectTokens, statsTokens } from '../../../cli/commands/stats';
+import { REMOTE_TOKEN_USAGE_TIMEOUT_MS } from '../../../shared/projectTokenUsage';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 
 describe('stats-tokens accounting', () => {
@@ -101,9 +103,11 @@ describe('stats-tokens accounting', () => {
 			data.byModel = [{ ...data.totals, key: JSON.stringify(['grok', rawModel]), label: rawModel }];
 			data.byAccount = [{ ...data.totals, key: account, label: 'work' }];
 			await statsTokens({});
+			// Waits past the desktop's longest wait on a remote's host, not the 10 s default.
 			expect(sendCommand).toHaveBeenCalledWith(
 				{ type: 'get_token_usage', range: 'week', force: false },
-				'token_usage'
+				'token_usage',
+				REMOTE_TOKEN_USAGE_TIMEOUT_MS + 30_000
 			);
 			const text = logSpy.mock.calls[0][0] as string;
 			expect(text).toContain(`  API-equivalent cost: ${label}\n`);
@@ -121,7 +125,8 @@ describe('stats-tokens accounting', () => {
 			await statsTokens({ range: 'all', refresh: true, json: true });
 			expect(sendCommand).toHaveBeenLastCalledWith(
 				{ type: 'get_token_usage', range: 'all', force: true },
-				'token_usage'
+				'token_usage',
+				REMOTE_TOKEN_USAGE_TIMEOUT_MS + 30_000
 			);
 			expect(JSON.parse(logSpy.mock.calls[1][0] as string)).toEqual({ range: 'all', ...data });
 			expect(errorSpy).not.toHaveBeenCalled();
@@ -270,6 +275,15 @@ describe('stats-project-tokens (the host op behind remote and hosted agents)', (
 		costEstimated: true,
 		coverage: 'full',
 	};
+	/** The host's answer: every asked project read, the first holding `record`. */
+	const answerAll = async (message: { projects: Array<{ projectPath: string }> }) => ({
+		type: 'project_token_usage_result',
+		success: true,
+		projects: message.projects.map((project, i) => ({
+			status: 'read',
+			breakdowns: i === 0 ? [{ ...record, projectPath: project.projectPath }] : [],
+		})),
+	});
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -286,38 +300,53 @@ describe('stats-project-tokens (the host op behind remote and hosted agents)', (
 	afterEach(() => vi.restoreAllMocks());
 
 	it("sends get_project_token_usage to this machine's host and prints what it answers", async () => {
-		sendCommand.mockResolvedValue({
-			type: 'project_token_usage_result',
-			success: true,
-			breakdowns: [record, { ...record, sessionId: 's2', inputTokens: -1 }],
-			unsupportedProviders: [],
-		});
+		sendCommand.mockImplementation(answerAll);
 		await statsProjectTokens({ provider: 'claude-code', project: ['/srv/app'] });
 		expect(sendCommand).toHaveBeenCalledWith(
 			{
 				type: 'get_project_token_usage',
-				projects: [{ provider: 'claude-code', projectPath: '/srv/app' }],
+				projects: [{ provider: 'claude-code', projectPath: path.resolve('/srv/app') }],
 			},
-			'project_token_usage_result'
+			'project_token_usage_result',
+			REMOTE_TOKEN_USAGE_TIMEOUT_MS
 		);
 		const out = logSpy.mock.calls[0][0] as string;
 		expect(out).toContain('Conversations:   1');
 		expect(out).toContain('1.5K in');
 		expect(out).toContain('~$1.25');
+		expect(out).not.toContain('Not counted');
 	});
 
-	it('prints the parsed answer as JSON', async () => {
+	it('resolves a relative project path from where the command runs', async () => {
+		sendCommand.mockImplementation(answerAll);
+		await statsProjectTokens({ provider: 'codex', project: ['./app'] });
+		expect(sendCommand.mock.calls[0][0].projects).toEqual([
+			{ provider: 'codex', projectPath: path.resolve('./app') },
+		]);
+	});
+
+	it('asks in chunks a host accepts and merges them', async () => {
+		sendCommand.mockImplementation(answerAll);
+		const project = Array.from({ length: 70 }, (_, i) => `/p/${i}`);
+		await statsProjectTokens({ provider: 'claude-code', project, json: true });
+		expect(sendCommand.mock.calls.map(([message]) => message.projects.length)).toEqual([64, 6]);
+		const out = JSON.parse(logSpy.mock.calls[0][0] as string);
+		expect(out.projects).toHaveLength(70);
+		expect(out.projects.filter((p: { breakdowns: unknown[] }) => p.breakdowns.length)).toHaveLength(
+			2
+		);
+	});
+
+	it('says which project was not counted in full', async () => {
 		sendCommand.mockResolvedValue({
 			type: 'project_token_usage_result',
 			success: true,
-			breakdowns: [record],
-			unsupportedProviders: ['claude-code'],
+			projects: [{ status: 'failed', breakdowns: [] }],
 		});
-		await statsProjectTokens({ provider: 'claude-code', project: ['/srv/app'], json: true });
-		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
-			breakdowns: [record],
-			unsupportedProviders: ['claude-code'],
-		});
+		await statsProjectTokens({ provider: 'codex', project: ['/x'] });
+		expect(logSpy.mock.calls[0][0]).toContain(
+			`Not counted in full: ${path.resolve('/x')} (this host could not read it)`
+		);
 	});
 
 	it("fails with the host's error, never a zero summary", async () => {

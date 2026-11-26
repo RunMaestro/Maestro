@@ -5,9 +5,11 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
 	createHostTokenUsageAnswer,
+	headlessAccountSources,
 	type ProjectTokenUsageReader,
 } from '../../../cli/services/host-token-usage';
 import {
@@ -38,8 +40,7 @@ const BREAKDOWN: SessionTokenBreakdown = {
 describe('headless host token usage answer', () => {
 	it('answers its own message with numbers only', async () => {
 		const read: ProjectTokenUsageReader = vi.fn(async () => ({
-			breakdowns: [BREAKDOWN],
-			unsupportedProviders: ['opencode'],
+			projects: [{ status: 'read' as const, breakdowns: [BREAKDOWN], complete: true }],
 		}));
 		const answer = createHostTokenUsageAnswer(read);
 		const frame = await answer(
@@ -48,7 +49,7 @@ describe('headless host token usage answer', () => {
 		expect(frame).toMatchObject({
 			type: PROJECT_TOKEN_USAGE_REPLY,
 			success: true,
-			unsupportedProviders: ['opencode'],
+			projects: [{ status: 'read', breakdowns: [{ sessionId: 's1', inputTokens: 3 }] }],
 		});
 		expect(read).toHaveBeenCalledWith([{ provider: 'claude-code', projectPath: '/srv/app' }]);
 	});
@@ -70,6 +71,37 @@ describe('headless host token usage answer', () => {
 			success: false,
 			error: 'Failed to read token usage: disk gone',
 		});
+	});
+
+	it('finds the accounts the host stores: its agents, provider env, and Settings env', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-host-accounts-'));
+		try {
+			fs.writeFileSync(
+				path.join(dir, 'maestro-agent-configs.json'),
+				JSON.stringify({ configs: { codex: { customEnvVars: { CODEX_HOME: '/data/codex-b' } } } })
+			);
+			const agents = [
+				{ id: 'a1', toolType: 'claude-code', customEnvVars: { CLAUDE_CONFIG_DIR: '/data/work' } },
+			];
+			const sources = await headlessAccountSources(
+				{
+					agents: { list: async () => ({ ok: true, value: agents }) },
+					settings: {
+						get: async () => ({
+							ok: true,
+							value: { shellEnvVars: { CLAUDE_CONFIG_DIR: '/data/shell', N: 3 } },
+						}),
+					},
+				} as never,
+				dir
+			);
+			expect(sources.sessions).toEqual(agents);
+			expect(sources.globalShellEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '/data/shell' });
+			expect(sources.agentLevelEnvVars('codex')).toEqual({ CODEX_HOME: '/data/codex-b' });
+			expect(sources.agentLevelEnvVars('claude-code')).toEqual({});
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it('loads storages that plain Node can run: no static path to better-sqlite3', () => {

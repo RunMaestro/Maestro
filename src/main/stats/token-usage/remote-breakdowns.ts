@@ -22,13 +22,7 @@ import type {
 	ProjectTokenUsage,
 	ProjectTokenUsageProject,
 } from '../../../shared/projectTokenUsage';
-import {
-	MAX_PROJECT_TOKEN_USAGE_PROJECTS,
-	uniqueProjects,
-} from '../../../shared/projectTokenUsage';
-
-/** How long one remote may take to answer before its agents are left "not counted". */
-export const REMOTE_TOKEN_USAGE_TIMEOUT_MS = 30_000;
+import { REMOTE_TOKEN_USAGE_TIMEOUT_MS, chunkProjects } from '../../../shared/projectTokenUsage';
 
 /** One agent whose conversations are on another computer. */
 export interface RemoteTokenAgent {
@@ -128,15 +122,11 @@ export async function collectRemoteBreakdowns(
 	}
 
 	// A host reads at most MAX_PROJECT_TOKEN_USAGE_PROJECTS per request, so a remote with more
-	// projects is asked in chunks; an agent is counted only when the chunk holding its project was.
+	// projects is asked in chunks (`chunkProjects`); each chunk stands or falls on its own.
 	const asks = [...byRemote].flatMap(([remoteId, remoteAgents]) => {
-		const projects = uniqueProjects(
+		const chunks = chunkProjects(
 			remoteAgents.map((agent) => ({ provider: agent.provider, projectPath: agent.projectPath }))
 		);
-		const chunks: ProjectTokenUsageProject[][] = [];
-		for (let i = 0; i < projects.length; i += MAX_PROJECT_TOKEN_USAGE_PROJECTS) {
-			chunks.push(projects.slice(i, i + MAX_PROJECT_TOKEN_USAGE_PROJECTS));
-		}
 		return chunks.map((chunk, index) => ({ remoteId, chunk, last: index === chunks.length - 1 }));
 	});
 	const answers = await Promise.all(
@@ -153,24 +143,26 @@ export async function collectRemoteBreakdowns(
 		})
 	);
 
+	// Only a project its host read whole counts, and only its numbers are merged: a project that
+	// failed, was cut short, or held a record that did not check out leaves its agent named, so
+	// "Not counted" is exactly true and a total is never quietly short.
 	const breakdowns: SessionTokenBreakdown[] = [];
-	/** `remoteId NUL provider NUL projectPath` of every project its host counted. */
+	/** `remoteId NUL provider NUL projectPath` of every project its host read whole. */
 	const countedProjects = new Set<string>();
 	const seen = new Set<string>();
 	for (const { remoteId, chunk, usage } of answers) {
 		if (!usage) continue;
-		const unsupported = new Set(usage.unsupportedProviders);
-		for (const project of chunk) {
-			if (!unsupported.has(project.provider)) {
-				countedProjects.add(`${remoteId}\u0000${project.provider}\u0000${project.projectPath}`);
+		chunk.forEach((project, index) => {
+			const result = usage.projects[index];
+			if (!result?.complete) return;
+			countedProjects.add(`${remoteId}\u0000${project.provider}\u0000${project.projectPath}`);
+			for (const breakdown of result.breakdowns) {
+				const key = `${remoteId}\u0000${breakdown.agentType}\u0000${breakdown.accountKey}\u0000${breakdown.projectPath}\u0000${breakdown.sessionId}`;
+				if (seen.has(key)) continue;
+				seen.add(key);
+				breakdowns.push(breakdown);
 			}
-		}
-		for (const breakdown of usage.breakdowns) {
-			const key = `${remoteId}\u0000${breakdown.agentType}\u0000${breakdown.accountKey}\u0000${breakdown.projectPath}\u0000${breakdown.sessionId}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			breakdowns.push(breakdown);
-		}
+		});
 	}
 	const counted = new Set(
 		agents

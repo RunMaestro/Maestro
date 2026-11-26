@@ -217,6 +217,16 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 		expect(notes.ssh).not.toMatch(/SSH|remote|hosted|federation/i);
 	});
 
+	it('names an agent whose host could not read its conversations, instead of counting it short', async () => {
+		for (const mode of ['ssh', 'hosted'] as const) {
+			setMode(mode);
+			listSessions.mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
+			const aggregate = await getTokenUsageAggregate(QUERY, true);
+			expect(aggregate.totals.sessionCount).toBe(0);
+			expect(aggregate.excluded.notCountedAgents).toEqual(['Build Box']);
+		}
+	});
+
 	it('counts a removed agent on another computer as one group, never by mode', async () => {
 		setMode('ssh');
 		vi.mocked(getLiveSessions).mockReturnValue([]);

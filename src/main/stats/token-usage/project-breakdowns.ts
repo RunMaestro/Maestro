@@ -25,6 +25,8 @@ import { usageCostUsd } from '../../../shared/maestro-lib/streaming/usage-totals
 import type {
 	ProjectTokenUsage,
 	ProjectTokenUsageProject,
+	ProjectTokenUsageResult,
+	ProjectTokenUsageStatus,
 } from '../../../shared/projectTokenUsage';
 import { sessionFingerprint, tokenCacheKey, type TokenUsageCache } from './token-usage-cache';
 
@@ -223,11 +225,20 @@ export interface ProjectBreakdownDeps {
 	onError?(error: unknown): void;
 }
 
-/** What one pass read: the breakdowns, the cache keys it saw, and the providers it cannot read. */
+/**
+ * What one pass read: the breakdowns, the cache keys it saw, the providers it cannot read, and the
+ * projects a storage failed to list (for one account or more), keyed by {@link projectKey}.
+ */
 export interface ProjectBreakdowns {
 	breakdowns: SessionTokenBreakdown[];
 	liveKeys: Set<string>;
 	unsupportedProviders: string[];
+	failedProjects: Set<string>;
+}
+
+/** The key a failed project is recorded under. */
+export function projectKey(agentType: string, projectPath: string): string {
+	return `${agentType}\u0000${projectPath}`;
 }
 
 /**
@@ -241,6 +252,7 @@ export async function collectProjectBreakdowns(
 	const breakdowns: SessionTokenBreakdown[] = [];
 	const liveKeys = new Set<string>();
 	const unsupported = new Set<string>();
+	const failedProjects = new Set<string>();
 
 	for (const [agentType, projects] of byAgent) {
 		const storage = deps.storageFor(agentType);
@@ -265,6 +277,7 @@ export async function collectProjectBreakdowns(
 					sessions = await storage.listSessions(projectPath, undefined, accountDir);
 				} catch (error) {
 					deps.onError?.(error);
+					failedProjects.add(projectKey(agentType, projectPath));
 					continue;
 				}
 				for (const info of sessions) {
@@ -293,28 +306,32 @@ export async function collectProjectBreakdowns(
 		}
 	}
 
-	return { breakdowns, liveKeys, unsupportedProviders: [...unsupported].sort() };
+	return { breakdowns, liveKeys, unsupportedProviders: [...unsupported].sort(), failedProjects };
 }
 
 /**
- * The answer to a peer's `get_project_token_usage`: the breakdowns of the named projects on this
- * machine, and the providers it cannot read. No breakdown cache here: each storage's own
- * fingerprint cache already keeps an unchanged conversation from being parsed twice, and the
- * dashboard's cache prunes to this machine's own agents.
+ * The answer to a peer's `get_project_token_usage`: per project, in the order asked, whether this
+ * machine read it and the breakdowns of its conversations. A project a storage could not list (for
+ * any account) answers `failed`, so the peer names its agent instead of counting it short. No
+ * breakdown cache here: each storage's own fingerprint cache already keeps an unchanged
+ * conversation from being parsed twice, and the dashboard's cache prunes to this machine's agents.
  */
 export async function projectTokenUsage(
 	projects: readonly ProjectTokenUsageProject[],
 	deps: Omit<ProjectBreakdownDeps, 'cache'>
 ): Promise<ProjectTokenUsage> {
-	const byAgent = new Map<string, Set<string>>();
+	const results: ProjectTokenUsageResult[] = [];
 	for (const { provider, projectPath } of projects) {
-		let set = byAgent.get(provider);
-		if (!set) {
-			set = new Set<string>();
-			byAgent.set(provider, set);
-		}
-		set.add(projectPath);
+		const read = await collectProjectBreakdowns(
+			new Map([[provider, new Set([projectPath])]]),
+			deps
+		);
+		const status: ProjectTokenUsageStatus = read.unsupportedProviders.includes(provider)
+			? 'unsupported'
+			: read.failedProjects.size > 0
+				? 'failed'
+				: 'read';
+		results.push({ status, breakdowns: read.breakdowns, complete: status === 'read' });
 	}
-	const { breakdowns, unsupportedProviders } = await collectProjectBreakdowns(byAgent, deps);
-	return { breakdowns, unsupportedProviders };
+	return { projects: results };
 }

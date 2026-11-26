@@ -1149,13 +1149,17 @@ describe('createWsMaestroClient', () => {
 				bridge.typed.set(
 					'get_project_token_usage',
 					reply('project_token_usage_result', {
-						breakdowns: [record, { ...record, sessionId: 's2', inputTokens: -1 }],
-						unsupportedProviders: [],
+						projects: [
+							{
+								status: 'read',
+								breakdowns: [record, { ...record, sessionId: 's2', inputTokens: -1 }],
+							},
+						],
 					})
 				);
 				expect(await client.usage!.projectTokens(projects)).toEqual({
 					ok: true,
-					value: { breakdowns: [record], unsupportedProviders: [] },
+					value: { projects: [{ status: 'read', breakdowns: [record], complete: false }] },
 				});
 				expect(bridge.sent('get_project_token_usage')[0]).toMatchObject({ projects });
 			});

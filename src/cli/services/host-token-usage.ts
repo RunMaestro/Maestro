@@ -15,6 +15,7 @@
  */
 
 import {
+	MAX_PROJECT_TOKEN_USAGE_PROJECTS,
 	PROJECT_TOKEN_USAGE_MESSAGE,
 	parseProjectTokenUsageRequest,
 	projectTokenUsageFailureFrame,
@@ -24,6 +25,8 @@ import {
 } from '../../shared/projectTokenUsage';
 import type { AgentSessionStorage } from '../../main/agents/session-storage';
 import type { ClaudeSessionOriginsData } from '../../main/storage/claude-session-storage';
+import type { MaestroClient } from '../../shared/maestro-lib/client/types';
+import { readAgentConfigsStoreFile } from '../../main/stores/agent-configs-store-file';
 
 /** Reads the usage of projects on this machine. */
 export type ProjectTokenUsageReader = (
@@ -36,10 +39,55 @@ export type HostTokenUsageAnswer = (
 ) => Promise<Record<string, unknown> | undefined>;
 
 /**
- * The reader a headless host uses: the Claude Code and Codex storages, built once on the first ask,
- * and this machine's account dirs.
+ * What a headless host knows about its accounts: its stored agents (an agent's own
+ * `CLAUDE_CONFIG_DIR` or `CODEX_HOME`), each provider's `customEnvVars`, and Settings ->
+ * Environment. The desktop reads these from its stores; a headless host has no desktop stores, so
+ * it hands them to account discovery itself. Without them an account set only there (a config dir
+ * outside `$HOME`) would never be read.
  */
-export function createHeadlessTokenUsageReader(): ProjectTokenUsageReader {
+export interface HeadlessAccountSources {
+	sessions: Array<Record<string, unknown>>;
+	globalShellEnvVars: Record<string, string>;
+	agentLevelEnvVars(toolType: string): Record<string, string>;
+}
+
+/** A string-to-string map from an untrusted settings value, or an empty one. */
+function stringMap(value: unknown): Record<string, string> {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+	return Object.fromEntries(
+		Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+	);
+}
+
+/** The account sources of a running headless host: its runtime's agents and settings, and its agent configs file. */
+export async function headlessAccountSources(
+	runtime: Pick<MaestroClient, 'agents' | 'settings'>,
+	productionDataDir: string
+): Promise<HeadlessAccountSources> {
+	const [agents, settings] = await Promise.all([
+		runtime.agents.list(),
+		runtime.settings.get(['shellEnvVars']),
+	]);
+	let configs: Record<string, Record<string, unknown>> = {};
+	try {
+		configs = readAgentConfigsStoreFile(productionDataDir).configs;
+	} catch {
+		// A corrupt configs file leaves only the provider layer out; the other layers still apply.
+	}
+	return {
+		sessions: agents.ok ? (agents.value as unknown as Array<Record<string, unknown>>) : [],
+		globalShellEnvVars: settings.ok ? stringMap(settings.value.shellEnvVars) : {},
+		agentLevelEnvVars: (toolType) => stringMap(configs[toolType]?.customEnvVars),
+	};
+}
+
+/**
+ * The reader a headless host uses: the Claude Code and Codex storages, built once on the first ask,
+ * and this machine's account dirs, found with the host's own account sources.
+ */
+export function createHeadlessTokenUsageReader(
+	accountSources: () => Promise<HeadlessAccountSources>
+): ProjectTokenUsageReader {
 	let loaded: Promise<ProjectTokenUsageReader> | undefined;
 	const load = async (): Promise<ProjectTokenUsageReader> => {
 		const [{ projectTokenUsage }, claude, codex, accounts, { default: Store }] = await Promise.all([
@@ -58,11 +106,18 @@ export function createHeadlessTokenUsageReader(): ProjectTokenUsageReader {
 			['claude-code', new claude.ClaudeSessionStorage(origins)],
 			['codex', new codex.CodexSessionStorage(origins)],
 		]);
-		return (projects) =>
-			projectTokenUsage(projects, {
+		return async (projects) => {
+			const sources = await accountSources();
+			return projectTokenUsage(projects, {
 				storageFor: (agentType) => storages.get(agentType) ?? null,
-				accountDirsFor: (agentType) => accounts.getProviderAccountDirs(agentType),
+				accountDirsFor: (agentType) =>
+					accounts.getProviderAccountDirs(agentType, {
+						sessions: sources.sessions,
+						globalShellEnvVars: sources.globalShellEnvVars,
+						agentLevelEnvVars: sources.agentLevelEnvVars(agentType),
+					}),
 			});
+		};
 	};
 	return async (projects) => {
 		loaded ??= load();
@@ -78,8 +133,10 @@ export function createHostTokenUsageAnswer(read: ProjectTokenUsageReader): HostT
 	return async (message) => {
 		if (message.type !== PROJECT_TOKEN_USAGE_MESSAGE) return undefined;
 		const projects = parseProjectTokenUsageRequest(message);
-		if (projects.length === 0) {
-			return projectTokenUsageFailureFrame('Name at least one project (provider and path).');
+		if (!projects) {
+			return projectTokenUsageFailureFrame(
+				`Name 1 to ${MAX_PROJECT_TOKEN_USAGE_PROJECTS} projects, each with a provider and a path.`
+			);
 		}
 		try {
 			return projectTokenUsageReplyFrame(await read(projects));

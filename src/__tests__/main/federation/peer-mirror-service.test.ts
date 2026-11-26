@@ -278,7 +278,7 @@ describe('PeerMirrorService', () => {
 
 	it('asks the host on a remote for its projects token usage only while that host is connected', async () => {
 		const a = fakeHost('a', { manualReady: true });
-		const usage = { breakdowns: [], unsupportedProviders: ['opencode'] };
+		const usage = { projects: [{ status: 'unsupported', breakdowns: [], complete: false }] };
 		const projectTokens = vi.fn(async () => ({ ok: true, value: usage }));
 		(a.client as unknown as { usage: unknown }).usage = { projectTokens };
 		const h = harness([remoteOf('a')], { a });
