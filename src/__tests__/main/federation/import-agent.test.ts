@@ -20,17 +20,27 @@ const fakeStore = (name: string) => ({
 		return stores[name] ?? {};
 	},
 });
+const userData = { dir: '' };
+vi.mock('../../../main/utils/app-user-data', () => ({
+	getAppUserDataDir: () => userData.dir,
+}));
+vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../main/stores/getters', () => ({
 	getSessionsStore: () => fakeStore('sessions'),
 	getGroupsStore: () => fakeStore('groups'),
 	getSettingsStore: () => fakeStore('settings'),
 }));
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
 	IMPORT_ENQUEUE_ATTEMPTS,
 	buildDesktopAgentImportDeps,
+	desktopAgentProcesses,
 	importAgentIntoDesktop,
 	type DesktopAgentImportDeps,
+	type ImportProcessTable,
 } from '../../../main/federation/import-agent';
 import type { AgentImportInput } from '../../../shared/maestro-lib/client/types';
 import type { StoredSession } from '../../../main/stores/types';
@@ -41,9 +51,30 @@ const input = (extra: Partial<AgentImportInput> = {}): AgentImportInput => ({
 	...extra,
 });
 
+/** A process table holding the given process ids, recording what is stopped on it. */
+function processTable(running: string[] = []) {
+	const live = new Set(running);
+	const table: ImportProcessTable & { stopped: string[]; closed: string[] } = {
+		stopped: [],
+		closed: [],
+		get: (id) => (live.has(id) ? { id } : undefined),
+		kill: (id) => {
+			table.stopped.push(id);
+			return live.delete(id);
+		},
+		closeAgent: (agentId) => {
+			table.closed.push(agentId);
+			for (const id of [...live]) if (id.startsWith(`${agentId}-ai`)) live.delete(id);
+		},
+	};
+	return table;
+}
+
 function deps(extra: Partial<DesktopAgentImportDeps> = {}) {
 	let sessions: StoredSession[] = [];
 	const d: DesktopAgentImportDeps & { stored: () => StoredSession[] } = {
+		processes: desktopAgentProcesses(processTable()),
+		removeFiles: vi.fn().mockResolvedValue(undefined),
 		getSessions: () => sessions,
 		setSessions: vi.fn((next: StoredSession[]) => {
 			sessions = next;
@@ -74,8 +105,122 @@ describe('importAgentIntoDesktop', () => {
 		const [agent] = d.stored();
 		expect(agent.name).toBe('Substrate');
 		expect(agent.aiTabs[0]).toMatchObject({ id: 'tA', agentSessionId: 'sess-A' });
-		expect(d.announceAdded).toHaveBeenCalledWith(agent);
+		expect(d.announceAdded).toHaveBeenCalledWith(agent, []);
 		expect(result.receipt).toEqual({ agentId: agent.id, queued: 0 });
+	});
+
+	it('replaces the copy an earlier Move Back left here, in the same write (T5)', async () => {
+		const d = deps();
+		d.setSessions([
+			{
+				id: 'stale-1',
+				liftedFromAgentId: 'local-1',
+				name: 'Substrate',
+				cwd: '/work/substrate',
+			} as StoredSession,
+		]);
+		const result = await importAgentIntoDesktop(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			d
+		);
+		expect(result.ok).toBe(true);
+		const stored = d.stored();
+		expect(stored.map((agent) => agent.id)).not.toContain('stale-1');
+		expect(stored).toHaveLength(1);
+		expect(d.announceAdded).toHaveBeenCalledWith(stored[0], ['stale-1']);
+	});
+
+	it('refuses to replace a copy whose tab runs a turn in the live table, while its stored state reads idle (T7)', async () => {
+		const table = processTable(['stale-1-ai-t1']);
+		const d = deps({ processes: desktopAgentProcesses(table) });
+		d.setSessions([
+			{
+				id: 'stale-1',
+				liftedFromAgentId: 'local-1',
+				name: 'Substrate',
+				cwd: '/work/substrate',
+				state: 'idle',
+				activeTabId: 't1',
+				aiTabs: [{ id: 't1', state: 'idle' }],
+			} as StoredSession,
+		]);
+		vi.mocked(d.setSessions).mockClear();
+		const result = await importAgentIntoDesktop(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			d
+		);
+		expect(result).toMatchObject({ ok: false, code: 'rejected' });
+		if (result.ok) return;
+		expect(result.message).toMatch(/is running a turn/);
+		expect(d.setSessions).not.toHaveBeenCalled();
+		expect(table.closed).toEqual([]);
+		expect(table.stopped).toEqual([]);
+		expect(d.removeFiles).not.toHaveBeenCalled();
+		expect(d.stored().map((agent) => agent.id)).toEqual(['stale-1']);
+	});
+
+	it('stops every process of an idle replaced copy and removes its files, as a remove does (T7)', async () => {
+		const table = processTable(['stale-1-terminal-term1']);
+		const d = deps({ processes: desktopAgentProcesses(table) });
+		d.setSessions([
+			{
+				id: 'stale-1',
+				liftedFromAgentId: 'local-1',
+				name: 'Substrate',
+				cwd: '/work/substrate',
+				aiTabs: [{ id: 't1' }],
+				terminalTabs: [{ id: 'term1' }],
+			} as StoredSession,
+		]);
+		const result = await importAgentIntoDesktop(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			d
+		);
+		expect(result.ok).toBe(true);
+		expect(table.closed).toEqual(['stale-1']);
+		expect(table.stopped).toEqual(['stale-1-terminal', 'stale-1-terminal-term1']);
+		expect(d.removeFiles).toHaveBeenCalledWith('stale-1');
+		expect(d.stored().map((agent) => agent.id)).not.toContain('stale-1');
+	});
+
+	it('refuses a replace when the process table is not up, since nobody can tell it is idle (T7)', async () => {
+		const d = deps({ processes: undefined });
+		d.setSessions([
+			{
+				id: 'stale-1',
+				liftedFromAgentId: 'local-1',
+				name: 'Substrate',
+				cwd: '/work/substrate',
+			} as StoredSession,
+		]);
+		vi.mocked(d.setSessions).mockClear();
+		const result = await importAgentIntoDesktop(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			d
+		);
+		expect(result).toMatchObject({ ok: false, code: 'rejected' });
+		expect(d.setSessions).not.toHaveBeenCalled();
+	});
+
+	it("says so, and keeps the move, when the replaced copy's files cannot be removed (T7)", async () => {
+		const d = deps({ removeFiles: vi.fn().mockRejectedValue(new Error('EACCES')) });
+		d.setSessions([
+			{
+				id: 'stale-1',
+				liftedFromAgentId: 'local-1',
+				name: 'Substrate',
+				cwd: '/work/substrate',
+			} as StoredSession,
+		]);
+		const result = await importAgentIntoDesktop(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			d
+		);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.receipt.notices).toEqual([
+			'The playbooks of the replaced copy (stale-1) were not removed: EACCES',
+		]);
 	});
 
 	it('writes nothing when the import rule refuses', async () => {
@@ -152,7 +297,7 @@ describe('buildDesktopAgentImportDeps', () => {
 		stores.groups = { groups: [{ id: 'g1' }, { id: 'g2' }] };
 		stores.settings = { newTabPlacement: 'end' };
 		const enqueue = vi.fn();
-		const d = buildDesktopAgentImportDeps(enqueue);
+		const d = buildDesktopAgentImportDeps(enqueue, null);
 		expect(d.getSessions()).toEqual([{ id: 'old' }]);
 		expect(d.getGroupIds()).toEqual(['g1', 'g2']);
 		expect(d.getSettings()).toEqual({ newTabPlacement: 'end' });
@@ -164,5 +309,18 @@ describe('buildDesktopAgentImportDeps', () => {
 			removedIds: [],
 		});
 		expect(d.enqueue).toBe(enqueue);
+		expect(d.processes).toBeUndefined();
+	});
+
+	it("removes a replaced agent's playbooks from this desktop's data directory (T7)", async () => {
+		userData.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'import-agent-'));
+		fs.mkdirSync(path.join(userData.dir, 'playbooks'));
+		const file = path.join(userData.dir, 'playbooks', 'stale-1.json');
+		fs.writeFileSync(file, '{"playbooks":[]}');
+		const d = buildDesktopAgentImportDeps(vi.fn(), processTable());
+		expect(d.processes).toBeDefined();
+		await d.removeFiles('stale-1');
+		expect(fs.existsSync(file)).toBe(false);
+		fs.rmSync(userData.dir, { recursive: true, force: true });
 	});
 });

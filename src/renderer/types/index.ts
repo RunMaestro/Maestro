@@ -1707,6 +1707,12 @@ export interface Session {
 	// Federation: moved back from its host by the person (Move Back from Host, `maestro-cli
 	// unlift`). Automatic Federation leaves it an SSH agent; Move to Host clears it.
 	hostedOptOut?: boolean;
+	// Federation: the host's copy a Move Back left behind (the host was down). The next Move to
+	// Host of this agent replaces it instead of being refused for its name.
+	leftOnHost?: LiftedToPointer;
+	// Federation, on a host: the id of the agent this record was lifted from. A later Move to Host
+	// of that agent may replace this record (`planAgentImport()`).
+	liftedFromAgentId?: string;
 
 	// Inline wizard state for /wizard command
 	// Keeps per-session/per-tab wizard state for creating or iterating on Auto Run documents
