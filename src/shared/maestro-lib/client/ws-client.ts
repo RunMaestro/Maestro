@@ -1497,11 +1497,29 @@ class WsMaestroClient implements MaestroClient {
 	// =======================================================================
 
 	private async agentsGet(agentId: string): Promise<ClientResult<AgentRecord>> {
-		const boot = await this.invoke<unknown>('agents.get', 'sessions:getBootstrap');
+		// The stored records read idle mid-turn (the desktop persists every state as idle), so the
+		// bridge's `get_sessions` projection, which reads the live process table (`isAgentBusy()`),
+		// is folded over them: a caller asking "is it running a turn?" gets the live answer.
+		const requestedAt = this.now();
+		const [boot, live] = await Promise.all([
+			this.invoke<unknown>('agents.get', 'sessions:getBootstrap'),
+			this.send<Reply>('agents.get', { type: 'get_sessions' }, 'sessions_list', {
+				matchByType: true,
+			}),
+		]);
 		if (!boot.ok) return boot;
 		const all = agentsOf({ sessions: Array.isArray(boot.value) ? boot.value : [] });
 		this.emitAll(this.mirror.syncAgents(all));
-		const found = all.find((agent) => agent.id === agentId);
+		if (!all.some((agent) => agent.id === agentId)) {
+			return this.fail('agents.get', 'not-found', `No agent ${agentId}`);
+		}
+		if (live.ok && Array.isArray(live.value.sessions)) {
+			// The reconcile poll's own fold (section 6.3), so the mirror reads the same either way.
+			this.emitAll(
+				this.mirror.reconcile(live.value.sessions as ProjectedAgent[], requestedAt).events
+			);
+		}
+		const found = this.mirror.getAgent(agentId) ?? all.find((agent) => agent.id === agentId);
 		return found ? ok(found) : this.fail('agents.get', 'not-found', `No agent ${agentId}`);
 	}
 

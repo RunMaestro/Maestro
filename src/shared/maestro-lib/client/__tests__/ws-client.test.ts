@@ -438,6 +438,24 @@ describe('createWsMaestroClient', () => {
 			);
 		});
 
+		it('reads an agent busy from the live get_sessions projection while its stored record reads idle (T8)', async () => {
+			agents = [
+				agentRecord(A1, { state: 'idle', aiTabs: [{ id: A1_TAB, state: 'idle' }] }),
+				agentRecord('a2'),
+			];
+			bridge.typed.set('get_sessions', () => ({
+				type: 'sessions_list',
+				sessions: [
+					{ id: A1, state: 'busy' },
+					{ id: 'a2', state: 'idle' },
+				],
+			}));
+			const result = await client.agents.get(A1);
+			expect(result.ok && result.value.state).toBe('busy');
+			const list = await client.agents.list();
+			expect(list.ok && list.value.map((a) => a.id)).toEqual([A1, 'a2']);
+		});
+
 		it('stops a busy tab process before deleting the agent (gap G6)', async () => {
 			agents = [
 				agentRecord(A1, {

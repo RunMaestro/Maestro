@@ -1681,6 +1681,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 		}
 
+		// Its playbooks go with it, as the Left Bar's Remove Agent does (`performDeleteSession`).
+		try {
+			await window.maestro.playbooks.deleteAll(sessionId);
+		} catch (error) {
+			captureException(error, { extra: { sessionId, operation: 'remote-delete-playbooks' } });
+		}
+
 		// Remove session
 		setSessions((prev: Session[]) => {
 			const filtered = prev.filter((s) => s.id !== sessionId);

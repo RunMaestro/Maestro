@@ -29,7 +29,7 @@ import type { ClientError, MaestroClient } from '../client/types';
 import type { AgentRecord } from '../store/records';
 import { liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
 import type { LiftPlan, LiftPlanSummary } from './lift-plan';
-import { peerAgentRef, type LiftedToPointer } from './lift-pointer';
+import { peerAgentRef, runningTurnWhere, type LiftedToPointer } from './lift-pointer';
 import { readLeftOnHost, withReturnedFromHost } from './lift-return-record';
 import { liftFollowUpPatch } from './lift-settings-sync';
 import type { AITabRecord } from '../store/records';
@@ -220,7 +220,7 @@ async function readStaleHostCopy(
 		throw hostError(connection.peer, hostCopy.error);
 	}
 	const ref = peerAgentRef(pointer.peer, pointer.agentId);
-	if ((hostCopy.value.aiTabs ?? []).some((tab) => tab.state === 'busy')) {
+	if (runningTurnWhere(hostCopy.value) !== null) {
 		throw new LiftRunError(
 			liftErrorCode('host-copy-busy'),
 			`"${agent.name}" still has a copy on the host (${ref}) that is running a turn. Wait for it to finish, or stop it, then move again.`
