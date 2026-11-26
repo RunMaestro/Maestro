@@ -1800,22 +1800,99 @@ describe('filesystem handlers', () => {
 	});
 
 	describe('fs:directorySize', () => {
-		it('should calculate directory size for remote via SSH', async () => {
-			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
-			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
-			vi.mocked(directorySizeRemote).mockResolvedValue({ success: true, data: 1024000 });
-			vi.mocked(countItemsRemote).mockResolvedValue({
-				success: true,
-				data: { fileCount: 50, folderCount: 5 },
+		// The same tree gives the same footer wherever the agent runs: the remote walk
+		// applies the local walk's patterns, root .gitignore, and depth.
+		describe('the same tree, local or on an SSH remote', () => {
+			// project/: src/index.ts (10 B), .git/HEAD (5 B), dist/out.js (7 B), app.ts (3 B)
+			const mockLocalTree = async () => {
+				const mockFs = (await import('fs/promises')).default;
+				vi.mocked(mockFs.readFile).mockImplementation(async (filePath: any) => {
+					if (String(filePath).endsWith('.gitignore')) return 'dist\n';
+					throw new Error('ENOENT');
+				});
+				vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
+					const p = String(dirPath).replace(/\\/g, '/');
+					const dir = (name: string) => ({ name, isDirectory: () => true, isFile: () => false });
+					const file = (name: string) => ({ name, isDirectory: () => false, isFile: () => true });
+					if (p === '/srv/tree')
+						return [dir('src'), dir('.git'), dir('dist'), file('app.ts')] as any;
+					if (p.endsWith('/src')) return [file('index.ts')] as any;
+					if (p.endsWith('/.git')) return [file('HEAD')] as any;
+					if (p.endsWith('/dist')) return [file('out.js')] as any;
+					return [];
+				});
+				vi.mocked(mockFs.stat).mockImplementation(async (filePath: any) => {
+					const p = String(filePath).replace(/\\/g, '/');
+					const sizes: Record<string, number> = {
+						'index.ts': 10,
+						HEAD: 5,
+						'out.js': 7,
+						'app.ts': 3,
+					};
+					return { size: sizes[p.split('/').pop()!] ?? 0 } as any;
+				});
+			};
+			const mockRemoteTree = () => {
+				vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1', host: 'box' } as any);
+				vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: 'dist\n' });
+				// What `find` returns once the patterns it was given are pruned: `.git`
+				// stays because the remote's `find -name` is asked for `.GIT`.
+				vi.mocked(listTreeRemote).mockResolvedValue({
+					success: true,
+					data: {
+						directories: ['src', '.git'],
+						files: ['src/index.ts', '.git/HEAD', 'app.ts'],
+						fileSizes: [10, 5, 3],
+						truncated: false,
+					},
+				});
+			};
+
+			it('counts and sizes the tree the same in every mode', async () => {
+				const handler = registeredHandlers.get('fs:directorySize');
+				const results: Record<string, unknown> = {};
+				for (const mode of ['local', 'ssh', 'hosted'] as const) {
+					if (mode === 'local') await mockLocalTree();
+					else mockRemoteTree();
+					// A hosted agent keeps its SSH remote, so the Files panel asks the same way.
+					results[mode] = await handler!(
+						{},
+						'/srv/tree',
+						mode === 'local' ? undefined : 'r1',
+						['.GIT', 'node_modules'],
+						true
+					);
+				}
+				expect(results.local).toEqual({ totalSize: 13, fileCount: 2, folderCount: 1 });
+				expect(results.ssh).toEqual(results.local);
+				expect(results.hosted).toEqual(results.local);
 			});
 
-			const handler = registeredHandlers.get('fs:directorySize');
-			const result = await handler!({}, '/remote/folder', 'remote-1');
+			it('asks the remote for the same patterns, its own .gitignore, and the same depth', async () => {
+				mockRemoteTree();
+				const handler = registeredHandlers.get('fs:directorySize');
+				await handler!({}, '/srv/remote-only', 'r1', ['.git'], true);
 
-			expect(result).toEqual({
-				totalSize: 1024000,
-				fileCount: 50,
-				folderCount: 5,
+				expect(readFileRemote).toHaveBeenCalledWith(
+					'/srv/remote-only/.gitignore',
+					expect.objectContaining({ id: 'r1' })
+				);
+				expect(listTreeRemote).toHaveBeenCalledWith(
+					'/srv/remote-only',
+					{ maxDepth: 10, ignorePatterns: ['.git', 'dist'], withSizes: true },
+					expect.objectContaining({ id: 'r1' })
+				);
+			});
+
+			it('fails loudly, never counting here, when the remote cannot be read', async () => {
+				vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1', host: 'box' } as any);
+				vi.mocked(listTreeRemote).mockResolvedValue({ success: false, error: 'ssh: timed out' });
+				const mockFs = (await import('fs/promises')).default;
+				vi.mocked(mockFs.readdir).mockClear();
+
+				const handler = registeredHandlers.get('fs:directorySize');
+				await expect(handler!({}, '/srv/down', 'r1', [], false)).rejects.toThrow('ssh: timed out');
+				expect(mockFs.readdir).not.toHaveBeenCalled();
 			});
 		});
 

@@ -16,7 +16,7 @@ import {
 	type UseFileTreeManagementDeps,
 } from '../../../renderer/hooks/git/useFileTreeManagement';
 import type { Session } from '../../../renderer/types';
-import { createMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, agentModeFields, createMockSession } from '../../helpers/mockSession';
 import { withWorkingDirectory } from '../../../renderer/utils/agentWorkingDirectory';
 import type { FileNode } from '../../../renderer/types/fileTree';
 import type { RightPanelHandle } from '../../../renderer/components/RightPanel';
@@ -1543,6 +1543,52 @@ describe('useFileTreeManagement', () => {
 			window.maestro.fs = originalFs;
 		}
 	});
+
+	// The footer counts what the agent's tree shows, so it is asked with the rule that
+	// tree is drawn with: the SSH remote's patterns for an agent on one, this
+	// machine's for a local agent. A hosted agent keeps its remote.
+	it.each(AGENT_MODES)(
+		"asks for a %s agent's footer with the rule its tree is drawn with",
+		async (mode) => {
+			const mockDirectorySize = vi
+				.fn()
+				.mockResolvedValue({ fileCount: 3, folderCount: 4, totalSize: 99 });
+			const originalFs = window.maestro?.fs;
+			window.maestro = {
+				...window.maestro,
+				fs: { ...originalFs, directorySize: mockDirectorySize },
+			};
+			try {
+				const session = createMockSession({
+					...agentModeFields(mode),
+					fileTree: [{ name: 'existing.txt', type: 'file' }],
+					fileTreeStats: undefined,
+					fileTreeError: undefined,
+					fileTreeLoading: false,
+				});
+				const state = createSessionsState([session]);
+				renderHook(() =>
+					useFileTreeManagement(
+						createDeps(state, {
+							localIgnorePatterns: ['.git', 'node_modules'],
+							localHonorGitignore: false,
+							sshRemoteIgnorePatterns: ['.git', '*cache*'],
+							sshRemoteHonorGitignore: true,
+						})
+					)
+				);
+				await waitFor(() => expect(mockDirectorySize).toHaveBeenCalled());
+				expect(mockDirectorySize).toHaveBeenLastCalledWith(
+					'/test/project',
+					...(mode === 'local'
+						? [undefined, ['.git', 'node_modules'], false]
+						: ['r1', ['.git', '*cache*'], true])
+				);
+			} finally {
+				if (originalFs) window.maestro.fs = originalFs;
+			}
+		}
+	);
 
 	it('does not fire file-tree safety timeout until sessionsLoaded is true', () => {
 		vi.useFakeTimers();

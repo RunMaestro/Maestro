@@ -116,6 +116,21 @@ function getSshContext(session: Session, options?: SshContextOptions): SshContex
 	return context;
 }
 
+/**
+ * The ignore rule for the Files panel's footer (counts and size): the rule the
+ * agent's own tree is drawn with, the SSH remote's patterns for an agent that
+ * runs on one and this machine's for a local agent. Main applies it the same
+ * way in both, so the footer counts exactly what the tree shows.
+ */
+function fileTreeStatsIgnore(
+	sshContext: SshContext | undefined,
+	localOptions: LocalFileTreeOptions | undefined
+): [ignorePatterns: string[] | undefined, honorGitignore: boolean | undefined] {
+	return sshContext
+		? [sshContext.ignorePatterns, sshContext.honorGitignore]
+		: [localOptions?.ignorePatterns, localOptions?.honorGitignore];
+}
+
 export type { RightPanelHandle } from '../../components/RightPanel';
 export type { SshContext } from '../../utils/fileExplorer';
 
@@ -526,8 +541,7 @@ export function useFileTreeManagement(
 						.directorySize(
 							treeRoot,
 							sshContext?.sshRemoteId,
-							localOptions?.ignorePatterns,
-							localOptions?.honorGitignore
+							...fileTreeStatsIgnore(sshContext, localOptions)
 						)
 						.then((stats) => {
 							if (isStale(sessionId, seq)) return;
@@ -704,8 +718,7 @@ export function useFileTreeManagement(
 					.directorySize(
 						treeRoot,
 						sshContext?.sshRemoteId,
-						localOptions?.ignorePatterns,
-						localOptions?.honorGitignore
+						...fileTreeStatsIgnore(sshContext, localOptions)
 					)
 					.then((stats) => {
 						if (isStale(sessionId, seq)) return;
@@ -1002,8 +1015,7 @@ export function useFileTreeManagement(
 				.directorySize(
 					treeRoot,
 					sshContext?.sshRemoteId,
-					localOptions?.ignorePatterns,
-					localOptions?.honorGitignore
+					...fileTreeStatsIgnore(sshContext, localOptions)
 				)
 				.then((stats) => {
 					if (isStale(sessionId, seq)) return;
@@ -1206,7 +1218,7 @@ export function useFileTreeManagement(
 		// Capture stable session ID for async callback (same stale closure fix as initial load)
 		const sessionId = session.id;
 
-		const sshContext = getSshContext(session);
+		const sshContext = getSshContext(session, sshContextOptions);
 		const treeRoot = session.projectRoot || session.cwd;
 
 		// Fetch stats only (don't re-fetch tree)
@@ -1214,8 +1226,7 @@ export function useFileTreeManagement(
 			.directorySize(
 				treeRoot,
 				sshContext?.sshRemoteId,
-				localOptions?.ignorePatterns,
-				localOptions?.honorGitignore
+				...fileTreeStatsIgnore(sshContext, localOptions)
 			)
 			.then((stats) => {
 				setSessions((prev) =>
@@ -1241,7 +1252,7 @@ export function useFileTreeManagement(
 					sessionId,
 				});
 			});
-	}, [activeSession, setSessions]);
+	}, [activeSession, setSessions, sshContextOptions, localOptions]);
 
 	/**
 	 * Filter file tree based on search query.

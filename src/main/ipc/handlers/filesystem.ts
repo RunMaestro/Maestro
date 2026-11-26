@@ -54,7 +54,6 @@ import {
 	writeFileRemote,
 	mkdirRemote,
 	statRemote,
-	directorySizeRemote,
 	renameRemote,
 	deleteRemote,
 	deleteManyRemote,
@@ -465,6 +464,9 @@ interface DirectorySizeResult {
  * only has to outlive one burst of callers, not act as a real cache.
  */
 const DIRECTORY_SIZE_CACHE_MS = 2_000;
+
+/** How deep the Files panel's size walk goes: entries up to 10 levels below the root, in every mode. */
+const DIRECTORY_SIZE_MAX_DEPTH = 10;
 
 /**
  * Request budget for fs:fetchImageAsBase64. The renderer blocks a preview on
@@ -952,25 +954,11 @@ export function registerFilesystemHandlers(): void {
 			ignorePatterns?: string[],
 			honorGitignore?: boolean
 		) => {
-			// SSH remote: dispatch to remote fs operations
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(sshRemoteId);
-				if (!sshConfig) {
-					throw new Error(`SSH remote not found: ${sshRemoteId}`);
-				}
-				// Fetch size and counts in parallel for SSH remotes
-				const [sizeResult, countResult] = await Promise.all([
-					directorySizeRemote(dirPath, sshConfig),
-					countItemsRemote(dirPath, sshConfig),
-				]);
-				if (!sizeResult.success) {
-					throw new Error(sizeResult.error || 'Failed to get remote directory size');
-				}
-				return {
-					totalSize: sizeResult.data!,
-					fileCount: countResult.success ? countResult.data!.fileCount : 0,
-					folderCount: countResult.success ? countResult.data!.folderCount : 0,
-				};
+			// SSH remote: the same walk rule (patterns, .gitignore, depth) over SSH, so
+			// one tree gives the same counts and size wherever the agent runs.
+			const sshConfig = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+			if (sshRemoteId && !sshConfig) {
+				throw new Error(`SSH remote not found: ${sshRemoteId}`);
 			}
 
 			// The Files panel asks for this from several places that all fire inside
@@ -980,7 +968,7 @@ export function registerFilesystemHandlers(): void {
 			// those into one walk: a request that arrives while a matching walk is
 			// still running joins it, and the settled answer is reused for a beat
 			// afterwards so the back-to-back callers do not each pay for it.
-			const cacheKey = `${dirPath}\u0000${honorGitignore ? 1 : 0}\u0000${(
+			const cacheKey = `${sshRemoteId ?? ''}\u0000${dirPath}\u0000${honorGitignore ? 1 : 0}\u0000${(
 				ignorePatterns ?? LOCAL_IGNORE_DEFAULTS
 			).join('\u0001')}`;
 			const cached = directorySizeCache.get(cacheKey);
@@ -988,7 +976,7 @@ export function registerFilesystemHandlers(): void {
 				return cached.result;
 			}
 
-			const pending = computeDirectorySize();
+			const pending = sshConfig ? computeRemoteDirectorySize(sshConfig) : computeDirectorySize();
 			const now = Date.now();
 			// Prune while we are here so a long-lived session cannot accumulate one
 			// entry per directory the user ever opened.
@@ -1000,6 +988,49 @@ export function registerFilesystemHandlers(): void {
 			// inherit the rejection for the rest of the TTL.
 			pending.catch(() => directorySizeCache.delete(cacheKey));
 			return pending;
+
+			/**
+			 * The local walk's rule on an SSH remote, in one round trip: the same
+			 * patterns (with the root's .gitignore read on the remote), the same
+			 * depth, and every surviving file's size. `listTreeRemote()` prunes by
+			 * `find -name`; each path is then checked with `shouldIgnore()` too, the
+			 * check the local walk makes, so a case the remote `find` does not fold
+			 * is dropped as it is here.
+			 */
+			async function computeRemoteDirectorySize(
+				remote: SshRemoteConfig
+			): Promise<DirectorySizeResult> {
+				let effectivePatterns = ignorePatterns ?? LOCAL_IGNORE_DEFAULTS;
+				if (honorGitignore) {
+					const gitignore = await readFileRemote(path.posix.join(dirPath, '.gitignore'), remote);
+					if (gitignore.success && gitignore.data) {
+						effectivePatterns = [...effectivePatterns, ...parseGitignoreContent(gitignore.data)];
+					}
+				}
+				const listed = await listTreeRemote(
+					dirPath,
+					{
+						maxDepth: DIRECTORY_SIZE_MAX_DEPTH,
+						ignorePatterns: effectivePatterns,
+						withSizes: true,
+					},
+					remote
+				);
+				if (!listed.success || !listed.data) {
+					throw new Error(listed.error || 'Failed to get remote directory size');
+				}
+				const kept = (relative: string) =>
+					!relative.split('/').some((name) => shouldIgnore(name, effectivePatterns));
+				const { directories, files, fileSizes } = listed.data;
+				let totalSize = 0;
+				let fileCount = 0;
+				files.forEach((file, index) => {
+					if (!kept(file)) return;
+					fileCount++;
+					totalSize += fileSizes?.[index] ?? 0;
+				});
+				return { totalSize, fileCount, folderCount: directories.filter(kept).length };
+			}
 
 			async function computeDirectorySize(): Promise<DirectorySizeResult> {
 				// Build effective ignore patterns (same logic as loadFileTree)
@@ -1024,7 +1055,7 @@ export function registerFilesystemHandlers(): void {
 
 				const calculateSize = async (currentPath: string, depth: number = 0): Promise<void> => {
 					// Limit recursion depth to match file tree loading
-					if (depth >= 10) return;
+					if (depth >= DIRECTORY_SIZE_MAX_DEPTH) return;
 
 					try {
 						const entries = await fs.readdir(currentPath, { withFileTypes: true });
