@@ -10,7 +10,9 @@
  * download. What makes a release a usable target is therefore not its
  * installer but its channel file (`latest-mac.yml` and friends): that is the
  * file electron-updater reads to find the installer, and a release without one
- * for this platform cannot be installed in place.
+ * for this platform cannot be installed in place. A signed Maestro also refuses
+ * an unsigned installer, so releases from before code signing are not targets
+ * either (`rollbackRefusal()`).
  */
 
 import { compareVersions } from './pathUtils';
@@ -80,6 +82,65 @@ export function updaterChannelFile(platform: string, arch: string): string | nul
 		default:
 			return null;
 	}
+}
+
+/**
+ * The asset the release workflow attaches to a release whose Windows
+ * executables passed signature verification. Its presence is how a client
+ * tells a signed Windows release from one built before signing began.
+ */
+export const WINDOWS_SIGNATURE_ASSET = 'windows-signature.json';
+
+/**
+ * The last release each platform shipped unsigned. A signed Maestro only
+ * installs an update signed by the same publisher (Squirrel.Mac checks the
+ * Team ID, NsisUpdater checks `publisherName`), so a rollback past this
+ * release downloads and then fails at install. Windows has no entry: the stable
+ * and RC trains interleave by version, so no single version separates signed
+ * from unsigned there, and it relies on `WINDOWS_SIGNATURE_ASSET` instead.
+ */
+const LAST_UNSIGNED_RELEASE: Readonly<Record<string, string>> = {
+	// macOS signing started with v0.8.1 (release.yml, 2025-12-12).
+	darwin: 'v0.8.0',
+};
+
+/** The release fields the rollback rules read: the GitHub release shape. */
+export interface RollbackCandidate {
+	tag_name: string;
+	assets?: ReadonlyArray<{ name: string }> | null;
+}
+
+/**
+ * Why `release` cannot be rolled back to on this platform, or null when it can.
+ * One rule for the rollback list and for a tag typed into `maestro-cli
+ * rollback`, so the CLI refuses up front what the updater would refuse after
+ * the download.
+ */
+export function rollbackRefusal(
+	release: RollbackCandidate,
+	currentVersion: string,
+	platform: string,
+	arch: string
+): string | null {
+	const tag = release.tag_name;
+	if (!isRollbackTarget(tag, currentVersion)) {
+		return `${tag} is not an earlier release than the running v${currentVersion}`;
+	}
+	const channelFile = updaterChannelFile(platform, arch);
+	if (!channelFile) return `Rollback is not supported on ${platform}`;
+
+	const assetNames = new Set((release.assets ?? []).map((a) => a.name.toLowerCase()));
+	if (!assetNames.has(channelFile)) {
+		return `${tag} has no ${channelFile}, so it cannot be installed in place`;
+	}
+	const lastUnsigned = LAST_UNSIGNED_RELEASE[platform];
+	if (lastUnsigned && compareVersions(tag, lastUnsigned) <= 0) {
+		return `${tag} predates code signing on this platform, and the installed Maestro only installs signed builds`;
+	}
+	if (platform === 'win32' && !assetNames.has(WINDOWS_SIGNATURE_ASSET)) {
+		return `${tag} predates Windows code signing, and the installed Maestro only installs signed builds`;
+	}
+	return null;
 }
 
 /**

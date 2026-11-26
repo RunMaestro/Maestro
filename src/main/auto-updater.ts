@@ -12,7 +12,7 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import { logger } from './utils/logger';
 import { captureException } from './utils/sentry';
 import { isWebContentsAvailable } from './utils/safe-send';
-import { getReleaseDownloadFeedUrl } from './update-checker';
+import { getReleaseDownloadFeedUrl, rollbackTargetRefusal } from './update-checker';
 import { isRollbackTarget, normalizeReleaseTag } from '../shared/updateRollback';
 
 export interface UpdateStatus {
@@ -418,6 +418,14 @@ export async function downloadRollback(version: string): Promise<DownloadRelease
 		const error = `${tag} is not an earlier release than the running v${currentVersion}`;
 		logger.warn(`Rollback refused: ${error}`, 'AutoUpdater');
 		return { success: false, error };
+	}
+	// The cheap tag check above keeps a malformed tag off the network; this one
+	// applies the rollback list's rules (channel file, code signing) to a tag
+	// typed by hand, so a build the updater would reject is never downloaded.
+	const refusal = await rollbackTargetRefusal(tag, currentVersion);
+	if (refusal) {
+		logger.warn(`Rollback refused: ${refusal}`, 'AutoUpdater');
+		return { success: false, error: refusal };
 	}
 	logger.info(`Rolling back from v${currentVersion} to ${tag}`, 'AutoUpdater');
 	return downloadRelease(tag, { allowDowngrade: true });

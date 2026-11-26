@@ -6,7 +6,7 @@
 import { compareVersions } from '../shared/pathUtils';
 import {
 	ROLLBACK_LIST_LIMIT,
-	updaterChannelFile,
+	rollbackRefusal,
 	type RollbackTargetsResult,
 } from '../shared/updateRollback';
 import { logger } from './utils/logger';
@@ -268,21 +268,48 @@ export async function checkForUpdates(
 }
 
 /**
- * True when electron-updater can install this release in place on this
- * platform: it must carry the channel file the updater reads to find the
- * installer. See `updaterChannelFile()`.
+ * Why the release tagged `tag` cannot be rolled back to on this machine, or
+ * null when it can. Looks the one release up so a tag typed into `maestro-cli
+ * rollback` gets the same check as the rollback list, before anything
+ * downloads. `tag` must already be a valid release tag (`isReleaseTag()`).
  */
-function hasUpdaterChannelFile(release: Release): boolean {
-	const channelFile = updaterChannelFile(process.platform, process.arch);
-	if (!channelFile) return false;
-	return (release.assets ?? []).some((asset) => asset.name.toLowerCase() === channelFile);
+export async function rollbackTargetRefusal(
+	tag: string,
+	currentVersion: string
+): Promise<string | null> {
+	const url = `${RELEASES_URL}/tags/${tag}`;
+	let response: Response;
+	try {
+		response = await fetchWithTimeout(
+			url,
+			{
+				headers: {
+					Accept: 'application/vnd.github.v3+json',
+					'User-Agent': 'Maestro-Update-Checker',
+				},
+			},
+			RELEASES_FETCH_TIMEOUT_MS
+		);
+	} catch (error) {
+		// Offline or timed out: the download would fail the same way, so refuse
+		// with the reason instead of throwing out of the IPC handler.
+		const message = error instanceof Error ? error.message : String(error);
+		return `Could not look up ${tag}: ${message}`;
+	}
+	if (response.status === 404) return `No published release is tagged ${tag}`;
+	if (!response.ok) {
+		return `Could not look up ${tag}: GitHub API error ${response.status} ${response.statusText}`;
+	}
+	const release = (await response.json()) as Release;
+	if (release.draft) return `No published release is tagged ${tag}`;
+	return rollbackRefusal(release, currentVersion, process.platform, process.arch);
 }
 
 /**
  * List the releases the user can roll back to: older than `currentVersion`,
- * installable on this platform, newest first, capped at `ROLLBACK_LIST_LIMIT`.
- * Prereleases are included only when `includePrerelease` is set, matching the
- * Check for Updates toggle.
+ * installable on this platform (see `rollbackRefusal()`), newest first, capped
+ * at `ROLLBACK_LIST_LIMIT`. Prereleases are included only when
+ * `includePrerelease` is set, matching the Check for Updates toggle.
  */
 export async function listRollbackTargets(
 	currentVersion: string,
@@ -291,7 +318,7 @@ export async function listRollbackTargets(
 	try {
 		const allReleases = await fetchReleases(includePrerelease);
 		const releases = allReleases
-			.filter((r) => compareVersions(r.tag_name, currentVersion) < 0 && hasUpdaterChannelFile(r))
+			.filter((r) => rollbackRefusal(r, currentVersion, process.platform, process.arch) === null)
 			.slice(0, ROLLBACK_LIST_LIMIT)
 			.map((r) => ({
 				tag_name: r.tag_name,
