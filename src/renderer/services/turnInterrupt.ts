@@ -176,6 +176,17 @@ export async function interruptTurn(
 			if (forward) await interruptHostedTurn(session, scopeTabId);
 		}
 		const consultsCanceled = await cancelConsults(sessionId, scopeTabId);
+		// A consult ended here on a tab whose turn the host did not stop (a mention with no turn
+		// yet, or one held for its reply): the host writes no note there, so the tab gets the one a
+		// local Stop writes on it (`settle` below). A tab the host stopped ends on the host's own.
+		const noteTabId = scopedTab?.id ?? getActiveTab(session)?.id;
+		if (consultsCanceled > 0 && noteTabId && !stopHere.includes(noteTabId)) {
+			const note = systemLog(TURN_CANCELED_NOTE);
+			updateSessionWith(sessionId, (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => (t.id === noteTabId ? { ...t, logs: [...t.logs, note] } : t)),
+			}));
+		}
 		const wasBusy = forward || stopHere.length > 0 || recoveriesEnded > 0 || consultsCanceled > 0;
 		return {
 			success: true,

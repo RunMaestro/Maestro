@@ -495,4 +495,48 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 		}
 		expect(result).toMatchObject({ success: true, wasBusy: true, interrupted: true });
 	});
+
+	// Parity M21: Stop during a consult whose tab runs no turn (a mention consulting before its
+	// turn, or a tab held for the reply) ends on the same "Canceled by user" line in every mode.
+	it.each(AGENT_MODES)(
+		'%s: Stop during a consult ends the tab on the same "Canceled by user" line (M21)',
+		async (mode) => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			vi.clearAllMocks();
+			processApi.interrupt.mockResolvedValue(true);
+			processApi.getActiveProcesses.mockResolvedValue([]);
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 1 });
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+			const seeded = seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
+			useSessionStore.setState({
+				sessions: [
+					{
+						...seeded,
+						state: 'idle',
+						busySource: undefined,
+						aiTabs: seeded.aiTabs.map((t) => ({ ...t, state: 'idle' as const })),
+					},
+				],
+			} as any);
+
+			const result = await interruptTurn('agent-1', { tabId: 'tab-a' });
+
+			expect(result).toMatchObject({ success: true, wasBusy: true });
+			expect(tab('tab-a').state).toBe('idle');
+			expect(tab('tab-a').logs.filter((l) => l.text === TURN_CANCELED_NOTE)).toHaveLength(1);
+			expect(tab('tab-a').logs.at(-1)?.text).toBe(TURN_CANCELED_NOTE);
+		}
+	);
+
+	it('hosted: a tab whose turn the host stopped gets no second line here (the host writes it) (M21)', async () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		crossAgentApi.cancel.mockResolvedValue({ canceled: 1 });
+		const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession('hosted');
+		seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
+
+		await interruptTurn('agent-1', { tabId: 'tab-a' });
+
+		expect(interruptMirroredAgent).toHaveBeenCalled();
+		expect(tab('tab-a').logs.some((l) => l.text === TURN_CANCELED_NOTE)).toBe(false);
+	});
 });
