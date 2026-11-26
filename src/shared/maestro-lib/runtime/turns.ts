@@ -275,6 +275,17 @@ function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Whether a turn event belongs in the cards a sticky tab keeps (`RecordedTurn.streamed`): a
+ * thinking or tool event, or the first answer text after a thinking block, which closes that block
+ * as the live tail closes it (so two blocks split by the answer stay two cards).
+ */
+function keepsCards(event: TurnEvent, streamed: LiveTurn | undefined): boolean {
+	if (event.kind === 'thinking' || event.kind === 'tool') return true;
+	if (event.kind !== 'text' || !streamed) return false;
+	return streamed.entries[streamed.entries.length - 1]?.source === 'thinking';
+}
+
 function noLoader(): never {
 	throw new Error('This host did not provide a SQLite loader, so usage is not recorded.');
 }
@@ -431,6 +442,10 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	const verdicts = new Map<string, (verdict: Verdict) => void>();
 
 	/** Send one turn event to every client; answers it as sent, stamped. */
+	/** Whether the tab keeps its thinking and tool cards past the turn's end, read as it is now. */
+	const isStickyTab = (agentId: string, tabId: string): boolean =>
+		repository.getTab(agentId, tabId)?.showThinking === 'sticky';
+
 	const emitTurn = (agentId: string, tabId: string, event: UnstampedTurnEvent): TurnEvent => {
 		const stamped = { ...event, at: deps.now() } as TurnEvent;
 		bus.emit({ type: 'turn', agentId, tabId, event: stamped });
@@ -698,9 +713,12 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		let observedSession: string | undefined;
 		let identityFailure: string | undefined;
 		let sessionWrite: Promise<void> = Promise.resolve();
-		// The turn as a client's live tail draws it, from the very events sent: a 'sticky' tab keeps
-		// its thinking and tool cards in the transcript once the turn ends (`RecordedTurn.streamed`).
+		// The cards a 'sticky' tab keeps in the transcript once the turn ends (`RecordedTurn.streamed`),
+		// folded as a client's live tail folds them from the very events sent. Only thinking and tool
+		// events are folded, and only while the tab is sticky: no other tab keeps them, and the answer
+		// is recorded from `completed`. Any other tab only notes that a tool ran (the History gate).
 		let streamed: LiveTurn | undefined;
+		let ranTool = false;
 		const foldContext = { newId: () => ctx.newId() };
 
 		/** Preserve an allocated ID even during cancellation; a different ID is never a resume. */
@@ -775,8 +793,11 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 						if (provider !== 'grok') noteSession(event.providerSessionId);
 						if (identityFailure) continue;
 					}
-					streamed =
-						foldLiveTurn(streamed, emitTurn(agentId, tabId, event), foldContext) ?? streamed;
+					const sent = emitTurn(agentId, tabId, event);
+					if (sent.kind === 'tool') ranTool = true;
+					if (keepsCards(sent, streamed) && isStickyTab(agentId, tabId)) {
+						streamed = foldLiveTurn(streamed, sent, foldContext) ?? streamed;
+					}
 				}
 			}
 		} catch (error) {
@@ -811,6 +832,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				endedAt,
 				userEntryWritten: true,
 				...(streamed ? { streamed: streamed.entries } : {}),
+				ranTool,
 				scope,
 				nativeSessionBinding,
 				writeGuard: provider === 'grok' ? () => !identityFailure && writeGuard!() : undefined,
