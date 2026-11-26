@@ -188,6 +188,59 @@ describe('remote copy write-back', () => {
 		expect(discarded).toBe(1);
 	});
 
+	it('an Open with no record of the copy leaves it alone when the app saves it while it is being kept', async () => {
+		localFiles.set(LOCAL, Buffer.from('unsent change'));
+		const writeBack = createRemoteCopyWriteBack({
+			...baseDeps(),
+			createLocal: async (keptAt, bytes) => {
+				localFiles.set(keptAt, bytes);
+				// The editor still has the copy open and saves it now.
+				localFiles.set(LOCAL, Buffer.from('saved while keeping'));
+			},
+		});
+		await expect(reopen(writeBack)).resolves.toBe('kept');
+		expect(localFiles.get(LOCAL)?.toString()).toBe('saved while keeping');
+		const keptAt = keptVersionPath(LOCAL, WHEN);
+		expect(localFiles.get(keptAt)?.toString()).toBe('unsent change');
+		expect(discarded).toBe(1);
+		expect(events).toEqual([
+			{ kind: 'kept', remotePath: REMOTE, sshRemoteId: 'r1', keptAt, replaced: false },
+		]);
+	});
+
+	it('still names a copy whose send failed after its watch stopped, beside one still being sent', async () => {
+		const other = path.join('tmp', 'maestro-remote-downloads', 'abc', 'other.md');
+		localFiles.set(other, Buffer.from('x'));
+		const writeBack = await watched();
+		await writeBack.watch({ localPath: other, remotePath: '/home/me/other.md', sshRemoteId: 'r1' });
+		// notes.md fails at once; other.md hangs (a dead connection).
+		writeRemote.mockImplementation(async (remotePath) => {
+			if (remotePath === REMOTE) throw new Error('Connection refused');
+			return new Promise(() => undefined);
+		});
+		localFiles.set(LOCAL, Buffer.from('edited'));
+		localFiles.set(other, Buffer.from('edited too'));
+		void writeBack.dispose();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(events.map((e) => e.kind)).toEqual(['failed']);
+		expect(writeBack.pendingCopies()).toEqual(
+			expect.arrayContaining([
+				{ remotePath: REMOTE, sshRemoteId: 'r1' },
+				{ remotePath: '/home/me/other.md', sshRemoteId: 'r1' },
+			])
+		);
+		expect(writeBack.pendingCopies()).toHaveLength(2);
+	});
+
+	it('stops naming a copy once a later send of it lands', async () => {
+		writeRemote.mockRejectedValueOnce(new Error('Connection refused'));
+		const writeBack = await watched();
+		await saveCopy(writeBack, 'edited');
+		expect(writeBack.pendingCopies()).toEqual([{ remotePath: REMOTE, sshRemoteId: 'r1' }]);
+		await saveCopy(writeBack, 'edited again');
+		expect(writeBack.pendingCopies()).toEqual([]);
+	});
+
 	it('names the copies whose change is not sent yet', async () => {
 		writeRemote.mockImplementation(() => new Promise(() => undefined));
 		const writeBack = await watched();

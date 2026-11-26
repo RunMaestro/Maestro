@@ -182,8 +182,9 @@ export interface RemoteCopyWriteBack {
 	/** Resolves once every change seen so far has been handled. */
 	idle(): Promise<void>;
 	/**
-	 * The copies with a change not handled yet: a save waiting out its debounce,
-	 * queued, or being sent. The quit path names them when it stops waiting.
+	 * The copies with a change not on the remote yet: a save waiting out its
+	 * debounce, queued, or being sent, and a copy whose last send failed. The
+	 * quit path names them when it stops waiting.
 	 */
 	pendingCopies(): Array<{ remotePath: string; sshRemoteId: string }>;
 	/**
@@ -276,6 +277,11 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	const queue = createKeyedWriteQueue();
 	/** Work in flight, with the copy it is for (for `idle()`, `dispose()`, `pendingCopies()`). */
 	const pending = new Map<Promise<void>, WatchedCopy>();
+	/**
+	 * Copies whose last send failed: the change is only in the copy until a later
+	 * send lands. Kept past `dispose()`, so the quit can still name them.
+	 */
+	const failed = new Set<WatchedCopy>();
 	/** One interval for every watched copy; runs only while a copy is watched. */
 	let poller: ReturnType<typeof setInterval> | null = null;
 	let polling = false;
@@ -351,7 +357,12 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	function enforceCaps(): void {
 		const live = [...watched.values()].filter((entry) => !entry.watcherLost);
 		for (const entry of live.slice(0, Math.max(0, live.length - maxWatched))) retire(entry);
-		while (watched.size > maxKnown) stop(watched.values().next().value as WatchedCopy);
+		while (watched.size > maxKnown) {
+			const oldest = watched.values().next().value as WatchedCopy;
+			stop(oldest);
+			// Forgotten for good: a fresh Open of it keeps an unsent change beside it.
+			failed.delete(oldest);
+		}
 	}
 
 	/**
@@ -420,6 +431,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 				entry.unconfirmed === null &&
 				(localHash === entry.baseline || localHash === entry.kept)
 			) {
+				failed.delete(entry);
 				return;
 			}
 			// Said once already; a fresh Open starts over from the remote's bytes.
@@ -439,6 +451,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 			if (remoteHash === localHash) {
 				entry.baseline = localHash;
 				entry.unconfirmed = null;
+				failed.delete(entry);
 				return;
 			}
 			// A write that failed with its connection may have landed after all (it
@@ -453,6 +466,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 				entry.baseline = localHash;
 				entry.unconfirmed = null;
 				entry.kept = null;
+				failed.delete(entry);
 				deps.notify({ kind: 'saved', remotePath, sshRemoteId });
 				return;
 			}
@@ -460,8 +474,11 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 			const keptAt = await keepVersion(localPath, local);
 			entry.kept = localHash;
 			entry.halted = 'conflict';
+			// Kept beside the copy, and the user was told where: not lost at quit.
+			failed.delete(entry);
 			deps.notify({ kind: 'conflict', remotePath, sshRemoteId, keptAt });
 		} catch (error) {
+			failed.add(entry);
 			deps.notify({ kind: 'failed', remotePath, sshRemoteId, message: messageOf(error) });
 		}
 	}
@@ -605,6 +622,10 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 							// differ may be a change never sent, so they are kept, never
 							// replaced unseen.
 							keptAt = await keepVersion(localPath, local);
+							// A save the app made while that was written is in neither the
+							// kept version nor the fetched bytes: the copy stays as it is.
+							const after = await readCopy(localPath);
+							if (after && hashOf(after) !== hashOf(local)) return 'saved-during-fetch' as const;
 						}
 						await staged.commit();
 						replaced = true;
@@ -618,6 +639,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 						entry.baseline = hashOf(bytes);
 						entry.kept = null;
 						entry.unconfirmed = null;
+						failed.delete(entry);
 						// A fresh copy saves back again, unless it is too large to.
 						entry.halted = bytes.length > maxBytes ? 'too-large' : null;
 					}
@@ -644,7 +666,7 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 		},
 		idle: settle,
 		pendingCopies() {
-			const copies = new Set(pending.values());
+			const copies = new Set([...pending.values(), ...failed]);
 			for (const entry of watched.values()) if (entry.timer) copies.add(entry);
 			return [...copies].map(({ remotePath, sshRemoteId }) => ({ remotePath, sshRemoteId }));
 		},

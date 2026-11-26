@@ -96,9 +96,11 @@ vi.mock('../../../main/dataview/dataview-service', () => ({
 }));
 
 const mockCaptureMessage = vi.fn().mockResolvedValue(undefined);
+const mockFlushSentry = vi.fn().mockResolvedValue(true);
 vi.mock('../../../main/utils/sentry', () => ({
 	captureException: vi.fn().mockResolvedValue(undefined),
 	captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
+	flushSentry: (...args: unknown[]) => mockFlushSentry(...args),
 }));
 
 // Platform is controllable per-test: the update-install hard-exit only applies
@@ -826,6 +828,53 @@ describe('app-lifecycle/quit-handler', () => {
 				'warning',
 				{ waitedMs: REMOTE_WRITE_FLUSH_MAX_MS, unsentCount: 1 }
 			);
+			vi.useRealTimers();
+		});
+
+		it('gives the Sentry report a bounded chance to be sent before the hard exit', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS, REMOTE_WRITE_REPORT_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			let sent!: (value: boolean) => void;
+			mockFlushSentry.mockImplementationOnce(
+				() => new Promise<boolean>((resolve) => (sent = resolve))
+			);
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+				listPendingRemoteWrites: () => ['/home/me/notes.md (SSH remote r1)'],
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS);
+			// The report was queued and is being sent: the hard exit waits for it.
+			expect(mockFlushSentry).toHaveBeenCalledWith(REMOTE_WRITE_REPORT_MAX_MS);
+			expect(process.kill).not.toHaveBeenCalled();
+			sent(true);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			vi.useRealTimers();
+		});
+
+		it('does not wait for the Sentry report past its own bound', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS, REMOTE_WRITE_REPORT_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			mockFlushSentry.mockImplementationOnce(() => new Promise<boolean>(() => undefined));
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS + REMOTE_WRITE_REPORT_MAX_MS - 1);
+			expect(process.kill).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
 			vi.useRealTimers();
 		});
 

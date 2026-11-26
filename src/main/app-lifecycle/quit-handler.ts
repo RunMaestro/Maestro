@@ -17,7 +17,7 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 import { stopAllCueRuns } from '../cue/cue-executor';
 import { flushTelemetry } from '../cue/cue-telemetry';
-import { captureException, captureMessage } from '../utils/sentry';
+import { captureException, captureMessage, flushSentry } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 import { isMacOS } from '../../shared/platformDetection';
 import { flushTranscriptMirrorsSync } from '../storage/starred-transcript-mirror';
@@ -62,6 +62,12 @@ const UPDATE_EXIT_GRACE_MS = 2000;
  * synchronously like the stores; a dead connection must not hold the quit.
  */
 export const REMOTE_WRITE_FLUSH_MAX_MS = 5000;
+
+/**
+ * After {@link REMOTE_WRITE_FLUSH_MAX_MS} runs out, the longest the quit waits
+ * for its report of the unsent copies to reach Sentry before the hard exit.
+ */
+export const REMOTE_WRITE_REPORT_MAX_MS = 1000;
 
 /**
  * Terminates the process immediately, bypassing Electron's Node-environment
@@ -236,8 +242,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				resolve();
 			};
 			const bound = setTimeout(() => {
-				reportUnsentRemoteWrites();
-				finish();
+				void reportUnsentRemoteWrites().finally(finish);
 			}, REMOTE_WRITE_FLUSH_MAX_MS);
 			void Promise.resolve()
 				.then(flushPendingRemoteWrites)
@@ -252,9 +257,11 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 	/**
 	 * The bound ran out: name the copies whose change did not reach the remote
 	 * (it stays in the copy, and the next Open keeps it beside the fetched file).
-	 * Sentry hears the count only, never the user's paths.
+	 * Sentry hears the count only, never the user's paths. Resolves once the
+	 * report was sent, or after {@link REMOTE_WRITE_REPORT_MAX_MS}: the hard exit
+	 * that follows would drop it from Sentry's queue.
 	 */
-	function reportUnsentRemoteWrites(): void {
+	async function reportUnsentRemoteWrites(): Promise<void> {
 		let unsent: string[] = [];
 		try {
 			unsent = listPendingRemoteWrites?.() ?? [];
@@ -265,10 +272,18 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			waitedMs: REMOTE_WRITE_FLUSH_MAX_MS,
 			unsent,
 		});
-		void captureMessage('Quit stopped waiting for remote copy writes', 'warning', {
-			waitedMs: REMOTE_WRITE_FLUSH_MAX_MS,
-			unsentCount: unsent.length,
-		});
+		let giveUp: ReturnType<typeof setTimeout> | undefined;
+		await Promise.race([
+			(async () => {
+				await captureMessage('Quit stopped waiting for remote copy writes', 'warning', {
+					waitedMs: REMOTE_WRITE_FLUSH_MAX_MS,
+					unsentCount: unsent.length,
+				});
+				await flushSentry(REMOTE_WRITE_REPORT_MAX_MS);
+			})(),
+			new Promise<void>((resolve) => (giveUp = setTimeout(resolve, REMOTE_WRITE_REPORT_MAX_MS))),
+		]);
+		clearTimeout(giveUp);
 	}
 
 	const state: QuitHandlerState = {
