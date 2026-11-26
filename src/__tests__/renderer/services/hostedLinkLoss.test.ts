@@ -706,6 +706,32 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(getRetryEntry('row', 't1')).toBeUndefined();
 	});
 
+	it('leaves the retry of a message sent after a Stop alone when the host answers the stopped resend', async () => {
+		cut();
+		const land = hostBackReadPending();
+		retryNow('row', 't1');
+		await flush();
+		stopRetriesForAgent('row', 't1');
+		// A new message on the tab is kept under a retry of its own.
+		keepTurnForHost(
+			'row',
+			{ id: 'b1', timestamp: 1, tabId: 't1', type: 'message', text: 'later' },
+			'down'
+		);
+		const later = getRetryEntry('row', 't1')!;
+
+		land([QUESTION, { id: 'a1', timestamp: 20, source: 'ai', text: 'The docs say...' }]);
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(getRetryEntry('row', 't1')).toMatchObject({
+			outageId: later.outageId,
+			heldItemId: 'b1',
+		});
+		expect(queue().map((item) => item.id)).toContain('b1');
+		expect(sends()).toHaveLength(0);
+	});
+
 	it('sends a message edited while it was kept as its own message, even when the host had the original', async () => {
 		cut();
 		const edited = 'Summarize the docs, briefly';

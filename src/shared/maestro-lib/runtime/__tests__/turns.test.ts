@@ -1557,6 +1557,26 @@ describe('runtime turns', () => {
 				expect(users[1].id).not.toBe('u1');
 			});
 
+			it('writes no second entry for the resend of a command, whose entry is its expanded prompt', async () => {
+				const runtime = await start([
+					seedAgent({
+						agentCommands: [{ command: '/review', prompt: 'Review the changes' }],
+						aiTabs: [{ id: 't1', agentSessionId: null, name: null, logs: [] }],
+					} as never),
+				]);
+				const first = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: '/review' }));
+				await first.outcome();
+				const [written] = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(written.text).not.toBe('/review');
+
+				const again = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: '/review', entryId: written.id }));
+				await again.outcome();
+				const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(users.map((entry) => entry.id)).toEqual([written.id]);
+			});
+
 			it('ignores an id it cannot take', async () => {
 				const runtime = await start();
 				const turn = watch(runtime);

@@ -237,8 +237,8 @@ type Verdict = { ok: true } | { ok: false; message: string };
  * The entry id a message may take (`TurnInput.entryId`): one the tab does not hold yet, or the user
  * entry of this same message (a resend: the same text and images), which then stands for it. An id
  * that names another entry is dropped, and the message gets a new one: a send never hides or
- * replaces what is there. Asked at admission and again when the turn starts, since a queued
- * message can be edited or merged in between.
+ * replaces what is there. Asked when the turn starts, against the entry it writes: a command's
+ * expanded prompt, and a message edited or merged while it waited.
  */
 function turnEntryIdFor(
 	tab: { logs?: unknown } | undefined,
@@ -1118,7 +1118,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (overrides) item.overrides = overrides;
 		if (agentContext.value) item.agentContext = agentContext.value;
 		if (agentNotes.value) item.agentNotes = agentNotes.value;
-		const entryId = turnEntryIdFor(tabRecord, input.entryId, text, images);
+		// Only its form is checked now: whether it stands for an entry the tab holds is decided against
+		// the entry the turn writes (a command's expanded prompt, an edit while it waited).
+		const entryId = readTurnEntryId(input.entryId);
 		if (entryId) item.entryId = entryId;
 
 		const queue = queueFor(agentId);

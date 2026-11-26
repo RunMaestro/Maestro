@@ -308,12 +308,16 @@ function forwardToHost(
 	const send = !fate
 		? sendToHost()
 		: fate.then((decided) => {
+				const stillOwned =
+					retryOutage !== undefined &&
+					getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
 				if (decided === 'answered') {
-					// The host had it: the retry ends here, nothing is sent or held.
-					settleRetryOnHost(sessionId, item.tabId);
+					// The host had it: nothing is sent or held. Only this resend's own retry ends here;
+					// one a later message started after a Stop is that message's.
+					if (stillOwned) settleRetryOnHost(sessionId, item.tabId);
 					return null;
 				}
-				if (retryOutage && getRetryEntry(sessionId, item.tabId)?.outageId !== retryOutage) {
+				if (retryOutage && !stillOwned) {
 					// Stopped while it waited: parked held, one click from Force Send, as Stop parks it.
 					holdRefusedItem(sessionId, item, index);
 					return null;
