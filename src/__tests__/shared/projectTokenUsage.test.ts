@@ -280,6 +280,71 @@ describe('project token usage reply', () => {
 		}
 	});
 
+	it('keeps native cost evidence when it folds model buckets past the cap', () => {
+		const models = Array.from({ length: 70 }, (_, i) => ({
+			model: `m-${i}`,
+			inputTokens: 1,
+			outputTokens: 1,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+			costUsd: 0.5,
+			costEstimated: false,
+			accounting: {
+				completeness: 'complete' as const,
+				cost: { status: 'exact' as const, costUsd: 0.5, costUsdTicks: '5000000000' },
+			},
+		}));
+		const parsed = parseProjectTokenUsageReply(
+			wire({ projects: [read([breakdown({ byModel: models })])] }),
+			ASKED
+		)!;
+		const folded = parsed.projects[0].breakdowns[0].byModel.at(-1)!;
+		expect(folded.model).toBe('');
+		expect(folded.accounting?.completeness).toBe('complete');
+		expect(folded.accounting?.cost).toMatchObject({ costUsdTicks: String(7n * 5000000000n) });
+	});
+
+	it('refuses cost ticks past the cap even when the amount beside them is small', () => {
+		const parsed = parseProjectTokenUsageReply(
+			replyWith({
+				lifetime: {
+					source: 'gateway',
+					completeness: 'complete',
+					cost: { status: 'exact', costUsd: 1, costUsdTicks: '1' + '0'.repeat(18) },
+				},
+			}),
+			ASKED
+		)!;
+		expect(parsed.projects[0].breakdowns).toEqual([]);
+		expect(parsed.projects[0].complete).toBe(false);
+	});
+
+	it('reads a malformed truncated flag as not complete', () => {
+		const frame = wire({ projects: [read([breakdown()])] }) as {
+			projects: Array<Record<string, unknown>>;
+		};
+		frame.projects[0].truncated = 'no';
+		expect(parseProjectTokenUsageReply(frame, ASKED)!.projects[0].complete).toBe(false);
+		frame.projects[0].truncated = false;
+		expect(parseProjectTokenUsageReply(frame, ASKED)!.projects[0].complete).toBe(true);
+	});
+
+	it('spends the reply budget on malformed entries too', () => {
+		const frame = wire({ projects: [read([breakdown()]), read([breakdown()])] }) as {
+			projects: Array<{ breakdowns: unknown[] }>;
+		};
+		frame.projects[0].breakdowns = Array.from(
+			{ length: MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS },
+			() => 'junk'
+		);
+		const asked = [ASKED[0], { provider: 'claude-code', projectPath: '/srv/app' }];
+		const parsed = parseProjectTokenUsageReply(frame, asked)!;
+		expect(parsed.projects[0].complete).toBe(false);
+		// The budget is spent, so the next project is cut rather than parsed.
+		expect(parsed.projects[1].breakdowns).toEqual([]);
+		expect(parsed.projects[1].complete).toBe(false);
+	});
+
 	it('keeps only known coverage and origin words', () => {
 		const parsed = parseProjectTokenUsageReply(
 			replyWith({ coverage: 'everything', origin: 'robot' }),

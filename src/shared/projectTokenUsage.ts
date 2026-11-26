@@ -27,6 +27,7 @@ import {
 	type TokenCoverage,
 } from './tokenUsage';
 import type { UsageAccounting, UsageCost } from './types';
+import { mergeUsageCost } from './maestro-lib/streaming/usage-totals';
 
 /** The request message type. */
 export const PROJECT_TOKEN_USAGE_MESSAGE = 'get_project_token_usage';
@@ -66,6 +67,8 @@ const MAX_PROVIDER_LENGTH = 64;
 const MAX_LABEL_LENGTH = 128;
 /** USD ticks (10^-10 USD) as the canonical accounting writes them: digits only. */
 const TICKS_PATTERN = /^\d{1,30}$/;
+/** {@link MAX_COST_USD} in ticks. */
+const MAX_COST_TICKS = BigInt(MAX_COST_USD) * 10_000_000_000n;
 
 /** One project a requester asks about: which provider, and its working directory on the host. */
 export interface ProjectTokenUsageProject {
@@ -249,9 +252,20 @@ function modelsToWire(byModel: readonly ModelTokenUsage[]): Json[] {
 	if (byModel.length <= MAX_MODELS_PER_SESSION) return byModel.map(modelToWire);
 	const kept = byModel.slice(0, MAX_MODELS_PER_SESSION - 1).map(modelToWire);
 	const rest = byModel.slice(MAX_MODELS_PER_SESSION - 1);
+	// Buckets that all carry native cost evidence keep it, merged, so the requester counts their
+	// cost the way this machine does; legacy buckets fold their numbers only, as before.
+	const evidence = rest.every((m) => m.accounting)
+		? rest
+				.map((m) => m.accounting!)
+				.reduce((merged, next) => ({
+					completeness: merged.completeness === next.completeness ? next.completeness : 'partial',
+					cost: mergeUsageCost(merged.cost, next.cost),
+				}))
+		: undefined;
 	kept.push(
 		modelToWire({
 			model: '',
+			...(evidence ? { accounting: evidence } : {}),
 			inputTokens: rest.reduce((sum, m) => sum + m.inputTokens, 0),
 			outputTokens: rest.reduce((sum, m) => sum + m.outputTokens, 0),
 			cacheReadTokens: rest.reduce((sum, m) => sum + m.cacheReadTokens, 0),
@@ -372,8 +386,11 @@ export function projectTokenUsageFailureFrame(error: string): Json {
 function parseCost(raw: unknown): UsageCost | undefined {
 	if (!isObject(raw)) return undefined;
 	const costUsd = boundedNumber(raw.costUsd, MAX_COST_USD);
+	// The ticks are what the dashboard sums when present, so they are capped like the amount.
 	const ticks =
-		typeof raw.costUsdTicks === 'string' && TICKS_PATTERN.test(raw.costUsdTicks)
+		typeof raw.costUsdTicks === 'string' &&
+		TICKS_PATTERN.test(raw.costUsdTicks) &&
+		BigInt(raw.costUsdTicks) <= MAX_COST_TICKS
 			? raw.costUsdTicks
 			: undefined;
 	if (raw.costUsd !== undefined && costUsd === undefined) return undefined;
@@ -592,7 +609,8 @@ export function parseProjectTokenUsageReply(
 			typeof raw.status === 'string' && STATUSES.has(raw.status as ProjectTokenUsageStatus)
 				? (raw.status as ProjectTokenUsageStatus)
 				: 'failed';
-		let complete = status === 'read' && raw.truncated !== true;
+		// `truncated` is absent or a boolean; anything else cannot say the project is whole.
+		let complete = status === 'read' && (raw.truncated === undefined || raw.truncated === false);
 		// A count that does not hold together cannot say how short the total is: not complete.
 		const skipped = raw.skipped === undefined ? 0 : boundedNumber(raw.skipped, MAX_SKIPPED_FILES);
 		if (skipped === undefined || !Number.isInteger(skipped)) complete = false;
@@ -602,13 +620,11 @@ export function parseProjectTokenUsageReply(
 				complete = false;
 				break;
 			}
+			// Every entry spends the budget, kept or not: parse work stays bounded by the cap.
+			room--;
 			const breakdown = parseBreakdown(entry, asked[i]);
-			if (breakdown) {
-				breakdowns.push(breakdown);
-				room--;
-			} else {
-				complete = false;
-			}
+			if (breakdown) breakdowns.push(breakdown);
+			else complete = false;
 		}
 		const skippedFiles = skipped !== undefined && Number.isInteger(skipped) ? skipped : 0;
 		projects.push({ status, breakdowns, complete, ...(skippedFiles > 0 ? { skippedFiles } : {}) });
