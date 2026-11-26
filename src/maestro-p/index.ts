@@ -36,7 +36,7 @@ import {
 import { extractExitPlanText } from './plan-mode';
 import { extractAskUserQuestionText } from './ask-user-question';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
-import { isPreTurnRow } from './turn-start';
+import { isPreTurnRow, isRowFromBeforeRun, rowTimestampMs } from './turn-start';
 import { collectAssistantText, ReplyText } from './reply-text';
 import {
 	discoverSessionId,
@@ -148,7 +148,8 @@ const STATUS_DEBOUNCE_POLL_MS = 100;
 // the probe at DEFAULT_TIMEOUT_MS (30s), and blowing through that turns a parse
 // flake into classifySpawnError -> 'timeout' - the same no-op for the consumer
 // with a worse diagnosis. Boot time varies by seconds, so only a deadline keeps
-// the total honest. 25s leaves room for driver.quit()'s QUIT_GRACE_MS on top.
+// the total honest. 25s leaves room for driver.quit()'s QUIT_GRACE_MS and
+// QUIT_TERM_GRACE_MS on top.
 const STATUS_RETRY_DEADLINE_MS = 25_000;
 // First re-send waits this long. Deliberately longer than the previous send's
 // last Enter re-tap (SEND_ENTER_DELAY_MS + SUBMIT_ENTER_RETRIES *
@@ -1043,7 +1044,24 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		subagents.start();
 	};
 
+	let warnedStaleRows = false;
+	let inStaleFlush = false;
 	const handleEntry = (entry: unknown): void => {
+		// A row made before this run is the previous turn's claude still writing
+		// as it exits, never this turn (see isRowFromBeforeRun). The untimestamped
+		// rows right after it (its cost-state row) are the same flush.
+		if (isRowFromBeforeRun(entry, startMs)) {
+			inStaleFlush = true;
+			if (!warnedStaleRows) {
+				warnedStaleRows = true;
+				process.stderr.write(
+					'maestro-p: ignoring transcript rows written before this run started (the previous turn was still exiting).\n'
+				);
+			}
+			return;
+		}
+		if (rowTimestampMs(entry) !== null) inStaleFlush = false;
+		else if (inStaleFlush) return;
 		// claude writes its spend tracker as it exits, after the turn: record it,
 		// even once finalize has begun (that is when it arrives), and nothing else.
 		const cost = parseCostStateRow(entry);
