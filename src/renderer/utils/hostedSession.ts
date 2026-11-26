@@ -391,6 +391,15 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 			continue;
 		}
 		const host = hostById.get(local.id);
+		if (!host && hostListed.has(local.id)) {
+			// A tab the host lists as hidden: the host's, so marked as reported, and closed here when
+			// the host stops listing it.
+			if (hostingAt !== undefined && local.hostSeenAt !== hostingAt) {
+				aiTabs.push({ ...local, hostSeenAt: hostingAt });
+				changed = true;
+			} else aiTabs.push(local);
+			continue;
+		}
 		if (!host) {
 			// The host does not have it: a conversation kept from before the move. Nothing runs it.
 			if (local.state === 'busy' && !local.hidden) {

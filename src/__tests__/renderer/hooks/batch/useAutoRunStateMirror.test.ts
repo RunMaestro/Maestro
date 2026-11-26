@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	applyAutoRunMirrorFrame,
 	buildMirroredBatchState,
@@ -9,6 +9,7 @@ import { useBatchStore } from '../../../../renderer/stores/batchStore';
 import { DEFAULT_BATCH_STATE } from '../../../../renderer/hooks/batch/batchReducer';
 import type { AutoRunBroadcastState } from '../../../../shared/autoRunBroadcast';
 import type { BatchRunState } from '../../../../renderer/types';
+import { autoRunActiveElapsedMs } from '../../../../renderer/hooks/batch/useTimeTracking';
 
 const mkFrame = (over: Partial<AutoRunBroadcastState> = {}): AutoRunBroadcastState => ({
 	isRunning: true,
@@ -97,6 +98,47 @@ describe('buildMirroredBatchState', () => {
 
 	it('leaves error undefined when the frame carries no error', () => {
 		expect(buildMirroredBatchState(mkFrame()).error).toBeUndefined();
+	});
+
+	describe('the ELAPSED clock', () => {
+		const start = Date.UTC(2026, 10, 26, 12, 0, 0);
+		const min = 60_000;
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('counts from the run start, never from the default of 0', () => {
+			vi.setSystemTime(start + 3 * min);
+			const state = buildMirroredBatchState(mkFrame({ startTime: start }));
+			expect(autoRunActiveElapsedMs(state, start + 3 * min)).toBe(3 * min);
+		});
+
+		it('holds still while the owner has the run paused, and counts on after the resume', () => {
+			vi.setSystemTime(start + 1 * min);
+			let state = buildMirroredBatchState(mkFrame({ startTime: start }));
+			// Paused at 12:01 for an agent error.
+			state = buildMirroredBatchState(
+				mkFrame({ startTime: start, errorPaused: true }),
+				state,
+				start + 1 * min
+			);
+			expect(autoRunActiveElapsedMs(state, start + 11 * min)).toBe(1 * min);
+			// A frame while still paused keeps the clock where it stopped.
+			state = buildMirroredBatchState(
+				mkFrame({ startTime: start, errorPaused: true }),
+				state,
+				start + 6 * min
+			);
+			expect(autoRunActiveElapsedMs(state, start + 11 * min)).toBe(1 * min);
+			// Resumed at 12:11: at 12:12 the run has been active for two minutes.
+			state = buildMirroredBatchState(mkFrame({ startTime: start }), state, start + 11 * min);
+			expect(autoRunActiveElapsedMs(state, start + 12 * min)).toBe(2 * min);
+			state = buildMirroredBatchState(mkFrame({ startTime: start }), state, start + 12 * min);
+			expect(autoRunActiveElapsedMs(state, start + 13 * min)).toBe(3 * min);
+		});
 	});
 });
 

@@ -93,6 +93,8 @@ function syncHostedAutoRun(
 		!frame?.isRunning &&
 		useBatchStore.getState().batchRunStates[sessionId] === undefined;
 	if (ended && connected && announcesRunEnds) {
+		// The peer mirror hands the sync only running frames and `null` (`setAgentAutoRun()`), and a
+		// host sends its final counts before that `null`, so the last mirror holds how it ended.
 		notifyAutoRunComplete(mirroredRunCompleteInfo(sessionId, sessionName, before));
 	}
 }

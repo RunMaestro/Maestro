@@ -295,6 +295,22 @@ describe('projectHostedSession', () => {
 		expect(unknown.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
 	});
 
+	it('marks a tab the host lists as hidden, and closes it when the host drops it', () => {
+		const consult = createMockAITab({
+			id: 'consult',
+			agentSessionId: 'c',
+			hidden: true,
+			logs: [local('c')],
+		});
+		const session = hostedRow([createMockAITab({ id: 't1' }), consult]);
+		const seen = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 'consult', hidden: true }] }),
+		});
+		expect(seen.aiTabs.find((tab) => tab.id === 'consult')?.hostSeenAt).toBe(1);
+		const gone = projectHostedSession(seen, { agent: host({ aiTabs: [{ id: 't1' }] }) });
+		expect(gone.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+	});
+
 	it('keeps a blank tab the host lists only as hidden', () => {
 		const blankHidden = createMockAITab({ id: 'consult', logs: [], agentSessionId: null });
 		const session = hostedRow([blankHidden]);
