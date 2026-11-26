@@ -96,6 +96,10 @@ import type { RuntimeTurnDeps, RuntimeTurnOptions } from './turns';
 
 const LOG_CONTEXT = '[RuntimeAutoRun]';
 
+/** How long a task's streamed reasoning is joined before it goes out, and the most joined at once. */
+export const THINKING_FLUSH_MS = 50;
+export const THINKING_FLUSH_CHARS = 8 * 1024;
+
 /** One run in flight, for `host status` and for refusing a `host stop`. */
 export interface ActiveAutoRun {
 	agentId: string;
@@ -247,6 +251,8 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 
 	/** Send the run's current frame. The wire shape stays here; clients get the parsed form. */
 	const publish = (handle: RunHandle): void => {
+		// A task's last reasoning lands before the frame that moves the run on.
+		flushAllThinking();
 		emitRun(handle.agentId, {
 			kind: 'state',
 			at: now(),
@@ -254,17 +260,50 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 		});
 	};
 
-	const forwardStream = (agentId: string, event: AutoRunStreamEvent): void => {
-		if (event.kind === 'output') {
-			emitRun(agentId, { kind: 'output', at: now(), processId: event.processId, text: event.text });
-		} else {
-			emitRun(agentId, {
-				kind: 'usage',
-				at: now(),
-				processId: event.processId,
-				usage: event.usage,
-			});
+	/**
+	 * Reasoning waiting to go out, by process. A provider streams it a few characters at a time, so
+	 * it is joined into windows of `THINKING_FLUSH_MS` (or `THINKING_FLUSH_CHARS`), as the desktop's
+	 * own forwarding does, rather than sent as one frame per token.
+	 */
+	const pendingThinking = new Map<
+		string,
+		{ agentId: string; text: string; timer: ReturnType<typeof setTimeout> | null }
+	>();
+	const flushThinking = (processId: string): void => {
+		const pending = pendingThinking.get(processId);
+		if (!pending) return;
+		pendingThinking.delete(processId);
+		if (pending.timer) clearTimeout(pending.timer);
+		if (pending.text) {
+			emitRun(pending.agentId, { kind: 'thinking', at: now(), processId, text: pending.text });
 		}
+	};
+	const flushAllThinking = (): void => {
+		for (const processId of [...pendingThinking.keys()]) flushThinking(processId);
+	};
+
+	/** Output, usage, reasoning, and tool calls go out in the order they came, stamped with the time. */
+	const forwardStream = (agentId: string, event: AutoRunStreamEvent): void => {
+		if (event.kind === 'thinking') {
+			if (!event.text) return;
+			let pending = pendingThinking.get(event.processId);
+			if (!pending) {
+				pending = { agentId, text: '', timer: null };
+				pendingThinking.set(event.processId, pending);
+			}
+			pending.text += event.text;
+			if (pending.text.length >= THINKING_FLUSH_CHARS) {
+				flushThinking(event.processId);
+			} else if (!pending.timer) {
+				const processId = event.processId;
+				pending.timer = setTimeout(() => flushThinking(processId), THINKING_FLUSH_MS);
+				(pending.timer as { unref?: () => void }).unref?.();
+			}
+			return;
+		}
+		// Reasoning before a tool call or an answer goes out before it.
+		flushThinking(event.processId);
+		emitRun(agentId, { ...event, at: now() });
 	};
 
 	// -----------------------------------------------------------------------

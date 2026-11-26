@@ -65,10 +65,21 @@ const DEFAULT_MAX_TASK_DURATION_MIN = 480;
 /** The longest delay `setTimeout` takes. An idle budget of "never" is this. */
 const MAX_TIMER_MS = 2_147_483_647;
 
-/** What a run's process says while it works, folded by `reduceAutoRun` into the output tail and totals. */
+/**
+ * What a run's process says while it works, folded by `reduceAutoRun` into the output tail and
+ * totals. Reasoning and tool calls also reach a client's Thought Stream.
+ */
 export type AutoRunStreamEvent =
 	| { kind: 'output'; processId: string; text: string }
-	| { kind: 'usage'; processId: string; usage: UsageStats };
+	| { kind: 'usage'; processId: string; usage: UsageStats }
+	| { kind: 'thinking'; processId: string; text: string }
+	| {
+			kind: 'tool';
+			processId: string;
+			toolName: string;
+			state?: unknown;
+			toolCallId?: string;
+	  };
 
 export interface AutoRunTurnRunnerOptions {
 	agentId: string;
@@ -229,6 +240,16 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 							options.onStream({ kind: 'output', processId: sessionId, text: event.text });
 						} else if (event.kind === 'usage') {
 							options.onStream({ kind: 'usage', processId: sessionId, usage: event.usage });
+						} else if (event.kind === 'thinking') {
+							options.onStream({ kind: 'thinking', processId: sessionId, text: event.text });
+						} else if (event.kind === 'tool') {
+							options.onStream({
+								kind: 'tool',
+								processId: sessionId,
+								toolName: event.tool.name,
+								...(event.tool.detail !== undefined ? { state: event.tool.detail } : {}),
+								...(event.tool.id ? { toolCallId: event.tool.id } : {}),
+							});
 						}
 					}
 				}

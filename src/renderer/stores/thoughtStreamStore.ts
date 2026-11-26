@@ -44,7 +44,12 @@
 
 import { create } from 'zustand';
 import { generateId } from '../utils/ids';
-import type { ToolActivityLabel, ToolActivityStatus } from '../utils/toolActivityLabel';
+import {
+	describeToolActivity,
+	describeToolActivityStatus,
+	type ToolActivityLabel,
+	type ToolActivityStatus,
+} from '../utils/toolActivityLabel';
 
 /**
  * Re-exported so consumers of the timeline get the status vocabulary from the
@@ -526,4 +531,105 @@ export function selectLastAppendAt(sessionId: string | undefined | null) {
 /** True when a thought arrived recently enough to call the stream live. */
 export function isThoughtStreamLive(lastAppendAt: number, now: number = Date.now()): boolean {
 	return lastAppendAt > 0 && now - lastAppendAt <= THOUGHT_LIVE_WINDOW_MS;
+}
+
+/**
+ * Coalescing window for streamed reasoning. A timer rather than
+ * requestAnimationFrame: rAF is paused while the window is hidden or minimized,
+ * which is exactly when a long unattended run is producing the reasoning the
+ * user later wants to read. A timer keeps flushing (throttled, not stopped) in
+ * the background, and at one store write every 250ms per session the
+ * always-on path stays cheap.
+ */
+export const THOUGHT_FLUSH_MS = 250;
+
+/** Joins streamed reasoning into one store write per `THOUGHT_FLUSH_MS`, per session and tab. */
+export interface ThoughtCoalescer {
+	/** Buffer a chunk of a session's reasoning, under the tab (or run process) it came from. */
+	add(sessionId: string, tabId: string, text: string): void;
+	/** Land everything buffered now. Reasoning before a tool call is flushed before the call. */
+	flush(): void;
+	/** Stop the timer and land what was buffered: a teardown mid-run loses nothing. */
+	dispose(): void;
+}
+
+/**
+ * The one coalescer every Thought Stream feed uses: a local run's
+ * `process:thinking-chunk` stream and a hosted run's reasoning from its host.
+ */
+export function createThoughtCoalescer(flushMs: number = THOUGHT_FLUSH_MS): ThoughtCoalescer {
+	const buffer = new Map<string, Map<string, string>>();
+	let timer: ReturnType<typeof setTimeout> | null = null;
+
+	const flush = () => {
+		if (timer !== null) {
+			clearTimeout(timer);
+			timer = null;
+		}
+		if (buffer.size === 0) return;
+		const chunks = [...buffer];
+		buffer.clear();
+		const { appendThought } = useThoughtStreamStore.getState();
+		for (const [sessionId, tabs] of chunks) {
+			for (const [tabId, text] of tabs) appendThought(sessionId, tabId, text);
+		}
+	};
+
+	return {
+		add(sessionId, tabId, text) {
+			if (!text) return;
+			let tabs = buffer.get(sessionId);
+			if (!tabs) {
+				tabs = new Map();
+				buffer.set(sessionId, tabs);
+			}
+			tabs.set(tabId, (tabs.get(tabId) ?? '') + text);
+			if (timer === null) {
+				timer = setTimeout(() => {
+					timer = null;
+					flush();
+				}, flushMs);
+			}
+		},
+		flush,
+		dispose: flush,
+	};
+}
+
+/** A tool lifecycle event, as a provider reports it (`process:tool-execution`, or a host). */
+export interface ToolActivityEvent {
+	toolName: string;
+	state?: unknown;
+	/** When the provider says it happened, epoch ms. */
+	timestamp?: number;
+	toolCallId?: string;
+}
+
+/**
+ * Put one tool event on a session's timeline as one plain-language line. The
+ * local tool listener and a hosted run's feed both call this, so a call reads
+ * the same whichever machine ran it.
+ */
+export function captureToolActivity(
+	sessionId: string,
+	tabId: string,
+	toolEvent: ToolActivityEvent
+): void {
+	const state =
+		typeof toolEvent.state === 'object' && toolEvent.state !== null
+			? (toolEvent.state as { input?: unknown })
+			: undefined;
+	useThoughtStreamStore.getState().appendToolActivity(sessionId, tabId, {
+		toolName: toolEvent.toolName,
+		label: describeToolActivity(toolEvent.toolName, state?.input),
+		// The whole payload, not just its `status` word: Codex reports a failed
+		// shell command as `completed` and hides the failure in `exit_code`, and a
+		// check mark beside a broken build is the one thing this feed exists to
+		// not do.
+		status: describeToolActivityStatus(toolEvent.state ?? undefined),
+		toolCallId: toolEvent.toolCallId,
+		// The provider's own timestamp, so a call's position on the timeline
+		// reflects when it happened, not when it was processed.
+		...(typeof toolEvent.timestamp === 'number' ? { timestamp: toolEvent.timestamp } : {}),
+	});
 }

@@ -2083,7 +2083,7 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
-		it('turns the run process stream into output and usage, and none of it into a turn', async () => {
+		it('turns the run process stream into output, tool calls, usage, and reasoning, and none of it into a turn', async () => {
 			await connect();
 			bridge.pushBridgeEvent('process:data', batchId, '\u001b[1mTask one done\u001b[0m');
 			bridge.pushBridgeEvent('process:tool-execution', batchId, {
@@ -2103,12 +2103,18 @@ describe('createWsMaestroClient', () => {
 				contextWindow: 200000,
 			});
 			bridge.pushBridgeEvent('process:thinking-chunk', batchId, 'hmm');
-			await vi.waitFor(() => expect(autoRunEvents()).toHaveLength(3));
-			const [data, tool, used] = autoRunEvents();
+			await vi.waitFor(() => expect(autoRunEvents()).toHaveLength(5));
+			const [data, started, finished, used, thought] = autoRunEvents();
 			expect(data).toMatchObject({ kind: 'output', processId: batchId });
-			expect(tool).toMatchObject({ kind: 'output', processId: batchId });
-			expect(tool.kind === 'output' && tool.text).toMatch(/^Read .*index\.ts$/);
+			expect(started).toMatchObject({
+				kind: 'tool',
+				processId: batchId,
+				toolName: 'Read',
+				state: { status: 'running' },
+			});
+			expect(finished).toMatchObject({ kind: 'tool', state: { status: 'completed' } });
 			expect(used).toMatchObject({ kind: 'usage', processId: batchId });
+			expect(thought).toMatchObject({ kind: 'thinking', processId: batchId, text: 'hmm' });
 			expect(types()).not.toContain('turn');
 			// The batch process is not a tab's turn, so no tab was marked busy.
 			expect(events.filter((event) => event.type === 'tab.updated')).toEqual([]);
