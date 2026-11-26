@@ -126,8 +126,10 @@ function fileTreeStatsIgnore(
 	sshContext: SshContext | undefined,
 	localOptions: LocalFileTreeOptions | undefined
 ): [ignorePatterns: string[] | undefined, honorGitignore: boolean | undefined] {
+	// No patterns on a remote means none, as the remote tree reads it (never this
+	// machine's defaults).
 	return sshContext
-		? [sshContext.ignorePatterns, sshContext.honorGitignore]
+		? [sshContext.ignorePatterns ?? [], sshContext.honorGitignore]
 		: [localOptions?.ignorePatterns, localOptions?.honorGitignore];
 }
 
@@ -1200,7 +1202,10 @@ export function useFileTreeManagement(
 	 * Migration: Fetch stats for sessions that have a file tree but no stats.
 	 * This handles sessions restored from before the stats feature was added (Dec 2025).
 	 * Only fetches stats - doesn't re-fetch the file tree since it's already loaded.
+	 * The newest request wins: an answer for an older rule (the ignore settings
+	 * changed while it ran) is dropped.
 	 */
+	const statsMigrationKeyRef = useRef<string | null>(null);
 	useEffect(() => {
 		const session = activeSession;
 		if (!session) return;
@@ -1222,13 +1227,13 @@ export function useFileTreeManagement(
 		const treeRoot = session.projectRoot || session.cwd;
 
 		// Fetch stats only (don't re-fetch tree)
+		const statsIgnore = fileTreeStatsIgnore(sshContext, localOptions);
+		const requestKey = JSON.stringify([sessionId, treeRoot, sshContext?.sshRemoteId, statsIgnore]);
+		statsMigrationKeyRef.current = requestKey;
 		window.maestro.fs
-			.directorySize(
-				treeRoot,
-				sshContext?.sshRemoteId,
-				...fileTreeStatsIgnore(sshContext, localOptions)
-			)
+			.directorySize(treeRoot, sshContext?.sshRemoteId, ...statsIgnore)
 			.then((stats) => {
+				if (statsMigrationKeyRef.current !== requestKey) return;
 				setSessions((prev) =>
 					prev.map((s) =>
 						s.id === sessionId

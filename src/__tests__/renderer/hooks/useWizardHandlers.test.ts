@@ -986,6 +986,57 @@ describe('useWizardHandlers', () => {
 			]);
 		});
 
+		it("finds a local Claude agent's commands again when its account changes", async () => {
+			const session = createMockSession({
+				agentCommands: undefined,
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/cfg/work' },
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const discover = (window as any).maestro.agents.discoverSlashCommands;
+			discover.mockResolvedValue([{ name: '/work-only' }]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/work-only',
+			]);
+			const callsForWork = discover.mock.calls.length;
+
+			discover.mockResolvedValue([{ name: '/home-only' }]);
+			await act(async () => {
+				useSessionStore.getState().updateSession(session.id, {
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/cfg/home' },
+				});
+			});
+			await act(async () => {});
+
+			expect(discover).toHaveBeenLastCalledWith('claude-code', session.cwd, undefined, undefined, {
+				CLAUDE_CONFIG_DIR: '/cfg/home',
+			});
+			expect(discover.mock.calls.length).toBeGreaterThan(callsForWork);
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/home-only',
+			]);
+		});
+
+		it("never reads this machine's command folders for a remote agent whose remote id is not set", async () => {
+			const session = createMockSession({
+				agentCommands: undefined,
+				sessionSshRemoteConfig: { enabled: true, remoteId: null },
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([
+				{ command: '/this-machine-only', description: 'Local' },
+			]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			expect((window as any).maestro.claude.getCommands).not.toHaveBeenCalled();
+		});
+
 		it('fetches custom commands and agent commands for claude-code sessions', async () => {
 			const session = createMockSession({ agentCommands: undefined });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });

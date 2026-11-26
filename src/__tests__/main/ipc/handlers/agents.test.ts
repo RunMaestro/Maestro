@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import path from 'path';
 import { ipcMain } from 'electron';
+import { capabilitySnapshots } from '../../../../main/agents/capability-snapshot';
 import {
 	registerAgentsHandlers,
 	clearRemoteCodexCommandCache,
@@ -824,6 +825,27 @@ describe('agents IPC handlers', () => {
 					command: 'type',
 					args: ['-a', '-p', 'codex'],
 				});
+			});
+
+			it('writes the snapshot of the path it saw before it looks up the installations', async () => {
+				let listStarted!: () => void;
+				const started = new Promise<void>((resolve) => (listStarted = resolve));
+				let answerList!: (value: { exitCode: number; stdout: string; stderr: string }) => void;
+				vi.mocked(execFileNoThrow).mockImplementation(async (_cmd, args) => {
+					if (((args as string[]) ?? [])[0] === 'type') {
+						listStarted();
+						return new Promise((resolve) => (answerList = resolve));
+					}
+					return { exitCode: 0, stdout: '/home/dev/.order/bin/codex\n', stderr: '' };
+				});
+				const pending = handlers.get('agents:get')!({} as any, 'codex', 'remote-1');
+				await started;
+				// A second request that answers first must not be overwritten by this one.
+				expect(capabilitySnapshots.get('codex', 'remote-1')?.path).toBe(
+					'/home/dev/.order/bin/codex'
+				);
+				answerList({ exitCode: 0, stdout: '', stderr: '' });
+				await pending;
 			});
 
 			it('bounds the installation list with a timeout that ends ssh itself', async () => {
@@ -3279,7 +3301,12 @@ describe('agents IPC handlers', () => {
 
 			it('asks a remote Codex once per window, and again after an unreachable answer', async () => {
 				clearRemoteCodexCommandCache();
-				vi.mocked(execFileNoThrow).mockResolvedValue({ exitCode: 2, stdout: '', stderr: '' });
+				// The remote has no prompt folders (what `ls` answers for a missing folder).
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 1,
+					stdout: '__LS_ERROR__\n__SYMDIR__\n',
+					stderr: '',
+				});
 				const handler = handlers.get('agents:discoverSlashCommands');
 
 				// Unreachable: Codex never answered, so nothing is kept.
@@ -3295,6 +3322,69 @@ describe('agents IPC handlers', () => {
 					{ name: 's', prompt: '$s' },
 				]);
 				expect(vi.mocked(discoverCodexSkills).mock.calls.length).toBe(calls);
+			});
+
+			it('does not keep a remote Codex list whose prompt folder could not be read', async () => {
+				clearRemoteCodexCommandCache();
+				vi.mocked(discoverCodexSkills).mockResolvedValue([{ name: 's', prompt: '$s' }]);
+				// The prompt scan fails for a reason other than "folder missing".
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 2,
+					stdout: '',
+					stderr: 'ls: reading directory: Input/output error',
+				});
+				const handler = handlers.get('agents:discoverSlashCommands');
+				await handler!({} as any, 'codex', '/srv/partial', undefined, 'remote-1');
+				const calls = vi.mocked(discoverCodexSkills).mock.calls.length;
+				await handler!({} as any, 'codex', '/srv/partial', undefined, 'remote-1');
+				expect(vi.mocked(discoverCodexSkills).mock.calls.length).toBe(calls + 1);
+
+				// Folders that are simply missing give a complete list, which is kept.
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 1,
+					stdout: '__LS_ERROR__\n__SYMDIR__\n',
+					stderr: '',
+				});
+				await handler!({} as any, 'codex', '/srv/partial', undefined, 'remote-1');
+				await handler!({} as any, 'codex', '/srv/partial', undefined, 'remote-1');
+				expect(vi.mocked(discoverCodexSkills).mock.calls.length).toBe(calls + 2);
+			});
+
+			it("lets a blank CODEX_HOME cancel the remote's for both Codex and the disk scan", async () => {
+				clearRemoteCodexCommandCache();
+				handlers.clear();
+				registerAgentsHandlers({
+					...deps,
+					settingsStore: {
+						get: vi.fn().mockReturnValue([{ ...remote, remoteEnv: { CODEX_HOME: '/srv/other' } }]),
+						set: vi.fn(),
+					} as any,
+				});
+				vi.mocked(discoverCodexSkills).mockResolvedValue([]);
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 1,
+					stdout: '__LS_ERROR__\n__SYMDIR__\n',
+					stderr: '',
+				});
+				await handlers.get('agents:discoverSlashCommands')!(
+					{} as any,
+					'codex',
+					'/srv/blank',
+					undefined,
+					'remote-1',
+					{ CODEX_HOME: '' }
+				);
+				// Neither Codex nor the disk scan is pointed at the cancelled /srv/other.
+				const sent = [
+					...vi
+						.mocked(buildSshCommand)
+						.mock.calls.map(([config, options]) =>
+							JSON.stringify({ remoteEnv: config.remoteEnv, env: options.env })
+						),
+					...vi.mocked(execFileNoThrow).mock.calls.map(([, args]) => JSON.stringify(args)),
+				];
+				expect(sent.join('\n')).not.toContain('/srv/other');
+				expect(vi.mocked(execFileNoThrow).mock.calls.length).toBeGreaterThan(0);
 			});
 
 			it('gives no list, and runs nothing here, when the remote is unknown', async () => {

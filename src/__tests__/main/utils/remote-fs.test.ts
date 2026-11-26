@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'child_process';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -17,6 +18,7 @@ import {
 	listFilesWithStatsRemote,
 	directorySizeRemote,
 	writeFileRemote,
+	replaceFileRemoteIfUnchanged,
 	existsRemote,
 	mkdirRemote,
 	compressFolderRemote,
@@ -2617,6 +2619,109 @@ finally:
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Failed to parse du output');
+		});
+	});
+
+	describe('replaceFileRemoteIfUnchanged', () => {
+		const sha = (text: string) => createHash('sha256').update(Buffer.from(text)).digest('hex');
+
+		/** Deps that run the generated command with this machine's sh, as the remote would. */
+		function runLocally(): RemoteFsDeps {
+			return {
+				buildSshArgs: vi.fn().mockReturnValue(['host']),
+				execSsh: vi.fn(async (_ssh: string, args: string[], input?: string) => {
+					const out = spawnSync('sh', ['-c', args.at(-1)!], { input, encoding: 'utf8' });
+					return { stdout: out.stdout, stderr: out.stderr, exitCode: out.status ?? 1 };
+				}),
+			};
+		}
+
+		let dir: string;
+		beforeEach(() => {
+			dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-replace-'));
+		});
+		afterEach(() => {
+			fs.rmSync(dir, { recursive: true, force: true });
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'writes over the file only while it holds the expected bytes',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(file, 0o640);
+
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(result).toEqual({ success: true });
+				expect(fs.readFileSync(file, 'utf8')).toBe('edited');
+				// Written into the file, so its mode is the user's, not a temp file's.
+				expect(fs.statSync(file).mode & 0o777).toBe(0o640);
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'leaves a file that changed alone and says so',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'someone else');
+
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(result).toMatchObject({ success: false, changed: true });
+				expect(fs.readFileSync(file, 'utf8')).toBe('someone else');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'reads a file that was deleted as changed, and a retried write that landed as written',
+			async () => {
+				const gone = await replaceFileRemoteIfUnchanged(
+					path.join(dir, 'gone.md'),
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(gone).toMatchObject({ success: false, changed: true });
+				expect(fs.existsSync(path.join(dir, 'gone.md'))).toBe(false);
+
+				const file = path.join(dir, 'landed.md');
+				fs.writeFileSync(file, 'edited');
+				const again = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(again).toEqual({ success: true });
+			}
+		);
+
+		it('streams the bytes on stdin and refuses a malformed digest', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			await replaceFileRemoteIfUnchanged(
+				'/srv/a.md',
+				Buffer.from('edited'),
+				sha('x'),
+				baseConfig,
+				deps
+			);
+			expect((deps.execSsh as any).mock.calls[0][2]).toBe(Buffer.from('edited').toString('base64'));
+			await expect(
+				replaceFileRemoteIfUnchanged('/srv/a.md', Buffer.from(''), 'nope', baseConfig, deps)
+			).rejects.toThrow(RangeError);
 		});
 	});
 

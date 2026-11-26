@@ -121,6 +121,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	countItemsRemote: vi.fn(),
 	compressFolderRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
+	replaceFileRemoteIfUnchanged: vi.fn(),
 	existsRemote: vi.fn(),
 	readBinaryFileRemoteAsBase64: vi.fn(),
 	listTreeRemote: vi.fn(),
@@ -159,11 +160,13 @@ import {
 	deleteRemote,
 	deleteManyRemote,
 	writeFileRemote,
+	replaceFileRemoteIfUnchanged,
 	existsRemote,
 	compressFolderRemote,
 } from '../../../../main/utils/remote-fs';
 import { existsSync } from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { withPlatform } from '../../../helpers/pathExpect';
 
 /**
@@ -271,6 +274,7 @@ describe('filesystem handlers', () => {
 	describe('fs:watchRemoteCopy', () => {
 		const safeSend = vi.fn();
 		const fetched = Buffer.from('fetched');
+		const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 		beforeEach(() => {
 			chokidarWatchers.length = 0;
@@ -280,7 +284,7 @@ describe('filesystem handlers', () => {
 				success: true,
 				data: fetched.toString('base64'),
 			} as any);
-			vi.mocked(writeFileRemote).mockResolvedValue({ success: true } as any);
+			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({ success: true });
 		});
 
 		afterEach(() => {
@@ -317,21 +321,25 @@ describe('filesystem handlers', () => {
 			).rejects.toThrow('SSH remote not found: gone');
 		});
 
-		it('writes a saved change back to the remote file and flashes that it did', async () => {
+		it('writes a saved change back over the fetched bytes only, and flashes that it did', async () => {
 			vi.useFakeTimers();
 			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
 			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
 			await saveCopyAs('edited');
-			expect(writeFileRemote).toHaveBeenCalledWith('/work/a/notes.md', Buffer.from('edited'), {
-				id: 'r1',
-			});
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledWith(
+				'/work/a/notes.md',
+				Buffer.from('edited'),
+				sha(fetched),
+				{ id: 'r1' }
+			);
+			expect(writeFileRemote).not.toHaveBeenCalled();
 			expect(safeSend).toHaveBeenCalledWith(
 				'remote:notifyCenterFlash',
 				expect.objectContaining({ message: 'Saved to the remote host', detail: 'notes.md' })
 			);
 		});
 
-		it('keeps the user version and raises a toast when the remote file changed', async () => {
+		it('keeps the user version, never over an earlier one, when the remote file changed', async () => {
 			vi.useFakeTimers();
 			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
 			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
@@ -339,14 +347,44 @@ describe('filesystem handlers', () => {
 				success: true,
 				data: Buffer.from('someone else').toString('base64'),
 			} as any);
+			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({
+				success: false,
+				changed: true,
+				error: 'The remote file changed',
+			});
 			await saveCopyAs('edited');
-			expect(writeFileRemote).not.toHaveBeenCalled();
 			const kept = vi.mocked(fs.writeFile).mock.calls.at(-1)!;
 			expect(path.basename(kept[0] as string)).toMatch(/^notes \(your version \d{8}-\d{6}\)\.md$/);
 			expect(kept[1]).toEqual(Buffer.from('edited'));
+			expect(kept[2]).toEqual({ flag: 'wx' });
 			expect(safeSend).toHaveBeenCalledWith(
 				'remote:notifyToast',
 				expect.objectContaining({ title: 'Not saved to the remote host', color: 'red' })
+			);
+		});
+
+		it('a second Open keeps a copy whose saved change has not reached the remote', async () => {
+			vi.useFakeTimers();
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			const download = registeredHandlers.get('fs:downloadRemoteFile')!;
+			await download({}, '/work/a/notes.md', 'r1');
+			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
+			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValueOnce({
+				success: false,
+				error: 'Connection refused',
+			});
+			await saveCopyAs('edited');
+			vi.mocked(fs.rename).mockClear();
+
+			await download({}, '/work/a/notes.md', 'r1');
+			await vi.advanceTimersByTimeAsync(0);
+			// The copy was not replaced, and the change was sent again.
+			expect(fs.rename).not.toHaveBeenCalled();
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenLastCalledWith(
+				'/work/a/notes.md',
+				Buffer.from('edited'),
+				sha(fetched),
+				{ id: 'r1' }
 			);
 		});
 	});
@@ -1914,10 +1952,24 @@ describe('filesystem handlers', () => {
 				});
 				vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
 					const p = String(dirPath).replace(/\\/g, '/');
-					const dir = (name: string) => ({ name, isDirectory: () => true, isFile: () => false });
-					const file = (name: string) => ({ name, isDirectory: () => false, isFile: () => true });
+					const entry = (name: string, kind: 'dir' | 'file' | 'link') => ({
+						name,
+						isDirectory: () => kind === 'dir',
+						isFile: () => kind === 'file',
+						isSymbolicLink: () => kind === 'link',
+					});
+					const dir = (name: string) => entry(name, 'dir');
+					const file = (name: string) => entry(name, 'file');
 					if (p === '/srv/tree')
-						return [dir('src'), dir('.git'), dir('dist'), file('app.ts')] as any;
+						return [
+							dir('src'),
+							dir('.git'),
+							dir('dist'),
+							file('app.ts'),
+							// A link to a folder: counted as the folder, as the tree draws it.
+							entry('lib', 'link'),
+						] as any;
+					if (p.endsWith('/lib')) return [file('util.ts')] as any;
 					if (p.endsWith('/src')) return [file('index.ts')] as any;
 					if (p.endsWith('/.git')) return [file('HEAD')] as any;
 					if (p.endsWith('/dist')) return [file('out.js')] as any;
@@ -1925,7 +1977,10 @@ describe('filesystem handlers', () => {
 				});
 				vi.mocked(mockFs.stat).mockImplementation(async (filePath: any) => {
 					const p = String(filePath).replace(/\\/g, '/');
+					// The link resolves to a folder; every other path is a file.
+					if (p.endsWith('/lib')) return { isDirectory: () => true, isFile: () => false } as any;
 					const sizes: Record<string, number> = {
+						'util.ts': 2,
 						'index.ts': 10,
 						HEAD: 5,
 						'out.js': 7,
@@ -1939,12 +1994,13 @@ describe('filesystem handlers', () => {
 				vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: 'dist\n' });
 				// What `find` returns once the patterns it was given are pruned: `.git`
 				// stays because the remote's `find -name` is asked for `.GIT`.
+				// `find -L` lists the linked folder `lib` as a folder, as the local walk now counts it.
 				vi.mocked(listTreeRemote).mockResolvedValue({
 					success: true,
 					data: {
-						directories: ['src', '.git'],
-						files: ['src/index.ts', '.git/HEAD', 'app.ts'],
-						fileSizes: [10, 5, 3],
+						directories: ['src', '.git', 'lib'],
+						files: ['src/index.ts', '.git/HEAD', 'app.ts', 'lib/util.ts'],
+						fileSizes: [10, 5, 3, 2],
 						truncated: false,
 					},
 				});
@@ -1965,7 +2021,7 @@ describe('filesystem handlers', () => {
 						true
 					);
 				}
-				expect(results.local).toEqual({ totalSize: 13, fileCount: 2, folderCount: 1 });
+				expect(results.local).toEqual({ totalSize: 15, fileCount: 3, folderCount: 2 });
 				expect(results.ssh).toEqual(results.local);
 				expect(results.hosted).toEqual(results.local);
 			});
@@ -2007,7 +2063,14 @@ describe('filesystem handlers', () => {
 
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
 				if (dirPath === '/dedupe') {
-					return [{ name: 'file.txt', isDirectory: () => false, isFile: () => true }] as any;
+					return [
+						{
+							name: 'file.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+					] as any;
 				}
 				return [];
 			});
@@ -2033,12 +2096,29 @@ describe('filesystem handlers', () => {
 
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
 				if (dirPath === '/one') {
-					return [{ name: 'a.txt', isDirectory: () => false, isFile: () => true }] as any;
+					return [
+						{
+							name: 'a.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+					] as any;
 				}
 				if (dirPath === '/two') {
 					return [
-						{ name: 'a.txt', isDirectory: () => false, isFile: () => true },
-						{ name: 'b.txt', isDirectory: () => false, isFile: () => true },
+						{
+							name: 'a.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'b.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
 					] as any;
 				}
 				return [];
@@ -2063,13 +2143,35 @@ describe('filesystem handlers', () => {
 				const p = String(dirPath).replace(/\\/g, '/');
 				if (p === '/project') {
 					return [
-						{ name: 'src', isDirectory: () => true, isFile: () => false },
-						{ name: '.git', isDirectory: () => true, isFile: () => false },
-						{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
+						{
+							name: 'src',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: '.git',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'file.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
 					] as any;
 				}
 				if (p.includes('/src')) {
-					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
+					return [
+						{
+							name: 'index.ts',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+					] as any;
 				}
 				return [];
 			});
@@ -2088,13 +2190,35 @@ describe('filesystem handlers', () => {
 				const p = String(dirPath).replace(/\\/g, '/');
 				if (p === '/project') {
 					return [
-						{ name: 'src', isDirectory: () => true, isFile: () => false },
-						{ name: '.git', isDirectory: () => true, isFile: () => false },
-						{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
+						{
+							name: 'src',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: '.git',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'file.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
 					] as any;
 				}
 				if (p.includes('/src')) {
-					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
+					return [
+						{
+							name: 'index.ts',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+					] as any;
 				}
 				return [];
 			});
@@ -2125,14 +2249,41 @@ describe('filesystem handlers', () => {
 				const p = String(dirPath).replace(/\\/g, '/');
 				if (p === '/project') {
 					return [
-						{ name: 'src', isDirectory: () => true, isFile: () => false },
-						{ name: 'dist', isDirectory: () => true, isFile: () => false },
-						{ name: 'app.ts', isDirectory: () => false, isFile: () => true },
-						{ name: 'debug.log', isDirectory: () => false, isFile: () => true },
+						{
+							name: 'src',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'dist',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'app.ts',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'debug.log',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
 					] as any;
 				}
 				if (p.includes('/src')) {
-					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
+					return [
+						{
+							name: 'index.ts',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+					] as any;
 				}
 				return [];
 			});

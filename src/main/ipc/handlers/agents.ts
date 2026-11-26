@@ -48,13 +48,13 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import {
+	agentEnvOverRemote,
 	buildSshCommand,
 	execSshCommand,
 	RemoteCommandOptions,
 } from '../../utils/ssh-command-builder';
 import { stripAnsi } from '../../utils/stripAnsi';
 import { readDirRemote, readFileRemote } from '../../utils/remote-fs';
-import { stripBlankEnvVars } from '../../../shared/agentEnvironment';
 import { createTtlPromiseCache } from '../../utils/ttl-promise-cache';
 import {
 	discoverAgentModels,
@@ -434,6 +434,11 @@ interface CodexCommandFiles {
 	/** Names of every entry in `dir`. */
 	listNames: (dir: string) => Promise<string[] | null>;
 	readFile: (file: string) => Promise<string | null>;
+	/**
+	 * Whether a read failed for a reason other than a missing entry (a remote
+	 * that dropped mid-scan). The list is then incomplete and is not cached.
+	 */
+	readFailed?: () => boolean;
 }
 
 function localCodexCommandFiles(cwd: string, env: NodeJS.ProcessEnv): CodexCommandFiles {
@@ -463,26 +468,33 @@ function localCodexCommandFiles(cwd: string, env: NodeJS.ProcessEnv): CodexComma
 function remoteCodexCommandFiles(cwd: string, remote: CodexSkillsRemote): CodexCommandFiles {
 	// The agent's CODEX_HOME over the remote's (a blank one cancels it), else the
 	// remote's `~/.codex` (expanded by the remote shell).
-	const env = stripBlankEnvVars({ ...remote.config.remoteEnv, ...remote.env });
+	const { env } = agentEnvOverRemote(remote.config, remote.env);
 	const home = env.CODEX_HOME || '~/.codex';
 	const join = path.posix.join;
+	let failed = false;
+	/** A missing entry reads as null; any other failure also marks the scan incomplete. */
+	const unlessMissing = (error: string | undefined, missing: string[]): null => {
+		if (!missing.some((prefix) => error?.startsWith(prefix))) failed = true;
+		return null;
+	};
+	const listDir = async (dir: string) => {
+		const result = await readDirRemote(dir, remote.config);
+		if (result.success && result.data) return result.data;
+		return unlessMissing(result.error, ['Directory not found']);
+	};
 	return {
 		skillDirs: [join(cwd, '.codex', 'skills'), `${home}/skills`],
 		promptDirs: [join(cwd, '.codex', 'prompts'), `${home}/prompts`],
 		join,
-		listDirs: async (dir) => {
-			const result = await readDirRemote(dir, remote.config);
-			if (!result.success || !result.data) return null;
-			return result.data.filter((entry) => entry.isDirectory).map((entry) => entry.name);
-		},
-		listNames: async (dir) => {
-			const result = await readDirRemote(dir, remote.config);
-			return result.success && result.data ? result.data.map((entry) => entry.name) : null;
-		},
+		listDirs: async (dir) =>
+			(await listDir(dir))?.filter((entry) => entry.isDirectory).map((entry) => entry.name) ?? null,
+		listNames: async (dir) => (await listDir(dir))?.map((entry) => entry.name) ?? null,
 		readFile: async (file) => {
 			const result = await readFileRemote(file, remote.config);
-			return result.success && typeof result.data === 'string' ? result.data : null;
+			if (result.success && typeof result.data === 'string') return result.data;
+			return unlessMissing(result.error, ['File not found', 'Path is a directory']);
 		},
+		readFailed: () => failed,
 	};
 }
 
@@ -490,16 +502,19 @@ function remoteCodexCommandFiles(cwd: string, remote: CodexSkillsRemote): CodexC
 interface CodexDiscovery {
 	commands: DiscoveredCommand[];
 	authoritative: boolean;
+	/** False when a folder or file could not be read (not missing): the list may be short. */
+	complete: boolean;
 }
 
 /**
  * Remote Codex command lists, kept as long as a Claude probe's (30 minutes).
  * An empty list is kept only when Codex itself said so: an unreachable remote
- * also reads as empty, and must be asked again next time.
+ * also reads as empty, and must be asked again next time. A list from a scan
+ * that could not read a folder or file is never kept.
  */
 const remoteCodexCommandCache = createTtlPromiseCache<CodexDiscovery>(
 	30 * 60 * 1000,
-	(found) => found.authoritative || found.commands.length > 0
+	(found) => found.complete && (found.authoritative || found.commands.length > 0)
 );
 
 /** For tests: forget every cached remote Codex command list. */
@@ -595,7 +610,11 @@ async function discoverCodexCommands(
 
 	const commandList = Array.from(commands.values());
 	logger.info(`Discovered ${commandList.length} Codex slash commands`, LOG_CONTEXT);
-	return { commands: commandList, authoritative: nativeSkillsAvailable };
+	return {
+		commands: commandList,
+		authoritative: nativeSkillsAvailable,
+		complete: !files.readFailed?.(),
+	};
 }
 
 /**
@@ -1311,12 +1330,6 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						logger.debug(`Agent "${agentDef.name}" not found on remote`, LOG_CONTEXT);
 					}
 
-					// Every installation on the remote, so the Edit Agent chooser shows
-					// for a remote agent exactly when it shows for a local one.
-					const allPaths = available
-						? await detectAllBinaryPathsRemote(sshConfig, agentDef.binaryName, path)
-						: undefined;
-
 					if (agentDef.id !== 'terminal') {
 						if (available) {
 							const existing = capabilitySnapshots.get(agentDef.id, sshConfig.id);
@@ -1328,6 +1341,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 							capabilitySnapshots.markNotInstalled(agentDef.id, sshConfig.id);
 						}
 					}
+
+					// Every installation on the remote, so the Edit Agent chooser shows
+					// for a remote agent exactly when it shows for a local one. Looked up
+					// after the snapshot write, so that write follows its own observation.
+					const allPaths = available
+						? await detectAllBinaryPathsRemote(sshConfig, agentDef.binaryName, path)
+						: undefined;
 
 					return stripAgentFunctions(
 						{

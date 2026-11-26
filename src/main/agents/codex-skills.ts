@@ -1,8 +1,7 @@
 import * as os from 'os';
 import type { SshRemoteConfig } from '../../shared/types';
 import { startTurn } from '../../shared/maestro-lib/run/start-turn';
-import { buildSshCommand } from '../utils/ssh-command-builder';
-import { stripBlankEnvVars } from '../../shared/agentEnvironment';
+import { agentEnvOverRemote, buildSshCommand } from '../utils/ssh-command-builder';
 import { CodexAppServerRpc } from '../codex-app-server/rpc-client';
 import { isCodexResponse } from '../codex-app-server/protocol';
 import { planSpawnShell } from '../process-manager/utils/windowsSpawnShell';
@@ -32,13 +31,14 @@ export async function discoverCodexSkills(
 		if (!turn.child.stdin?.writable) throw new Error('Codex stdin is closed');
 		turn.child.stdin.write(`${line}\n`);
 	});
-	const launch = remote
-		? await buildSshCommand(remote.config, {
+	// A blank agent value cancels the remote's layer, then is dropped.
+	const target = remote ? agentEnvOverRemote(remote.config, remote.env) : null;
+	const launch = target
+		? await buildSshCommand(target.config, {
 				command,
 				args: ['app-server'],
 				cwd,
-				// A blank agent value cancels the remote's layer, then is dropped.
-				env: stripBlankEnvVars({ ...remote.config.remoteEnv, ...remote.env }),
+				env: target.env,
 				useStdin: true,
 			}).then((ssh) => ({
 				...planSpawnShell(ssh.command, ssh.args, {}),

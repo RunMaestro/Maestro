@@ -410,7 +410,8 @@ export function buildSharedHistoryContext(
 	// Respect the History sharing toggle (opt-in, defaults to false)
 	if (!sharesHistoryInProject(config)) return undefined;
 
-	const remoteCwd = session.cwd;
+	// The folder the agent works in on the remote: its override when set, as its turns use.
+	const remoteCwd = config.workingDirOverride || session.cwd;
 	if (!remoteCwd) return undefined;
 
 	return {

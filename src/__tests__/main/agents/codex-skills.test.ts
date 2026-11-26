@@ -10,7 +10,11 @@ import type { SshRemoteConfig } from '../../../shared/types';
 import * as path from 'path';
 
 vi.mock('../../../shared/maestro-lib/run/start-turn', () => ({ startTurn: vi.fn() }));
-vi.mock('../../../main/utils/ssh-command-builder', () => ({
+vi.mock('../../../main/utils/ssh-command-builder', async (importOriginal) => ({
+	// The real env layering; only the command builder is faked.
+	agentEnvOverRemote: (
+		await importOriginal<typeof import('../../../main/utils/ssh-command-builder')>()
+	).agentEnvOverRemote,
 	buildSshCommand: vi.fn(
 		async (_remote: unknown, options: { command: string; args: string[]; cwd?: string }) => ({
 			command: 'ssh',
@@ -141,13 +145,17 @@ describe('Codex skill discovery protocol', () => {
 		const commands = await discoverCodexSkills('codex', remoteCwd, { PATH: '/usr/bin' }, remote);
 
 		expect(commands.map((c) => c.name)).toEqual(['remote-skill']);
-		expect(buildSshCommand).toHaveBeenCalledWith(remote.config, {
-			command: 'codex',
-			args: ['app-server'],
-			cwd: remoteCwd,
-			env: { A: '1', CODEX_HOME: '/srv/codex' },
-			useStdin: true,
-		});
+		// The remote's layer is merged into env, so the builder cannot add it again.
+		expect(buildSshCommand).toHaveBeenCalledWith(
+			{ ...remote.config, remoteEnv: {} },
+			{
+				command: 'codex',
+				args: ['app-server'],
+				cwd: remoteCwd,
+				env: { A: '1', CODEX_HOME: '/srv/codex' },
+				useStdin: true,
+			}
+		);
 		// This machine starts ssh, never codex in a folder that is not here.
 		const spec = vi.mocked(startTurn).mock.calls.at(-1)![0];
 		expect(spec.command).toBe('ssh');

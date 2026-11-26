@@ -15,6 +15,7 @@ import { logger } from '../host';
 import { resolveSshPath } from './ssh-path';
 import { buildSshOptionArgs } from '../../sshOptions';
 import { parseDataUrl, buildImagePromptPrefix } from './image-refs';
+import { stripBlankEnvVars } from '../../agentEnvironment';
 import type { PromptDelivery, PromptFileDestination } from './prompt-delivery';
 
 /** Select in the supported remote Linux namespace, never the local temp/home directory. */
@@ -616,6 +617,24 @@ export async function buildSshCommandWithStdin(
 		remoteTempImagePaths: allRemoteTempPaths.length > 0 ? allRemoteTempPaths : undefined,
 		remoteCommandLine,
 	};
+}
+
+/**
+ * The remote and env for a one-shot command that runs as one agent (a discovery
+ * probe): the agent's vars over the remote's, and a blank agent value cancels
+ * the remote's value instead of falling back to it. {@link buildSshCommand}
+ * merges `config.remoteEnv` under `env`, so the config returned carries none:
+ * the layering is done once, here.
+ */
+export function agentEnvOverRemote(
+	config: SshRemoteConfig,
+	agentEnv: Record<string, string | undefined> = {}
+): { config: SshRemoteConfig; env: Record<string, string> } {
+	const layered: Record<string, string> = { ...(config.remoteEnv || {}) };
+	for (const [key, value] of Object.entries(agentEnv)) {
+		if (value !== undefined) layered[key] = value;
+	}
+	return { config: { ...config, remoteEnv: {} }, env: stripBlankEnvVars(layered) };
 }
 
 /**

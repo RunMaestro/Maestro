@@ -21,12 +21,11 @@
 
 import type { SshRemoteConfig } from '../../shared/types';
 import { execFileNoThrow, type ExecResult } from '../utils/execFile';
-import { buildSshCommand, execSshCommand } from '../utils/ssh-command-builder';
+import { agentEnvOverRemote, buildSshCommand, execSshCommand } from '../utils/ssh-command-builder';
 import { stripAnsi } from '../utils/stripAnsi';
 import { logger } from '../utils/logger';
 import { createTtlPromiseCache } from '../utils/ttl-promise-cache';
 import { canonicalJson } from '../../shared/canonicalJson';
-import { stripBlankEnvVars } from '../../shared/agentEnvironment';
 
 const LOG_CONTEXT = '[ClaudeSlashCommands]';
 
@@ -90,14 +89,15 @@ export async function probeClaudeSlashCommandsRemote(
 	cwd: string,
 	env: Record<string, string> = {}
 ): Promise<string[] | null> {
+	// The agent's own vars (its `CLAUDE_CONFIG_DIR` account) over the remote's;
+	// a blank agent value cancels the remote's, then is dropped.
+	const target = agentEnvOverRemote(sshRemote, env);
 	return runProbe(async (args) => {
-		const sshCommand = await buildSshCommand(sshRemote, {
+		const sshCommand = await buildSshCommand(target.config, {
 			command: binary,
 			args: [...args, '--', '/help'],
 			cwd,
-			// The agent's own vars (its `CLAUDE_CONFIG_DIR` account) over the remote's;
-			// a blank agent value cancels the remote's, then is dropped.
-			env: stripBlankEnvVars({ ...sshRemote.remoteEnv, ...env }),
+			env: target.env,
 		});
 		const result = await execSshCommand(sshRemote, sshCommand, {
 			timeout: REMOTE_PROBE_TIMEOUT_MS,
@@ -107,10 +107,21 @@ export async function probeClaudeSlashCommandsRemote(
 	});
 }
 
+/**
+ * Whether claude refused to start because it does not know
+ * {@link NO_PERSISTENCE_FLAG}. Over SSH the forced TTY carries stderr on stdout,
+ * so both streams are read.
+ */
+function rejectedPersistenceFlag(result: ExecResult): boolean {
+	if (result.exitCode === 0) return false;
+	const refusal = /unknown option\W+--no-session-persistence/i;
+	return refusal.test(result.stderr ?? '') || refusal.test(result.stdout ?? '');
+}
+
 async function runProbe(run: (args: string[]) => Promise<ExecResult>): Promise<string[] | null> {
 	let result = await run([...PROBE_ARGS, NO_PERSISTENCE_FLAG]);
 	// A claude too old to know the flag refuses to start; ask again without it.
-	if (result.exitCode !== 0 && /unknown option/i.test(result.stderr ?? '')) {
+	if (rejectedPersistenceFlag(result)) {
 		result = await run(PROBE_ARGS);
 	}
 	if (result.exitCode !== 0 && !result.stdout) {

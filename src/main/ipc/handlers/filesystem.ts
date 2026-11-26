@@ -53,6 +53,7 @@ import {
 	readBinaryFileRemoteAsBase64,
 	readFileRemoteAbortable,
 	writeFileRemote,
+	replaceFileRemoteIfUnchanged,
 	mkdirRemote,
 	statRemote,
 	renameRemote,
@@ -227,7 +228,7 @@ async function downloadRemoteFileTo(
 	remotePath: string,
 	localPath: string,
 	sshConfig: SshRemoteConfig
-): Promise<void> {
+): Promise<Buffer> {
 	const bytes = await readRemoteFileBytes(remotePath, sshConfig);
 	const staged = stagingPathFor(localPath);
 	try {
@@ -241,6 +242,7 @@ async function downloadRemoteFileTo(
 		}
 		throw error;
 	}
+	return bytes;
 }
 
 /** The most files one folder download fetches; a bigger folder is refused, never cut short. */
@@ -637,12 +639,20 @@ function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopy
 			return { close: () => watcher.close() };
 		},
 		readLocal: (localPath) => fs.readFile(localPath),
-		writeLocal: (localPath, bytes) => fs.writeFile(localPath, bytes),
+		// `wx`: a kept version never replaces an earlier one.
+		createLocal: (localPath, bytes) => fs.writeFile(localPath, bytes, { flag: 'wx' }),
 		readRemote: (remotePath, sshRemoteId) =>
 			readRemoteFileBytes(remotePath, sshConfigOrThrow(sshRemoteId)),
-		writeRemote: async (remotePath, bytes, sshRemoteId) => {
-			const result = await writeFileRemote(remotePath, bytes, sshConfigOrThrow(sshRemoteId));
-			if (!result.success) throw new Error(result.error || 'The remote write failed');
+		writeRemote: async (remotePath, bytes, sshRemoteId, expectedSha256) => {
+			const result = await replaceFileRemoteIfUnchanged(
+				remotePath,
+				bytes,
+				expectedSha256,
+				sshConfigOrThrow(sshRemoteId)
+			);
+			if (result.success) return 'written';
+			if (result.changed) return 'changed';
+			throw new Error(result.error || 'The remote write failed');
 		},
 		notify: (event) => announceWriteBack(safeSend, event),
 	});
@@ -943,13 +953,19 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 				throw new Error(`SSH remote not found: ${sshRemoteId}`);
 			}
 
-			let destPath = localDestPath;
-			if (!destPath) {
-				destPath = remoteDownloadTempPath(sshRemoteId, remotePath);
-				await fs.mkdir(path.dirname(destPath), { recursive: true });
+			if (localDestPath) {
+				await downloadRemoteFileTo(remotePath, localDestPath, sshConfig);
+				return { success: true, path: localDestPath };
 			}
-
-			await downloadRemoteFileTo(remotePath, destPath, sshConfig);
+			const destPath = remoteDownloadTempPath(sshRemoteId, remotePath);
+			// A copy opened in another app may hold a change the remote does not have
+			// yet: it stays (the write is tried again), never replaced by a fetch.
+			if ((await writeBack.beforeRefetch(destPath)) === 'keep') {
+				return { success: true, path: destPath };
+			}
+			await fs.mkdir(path.dirname(destPath), { recursive: true });
+			const bytes = await downloadRemoteFileTo(remotePath, destPath, sshConfig);
+			await writeBack.noteFetched(destPath, bytes);
 			return { success: true, path: destPath };
 		}
 	);
@@ -1182,12 +1198,19 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 								continue;
 							}
 
-							if (entry.isDirectory()) {
+							// A symlink counts as its target, as the Files panel tree draws it
+							// and as the remote walk (`find -L`) counts it; the depth bound
+							// ends a link loop, as it does in the tree.
+							const childPath = childPrefix + entry.name;
+							const kind = entry.isSymbolicLink()
+								? await resolveDirentType(entry, childPath)
+								: { isDirectory: entry.isDirectory(), isFile: entry.isFile() };
+							if (kind.isDirectory) {
 								folderCount++;
-								await calculateSize(childPrefix + entry.name, depth + 1);
-							} else if (entry.isFile()) {
+								await calculateSize(childPath, depth + 1);
+							} else if (kind.isFile) {
 								fileCount++;
-								filePaths.push(childPrefix + entry.name);
+								filePaths.push(childPath);
 							}
 						}
 

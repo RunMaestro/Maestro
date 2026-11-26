@@ -11,7 +11,11 @@ vi.mock('../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
 
-vi.mock('../../../main/utils/ssh-command-builder', () => ({
+vi.mock('../../../main/utils/ssh-command-builder', async (importOriginal) => ({
+	// The real env layering; only the command builder is faked.
+	agentEnvOverRemote: (
+		await importOriginal<typeof import('../../../main/utils/ssh-command-builder')>()
+	).agentEnvOverRemote,
 	buildSshCommand: vi.fn(
 		async (_remote: unknown, options: { command: string; args: string[] }) => ({
 			command: 'ssh',
@@ -237,10 +241,38 @@ describe('probeClaudeSlashCommandsRemoteCached', () => {
 		await probeClaudeSlashCommandsRemoteCached(withAccount, 'claude', '/srv/p', {
 			CLAUDE_CONFIG_DIR: '',
 		});
+		// The remote's own layer is merged here, so the builder cannot put it back.
 		expect(buildSshCommand).toHaveBeenCalledWith(
-			expect.anything(),
+			expect.objectContaining({ id: 'acct', remoteEnv: {} }),
 			expect.objectContaining({ env: { FOO: '1' } })
 		);
+	});
+
+	it('asks again without the flag when the refusal arrives on the TTY (stdout)', async () => {
+		vi.mocked(execSshCommand)
+			.mockResolvedValueOnce({
+				stdout: "error: unknown option '--no-session-persistence'\r\n",
+				stderr: '',
+				exitCode: 1,
+			})
+			.mockResolvedValueOnce({ stdout: initLine(['/help']), stderr: '', exitCode: 0 });
+
+		await expect(
+			probeClaudeSlashCommandsRemoteCached(remote('old'), 'claude', '/srv/p')
+		).resolves.toEqual(['/help']);
+		const second = vi.mocked(buildSshCommand).mock.calls[1][1] as { args: string[] };
+		expect(second.args).not.toContain('--no-session-persistence');
+	});
+
+	it('does not retry for any other unknown option', async () => {
+		vi.mocked(execSshCommand).mockResolvedValue({
+			stdout: "error: unknown option '--output-format'",
+			stderr: '',
+			exitCode: 1,
+		});
+
+		await probeClaudeSlashCommandsRemoteCached(remote('other'), 'claude', '/srv/p');
+		expect(execSshCommand).toHaveBeenCalledTimes(1);
 	});
 
 	it('gives no list for an unreachable remote and asks again next time', async () => {
