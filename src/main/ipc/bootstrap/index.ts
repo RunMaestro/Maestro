@@ -100,6 +100,7 @@ import {
 	setGetCustomShellPathCallback,
 } from '../../group-chat/group-chat-router';
 import { mapSessionsForMentions } from './session-mention-mapper';
+import { getPeerMirrorService } from '../../federation';
 import { resolveSessionWindow } from './session-window';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { IpcBootstrapDependencies } from './types';
@@ -524,7 +525,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 				deps.settingsStore.get('encoreFeatures')
 			),
 			getSshRemoteById,
-			deps.getProcessManager()
+			deps.getProcessManager(),
+			{
+				hostingEnabled: () => deps.settingsStore.get('federationHostedAgents', false) === true,
+				peers: () => getPeerMirrorService()?.snapshot().peers ?? [],
+			}
 		)
 	);
 
