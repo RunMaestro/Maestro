@@ -191,7 +191,6 @@ export function HamburgerMenuContent({
 					</div>
 				</button>
 			)}
-			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 			{!phone && (
 				<button
 					onClick={() => {
@@ -290,30 +289,34 @@ export function HamburgerMenuContent({
 					{formatShortcutKeys(shortcuts.processMonitor.keys)}
 				</span>
 			</button>
-			{encoreFeatures.usageStats && (
+			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+			{/* Features, in alphabetical order. Keep new entries sorted by label. */}
+			{encoreFeatures.concerto && (
 				<button
 					onClick={() => {
-						setUsageDashboardOpen(true);
+						setConcertoStageOpen(true);
 						setMenuOpen(false);
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					<BarChart3 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<Music2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
 					<div className="flex-1">
 						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Usage Dashboard
+							Concerto
 						</div>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							View usage analytics
+							Agent-composed interactive views
 						</div>
 					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						data-shortcut-hint=""
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
-						{formatShortcutKeys(shortcuts.usageDashboard.keys)}
-					</span>
+					{shortcuts.toggleConcerto && (
+						<span
+							className="text-xs font-mono px-1.5 py-0.5 rounded"
+							data-shortcut-hint=""
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						>
+							{formatShortcutKeys(shortcuts.toggleConcerto.keys)}
+						</span>
+					)}
 				</button>
 			)}
 			{encoreFeatures.directorNotes && (
@@ -344,32 +347,6 @@ export function HamburgerMenuContent({
 					)}
 				</button>
 			)}
-			{encoreFeatures.symphony && (
-				<button
-					onClick={() => {
-						setSymphonyModalOpen(true);
-						setMenuOpen(false);
-					}}
-					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-				>
-					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Maestro Symphony
-						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Contribute to open source
-						</div>
-					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						data-shortcut-hint=""
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
-						{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⌥⌘Y'}
-					</span>
-				</button>
-			)}
 			{encoreFeatures.maestroCue && (
 				<button
 					onClick={() => {
@@ -396,6 +373,51 @@ export function HamburgerMenuContent({
 							{formatShortcutKeys(shortcuts.openCue.keys)}
 						</span>
 					)}
+				</button>
+			)}
+			{encoreFeatures.symphony && (
+				<button
+					onClick={() => {
+						setSymphonyModalOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Maestro Symphony
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Contribute to open source
+						</div>
+					</div>
+					<span
+						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						data-shortcut-hint=""
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					>
+						{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⌥⌘Y'}
+					</span>
+				</button>
+			)}
+			{encoreFeatures.pianola && (
+				<button
+					onClick={() => {
+						setPianolaModalOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Pianola
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Autonomous manager
+						</div>
+					</div>
 				</button>
 			)}
 			{promptLinksAvailable(encoreFeatures.promptLinks) && (
@@ -426,51 +448,30 @@ export function HamburgerMenuContent({
 					)}
 				</button>
 			)}
-			{encoreFeatures.concerto && (
+			{encoreFeatures.usageStats && (
 				<button
 					onClick={() => {
-						setConcertoStageOpen(true);
+						setUsageDashboardOpen(true);
 						setMenuOpen(false);
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					<Music2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<BarChart3 className="w-5 h-5" style={{ color: theme.colors.accent }} />
 					<div className="flex-1">
 						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Concerto
+							Usage Dashboard
 						</div>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Agent-composed interactive views
+							View usage analytics
 						</div>
 					</div>
-					{shortcuts.toggleConcerto && (
-						<span
-							className="text-xs font-mono px-1.5 py-0.5 rounded"
-							data-shortcut-hint=""
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						>
-							{formatShortcutKeys(shortcuts.toggleConcerto.keys)}
-						</span>
-					)}
-				</button>
-			)}
-			{encoreFeatures.pianola && (
-				<button
-					onClick={() => {
-						setPianolaModalOpen(true);
-						setMenuOpen(false);
-					}}
-					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
-				>
-					<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-							Pianola
-						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Autonomous manager
-						</div>
-					</div>
+					<span
+						className="text-xs font-mono px-1.5 py-0.5 rounded"
+						data-shortcut-hint=""
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					>
+						{formatShortcutKeys(shortcuts.usageDashboard.keys)}
+					</span>
 				</button>
 			)}
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />

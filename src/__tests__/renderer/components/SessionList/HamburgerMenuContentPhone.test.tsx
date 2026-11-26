@@ -12,6 +12,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { HamburgerMenuContent } from '../../../../renderer/components/SessionList/HamburgerMenuContent';
 import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import {
 	selectModalData,
 	selectModalOpen,
@@ -79,6 +80,29 @@ describe('HamburgerMenuContent on a phone', () => {
 		for (const badge of badges) {
 			expect(badge).toHaveAttribute('data-shortcut-hint');
 		}
+	});
+});
+
+describe('HamburgerMenuContent sections', () => {
+	it('keeps the feature section between the two dividers in alphabetical order', () => {
+		const original = useSettingsStore.getState().encoreFeatures;
+		useSettingsStore.setState({
+			encoreFeatures: Object.fromEntries(
+				Object.keys(original).map((key) => [key, true])
+			) as typeof original,
+		});
+		const { container } = renderMenu();
+		const rows = Array.from(container.firstElementChild!.children);
+		const dividers = rows.flatMap((row, i) => (row.classList.contains('border-t') ? [i] : []));
+		expect(dividers).toHaveLength(2);
+
+		const labelOf = (row: Element) => row.querySelector('.text-sm.font-medium')?.textContent ?? '';
+		const features = rows.slice(dividers[0] + 1, dividers[1]).map(labelOf);
+		expect(features.length).toBeGreaterThan(1);
+		expect(features).toEqual([...features].sort((a, b) => a.localeCompare(b)));
+		// The app-level entries all sit above the first divider.
+		expect(rows.slice(0, dividers[0]).map(labelOf)).toContain('Process Monitor');
+		useSettingsStore.setState({ encoreFeatures: original });
 	});
 });
 
