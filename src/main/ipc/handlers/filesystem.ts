@@ -232,6 +232,15 @@ async function downloadRemoteFileTo(
 	sshConfig: SshRemoteConfig
 ): Promise<Buffer> {
 	const bytes = await readRemoteFileBytes(remotePath, sshConfig);
+	await placeLocalFile(localPath, bytes);
+	return bytes;
+}
+
+/**
+ * Put `bytes` at a local path through a sibling and a rename, so the path never
+ * names a half-written file, and a failed write leaves the earlier file as it was.
+ */
+async function placeLocalFile(localPath: string, bytes: Buffer): Promise<void> {
 	const staged = stagingPathFor(localPath);
 	try {
 		await fs.writeFile(staged, bytes);
@@ -244,7 +253,6 @@ async function downloadRemoteFileTo(
 		}
 		throw error;
 	}
-	return bytes;
 }
 
 /** The most files one folder download fetches; a bigger folder is refused, never cut short. */
@@ -981,13 +989,15 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 			}
 			const destPath = remoteDownloadTempPath(sshRemoteId, remotePath);
 			// A copy opened in another app may hold a change the remote does not have
-			// yet: it stays (the write is tried again), never replaced by a fetch.
-			if ((await writeBack.beforeRefetch(destPath)) === 'keep') {
-				return { success: true, path: destPath };
-			}
-			await fs.mkdir(path.dirname(destPath), { recursive: true });
-			const bytes = await downloadRemoteFileTo(remotePath, destPath, sshConfig);
-			await writeBack.noteFetched(destPath, bytes);
+			// yet: it stays (the write is tried again), never replaced by a fetch. The
+			// fetch runs in that copy's own queue, so no save of it interleaves.
+			await writeBack.refetch(destPath, {
+				download: () => readRemoteFileBytes(remotePath, sshConfig),
+				place: async (bytes) => {
+					await fs.mkdir(path.dirname(destPath), { recursive: true });
+					await placeLocalFile(destPath, bytes);
+				},
+			});
 			return { success: true, path: destPath };
 		}
 	);

@@ -401,16 +401,19 @@ describe('filesystem handlers', () => {
 			const download = registeredHandlers.get('fs:downloadRemoteFile')!;
 			await download({}, '/work/a/notes.md', 'r1');
 			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
-			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValueOnce({
+			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({
 				success: false,
 				error: 'Connection refused',
 			});
 			await saveCopyAs('edited');
 			vi.mocked(fs.rename).mockClear();
+			vi.mocked(readBinaryFileRemoteAsBase64).mockClear();
 
 			await download({}, '/work/a/notes.md', 'r1');
-			await vi.advanceTimersByTimeAsync(0);
-			// The copy was not replaced, and the change was sent again.
+			// The change was sent again first; it still failed, so the copy was not
+			// replaced and nothing was fetched over it.
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledTimes(2);
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
 			expect(fs.rename).not.toHaveBeenCalled();
 			expect(replaceFileRemoteIfUnchanged).toHaveBeenLastCalledWith(
 				'/work/a/notes.md',

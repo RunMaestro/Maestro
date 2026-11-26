@@ -15,9 +15,10 @@
  *   toast says where. From then on the copy no longer saves back (every later
  *   save would conflict again); the toast says so once, and opening the file
  *   again starts over from the remote's bytes.
- * - A fetch of the same file again (a second Open) does not replace a copy that
- *   holds a change the remote does not have yet: the copy stays, and the
- *   write is tried again.
+ * - A fetch of the same file again (a second Open) runs in the copy's own
+ *   queue, after any save not sent yet, and never replaces a copy that holds a
+ *   change the remote does not have: the copy stays, and the write is tried
+ *   again.
  */
 
 import { createHash } from 'crypto';
@@ -102,13 +103,21 @@ export interface RemoteCopyWriteBack {
 	 */
 	watch(input: { localPath: string; remotePath: string; sshRemoteId: string }): Promise<void>;
 	/**
-	 * Before a fetch replaces the copy at `localPath`: `keep` when the copy holds
-	 * a change the remote does not have and that is kept nowhere else (the fetch
-	 * must leave it, and the write is tried again), else `fetch`.
+	 * Fetch the remote file again into the copy at `localPath` (a second Open),
+	 * as one step of the copy's own queue, so no save of it interleaves:
+	 * 1. A save not sent yet is sent first.
+	 * 2. A change the remote still does not have (the write failed) keeps the
+	 *    copy: resolves `kept`, and no bytes are fetched. On a copy that no
+	 *    longer saves back, that change is kept beside it instead, and the fetch
+	 *    goes on.
+	 * 3. `download()` gets the remote's bytes; `place()` puts them at the copy,
+	 *    and they are the new baseline. A save the app made while they were
+	 *    coming keeps the copy instead (and goes to the remote): `kept`.
 	 */
-	beforeRefetch(localPath: string): Promise<'fetch' | 'keep'>;
-	/** After a fetch put `bytes` (the remote's now) at `localPath`: they are the baseline. */
-	noteFetched(localPath: string, bytes: Buffer): Promise<void>;
+	refetch(
+		localPath: string,
+		io: { download(): Promise<Buffer>; place(bytes: Buffer): Promise<void> }
+	): Promise<'fetched' | 'kept'>;
 	/** Resolves once every change seen so far has been handled. */
 	idle(): Promise<void>;
 	/**
@@ -308,44 +317,60 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 				}
 			});
 		},
-		async beforeRefetch(localPath) {
-			const entry = watched.get(localPath);
-			if (!entry) return 'fetch';
-			const verdict = await queue.enqueue(localPath, async () => {
-				const local = await readCopy(localPath);
-				if (!local) return 'fetch' as const;
-				const localHash = hashOf(local);
-				if (localHash === entry.baseline || localHash === entry.kept) return 'fetch' as const;
-				if (!entry.halted) return 'keep' as const;
-				// This copy no longer saves back, and it holds a change kept nowhere
-				// else: keep that beside it, say where, and let the fetch start over.
-				const keptAt = await keepVersion(localPath, local);
-				entry.kept = localHash;
-				deps.notify({
-					kind: 'kept',
-					remotePath: entry.remotePath,
-					sshRemoteId: entry.sshRemoteId,
-					keptAt,
-				});
-				return 'fetch' as const;
+		async refetch(localPath, { download, place }) {
+			const outcome = await queue.enqueue(localPath, async () => {
+				const entry = watched.get(localPath);
+				let checked: string | null = null;
+				if (entry) {
+					// A save still waiting out its debounce, or one that failed, goes
+					// first: the fetch must not land over a change the remote lacks.
+					if (entry.timer) clearTimeout(entry.timer);
+					entry.timer = null;
+					await sync(entry);
+					const local = await readCopy(localPath);
+					if (local) {
+						const localHash = hashOf(local);
+						checked = localHash;
+						if (localHash !== entry.baseline && localHash !== entry.kept) {
+							// Still not on the remote (the write failed): the copy stays,
+							// and the next save tries again.
+							if (!entry.halted) return 'kept' as const;
+							// This copy no longer saves back, and it holds a change kept
+							// nowhere else: keep that beside it, say where, and start over.
+							const keptAt = await keepVersion(localPath, local);
+							entry.kept = localHash;
+							deps.notify({
+								kind: 'kept',
+								remotePath: entry.remotePath,
+								sshRemoteId: entry.sshRemoteId,
+								keptAt,
+							});
+						}
+					}
+				}
+				const bytes = await download();
+				// The app may have saved the copy while the bytes were coming (this
+				// queue orders Maestro's own steps, not the app's): that save stays,
+				// and goes to the remote, instead of being replaced.
+				if (entry && watched.get(localPath) === entry) {
+					const local = await readCopy(localPath);
+					if (local && hashOf(local) !== checked) return 'saved-during-fetch' as const;
+				}
+				await place(bytes);
+				if (entry) {
+					entry.baseline = hashOf(bytes);
+					entry.kept = null;
+					// A fresh copy saves back again, unless it is too large to.
+					entry.halted = bytes.length > maxBytes ? 'too-large' : null;
+				}
+				return 'fetched' as const;
 			});
-			if (verdict === 'keep') {
-				// A save still waiting, or one that failed: send it now instead.
-				if (entry.timer) clearTimeout(entry.timer);
-				entry.timer = null;
-				runSync(entry);
+			if (outcome === 'saved-during-fetch') {
+				const entry = watched.get(localPath);
+				if (entry) runSync(entry);
+				return 'kept';
 			}
-			return verdict;
-		},
-		async noteFetched(localPath, bytes) {
-			const entry = watched.get(localPath);
-			if (!entry) return;
-			await queue.enqueue(localPath, async () => {
-				entry.baseline = hashOf(bytes);
-				entry.kept = null;
-				// A fresh copy saves back again, unless it is too large to.
-				entry.halted = bytes.length > maxBytes ? 'too-large' : null;
-			});
+			return outcome;
 		},
 		idle: settle,
 		async dispose() {
