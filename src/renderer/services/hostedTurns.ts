@@ -417,7 +417,6 @@ export async function sendHostedTurn(
 	const historyBaseline = historyCommand
 		? await hostedTranscriptBaseline(target.peerId, target.agentId, hostTabId as string)
 		: undefined;
-	const sentAt = Date.now();
 	const receipt = await sendToMirroredTab(
 		target.peerId,
 		target.agentId,
@@ -440,11 +439,9 @@ export async function sendHostedTurn(
 				: candidate
 		);
 	}
-	if (historyCommand && receipt?.status === 'ran' && hostTabId) {
-		watchHostedHistoryCommand(session.id, target, hostTabId, {
-			sentAt,
-			...(historyBaseline ? { baseline: historyBaseline } : {}),
-		});
+	// No baseline (the read before the send failed): no toast rather than an earlier run's.
+	if (historyCommand && historyBaseline && receipt?.status === 'ran' && hostTabId) {
+		watchHostedHistoryCommand(session.id, target, hostTabId, { baseline: historyBaseline });
 	}
 	// The tab the message landed in: a kept tab's message opened a new host tab above.
 	if (receipt && opts.nameFrom && hostTabId) {
