@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import {
 	createRemoteCopyWriteBack,
 	keptVersionPath,
+	RemoteCopyNotSavedBackError,
 	RemoteCopyTooLargeError,
 	remoteCopyTooLargeMessage,
 	type RemoteCopyWriteBackEvent,
@@ -187,7 +188,13 @@ describe('remote copy write-back', () => {
 		await expect(reopen(writeBack)).resolves.toBe('fetched');
 		const keptAt = keptVersionPath(LOCAL, WHEN, 2);
 		expect(localFiles.get(keptAt)?.toString()).toBe('second');
-		expect(events.at(-1)).toEqual({ kind: 'kept', remotePath: REMOTE, sshRemoteId: 'r1', keptAt });
+		expect(events.at(-1)).toEqual({
+			kind: 'kept',
+			remotePath: REMOTE,
+			sshRemoteId: 'r1',
+			keptAt,
+			replaced: true,
+		});
 
 		// The fetch put the remote's bytes in the copy: a new baseline.
 		expect(localFiles.get(LOCAL)?.toString()).toBe('someone else');
@@ -435,6 +442,93 @@ describe('remote copy write-back', () => {
 		expect(onChange).not.toBeNull();
 		await saveCopy(writeBack, 'watched again');
 		expect(remoteFile.toString()).toBe('watched again');
+	});
+
+	it('a fresh Open of a copy too large to send back keeps a change made in it', async () => {
+		const writeBack = service({ maxBytes: 4 });
+		await expect(
+			writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' })
+		).rejects.toBeInstanceOf(RemoteCopyTooLargeError);
+		localFiles.set(LOCAL, Buffer.from('edited the big copy'));
+		await expect(reopen(writeBack)).resolves.toBe('fetched');
+		expect(localFiles.get(keptVersionPath(LOCAL, WHEN))?.toString()).toBe('edited the big copy');
+		expect(localFiles.get(LOCAL)?.toString()).toBe('fetched');
+		expect(writeRemote).not.toHaveBeenCalled();
+	});
+
+	it('watch says a copy a refetch could not start over does not save back', async () => {
+		const writeBack = await watched();
+		remoteFile = Buffer.from('someone else');
+		await saveCopy(writeBack, 'first');
+		// Open again, and the app saves while the bytes download: the copy keeps that save.
+		await expect(
+			reopen(writeBack, {
+				duringDownload: () => localFiles.set(LOCAL, Buffer.from('saved during the download')),
+			})
+		).resolves.toBe('kept');
+		await expect(
+			writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' })
+		).rejects.toThrow(
+			new RemoteCopyNotSavedBackError(
+				'The remote file changed since this copy was made, so the copy does not save back'
+			)
+		);
+	});
+
+	it('says a change was kept without claiming the copy was replaced when the fetch fails', async () => {
+		const writeBack = await watched();
+		remoteFile = Buffer.from('someone else');
+		await saveCopy(writeBack, 'first');
+		await saveCopy(writeBack, 'second');
+		await expect(
+			writeBack.refetch(LOCAL, {
+				download: async () => {
+					throw new Error('Connection refused');
+				},
+				place: async () => undefined,
+			})
+		).rejects.toThrow('Connection refused');
+		expect(events.at(-1)).toMatchObject({ kind: 'kept', replaced: false });
+		expect(localFiles.get(LOCAL)?.toString()).toBe('second');
+	});
+
+	it('a save made while the refetch downloads stays, even when another Open evicted the watch', async () => {
+		const writeBack = service({ maxWatched: 1 });
+		const other = path.join('tmp', 'maestro-remote-downloads', 'abc', 'other.md');
+		localFiles.set(other, Buffer.from('x'));
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await expect(
+			writeBack.refetch(LOCAL, {
+				download: async () => {
+					await writeBack.watch({
+						localPath: other,
+						remotePath: '/home/me/other.md',
+						sshRemoteId: 'r1',
+					});
+					localFiles.set(LOCAL, Buffer.from('saved during the download'));
+					return remoteFile;
+				},
+				place: async (bytes) => {
+					localFiles.set(LOCAL, bytes);
+				},
+			})
+		).resolves.toBe('kept');
+		await writeBack.idle();
+		expect(localFiles.get(LOCAL)?.toString()).toBe('saved during the download');
+		// The eviction's last send ran after the refetch, and found the save.
+		expect(remoteFile.toString()).toBe('saved during the download');
+	});
+
+	it('after a refetch, the next poll reads the copy once, so a save beside the rename still goes', async () => {
+		const writeBack = service({ fileEvents: false });
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		remoteFile = Buffer.from('remote2');
+		await expect(reopen(writeBack)).resolves.toBe('fetched');
+		// Same size and time as the fetched copy: only reading it shows the change.
+		localFiles.set(LOCAL, Buffer.from('edited!'));
+		await vi.advanceTimersByTimeAsync(1000 + 60);
+		await writeBack.idle();
+		expect(remoteFile.toString()).toBe('edited!');
 	});
 
 	it('names the kept version beside the copy', () => {

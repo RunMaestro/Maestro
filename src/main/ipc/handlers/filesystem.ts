@@ -73,7 +73,7 @@ import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
 import {
 	createRemoteCopyWriteBack,
-	RemoteCopyTooLargeError,
+	RemoteCopyNotSavedBackError,
 	type RemoteCopyWriteBack,
 	type RemoteCopyWriteBackEvent,
 } from '../../utils/remote-copy-write-back';
@@ -626,7 +626,9 @@ function announceWriteBack(
 	if (event.kind === 'kept') {
 		safeSend('remote:notifyToast', {
 			title: 'Your change was kept',
-			message: `${name} was opened again, so the copy now holds the remote file. Your change, which was not saved there, is kept at ${event.keptAt}.`,
+			message: event.replaced
+				? `${name} was opened again, so the copy now holds the remote file. Your change, which was not saved there, is kept at ${event.keptAt}.`
+				: `Your change to ${name}, which was not saved to the remote host, is kept at ${event.keptAt}.`,
 			color: 'yellow',
 			dismissible: true,
 		});
@@ -1034,8 +1036,9 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 	// destination named), and write a change saved in another app back to the
 	// remote file. The copy's path is derived here, never taken from the caller,
 	// so only a fetched copy can be sent to the remote. Call it right after the
-	// fetch: the copy's bytes now are what the remote held. A copy too large to
-	// send back is not watched, and the answer says why, for the flash.
+	// fetch: the copy's bytes now are what the remote held. A copy that does not
+	// save back (too large, or one a refetch could not start over) answers why,
+	// for the flash.
 	ipcMain.handle(
 		'fs:watchRemoteCopy',
 		async (_, remotePath: string, sshRemoteId: string): Promise<RemoteCopyWatchResult> => {
@@ -1044,7 +1047,7 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 			try {
 				await writeBack.watch({ localPath, remotePath, sshRemoteId });
 			} catch (error) {
-				if (!(error instanceof RemoteCopyTooLargeError)) throw error;
+				if (!(error instanceof RemoteCopyNotSavedBackError)) throw error;
 				return { path: localPath, savesBack: false, reason: error.message };
 			}
 			return { path: localPath, savesBack: true };

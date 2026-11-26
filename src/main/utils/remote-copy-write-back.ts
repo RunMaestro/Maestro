@@ -38,8 +38,20 @@ export function remoteCopyTooLargeMessage(maxBytes = REMOTE_COPY_WRITE_BACK_MAX_
 	return `The file is too large to save back to the remote host (over ${formatSize(maxBytes)})`;
 }
 
-/** `watch()` refuses a copy bigger than the write-back sends; nothing watches it. */
-export class RemoteCopyTooLargeError extends Error {
+/**
+ * `watch()` refuses a copy that does not save back; the message says why, in
+ * words for the user. The copy stays known, so a fresh Open keeps a change made
+ * in it beside it instead of replacing it.
+ */
+export class RemoteCopyNotSavedBackError extends Error {
+	constructor(reason: string) {
+		super(reason);
+		this.name = 'RemoteCopyNotSavedBackError';
+	}
+}
+
+/** The copy is bigger than the write-back sends; nothing watches it. */
+export class RemoteCopyTooLargeError extends RemoteCopyNotSavedBackError {
 	constructor(maxBytes = REMOTE_COPY_WRITE_BACK_MAX_BYTES) {
 		super(remoteCopyTooLargeMessage(maxBytes));
 		this.name = 'RemoteCopyTooLargeError';
@@ -50,8 +62,18 @@ export class RemoteCopyTooLargeError extends Error {
 export type RemoteCopyWriteBackEvent =
 	| { kind: 'saved'; remotePath: string; sshRemoteId: string }
 	| { kind: 'conflict'; remotePath: string; sshRemoteId: string; keptAt: string }
-	/** A copy that no longer saved back was fetched again; the change it held is kept here. */
-	| { kind: 'kept'; remotePath: string; sshRemoteId: string; keptAt: string }
+	/**
+	 * A copy that no longer saved back was opened again; the change it held is
+	 * kept at `keptAt`. `replaced`: the copy now holds the remote's bytes (false
+	 * when the fetch failed, or the app saved the copy again meanwhile).
+	 */
+	| {
+			kind: 'kept';
+			remotePath: string;
+			sshRemoteId: string;
+			keptAt: string;
+			replaced: boolean;
+	  }
 	| { kind: 'failed'; remotePath: string; sshRemoteId: string; message: string }
 	/** The copy can no longer be watched (the watcher failed): later saves stay on this machine. */
 	| { kind: 'unwatched'; remotePath: string; sshRemoteId: string };
@@ -115,8 +137,9 @@ export interface RemoteCopyWriteBack {
 	/**
 	 * Watch the copy at `localPath` of `remotePath`. A new watch takes the copy's
 	 * bytes now as the baseline: call this right after the copy was fetched.
-	 * Rejects with {@link RemoteCopyTooLargeError} for a copy bigger than the
-	 * write-back sends.
+	 * Rejects with {@link RemoteCopyNotSavedBackError} (its message says why)
+	 * for a copy that does not save back: one bigger than the write-back sends
+	 * ({@link RemoteCopyTooLargeError}), or one a refetch could not start over.
 	 */
 	watch(input: { localPath: string; remotePath: string; sshRemoteId: string }): Promise<void>;
 	/**
@@ -205,6 +228,16 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 	const pollMs = deps.pollMs ?? DEFAULT_POLL_MS;
 	const maxWatched = deps.maxWatched ?? DEFAULT_MAX_WATCHED;
 	const maxBytes = deps.maxBytes ?? REMOTE_COPY_WRITE_BACK_MAX_BYTES;
+
+	/** Why a halted copy does not save back, for `watch()` to say instead of "saves back". */
+	function haltError(halted: NonNullable<WatchedCopy['halted']>): RemoteCopyNotSavedBackError {
+		if (halted === 'too-large') return new RemoteCopyTooLargeError(maxBytes);
+		return new RemoteCopyNotSavedBackError(
+			halted === 'conflict'
+				? 'The remote file changed since this copy was made, so the copy does not save back'
+				: 'Maestro cannot watch this copy, so it does not save back'
+		);
+	}
 	const now = deps.now ?? (() => new Date());
 	/** Local copy path -> its watch. Insertion order is age, for eviction. */
 	const watched = new Map<string, WatchedCopy>();
@@ -396,8 +429,9 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					// The baseline is already right: a refetch set it, or kept the copy's change.
 					existing.remotePath = remotePath;
 					existing.sshRemoteId = sshRemoteId;
-					// The fetch just put a copy too large to send back here.
-					if (existing.halted === 'too-large') throw new RemoteCopyTooLargeError(maxBytes);
+					// The copy still does not save back (a refetch could not start it over,
+					// or put a copy too large to send back here): say so, not "saves back".
+					if (existing.halted) throw haltError(existing.halted);
 					if (existing.watcherLost) {
 						existing.watcherLost = false;
 						existing.watcher = deps.watchFile(
@@ -409,35 +443,42 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					return;
 				}
 				const fetched = await deps.readLocal(localPath);
-				if (fetched.length > maxBytes) throw new RemoteCopyTooLargeError(maxBytes);
+				// A copy too large to send back is not watched, but stays known with its
+				// baseline: a fresh Open must keep a change made in it, not replace it.
+				const tooLarge = fetched.length > maxBytes;
 				const entry: WatchedCopy = {
 					localPath,
 					remotePath,
 					sshRemoteId,
 					baseline: hashOf(fetched),
 					kept: null,
-					halted: null,
+					halted: tooLarge ? 'too-large' : null,
 					watcher: { close: () => undefined },
-					watcherLost: false,
+					watcherLost: tooLarge,
 					timer: null,
 					lastStat: await statKey(localPath),
 				};
-				entry.watcher = deps.watchFile(
-					localPath,
-					() => schedule(entry),
-					() => lose(entry)
-				);
+				if (!tooLarge) {
+					entry.watcher = deps.watchFile(
+						localPath,
+						() => schedule(entry),
+						() => lose(entry)
+					);
+				}
 				watched.set(localPath, entry);
 				updatePoller();
 				while (watched.size > maxWatched) {
 					stop(watched.values().next().value as WatchedCopy);
 				}
+				if (tooLarge) throw new RemoteCopyTooLargeError(maxBytes);
 			});
 		},
 		async refetch(localPath, { download, place }) {
 			const outcome = await queue.enqueue(localPath, async () => {
 				const entry = watched.get(localPath);
 				let checked: string | null = null;
+				/** Where a change this copy could not send was kept, told once the fetch is done. */
+				let keptAt: string | null = null;
 				if (entry) {
 					// A save still waiting out its debounce, or one that failed, goes
 					// first: the fetch must not land over a change the remote lacks.
@@ -453,35 +494,47 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 							// and the next save tries again.
 							if (!entry.halted) return 'kept' as const;
 							// This copy no longer saves back, and it holds a change kept
-							// nowhere else: keep that beside it, say where, and start over.
-							const keptAt = await keepVersion(localPath, local);
+							// nowhere else: keep that beside it, and start over.
+							keptAt = await keepVersion(localPath, local);
 							entry.kept = localHash;
-							deps.notify({
-								kind: 'kept',
-								remotePath: entry.remotePath,
-								sshRemoteId: entry.sshRemoteId,
-								keptAt,
-							});
 						}
 					}
 				}
-				const bytes = await download();
-				// The app may have saved the copy while the bytes were coming (this
-				// queue orders Maestro's own steps, not the app's): that save stays,
-				// and goes to the remote, instead of being replaced.
-				if (entry && watched.get(localPath) === entry) {
-					const local = await readCopy(localPath);
-					if (local && hashOf(local) !== checked) return 'saved-during-fetch' as const;
+				let replaced = false;
+				try {
+					const bytes = await download();
+					// The app may have saved the copy while the bytes were coming (this
+					// queue orders Maestro's own steps, not the app's): that save stays,
+					// and goes to the remote, instead of being replaced. Checked even when
+					// the watch was evicted meanwhile: it decides whether replacing is safe.
+					if (entry) {
+						const local = await readCopy(localPath);
+						if (local && hashOf(local) !== checked) return 'saved-during-fetch' as const;
+					}
+					await place(bytes);
+					replaced = true;
+					if (entry) {
+						// The next poll reads the copy once (a save may have landed beside the
+						// rename); the read sends nothing when it holds these bytes.
+						entry.lastStat = null;
+						entry.baseline = hashOf(bytes);
+						entry.kept = null;
+						// A fresh copy saves back again, unless it is too large to.
+						entry.halted = bytes.length > maxBytes ? 'too-large' : null;
+					}
+					return 'fetched' as const;
+				} finally {
+					// Said after the fetch, so the words match what the copy holds now.
+					if (entry && keptAt) {
+						deps.notify({
+							kind: 'kept',
+							remotePath: entry.remotePath,
+							sshRemoteId: entry.sshRemoteId,
+							keptAt,
+							replaced,
+						});
+					}
 				}
-				await place(bytes);
-				if (entry) {
-					entry.lastStat = await statKey(localPath);
-					entry.baseline = hashOf(bytes);
-					entry.kept = null;
-					// A fresh copy saves back again, unless it is too large to.
-					entry.halted = bytes.length > maxBytes ? 'too-large' : null;
-				}
-				return 'fetched' as const;
 			});
 			if (outcome === 'saved-during-fetch') {
 				const entry = watched.get(localPath);
