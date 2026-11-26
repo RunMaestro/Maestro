@@ -885,6 +885,15 @@ describe('turn records', () => {
 			expect(result.history).toMatchObject(handed ? { ok: true } : { reason: 'not-recorded' });
 		});
 
+		it('summarizes a tool turn whose cards the host did not fold (P12)', async () => {
+			seed({}, { showThinking: 'on' });
+			const summarize = vi.fn();
+			const { recorder: records } = await recorder({ summarize });
+			const result = await records.recordTurn(turn({ ranTool: true }));
+			expect(summarize).toHaveBeenCalledTimes(1);
+			expect(result.history).toMatchObject({ ok: true });
+		});
+
 		it('summarizes no turn that ran in no provider session, as the desktop does not', async () => {
 			const summarize = vi.fn();
 			const { recorder: records } = await recorder({ summarize });
