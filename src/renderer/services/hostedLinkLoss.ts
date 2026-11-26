@@ -147,6 +147,20 @@ function stoppedHere(key: string, messageId: string | undefined): boolean {
 
 const cutKey = (sessionId: string, tabId: string) => `${sessionId}:${tabId}`;
 
+/**
+ * The message the turn a host tab runs answers: the tab's newest user message, when it is not
+ * older than the turn (the host stamps both on its own clock, and writes the message after the
+ * turn's process starts). An older one is the previous turn's, so the cut keeps nothing for it.
+ */
+function cutTurnMessage(
+	logs: readonly LogEntry[] | undefined,
+	turnStartedAt: number | undefined
+): LogEntry | undefined {
+	const message = lastUserMessage(logs);
+	if (!message || turnStartedAt === undefined) return message;
+	return message.timestamp >= turnStartedAt ? message : undefined;
+}
+
 /** The newest message the user sent in a tab: the one its running turn answers. */
 function lastUserMessage(logs: readonly LogEntry[] | undefined): LogEntry | undefined {
 	for (let i = (logs?.length ?? 0) - 1; i >= 0; i -= 1) {
@@ -169,7 +183,10 @@ export function noteHostedTurnsCut(session: Session, link: HostLink, lost?: Agen
 		if (hostTab.state !== 'busy' || hostTab.hidden) continue;
 		const key = cutKey(session.id, hostTab.id);
 		if (cutTurns.has(key)) continue;
-		const message = lastUserMessage(session.aiTabs.find((tab) => tab.id === hostTab.id)?.logs);
+		const message = cutTurnMessage(
+			session.aiTabs.find((tab) => tab.id === hostTab.id)?.logs,
+			hostTab.thinkingStartTime
+		);
 		const entry: CutTurn = {
 			sessionId: session.id,
 			tabId: hostTab.id,

@@ -735,8 +735,9 @@ function withUserEntry(logs: readonly unknown[], entry: LogEntryRecord): unknown
 	const sent = entry.images ?? [];
 	const held = logs.some((candidate) => {
 		const existing = candidate as Partial<LogEntryRecord> | null;
-		const images = existing?.images ?? [];
+		const images = Array.isArray(existing?.images) ? existing.images : [];
 		return (
+			(existing?.images === undefined || Array.isArray(existing.images)) &&
 			existing?.id === entry.id &&
 			existing.source === 'user' &&
 			existing.text === entry.text &&

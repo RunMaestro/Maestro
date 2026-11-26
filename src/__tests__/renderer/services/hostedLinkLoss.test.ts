@@ -80,7 +80,11 @@ const hostOutage: SshReachabilityEvent = {
 	cause: 'host',
 };
 
-function peerWith(state: 'idle' | 'busy', connection: PeerMirrorConnection) {
+function peerWith(
+	state: 'idle' | 'busy',
+	connection: PeerMirrorConnection,
+	thinkingStartTime?: number
+) {
 	const { peer } = replacePeerAgents(
 		createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
 		[
@@ -89,7 +93,15 @@ function peerWith(state: 'idle' | 'busy', connection: PeerMirrorConnection) {
 				name: 'Docs',
 				toolType: 'claude-code',
 				activeTabId: 't1',
-				aiTabs: [{ id: 't1', name: 'Main', agentSessionId: 's1', state }],
+				aiTabs: [
+					{
+						id: 't1',
+						name: 'Main',
+						agentSessionId: 's1',
+						state,
+						...(thinkingStartTime !== undefined ? { thinkingStartTime } : {}),
+					},
+				],
 			},
 		],
 		[],
@@ -99,11 +111,15 @@ function peerWith(state: 'idle' | 'busy', connection: PeerMirrorConnection) {
 }
 
 /** Replace the host's report without dropping the transcripts read so far. */
-function hostReports(state: 'idle' | 'busy', connection: PeerMirrorConnection) {
+function hostReports(
+	state: 'idle' | 'busy',
+	connection: PeerMirrorConnection,
+	thinkingStartTime?: number
+) {
 	usePeerMirrorStore.setState((current) => ({
 		enabled: true,
 		order: ['box'],
-		peers: { ...current.peers, box: peerWith(state, connection) },
+		peers: { ...current.peers, box: peerWith(state, connection, thinkingStartTime) },
 	}));
 }
 
@@ -608,6 +624,24 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		// The kept message names the host's entry for it, so its resend draws no second bubble.
 		expect(useSessionStore.getState().sessions[1].executionQueue?.[0]?.hostEntryId).toBe('u1');
 		expect(useSshOutageStore.getState().outages.r1.surfaced).toBe(true);
+	});
+
+	it("keeps nothing for a turn whose own message has not reached this tab: never the previous turn's", () => {
+		// The host started a turn after QUESTION (timestamp 10), and its message is not drawn here yet.
+		hostReports('busy', 'reconnecting', 100);
+		confirmOutage();
+		syncHostedAgents();
+		expect(queue()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		// The cut draws its note instead, as when no message can be kept.
+		expect(linkNotes()).toHaveLength(1);
+	});
+
+	it('keeps the message the running turn answers (not older than the turn)', () => {
+		hostReports('busy', 'reconnecting', QUESTION.timestamp);
+		confirmOutage();
+		syncHostedAgents();
+		expect(queue().map((item) => item.hostEntryId)).toEqual(['u1']);
 	});
 
 	it('keeps the cut message once, however many passes the sync makes', () => {

@@ -1616,6 +1616,16 @@ describe('runtime turns', () => {
 				expect(users.map((entry) => entry.id)).toEqual([written.id]);
 			});
 
+			it('starts the turn with a new entry when the entry its id names holds malformed images', async () => {
+				const runtime = await start([cutTab([{ ...QUESTION, images: '' }])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.outcome();
+				const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(users).toHaveLength(2);
+				expect(users[1].id).not.toBe('u1');
+			});
+
 			it('ignores an id it cannot take', async () => {
 				const runtime = await start();
 				const turn = watch(runtime);

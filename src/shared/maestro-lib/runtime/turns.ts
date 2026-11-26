@@ -252,6 +252,8 @@ function turnEntryIdFor(
 	const logs = Array.isArray(tab?.logs) ? (tab.logs as LogEntryRecord[]) : [];
 	const existing = logs.find((entry) => entry?.id === entryId);
 	if (!existing) return entryId;
+	// A stored entry is not checked on load: a malformed `images` reads as another message.
+	if (existing.images !== undefined && !Array.isArray(existing.images)) return undefined;
 	const held = existing.images ?? [];
 	const sent = images ?? [];
 	const same =
