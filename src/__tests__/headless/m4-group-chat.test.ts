@@ -306,4 +306,35 @@ describe('M4 end-to-end: headless group chat and consults', () => {
 			await runtime.connection.close();
 		}
 	});
+
+	// A Stop that lands before the consult's process starts (it waits its turn, or its question is
+	// still being written) still ends it as stopped, on its consult tab too, as a local Stop does.
+	it('ends a consult stopped before its process started as a stopped one', async () => {
+		const runtime = await startRuntime([seedAgent('responder', 'Responder')]);
+		const askerKey = buildRemoteAskerKey({ machine: 'laptop', agentId: 'a', tabId: 't' });
+		let result: ClientResult<unknown> | undefined;
+		try {
+			const asked = runtime.consults.ask({
+				targetAgentId: 'responder',
+				question: 'What is the answer?',
+				askerKey,
+			});
+			expect(await runtime.consults.cancel?.({ askerKey })).toEqual({
+				ok: true,
+				value: { canceled: 1 },
+			});
+			result = await asked;
+		} finally {
+			await runtime.connection.close();
+		}
+		expect(result?.ok).toBe(false);
+		if (result && !result.ok) expect(result.error.message).toMatch(/was stopped/);
+		const stored = JSON.parse(fs.readFileSync(path.join(dir, 'maestro-sessions.json'), 'utf8'));
+		const responder = stored.sessions.find((s: { id: string }) => s.id === 'responder');
+		const consultTab = responder.aiTabs.find(
+			(tab: { consultOrigin?: unknown }) => tab.consultOrigin
+		);
+		expect(consultTab.logs.map((log: { source: string }) => log.source)).toEqual(['user', 'ai']);
+		expect(consultTab.logs[1].text).toMatch(/was stopped/);
+	});
 });

@@ -157,6 +157,25 @@ function toTargetSession(record: AgentRecord): CrossAgentTargetSession | undefin
 	};
 }
 
+/** The terminal chunk of a consult Stop ended before its process started: stopped, nothing said. */
+function stoppedChunk(
+	request: CrossAgentRequest,
+	target: CrossAgentTargetSession
+): CrossAgentResponseChunk {
+	return {
+		requestId: request.requestId,
+		sourceSessionId: request.sourceSessionId,
+		sourceTabId: request.sourceTabId,
+		targetSessionId: request.targetSessionId,
+		targetTabId: request.targetTabId,
+		targetAgentName: target.name,
+		targetToolType: target.toolType,
+		chunk: '',
+		done: true,
+		canceled: true,
+	};
+}
+
 export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeConsults {
 	const { paths, repository, background } = options;
 	const ctx: RuleContext = { ...DEFAULT_RULE_CONTEXT, ...options.rules };
@@ -166,6 +185,12 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 
 	/** Consults that share a consult tab run one at a time; different tabs and agents run at once (GD18). */
 	const order = createKeyedWriteQueue();
+	/**
+	 * Consults asked but not started yet (waiting behind another on their consult tab, or writing
+	 * the question): Stop finds no process for them, so it marks them here and they end as stopped
+	 * the moment their turn comes, as a local Stop ends one whose process does not exist yet.
+	 */
+	const waiting = new Set<{ sourceSessionId: string; sourceTabId: string; stopped: boolean }>();
 	let inFlight = 0;
 	let disposed = false;
 	/** Every ask not yet finished, so shutdown can wait for what each one writes down. */
@@ -290,6 +315,8 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		}, timeoutMs);
 		timer.handle.unref?.();
 
+		const pendingStart = { ...key, stopped: false };
+		waiting.add(pendingStart);
 		inFlight += 1;
 		try {
 			return await order.enqueue(`${target.id}\u0000${key.sourceSessionId}`, async () => {
@@ -346,35 +373,40 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 					createdAt: now(),
 				};
 
-				const chunk = await new Promise<CrossAgentResponseChunk>((resolve) => {
-					void service.start(request, {
-						runner: background.consultRunner(),
-						resolveAgent: (providerId) => background.resolveAgent(providerId),
-						sshStore: background.sshStore,
-						getTargetSession: (id) => {
-							const found = repository.getAgent(id);
-							return found ? (toTargetSession(found) ?? null) : null;
-						},
-						getCustomEnvVars: (toolType) =>
-							agentConfigs()[toolType]?.customEnvVars as Record<string, string> | undefined,
-						getAgentConfig: (toolType) => agentConfigs()[toolType],
-						writable: writableFor(isHandoff),
-						// The target answers as itself: the system prompt its own chat turn carries.
-						getSystemPrompt: (consulted) => {
-							const stored = repository.getAgent(consulted.id);
-							return loadStandInSystemPrompt(
-								stored ? toTurnAgent(stored) : undefined,
-								promptSources,
-								{
-									isSsh: consulted.sshRemoteConfig?.enabled === true,
-								}
-							);
-						},
-						onChunk: (piece) => {
-							if (piece.done) resolve(piece);
-						},
-					});
-				});
+				// Stopped while it waited: it ends as a stopped consult with nothing said, and from here
+				// on a Stop reaches the service, which registers the consult as `start` is called.
+				waiting.delete(pendingStart);
+				const chunk = pendingStart.stopped
+					? stoppedChunk(request, target)
+					: await new Promise<CrossAgentResponseChunk>((resolve) => {
+							void service.start(request, {
+								runner: background.consultRunner(),
+								resolveAgent: (providerId) => background.resolveAgent(providerId),
+								sshStore: background.sshStore,
+								getTargetSession: (id) => {
+									const found = repository.getAgent(id);
+									return found ? (toTargetSession(found) ?? null) : null;
+								},
+								getCustomEnvVars: (toolType) =>
+									agentConfigs()[toolType]?.customEnvVars as Record<string, string> | undefined,
+								getAgentConfig: (toolType) => agentConfigs()[toolType],
+								writable: writableFor(isHandoff),
+								// The target answers as itself: the system prompt its own chat turn carries.
+								getSystemPrompt: (consulted) => {
+									const stored = repository.getAgent(consulted.id);
+									return loadStandInSystemPrompt(
+										stored ? toTurnAgent(stored) : undefined,
+										promptSources,
+										{
+											isSsh: consulted.sshRemoteConfig?.enabled === true,
+										}
+									);
+								},
+								onChunk: (piece) => {
+									if (piece.done) resolve(piece);
+								},
+							});
+						});
 
 				// A failed or stopped consult keeps what the target managed to say, and the reason after it.
 				const note = crossAgentTerminationNote(chunk);
@@ -441,6 +473,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 				return ok({ answer: chunk.chunk.trim(), agentName: target.name });
 			});
 		} finally {
+			waiting.delete(pendingStart);
 			inFlight -= 1;
 			clearTimeout(timer.handle);
 		}
@@ -448,7 +481,20 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 
 	return {
 		api: { ask },
-		cancelForSource: (agentId, tabId) => service.cancelForSource(agentId, tabId),
+		cancelForSource: (agentId, tabId) => {
+			let marked = 0;
+			for (const pending of waiting) {
+				if (
+					!pending.stopped &&
+					pending.sourceSessionId === agentId &&
+					(!tabId || pending.sourceTabId === tabId)
+				) {
+					pending.stopped = true;
+					marked += 1;
+				}
+			}
+			return marked + service.cancelForSource(agentId, tabId);
+		},
 		inFlight: () => inFlight,
 		dispose() {
 			disposed = true;

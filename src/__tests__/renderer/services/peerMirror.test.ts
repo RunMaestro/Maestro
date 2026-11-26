@@ -13,6 +13,7 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 
 import {
 	callMirroredAgentAction,
+	cancelMirrorConsult,
 	removeMirrorQueuedItem,
 	setMirrorQueuedItemPaused,
 } from '../../../renderer/services/peerMirror';
@@ -96,6 +97,30 @@ describe('services/peerMirror', () => {
 			expect(await removeMirrorQueuedItem('box', 'a1', 'q1')).toBeNull();
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({ color: 'red', title: 'Could not remove the queued message' })
+			);
+		});
+	});
+
+	describe('cancelMirrorConsult', () => {
+		it('carries Stop to the host with no toast when the host took it', async () => {
+			act$.mockResolvedValue({ ok: true, result: { kind: 'consult-cancel', canceled: 1 } });
+			expect(await cancelMirrorConsult('box', 'a1', { agentId: 'src', tabId: 't' })).toBe(true);
+			expect(act$).toHaveBeenCalledWith('box', 'a1', {
+				kind: 'consult-cancel',
+				asker: { agentId: 'src', tabId: 't' },
+			});
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		it('says so in a red toast when Stop did not reach the host', async () => {
+			act$.mockResolvedValue({ ok: false, error: 'Not connected to peer "box".' });
+			expect(await cancelMirrorConsult('box', 'a1', { agentId: 'src', tabId: 't' })).toBe(false);
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					color: 'red',
+					title: 'Could not stop the consult',
+					message: expect.stringContaining('The host may still finish the consult.'),
+				})
 			);
 		});
 	});

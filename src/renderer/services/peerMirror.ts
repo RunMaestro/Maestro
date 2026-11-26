@@ -406,16 +406,23 @@ export async function askMirrorConsult(
 
 /**
  * Stop on the asking tab, carried to the host: end the consults that tab has running there, which
- * end as stopped ones in the host's consult tab and History, as main ends a local target's. No
- * toast: the bubble already shows the consult stopped, and a host that is down has nothing running
- * that this machine could reach.
+ * end as stopped ones in the host's consult tab and History, as main ends a local target's. The
+ * bubble already shows the consult stopped; a Stop that did not reach the host is a red toast,
+ * since the host may still finish that consult. Answers whether the host took it.
  */
 export async function cancelMirrorConsult(
 	peerId: string,
 	agentId: string,
 	asker: { agentId: string; tabId: string }
-): Promise<void> {
-	await callMirroredAgentAction(peerId, agentId, { kind: 'consult-cancel', asker });
+): Promise<boolean> {
+	const answer = await callMirroredAgentAction(peerId, agentId, { kind: 'consult-cancel', asker });
+	if (answer?.ok) return true;
+	notifyToast({
+		color: 'red',
+		title: ACTION_FAILURE_TITLES['consult-cancel'],
+		message: `${answer?.error ?? 'Federation is not available in this window.'} The host may still finish the consult.`,
+	});
+	return false;
 }
 
 /** Close a mirrored tab on its host: it moves to the host's closed-tab history. */
