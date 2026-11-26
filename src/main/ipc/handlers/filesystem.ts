@@ -40,6 +40,7 @@ import { normalizeRootRelativePath } from '../../../shared/pathContainment';
 import { isWindows } from '../../../shared/platformDetection';
 import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
 import { generateUUID } from '../../../shared/uuid';
+import { formatSize } from '../../../shared/formatters';
 import { buildParquetPreviewMarker, isParquetFile } from '../../../shared/parquet/preview';
 import { buildSqlitePreviewMarker } from '../../../shared/sqlite/preview';
 import { isSqliteDatabaseFile } from '../../sqlite/sqlite-detect';
@@ -240,6 +241,38 @@ async function downloadRemoteFileTo(
 export const REMOTE_FOLDER_DOWNLOAD_MAX_FILES = 2000;
 /** The deepest a folder download walks (the tree listing's own default is 5). */
 export const REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH = 64;
+/**
+ * The most bytes one folder download fetches in all. Each file is read whole into memory, so a
+ * bigger tree is refused (with its size) rather than copied; the callers fall back (a remote page
+ * opens alone, a drag-out says why).
+ */
+export const REMOTE_FOLDER_DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
+/** The largest one file in a folder download may be (it is read whole, and four run at once). */
+export const REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES = 50 * 1024 * 1024;
+
+/** Why a folder of `total` bytes (`atLeast`: a lower bound) is refused, or `null` when it fits. */
+export function remoteFolderTooLarge(
+	total: number,
+	largest: { name: string; size: number } | null,
+	atLeast = false
+): string | null {
+	const size = `${atLeast ? 'at least ' : ''}${formatSize(total)}`;
+	if (largest && largest.size > REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES) {
+		return (
+			`The folder is too large to copy to this computer (${size}): ` +
+			`${largest.name.slice(0, 200)} alone is ${formatSize(largest.size)}, over the ` +
+			`${formatSize(REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES)} limit for one file`
+		);
+	}
+	if (total > REMOTE_FOLDER_DOWNLOAD_MAX_BYTES) {
+		return (
+			`The folder is too large to copy to this computer (${size}; ` +
+			`the limit is ${formatSize(REMOTE_FOLDER_DOWNLOAD_MAX_BYTES)})`
+		);
+	}
+	return null;
+}
+
 /** Parallel SSH reads while downloading a folder. */
 const REMOTE_FOLDER_DOWNLOAD_CONCURRENCY = 4;
 
@@ -314,6 +347,8 @@ async function downloadRemoteDirToLocal(
 			// A subfolder the walk cannot read fails the copy, naming it, before any byte is
 			// fetched: a copy that silently lacks a subfolder is a wrong copy.
 			strict: true,
+			// Sizes come with the listing, so a tree too large to copy is refused before any read.
+			withSizes: true,
 		},
 		sshConfig
 	);
@@ -344,10 +379,23 @@ async function downloadRemoteDirToLocal(
 		);
 	}
 	const remoteRoot = remoteDir.replace(/\/+$/, '');
-	const files = listed.data!.files.map((rel) => ({
+	const sizes = listed.data!.fileSizes ?? [];
+	const files = listed.data!.files.map((rel, i) => ({
 		remote: `${remoteRoot}/${rel}`,
 		segments: toSegments(rel),
+		rel,
+		size: sizes[i] ?? null,
 	}));
+	// Checked from the listing before any byte is fetched, for every size the remote reported.
+	let listedTotal = 0;
+	let largest: { name: string; size: number } | null = null;
+	for (const file of files) {
+		if (file.size === null) continue;
+		listedTotal += file.size;
+		if (!largest || file.size > largest.size) largest = { name: file.rel, size: file.size };
+	}
+	const tooLarge = remoteFolderTooLarge(listedTotal, largest);
+	if (tooLarge) throw new Error(tooLarge);
 
 	const staging = stagingPathFor(localDir);
 	try {
@@ -358,12 +406,24 @@ async function downloadRemoteDirToLocal(
 		// The first failure stops the rest from starting, and the reads already
 		// running settle before the staging folder is removed under them.
 		const failures: unknown[] = [];
+		// A size the listing could not report is checked once the bytes are here, the same rule.
+		let fetchedTotal = listedTotal;
 		await mapWithConcurrency(files, REMOTE_FOLDER_DOWNLOAD_CONCURRENCY, async (file) => {
 			if (failures.length > 0) return;
 			try {
 				const local = path.join(staging, ...file.segments);
 				await fs.mkdir(path.dirname(local), { recursive: true });
-				await fs.writeFile(local, await readRemoteFileBytes(file.remote, sshConfig));
+				const bytes = await readRemoteFileBytes(file.remote, sshConfig);
+				if (file.size === null) {
+					fetchedTotal += bytes.length;
+					const over = remoteFolderTooLarge(
+						fetchedTotal,
+						{ name: file.rel, size: bytes.length },
+						true
+					);
+					if (over) throw new Error(over);
+				}
+				await fs.writeFile(local, bytes);
 			} catch (error) {
 				failures.push(error);
 			}

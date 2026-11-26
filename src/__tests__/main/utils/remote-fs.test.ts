@@ -347,6 +347,49 @@ describe('remote-fs', () => {
 				}
 			);
 
+			it.skipIf(process.platform === 'win32')(
+				'under a real shell: withSizes reports each file size, names with spaces included',
+				async () => {
+					const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'remote-sizes-')));
+					try {
+						fs.mkdirSync(path.join(base, 'sub'));
+						fs.writeFileSync(path.join(base, 'a b.md'), 'hello');
+						fs.writeFileSync(path.join(base, 'sub', 'c.bin'), Buffer.alloc(1234));
+						const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+						await listTreeRemote(base, { strict: true, withSizes: true }, baseConfig, deps);
+						const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(
+							-1
+						) as string;
+						const out = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+						const result = await listTreeRemote(
+							base,
+							{ strict: true, withSizes: true },
+							baseConfig,
+							createMockDeps({ stdout: out.stdout, stderr: '', exitCode: 0 })
+						);
+						expect(result.success).toBe(true);
+						const sizeOf = Object.fromEntries(
+							result.data!.files.map((file, i) => [file, result.data!.fileSizes![i]])
+						);
+						expect(sizeOf).toEqual({ 'a b.md': 5, 'sub/c.bin': 1234 });
+					} finally {
+						fs.rmSync(base, { recursive: true, force: true });
+					}
+				}
+			);
+
+			it('withSizes keeps a file stat could not read, with an unknown size', async () => {
+				const stdout = `${SEP}\n./a.md\n./b.md\n__MAESTRO_FIND_SIZES__\n7 ./a.md\n`;
+				const result = await listTreeRemote(
+					'/project',
+					{ withSizes: true },
+					baseConfig,
+					createMockDeps({ stdout, stderr: '', exitCode: 0 })
+				);
+				expect(result.data?.files).toEqual(['a.md', 'b.md']);
+				expect(result.data?.fileSizes).toEqual([7, null]);
+			});
+
 			it('without strict, an unreadable subfolder is still skipped quietly (the explorer view)', async () => {
 				const { deps } = runStrict('/project');
 				await listTreeRemote('/project', {}, baseConfig, deps);

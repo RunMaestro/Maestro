@@ -1950,6 +1950,12 @@ export interface ListTreeOptions {
 	 * walk without `strict` lists it.
 	 */
 	strict?: boolean;
+	/**
+	 * Also report each listed file's size in bytes (`ListTreeResult.fileSizes`), so a caller can
+	 * refuse a tree that is too large before it fetches a byte. Read by a separate `stat` walk: a
+	 * file `stat` cannot read keeps its place in `files` with an unknown (`null`) size.
+	 */
+	withSizes?: boolean;
 }
 
 /** `find -L` reports a symlink loop with one of these (GNU, BSD); the walk already skipped it. */
@@ -1986,6 +1992,11 @@ export interface ListTreeResult {
 	files: string[];
 	/** True iff the file list was truncated by the `maxFiles` cap. */
 	truncated: boolean;
+	/**
+	 * With `withSizes`: each file's size in bytes, in the order of `files`, or `null` when the
+	 * remote could not report it.
+	 */
+	fileSizes?: (number | null)[];
 }
 
 /**
@@ -2055,12 +2066,19 @@ export async function listTreeRemote(
 
 	const SEP = '__MAESTRO_FIND_SEP__';
 	const ERR_SEP = '__MAESTRO_FIND_ERR__';
+	const SIZE_SEP = '__MAESTRO_FIND_SIZES__';
+	// Sizes: GNU `stat -c` first, then BSD `stat -f` (macOS), as `listFilesWithStatsRemote()`.
+	const withSizes = options.withSizes === true;
+	const sizeFind =
+		`if stat -c %s . >/dev/null 2>&1; then __o=-c; __f='%s %n'; else __o=-f; __f='%z %N'; fi; ` +
+		`find -L . -mindepth 1 -maxdepth ${maxDepth} ${pruneClause} -type f -exec stat -L "$__o" "$__f" {} + 2>/dev/null${headTail}`;
 	const remoteCommand =
 		`cd ${escapedRoot} 2>/dev/null || { echo "__CD_ERROR__"; exit 0; }; ` +
 		(strict ? `__maestro_err=$(mktemp 2>/dev/null) || { echo "__TMP_ERROR__"; exit 0; }; ` : '') +
 		`${dirFind}; ` +
 		`echo "${SEP}"; ` +
 		`${fileFind}` +
+		(withSizes ? `; echo "${SIZE_SEP}"; ${sizeFind}` : '') +
 		(strict ? `; echo "${ERR_SEP}"; cat "$__maestro_err"; rm -f "$__maestro_err"` : '');
 
 	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
@@ -2103,7 +2121,18 @@ export async function listTreeRemote(
 	const sepLine = `\n${SEP}\n`;
 	const sepIdx = output.indexOf(sepLine);
 	const dirSection = sepIdx >= 0 ? output.slice(0, sepIdx) : output;
-	const fileSection = sepIdx >= 0 ? output.slice(sepIdx + sepLine.length) : '';
+	let fileSection = sepIdx >= 0 ? output.slice(sepIdx + sepLine.length) : '';
+	// Every listed line starts with `./`, so the first marker line is the real one.
+	let sizeSection = '';
+	if (withSizes) {
+		const sizeLine = `\n${SIZE_SEP}\n`;
+		const padded = `\n${fileSection}`;
+		const sizeIdx = padded.indexOf(sizeLine);
+		if (sizeIdx >= 0) {
+			sizeSection = padded.slice(sizeIdx + sizeLine.length);
+			fileSection = padded.slice(1, sizeIdx + 1);
+		}
+	}
 
 	const stripPrefix = (line: string): string => (line.startsWith('./') ? line.slice(2) : line);
 
@@ -2118,7 +2147,14 @@ export async function listTreeRemote(
 	}
 	const files = fileLines.map(stripPrefix).filter(Boolean);
 
-	return { success: true, data: { directories, files, truncated } };
+	if (!withSizes) return { success: true, data: { directories, files, truncated } };
+	const sizeOf = new Map<string, number>();
+	for (const line of sizeSection.split('\n')) {
+		const match = /^(\d+) \.\/(.+)$/.exec(line.replace(/\r$/, ''));
+		if (match) sizeOf.set(match[2], parseInt(match[1], 10));
+	}
+	const fileSizes = files.map((file) => sizeOf.get(file) ?? null);
+	return { success: true, data: { directories, files, truncated, fileSizes } };
 }
 
 /** One regular file from {@link listFilesWithStatsRemote}. Times are milliseconds. */
