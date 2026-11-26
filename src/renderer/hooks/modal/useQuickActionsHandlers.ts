@@ -17,11 +17,11 @@ import { useCallback } from 'react';
 import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import {
-	cycleShowThinkingFields,
 	moveActiveUnifiedTabToEdge,
 	resolveQueuedItemTarget,
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
+import { cycleTabThinkingMode } from '../../services/tabThinkingMode';
 import { logger } from '../../utils/logger';
 import type { Session } from '../../types';
 import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/sessionStore';
@@ -156,10 +156,7 @@ export function useQuickActionsHandlers(
 	const handleQuickActionsToggleTabShowThinking = useCallback(() => {
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			updateAiTab(activeSession.id, activeSession.activeTabId, (tab) => ({
-				...tab,
-				...cycleShowThinkingFields(tab),
-			}));
+			cycleTabThinkingMode(activeSession.id, activeSession.activeTabId);
 		}
 	}, []);
 
