@@ -12,6 +12,7 @@ import {
 } from './testUtils';
 import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayout';
 import type { PanelLayoutNode, TabGroup, UnifiedTabRef } from '../../../../../renderer/types';
+import { AGENT_MODES, agentModeFields } from '../../../../helpers';
 
 /** Find the leaf id whose tab ref matches, so a test can focus a specific pane. */
 function leafIdForTab(group: TabGroup, ref: UnifiedTabRef): string {
@@ -47,6 +48,9 @@ vi.mock('../../../../../renderer/contexts/InlineWizardContext', () => ({
 
 const runtimeMocks = vi.hoisted(() => ({ isWebDesktop: vi.fn(() => false) }));
 vi.mock('../../../../../renderer/utils/runtimeContext', () => runtimeMocks);
+
+const hostedMocks = vi.hoisted(() => ({ closeHostedTab: vi.fn() }));
+vi.mock('../../../../../renderer/services/hostedTurns', () => hostedMocks);
 
 describe('useUnifiedTabHandlers', () => {
 	beforeEach(() => {
@@ -179,6 +183,33 @@ describe('useUnifiedTabHandlers', () => {
 		});
 		expect(getSession().browserTabs).toEqual([]);
 	});
+
+	// Parity round 5, P1: a bulk close reaches a hosted agent's host, as one tab's close does.
+	it.each(AGENT_MODES)(
+		'%s: Close Other Tabs leaves the same strip and closes each AI tab on the host too',
+		(mode) => {
+			hostedMocks.closeHostedTab.mockClear();
+			setupSession({
+				...agentModeFields(mode),
+				aiTabs: [
+					createMockAITab({ id: 'ai-1' }),
+					createMockAITab({ id: 'ai-2' }),
+					createMockAITab({ id: 'ai-3' }),
+				],
+				activeTabId: 'ai-2',
+			});
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+			act(() => {
+				result.current.handleCloseOtherTabs();
+			});
+			expect(getSession().unifiedTabOrder).toEqual([{ type: 'ai', id: 'ai-2' }]);
+			// `closeHostedTab()` closes on the host for a hosted agent and does nothing for the others.
+			expect(hostedMocks.closeHostedTab.mock.calls.map((call) => call[1])).toEqual([
+				'ai-1',
+				'ai-3',
+			]);
+		}
+	);
 
 	it('closes other mixed tabs, kills terminal processes, and ends closed wizard tabs', async () => {
 		const active = createMockAITab({ id: 'ai-active' });
