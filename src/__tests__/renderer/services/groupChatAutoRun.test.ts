@@ -58,7 +58,13 @@ function launcherFor(mode: (typeof AGENT_MODES)[number]) {
 	const seen = { registered: false };
 	const launch = vi.fn(async (sessionId: string) => {
 		seen.registered = hasGroupChatAutoRun(sessionId);
-		if (mode !== 'hosted') consumeGroupChatAutoRun(sessionId);
+		if (mode === 'hosted') return;
+		// START_BATCH, then the run's end: its completion consumes the entry.
+		useBatchStore.setState({
+			batchRunStates: { [sessionId]: { ...DEFAULT_BATCH_STATE, isRunning: true } },
+		});
+		consumeGroupChatAutoRun(sessionId);
+		useBatchStore.setState({ batchRunStates: { [sessionId]: { ...DEFAULT_BATCH_STATE } } });
 	});
 	return { launch, seen };
 }
@@ -213,6 +219,26 @@ describe('startGroupChatAutoRun refusals reach the chat', () => {
 			participantName: 'Client',
 		});
 		void firstRequest;
+	});
+
+	it('reports a declined launch even when another window runs a mirror on the agent', async () => {
+		setAgent('local');
+		// startBatchRun refuses because another window's run appeared as a mirror.
+		const startBatchRun = vi.fn(async (sessionId: string) => {
+			useBatchStore.setState({ batchRunStates: { [sessionId]: mirror() } });
+		});
+
+		await startGroupChatAutoRun(trigger, startBatchRun);
+
+		expect(hasGroupChatAutoRun('agent-1')).toBe(false);
+		expect(reportAutoRunComplete).toHaveBeenCalledWith(
+			'chat-1',
+			'Client',
+			groupChatAutoRunFailure('Client', 'Maestro declined to start the run. Its notice says why.')
+		);
+		// The other window's run ending is not reported to the chat as this one.
+		useBatchStore.setState({ batchRunStates: {} });
+		expect(reportAutoRunComplete).toHaveBeenCalledTimes(1);
 	});
 
 	it('refuses when Auto Run is turned off, before registering', async () => {

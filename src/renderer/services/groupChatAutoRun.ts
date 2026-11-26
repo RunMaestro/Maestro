@@ -81,19 +81,32 @@ function resolveParticipantAgent(trigger: GroupChatAutoRunTrigger): Session | un
 	return findSessionForParticipantName(trigger.participantName, sessions);
 }
 
+interface LaunchWatch {
+	stop: () => void;
+	/** Whether this window's own run (not a mirror) ever started for the agent. */
+	sawOwnRun: () => boolean;
+}
+
 /**
- * Report a mirrored run's end. Watches the batch store from before the launch,
- * so a run that ends at once is still seen. Stops watching when the entry is
+ * Watch the agent's batch state from before the launch, so a run that ends at
+ * once is still seen. Reports a mirrored run's end (a run a host drives), and
+ * records whether this window's own run started, which is how a launch
+ * `startBatchRun` declined is told apart. Stops watching when the entry is
  * consumed elsewhere (the batch processor's own completion, a failed start).
  */
-function watchMirroredRunEnd(sessionId: string, trigger: GroupChatAutoRunTrigger): () => void {
+function watchLaunch(sessionId: string, trigger: GroupChatAutoRunTrigger): LaunchWatch {
 	let lastMirror: BatchRunState | undefined;
+	let ownRun = false;
 	const unsubscribe = useBatchStore.subscribe((state) => {
 		if (!hasGroupChatAutoRun(sessionId)) {
 			unsubscribe();
 			return;
 		}
 		const current = state.batchRunStates[sessionId];
+		if (current?.isRunning && current.mirrored !== true) {
+			ownRun = true;
+			return;
+		}
 		if (current?.mirrored === true && current.isRunning) {
 			lastMirror = current;
 			return;
@@ -111,7 +124,7 @@ function watchMirroredRunEnd(sessionId: string, trigger: GroupChatAutoRunTrigger
 			})
 		);
 	});
-	return unsubscribe;
+	return { stop: unsubscribe, sawOwnRun: () => ownRun };
 }
 
 /**
@@ -202,26 +215,23 @@ export async function startGroupChatAutoRun(
 	}
 	// Register before the launch: a run can end before startBatchRun returns.
 	registerGroupChatAutoRun(session.id, trigger.groupChatId, trigger.participantName);
-	const stopWatching = watchMirroredRunEnd(session.id, trigger);
+	const watch = watchLaunch(session.id, trigger);
 	try {
 		await startBatchRun(session.id, config, folderPath);
 	} catch (err) {
-		stopWatching();
+		watch.stop();
 		if (consumeGroupChatAutoRun(session.id)) {
 			await fail(ipcErrorMessage(err));
 		}
 		return;
 	}
-	// A run this window drives is awaited to its end, so its completion has
-	// already consumed the entry. One still waiting, with no run on screen, was
-	// declined by `startBatchRun` (which showed the reason in a notice). A run a
-	// host drives resolves when the host takes it, and its mirror ends it later.
-	if (
-		hasGroupChatAutoRun(session.id) &&
-		!useBatchStore.getState().batchRunStates[session.id]?.isRunning &&
-		!hostedTargetOf(session)
-	) {
-		stopWatching();
+	// A run this window drives starts here (its own, non-mirrored batch state)
+	// and its completion consumes the entry. If none started, `startBatchRun`
+	// declined the launch (it showed the reason in a notice), even when another
+	// window's run is on screen as a mirror. A run a host drives is only ever a
+	// mirror here: the host took it, and the mirror's end reports it.
+	if (hasGroupChatAutoRun(session.id) && !watch.sawOwnRun() && !hostedTargetOf(session)) {
+		watch.stop();
 		consumeGroupChatAutoRun(session.id);
 		await fail('Maestro declined to start the run. Its notice says why.');
 	}
