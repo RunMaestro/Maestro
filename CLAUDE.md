@@ -100,7 +100,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
-- **A `file://` URL to a path and back (incl. Windows drives):** `fileUrlToPath(href)`, `windowsDrivePathToFileUrl(path)` in `src/renderer/utils/openFileUrl.ts`.
+- **A `file://` URL to a path and back (incl. Windows drives):** `fileUrlToPath(href)`, `pathToFileUrl(path)`, `windowsDrivePathToFileUrl(path)` in `src/renderer/utils/openFileUrl.ts`.
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **A file handed back as a marker instead of its bytes (parquet, SQLite):** `createPreviewMarkerCodec()`, `utf8ToHex()`, `hexToUtf8()` in `src/shared/previewMarker.ts`
 - **Parsing a base64 data URL (an image payload):** `parseBase64DataUrl()`, `mediaSubtype()` in `src/shared/dataUrl.ts` (never a `base64,(.+)$` capture)
@@ -121,6 +121,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether an absolute path exists, from render code:** `checkPathExists()` in `src/renderer/utils/fileLinks/pathExistence.ts`, `usePathExistence(sshRemoteId?)` in `src/renderer/hooks/utils/usePathExistence.ts` (async-filled cache; `remarkFileLinks` links a spaced absolute path only once it exists)
 - **Finding the file a markdown embed points at:** `resolveEmbedCandidates()`, `findFirstExistingPath()`, `parseEmbedAltSize()` in `src/renderer/utils/fileLinks/embedResolution.ts`
 - **Delete the file the user is previewing:** `requestFileDeletion()` in `src/renderer/services/fileDeletion.ts`
+- **A file action that hands a file to this machine (open, reveal, play, save a copy):** `openFileInDefaultApp()`, `revealInFileManager()`, `openFolderInFileManager()`, `openFileInMaestroBrowser()`, `saveCopyOfFile()`, `resolveOpenSource()`, `fetchLocalCopy()` in `src/renderer/services/fileActions.ts`
+- **A Browse button on a folder or file field:** `pickDirectory()`, `pickFile()`, `pathPickerRemoteId(session)` in `src/renderer/services/pathPicker.ts`; `<PathPickerModal>`, `<PathPickerHost>` in `src/renderer/components/PathPicker/PathPickerModal.tsx`
 
 #### Main process: stores, persistence, platform
 
