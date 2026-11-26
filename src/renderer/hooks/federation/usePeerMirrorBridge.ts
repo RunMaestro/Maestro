@@ -18,8 +18,10 @@ import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useFederationAutoStore } from '../../stores/federationAutoStore';
 import { logger } from '../../utils/logger';
 import { startHostedAgentSync } from '../../services/hostedAgentSync';
+import { useIsLifecycleOwner } from '../../contexts/WindowContext';
 
 export function usePeerMirrorBridge(): void {
+	const isLifecycleOwner = useIsLifecycleOwner();
 	useEffect(() => {
 		const store = usePeerMirrorStore.getState();
 		const api = window.maestro?.federation;
@@ -51,7 +53,7 @@ export function usePeerMirrorBridge(): void {
 				// The pushes alone keep the store current.
 			});
 
-		const stopHostedSync = startHostedAgentSync();
+		const stopHostedSync = startHostedAgentSync({ announcesRunEnds: isLifecycleOwner });
 
 		const replay = () => {
 			const queued = pending ?? [];
@@ -84,5 +86,5 @@ export function usePeerMirrorBridge(): void {
 			useFederationAutoStore.getState().reset();
 			usePeerMirrorStore.getState().reset();
 		};
-	}, []);
+	}, [isLifecycleOwner]);
 }

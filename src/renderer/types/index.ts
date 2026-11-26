@@ -960,6 +960,13 @@ export interface AITab {
 	 */
 	hidden?: boolean;
 	/**
+	 * On a hosted agent's tab: the `liftedTo.at` of the hosting during which the host reported
+	 * this tab (`projectHostedSession()`). A tab the host reported and then stopped listing was
+	 * closed on the host, so the record drops it too; a tab without it (or from an earlier
+	 * hosting) is a conversation kept from before the move, and stays.
+	 */
+	hostSeenAt?: number;
+	/**
 	 * Set on a tab Quick Chat created (the hotkey-summoned floating chat window,
 	 * see src/shared/quickChat.ts). An ephemeral Quick Chat tab is also `hidden`
 	 * and is deleted when the next chat starts; a kept one is an ordinary tab.

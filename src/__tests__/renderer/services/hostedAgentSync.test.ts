@@ -18,6 +18,12 @@ import { resetStores } from '../../helpers';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 
+const toastMock = vi.hoisted(() => vi.fn());
+vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/stores/notificationStore')>()),
+	notifyToast: toastMock,
+}));
+
 const maestro = window.maestro as unknown as Record<string, unknown>;
 const transcript = vi.fn();
 
@@ -187,6 +193,73 @@ describe('hostedAgentSync', () => {
 			useSessionStore.setState({ sessions: [{ ...row(), liftedTo: undefined }] });
 			syncHostedAgents();
 			expect(useBatchStore.getState().batchRunStates.row).toBeUndefined();
+		});
+
+		describe('the end of the host run', () => {
+			const across = (done: number, extra: Record<string, unknown> = {}) => ({
+				...frame(done),
+				totalTasksAcrossAllDocs: 4,
+				completedTasksAcrossAllDocs: done,
+				initialCompletedTasks: 0,
+				...extra,
+			});
+			let stop: () => void = () => undefined;
+			beforeEach(() => toastMock.mockClear());
+			afterEach(() => stop());
+
+			it('raises the same Auto-Run Complete toast a local run raises', () => {
+				stop = startHostedAgentSync({ announcesRunEnds: true });
+				pushRun(across(3) as never);
+				syncHostedAgents();
+				pushRun(across(4) as never);
+				syncHostedAgents();
+				expect(toastMock).not.toHaveBeenCalled();
+				pushRun(null);
+				syncHostedAgents();
+				expect(toastMock).toHaveBeenCalledTimes(1);
+				expect(toastMock).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'success',
+						title: 'Auto-Run Complete',
+						message: 'All 4 tasks completed successfully',
+						sessionId: 'row',
+					})
+				);
+				// The run is gone; a later sync raises nothing more.
+				syncHostedAgents();
+				expect(toastMock).toHaveBeenCalledTimes(1);
+			});
+
+			it('says a stopped run stopped', () => {
+				stop = startHostedAgentSync({ announcesRunEnds: true });
+				pushRun(across(2, { isStopping: true }) as never);
+				syncHostedAgents();
+				pushRun(null);
+				syncHostedAgents();
+				expect(toastMock).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'warning',
+						message: 'Stopped after completing 2 of 4 tasks',
+					})
+				);
+			});
+
+			it('raises it in one window only, and not when the record stops being hosted', () => {
+				stop = startHostedAgentSync();
+				pushRun(across(4) as never);
+				syncHostedAgents();
+				pushRun(null);
+				syncHostedAgents();
+				expect(toastMock).not.toHaveBeenCalled();
+				stop();
+
+				stop = startHostedAgentSync({ announcesRunEnds: true });
+				pushRun(across(4) as never);
+				syncHostedAgents();
+				useSessionStore.setState({ sessions: [{ ...row(), liftedTo: undefined }] });
+				syncHostedAgents();
+				expect(toastMock).not.toHaveBeenCalled();
+			});
 		});
 
 		it('never overwrites a run this window owns for the record', () => {
