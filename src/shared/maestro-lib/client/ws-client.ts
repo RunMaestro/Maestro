@@ -1093,7 +1093,7 @@ class WsMaestroClient implements MaestroClient {
 				break;
 			}
 			case 'queue_changed': {
-				// A headless host's own frame: the desktop sends none (see `queue.changed`).
+				// A host's queue change: a headless host's, and a desktop's (`broadcastDesktopQueueChanges()`).
 				const agentId = asString(frame.sessionId);
 				if (!agentId || !Array.isArray(frame.items)) break;
 				// How an item left, from a host that names it (an older one sends neither field).

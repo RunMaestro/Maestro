@@ -554,6 +554,8 @@ export interface MentionHandoff {
 		 * read since then (a reconnect) may have missed its named exit: the tab's state decides.
 		 */
 		readsAtSeen?: number;
+		/** How many images the message carried (absent: none): an image-only message is matched by it. */
+		imageCount?: number;
 	};
 }
 

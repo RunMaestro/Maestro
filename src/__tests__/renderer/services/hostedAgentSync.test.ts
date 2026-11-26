@@ -6,7 +6,10 @@
 import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startHostedAgentSync, syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
-import { HOST_QUEUE_START_GRACE_MS } from '../../../renderer/services/crossAgentHandoff';
+import {
+	HOST_QUEUE_START_GRACE_MS,
+	resetHostEntryClaims,
+} from '../../../renderer/services/crossAgentHandoff';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -57,6 +60,9 @@ const row = () =>
 	});
 
 const flush = () => act(async () => undefined);
+
+// A host entry matched to one message in a test is never held for another test's message.
+beforeEach(() => resetHostEntryClaims());
 
 describe('hostedAgentSync', () => {
 	beforeEach(() => {

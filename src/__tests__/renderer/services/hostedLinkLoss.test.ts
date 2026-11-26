@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
 import { __resetHostedLinkLossForTests } from '../../../renderer/services/hostedLinkLoss';
 import { interruptTurn } from '../../../renderer/services/turnInterrupt';
+import { TURN_CANCELED_NOTE } from '../../../shared/maestro-lib/store/transcript';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
 	registerAgentErrorSurfacer,
@@ -368,9 +369,14 @@ describe('a turn cut by a lost link', () => {
 		expect(toastMock).toHaveBeenCalledWith(
 			expect.objectContaining({ title: 'Stopped here', color: 'orange' })
 		);
+		// The host was not told, so it writes no line: the tab ends on the one a local Stop writes
+		// (CodeRabbit on #2154).
+		const canceled = () => tab().logs.filter((entry) => entry.text === TURN_CANCELED_NOTE);
+		expect(canceled()).toHaveLength(1);
 		// The mirror still says busy; the tab stays ended until the host reports again.
 		syncHostedAgents();
 		expect(tab().state).toBe('idle');
+		expect(canceled()).toHaveLength(1);
 
 		// Back, and the host still runs it: Thinking again, and Stop goes to the host.
 		hostReports('busy', 'connected');
