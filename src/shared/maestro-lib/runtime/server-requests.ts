@@ -33,6 +33,7 @@ import type {
 	MaestroClient,
 	ProviderInfo,
 	TabPatch,
+	TurnInput,
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../client/types';
@@ -490,6 +491,21 @@ function turnOverridesOf(message: Request): { overrides?: TurnOverrides } {
 	return overrides ? { overrides } : {};
 }
 
+/**
+ * The agent-only text a desktop's `@mention` adds to this one turn (`TurnInput.agentContext`,
+ * `agentNotes`), passed through as sent: the runtime checks it and refuses a send it cannot take.
+ */
+function turnAgentTextOf(message: Request): Pick<TurnInput, 'agentContext' | 'agentNotes'> {
+	return {
+		...(message.agentContext !== undefined
+			? { agentContext: message.agentContext as TurnInput['agentContext'] }
+			: {}),
+		...(message.agentNotes !== undefined
+			? { agentNotes: message.agentNotes as TurnInput['agentNotes'] }
+			: {}),
+	};
+}
+
 export type RequestHandler = (message: Request) => Promise<Frame | undefined>;
 
 export interface RequestHandlerOptions {
@@ -689,6 +705,7 @@ export function createRequestHandler(
 					...turnOverridesOf(message),
 					// Queue Held (`dispatch --queue --held`): queued paused, even on an idle agent.
 					...(message.held === true ? { held: true } : {}),
+					...turnAgentTextOf(message),
 				});
 				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
 				return {

@@ -520,6 +520,12 @@ export interface MentionHandoff {
 	targets: ConsultHoldTarget[];
 	/** The user's message, verbatim, relayed alongside the answer. */
 	message: string;
+	/**
+	 * A hosted agent's turn runs on its host, so no local exit releases the hand-off: the host's
+	 * tab state does (`followHostedHandoffs()`). `sent` once the host took the turn (`queueItemId`
+	 * when it waits in the host's queue), `running` once the host tab reads busy with it.
+	 */
+	hostTurn?: { stage: 'sent' | 'running'; queueItemId?: string };
 }
 
 export interface QueuedItem {

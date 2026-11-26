@@ -25,6 +25,7 @@ import { nativeAccountRef } from '../../../agentAccountDir';
 import * as repositories from '../../agents/repository';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
 import type { ClientResult, QueuedTurn, TurnEvent } from '../../client/types';
+import { MAX_TURN_AGENT_TEXT_CHARS } from '../../client/types';
 import { readHistory } from '../../store/read-history';
 import { sharedHistoryDir, sharedHistoryFilename } from '../../store/shared-history';
 import { runAgentTurn, type RunAgentTurnOptions } from '../../turns/run-agent-turn';
@@ -1274,6 +1275,73 @@ describe('runtime turns', () => {
 			value(await runtime.turns.queue.remove('a1', queued.itemId));
 			value(await runtime.turns.interrupt('a1', 't1'));
 			await turn.outcome();
+		});
+
+		// Parity M7: a hosted agent's `@mention` runs on the desktop that sent it, and the turn
+		// carries the mention's agent-only text here, as a local turn carries it.
+		describe('agent-only text from an @mention (M7)', () => {
+			const sentPrompt = (index: number): string => {
+				const argv = (JSON.parse(fs.readFileSync(argvFiles[index], 'utf-8')) as string[]).join(
+					'\n'
+				);
+				const stdin = argvFiles[index].replace(/argv-(\d+)\.json$/, 'stdin-$1.txt');
+				return fs.existsSync(stdin) ? `${argv}\n${fs.readFileSync(stdin, 'utf-8')}` : argv;
+			};
+
+			it('puts the context ahead of the message and the notes after it, and records the message alone', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'hello',
+						agentContext: 'REPLIES FROM BACKEND',
+						agentNotes: 'BACKEND IS CONSULTING',
+					})
+				);
+				await turn.outcome();
+
+				const prompt = sentPrompt(0);
+				expect(prompt).toContain('REPLIES FROM BACKEND\n\n---\n\nhello');
+				expect(prompt).toContain('\n\n---\n\nBACKEND IS CONSULTING');
+				const entries = await transcript(runtime);
+				expect(entries[0]).toMatchObject({ source: 'user', text: 'hello' });
+				expect(JSON.stringify(entries)).not.toContain('BACKEND IS CONSULTING');
+				expect(JSON.stringify(entries)).not.toContain('REPLIES FROM BACKEND');
+			});
+
+			it('keeps it on a message that waits, until the message runs', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				const held = value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'later',
+						held: true,
+						agentNotes: 'BACKEND IS CONSULTING',
+					})
+				);
+				if (held.status !== 'queued') throw new Error('expected queued');
+				value(await runtime.turns.queue.setPaused('a1', held.itemId, false));
+				await turn.outcome();
+				expect(sentPrompt(0)).toContain('BACKEND IS CONSULTING');
+			});
+
+			it('refuses text it cannot take instead of running the turn without it', async () => {
+				const runtime = await start();
+				const long = 'x'.repeat(MAX_TURN_AGENT_TEXT_CHARS + 1);
+				const refused = errorOf(
+					await runtime.turns.send('a1', 't1', { text: 'hello', agentContext: long })
+				);
+				expect(refused).toMatchObject({ code: 'invalid' });
+				expect(refused.message).toContain('agentContext');
+				const notText = errorOf(
+					await runtime.turns.send('a1', 't1', {
+						text: 'hello',
+						agentNotes: 42 as unknown as string,
+					})
+				);
+				expect(notText.message).toContain('agentNotes must be text');
+				expect(argvFiles).toEqual([]);
+			});
 		});
 
 		it('queues a held message paused on an idle tab, and runs it once resumed (M3)', async () => {

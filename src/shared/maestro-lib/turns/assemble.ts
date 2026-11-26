@@ -33,6 +33,7 @@ import {
 	buildMessagePrompt,
 	expandCommandArguments,
 	prependMergedContext,
+	appendAgentNotes,
 } from './prompt';
 
 /** The environment variable that names the data directory a process should use. */
@@ -105,6 +106,16 @@ export interface TurnMessage {
 	 * carries no system prompt, as the desktop's `groomContext` runs one.
 	 */
 	sideQuestion?: true;
+	/**
+	 * Agent-only text ahead of the message (`TurnInput.agentContext`): a released consult's
+	 * replies. The prompt carries it; the transcript entry shows `text` alone.
+	 */
+	agentContext?: string;
+	/**
+	 * Agent-only notes behind the message (`TurnInput.agentNotes`): the `@mention` notes of a
+	 * consult that is running or an answer that is handed off. The transcript never shows them.
+	 */
+	agentNotes?: string;
 }
 
 export interface TurnContext {
@@ -313,8 +324,12 @@ export function assembleTurn(
 			agentSessionId: tab.agentSessionId,
 			newSessionMessage: agent.newSessionMessage,
 			readOnly,
+			...(message.agentContext ? { agentContext: message.agentContext } : {}),
 		});
-		userPrompt = prependMergedContext(layered, tab.pendingMergedContext);
+		userPrompt = appendAgentNotes(
+			prependMergedContext(layered, tab.pendingMergedContext),
+			message.agentNotes
+		);
 		consumedMergedContext = !!tab.pendingMergedContext;
 		entry = { text: message.text };
 	}

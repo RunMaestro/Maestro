@@ -19,11 +19,16 @@
  * 3. Stop clears it (`dropMentionHandoffs`): Stop means stop, and forwarding a
  *    half-finished answer would act on the user's behalf after they said no.
  *
+ * A hosted agent's turn runs on its Federation host, so no local process exits: the host's tab
+ * state releases it instead (`markHandoffSentToHost()`, then `followHostedHandoffs()` on every
+ * sync), with the same answer, the same notes, and the same targets.
+ *
  * One way by design: the target's reply lands on the source tab as an
  * attributed bubble, and no follow-up turn is sent back to the source agent.
  */
 
-import type { ConsultHoldTarget, LogEntry, MentionHandoff } from '../types';
+import type { TurnSendReceipt } from '../../shared/maestro-lib/client/types';
+import type { AITab, ConsultHoldTarget, LogEntry, MentionHandoff, Session } from '../types';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { sendCrossAgentRequest } from '../hooks/agent/useCrossAgentDispatch';
 import { isSelfContainedCard } from '../utils/logEntries';
@@ -180,5 +185,72 @@ export function releaseMentionHandoff(
 			sourceCwd: session.cwd,
 			handoffAnswer: turn.answer,
 		});
+	}
+}
+
+/** The host took the turn a hand-off waits on: follow its tab from now on. */
+export function markHandoffSentToHost(
+	sessionId: string,
+	tabId: string,
+	receipt: TurnSendReceipt
+): void {
+	updateAiTab(sessionId, tabId, (tab) =>
+		tab.pendingMentionHandoff
+			? {
+					...tab,
+					pendingMentionHandoff: {
+						...tab.pendingMentionHandoff,
+						hostTurn: {
+							stage: 'sent',
+							...(receipt.status === 'queued' ? { queueItemId: receipt.itemId } : {}),
+						},
+					},
+				}
+			: tab
+	);
+}
+
+/**
+ * What a hosted tab's armed hand-off does on this sync: `running` once the tab reads busy with
+ * the turn (not while it still waits in the host's queue), `release` once a running turn's tab
+ * reads idle again, else `wait`. A hand-off no host took (`hostTurn` absent) is a local one.
+ */
+export function hostedHandoffStep(
+	tab: Pick<AITab, 'state' | 'pendingMentionHandoff'>,
+	hostQueueItemIds: ReadonlySet<string>
+): 'wait' | 'running' | 'release' {
+	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
+	if (!hostTurn) return 'wait';
+	if (hostTurn.stage === 'running') return tab.state === 'busy' ? 'wait' : 'release';
+	if (hostTurn.queueItemId && hostQueueItemIds.has(hostTurn.queueItemId)) return 'wait';
+	return tab.state === 'busy' ? 'running' : 'wait';
+}
+
+/**
+ * Move every hand-off a hosted agent's tabs wait on: a turn its host started, then ended, releases
+ * as a local exit does (`releaseMentionHandoff()`), failed when the tab ended on an error.
+ */
+export function followHostedHandoffs(session: Session): void {
+	if (!session.aiTabs.some((tab) => tab.pendingMentionHandoff?.hostTurn)) return;
+	const hostQueueItemIds = new Set(
+		(session.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
+	);
+	for (const tab of session.aiTabs) {
+		const step = hostedHandoffStep(tab, hostQueueItemIds);
+		if (step === 'running') {
+			updateAiTab(session.id, tab.id, (current) =>
+				current.pendingMentionHandoff?.hostTurn
+					? {
+							...current,
+							pendingMentionHandoff: {
+								...current.pendingMentionHandoff,
+								hostTurn: { stage: 'running' },
+							},
+						}
+					: current
+			);
+		} else if (step === 'release') {
+			void releaseMentionHandoff(session.id, tab.id, { failed: !!tab.agentError });
+		}
 	}
 }

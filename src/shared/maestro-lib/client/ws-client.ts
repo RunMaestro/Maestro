@@ -1895,6 +1895,8 @@ class WsMaestroClient implements MaestroClient {
 		const turnOverrides = normalizeTurnOverrides(input.overrides);
 		if (turnOverrides) message.turnOverrides = turnOverrides;
 		if (input.held === true) message.held = true;
+		if (input.agentContext) message.agentContext = input.agentContext;
+		if (input.agentNotes) message.agentNotes = input.agentNotes;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)

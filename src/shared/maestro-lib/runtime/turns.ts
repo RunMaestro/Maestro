@@ -63,6 +63,7 @@ import {
 	normalizeOriginHost,
 	normalizeTurnOverrides,
 	parseQueuedTurnSettings,
+	readTurnAgentText,
 } from '../client/types';
 import { logger } from '../host';
 import { admitTurnImages, turnImageBoundsError } from '../launch/image-delivery';
@@ -216,6 +217,10 @@ interface TurnItem extends QueueItem {
 	 * written to the tab record.
 	 */
 	overrides?: TurnOverrides;
+	/** Agent-only text ahead of `text` when it runs (`TurnInput.agentContext`). */
+	agentContext?: string;
+	/** Agent-only notes behind `text` when it runs (`TurnInput.agentNotes`). */
+	agentNotes?: string;
 }
 
 type Verdict = { ok: true } | { ok: false; message: string };
@@ -524,6 +529,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			...(command ? { command } : {}),
 			...(item.readOnly ? { readOnly: true } : {}),
 			...(item.overrides?.readOnly !== undefined ? { tabReadOnly: item.overrides.readOnly } : {}),
+			...(item.agentContext ? { agentContext: item.agentContext } : {}),
+			...(item.agentNotes ? { agentNotes: item.agentNotes } : {}),
 		};
 		const assembled = assembleTurn(agent, tab, message, {
 			...loaded.context,
@@ -987,6 +994,12 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const tab = toTurnTab(tabRecord);
 		// The sender's own chips stand in for the tab's, for this message only (`TurnOverrides`).
 		const overrides = normalizeTurnOverrides(input.overrides);
+		// Agent-only text a desktop's `@mention` adds (a consult's replies, its notes). One this
+		// host cannot take refuses the send: the turn would answer without what it was sent with.
+		const agentContext = readTurnAgentText(input.agentContext, 'agentContext');
+		if (!agentContext.ok) return fail(method, 'invalid', agentContext.error);
+		const agentNotes = readTurnAgentText(input.agentNotes, 'agentNotes');
+		if (!agentNotes.ok) return fail(method, 'invalid', agentNotes.error);
 		if ((queues.get(agentId)?.items().length ?? 0) >= MAX_WAITING_TURNS_PER_AGENT) {
 			return fail(
 				method,
@@ -1017,6 +1030,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const originHost = normalizeOriginHost(input.originHost);
 		if (originHost) item.originHost = originHost;
 		if (overrides) item.overrides = overrides;
+		if (agentContext.value) item.agentContext = agentContext.value;
+		if (agentNotes.value) item.agentNotes = agentNotes.value;
 
 		const queue = queueFor(agentId);
 		const attempt = new Promise<Verdict>((resolve) => verdicts.set(item.id, resolve));

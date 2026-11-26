@@ -7,12 +7,24 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { sendCrossAgentRequest } = vi.hoisted(() => ({ sendCrossAgentRequest: vi.fn() }));
+vi.mock('../../../renderer/hooks/agent/useCrossAgentDispatch', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/hooks/agent/useCrossAgentDispatch')>()),
+	sendCrossAgentRequest: (...args: unknown[]) => sendCrossAgentRequest(...args),
+}));
+
 import {
 	handQueuedItemToHost,
 	isQueuedItemForHost,
 	queuedItemHostText,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { enqueuePromptForTab } from '../../../renderer/services/queuedPrompt';
+import { loadCrossAgentConsultPrompts } from '../../../renderer/services/crossAgentConsultHold';
+import {
+	followHostedHandoffs,
+	hostedHandoffStep,
+} from '../../../renderer/services/crossAgentHandoff';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -22,7 +34,13 @@ import {
 	createMirroredPeer,
 	replacePeerAgents,
 } from '../../../shared/maestro-lib/client/peer-mirror';
-import { AGENT_MODES, createModeSession, resetStores, type AgentMode } from '../../helpers';
+import {
+	AGENT_MODES,
+	createMockSession,
+	createModeSession,
+	resetStores,
+	type AgentMode,
+} from '../../helpers';
 import { createMockAITab } from '../../helpers/mockTab';
 
 const maestro = window.maestro as unknown as Record<string, unknown>;
@@ -243,5 +261,226 @@ describe('hostedQueuedTurn', () => {
 			['q1', true],
 			['next', undefined],
 		]);
+	});
+});
+
+// Parity M7: a hosted agent's `@mention` consults from this machine, as a local agent's does (the
+// mentioned agent is in this machine's roster). The drain fires it as the turn goes to the host;
+// the turn carries the agent-only notes and a released consult's replies there.
+describe('hostedQueuedTurn: @mentions (M7)', () => {
+	const drainDeps = {
+		conductorProfile: '',
+		customAICommands: [],
+		speckitCommands: [],
+		openspecCommands: [],
+	};
+	const backend = () =>
+		createMockSession({ id: 'backend', name: 'Backend', aiTabs: [createMockAITab({ id: 'b1' })] });
+	const seedWithBackend = (mode: AgentMode, executionQueue: QueuedItem[] = []) => {
+		const session = seed(mode, executionQueue);
+		useSessionStore.setState({ sessions: [session, backend()], groups: [] });
+		return session;
+	};
+	const row = () => useSessionStore.getState().sessions.find((s) => s.id === 'row')!;
+
+	beforeEach(async () => {
+		resetStores(usePeerMirrorStore, useSessionStore);
+		useSettingsStore.setState({ federationHostedAgents: true });
+		act$.mockReset();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
+		maestro.federation = { act: act$ };
+		const templates: Record<string, string> = {
+			'cross-agent-consult-pending': 'Consulting {{CONSULTED_AGENTS}}: do not finish yet.',
+			'cross-agent-consult-reply': 'Replies:\n{{CONSULT_REPLIES}}',
+			'cross-agent-consult-first': 'First:\n{{CONSULT_REPLIES}}',
+			'cross-agent-handoff-pending': 'Your answer goes to {{HANDOFF_AGENTS}}.',
+		};
+		maestro.prompts = {
+			...(maestro.prompts as object),
+			get: vi.fn(async (id: string) => ({ success: true, content: templates[id] })),
+		};
+		await loadCrossAgentConsultPrompts(true);
+		sendCrossAgentRequest.mockReset();
+		hydrateHost();
+	});
+
+	afterEach(() => {
+		delete maestro.federation;
+	});
+
+	it.each(AGENT_MODES)(
+		'%s: a drained message addressed only at a mentioned agent consults it and runs no turn',
+		async (mode) => {
+			const spawn = vi.mocked(window.maestro.process.spawn);
+			spawn.mockClear();
+			seedWithBackend(mode);
+			const item = queuedMessage({
+				text: '@Backend does this look right?',
+				crossAgentMention: true,
+				crossAgentOnly: true,
+			});
+			const dispatched = await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+			await flush();
+
+			expect(dispatched).toBe(true);
+			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+			expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
+				sourceSessionId: 'row',
+				sourceTabId: 't1',
+				targetSessionId: 'backend',
+				userPrompt: '@Backend does this look right?',
+			});
+			expect(spawn).not.toHaveBeenCalled();
+			expect(sends()).toEqual([]);
+		}
+	);
+
+	it('hosted: a mid-sentence mention sends the turn with the pending note, then consults and holds the tab', async () => {
+		seedWithBackend('hosted');
+		const item = queuedMessage({
+			text: 'look into the cache with @Backend',
+			crossAgentMention: true,
+			mentionRouting: 'parallel',
+		});
+		await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+		await flush();
+
+		// The host's transcript shows the message alone; the note is agent-only.
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({
+			kind: 'send',
+			text: 'look into the cache with @Backend',
+			agentNotes: 'Consulting Backend: do not finish yet.',
+		});
+		expect(sends()[0][2].agentContext).toBeUndefined();
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({ targetSessionId: 'backend' });
+		// The same hold a local turn waits behind, at the head of this machine's queue.
+		expect(queue()[0].awaitingConsult?.pending).toEqual([
+			{ targetSessionId: 'backend', targetAgentName: 'Backend' },
+		]);
+	});
+
+	it('hosted: a turn the host refuses consults nobody, and comes back held with its mention', async () => {
+		act$.mockResolvedValue({ ok: false, error: 'host is down' });
+		seedWithBackend('hosted');
+		const item = queuedMessage({
+			text: 'look into the cache with @Backend',
+			crossAgentMention: true,
+			mentionRouting: 'parallel',
+		});
+		await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+		await flush();
+
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		expect(queue()).toHaveLength(1);
+		expect(queue()[0]).toMatchObject({ id: 'q1', paused: true, crossAgentMention: true });
+	});
+
+	it("hosted: a released consult's replies ride to the host as agent-only context", async () => {
+		seedWithBackend('hosted');
+		const item = queuedMessage({
+			text: 'Backend replied. Finish your answer with what came back.',
+			agentContext: 'Replies:\nBackend: the cache is fine.',
+		});
+		await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+		await flush();
+
+		expect(sends()[0][2]).toMatchObject({
+			kind: 'send',
+			text: 'Backend replied. Finish your answer with what came back.',
+			agentContext: 'Replies:\nBackend: the cache is fine.',
+		});
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+	});
+
+	it("hosted: a hand-off goes out when the host's turn ends, with its answer", async () => {
+		seedWithBackend('hosted');
+		const item = queuedMessage({
+			text: 'look into the cache, then tell @Backend',
+			crossAgentMention: true,
+			mentionRouting: 'handoff',
+		});
+		await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+		await flush();
+
+		expect(sends()[0][2].agentNotes).toBe('Your answer goes to Backend.');
+		// Nobody is consulted yet: the answer does not exist.
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn).toEqual({ stage: 'sent' });
+
+		// The host's tab runs the turn...
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((s) =>
+				s.id === 'row' ? { ...s, aiTabs: s.aiTabs.map((t) => ({ ...t, state: 'busy' })) } : s
+			),
+		}));
+		followHostedHandoffs(row());
+		expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn).toEqual({ stage: 'running' });
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+
+		// ...and ends with an answer.
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((s) =>
+				s.id === 'row'
+					? {
+							...s,
+							aiTabs: s.aiTabs.map((t) => ({
+								...t,
+								state: 'idle',
+								logs: [
+									{ id: 'u', timestamp: 1, source: 'user', text: item.text! },
+									{ id: 'a', timestamp: 2, source: 'ai', text: 'The cache is stale.' },
+								],
+							})),
+						}
+					: s
+			),
+		}));
+		followHostedHandoffs(row());
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
+			targetSessionId: 'backend',
+			userPrompt: 'look into the cache, then tell @Backend',
+			handoffAnswer: 'The cache is stale.',
+		});
+		expect(row().aiTabs[0].pendingMentionHandoff).toBeUndefined();
+	});
+
+	it('a hand-off waits while its turn still sits in the host queue', () => {
+		const tab = {
+			state: 'busy' as const,
+			pendingMentionHandoff: {
+				targets: [],
+				message: 'm',
+				hostTurn: { stage: 'sent' as const, queueItemId: 'h9' },
+			},
+		};
+		expect(hostedHandoffStep(tab, new Set(['h9']))).toBe('wait');
+		expect(hostedHandoffStep(tab, new Set())).toBe('running');
+		expect(hostedHandoffStep({ ...tab, state: 'idle' }, new Set())).toBe('wait');
+		expect(
+			hostedHandoffStep(
+				{
+					state: 'idle',
+					pendingMentionHandoff: { ...tab.pendingMentionHandoff, hostTurn: { stage: 'running' } },
+				},
+				new Set()
+			)
+		).toBe('release');
+		// A local hand-off is released by its process exit, never here.
+		expect(
+			hostedHandoffStep(
+				{ state: 'idle', pendingMentionHandoff: { targets: [], message: 'm' } },
+				new Set()
+			)
+		).toBe('wait');
+	});
+
+	it('hosted: a queued message that mentions an agent waits for the drain instead of going at once', () => {
+		seedWithBackend('hosted', [queuedMessage({ text: 'ask @Backend', crossAgentMention: true })]);
+		expect(handQueuedItemToHost('row', 'q1')).toBe(false);
+		expect(sends()).toEqual([]);
+		expect(queue().map((queued) => queued.id)).toEqual(['q1']);
 	});
 });

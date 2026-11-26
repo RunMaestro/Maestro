@@ -313,6 +313,13 @@ export async function sendHostedTurn(
 		held?: boolean;
 		overrides?: TurnOverrides;
 		nameFrom?: { text: string; label?: string };
+		/**
+		 * Agent-only text for this one turn: ahead of the message (a released consult's replies,
+		 * `QueuedItem.agentContext`) and behind it (the `@mention` notes). The host's transcript
+		 * shows `text` alone, as a local transcript does.
+		 */
+		agentContext?: string;
+		agentNotes?: string;
 	} = {}
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
@@ -355,7 +362,11 @@ export async function sendHostedTurn(
 		text,
 		opts.overrides ? { ...hostedTurnOverrides(tab), ...opts.overrides } : hostedTurnOverrides(tab),
 		images,
-		opts.held
+		opts.held,
+		{
+			...(opts.agentContext ? { agentContext: opts.agentContext } : {}),
+			...(opts.agentNotes ? { agentNotes: opts.agentNotes } : {}),
+		}
 	);
 	// Spent here once the host took the turn, as a local send spends it at spawn. A refused send
 	// keeps it, so the retry hands it over again (the host's copy is overwritten, not doubled).

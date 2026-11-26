@@ -29,6 +29,7 @@ import {
 	type HostedProjectionInput,
 } from '../utils/hostedSession';
 import { applyAutoRunMirrorFrame } from '../hooks/batch/useAutoRunStateMirror';
+import { followHostedHandoffs } from './crossAgentHandoff';
 import { hostingEnabled } from './hostedTurns';
 import { readMirrorTranscript } from './peerMirror';
 
@@ -125,6 +126,8 @@ export function syncHostedAgents(): void {
 				current === session ? next : projectHostedSession(current, input)
 			);
 		}
+		// A hand-off armed on a turn the host runs releases when the host's turn ends.
+		followHostedHandoffs(next);
 		if (session.id !== activeSessionId || !hosted.connected) continue;
 		const tabId = next.activeTabId;
 		if (!hosted.input.agent.aiTabs?.some((tab) => tab.id === tabId)) continue;
