@@ -61,6 +61,7 @@ import { getTokenUsageCache, type TokenUsageCache } from './token-usage-cache';
 import {
 	COVERAGE_BY_AGENT,
 	collectProjectBreakdowns,
+	createSessionListGate,
 	projectTokenUsage,
 	toBreakdown,
 } from './project-breakdowns';
@@ -828,6 +829,9 @@ export async function getTokenUsageAggregate(
 	return result;
 }
 
+/** Joins and limits the session listings this machine runs for its Federation peers. */
+const peerListGate = createSessionListGate();
+
 /**
  * The usage of `projects` on this machine, for a Federation peer that asked
  * (`get_project_token_usage`): the same storages and account dirs this
@@ -838,6 +842,7 @@ export function getProjectTokenUsage(
 ): Promise<ProjectTokenUsage> {
 	return projectTokenUsage(projects, {
 		storageFor: getSessionStorage,
+		gate: peerListGate,
 		accountDirsFor: (agentType) => getProviderAccountDirs(agentType),
 		onError: (error) => void captureException(error, { operation: 'tokenUsage:peerProjects' }),
 	});

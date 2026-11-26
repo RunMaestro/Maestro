@@ -24,7 +24,7 @@ import {
 	type ProjectTokenUsage,
 	type ProjectTokenUsageProject,
 } from '../../shared/projectTokenUsage';
-import type { AgentSessionStorage } from '../../main/agents/session-storage';
+import type { ProjectSessionStorage } from '../../main/stats/token-usage/project-breakdowns';
 import type { ClaudeSessionOriginsData } from '../../main/storage/claude-session-storage';
 import type { MaestroClient } from '../../shared/maestro-lib/client/types';
 import { readAgentConfigsStoreFile } from '../../main/stores/agent-configs-store-file';
@@ -91,11 +91,12 @@ export function createHeadlessTokenUsageReader(
 ): ProjectTokenUsageReader {
 	let loaded: Promise<ProjectTokenUsageReader> | undefined;
 	const load = async (): Promise<ProjectTokenUsageReader> => {
-		const [{ projectTokenUsage }, claude, codex, accounts, { default: Store }] = await Promise.all([
+		const [breakdowns, claude, codex, accounts, { default: Store }] = await Promise.all([
 			import('../../main/stats/token-usage/project-breakdowns'),
 			import('../../main/storage/claude-session-storage'),
 			import('../../main/storage/codex-session-storage'),
-			import('../../main/agents/provider-account-dirs'),
+			// The rule with no stores: a headless host hands in its own sources.
+			import('../../main/agents/provider-account-dirs-core'),
 			import('electron-store'),
 		]);
 		const origins = new Store<ClaudeSessionOriginsData>({
@@ -103,16 +104,20 @@ export function createHeadlessTokenUsageReader(
 			defaults: { origins: {} },
 		});
 		// Only these two: every other storage needs SQLite, which plain Node cannot load.
-		const storages = new Map<string, Pick<AgentSessionStorage, 'listSessions'>>([
+		const storages = new Map<string, ProjectSessionStorage>([
 			['claude-code', new claude.ClaudeSessionStorage(origins)],
 			['codex', new codex.CodexSessionStorage(origins)],
 		]);
+		// This host parses inline on its own event loop: a repeat ask during a long cold parse joins
+		// it, and at most SESSION_LIST_CONCURRENCY listings run at once.
+		const gate = breakdowns.createSessionListGate();
 		return async (projects) => {
 			const sources = await accountSources();
-			return projectTokenUsage(projects, {
+			return breakdowns.projectTokenUsage(projects, {
 				storageFor: (agentType) => storages.get(agentType) ?? null,
+				gate,
 				accountDirsFor: (agentType) =>
-					accounts.getProviderAccountDirs(agentType, {
+					accounts.findProviderAccountDirs(agentType, {
 						sessions: sources.sessions,
 						globalShellEnvVars: sources.globalShellEnvVars,
 						agentLevelEnvVars: sources.agentLevelEnvVars(agentType),

@@ -232,6 +232,27 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 		}
 	);
 
+	it('lists several projects from one walk of the rollouts, each as listSessions would', async () => {
+		const project = 'C:\\Users\\test\\project';
+		const findAll = vi.spyOn(storage as any, 'findAllSessionFiles').mockResolvedValue([
+			{
+				filePath: '/fake/rollout.jsonl',
+				filename: 'rollout-20260308_031029-019ccb6c-c0fd-7b70-92b7-558f514099c6.jsonl',
+			},
+		]);
+		vi.mocked(fs.stat).mockResolvedValue({ size: 200, mtimeMs: 1_000 } as any);
+		vi.mocked(fs.readFile).mockImplementation(async (file) => {
+			if (String(file).includes('codex-sessions-cache')) throw new Error('no cache');
+			return createSessionContent();
+		});
+		const byProject = await storage.listSessionsForProjects([project, '/elsewhere']);
+		expect(findAll).toHaveBeenCalledTimes(1);
+		const single = await storage.listSessions(project);
+		expect(byProject.get(project)).toEqual(single);
+		expect(byProject.get(project)).toHaveLength(1);
+		expect(byProject.get('/elsewhere')).toEqual([]);
+	});
+
 	it('keeps distinct response items around malformed rows after shared native parsing', async () => {
 		vi.spyOn(storage, 'findSessionFile').mockResolvedValue('/isolated/rollout.jsonl');
 		vi.mocked(fs.readFile).mockResolvedValue(

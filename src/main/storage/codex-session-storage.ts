@@ -589,20 +589,13 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * List sessions for a project.
-	 *
-	 * `accountDir` selects which `CODEX_HOME` account's rollouts to read;
-	 * undefined reads the default account. See {@link AgentSessionStorage}.
+	 * Every local session of one account that has a working directory, newest
+	 * first: one walk of its rollouts, served from the parse cache where a file
+	 * is unchanged. Callers filter by project.
 	 */
-	async listSessions(
-		projectPath: string,
-		sshConfig?: SshRemoteConfig,
+	private async scanLocalSessions(
 		accountDir?: string
-	): Promise<AgentSessionInfo[]> {
-		// Use SSH remote access if config provided
-		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig, accountDir);
-		}
+	): Promise<{ sessions: AgentSessionInfo[]; fileCount: number }> {
 		const sessionsDir = this.getSessionsDir(accountDir);
 		const allSessionFiles = await this.findAllSessionFiles(accountDir);
 
@@ -632,12 +625,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 
 			const cached = cache.sessions[filePath];
 			if (cached && cached.fileMtimeMs >= stats.mtimeMs) {
-				if (
-					cached.session.projectPath &&
-					isSessionForProject(cached.session.projectPath, projectPath)
-				) {
-					sessions.push(cached.session);
-				}
+				if (cached.session.projectPath) sessions.push(cached.session);
 				continue;
 			}
 
@@ -650,9 +638,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			if (session) {
 				cache.sessions[filePath] = { session, fileMtimeMs: stats.mtimeMs };
 				cacheUpdated = true;
-				if (session.projectPath && isSessionForProject(session.projectPath, projectPath)) {
-					sessions.push(session);
-				}
+				if (session.projectPath) sessions.push(session);
 			}
 		}
 
@@ -683,8 +669,51 @@ export class CodexSessionStorage extends BaseSessionStorage {
 
 		// Sort by modified date (newest first)
 		sessions.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+		return { sessions, fileCount: allSessionFiles.length };
+	}
 
-		if (allSessionFiles.length === 0) {
+	/**
+	 * The local sessions of several projects of one account, from ONE walk of
+	 * its rollouts (`listSessions` walks them all for every project). Each
+	 * project gets what `listSessions(projectPath, undefined, accountDir)` would
+	 * return for it.
+	 */
+	async listSessionsForProjects(
+		projectPaths: readonly string[],
+		accountDir?: string
+	): Promise<Map<string, AgentSessionInfo[]>> {
+		const { sessions: all } = await this.scanLocalSessions(accountDir);
+		const byProject = new Map<string, AgentSessionInfo[]>();
+		for (const projectPath of projectPaths) {
+			const sessions = all.filter(
+				(session) => session.projectPath && isSessionForProject(session.projectPath, projectPath)
+			);
+			byProject.set(projectPath, this.attachOriginInfo(sessions, projectPath));
+		}
+		return byProject;
+	}
+
+	/**
+	 * List sessions for a project.
+	 *
+	 * `accountDir` selects which `CODEX_HOME` account's rollouts to read;
+	 * undefined reads the default account. See {@link AgentSessionStorage}.
+	 */
+	async listSessions(
+		projectPath: string,
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string
+	): Promise<AgentSessionInfo[]> {
+		// Use SSH remote access if config provided
+		if (sshConfig) {
+			return this.listSessionsRemote(projectPath, sshConfig, accountDir);
+		}
+		const { sessions: all, fileCount } = await this.scanLocalSessions(accountDir);
+		const sessions = all.filter(
+			(session) => session.projectPath && isSessionForProject(session.projectPath, projectPath)
+		);
+
+		if (fileCount === 0) {
 			logger.info(`No Codex sessions found`, LOG_CONTEXT);
 		} else {
 			logger.info(

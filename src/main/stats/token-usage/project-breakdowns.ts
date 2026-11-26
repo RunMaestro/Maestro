@@ -28,7 +28,8 @@ import type {
 	ProjectTokenUsageResult,
 	ProjectTokenUsageStatus,
 } from '../../../shared/projectTokenUsage';
-import { sessionFingerprint, tokenCacheKey, type TokenUsageCache } from './token-usage-cache';
+import type { TokenUsageCache } from './token-usage-cache';
+import { sessionFingerprint, tokenCacheKey } from './token-usage-keys';
 
 /**
  * Per-agent base coverage, matching the Cue accessor's classification so both
@@ -213,14 +214,76 @@ export function toBreakdown(
 	};
 }
 
+/**
+ * What a project read lists from: a provider's session storage. A storage that walks every
+ * transcript of an account whatever project it is asked about (Codex) also lists several
+ * projects from one walk.
+ */
+export type ProjectSessionStorage = Pick<AgentSessionStorage, 'listSessions'> & {
+	listSessionsForProjects?(
+		projectPaths: readonly string[],
+		accountDir?: string
+	): Promise<Map<string, AgentSessionInfo[]>>;
+};
+
+/**
+ * Runs the session listings of a host: a listing asked for again while it is still running joins
+ * the first (same provider, account, and projects), and at most `limit` run at once. A long cold
+ * parse then costs one parse however many asks arrive during it.
+ */
+export interface SessionListGate {
+	run<T>(key: string, list: () => Promise<T>): Promise<T>;
+}
+
+/** How many listings a host runs at once. */
+export const SESSION_LIST_CONCURRENCY = 2;
+
+export function createSessionListGate(limit = SESSION_LIST_CONCURRENCY): SessionListGate {
+	const inflight = new Map<string, Promise<unknown>>();
+	const waiting: Array<() => void> = [];
+	let active = 0;
+
+	async function withSlot<T>(list: () => Promise<T>): Promise<T> {
+		if (active < limit) active++;
+		else await new Promise<void>((resolve) => waiting.push(resolve));
+		try {
+			return await list();
+		} finally {
+			// Hand the slot straight to the next waiter, or give it back.
+			const next = waiting.shift();
+			if (next) next();
+			else active--;
+		}
+	}
+
+	return {
+		run<T>(key: string, list: () => Promise<T>): Promise<T> {
+			const existing = inflight.get(key);
+			if (existing) return existing as Promise<T>;
+			const pending = withSlot(list);
+			inflight.set(key, pending);
+			const clear = (): void => {
+				if (inflight.get(key) === pending) inflight.delete(key);
+			};
+			pending.then(clear, clear);
+			return pending;
+		},
+	};
+}
+
+/** A gate that joins nothing and limits nothing. */
+const UNGATED: SessionListGate = { run: (_key, list) => list() };
+
 /** What `collectProjectBreakdowns` reads with. */
 export interface ProjectBreakdownDeps {
 	/** The provider's session storage on this machine, or null when it has none. */
-	storageFor(agentType: string): Pick<AgentSessionStorage, 'listSessions'> | null;
+	storageFor(agentType: string): ProjectSessionStorage | null;
 	/** Every account dir of the provider on this machine; empty for a single default pass. */
 	accountDirsFor(agentType: string): Promise<string[]>;
 	/** The per-session breakdown cache, when the caller keeps one. */
 	cache?: Pick<TokenUsageCache, 'get' | 'set'>;
+	/** Joins and limits the session listings, when the caller keeps one (a host does). */
+	gate?: SessionListGate;
 	/** A storage failed to list one project; that project is skipped. */
 	onError?(error: unknown): void;
 }
@@ -228,17 +291,63 @@ export interface ProjectBreakdownDeps {
 /**
  * What one pass read: the breakdowns, the cache keys it saw, the providers it cannot read, and the
  * projects a storage failed to list (for one account or more), keyed by {@link projectKey}.
+ * `byProject` holds each project's own breakdowns, keyed the same way.
  */
 export interface ProjectBreakdowns {
 	breakdowns: SessionTokenBreakdown[];
 	liveKeys: Set<string>;
 	unsupportedProviders: string[];
 	failedProjects: Set<string>;
+	byProject: Map<string, SessionTokenBreakdown[]>;
 }
 
 /** The key a failed project is recorded under. */
 export function projectKey(agentType: string, projectPath: string): string {
 	return `${agentType}\u0000${projectPath}`;
+}
+
+/**
+ * The sessions of every project in `projects` for one account: one walk for a storage that can
+ * list several projects at once, else one listing per project. A listing that fails is an Error
+ * in place of that project's sessions.
+ */
+async function listAccountProjects(
+	agentType: string,
+	storage: ProjectSessionStorage,
+	projects: readonly string[],
+	accountDir: string | undefined,
+	gate: SessionListGate
+): Promise<Map<string, AgentSessionInfo[] | Error>> {
+	const account = accountDir ?? '';
+	const listed = new Map<string, AgentSessionInfo[] | Error>();
+	const asError = (error: unknown): Error =>
+		error instanceof Error ? error : new Error(String(error));
+	if (storage.listSessionsForProjects && projects.length > 1) {
+		const listMany = storage.listSessionsForProjects.bind(storage);
+		try {
+			const byProject = await gate.run(
+				canonicalJson(['many', agentType, account, [...projects]]),
+				() => listMany(projects, accountDir)
+			);
+			for (const projectPath of projects) listed.set(projectPath, byProject.get(projectPath) ?? []);
+		} catch (error) {
+			for (const projectPath of projects) listed.set(projectPath, asError(error));
+		}
+		return listed;
+	}
+	for (const projectPath of projects) {
+		try {
+			listed.set(
+				projectPath,
+				await gate.run(canonicalJson(['one', agentType, account, projectPath]), () =>
+					storage.listSessions(projectPath, undefined, accountDir)
+				)
+			);
+		} catch (error) {
+			listed.set(projectPath, asError(error));
+		}
+	}
+	return listed;
 }
 
 /**
@@ -253,13 +362,18 @@ export async function collectProjectBreakdowns(
 	const liveKeys = new Set<string>();
 	const unsupported = new Set<string>();
 	const failedProjects = new Set<string>();
+	const byProject = new Map<string, SessionTokenBreakdown[]>();
+	const gate = deps.gate ?? UNGATED;
+	// One walk can fail for several projects at once; report it once.
+	const reported = new Set<Error>();
 
-	for (const [agentType, projects] of byAgent) {
+	for (const [agentType, projectSet] of byAgent) {
 		const storage = deps.storageFor(agentType);
 		if (!storage) {
 			unsupported.add(agentType);
 			continue;
 		}
+		const projects = [...projectSet];
 
 		// Users routinely run one provider under several accounts, each a separate
 		// config dir with its own transcript tree. Reading only the default root
@@ -268,17 +382,24 @@ export async function collectProjectBreakdowns(
 		// single default pass, filed under DEFAULT_ACCOUNT_KEY.
 		const accountDirs = await deps.accountDirsFor(agentType);
 		const accounts: Array<string | undefined> = accountDirs.length ? accountDirs : [undefined];
+		// Each account is listed once for all its projects (one walk where the storage can).
+		const listings: Array<Map<string, AgentSessionInfo[] | Error>> = [];
+		for (const accountDir of accounts) {
+			listings.push(await listAccountProjects(agentType, storage, projects, accountDir, gate));
+		}
 
 		for (const projectPath of projects) {
-			for (const accountDir of accounts) {
+			const own: SessionTokenBreakdown[] = [];
+			const ownKeys = new Set<string>();
+			byProject.set(projectKey(agentType, projectPath), own);
+			accounts.forEach((accountDir, index) => {
 				const accountKey = accountDir ?? DEFAULT_ACCOUNT_KEY;
-				let sessions: AgentSessionInfo[];
-				try {
-					sessions = await storage.listSessions(projectPath, undefined, accountDir);
-				} catch (error) {
-					deps.onError?.(error);
+				const sessions = listings[index].get(projectPath) ?? [];
+				if (sessions instanceof Error) {
+					if (!reported.has(sessions)) deps.onError?.(sessions);
+					reported.add(sessions);
 					failedProjects.add(projectKey(agentType, projectPath));
-					continue;
+					return;
 				}
 				for (const info of sessions) {
 					// Grok IDs are scoped to account/cwd, and aliased project queries
@@ -289,8 +410,8 @@ export async function collectProjectBreakdowns(
 							: `${agentType}@${accountKey}`,
 						info.sessionId
 					);
-					if (agentType === 'grok' && liveKeys.has(key)) continue;
-					liveKeys.add(key);
+					if (agentType === 'grok' && ownKeys.has(key)) continue;
+					ownKeys.add(key);
 					const fingerprint = sessionFingerprint(info.modifiedAt, info.sizeBytes);
 					// A Grok usage.json update need not change the transcript size or
 					// summary timestamp. Storage already sampled all native files;
@@ -300,13 +421,22 @@ export async function collectProjectBreakdowns(
 						breakdown = toBreakdown(agentType, info, accountKey);
 						deps.cache?.set(key, fingerprint, breakdown);
 					}
+					own.push(breakdown);
+					if (agentType === 'grok' && liveKeys.has(key)) continue;
+					liveKeys.add(key);
 					breakdowns.push(breakdown);
 				}
-			}
+			});
 		}
 	}
 
-	return { breakdowns, liveKeys, unsupportedProviders: [...unsupported].sort(), failedProjects };
+	return {
+		breakdowns,
+		liveKeys,
+		unsupportedProviders: [...unsupported].sort(),
+		failedProjects,
+		byProject,
+	};
 }
 
 /**
@@ -315,30 +445,34 @@ export async function collectProjectBreakdowns(
  * any account) answers `failed`, so the peer names its agent instead of counting it short. No
  * breakdown cache here: each storage's own fingerprint cache already keeps an unchanged
  * conversation from being parsed twice, and the dashboard's cache prunes to this machine's agents.
+ * The whole request is one pass: each provider and account is listed once for all its projects.
  */
 export async function projectTokenUsage(
 	projects: readonly ProjectTokenUsageProject[],
 	deps: Omit<ProjectBreakdownDeps, 'cache'>
 ): Promise<ProjectTokenUsage> {
-	const results: ProjectTokenUsageResult[] = [];
+	const byAgent = new Map<string, Set<string>>();
 	for (const { provider, projectPath } of projects) {
-		const read = await collectProjectBreakdowns(
-			new Map([[provider, new Set([projectPath])]]),
-			deps
-		);
+		const set = byAgent.get(provider) ?? new Set<string>();
+		set.add(projectPath);
+		byAgent.set(provider, set);
+	}
+	const read = await collectProjectBreakdowns(byAgent, deps);
+	const results: ProjectTokenUsageResult[] = projects.map(({ provider, projectPath }) => {
+		const key = projectKey(provider, projectPath);
 		const status: ProjectTokenUsageStatus = read.unsupportedProviders.includes(provider)
 			? 'unsupported'
-			: read.failedProjects.size > 0
+			: read.failedProjects.has(key)
 				? 'failed'
 				: 'read';
 		// A storage may match conversations in folders under the one asked (Codex
 		// matches by prefix, so a request for `/` would list every rollout with its
 		// own working directory). Each answers as the folder asked: the peer learns
 		// only the numbers of what is under it, never a path it did not name.
-		const breakdowns = read.breakdowns.map((breakdown) =>
+		const breakdowns = (read.byProject.get(key) ?? []).map((breakdown) =>
 			breakdown.projectPath === projectPath ? breakdown : { ...breakdown, projectPath }
 		);
-		results.push({ status, breakdowns, complete: status === 'read' });
-	}
+		return { status, breakdowns, complete: status === 'read' };
+	});
 	return { projects: results };
 }
