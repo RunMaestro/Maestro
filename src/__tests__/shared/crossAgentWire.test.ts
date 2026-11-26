@@ -109,6 +109,23 @@ describe('remote asker keys (G2)', () => {
 		expect(parseWireAskerKey(long)).toBe(long);
 	});
 
+	it('stays under the wire bound for a non-ASCII name, without splitting a character', () => {
+		const key = buildRemoteAskerKey({
+			machine: '東京の開発マシン'.repeat(4),
+			agentId: '😀'.repeat(40),
+			tabId: '1b4e28ba-2fa1-11d2-883f-0016d3cca427',
+		});
+		expect(key.length).toBeLessThanOrEqual(MAX_WIRE_ASKER_KEY);
+		expect(parseWireAskerKey(key)).toBe(key);
+		const [machine, agent] = key.split('/').map((part) => decodeURIComponent(part));
+		expect('東京の開発マシン'.repeat(4).startsWith(machine)).toBe(true);
+		expect([...agent].every((char) => char === '😀')).toBe(true);
+		// A lone surrogate is skipped rather than thrown on.
+		expect(
+			parseWireAskerKey(buildRemoteAskerKey({ machine: '\ud800', agentId: 'a', tabId: 't' }))
+		).toBe('-/a/t');
+	});
+
 	it('refuses anything that is not that shape, so no other value names a tab', () => {
 		for (const bad of [
 			undefined,

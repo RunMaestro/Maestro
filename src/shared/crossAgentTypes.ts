@@ -111,7 +111,7 @@ export interface RemoteAskerContext {
 
 /** The longest asker key a consult accepts off the wire (`buildRemoteAskerKey()` stays under it). */
 export const MAX_WIRE_ASKER_KEY = 256;
-/** The longest part of an asker key, so the three always fit in {@link MAX_WIRE_ASKER_KEY}. */
+/** The longest ENCODED part of an asker key, so the three always fit in {@link MAX_WIRE_ASKER_KEY}. */
 const MAX_ASKER_KEY_PART = 80;
 /**
  * The source-agent id a remote asker's consult tab is keyed on: this prefix, then its key. No
@@ -125,16 +125,30 @@ const ASKER_KEY_PATTERN =
 
 /**
  * The asker key a consult of an agent on another machine carries: the asking machine (its
- * hostname), the asking agent, and the asking tab. Each part is URI-encoded and bounded, so the
- * key is plain ASCII that `parseWireAskerKey()` accepts.
+ * hostname), the asking agent, and the asking tab. Each part is URI-encoded and bounded after
+ * encoding, so the key is plain ASCII that `parseWireAskerKey()` accepts.
  */
 export function buildRemoteAskerKey(parts: {
 	machine: string;
 	agentId: string;
 	tabId: string;
 }): string {
-	const part = (value: string): string =>
-		encodeURIComponent(value.trim().slice(0, MAX_ASKER_KEY_PART)) || '-';
+	// Bounded after encoding, one whole character at a time: a non-ASCII name encodes to several
+	// bytes per character, and a key past the wire bound would be dropped for the shared thread.
+	const part = (value: string): string => {
+		let encoded = '';
+		for (const char of value.trim()) {
+			let piece: string;
+			try {
+				piece = encodeURIComponent(char);
+			} catch {
+				continue; // A lone surrogate has no encoding; it names nothing.
+			}
+			if (encoded.length + piece.length > MAX_ASKER_KEY_PART) break;
+			encoded += piece;
+		}
+		return encoded || '-';
+	};
 	return `${part(parts.machine)}/${part(parts.agentId)}/${part(parts.tabId)}`;
 }
 
