@@ -10,6 +10,7 @@
  */
 
 import { spawn } from 'child_process';
+import { createHash } from 'crypto';
 import { isUtf8 } from 'node:buffer';
 import { posix } from 'node:path';
 import * as path from 'path';
@@ -1571,6 +1572,76 @@ export async function writeFileRemote(
 	}
 
 	return { success: true };
+}
+
+/** Exit status of {@link replaceFileRemoteIfUnchanged}'s script when the remote file is not the expected one. */
+const REPLACE_IF_UNCHANGED_CHANGED = 3;
+/** Exit status of that script when the remote has no SHA-256 tool. */
+const REPLACE_IF_UNCHANGED_NO_HASH = 5;
+
+/**
+ * Write `content` over a remote file only if the file still holds the bytes
+ * whose SHA-256 is `expectedSha256` (the write-back of a copy opened in another
+ * app). One SSH round trip:
+ *
+ * 1. The bytes go to a temp file on the remote first, so a dropped connection
+ *    never leaves the target cut short.
+ * 2. The target is hashed there and compared with `expectedSha256`; a target
+ *    that changed, or is gone, is left alone and reported as `changed`.
+ * 3. The temp file is copied INTO the target (not moved over it), which keeps
+ *    the target's mode, owner, and links.
+ *
+ * Steps 2 and 3 run back to back on the remote host, which leaves the window for
+ * another writer at the remote's own speed instead of an SSH round trip. A
+ * target that already holds `content` (a retried write that had landed) counts
+ * as written.
+ */
+export async function replaceFileRemoteIfUnchanged(
+	filePath: string,
+	content: Buffer,
+	expectedSha256: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<void> & { changed?: boolean }> {
+	if (!/^[0-9a-f]{64}$/.test(expectedSha256)) {
+		throw new RangeError('expectedSha256 must be a lowercase SHA-256 hex digest');
+	}
+	const contentSha256 = createHash('sha256').update(content).digest('hex');
+	const script = [
+		`f=${shellEscapeRemotePath(filePath)}`,
+		'sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d" " -f1; }',
+		'command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || exit ' +
+			REPLACE_IF_UNCHANGED_NO_HASH,
+		'tmp=$(mktemp "${TMPDIR:-/tmp}/maestro-write-back.XXXXXX") || exit 1',
+		'trap \'rm -f "$tmp"\' EXIT',
+		'base64 -d > "$tmp" || exit 1',
+		`[ -f "$f" ] || exit ${REPLACE_IF_UNCHANGED_CHANGED}`,
+		'cur=$(sum "$f")',
+		`[ "$cur" = ${contentSha256} ] && exit 0`,
+		`[ "$cur" = ${expectedSha256} ] || exit ${REPLACE_IF_UNCHANGED_CHANGED}`,
+		'cat "$tmp" > "$f"',
+	].join('\n');
+	const result = await execRemoteCommand(
+		sshRemote,
+		`/bin/sh -c ${shellEscape(script)}`,
+		deps,
+		content.toString('base64')
+	);
+	if (result.exitCode === 0) return { success: true };
+	if (result.exitCode === REPLACE_IF_UNCHANGED_CHANGED) {
+		return { success: false, changed: true, error: `The remote file changed: ${filePath}` };
+	}
+	if (result.exitCode === REPLACE_IF_UNCHANGED_NO_HASH) {
+		return {
+			success: false,
+			error: `The remote host has no sha256sum or shasum to check ${filePath} before writing`,
+		};
+	}
+	const error = result.stderr || `Failed to write file: ${filePath}`;
+	return {
+		success: false,
+		error: error.includes('Permission denied') ? `Permission denied: ${filePath}` : error,
+	};
 }
 
 /**

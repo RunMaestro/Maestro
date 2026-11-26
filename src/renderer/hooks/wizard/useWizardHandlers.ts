@@ -122,6 +122,7 @@ import type { HistoryEntryInput } from '../agent/useAgentSessionManagement';
 import type { AgentSpawnResult } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import { canonicalJson } from '../../../shared/canonicalJson';
 
 // ============================================================================
 // Dependencies interface
@@ -225,6 +226,18 @@ export interface UseWizardHandlersReturn {
 // Hook implementation
 // ============================================================================
 
+/**
+ * Whether the agent's discovered command list is refreshed every time it is
+ * selected and replaced whole: Codex (its skills change with its account), and
+ * Claude on an SSH remote (the list comes from the remote, cached in main, and
+ * must never keep commands found on this machine).
+ */
+function refreshesStoredCommands(session: Session): boolean {
+	return (
+		session.toolType === 'codex' || (session.toolType === 'claude-code' && isSessionRemote(session))
+	);
+}
+
 export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandlersReturn {
 	const {
 		inlineWizardContext,
@@ -245,14 +258,19 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	const activeToolType = useSessionStore((s) => selectActiveSession(s)?.toolType);
 	const activeCwd = useSessionStore((s) => selectActiveSession(s)?.cwd);
 	const activeCustomPath = useSessionStore((s) => selectActiveSession(s)?.customPath);
-	// Codex refreshes persisted command lists on focus; its own write must not retrigger discovery.
+	// Codex, and Claude on an SSH remote, refresh their persisted command lists on
+	// focus; their own write must not retrigger discovery.
 	const activeAgentCommands = useSessionStore((s) => {
 		const session = selectActiveSession(s);
-		return session?.toolType === 'codex' ? undefined : session?.agentCommands;
+		return session && refreshesStoredCommands(session) ? undefined : session?.agentCommands;
 	});
+	// The agent's own vars pick its account (CODEX_HOME, CLAUDE_CONFIG_DIR), so
+	// discovery runs with them, on this machine or on the remote.
 	const activeCodexEnv = useSessionStore((s) => {
 		const session = selectActiveSession(s);
-		return session?.toolType === 'codex' ? session.customEnvVars : undefined;
+		return session?.toolType === 'codex' || session?.toolType === 'claude-code'
+			? session.customEnvVars
+			: undefined;
 	});
 	const codexShellEnv = useSettingsStore((s) =>
 		activeToolType === 'codex' ? s.shellEnvVars : undefined
@@ -369,6 +387,11 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// Keep reconnects on the current effect's cancellable discovery operation.
 	const discoverCommandsRef = useRef<(() => void) | null>(null);
 	useEventListener(WEB_BRIDGE_STATE_EVENT, () => discoverCommandsRef.current?.());
+	// Where each agent's stored command list was found: the machine ('local', or
+	// the SSH remote's id) and the agent's own vars (its account). In memory only:
+	// a list restored from disk is taken as found where the agent is now, so an
+	// edit to the account or a move to another machine finds the list again.
+	const commandsFoundOnRef = useRef(new Map<string, string>());
 	useEffect(() => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return;
@@ -379,9 +402,29 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			currentSession.toolType !== 'codex'
 		)
 			return;
-		if (currentSession.toolType !== 'codex' && currentSession.agentCommands?.length) return;
-
+		// A list that is refreshed on focus is replaced whole. For a remote Claude
+		// agent that also drops commands an older build collected on this machine.
+		const replacesStored = refreshesStoredCommands(currentSession);
 		const sessionId = currentSession.id;
+		const foundOn = `${activeSshRemoteId ?? 'local'}\0${canonicalJson(
+			(currentSession.toolType === 'codex' || currentSession.toolType === 'claude-code'
+				? currentSession.customEnvVars
+				: undefined) ?? {}
+		)}`;
+		const storedFoundOn = commandsFoundOnRef.current.get(sessionId);
+		if (!replacesStored && currentSession.agentCommands?.length) {
+			if (storedFoundOn === undefined) {
+				commandsFoundOnRef.current.set(sessionId, foundOn);
+				return;
+			}
+			if (storedFoundOn === foundOn) return;
+			// The agent moved off the machine or the account its list was found on: drop the list.
+			// Clearing it runs this effect again, which finds the commands here.
+			commandsFoundOnRef.current.set(sessionId, foundOn);
+			updateSessionWith(sessionId, (s) => ({ ...s, agentCommands: [] }));
+			return;
+		}
+
 		const projectRoot = currentSession.projectRoot;
 		let cancelled = false;
 
@@ -411,6 +454,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				);
 
 				if (customCommandObjects.length > 0) {
+					commandsFoundOnRef.current.set(sessionId, foundOn);
 					updateSessionWith(sessionId, (s) => {
 						const existingCommands = s.agentCommands || [];
 						return {
@@ -437,7 +481,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					currentSession.cwd,
 					currentSession.customPath,
 					activeSshRemoteId,
-					...(currentSession.toolType === 'codex' && currentSession.customEnvVars !== undefined
+					...((currentSession.toolType === 'codex' || currentSession.toolType === 'claude-code') &&
+					currentSession.customEnvVars !== undefined
 						? [currentSession.customEnvVars]
 						: [])
 				);
@@ -452,21 +497,32 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 				if (
 					agentCommandObjects.length > 0 ||
-					(currentSession.toolType === 'codex' &&
-						(agentSlashCommands !== null || activeSshRemoteId !== undefined))
+					(replacesStored && (agentSlashCommands !== null || activeSshRemoteId !== undefined))
 				) {
+					commandsFoundOnRef.current.set(sessionId, foundOn);
 					updateSessionWith(sessionId, (s) => {
 						const existingCommands = s.agentCommands || [];
 						return {
 							...s,
-							agentCommands:
-								currentSession.toolType === 'codex'
-									? agentCommandObjects
-									: mergeCommands(existingCommands, agentCommandObjects),
+							agentCommands: replacesStored
+								? agentCommandObjects
+								: mergeCommands(existingCommands, agentCommandObjects),
 						};
 					});
 				}
 			} catch (error) {
+				// A remote agent never keeps a list that was not found on its remote,
+				// even when the remote could not be asked this time.
+				if (
+					!cancelled &&
+					activeSshRemoteId !== undefined &&
+					commandsFoundOnRef.current.get(sessionId) !== foundOn
+				) {
+					commandsFoundOnRef.current.set(sessionId, foundOn);
+					updateSessionWith(sessionId, (s) =>
+						s.agentCommands?.length ? { ...s, agentCommands: [] } : s
+					);
+				}
 				if (!cancelled && !isExpectedBridgeError(error)) {
 					logger.error(
 						'[SlashCommandDiscovery] Failed to discover agent commands:',
@@ -479,7 +535,10 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 		const discover = () => {
 			if (!isBridgeTransportReady()) return;
-			if (currentSession.toolType === 'claude-code') {
+			// `claude:getCommands` reads this machine's command folders. For an agent
+			// on an SSH remote (SSH or hosted) the probe below runs on the remote and
+			// names its commands, so this machine's are never mixed in.
+			if (currentSession.toolType === 'claude-code' && !isSessionRemote(currentSession)) {
 				void fetchCustomCommands();
 			}
 			void discoverAgentCommands();

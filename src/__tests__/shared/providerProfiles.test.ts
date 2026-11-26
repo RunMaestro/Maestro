@@ -22,6 +22,7 @@ import {
 	isImplicitDefaultProfile,
 	makeAccountKeyHelpers,
 	parseProviderProfileKey,
+	profileAccountShortLabel,
 	providerProfileKey,
 	providerProfileLabel,
 	providerProfileShortLabel,
@@ -165,22 +166,26 @@ describe('profile labels', () => {
 describe('isImplicitDefaultProfile', () => {
 	const local = { credential: null, sshRemoteId: null };
 
-	it('is true only for the local implicit ~/<subdir> account', () => {
+	it('is true for the implicit ~/<subdir> account, here or on a remote', () => {
 		expect(isImplicitDefaultProfile('codex', { ...local, accountKey: '/Users/me/.codex' })).toBe(
 			true
 		);
 		expect(
 			isImplicitDefaultProfile('claude-code', { ...local, accountKey: '/Users/me/.claude/' })
 		).toBe(true);
+		// A remote's default account is as implicit as this machine's.
+		const remoteDefault = resolveAgentProfile('claude-code', {}, '~', { id: 'r1', name: 'box' });
+		expect(remoteDefault).not.toBeNull();
+		expect(isImplicitDefaultProfile('claude-code', remoteDefault!)).toBe(true);
 	});
 
-	it('is false for a named account, a remote host, a credential, or no account', () => {
+	it('is false for a named account, a credential, or no account', () => {
 		expect(
 			isImplicitDefaultProfile('codex', { ...local, accountKey: '/Users/me/.codex-work' })
 		).toBe(false);
 		expect(
 			isImplicitDefaultProfile('codex', {
-				accountKey: '/home/me/.codex',
+				accountKey: '/home/me/.codex-work',
 				credential: null,
 				sshRemoteId: 'remote-1',
 			})
@@ -193,6 +198,27 @@ describe('isImplicitDefaultProfile', () => {
 			})
 		).toBe(false);
 		expect(isImplicitDefaultProfile('opencode', { ...local, accountKey: null })).toBe(false);
+	});
+});
+
+describe('profileAccountShortLabel', () => {
+	it('names the account without the remote host, the same in every mode', () => {
+		const env = { CLAUDE_CONFIG_DIR: '/srv/me/.claude-work' };
+		const local = resolveAgentProfile('claude-code', env, '/Users/me')!;
+		const remote = resolveAgentProfile('claude-code', env, '~', { id: 'r1', name: 'box' })!;
+		expect(remote.shortLabel).toContain('@ box');
+		expect(profileAccountShortLabel('claude-code', remote)).toBe(
+			profileAccountShortLabel('claude-code', local)
+		);
+		expect(profileAccountShortLabel('claude-code', local)).toBe(local.shortLabel);
+	});
+
+	it('names a billed credential by its own label', () => {
+		const profile = {
+			accountKey: null,
+			credential: { kind: 'api-key' as const, id: 'api-key:abcd', label: 'API key ...abcd' },
+		};
+		expect(profileAccountShortLabel('claude-code', profile)).toBe('API key ...abcd');
 	});
 });
 

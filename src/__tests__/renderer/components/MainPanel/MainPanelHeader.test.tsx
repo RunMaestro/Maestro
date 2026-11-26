@@ -1064,6 +1064,40 @@ describe('MainPanelHeader: local, SSH, and hosted agents draw the same header', 
 		}
 	});
 
+	it('hides the default account in every mode, and names a chosen account the same way', async () => {
+		settingsMocks.hostingOn = true;
+		const sessionsFor = (env?: Record<string, string>) =>
+			[modes.local, modes.ssh, modes.hosted].map((session) => ({
+				...session,
+				customEnvVars: env,
+			}));
+		// The default account (no CLAUDE_CONFIG_DIR): no label, here or on a remote,
+		// and never a path of this machine in a tooltip.
+		for (const session of sessionsFor()) {
+			const { container, unmount } = render(
+				<MainPanelHeader {...defaultProps} activeSession={session} activeTabContextWindow={0} />
+			);
+			await act(async () => {});
+			expect(screen.queryByLabelText(/^Provider profile:/)).not.toBeInTheDocument();
+			expect(container.innerHTML).not.toContain('/home/testuser');
+			unmount();
+		}
+		// An account the user chose: the same label and tooltip in every mode.
+		const seen: Array<[string | null, string | null]> = [];
+		for (const session of sessionsFor({ CLAUDE_CONFIG_DIR: '/srv/me/.claude-work' })) {
+			const { unmount } = render(
+				<MainPanelHeader {...defaultProps} activeSession={session} activeTabContextWindow={0} />
+			);
+			const label = await screen.findByLabelText(/^Provider profile:/);
+			seen.push([label.textContent, label.getAttribute('title')]);
+			unmount();
+		}
+		expect(seen[0][1]).toBe('/srv/me/.claude-work');
+		expect(seen[0][0]).not.toContain('@');
+		expect(seen[1]).toEqual(seen[0]);
+		expect(seen[2]).toEqual(seen[0]);
+	});
+
 	it('draws a hosted agent as the SSH agent it was while hosted agents are off', () => {
 		settingsMocks.hostingOn = false;
 		render(<MainPanelHeader {...defaultProps} activeSession={modes.hosted} />);

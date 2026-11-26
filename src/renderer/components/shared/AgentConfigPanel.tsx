@@ -709,8 +709,9 @@ export function AgentConfigPanel({
 	// that detection reports in expanded form), in which case it won't match
 	// any detected option and we surface it as an explicit "Custom" entry
 	// rather than letting the <select> silently display the first option.
-	// Remote detection resolves one binary, so a remote agent has no chooser.
-	const detectedPaths = isSshEnabled ? [] : (agent.allPaths ?? []);
+	// Detection lists every installation where the agent runs (the SSH remote
+	// for a remote or hosted agent), so the chooser shows in every mode.
+	const detectedPaths = isSshEnabled ? remoteDetection.allPaths : (agent.allPaths ?? []);
 	const activePath = customPath || detectedPath || '';
 	const activePathIsDetected = detectedPaths.includes(activePath);
 

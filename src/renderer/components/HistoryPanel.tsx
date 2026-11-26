@@ -234,6 +234,7 @@ export const HistoryPanel = React.memo(
 			session.sessionSshRemoteConfig?.enabled,
 			session.sessionSshRemoteConfig?.remoteId,
 			session.sessionSshRemoteConfig?.syncHistory,
+			session.sessionSshRemoteConfig?.shareHistoryToProjectDir,
 		]);
 		// `projectPath` is what lets the handler merge a non-SSH session's
 		// `<projectPath>/.maestro/history/*.jsonl` files (entries written
