@@ -478,7 +478,11 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		turns: turns.api,
 		autoRun: autoRun.api,
 		groupChats: groupChats.api,
-		consults: { api: consults.api, cancelForSource: consults.cancelForSource },
+		consults: {
+			api: consults.api,
+			cancelForSource: consults.cancelForSource,
+			cancelForRemoteAsker: consults.cancelForRemoteAsker,
+		},
 		history: history.api,
 	});
 

@@ -108,6 +108,12 @@ export interface RuntimeConsults {
 	readonly api: { ask(input: RuntimeConsultInput): Promise<ClientResult<ConsultAnswer>> };
 	/** Stop every consult `agentId` (or its tab `tabId`) asked for. Answers how many were stopped. */
 	cancelForSource(agentId: string, tabId?: string): number;
+	/**
+	 * Stop on an asker on another machine (`consults.cancel`): every consult of that consult-tab key,
+	 * including one still waiting its turn or writing its question, which ends as stopped when its
+	 * turn comes. The asker cannot see that queue, so its Stop must not miss what waits in it.
+	 */
+	cancelForRemoteAsker(sourceSessionId: string): number;
 	/** Consults running now. With the group chat rounds, the work `host stop` refuses to cut off. */
 	inFlight(): number;
 	/**
@@ -187,8 +193,8 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 	const order = createKeyedWriteQueue();
 	/**
 	 * Consults asked but not started yet (waiting behind another on their consult tab, or writing
-	 * the question): Stop finds no process for them, so it marks them here and they end as stopped
-	 * the moment their turn comes, as a local Stop ends one whose process does not exist yet.
+	 * the question): a remote asker's Stop finds no process for them, so it marks them here and they
+	 * end as stopped the moment their turn comes (`cancelForRemoteAsker`).
 	 */
 	const waiting = new Set<{ sourceSessionId: string; sourceTabId: string; stopped: boolean }>();
 	let inFlight = 0;
@@ -481,19 +487,16 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 
 	return {
 		api: { ask },
-		cancelForSource: (agentId, tabId) => {
+		cancelForSource: (agentId, tabId) => service.cancelForSource(agentId, tabId),
+		cancelForRemoteAsker: (sourceSessionId) => {
 			let marked = 0;
 			for (const pending of waiting) {
-				if (
-					!pending.stopped &&
-					pending.sourceSessionId === agentId &&
-					(!tabId || pending.sourceTabId === tabId)
-				) {
+				if (!pending.stopped && pending.sourceSessionId === sourceSessionId) {
 					pending.stopped = true;
 					marked += 1;
 				}
 			}
-			return marked + service.cancelForSource(agentId, tabId);
+			return marked + service.cancelForSource(sourceSessionId);
 		},
 		inFlight: () => inFlight,
 		dispose() {

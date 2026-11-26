@@ -71,7 +71,12 @@ export interface RuntimeClientDeps {
 	/** Create, read, send into, stop, rename, and delete group chats. */
 	groupChats: GroupChatsApi;
 	/** Ask another agent. `cancelForSource` is how Stop on the asker reaches the consults it started. */
-	consults: { api: ConsultsApi; cancelForSource(agentId: string): number };
+	consults: {
+		api: ConsultsApi;
+		cancelForSource(agentId: string): number;
+		/** Stop on an asker on another machine, including what waits in this host's queue. */
+		cancelForRemoteAsker(sourceSessionId: string): number;
+	};
 	/** An agent's History, with the shared History of its project. */
 	history: HistoryApi;
 }
@@ -307,7 +312,7 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 					const askerKey = parseWireAskerKey(input.askerKey);
 					if (!askerKey) return fail('consults.cancel', 'invalid', 'The asker key is not valid.');
 					const key = remoteAskerConsultKey(askerKey);
-					return ok({ canceled: deps.consults.cancelForSource(key.sourceSessionId) });
+					return ok({ canceled: deps.consults.cancelForRemoteAsker(key.sourceSessionId) });
 				}),
 		},
 
