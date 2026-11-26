@@ -45,6 +45,7 @@ interface SentryModule {
 	}) => void;
 	setTags: (tags: Record<string, string>) => void;
 	setContext: (name: string, context: Record<string, unknown> | null) => void;
+	flush: (timeout?: number) => PromiseLike<boolean>;
 }
 
 /** Cached Sentry module reference */
@@ -95,6 +96,24 @@ export async function captureMessage(
 	} catch {
 		// Sentry not available (development mode or initialization failed)
 		logger.debug('Sentry not available for message reporting', '[Sentry]');
+	}
+}
+
+/**
+ * Waits, at most `timeoutMs`, for the events already captured to be sent. For a
+ * process about to hard-exit (a SIGKILL drops Sentry's queue). Resolves false
+ * when they were not all sent, or Sentry is not available.
+ */
+export async function flushSentry(timeoutMs: number): Promise<boolean> {
+	try {
+		if (!sentryModule) {
+			const sentry = await import('@sentry/electron/main');
+			sentryModule = sentry;
+		}
+		return await sentryModule.flush(timeoutMs);
+	} catch {
+		logger.debug('Sentry not available for flushing', '[Sentry]');
+		return false;
 	}
 }
 

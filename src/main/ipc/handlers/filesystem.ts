@@ -740,6 +740,17 @@ export function flushRemoteCopyWriteBack(): Promise<void> {
 	return remoteCopyWriteBack?.dispose() ?? Promise.resolve();
 }
 
+/**
+ * The opened remote copies whose saved change has not reached the remote yet,
+ * as `<remote path> (SSH remote <id>)`. The quit path logs them when it stops
+ * waiting: those changes stay only in the copies on this machine.
+ */
+export function pendingRemoteCopyWrites(): string[] {
+	return (remoteCopyWriteBack?.pendingCopies() ?? []).map(
+		({ remotePath, sshRemoteId }) => `${remotePath} (SSH remote ${sshRemoteId})`
+	);
+}
+
 export interface FilesystemHandlerDependencies {
 	/** Broadcast to the renderers: the write-back of a remote copy reports through it. */
 	safeSend?: SafeSendFn;
@@ -1041,13 +1052,16 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 			// A copy opened in another app may hold a change the remote does not have
 			// yet: it stays (the write is tried again), never replaced by a fetch. The
 			// fetch runs in that copy's own queue, so no save of it interleaves.
-			await writeBack.refetch(destPath, {
-				download: () => readRemoteFileBytes(remotePath, sshConfig),
-				stage: async (bytes) => {
-					await fs.mkdir(path.dirname(destPath), { recursive: true });
-					return stageLocalFile(destPath, bytes);
-				},
-			});
+			await writeBack.refetch(
+				{ localPath: destPath, remotePath, sshRemoteId },
+				{
+					download: () => readRemoteFileBytes(remotePath, sshConfig),
+					stage: async (bytes) => {
+						await fs.mkdir(path.dirname(destPath), { recursive: true });
+						return stageLocalFile(destPath, bytes);
+					},
+				}
+			);
 			return { success: true, path: destPath };
 		}
 	);
