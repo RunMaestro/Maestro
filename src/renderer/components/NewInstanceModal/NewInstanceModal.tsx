@@ -200,10 +200,13 @@ export function NewInstanceModal({
 		return remote?.host;
 	}, [isSshEnabled, selectedAgent, agentSshRemoteConfigs, sshRemotes]);
 
-	// Validate remote path when SSH is enabled (debounced)
+	// Validate the path (debounced) where the agent will run: on the SSH remote, or on this
+	// machine (with `~` expanded here, as the agent's spawn cwd is). Edit Agent checks a local
+	// path the same way, so the status row under the field reads the same in every mode.
 	const remotePathValidation = useRemotePathValidation({
 		isSshEnabled: !!isSshEnabled,
-		path: workingDir,
+		validateLocal: true,
+		path: isSshEnabled ? workingDir : expandTilde(workingDir),
 		sshRemoteId: (agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_'])
 			?.remoteId,
 	});
@@ -1364,14 +1367,8 @@ export function NewInstanceModal({
 					}
 				/>
 
-				{/* Remote path validation status (only shown when SSH is enabled) */}
-				{isSshEnabled && workingDir.trim() && (
-					<RemotePathStatus
-						theme={theme}
-						validation={remotePathValidation}
-						remoteHost={sshRemoteHost}
-					/>
-				)}
+				{/* Path status, drawn the same way for a local and a remote directory */}
+				{workingDir.trim() && <RemotePathStatus theme={theme} validation={remotePathValidation} />}
 
 				{/* Git repo hint - offer to `git init` when the selected dir isn't a repo */}
 				{workingDir.trim() && gitRepoStatus === 'not-repo' && (

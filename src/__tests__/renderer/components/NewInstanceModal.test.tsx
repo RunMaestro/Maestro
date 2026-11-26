@@ -17,7 +17,13 @@ import type { AgentDiscoveryResult } from '../../../shared/types';
 import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
 import { getAgentDefinition } from '../../../shared/maestro-lib/providers/definitions';
 import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
-import { createMockAITab, createMockSession } from '../../helpers';
+import {
+	AGENT_MODES,
+	createMockAITab,
+	createMockSession,
+	createModeSession,
+	type AgentMode,
+} from '../../helpers';
 
 // lucide-react icons are mocked globally in src/__tests__/setup.ts using a Proxy
 
@@ -3787,7 +3793,7 @@ describe('NewInstanceModal', () => {
 			// This validates the path exists on the remote and enables the Create button
 			await waitFor(
 				() => {
-					expect(screen.getByText('Directory found on test.example.com')).toBeInTheDocument();
+					expect(screen.getByText('Directory found')).toBeInTheDocument();
 				},
 				{ timeout: 3000 }
 			);
@@ -4026,7 +4032,7 @@ describe('NewInstanceModal', () => {
 			// Wait for remote path validation
 			await waitFor(
 				() => {
-					expect(screen.getByText('Directory found on dev.example.com')).toBeInTheDocument();
+					expect(screen.getByText('Directory found')).toBeInTheDocument();
 				},
 				{ timeout: 3000 }
 			);
@@ -4127,7 +4133,7 @@ describe('NewInstanceModal', () => {
 			});
 			await waitFor(
 				() => {
-					expect(screen.getByText('Directory found on dev.example.com')).toBeInTheDocument();
+					expect(screen.getByText('Directory found')).toBeInTheDocument();
 				},
 				{ timeout: 3000 }
 			);
@@ -4453,6 +4459,87 @@ describe('NewInstanceModal', () => {
 		});
 	});
 
+	// Parity (docs/parity/agent-ux-parity.md): the New Agent modal draws one path-status row with
+	// the same words for a local, an SSH, and a hosted draft, as Edit Agent does. The path is
+	// checked where the agent will run; the row never names the host (the mode pill does that).
+	describe('Path status row: mode parity (local, SSH, hosted)', () => {
+		const renderDraft = async (mode: AgentMode) => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'r1',
+						name: 'Box',
+						host: 'box.example.com',
+						port: 22,
+						username: 'me',
+						privateKeyPath: '',
+						enabled: true,
+					},
+				],
+			} as any);
+			const stat = vi.mocked(window.maestro.fs.stat);
+			stat.mockReset();
+			stat.mockResolvedValue({ isDirectory: true, isFile: false } as any);
+			const view = render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={createModeSession(mode, { name: 'Src', cwd: '/srv/start' })}
+				/>
+			);
+			await waitFor(() => expect(screen.getByLabelText('Working Directory')).toBeInTheDocument());
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '/srv/project' },
+			});
+			await waitFor(() => expect(screen.getByText('Directory found')).toBeInTheDocument(), {
+				timeout: 3000,
+			});
+			const lastStat = stat.mock.calls.at(-1);
+			const text = screen.getByText('Directory found').closest('div')?.textContent;
+			view.unmount();
+			return { text, lastStat };
+		};
+
+		it('draws the same row in every mode and checks the path where the agent will run', async () => {
+			const results = {} as Record<AgentMode, Awaited<ReturnType<typeof renderDraft>>>;
+			for (const mode of AGENT_MODES) results[mode] = await renderDraft(mode);
+			expect(results.ssh.text).toBe(results.local.text);
+			expect(results.hosted.text).toBe(results.local.text);
+			expect(results.local.text).toBe('Directory found');
+			expect(results.ssh.text).not.toContain('box.example.com');
+			expect(results.local.lastStat).toEqual(['/srv/project', undefined]);
+			expect(results.ssh.lastStat).toEqual(['/srv/project', 'r1']);
+			expect(results.hosted.lastStat).toEqual(['/srv/project', 'r1']);
+		});
+
+		it('a local path that is not there shows the same error row an SSH one does', async () => {
+			vi.mocked(window.maestro.fs.stat).mockReset();
+			vi.mocked(window.maestro.fs.stat).mockRejectedValue(new Error('ENOENT'));
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+				/>
+			);
+			await waitFor(() => expect(screen.getByLabelText('Working Directory')).toBeInTheDocument());
+			fireEvent.change(screen.getByLabelText('Working Directory'), {
+				target: { value: '~/missing' },
+			});
+			expect(
+				await screen.findByText('Path not found or not accessible', undefined, { timeout: 3000 })
+			).toBeInTheDocument();
+			// `~` is expanded with this machine's home for a local path, as its spawn cwd is.
+			expect(window.maestro.fs.stat).toHaveBeenLastCalledWith('/home/testuser/missing', undefined);
+		});
+	});
+
 	describe('Agent Group selector', () => {
 		it('hides the Agent Group control when no groups exist', async () => {
 			useSessionStore.setState({ groups: [] });
@@ -4681,7 +4768,7 @@ describe('NewInstanceModal', () => {
 			});
 			await waitFor(
 				() => {
-					expect(screen.getByText('Directory found on dev.example.com')).toBeInTheDocument();
+					expect(screen.getByText('Directory found')).toBeInTheDocument();
 				},
 				{ timeout: 3000 }
 			);
@@ -4759,7 +4846,7 @@ describe('NewInstanceModal', () => {
 			});
 			await waitFor(
 				() => {
-					expect(screen.getByText('Directory found on up.example.com')).toBeInTheDocument();
+					expect(screen.getByText('Directory found')).toBeInTheDocument();
 				},
 				{ timeout: 3000 }
 			);
