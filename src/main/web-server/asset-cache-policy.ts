@@ -34,6 +34,20 @@ const CONTENT_HASHED_FILE_NAME = /-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+(?:\.map)?$/;
 export const IMMUTABLE_ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
 /**
+ * What an error response on this mount carries instead. The plugin applies the
+ * immutable header after `stat` and before the file opens, so a failed open
+ * (an extracted asar copy purged from temp, say) used to send its `500` with a
+ * one-year `immutable` attached. Chromium then serves that cached `500` on
+ * every reload, long after the file is back.
+ */
+export const ERROR_RESPONSE_CACHE_CONTROL = 'no-store';
+
+/** The statuses that may keep the immutable header: the file itself, or proof it is unchanged. */
+export function mayCacheAssetResponse(statusCode: number): boolean {
+	return statusCode === 200 || statusCode === 206 || statusCode === 304;
+}
+
+/**
  * True when `filePath` is a content-hashed file directly inside `assetsRoot`.
  * Anything outside the root, in a subfolder, or without a hash suffix keeps the
  * default revalidating policy.

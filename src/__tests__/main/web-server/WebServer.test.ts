@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import fs, { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import os from 'os';
+import { PassThrough } from 'stream';
 import path from 'path';
 import { WebServer } from '../../../main/web-server/WebServer';
 import { MEDIA_PATH_PARAM_MAX_LENGTH } from '../../../main/web-server/routes/mediaRoutes';
@@ -110,6 +111,40 @@ describe('WebServer desktop asset caching', () => {
 
 		await fastify.close();
 	});
+
+	// The headers go on after stat and before the file opens. When the open
+	// fails, Chromium caches the error under the one-year immutable header and
+	// keeps serving it after the file is back (#2158).
+	it.each([
+		['EACCES', 500],
+		['ENOENT', 500],
+	])(
+		'never marks an error response immutable when the open fails with %s',
+		async (code, status) => {
+			const server = new WebServer(0);
+			await (server as any).setupMiddleware();
+			const fastify = server.getServer();
+			const token = server.getSecurityToken();
+
+			vi.spyOn(fs, 'createReadStream').mockImplementation(() => {
+				const stream = new PassThrough();
+				process.nextTick(() =>
+					stream.destroy(Object.assign(new Error(`${code}: open failed`), { code }))
+				);
+				return stream as unknown as fs.ReadStream;
+			});
+
+			const failed = await fastify.inject({
+				method: 'GET',
+				url: `/${token}/desktop/assets/main-BOEbwE3b.js`,
+			});
+			expect(failed.statusCode).toBe(status);
+			expect(String(failed.headers['cache-control'] ?? '')).not.toContain('immutable');
+			expect(String(failed.headers['cache-control'] ?? '')).not.toContain('max-age=31536000');
+
+			await fastify.close();
+		}
+	);
 });
 
 describe('WebServer Fastify configuration', () => {

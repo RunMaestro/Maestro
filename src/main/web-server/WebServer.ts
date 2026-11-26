@@ -58,7 +58,12 @@ import {
 	WsRoute,
 } from './routes';
 import { MEDIA_PATH_PARAM_MAX_LENGTH } from './routes/mediaRoutes';
-import { IMMUTABLE_ASSET_CACHE_CONTROL, isContentHashedAsset } from './asset-cache-policy';
+import {
+	ERROR_RESPONSE_CACHE_CONTROL,
+	IMMUTABLE_ASSET_CACHE_CONTROL,
+	isContentHashedAsset,
+	mayCacheAssetResponse,
+} from './asset-cache-policy';
 import { webLoginPreHandler } from './auth/web-login-hook';
 import { getWebUserStore } from './auth/web-user-store';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../shared/webLogin';
@@ -1069,19 +1074,34 @@ export class WebServer {
 		if (this.webDesktopPath) {
 			const wdAssets = path.join(this.webDesktopPath, 'assets');
 			if (existsSync(wdAssets)) {
-				await this.server.register(fastifyStatic, {
-					root: wdAssets,
-					prefix: `/${this.securityToken}/desktop/assets/`,
-					decorateReply: false,
-					// Runs after the plugin's own headers (200, 206 and 304 alike), so
-					// this replaces its default `max-age=0` for hashed files only.
-					// See asset-cache-policy.ts for why revalidating them broke boot
-					// over a Cloudflare quick tunnel.
-					setHeaders: (reply, filePath) => {
-						if (isContentHashedAsset(wdAssets, filePath)) {
-							reply.header('Cache-Control', IMMUTABLE_ASSET_CACHE_CONTROL);
+				const prefix = `/${this.securityToken}/desktop/assets/`;
+				// Encapsulated so the onSend hook below sees only this mount.
+				await this.server.register(async (scope) => {
+					// setHeaders runs before the file opens, so a failed open still
+					// carries the immutable header into its error response (#2158).
+					scope.addHook('onSend', async (_request, reply, payload) => {
+						if (
+							!mayCacheAssetResponse(reply.statusCode) &&
+							reply.getHeader('Cache-Control') === IMMUTABLE_ASSET_CACHE_CONTROL
+						) {
+							reply.header('Cache-Control', ERROR_RESPONSE_CACHE_CONTROL);
 						}
-					},
+						return payload;
+					});
+					await scope.register(fastifyStatic, {
+						root: wdAssets,
+						prefix,
+						decorateReply: false,
+						// Runs after the plugin's own headers (200, 206 and 304 alike), so
+						// this replaces its default `max-age=0` for hashed files only.
+						// See asset-cache-policy.ts for why revalidating them broke boot
+						// over a Cloudflare quick tunnel.
+						setHeaders: (reply, filePath) => {
+							if (isContentHashedAsset(wdAssets, filePath)) {
+								reply.header('Cache-Control', IMMUTABLE_ASSET_CACHE_CONTROL);
+							}
+						},
+					});
 				});
 			}
 		}
