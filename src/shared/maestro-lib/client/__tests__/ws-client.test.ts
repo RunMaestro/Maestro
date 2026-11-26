@@ -1127,6 +1127,52 @@ describe('createWsMaestroClient', () => {
 			});
 		});
 
+		describe('usage.projectTokens', () => {
+			const projects = [{ provider: 'claude-code', projectPath: '/srv/app' }];
+			const record = {
+				sessionId: 's1',
+				agentType: 'claude-code',
+				projectPath: '/srv/app',
+				accountKey: 'default',
+				timestampMs: 5,
+				byModel: [],
+				inputTokens: 3,
+				outputTokens: 4,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0,
+				costEstimated: false,
+				coverage: 'full',
+			};
+
+			it('sends get_project_token_usage and keeps only records that hold together', async () => {
+				bridge.typed.set(
+					'get_project_token_usage',
+					reply('project_token_usage_result', {
+						projects: [
+							{
+								status: 'read',
+								breakdowns: [record, { ...record, sessionId: 's2', inputTokens: -1 }],
+							},
+						],
+					})
+				);
+				expect(await client.usage!.projectTokens(projects)).toEqual({
+					ok: true,
+					value: { projects: [{ status: 'read', breakdowns: [record], complete: false }] },
+				});
+				expect(bridge.sent('get_project_token_usage')[0]).toMatchObject({ projects });
+			});
+
+			it('answers unsupported from a host that does not know the message', async () => {
+				const result = await client.usage!.projectTokens(projects);
+				expect(result).toMatchObject({
+					ok: false,
+					error: { code: 'unsupported', method: 'usage.projectTokens' },
+				});
+			});
+		});
+
 		describe('history.remove and history.update', () => {
 			it('deletes with delete_history_entry and reads back whether one was removed', async () => {
 				bridge.typed.set(

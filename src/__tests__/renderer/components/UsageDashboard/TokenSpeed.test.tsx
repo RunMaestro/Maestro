@@ -153,6 +153,7 @@ describe('OverviewTokenSpeed', () => {
 		expect(await screen.findByTestId('token-speed-cards')).toBeInTheDocument();
 		expect(getTokenUsage).toHaveBeenCalledWith(
 			expect.objectContaining({ sinceMs: expect.any(Number) }),
+			false,
 			false
 		);
 		expect(storage.get(OVERVIEW_TOKEN_SPEED_KEY)).toBe('true');
