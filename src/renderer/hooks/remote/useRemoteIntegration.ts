@@ -32,10 +32,12 @@ import {
 	matchQueuedSlashCommand,
 	enqueuePromptForTab,
 	sendQueuedItemNow,
-	setQueuedItemPaused,
-	editQueuedItem,
-	mergeQueuedItemIntoAbove,
-	moveQueuedItem,
+	sendQueuedItemNowSettled,
+	removeQueuedItemSettled,
+	setQueuedItemPausedSettled,
+	editQueuedItemSettled,
+	mergeQueuedItemIntoAboveSettled,
+	moveQueuedItemSettled,
 } from '../../services/queuedPrompt';
 import { withQueuedTurnOverrides } from '../../../shared/queuedTurnSettings';
 import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
@@ -1659,18 +1661,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote "remove queue item" from the CLI (`queue remove`). Drops the
 		// item by id from the authoritative queue, exactly like the UI trash action.
 		const unsubscribeRemoveQueueItem = window.maestro.process.onRemoteRemoveQueueItem(
-			(sessionId: string, itemId: string, responseChannel: string) => {
+			async (sessionId: string, itemId: string, responseChannel: string) => {
 				try {
-					// Determine the outcome from the current store snapshot, then mutate.
-					// Keeps the returned `removed` independent of update timing.
-					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-					const removed = !!session?.executionQueue?.some((i) => i.id === itemId);
-					if (removed) {
-						updateSessionWith(sessionId, (s) => ({
-							...s,
-							executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
-						}));
-					}
+					// The trash action's own removal: a hosted agent's host item is removed on its host.
+					const removed = await removeQueuedItemSettled(sessionId, itemId);
 					window.maestro.process.sendRemoteRemoveQueueItemResponse(responseChannel, {
 						success: true,
 						removed,
@@ -1689,9 +1683,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote "hold / resume queue item" from the CLI (`queue hold`,
 		// `queue resume`). Same flag the queued card's Hold / Resume button flips.
 		const unsubscribeSetQueueItemPaused = window.maestro.process.onRemoteSetQueueItemPaused?.(
-			(sessionId: string, itemId: string, paused: boolean, responseChannel: string) => {
+			async (sessionId: string, itemId: string, paused: boolean, responseChannel: string) => {
 				try {
-					const found = setQueuedItemPaused(sessionId, itemId, paused);
+					const found = await setQueuedItemPausedSettled(sessionId, itemId, paused);
 					window.maestro.process.sendRemoteSetQueueItemPausedResponse(responseChannel, {
 						success: true,
 						found,
@@ -1715,9 +1709,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote "merge queue item" from the CLI (`queue merge`). Same merge
 		// the queued card's Merge button runs.
 		const unsubscribeMergeQueueItem = window.maestro.process.onRemoteMergeQueueItem?.(
-			(sessionId: string, itemId: string, responseChannel: string) => {
+			async (sessionId: string, itemId: string, responseChannel: string) => {
 				try {
-					const mergedIntoId = mergeQueuedItemIntoAbove(sessionId, itemId);
+					const mergedIntoId = await mergeQueuedItemIntoAboveSettled(sessionId, itemId);
 					window.maestro.process.sendRemoteMergeQueueItemResponse(responseChannel, {
 						success: true,
 						merged: mergedIntoId !== null,
@@ -1737,9 +1731,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote "edit queue item" from the CLI (`queue edit`) or a client's
 		// hosted queued card. Same edit the queued card's Edit runs.
 		const unsubscribeEditQueueItem = window.maestro.process.onRemoteEditQueueItem?.(
-			(sessionId, itemId, edit, responseChannel) => {
+			async (sessionId, itemId, edit, responseChannel) => {
 				try {
-					const found = editQueuedItem(sessionId, itemId, edit);
+					const found = await editQueuedItemSettled(sessionId, itemId, edit);
 					window.maestro.process.sendRemoteEditQueueItemResponse(responseChannel, {
 						success: true,
 						found,
@@ -1758,9 +1752,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote "move queue item" from the CLI (`queue move`) or a client's
 		// hosted queued card's drag. Same move the drag runs.
 		const unsubscribeMoveQueueItem = window.maestro.process.onRemoteMoveQueueItem?.(
-			(sessionId, itemId, toIndex, tabId, responseChannel) => {
+			async (sessionId, itemId, toIndex, tabId, responseChannel) => {
 				try {
-					const moved = moveQueuedItem(sessionId, itemId, toIndex, tabId ?? undefined);
+					const moved = await moveQueuedItemSettled(sessionId, itemId, toIndex, tabId ?? undefined);
 					window.maestro.process.sendRemoteMoveQueueItemResponse(responseChannel, {
 						success: true,
 						moved,
@@ -1777,11 +1771,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		);
 
 		// Handle remote "send queue item now" from the CLI (`queue send-now`) or a
-		// client's hosted queued card's Force Send. Same send the Force Send button runs.
+		// client's hosted queued card's Force Send. Same send, and the same Forced
+		// Parallel Execution gate, the Force Send button has.
 		const unsubscribeSendQueueItemNow = window.maestro.process.onRemoteSendQueueItemNow?.(
-			(sessionId, itemId, responseChannel) => {
+			async (sessionId, itemId, responseChannel) => {
 				try {
-					const sent = sendQueuedItemNow(sessionId, itemId);
+					const sent = await sendQueuedItemNowSettled(sessionId, itemId);
 					window.maestro.process.sendRemoteSendQueueItemNowResponse(responseChannel, {
 						success: true,
 						sent,

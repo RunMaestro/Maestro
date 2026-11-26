@@ -592,7 +592,8 @@ export async function queueMove(itemId: string, options: QueueMoveOptions): Prom
 /**
  * `maestro-cli queue send-now <item-id> --agent <id>` - run a queued item now instead of in its
  * turn, like the Force Send button on its queued card. Never over a turn on its own tab; beside
- * another tab's turn it runs in parallel. A hosted agent's item runs on its host.
+ * another tab's turn it runs in parallel only when Forced Parallel Execution is on, as the button
+ * does. A hosted agent's item runs on its host.
  */
 export async function queueSendNow(itemId: string, options: QueueSendNowOptions): Promise<void> {
 	if (!options.agent) {
@@ -608,7 +609,7 @@ export async function queueSendNow(itemId: string, options: QueueSendNowOptions)
 			{ kind: 'send-now-queued', itemId },
 			(result) => (result.kind === 'send-now-queued' && result.sent ? {} : null),
 			(agentRef) => ({
-				message: `Queued item ${itemId} for agent ${agentRef} did not start: it is gone, or its tab is mid-turn`,
+				message: `Queued item ${itemId} for agent ${agentRef} did not start: it is gone, its tab is mid-turn, or another tab is busy and Forced Parallel Execution is off`,
 				code: 'NOT_SENT',
 			})
 		);
@@ -637,7 +638,7 @@ export async function queueSendNow(itemId: string, options: QueueSendNowOptions)
 		}
 		if (!result.sent) {
 			emitError(
-				`Queued item ${itemId} for agent ${sessionId} did not start: it is gone, or its tab is mid-turn`,
+				`Queued item ${itemId} for agent ${sessionId} did not start: it is gone, its tab is mid-turn, or another tab is busy and Forced Parallel Execution is off`,
 				'NOT_SENT'
 			);
 			process.exit(1);

@@ -20,6 +20,7 @@
  * Pure. Returns the same `session` reference when nothing changed.
  */
 
+import { canonicalJson } from '../../shared/canonicalJson';
 import type { LiveTurn } from '../../shared/maestro-lib/client/live-turn';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
@@ -117,17 +118,35 @@ export function mergeHostedLogs(
 	return next;
 }
 
+/**
+ * Whether two queues draw the same cards. Every field `mirrorQueuedItem()` writes is compared, so
+ * an edit on the host that changes only the images, the model or effort, or a command's arguments
+ * reaches the card and its editor instead of being dropped as "unchanged".
+ */
 function sameQueue(a: readonly QueuedItem[], b: readonly QueuedItem[]): boolean {
 	return (
 		a.length === b.length &&
-		a.every(
-			(item, i) =>
-				item.id === b[i].id &&
-				item.paused === b[i].paused &&
-				item.text === b[i].text &&
-				item.tabId === b[i].tabId
-		)
+		a.every((item, i) => {
+			const other = b[i];
+			return (
+				item.id === other.id &&
+				item.paused === other.paused &&
+				item.type === other.type &&
+				item.text === other.text &&
+				item.command === other.command &&
+				item.commandArgs === other.commandArgs &&
+				item.tabId === other.tabId &&
+				sameImages(item.images, other.images) &&
+				canonicalJson(item.turnSettings ?? null) === canonicalJson(other.turnSettings ?? null)
+			);
+		})
 	);
+}
+
+function sameImages(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+	const left = a ?? [];
+	const right = b ?? [];
+	return left.length === right.length && left.every((image, i) => image === right[i]);
 }
 
 /**

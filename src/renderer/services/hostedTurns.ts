@@ -201,8 +201,9 @@ export interface HostedConversationStart extends HostedTabPlacement {
  * Start a conversation in a new host tab, as a local fork or compaction starts one in a new tab:
  * the tab opens where `start` places it and takes its name on the host. With a prompt, its first
  * turn runs there with the tab's own model, effort, read-only, and save to History. The new tab's
- * id, or null when the host refused (a refusal shows as a toast). Null for an agent that is not
- * hosted.
+ * id, or null when the host refused the tab or its first turn (a refusal shows as a toast). A
+ * refused first turn leaves the open tab with the prompt as its draft, ready to send again. Null
+ * for an agent that is not hosted.
  */
 export async function startHostedConversation(
 	session: Pick<Session, 'id' | 'liftedTo'>,
@@ -221,14 +222,19 @@ export async function startHostedConversation(
 	const tab = selectSessionById(session.id)(useSessionStore.getState())?.aiTabs.find(
 		(candidate) => candidate.id === tabId
 	);
-	await sendToMirroredTab(
+	const receipt = await sendToMirroredTab(
 		target.peerId,
 		target.agentId,
 		tabId,
 		start.prompt,
 		hostedTurnOverrides(tab)
 	);
-	return tabId;
+	if (receipt) return tabId;
+	// The host opened the tab but refused its first turn (the refusal is already a toast). Keep
+	// the prompt as the tab's draft, so the context is not lost and Enter sends it again.
+	const prompt = start.prompt;
+	updateAiTab(session.id, tabId, (current) => ({ ...current, inputValue: prompt }));
+	return null;
 }
 
 /**

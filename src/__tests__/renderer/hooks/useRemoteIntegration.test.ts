@@ -3290,7 +3290,7 @@ describe('useRemoteIntegration', () => {
 			);
 		});
 
-		it('removes a queued item by id and acks removed:true', () => {
+		it('removes a queued item by id and acks removed:true', async () => {
 			const tab = createMockTab({ id: 'tab-1' });
 			const item = { id: 'q1', timestamp: 1, tabId: 'tab-1', type: 'message' as const, text: 'x' };
 			const session = createMockSession({
@@ -3305,7 +3305,7 @@ describe('useRemoteIntegration', () => {
 
 			renderHook(() => useRemoteIntegration(deps));
 
-			act(() => {
+			await act(async () => {
 				onRemoteRemoveQueueItemHandler?.('session-1', 'q1', 'chan-rm');
 			});
 
@@ -3317,7 +3317,7 @@ describe('useRemoteIntegration', () => {
 			);
 		});
 
-		it('holds and resumes a queued item by id (queue hold / resume)', () => {
+		it('holds and resumes a queued item by id (queue hold / resume)', async () => {
 			const tab = createMockTab({ id: 'tab-1' });
 			const item = { id: 'q1', timestamp: 1, tabId: 'tab-1', type: 'message' as const, text: 'x' };
 			const session = createMockSession({
@@ -3330,7 +3330,7 @@ describe('useRemoteIntegration', () => {
 			useSessionStore.setState({ sessions: [session] });
 			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
 
-			act(() => {
+			await act(async () => {
 				onRemoteSetQueueItemPausedHandler?.('session-1', 'q1', true, 'chan-hold');
 			});
 			const held = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
@@ -3341,13 +3341,13 @@ describe('useRemoteIntegration', () => {
 				paused: true,
 			});
 
-			act(() => {
+			await act(async () => {
 				onRemoteSetQueueItemPausedHandler?.('session-1', 'q1', false, 'chan-resume');
 			});
 			const resumed = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(resumed?.executionQueue[0].paused).toBeUndefined();
 
-			act(() => {
+			await act(async () => {
 				onRemoteSetQueueItemPausedHandler?.('session-1', 'ghost', true, 'chan-ghost');
 			});
 			expect(mockProcess.sendRemoteSetQueueItemPausedResponse).toHaveBeenCalledWith('chan-ghost', {
@@ -3356,7 +3356,7 @@ describe('useRemoteIntegration', () => {
 			});
 		});
 
-		it('acks removed:false when the item id is not in the queue', () => {
+		it('acks removed:false when the item id is not in the queue', async () => {
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
 				id: 'session-1',
@@ -3370,7 +3370,7 @@ describe('useRemoteIntegration', () => {
 
 			renderHook(() => useRemoteIntegration(deps));
 
-			act(() => {
+			await act(async () => {
 				onRemoteRemoveQueueItemHandler?.('session-1', 'ghost', 'chan-rm2');
 			});
 

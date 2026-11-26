@@ -849,7 +849,7 @@ queue
 queue
 	.command('send-now <item-id>')
 	.description(
-		"Run a queued item now instead of in its turn, like the Force Send button on its queued card. It never runs over a turn on its own tab; beside another tab's turn it runs in parallel."
+		"Run a queued item now instead of in its turn, like the Force Send button on its queued card. It never runs over a turn on its own tab; beside another tab's turn it runs in parallel only when Forced Parallel Execution is on."
 	)
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueSendNow);

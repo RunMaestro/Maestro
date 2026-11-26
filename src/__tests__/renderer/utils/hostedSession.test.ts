@@ -177,6 +177,42 @@ describe('projectHostedSession', () => {
 		expect(nextRunnableQueueItem(next.executionQueue)).toBeUndefined();
 	});
 
+	it('redraws a host card when only its images, model, or command arguments changed', () => {
+		const base = {
+			itemId: 'q1',
+			tabId: 't1',
+			text: 'next',
+			queuedAt: 5,
+			kind: 'message' as const,
+			paused: false,
+		};
+		const first = projectHostedSession(hostedRow(), { agent: host(), queue: [base] });
+		const images = projectHostedSession(first, {
+			agent: host(),
+			queue: [{ ...base, images: ['data:image/png;base64,AA'] }],
+		});
+		expect(images.executionQueue[0].images).toEqual(['data:image/png;base64,AA']);
+		const model = projectHostedSession(images, {
+			agent: host(),
+			queue: [{ ...base, images: ['data:image/png;base64,AA'], turnSettings: { model: 'opus' } }],
+		});
+		expect(model.executionQueue[0].turnSettings).toEqual({ model: 'opus' });
+		const command = { ...base, kind: 'command' as const, text: '/plan auth' };
+		const plan = projectHostedSession(model, { agent: host(), queue: [command] });
+		const replan = projectHostedSession(plan, {
+			agent: host(),
+			queue: [{ ...command, text: '/plan billing' }],
+		});
+		expect(replan.executionQueue[0].commandArgs).toBe('billing');
+		// Unchanged: the same record, so nothing redraws.
+		expect(
+			projectHostedSession(replan, {
+				agent: host(),
+				queue: [{ ...command, text: '/plan billing' }],
+			})
+		).toBe(replan);
+	});
+
 	it('leaves a running terminal command in charge of the busy state', () => {
 		const session = { ...hostedRow(), state: 'busy' as const, busySource: 'terminal' as const };
 		const next = projectHostedSession(session, { agent: host() });

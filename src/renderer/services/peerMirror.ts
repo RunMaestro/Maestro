@@ -187,6 +187,14 @@ export async function renameMirrorTab(
 }
 
 /**
+ * What a host said to an action on one of its waiting messages: `true` it did it, `false` it
+ * refused (the message no longer waits, or its tab is mid-turn; a notice is already shown), and
+ * `null` it did not answer (the red toast is already shown). A caller that reports the outcome,
+ * such as `maestro-cli queue`, reads this instead of assuming success.
+ */
+export type HostQueueAnswer = boolean | null;
+
+/**
  * Take a waiting message out of a mirrored agent's host queue (the queued card's remove button).
  * The host's `queue.changed` then updates every window. A message that already started is not an
  * error to fix, so it is a notice, not a red toast.
@@ -195,15 +203,17 @@ export async function removeMirrorQueuedItem(
 	peerId: string,
 	agentId: string,
 	itemId: string
-): Promise<void> {
+): Promise<HostQueueAnswer> {
 	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'remove-queued', itemId });
-	if (result?.kind === 'remove-queued' && !result.removed) {
+	if (result?.kind !== 'remove-queued') return null;
+	if (!result.removed) {
 		notifyToast({
 			color: 'yellow',
 			title: 'Message not removed',
 			message: 'It no longer waits on the host: it may have started already.',
 		});
 	}
+	return result.removed;
 }
 
 /**
@@ -215,19 +225,21 @@ export async function setMirrorQueuedItemPaused(
 	agentId: string,
 	itemId: string,
 	paused: boolean
-): Promise<void> {
+): Promise<HostQueueAnswer> {
 	const result = await actOnMirroredAgent(peerId, agentId, {
 		kind: 'pause-queued',
 		itemId,
 		paused,
 	});
-	if (result?.kind === 'pause-queued' && !result.found) {
+	if (result?.kind !== 'pause-queued') return null;
+	if (!result.found) {
 		notifyToast({
 			color: 'yellow',
 			title: paused ? 'Message not held' : 'Message not resumed',
 			message: 'It no longer waits on the host: it may have started already.',
 		});
 	}
+	return result.found;
 }
 
 /**
@@ -238,15 +250,17 @@ export async function mergeMirrorQueuedItem(
 	peerId: string,
 	agentId: string,
 	itemId: string
-): Promise<void> {
+): Promise<HostQueueAnswer> {
 	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'merge-queued', itemId });
-	if (result?.kind === 'merge-queued' && !result.merged) {
+	if (result?.kind !== 'merge-queued') return null;
+	if (!result.merged) {
 		notifyToast({
 			color: 'yellow',
 			title: 'Messages not merged',
 			message: 'They no longer both wait on the host: one may have started already.',
 		});
 	}
+	return result.merged;
 }
 
 /**
@@ -258,15 +272,17 @@ export async function editMirrorQueuedItem(
 	agentId: string,
 	itemId: string,
 	edit: QueuedTurnEdit
-): Promise<void> {
+): Promise<HostQueueAnswer> {
 	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'edit-queued', itemId, edit });
-	if (result?.kind === 'edit-queued' && !result.found) {
+	if (result?.kind !== 'edit-queued') return null;
+	if (!result.found) {
 		notifyToast({
 			color: 'yellow',
 			title: 'Message not edited',
 			message: 'It no longer waits on the host: it may have started already.',
 		});
 	}
+	return result.found;
 }
 
 /**
@@ -280,20 +296,22 @@ export async function moveMirrorQueuedItem(
 	itemId: string,
 	toIndex: number,
 	tabId?: string
-): Promise<void> {
+): Promise<HostQueueAnswer> {
 	const result = await actOnMirroredAgent(peerId, agentId, {
 		kind: 'move-queued',
 		itemId,
 		toIndex,
 		...(tabId ? { tabId } : {}),
 	});
-	if (result?.kind === 'move-queued' && !result.moved) {
+	if (result?.kind !== 'move-queued') return null;
+	if (!result.moved) {
 		notifyToast({
 			color: 'yellow',
 			title: 'Message not moved',
 			message: 'It no longer waits on the host: it may have started already.',
 		});
 	}
+	return result.moved;
 }
 
 /**
@@ -304,15 +322,17 @@ export async function sendMirrorQueuedItemNow(
 	peerId: string,
 	agentId: string,
 	itemId: string
-): Promise<void> {
+): Promise<HostQueueAnswer> {
 	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'send-now-queued', itemId });
-	if (result?.kind === 'send-now-queued' && !result.sent) {
+	if (result?.kind !== 'send-now-queued') return null;
+	if (!result.sent) {
 		notifyToast({
 			color: 'yellow',
 			title: 'Message not sent now',
 			message: 'Its tab on the host is mid-turn, or it already started.',
 		});
 	}
+	return result.sent;
 }
 
 /**

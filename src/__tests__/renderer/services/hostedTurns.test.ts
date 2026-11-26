@@ -307,6 +307,28 @@ describe('hostedTurns', () => {
 		expect(shown.activeTabId).toBe('t1');
 	});
 
+	it('fails a fork whose first turn the host refuses, and keeps its prompt as the draft', async () => {
+		hydrateHost();
+		const session = row();
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		act$
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'new-tab', tabId: 't-fork' } })
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'rename-tab', tabId: 't-fork' } })
+			.mockResolvedValueOnce({ ok: false, error: 'Not connected to peer "box".' });
+		let tabId: string | null = 'unset';
+		await act(async () => {
+			tabId = await startHostedConversation(session, {
+				afterTabId: 't1',
+				name: 'Forked: Docs',
+				prompt: '# Forked Conversation',
+			});
+		});
+		// No "Conversation Forked": the caller reads null as failure.
+		expect(tabId).toBeNull();
+		const forked = useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === 't-fork');
+		expect(forked?.inputValue).toBe('# Forked Conversation');
+	});
+
 	it('starts no conversation for an agent that is not hosted', async () => {
 		const plain = createMockSession({ ...row(), liftedTo: undefined });
 		expect(await startHostedConversation(plain, { name: 'x', prompt: 'y' })).toBeNull();

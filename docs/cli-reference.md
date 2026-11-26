@@ -529,7 +529,7 @@ Move a queued item to another place, like dragging its queued card. --to counts 
 
 ## `maestro-cli queue send-now <item-id>`
 
-Run a queued item now instead of in its turn, like the Force Send button on its queued card. It never runs over a turn on its own tab; beside another tab's turn it runs in parallel.
+Run a queued item now instead of in its turn, like the Force Send button on its queued card. It never runs over a turn on its own tab; beside another tab's turn it runs in parallel only when Forced Parallel Execution is on.
 
 | Option             | Description                                      | Default |
 | ------------------ | ------------------------------------------------ | ------- |

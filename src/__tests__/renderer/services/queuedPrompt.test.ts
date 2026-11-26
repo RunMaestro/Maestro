@@ -21,12 +21,12 @@ vi.mock('../../../renderer/services/crossAgentMentions', async (importOriginal) 
 }));
 
 // A hosted agent's queue actions go to its host; the test reads which one went.
-const mergeMirrorQueuedItem = vi.fn(async () => undefined);
-const editMirrorQueuedItem = vi.fn(async () => undefined);
-const moveMirrorQueuedItem = vi.fn(async () => undefined);
-const sendMirrorQueuedItemNow = vi.fn(async () => undefined);
-const removeMirrorQueuedItem = vi.fn(async () => undefined);
-const setMirrorQueuedItemPaused = vi.fn(async () => undefined);
+const mergeMirrorQueuedItem = vi.fn(async (): Promise<boolean | null> => true);
+const editMirrorQueuedItem = vi.fn(async (): Promise<boolean | null> => true);
+const moveMirrorQueuedItem = vi.fn(async (): Promise<boolean | null> => true);
+const sendMirrorQueuedItemNow = vi.fn(async (): Promise<boolean | null> => true);
+const removeMirrorQueuedItem = vi.fn(async (): Promise<boolean | null> => true);
+const setMirrorQueuedItemPaused = vi.fn(async (): Promise<boolean | null> => true);
 vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/services/peerMirror')>()),
 	mergeMirrorQueuedItem: (...args: unknown[]) => mergeMirrorQueuedItem(...(args as [])),
@@ -40,18 +40,24 @@ vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 import {
 	buildQueuedMessageItem,
 	editQueuedItem,
+	editQueuedItemSettled,
 	enqueuePromptForTab,
 	getQueuedCommandScopeRefusal,
 	getQueuedCommandSelectionRefusal,
 	getQueuedCommandSpawnSelection,
 	matchQueuedSlashCommand,
 	mergeQueuedItemIntoAbove,
+	mergeQueuedItemIntoAboveSettled,
 	moveQueuedItem,
+	moveQueuedItemSettled,
 	removeQueuedItem,
+	removeQueuedItemSettled,
 	reorderQueuedItems,
 	resolveQueuedItemEdit,
 	sendQueuedItemNow,
+	sendQueuedItemNowSettled,
 	setQueuedItemPaused,
+	setQueuedItemPausedSettled,
 	toggleQueuedItemPaused,
 } from '../../../renderer/services/queuedPrompt';
 import { registerDispatchDepsProvider } from '../../../renderer/stores/retryStore';
@@ -814,6 +820,102 @@ describe('sendQueuedItemNow', () => {
 		const dispatch = vi.fn().mockRejectedValue(new Error('spawn failed'));
 		expect(sendQueuedItemNow('session-1', item.id, dispatch)).toBe(true);
 		await Promise.resolve();
+	});
+});
+
+describe('settled queue actions (maestro-cli queue, a hosted card reaching its host)', () => {
+	const hostMocks = [
+		mergeMirrorQueuedItem,
+		editMirrorQueuedItem,
+		moveMirrorQueuedItem,
+		sendMirrorQueuedItemNow,
+		removeMirrorQueuedItem,
+		setMirrorQueuedItemPaused,
+	];
+	afterEach(() =>
+		useSettingsStore.setState({ federationHostedAgents: false, forcedParallelExecution: false })
+	);
+	beforeEach(() => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue(null);
+		for (const mock of hostMocks) mock.mockClear();
+	});
+
+	function seedMode(mode: (typeof AGENT_MODES)[number]) {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const hostQueued = mode === 'hosted' ? { hostQueued: true } : {};
+		const queue: QueuedItem[] = ['q1', 'q2', 'q3'].map((id) => ({
+			id,
+			timestamp: 0,
+			tabId: 'b',
+			type: 'message',
+			text: id,
+			...hostQueued,
+		}));
+		seed({ ...agentModeFields(mode), executionQueue: queue });
+	}
+
+	async function runAll() {
+		return [
+			await editQueuedItemSettled('session-1', 'q1', { text: 'edited' }),
+			await mergeQueuedItemIntoAboveSettled('session-1', 'q2'),
+			await moveQueuedItemSettled('session-1', 'q3', 0),
+			await setQueuedItemPausedSettled('session-1', 'q1', true),
+			await removeQueuedItemSettled('session-1', 'q3'),
+		];
+	}
+
+	it('answers the same in every mode once the action is done', async () => {
+		const answers = [];
+		for (const mode of AGENT_MODES) {
+			seedMode(mode);
+			answers.push(await runAll());
+		}
+		// Local and SSH act here; hosted waits for its host, which said yes.
+		expect(answers[0]).toEqual([true, 'q1', true, true, true]);
+		expect(answers[1]).toEqual(answers[0]);
+		expect(answers[2]).toEqual(answers[0]);
+		expect(editMirrorQueuedItem).toHaveBeenCalledWith('box', 'h1', 'q1', { text: 'edited' });
+		expect(moveMirrorQueuedItem).toHaveBeenCalledWith('box', 'h1', 'q3', 0, undefined);
+	});
+
+	it("reports a hosted host's refusal instead of a false success", async () => {
+		seedMode('hosted');
+		for (const mock of hostMocks) {
+			if (mock !== sendMirrorQueuedItemNow) mock.mockResolvedValueOnce(false);
+		}
+		expect(await runAll()).toEqual([false, null, false, false, false]);
+	});
+
+	it('fails with the reason when the host does not answer', async () => {
+		seedMode('hosted');
+		editMirrorQueuedItem.mockResolvedValueOnce(null);
+		await expect(editQueuedItemSettled('session-1', 'q1', { text: 'x' })).rejects.toThrow(
+			/did not answer/
+		);
+	});
+
+	it('Send Now keeps the Forced Parallel Execution gate in every mode', async () => {
+		for (const mode of AGENT_MODES) {
+			seedMode(mode);
+			useSessionStore.setState({
+				sessions: useSessionStore.getState().sessions.map((s) => ({
+					...s,
+					aiTabs: s.aiTabs.map((t) => (t.id === 'a' ? { ...t, state: 'busy' as const } : t)),
+				})),
+			});
+			useSettingsStore.setState({ forcedParallelExecution: false });
+			expect(await sendQueuedItemNowSettled('session-1', 'q1'), mode).toBe(false);
+			expect(
+				currentQueue().map((i) => i.id),
+				mode
+			).toEqual(['q1', 'q2', 'q3']);
+		}
+		expect(sendMirrorQueuedItemNow).not.toHaveBeenCalled();
+
+		useSettingsStore.setState({ forcedParallelExecution: true });
+		expect(await sendQueuedItemNowSettled('session-1', 'q1')).toBe(true);
+		expect(sendMirrorQueuedItemNow).toHaveBeenCalledWith('box', 'h1', 'q1');
 	});
 });
 
