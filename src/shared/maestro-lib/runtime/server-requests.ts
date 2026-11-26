@@ -669,15 +669,6 @@ export function createRequestHandler(
 				const agentId = sessionId(message);
 				const unsupported = unsupportedDispatch(message);
 				if (unsupported) return refusal(type, unsupported, { sessionId: agentId });
-				// The queue here starts a waiting message as soon as its turn comes; it has no state
-				// that keeps one back until a person releases it.
-				if (message.held === true) {
-					return refusal(
-						type,
-						'A headless host cannot queue a held message (--held): its queue would run the message as soon as the agent is free. Nothing was queued.',
-						{ sessionId: agentId }
-					);
-				}
 				const target = await resolveTargetTab(client, agentId, str(message.tabId));
 				if (!target.ok) {
 					return refusal(type, target.error, {
@@ -691,6 +682,8 @@ export function createRequestHandler(
 					...(images ? { images } : {}),
 					...originHostOf(message),
 					...turnOverridesOf(message),
+					// Queue Held (`dispatch --queue --held`): queued paused, even on an idle agent.
+					...(message.held === true ? { held: true } : {}),
 				});
 				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
 				return {

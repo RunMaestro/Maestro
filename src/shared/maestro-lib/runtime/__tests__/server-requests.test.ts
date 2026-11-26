@@ -641,12 +641,20 @@ describe('dispatch messages', () => {
 			expect(none.named('turns.send')).toEqual([]);
 		});
 
-		it('refuses a held message instead of running it', async () => {
-			const host = recordingClient({ activeTabId: 't-active' });
+		it('queues a held message paused, as a desktop host does (M3)', async () => {
+			const host = recordingClient({ activeTabId: 't-active', send: queued });
 			const reply = await host.handle({ ...base, held: true });
-			expect(reply).toMatchObject({ type: 'enqueue_command_result', success: false });
-			expect(String(reply?.error)).toContain('cannot queue a held message');
-			expect(host.named('turns.send')).toEqual([]);
+			expect(reply).toMatchObject({
+				type: 'enqueue_command_result',
+				success: true,
+				queued: true,
+				itemId: 'q1',
+			});
+			expect(host.named('turns.send')[0].args).toEqual([
+				'a1',
+				't-active',
+				{ text: 'hello', held: true },
+			]);
 		});
 
 		it('words a missing agent and a missing tab the way the CLI maps to its codes', async () => {

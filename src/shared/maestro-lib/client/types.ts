@@ -434,7 +434,8 @@ export interface TurnInput {
 	overrides?: TurnOverrides;
 	/**
 	 * Queue Held: the host queues the message paused, even on an idle tab, until someone resumes
-	 * it. The same `held` flag `maestro-cli dispatch --held` sends. A headless host refuses it.
+	 * it. The same `held` flag `maestro-cli dispatch --held` sends. A headless host older than this
+	 * field refuses it; a newer one queues it paused, as a desktop host does.
 	 */
 	held?: boolean;
 }

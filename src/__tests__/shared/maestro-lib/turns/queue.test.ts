@@ -103,6 +103,16 @@ describe('decideSubmit', () => {
 		expect(decideSubmit(item('a', 't1'), view())).toBe('run');
 	});
 
+	it('queues a held (paused) message even on an idle agent, forced parallel or not', () => {
+		expect(decideSubmit({ ...item('a', 't1'), paused: true }, view())).toBe('queue');
+		expect(
+			decideSubmit(
+				{ ...item('a', 't1'), paused: true, forceParallel: true, readOnly: true },
+				view()
+			)
+		).toBe('queue');
+	});
+
 	it('queues behind a busy tab, forced parallel or not', () => {
 		expect(decideSubmit(item('a', 't1'), view([{ tabId: 't1' }]))).toBe('queue');
 		expect(decideSubmit(item('a', 't1', { forceParallel: true }), view([{ tabId: 't1' }]))).toBe(

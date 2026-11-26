@@ -812,6 +812,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			},
 			settingsProvider: agent.toolType,
 		};
+		// Queue Held: queued paused, even on an idle tab, until someone resumes it.
+		if (input.held === true) item.paused = true;
 		const originHost = normalizeOriginHost(input.originHost);
 		if (originHost) item.originHost = originHost;
 		if (overrides) item.overrides = overrides;

@@ -855,6 +855,31 @@ describe('runtime turns', () => {
 			await turn.outcome();
 		});
 
+		it('queues a held message paused on an idle tab, and runs it once resumed (M3)', async () => {
+			const runtime = await start();
+			const turn = watch(runtime);
+
+			const held = value(await runtime.turns.send('a1', 't1', { text: 'later', held: true }));
+			expect(held).toMatchObject({ status: 'queued', position: 1, queueLength: 1 });
+			if (held.status !== 'queued') throw new Error('expected queued');
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+				expect.objectContaining({ itemId: held.itemId, text: 'later', paused: true }),
+			]);
+			// Nothing ran: the tab is idle and the message waits for a person.
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(argvFiles).toEqual([]);
+			expect(turn.events).toEqual([]);
+
+			expect(value(await runtime.turns.queue.setPaused('a1', held.itemId, false))).toEqual({
+				found: true,
+				paused: false,
+			});
+			await turn.outcome();
+			expect(turn.outcomes()).toEqual(['completed']);
+			expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+			expect((await transcript(runtime))[0]).toMatchObject({ source: 'user', text: 'later' });
+		});
+
 		it('merges a waiting message into the one above it, the way the queued card does', async () => {
 			hold = true;
 			const runtime = await start();

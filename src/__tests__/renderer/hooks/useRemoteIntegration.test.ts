@@ -5775,6 +5775,45 @@ describe('useRemoteIntegration', () => {
 			}
 		);
 
+		// M3: a headless host now queues a held message paused, as this desktop does for a local or
+		// SSH agent (`createRuntimeTurns` send with `held`, proven in runtime/__tests__/turns.test.ts).
+		it.each(AGENT_MODES)(
+			'%s: a held send on an idle tab waits paused, first in line, and runs nothing',
+			async (mode) => {
+				const session = seed(mode);
+				receipt = { status: 'queued', itemId: 'host-item', position: 1, queueLength: 1 };
+				const spy = vi.spyOn(window, 'dispatchEvent');
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				await act(async () => {
+					await onRemoteEnqueueCommandHandler?.(
+						'session-1',
+						'later',
+						'chan',
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						true
+					);
+				});
+
+				const [, answer] = mockProcess.sendRemoteEnqueueCommandResponse.mock.calls[0];
+				expect(answer).toMatchObject({ success: true, queued: true, queuePosition: 1 });
+				expect(remoteCommands(spy)).toEqual([]);
+				const local = useSessionStore.getState().sessions[0].executionQueue;
+				if (mode === 'hosted') {
+					expect(local).toEqual([]);
+					expect(hostSends().map(([, , action]) => [action.text, action.held])).toEqual([
+						['later', true],
+					]);
+				} else {
+					expect(local).toEqual([expect.objectContaining({ text: 'later', paused: true })]);
+				}
+				spy.mockRestore();
+			}
+		);
+
 		it.each(AGENT_MODES)(
 			'%s: /history runs for the named tab and answers that it ran',
 			async (mode) => {

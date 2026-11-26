@@ -253,6 +253,8 @@ function canWriteBypassQueue<T extends QueueItem>(item: T, view: QueueView<T>): 
  * bridge-connection hold, which the TUI does not have. The Auto Run hold arrives as `holdsTree`.
  */
 export function decideSubmit<T extends QueueItem>(item: T, view: QueueView<T>): 'run' | 'queue' {
+	// Queue Held: a message submitted paused waits, even on an idle tab, until someone resumes it.
+	if (item.paused) return 'queue';
 	// A retry counting down holds the tab even though the tab reads idle: sending now burns
 	// against the same wall. This outranks force-parallel, which only skips tab serialization.
 	if (view.isRetryHeld?.(item.tabId)) return 'queue';
