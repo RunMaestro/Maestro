@@ -65,6 +65,7 @@ import { notifyToast } from './notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
 import type { AgentError, QueuedItem } from '../types';
 import { registerBatchResumer, getBatchResumer } from '../services/batchResumer';
+import { isSshTransportError } from './sshOutageStore';
 
 // ============================================================================
 // Types
@@ -175,6 +176,21 @@ export interface OutageRecord {
 	 * that forward no quota object.
 	 */
 	quota?: QuotaLimitDetail;
+	/**
+	 * What failed, when it was not the provider: `connection` when the turn never reached the
+	 * agent because its link was down (ssh could not reach the remote, or the hosted agent's
+	 * Maestro host could not be reached). Same backoff as `availability`; the card names the link
+	 * instead of "Service overloaded". Undefined for a provider outage.
+	 */
+	cause?: OutageCause;
+}
+
+/** See `OutageRecord.cause`. */
+export type OutageCause = 'connection';
+
+/** The cause an outage card names for `error`: the link (SSH or hosted host), or the provider. */
+export function outageCauseOf(error: AgentError): OutageCause | undefined {
+	return isSshTransportError(error) ? 'connection' : undefined;
 }
 
 interface DispatchSnapshot {
@@ -733,6 +749,7 @@ export function scheduleRetryForError(
 		// and a card still naming the first window sends the user to wait out a
 		// reset that already happened.
 		quota: parseQuotaLimitDetail(error.parsedJson),
+		cause: outageCauseOf(error),
 	});
 
 	const delay = Math.max(0, nextRetryAt - now);
