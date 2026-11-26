@@ -7,6 +7,7 @@ import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startHostedAgentSync, syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -184,6 +185,41 @@ describe('hostedAgentSync', () => {
 			pushRun(null);
 			syncHostedAgents();
 			expect(useBatchStore.getState().batchRunStates.row).toBeUndefined();
+		});
+
+		it("reads the host's steering notes when it first sees the run, and when the run moves on", async () => {
+			const act = vi.fn(async () => ({
+				ok: true,
+				result: {
+					kind: 'steer-auto-run',
+					result: {
+						success: true,
+						steerable: true,
+						pending: [{ id: 'n1', text: 'Sent from another client', timestamp: 3 }],
+						deliveries: [],
+					},
+				},
+			}));
+			maestro.federation = { transcript, act };
+			pushRun(frame(1));
+			syncHostedAgents();
+			await flush();
+			expect(act).toHaveBeenCalledTimes(1);
+			expect(act).toHaveBeenCalledWith('box', 'h1', {
+				kind: 'steer-auto-run',
+				input: { action: 'list' },
+			});
+			expect(useAutoRunSteeringStore.getState().notes.row).toEqual([
+				{ id: 'n1', text: 'Sent from another client', timestamp: 3 },
+			]);
+
+			// The same place again: the notes still wait, so the host is asked whether a task took them.
+			act.mockClear();
+			pushRun(frame(2));
+			syncHostedAgents();
+			await flush();
+			expect(act).toHaveBeenCalledTimes(1);
+			useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
 		});
 
 		it('drops the run of a record that is no longer hosted', () => {

@@ -11,6 +11,7 @@
 // `snapshot` and `agent.*` rules as they stand.
 
 import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
+import type { AutoRunActivity } from '../autorun/run-tracker';
 import { peerAgentRef } from '../agents/lift-pointer';
 import type { AgentRecord, GroupRecord } from '../store/records';
 import { foldLiveTurn, liveTurnKey, type LiveTurn, type LiveTurnContext } from './live-turn';
@@ -83,6 +84,11 @@ export type MirrorEvent =
 	| { type: 'agent.queue'; agentId: string; items: QueuedTurn[] }
 	/** The agent's Auto Run as the host drew it now; `null` when it has none. Replaces what was held. */
 	| { type: 'agent.autorun'; agentId: string; state: AutoRunBroadcastState | null }
+	/**
+	 * A piece of the agent's Auto Run reasoning, or one of its tool calls, as it happens. Nothing is
+	 * held: a window feeds it to its Thought Stream (`feedHostedAutoRunActivity()`).
+	 */
+	| { type: 'agent.autorunActivity'; agentId: string; activity: AutoRunActivity }
 	/** Read this tab's transcript again on next open (now, when it is open). */
 	| { type: 'tab.stale'; agentId: string; tabId: string }
 	/** Every tab is stale: the connection could not resume, or the desktop woke up. */
@@ -426,6 +432,13 @@ export function applyPeerEvent(
 			return setAgentQueue(peer, event.agentId, event.items);
 		case 'autorun': {
 			const run = event.event;
+			if (run.kind === 'thinking' || run.kind === 'tool') {
+				if (!peer.agents.some((agent) => agent.id === event.agentId)) return { peer, push: [] };
+				return {
+					peer,
+					push: [{ type: 'agent.autorunActivity', agentId: event.agentId, activity: run }],
+				};
+			}
 			if (run.kind !== 'state') return { peer, push: [] };
 			// Only a wire event carries the frame; without one, only a clear can be applied.
 			if (run.frame === undefined && run.state !== null) return { peer, push: [] };

@@ -17,7 +17,11 @@ import type { MirrorPush } from '../../../shared/maestro-lib/client/peer-mirror'
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useFederationAutoStore } from '../../stores/federationAutoStore';
 import { logger } from '../../utils/logger';
-import { startHostedAgentSync } from '../../services/hostedAgentSync';
+import {
+	feedHostedAutoRunActivity,
+	flushHostedAutoRunActivity,
+	startHostedAgentSync,
+} from '../../services/hostedAgentSync';
 import { useIsLifecycleOwner } from '../../contexts/WindowContext';
 
 export function usePeerMirrorBridge(): void {
@@ -34,6 +38,8 @@ export function usePeerMirrorBridge(): void {
 		let pending: MirrorPush[] | null = [];
 		const offEvent = api.onEvent((push) => {
 			if (disposed) return;
+			// A hosted run's reasoning and tool calls are fed as they come; the store holds none.
+			if (feedHostedAutoRunActivity(push)) return;
 			if (pending) pending.push(push);
 			else usePeerMirrorStore.getState().applyPush(push);
 		});
@@ -83,6 +89,7 @@ export function usePeerMirrorBridge(): void {
 			offReset();
 			offAuto?.();
 			stopHostedSync();
+			flushHostedAutoRunActivity();
 			useFederationAutoStore.getState().reset();
 			usePeerMirrorStore.getState().reset();
 		};

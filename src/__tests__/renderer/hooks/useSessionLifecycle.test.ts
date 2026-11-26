@@ -624,7 +624,7 @@ describe('useSessionLifecycle', () => {
 	// ======================================================================
 
 	describe('handleRenameTab', () => {
-		it('renames the tab the same way for a local, an SSH, and a hosted agent (mode parity)', () => {
+		it('renames the tab the same way for a local, an SSH, and a hosted agent (mode parity)', async () => {
 			// docs/parity/agent-ux-parity.md, Tab bar: only the transport differs. A hosted
 			// agent's rename also reaches its host (`federation.act`).
 			const federationAct = vi.fn().mockResolvedValue({ ok: true, result: { kind: 'rename-tab' } });
@@ -638,7 +638,8 @@ describe('useSessionLifecycle', () => {
 			);
 			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
 			try {
-				const outcomes = AGENT_MODES.map((mode) => {
+				const outcomes = [];
+				for (const mode of AGENT_MODES) {
 					const session = createModeSession(mode, {
 						id: 'session-1',
 						name: 'Test Agent',
@@ -650,19 +651,65 @@ describe('useSessionLifecycle', () => {
 					useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 					useModalStore.getState().openModal('renameTab', { tabId: 'tab-1', initialName: 'Old' });
 					const { result, unmount } = renderHook(() => useSessionLifecycle(createDeps()));
-					act(() => {
-						result.current.handleRenameTab('New Tab Name');
+					let saved;
+					await act(async () => {
+						saved = await result.current.handleRenameTab('New Tab Name');
 					});
 					const tab = useSessionStore.getState().sessions[0].aiTabs[0];
 					unmount();
-					return { name: tab.name, isGeneratingName: tab.isGeneratingName };
+					outcomes.push({ name: tab.name, isGeneratingName: tab.isGeneratingName, saved });
+				}
+				expect(outcomes[0]).toEqual({
+					name: 'New Tab Name',
+					isGeneratingName: false,
+					saved: { saved: true },
 				});
-				expect(outcomes[0]).toEqual({ name: 'New Tab Name', isGeneratingName: false });
 				expect(outcomes[1]).toEqual(outcomes[0]);
 				expect(outcomes[2]).toEqual(outcomes[0]);
 				expect(federationAct.mock.calls.map((call) => call[2])).toEqual([
 					{ kind: 'rename-tab', tabId: 'tab-1', name: 'New Tab Name' },
 				]);
+			} finally {
+				useSettingsStore.setState({ federationHostedAgents: false } as any);
+				usePeerMirrorStore.setState({ peers: {} } as any);
+			}
+		});
+
+		it('keeps the old name and answers the host reason when a hosted rename is refused (P6)', async () => {
+			// The Rename Tab modal stays open on this answer, with what the person typed.
+			const federationAct = vi
+				.fn()
+				.mockResolvedValue({ ok: false, error: 'The host could not rename the tab.' });
+			(window as any).maestro.federation = { act: federationAct };
+			useSettingsStore.setState({ federationHostedAgents: true } as any);
+			const { peer } = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+				[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+				[],
+				1
+			);
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+			try {
+				useSessionStore.setState({
+					sessions: [
+						createModeSession('hosted', {
+							id: 'session-1',
+							aiTabs: [createMockAITab({ id: 'tab-1', agentSessionId: 'agent-123', name: 'Old' })],
+							activeTabId: 'tab-1',
+						}),
+					],
+					activeSessionId: 'session-1',
+				});
+				useModalStore.getState().openModal('renameTab', { tabId: 'tab-1', initialName: 'Old' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+				let saved;
+				await act(async () => {
+					saved = await result.current.handleRenameTab('New Tab Name');
+				});
+				expect(saved).toEqual({ saved: false, reason: 'The host could not rename the tab.' });
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].name).toBe('Old');
+				expect(notifyToast).not.toHaveBeenCalled();
+				expect(window.maestro.history.updateSessionName).not.toHaveBeenCalled();
 			} finally {
 				useSettingsStore.setState({ federationHostedAgents: false } as any);
 				usePeerMirrorStore.setState({ peers: {} } as any);
@@ -757,7 +804,9 @@ describe('useSessionLifecycle', () => {
 
 				for (const label of ['Maestro label', '']) {
 					const view = renderHook(() => useSessionLifecycle(createDeps()));
-					act(() => view.result.current.handleRenameTab(label));
+					await act(async () => {
+						await view.result.current.handleRenameTab(label);
+					});
 					const [updated, ...untouched] = useSessionStore.getState().sessions;
 					expect(updated.aiTabs[0]).toEqual({
 						...tab,

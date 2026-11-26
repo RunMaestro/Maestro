@@ -18,6 +18,7 @@
 
 import type { LogEntry, ThinkingMode } from '../../../../types';
 import { buildHiddenProgressLogId } from '../../../../utils/hiddenProgress';
+import { logsKeptAtTurnEnd } from '../../../../../shared/types';
 
 export function removeHiddenProgressLog(logs: LogEntry[], tabId: string): LogEntry[] {
 	const hiddenLogId = buildHiddenProgressLogId(tabId);
@@ -29,9 +30,7 @@ export function applyExitThinkingPolicy(
 	logs: LogEntry[],
 	tab: { showThinking?: ThinkingMode }
 ): LogEntry[] {
-	if (tab.showThinking === 'sticky') return logs;
-	const filtered = logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool');
-	return filtered.length === logs.length ? logs : filtered;
+	return logsKeptAtTurnEnd(logs, tab.showThinking);
 }
 
 /**

@@ -10,6 +10,11 @@
  *
  * `runRemoteSteeringCommand` is the same four gestures - send, read, take back,
  * dismiss - for a caller that is not looking at the panel (`maestro-cli steer-auto-run`).
+ *
+ * A hosted agent's run is driven by its Federation host, so the same four
+ * gestures also go to the host (`forwardToHost()`), and the host's own list
+ * replaces what this window shows once it answers: one panel, one store, the
+ * transport alone differs.
  * It runs the functions below rather than a copy of them, and it asks
  * `steeringBlocker` the same question the panel's Steer button asks, so a click
  * and a CLI call cannot disagree about whether a run can be steered.
@@ -23,22 +28,30 @@
 
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { useBatchStore } from '../stores/batchStore';
+import { selectSessionById, useSessionStore } from '../stores/sessionStore';
 import {
 	groupSteeringDeliveries,
+	MAX_DELIVERED_STEERING_NOTES,
+	MAX_STEERING_RESPONSE_LENGTH,
 	useAutoRunSteeringStore,
+	type DeliveredSteeringNote,
 	type SteeringDelivery,
 } from '../stores/autoRunSteeringStore';
 import {
 	MAX_PENDING_STEERING_NOTES,
+	MAX_STEERING_NOTE_LENGTH,
 	normalizeSteeringNoteText,
 	type AutoRunSteeringNote,
 } from '../../shared/autorunSteering';
 import type {
+	SteeringCommandInput,
 	SteeringCommandRequest,
 	SteeringCommandResult,
 	SteeringDeliverySummary,
 	SteeringNoteSummary,
 } from '../../shared/autoRunSteeringCommands';
+import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
+import { hostedTargetOf, steerHostedAutoRun } from './hostedTurns';
 import { readBackgroundField } from '../../shared/focusPlacement';
 import type { BatchRunState } from '../types';
 
@@ -46,17 +59,218 @@ import type { BatchRunState } from '../types';
  * Why a run cannot be steered from this client, or `null` when it can.
  *
  * The one statement of the rule, read by the panel's Steer button and by the
- * CLI's `send`. Only a run THIS client owns can be steered: the notes are
- * renderer state, so a mirrored run's loop is in another client and would never
- * read them. A Steer button, or a `send`, that quietly did nothing is worse
- * than a refusal.
+ * CLI's `send`. A run THIS client owns can be steered, and so can a hosted
+ * agent's run (`sessionId` names the agent): its host takes the note
+ * (`steerHostedAutoRun()`), as this client's own loop would. Any other mirrored
+ * run's loop is in another client and would never read the notes. A Steer
+ * button, or a `send`, that quietly did nothing is worse than a refusal.
  */
-export function steeringBlocker(run: BatchRunState | undefined): string | null {
+export function steeringBlocker(run: BatchRunState | undefined, sessionId?: string): string | null {
 	if (!run?.isRunning) return 'No Auto Run is active on this agent';
-	if (run.mirrored === true) {
+	if (run.mirrored === true && !hostedSessionOf(sessionId)) {
 		return 'This Auto Run is owned by another Maestro client, and only that client can steer it';
 	}
 	return null;
+}
+
+/** The agent record when its run is driven by its Federation host, else undefined. */
+function hostedSessionOf(sessionId: string | undefined) {
+	if (!sessionId) return undefined;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	return hostedTargetOf(session) ? session : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// A hosted agent's run: the host holds the notes
+// ---------------------------------------------------------------------------
+
+/**
+ * One host conversation at a time per agent, so a list asked after a send reads the send, and
+ * answers land in the order they were asked.
+ */
+const hostedSteeringQueue = createKeyedWriteQueue();
+
+/** A note the host reported, type-checked and bounded; undefined when it is not one. */
+function hostNote(raw: unknown): AutoRunSteeringNote | undefined {
+	if (!raw || typeof raw !== 'object') return undefined;
+	const note = raw as Record<string, unknown>;
+	if (typeof note.id !== 'string' || !note.id || typeof note.text !== 'string') return undefined;
+	return {
+		id: note.id.slice(0, 200),
+		text: note.text.slice(0, MAX_STEERING_NOTE_LENGTH),
+		timestamp: typeof note.timestamp === 'number' ? note.timestamp : 0,
+	};
+}
+
+/** The host's delivered notes as this window's store holds them, each with its delivery's reply. */
+function hostDelivered(raw: unknown): DeliveredSteeringNote[] {
+	if (!Array.isArray(raw)) return [];
+	const delivered: DeliveredSteeringNote[] = [];
+	for (const item of raw) {
+		if (!item || typeof item !== 'object') continue;
+		const delivery = item as Record<string, unknown>;
+		if (typeof delivery.deliveryId !== 'string' || !Array.isArray(delivery.notes)) continue;
+		const reply = delivery.reply as Record<string, unknown> | undefined;
+		const response =
+			reply && typeof reply === 'object' && typeof reply.text === 'string'
+				? {
+						summary: typeof reply.summary === 'string' ? reply.summary.slice(0, 500) : '',
+						text: reply.text.slice(0, MAX_STEERING_RESPONSE_LENGTH),
+						success: reply.success === true,
+						timestamp: typeof reply.timestamp === 'number' ? reply.timestamp : 0,
+					}
+				: undefined;
+		for (const rawNote of delivery.notes) {
+			const note = hostNote(rawNote);
+			if (!note) continue;
+			delivered.push({
+				...note,
+				deliveryId: delivery.deliveryId.slice(0, 200),
+				...(response ? { response } : {}),
+			});
+		}
+	}
+	return delivered.slice(-MAX_DELIVERED_STEERING_NOTES);
+}
+
+/** Notes this window shows whose send the host has not answered yet, by agent. */
+const unansweredNotes = new Map<string, Set<string>>();
+
+/**
+ * Replace what this window shows for a hosted agent with the host's own list. A note whose send
+ * the host has not answered yet stays, after the host's: a list read before the send reached the
+ * host cannot know it.
+ */
+function applyHostList(sessionId: string, result: SteeringCommandResult): void {
+	const hostPending = (Array.isArray(result.pending) ? result.pending : [])
+		.map(hostNote)
+		.filter((note): note is AutoRunSteeringNote => note !== undefined);
+	const unanswered = unansweredNotes.get(sessionId);
+	useAutoRunSteeringStore.setState((state) => {
+		const waiting = unanswered
+			? (state.notes[sessionId] ?? []).filter((note) => unanswered.has(note.id))
+			: [];
+		return {
+			notes: {
+				...state.notes,
+				[sessionId]: [...hostPending, ...waiting].slice(0, MAX_PENDING_STEERING_NOTES),
+			},
+			delivered: { ...state.delivered, [sessionId]: hostDelivered(result.deliveries) },
+		};
+	});
+}
+
+function markUnanswered(sessionId: string, noteId: string, waiting: boolean): void {
+	const notes = unansweredNotes.get(sessionId) ?? new Set<string>();
+	if (waiting) notes.add(noteId);
+	else notes.delete(noteId);
+	if (notes.size) unansweredNotes.set(sessionId, notes);
+	else unansweredNotes.delete(sessionId);
+}
+
+/** The host's id for a note this window showed first under its own, by that id. */
+const hostNoteIds = new Map<string, string>();
+
+interface ForwardOptions {
+	/** The note this window shows while the host has not answered (a send). */
+	localNoteId?: string;
+	/** Say a refusal on screen. A caller that reports it itself (the CLI) passes false. */
+	announce?: boolean;
+	/** A background read: a host that cannot be reached raises no toast. */
+	quiet?: boolean;
+}
+
+/**
+ * Ask the host one steering command for a hosted agent, then read its list back into this
+ * window's store, so the panel shows what the host holds. `input` is built when the command's
+ * turn comes, so a cancel queued behind its send names the note by the host's id. Resolves with
+ * the host's answer (the list, for a `list`), or null when the host could not be reached.
+ */
+function forwardToHost(
+	sessionId: string,
+	input: SteeringCommandInput | (() => SteeringCommandInput),
+	options: ForwardOptions = {}
+): Promise<SteeringCommandResult | null> {
+	return hostedSteeringQueue.enqueue(sessionId, async () => {
+		const session = hostedSessionOf(sessionId);
+		if (!session) return null;
+		const ask = typeof input === 'function' ? input() : input;
+		let answer: SteeringCommandResult | null = null;
+		if (ask.action !== 'list') {
+			answer = (await steerHostedAutoRun(session, ask)) ?? null;
+			// Answered (or out of reach): from here the host's list says whether it waits.
+			if (options.localNoteId) markUnanswered(sessionId, options.localNoteId, false);
+			if (answer?.success && options.localNoteId && answer.note?.id) {
+				hostNoteIds.set(options.localNoteId, answer.note.id);
+			}
+			if (answer && !answer.success) {
+				// The host said no: the note it refused is not waiting anywhere.
+				if (options.localNoteId) {
+					useAutoRunSteeringStore.getState().removeNote(sessionId, options.localNoteId);
+				}
+				if (options.announce !== false) {
+					notifyCenterFlash({
+						message: 'Steering note not delivered',
+						detail: answer.error ?? 'The host refused it',
+						color: 'orange',
+					});
+				}
+			}
+		}
+		const listed =
+			(await steerHostedAutoRun(session, { action: 'list' }, { quiet: options.quiet })) ?? null;
+		if (listed?.success) applyHostList(sessionId, listed);
+		return ask.action === 'list' ? listed : answer;
+	});
+}
+
+/**
+ * Read a hosted agent's notes and replies from its host again. The hosted sync calls it when it
+ * first sees the host's run and as the run moves on (a task took the notes, or replied to them).
+ * No-op for any other agent.
+ */
+export function refreshHostedSteering(sessionId: string): Promise<void> {
+	// One read waiting per agent is enough: frames faster than the host answers must not queue
+	// reads ahead of a note the person sends.
+	const queued = queuedRefreshes.get(sessionId);
+	if (queued) return queued;
+	const read = forwardToHost(
+		sessionId,
+		() => {
+			queuedRefreshes.delete(sessionId);
+			return { action: 'list' };
+		},
+		{ quiet: true }
+	)
+		.then(() => undefined)
+		.finally(() => {
+			if (queuedRefreshes.get(sessionId) === read) queuedRefreshes.delete(sessionId);
+		});
+	queuedRefreshes.set(sessionId, read);
+	return read;
+}
+
+/** The list read waiting its turn for each hosted agent, if one is. */
+const queuedRefreshes = new Map<string, Promise<void>>();
+
+/**
+ * Answer one steering verb from outside the panel (`maestro-cli steer-auto-run`). A hosted agent's
+ * notes are on its host, so its verbs are the host's to answer, and the caller gets the host's own
+ * result (its note ids, its refusals). Any other agent's are answered here
+ * (`runRemoteSteeringCommand()`).
+ */
+export async function answerSteeringCommand(
+	request: SteeringCommandRequest
+): Promise<SteeringCommandResult> {
+	const { sessionId } = request;
+	if (!sessionId || !hostedSessionOf(sessionId)) return runRemoteSteeringCommand(request);
+	if (request.action === 'send') {
+		const blocker = steeringBlocker(useBatchStore.getState().batchRunStates[sessionId], sessionId);
+		if (blocker) return { success: false, error: blocker };
+	}
+	const { sessionId: _agent, background: _notice, ...input } = request;
+	const answer = await forwardToHost(sessionId, input, { announce: false });
+	return answer ?? { success: false, error: 'The host that runs this agent could not be reached' };
 }
 
 export interface SubmitSteeringNoteArgs {
@@ -102,6 +316,16 @@ export function submitSteeringNote(args: SubmitSteeringNoteArgs): AutoRunSteerin
 			color: 'theme',
 		});
 	}
+	// A hosted agent's run is on its host: the note goes there, and the host's list replaces this
+	// one when it answers (the note shows as pending meanwhile, as a local one does).
+	if (hostedSessionOf(sessionId)) {
+		markUnanswered(sessionId, note.id, true);
+		void forwardToHost(
+			sessionId,
+			{ action: 'send', text: note.text },
+			{ localNoteId: note.id, announce }
+		);
+	}
 	return note;
 }
 
@@ -112,6 +336,13 @@ export function submitSteeringNote(args: SubmitSteeringNoteArgs): AutoRunSteerin
  */
 export function cancelSteeringNote(sessionId: string, noteId: string): void {
 	useAutoRunSteeringStore.getState().removeNote(sessionId, noteId);
+	if (hostedSessionOf(sessionId)) {
+		// Named by the host's id once its send has answered (the queue runs this after it).
+		void forwardToHost(sessionId, () => ({
+			action: 'cancel',
+			noteId: hostNoteIds.get(noteId) ?? noteId,
+		}));
+	}
 }
 
 /**
@@ -131,6 +362,7 @@ export function dismissSteeringDelivery(
 	);
 	if (!target) return null;
 	store.dismissDelivery(sessionId, deliveryId);
+	if (hostedSessionOf(sessionId)) void forwardToHost(sessionId, { action: 'dismiss', deliveryId });
 	return target;
 }
 
@@ -212,7 +444,7 @@ export function runRemoteSteeringCommand(request: SteeringCommandRequest): Steer
 	if (!sessionId) return { success: false, error: `steering ${action} requires an agent` };
 
 	const store = useAutoRunSteeringStore.getState();
-	const blocker = steeringBlocker(useBatchStore.getState().batchRunStates[sessionId]);
+	const blocker = steeringBlocker(useBatchStore.getState().batchRunStates[sessionId], sessionId);
 
 	if (action === 'list') {
 		return {
