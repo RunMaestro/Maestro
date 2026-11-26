@@ -470,4 +470,23 @@ describe('projectHostedSession with the link lost', () => {
 		expect(twice.aiTabs[0].logs.find((entry) => entry.id === 'live1')?.text).toBe('partial answer');
 		expect(twice.aiTabs[0].logs.at(-1)?.id).toBe('host-link-t1-u1');
 	});
+
+	it('keeps one note when the turn message lands after the cut was drawn (a late transcript read)', () => {
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', logs: [] })],
+		});
+		const once = projectHostedSession(local, { agent, linkLost });
+		expect(once.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['host-link-t1-50']);
+
+		// A read already in flight lands during the loss, with the turn's message before the note.
+		const late = {
+			...once,
+			aiTabs: [{ ...once.aiTabs[0], logs: [QUESTION, ...once.aiTabs[0].logs] }],
+		};
+		const twice = projectHostedSession(late, { agent, linkLost });
+		const notes = twice.aiTabs[0].logs.filter((entry) => entry.agentError?.source === 'host-link');
+		expect(notes.map((entry) => entry.id)).toEqual(['host-link-t1-50']);
+	});
 });

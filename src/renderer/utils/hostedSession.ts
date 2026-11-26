@@ -71,17 +71,27 @@ export interface HostedProjectionInput {
 /**
  * The transcript note a tab gets when the link to its host is lost mid-turn. Keyed on the cut: the
  * tab and the message whose turn it ended, so the loss moving from "connection lost" to "outage
- * confirmed" (or the same turn cut again) rewords one note instead of adding another.
+ * confirmed" (or the same turn cut again) rewords one note instead of adding another. A note this
+ * cut already drew keeps its id (the error keeps its timestamp for one loss), so a transcript that
+ * lands during the loss, with the turn's message in it, does not add a second note.
  */
 export function hostLinkNoteId(
 	tabId: string,
 	logs: readonly LogEntry[],
 	error: AgentError
 ): string {
+	const prefix = `host-link-${tabId}-`;
+	const drawn = logs.find(
+		(entry) =>
+			entry.id.startsWith(prefix) &&
+			entry.agentError?.source === 'host-link' &&
+			entry.agentError.timestamp === error.timestamp
+	);
+	if (drawn) return drawn.id;
 	for (let i = logs.length - 1; i >= 0; i -= 1) {
-		if (logs[i].source === 'user') return `host-link-${tabId}-${logs[i].id}`;
+		if (logs[i].source === 'user') return `${prefix}${logs[i].id}`;
 	}
-	return `host-link-${tabId}-${error.timestamp}`;
+	return `${prefix}${error.timestamp}`;
 }
 
 /**
