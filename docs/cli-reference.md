@@ -1063,7 +1063,7 @@ Configure and optionally launch an auto-run with documents
 
 ## `maestro-cli stop-auto-run`
 
-Stop the active Auto Run for an agent
+Stop the active Auto Run for an agent (on a run already stopping, end it now)
 
 | Option             | Description                    | Default |
 | ------------------ | ------------------------------ | ------- |
@@ -1090,7 +1090,7 @@ Skip the current document of an error-paused Auto Run and continue
 
 ## `maestro-cli abort-auto-run`
 
-Abort an error-paused Auto Run
+Abort an error-paused Auto Run (on a run already stopping, end it now)
 
 | Option             | Description                    | Default |
 | ------------------ | ------------------------------ | ------- |
