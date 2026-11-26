@@ -85,3 +85,24 @@ describe('HamburgerMenuContent on a phone', () => {
 		}
 	});
 });
+
+describe('HamburgerMenuContent sections', () => {
+	it('keeps the feature section between the two dividers in alphabetical order', () => {
+		const original = useSettingsStore.getState().encoreFeatures;
+		const allOn = { ...original };
+		for (const key of Object.keys(allOn) as (keyof typeof allOn)[]) allOn[key] = true;
+		useSettingsStore.setState({ encoreFeatures: allOn });
+		const { container } = renderMenu();
+		const rows = Array.from(container.firstElementChild!.children);
+		const dividers = rows.flatMap((row, i) => (row.classList.contains('border-t') ? [i] : []));
+		expect(dividers).toHaveLength(2);
+
+		const labelOf = (row: Element) => row.querySelector('.text-sm.font-medium')?.textContent ?? '';
+		const features = rows.slice(dividers[0] + 1, dividers[1]).map(labelOf);
+		expect(features.length).toBeGreaterThan(1);
+		expect(features).toEqual([...features].sort((a, b) => a.localeCompare(b)));
+		// The app-level entries all sit above the first divider.
+		expect(rows.slice(0, dividers[0]).map(labelOf)).toContain('Process Monitor');
+		useSettingsStore.setState({ encoreFeatures: original });
+	});
+});
