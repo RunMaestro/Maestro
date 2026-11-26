@@ -42,7 +42,7 @@ import { applyAutoRunMirrorFrame } from '../hooks/batch/useAutoRunStateMirror';
 import { useBatchStore } from '../stores/batchStore';
 import { mirroredRunCompleteInfo, notifyAutoRunComplete } from './autoRunCompletion';
 import { followHostedHandoffs } from './crossAgentHandoff';
-import { fireHostStartedMentions } from './hostedQueuedTurn';
+import { fireHostStartedMentions, pruneHostStartedMentions } from './hostedQueuedTurn';
 import { closingHostTabIds, hostingEnabled } from './hostedTurns';
 import { clearPendingSteeringNotes, refreshHostedSteering } from './autoRunSteering';
 import { useAutoRunSteeringStore } from '../stores/autoRunSteeringStore';
@@ -183,12 +183,18 @@ function releaseHostedAgents(): void {
 export function syncHostedAgents(): void {
 	if (!hostingEnabled()) {
 		dropStaleAutoRuns(new Set());
+		pruneHostStartedMentions(new Set());
 		releaseHostedAgents();
 		return;
 	}
 	released.clear();
-	if (!usePeerMirrorStore.getState().enabled) return;
 	const { sessions, activeSessionId } = useSessionStore.getState();
+	// A record still points at a host while the mirror reconnects: only a deleted or moved-back
+	// agent lets go of the consults it waits to fire.
+	pruneHostStartedMentions(
+		new Set(sessions.filter((s) => readLiftedTo(s.liftedTo)).map((s) => s.id))
+	);
+	if (!usePeerMirrorStore.getState().enabled) return;
 	const hostedIds = new Set<string>();
 	for (const session of sessions) {
 		const hosted = hostedInput(session);

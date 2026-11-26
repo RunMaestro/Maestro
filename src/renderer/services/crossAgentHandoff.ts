@@ -105,19 +105,26 @@ export function dropMentionHandoffs(sessionId: string, tabId?: string): void {
 	}));
 }
 
-/** A system note on the source tab saying why a hand-off did not go out. */
-function noteSkippedHandoff(
+/**
+ * A system note on the source tab saying why a mention's hand-off (or consult) did not go out,
+ * the one note every mode writes for a mention that cannot run.
+ */
+export function noteSkippedMention(
 	sessionId: string,
 	tabId: string,
 	targets: ConsultHoldTarget[],
-	why: string
+	why: string,
+	kind: 'handoff' | 'consult' = 'handoff'
 ) {
 	const names = formatConsultedAgentNames(targets.map((t) => t.targetAgentName));
 	const entry: LogEntry = {
 		id: generateId(),
 		timestamp: Date.now(),
 		source: 'system',
-		text: `Nothing was handed off to ${names}: ${why}`,
+		text:
+			kind === 'handoff'
+				? `Nothing was handed off to ${names}: ${why}`
+				: `Nothing was asked of ${names}: ${why}`,
 	};
 	updateAiTab(sessionId, tabId, (tab) => ({ ...tab, logs: [...tab.logs, entry] }));
 }
@@ -174,12 +181,12 @@ export function releaseMentionHandoff(
 	updateAiTab(sessionId, tabId, (t) => ({ ...t, pendingMentionHandoff: undefined }));
 
 	if (opts.failed) {
-		noteSkippedHandoff(sessionId, tabId, handoff.targets, 'the turn did not finish.');
+		noteSkippedMention(sessionId, tabId, handoff.targets, 'the turn did not finish.');
 		return;
 	}
 	const turn = opts.turn !== undefined ? opts.turn : collectHandoffTurn(tab.logs);
 	if (!turn) {
-		noteSkippedHandoff(sessionId, tabId, handoff.targets, 'the turn produced no answer.');
+		noteSkippedMention(sessionId, tabId, handoff.targets, 'the turn produced no answer.');
 		return;
 	}
 
@@ -429,7 +436,7 @@ export function followHostedHandoffs(
 		} else if (step === 'drop') {
 			const handoff = tab.pendingMentionHandoff!;
 			updateAiTab(session.id, tab.id, (t) => ({ ...t, pendingMentionHandoff: undefined }));
-			noteSkippedHandoff(
+			noteSkippedMention(
 				session.id,
 				tab.id,
 				handoff.targets,

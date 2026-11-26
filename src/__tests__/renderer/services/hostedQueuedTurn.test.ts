@@ -27,7 +27,12 @@ import {
 	hostedHandoffStep,
 	hostedHandoffTurn,
 } from '../../../renderer/services/crossAgentHandoff';
-import { fireHostStartedMentions } from '../../../renderer/services/hostedQueuedTurn';
+import {
+	dropStoppedHostStartMentions,
+	fireHostStartedMentions,
+	HOST_START_MENTION_TTL_MS,
+	pruneHostStartedMentions,
+} from '../../../renderer/services/hostedQueuedTurn';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -50,10 +55,22 @@ const maestro = window.maestro as unknown as Record<string, unknown>;
 const act$ = vi.fn();
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function hydrateHost() {
+/** The host's own record of its tab: busy with a turn that started at `busySince` (host clock). */
+function hydrateHost(busySince?: number) {
 	const { peer } = replacePeerAgents(
 		createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
-		[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: 't1' }] }],
+		[
+			{
+				id: 'h1',
+				name: 'Docs',
+				toolType: 'claude-code',
+				aiTabs: [
+					busySince === undefined
+						? { id: 't1' }
+						: { id: 't1', state: 'busy', thinkingStartTime: busySince },
+				],
+			},
+		],
 		[],
 		1
 	);
@@ -693,7 +710,8 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			},
 		});
 		seedWithBackend('hosted');
-		// The tab is busy with the turn the message was queued behind.
+		// The tab is busy with the turn the message was queued behind, as the host tells it.
+		hydrateHost(100);
 		useSessionStore.setState((current) => ({
 			sessions: current.sessions.map((s) =>
 				s.id === 'row'
@@ -1049,6 +1067,138 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				expect(row().aiTabs[0].pendingMentionHandoff).toBeUndefined();
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 			});
+		});
+	});
+
+	describe('a consult waiting for a host start is let go, and says so (M15)', () => {
+		const notes = () =>
+			row()
+				.aiTabs[0].logs.filter((entry) => entry.source === 'system')
+				.map((entry) => entry.text);
+		const busy = (thinkingStartTime: number | undefined, hostQueuedId?: string) =>
+			useSessionStore.setState((current) => ({
+				sessions: current.sessions.map((s) =>
+					s.id === 'row'
+						? {
+								...s,
+								aiTabs: s.aiTabs.map((t) => ({
+									...t,
+									state: thinkingStartTime === undefined ? 'idle' : 'busy',
+									thinkingStartTime,
+								})),
+								executionQueue: hostQueuedId
+									? [queuedMessage({ id: hostQueuedId, hostQueued: true })]
+									: s.executionQueue.filter((q) => !q.hostQueued),
+							}
+						: s
+				),
+			}));
+		/** A parallel mention message the host queues behind the turn its own record shows. */
+		const queueOnHost = async (itemId: string, hostBusySince?: number) => {
+			act$.mockResolvedValue({
+				ok: true,
+				result: {
+					kind: 'send',
+					receipt: { status: 'queued', itemId, position: 1, queueLength: 1 },
+				},
+			});
+			seedWithBackend('hosted');
+			hydrateHost(hostBusySince);
+			await useAgentStore.getState().processQueuedItem(
+				'row',
+				queuedMessage({
+					text: 'look into the cache with @Backend',
+					crossAgentMention: true,
+					mentionRouting: 'parallel',
+				}),
+				drainDeps
+			);
+			await flush();
+		};
+
+		it("compares the host's start times only with each other, so a host clock behind this one still consults", async () => {
+			// The host's clock is far behind this machine's: every start it reports is "in the past".
+			await queueOnHost('m15-clock', 100);
+			busy(100);
+			fireHostStartedMentions(row());
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+			busy(150);
+			fireHostStartedMentions(row());
+			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		});
+
+		it('an agent moved back from its host lets go, with a note, and never consults later', async () => {
+			await queueOnHost('m15-moved', 100);
+			pruneHostStartedMentions(new Set(['row']));
+			expect(notes()).toEqual([]);
+			pruneHostStartedMentions(new Set());
+			expect(notes()).toEqual([
+				'Nothing was asked of Backend: the agent no longer runs on that host.',
+			]);
+			busy(200);
+			fireHostStartedMentions(row());
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		});
+
+		it('a deleted agent lets go without a note to write', async () => {
+			await queueOnHost('m15-deleted', 100);
+			useSessionStore.setState({ sessions: [backend()] });
+			expect(() => pruneHostStartedMentions(new Set())).not.toThrow();
+			seedWithBackend('hosted');
+			busy(200);
+			fireHostStartedMentions(row());
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		});
+
+		it('one the host queue never shows lets go past the time limit; one it shows stays', async () => {
+			await queueOnHost('m15-shown', 100);
+			busy(100, 'm15-shown');
+			fireHostStartedMentions(row(), undefined, Date.now() + HOST_START_MENTION_TTL_MS + 1);
+			expect(notes()).toEqual([]);
+
+			await queueOnHost('m15-never', 100);
+			busy(100);
+			fireHostStartedMentions(row(), [], Date.now() + HOST_START_MENTION_TTL_MS + 1);
+			expect(notes()).toContain(
+				'Nothing was asked of Backend: its message never started on the host.'
+			);
+			busy(200);
+			fireHostStartedMentions(row(), []);
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		});
+
+		it('a removal the host names (by naming no start) leaves the note a local mention leaves', async () => {
+			await queueOnHost('m15-removed', 100);
+			busy(100, 'm15-removed');
+			fireHostStartedMentions(row(), []);
+			busy(100);
+			fireHostStartedMentions(row(), []);
+			expect(notes()).toEqual([
+				'Nothing was asked of Backend: the message was removed before it ran.',
+			]);
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		});
+
+		it('Stop lets go of the one whose turn it stopped, and keeps one that still waits on the host', async () => {
+			await queueOnHost('m15-stopped', 100);
+			busy(100, 'm15-stopped');
+			fireHostStartedMentions(row());
+			// It left the host queue; its start is not confirmed yet when Stop lands.
+			busy(undefined);
+			fireHostStartedMentions(row());
+			dropStoppedHostStartMentions('row', 't1');
+			expect(notes()).toEqual(['Nothing was asked of Backend: the turn was stopped.']);
+			busy(200);
+			fireHostStartedMentions(row());
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+
+			await queueOnHost('m15-waits', 100);
+			busy(100, 'm15-waits');
+			fireHostStartedMentions(row());
+			dropStoppedHostStartMentions('row');
+			busy(300);
+			fireHostStartedMentions(row());
+			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 		});
 	});
 

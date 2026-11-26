@@ -49,8 +49,13 @@ import {
 	handoffSendBoundary,
 	hasDeferredHostedHandoff,
 	markHandoffSentToHost,
+	noteSkippedMention,
 } from './crossAgentHandoff';
+import { resolveConsultTargets } from './crossAgentConsultHold';
 import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
+import { usePeerMirrorStore } from '../stores/peerMirrorStore';
+import { hostTabTurnStartedAt } from '../utils/hostedSession';
+import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import { queuedItemNamingText } from './tabAutoNaming';
 
 /**
@@ -196,13 +201,17 @@ function fireMentionsForHostTurn(
 	// A turn the host queued behind another is not this agent's turn yet: its consult waits for
 	// it to start (`fireHostStartedMentions()`). A hand-off consults nobody until the turn ends.
 	if (receipt.status === 'queued' && mention.routing !== 'handoff') {
-		// The turn it waits behind is read from the host's tab while it is seen queued.
-		mentionsAwaitingHostStart.set(receipt.itemId, {
+		// The turn it waits behind is the one the host's tab runs now, as the host told it (never
+		// this machine's clock, and never this tab, which the drain just marked and released). A
+		// tab the host shows idle is read again when the item is seen queued.
+		const ahead = hostTurnAhead(sessionId, item.tabId);
+		awaitHostStart(receipt.itemId, {
 			sessionId,
 			item,
 			mention,
 			seenQueued: false,
 			queuedAt: Date.now(),
+			...(ahead.busy ? { aheadKnown: true, turnStartedAt: ahead.startedAt } : {}),
 		});
 		return;
 	}
@@ -230,6 +239,15 @@ function fireMentionsForHostTurn(
 	if (mention.routing === 'handoff') markHandoffSentToHost(sessionId, tabId, receipt);
 }
 
+/**
+ * How long a consult waits for its turn to start while the host's queue does not show it (a desktop
+ * host, whose queue is not mirrored, or an item that left the queue before its first frame came).
+ */
+export const HOST_START_MENTION_TTL_MS = 12 * 60 * 60 * 1000;
+
+/** The most consults that wait for host starts at once; past it the oldest is let go, with a note. */
+export const MAX_HOST_START_MENTIONS = 100;
+
 /** Consults of turns the host queued, by the host's queue item id, until that item starts. */
 const mentionsAwaitingHostStart = new Map<
 	string,
@@ -251,10 +269,75 @@ const mentionsAwaitingHostStart = new Map<
 		 * next sync tells a start whose tab state comes later from a removal.
 		 */
 		goneOnce?: boolean;
-		/** When the host's receipt said it was queued. */
+		/** When the host's receipt said it was queued (this machine's clock; only for the time limit). */
 		queuedAt: number;
 	}
 >();
+
+type AwaitingHostStart = typeof mentionsAwaitingHostStart extends Map<string, infer V> ? V : never;
+
+/** Whether the host's own record of `tabId` reads busy now, and when that turn started. */
+function hostTurnAhead(sessionId: string, tabId: string): { busy: boolean; startedAt?: number } {
+	const target = hostedTargetOf(selectSessionById(sessionId)(useSessionStore.getState()));
+	const host = target?.agent?.aiTabs?.find((tab) => tab.id === tabId);
+	if (!target || host?.state !== 'busy') return { busy: false };
+	const liveTurn =
+		usePeerMirrorStore.getState().peers[target.peerId]?.liveTurns[
+			liveTurnKey(target.agentId, tabId)
+		];
+	return { busy: true, startedAt: hostTabTurnStartedAt(host, liveTurn) };
+}
+
+function awaitHostStart(hostItemId: string, waiting: AwaitingHostStart): void {
+	mentionsAwaitingHostStart.set(hostItemId, waiting);
+	for (const [oldestId, oldest] of mentionsAwaitingHostStart) {
+		if (mentionsAwaitingHostStart.size <= MAX_HOST_START_MENTIONS) break;
+		letGoOfHostStart(oldestId, oldest, 'too many messages wait on the host for their turn.');
+	}
+}
+
+/**
+ * Stop waiting for a consult's turn without consulting, and say so on the tab, as a local mention
+ * that cannot run says it. Nothing is written when the agent is gone.
+ */
+function letGoOfHostStart(hostItemId: string, waiting: AwaitingHostStart, why: string): void {
+	mentionsAwaitingHostStart.delete(hostItemId);
+	const session = selectSessionById(waiting.sessionId)(useSessionStore.getState());
+	const tabId = waiting.item.tabId || session?.activeTabId;
+	if (!session || !tabId || !session.aiTabs.some((tab) => tab.id === tabId)) return;
+	noteSkippedMention(
+		session.id,
+		tabId,
+		resolveConsultTargets(waiting.mention.targetSessionIds),
+		why,
+		'consult'
+	);
+}
+
+/**
+ * Let go of the consults of agents this window no longer follows on a host: deleted, moved back,
+ * or with hosted agents switched off. Called on every hosted sync with the ids still hosted.
+ */
+export function pruneHostStartedMentions(hostedSessionIds: ReadonlySet<string>): void {
+	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
+		if (hostedSessionIds.has(waiting.sessionId)) continue;
+		letGoOfHostStart(hostItemId, waiting, 'the agent no longer runs on that host.');
+	}
+}
+
+/**
+ * Stop ended the agent's turn (or `tabId`'s): a consult whose message already left the host's
+ * queue and whose start is not confirmed yet belonged to that turn, so it goes, with a note. One
+ * still waiting in the host's queue (or never seen there) stays: that message runs later, and
+ * consults when it starts, as a local queued message does after Stop.
+ */
+export function dropStoppedHostStartMentions(sessionId: string, tabId?: string): void {
+	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
+		if (waiting.sessionId !== sessionId || !waiting.goneOnce) continue;
+		if (tabId && waiting.item.tabId && waiting.item.tabId !== tabId) continue;
+		letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+	}
+}
 
 /**
  * Fire the consults of turns the host queued once they start.
@@ -265,11 +348,19 @@ const mentionsAwaitingHostStart = new Map<
  *
  * An older headless host, and a desktop host, name none. Then the item started when it is not in
  * the host's queue and its tab reads busy with a turn that is not the one it was queued behind (the
- * turn the tab ran when it was first seen waiting, never overwritten after). The queue change and
- * the tab's busy state arrive as separate messages, so one that left the queue while the tab is
- * idle, or still busy with the turn ahead, waits one more sync before it counts as removed.
+ * turn the tab ran at the receipt, or when it was first seen waiting; never overwritten after, and
+ * only ever compared with another start time from the host). The queue change and the tab's busy
+ * state arrive as separate messages, so one that left the queue while the tab is idle, or still
+ * busy with the turn ahead, waits one more sync before it counts as removed.
+ *
+ * A consult that is let go without running (removed, or not in the host's queue for
+ * `HOST_START_MENTION_TTL_MS`) leaves the note a local mention that cannot run leaves.
  */
-export function fireHostStartedMentions(session: Session, hostStarts?: readonly string[]): void {
+export function fireHostStartedMentions(
+	session: Session,
+	hostStarts?: readonly string[],
+	now = Date.now()
+): void {
 	if (mentionsAwaitingHostStart.size === 0) return;
 	const hostQueued = new Set(
 		(session.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
@@ -287,22 +378,28 @@ export function fireHostStartedMentions(session: Session, hostStarts?: readonly 
 				}
 				continue;
 			}
-			// Named starts: unnamed and gone after it was seen waiting is a removal.
-			if (hostStarts) {
-				if (waiting.seenQueued) mentionsAwaitingHostStart.delete(hostItemId);
+			// Not waiting in the host's queue for longer than any turn runs: let it go, and say so.
+			if (now - waiting.queuedAt > HOST_START_MENTION_TTL_MS) {
+				letGoOfHostStart(hostItemId, waiting, 'its message never started on the host.');
 				continue;
 			}
-			// Never seen waiting (its queue frame had not come): only a turn that started after the
-			// receipt can be it, not the one running when the host queued it.
+			// Named starts: unnamed and gone after it was seen waiting is a removal.
+			if (hostStarts) {
+				if (waiting.seenQueued) {
+					letGoOfHostStart(hostItemId, waiting, 'the message was removed before it ran.');
+				}
+				continue;
+			}
+			// Its turn is one that started at another time than the turn ahead, both in the host's
+			// clock. With no turn ahead known (the tab read idle), the next turn it runs is it.
 			const started =
 				tab?.state === 'busy' &&
-				(waiting.seenQueued
-					? tab.thinkingStartTime !== waiting.turnStartedAt
-					: (tab.thinkingStartTime ?? 0) >= waiting.queuedAt);
+				(!waiting.aheadKnown || tab.thinkingStartTime !== waiting.turnStartedAt);
 			if (!started) {
 				if (!waiting.seenQueued) continue;
-				if (waiting.goneOnce) mentionsAwaitingHostStart.delete(hostItemId);
-				else waiting.goneOnce = true;
+				if (waiting.goneOnce) {
+					letGoOfHostStart(hostItemId, waiting, 'the message was removed before it ran.');
+				} else waiting.goneOnce = true;
 				continue;
 			}
 		}
