@@ -17,6 +17,28 @@ vi.mock('../../../main/group-chat/spawn-config', () => ({
 
 const spawn = { processId: 'cross-agent-auth', providerId: 'codex' } as GroupChatSpawn;
 
+describe('the launch feature a consult reports (G3)', () => {
+	beforeEach(() =>
+		vi.mocked(spawnGroupChatAgent).mockReset().mockResolvedValue({ success: true, pid: 1 })
+	);
+
+	it('names a managed consult, whose admission stays on this machine, apart from a plain one', async () => {
+		const observer = { onActivity: vi.fn(), onSessionId: vi.fn(), onEnd: vi.fn() };
+		await createDesktopConsultRunner(new EventEmitter() as ProcessManager, null).start(
+			spawn,
+			observer
+		);
+		await createDesktopConsultRunner(new EventEmitter() as ProcessManager, null, {
+			beforeSpawn: vi.fn(),
+			started: vi.fn(),
+		}).start(spawn, observer);
+		const features = vi
+			.mocked(spawnGroupChatAgent)
+			.mock.calls.map(([config]) => config.launchFeature);
+		expect(features).toEqual([undefined, 'managed-consult']);
+	});
+});
+
 describe('desktop consult listener lifecycle', () => {
 	beforeEach(() =>
 		vi.mocked(spawnGroupChatAgent).mockReset().mockResolvedValue({ success: true, pid: 123 })

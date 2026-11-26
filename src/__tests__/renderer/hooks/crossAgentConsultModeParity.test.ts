@@ -264,6 +264,51 @@ describe('A1.7: a consult of a local, SSH, or hosted target', () => {
 		}
 	});
 
+	// G3: a Pianola-managed consult stays with main's managed queue on this machine in every mode
+	// (its admission cannot move to a host that does not hold the queue): the same request, no
+	// consult tab, and the same bubble when the answer lands.
+	it('runs a managed consult through main in every mode and draws the same bubble', async () => {
+		const bubbles: ReturnType<typeof bubble>[] = [];
+		for (const mode of AGENT_MODES) {
+			seed(mode);
+			send.mockResolvedValue({ requestId: `managed-${mode}` });
+			await sendCrossAgentRequest({
+				sourceSessionId: 'src',
+				sourceAgentName: 'Source',
+				sourceTabId: 'tab',
+				targetSessionId: 'tgt',
+				userPrompt: QUESTION,
+				sourceLogs: SOURCE_LOGS,
+				managedQueue: { dispatchId: 'd1', generation: 'g1' },
+			});
+			expect(act$).not.toHaveBeenCalled();
+			expect(send).toHaveBeenCalledTimes(1);
+			expect(send.mock.calls[0][0]).toMatchObject({
+				targetSessionId: 'tgt',
+				transcript: [],
+				managedQueue: { dispatchId: 'd1', generation: 'g1' },
+			});
+			expect(send.mock.calls[0][0].targetTabId).toBeUndefined();
+			applyCrossAgentChunk({
+				requestId: `managed-${mode}`,
+				sourceSessionId: 'src',
+				sourceTabId: 'tab',
+				targetSessionId: 'tgt',
+				targetAgentName: 'Target',
+				targetToolType: 'codex',
+				chunk: ANSWER,
+				done: true,
+			});
+			const target = useSessionStore.getState().sessions[1];
+			expect(target.aiTabs.some((tab) => tab.consultOrigin)).toBe(false);
+			bubbles.push(bubble());
+			send.mockReset();
+		}
+		expect(bubbles[0].text).toBe(ANSWER);
+		expect(bubbles[1]).toEqual(bubbles[0]);
+		expect(bubbles[2]).toEqual(bubbles[0]);
+	});
+
 	it('sends a hand-off answer to the host for the target to act on', async () => {
 		seed('hosted');
 		act$.mockResolvedValue({ ok: true, result: { kind: 'consult', answer: 'done' } });
