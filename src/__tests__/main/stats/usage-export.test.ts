@@ -531,8 +531,11 @@ describe('exportUsageData', () => {
 		expect(written.delegation.totals).toEqual(delegationTotals);
 		// The token query is the dashboard's: a calendar-aligned lower bound,
 		// with the accessor choosing the slice size from the window.
+		// An export waits for agents on another computer to be counted.
 		expect(mockGetTokenUsageAggregate).toHaveBeenCalledWith(
-			expect.objectContaining({ sinceMs: expect.any(Number) })
+			expect.objectContaining({ sinceMs: expect.any(Number) }),
+			false,
+			{ waitForRemote: true }
 		);
 	});
 

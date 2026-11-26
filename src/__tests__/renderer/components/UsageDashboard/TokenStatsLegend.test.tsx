@@ -489,6 +489,52 @@ describe('TokenStats framing', () => {
 		expect(coverage.textContent).not.toContain('Not counted');
 	});
 
+	it('shows local totals while a computer is still counting, then fills its rows in', async () => {
+		const first = {
+			...aggregate,
+			totals: makeTotals({ sessionCount: 3 }),
+			excluded: {
+				unsupportedAgents: [],
+				remoteProjects: 0,
+				notCountedAgents: [],
+				pendingAgents: ['Build Box'],
+				remoteRefreshing: true,
+			},
+		};
+		let land: (value: TokenUsageAggregate) => void = () => undefined;
+		const landed = new Promise<TokenUsageAggregate>((resolve) => (land = resolve));
+		const getTokenUsage = vi.fn((_query: unknown, _force: boolean, waitForRemote?: boolean) =>
+			waitForRemote ? landed : Promise.resolve(first)
+		);
+		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
+		render(<TokenStats timeRange="week" theme={theme} />);
+
+		const coverage = await screen.findByTestId('token-stats-coverage');
+		expect(coverage.textContent).toContain(
+			'Not counted: Build Box (conversations on another computer, still being read).'
+		);
+		expect(coverage.textContent).not.toMatch(/SSH|remote|hosted/i);
+		// The dashboard asks once more, waiting for the remote count.
+		await waitFor(() => expect(getTokenUsage).toHaveBeenCalledTimes(2));
+		expect(getTokenUsage.mock.calls[1][2]).toBe(true);
+
+		land({
+			...aggregate,
+			totals: makeTotals({ sessionCount: 5 }),
+			excluded: {
+				unsupportedAgents: [],
+				remoteProjects: 0,
+				notCountedAgents: [],
+				pendingAgents: [],
+				remoteRefreshing: false,
+			},
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId('token-stats-coverage').textContent).not.toContain('Not counted')
+		);
+		expect(getTokenUsage).toHaveBeenCalledTimes(2);
+	});
+
 	it('shows the error, not an empty state, when the read fails', async () => {
 		(window as unknown as { maestro: unknown }).maestro = {
 			stats: { getTokenUsage: vi.fn().mockRejectedValue(new Error('disk on fire')) },

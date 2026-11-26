@@ -88,23 +88,45 @@ interface Collection {
 	excluded: TokenUsageExclusions;
 }
 
-interface MemoEntry extends Collection {
+/** What the local scan read, plus the remote lifecycle pairs it left to the remote count. */
+interface LocalCollection extends Collection {
+	remotePairs: Set<string>;
+}
+
+interface MemoEntry extends LocalCollection {
 	computedAt: number;
 }
 
 /**
- * The collected breakdowns, not the aggregate: collection is the expensive step
+ * The local collection, not the aggregate: collection is the expensive step
  * and is query-independent, while aggregating is pure in-memory math over the
  * same array. Memoizing here means flipping the dashboard's time range or
  * granularity re-buckets what we already have instead of re-walking storage.
  */
 let memo: MemoEntry | null = null;
 /** Shared by concurrent callers so a double mount can't run two collections. */
-let inflight: Promise<Collection> | null = null;
+let inflight: Promise<LocalCollection> | null = null;
+
+/** The last count of the agents on another computer, and which agents it asked about. */
+interface RemoteEntry {
+	computedAt: number;
+	agentIds: Set<string>;
+	result: RemoteBreakdowns;
+}
+
+/**
+ * The remote count is kept apart from the local one: a host can take up to
+ * `REMOTE_TOKEN_USAGE_TIMEOUT_MS` to answer, and the local totals never wait on
+ * it. A read serves the last remote result at once and refreshes it in the
+ * background; the dashboard reads again when the refresh lands.
+ */
+let remoteMemo: RemoteEntry | null = null;
+let remoteInflight: Promise<RemoteEntry> | null = null;
 
 /** Reset the in-memory memo (call on external stats changes / tests). */
 export function invalidateTokenUsageMemo(): void {
 	memo = null;
+	remoteMemo = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +135,13 @@ export function invalidateTokenUsageMemo(): void {
 
 /** No exclusions: the default for callers (tests) that build breakdowns directly. */
 function noExclusions(): TokenUsageExclusions {
-	return { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] };
+	return {
+		unsupportedAgents: [],
+		remoteProjects: 0,
+		notCountedAgents: [],
+		pendingAgents: [],
+		remoteRefreshing: false,
+	};
 }
 
 /**
@@ -190,11 +218,12 @@ const requestRemoteTokenUsage: RemoteTokenUsageRequest = async (remoteId, projec
 	(await getPeerMirrorService()?.projectTokenUsage(remoteId, projects, timeoutMs)) ?? undefined;
 
 /**
- * The usage of the agents whose conversations are on another computer, counted on that computer.
+ * The usage of `agents` (whose conversations are on another computer), counted on that computer.
  * Shows on the stats indexing surface while a remote is slow to answer.
  */
-async function collectRemoteAgentBreakdowns(): Promise<RemoteBreakdowns> {
-	const agents = readRemoteTokenAgents();
+async function collectRemoteAgentBreakdowns(
+	agents: readonly RemoteTokenAgent[]
+): Promise<RemoteBreakdowns> {
 	if (agents.length === 0) return { breakdowns: [], notCounted: [], pairs: new Set() };
 	return withStatsIndexing(
 		{ id: 'remote-token-usage', label: 'Token usage on other computers', reason: 'index' },
@@ -209,28 +238,117 @@ async function collectRemoteAgentBreakdowns(): Promise<RemoteBreakdowns> {
 }
 
 /**
- * Collect one breakdown per known session, using the cache for unchanged ones.
- * Live keys are tracked so the cache can prune sessions deleted on disk. The
- * conversations of agents on another computer are counted there, beside the
- * local scan, and merged in.
+ * Count `agents` on their computers, once at a time: a second caller joins the
+ * refresh in flight. Never rejects: a failure leaves every agent "not counted".
  */
-async function collectBreakdowns(cache: TokenUsageCache): Promise<Collection> {
+function refreshRemote(agents: readonly RemoteTokenAgent[]): Promise<RemoteEntry> {
+	if (remoteInflight) return remoteInflight;
+	const agentIds = new Set(agents.map((agent) => agent.id));
+	const pending = (async (): Promise<RemoteEntry> => {
+		let result: RemoteBreakdowns;
+		try {
+			result = await collectRemoteAgentBreakdowns(agents);
+		} catch (error) {
+			void captureException(error, { operation: 'tokenUsage:remoteRefresh' });
+			result = {
+				breakdowns: [],
+				notCounted: [...agents],
+				pairs: new Set(
+					agents.map((agent) => remoteProjectPairKey(agent.provider, agent.projectPath))
+				),
+			};
+		}
+		const entry = { computedAt: Date.now(), agentIds, result };
+		remoteMemo = entry;
+		return entry;
+	})();
+	remoteInflight = pending;
+	void pending.finally(() => {
+		if (remoteInflight === pending) remoteInflight = null;
+	});
+	return pending;
+}
+
+/** Whether `entry` asked about exactly the agents in `agents`. */
+function askedAbout(entry: RemoteEntry, agents: readonly RemoteTokenAgent[]): boolean {
+	return entry.agentIds.size === agents.length && agents.every((a) => entry.agentIds.has(a.id));
+}
+
+/** The remote count a read uses, and whether a newer one is still being read. */
+interface RemoteRead {
+	agents: RemoteTokenAgent[];
+	entry: RemoteEntry | null;
+	refreshing: boolean;
+}
+
+/**
+ * The remote count for a read. A fresh one is served as it is. Otherwise a
+ * refresh starts in the background and the last result (if any) is served at
+ * once, unless the caller waits for the refresh (`maestro-cli stats-tokens`,
+ * an export: a script wants the whole number).
+ */
+async function loadRemote(force: boolean, waitForRemote: boolean): Promise<RemoteRead> {
+	const agents = readRemoteTokenAgents();
+	if (agents.length === 0) return { agents, entry: null, refreshing: false };
+	if (
+		!force &&
+		remoteMemo &&
+		Date.now() - remoteMemo.computedAt < MEMO_TTL_MS &&
+		askedAbout(remoteMemo, agents)
+	) {
+		return { agents, entry: remoteMemo, refreshing: false };
+	}
+	const refresh = refreshRemote(agents);
+	if (waitForRemote) {
+		const entry = await refresh;
+		return { agents, entry, refreshing: false };
+	}
+	return { agents, entry: remoteMemo, refreshing: true };
+}
+
+/**
+ * The local collection with the remote count laid over it. An agent the remote
+ * result did not ask about yet is named as still being read, not as not counted.
+ */
+function withRemote(local: LocalCollection, remote: RemoteRead): Collection {
+	const result = remote.entry?.result;
+	const asked = remote.entry?.agentIds ?? new Set<string>();
+	const current = new Set(remote.agents.map((agent) => agent.id));
+	const pending = remote.agents.filter((agent) => !asked.has(agent.id));
+	const pairs = new Set(result?.pairs ?? []);
+	for (const agent of pending) pairs.add(remoteProjectPairKey(agent.provider, agent.projectPath));
+	return {
+		breakdowns: result ? [...local.breakdowns, ...result.breakdowns] : local.breakdowns,
+		excluded: {
+			...local.excluded,
+			// A remote pair of a stored agent is now counted, named below, or being
+			// read; what is left belongs to agents that no longer exist here.
+			remoteProjects: [...local.remotePairs].filter((pair) => !pairs.has(pair)).length,
+			notCountedAgents: (result?.notCounted ?? [])
+				.filter((agent) => current.has(agent.id))
+				.map((agent) => agent.name),
+			pendingAgents: pending.map((agent) => agent.name),
+			remoteRefreshing: remote.refreshing,
+		},
+	};
+}
+
+/**
+ * Collect one breakdown per known local session, using the cache for unchanged
+ * ones. Live keys are tracked so the cache can prune sessions deleted on disk.
+ * The conversations of agents on another computer are counted there
+ * (`loadRemote`), never here.
+ */
+async function collectBreakdowns(cache: TokenUsageCache): Promise<LocalCollection> {
 	const { byAgent, excluded, remotePairs } = enumerateAgentProjects();
-	const [local, remote] = await Promise.all([
-		collectProjectBreakdowns(byAgent, {
-			storageFor: getSessionStorage,
-			accountDirsFor: (agentType) => getProviderAccountDirs(agentType),
-			cache,
-			onError: (error) => void captureException(error),
-		}),
-		collectRemoteAgentBreakdowns(),
-	]);
+	const local = await collectProjectBreakdowns(byAgent, {
+		storageFor: getSessionStorage,
+		accountDirsFor: (agentType) => getProviderAccountDirs(agentType),
+		cache,
+		onError: (error) => void captureException(error),
+	});
 	cache.prune(local.liveKeys);
-	// A remote pair of a stored agent is now either counted or named below; what
-	// is left belongs to agents that no longer exist here.
-	excluded.remoteProjects = [...remotePairs].filter((pair) => !remote.pairs.has(pair)).length;
-	excluded.notCountedAgents = remote.notCounted.map((agent) => agent.name);
-	return { breakdowns: [...local.breakdowns, ...remote.breakdowns], excluded };
+	return { breakdowns: local.breakdowns, excluded, remotePairs };
 }
 
 /**
@@ -647,10 +765,10 @@ function projectLabel(projectPath: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Collected breakdowns for every known session, served from the memo when it is
- * still fresh. Concurrent callers share one collection.
+ * Collected local breakdowns for every known session, served from the memo when
+ * it is still fresh. Concurrent callers share one collection.
  */
-async function loadBreakdowns(force: boolean): Promise<Collection> {
+async function loadLocal(force: boolean): Promise<LocalCollection> {
 	if (!force && memo && Date.now() - memo.computedAt < MEMO_TTL_MS) {
 		return memo;
 	}
@@ -671,6 +789,22 @@ async function loadBreakdowns(force: boolean): Promise<Collection> {
 	}
 }
 
+/** Every breakdown a read counts: the local scan, with the remote count laid over it. */
+async function loadBreakdowns(force: boolean, waitForRemote: boolean): Promise<Collection> {
+	const [local, remote] = await Promise.all([loadLocal(force), loadRemote(force, waitForRemote)]);
+	return withRemote(local, remote);
+}
+
+/** How a read treats the agents whose conversations are on another computer. */
+export interface TokenUsageReadOptions {
+	/**
+	 * Wait for their count instead of serving the last one and refreshing it in
+	 * the background. For a script (`maestro-cli stats-tokens`, an export) that
+	 * wants the whole number; the dashboard never waits.
+	 */
+	waitForRemote?: boolean;
+}
+
 /**
  * Compute the token-usage aggregate for a query. The underlying collection is
  * served from the in-memory memo within {@link MEMO_TTL_MS}, and each agent's
@@ -681,9 +815,10 @@ async function loadBreakdowns(force: boolean): Promise<Collection> {
  */
 export async function getTokenUsageAggregate(
 	query: TokenUsageQuery = {},
-	force = false
+	force = false,
+	options: TokenUsageReadOptions = {}
 ): Promise<TokenUsageAggregate> {
-	const { breakdowns, excluded } = await loadBreakdowns(force);
+	const { breakdowns, excluded } = await loadBreakdowns(force, options.waitForRemote === true);
 	// Read fresh on every call, outside the memo: stream samples land live.
 	const result = aggregate(breakdowns, query, excluded, Date.now(), loadStreamSpeed(query));
 	logger.debug(

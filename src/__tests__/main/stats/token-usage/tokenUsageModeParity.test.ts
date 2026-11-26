@@ -186,7 +186,7 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 		const results: Record<AgentMode, ReturnType<typeof drawn>> = {} as never;
 		for (const mode of AGENT_MODES) {
 			setMode(mode);
-			results[mode] = drawn(await getTokenUsageAggregate(QUERY, true));
+			results[mode] = drawn(await getTokenUsageAggregate(QUERY, true, { waitForRemote: true }));
 		}
 		expect(results.local.totals.sessionCount).toBe(2);
 		expect(results.local.totals.inputTokens).toBe(1250);
@@ -194,6 +194,8 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 			unsupportedAgents: [],
 			remoteProjects: 0,
 			notCountedAgents: [],
+			pendingAgents: [],
+			remoteRefreshing: false,
 		});
 		expect(results.local.notes.join(' ')).not.toContain('Not counted');
 		expect(results.ssh).toEqual(results.local);
@@ -204,7 +206,7 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 		const notes: Record<string, string> = {};
 		for (const mode of ['ssh', 'hosted'] as const) {
 			setMode(mode, { answers: false });
-			const aggregate = await getTokenUsageAggregate(QUERY, true);
+			const aggregate = await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
 			expect(aggregate.totals.sessionCount).toBe(0);
 			expect(aggregate.excluded.notCountedAgents).toEqual(['Build Box']);
 			expect(aggregate.excluded.remoteProjects).toBe(0);
@@ -221,7 +223,7 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 		for (const mode of ['ssh', 'hosted'] as const) {
 			setMode(mode);
 			listSessions.mockRejectedValueOnce(Object.assign(new Error('EACCES'), { code: 'EACCES' }));
-			const aggregate = await getTokenUsageAggregate(QUERY, true);
+			const aggregate = await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
 			expect(aggregate.totals.sessionCount).toBe(0);
 			expect(aggregate.excluded.notCountedAgents).toEqual(['Build Box']);
 		}
@@ -234,5 +236,67 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 		expect(aggregate.excluded.remoteProjects).toBe(1);
 		expect(aggregate.excluded.notCountedAgents).toEqual([]);
 		expect(tokenCoverageNotes(aggregate).join(' ')).toContain('1 removed agent');
+	});
+
+	it('returns local totals at once while a slow host is still counting, then fills the remote rows in', async () => {
+		for (const mode of ['ssh', 'hosted'] as const) {
+			setMode(mode);
+			// A local agent beside the remote one: its own row in the activity record.
+			vi.mocked(getStatsDB).mockReturnValue({
+				isReady: () => true,
+				getSessionLifecycleEvents: () => [
+					{ agentType: 'claude-code', projectPath: '/local/app', isRemote: false },
+					{ agentType: 'claude-code', projectPath: PROJECT, isRemote: true },
+				],
+				getTokenSpeedSources: () => [],
+			} as unknown as ReturnType<typeof getStatsDB>);
+			let release: () => void = () => undefined;
+			const answered = new Promise<void>((resolve) => (release = resolve));
+			const projectTokenUsageMock = vi.fn(
+				async (_remoteId: string, projects: ProjectTokenUsageProject[]) => {
+					await answered;
+					return hostAnswers(projects);
+				}
+			);
+			vi.mocked(getPeerMirrorService).mockReturnValue({
+				projectTokenUsage: projectTokenUsageMock,
+			} as unknown as ReturnType<typeof getPeerMirrorService>);
+
+			// The host has not answered, and the read does not wait for it.
+			const first = await getTokenUsageAggregate(QUERY, true);
+			await vi.waitFor(() => expect(projectTokenUsageMock).toHaveBeenCalledTimes(1));
+			expect(first.totals.sessionCount).toBe(2);
+			expect(first.excluded.pendingAgents).toEqual(['Build Box']);
+			expect(first.excluded.notCountedAgents).toEqual([]);
+			expect(first.excluded.remoteRefreshing).toBe(true);
+			const note = tokenCoverageNotes(first).join(' ');
+			expect(note).toContain('Build Box (conversations on another computer, still being read)');
+			expect(note).not.toMatch(/SSH|remote|hosted|federation/i);
+
+			// The dashboard's second read waits, and the remote rows land.
+			const waited = getTokenUsageAggregate(QUERY, false, { waitForRemote: true });
+			release();
+			const full = await waited;
+			expect(projectTokenUsageMock).toHaveBeenCalledTimes(1);
+			expect(full.totals.sessionCount).toBe(4);
+			expect(full.excluded.pendingAgents).toEqual([]);
+			expect(full.excluded.remoteRefreshing).toBe(false);
+
+			// A later refresh serves the last remote count at once while it asks again.
+			let releaseAgain: () => void = () => undefined;
+			const again = new Promise<void>((resolve) => (releaseAgain = resolve));
+			projectTokenUsageMock.mockImplementationOnce(async (_remoteId, projects) => {
+				await again;
+				return hostAnswers(projects);
+			});
+			const stale = await getTokenUsageAggregate(QUERY, true);
+			expect(stale.totals.sessionCount).toBe(4);
+			expect(stale.excluded.pendingAgents).toEqual([]);
+			expect(stale.excluded.remoteRefreshing).toBe(true);
+			releaseAgain();
+			const refreshed = await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
+			expect(refreshed.totals.sessionCount).toBe(4);
+			expect(refreshed.excluded.remoteRefreshing).toBe(false);
+		}
 	});
 });

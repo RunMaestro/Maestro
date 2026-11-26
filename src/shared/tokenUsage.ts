@@ -208,6 +208,18 @@ export interface TokenUsageExclusions {
 	 * cannot read, or no answer in time). Every other such agent is counted.
 	 */
 	notCountedAgents: string[];
+	/**
+	 * Names of the agents whose conversations are on another computer that have
+	 * not been counted yet: their computer is being asked now, and the totals
+	 * leave them out until it answers.
+	 */
+	pendingAgents?: string[];
+	/**
+	 * True while the count of the agents on another computer is being refreshed
+	 * in the background. A reader that wants those numbers reads again with
+	 * `waitForRemote` (the dashboard does, and fills them in when they land).
+	 */
+	remoteRefreshing?: boolean;
 }
 
 /**

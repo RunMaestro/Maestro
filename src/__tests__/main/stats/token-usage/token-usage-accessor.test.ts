@@ -271,6 +271,8 @@ describe('aggregate', () => {
 			unsupportedAgents: [],
 			remoteProjects: 0,
 			notCountedAgents: [],
+			pendingAgents: [],
+			remoteRefreshing: false,
 		});
 	});
 

@@ -881,7 +881,10 @@ export async function exportUsageData(request: UsageExportRequest): Promise<Usag
 
 	let tokenUsage: TokenUsageAggregate | null = null;
 	try {
-		tokenUsage = await getTokenUsageAggregate(tokenUsageQueryForRange(range));
+		// An export is a record: wait for the agents on another computer to be counted.
+		tokenUsage = await getTokenUsageAggregate(tokenUsageQueryForRange(range), false, {
+			waitForRemote: true,
+		});
 	} catch (err) {
 		notes.push(`Token usage is not included: ${err instanceof Error ? err.message : String(err)}`);
 		void captureException(err, { operation: 'stats.export.tokenUsage' });

@@ -89,7 +89,8 @@ describe('get_token_usage handler', () => {
 		handler.handleMessage(client, { type: 'get_token_usage', range: 'all', force: true });
 		await flush();
 
-		expect(mockGetTokenUsageAggregate).toHaveBeenCalledWith({}, true);
+		// A script asking waits for agents on another computer to be counted.
+		expect(mockGetTokenUsageAggregate).toHaveBeenCalledWith({}, true, { waitForRemote: true });
 	});
 
 	it('rejects an unknown range without reading transcripts', async () => {

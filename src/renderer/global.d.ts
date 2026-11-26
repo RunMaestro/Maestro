@@ -4364,10 +4364,12 @@ interface MaestroAPI {
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<Array<{ hour: number; count: number; successCount: number }>>;
 		// Token & cost usage aggregate for the Tokens tab. Reads agent session
-		// transcripts; `force` bypasses the accessor's in-memory memo.
+		// transcripts; `force` bypasses the accessor's in-memory memo;
+		// `waitForRemote` resolves once agents on another computer are counted.
 		getTokenUsage: (
 			query?: import('../shared/tokenUsage').TokenUsageQuery,
-			force?: boolean
+			force?: boolean,
+			waitForRemote?: boolean
 		) => Promise<import('../shared/tokenUsage').TokenUsageAggregate>;
 		// Progress of the long transcript scans behind the usage caches
 		getIndexingState: () => Promise<import('../shared/statsIndexing').StatsIndexingState>;

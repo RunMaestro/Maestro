@@ -97,7 +97,11 @@ export function handleGetTokenUsage(
 		return;
 	}
 
-	getTokenUsageAggregate(tokenUsageQueryForRange(range as StatsTimeRange), message.force === true)
+	// A script asking (`maestro-cli stats-tokens`) wants the whole number, so this
+	// read waits for the agents on another computer to be counted.
+	getTokenUsageAggregate(tokenUsageQueryForRange(range as StatsTimeRange), message.force === true, {
+		waitForRemote: true,
+	})
 		.then((data) => {
 			ctx.send(client, {
 				type: 'token_usage',

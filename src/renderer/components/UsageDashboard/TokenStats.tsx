@@ -473,6 +473,10 @@ export function tokenCoverageNotes(data: TokenUsageAggregate): string[] {
 	if (unread.length > 0) {
 		skipped.push(`${unread.join(', ')} (conversations on another computer that could not be read)`);
 	}
+	const pending = data.excluded.pendingAgents ?? [];
+	if (pending.length > 0) {
+		skipped.push(`${pending.join(', ')} (conversations on another computer, still being read)`);
+	}
 	if (data.excluded.unsupportedAgents.length > 0) {
 		skipped.push(
 			`${data.excluded.unsupportedAgents.map(getAgentDisplayName).join(', ')} (no transcripts to read)`
