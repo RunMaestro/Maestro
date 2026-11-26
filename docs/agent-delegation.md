@@ -10,12 +10,12 @@ An agent that another agent may reach is its **peer**. The list of an agent's pe
 
 The feature has four parts. Each has its own section below.
 
-| Part                                            | What it is                                                         | Where you set it                                                      |
-| ----------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| [Roster](#where-peers-come-from)                | Who one agent may reach, and how                                   | The **Peers** tab of Edit Agent                                       |
-| [Group defaults](#a-roster-for-new-agents)      | The roster a new agent in a group starts with                      | The **Peers** tab of Group Settings                                   |
-| [Consultation budget](#the-consultation-budget) | The most agent turns one of your messages can set in motion        | **Settings > General**                                                |
-| [Delegation Graph](#the-delegation-graph)       | Every roster drawn as one picture, which you can also edit by hand | The hamburger menu, Quick Actions, or an agent or group's right-click |
+| Part                                            | What it is                                                         | Where you set it                                  |
+| ----------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------- |
+| [Roster](#where-peers-come-from)                | Who one agent may reach, and how                                   | The **Peers** tab of Edit Agent                   |
+| [Group defaults](#a-roster-for-new-agents)      | The roster a new agent in a group starts with                      | The **Peers** tab of Group Settings               |
+| [Consultation budget](#the-consultation-budget) | The most agent turns one of your messages can set in motion        | **Settings > General**                            |
+| [Delegation Graph](#the-delegation-graph)       | Every roster drawn as one picture, which you can also edit by hand | Quick Actions, or an agent or group's right-click |
 
 Agent Delegation is part of every install. It is not an [Encore Feature](./encore-features), so there is nothing to switch on, and it works the same in the [web interface](./remote-control).
 
@@ -198,14 +198,13 @@ The graph reads the same three sources the Peers tab writes, and in Edit it writ
 
 ### Opening It
 
-| Where              | How                                                                      | Opens on                |
-| ------------------ | ------------------------------------------------------------------------ | ----------------------- |
-| **Hamburger menu** | **Delegation Graph**                                                     | Every agent             |
-| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph**                            | Every agent             |
-| **Quick Actions**  | `Cmd+K` / `Ctrl+K`, then **Delegation Graph:** and a group name          | That group              |
-| **Left Bar**       | Right-click a group header, then **Delegation Graph**                    | That group              |
-| **Left Bar**       | Right-click a linked agent, then **Agent Tools > View Delegation Graph** | Its connected cluster   |
-| **CLI**            | `maestro-cli open delegation-graph [--group <group-id>]`                 | Every agent, or a group |
+| Where             | How                                                                      | Opens on                |
+| ----------------- | ------------------------------------------------------------------------ | ----------------------- |
+| **Quick Actions** | `Cmd+K` / `Ctrl+K`, then **Delegation Graph**                            | Every agent             |
+| **Quick Actions** | `Cmd+K` / `Ctrl+K`, then **Delegation Graph:** and a group name          | That group              |
+| **Left Bar**      | Right-click a group header, then **Delegation Graph**                    | That group              |
+| **Left Bar**      | Right-click a linked agent, then **Agent Tools > View Delegation Graph** | Its connected cluster   |
+| **CLI**           | `maestro-cli open delegation-graph [--group <group-id>]`                 | Every agent, or a group |
 
 The Quick Actions list has one **Delegation Graph:** entry for every group, hidden groups and worktree groups included. The CLI opens every agent or one group. It cannot open an agent's cluster; open the graph and pick the agent instead. The CLI also accepts `delegation`, `delegations`, `peer-graph`, and `peers-graph` in place of `delegation-graph`.
 

@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { HamburgerMenuContent } from '../../../../renderer/components/SessionList/HamburgerMenuContent';
 import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
-import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -87,90 +86,39 @@ describe('HamburgerMenuContent on a phone', () => {
 	});
 });
 
-describe('HamburgerMenuContent Delegation Graph entry', () => {
-	afterEach(() => {
-		useModalStore.getState().closeModal('delegationGraph');
-	});
-
-	it('opens the Delegation Graph and closes the menu', () => {
-		const setMenuOpen = vi.fn();
-		render(<HamburgerMenuContent theme={mockTheme} setMenuOpen={setMenuOpen} />);
-
-		fireEvent.click(screen.getByText('Delegation Graph'));
-
-		expect(useModalStore.getState().isOpen('delegationGraph')).toBe(true);
-		expect(setMenuOpen).toHaveBeenCalledWith(false);
-	});
-
-	it('is offered with no Encore Feature switched on', () => {
+describe('HamburgerMenuContent sections', () => {
+	it('keeps the feature section between the two dividers in alphabetical order', () => {
 		const original = useSettingsStore.getState().encoreFeatures;
-		const allOff = Object.fromEntries(
-			Object.keys(original).map((flag) => [flag, false])
-		) as typeof original;
-		useSettingsStore.setState({ encoreFeatures: allOff });
+		const allOn = { ...original };
+		for (const key of Object.keys(allOn) as (keyof typeof allOn)[]) allOn[key] = true;
+		useSettingsStore.setState({ encoreFeatures: allOn });
 		try {
-			render(<HamburgerMenuContent theme={mockTheme} setMenuOpen={vi.fn()} />);
-			expect(screen.getByText('Delegation Graph')).toBeInTheDocument();
+			const { container } = renderMenu();
+			const rows = Array.from(container.firstElementChild!.children);
+			const dividers = rows.flatMap((row, i) => (row.classList.contains('border-t') ? [i] : []));
+			expect(dividers).toHaveLength(2);
+
+			const labelOf = (row: Element) =>
+				row.querySelector('.text-sm.font-medium')?.textContent ?? '';
+			const features = rows.slice(dividers[0] + 1, dividers[1]).map(labelOf);
+			expect(features.length).toBeGreaterThan(1);
+			expect(features).toEqual([...features].sort((a, b) => a.localeCompare(b)));
+			// The app-level entries all sit above the first divider.
+			expect(rows.slice(0, dividers[0]).map(labelOf)).toContain('Process Monitor');
 		} finally {
 			useSettingsStore.setState({ encoreFeatures: original });
 		}
 	});
 
-	it('draws no chord badge while the shortcut is unbound, and one once it is bound', () => {
-		const row = () => screen.getByText('Delegation Graph').closest('button')!;
-		const { unmount } = render(<HamburgerMenuContent theme={mockTheme} setMenuOpen={vi.fn()} />);
-		expect(row().querySelector('[data-shortcut-hint]')).toBeNull();
-		unmount();
-
-		const original = useSettingsStore.getState().shortcuts;
-		useSettingsStore.setState({
-			shortcuts: {
-				...original,
-				openDelegationGraph: { ...original.openDelegationGraph, keys: ['Alt', 'Meta', 'y'] },
-			},
-		});
-		try {
-			render(<HamburgerMenuContent theme={mockTheme} setMenuOpen={vi.fn()} />);
-			expect(row().querySelector('[data-shortcut-hint]')).not.toBeNull();
-		} finally {
-			useSettingsStore.setState({ shortcuts: original });
-		}
-	});
-});
-
-describe('HamburgerMenuContent Tab Cleanup entry', () => {
-	afterEach(() => {
-		useModalStore.getState().closeModal('tabCleanup');
-	});
-
-	it('opens Tab Cleanup Suggestions and closes the menu', () => {
-		const setMenuOpen = vi.fn();
-		render(<HamburgerMenuContent theme={mockTheme} setMenuOpen={setMenuOpen} />);
-
-		fireEvent.click(screen.getByText('Tab Cleanup'));
-
-		expect(useModalStore.getState().isOpen('tabCleanup')).toBe(true);
-		expect(setMenuOpen).toHaveBeenCalledWith(false);
-	});
-
-	it('draws no chord badge while the shortcut is unbound, and one once it is bound', () => {
-		const row = () => screen.getByText('Tab Cleanup').closest('button')!;
-		const { unmount } = render(<HamburgerMenuContent theme={mockTheme} setMenuOpen={vi.fn()} />);
-		expect(row().querySelector('[data-shortcut-hint]')).toBeNull();
-		unmount();
-
-		const original = useSettingsStore.getState().shortcuts;
-		useSettingsStore.setState({
-			shortcuts: {
-				...original,
-				tabCleanupSuggestions: { ...original.tabCleanupSuggestions, keys: ['Alt', 'Meta', 'k'] },
-			},
-		});
-		try {
-			render(<HamburgerMenuContent theme={mockTheme} setMenuOpen={vi.fn()} />);
-			expect(row().querySelector('[data-shortcut-hint]')).not.toBeNull();
-		} finally {
-			useSettingsStore.setState({ shortcuts: original });
+	it('leaves the palette-only surfaces out of the menu', () => {
+		renderMenu();
+		for (const label of [
+			'Tab Cleanup',
+			'Delegation Graph',
+			'Federation Settings Conflicts',
+			'Add Hosted Agent',
+		]) {
+			expect(screen.queryByText(label)).not.toBeInTheDocument();
 		}
 	});
 });

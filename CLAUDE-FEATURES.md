@@ -338,7 +338,7 @@ documentGraphLayoutType: DocumentGraphLayoutType; // Default layout (default: 'h
 
 `DelegationGraphView.tsx` reuses `<MindMap>` from the Document Graph in View mode and retains the React Flow relationship editor in Edit mode. `delegationMindMapData()` adapts the live peer-roster model to canvas nodes and directed links. Both canvases use `graphEdgeGeometry()` in `src/renderer/utils/graphEdgeGeometry.ts`; do not add a second arrow router.
 
-`buildDelegationGraph()` accepts all-agent, group, and agent scopes. An agent scope follows incoming and outgoing links transitively across groups to show its connected component. Right-clicking an agent with a resolved peer relationship exposes **View Delegation Graph**. The toolbar can isolate the selected agent's cluster or show all agents again. Cmd/Ctrl+K and the hamburger menu open the global graph; `openDelegationGraph` ships with no shortcut assigned.
+`buildDelegationGraph()` accepts all-agent, group, and agent scopes. An agent scope follows incoming and outgoing links transitively across groups to show its connected component. Right-clicking an agent with a resolved peer relationship exposes **View Delegation Graph**. The toolbar can isolate the selected agent's cluster or show all agents again. Cmd/Ctrl+K opens the global graph; `openDelegationGraph` ships with no shortcut assigned.
 
 The global default is `DEFAULT_GLOBAL_DELEGATION_LAYOUT` (`lobes`); group and agent scopes use `DEFAULT_DELEGATION_LAYOUT` (`hierarchical`). The layout vocabulary reuses the Document Graph's leaf labels and excludes Timeline, since relationships have no document timestamps. Layouts and positions are stored separately under `all`, `group:<groupId>`, and `agent:<sessionId>`.
 
