@@ -212,4 +212,17 @@ describe('sshFailedBeforeSession', () => {
 		expect(sshFailedBeforeSession('client_loop: send disconnect: Broken pipe')).toBe(false);
 		expect(sshFailedBeforeSession('')).toBe(false);
 	});
+
+	it('is false for the same words written by the remote side, not by ssh', () => {
+		// The remote shell and the relay share ssh's stderr; their text proves nothing.
+		expect(sshFailedBeforeSession('bash: /home/me/.maestro/bin/x: Permission denied')).toBe(false);
+		expect(sshFailedBeforeSession('maestro-p: connection refused by the steering socket')).toBe(
+			false
+		);
+		expect(
+			sshFailedBeforeSession(
+				'warning: remote said Host key verification failed. in a log line\nConnection to box closed.'
+			)
+		).toBe(false);
+	});
 });

@@ -147,7 +147,7 @@ describe('sendRemoteSteeringRequest', () => {
 	it('refuses (the message stays queued) when ssh never reached the host', async () => {
 		ssh.result = {
 			stdout: '',
-			stderr: 'ssh: connect to host box: Connection refused',
+			stderr: 'ssh: connect to host box.example port 22: Connection refused',
 			exitCode: 255,
 		};
 		const result = await sendRemoteSteeringRequest({
@@ -175,6 +175,21 @@ describe('sendRemoteSteeringRequest', () => {
 			id: 'id-3b',
 		});
 		expect(result).toMatchObject({ id: 'id-3b', verdict: 'unknown' });
+	});
+
+	it('answers `unknown` when a dropped connection carries remote text that only looks like an ssh failure', async () => {
+		ssh.result = {
+			stdout: '',
+			stderr: 'bash: /home/me/.profile: Permission denied\nConnection to box.example closed.',
+			exitCode: 255,
+		};
+		const result = await sendRemoteSteeringRequest({
+			channel,
+			processKey: 'k',
+			text: 'hi',
+			id: 'id-3c',
+		});
+		expect(result).toMatchObject({ id: 'id-3c', verdict: 'unknown' });
 	});
 
 	it('runs the relay under the HOME the turn ran under', async () => {

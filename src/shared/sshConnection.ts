@@ -150,25 +150,33 @@ export function isSshConnectionFailure(exitCode: number | string): boolean {
 }
 
 /**
- * True only when ssh's stderr PROVES it failed before a session opened (the host
- * refused, could not be resolved or routed to, or authentication failed), so no
- * remote command can have run. Exit 255 alone does not say that: ssh exits 255 too
- * when a working connection drops mid-command, after the remote side has acted.
- * A caller that must never repeat a remote side effect treats anything this does
- * not recognize as "it may have run".
+ * Lines only the ssh CLIENT prints, and only when no session opened: the host
+ * refused, timed out or could not be routed to or resolved, the host key did not
+ * verify, or authentication failed. Matched per line, anchored to ssh's own
+ * wording, because the remote side writes to the same stderr: a remote shell's
+ * `bash: x: Permission denied` must never read as ssh's
+ * `me@box: Permission denied (publickey).`.
+ */
+const SSH_PRE_SESSION_LINES: readonly RegExp[] = [
+	/^ssh: connect to host \S+ port \d+: (Connection refused|Connection timed out|Operation timed out|No route to host|Network is unreachable)$/i,
+	/^ssh: Could not resolve hostname \S+: /i,
+	/^\S+: Permission denied \([a-z0-9,-]+\)\.?$/i,
+	/^Host key verification failed\.$/i,
+	/^@\s+WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\s+@$/i,
+];
+
+/**
+ * True only when ssh's stderr PROVES it failed before a session opened, so no
+ * remote command can have run. Exit 255 alone does not say that: ssh exits 255
+ * too when a working connection drops mid-command, after the remote side has
+ * acted. A caller that must never repeat a remote side effect treats anything
+ * this does not recognize as "it may have run".
  */
 export function sshFailedBeforeSession(stderr: string): boolean {
-	const lower = stderr.toLowerCase();
-	return [
-		'permission denied',
-		'connection refused',
-		'connection timed out',
-		'no route to host',
-		'could not resolve hostname',
-		'name or service not known',
-		'host key verification failed',
-		'remote host identification has changed',
-	].some((marker) => lower.includes(marker));
+	return stderr
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.some((line) => SSH_PRE_SESSION_LINES.some((pattern) => pattern.test(line)));
 }
 
 /**
