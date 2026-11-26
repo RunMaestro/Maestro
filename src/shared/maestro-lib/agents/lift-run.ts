@@ -27,6 +27,7 @@ import { isFederationRemote } from '../../federationRemote';
 import { LIFT_HOST_TOO_OLD } from '../../federationCommands';
 import type { ClientError, MaestroClient } from '../client/types';
 import type { AgentRecord } from '../store/records';
+import { staleCopyMismatch } from './import-plan';
 import { liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
 import type { LiftPlan, LiftPlanSummary } from './lift-plan';
 import { peerAgentRef, runningTurnWhere, type LiftedToPointer } from './lift-pointer';
@@ -143,7 +144,7 @@ export function formatLiftPlan(summary: LiftPlanSummary, dryRun: boolean): strin
 	lines.push(`  Queued messages: ${summary.queued.length}`);
 	if (summary.replaces) {
 		lines.push(
-			`Replaces the copy an earlier Move Back left on the host (${summary.replaces}): its tabs and transcripts are merged into what moves.`
+			`Replaces the copy an earlier Move Back left on the host (${summary.replaces}): its tabs and transcripts are merged into what moves, its processes are stopped, and its History on the host stays filed under its old id, so the moved agent's History does not show it.`
 		);
 	}
 	lines.push('Stays on this machine:');
@@ -220,6 +221,17 @@ async function readStaleHostCopy(
 		throw hostError(connection.peer, hostCopy.error);
 	}
 	const ref = peerAgentRef(pointer.peer, pointer.agentId);
+	// The host checks this too (`planAgentImport()`); asking first names the exact command.
+	const mismatch = staleCopyMismatch(hostCopy.value, {
+		name: agent.name,
+		liftedFromAgentId: agent.id,
+	});
+	if (mismatch) {
+		throw new LiftRunError(
+			liftErrorCode('host-copy-foreign'),
+			`${mismatch} Remove it (maestro-cli remove-agent ${ref}), then move again.`
+		);
+	}
 	if (runningTurnWhere(hostCopy.value) !== null) {
 		throw new LiftRunError(
 			liftErrorCode('host-copy-busy'),

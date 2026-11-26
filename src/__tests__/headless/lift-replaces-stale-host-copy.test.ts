@@ -59,6 +59,8 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 					{
 						id: 'host-1',
 						name: 'Docs',
+						// Stored by the import this copy came from: the agent it was moved from (T9).
+						liftedFromAgentId: 'agent-1',
 						toolType: 'claude-code',
 						cwd: work,
 						projectRoot: work,
@@ -147,7 +149,7 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 		});
 		expect(plan?.summary.replaces).toBe(`${PEER}:host-1`);
 		expect(formatLiftPlan(plan!.summary, false)).toContain(
-			`Replaces the copy an earlier Move Back left on the host (${PEER}:host-1)`
+			`Replaces the copy an earlier Move Back left on the host (${PEER}:host-1): its tabs and transcripts are merged into what moves, its processes are stopped, and its History on the host stays filed under its old id, so the moved agent's History does not show it.`
 		);
 
 		const agents = value(await host.agents.list());
@@ -159,6 +161,31 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 		expect(tabs.map((tab) => tab.id).sort()).toEqual(['tab-1', 'tab-h']);
 		const said = value(await host.tabs.transcript(agents[0].id, 'tab-h'));
 		expect(said.map((entry) => entry.text)).toContain('said on the host');
+	});
+
+	it('never replaces a host agent that is not the copy of this agent, and names the remove command (T9)', async () => {
+		// A different local agent whose pointer, by mistake, names the host's copy of "Docs".
+		const other = localAgent('agent-2', true);
+		await expect(runLift('agent-2', {}, deps(other))).rejects.toMatchObject({
+			code: 'LIFT_HOST_COPY_FOREIGN',
+			message: `The copy host-1 was moved from another agent, so it is not replaced. Remove it (maestro-cli remove-agent ${PEER}:host-1), then move again.`,
+		});
+		expect(value(await host.agents.list()).map((agent) => agent.id)).toEqual(['host-1']);
+		// The host refuses on its own, too, when a client skips the check.
+		const imported = await host.agents.import({
+			agent: { name: 'Docs', provider: 'claude-code', cwd: work },
+			tabs: [{ id: 'tab-x', logs: [] }],
+			replacesAgentId: 'host-1',
+			liftedFromAgentId: 'agent-2',
+		});
+		expect(imported).toMatchObject({ ok: false, error: { code: 'rejected' } });
+		expect(value(await host.agents.list()).map((agent) => agent.id)).toEqual(['host-1']);
+	});
+
+	it('stores the marker on the new copy, so the next move of the same agent is matched (T9)', async () => {
+		await runLift('agent-1', {}, deps(localAgent('agent-1', true)));
+		const [agent] = value(await host.agents.list());
+		expect(value(await host.agents.get(agent.id)).liftedFromAgentId).toBe('agent-1');
 	});
 
 	it('moves the stored selection onto the new record (T5 review)', async () => {

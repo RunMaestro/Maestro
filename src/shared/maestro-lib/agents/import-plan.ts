@@ -23,8 +23,11 @@ import {
 } from './rules';
 
 export interface AgentImportPlanContext {
-	/** The host's agents, for the duplicate-name and same-directory checks. */
-	agents: readonly ValidatedAgent[];
+	/**
+	 * The host's agents, for the duplicate-name and same-directory checks, and the marker a copy
+	 * to replace must carry (`liftedFromAgentId`).
+	 */
+	agents: readonly ImportHostAgent[];
 	/** The host's group ids. An import into a group the host lacks is refused. */
 	groupIds: readonly string[];
 	/** The host's new-tab defaults, read from its settings. */
@@ -32,6 +35,37 @@ export interface AgentImportPlanContext {
 	ctx?: RuleContext;
 	/** Why a working directory cannot be used here, or null. Defaults to the spawn check. */
 	checkCwd?: (cwd: string) => string | null;
+}
+
+/** A host agent as the import reads it. */
+export type ImportHostAgent = ValidatedAgent & { liftedFromAgentId?: unknown };
+
+/** The longest agent id the marker may hold: ids are generated, never prose. */
+const MAX_LIFTED_FROM_ID_CHARS = 200;
+
+/**
+ * Why `copy` is not the stale copy of the agent an import moves, or null when it is: it must carry
+ * the marker of that same agent (`liftedFromAgentId`, stored when it was imported) and the same
+ * name. One rule for the host that replaces and the client that asks it to (`runLift()`).
+ */
+export function staleCopyMismatch(
+	copy: { id: string; name: string; liftedFromAgentId?: unknown },
+	moving: { name: string; liftedFromAgentId?: unknown }
+): string | null {
+	const wanted = typeof moving.liftedFromAgentId === 'string' ? moving.liftedFromAgentId : '';
+	if (!wanted) {
+		return `The move does not say which agent it is, so the copy ${copy.id} is not replaced.`;
+	}
+	if (typeof copy.liftedFromAgentId !== 'string' || !copy.liftedFromAgentId) {
+		return `The copy ${copy.id} carries no record of the agent it was moved from, so it is not replaced.`;
+	}
+	if (copy.liftedFromAgentId !== wanted) {
+		return `The copy ${copy.id} was moved from another agent, so it is not replaced.`;
+	}
+	if (copy.name.trim().toLowerCase() !== moving.name.trim().toLowerCase()) {
+		return `The copy ${copy.id} is named "${copy.name}", not "${moving.name}", so it is not replaced.`;
+	}
+	return null;
 }
 
 export type AgentImportPlan =
@@ -56,14 +90,36 @@ export function planAgentImport(
 ): AgentImportPlan {
 	const checked = checkAgentImportInput(input);
 	if (!checked.ok) return checked;
+	const liftedFrom = input.liftedFromAgentId;
+	if (
+		liftedFrom !== undefined &&
+		(typeof liftedFrom !== 'string' || !liftedFrom || liftedFrom.length > MAX_LIFTED_FROM_ID_CHARS)
+	) {
+		return { ok: false, code: 'invalid', message: 'The id of the moved agent is not valid.' };
+	}
 
 	// The agent's own earlier copy (left by a Move Back while this host was down) is replaced, so
-	// its name and directory are not a conflict. A copy already gone replaces nothing. Any other
-	// agent with the name still refuses the import.
-	const replaces =
+	// its name and directory are not a conflict. A copy already gone replaces nothing. The copy
+	// must be that agent's (`staleCopyMismatch()`): a wrong id from the client never removes
+	// another agent. Any other agent with the name still refuses the import.
+	const copy =
 		typeof input.replacesAgentId === 'string' && input.replacesAgentId
-			? context.agents.find((agent) => agent.id === input.replacesAgentId)?.id
+			? context.agents.find((agent) => agent.id === input.replacesAgentId)
 			: undefined;
+	if (copy) {
+		const mismatch = staleCopyMismatch(copy, {
+			name: checked.value.name,
+			liftedFromAgentId: liftedFrom,
+		});
+		if (mismatch) {
+			return {
+				ok: false,
+				code: 'rejected',
+				message: `${mismatch} Remove it from the machine you move from (maestro-cli remove-agent <peer>:${copy.id}), then move again.`,
+			};
+		}
+	}
+	const replaces = copy?.id;
 	const others = replaces
 		? context.agents.filter((agent) => agent.id !== replaces)
 		: context.agents;
@@ -88,14 +144,16 @@ export function planAgentImport(
 	const sessionDir = liftSessionDirProblem(input.agent.provider, input.agent.env);
 	if (sessionDir) return { ok: false, code: 'invalid', message: sessionDir };
 
+	const agent = buildImportedAgentRecord(
+		input,
+		checked.value,
+		context.ctx ?? DEFAULT_RULE_CONTEXT,
+		context.defaults
+	);
 	return {
 		ok: true,
-		agent: buildImportedAgentRecord(
-			input,
-			checked.value,
-			context.ctx ?? DEFAULT_RULE_CONTEXT,
-			context.defaults
-		),
+		// The marker a later lift of the same agent is checked against.
+		agent: liftedFrom ? { ...agent, liftedFromAgentId: liftedFrom } : agent,
 		...(replaces ? { replaces } : {}),
 	};
 }

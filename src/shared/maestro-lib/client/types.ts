@@ -269,6 +269,12 @@ export interface AgentImportInput {
 	 * not refuse the import. A host that does not know the field refuses on the name as before.
 	 */
 	replacesAgentId?: string;
+	/**
+	 * The id of the agent this import moves, on the machine it moves from. The host stores it on
+	 * the record (`liftedFromAgentId`) and replaces a copy (`replacesAgentId`) only when that copy
+	 * carries the same id and the same name: a wrong `replacesAgentId` never removes another agent.
+	 */
+	liftedFromAgentId?: string;
 }
 
 export interface AgentImportReceipt {

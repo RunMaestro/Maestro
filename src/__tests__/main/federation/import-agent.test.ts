@@ -111,8 +111,18 @@ describe('importAgentIntoDesktop', () => {
 
 	it('replaces the copy an earlier Move Back left here, in the same write (T5)', async () => {
 		const d = deps();
-		d.setSessions([{ id: 'stale-1', name: 'Substrate', cwd: '/work/substrate' } as StoredSession]);
-		const result = await importAgentIntoDesktop(input({ replacesAgentId: 'stale-1' }), d);
+		d.setSessions([
+			{
+				id: 'stale-1',
+				liftedFromAgentId: 'local-1',
+				name: 'Substrate',
+				cwd: '/work/substrate',
+			} as StoredSession,
+		]);
+		const result = await importAgentIntoDesktop(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			d
+		);
 		expect(result.ok).toBe(true);
 		const stored = d.stored();
 		expect(stored.map((agent) => agent.id)).not.toContain('stale-1');
@@ -126,6 +136,7 @@ describe('importAgentIntoDesktop', () => {
 		d.setSessions([
 			{
 				id: 'stale-1',
+				liftedFromAgentId: 'local-1',
 				name: 'Substrate',
 				cwd: '/work/substrate',
 				state: 'idle',
@@ -134,7 +145,10 @@ describe('importAgentIntoDesktop', () => {
 			} as StoredSession,
 		]);
 		vi.mocked(d.setSessions).mockClear();
-		const result = await importAgentIntoDesktop(input({ replacesAgentId: 'stale-1' }), d);
+		const result = await importAgentIntoDesktop(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			d
+		);
 		expect(result).toMatchObject({ ok: false, code: 'rejected' });
 		if (result.ok) return;
 		expect(result.message).toMatch(/is running a turn/);
@@ -151,13 +165,17 @@ describe('importAgentIntoDesktop', () => {
 		d.setSessions([
 			{
 				id: 'stale-1',
+				liftedFromAgentId: 'local-1',
 				name: 'Substrate',
 				cwd: '/work/substrate',
 				aiTabs: [{ id: 't1' }],
 				terminalTabs: [{ id: 'term1' }],
 			} as StoredSession,
 		]);
-		const result = await importAgentIntoDesktop(input({ replacesAgentId: 'stale-1' }), d);
+		const result = await importAgentIntoDesktop(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			d
+		);
 		expect(result.ok).toBe(true);
 		expect(table.closed).toEqual(['stale-1']);
 		expect(table.stopped).toEqual(['stale-1-terminal', 'stale-1-terminal-term1']);
@@ -167,17 +185,37 @@ describe('importAgentIntoDesktop', () => {
 
 	it('refuses a replace when the process table is not up, since nobody can tell it is idle (T7)', async () => {
 		const d = deps({ processes: undefined });
-		d.setSessions([{ id: 'stale-1', name: 'Substrate', cwd: '/work/substrate' } as StoredSession]);
+		d.setSessions([
+			{
+				id: 'stale-1',
+				liftedFromAgentId: 'local-1',
+				name: 'Substrate',
+				cwd: '/work/substrate',
+			} as StoredSession,
+		]);
 		vi.mocked(d.setSessions).mockClear();
-		const result = await importAgentIntoDesktop(input({ replacesAgentId: 'stale-1' }), d);
+		const result = await importAgentIntoDesktop(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			d
+		);
 		expect(result).toMatchObject({ ok: false, code: 'rejected' });
 		expect(d.setSessions).not.toHaveBeenCalled();
 	});
 
 	it("says so, and keeps the move, when the replaced copy's files cannot be removed (T7)", async () => {
 		const d = deps({ removeFiles: vi.fn().mockRejectedValue(new Error('EACCES')) });
-		d.setSessions([{ id: 'stale-1', name: 'Substrate', cwd: '/work/substrate' } as StoredSession]);
-		const result = await importAgentIntoDesktop(input({ replacesAgentId: 'stale-1' }), d);
+		d.setSessions([
+			{
+				id: 'stale-1',
+				liftedFromAgentId: 'local-1',
+				name: 'Substrate',
+				cwd: '/work/substrate',
+			} as StoredSession,
+		]);
+		const result = await importAgentIntoDesktop(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			d
+		);
 		expect(result.ok).toBe(true);
 		if (!result.ok) return;
 		expect(result.receipt.notices).toEqual([

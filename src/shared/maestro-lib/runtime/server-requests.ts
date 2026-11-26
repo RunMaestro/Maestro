@@ -445,6 +445,9 @@ export function importInputFromMessage(
 			...(str(message.activeTabId) ? { activeTabId: str(message.activeTabId) } : {}),
 			...(queue.length > 0 ? { queue: queue as AgentImportQueuedMessage[] } : {}),
 			...(str(message.replacesAgentId) ? { replacesAgentId: str(message.replacesAgentId) } : {}),
+			...(str(message.liftedFromAgentId)
+				? { liftedFromAgentId: str(message.liftedFromAgentId) }
+				: {}),
 		},
 	};
 }
