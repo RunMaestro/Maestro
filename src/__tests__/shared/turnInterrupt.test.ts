@@ -17,7 +17,9 @@ describe('isTurnProcessInScope', () => {
 		['agent-1-ai-tab-b', true],
 		['agent-1-ai', false],
 		['agent-1-synopsis-1', false],
-		['agent-1-batch-1', false],
+		// An Auto Run task's turn runs on no tab; it is the agent's running turn all the same.
+		['agent-1-batch-1', true],
+		['agent-10-batch-1', false],
 		['agent-1-terminal', false],
 		['agent-10-ai-tab-a', false],
 	])('agent scope: %s -> %s', (processId, expected) => {
@@ -31,6 +33,7 @@ describe('isTurnProcessInScope', () => {
 		// A tab whose id starts with the named one is a different tab.
 		['agent-1-ai-tab-ab', false],
 		['agent-1-ai', false],
+		['agent-1-batch-1', false],
 	])('tab scope: %s -> %s', (processId, expected) => {
 		expect(isTurnProcessInScope(processId, 'agent-1', 'tab-a')).toBe(expected);
 	});

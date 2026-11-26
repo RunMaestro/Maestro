@@ -23,8 +23,7 @@ import { WindowsWarningModal } from './WindowsWarningModal';
 import { OnboardingSeriesHost } from './OnboardingSeriesHost';
 import { AppOverlays } from './AppOverlays';
 import { GitPillModals } from './GitPillModals';
-import { pathPickerRemoteId } from '../services/pathPicker';
-import { getSessionSshRemoteId } from '../utils/sessionHelpers';
+import { fileOpRemoteId, pathPickerRemoteId, UnresolvedRemoteError } from '../services/pathPicker';
 import { PlaygroundPanel } from './PlaygroundPanel';
 import { GistPublishModal } from './GistPublishModal';
 import type { GistInfo } from './GistPublishModal';
@@ -623,9 +622,11 @@ function AppStandaloneModalsInner({
 								graphRootPath || activeSession?.projectRoot || activeSession?.cwd || '';
 							const fullPath = `${treeRoot}/${filePath}`;
 							const filename = filePath.split('/').pop() || filePath;
-							// The gated remote id: a remote left on an agent with SSH switched off is ignored.
-							const sshRemoteId = getSessionSshRemoteId(activeSession);
 							try {
+								// The gated remote id: a remote left on an agent with SSH switched off is
+								// ignored, and an SSH agent with no remote resolved throws instead of
+								// reading this machine's disk.
+								const sshRemoteId = fileOpRemoteId(pathPickerRemoteId(activeSession));
 								// Fetch content and stat in parallel for efficiency
 								const [content, stat] = await Promise.all([
 									window.maestro.fs.readFile(fullPath, sshRemoteId),
@@ -644,6 +645,13 @@ function AppStandaloneModalsInner({
 									});
 								}
 							} catch (error) {
+								if (error instanceof UnresolvedRemoteError) {
+									notifyToast({
+										color: 'red',
+										title: 'Could not open file',
+										message: error.message,
+									});
+								}
 								logger.error('[DocumentGraph] Failed to open file:', undefined, error);
 							}
 							useFileExplorerStore.getState().setIsGraphViewOpen(false);
@@ -674,7 +682,7 @@ function AppStandaloneModalsInner({
 							// Also update the global default for new agents
 							onLayoutTypeChange(type);
 						}}
-						sshRemoteId={getSessionSshRemoteId(activeSession)}
+						sshRemoteId={pathPickerRemoteId(activeSession)}
 					/>
 				</Suspense>
 			)}

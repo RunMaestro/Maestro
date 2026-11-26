@@ -1519,6 +1519,55 @@ describe('useBatchProcessor hook', () => {
 			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
 		});
 
+		it('ends a stopping document run whose turn never settles on a second stop', async () => {
+			// The same sequence a goal run hung on: stop (waits for the turn), the turn never
+			// settles, then stop again. The second stop is the CLI's way to Force Kill.
+			const sessions = [createMockSession()];
+			mockReadDoc.mockResolvedValue({ success: true, content: '# Tasks\n- [ ] Task 1' });
+			mockOnSpawnAgent.mockReturnValue(new Promise(() => {}));
+			useSessionStore.setState({ sessions, activeSessionId: sessions[0].id });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+			let finished = false;
+			act(() => {
+				void result.current
+					.startBatchRun(
+						'test-session-id',
+						{
+							documents: [{ filename: 'tasks', resetOnCompletion: false }],
+							prompt: 'Test',
+							loopEnabled: false,
+						},
+						'/test/folder'
+					)
+					.then(() => {
+						finished = true;
+					});
+			});
+			await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1));
+
+			act(() => result.current.stopBatchRun('test-session-id'));
+			await waitFor(() =>
+				expect(result.current.getBatchState('test-session-id').isStopping).toBe(true)
+			);
+			expect(finished).toBe(false);
+
+			await act(async () => {
+				result.current.stopBatchRun('test-session-id');
+			});
+
+			await waitFor(() => expect(finished).toBe(true));
+			expect(result.current.getBatchState('test-session-id').isRunning).toBe(false);
+			expect(mockOnSpawnAgent.mock.calls[0][3].abortSignal.aborted).toBe(true);
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+
 		it('should fire onComplete with non-zero elapsed time on kill so the leaderboard receives it', async () => {
 			// Regression: killBatchRun used to call timeTracking.stopTracking() before the
 			// loop's natural cleanup ran. The natural cleanup then read getElapsedTime() as 0
@@ -6740,12 +6789,15 @@ describe('useBatchProcessor hook', () => {
 
 		// Every task spawn carries its run's id so a dispatch it makes reports back.
 		const AUTO_RUN_ID = expect.stringMatching(/^autorun-/);
+		// And the signal a force-end aborts, so the run is never stuck on a turn that never settles.
+		const ABORT_SIGNAL = expect.any(AbortSignal);
 
 		it('forwards config.model and config.effort to onSpawnAgent', async () => {
 			await startRun({ model: 'opus', effort: 'high' });
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'opus',
 				effortOverride: 'high',
 			});
@@ -6756,6 +6808,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'opus',
 			});
 		});
@@ -6765,6 +6818,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'opus',
 				effortOverride: undefined,
 			});
@@ -6778,6 +6832,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'sonnet',
 				effortOverride: undefined,
 			});
@@ -6791,6 +6846,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: undefined,
 				effortOverride: undefined,
 			});
@@ -6805,6 +6861,7 @@ describe('useBatchProcessor hook', () => {
 			// the spawn falls through to the agent's own configured values.
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: undefined,
 				effortOverride: undefined,
 			});

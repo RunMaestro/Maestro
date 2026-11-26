@@ -224,6 +224,11 @@ export interface AutoRunTurnOverrides {
 	effortOverride?: string;
 	/** The run the task belongs to, so a dispatch it makes reports back to it. */
 	autoRunId?: string;
+	/**
+	 * Aborted when the run is force-ended while this turn is awaited (`abortAutoRunTurns`), so
+	 * the spawn releases its listeners and waits. Set by `abortableAutoRunSpawn`, never by a runner.
+	 */
+	abortSignal?: AbortSignal;
 }
 
 /**

@@ -57,16 +57,21 @@ export const INTERRUPT_TURN_REPLY_TIMEOUT_MS = 20000;
  * True when `processId` is a turn process inside the stop's scope.
  *
  * Agent scope (`tabId` null) is every `{agentId}-ai-*` process: per-tab turns,
- * their forced-parallel `-fp-<n>` siblings, and a turn the store records idle.
- * Tab scope is that tab's process and its `-fp-<n>` siblings only. Synopsis,
- * batch and terminal ids never match.
+ * their forced-parallel `-fp-<n>` siblings, and a turn the store records idle;
+ * plus an Auto Run task's `{agentId}-batch-*` turn, which runs on no tab and is
+ * the agent's running turn all the same (stopping it ends that task or that
+ * goal iteration, and the run goes on or stops by its own flags). Tab scope is
+ * that tab's process and its `-fp-<n>` siblings only. Synopsis and terminal ids
+ * never match.
  */
 export function isTurnProcessInScope(
 	processId: string,
 	agentId: string,
 	tabId: string | null
 ): boolean {
-	if (tabId === null) return processId.startsWith(`${agentId}-ai-`);
+	if (tabId === null) {
+		return processId.startsWith(`${agentId}-ai-`) || processId.startsWith(`${agentId}-batch-`);
+	}
 	const tabProcessId = `${agentId}-ai-${tabId}`;
 	return processId === tabProcessId || processId.startsWith(`${tabProcessId}-fp-`);
 }
