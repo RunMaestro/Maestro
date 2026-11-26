@@ -95,6 +95,14 @@ vi.mock('../../../main/dataview/dataview-service', () => ({
 	shutdownDataviewService: (...args: unknown[]) => mockShutdownDataview(...args),
 }));
 
+const mockCaptureMessage = vi.fn().mockResolvedValue(undefined);
+const mockFlushSentry = vi.fn().mockResolvedValue(true);
+vi.mock('../../../main/utils/sentry', () => ({
+	captureException: vi.fn().mockResolvedValue(undefined),
+	captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
+	flushSentry: (...args: unknown[]) => mockFlushSentry(...args),
+}));
+
 // Platform is controllable per-test: the update-install hard-exit only applies
 // on macOS (Squirrel.Mac/ShipIt), while Windows/Linux keep the graceful path.
 let mockIsMacOS = true;
@@ -327,6 +335,63 @@ describe('app-lifecycle/quit-handler', () => {
 			beforeQuitHandler!(mockEvent);
 
 			expect(mockQuit).toHaveBeenCalled();
+		});
+
+		it('holds a Windows or Linux update install until opened remote copies have sent their saved changes, then quits again', async () => {
+			mockIsMacOS = false;
+			vi.useFakeTimers();
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+			let landWrites!: () => void;
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>((resolve) => (landWrites = resolve)),
+			});
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			const first = { preventDefault: vi.fn() };
+			beforeQuitHandler!(first);
+			expect(first.preventDefault).toHaveBeenCalled();
+			// A second quit request while the writes go is held too.
+			const reentrant = { preventDefault: vi.fn() };
+			beforeQuitHandler!(reentrant);
+			expect(reentrant.preventDefault).toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(mockQuit).not.toHaveBeenCalled();
+
+			landWrites();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(mockQuit).toHaveBeenCalledTimes(1);
+			// The quit it starts runs the graceful teardown the installer handoff needs.
+			const again = { preventDefault: vi.fn() };
+			beforeQuitHandler!(again);
+			expect(again.preventDefault).not.toHaveBeenCalled();
+			expect(process.kill).not.toHaveBeenCalled();
+			expect(mockExit).not.toHaveBeenCalled();
+			// Cleanup ran once, on the first before-quit.
+			expect(mockHistoryManager.stopWatching).toHaveBeenCalledTimes(1);
+			vi.useRealTimers();
+		});
+
+		it('lets a Windows or Linux update install go on after the remote-copy bound runs out', async () => {
+			mockIsMacOS = false;
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+			});
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS - 1);
+			expect(mockQuit).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(mockQuit).toHaveBeenCalledTimes(1);
+			expect(process.kill).not.toHaveBeenCalled();
+			vi.useRealTimers();
 		});
 
 		it('should hard-exit on the macOS update-install path after the grace window', async () => {
@@ -734,6 +799,127 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(process.kill).not.toHaveBeenCalled();
 			await vi.advanceTimersByTimeAsync(1);
 			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			vi.useRealTimers();
+		});
+
+		it('names the remote copies still not sent when it stops waiting, and tells Sentry only how many', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			const unsent = ['/home/me/notes.md (SSH remote r1)'];
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+				listPendingRemoteWrites: () => unsent,
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS);
+			expect(mockLogger.warn).toHaveBeenCalledWith(
+				'Quit stopped waiting for remote copy writes',
+				'Shutdown',
+				expect.objectContaining({ unsent })
+			);
+			// A message, not an exception, and never the user's paths.
+			expect(mockCaptureMessage).toHaveBeenCalledWith(
+				'Quit stopped waiting for remote copy writes',
+				'warning',
+				{ waitedMs: REMOTE_WRITE_FLUSH_MAX_MS, unsentCount: 1 }
+			);
+			vi.useRealTimers();
+		});
+
+		it('gives the Sentry report a bounded chance to be sent before the hard exit', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS, REMOTE_WRITE_REPORT_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			let sent!: (value: boolean) => void;
+			mockFlushSentry.mockImplementationOnce(
+				() => new Promise<boolean>((resolve) => (sent = resolve))
+			);
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+				listPendingRemoteWrites: () => ['/home/me/notes.md (SSH remote r1)'],
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS);
+			// The report was queued and is being sent: the hard exit waits for it.
+			expect(mockFlushSentry).toHaveBeenCalledWith(REMOTE_WRITE_REPORT_MAX_MS);
+			expect(process.kill).not.toHaveBeenCalled();
+			sent(true);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			vi.useRealTimers();
+		});
+
+		it('keeps waiting for the Sentry report when the writes land while it is being sent', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			let sent!: (value: boolean) => void;
+			mockFlushSentry.mockImplementationOnce(
+				() => new Promise<boolean>((resolve) => (sent = resolve))
+			);
+			let landWrites!: () => void;
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>((resolve) => (landWrites = resolve)),
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS);
+			expect(mockFlushSentry).toHaveBeenCalled();
+			// The writes land after the bound, while the report is still going out.
+			landWrites();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(process.kill).not.toHaveBeenCalled();
+			sent(true);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			vi.useRealTimers();
+		});
+
+		it('does not wait for the Sentry report past its own bound', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler, REMOTE_WRITE_FLUSH_MAX_MS, REMOTE_WRITE_REPORT_MAX_MS } =
+				await import('../../../main/app-lifecycle/quit-handler');
+			mockFlushSentry.mockImplementationOnce(() => new Promise<boolean>(() => undefined));
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: () => new Promise<void>(() => undefined),
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			await vi.advanceTimersByTimeAsync(REMOTE_WRITE_FLUSH_MAX_MS + REMOTE_WRITE_REPORT_MAX_MS - 1);
+			expect(process.kill).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(1);
+			expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGKILL');
+			vi.useRealTimers();
+		});
+
+		it('says nothing to Sentry when the remote copy writes land in time', async () => {
+			vi.useFakeTimers();
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+			const quitHandler = createQuitHandler({
+				...(deps as Parameters<typeof createQuitHandler>[0]),
+				flushPendingRemoteWrites: async () => undefined,
+				listPendingRemoteWrites: () => [],
+			});
+			quitHandler.setup();
+			ipcHandlers.get('app:quitConfirmed')!();
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+			await vi.advanceTimersByTimeAsync(10_000);
+			expect(mockCaptureMessage).not.toHaveBeenCalled();
 			vi.useRealTimers();
 		});
 

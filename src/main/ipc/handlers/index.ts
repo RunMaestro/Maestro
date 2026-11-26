@@ -48,7 +48,11 @@ import {
 } from '../../cue/stats/cue-stats-query';
 import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from './documentGraph';
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
-import { flushRemoteCopyWriteBack, registerFilesystemHandlers } from './filesystem';
+import {
+	flushRemoteCopyWriteBack,
+	pendingRemoteCopyWrites,
+	registerFilesystemHandlers,
+} from './filesystem';
 import { registerParquetHandlers } from './parquet';
 import { registerSqliteHandlers } from './sqlite';
 import { registerCodexVisualizationHandlers } from './codexVisualization';
@@ -138,7 +142,7 @@ export { registerCueStatsHandlers };
 export type { CueStatsHandlerDependencies };
 export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
-export { registerFilesystemHandlers, flushRemoteCopyWriteBack };
+export { registerFilesystemHandlers, flushRemoteCopyWriteBack, pendingRemoteCopyWrites };
 export { registerParquetHandlers };
 export { registerSqliteHandlers };
 export { registerCodexVisualizationHandlers };
