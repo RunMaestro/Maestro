@@ -19,11 +19,16 @@
  * 3. Stop clears it (`dropMentionHandoffs`): Stop means stop, and forwarding a
  *    half-finished answer would act on the user's behalf after they said no.
  *
+ * A hosted agent's turn runs on its Federation host, so no local process exits: the host's tab
+ * state releases it instead (`markHandoffSentToHost()`, then `followHostedHandoffs()` on every
+ * sync), with the same answer, the same notes, and the same targets.
+ *
  * One way by design: the target's reply lands on the source tab as an
  * attributed bubble, and no follow-up turn is sent back to the source agent.
  */
 
-import type { ConsultHoldTarget, LogEntry, MentionHandoff } from '../types';
+import type { TurnSendReceipt } from '../../shared/maestro-lib/client/types';
+import type { AITab, ConsultHoldTarget, LogEntry, MentionHandoff, Session } from '../types';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { sendCrossAgentRequest } from '../hooks/agent/useCrossAgentDispatch';
 import { isSelfContainedCard } from '../utils/logEntries';
@@ -83,6 +88,13 @@ export function armMentionHandoff(sessionId: string, tabId: string, handoff: Men
  * when `tabId` is given (a Stop aimed at a single turn).
  */
 export function dropMentionHandoffs(sessionId: string, tabId?: string): void {
+	// The hand-offs waiting behind an armed one go with it.
+	for (const key of [...deferredHostedHandoffs.keys()]) {
+		const scoped = tabId
+			? key === deferredKey(sessionId, tabId)
+			: key.startsWith(`${sessionId}\u0000`);
+		if (scoped) deferredHostedHandoffs.delete(key);
+	}
 	const armed = (t: { id: string; pendingMentionHandoff?: unknown }) =>
 		!!t.pendingMentionHandoff && (!tabId || t.id === tabId);
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
@@ -122,6 +134,8 @@ export function releaseMentionHandoff(
 	opts: {
 		failed: boolean;
 		managedQueue?: { dispatchId: string; generation: string; targetSessionIds: string[] };
+		/** The turn's answer as the caller found it (a hosted turn, after its send boundary). */
+		turn?: HandoffTurn | null;
 	}
 ): void | Promise<void> {
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
@@ -163,7 +177,7 @@ export function releaseMentionHandoff(
 		noteSkippedHandoff(sessionId, tabId, handoff.targets, 'the turn did not finish.');
 		return;
 	}
-	const turn = collectHandoffTurn(tab.logs);
+	const turn = opts.turn !== undefined ? opts.turn : collectHandoffTurn(tab.logs);
 	if (!turn) {
 		noteSkippedHandoff(sessionId, tabId, handoff.targets, 'the turn produced no answer.');
 		return;
@@ -181,4 +195,224 @@ export function releaseMentionHandoff(
 			handoffAnswer: turn.answer,
 		});
 	}
+}
+
+/** The host took the turn a hand-off waits on: follow its tab from now on. */
+export function markHandoffSentToHost(
+	sessionId: string,
+	tabId: string,
+	receipt: TurnSendReceipt,
+	/** The send boundary when the host took the turn, for a hand-off armed later than that. */
+	boundary?: { afterEntryId: string | undefined }
+): void {
+	updateAiTab(sessionId, tabId, (tab) => {
+		if (!tab.pendingMentionHandoff) return tab;
+		const afterEntryId = boundary ? boundary.afterEntryId : handoffSendBoundary(tab.logs);
+		return {
+			...tab,
+			pendingMentionHandoff: {
+				...tab.pendingMentionHandoff,
+				hostTurn: {
+					stage: 'sent',
+					...(receipt.status === 'queued' ? { queueItemId: receipt.itemId } : {}),
+					...(afterEntryId ? { afterEntryId } : {}),
+				},
+			},
+		};
+	});
+}
+
+/** The send boundary of a hosted turn: the last entry the tab holds that is not live. */
+export function handoffSendBoundary(logs: LogEntry[]): string | undefined {
+	return [...logs].reverse().find((entry) => !entry.hostLive)?.id;
+}
+
+/** The entries a host wrote after `afterEntryId` (all of them when it is unknown or gone). */
+function entriesAfter(logs: LogEntry[], afterEntryId: string | undefined): LogEntry[] {
+	const at = afterEntryId ? logs.findIndex((entry) => entry.id === afterEntryId) : -1;
+	return at === -1 ? logs : logs.slice(at + 1);
+}
+
+/**
+ * The one turn a hosted hand-off waits on: from the first user message the host wrote after the
+ * send boundary up to the next one. A later turn that ended before the same sync is not its turn,
+ * and the end of a turn that was still running at the send (before that message) is not either.
+ * Empty until the host wrote the turn's message.
+ */
+function ownTurnEntries(logs: LogEntry[], afterEntryId: string | undefined): LogEntry[] {
+	const after = entriesAfter(logs, afterEntryId);
+	const start = after.findIndex((entry) => entry.source === 'user');
+	if (start === -1) return [];
+	const next = after.findIndex((entry, index) => index > start && entry.source === 'user');
+	return after.slice(start, next === -1 ? undefined : next);
+}
+
+/**
+ * What a hosted tab's armed hand-off does on this sync. A hand-off no host took (`hostTurn`
+ * absent) is a local one, released by its process exit: `wait`.
+ * - `running`: the tab reads busy with the turn (not while it still waits in the host's queue).
+ * - `read`: the turn ended but its saved answer is not here yet (the tab still draws what the
+ *   turn streamed, or holds nothing after the entry it ended on at send): read the saved
+ *   transcript, so the answer handed off is the one the host recorded.
+ * - `release`: the saved answer is here, or the saved transcript is current (`transcriptCurrent`)
+ *   and the turn left none (the release says so in the transcript). A turn so short the tab never
+ *   read busy counts once its answer follows the entry the tab ended on when it was sent.
+ */
+export function hostedHandoffStep(
+	tab: Pick<AITab, 'state' | 'pendingMentionHandoff' | 'logs' | 'thinkingStartTime'>,
+	hostQueueItemIds: ReadonlySet<string>,
+	transcriptCurrent = false
+): 'wait' | 'running' | 'read' | 'release' | 'drop' | 'seen-queued' {
+	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
+	if (!hostTurn) return 'wait';
+	if (hostTurn.queueItemId && hostQueueItemIds.has(hostTurn.queueItemId)) {
+		// While it waits, the turn ahead is whatever the host's tab runs now: record it.
+		const ahead = tab.state === 'busy' ? tab.thinkingStartTime : undefined;
+		return hostTurn.seenQueued && hostTurn.turnStartedAt === ahead ? 'wait' : 'seen-queued';
+	}
+	if (hostTurn.stage === 'sent' && hostTurn.queueItemId) {
+		// Queued behind another turn: it runs once the tab is busy with a turn that started at
+		// another time. Gone from the queue with that turn still running, or with the tab idle,
+		// it was taken out of the queue: nothing it never ran is handed off.
+		if (tab.state === 'busy' && tab.thinkingStartTime !== hostTurn.turnStartedAt) return 'running';
+		return hostTurn.seenQueued ? 'drop' : 'wait';
+	}
+	if (tab.state === 'busy') return hostTurn.stage === 'sent' ? 'running' : 'wait';
+	if (tab.logs.some((entry) => entry.hostLive)) return 'read';
+	if (collectHandoffTurn(ownTurnEntries(tab.logs, hostTurn.afterEntryId))) return 'release';
+	// Not started yet, or ended between two syncs: a stale transcript is read to tell them apart.
+	if (hostTurn.stage === 'sent') return transcriptCurrent ? 'wait' : 'read';
+	return transcriptCurrent ? 'release' : 'read';
+}
+
+/**
+ * The answer a hosted hand-off sends: its own turn's last answer (`ownTurnEntries()`), with the
+ * conversation before the turn's user message as the target's context. Null when the turn left
+ * no answer (the release notes it), never an earlier or a later turn's answer.
+ */
+export function hostedHandoffTurn(
+	logs: LogEntry[],
+	afterEntryId: string | undefined
+): HandoffTurn | null {
+	const fromSend = collectHandoffTurn(ownTurnEntries(logs, afterEntryId));
+	if (!fromSend) return null;
+	return { answer: fromSend.answer, priorLogs: collectHandoffTurn(logs)?.priorLogs ?? [] };
+}
+
+/** Release a hosted tab's armed hand-off now, with the answer its turn left after the send. */
+export function releaseHostedHandoff(sessionId: string, tab: AITab): void {
+	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
+	void releaseMentionHandoff(sessionId, tab.id, {
+		failed: !!tab.agentError,
+		turn: hostedHandoffTurn(tab.logs, hostTurn?.afterEntryId),
+	});
+}
+
+const deferredKey = (sessionId: string, tabId: string) => `${sessionId}\u0000${tabId}`;
+
+/**
+ * Hand-offs of hosted turns whose tab still holds an armed hand-off, in the order the host took
+ * them. A tab holds one hand-off: the next one arms once the armed one has released with its own
+ * turn's answer (`followHostedHandoffs()`), never replacing it or releasing it early. Stop drops
+ * them with the armed one (`dropMentionHandoffs()`).
+ */
+const deferredHostedHandoffs = new Map<string, Array<() => void>>();
+
+/** Hold `arm` until `tabId` no longer holds an armed hand-off. */
+export function deferHostedHandoff(sessionId: string, tabId: string, arm: () => void): void {
+	const key = deferredKey(sessionId, tabId);
+	deferredHostedHandoffs.set(key, [...(deferredHostedHandoffs.get(key) ?? []), arm]);
+}
+
+/** Whether a hand-off waits behind the one `tabId` holds. */
+export function hasDeferredHostedHandoff(sessionId: string, tabId: string): boolean {
+	return (deferredHostedHandoffs.get(deferredKey(sessionId, tabId))?.length ?? 0) > 0;
+}
+
+/** Arm the next waiting hand-off of every tab of `sessionId` that holds none now. */
+function armDeferredHostedHandoffs(sessionId: string): void {
+	for (const [key, waiting] of [...deferredHostedHandoffs]) {
+		if (!key.startsWith(`${sessionId}\u0000`)) continue;
+		const tabId = key.slice(sessionId.length + 1);
+		const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+		const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
+		if (!tab) {
+			deferredHostedHandoffs.delete(key);
+			continue;
+		}
+		if (tab.pendingMentionHandoff) continue;
+		const [next, ...rest] = waiting;
+		if (rest.length) deferredHostedHandoffs.set(key, rest);
+		else deferredHostedHandoffs.delete(key);
+		next?.();
+	}
+}
+
+/**
+ * Move every hand-off a hosted agent's tabs wait on: a turn its host started, then ended, releases
+ * as a local exit does (`releaseMentionHandoff()`), failed when the tab ended on an error.
+ * `transcript` reads a tab's saved transcript when the turn's answer is not here yet.
+ */
+export function followHostedHandoffs(
+	session: Session,
+	transcript: {
+		/** Ask for the tab's saved transcript (once; a failed read waits for a new trigger). */
+		read: (tabId: string) => void;
+		/** The tab's saved transcript is loaded and nothing marked it stale since. */
+		isCurrent: (tabId: string) => boolean;
+	} = { read: () => {}, isCurrent: () => false }
+): void {
+	armDeferredHostedHandoffs(session.id);
+	if (!session.aiTabs.some((tab) => tab.pendingMentionHandoff?.hostTurn)) return;
+	const hostQueueItemIds = new Set(
+		(session.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
+	);
+	for (const tab of session.aiTabs) {
+		const step = hostedHandoffStep(tab, hostQueueItemIds, transcript.isCurrent(tab.id));
+		if (step === 'running') {
+			updateAiTab(session.id, tab.id, (current) =>
+				current.pendingMentionHandoff?.hostTurn
+					? {
+							...current,
+							pendingMentionHandoff: {
+								...current.pendingMentionHandoff,
+								// The queue gate and the send boundary still hold for this turn.
+								hostTurn: { ...current.pendingMentionHandoff.hostTurn, stage: 'running' },
+							},
+						}
+					: current
+			);
+		} else if (step === 'seen-queued') {
+			updateAiTab(session.id, tab.id, (current) =>
+				current.pendingMentionHandoff?.hostTurn
+					? {
+							...current,
+							pendingMentionHandoff: {
+								...current.pendingMentionHandoff,
+								hostTurn: {
+									...current.pendingMentionHandoff.hostTurn,
+									seenQueued: true,
+									turnStartedAt: current.state === 'busy' ? current.thinkingStartTime : undefined,
+								},
+							},
+						}
+					: current
+			);
+		} else if (step === 'read') {
+			transcript.read(tab.id);
+		} else if (step === 'release') {
+			releaseHostedHandoff(session.id, tab);
+		} else if (step === 'drop') {
+			const handoff = tab.pendingMentionHandoff!;
+			updateAiTab(session.id, tab.id, (t) => ({ ...t, pendingMentionHandoff: undefined }));
+			noteSkippedHandoff(
+				session.id,
+				tab.id,
+				handoff.targets,
+				'the message was removed before it ran.'
+			);
+		}
+	}
+	// A hand-off that waited behind one released (or dropped) on this sync arms now.
+	armDeferredHostedHandoffs(session.id);
 }

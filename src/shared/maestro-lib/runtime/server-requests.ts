@@ -33,6 +33,7 @@ import type {
 	MaestroClient,
 	ProviderInfo,
 	TabPatch,
+	TurnInput,
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../client/types';
@@ -310,8 +311,13 @@ function imagesOf(message: Request): string[] | undefined {
 	return message.images as string[];
 }
 
-/** The reply fields that say whether the message is running or waiting its turn. */
+/**
+ * The reply fields that say whether the message is running or waiting its turn, or was one of
+ * Maestro's own commands the host ran (`ran`, as a desktop host replies): no turn starts for it, so
+ * a client must not wait for one to end.
+ */
 function receiptFields(receipt: TurnSendReceipt): Frame {
+	if (receipt.status === 'ran') return { queued: false, ran: true };
 	return receipt.status === 'queued'
 		? {
 				queued: true,
@@ -494,6 +500,21 @@ function originHostOf(message: Request): { originHost?: string } {
 function turnOverridesOf(message: Request): { overrides?: TurnOverrides } {
 	const overrides = normalizeTurnOverrides(message.turnOverrides);
 	return overrides ? { overrides } : {};
+}
+
+/**
+ * The agent-only text a desktop's `@mention` adds to this one turn (`TurnInput.agentContext`,
+ * `agentNotes`), passed through as sent: the runtime checks it and refuses a send it cannot take.
+ */
+function turnAgentTextOf(message: Request): Pick<TurnInput, 'agentContext' | 'agentNotes'> {
+	return {
+		...(message.agentContext !== undefined
+			? { agentContext: message.agentContext as TurnInput['agentContext'] }
+			: {}),
+		...(message.agentNotes !== undefined
+			? { agentNotes: message.agentNotes as TurnInput['agentNotes'] }
+			: {}),
+	};
 }
 
 export type RequestHandler = (message: Request) => Promise<Frame | undefined>;
@@ -695,6 +716,7 @@ export function createRequestHandler(
 					...turnOverridesOf(message),
 					// Queue Held (`dispatch --queue --held`): queued paused, even on an idle agent.
 					...(message.held === true ? { held: true } : {}),
+					...turnAgentTextOf(message),
 				});
 				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
 				return {

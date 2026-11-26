@@ -100,13 +100,27 @@ function defaultGenerateId(): string {
 	return `cb_${Date.now().toString(36)}${idCounter.toString(36).padStart(3, '0')}`;
 }
 
+/** Whether the dispatched turn ended well: exit 0, and no failure its host reported. */
+function exitedOk(entry: Pick<DispatchCallbackEntry, 'exitCode' | 'turnFailed'>): boolean {
+	return entry.exitCode === 0 && entry.turnFailed !== true;
+}
+
+function exitStatus(
+	entry: Pick<DispatchCallbackEntry, 'exitCode' | 'turnFailed'>
+): 'completed' | 'failed' {
+	return exitedOk(entry) ? 'completed' : 'failed';
+}
+
 export class DispatchCallbackRegistry {
 	private entries = new Map<string, DispatchCallbackEntry>();
 	private graceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	/** processSessionId -> last observed spawn time (see SPAWN_LOOKBACK_MS). */
 	private recentSpawns = new Map<string, number>();
 	/** processSessionId -> last observed exit (see SPAWN_LOOKBACK_MS). */
-	private recentExits = new Map<string, { at: number; exitCode: number | null }>();
+	private recentExits = new Map<
+		string,
+		{ at: number; exitCode: number | null; turnFailed?: boolean }
+	>();
 	/**
 	 * processSessionId -> output since its last spawn, kept only while that spawn
 	 * is inside SPAWN_LOOKBACK_MS. Lets a late `--new-tab` registration adopt
@@ -162,7 +176,7 @@ export class DispatchCallbackRegistry {
 		// --new-tab only: the renderer may already have spawned the agent before
 		// this registration landed. The tab id is brand new, so a recent spawn
 		// against it can only be our dispatch.
-		let replayExit: { at: number; exitCode: number | null } | undefined;
+		let replayExit: { at: number; exitCode: number | null; turnFailed?: boolean } | undefined;
 		if (registration.armFromRecentSpawn && !registration.pendingAdmissionId) {
 			const spawnedAt = this.recentSpawns.get(entry.processSessionId);
 			if (spawnedAt !== undefined && now - spawnedAt <= SPAWN_LOOKBACK_MS) {
@@ -187,7 +201,9 @@ export class DispatchCallbackRegistry {
 			this.deps.logger?.info(
 				`[DispatchCallback] ${entry.callbackId} replaying exit observed before registration`
 			);
-			this.noteExit(entry.processSessionId, replayExit.exitCode);
+			this.noteExit(entry.processSessionId, replayExit.exitCode, {
+				turnFailed: replayExit.turnFailed,
+			});
 		}
 		return entry;
 	}
@@ -281,17 +297,27 @@ export class DispatchCallbackRegistry {
 	 * A process exited. Fires (after the Auto Run grace window) or parks the
 	 * entry until the Auto Run batch finishes.
 	 */
-	noteExit(processSessionId: string, exitCode: number | null): void {
+	noteExit(
+		processSessionId: string,
+		exitCode: number | null,
+		opts: { turnFailed?: boolean } = {}
+	): void {
 		const observedAt = this.now();
-		this.recentExits.set(processSessionId, { at: observedAt, exitCode });
+		const turnFailed = opts.turnFailed === true ? true : undefined;
+		this.recentExits.set(processSessionId, {
+			at: observedAt,
+			exitCode,
+			...(turnFailed ? { turnFailed } : {}),
+		});
 		this.prunePendingSpawns(observedAt);
 		for (const entry of [...this.entries.values()]) {
 			if (entry.processSessionId !== processSessionId) continue;
 			if (entry.state !== 'armed') continue;
 			entry.exitCode = exitCode;
+			entry.turnFailed = turnFailed;
 			entry.durationMs = this.now() - (entry.startedAt ?? entry.createdAt);
 
-			if (entry.retryPending && exitCode !== 0) {
+			if (entry.retryPending && !exitedOk(entry)) {
 				entry.state = 'awaiting-retry';
 				this.deps.logger?.info(
 					`[DispatchCallback] ${entry.callbackId} parked - a retry of the failed turn is scheduled`
@@ -317,7 +343,7 @@ export class DispatchCallbackRegistry {
 					current.state = 'awaiting-autorun';
 					return;
 				}
-				this.fire(current, current.exitCode === 0 ? 'completed' : 'failed');
+				this.fire(current, exitStatus(current));
 			}, this.graceMs);
 			this.graceTimers.set(entry.callbackId, handle);
 		}
@@ -334,7 +360,7 @@ export class DispatchCallbackRegistry {
 		for (const entry of [...this.entries.values()]) {
 			if (entry.targetAgentId !== agentId) continue;
 			if (entry.state !== 'awaiting-autorun') continue;
-			this.fire(entry, entry.exitCode === 0 ? 'completed' : 'failed', progress, true);
+			this.fire(entry, exitStatus(entry), progress, true);
 		}
 	}
 
@@ -354,7 +380,7 @@ export class DispatchCallbackRegistry {
 				if (entry.state === 'armed') {
 					// The exit has not reached us yet; park it when it does.
 					entry.retryPending = true;
-				} else if (entry.state === 'grace' && entry.exitCode !== 0) {
+				} else if (entry.state === 'grace' && !exitedOk(entry)) {
 					this.clearGraceTimer(entry.callbackId);
 					entry.state = 'awaiting-retry';
 					this.deps.logger?.info(
@@ -367,7 +393,7 @@ export class DispatchCallbackRegistry {
 				entry.retryPending = false;
 			} else if (entry.state === 'awaiting-retry') {
 				// The retry was dropped (Stop, superseded, given up) with no resend.
-				this.fire(entry, entry.exitCode === 0 ? 'completed' : 'failed');
+				this.fire(entry, exitStatus(entry));
 			}
 		}
 	}

@@ -46,6 +46,10 @@ import {
 	liftedSendRefusal,
 } from '../../../shared/maestro-lib/agents/lift-pointer';
 import { statelessHelperOfProcess } from '../../../shared/maestro-lib/agents/hosted-launch';
+import {
+	TRANSCRIPT_CHANGED_CHANNEL,
+	transcriptChangedArgs,
+} from '../../../shared/maestro-lib/client/bridge-frames';
 import { installHostedLaunchGuard } from '../../utils/hosted-launch-guard';
 import {
 	initPermissionRelay,
@@ -537,6 +541,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				if (mainWindow && isWebContentsAvailable(mainWindow)) {
 					mainWindow.webContents.send('process:user-input', payload);
 				}
+			}
+		)
+	);
+
+	// A tab's transcript grew outside a turn (`/skills`, `/history` run for a Federation client):
+	// tell this host's clients to read the tab again, as a headless host does.
+	ipcMain.handle(
+		'process:broadcast-transcript-changed',
+		withIpcErrorLogging(
+			handlerOpts('broadcast-transcript-changed'),
+			async (sessionId: unknown, tabId: unknown) => {
+				if (typeof sessionId !== 'string' || typeof tabId !== 'string') return;
+				if (!sessionId || !tabId) return;
+				safeSend?.(TRANSCRIPT_CHANGED_CHANNEL, ...transcriptChangedArgs(sessionId, tabId));
 			}
 		)
 	);

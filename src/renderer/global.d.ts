@@ -528,6 +528,7 @@ interface MaestroAPI {
 				forceParallel?: boolean;
 			};
 		}) => Promise<void>;
+		broadcastTranscriptChanged: (sessionId: string, tabId: string) => Promise<void>;
 		interrupt: (sessionId: string) => Promise<boolean>;
 		kill: (sessionId: string) => Promise<boolean>;
 		closeAgent: (agentId: string) => Promise<boolean>;

@@ -23,6 +23,7 @@
 import { joinPath } from '../../shared/formatters';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { DEFAULT_TAB_DEFAULTS } from '../../shared/maestro-lib/agents/rules';
+import { parseMaestroBuiltinCommand } from '../../shared/maestroBuiltinCommands';
 import type { AutoRunControl } from '../../shared/maestro-lib/client/peer-actions';
 import type {
 	TabPatch,
@@ -55,6 +56,7 @@ import {
 	starMirrorTab,
 } from './peerMirror';
 import { requestTabAutoNameForMessage } from './tabAutoNaming';
+import { hostedTranscriptBaseline, watchHostedHistoryCommand } from './historyEntryToast';
 
 export interface HostedTarget {
 	peerId: string;
@@ -361,6 +363,13 @@ export async function sendHostedTurn(
 		held?: boolean;
 		overrides?: TurnOverrides;
 		nameFrom?: { text: string; label?: string };
+		/**
+		 * Agent-only text for this one turn: ahead of the message (a released consult's replies,
+		 * `QueuedItem.agentContext`) and behind it (the `@mention` notes). The host's transcript
+		 * shows `text` alone, as a local transcript does.
+		 */
+		agentContext?: string;
+		agentNotes?: string;
 	} = {}
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
@@ -396,6 +405,13 @@ export async function sendHostedTurn(
 		});
 		if (!handed) return null;
 	}
+	// `/history`: the host saves the entry; the toast a local `/history` raises is raised here.
+	const historyCommand =
+		!opts.held && parseMaestroBuiltinCommand(text, session.toolType)?.name === '/history';
+	const historyBaseline = historyCommand
+		? await hostedTranscriptBaseline(target.peerId, target.agentId, hostTabId as string)
+		: undefined;
+	const sentAt = Date.now();
 	const receipt = await sendToMirroredTab(
 		target.peerId,
 		target.agentId,
@@ -403,7 +419,11 @@ export async function sendHostedTurn(
 		text,
 		opts.overrides ? { ...hostedTurnOverrides(tab), ...opts.overrides } : hostedTurnOverrides(tab),
 		images,
-		opts.held
+		opts.held,
+		{
+			...(opts.agentContext ? { agentContext: opts.agentContext } : {}),
+			...(opts.agentNotes ? { agentNotes: opts.agentNotes } : {}),
+		}
 	);
 	// Spent here once the host took the turn, as a local send spends it at spawn. A refused send
 	// keeps it, so the retry hands it over again (the host's copy is overwritten, not doubled).
@@ -413,6 +433,12 @@ export async function sendHostedTurn(
 				? { ...candidate, pendingMergedContext: undefined }
 				: candidate
 		);
+	}
+	if (historyCommand && receipt?.status === 'ran' && hostTabId) {
+		watchHostedHistoryCommand(session.id, target, hostTabId, {
+			sentAt,
+			...(historyBaseline ? { baseline: historyBaseline } : {}),
+		});
 	}
 	// The tab the message landed in: a kept tab's message opened a new host tab above.
 	if (receipt && opts.nameFrom && hostTabId) {
