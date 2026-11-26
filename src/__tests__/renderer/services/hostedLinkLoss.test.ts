@@ -806,6 +806,42 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(sends()).toHaveLength(0);
 	});
 
+	it('a resend after a failed read starts one read of its own, and sends once it says the turn died (R20)', async () => {
+		cut();
+		transcript.mockRejectedValueOnce(new Error('read failed'));
+		await hostBack('idle', [QUESTION]);
+		// The read after the reconnect failed: nothing is sent, the message stays kept.
+		expect(sends()).toHaveLength(0);
+		const reads = transcript.mock.calls.length;
+
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
+		transcript.mockResolvedValue([QUESTION]);
+		retryNow('row', 't1');
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(transcript.mock.calls.length).toBe(reads + 1);
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', entryId: 'u1' });
+	});
+
+	it('a resend after a failed read reads once per try, never in a loop, while the host keeps failing (R20)', async () => {
+		cut();
+		transcript.mockRejectedValueOnce(new Error('read failed'));
+		await hostBack('idle', [QUESTION]);
+		transcript.mockRejectedValue(new Error('read failed'));
+		const reads = transcript.mock.calls.length;
+		retryNow('row', 't1');
+		await flush();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(transcript.mock.calls.length).toBe(reads + 1);
+		expect(sends()).toHaveLength(0);
+		expect(queue()).toHaveLength(1);
+		expect(getRetryEntry('row', 't1')?.status).toBe('scheduled');
+	});
+
 	it('a resend while the host is still down stays kept under the same card', async () => {
 		cut();
 		const outageId = getRetryEntry('row', 't1')!.outageId;
