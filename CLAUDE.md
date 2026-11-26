@@ -122,6 +122,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Finding the file a markdown embed points at:** `resolveEmbedCandidates()`, `findFirstExistingPath()`, `parseEmbedAltSize()` in `src/renderer/utils/fileLinks/embedResolution.ts`
 - **Delete the file the user is previewing:** `requestFileDeletion()` in `src/renderer/services/fileDeletion.ts`
 - **A file action that hands a file to this machine (open, reveal, play, save a copy):** `openFileInDefaultApp()`, `revealInFileManager()`, `openFolderInFileManager()`, `openFileInMaestroBrowser()`, `saveCopyOfFile()`, `resolveOpenSource()`, `fetchLocalCopy()` in `src/renderer/services/fileActions.ts`
+- **Saving an opened copy of a remote file back to the remote:** `createRemoteCopyWriteBack()`, `keptVersionPath()` in `src/main/utils/remote-copy-write-back.ts`; `replaceFileRemoteIfUnchanged()` in `src/main/utils/remote-fs.ts`
 - **A Browse button on a folder or file field:** `pickDirectory()`, `pickFile()`, `pathPickerRemoteId(session)`, `fileOpRemoteId()` in `src/renderer/services/pathPicker.ts`; `<PathPickerModal>`, `<PathPickerHost>` in `src/renderer/components/PathPicker/PathPickerModal.tsx`
 - **Which SSH remote an agent's files are on (renderer):** `getSessionSshRemoteId(session)`, `isSessionRemote(session)` in `src/renderer/utils/sessionHelpers.ts`
 
@@ -184,6 +185,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Recording or reading the User Journey:** `sanitizeJourneyUrl()`, `formatJourneyLine()`, `parseJourneyJsonl()` in `src/shared/userJourney.ts`; `appendJourneyEntry()` in `src/main/user-journey-manager.ts`; `recordJourney()` in `src/renderer/services/userJourney.ts`
 - **What happened around an agent, in time order (the timeline):** `readTimeline()` in `src/shared/maestro-lib/store/read-timeline.ts`; `selectTimelineEvents()`, `formatTimelineLine()`, `timelineFollowUps()` in `src/shared/timeline.ts`; `findHistoryEntries()` in `src/shared/maestro-lib/store/read-history.ts`
 - **A project's shared History (`.maestro/history/history-<label>.jsonl`):** `appendSharedHistoryEntry()`, `readSharedHistoryEntries()`, `hostSharedHistoryLabel()` in `src/shared/maestro-lib/store/shared-history.ts`; `filterHistoryEntries()`, `mergeEntriesById()` in `src/shared/history.ts`
+- **Whether an agent shares its History into the project folder:** `sharesHistoryInProject()`, `withHistorySharedInProject()` in `src/shared/historySharing.ts`; `withOwnHostAsLocal()` in `src/shared/history.ts`
 - **A `--since` / `--until` time the user typed (`30m`, `2h`, `1w`, ISO, epoch):** `parseTimeInput()`, `parseDurationInput()` in `src/shared/timeInput.ts`
 - **Serializing async work on one entity:** `createKeyedWriteQueue()` in `src/shared/keyedWriteQueue.ts` (main imports it via `src/main/utils/atomic-json-store.ts`)
 - **Capping stored tool output:** `compactToolOutput()`, `compactToolInput()`, `compactSessionToolOutputs()` in `src/shared/toolOutput.ts`
@@ -191,6 +193,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Turning Live mode (the web interface) or Remote Control (its tunnel) on or off:** `getLiveModeController()`, `createLiveModeController()` in `src/main/web-server/live-mode.ts`; wire types in `src/shared/liveMode.ts`
 - **Asking a renderer window a question from main (request, reply, timeout):** `requestFromRenderer(win, channel, { fallback, parse, timeoutMs, args })` in `src/main/web-server/callbacks/remoteRequest.ts`
 - **HTTP request from the main process:** `fetchWithTimeout()`, `isFetchTimeoutError()` in `src/main/utils/fetchWithTimeout.ts` (never a bare `fetch()`)
+- **Async results cached by key for a window (in-flight shared, failures dropped):** `createTtlPromiseCache(ttlMs, keep?)` in `src/main/utils/ttl-promise-cache.ts`
 - **A git query the UI polls in the background:** `execGitReadOnly()`, `isGitTimeout()`, `READ_ONLY_GIT_TIMEOUT_MS` in `src/main/utils/remote-git.ts`
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
 - **Yielding to the event loop during long main-process work:** `yieldToEventLoop()` in `src/main/utils/concurrency.ts`
@@ -251,7 +254,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A hosted agent drawn as its own Left Bar record (renderer):** `projectHostedSession()` in `src/renderer/utils/hostedSession.ts`; `startHostedAgentSync()` in `src/renderer/services/hostedAgentSync.ts`; `sendHostedTurn()`, `interruptHostedTurn()`, `openHostedTab()` in `src/renderer/services/hostedTurns.ts`
 - **A turn queued on this machine for a hosted agent:** `handQueuedItemToHost()`, `sendTakenItemToHost()`, `isQueuedItemForHost()`, `queuedItemHostSend()` in `src/renderer/services/hostedQueuedTurn.ts`
 - **Whether a provider launch for a hosted agent may start on this machine:** `checkHostedAgentLaunch()` in `src/main/utils/hosted-launch-guard.ts`; `HOSTED_STATELESS_HELPERS`, `statelessHelperOfProcess()`, `hostedLaunchVerdict()` in `src/shared/maestro-lib/agents/hosted-launch.ts`
-- **Consulting a hosted agent on its host:** `askMirrorConsult()` in `src/renderer/services/peerMirror.ts`; `RemoteAskerContext`, `parseWireTranscript()` in `src/shared/crossAgentTypes.ts`; `cancelHostedConsults()` in `src/renderer/hooks/agent/useCrossAgentDispatch.ts`
+- **Consulting a hosted agent on its host:** `askMirrorConsult()` in `src/renderer/services/peerMirror.ts`; `RemoteAskerContext`, `parseWireTranscript()`, `buildRemoteAskerKey()`, `parseWireAskerKey()` in `src/shared/crossAgentTypes.ts`; `cancelHostedConsults()` in `src/renderer/hooks/agent/useCrossAgentDispatch.ts`
 - **A hosted agent's History with this machine's Cue runs:** `withHostedCueRuns()`, `hostedCueScopeAgents()` in `src/main/utils/cue-history-merge.ts`
 - **The peer mirror's store and record adapters (renderer):** `usePeerMirrorStore`, `reducePeerMirrorPush()` in `src/renderer/stores/peerMirrorStore.ts`; `mirrorTab()`, `mirrorLogEntry()` in `src/renderer/utils/peerMirrorView.ts`
 - **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
@@ -284,6 +287,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
 - **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
 - **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()`, `isImplicitDefaultProfile()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
+- **Naming an agent's provider account on a surface about that one agent:** `profileAccountShortLabel()`, `isImplicitDefaultProfile()` in `src/shared/providerProfiles.ts`
 - **An agent's model list, and refreshing it:** `discoverAgentModels()` in `src/main/agents/model-discovery.ts`; `refreshModels()` on `useAgentModelEffortOptions()`; `MODELS_REFRESHED_CHANNEL` in `src/shared/agentModelsRefresh.ts`
 - **Antigravity models and per-model efforts:** `parseAntigravityModelList()`, `resolveAntigravitySelection()`, `resolveAntigravityModelEffortArgs()`, `readAntigravityModelEffortArgs()`, `antigravitySdkSelection()` in `src/shared/antigravityModels.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
@@ -345,7 +349,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Compact, Merge Into, or Send to Agent from a script (`maestro-cli tab compact` / `merge` / `transfer`):** `runRemoteTabContextOp()` in `src/renderer/services/tabContextOps.ts`, wire in `src/shared/tabContextOps.ts`
 - **Forcing a tracked sessions flush from outside App's hook tree:** `flushSessionPersistenceNow()`, `registerSessionPersistenceFlush()` in `src/renderer/services/sessionPersistenceFlush.ts`
 - **Which tab a Quick Chat message goes to:** `decideRoute()`, `parseRouteAnswer()` in `src/shared/quickChatRouting.ts`; `routeQuickChatMessage()`, `reopenClosedConversation()` in `src/renderer/services/quickChatRouter.ts`
-- **Naming a tab from the user's message:** `requestTabAutoName()`, `collectNamingPrompt()`, `requestWizardTabAutoName()` in `src/renderer/services/tabAutoNaming.ts`
+- **Naming a tab from the user's message:** `requestTabAutoName()`, `collectNamingPrompt()`, `requestWizardTabAutoName()`, `queuedItemNamingText()` in `src/renderer/services/tabAutoNaming.ts`
 - **Closing a tab while the unread filter is on:** `closeTab()`'s third argument is an OVERRIDE; omit it and `src/renderer/utils/tabHelpers/index.ts` reads `uiStore.showUnreadOnly`
 - **Ending a turn with no process exit:** `settleTabThinkingState(session, tabId)` in `src/renderer/utils/tabHelpers/index.ts`
 - **Never leaving an agent with an empty tab strip:** `ensureAgentHasVisibleTab()`, `agentHasVisibleTab()`, `createBlankAiTab()` in `src/renderer/utils/unifiedTabOrderUtils.ts`
@@ -438,6 +442,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Turning an Auto Run prompt template into a task prompt:** `resolveAutoRunPromptTemplate()`, `namesAutoRunDocument()` in `src/shared/autorunPromptTemplate.ts`; desktop `buildDesktopAutoRunPrompt()` / `prepareDesktopAutoRunPrompt()` in `src/renderer/hooks/batch/batchUtils.ts`
 - **Whether an untyped value is a task-selection mode:** `isTaskSelectionMode()` in `src/shared/types.ts`
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `recordSteeringResponse()`, `runRemoteSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; wire shape in `src/shared/autoRunSteeringCommands.ts`
+- **Starting a group chat `!autorun` participant's run:** `startGroupChatAutoRun()`, `groupChatAutoRunFailure()` in `src/renderer/services/groupChatAutoRun.ts`; `useGroupChatAutoRunTrigger()` in `src/renderer/hooks/groupChat/useGroupChatAutoRunTrigger.ts`
 - **Auto Run delegation (a task hands work to another agent):** `formatDelegationResultsBlock()`, `applyAutoRunDelegationEvent()` in `src/shared/autoRunDelegation.ts`; `awaitDelegationsBeforeTurn()`, `settleDelegationsAtRunEnd()` in `src/renderer/services/autoRunDelegations.ts`
 - **Fence-aware markdown scanning:** `forEachMarkdownLine()`, `UNCHECKED_TASK_REGEX`, `CHECKED_TASK_COUNT_REGEX`, `CHECKED_TASK_REGEX` in `src/shared/markdownTaskScan.ts`
 - **Auto Run document names (absolute path to folder-relative):** `resolveAutoRunDocumentName()`, `resolveAutoRunDocumentNames()` in `src/shared/autoRunDocumentPaths.ts`
