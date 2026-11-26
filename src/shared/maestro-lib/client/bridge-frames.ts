@@ -13,6 +13,7 @@ import { createOutputParser } from '../parsers/parser-factory';
 import { resolveTurnOutcome, type TurnOutcome } from '../streaming/turn-outcome';
 import type { ClientErrorCode, TurnToolCall } from './types';
 import { isUnsupportedInvokeError } from '../../bridgeError';
+import { toolActivityState } from '../../toolActivityLabel';
 
 // ---------------------------------------------------------------------------
 // Process ids (8.1)
@@ -252,7 +253,8 @@ export function parseBatchFrame(channel: string, args: unknown[]): ParsedBatchFr
 		case 'process:tool-execution': {
 			const payload = args[1];
 			if (!isObject(payload) || typeof payload.toolName !== 'string' || !payload.toolName) break;
-			const state = isObject(payload.state) ? payload.state : undefined;
+			// Only what the Thought Stream reads: a tool's output never crosses to the window.
+			const state = toolActivityState(payload.state);
 			frame = {
 				kind: 'tool',
 				toolName: payload.toolName.slice(0, MAX_BATCH_TOOL_NAME_CHARS),

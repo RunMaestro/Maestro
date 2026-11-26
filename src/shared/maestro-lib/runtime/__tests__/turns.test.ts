@@ -46,6 +46,13 @@ import {
 import { RUNTIME_LOCK_FILE_NAME } from '../data-dir-lock';
 import { MAX_WAITING_TURNS_PER_AGENT } from '../turns';
 import type { WatchDirectory } from '../settings-watch';
+import { foldLiveTurn } from '../../client/live-turn';
+
+// Passes through: a test counts what the host folds for the transcript (P12).
+vi.mock('../../client/live-turn', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../client/live-turn')>();
+	return { ...actual, foldLiveTurn: vi.fn(actual.foldLiveTurn) };
+});
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
 const BUNDLED_PROMPTS = path.resolve(__dirname, '../../../../prompts');
@@ -427,6 +434,49 @@ describe('runtime turns', () => {
 				expect(entries.at(-1)?.text).toBe('Done.');
 			}
 		);
+
+		// P12: the host folds the cards only a sticky tab keeps, never the answer text, and nothing
+		// for any other tab.
+		it.each([
+			['sticky', ['thinking', 'text', 'tool', 'thinking', 'text']],
+			['on', []],
+			['off', []],
+		])('folds only what a %s tab keeps past the turn', async (showThinking, folded) => {
+			const line = (obj: unknown) => JSON.stringify(obj) + '\n';
+			const session = 'sess-fold-1';
+			const say = (content: unknown[]) =>
+				line({ type: 'assistant', message: { role: 'assistant', content } });
+			recordings['claude-code'] = writeFakeTurn(work, {
+				chunks: [
+					line({ type: 'system', subtype: 'init', session_id: session }),
+					say([{ type: 'thinking', thinking: 'Plan it.' }]),
+					say([{ type: 'text', text: 'Reading. ' }]),
+					say([{ type: 'text', text: 'Still reading. ' }]),
+					say([{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: {} }]),
+					say([{ type: 'thinking', thinking: 'Now answer.' }]),
+					say([{ type: 'text', text: 'Done.' }]),
+					line({ type: 'result', result: 'Done.', session_id: session }),
+				],
+				close: { code: 0, signal: null },
+			});
+			const runtime = await start([
+				seedAgent({
+					aiTabs: [{ id: 't1', agentSessionId: null, name: null, logs: [], showThinking }],
+				}),
+			]);
+			vi.mocked(foldLiveTurn).mockClear();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'read it' }));
+			await turn.outcome();
+
+			expect(vi.mocked(foldLiveTurn).mock.calls.map(([, event]) => event.kind)).toEqual(folded);
+			const sources = (await transcript(runtime)).map((entry) => entry.source);
+			expect(sources).toEqual(
+				showThinking === 'sticky'
+					? ['user', 'thinking', 'tool', 'thinking', 'stdout']
+					: ['user', 'stdout']
+			);
+		});
 
 		describe('History host and shared History', () => {
 			const SHARED = { sharedHistory: { label: 'box.host', hostname: 'box' } };

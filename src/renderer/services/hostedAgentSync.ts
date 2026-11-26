@@ -50,7 +50,11 @@ import {
 	pruneHostStartedMentions,
 } from './hostedQueuedTurn';
 import { closingHostTabIds, hostingEnabled } from './hostedTurns';
-import { clearPendingSteeringNotes, refreshHostedSteering } from './autoRunSteering';
+import {
+	clearPendingSteeringNotes,
+	forgetHostedSteering,
+	refreshHostedSteering,
+} from './autoRunSteering';
 import { useAutoRunSteeringStore } from '../stores/autoRunSteeringStore';
 import { readMirrorTranscript } from './peerMirror';
 import {
@@ -142,7 +146,7 @@ function syncHostedAutoRun(
 		// task's reply before its last frame, so a reply still to come is read now.
 		clearPendingSteeringNotes(sessionId);
 		if (connected && awaitsHostSteering(sessionId)) void refreshHostedSteering(sessionId);
-		steeringPositions.delete(sessionId);
+		forgetHostedRun(sessionId);
 	} else if (connected && frame?.isRunning) {
 		// First seen (a new window, a reload, another client's note), or the run moved to another
 		// task: what the host holds may have changed. Read it again.
@@ -185,7 +189,14 @@ function dropStaleAutoRuns(hostedIds: ReadonlySet<string>): void {
 		if (hostedIds.has(sessionId)) continue;
 		if (appliedAutoRuns.get(sessionId) !== null) applyAutoRunMirrorFrame(sessionId, null);
 		appliedAutoRuns.delete(sessionId);
+		forgetHostedRun(sessionId);
 	}
+}
+
+/** Drop what the sync and the steering service keep for a hosted run that ended or left. */
+function forgetHostedRun(sessionId: string): void {
+	steeringPositions.delete(sessionId);
+	forgetHostedSteering(sessionId);
 }
 
 /** Records already released since hosted agents were switched off (see `releaseHostedSession()`). */

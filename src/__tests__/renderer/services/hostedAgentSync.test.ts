@@ -273,6 +273,29 @@ describe('hostedAgentSync', () => {
 			expect(useBatchStore.getState().batchRunStates.row).toBeUndefined();
 		});
 
+		it('reads the steering again when a record hosted again shows the run it left (P11)', async () => {
+			const act = vi.fn(async () => ({
+				ok: true,
+				result: {
+					kind: 'steer-auto-run',
+					result: { success: true, steerable: true, pending: [], deliveries: [] },
+				},
+			}));
+			maestro.federation = { transcript, act };
+			pushRun(frame(1));
+			syncHostedAgents();
+			await flush();
+			expect(act).toHaveBeenCalledTimes(1);
+
+			// The record stops being hosted mid-run, then is hosted again at the same place.
+			useSessionStore.setState({ sessions: [{ ...row(), liftedTo: undefined }] });
+			syncHostedAgents();
+			useSessionStore.setState({ sessions: [row()] });
+			syncHostedAgents();
+			await flush();
+			expect(act).toHaveBeenCalledTimes(2);
+		});
+
 		describe('the end of the host run', () => {
 			const across = (done: number, extra: Record<string, unknown> = {}) => ({
 				...frame(done),
