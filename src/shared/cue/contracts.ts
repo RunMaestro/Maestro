@@ -5,6 +5,7 @@
  */
 
 import type { EffortLevel, ModelTier } from '../modelTiers';
+import type { CueFailureStreak } from './failure-streak';
 
 /** Days of the week for scheduled triggers */
 export type CueScheduleDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -391,6 +392,16 @@ export interface CueSettings {
 	 * ordinary security-flavored text such as "stop logging the bearer token".
 	 */
 	susfactor_threshold?: number;
+	/**
+	 * Consecutive failed (or timed-out) runs of one subscription before it
+	 * reads as failing: a red toast names the subscription and agent, and the
+	 * dashboard and `cue list` show it as failing until a run succeeds. A
+	 * second alert fires at ten times this count; nothing more until recovery.
+	 * `0` turns the alert off.
+	 *
+	 * Defaults to 3 (`DEFAULT_CUE_FAILURE_ALERT_THRESHOLD`).
+	 */
+	failure_alert_threshold?: number;
 }
 
 /** Default Cue settings */
@@ -401,6 +412,7 @@ export const DEFAULT_CUE_SETTINGS: CueSettings = {
 	queue_size: 512,
 	susfactor_enabled: true,
 	susfactor_threshold: 0.95,
+	failure_alert_threshold: 3,
 };
 
 /** Top-level Cue configuration */
@@ -476,6 +488,10 @@ export interface CueSessionStatus {
 	 *  projectRoot) or unresolvable (owner_agent_id matches no agent). The
 	 *  dashboard renders a red indicator with this text as the tooltip. */
 	ownershipWarning?: string;
+	/** Subscriptions on this agent whose consecutive-failure streak reached the
+	 *  alert threshold. Omitted when none are failing. The dashboard shows the
+	 *  agent as Failing (red) instead of Active while this is non-empty. */
+	failingSubscriptions?: CueFailureStreak[];
 }
 
 /** Session data with subscriptions for the Cue graph visualization */

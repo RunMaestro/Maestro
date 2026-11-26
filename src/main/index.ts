@@ -107,6 +107,7 @@ import { executeCueNotify } from './cue/cue-notify-executor';
 import { reportCueAuthFailure } from './cue/cue-auth-detector';
 import { setSusFactorNotifier } from './cue/cue-susfactor';
 import { emitCueNotifyToast } from './cue/cue-notify-bridge';
+import { failureStreakToast } from './cue/cue-failure-streak';
 import { getAgentDisplayName } from '../shared/agentMetadata';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
@@ -739,6 +740,10 @@ const createWebServer = createWebServerFactory({
 		return cueEngine.getActivityLog();
 	},
 	getCueSubscriptionTriggerStats,
+	getCueFailureStreaks: () => {
+		if (!cueEngine) return [];
+		return cueEngine.getFailureStreaks();
+	},
 	addGroupChatParticipant: async (chatId, agentId) => {
 		if (!processManager) return { success: false, error: 'Process manager not initialized' };
 		try {
@@ -1616,6 +1621,11 @@ app
 						if (delivered) cueHealthToastAt.set(payload.sessionId, now);
 					}
 				}
+				// A subscription failing N runs in a row. The engine emits this at
+				// most twice per streak, so no coalescing is needed here. Same
+				// always-mounted channel, so it lands with the Cue modal closed.
+				const streakToast = failureStreakToast(payload);
+				if (streakToast) emitCueNotifyToast(mainWindow, streakToast);
 				// Push activity updates to renderer (and web-desktop bridge clients)
 				if (data) {
 					safeSend('cue:activityUpdate', data);

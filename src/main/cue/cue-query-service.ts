@@ -1,3 +1,4 @@
+import type { CueFailureStreak } from '../../shared/cue/failure-streak';
 import {
 	DEFAULT_CUE_SETTINGS,
 	type CueConfig,
@@ -21,6 +22,8 @@ export interface CueQueryServiceDeps {
 	}>;
 	getSessionStates: () => Map<string, SessionState>;
 	getActiveRunCount: (sessionId: string) => number;
+	/** Current failure streaks for one agent. Optional so older test doubles still build. */
+	getFailureStreaks?: (sessionId: string) => CueFailureStreak[];
 	loadConfigForProjectRoot: (projectRoot: string) => CueConfig | null;
 }
 
@@ -31,6 +34,28 @@ export interface CueQueryService {
 }
 
 export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryService {
+	/**
+	 * Streaks at or past the alert threshold, limited to subscriptions the agent
+	 * still runs: a renamed or deleted subscription must not keep the row red.
+	 */
+	function failingSubscriptionsFor(
+		sessionId: string,
+		sessionName: string,
+		state: SessionState
+	): CueFailureStreak[] | undefined {
+		const live = new Set(
+			state.config.subscriptions
+				.filter(
+					(sub) => sub.enabled !== false && isSubscriptionParticipant(sub, sessionId, sessionName)
+				)
+				.map((sub) => sub.name)
+		);
+		const failing = (deps.getFailureStreaks?.(sessionId) ?? []).filter(
+			(streak) => streak.failing && live.has(streak.subscriptionName)
+		);
+		return failing.length > 0 ? failing : undefined;
+	}
+
 	return {
 		getStatus(): CueSessionStatus[] {
 			const result: CueSessionStatus[] = [];
@@ -56,6 +81,7 @@ export function createCueQueryService(deps: CueQueryServiceDeps): CueQueryServic
 						),
 						activeRuns: deps.getActiveRunCount(sessionId),
 						state,
+						failingSubscriptions: failingSubscriptionsFor(sessionId, session.name, state),
 					})
 				);
 			}

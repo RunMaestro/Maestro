@@ -1891,6 +1891,75 @@ describe('web-server/web-server-factory', () => {
 			expect(all[2].lastTriggered).toBeUndefined();
 		});
 
+		it('reports health and the failure streak per agent and subscription', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Pedsidian',
+					toolType: 'claude-code',
+					subscriptions: [
+						{ name: 'sms-poll', event: 'time.heartbeat', enabled: true, prompt: '' },
+						{ name: 'flaky', event: 'time.heartbeat', enabled: true, prompt: '' },
+						{ name: 'fine', event: 'time.heartbeat', enabled: true, prompt: '' },
+					],
+				},
+				{
+					sessionId: 'agent-2',
+					sessionName: 'Other',
+					toolType: 'claude-code',
+					subscriptions: [{ name: 'sms-poll', event: 'time.heartbeat', enabled: true, prompt: '' }],
+				},
+			]);
+			const streak = (subscriptionName: string, consecutiveFailures: number, failing: boolean) => ({
+				sessionId: 'agent-1',
+				sessionName: 'Pedsidian',
+				subscriptionName,
+				consecutiveFailures,
+				firstFailedAt: '2026-11-17T03:32:35.000Z',
+				lastFailedAt: '2026-11-17T23:59:15.000Z',
+				lastStatus: 'failed',
+				lastError: 'No, exit',
+				alertThreshold: 3,
+				failing,
+			});
+			const getCueFailureStreaks = vi
+				.fn()
+				.mockReturnValue([streak('sms-poll', 134, true), streak('flaky', 1, false)]);
+
+			const createWebServer = createWebServerFactory({
+				...deps,
+				getCueGraphData,
+				getCueFailureStreaks,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+
+			const all = await callback();
+			expect(all[0]).toMatchObject({
+				name: 'sms-poll',
+				health: 'failing',
+				failureStreak: {
+					consecutiveFailures: 134,
+					firstFailedAt: '2026-11-17T03:32:35.000Z',
+					lastFailedAt: '2026-11-17T23:59:15.000Z',
+					lastStatus: 'failed',
+					lastError: 'No, exit',
+					alertThreshold: 3,
+				},
+			});
+			// Below the threshold: the streak is visible, health stays ok.
+			expect(all[1]).toMatchObject({
+				name: 'flaky',
+				health: 'ok',
+				failureStreak: { consecutiveFailures: 1 },
+			});
+			expect(all[2]).toMatchObject({ name: 'fine', health: 'ok' });
+			expect(all[2].failureStreak).toBeUndefined();
+			// Same name on another agent does not inherit agent-1's streak.
+			expect(all[3]).toMatchObject({ sessionId: 'agent-2', health: 'ok' });
+			expect(all[3].failureStreak).toBeUndefined();
+		});
+
 		it('returns [] and warns when the engine dependency is missing', async () => {
 			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData: undefined });
 			const server = createWebServer() as any;

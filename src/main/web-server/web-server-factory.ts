@@ -14,6 +14,7 @@ import type { SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { DebugPackageDependencies } from '../debug-package';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import type { CueSubscriptionTriggerStat } from '../cue/cue-db';
+import type { CueFailureStreak } from '../../shared/cue/failure-streak';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { AddGroupChatParticipantCallback } from './types';
 import { registerSessionCallbacks } from './callbacks/sessionCallbacks';
@@ -105,6 +106,10 @@ export interface WebServerFactoryDependencies {
 	 *  Fills the `lastTriggered` / `triggerCount` fields of `cue list`.
 	 *  Absent = every subscription reports "never triggered". */
 	getCueSubscriptionTriggerStats?: () => CueSubscriptionTriggerStat[];
+	/** Current consecutive-failure streaks from the Cue engine. Fills the
+	 *  `health` / `failureStreak` fields of `cue list`. Absent = every
+	 *  subscription reports `health: 'ok'`. */
+	getCueFailureStreaks?: () => CueFailureStreak[];
 	/** Collectors for a support package (`maestro-cli support-package`,
 	 *  `feedback submit --support-package`). Absent = the CLI reports the
 	 *  feature as unconfigured instead of shipping a hollow zip. */

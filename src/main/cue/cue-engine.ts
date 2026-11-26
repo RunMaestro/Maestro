@@ -41,6 +41,15 @@ import {
 import { getCueRunLiveOutput } from './cue-executor';
 import { scanTaskFilesNow, buildTaskPendingPayload } from './cue-task-scanner';
 import { createCueActivityLog } from './cue-activity-log';
+import {
+	createCueFailureStreakTracker,
+	failureStreakPayload,
+	type CueFailureStreakTracker,
+} from './cue-failure-streak';
+import {
+	resolveFailureAlertThreshold,
+	type CueFailureStreak,
+} from '../../shared/cue/failure-streak';
 import type { CueActivityLog } from './cue-activity-log';
 import { createCueHeartbeat } from './cue-heartbeat';
 import type { CueHeartbeat } from './cue-heartbeat';
@@ -157,6 +166,8 @@ export class CueEngine {
 	 * sessions that arrive after start() (the common case at boot). */
 	private startReason: 'system-boot' | null = null;
 	private activityLog: CueActivityLog = createCueActivityLog();
+	/** Consecutive failed runs per (agent, subscription). See cue-failure-streak.ts. */
+	private failureStreaks: CueFailureStreakTracker = createCueFailureStreakTracker();
 	private registry: CueSessionRegistry;
 	private fanInTracker!: CueFanInTracker;
 	private runManager!: CueRunManager;
@@ -270,6 +281,7 @@ export class CueEngine {
 				}),
 			onRunCompleted: (sessionId, result, subscriptionName, chainDepth, chainRootId) => {
 				this.pushActivityLog(result);
+				this.recordFailureStreak(result);
 				this.safeEmitPluginEvent({
 					topic: 'cue.runFinished',
 					at: new Date().toISOString(),
@@ -502,6 +514,7 @@ export class CueEngine {
 				})),
 			getSessionStates: () => this.registry.snapshot(),
 			getActiveRunCount: (sessionId) => this.runManager.getActiveRunCount(sessionId),
+			getFailureStreaks: (sessionId) => this.failureStreaks.list(sessionId),
 			// Use the partitioned/detailed loader so an inactive session's
 			// dashboard view matches what the runtime will see when the engine
 			// initializes that session. The legacy `loadCueConfig` skips
@@ -608,6 +621,8 @@ export class CueEngine {
 		for (const session of sessions) {
 			this.sessionRuntimeService.initSession(session, { reason });
 		}
+		// After initSession, so each agent's own failure_alert_threshold is known.
+		this.seedFailureStreaks();
 
 		// Phase 12A - restore persisted queue entries AFTER sessions are
 		// initialized (so registry.get(...) has their configs / timeout). Each
@@ -675,6 +690,8 @@ export class CueEngine {
 
 		this.runManager.reset();
 		this.fanInTracker.reset();
+		// The next start() re-seeds from cue_events, so nothing is lost.
+		this.failureStreaks.clear();
 
 		// Stop heartbeat and close database via the recovery service.
 		this.heartbeat.stop();
@@ -723,6 +740,15 @@ export class CueEngine {
 	/** Teardown all subscriptions for a session */
 	removeSession(sessionId: string): void {
 		this.sessionRuntimeService.removeSession(sessionId);
+		this.failureStreaks.clearSession(sessionId);
+	}
+
+	/**
+	 * Every current consecutive-failure streak, including ones still below the
+	 * alert threshold (`failing: false`). Feeds `cue list`.
+	 */
+	getFailureStreaks(): CueFailureStreak[] {
+		return this.failureStreaks.list();
 	}
 
 	/** Returns status of all sessions with Cue configs */
@@ -1468,6 +1494,56 @@ export class CueEngine {
 	 * finalize) are surfaced as `failed` so the UI doesn't render them as a
 	 * 0ms success.
 	 */
+	/** The failure-alert threshold in force for one agent's cue.yaml. */
+	private failureAlertThresholdFor(sessionId: string): number {
+		return resolveFailureAlertThreshold(this.registry.get(sessionId)?.config.settings);
+	}
+
+	/**
+	 * Fold a finished run into its failure streak and announce a transition.
+	 * Never throws: alert bookkeeping must not break chain propagation.
+	 */
+	private recordFailureStreak(result: CueRunResult): void {
+		try {
+			const transition = this.failureStreaks.record(
+				result,
+				this.failureAlertThresholdFor(result.sessionId)
+			);
+			if (!transition) return;
+			const payload = failureStreakPayload(transition);
+			if (payload.type === 'subscriptionFailing') {
+				this.meteredOnLog(
+					'error',
+					`[CUE] "${payload.subscriptionName}" on "${payload.sessionName}" failed ${payload.consecutiveFailures} runs in a row`,
+					payload
+				);
+			} else {
+				this.meteredOnLog(
+					'info',
+					`[CUE] "${payload.subscriptionName}" on "${payload.sessionName}" recovered after ${payload.consecutiveFailures} failed runs`,
+					payload
+				);
+			}
+		} catch (err) {
+			captureException(err, { operation: 'cue:failureStreak', runId: result.runId });
+		}
+	}
+
+	/**
+	 * Rebuild failure streaks from the activity log hydrated at start, so a
+	 * subscription that was failing before a restart still reads as failing
+	 * (and is not announced a second time).
+	 */
+	private seedFailureStreaks(): void {
+		try {
+			this.failureStreaks.seed(this.activityLog.getAll(), (sessionId) =>
+				this.failureAlertThresholdFor(sessionId)
+			);
+		} catch (err) {
+			captureException(err, { operation: 'cue:failureStreakSeed' });
+		}
+	}
+
 	private hydrateActivityLogFromDb(): void {
 		try {
 			const records = getRecentCueEvents(0, 1000);

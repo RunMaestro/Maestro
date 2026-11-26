@@ -181,6 +181,7 @@ export function toSessionStatus(params: {
 	subscriptionCount: number;
 	activeRuns: number;
 	state?: SessionState;
+	failingSubscriptions?: CueSessionStatus['failingSubscriptions'];
 }): CueSessionStatus {
 	return {
 		sessionId: params.sessionId,
@@ -193,5 +194,8 @@ export function toSessionStatus(params: {
 		lastTriggered: params.state?.lastTriggered,
 		nextTrigger: params.state ? getEarliestNextTriggerIso(params.state) : undefined,
 		ownershipWarning: params.state?.ownershipWarning,
+		...(params.failingSubscriptions?.length
+			? { failingSubscriptions: params.failingSubscriptions }
+			: {}),
 	};
 }

@@ -57,4 +57,20 @@ describe('CueIndicator', () => {
 		const wrapper = screen.getByTitle(/Maestro Cue/);
 		expect(wrapper.getAttribute('title')).toBe('Maestro Cue running (3 subscriptions)');
 	});
+
+	it('turns the zap red and says so in the tooltip when subscriptions are failing', () => {
+		render(<CueIndicator subscriptionCount={3} activeRun={false} failingCount={1} />);
+		const zap = screen.getByTestId('icon-zap');
+		expect(zap.getAttribute('data-fill')).toBe('#ef4444');
+		expect(zap).toHaveStyle({ color: '#ef4444' });
+		expect(screen.getByTestId('cue-indicator-failing').getAttribute('title')).toBe(
+			'Maestro Cue: 1 of 3 subscriptions failing - open the Cue dashboard to see which'
+		);
+	});
+
+	it('stays teal when nothing is failing', () => {
+		render(<CueIndicator subscriptionCount={2} activeRun={false} failingCount={0} />);
+		expect(screen.getByTestId('icon-zap').getAttribute('data-fill')).toBe('#2dd4bf');
+		expect(screen.queryByTestId('cue-indicator-failing')).toBeNull();
+	});
 });

@@ -169,6 +169,59 @@ describe('getStatus', () => {
 		expect(result.find((r) => r.sessionId === 'a1')?.enabled).toBe(true);
 		expect(result.find((r) => r.sessionId === 'd1')?.enabled).toBe(false);
 	});
+
+	describe('failingSubscriptions', () => {
+		const streak = (subscriptionName: string, failing: boolean) => ({
+			sessionId: 's1',
+			sessionName: 'Session-s1',
+			subscriptionName,
+			consecutiveFailures: failing ? 5 : 1,
+			firstFailedAt: '2026-11-17T03:00:00.000Z',
+			lastFailedAt: '2026-11-17T04:00:00.000Z',
+			lastStatus: 'failed' as const,
+			alertThreshold: 3,
+			failing,
+		});
+		const sub = (name: string, extra: Partial<CueSubscription> = {}): CueSubscription => ({
+			name,
+			event: 'time.heartbeat',
+			enabled: true,
+			prompt: 'p',
+			interval_minutes: 60,
+			...extra,
+		});
+
+		it('lists only streaks past the threshold for subscriptions the agent still runs', () => {
+			const state = makeState(
+				makeConfig([sub('broken'), sub('flaky'), sub('paused', { enabled: false })])
+			);
+			const svc = createCueQueryService(
+				makeDeps({
+					getAllSessions: () => [makeSession('s1')],
+					getSessionStates: () => new Map([['s1', state]]),
+					getFailureStreaks: () => [
+						streak('broken', true),
+						streak('flaky', false),
+						streak('paused', true),
+						streak('renamed-away', true),
+					],
+				})
+			);
+			const [status] = svc.getStatus();
+			expect(status.failingSubscriptions?.map((f) => f.subscriptionName)).toEqual(['broken']);
+		});
+
+		it('omits the field when nothing is failing', () => {
+			const svc = createCueQueryService(
+				makeDeps({
+					getAllSessions: () => [makeSession('s1')],
+					getSessionStates: () => new Map([['s1', makeState(makeConfig([sub('ok')]))]]),
+					getFailureStreaks: () => [streak('ok', false)],
+				})
+			);
+			expect(svc.getStatus()[0]).not.toHaveProperty('failingSubscriptions');
+		});
+	});
 });
 
 // ─── getGraphData ─────────────────────────────────────────────────────────────

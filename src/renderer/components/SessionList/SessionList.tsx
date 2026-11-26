@@ -403,11 +403,11 @@ function SessionListInner(props: SessionListProps) {
 		return { groups, bookmarkActive, bookmarkGenerating };
 	}, [wizardActiveSessions, sessions]);
 
-	// Cue session status map: sessionId → { count, active }
+	// Cue session status map: sessionId → { count, active, failing }
 	// Always fetched - the indicator shows whenever a .maestro/cue.yaml has subscriptions,
 	// regardless of whether the Cue Encore Feature is enabled (that only gates execution).
 	const [cueSessionMap, setCueSessionMap] = useState<
-		Map<string, { count: number; active: boolean }>
+		Map<string, { count: number; active: boolean; failing: number }>
 	>(new Map());
 	useEffect(() => {
 		let mounted = true;
@@ -416,12 +416,13 @@ function SessionListInner(props: SessionListProps) {
 			try {
 				const statuses = await cueService.getStatus();
 				if (!mounted) return;
-				const map = new Map<string, { count: number; active: boolean }>();
+				const map = new Map<string, { count: number; active: boolean; failing: number }>();
 				for (const s of statuses) {
 					if (s.subscriptionCount > 0) {
 						map.set(s.sessionId, {
 							count: s.subscriptionCount,
 							active: s.activeRuns > 0,
+							failing: s.enabled ? (s.failingSubscriptions?.length ?? 0) : 0,
 						});
 					}
 				}
@@ -433,7 +434,13 @@ function SessionListInner(props: SessionListProps) {
 					if (prev.size !== map.size) return map;
 					for (const [id, next] of map) {
 						const cur = prev.get(id);
-						if (!cur || cur.count !== next.count || cur.active !== next.active) return map;
+						if (
+							!cur ||
+							cur.count !== next.count ||
+							cur.active !== next.active ||
+							cur.failing !== next.failing
+						)
+							return map;
 					}
 					return prev;
 				});
@@ -1380,6 +1387,7 @@ function SessionListInner(props: SessionListProps) {
 					jumpNumber={getSessionJumpNumber(session.id)}
 					cueSubscriptionCount={cueSessionMap.get(session.id)?.count}
 					cueActiveRun={cueSessionMap.get(session.id)?.active}
+					cueFailingCount={cueSessionMap.get(session.id)?.failing}
 					wizardActive={wizardActiveSessions.has(session.id)}
 					wizardGeneratingDocs={!!wizardActiveSessions.get(session.id)?.isGeneratingDocs}
 					worktreeChildCount={worktreeChildren.length}
@@ -1439,6 +1447,7 @@ function SessionListInner(props: SessionListProps) {
 										jumpNumber={getSessionJumpNumber(child.id)}
 										cueSubscriptionCount={cueSessionMap.get(child.id)?.count}
 										cueActiveRun={cueSessionMap.get(child.id)?.active}
+										cueFailingCount={cueSessionMap.get(child.id)?.failing}
 										wizardActive={wizardActiveSessions.has(child.id)}
 										wizardGeneratingDocs={!!wizardActiveSessions.get(child.id)?.isGeneratingDocs}
 										otherWindowNumber={windowCtx?.getSessionWindow(child.id)?.windowNumber}

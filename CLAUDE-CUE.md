@@ -309,6 +309,7 @@ Hot-path callers (`recordTriggerFired`, `recordRunCompleted`) MUST be non-throwi
 - `cue-webhook-server.ts` - one process-wide local HTTP listener serving every `webhook.received` subscription; no port is opened when none exist.
 - `cue-susfactor.ts` - 0DIN.ai SusFactor prompt-injection pre-check on attacker-controllable GitHub text; blocked runs land in `cue_susfactor_blocks`.
 - `cue-notify-executor.ts` + `cue-notify-bridge.ts` - `action: notify` toasts over `remote:notifyToast`.
+- `cue-failure-streak.ts` - consecutive failed runs per (agent, subscription), fed from `onRunCompleted` and re-seeded from the hydrated activity log on start; emits `subscriptionFailing` (at `settings.failure_alert_threshold`, default 3, and once more at 10x) and `subscriptionRecovered`, which `src/main/index.ts` toasts. Surfaces as `CueSessionStatus.failingSubscriptions` and `cue list --json` `health` / `failureStreak`. Rules live in `src/shared/cue/failure-streak.ts`.
 - `cue-self-destruct.ts` - removes a finished `time.once` subscription from `cue.yaml` (`removeSubscriptionFromYaml`, called from `onRunCompleted`).
 - `stats/cue-stats-query.ts`, `stats/cue-token-accessor.ts` - dashboard stats, agent-agnostic token attribution, and the History read path (`getCueHistoryEntries`).
 - `backup/cue-backup-manager.ts` - zip snapshots and restore of every workspace's `cue.yaml` plus `.maestro/prompts/*.md`.

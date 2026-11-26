@@ -3853,4 +3853,171 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 	});
+
+	describe('failure streak alerts', () => {
+		const triggerConfig = (settings?: Partial<CueConfig['settings']>) =>
+			createMockConfig({
+				subscriptions: [
+					{ name: 'sms-poll', event: 'cli.trigger', enabled: true, prompt: 'Poll SMS' },
+				],
+				...(settings
+					? {
+							settings: {
+								timeout_minutes: 30,
+								timeout_on_fail: 'break',
+								max_concurrent: 1,
+								queue_size: 10,
+								...settings,
+							},
+						}
+					: {}),
+			});
+
+		/** onCueRun that returns the next queued status for each run. */
+		function scriptedRuns(statuses: CueRunResult['status'][]) {
+			return vi.fn(async (request: Parameters<CueEngineDeps['onCueRun']>[0]) => {
+				const status = statuses.shift() ?? 'completed';
+				return {
+					runId: request.runId,
+					sessionId: 'session-1',
+					sessionName: 'Test Session',
+					subscriptionName: request.subscriptionName,
+					event: request.event,
+					status,
+					stdout: '',
+					stderr: status === 'completed' ? '' : 'Claude Code trust prompt: No, exit',
+					exitCode: status === 'completed' ? 0 : 1,
+					durationMs: 10,
+					startedAt: new Date().toISOString(),
+					endedAt: new Date().toISOString(),
+				} satisfies CueRunResult;
+			});
+		}
+
+		async function runTimes(engine: CueEngine, n: number) {
+			for (let i = 0; i < n; i++) {
+				engine.triggerSubscription('sms-poll');
+				await vi.advanceTimersByTimeAsync(10);
+			}
+		}
+
+		function streakPayloads(deps: CueEngineDeps, type: string) {
+			return (deps.onLog as ReturnType<typeof vi.fn>).mock.calls
+				.map((c) => c[2] as { type?: string } | undefined)
+				.filter((p): p is Record<string, unknown> & { type: string } => p?.type === type);
+		}
+
+		it('alerts once when a subscription fails the threshold number of runs in a row', async () => {
+			mockLoadCueConfig.mockReturnValue(triggerConfig());
+			const deps = createMockDeps({ onCueRun: scriptedRuns(Array(5).fill('failed')) });
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			await runTimes(engine, 2);
+			expect(streakPayloads(deps, 'subscriptionFailing')).toHaveLength(0);
+			expect(engine.getStatus()[0].failingSubscriptions).toBeUndefined();
+
+			await runTimes(engine, 3);
+			const alerts = streakPayloads(deps, 'subscriptionFailing');
+			expect(alerts).toHaveLength(1);
+			expect(alerts[0]).toMatchObject({
+				sessionId: 'session-1',
+				sessionName: 'Test Session',
+				subscriptionName: 'sms-poll',
+				consecutiveFailures: 3,
+				threshold: 3,
+				escalated: false,
+				lastError: 'Claude Code trust prompt: No, exit',
+			});
+
+			const failing = engine.getStatus()[0].failingSubscriptions;
+			expect(failing).toHaveLength(1);
+			expect(failing![0]).toMatchObject({ subscriptionName: 'sms-poll', consecutiveFailures: 5 });
+
+			engine.stop();
+		});
+
+		it('escalates once at ten times the threshold and then stays quiet', async () => {
+			mockLoadCueConfig.mockReturnValue(triggerConfig({ failure_alert_threshold: 2 }));
+			const deps = createMockDeps({ onCueRun: scriptedRuns(Array(25).fill('timeout')) });
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			await runTimes(engine, 25);
+			const alerts = streakPayloads(deps, 'subscriptionFailing');
+			expect(alerts.map((a) => [a.consecutiveFailures, a.escalated])).toEqual([
+				[2, false],
+				[20, true],
+			]);
+
+			engine.stop();
+		});
+
+		it('clears the failing state and announces recovery when a run succeeds', async () => {
+			mockLoadCueConfig.mockReturnValue(triggerConfig());
+			const deps = createMockDeps({
+				onCueRun: scriptedRuns(['failed', 'failed', 'failed', 'failed', 'completed', 'failed']),
+			});
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			await runTimes(engine, 4);
+			expect(engine.getStatus()[0].failingSubscriptions).toHaveLength(1);
+
+			await runTimes(engine, 1);
+			expect(engine.getStatus()[0].failingSubscriptions).toBeUndefined();
+			expect(engine.getFailureStreaks()).toEqual([]);
+			const recovered = streakPayloads(deps, 'subscriptionRecovered');
+			expect(recovered).toHaveLength(1);
+			expect(recovered[0]).toMatchObject({ subscriptionName: 'sms-poll', consecutiveFailures: 4 });
+
+			// The next failure starts a fresh streak, below the threshold again.
+			await runTimes(engine, 1);
+			expect(engine.getFailureStreaks()[0]).toMatchObject({
+				consecutiveFailures: 1,
+				failing: false,
+			});
+
+			engine.stop();
+		});
+
+		it('never alerts when failure_alert_threshold is 0, but still counts', async () => {
+			mockLoadCueConfig.mockReturnValue(triggerConfig({ failure_alert_threshold: 0 }));
+			const deps = createMockDeps({ onCueRun: scriptedRuns(Array(4).fill('failed')) });
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			await runTimes(engine, 4);
+			expect(streakPayloads(deps, 'subscriptionFailing')).toHaveLength(0);
+			expect(engine.getStatus()[0].failingSubscriptions).toBeUndefined();
+			expect(engine.getFailureStreaks()[0]).toMatchObject({ consecutiveFailures: 4 });
+
+			engine.stop();
+		});
+
+		it('forgets the streaks of a removed session', async () => {
+			mockLoadCueConfig.mockReturnValue(triggerConfig());
+			const deps = createMockDeps({ onCueRun: scriptedRuns(Array(3).fill('failed')) });
+			const engine = new CueEngine(deps);
+			engine.start();
+			await runTimes(engine, 3);
+			expect(engine.getFailureStreaks()).toHaveLength(1);
+
+			engine.removeSession('session-1');
+			expect(engine.getFailureStreaks()).toEqual([]);
+			engine.stop();
+		});
+
+		it('forgets streaks when the engine stops', async () => {
+			mockLoadCueConfig.mockReturnValue(triggerConfig());
+			const deps = createMockDeps({ onCueRun: scriptedRuns(Array(3).fill('failed')) });
+			const engine = new CueEngine(deps);
+			engine.start();
+			await runTimes(engine, 3);
+			expect(engine.getFailureStreaks()).toHaveLength(1);
+
+			engine.stop();
+			expect(engine.getFailureStreaks()).toEqual([]);
+		});
+	});
 });
