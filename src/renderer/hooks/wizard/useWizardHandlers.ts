@@ -250,9 +250,13 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		const session = selectActiveSession(s);
 		return session?.toolType === 'codex' ? undefined : session?.agentCommands;
 	});
+	// The agent's own vars pick its account (CODEX_HOME, CLAUDE_CONFIG_DIR), so
+	// discovery runs with them, on this machine or on the remote.
 	const activeCodexEnv = useSessionStore((s) => {
 		const session = selectActiveSession(s);
-		return session?.toolType === 'codex' ? session.customEnvVars : undefined;
+		return session?.toolType === 'codex' || session?.toolType === 'claude-code'
+			? session.customEnvVars
+			: undefined;
 	});
 	const codexShellEnv = useSettingsStore((s) =>
 		activeToolType === 'codex' ? s.shellEnvVars : undefined
@@ -437,7 +441,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					currentSession.cwd,
 					currentSession.customPath,
 					activeSshRemoteId,
-					...(currentSession.toolType === 'codex' && currentSession.customEnvVars !== undefined
+					...((currentSession.toolType === 'codex' || currentSession.toolType === 'claude-code') &&
+					currentSession.customEnvVars !== undefined
 						? [currentSession.customEnvVars]
 						: [])
 				);

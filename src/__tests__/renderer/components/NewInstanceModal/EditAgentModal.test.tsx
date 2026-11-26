@@ -2706,6 +2706,51 @@ describe('EditAgentModal', () => {
 			expect(results.hosted.saved).toEqual(results.ssh.saved);
 		});
 
+		it('keeps History sharing on, in both fields, when the agent moves to a remote', async () => {
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockResolvedValue({
+				success: true,
+				configs: [
+					{
+						id: 'r1',
+						name: 'Dev Server',
+						host: 'dev.example.com',
+						port: 22,
+						username: 'devuser',
+						privateKeyPath: '/path/to/key',
+						enabled: true,
+					},
+				],
+			});
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={createModeSession('local', {
+						id: 'session-123',
+						name: 'My Agent',
+						sessionSshRemoteConfig: {
+							enabled: false,
+							remoteId: null,
+							shareHistoryToProjectDir: true,
+						},
+					})}
+					existingSessions={[]}
+				/>
+			);
+			const dropdown = (await screen.findByDisplayValue('Local Execution')) as HTMLSelectElement;
+			fireEvent.change(dropdown, { target: { value: 'r1' } });
+			fireEvent.click(screen.getByText('Save Changes'));
+			expect(onSave.mock.calls.at(-1)?.[11]).toEqual(
+				expect.objectContaining({
+					enabled: true,
+					syncHistory: true,
+					shareHistoryToProjectDir: true,
+				})
+			);
+		});
+
 		it.each(AGENT_MODES)(
 			'offers one History sharing toggle with the same words for a %s agent',
 			async (mode) => {

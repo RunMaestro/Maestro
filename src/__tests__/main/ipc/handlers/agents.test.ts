@@ -9,8 +9,10 @@ import path from 'path';
 import { ipcMain } from 'electron';
 import {
 	registerAgentsHandlers,
+	clearRemoteCodexCommandCache,
 	AgentsHandlerDependencies,
 } from '../../../../main/ipc/handlers/agents';
+import { clearClaudeSlashCommandCache } from '../../../../main/agents/claude-slash-command-probe';
 import * as agentCapabilities from '../../../../main/agents';
 import { discoverCodexSkills } from '../../../../main/agents/codex-skills';
 import { makeGrokCommandObservation } from '../../../fixtures/grok-command-observation';
@@ -204,6 +206,8 @@ describe('agents IPC handlers', () => {
 
 		// Register handlers
 		registerAgentsHandlers(deps);
+		clearRemoteCodexCommandCache();
+		clearClaudeSlashCommandCache();
 	});
 
 	afterEach(() => {
@@ -817,6 +821,18 @@ describe('agents IPC handlers', () => {
 					command: 'type',
 					args: ['-a', '-p', 'codex'],
 				});
+			});
+
+			it('bounds the installation list with a timeout that ends ssh itself', async () => {
+				remoteAnswers('/home/dev/.local/bin/codex\n', { exitCode: 0, stdout: '' });
+				await handlers.get('agents:get')!({} as any, 'codex', 'remote-1');
+
+				expect(execFileNoThrow).toHaveBeenCalledWith(
+					'ssh',
+					['type', '-a', '-p', 'codex'],
+					undefined,
+					{ timeout: 10000 }
+				);
 			});
 
 			it('offers no list when the remote has one installation or the list fails', async () => {
@@ -3110,6 +3126,48 @@ describe('agents IPC handlers', () => {
 				}
 				expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
 				expect(fs.existsSync).not.toHaveBeenCalled();
+			});
+
+			it("probes Claude with the agent's own account vars", async () => {
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout:
+						JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['/x'] }) + '\n',
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:discoverSlashCommands');
+				await handler!({} as any, 'claude-code', '/srv/acct', undefined, 'remote-1', {
+					CLAUDE_CONFIG_DIR: '~/.claude-work',
+				});
+
+				expect(buildSshCommand).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'remote-1' }),
+					expect.objectContaining({
+						cwd: '/srv/acct',
+						env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '~/.claude-work' }),
+					})
+				);
+			});
+
+			it('asks a remote Codex once per window, and again after an unreachable answer', async () => {
+				clearRemoteCodexCommandCache();
+				vi.mocked(execFileNoThrow).mockResolvedValue({ exitCode: 2, stdout: '', stderr: '' });
+				const handler = handlers.get('agents:discoverSlashCommands');
+
+				// Unreachable: Codex never answered, so nothing is kept.
+				vi.mocked(discoverCodexSkills).mockRejectedValueOnce(new Error('ssh: connect failed'));
+				expect(await handler!({} as any, 'codex', '/srv/cache', undefined, 'remote-1')).toEqual([]);
+				vi.mocked(discoverCodexSkills).mockResolvedValueOnce([{ name: 's', prompt: '$s' }]);
+				expect(await handler!({} as any, 'codex', '/srv/cache', undefined, 'remote-1')).toEqual([
+					{ name: 's', prompt: '$s' },
+				]);
+				const calls = vi.mocked(discoverCodexSkills).mock.calls.length;
+				// The answer Codex gave is kept: switching back does not ask again.
+				expect(await handler!({} as any, 'codex', '/srv/cache', undefined, 'remote-1')).toEqual([
+					{ name: 's', prompt: '$s' },
+				]);
+				expect(vi.mocked(discoverCodexSkills).mock.calls.length).toBe(calls);
 			});
 
 			it('gives no list, and runs nothing here, when the remote is unknown', async () => {

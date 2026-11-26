@@ -15,7 +15,7 @@ import type { Theme } from '../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { formatSshTarget } from '../../../shared/formatters';
 import { isWebDesktop } from '../../utils/runtimeContext';
-import { sharesHistoryInProject, withHistorySharedInProject } from '../../utils/sessionHelpers';
+import { sharesHistoryInProject, withHistorySharedInProject } from '../../../shared/historySharing';
 
 export interface SshRemoteSelectorProps {
 	theme: Theme;
@@ -108,25 +108,31 @@ function SshRemoteDropdown({
 					onChange={(e) => {
 						const value = e.target.value;
 						if (value === 'local') {
-							// Run locally. Preserve workingDirOverride and shareHistoryToProjectDir
-							// so toggling the dropdown doesn't silently wipe the
-							// "remote-controlled" flag (which is independent of SSH enablement).
-							onSshRemoteConfigChange({
-								enabled: false,
-								remoteId: null,
-								workingDirOverride: sshRemoteConfig?.workingDirOverride,
-								syncHistory: sshRemoteConfig?.syncHistory,
-								shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
-							});
+							// Run locally. Preserve workingDirOverride and History sharing, so
+							// changing where the agent runs never silently wipes the setting;
+							// both of its stored fields carry the one value.
+							onSshRemoteConfigChange(
+								withHistorySharedInProject(
+									{
+										enabled: false,
+										remoteId: null,
+										workingDirOverride: sshRemoteConfig?.workingDirOverride,
+									},
+									sharesHistoryInProject(sshRemoteConfig)
+								)
+							);
 						} else {
-							// Use specific remote. Preserve sibling fields for the same reason.
-							onSshRemoteConfigChange({
-								enabled: true,
-								remoteId: value,
-								workingDirOverride: sshRemoteConfig?.workingDirOverride,
-								syncHistory: sshRemoteConfig?.syncHistory ?? false,
-								shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
-							});
+							// Use a specific remote. Preserve the same fields for the same reason.
+							onSshRemoteConfigChange(
+								withHistorySharedInProject(
+									{
+										enabled: true,
+										remoteId: value,
+										workingDirOverride: sshRemoteConfig?.workingDirOverride,
+									},
+									sharesHistoryInProject(sshRemoteConfig)
+								)
+							);
 						}
 					}}
 					onClick={(e) => e.stopPropagation()}

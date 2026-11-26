@@ -201,6 +201,28 @@ describe('probeClaudeSlashCommandsRemoteCached', () => {
 		expect(execSshCommand).toHaveBeenCalledTimes(2);
 	});
 
+	it("probes with the agent's own account, and keeps one list per account", async () => {
+		vi.mocked(execSshCommand).mockImplementation(async (_config, command) => ({
+			stdout: initLine([`/${(command as { args: string[] }).args.length}`]),
+			stderr: '',
+			exitCode: 0,
+		}));
+
+		await probeClaudeSlashCommandsRemoteCached(remote('box'), 'claude', '/srv/p', {
+			CLAUDE_CONFIG_DIR: '~/.claude-work',
+		});
+		await probeClaudeSlashCommandsRemoteCached(remote('box'), 'claude', '/srv/p', {
+			CLAUDE_CONFIG_DIR: '~/.claude-home',
+		});
+		expect(buildSshCommand).toHaveBeenNthCalledWith(
+			1,
+			expect.anything(),
+			expect.objectContaining({ env: { FOO: '1', CLAUDE_CONFIG_DIR: '~/.claude-work' } })
+		);
+		// Two accounts on one remote: two probes, never a shared list.
+		expect(execSshCommand).toHaveBeenCalledTimes(2);
+	});
+
 	it('gives no list for an unreachable remote and asks again next time', async () => {
 		vi.mocked(execSshCommand).mockResolvedValue({ stdout: '', stderr: 'timed out', exitCode: 255 });
 

@@ -30,7 +30,7 @@ import type {
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { pickDirectory, usePathPickerStore } from '../../services/pathPicker';
 import { validateEditSession } from '../../utils/sessionValidation';
-import { sharesHistoryInProject } from '../../utils/sessionHelpers';
+import { sharesHistoryInProject } from '../../../shared/historySharing';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';

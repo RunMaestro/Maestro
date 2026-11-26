@@ -432,7 +432,10 @@ describe('useWizardHandlers', () => {
 									next.cwd,
 									next.customPath,
 									undefined,
-									...(toolType === 'codex' ? [next.customEnvVars] : []),
+									// The agent's own vars pick its account for Codex and Claude.
+									...(toolType === 'codex' || toolType === 'claude-code'
+										? [next.customEnvVars]
+										: []),
 								],
 							];
 				expect(discover.mock.calls).toEqual(expectedCalls);

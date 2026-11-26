@@ -24,6 +24,8 @@ import { execFileNoThrow, type ExecResult } from '../utils/execFile';
 import { buildSshCommand, execSshCommand } from '../utils/ssh-command-builder';
 import { stripAnsi } from '../utils/stripAnsi';
 import { logger } from '../utils/logger';
+import { createTtlPromiseCache } from '../utils/ttl-promise-cache';
+import { canonicalJson } from '../../shared/canonicalJson';
 
 const LOG_CONTEXT = '[ClaudeSlashCommands]';
 
@@ -79,19 +81,21 @@ const REMOTE_PROBE_TIMEOUT_MS = 30_000;
 /**
  * {@link probeClaudeSlashCommands} on an SSH remote: `binary` (the agent's
  * custom path there, or the provider's binary name) runs in `cwd` on the
- * remote, with the remote's own environment.
+ * remote, with the remote's environment and then `env`, the agent's own vars.
  */
 export async function probeClaudeSlashCommandsRemote(
 	sshRemote: SshRemoteConfig,
 	binary: string,
-	cwd: string
+	cwd: string,
+	env: Record<string, string> = {}
 ): Promise<string[] | null> {
 	return runProbe(async (args) => {
 		const sshCommand = await buildSshCommand(sshRemote, {
 			command: binary,
 			args: [...args, '--', '/help'],
 			cwd,
-			env: sshRemote.remoteEnv,
+			// The agent's own vars (its `CLAUDE_CONFIG_DIR` account) over the remote's.
+			env: { ...sshRemote.remoteEnv, ...env },
 		});
 		const result = await execSshCommand(sshRemote, sshCommand, {
 			timeout: REMOTE_PROBE_TIMEOUT_MS,
@@ -120,12 +124,8 @@ async function runProbe(run: (args: string[]) => Promise<ExecResult>): Promise<s
 	return commands;
 }
 
-interface CacheEntry {
-	at: number;
-	commands: Promise<string[] | null>;
-}
-
-const cache = new Map<string, CacheEntry>();
+/** One probe per key in the window; a failed probe (null) is not kept. */
+const cache = createTtlPromiseCache<string[] | null>(CACHE_TTL_MS, (found) => found !== null);
 
 /**
  * {@link probeClaudeSlashCommands}, at most once per binary, folder, and config
@@ -139,38 +139,25 @@ export function probeClaudeSlashCommandsCached(
 	env: NodeJS.ProcessEnv
 ): Promise<string[] | null> {
 	const key = [commandPath, cwd, env.CLAUDE_CONFIG_DIR ?? ''].join('\0');
-	const now = Date.now();
-	const hit = cache.get(key);
-	if (hit && now - hit.at < CACHE_TTL_MS) return hit.commands;
-	const commands = probeClaudeSlashCommands(commandPath, cwd, env).then((found) => {
-		if (!found) cache.delete(key);
-		return found;
-	});
-	cache.set(key, { at: now, commands });
-	return commands;
+	return cache.get(key, () => probeClaudeSlashCommands(commandPath, cwd, env));
 }
 
 /**
- * {@link probeClaudeSlashCommandsRemote}, at most once per remote, binary, and
- * folder in {@link CACHE_TTL_MS}, so opening an SSH agent does not start an SSH
+ * {@link probeClaudeSlashCommandsRemote}, at most once per remote, binary,
+ * folder, and agent env in {@link CACHE_TTL_MS}, so opening an SSH agent does not start an SSH
  * round trip each time. Keyed by the remote's id: two remotes never share a
  * list. A failed probe is not cached.
  */
 export function probeClaudeSlashCommandsRemoteCached(
 	sshRemote: SshRemoteConfig,
 	binary: string,
-	cwd: string
+	cwd: string,
+	env: Record<string, string> = {}
 ): Promise<string[] | null> {
-	const key = ['ssh', sshRemote.id, binary, cwd].join('\0');
-	const now = Date.now();
-	const hit = cache.get(key);
-	if (hit && now - hit.at < CACHE_TTL_MS) return hit.commands;
-	const commands = probeClaudeSlashCommandsRemote(sshRemote, binary, cwd).then((found) => {
-		if (!found) cache.delete(key);
-		return found;
-	});
-	cache.set(key, { at: now, commands });
-	return commands;
+	// The account is part of the key: two agents on one remote with different
+	// config dirs see their own commands.
+	const key = ['ssh', sshRemote.id, binary, cwd, canonicalJson(env)].join('\0');
+	return cache.get(key, () => probeClaudeSlashCommandsRemote(sshRemote, binary, cwd, env));
 }
 
 /** For tests: forget every cached probe. */

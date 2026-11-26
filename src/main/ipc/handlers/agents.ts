@@ -55,6 +55,7 @@ import {
 import { stripAnsi } from '../../utils/stripAnsi';
 import { readDirRemote, readFileRemote } from '../../utils/remote-fs';
 import { stripBlankEnvVars } from '../../../shared/agentEnvironment';
+import { createTtlPromiseCache } from '../../utils/ttl-promise-cache';
 import {
 	discoverAgentModels,
 	discoverModelsRemote,
@@ -483,12 +484,42 @@ function remoteCodexCommandFiles(cwd: string, remote: CodexSkillsRemote): CodexC
 	};
 }
 
+/** What Codex discovery found, and whether Codex itself answered (its skills/list). */
+interface CodexDiscovery {
+	commands: DiscoveredCommand[];
+	authoritative: boolean;
+}
+
+/**
+ * Remote Codex command lists, kept as long as a Claude probe's (30 minutes).
+ * An empty list is kept only when Codex itself said so: an unreachable remote
+ * also reads as empty, and must be asked again next time.
+ */
+const remoteCodexCommandCache = createTtlPromiseCache<CodexDiscovery>(
+	30 * 60 * 1000,
+	(found) => found.authoritative || found.commands.length > 0
+);
+
+/** For tests: forget every cached remote Codex command list. */
+export function clearRemoteCodexCommandCache(): void {
+	remoteCodexCommandCache.clear();
+}
+
 async function discoverCodexSlashCommands(
 	cwd: string,
 	command: string,
 	env: NodeJS.ProcessEnv,
 	remote?: CodexSkillsRemote
 ): Promise<DiscoveredCommand[]> {
+	return (await discoverCodexCommands(cwd, command, env, remote)).commands;
+}
+
+async function discoverCodexCommands(
+	cwd: string,
+	command: string,
+	env: NodeJS.ProcessEnv,
+	remote?: CodexSkillsRemote
+): Promise<CodexDiscovery> {
 	const commands = new Map<string, DiscoveredCommand>();
 	const files = remote ? remoteCodexCommandFiles(cwd, remote) : localCodexCommandFiles(cwd, env);
 	let nativeSkillsAvailable = false;
@@ -562,7 +593,7 @@ async function discoverCodexSlashCommands(
 
 	const commandList = Array.from(commands.values());
 	logger.info(`Discovered ${commandList.length} Codex slash commands`, LOG_CONTEXT);
-	return commandList;
+	return { commands: commandList, authoritative: nativeSkillsAvailable };
 }
 
 /**
@@ -666,9 +697,11 @@ async function detectAllBinaryPathsRemote(
 		const timeout = new Promise<never>((_, reject) => {
 			timer = setTimeout(() => reject(new Error('timed out')), TIMEOUT_MS);
 		});
-		const result = await Promise.race([execSshCommand(sshRemote, sshCommand), timeout]).finally(
-			() => clearTimeout(timer)
-		);
+		// The exec timeout ends ssh itself; the race only bounds the wait.
+		const result = await Promise.race([
+			execSshCommand(sshRemote, sshCommand, { timeout: TIMEOUT_MS }),
+			timeout,
+		]).finally(() => clearTimeout(timer));
 		if (result.exitCode !== 0) return undefined;
 		const found = stripAnsi(result.stdout)
 			.split('\n')
@@ -2015,8 +2048,18 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
 					// The agent's custom path is a path on the remote; else the remote's PATH finds it.
 					const binary = customPath || agentDef?.binaryName || agentId;
+					// The agent's own vars (its account: CLAUDE_CONFIG_DIR, CODEX_HOME), as its turns get.
+					const providerEnv = agentConfigsStore.get('configs', {})[agentId]?.customEnvVars;
+					const remoteEnv = stripBlankEnvVars(
+						effectiveAgentCustomEnvVars(customEnvVars, providerEnv)
+					);
 					if (agentId === 'claude-code') {
-						const names = await probeClaudeSlashCommandsRemoteCached(sshRemote, binary, cwd);
+						const names = await probeClaudeSlashCommandsRemoteCached(
+							sshRemote,
+							binary,
+							cwd,
+							remoteEnv
+						);
 						if (!names) return null;
 						logger.info(
 							`Discovered ${names.length} slash commands for ${agentId} on ${sshRemote.name}`,
@@ -2024,14 +2067,16 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						);
 						return names.map((name: string) => ({ name }));
 					}
-					const providerEnv = agentConfigsStore.get('configs', {}).codex?.customEnvVars;
-					const remoteEnv = stripBlankEnvVars(
-						effectiveAgentCustomEnvVars(customEnvVars, providerEnv)
+					// Cached per remote, binary, folder, and env: an agent switch must not
+					// start `codex app-server` over SSH again. A failure is not kept.
+					const key = ['ssh', sshRemote.id, binary, cwd, canonicalJson(remoteEnv)].join('\0');
+					const found = await remoteCodexCommandCache.get(key, () =>
+						discoverCodexCommands(cwd, binary, process.env, {
+							config: sshRemote,
+							env: remoteEnv,
+						})
 					);
-					return discoverCodexSlashCommands(cwd, binary, process.env, {
-						config: sshRemote,
-						env: remoteEnv,
-					});
+					return found.commands;
 				}
 
 				const agent = await agentDetector.getAgent(agentId);
@@ -2087,8 +2132,21 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					}
 
 					// The init message of a `/help` probe names every command; see
-					// claude-slash-command-probe.ts.
-					const names = await probeClaudeSlashCommands(commandPath, cwd);
+					// claude-slash-command-probe.ts. An agent with its own vars (its
+					// CLAUDE_CONFIG_DIR account) probes with them, as on a remote.
+					const agentEnv = stripBlankEnvVars(
+						effectiveAgentCustomEnvVars(
+							customEnvVars,
+							agentConfigsStore.get('configs', {})['claude-code']?.customEnvVars
+						)
+					);
+					const names = Object.keys(agentEnv).length
+						? await probeClaudeSlashCommands(
+								commandPath,
+								cwd,
+								buildChildProcessEnv(agentEnv, false, settingsStore?.get('shellEnvVars', {}))
+							)
+						: await probeClaudeSlashCommands(commandPath, cwd);
 					if (!names) return null;
 					logger.info(`Discovered ${names.length} slash commands for ${agentId}`, LOG_CONTEXT);
 					// Description enrichment is best-effort: a permission/IO
