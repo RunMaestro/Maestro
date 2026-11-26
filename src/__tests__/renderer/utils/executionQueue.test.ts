@@ -597,6 +597,27 @@ describe('applyQueuedItemEdit', () => {
 		expect(next[0].type).toBe('message');
 		expect(next[0].command).toBeUndefined();
 	});
+
+	// A queued `/plan auth` edited to plain text still ran `/plan`: the drain reads the command first.
+	it('turns a command edited into ordinary text back into a message', () => {
+		const queue: QueuedItem[] = [
+			{
+				...item('a'),
+				type: 'command',
+				text: undefined,
+				command: '/plan',
+				commandArgs: 'auth',
+				commandDescription: 'Plan it',
+			},
+		];
+
+		const next = applyQueuedItemEdit(queue, 'a', { ...patch(), text: 'Explain the design' });
+
+		expect(next[0]).toMatchObject({ type: 'message', text: 'Explain the design' });
+		expect(next[0].command).toBeUndefined();
+		expect(next[0].commandArgs).toBeUndefined();
+		expect(next[0].commandDescription).toBeUndefined();
+	});
 });
 
 // ============================================================================

@@ -41,6 +41,7 @@ import {
 } from '../stores/sessionStore';
 import type { AITab, Session } from '../types';
 import { mirrorTab } from '../utils/peerMirrorView';
+import { appendBlockToDraft } from '../utils/quoteSelection';
 import { setActiveTab } from '../utils/tabHelpers';
 import {
 	actOnMirroredAgent,
@@ -231,9 +232,13 @@ export async function startHostedConversation(
 	);
 	if (receipt) return tabId;
 	// The host opened the tab but refused its first turn (the refusal is already a toast). Keep
-	// the prompt as the tab's draft, so the context is not lost and Enter sends it again.
+	// the prompt as the tab's draft, so the context is not lost and Enter sends it again. Text the
+	// person typed while the send was pending stays too, after the prompt.
 	const prompt = start.prompt;
-	updateAiTab(session.id, tabId, (current) => ({ ...current, inputValue: prompt }));
+	updateAiTab(session.id, tabId, (current) => ({
+		...current,
+		inputValue: appendBlockToDraft(prompt, current.inputValue ?? ''),
+	}));
 	return null;
 }
 

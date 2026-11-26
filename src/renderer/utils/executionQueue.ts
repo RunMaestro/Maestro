@@ -89,7 +89,18 @@ export function applyQueuedItemEdit(
 			turnSettings: patch.turnSettings,
 			...(crossAgent ?? {}),
 		};
-		if (!slashCommand) return edited;
+		if (!slashCommand) {
+			if (edited.type !== 'command') return edited;
+			// A command edited into ordinary text is a message again: the drain reads `command`
+			// before `text`, so a stale command would run in place of what the user typed.
+			return {
+				...edited,
+				type: 'message',
+				command: undefined,
+				commandArgs: undefined,
+				commandDescription: undefined,
+			};
+		}
 		return {
 			...edited,
 			type: 'command',

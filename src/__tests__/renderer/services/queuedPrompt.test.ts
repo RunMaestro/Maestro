@@ -887,6 +887,15 @@ describe('settled queue actions (maestro-cli queue, a hosted card reaching its h
 		expect(await runAll()).toEqual([false, null, false, false, false]);
 	});
 
+	it('reports the message the host merged into, not the one this machine saw above', async () => {
+		seedMode('hosted');
+		mergeMirrorQueuedItem.mockResolvedValueOnce('q0' as never);
+		expect(await mergeQueuedItemIntoAboveSettled('session-1', 'q2')).toBe('q0');
+		// A host that merged but named no target: the message above here is the answer.
+		mergeMirrorQueuedItem.mockResolvedValueOnce(true);
+		expect(await mergeQueuedItemIntoAboveSettled('session-1', 'q2')).toBe('q1');
+	});
+
 	it('fails with the reason when the host does not answer', async () => {
 		seedMode('hosted');
 		editMirrorQueuedItem.mockResolvedValueOnce(null);
@@ -1175,6 +1184,16 @@ describe('matchQueuedSlashCommand', () => {
 			command: '/commit',
 			commandArgs: 'and tag it',
 		});
+	});
+
+	it('splits at a tab or a newline as well as a space, as buildQueuedMessageItem does', () => {
+		const session = seed();
+		for (const text of ['/commit\tand tag it', '/commit\nand tag it']) {
+			expect(matchQueuedSlashCommand(session, text), JSON.stringify(text)).toMatchObject({
+				command: '/commit',
+				commandArgs: 'and tag it',
+			});
+		}
 	});
 
 	it('matches an agent-discovered command only when it carries a prompt', () => {

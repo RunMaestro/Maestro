@@ -243,6 +243,13 @@ export async function setMirrorQueuedItemPaused(
 }
 
 /**
+ * What a host said to a Merge: the id of the message it folded into (the host picks the one
+ * above in its own order, which can differ from the one this machine saw), `true` when it merged
+ * but named no target, `false` it refused, `null` it did not answer.
+ */
+export type HostMergeAnswer = string | boolean | null;
+
+/**
  * Fold a waiting message into the one above it on its host (the queued card's Merge). The host's
  * queue update redraws both cards; a message that no longer waits is a notice, not a red toast.
  */
@@ -250,7 +257,7 @@ export async function mergeMirrorQueuedItem(
 	peerId: string,
 	agentId: string,
 	itemId: string
-): Promise<HostQueueAnswer> {
+): Promise<HostMergeAnswer> {
 	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'merge-queued', itemId });
 	if (result?.kind !== 'merge-queued') return null;
 	if (!result.merged) {
@@ -259,8 +266,9 @@ export async function mergeMirrorQueuedItem(
 			title: 'Messages not merged',
 			message: 'They no longer both wait on the host: one may have started already.',
 		});
+		return false;
 	}
-	return result.merged;
+	return result.mergedIntoId || true;
 }
 
 /**

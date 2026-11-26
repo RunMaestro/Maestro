@@ -25,6 +25,7 @@ import type { AITab, QueuedItem, QueuedItemEditPatch, Session } from '../types';
 import { selectSessionById, useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { hostedTargetOf } from './hostedTurns';
 import {
+	type HostMergeAnswer,
 	type HostQueueAnswer,
 	editMirrorQueuedItem,
 	mergeMirrorQueuedItem,
@@ -393,14 +394,16 @@ type HostQueueTarget = NonNullable<ReturnType<typeof hostQueuedItemTarget>>;
  * host's queue update redraw it; a script must not be told "done" before the host has spoken. A
  * host that did not answer is an error, not a miss, so the caller gets the reason.
  */
-async function settledHostAnswer(answer: Promise<HostQueueAnswer>): Promise<boolean> {
+async function settledHostAnswer<T extends HostQueueAnswer | HostMergeAnswer>(
+	answer: Promise<T>
+): Promise<Exclude<T, null>> {
 	const result = await answer;
 	if (result === null) {
 		throw new Error(
 			"The agent's host did not answer. It may be offline: check the agent in Maestro."
 		);
 	}
-	return result;
+	return result as Exclude<T, null>;
 }
 
 /**
@@ -564,14 +567,17 @@ export async function mergeQueuedItemIntoAboveSettled(
 	if (!hosted) return mergeQueuedItemIntoAbove(sessionId, itemId);
 	const merge = mergeOnHost(hosted, itemId);
 	if (!merge) return null;
-	return (await settledHostAnswer(merge.answer)) ? merge.targetId : null;
+	// The host names the message it merged into; the one this machine saw above is the fallback.
+	const answer = await settledHostAnswer(merge.answer);
+	if (typeof answer === 'string') return answer;
+	return answer ? merge.targetId : null;
 }
 
 /** The host merges by the same rule, so the message it folds into is the one above in its order. */
 function mergeOnHost(
 	hosted: HostQueueTarget,
 	itemId: string
-): { targetId: string; answer: Promise<HostQueueAnswer> } | null {
+): { targetId: string; answer: Promise<HostMergeAnswer> } | null {
 	const above = findQueuedMergeTarget(hosted.hostQueue, itemId);
 	if (!above) return null;
 	return {
@@ -855,9 +861,10 @@ export function matchQueuedSlashCommand(session: Session, text: string): QueuedS
 	if (!commandText.startsWith('/')) return null;
 	const deps = getDispatchDeps();
 	if (!deps) return null;
-	const firstSpace = commandText.indexOf(' ');
-	const command = firstSpace === -1 ? commandText : commandText.slice(0, firstSpace);
-	const commandArgs = firstSpace === -1 ? '' : commandText.slice(firstSpace + 1).trim();
+	// Split at the first whitespace of any kind, as `buildQueuedMessageItem` does.
+	const firstWhitespace = commandText.search(/\s/);
+	const command = firstWhitespace === -1 ? commandText : commandText.slice(0, firstWhitespace);
+	const commandArgs = firstWhitespace === -1 ? '' : commandText.slice(firstWhitespace + 1).trim();
 	const match =
 		deps.customAICommands.find((cmd) => cmd.command === command) ??
 		deps.speckitCommands.find((cmd) => cmd.command === command) ??

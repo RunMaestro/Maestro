@@ -21,7 +21,7 @@ import {
 	starHostedTab,
 } from '../../../renderer/services/hostedTurns';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { updateAiTab, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import {
 	createMirroredPeer,
@@ -327,6 +327,29 @@ describe('hostedTurns', () => {
 		expect(tabId).toBeNull();
 		const forked = useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === 't-fork');
 		expect(forked?.inputValue).toBe('# Forked Conversation');
+	});
+
+	it('keeps a draft typed while the refused first turn was pending, after the prompt', async () => {
+		hydrateHost();
+		const session = row();
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		act$
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'new-tab', tabId: 't-fork' } })
+			.mockResolvedValueOnce({ ok: true, result: { kind: 'rename-tab', tabId: 't-fork' } })
+			.mockImplementationOnce(async () => {
+				// The person types in the new tab before the host answers.
+				updateAiTab(session.id, 't-fork', (tab) => ({ ...tab, inputValue: 'and also this' }));
+				return { ok: false, error: 'Not connected to peer "box".' };
+			});
+		await act(async () => {
+			await startHostedConversation(session, {
+				afterTabId: 't1',
+				name: 'Forked: Docs',
+				prompt: '# Forked Conversation',
+			});
+		});
+		const forked = useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === 't-fork');
+		expect(forked?.inputValue).toBe('# Forked Conversation\n\nand also this\n\n');
 	});
 
 	it('starts no conversation for an agent that is not hosted', async () => {
