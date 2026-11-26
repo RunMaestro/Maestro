@@ -1051,6 +1051,14 @@ export class WebServer {
 		// bundle (copied there by its vite publicDir), so webAssetsPath points at
 		// that bundle root. The bundle's own JS/CSS assets are served separately
 		// at /<token>/desktop/assets/ (see below).
+		//
+		// Both fastifyStatic roots below MUST stay outside app.asar: the
+		// package.json `asarUnpack` entry `dist/web-desktop/**/*` ships them as
+		// real files. fastifyStatic streams with fs.open, and Electron answers an
+		// fs.open inside app.asar by copying the file to a temp file in $TMPDIR
+		// and caching that path for the life of the process. macOS purges
+		// untouched $TMPDIR files after a few days, so every asset then 500s
+		// with ENOENT until restart (issue #2155).
 		if (this.webAssetsPath) {
 			const iconsPath = path.join(this.webAssetsPath, 'icons');
 			if (existsSync(iconsPath)) {
