@@ -86,9 +86,47 @@ function byTime(local: readonly LogEntry[], host: readonly LogEntry[]): LogEntry
 	return out;
 }
 
+/** Sources whose arrival proves the agent got the message: its answer streaming in. */
+const ANSWER_SOURCES = new Set<LogEntry['source']>(['stdout', 'ai']);
+
+/**
+ * The host's user entries with "Message delivered" set by the rule a local tab follows: a local
+ * send marks its message delivered when the agent's first output for it arrives
+ * (`markDelivered()` on the first data chunk), not when the turn starts, so the tick never shows
+ * on a message the agent has not answered. The host records `delivered` when its turn starts;
+ * here the tick waits, as a local one does, for an answer entry after the message (and before the
+ * next one). Only entries in `fromHost` are judged; one written here keeps its own flag. An entry
+ * whose flag is already right is kept as is.
+ */
+function withAnswerDelivery(entries: LogEntry[], fromHost: ReadonlySet<string>): LogEntry[] {
+	let out: LogEntry[] | undefined;
+	let pendingUser = -1;
+	let answered = false;
+	const settle = () => {
+		if (pendingUser === -1) return;
+		const entry = entries[pendingUser];
+		if (fromHost.has(entry.id) && !!entry.delivered !== answered) {
+			out ??= [...entries];
+			out[pendingUser] = { ...entry, delivered: answered };
+		}
+	};
+	entries.forEach((entry, i) => {
+		if (entry.source === 'user') {
+			settle();
+			pendingUser = i;
+			answered = false;
+		} else if (ANSWER_SOURCES.has(entry.source)) {
+			answered = true;
+		}
+	});
+	settle();
+	return out ?? entries;
+}
+
 /**
  * A tab's transcript with the host's folded in. `persisted` undefined (never read) keeps the local
- * entries; the live tail still shows. Returns `local` itself when nothing changed.
+ * entries; the live tail still shows. Returns `local` itself when nothing changed. A host user
+ * entry shows "Message delivered" when the agent's answer to it arrived (`withAnswerDelivery()`).
  */
 export function mergeHostedLogs(
 	local: LogEntry[],
@@ -106,14 +144,17 @@ export function mergeHostedLogs(
 		seen.add(record.id);
 		live.push({ ...mirrorLogEntry(record), hostLive: true });
 	}
-	const next = [...byTime(older, hostEntries), ...live];
+	const fromHost = new Set([...hostIds, ...live.map((entry) => entry.id)]);
+	const next = withAnswerDelivery([...byTime(older, hostEntries), ...live], fromHost);
 	if (sameIds(next, local)) {
-		// Same entries in the same order: keep the old array unless a live entry's text moved on.
+		// Same entries in the same order: keep the old array unless a live entry's text moved on,
+		// or a message's delivered tick did.
 		const liveChanged = live.some((entry, i) => {
 			const prior = local[older.length + hostEntries.length + i];
 			return prior?.text !== entry.text || prior?.metadata !== entry.metadata;
 		});
-		if (!liveChanged) return local;
+		const tickChanged = next.some((entry, i) => !!entry.delivered !== !!local[i].delivered);
+		if (!liveChanged && !tickChanged) return local;
 	}
 	return next;
 }
