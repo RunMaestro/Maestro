@@ -33,6 +33,8 @@ import type { AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem, Session, UnifiedTabRef } from '../types';
 import { mirrorLogEntry, mirrorQueuedItem, mirrorTab, mirrorUsageStats } from './peerMirrorView';
 import { isAiTabHidden } from './unifiedTabOrderUtils';
+import { normalizeTabGroups } from './panelLayout';
+import { closeTab } from './tabHelpers';
 
 /** One tab's transcript as the mirror holds it (`MirrorTranscriptSlot`, the fields read here). */
 export interface HostedTranscript {
@@ -325,14 +327,29 @@ export function hostRunView<T extends Pick<Session, 'sshRemoteId' | 'sessionSshR
 }
 
 /** `session` with the host's tabs, transcripts, busy state, and queue folded in. */
-export function projectHostedSession(session: Session, input: HostedProjectionInput): Session {
+export function projectHostedSession(incoming: Session, input: HostedProjectionInput): Session {
 	const { agent } = input;
 	const hostTabs = (agent.aiTabs ?? []).filter((tab) => !tab.hidden);
 	const hostById = new Map(hostTabs.map((tab) => [tab.id, tab]));
 	// Every tab the host lists, hidden ones too: a tab it hid is not a tab it closed.
 	const hostListed = new Set((agent.aiTabs ?? []).map((tab) => tab.id));
 	// The hosting these tabs belong to: a mark from an earlier one says nothing about this host.
-	const hostingAt = readLiftedTo(session.liftedTo)?.at;
+	const hostingAt = readLiftedTo(incoming.liftedTo)?.at;
+	// Reported by the host in this hosting and no longer listed: the host closed it (another
+	// client, or a close from here the host took). A record that lists no tabs at all is not
+	// known yet, and closes nothing.
+	const closedOnHost = (tab: AITab) =>
+		Array.isArray(agent.aiTabs) &&
+		hostingAt !== undefined &&
+		tab.hostSeenAt === hostingAt &&
+		!hostListed.has(tab.id);
+	// Close each such tab here as a local close does (`closeTab()`): the closed-tab history keeps
+	// what only this machine holds (a draft, staged images), so Cmd+Shift+T brings it back, and
+	// the strip, the active tab, and the tile groups settle as they do after any close.
+	let session = incoming;
+	for (const tab of incoming.aiTabs) {
+		if (closedOnHost(tab)) session = closeTab(session, tab.id)?.session ?? session;
+	}
 	const logsFor = (tabId: string, local: LogEntry[]): LogEntry[] => {
 		const key = liveTurnKey(agent.id, tabId);
 		const slot = input.transcripts?.[key];
@@ -344,23 +361,19 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 		);
 	};
 
-	let changed = false;
+	let changed = session !== incoming;
 	const localIds = new Set(session.aiTabs.map((tab) => tab.id));
-	// An added agent starts with one blank local tab; once the host has tabs it is only noise.
+	// An added agent starts with one blank local tab; once the host has a tab to show it is only
+	// noise. A tab the host lists (a hidden one too) is the host's, never this placeholder.
 	const isBlankLocalOnly = (tab: AITab) =>
-		!hostById.has(tab.id) &&
+		!hostListed.has(tab.id) &&
 		!tab.agentSessionId &&
 		(tab.logs?.length ?? 0) === 0 &&
 		!tab.inputValue &&
 		(tab.stagedImages?.length ?? 0) === 0;
-	// Reported by the host in this hosting and no longer listed: the host closed it.
-	const closedOnHost = (tab: AITab) =>
-		hostingAt !== undefined && tab.hostSeenAt === hostingAt && !hostListed.has(tab.id);
 	const dropped = new Set(
-		hostListed.size > 0
-			? session.aiTabs
-					.filter((tab) => isBlankLocalOnly(tab) || closedOnHost(tab))
-					.map((tab) => tab.id)
+		hostTabs.length > 0
+			? session.aiTabs.filter((tab) => isBlankLocalOnly(tab)).map((tab) => tab.id)
 			: []
 	);
 
@@ -458,7 +471,7 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 	if (state !== session.state || busySource !== session.busySource) changed = true;
 
 	if (!changed) return session;
-	return {
+	const projected: Session = {
 		...session,
 		aiTabs,
 		activeTabId,
@@ -469,6 +482,8 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 		agentError,
 		agentErrorTabId,
 	};
+	// A tab left the strip: its pane leaves its tile group, as after a local close.
+	return session !== incoming || dropped.size > 0 ? normalizeTabGroups(projected) : projected;
 }
 
 /**
