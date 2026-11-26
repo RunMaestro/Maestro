@@ -280,6 +280,27 @@ describe('ssh-reachability', () => {
 			expect(probe).not.toHaveBeenCalled();
 		});
 
+		it('a host that reconnects and drops again during the ssh probe keeps the newer grace', async () => {
+			let answer!: (outcome: SshProbeOutcome) => void;
+			probe.mockImplementation(() => new Promise<SshProbeOutcome>((resolve) => (answer = resolve)));
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(probe).toHaveBeenCalledTimes(1);
+
+			// While the probe runs: back, then down again.
+			noteHostConnection(report('connected'));
+			noteHostConnection(report('lost'));
+			answer(UP);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(emitted).toEqual([]);
+
+			// The newer drop gets its own full grace before it is raised.
+			probe.mockResolvedValue(UP);
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(emitted).toHaveLength(1);
+			expect(emitted[0]).toMatchObject({ reachable: false, cause: 'host' });
+		});
+
 		it('raises nothing for a host no agent on this machine runs on', async () => {
 			hosts = false;
 			noteHostConnection(report('host-down', 'No Maestro host is running.'));

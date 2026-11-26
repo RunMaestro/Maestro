@@ -372,7 +372,9 @@ async function confirmHostDown(remoteId: string): Promise<void> {
 	// Tell a stopped host from a dead remote. A failed probe raises the SSH outage.
 	await checkSshRemote(remoteId);
 	const still = hostPending.get(remoteId);
-	if (!still) return; // Reconnected while the probe ran.
+	// Reconnected while the probe ran, or reconnected and dropped again: a newer drop keeps its
+	// own grace.
+	if (still !== pending) return;
 	clearHostPending(remoteId);
 	markHostDown(still.report);
 }

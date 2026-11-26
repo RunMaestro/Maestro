@@ -184,7 +184,10 @@ export function agentsOnRemote(sessions: Session[], remoteId: string): Session[]
  * when the host behind it is.
  */
 export function agentsStoppedBy(sessions: Session[], event: SshReachabilityEvent): Session[] {
-	const onRemote = agentsOnRemote(sessions, event.remoteId);
+	// By the remote each agent's work actually runs through, not a stale field naming another.
+	const onRemote = agentsOnRemote(sessions, event.remoteId).filter(
+		(session) => outageScopeOf(session).remoteId === event.remoteId
+	);
 	if (outageCause(event) === 'ssh') return onRemote;
 	return onRemote.filter((session) => outageScopeOf(session).hosted);
 }

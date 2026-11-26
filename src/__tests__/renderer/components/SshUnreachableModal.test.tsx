@@ -285,6 +285,18 @@ describe('SshUnreachableModal', () => {
 			await waitFor(() => expect(checkReachability).toHaveBeenCalledWith('r1'));
 		});
 
+		it('names only the agents whose work runs through the down remote, not a stale field naming it', () => {
+			const stale = createModeSession('ssh', {
+				id: 'stale',
+				name: 'Agent stale',
+				sshRemoteId: 'r2',
+			} as Partial<Session>);
+			look('ssh');
+			recordOutage('r1');
+			render(<SshUnreachableModal theme={mockTheme} sessions={[...agents(), stale]} />);
+			expect(screen.getByText('Agent ssh, Agent hosted')).toBeInTheDocument();
+		});
+
 		it('a dismissed host outage opens again when ssh itself goes down: that is news', () => {
 			look('hosted');
 			recordHostOutage();

@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	handQueuedItemToHost,
+	inHostTabOrder,
 	keepTurnForHost,
 	sendTakenItemToHost,
 } from '../../../renderer/services/hostedQueuedTurn';
@@ -297,5 +298,24 @@ describe('a message sent while the link is down is kept for a retry', () => {
 		// No new host tab, no merged-context update, no send: nothing reached the host.
 		expect(act$).not.toHaveBeenCalled();
 		expect(getRetryEntry(session.id, 't1')).toMatchObject({ heldItemId: 'q1' });
+	});
+
+	it('runs hosted sends of one tab in typed order, so a slower first send still lands first', async () => {
+		const order: string[] = [];
+		let releaseFirst!: () => void;
+		const first = inHostTabOrder('row:t1', async () => {
+			await new Promise<void>((resolve) => (releaseFirst = resolve));
+			order.push('first');
+		});
+		const second = inHostTabOrder('row:t1', async () => {
+			order.push('second');
+		});
+		// Another tab does not wait.
+		await inHostTabOrder('row:t2', async () => {
+			order.push('other tab');
+		});
+		releaseFirst();
+		await Promise.all([first, second]);
+		expect(order).toEqual(['other tab', 'first', 'second']);
 	});
 });

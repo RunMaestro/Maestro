@@ -1842,6 +1842,31 @@ describe('useInputProcessing', () => {
 			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
 		});
 
+		it('Queue Held while an earlier message waits for its retry says so and keeps the draft', async () => {
+			vi.mocked(sendHostedTurn).mockClear();
+			vi.mocked(keepTurnForHost).mockReturnValue(false);
+			mockSetInputValue.mockClear();
+			const session = createMockSession({ liftedTo });
+			const key = `${session.id}:${session.activeTabId}`;
+			useRetryStore.setState({
+				retries: { [key]: { key, sessionId: session.id, tabId: session.activeTabId } as never },
+			});
+			const deps = createDeps({ activeSession: session, inputValue: 'later' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { hold: true });
+			});
+
+			expect(sendHostedTurn).not.toHaveBeenCalled();
+			expect(useNotificationStore.getState().toasts[0]?.message).toContain(
+				'An earlier message on this tab is waiting for the host'
+			);
+			expect(mockSetInputValue).not.toHaveBeenCalledWith('');
+			useRetryStore.setState({ retries: {} });
+			vi.mocked(keepTurnForHost).mockReturnValue(true);
+		});
+
 		it('leaves the draft in place when a message the host could not take is not kept', async () => {
 			vi.mocked(keepTurnForHost).mockClear();
 			vi.mocked(keepTurnForHost).mockReturnValue(false);

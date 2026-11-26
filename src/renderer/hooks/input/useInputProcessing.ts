@@ -69,7 +69,7 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
 import { hostedTargetOf, sendHostedTurn } from '../../services/hostedTurns';
-import { keepTurnForHost } from '../../services/hostedQueuedTurn';
+import { inHostTabOrder, keepTurnForHost } from '../../services/hostedQueuedTurn';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -682,10 +682,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const releaseSubmit = isComposerSubmit
 					? holdComposerSubmit(hostedKey, hostedSubmit)
 					: undefined;
-				let receipt: Awaited<ReturnType<typeof sendHostedTurn>> = null;
+				// Cast so TS does not narrow them to their initial values: the ordered task assigns both.
+				let receipt = null as Awaited<ReturnType<typeof sendHostedTurn>>;
 				// A host that is not connected sends nothing; the message is then kept for an automatic
 				// retry, as an SSH agent's is when its link is down (`keepTurnForHost()`).
-				let kept = false;
+				let kept = false as boolean;
 				const hostedTab = activeSession.aiTabs.find((tab) => tab.id === targetTabId);
 				const keepForHost = (message: string) => {
 					if (!hostedTab || options?.hold === true) return false;
@@ -699,10 +700,21 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					return keepTurnForHost(activeSession.id, item, message);
 				};
 				try {
-					// An earlier message of this tab still waits for its retry: this one waits behind it.
-					if (hostedTab && hasPendingRetry(activeSession.id, hostedTab.id)) {
-						kept = keepForHost('');
-					} else {
+					// One send per tab at a time, so messages reach the host, or are kept, in typed order.
+					await inHostTabOrder(hostedKey, async () => {
+						// An earlier message of this tab still waits for its retry: this one waits behind it.
+						if (hostedTab && hasPendingRetry(activeSession.id, hostedTab.id)) {
+							kept = keepForHost('');
+							if (!kept) {
+								notifyToast({
+									color: 'red',
+									title: 'Message not sent',
+									message:
+										'An earlier message on this tab is waiting for the host to come back. Nothing was sent.',
+								});
+							}
+							return;
+						}
 						let unavailable: string | undefined;
 						receipt = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
 							held: options?.hold === true,
@@ -720,7 +732,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								notifyToast({ color: 'red', title: 'Message not sent', message: unavailable });
 							}
 						}
-					}
+					});
 				} finally {
 					releaseSubmit?.();
 				}

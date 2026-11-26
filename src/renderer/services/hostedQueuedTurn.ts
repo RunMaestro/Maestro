@@ -110,6 +110,28 @@ function hostUnavailableError(session: Session, message: string): AgentError {
 	};
 }
 
+/** Hosted sends per tab, chained so each settles (sent, kept, or refused) before the next starts. */
+const tabSendChains = new Map<string, Promise<void>>();
+
+/**
+ * Run a hosted send for one tab after every earlier one of that tab has settled. A message whose
+ * images take longer to hand over must not lose its place to one typed after it: when the host is
+ * down, the first refusal to land becomes the kept head, so refusals must land in typed order.
+ */
+export function inHostTabOrder<T>(key: string, task: () => Promise<T>): Promise<T> {
+	const prior = tabSendChains.get(key) ?? Promise.resolve();
+	const run = prior.then(task);
+	const tail = run.then(
+		() => undefined,
+		() => undefined
+	);
+	tabSendChains.set(key, tail);
+	void tail.then(() => {
+		if (tabSendChains.get(key) === tail) tabSendChains.delete(key);
+	});
+	return run;
+}
+
 /** Put `item` at the end of this agent's queue, waiting (not held), unless it is already there. */
 function queueBehind(sessionId: string, item: QueuedItem): void {
 	updateSessionWith(sessionId, (session) => {
