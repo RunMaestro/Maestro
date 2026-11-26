@@ -68,6 +68,8 @@ function hostedInput(session: { liftedTo?: unknown }):
 			autoRun: AutoRunBroadcastState | null;
 			/** How the host queue items that last left it left, when the host names that. */
 			queueExits: readonly QueueExit[] | undefined;
+			/** How many whole reads of the host queue the mirror took since its host named exits. */
+			queueReads: number;
 	  }
 	| undefined {
 	const pointer = readLiftedTo(session.liftedTo);
@@ -90,6 +92,7 @@ function hostedInput(session: { liftedTo?: unknown }):
 		},
 		autoRun: peer.autoRuns?.[agent.id] ?? null,
 		queueExits: peer.queueExits?.[agent.id],
+		queueReads: peer.queueReads?.[agent.id] ?? 0,
 		input: {
 			agent,
 			transcripts: mirror.transcripts[pointer.peer],
@@ -244,7 +247,7 @@ export function syncHostedAgents(): void {
 			);
 		}
 		// A consult of a turn the host queued fires as that turn starts.
-		fireHostStartedMentions(next, hosted.queueExits);
+		fireHostStartedMentions(next, hosted.queueExits, Date.now(), hosted.queueReads);
 		// A hand-off armed on a turn the host runs releases when the host's turn ends, with the
 		// answer the host saved: a background tab's transcript is read for it.
 		const slotOf = (tabId: string) =>
@@ -268,7 +271,9 @@ export function syncHostedAgents(): void {
 					return !!slot?.loaded && !slot.stale && !slot.loading && !slot.error;
 				},
 			},
-			hosted.queueExits
+			hosted.queueExits,
+			Date.now(),
+			hosted.queueReads
 		);
 		if (session.id !== activeSessionId || !hosted.connected) continue;
 		const tabId = next.activeTabId;

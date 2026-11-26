@@ -549,6 +549,11 @@ export interface MentionHandoff {
 		 * it): past `HOST_QUEUE_START_GRACE_MS` it counts as removed.
 		 */
 		goneAt?: number;
+		/**
+		 * The mirror's count of whole host-queue reads when it was last seen waiting (or sent). A
+		 * read since then (a reconnect) may have missed its named exit: the tab's state decides.
+		 */
+		readsAtSeen?: number;
 	};
 }
 

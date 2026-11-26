@@ -211,7 +211,9 @@ export function markHandoffSentToHost(
 	tabId: string,
 	receipt: TurnSendReceipt,
 	/** The send boundary when the host took the turn, for a hand-off armed later than that. */
-	boundary?: { afterEntryId: string | undefined }
+	boundary?: { afterEntryId: string | undefined },
+	/** The mirror's count of whole host-queue reads now (`MirroredPeer.queueReads`). */
+	queueReads = 0
 ): void {
 	updateAiTab(sessionId, tabId, (tab) => {
 		if (!tab.pendingMentionHandoff) return tab;
@@ -222,7 +224,9 @@ export function markHandoffSentToHost(
 				...tab.pendingMentionHandoff,
 				hostTurn: {
 					stage: 'sent',
-					...(receipt.status === 'queued' ? { queueItemId: receipt.itemId } : {}),
+					...(receipt.status === 'queued'
+						? { queueItemId: receipt.itemId, readsAtSeen: queueReads }
+						: {}),
 					...(afterEntryId ? { afterEntryId } : {}),
 				},
 			},
@@ -286,10 +290,15 @@ export function hostedHandoffStep(
 	hostQueueItemIds: ReadonlySet<string>,
 	transcriptCurrent = false,
 	hostExits?: readonly QueueExit[],
-	now = Date.now()
+	now = Date.now(),
+	/** The mirror's count of whole reads of this agent's host queue (`MirroredPeer.queueReads`). */
+	hostReads = 0
 ): 'wait' | 'running' | 'read' | 'release' | 'drop' | 'seen-queued' | 'left-queue' {
 	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
 	if (!hostTurn) return 'wait';
+	// A whole read of the host queue since it was last seen waiting (a reconnect) may have missed
+	// its named exit: from here the tab's state decides, as for a host that names none.
+	const readSince = hostReads > (hostTurn.readsAtSeen ?? 0);
 	const queued = hostTurn.stage === 'sent' ? hostTurn.queueItemId : undefined;
 	const exit = queued ? queueExitOf(hostExits, queued) : undefined;
 	if (exit === 'removed') return 'drop';
@@ -303,12 +312,13 @@ export function hostedHandoffStep(
 		return transcriptCurrent ? 'wait' : 'read';
 	}
 	if (hostTurn.queueItemId && hostQueueItemIds.has(hostTurn.queueItemId)) {
-		// The turn ahead is what the tab runs when it is first seen waiting, never overwritten.
-		return hostTurn.seenQueued ? 'wait' : 'seen-queued';
+		// The turn ahead is what the tab runs when it is first seen waiting, never overwritten; a
+		// sighting after a read moves only the read count.
+		return hostTurn.seenQueued && !readSince ? 'wait' : 'seen-queued';
 	}
 	if (queued) {
 		// Named exits: gone without a name, its start (or its first frame) is still coming.
-		if (hostExits) return 'wait';
+		if (hostExits && !readSince) return 'wait';
 		// Inferred: it runs once the tab is busy with a turn that started at another time, soon
 		// after it left the queue. Later than that it was removed: nothing it never ran is handed off.
 		const goneFor = hostTurn.goneAt === undefined ? 0 : now - hostTurn.goneAt;
@@ -403,7 +413,9 @@ export function followHostedHandoffs(
 	} = { read: () => {}, isCurrent: () => false },
 	/** How the host queue items that last left it left, when the host names that. */
 	hostExits?: readonly QueueExit[],
-	now = Date.now()
+	now = Date.now(),
+	/** The mirror's count of whole reads of this agent's host queue. */
+	hostReads = 0
 ): void {
 	armDeferredHostedHandoffs(session.id);
 	if (!session.aiTabs.some((tab) => tab.pendingMentionHandoff?.hostTurn)) return;
@@ -416,7 +428,8 @@ export function followHostedHandoffs(
 			hostQueueItemIds,
 			transcript.isCurrent(tab.id),
 			hostExits,
-			now
+			now,
+			hostReads
 		);
 		if (step === 'running') {
 			updateAiTab(session.id, tab.id, (current) =>
@@ -441,7 +454,12 @@ export function followHostedHandoffs(
 								hostTurn: {
 									...current.pendingMentionHandoff.hostTurn,
 									seenQueued: true,
-									turnStartedAt: current.state === 'busy' ? current.thinkingStartTime : undefined,
+									readsAtSeen: hostReads,
+									turnStartedAt: current.pendingMentionHandoff.hostTurn.seenQueued
+										? current.pendingMentionHandoff.hostTurn.turnStartedAt
+										: current.state === 'busy'
+											? current.thinkingStartTime
+											: undefined,
 								},
 							},
 						}

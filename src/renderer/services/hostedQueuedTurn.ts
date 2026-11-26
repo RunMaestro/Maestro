@@ -331,6 +331,7 @@ function fireMentionsForHostTurn(
 			mention,
 			seenQueued: false,
 			queuedAt: Date.now(),
+			readsAtSeen: ahead.queueReads,
 			...(ahead.busy ? { aheadKnown: true, turnStartedAt: ahead.startedAt } : {}),
 		});
 		return;
@@ -338,6 +339,7 @@ function fireMentionsForHostTurn(
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tabId = item.tabId || session?.activeTabId;
 	if (!session || !tabId) return;
+	const queueReads = hostTurnAhead(sessionId, tabId).queueReads;
 	// A tab holds one hand-off. While one is armed, this one waits (with the send boundary it has
 	// now) until that one released with its own turn's answer, as a local tab's next turn runs
 	// only after its exit released the last one. Neither replaces nor releases the other early.
@@ -351,12 +353,14 @@ function fireMentionsForHostTurn(
 			const current = selectSessionById(sessionId)(useSessionStore.getState());
 			if (!current) return;
 			dispatchCrossAgentMentions(mention, item.text ?? '', current, tabId, item.images);
-			markHandoffSentToHost(sessionId, tabId, receipt, boundary);
+			markHandoffSentToHost(sessionId, tabId, receipt, boundary, queueReads);
 		});
 		return;
 	}
 	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
-	if (mention.routing === 'handoff') markHandoffSentToHost(sessionId, tabId, receipt);
+	if (mention.routing === 'handoff') {
+		markHandoffSentToHost(sessionId, tabId, receipt, undefined, queueReads);
+	}
 }
 
 /**
@@ -394,21 +398,31 @@ const mentionsAwaitingHostStart = new Map<
 		queuedAt: number;
 		/** When the host's queue last showed it (this machine's clock): the time limit runs from here. */
 		lastSeenQueuedAt?: number;
+		/**
+		 * The mirror's count of whole host-queue reads when it was last seen waiting (or at the
+		 * receipt). A read since then may have missed its named exit, so it is judged by the tab.
+		 */
+		readsAtSeen?: number;
 	}
 >();
 
 type AwaitingHostStart = typeof mentionsAwaitingHostStart extends Map<string, infer V> ? V : never;
 
-/** Whether the host's own record of `tabId` reads busy now, and when that turn started. */
-function hostTurnAhead(sessionId: string, tabId: string): { busy: boolean; startedAt?: number } {
+/**
+ * Whether the host's own record of `tabId` reads busy now, and when that turn started; and how
+ * many whole reads of the agent's host queue the mirror has taken (`MirroredPeer.queueReads`).
+ */
+function hostTurnAhead(
+	sessionId: string,
+	tabId: string
+): { busy: boolean; startedAt?: number; queueReads: number } {
 	const target = hostedTargetOf(selectSessionById(sessionId)(useSessionStore.getState()));
+	const peer = target ? usePeerMirrorStore.getState().peers[target.peerId] : undefined;
+	const queueReads = (target && peer?.queueReads?.[target.agentId]) || 0;
 	const host = target?.agent?.aiTabs?.find((tab) => tab.id === tabId);
-	if (!target || host?.state !== 'busy') return { busy: false };
-	const liveTurn =
-		usePeerMirrorStore.getState().peers[target.peerId]?.liveTurns[
-			liveTurnKey(target.agentId, tabId)
-		];
-	return { busy: true, startedAt: hostTabTurnStartedAt(host, liveTurn) };
+	if (!target || host?.state !== 'busy') return { busy: false, queueReads };
+	const liveTurn = peer?.liveTurns[liveTurnKey(target.agentId, tabId)];
+	return { busy: true, startedAt: hostTabTurnStartedAt(host, liveTurn), queueReads };
 }
 
 function awaitHostStart(hostItemId: string, waiting: AwaitingHostStart): void {
@@ -468,7 +482,9 @@ export function dropStoppedHostStartMentions(sessionId: string, tabId?: string):
  * A host that names how each item leaves its queue (`hostExits`, the mirror's `queueExits`) says
  * so in the same message that takes it out: a start fires, a removal is let go, and an item gone
  * from the list without a name is still on its way (its start is in flight), so it waits. Nothing
- * is read from the tab's state.
+ * is read from the tab's state, except after a whole read of the queue since the item was last
+ * seen waiting (`hostReads`, a reconnect): the exit named while this window was not attached is
+ * missing, so that item is judged by the rules below.
  *
  * An older headless host, and a desktop host, name none. Then the item started when it is not in
  * the host's queue and its tab reads busy with a turn that is not the one it was queued behind (the
@@ -485,7 +501,9 @@ export function dropStoppedHostStartMentions(sessionId: string, tabId?: string):
 export function fireHostStartedMentions(
 	session: Session,
 	hostExits?: readonly QueueExit[],
-	now = Date.now()
+	now = Date.now(),
+	/** The mirror's count of whole reads of this agent's host queue (`MirroredPeer.queueReads`). */
+	hostReads = 0
 ): void {
 	if (mentionsAwaitingHostStart.size === 0) return;
 	const hostQueued = new Set(
@@ -504,6 +522,7 @@ export function fireHostStartedMentions(
 			if (hostQueued.has(hostItemId)) {
 				waiting.seenQueued = true;
 				waiting.lastSeenQueuedAt = now;
+				waiting.readsAtSeen = hostReads;
 				if (!waiting.aheadKnown) {
 					waiting.aheadKnown = true;
 					waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
@@ -516,7 +535,9 @@ export function fireHostStartedMentions(
 				continue;
 			}
 			// Named exits: gone without a name, its start (or its first frame) is still coming.
-			if (hostExits) continue;
+			// Unless the queue was read whole since it was last seen waiting (a reconnect): a start
+			// named while this window was not attached never comes, so the tab's state decides.
+			if (hostExits && hostReads <= (waiting.readsAtSeen ?? 0)) continue;
 			// Its turn is one that started at another time than the turn ahead, both in the host's
 			// clock. With no turn ahead known (the tab read idle), the next turn it runs is it.
 			const started =

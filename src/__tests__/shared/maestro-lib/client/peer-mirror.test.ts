@@ -283,6 +283,27 @@ describe('host queues', () => {
 		expect(replacePeerAgents(peer, [agent('a2')], [], 2000).peer.queueExits).toEqual({});
 	});
 
+	it('counts whole reads of a queue whose host names exits, where a named exit can be missed (M18)', () => {
+		let peer = peerWith([agent('a1')]);
+		// Before the host is known to name exits, a read is not a gap.
+		peer = setAgentQueue(peer, 'a1', [waiting('q1')]).peer;
+		expect(peer.queueReads).toBeUndefined();
+		peer = setAgentQueue(peer, 'a1', [waiting('q1')], { namesExits: true }).peer;
+		// A named change is not a read; a read (after a reconnect) is, even of an empty queue.
+		peer = setAgentQueue(peer, 'a1', [], {
+			namesExits: true,
+			exit: { itemId: 'q1', exit: 'removed' },
+		}).peer;
+		expect(peer.queueReads).toBeUndefined();
+		const read = setAgentQueue(peer, 'a1', []);
+		expect(read.peer.queueReads).toEqual({ a1: 1 });
+		expect(read.push).toEqual([{ type: 'agent.queue', agentId: 'a1', items: [] }]);
+		expect(setAgentQueue(read.peer, 'a1', []).peer.queueReads).toEqual({ a1: 2 });
+		expect(
+			applyPeerEvent(read.peer, { type: 'agent.removed', agentId: 'a1' }, ctx()).peer.queueReads
+		).toEqual({});
+	});
+
 	it('a snapshot keeps the queues of agents still there and drops the rest', () => {
 		let peer = peerWith([agent('a1'), agent('a2')]);
 		peer = setAgentQueue(peer, 'a1', [waiting('q1')]).peer;

@@ -1047,6 +1047,20 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 			});
 
+			it('a start named while this window was not attached still consults, once, after the reconnect read (M18)', async () => {
+				const id = `m18-${routing}`;
+				const text = await drainQueued(id, routing);
+				hostSays(id, text, { queued: true, busy: 100 });
+				fireHostStartedMentions(row(), [], Date.now(), 0);
+				// Disconnected: the host starts it, and that named start never reaches this window.
+				// The reconnect reads the queue whole (one read): it lacks the item and names nothing.
+				hostSays(id, text, { queued: false, busy: 200 });
+				fireHostStartedMentions(row(), [], Date.now(), 1);
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				fireHostStartedMentions(row(), [], Date.now(), 1);
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+			});
+
 			it('a host that names its exits: a start still in flight is never taken for a removal (CodeRabbit on #2148)', async () => {
 				const id = `f-${routing}`;
 				const text = await drainQueued(id, routing);
@@ -1129,6 +1143,22 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				followHostedHandoffs(row(), undefined, [started('h-c')]);
 				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
 				releasesWithItsAnswer(text, [started('h-c')]);
+			});
+
+			it('a start named while this window was not attached arms once, after the reconnect read (M18)', async () => {
+				const text = await drainQueued('h-m18', 'handoff');
+				hostSays('h-m18', text, { queued: true, busy: 100 });
+				followHostedHandoffs(row(), undefined, [], Date.now(), 0);
+				hostSays('h-m18', text, { queued: false, busy: 200 });
+				// Without a read since it was seen, a missing item with no name waits for its name...
+				followHostedHandoffs(row(), undefined, [], Date.now(), 0);
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('sent');
+				// ...after the reconnect's read the tab's state decides: its own turn runs.
+				followHostedHandoffs(row(), undefined, [], Date.now(), 1);
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
+				followHostedHandoffs(row(), undefined, [], Date.now(), 1);
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
+				releasesWithItsAnswer(text, []);
 			});
 
 			it('a named start on a tab that still reads idle never releases from a transcript older than it (CodeRabbit on #2148)', async () => {
