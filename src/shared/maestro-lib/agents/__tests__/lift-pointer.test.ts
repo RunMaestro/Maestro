@@ -47,9 +47,10 @@ describe('liftedSendRefusal', () => {
 		expect(reads).toBe(1);
 	});
 
-	it('reads the switch from settings: absent or true is on, false is off', () => {
-		expect(hostedAgentsEnabled(undefined)).toBe(true);
-		expect(hostedAgentsEnabled({})).toBe(true);
+	it('reads the switch from settings: only true is on, absent or false is off (opt-in)', () => {
+		expect(hostedAgentsEnabled(undefined)).toBe(false);
+		expect(hostedAgentsEnabled(null)).toBe(false);
+		expect(hostedAgentsEnabled({})).toBe(false);
 		expect(hostedAgentsEnabled({ federationHostedAgents: true })).toBe(true);
 		expect(hostedAgentsEnabled({ federationHostedAgents: false })).toBe(false);
 	});

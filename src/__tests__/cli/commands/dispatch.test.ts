@@ -39,6 +39,7 @@ import {
 	readSettingValue,
 	readLiveSessions,
 	readGroups,
+	readSettings,
 } from '../../../cli/services/storage';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
@@ -1005,6 +1006,7 @@ describe('dispatch command', () => {
 		});
 
 		it('refuses a lifted agent with AGENT_LIFTED before reaching the desktop', async () => {
+			vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
 			vi.mocked(resolveAgentId).mockReturnValue('lifted-agent');
 			vi.mocked(getSessionById).mockReturnValueOnce({
 				id: 'lifted-agent',

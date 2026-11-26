@@ -25,15 +25,16 @@ export interface LiftedToPointer {
 }
 
 /**
- * The setting that switches hosted agents off on this machine (on by default). Off, a lifted
- * record works as the SSH agent it was: its turns run over SSH from here, nothing is sent to its
- * host, and nothing on the host or in the record changes, so switching it back on restores hosting.
+ * The setting that turns hosted agents on for this machine. Off by default: only an explicit `true`
+ * opts in. Off, a lifted record works as the SSH agent it was: its turns run over SSH from here,
+ * nothing is sent to its host, and nothing on the host or in the record changes, so switching it
+ * on again restores hosting.
  */
 export const HOSTED_AGENTS_SETTING = 'federationHostedAgents';
 
-/** Whether hosted agents are on, from the stored settings (absent means on). */
+/** Whether hosted agents are on, from the stored settings (absent means off: only `true` opts in). */
 export function hostedAgentsEnabled(settings: Record<string, unknown> | undefined | null): boolean {
-	return settings?.[HOSTED_AGENTS_SETTING] !== false;
+	return settings?.[HOSTED_AGENTS_SETTING] === true;
 }
 
 /** The error code a refused send reports (`--json` output and bridge replies). */
