@@ -21,7 +21,27 @@
 import { createHash } from 'crypto';
 import path from 'path';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
-import { fileTimestampSlug } from '../../shared/formatters';
+import { fileTimestampSlug, formatSize } from '../../shared/formatters';
+
+/**
+ * The largest copy written back to its remote file. Each save sends the whole
+ * file over SSH (as base64 on stdin), so a bigger copy is refused, with a
+ * message, instead of tying up the connection.
+ */
+export const REMOTE_COPY_WRITE_BACK_MAX_BYTES = 32 * 1024 * 1024;
+
+/** Why a copy does not save back: it is bigger than the write-back sends. */
+export function remoteCopyTooLargeMessage(maxBytes = REMOTE_COPY_WRITE_BACK_MAX_BYTES): string {
+	return `The file is too large to save back to the remote host (over ${formatSize(maxBytes)})`;
+}
+
+/** `watch()` refuses a copy bigger than the write-back sends; nothing watches it. */
+export class RemoteCopyTooLargeError extends Error {
+	constructor(maxBytes = REMOTE_COPY_WRITE_BACK_MAX_BYTES) {
+		super(remoteCopyTooLargeMessage(maxBytes));
+		this.name = 'RemoteCopyTooLargeError';
+	}
+}
 
 /** What happened to one saved change, for the user to hear about. */
 export type RemoteCopyWriteBackEvent =
@@ -41,8 +61,11 @@ export interface RemoteCopyWriteBackDeps {
 	readLocal(localPath: string): Promise<Buffer>;
 	/** Create a NEW local file (the user's version on a conflict); rejects with EEXIST if it exists. */
 	createLocal(localPath: string, bytes: Buffer): Promise<void>;
-	/** The remote file's bytes now; rejects when the remote cannot be read. */
-	readRemote(remotePath: string, sshRemoteId: string): Promise<Buffer>;
+	/**
+	 * The SHA-256 (hex) of the remote file now, taken on the remote (its bytes
+	 * never cross); `null` when it is gone. Rejects when the remote cannot be read.
+	 */
+	hashRemote(remotePath: string, sshRemoteId: string): Promise<string | null>;
 	/**
 	 * Write the remote file only if it still holds the bytes hashed `expectedSha256`.
 	 * Resolves `changed` (and leaves the remote alone) when it does not; rejects when
@@ -60,6 +83,8 @@ export interface RemoteCopyWriteBackDeps {
 	debounceMs?: number;
 	/** The most copies watched at once; the oldest watch stops first. */
 	maxWatched?: number;
+	/** The largest copy written back (default {@link REMOTE_COPY_WRITE_BACK_MAX_BYTES}). */
+	maxBytes?: number;
 	/** Clock for the kept-version name. */
 	now?: () => Date;
 }
@@ -68,6 +93,8 @@ export interface RemoteCopyWriteBack {
 	/**
 	 * Watch the copy at `localPath` of `remotePath`. A new watch takes the copy's
 	 * bytes now as the baseline: call this right after the copy was fetched.
+	 * Rejects with {@link RemoteCopyTooLargeError} for a copy bigger than the
+	 * write-back sends.
 	 */
 	watch(input: { localPath: string; remotePath: string; sshRemoteId: string }): Promise<void>;
 	/**
@@ -130,6 +157,7 @@ export function keptVersionPath(localPath: string, when: Date, attempt = 1): str
 export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): RemoteCopyWriteBack {
 	const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS;
 	const maxWatched = deps.maxWatched ?? DEFAULT_MAX_WATCHED;
+	const maxBytes = deps.maxBytes ?? REMOTE_COPY_WRITE_BACK_MAX_BYTES;
 	const now = deps.now ?? (() => new Date());
 	/** Local copy path -> its watch. Insertion order is age, for eviction. */
 	const watched = new Map<string, WatchedCopy>();
@@ -176,8 +204,17 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 			if (!local) return;
 			const localHash = hashOf(local);
 			if (localHash === entry.baseline || localHash === entry.kept) return;
+			if (local.length > maxBytes) {
+				deps.notify({
+					kind: 'failed',
+					remotePath,
+					sshRemoteId,
+					message: remoteCopyTooLargeMessage(maxBytes),
+				});
+				return;
+			}
 			// The copy holds what the remote holds (a fresh fetch replaced it): nothing to send.
-			if (hashOf(await deps.readRemote(remotePath, sshRemoteId)) === localHash) {
+			if ((await deps.hashRemote(remotePath, sshRemoteId)) === localHash) {
 				entry.baseline = localHash;
 				return;
 			}
@@ -222,11 +259,13 @@ export function createRemoteCopyWriteBack(deps: RemoteCopyWriteBackDeps): Remote
 					existing.sshRemoteId = sshRemoteId;
 					return;
 				}
+				const fetched = await deps.readLocal(localPath);
+				if (fetched.length > maxBytes) throw new RemoteCopyTooLargeError(maxBytes);
 				const entry: WatchedCopy = {
 					localPath,
 					remotePath,
 					sshRemoteId,
-					baseline: hashOf(await deps.readLocal(localPath)),
+					baseline: hashOf(fetched),
 					kept: null,
 					watcher: { close: () => undefined },
 					timer: null,

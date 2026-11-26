@@ -1576,8 +1576,58 @@ export async function writeFileRemote(
 
 /** Exit status of {@link replaceFileRemoteIfUnchanged}'s script when the remote file is not the expected one. */
 const REPLACE_IF_UNCHANGED_CHANGED = 3;
-/** Exit status of that script when the remote has no SHA-256 tool. */
-const REPLACE_IF_UNCHANGED_NO_HASH = 5;
+/** Exit status of a remote hash script when the remote has no SHA-256 tool. */
+const REMOTE_SHA256_NO_TOOL = 5;
+
+/**
+ * The lines of a remote `/bin/sh` script that define `sum <file>` (the file's
+ * SHA-256 in hex, from `sha256sum` or `shasum`), and exit
+ * {@link REMOTE_SHA256_NO_TOOL} when the host has neither.
+ */
+const REMOTE_SHA256_PRELUDE = [
+	'sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d" " -f1; }',
+	'command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || exit ' +
+		REMOTE_SHA256_NO_TOOL,
+];
+
+function noRemoteSha256Message(filePath: string): string {
+	return `The remote host has no sha256sum or shasum to check ${filePath}`;
+}
+
+/**
+ * The SHA-256 (lowercase hex) of a remote file, taken ON the remote, so the
+ * file's bytes never cross the connection. `null` when there is no regular
+ * file at the path.
+ */
+export async function sha256FileRemote(
+	filePath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string | null>> {
+	const script = [
+		`f=${shellEscapeRemotePath(filePath)}`,
+		...REMOTE_SHA256_PRELUDE,
+		'[ -f "$f" ] || exit 0',
+		'sum "$f"',
+	].join('\n');
+	const result = await execRemoteCommand(sshRemote, `/bin/sh -c ${shellEscape(script)}`, deps);
+	if (result.exitCode === REMOTE_SHA256_NO_TOOL) {
+		return { success: false, error: noRemoteSha256Message(filePath) };
+	}
+	if (result.exitCode !== 0) {
+		const error = result.stderr || `Failed to read file: ${filePath}`;
+		return {
+			success: false,
+			error: error.includes('Permission denied') ? `Permission denied: ${filePath}` : error,
+		};
+	}
+	const digest = result.stdout.trim();
+	if (digest === '') return { success: true, data: null };
+	if (!/^[0-9a-f]{64}$/.test(digest)) {
+		return { success: false, error: `Unexpected hash output for ${filePath}` };
+	}
+	return { success: true, data: digest };
+}
 
 /**
  * Write `content` over a remote file only if the file still holds the bytes
@@ -1612,9 +1662,7 @@ export async function replaceFileRemoteIfUnchanged(
 	const contentSha256 = createHash('sha256').update(content).digest('hex');
 	const script = [
 		`f=${shellEscapeRemotePath(filePath)}`,
-		'sum() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d" " -f1; }',
-		'command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || exit ' +
-			REPLACE_IF_UNCHANGED_NO_HASH,
+		...REMOTE_SHA256_PRELUDE,
 		'tmp=$(mktemp "${TMPDIR:-/tmp}/maestro-write-back.XXXXXX") || exit 1',
 		'trap \'rm -f "$tmp"\' EXIT',
 		'base64 -d > "$tmp" || exit 1',
@@ -1636,11 +1684,8 @@ export async function replaceFileRemoteIfUnchanged(
 	if (result.exitCode === REPLACE_IF_UNCHANGED_CHANGED) {
 		return { success: false, changed: true, error: `The remote file changed: ${filePath}` };
 	}
-	if (result.exitCode === REPLACE_IF_UNCHANGED_NO_HASH) {
-		return {
-			success: false,
-			error: `The remote host has no sha256sum or shasum to check ${filePath} before writing`,
-		};
+	if (result.exitCode === REMOTE_SHA256_NO_TOOL) {
+		return { success: false, error: `${noRemoteSha256Message(filePath)} before writing` };
 	}
 	const error = result.stderr || `Failed to write file: ${filePath}`;
 	return {

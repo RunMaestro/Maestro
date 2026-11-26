@@ -47,7 +47,7 @@ beforeEach(() => {
 		path: '/tmp/maestro-remote-downloads/abc/src',
 		fileCount: 3,
 	});
-	watchRemoteCopy = vi.fn().mockResolvedValue({ path: LOCAL_COPY });
+	watchRemoteCopy = vi.fn().mockResolvedValue({ path: LOCAL_COPY, savesBack: true });
 	openPath = vi.fn().mockResolvedValue(undefined);
 	showItemInFolder = vi.fn().mockResolvedValue(undefined);
 	copyPath = vi.fn().mockResolvedValue({ success: true });
@@ -364,6 +364,20 @@ describe('fetch progress and failure', () => {
 		expect(useCenterFlashStore.getState().active).toMatchObject({
 			message: 'This is a copy of the remote file',
 			detail: 'Changes you save stay on this computer.',
+			color: 'yellow',
+		});
+	});
+
+	it('says why a copy too large to send back stays on this computer', async () => {
+		watchRemoteCopy.mockResolvedValueOnce({
+			path: LOCAL_COPY,
+			savesBack: false,
+			reason: 'The file is too large to save back to the remote host (over 32 MB)',
+		});
+		await openFileInDefaultApp({ path: '/work/report.pdf', sshRemoteId: 'r1' });
+		expect(useCenterFlashStore.getState().active).toMatchObject({
+			detail:
+				'The file is too large to save back to the remote host (over 32 MB). Changes you save stay on this computer.',
 			color: 'yellow',
 		});
 	});

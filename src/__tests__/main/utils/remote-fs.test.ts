@@ -19,6 +19,7 @@ import {
 	directorySizeRemote,
 	writeFileRemote,
 	replaceFileRemoteIfUnchanged,
+	sha256FileRemote,
 	existsRemote,
 	mkdirRemote,
 	compressFolderRemote,
@@ -2619,6 +2620,53 @@ finally:
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Failed to parse du output');
+		});
+	});
+
+	describe('sha256FileRemote', () => {
+		const run = (command: string) => {
+			const out = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+			return { stdout: out.stdout, stderr: out.stderr, exitCode: out.status ?? 1 };
+		};
+		const deps = (): RemoteFsDeps => ({
+			buildSshArgs: vi.fn().mockReturnValue(['host']),
+			execSsh: vi.fn(async (_ssh: string, args: string[]) => run(args.at(-1)!)),
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'hashes the file on the remote, sending nothing back but the digest, and reads a missing file as null',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sha-'));
+				try {
+					const file = path.join(dir, "it's here.md");
+					fs.writeFileSync(file, 'fetched');
+					const remote = deps();
+					const result = await sha256FileRemote(file, baseConfig, remote);
+					expect(result).toEqual({
+						success: true,
+						data: createHash('sha256').update('fetched').digest('hex'),
+					});
+					// No payload on stdin, and none of the file's bytes on stdout.
+					expect((remote.execSsh as any).mock.calls[0][2]).toBeUndefined();
+					await expect(
+						sha256FileRemote(path.join(dir, 'gone.md'), baseConfig, deps())
+					).resolves.toEqual({ success: true, data: null });
+				} finally {
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it('says so when the remote has no hash tool', async () => {
+			const result = await sha256FileRemote(
+				'/srv/a.md',
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 5 })
+			);
+			expect(result).toEqual({
+				success: false,
+				error: 'The remote host has no sha256sum or shasum to check /srv/a.md',
+			});
 		});
 	});
 

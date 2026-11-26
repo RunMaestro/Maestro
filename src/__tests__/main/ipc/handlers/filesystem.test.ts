@@ -122,6 +122,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	compressFolderRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
 	replaceFileRemoteIfUnchanged: vi.fn(),
+	sha256FileRemote: vi.fn(),
 	existsRemote: vi.fn(),
 	readBinaryFileRemoteAsBase64: vi.fn(),
 	listTreeRemote: vi.fn(),
@@ -144,6 +145,10 @@ import {
 	REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES,
 	remoteFolderTooLarge,
 } from '../../../../main/ipc/handlers/filesystem';
+import {
+	REMOTE_COPY_WRITE_BACK_MAX_BYTES,
+	remoteCopyTooLargeMessage,
+} from '../../../../main/utils/remote-copy-write-back';
 import { walkLocalFileTree } from '../../../../main/utils/file-tree-walk';
 import fs from 'fs/promises';
 import { getSshRemoteById } from '../../../../main/stores';
@@ -161,6 +166,7 @@ import {
 	deleteManyRemote,
 	writeFileRemote,
 	replaceFileRemoteIfUnchanged,
+	sha256FileRemote,
 	existsRemote,
 	compressFolderRemote,
 } from '../../../../main/utils/remote-fs';
@@ -285,6 +291,7 @@ describe('filesystem handlers', () => {
 				data: fetched.toString('base64'),
 			} as any);
 			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({ success: true });
+			vi.mocked(sha256FileRemote).mockResolvedValue({ success: true, data: sha(fetched) });
 		});
 
 		afterEach(() => {
@@ -310,8 +317,24 @@ describe('filesystem handlers', () => {
 				'/work/a/notes.md',
 				'r1'
 			);
-			expect(watched.path).toBe(download.path);
+			expect(watched).toEqual({ path: download.path, savesBack: true });
 			expect(chokidarWatchers.map((w) => w.path)).toEqual([download.path]);
+		});
+
+		it('does not watch a copy too large to send back, and says why', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				Buffer.alloc(REMOTE_COPY_WRITE_BACK_MAX_BYTES + 1) as any
+			);
+			const watched = await registeredHandlers.get('fs:watchRemoteCopy')!(
+				{},
+				'/work/a/big.bin',
+				'r1'
+			);
+			expect(watched).toMatchObject({
+				savesBack: false,
+				reason: remoteCopyTooLargeMessage(),
+			});
+			expect(chokidarWatchers).toEqual([]);
 		});
 
 		it('refuses an unknown remote', async () => {
@@ -343,10 +366,10 @@ describe('filesystem handlers', () => {
 			vi.useFakeTimers();
 			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
 			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
-			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+			vi.mocked(sha256FileRemote).mockResolvedValue({
 				success: true,
-				data: Buffer.from('someone else').toString('base64'),
-			} as any);
+				data: sha(Buffer.from('someone else')),
+			});
 			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({
 				success: false,
 				changed: true,

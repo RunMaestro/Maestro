@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import {
 	createRemoteCopyWriteBack,
 	keptVersionPath,
+	RemoteCopyTooLargeError,
+	remoteCopyTooLargeMessage,
 	type RemoteCopyWriteBackEvent,
 } from '../../../main/utils/remote-copy-write-back';
 
@@ -34,7 +36,7 @@ let writeRemote: Mock<
 >;
 let close: Mock<() => void>;
 
-function service(overrides: { maxWatched?: number } = {}) {
+function service(overrides: { maxWatched?: number; maxBytes?: number } = {}) {
 	return createRemoteCopyWriteBack({
 		watchFile: (_localPath, handler) => {
 			onChange = handler;
@@ -49,7 +51,8 @@ function service(overrides: { maxWatched?: number } = {}) {
 			if (localFiles.has(localPath)) throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
 			localFiles.set(localPath, bytes);
 		},
-		readRemote: async () => remoteFile,
+		// The remote hashes its own file: its bytes never come here.
+		hashRemote: async () => sha(remoteFile),
 		writeRemote,
 		notify: (event) => events.push(event),
 		debounceMs: 50,
@@ -224,6 +227,30 @@ describe('remote copy write-back', () => {
 		expect(close).toHaveBeenCalledTimes(1);
 		writeBack.dispose();
 		expect(close).toHaveBeenCalledTimes(2);
+	});
+
+	it('refuses to watch a copy too large to send back', async () => {
+		const writeBack = service({ maxBytes: 4 });
+		await expect(
+			writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' })
+		).rejects.toBeInstanceOf(RemoteCopyTooLargeError);
+		expect(onChange).toBeNull();
+	});
+
+	it('says a save that grew past the cap is too large to save back, and sends nothing', async () => {
+		const writeBack = service({ maxBytes: 8 });
+		await writeBack.watch({ localPath: LOCAL, remotePath: REMOTE, sshRemoteId: 'r1' });
+		await saveCopy(writeBack, 'far too long to send');
+		expect(writeRemote).not.toHaveBeenCalled();
+		expect(events).toEqual([
+			{
+				kind: 'failed',
+				remotePath: REMOTE,
+				sshRemoteId: 'r1',
+				message: remoteCopyTooLargeMessage(8),
+			},
+		]);
+		expect(localFiles.get(LOCAL)?.toString()).toBe('far too long to send');
 	});
 
 	it('names the kept version beside the copy', () => {

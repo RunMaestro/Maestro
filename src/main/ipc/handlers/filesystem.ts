@@ -63,15 +63,17 @@ import {
 	countItemsRemote,
 	compressFolderRemote,
 	listTreeRemote,
+	sha256FileRemote,
 	type ListTreeOptions,
 } from '../../utils/remote-fs';
-import type { SshRemoteConfig } from '../../../shared/types';
+import type { RemoteCopyWatchResult, SshRemoteConfig } from '../../../shared/types';
 import { resolveDirentType } from '../../utils/dirent-utils';
 import { walkLocalFileTree } from '../../utils/file-tree-walk';
 import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
 import {
 	createRemoteCopyWriteBack,
+	RemoteCopyTooLargeError,
 	type RemoteCopyWriteBack,
 	type RemoteCopyWriteBackEvent,
 } from '../../utils/remote-copy-write-back';
@@ -641,8 +643,11 @@ function createFilesystemWriteBack(safeSend: SafeSendFn | undefined): RemoteCopy
 		readLocal: (localPath) => fs.readFile(localPath),
 		// `wx`: a kept version never replaces an earlier one.
 		createLocal: (localPath, bytes) => fs.writeFile(localPath, bytes, { flag: 'wx' }),
-		readRemote: (remotePath, sshRemoteId) =>
-			readRemoteFileBytes(remotePath, sshConfigOrThrow(sshRemoteId)),
+		hashRemote: async (remotePath, sshRemoteId) => {
+			const result = await sha256FileRemote(remotePath, sshConfigOrThrow(sshRemoteId));
+			if (!result.success) throw new Error(result.error || 'The remote file could not be read');
+			return result.data ?? null;
+		},
 		writeRemote: async (remotePath, bytes, sshRemoteId, expectedSha256) => {
 			const result = await replaceFileRemoteIfUnchanged(
 				remotePath,
@@ -974,13 +979,22 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 	// destination named), and write a change saved in another app back to the
 	// remote file. The copy's path is derived here, never taken from the caller,
 	// so only a fetched copy can be sent to the remote. Call it right after the
-	// fetch: the copy's bytes now are what the remote held.
-	ipcMain.handle('fs:watchRemoteCopy', async (_, remotePath: string, sshRemoteId: string) => {
-		sshConfigOrThrow(sshRemoteId);
-		const localPath = remoteDownloadTempPath(sshRemoteId, remotePath);
-		await writeBack.watch({ localPath, remotePath, sshRemoteId });
-		return { path: localPath };
-	});
+	// fetch: the copy's bytes now are what the remote held. A copy too large to
+	// send back is not watched, and the answer says why, for the flash.
+	ipcMain.handle(
+		'fs:watchRemoteCopy',
+		async (_, remotePath: string, sshRemoteId: string): Promise<RemoteCopyWatchResult> => {
+			sshConfigOrThrow(sshRemoteId);
+			const localPath = remoteDownloadTempPath(sshRemoteId, remotePath);
+			try {
+				await writeBack.watch({ localPath, remotePath, sshRemoteId });
+			} catch (error) {
+				if (!(error instanceof RemoteCopyTooLargeError)) throw error;
+				return { path: localPath, savesBack: false, reason: error.message };
+			}
+			return { path: localPath, savesBack: true };
+		}
+	);
 
 	// Download a remote SSH folder (its whole tree) to a temp folder on this
 	// machine, for actions that must hand a real folder to the OS (the Files

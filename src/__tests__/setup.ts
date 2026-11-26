@@ -377,7 +377,9 @@ const mockMaestro = {
 		getPathForFile: vi.fn((file?: { path?: string }) => file?.path ?? ''),
 		writeFile: vi.fn().mockResolvedValue({ success: true }),
 		// Main watches a fetched remote copy and writes saved changes back.
-		watchRemoteCopy: vi.fn((remotePath: string) => Promise.resolve({ path: remotePath })),
+		watchRemoteCopy: vi.fn((remotePath: string) =>
+			Promise.resolve({ path: remotePath, savesBack: true })
+		),
 		writeImageFile: vi.fn().mockResolvedValue({ success: true }),
 		mkdir: vi.fn().mockResolvedValue({ success: true }),
 		stat: vi.fn().mockResolvedValue({
