@@ -5887,6 +5887,47 @@ describe('useRemoteIntegration', () => {
 		);
 
 		it.each(AGENT_MODES)(
+			'%s: a dispatched follow-up waits behind the consult hold of the turn before it',
+			async (mode) => {
+				const session = {
+					...seed(mode),
+					executionQueue: [
+						{
+							id: 'hold',
+							timestamp: 1,
+							tabId: 'tab-1',
+							type: 'message' as const,
+							text: 'Waiting for Backend to reply before finishing this answer.',
+							awaitingConsult: {
+								pending: [{ targetSessionId: 'backend', targetAgentName: 'Backend' }],
+								replies: [],
+							},
+						},
+					],
+				};
+				useSessionStore.setState({ sessions: [session] });
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				await act(async () => {
+					await onRemoteEnqueueCommandHandler?.(
+						'session-1',
+						'one more thing',
+						'chan',
+						'ai',
+						'tab-1'
+					);
+				});
+
+				const [, answer] = mockProcess.sendRemoteEnqueueCommandResponse.mock.calls[0];
+				expect(answer).toMatchObject({ success: true, tabId: 'tab-1', queued: true });
+				const local = useSessionStore.getState().sessions[0].executionQueue;
+				expect(local.map((item) => item.id)[0]).toBe('hold');
+				expect(local.map((item) => item.text)).toContain('one more thing');
+				expect(hostSends()).toEqual([]);
+			}
+		);
+
+		it.each(AGENT_MODES)(
 			'%s: a new tab with a prompt opens hidden in the background and runs the prompt there',
 			async (mode) => {
 				const session = seed(mode);

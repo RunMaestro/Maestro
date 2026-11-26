@@ -1517,9 +1517,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// runs on this machine (its roster), so the message gets in this machine's line as
 					// for a local agent, and the drain consults as it hands the turn to the host
 					// (`sendTakenItemToHost()`). Never the text alone with the mention dropped.
+					// This machine holds a line for the tab (a consult's hold, a mention waiting its turn):
+					// a plain follow-up waits behind it too, as it does for a local agent.
+					const hostedLocalLine = (session.executionQueue ?? []).some(
+						(queued) => queued.tabId === resolvedTabId && !queued.hostQueued
+					);
 					if (
 						hostedTargetOf(session) &&
-						planCrossAgentMentions(command, sessionId, mentionRouting)
+						(hostedLocalLine || planCrossAgentMentions(command, sessionId, mentionRouting))
 					) {
 						const item: QueuedItem = {
 							...withQueuedTurnOverrides(

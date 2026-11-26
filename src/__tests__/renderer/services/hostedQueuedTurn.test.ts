@@ -417,7 +417,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			),
 		}));
 		followHostedHandoffs(row());
-		expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn).toEqual({ stage: 'running' });
+		expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn).toMatchObject({ stage: 'running' });
 		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 
 		// ...and ends with an answer.
@@ -491,15 +491,34 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				new Set()
 			)
 		).toBe('release');
-		// ...but an idle tab with nothing new since the send is a turn that has not started.
+		// ...but an idle tab with nothing new since the send is a turn that has not started (with a
+		// current transcript), or one whose answer the host has not been read for yet.
+		const notYet = {
+			state: 'idle' as const,
+			logs: answer,
+			pendingMentionHandoff: handoff({ stage: 'sent', afterEntryId: 'a' }),
+		};
+		expect(hostedHandoffStep(notYet, new Set(), true)).toBe('wait');
+		expect(hostedHandoffStep(notYet, new Set(), false)).toBe('read');
+		// A turn that ran but whose answer is not here: read the saved transcript, and release
+		// (the release notes "no answer") only once that transcript is current.
+		const ranNoAnswer = {
+			state: 'idle' as const,
+			logs: answer,
+			pendingMentionHandoff: handoff({ stage: 'running', afterEntryId: 'a' }),
+		};
+		expect(hostedHandoffStep(ranNoAnswer, new Set(), false)).toBe('read');
+		expect(hostedHandoffStep(ranNoAnswer, new Set(), true)).toBe('release');
+		// The queue gate holds through `running`: the turn ahead ending is not this turn ending.
 		expect(
 			hostedHandoffStep(
 				{
 					state: 'idle',
 					logs: answer,
-					pendingMentionHandoff: handoff({ stage: 'sent', afterEntryId: 'a' }),
+					pendingMentionHandoff: handoff({ stage: 'running', queueItemId: 'h9' }),
 				},
-				new Set()
+				new Set(['h9']),
+				true
 			)
 		).toBe('wait');
 		// A local hand-off is released by its process exit, never here.
@@ -532,9 +551,9 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 					: s
 			),
 		}));
-		const readTranscript = vi.fn();
-		followHostedHandoffs(row(), readTranscript);
-		expect(readTranscript).toHaveBeenCalledWith('t1');
+		const read = vi.fn();
+		followHostedHandoffs(row(), { read, isCurrent: () => true });
+		expect(read).toHaveBeenCalledWith('t1');
 		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 		expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
 	});
@@ -597,6 +616,47 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		fireHostStartedMentions(row());
 		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 		expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({ targetSessionId: 'backend' });
+	});
+
+	it('hosted: a queued turn that starts before its queued state is seen still consults', async () => {
+		act$.mockResolvedValue({
+			ok: true,
+			result: {
+				kind: 'send',
+				receipt: { status: 'queued', itemId: 'h8', position: 1, queueLength: 1 },
+			},
+		});
+		seedWithBackend('hosted');
+		// The tab is busy with the turn the message was queued behind.
+		useSessionStore.setState((current) => ({
+			sessions: current.sessions.map((s) =>
+				s.id === 'row'
+					? { ...s, aiTabs: s.aiTabs.map((t) => ({ ...t, state: 'busy', thinkingStartTime: 100 })) }
+					: s
+			),
+		}));
+		await useAgentStore.getState().processQueuedItem(
+			'row',
+			queuedMessage({
+				text: 'look into the cache with @Backend',
+				crossAgentMention: true,
+				mentionRouting: 'parallel',
+			}),
+			drainDeps
+		);
+		await flush();
+		fireHostStartedMentions(row());
+		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+		// The host started it before any queue frame arrived: a new turn on the tab.
+		useSessionStore.setState((current) => ({
+			sessions: current.sessions.map((s) =>
+				s.id === 'row'
+					? { ...s, aiTabs: s.aiTabs.map((t) => ({ ...t, state: 'busy', thinkingStartTime: 200 })) }
+					: s
+			),
+		}));
+		fireHostStartedMentions(row());
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 	});
 
 	it('hosted: a message addressed only at an agent that is gone sends this agent nothing', async () => {

@@ -191,7 +191,18 @@ function fireMentionsForHostTurn(
 	// A turn the host queued behind another is not this agent's turn yet: its consult waits for
 	// it to start (`fireHostStartedMentions()`). A hand-off consults nobody until the turn ends.
 	if (receipt.status === 'queued' && mention.routing !== 'handoff') {
-		mentionsAwaitingHostStart.set(receipt.itemId, { sessionId, item, mention, seenQueued: false });
+		const tabId =
+			item.tabId || selectSessionById(sessionId)(useSessionStore.getState())?.activeTabId;
+		const tab = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
+			(candidate) => candidate.id === tabId
+		);
+		mentionsAwaitingHostStart.set(receipt.itemId, {
+			sessionId,
+			item,
+			mention,
+			seenQueued: false,
+			turnStartedAt: tab?.state === 'busy' ? tab.thinkingStartTime : undefined,
+		});
 		return;
 	}
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
@@ -204,13 +215,21 @@ function fireMentionsForHostTurn(
 /** Consults of turns the host queued, by the host's queue item id, until that item starts. */
 const mentionsAwaitingHostStart = new Map<
 	string,
-	{ sessionId: string; item: QueuedItem; mention: CrossAgentMentionPlan; seenQueued: boolean }
+	{
+		sessionId: string;
+		item: QueuedItem;
+		mention: CrossAgentMentionPlan;
+		seenQueued: boolean;
+		/** When the turn the host queued it behind started (the tab's `thinkingStartTime` then). */
+		turnStartedAt?: number;
+	}
 >();
 
 /**
- * Fire the consults of turns the host queued once they start: the item has left the host's queue
- * (after it was seen there) and its tab reads busy. One that left while the tab is idle was taken
- * out of the host's queue, so nobody is consulted for it.
+ * Fire the consults of turns the host queued once they start: the item is not in the host's queue
+ * and its tab reads busy with a turn that is not the one it was queued behind (it was seen queued,
+ * or the tab's turn started at another time). One seen queued that left while the tab is idle was
+ * taken out of the host's queue, so nobody is consulted for it.
  */
 export function fireHostStartedMentions(session: Session): void {
 	if (mentionsAwaitingHostStart.size === 0) return;
@@ -223,11 +242,16 @@ export function fireHostStartedMentions(session: Session): void {
 			waiting.seenQueued = true;
 			continue;
 		}
-		if (!waiting.seenQueued) continue;
-		mentionsAwaitingHostStart.delete(hostItemId);
 		const tabId = waiting.item.tabId || session.activeTabId;
 		const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
-		if (tab?.state !== 'busy') continue;
+		const started =
+			tab?.state === 'busy' &&
+			(waiting.seenQueued || tab.thinkingStartTime !== waiting.turnStartedAt);
+		if (!started) {
+			if (waiting.seenQueued && tab?.state !== 'busy') mentionsAwaitingHostStart.delete(hostItemId);
+			continue;
+		}
+		mentionsAwaitingHostStart.delete(hostItemId);
 		dispatchCrossAgentMentions(
 			waiting.mention,
 			waiting.item.text ?? '',

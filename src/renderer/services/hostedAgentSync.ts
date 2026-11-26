@@ -131,13 +131,24 @@ export function syncHostedAgents(): void {
 		fireHostStartedMentions(next);
 		// A hand-off armed on a turn the host runs releases when the host's turn ends, with the
 		// answer the host saved: a background tab's transcript is read for it.
-		followHostedHandoffs(next, (tabId) => {
-			if (!hosted.connected) return;
-			const slot =
-				usePeerMirrorStore.getState().transcripts[hosted.peerId]?.[
-					liveTurnKey(hosted.agentId, tabId)
-				];
-			if (!slot?.loading) void readMirrorTranscript(hosted.peerId, hosted.agentId, tabId);
+		const slotOf = (tabId: string) =>
+			usePeerMirrorStore.getState().transcripts[hosted.peerId]?.[
+				liveTurnKey(hosted.agentId, tabId)
+			];
+		followHostedHandoffs(next, {
+			// The rule the shown tab's read follows: never while one is out, never again after one
+			// failed (the next stale mark or reconnect asks again), so a failing host is not polled.
+			read: (tabId) => {
+				const slot = slotOf(tabId);
+				if (!hosted.connected || slot?.loading || slot?.error) return;
+				if (!slot || slot.stale || !slot.loaded) {
+					void readMirrorTranscript(hosted.peerId, hosted.agentId, tabId);
+				}
+			},
+			isCurrent: (tabId) => {
+				const slot = slotOf(tabId);
+				return !!slot?.loaded && !slot.stale && !slot.loading;
+			},
 		});
 		if (session.id !== activeSessionId || !hosted.connected) continue;
 		const tabId = next.activeTabId;

@@ -221,39 +221,49 @@ function entriesAfter(logs: LogEntry[], afterEntryId: string | undefined): LogEn
  * What a hosted tab's armed hand-off does on this sync. A hand-off no host took (`hostTurn`
  * absent) is a local one, released by its process exit: `wait`.
  * - `running`: the tab reads busy with the turn (not while it still waits in the host's queue).
- * - `read`: the turn ended but the tab still draws its streamed entries: read the saved
- *   transcript first, so the answer handed off is the one the host recorded.
- * - `release`: the turn ended and its saved answer is here. A turn so short the tab never read
- *   busy counts once its answer follows the entry the tab ended on when it was sent.
+ * - `read`: the turn ended but its saved answer is not here yet (the tab still draws what the
+ *   turn streamed, or holds nothing after the entry it ended on at send): read the saved
+ *   transcript, so the answer handed off is the one the host recorded.
+ * - `release`: the saved answer is here, or the saved transcript is current (`transcriptCurrent`)
+ *   and the turn left none (the release says so in the transcript). A turn so short the tab never
+ *   read busy counts once its answer follows the entry the tab ended on when it was sent.
  */
 export function hostedHandoffStep(
 	tab: Pick<AITab, 'state' | 'pendingMentionHandoff' | 'logs'>,
-	hostQueueItemIds: ReadonlySet<string>
+	hostQueueItemIds: ReadonlySet<string>,
+	transcriptCurrent = false
 ): 'wait' | 'running' | 'read' | 'release' {
 	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
 	if (!hostTurn) return 'wait';
 	if (hostTurn.queueItemId && hostQueueItemIds.has(hostTurn.queueItemId)) return 'wait';
 	if (tab.state === 'busy') return hostTurn.stage === 'sent' ? 'running' : 'wait';
 	if (tab.logs.some((entry) => entry.hostLive)) return 'read';
-	if (hostTurn.stage === 'running') return 'release';
-	return collectHandoffTurn(entriesAfter(tab.logs, hostTurn.afterEntryId)) ? 'release' : 'wait';
+	if (collectHandoffTurn(entriesAfter(tab.logs, hostTurn.afterEntryId))) return 'release';
+	// Not started yet, or ended between two syncs: a stale transcript is read to tell them apart.
+	if (hostTurn.stage === 'sent') return transcriptCurrent ? 'wait' : 'read';
+	return transcriptCurrent ? 'release' : 'read';
 }
 
 /**
  * Move every hand-off a hosted agent's tabs wait on: a turn its host started, then ended, releases
  * as a local exit does (`releaseMentionHandoff()`), failed when the tab ended on an error.
- * `readTranscript` asks for a tab's saved transcript when the turn's streamed entries still stand.
+ * `transcript` reads a tab's saved transcript when the turn's answer is not here yet.
  */
 export function followHostedHandoffs(
 	session: Session,
-	readTranscript: (tabId: string) => void = () => {}
+	transcript: {
+		/** Ask for the tab's saved transcript (once; a failed read waits for a new trigger). */
+		read: (tabId: string) => void;
+		/** The tab's saved transcript is loaded and nothing marked it stale since. */
+		isCurrent: (tabId: string) => boolean;
+	} = { read: () => {}, isCurrent: () => false }
 ): void {
 	if (!session.aiTabs.some((tab) => tab.pendingMentionHandoff?.hostTurn)) return;
 	const hostQueueItemIds = new Set(
 		(session.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
 	);
 	for (const tab of session.aiTabs) {
-		const step = hostedHandoffStep(tab, hostQueueItemIds);
+		const step = hostedHandoffStep(tab, hostQueueItemIds, transcript.isCurrent(tab.id));
 		if (step === 'running') {
 			updateAiTab(session.id, tab.id, (current) =>
 				current.pendingMentionHandoff?.hostTurn
@@ -261,13 +271,14 @@ export function followHostedHandoffs(
 							...current,
 							pendingMentionHandoff: {
 								...current.pendingMentionHandoff,
-								hostTurn: { stage: 'running' },
+								// The queue gate and the send boundary still hold for this turn.
+								hostTurn: { ...current.pendingMentionHandoff.hostTurn, stage: 'running' },
 							},
 						}
 					: current
 			);
 		} else if (step === 'read') {
-			readTranscript(tab.id);
+			transcript.read(tab.id);
 		} else if (step === 'release') {
 			void releaseMentionHandoff(session.id, tab.id, { failed: !!tab.agentError });
 		}
