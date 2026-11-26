@@ -22,7 +22,6 @@ import type {
 	PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
 import type { QueueSteerResult } from '../../shared/chatSteering';
-import type { RemoteAskerContext } from '../../shared/crossAgentTypes';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
@@ -391,7 +390,7 @@ export async function askMirrorSideQuestion(
 export async function askMirrorConsult(
 	peerId: string,
 	agentId: string,
-	consult: { question: string } & RemoteAskerContext
+	consult: Omit<Extract<PeerAgentAction, { kind: 'consult' }>, 'kind'>
 ): Promise<{ answer: string; agentName?: string } | { error: string }> {
 	const answer = await callMirroredAgentAction(peerId, agentId, { kind: 'consult', ...consult });
 	if (!answer) return { error: 'Federation is not available in this window.' };

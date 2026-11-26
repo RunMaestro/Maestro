@@ -16,6 +16,7 @@
 import type { AgentRecord } from '../store/records';
 import {
 	parseWireAgentName,
+	parseWireAskerKey,
 	parseWireHandoffAnswer,
 	parseWireTranscript,
 } from '../../crossAgentTypes';
@@ -995,6 +996,7 @@ export function createRequestHandler(
 				const transcript = parseWireTranscript(message.transcript);
 				const fromAgentName = parseWireAgentName(message.fromAgentName);
 				const handoffAnswer = parseWireHandoffAnswer(message.handoffAnswer);
+				const askerKey = parseWireAskerKey(message.askerKey);
 				const result = await client.consults.ask({
 					targetAgentId: sessionId(message),
 					question: typeof message.question === 'string' ? message.question : '',
@@ -1003,6 +1005,7 @@ export function createRequestHandler(
 					withContext: message.withContext === true,
 					...(transcript ? { transcript } : {}),
 					...(fromAgentName ? { fromAgentName } : {}),
+					...(askerKey ? { askerKey } : {}),
 					...(num(message.timeoutMs) !== undefined ? { timeoutMs: num(message.timeoutMs) } : {}),
 					...(handoffAnswer !== undefined ? { handoffAnswer } : {}),
 					...(message.sideQuestion === true ? { sideQuestion: true } : {}),

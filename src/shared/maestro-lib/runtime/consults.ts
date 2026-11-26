@@ -34,8 +34,9 @@ import {
 	selectContextWindow,
 } from '../../crossAgentContext';
 import {
-	CROSS_AGENT_ASK_SESSION_ID,
 	CROSS_AGENT_ASK_TAB_ID,
+	parseWireAskerKey,
+	remoteAskerConsultKey,
 	type CrossAgentRequest,
 	type CrossAgentResponseChunk,
 	type CrossAgentTranscriptEntry,
@@ -264,10 +265,11 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		const sourceName = source?.name ?? (input.fromAgentName?.trim() || UNNAMED_ASKER);
 		// Keyed on the CALLING AGENT and a constant tab, never the caller's active tab, so one consult
 		// tab per pairing survives the agent switching tabs and a follow-up resumes the thread (req-D2).
-		const key = {
-			sourceSessionId: source?.id ?? CROSS_AGENT_ASK_SESSION_ID,
-			sourceTabId: CROSS_AGENT_ASK_TAB_ID,
-		};
+		// An asker on another machine is keyed on its own (machine, agent, tab), under a prefix no
+		// agent here has, so it reaches its own consult tab and no other.
+		const key = source
+			? { sourceSessionId: source.id, sourceTabId: CROSS_AGENT_ASK_TAB_ID }
+			: remoteAskerConsultKey(parseWireAskerKey(input.askerKey));
 		const timeoutMs = Math.min(
 			Math.max(input.timeoutMs ?? DEFAULT_TIMEOUT_MS, options.minTimeoutMs ?? MIN_TIMEOUT_MS),
 			MAX_TIMEOUT_MS

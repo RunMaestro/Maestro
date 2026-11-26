@@ -2432,6 +2432,7 @@ class WsMaestroClient implements MaestroClient {
 				withContext: input.withContext === true,
 				...(input.transcript ? { transcript: input.transcript } : {}),
 				...(input.fromAgentName ? { fromAgentName: input.fromAgentName } : {}),
+				...(input.askerKey ? { askerKey: input.askerKey } : {}),
 				timeoutMs,
 				...(input.handoffAnswer !== undefined ? { handoffAnswer: input.handoffAnswer } : {}),
 				...(input.sideQuestion === true ? { sideQuestion: true } : {}),

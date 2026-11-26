@@ -6,14 +6,21 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+	buildRemoteAskerKey,
+	CROSS_AGENT_ASK_SESSION_ID,
+	CROSS_AGENT_ASK_TAB_ID,
 	MAX_WIRE_AGENT_NAME,
+	MAX_WIRE_ASKER_KEY,
 	MAX_WIRE_HANDOFF_ANSWER,
 	MAX_WIRE_TRANSCRIPT_ENTRIES,
 	MAX_WIRE_TRANSCRIPT_SOURCE,
 	MAX_WIRE_TRANSCRIPT_TEXT,
 	parseWireAgentName,
+	parseWireAskerKey,
 	parseWireHandoffAnswer,
 	parseWireTranscript,
+	remoteAskerConsultKey,
+	REMOTE_ASKER_SESSION_PREFIX,
 } from '../../shared/crossAgentTypes';
 
 describe('parseWireTranscript', () => {
@@ -84,5 +91,48 @@ describe('parseWireHandoffAnswer', () => {
 		);
 		expect(parseWireHandoffAnswer(undefined)).toBeUndefined();
 		expect(parseWireHandoffAnswer({ text: 'x' })).toBeUndefined();
+	});
+});
+
+describe('remote asker keys (G2)', () => {
+	it('builds a key a host reads back, from any machine, agent, and tab name', () => {
+		const key = buildRemoteAskerKey({ machine: 'Ped’s Mac', agentId: 'a/b:c', tabId: 'tab 1' });
+		expect(parseWireAskerKey(key)).toBe(key);
+		expect(key.split('/')).toHaveLength(3);
+		// Bounded parts: a key always fits the wire bound.
+		const long = buildRemoteAskerKey({
+			machine: 'm'.repeat(1000),
+			agentId: 'a'.repeat(1000),
+			tabId: 't'.repeat(1000),
+		});
+		expect(long.length).toBeLessThanOrEqual(MAX_WIRE_ASKER_KEY);
+		expect(parseWireAskerKey(long)).toBe(long);
+	});
+
+	it('refuses anything that is not that shape, so no other value names a tab', () => {
+		for (const bad of [
+			undefined,
+			7,
+			'',
+			'responder',
+			'a/b',
+			'a/b/c/d',
+			'a/b c/d',
+			'a/b/c\n',
+			`a/b/${'c'.repeat(MAX_WIRE_ASKER_KEY)}`,
+		]) {
+			expect(parseWireAskerKey(bad)).toBeUndefined();
+		}
+	});
+
+	it('keys a remote asker under a prefix no local agent has, or the shared stand-in without one', () => {
+		expect(remoteAskerConsultKey('m/a/t')).toEqual({
+			sourceSessionId: `${REMOTE_ASKER_SESSION_PREFIX}m/a/t`,
+			sourceTabId: CROSS_AGENT_ASK_TAB_ID,
+		});
+		expect(remoteAskerConsultKey(undefined)).toEqual({
+			sourceSessionId: CROSS_AGENT_ASK_SESSION_ID,
+			sourceTabId: CROSS_AGENT_ASK_TAB_ID,
+		});
 	});
 });

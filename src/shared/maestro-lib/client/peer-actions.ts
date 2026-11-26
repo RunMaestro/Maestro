@@ -20,7 +20,11 @@
 // A send to a busy tab waits in the HOST's execution queue, as it would for a local agent.
 
 import type { QueueSteerResult } from '../../chatSteering';
-import { parseWireTranscript, type RemoteAskerContext } from '../../crossAgentTypes';
+import {
+	buildRemoteAskerKey,
+	parseWireTranscript,
+	type RemoteAskerContext,
+} from '../../crossAgentTypes';
 import { isCodexTransport } from '../../codexTransport';
 import {
 	validateAutoRunLaunch,
@@ -95,9 +99,14 @@ export type PeerAgentAction =
 	 * Consult the host's agent for an agent on this machine (a typed `@mention`, `maestro-cli
 	 * ask`): the host runs the consult in its own hidden consult tab and records it in its History,
 	 * as a consult of a local agent does here. The asker is not on the host, so it sends its own
-	 * windowed context and name (`RemoteAskerContext`).
+	 * windowed context and name (`RemoteAskerContext`). `asker` is the asking agent and tab here:
+	 * with this machine's hostname it becomes the asker key the host keeps one consult tab per.
 	 */
-	| ({ kind: 'consult'; question: string } & RemoteAskerContext)
+	| ({
+			kind: 'consult';
+			question: string;
+			asker?: { agentId: string; tabId: string };
+	  } & Omit<RemoteAskerContext, 'askerKey'>)
 	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
 	| { kind: 'update-agent'; patch: AgentPatch }
 	/** Change one tab's composer settings on the host. */
@@ -323,6 +332,15 @@ export async function runPeerAgentAction(
 				question: action.question,
 				...(action.transcript ? { transcript: action.transcript } : {}),
 				...(action.fromAgentName ? { fromAgentName: action.fromAgentName } : {}),
+				...(action.asker
+					? {
+							askerKey: buildRemoteAskerKey({
+								machine: context.originHost ?? '',
+								agentId: action.asker.agentId,
+								tabId: action.asker.tabId,
+							}),
+						}
+					: {}),
 				...(action.handoffAnswer !== undefined ? { handoffAnswer: action.handoffAnswer } : {}),
 			});
 			return asked.ok
@@ -485,6 +503,14 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 		case 'consult': {
 			if (!nonEmptyString(value.question)) throw new Error('The question is empty.');
 			const transcript = parseWireTranscript(value.transcript);
+			const rawAsker =
+				value.asker && typeof value.asker === 'object'
+					? (value.asker as Record<string, unknown>)
+					: undefined;
+			const asker =
+				rawAsker && nonEmptyString(rawAsker.agentId) && nonEmptyString(rawAsker.tabId)
+					? { agentId: rawAsker.agentId, tabId: rawAsker.tabId }
+					: undefined;
 			return {
 				kind,
 				question: value.question.trim(),
@@ -492,6 +518,7 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				...(nonEmptyString(value.fromAgentName)
 					? { fromAgentName: value.fromAgentName.trim() }
 					: {}),
+				...(asker ? { asker } : {}),
 				...(typeof value.handoffAnswer === 'string' ? { handoffAnswer: value.handoffAnswer } : {}),
 			};
 		}

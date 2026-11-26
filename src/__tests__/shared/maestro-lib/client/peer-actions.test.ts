@@ -11,6 +11,7 @@ import {
 	runPeerAgentAction,
 } from '../../../../shared/maestro-lib/client/peer-actions';
 import type { ClientResult, MaestroClient } from '../../../../shared/maestro-lib/client/types';
+import { buildRemoteAskerKey } from '../../../../shared/crossAgentTypes';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
@@ -350,6 +351,22 @@ describe('runPeerAgentAction', () => {
 		});
 	});
 
+	it('names the asker to the host by (this machine, asking agent, asking tab), for its own consult tab', async () => {
+		const { client, asClient } = fakeClient();
+		client.consults.ask.mockResolvedValue({ ok: true, value: { answer: 'a' } });
+		await runPeerAgentAction(
+			asClient,
+			agent,
+			{ kind: 'consult', question: 'q', asker: { agentId: 'src', tabId: 'tab-1' } },
+			{ originHost: 'laptop' }
+		);
+		expect(client.consults.ask).toHaveBeenCalledWith({
+			targetAgentId: 'a1',
+			question: 'q',
+			askerKey: buildRemoteAskerKey({ machine: 'laptop', agentId: 'src', tabId: 'tab-1' }),
+		});
+	});
+
 	it('edits a waiting message on the host', async () => {
 		const { client, asClient } = fakeClient();
 		const edit = { text: 'new', turnSettings: { model: 'm' } };
@@ -516,6 +533,17 @@ describe('parsePeerAgentAction', () => {
 			kind: 'consult',
 			question: 'how?',
 		});
+		expect(
+			parsePeerAgentAction({
+				kind: 'consult',
+				question: 'how?',
+				asker: { agentId: 'src', tabId: 'tab-1', extra: 1 },
+				askerKey: 'forged/key/here',
+			})
+		).toEqual({ kind: 'consult', question: 'how?', asker: { agentId: 'src', tabId: 'tab-1' } });
+		expect(
+			parsePeerAgentAction({ kind: 'consult', question: 'how?', asker: { agentId: 'src' } })
+		).toEqual({ kind: 'consult', question: 'how?' });
 		expect(
 			parsePeerAgentAction({
 				kind: 'update-agent',

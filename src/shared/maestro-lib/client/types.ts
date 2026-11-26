@@ -804,6 +804,12 @@ export interface ConsultAskInput {
 	transcript?: CrossAgentTranscriptEntry[];
 	/** The asker's display name, for an asker the host does not hold: names the consult tab. */
 	fromAgentName?: string;
+	/**
+	 * For an asker the host does not hold: who it is, as (machine, agent, tab)
+	 * (`buildRemoteAskerKey()`). The host keeps one consult tab per key; without one, every such
+	 * asker shares one.
+	 */
+	askerKey?: string;
 	/** How long to wait for the answer. The host clamps it to 10 seconds through an hour. Default 600000. */
 	timeoutMs?: number;
 	/**

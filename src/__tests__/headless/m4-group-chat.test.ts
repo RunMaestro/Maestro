@@ -21,6 +21,7 @@ import {
 	writeFakeTurn,
 } from '../shared/maestro-lib/run/fakeAgent';
 import { DEFAULT_TAB_DEFAULTS } from '../../shared/maestro-lib/agents/rules';
+import { buildRemoteAskerKey } from '../../shared/crossAgentTypes';
 import type { ClientResult } from '../../shared/maestro-lib/client/types';
 import { runAgentTurn } from '../../shared/maestro-lib/turns/run-agent-turn';
 import {
@@ -247,5 +248,45 @@ describe('M4 end-to-end: headless group chat and consults', () => {
 		} finally {
 			await runtime.connection.close();
 		}
+	});
+
+	// G2: an asker on another machine names itself by (machine, agent, tab). The host keeps one
+	// consult tab per key, as it keeps one per local asker, so a follow-up continues its own
+	// thread; a key it cannot read falls back to the one shared stand-in tab, never another's.
+	it('keeps one consult tab per remote asker key, and none a key can reach outside it', async () => {
+		const sessions = [seedAgent('responder', 'Responder')];
+		const runtime = await startRuntime(sessions);
+		const keyA = buildRemoteAskerKey({ machine: 'laptop', agentId: 'agent-a', tabId: 'tab-1' });
+		const keyB = buildRemoteAskerKey({ machine: 'laptop', agentId: 'agent-a', tabId: 'tab-2' });
+		try {
+			for (const askerKey of [keyA, keyA, keyB, 'responder', undefined]) {
+				await runtime.consults.ask({
+					targetAgentId: 'responder',
+					question: 'What is the answer?',
+					fromAgentName: 'Laptop Agent',
+					...(askerKey ? { askerKey } : {}),
+				});
+			}
+		} finally {
+			await runtime.connection.close();
+		}
+		const stored = JSON.parse(fs.readFileSync(path.join(dir, 'maestro-sessions.json'), 'utf8'));
+		const responder = stored.sessions.find((s: { id: string }) => s.id === 'responder');
+		const consultTabs = responder.aiTabs.filter(
+			(tab: { consultOrigin?: unknown }) => tab.consultOrigin
+		);
+		expect(consultTabs.map((tab: { consultOrigin: unknown }) => tab.consultOrigin)).toEqual([
+			{ sourceSessionId: `remote-asker:${keyA}`, sourceTabId: 'cli-ask' },
+			{ sourceSessionId: `remote-asker:${keyB}`, sourceTabId: 'cli-ask' },
+			// The bare agent id is not a key: it lands in the shared stand-in, not the agent's own tab.
+			{ sourceSessionId: 'cli-ask', sourceTabId: 'cli-ask' },
+		]);
+		// Two questions from the same asker landed in one thread.
+		const userTurns = consultTabs[0].logs.filter(
+			(log: { source: string }) => log.source === 'user'
+		);
+		expect(userTurns).toHaveLength(2);
+		// The agent's own tab is untouched.
+		expect(responder.aiTabs[0].logs).toEqual([]);
 	});
 });

@@ -606,6 +606,7 @@ describe('WebSocketMessageHandler', () => {
 				question: 'q',
 				transcript: [{ source: 'user', text: 'hi', timestamp: 1 }, 'junk'],
 				fromAgentName: ' Laptop Agent ',
+				askerKey: 'laptop/agent-a/tab-1',
 				handoffAnswer: 'the plan',
 			});
 
@@ -614,10 +615,25 @@ describe('WebSocketMessageHandler', () => {
 					expect.objectContaining({
 						transcript: [{ source: 'user', text: 'hi', timestamp: 1 }],
 						fromAgentName: 'Laptop Agent',
+						askerKey: 'laptop/agent-a/tab-1',
 						handoffAnswer: 'the plan',
 					})
 				);
 			});
+		});
+
+		it('drops an asker key it cannot read, so the consult shares the stand-in tab (G2)', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				askerKey: 'session-2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalled();
+			});
+			expect((callbacks.consultAgent as any).mock.calls[0][0]).not.toHaveProperty('askerKey');
 		});
 
 		it('consults the target and returns the answer without touching its open tab', async () => {

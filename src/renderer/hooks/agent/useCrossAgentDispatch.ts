@@ -673,6 +673,9 @@ function sendHostedConsult(
 		question: opts.userPrompt,
 		...(transcript.length > 0 ? { transcript } : {}),
 		fromAgentName: opts.sourceAgentName,
+		// The host keeps one consult tab per asking (machine, agent, tab), as this machine keeps
+		// one per asking tab, so a follow-up from this tab continues its own thread there.
+		asker: { agentId: opts.sourceSessionId, tabId: opts.sourceTabId },
 		...(opts.handoffAnswer !== undefined ? { handoffAnswer: opts.handoffAnswer } : {}),
 	}).then((reply) => {
 		if ('error' in reply) finish({ error: reply.error });

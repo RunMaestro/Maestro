@@ -101,6 +101,67 @@ export interface RemoteAskerContext {
 	fromAgentName?: string;
 	/** A HAND-OFF: the asker's final answer, which the target acts on (`ConsultAskInput`). */
 	handoffAnswer?: string;
+	/**
+	 * Who is asking, as (asking machine, asking agent, asking tab): `buildRemoteAskerKey()`. The
+	 * host keeps one consult tab per key, so a follow-up from the same asker continues its own
+	 * thread, as a local asker's does. Absent (an older client): every such asker shares one tab.
+	 */
+	askerKey?: string;
+}
+
+/** The longest asker key a consult accepts off the wire (`buildRemoteAskerKey()` stays under it). */
+export const MAX_WIRE_ASKER_KEY = 256;
+/** The longest part of an asker key, so the three always fit in {@link MAX_WIRE_ASKER_KEY}. */
+const MAX_ASKER_KEY_PART = 80;
+/**
+ * The source-agent id a remote asker's consult tab is keyed on: this prefix, then its key. No
+ * agent id on this machine starts with it, so a remote asker can only ever find a consult tab
+ * made for a remote asker, never a local agent's tab or a local asker's consult tab.
+ */
+export const REMOTE_ASKER_SESSION_PREFIX = 'remote-asker:';
+/** Printable ASCII with no space or `:` beyond the separators: what `encodeURIComponent` emits. */
+const ASKER_KEY_PATTERN =
+	/^[A-Za-z0-9\-_.!~*'()%]+\/[A-Za-z0-9\-_.!~*'()%]+\/[A-Za-z0-9\-_.!~*'()%]+$/;
+
+/**
+ * The asker key a consult of an agent on another machine carries: the asking machine (its
+ * hostname), the asking agent, and the asking tab. Each part is URI-encoded and bounded, so the
+ * key is plain ASCII that `parseWireAskerKey()` accepts.
+ */
+export function buildRemoteAskerKey(parts: {
+	machine: string;
+	agentId: string;
+	tabId: string;
+}): string {
+	const part = (value: string): string =>
+		encodeURIComponent(value.trim().slice(0, MAX_ASKER_KEY_PART)) || '-';
+	return `${part(parts.machine)}/${part(parts.agentId)}/${part(parts.tabId)}`;
+}
+
+/**
+ * Read an asker key off the wire: the shape `buildRemoteAskerKey()` makes, bounded. Undefined for
+ * anything else, so the consult falls back to the shared remote-asker tab instead of failing.
+ */
+export function parseWireAskerKey(value: unknown): string | undefined {
+	if (typeof value !== 'string' || value.length > MAX_WIRE_ASKER_KEY) return undefined;
+	return ASKER_KEY_PATTERN.test(value) ? value : undefined;
+}
+
+/**
+ * The consult-tab key for an asker on another machine. With a valid key it is that asker's own
+ * (`REMOTE_ASKER_SESSION_PREFIX` + key, the constant ask tab); without one it is the shared
+ * stand-in every unattributed caller uses.
+ */
+export function remoteAskerConsultKey(askerKey: string | undefined): {
+	sourceSessionId: string;
+	sourceTabId: string;
+} {
+	return {
+		sourceSessionId: askerKey
+			? `${REMOTE_ASKER_SESSION_PREFIX}${askerKey}`
+			: CROSS_AGENT_ASK_SESSION_ID,
+		sourceTabId: CROSS_AGENT_ASK_TAB_ID,
+	};
 }
 
 /** The most transcript entries a consult accepts off the wire. A windowed context is far smaller. */

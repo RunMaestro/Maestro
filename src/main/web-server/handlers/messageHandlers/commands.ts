@@ -19,6 +19,7 @@ import { interruptTurnFailure } from '../../../../shared/turnInterrupt';
 import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
 import {
 	parseWireAgentName,
+	parseWireAskerKey,
 	parseWireHandoffAnswer,
 	parseWireTranscript,
 } from '../../../../shared/crossAgentTypes';
@@ -708,6 +709,7 @@ export function handleCrossAgentAsk(
 	const transcript = parseWireTranscript(message.transcript);
 	const fromAgentName = parseWireAgentName(message.fromAgentName);
 	const handoffAnswer = parseWireHandoffAnswer(message.handoffAnswer);
+	const askerKey = parseWireAskerKey(message.askerKey);
 	const timeoutMs =
 		typeof message.timeoutMs === 'number' && Number.isFinite(message.timeoutMs)
 			? Math.min(Math.max(message.timeoutMs, MIN_CONSULT_TIMEOUT_MS), MAX_CONSULT_TIMEOUT_MS)
@@ -753,6 +755,7 @@ export function handleCrossAgentAsk(
 			...(targetTabId ? { targetTabId } : {}),
 			...(transcript ? { transcript } : {}),
 			...(fromAgentName ? { fromAgentName } : {}),
+			...(askerKey ? { askerKey } : {}),
 			...(handoffAnswer !== undefined ? { handoffAnswer } : {}),
 			timeoutMs,
 		})

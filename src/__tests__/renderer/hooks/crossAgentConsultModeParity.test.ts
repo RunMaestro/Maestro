@@ -21,6 +21,7 @@ import {
 	createMirroredPeer,
 	replacePeerAgents,
 } from '../../../shared/maestro-lib/client/peer-mirror';
+import { buildRemoteAskerKey } from '../../../shared/crossAgentTypes';
 import { resetStores } from '../../helpers';
 import { AGENT_MODES, createMockSession, createModeSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -153,6 +154,7 @@ describe('A1.7: a consult of a local, SSH, or hosted target', () => {
 						timestamp,
 					})),
 					fromAgentName: 'Source',
+					asker: { agentId: 'src', tabId: 'tab' },
 				});
 				// The host keeps the consult tab and History: nothing is written here for it.
 				const target = useSessionStore.getState().sessions[1];
@@ -219,6 +221,49 @@ describe('A1.7: a consult of a local, SSH, or hosted target', () => {
 		expect(cancelHostedConsults('src')).toBe(0);
 	});
 
+	// G2: a follow-up from the same asking tab continues its own consult thread on the target, and
+	// another asking tab starts its own, whether the target answers here or on its host.
+	it('keeps one consult thread per asking tab, in every mode', async () => {
+		const threads: string[][] = [];
+		for (const mode of AGENT_MODES) {
+			seed(mode);
+			useSessionStore.setState((state) => ({
+				sessions: state.sessions.map((session) =>
+					session.id === 'src'
+						? { ...session, aiTabs: [...session.aiTabs, createMockAITab({ id: 'tab-2' })] }
+						: session
+				),
+			}));
+			send.mockResolvedValue({ requestId: `rq-${mode}` });
+			act$.mockResolvedValue({ ok: true, result: { kind: 'consult', answer: ANSWER } });
+			for (const sourceTabId of ['tab', 'tab', 'tab-2']) {
+				await sendCrossAgentRequest({
+					sourceSessionId: 'src',
+					sourceAgentName: 'Source',
+					sourceTabId,
+					targetSessionId: 'tgt',
+					userPrompt: QUESTION,
+					sourceLogs: [],
+				});
+			}
+			// The thread a consult lands in: the consult tab here, or the asker key on the host.
+			const thread =
+				mode === 'hosted'
+					? act$.mock.calls.map(([, , action]) =>
+							buildRemoteAskerKey({ machine: 'laptop', ...action.asker })
+						)
+					: send.mock.calls.map(([request]) => request.targetTabId as string);
+			threads.push(thread);
+			send.mockReset();
+			act$.mockReset();
+		}
+		for (const thread of threads) {
+			expect(thread).toHaveLength(3);
+			expect(thread[1]).toBe(thread[0]);
+			expect(thread[2]).not.toBe(thread[0]);
+		}
+	});
+
 	it('sends a hand-off answer to the host for the target to act on', async () => {
 		seed('hosted');
 		act$.mockResolvedValue({ ok: true, result: { kind: 'consult', answer: 'done' } });
@@ -235,6 +280,7 @@ describe('A1.7: a consult of a local, SSH, or hosted target', () => {
 			kind: 'consult',
 			question: 'then send it to @Target',
 			fromAgentName: 'Source',
+			asker: { agentId: 'src', tabId: 'tab' },
 			handoffAnswer: 'the final plan',
 		});
 	});
