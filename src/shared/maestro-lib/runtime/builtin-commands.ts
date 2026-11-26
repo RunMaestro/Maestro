@@ -13,6 +13,10 @@
  * | The synopsis turn's model and effort | `cheapResumeTurnSettings` |
  * | The skills a project has, and their table | `discoverClaudeSkills`, `formatClaudeSkillsMessage` |
  *
+ * The same synopsis turn writes a finished turn's History entry (`summarizeTurn`, P8), as the
+ * desktop's exit synopsis does (`runExitSynopsis`), so `/history` and a turn's entry share the
+ * last-synopsis time and the one-writer hold.
+ *
  * Differences that are the transport, not the result: the transcript is append-only here, so
  * `/history` writes its outcome as a second system entry after "Generating history synopsis...",
  * where the desktop rewrites the first. A synopsis resumes the tab's provider session, so it waits
@@ -32,7 +36,7 @@ import type { MaestroBuiltinCommand } from '../../maestroBuiltinCommands';
 import { cheapResumeTurnSettings } from '../../modelTiers';
 import { PROMPT_IDS } from '../../promptDefinitions';
 import { parseSynopsis } from '../../synopsis';
-import type { ToolType } from '../../types';
+import type { HistoryEntry, ToolType, UsageStats } from '../../types';
 import { discoverClaudeSkills } from '../agents/claude-skills';
 import type { AgentRepository } from '../agents/repository';
 import type { RuleContext } from '../agents/rules';
@@ -40,8 +44,10 @@ import { logger } from '../host';
 import type { MaestroPaths } from '../paths/resolve';
 import { estimateContextUsage } from '../parsers/usage-aggregator';
 import { createPromptLoaderFor } from '../prompts/load';
+import type { AgentRecord, AITabRecord } from '../store/records';
 import type { LogEntryRecord } from '../store/transcript';
 import type { HistoryWriter } from '../turns/history';
+import type { TurnSummaryHandoff } from '../turns/record-turn';
 import type { StatsRecorder } from '../turns/stats';
 import { createAutoRunTurnRunner } from './autorun-turns';
 import type { ProcessRegistry } from './processes';
@@ -78,12 +84,25 @@ export interface RuntimeBuiltinCommandsOptions {
 	homeDir?(): string;
 }
 
+/** What one synopsis turn came to (`synopsize`). */
+type SynopsisOutcome =
+	| { kind: 'gone' }
+	| { kind: 'no-session' }
+	| { kind: 'failed' }
+	| { kind: 'nothing' }
+	| { kind: 'written'; shortSummary: string };
+
 export interface RuntimeBuiltinCommands {
 	/**
 	 * Run `command` for the tab. Resolves when it has finished writing; never rejects (a failure is
 	 * written to the tab, as the desktop writes it).
 	 */
 	run(agentId: string, tabId: string, command: MaestroBuiltinCommand): Promise<void>;
+	/**
+	 * Write a finished turn's History entry from a synopsis turn, once the tab is free. Resolves when
+	 * it is written or skipped; never rejects.
+	 */
+	summarizeTurn(request: TurnSummaryHandoff): Promise<void>;
 	/**
 	 * Stop the `/history` synopses of an agent's tab, of every tab of the agent (no `tabId`), or of
 	 * every agent (no `agentId`): a tab that closes, an agent that is removed, and a host that shuts
@@ -142,17 +161,37 @@ export function createRuntimeBuiltinCommands(
 		options.transcriptChanged(agentId, tabId);
 	}
 
-	async function history(agentId: string, tabId: string): Promise<void> {
-		const record = repository.getAgent(agentId);
-		const tab = repository.getTab(agentId, tabId);
-		if (!record || !tab) return;
-		const agentSessionId =
-			typeof tab.agentSessionId === 'string' && tab.agentSessionId ? tab.agentSessionId : undefined;
-		if (!agentSessionId) {
-			await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.noSession);
-			return;
+	/**
+	 * One synopsis turn of a tab, for `/history` and for a finished turn's History entry (the desktop
+	 * runs both through the same synopsis spawn). It holds the tab's provider session once no turn
+	 * runs on it, resumes it on the cheap tier of `settings` (`cheapResumeTurnSettings`), covers
+	 * the work since the tab's last synopsis, and appends the entry `buildEntry` makes from it.
+	 * Throws when the entry could not be appended.
+	 */
+	async function synopsize(
+		agentId: string,
+		tabId: string,
+		request: {
+			/**
+			 * What the summarized work ran at: the tab's settings, or the finished turn's. `null`: the
+			 * session cannot be resumed now (the agent left the turn's provider), so no synopsis.
+			 */
+			settings(record: AgentRecord, tab: AITabRecord): { model?: string; effort?: string } | null;
+			/** The session to resume. Default: the tab's session once the hold is taken. */
+			resumeSessionId?: string;
+			buildEntry(synopsis: {
+				record: AgentRecord;
+				tab: AITabRecord;
+				agentSessionId: string;
+				shortSummary: string;
+				fullSynopsis: string;
+				usageStats?: UsageStats;
+				contextUsage?: number;
+				synopsisTime: number;
+				lastSynopsisTime?: number;
+			}): HistoryEntry;
 		}
-		await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.pending);
+	): Promise<SynopsisOutcome> {
 		let release: (() => void) | undefined;
 		const key = slotKey(agentId, tabId);
 		const controller = new AbortController();
@@ -162,26 +201,23 @@ export function createRuntimeBuiltinCommands(
 			release = await options.reserveTabSession(agentId, tabId);
 			inFlight.set(key, { agentId, tabId, controller });
 			// What the wait may have changed: the turn that ran can have moved the tab to a new
-			// session, which is the conversation to summarize.
+			// session, which is the conversation `/history` summarizes.
 			const current = repository.getTab(agentId, tabId);
 			const record = repository.getAgent(agentId);
+			if (!record || !current) return { kind: 'gone' };
 			const sessionNow =
-				current && typeof current.agentSessionId === 'string' && current.agentSessionId
+				request.resumeSessionId ??
+				(typeof current.agentSessionId === 'string' && current.agentSessionId
 					? current.agentSessionId
-					: undefined;
-			if (!record || !current) return;
-			if (!sessionNow) {
-				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.noSession);
-				return;
-			}
+					: undefined);
+			if (!sessionNow) return { kind: 'no-session' };
 			const lastSynopsisTime =
-				lastSynopsisAt.get(slotKey(agentId, tabId)) ??
+				lastSynopsisAt.get(key) ??
 				(typeof current.lastSynopsisTime === 'number' ? current.lastSynopsisTime : undefined);
 			const toolType = record.toolType as ToolType;
-			const cheap = cheapResumeTurnSettings(toolType, {
-				model: str(current.customModel) ?? str(record.customModel),
-				effort: str(current.customEffort) ?? str(record.customEffort),
-			});
+			const settings = request.settings(record, current);
+			if (!settings) return { kind: 'gone' };
+			const cheap = cheapResumeTurnSettings(toolType, settings);
 			const synopsisTime = deps.now();
 			const runner = createAutoRunTurnRunner({
 				agentId,
@@ -193,6 +229,9 @@ export function createRuntimeBuiltinCommands(
 				deps,
 				onStream: () => undefined,
 				processTabId: synopsisProcessSlot(tabId),
+				...(current.nativeSessionBinding
+					? { retainedNativeSessionBinding: current.nativeSessionBinding }
+					: {}),
 			});
 			const result = await runner.run({
 				purpose: 'synopsis',
@@ -203,40 +242,82 @@ export function createRuntimeBuiltinCommands(
 				signal: controller.signal,
 			});
 			// Stopped (the tab closed, the host is going): nothing more is written for it.
-			if (controller.signal.aborted) return;
-			if (!result.success || !result.response) {
-				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.failed);
-				return;
-			}
+			if (controller.signal.aborted) return { kind: 'gone' };
+			if (!result.success || !result.response) return { kind: 'failed' };
 			const parsed = parseSynopsis(result.response);
-			if (parsed.nothingToReport) {
-				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.nothingToReport);
-				return;
-			}
+			if (parsed.nothingToReport) return { kind: 'nothing' };
 			const context = result.usageStats ? estimateContextUsage(result.usageStats, toolType) : null;
-			const appended = await options.historyWriter.append(agentId, {
-				id: rules.newId(),
-				type: 'AUTO',
-				timestamp: synopsisTime,
-				summary: parsed.shortSummary,
-				fullResponse: parsed.fullSynopsis,
-				agentSessionId: sessionNow,
-				sessionId: agentId,
-				projectPath: typeof record.cwd === 'string' ? record.cwd : '',
-				...(str(current.name) ? { sessionName: str(current.name) } : {}),
-				...(result.usageStats ? { usageStats: result.usageStats } : {}),
-				...(context !== null ? { contextUsage: context } : {}),
-				elapsedTimeMs: historySynopsisElapsedMs(
-					{
-						lastSynopsisTime,
-						createdAt: typeof current.createdAt === 'number' ? current.createdAt : undefined,
-					},
-					synopsisTime
-				),
-			});
+			const appended = await options.historyWriter.append(
+				agentId,
+				request.buildEntry({
+					record,
+					tab: current,
+					agentSessionId: sessionNow,
+					shortSummary: parsed.shortSummary,
+					fullSynopsis: parsed.fullSynopsis,
+					...(result.usageStats ? { usageStats: result.usageStats } : {}),
+					...(context !== null ? { contextUsage: context } : {}),
+					synopsisTime,
+					...(lastSynopsisTime !== undefined ? { lastSynopsisTime } : {}),
+				})
+			);
 			if (!appended.ok) throw new Error(appended.message);
-			lastSynopsisAt.set(slotKey(agentId, tabId), synopsisTime);
-			await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.saved(parsed.shortSummary));
+			lastSynopsisAt.set(key, synopsisTime);
+			return { kind: 'written', shortSummary: parsed.shortSummary };
+		} finally {
+			if (inFlight.get(key)?.controller === controller) inFlight.delete(key);
+			release?.();
+		}
+	}
+
+	async function history(agentId: string, tabId: string): Promise<void> {
+		const record = repository.getAgent(agentId);
+		const tab = repository.getTab(agentId, tabId);
+		if (!record || !tab) return;
+		const agentSessionId =
+			typeof tab.agentSessionId === 'string' && tab.agentSessionId ? tab.agentSessionId : undefined;
+		if (!agentSessionId) {
+			await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.noSession);
+			return;
+		}
+		await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.pending);
+		try {
+			const outcome = await synopsize(agentId, tabId, {
+				settings: (record, current) => ({
+					model: str(current.customModel) ?? str(record.customModel),
+					effort: str(current.customEffort) ?? str(record.customEffort),
+				}),
+				buildEntry: (synopsis) => ({
+					id: rules.newId(),
+					type: 'AUTO',
+					timestamp: synopsis.synopsisTime,
+					summary: synopsis.shortSummary,
+					fullResponse: synopsis.fullSynopsis,
+					agentSessionId: synopsis.agentSessionId,
+					sessionId: agentId,
+					projectPath: typeof synopsis.record.cwd === 'string' ? synopsis.record.cwd : '',
+					...(str(synopsis.tab.name) ? { sessionName: str(synopsis.tab.name) } : {}),
+					...(synopsis.usageStats ? { usageStats: synopsis.usageStats } : {}),
+					...(synopsis.contextUsage !== undefined ? { contextUsage: synopsis.contextUsage } : {}),
+					elapsedTimeMs: historySynopsisElapsedMs(
+						{
+							lastSynopsisTime: synopsis.lastSynopsisTime,
+							createdAt:
+								typeof synopsis.tab.createdAt === 'number' ? synopsis.tab.createdAt : undefined,
+						},
+						synopsis.synopsisTime
+					),
+				}),
+			});
+			if (outcome.kind === 'no-session') {
+				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.noSession);
+			} else if (outcome.kind === 'failed') {
+				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.failed);
+			} else if (outcome.kind === 'nothing') {
+				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.nothingToReport);
+			} else if (outcome.kind === 'written') {
+				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.saved(outcome.shortSummary));
+			}
 		} catch (error) {
 			await write(
 				agentId,
@@ -244,9 +325,51 @@ export function createRuntimeBuiltinCommands(
 				'system',
 				HISTORY_COMMAND_TEXT.error(error instanceof Error ? error.message : String(error))
 			);
-		} finally {
-			if (inFlight.get(key)?.controller === controller) inFlight.delete(key);
-			release?.();
+		}
+	}
+
+	/**
+	 * A finished turn's History entry, from a synopsis turn, as a desktop writes it on exit
+	 * (`runExitSynopsis`): the synopsis' short summary and full text, its usage, and the turn's
+	 * own fields (`entry`) otherwise. Resumes the turn's session on the cheap tier of the turn's
+	 * model and effort. NOTHING_TO_REPORT and a failed synopsis write no entry, as on the desktop
+	 * (where a failure is a yellow toast; here it is a host log line).
+	 */
+	async function summarizeTurn(request: TurnSummaryHandoff): Promise<void> {
+		const { agentId, tabId, entry } = request;
+		try {
+			const outcome = await synopsize(agentId, tabId, {
+				// A session belongs to its provider: once the agent moved to another, there is no
+				// conversation left to resume for this turn.
+				settings: (record) =>
+					record.toolType === request.settings.provider
+						? {
+								...(request.settings.model ? { model: request.settings.model } : {}),
+								...(request.settings.effort ? { effort: request.settings.effort } : {}),
+							}
+						: null,
+				...(entry.agentSessionId ? { resumeSessionId: entry.agentSessionId } : {}),
+				buildEntry: (synopsis) => {
+					const { usageStats: _turnUsage, contextUsage: _turnContext, ...turnFields } = entry;
+					return {
+						...turnFields,
+						timestamp: synopsis.synopsisTime,
+						summary: synopsis.shortSummary,
+						fullResponse: synopsis.fullSynopsis,
+						agentSessionId: synopsis.agentSessionId,
+						...(synopsis.usageStats ? { usageStats: synopsis.usageStats } : {}),
+						...(synopsis.contextUsage !== undefined ? { contextUsage: synopsis.contextUsage } : {}),
+					};
+				},
+			});
+			if (outcome.kind === 'failed') {
+				logger.warn('A turn synopsis failed: no History entry was written.', LOG_CONTEXT);
+			}
+		} catch (error) {
+			logger.warn(
+				`A turn's History entry was not written: ${error instanceof Error ? error.message : String(error)}`,
+				LOG_CONTEXT
+			);
 		}
 	}
 
@@ -270,6 +393,7 @@ export function createRuntimeBuiltinCommands(
 	}
 
 	return {
+		summarizeTurn,
 		stop(agentId, tabId) {
 			for (const entry of inFlight.values()) {
 				if (agentId !== undefined && entry.agentId !== agentId) continue;

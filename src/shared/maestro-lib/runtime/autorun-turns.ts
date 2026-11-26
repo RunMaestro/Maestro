@@ -36,6 +36,7 @@ import { getClaudeTokenSourceFields, type ClaudeTokenSourceFields } from '../../
 import { usageStatsToTurnFields } from '../../turnUsageLedger';
 import type { UsageStats } from '../../types';
 import type { AgentRepository } from '../agents/repository';
+import type { NativeSessionBinding } from '../agents/providerSwap';
 import type { AutoRunTurnResult, AutoRunTurnRequest } from '../autorun/engine-types';
 import { createIdleWatchdog } from '../control/idle-watchdog';
 import { logger } from '../host';
@@ -116,6 +117,11 @@ export interface AutoRunTurnRunnerOptions {
 	 * tab's `/history` synopsis uses its own slot beside the tab (`synopsisProcessSlot`).
 	 */
 	processTabId?: string;
+	/**
+	 * The ownership of the tab session a turn resumes (a synopsis resumes a tab's): a Grok resume
+	 * is refused without it, as a chat turn's would be (`runAgentTurn`).
+	 */
+	retainedNativeSessionBinding?: NativeSessionBinding;
 	/**
 	 * Each turn is a `/btw` side question (`runtime/side-questions.ts`): `request.prompt` is the
 	 * question, assembled by `assembleSideQuestionTurn` as a read-only throwaway fork with tools
@@ -218,6 +224,10 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 				: { claudeTokenSource: getClaudeTokenSourceFields(record as ClaudeTokenSourceFields) }),
 			maestroPBinPath: host.maestroPBinPath ?? null,
 			...(request.signal ? { signal: request.signal } : {}),
+			...(host.grokLaunchScope ? { grokLaunchScope: host.grokLaunchScope } : {}),
+			...(options.retainedNativeSessionBinding
+				? { retainedNativeSessionBinding: structuredClone(options.retainedNativeSessionBinding) }
+				: {}),
 		});
 		if (!started.ok) return attempt(failure(started.message));
 		const process = started.run;

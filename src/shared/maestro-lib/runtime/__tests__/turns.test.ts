@@ -25,6 +25,8 @@ import { nativeAccountRef } from '../../../agentAccountDir';
 import * as repositories from '../../agents/repository';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
 import type { ClientResult, QueuedTurn, TurnEvent } from '../../client/types';
+import type { HistoryEntry } from '../../../types';
+import { parseSynopsis } from '../../../synopsis';
 import { readHistory } from '../../store/read-history';
 import { sharedHistoryDir, sharedHistoryFilename } from '../../store/shared-history';
 import { runAgentTurn, type RunAgentTurnOptions } from '../../turns/run-agent-turn';
@@ -139,9 +141,11 @@ describe('runtime turns', () => {
 		toolType: 'claude-code',
 		cwd: work,
 		projectRoot: work,
+		// A tab that saves to History follows each turn with a synopsis turn (P8), so only the tests
+		// about History seed one (`savingAgent`); the rest count and read one process per turn.
 		aiTabs: [
-			{ id: 't1', agentSessionId: null, name: null, logs: [] },
-			{ id: 't2', agentSessionId: null, name: null, logs: [] },
+			{ id: 't1', agentSessionId: null, name: null, logs: [], saveToHistory: false },
+			{ id: 't2', agentSessionId: null, name: null, logs: [], saveToHistory: false },
 		],
 		activeTabId: 't1',
 		unifiedTabOrder: [
@@ -150,6 +154,30 @@ describe('runtime turns', () => {
 		],
 		...extra,
 	});
+
+	/** `seedAgent` with tabs that save to History: each turn's entry comes from a synopsis turn. */
+	const savingAgent = (extra: Record<string, unknown> = {}) =>
+		seedAgent({
+			aiTabs: [
+				{ id: 't1', agentSessionId: null, name: null, logs: [] },
+				{ id: 't2', agentSessionId: null, name: null, logs: [] },
+			],
+			...extra,
+		});
+
+	/** The agent's History once `count` entries are written (a turn's comes after its synopsis). */
+	async function historyWritten(runtime: MaestroRuntime, count = 1): Promise<HistoryEntry[]> {
+		let entries: HistoryEntry[] = [];
+		await vi.waitFor(
+			() => {
+				const history = readHistory(runtime.paths, 'a1');
+				entries = history.status === 'ok' ? history.entries : [];
+				expect(entries).toHaveLength(count);
+			},
+			{ timeout: 8_000 }
+		);
+		return entries;
+	}
 
 	async function start(
 		sessions: unknown[] = [seedAgent()],
@@ -285,7 +313,7 @@ describe('runtime turns', () => {
 		});
 
 		it('writes the message, the answer, the session id, and the folded usage the desktop will show', async () => {
-			const runtime = await start();
+			const runtime = await start([savingAgent()]);
 			const turn = watch(runtime);
 			value(await runtime.turns.send('a1', 't1', { text: 'what is the capital of France' }));
 			await turn.outcome();
@@ -302,15 +330,50 @@ describe('runtime turns', () => {
 			expect(tab.turnProvider).toBe('claude-code');
 			expect((tab.usageStats as { outputTokens: number }).outputTokens).toBeGreaterThan(0);
 
-			const history = readHistory(runtime.paths, 'a1');
-			if (history.status !== 'ok') throw new Error(`history ${history.status}`);
-			expect(history.entries).toHaveLength(1);
-			expect(history.entries[0]).toMatchObject({
+			const [entry] = await historyWritten(runtime);
+			expect(entry).toMatchObject({
 				type: 'USER',
 				sessionId: 'a1',
 				tabId: 't1',
 				agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID,
 			});
+		});
+
+		// P8: the host writes a turn's History entry as a desktop does on exit: from a synopsis turn
+		// that resumes the turn's session, so the same reply gives the same summary in every mode.
+		it("writes the turn's History entry from a synopsis turn, as a desktop does on exit", async () => {
+			const runtime = await start([savingAgent()]);
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'what is the capital of France' }));
+			await turn.outcome();
+			const [entry] = await historyWritten(runtime);
+
+			// One synopsis turn followed, on the turn's own conversation, under the synopsis prompt.
+			expect(launched).toHaveLength(2);
+			expect(launched[1].resumeSessionId).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
+			const synopsisPrompt = fs.readFileSync(
+				path.join(BUNDLED_PROMPTS, 'autorun-synopsis.md'),
+				'utf-8'
+			);
+			expect(launched[1].prompt).toContain(synopsisPrompt.trim().split('\n')[0]);
+			// The entry is the synopsis' (the fake replays the same reply for it), not the answer's lines.
+			const answer = (await transcript(runtime)).find((e) => e.source === 'stdout')!.text;
+			const synopsis = parseSynopsis(answer);
+			expect(entry).toMatchObject({
+				type: 'USER',
+				summary: synopsis.shortSummary,
+				fullResponse: synopsis.fullSynopsis,
+				agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID,
+				tabId: 't1',
+			});
+			// The synopsis wrote nothing to the tab, which reads as the turn left it.
+			expect((await transcript(runtime)).map((e) => e.source)).toEqual(['user', 'stdout']);
+
+			// The next turn's synopsis covers only the work since this one.
+			value(await runtime.turns.send('a1', 't1', { text: 'and of Spain' }));
+			await turn.outcome(2);
+			await historyWritten(runtime, 2);
+			expect(launched[3].prompt).toContain('Only synopsize work done since the last synopsis');
 		});
 
 		// P7: a 'sticky' tab keeps the turn's thinking and tool cards past the turn's end, as a local
@@ -373,22 +436,18 @@ describe('runtime turns', () => {
 					.split('\n')
 					.filter(Boolean)
 					.map((line) => JSON.parse(line));
-			const ownEntries = (runtime: MaestroRuntime) => {
-				const history = readHistory(runtime.paths, 'a1');
-				if (history.status !== 'ok') throw new Error(`history ${history.status}`);
-				return history.entries;
-			};
+			const ownEntries = (runtime: MaestroRuntime) => historyWritten(runtime);
 
 			it('stamps the entry with the machine the send names, and copies it to the project', async () => {
 				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
-				const runtime = await start([seedAgent()], SHARED);
+				const runtime = await start([savingAgent()], SHARED);
 				const turn = watch(runtime);
 				value(
 					await runtime.turns.send('a1', 't1', { text: 'hello', originHost: '  laptop.local ' })
 				);
 				await turn.outcome();
 
-				const [own] = ownEntries(runtime);
+				const [own] = await ownEntries(runtime);
 				expect(own.hostname).toBe('laptop.local');
 				const shared = readShared();
 				expect(shared).toHaveLength(1);
@@ -400,32 +459,32 @@ describe('runtime turns', () => {
 
 			it("gives a copy with no origin the host's own hostname, and drops an origin that is not printable", async () => {
 				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
-				const runtime = await start([seedAgent()], SHARED);
+				const runtime = await start([savingAgent()], SHARED);
 				const turn = watch(runtime);
 				value(await runtime.turns.send('a1', 't1', { text: 'hello', originHost: 'bad\u0007host' }));
 				await turn.outcome();
 
-				const [own] = ownEntries(runtime);
+				const [own] = await ownEntries(runtime);
 				expect(own).not.toHaveProperty('hostname');
 				expect(readShared()[0]).toMatchObject({ id: own.id, hostname: 'box' });
 			});
 
 			it('copies nothing for a project that does not share, or without a shared identity', async () => {
-				const runtime = await start([seedAgent()], SHARED);
+				const runtime = await start([savingAgent()], SHARED);
 				const turn = watch(runtime);
 				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
 				await turn.outcome();
-				expect(ownEntries(runtime)).toHaveLength(1);
+				expect(await ownEntries(runtime)).toHaveLength(1);
 				expect(fs.existsSync(sharedHistoryDir(work))).toBe(false);
 			});
 
 			it('copies nothing without a shared identity, even where the project shares', async () => {
 				fs.mkdirSync(sharedHistoryDir(work), { recursive: true });
-				const runtime = await start();
+				const runtime = await start([savingAgent()]);
 				const turn = watch(runtime);
 				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
 				await turn.outcome();
-				expect(ownEntries(runtime)).toHaveLength(1);
+				expect(await ownEntries(runtime)).toHaveLength(1);
 				expect(fs.readdirSync(sharedHistoryDir(work))).toEqual([]);
 			});
 
@@ -435,10 +494,11 @@ describe('runtime turns', () => {
 					path.join(sharedHistoryDir(work), sharedHistoryFilename('laptop')),
 					`${JSON.stringify({ id: 'from-laptop', type: 'USER', timestamp: 1, summary: 's', projectPath: work })}\n`
 				);
-				const runtime = await start([seedAgent()], SHARED);
+				const runtime = await start([savingAgent()], SHARED);
 				const turn = watch(runtime);
 				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
 				await turn.outcome();
+				await historyWritten(runtime);
 				const listed = value(await runtime.history.list('a1'));
 				expect(listed).toHaveLength(2);
 				expect(listed[1]).toMatchObject({ id: 'from-laptop', hostname: 'laptop' });
@@ -787,7 +847,13 @@ describe('runtime turns', () => {
 				const runtime = await start([
 					seedAgent({
 						aiTabs: [
-							{ id: 't1', agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID, name: null, logs: [] },
+							{
+								id: 't1',
+								agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID,
+								name: null,
+								logs: [],
+								saveToHistory: false,
+							},
 						],
 						unifiedTabOrder: [{ type: 'ai', id: 't1' }],
 					}),
@@ -819,7 +885,13 @@ describe('runtime turns', () => {
 					[
 						seedAgent({
 							aiTabs: [
-								{ id: 't1', agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID, name: null, logs: [] },
+								{
+									id: 't1',
+									agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID,
+									name: null,
+									logs: [],
+									saveToHistory: false,
+								},
 							],
 							unifiedTabOrder: [{ type: 'ai', id: 't1' }],
 						}),
@@ -938,7 +1010,13 @@ describe('runtime turns', () => {
 						enableMaestroP: true,
 						maestroPMode: 'interactive',
 						aiTabs: [
-							{ id: 't1', agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID, name: null, logs: [] },
+							{
+								id: 't1',
+								agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID,
+								name: null,
+								logs: [],
+								saveToHistory: false,
+							},
 						],
 					}),
 				]);
@@ -1109,7 +1187,7 @@ describe('runtime turns', () => {
 			await turn.outcome(2);
 			expect(launched[1].settings).toMatchObject({ model: 'sonnet', effort: 'low' });
 			expect(launched[1].readOnly).toBe(false);
-			expect(historyEntries(runtime)).toHaveLength(1);
+			expect(await historyWritten(runtime)).toHaveLength(1);
 		});
 
 		it("lets a sender's read-only off stand in for the tab's chip, but not for read-only permissions", async () => {
@@ -1133,7 +1211,7 @@ describe('runtime turns', () => {
 				await runtime.turns.send('a1', 't1', { text: 'keep', overrides: { saveToHistory: true } })
 			);
 			await turn.outcome();
-			expect(historyEntries(runtime)).toHaveLength(1);
+			expect(await historyWritten(runtime)).toHaveLength(1);
 			expect((await tabOf(runtime)).saveToHistory).toBe(false);
 		});
 
@@ -1192,7 +1270,7 @@ describe('runtime turns', () => {
 
 		it('keeps the origin host on a queued message, so its History entry names the sender', async () => {
 			hold = true;
-			const runtime = await start();
+			const runtime = await start([savingAgent()]);
 			const turn = watch(runtime);
 			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
 			await turn.started();
@@ -1202,11 +1280,9 @@ describe('runtime turns', () => {
 			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: true });
 			await turn.outcome(2);
 
-			const history = readHistory(runtime.paths, 'a1');
-			if (history.status !== 'ok') throw new Error(`history ${history.status}`);
 			// The interrupted first turn writes no entry; the queued one is stamped with its sender.
-			expect(history.entries).toHaveLength(1);
-			expect(history.entries[0].hostname).toBe('laptop.local');
+			const [entry] = await historyWritten(runtime);
+			expect(entry.hostname).toBe('laptop.local');
 		});
 
 		it('holds a write on another tab while one runs, since the tabs share a working directory', async () => {
@@ -1937,14 +2013,17 @@ describe('runtime turns', () => {
 				let changeScope: () => void = () => undefined;
 				const stopped = Promise.withResolvers<void>();
 				const run: RuntimeDeps['turns']['runAgentTurn'] = async (assembled, options) => {
-					expect(assembled.resumeSessionId).toBe(resume);
-					const started = await fakeProvider(assembled, {
+					const scoped = {
 						...options,
 						grokLaunchScope: {
 							...options.grokLaunchScope!,
 							local: { ...options.grokLaunchScope!.local, installationId: () => 'recording-host' },
 						},
-					});
+					};
+					// The synopsis turn that writes the History entry (P8) resumes the recorded session.
+					if (assembled.entry.text !== 'identity recording') return fakeProvider(assembled, scoped);
+					expect(assembled.resumeSessionId).toBe(resume);
+					const started = await fakeProvider(assembled, scoped);
 					if (!started.ok) return started;
 					return {
 						ok: true,
@@ -2099,16 +2178,17 @@ describe('runtime turns', () => {
 							? [end]
 							: []
 				);
-				const history = readHistory(runtime.paths, 'a1');
-				if (refused || cancel || missingEnd) expect(history.status).toBe('missing');
-				else {
-					if (history.status !== 'ok') throw new Error(`history ${history.status}`);
-					expect(history.entries).toHaveLength(1);
-					expect(history.entries[0].projectPath).toBe(fs.realpathSync(work));
-					expect(history.entries[0].agentSessionId).toBe(observed);
-					expect(history.entries[0].nativeSessionBinding).toEqual(
-						observed ? binding : unknownBinding
-					);
+				// The entry comes from a synopsis turn that resumes the recorded session (P8), and keeps
+				// the turn's binding. None without a session to resume (the desktop's rule), none when
+				// the agent left Grok since, and none when the session's ownership is unknown: a Grok
+				// resume is refused then, as a chat turn's would be.
+				if (refused || cancel || missingEnd || !observed || mutate || noReceipt) {
+					expect(readHistory(runtime.paths, 'a1').status).toBe('missing');
+				} else {
+					const [entry] = await historyWritten(runtime);
+					expect(entry.projectPath).toBe(fs.realpathSync(work));
+					expect(entry.agentSessionId).toBe(observed);
+					expect(entry.nativeSessionBinding).toEqual(binding);
 				}
 				if (writeRefused) {
 					expect(await transcript(runtime)).toEqual([

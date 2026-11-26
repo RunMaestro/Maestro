@@ -290,6 +290,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		loadSqlite: host.loadSqlite ?? noLoader,
 		fence: options.fence,
 		context: options.rules,
+		// A finished turn's History entry comes from a synopsis turn, by the desktop's exit rule
+		// (`shouldRunSynopsisOnExit`): not while the tab has a message waiting to run, which would
+		// be a second writer on the session the synopsis resumes. It runs once the tab is free.
+		summarize: (handoff) => {
+			const waiting = queues.get(handoff.agentId)?.items() ?? [];
+			if (waiting.some((item) => item.tabId === handoff.tabId && !item.paused)) return;
+			void builtins.summarizeTurn(handoff);
+		},
 	});
 
 	const sshStore = createSshRemoteStore(paths);
