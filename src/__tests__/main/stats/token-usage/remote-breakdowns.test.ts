@@ -93,6 +93,24 @@ describe('collectRemoteBreakdowns', () => {
 		expect(result.notCounted).toEqual([]);
 	});
 
+	it('asks a remote with more projects than a host reads per request in chunks, and counts each chunk on its own', async () => {
+		const many = Array.from({ length: 70 }, (_, i) =>
+			agent({ id: `a${i}`, name: `A${i}`, projectPath: `/p/${i}` })
+		);
+		const request = vi.fn(
+			async (_remoteId: string, projects: Array<{ projectPath: string }>, _timeoutMs: number) =>
+				projects.length === 64
+					? { breakdowns: [breakdown('s0', '/p/0')], unsupportedProviders: [] }
+					: undefined
+		);
+		const result = await collectRemoteBreakdowns(many, request);
+		expect(request.mock.calls.map(([, projects]) => projects.length)).toEqual([64, 6]);
+		expect(result.breakdowns.map((b) => b.sessionId)).toEqual(['s0']);
+		expect(result.notCounted.map((a) => a.id)).toEqual(
+			Array.from({ length: 6 }, (_, i) => `a${64 + i}`)
+		);
+	});
+
 	it('names every agent whose remote did not answer, answered late, threw, or cannot read its provider', async () => {
 		vi.useFakeTimers();
 		try {

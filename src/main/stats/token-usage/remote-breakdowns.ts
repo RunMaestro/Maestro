@@ -22,7 +22,10 @@ import type {
 	ProjectTokenUsage,
 	ProjectTokenUsageProject,
 } from '../../../shared/projectTokenUsage';
-import { uniqueProjects } from '../../../shared/projectTokenUsage';
+import {
+	MAX_PROJECT_TOKEN_USAGE_PROJECTS,
+	uniqueProjects,
+} from '../../../shared/projectTokenUsage';
 
 /** How long one remote may take to answer before its agents are left "not counted". */
 export const REMOTE_TOKEN_USAGE_TIMEOUT_MS = 30_000;
@@ -105,8 +108,9 @@ export interface CollectRemoteBreakdownsOptions {
 }
 
 /**
- * Ask every remote once, in parallel, for the usage of its agents' projects, and merge what they
- * answer. A conversation two agents share (the same project) is counted once.
+ * Ask every remote, in parallel, for the usage of its agents' projects (once, or in chunks the
+ * host accepts), and merge what they answer. A conversation two agents share (the same project)
+ * is counted once.
  */
 export async function collectRemoteBreakdowns(
 	agents: readonly RemoteTokenAgent[],
@@ -123,32 +127,44 @@ export async function collectRemoteBreakdowns(
 		else byRemote.set(agent.remoteId, [agent]);
 	}
 
+	// A host reads at most MAX_PROJECT_TOKEN_USAGE_PROJECTS per request, so a remote with more
+	// projects is asked in chunks; an agent is counted only when the chunk holding its project was.
+	const asks = [...byRemote].flatMap(([remoteId, remoteAgents]) => {
+		const projects = uniqueProjects(
+			remoteAgents.map((agent) => ({ provider: agent.provider, projectPath: agent.projectPath }))
+		);
+		const chunks: ProjectTokenUsageProject[][] = [];
+		for (let i = 0; i < projects.length; i += MAX_PROJECT_TOKEN_USAGE_PROJECTS) {
+			chunks.push(projects.slice(i, i + MAX_PROJECT_TOKEN_USAGE_PROJECTS));
+		}
+		return chunks.map((chunk, index) => ({ remoteId, chunk, last: index === chunks.length - 1 }));
+	});
 	const answers = await Promise.all(
-		[...byRemote].map(async ([remoteId, remoteAgents]) => {
-			const projects = uniqueProjects(
-				remoteAgents.map((agent) => ({ provider: agent.provider, projectPath: agent.projectPath }))
-			);
+		asks.map(async ({ remoteId, chunk, last }) => {
 			let usage: ProjectTokenUsage | undefined;
 			try {
-				usage = await withTimeout(request(remoteId, projects, timeoutMs), timeoutMs);
+				usage = await withTimeout(request(remoteId, chunk, timeoutMs), timeoutMs);
 			} catch (error) {
 				options.onError?.(error);
 				usage = undefined;
 			}
-			options.onRemoteDone?.();
-			return { remoteId, remoteAgents, usage };
+			if (last) options.onRemoteDone?.();
+			return { remoteId, chunk, usage };
 		})
 	);
 
 	const breakdowns: SessionTokenBreakdown[] = [];
-	const counted = new Set<string>();
-	for (const { remoteId, remoteAgents, usage } of answers) {
+	/** `remoteId NUL provider NUL projectPath` of every project its host counted. */
+	const countedProjects = new Set<string>();
+	const seen = new Set<string>();
+	for (const { remoteId, chunk, usage } of answers) {
 		if (!usage) continue;
 		const unsupported = new Set(usage.unsupportedProviders);
-		for (const agent of remoteAgents) {
-			if (!unsupported.has(agent.provider)) counted.add(agent.id);
+		for (const project of chunk) {
+			if (!unsupported.has(project.provider)) {
+				countedProjects.add(`${remoteId}\u0000${project.provider}\u0000${project.projectPath}`);
+			}
 		}
-		const seen = new Set<string>();
 		for (const breakdown of usage.breakdowns) {
 			const key = `${remoteId}\u0000${breakdown.agentType}\u0000${breakdown.accountKey}\u0000${breakdown.projectPath}\u0000${breakdown.sessionId}`;
 			if (seen.has(key)) continue;
@@ -156,6 +172,13 @@ export async function collectRemoteBreakdowns(
 			breakdowns.push(breakdown);
 		}
 	}
+	const counted = new Set(
+		agents
+			.filter((agent) =>
+				countedProjects.has(`${agent.remoteId}\u0000${agent.provider}\u0000${agent.projectPath}`)
+			)
+			.map((agent) => agent.id)
+	);
 
 	return {
 		breakdowns,
