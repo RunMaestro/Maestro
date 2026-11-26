@@ -68,18 +68,29 @@ export interface HostedProjectionInput {
 	endedHere?: ReadonlySet<string>;
 }
 
-/** The transcript note a tab gets when the link to its host is lost mid-turn. */
-export function hostLinkNoteId(error: AgentError, tabId: string): string {
-	return `host-link-${error.timestamp}-${tabId}`;
+/**
+ * The transcript note a tab gets when the link to its host is lost mid-turn. Keyed on the cut: the
+ * tab and the message whose turn it ended, so the loss moving from "connection lost" to "outage
+ * confirmed" (or the same turn cut again) rewords one note instead of adding another.
+ */
+export function hostLinkNoteId(
+	tabId: string,
+	logs: readonly LogEntry[],
+	error: AgentError
+): string {
+	for (let i = logs.length - 1; i >= 0; i -= 1) {
+		if (logs[i].source === 'user') return `host-link-${tabId}-${logs[i].id}`;
+	}
+	return `host-link-${tabId}-${error.timestamp}`;
 }
 
 /**
  * `logs` with the link note last: after the turn's live entries, where an SSH tab's error lands.
- * The same array back when it is already there, so the projection settles.
+ * The same array back when it is already there with the same words, so the projection settles.
  */
 function withLinkNote(logs: LogEntry[], prior: readonly LogEntry[], note: LogEntry): LogEntry[] {
 	const last = logs[logs.length - 1];
-	if (last?.id === note.id) return logs;
+	if (last?.id === note.id && last.text === note.text) return logs;
 	const next = [...logs.filter((entry) => entry.id !== note.id), note];
 	return sameEntries(next, prior) ? (prior as LogEntry[]) : next;
 }
@@ -325,7 +336,7 @@ function projectTab(
 	const logs =
 		cut && link.lost
 			? withLinkNote(merged, local.logs ?? [], {
-					id: hostLinkNoteId(link.lost, local.id),
+					id: hostLinkNoteId(local.id, merged, link.lost),
 					timestamp: link.lost.timestamp,
 					source: 'error',
 					text: link.lost.message,

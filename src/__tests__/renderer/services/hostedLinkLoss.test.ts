@@ -194,6 +194,27 @@ describe('a turn cut by a lost link', () => {
 		expect(tab().agentError?.source).toBe('host-link');
 	});
 
+	it('draws one link card for one cut, reworded when the outage is confirmed after the connection was lost (R12)', () => {
+		const linkNotes = () => tab().logs.filter((entry) => entry.agentError?.source === 'host-link');
+		hostReports('busy', 'lost');
+		syncHostedAgents();
+		expect(linkNotes()).toHaveLength(1);
+		const first = linkNotes()[0];
+
+		confirmOutage();
+		syncHostedAgents();
+		expect(linkNotes()).toHaveLength(1);
+		expect(linkNotes()[0].id).toBe(first.id);
+		expect(linkNotes()[0].text).toContain(hostOutage.message);
+		expect(tab().agentError?.timestamp).toBe(first.timestamp);
+
+		// Back to "connection lost" only: still the one card.
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		syncHostedAgents();
+		expect(linkNotes()).toHaveLength(1);
+		expect(linkNotes()[0].id).toBe(first.id);
+	});
+
 	it('draws the host turn Thinking again when the host is back and still runs it, with the error cleared', async () => {
 		hostReports('busy', 'reconnecting');
 		confirmOutage();
@@ -423,7 +444,7 @@ describe('projectHostedSession with the link lost', () => {
 		expect(once.aiTabs[0].logs.map((entry) => entry.id)).toEqual([
 			'u1',
 			'live1',
-			'host-link-50-t1',
+			'host-link-t1-u1',
 		]);
 		expect(projectHostedSession(once, { agent, liveTurns, linkLost })).toBe(once);
 	});
@@ -447,6 +468,6 @@ describe('projectHostedSession with the link lost', () => {
 			linkLost,
 		});
 		expect(twice.aiTabs[0].logs.find((entry) => entry.id === 'live1')?.text).toBe('partial answer');
-		expect(twice.aiTabs[0].logs.at(-1)?.id).toBe('host-link-50-t1');
+		expect(twice.aiTabs[0].logs.at(-1)?.id).toBe('host-link-t1-u1');
 	});
 });

@@ -44,7 +44,11 @@ export interface HostLink {
 	agent: AgentRecord;
 }
 
-/** The link error per record, kept while one outage lasts so every projection sees one value. */
+/**
+ * The link error per record, kept while one loss lasts so every projection sees one value. `since`
+ * is the loss's stage (0 while only the connection is lost, the outage's start once one is
+ * confirmed): a new stage rewords the error and keeps its timestamp, so it stays one cut.
+ */
 const linkErrors = new Map<string, { since: number; error: AgentError }>();
 
 /**
@@ -73,7 +77,7 @@ export function hostLinkLostError(session: Session, link: HostLink): AgentError 
 		agentId: session.toolType,
 		sessionId: session.id,
 		sshRemoteId: link.remoteId,
-		timestamp: since || Date.now(),
+		timestamp: kept?.error.timestamp ?? (since || Date.now()),
 	};
 	linkErrors.set(session.id, { since, error });
 	return error;
