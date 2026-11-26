@@ -213,5 +213,12 @@ describe('SshUnreachableModal', () => {
 			expect(html[1]).toBe(html[0]);
 			expect(html[2]).toBe(html[0]);
 		});
+
+		it('wears the agent error modal chrome for a connection error, with no mode icon', () => {
+			const html = dialogFor(createModeSession('hosted', { id: 'active' }), agents(), true) ?? '';
+			// The Connection Error mark (lucide Wifi), never the old Server mode icon.
+			expect(html).toContain('data-testid="wifi-icon"');
+			expect(html).not.toContain('data-testid="server-icon"');
+		});
 	});
 });
