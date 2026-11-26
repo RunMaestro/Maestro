@@ -733,7 +733,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					await inHostTabOrder(hostedKey, async () => {
 						// An earlier message of this tab still waits for its retry: this one waits behind it.
 						if (hostedTab && hasPendingRetry(activeSession.id, hostedTab.id)) {
-							kept = keepForHost('');
+							kept = keepForHost(
+								'An earlier message on this tab is waiting for the host to come back.'
+							);
 							if (!kept) {
 								notifyToast({
 									color: 'red',
