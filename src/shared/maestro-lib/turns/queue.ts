@@ -227,6 +227,18 @@ export function joinMergedQueueText(upper: string | undefined, lower: string | u
 }
 
 /**
+ * The images of two merged messages: the upper message's, then the lower's, in attachment order.
+ * `undefined` when neither carries any, so a merged text-only message stays text-only.
+ */
+export function joinMergedQueueImages(
+	upper: readonly string[] | undefined,
+	lower: readonly string[] | undefined
+): string[] | undefined {
+	const images = [...(upper ?? []), ...(lower ?? [])];
+	return images.length > 0 ? images : undefined;
+}
+
+/**
  * A write turn may start beside running work only when all of that work, and everything
  * waiting, is read-only: no two writers share a working directory.
  */

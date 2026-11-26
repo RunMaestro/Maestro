@@ -935,15 +935,15 @@ describe('runtime turns', () => {
 			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
 				expect.objectContaining({ turnSettings: { effort: 'high' } }),
 			]);
-			// A headless host queues no images, so an edit with some is refused whole.
+			// An image the edit carries is admitted as a send's is: a store ref is refused whole.
 			expect(
 				errorOf(
 					await runtime.turns.queue.edit('a1', queued.itemId, {
 						text: 'x',
-						images: ['data:image/png;base64,AAAA'],
+						images: ['maestro-image://sha256/abc'],
 					})
 				).code
-			).toBe('unsupported');
+			).toBe('invalid');
 			expect(value(await runtime.turns.queue.edit('a1', 'gone', { text: 'x' }))).toEqual({
 				found: false,
 			});
@@ -954,6 +954,90 @@ describe('runtime turns', () => {
 			value(await runtime.turns.queue.remove('a1', queued.itemId));
 			value(await runtime.turns.interrupt('a1', 't1'));
 			await turn.outcome();
+		});
+
+		describe('images on a waiting message (M2)', () => {
+			const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+			const JPEG = 'data:image/jpeg;base64,/9j/4AAQ';
+
+			it('queues a message with its images, lists them on the card, and runs it with them', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const queued = value(
+					await runtime.turns.send('a1', 't1', { text: 'look', images: [PNG, JPEG] })
+				);
+				if (queued.status !== 'queued') throw new Error('expected queued');
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+					expect.objectContaining({ itemId: queued.itemId, text: 'look', images: [PNG, JPEG] }),
+				]);
+
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(2);
+				const entries = await transcript(runtime);
+				expect(entries.filter((entry) => entry.source === 'user').at(-1)).toMatchObject({
+					text: 'look',
+					images: [PNG, JPEG],
+				});
+				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
+				expect(argv.slice(-2)).toEqual(['--input-format', 'stream-json']);
+			});
+
+			it('adds, replaces, keeps, and removes images on an Edit, the way the queued card does', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const queued = value(await runtime.turns.send('a1', 't1', { text: 'draft' }));
+				if (queued.status !== 'queued') throw new Error('expected queued');
+				const card = async () => value(await runtime.turns.queue.list('a1'))[0];
+
+				value(await runtime.turns.queue.edit('a1', queued.itemId, { text: 'two', images: [PNG] }));
+				expect(await card()).toMatchObject({ text: 'two', images: [PNG] });
+				// No images given: the message keeps its own.
+				value(await runtime.turns.queue.edit('a1', queued.itemId, { text: 'three' }));
+				expect(await card()).toMatchObject({ text: 'three', images: [PNG] });
+				value(
+					await runtime.turns.queue.edit('a1', queued.itemId, { text: 'four', images: [JPEG, PNG] })
+				);
+				expect(await card()).toMatchObject({ images: [JPEG, PNG] });
+				// An empty list removes them all.
+				value(await runtime.turns.queue.edit('a1', queued.itemId, { text: 'five', images: [] }));
+				expect((await card()).images).toBeUndefined();
+
+				value(await runtime.turns.queue.remove('a1', queued.itemId));
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
+
+			it("merges the lower message's images after the upper's, as the desktop's merge does", async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const upper = value(await runtime.turns.send('a1', 't1', { text: 'up', images: [PNG] }));
+				const lower = value(await runtime.turns.send('a1', 't1', { text: 'down', images: [JPEG] }));
+				if (upper.status !== 'queued' || lower.status !== 'queued')
+					throw new Error('expected queued');
+
+				value(await runtime.turns.queue.merge('a1', lower.itemId));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([
+					expect.objectContaining({
+						itemId: upper.itemId,
+						text: 'up\n\ndown',
+						images: [PNG, JPEG],
+					}),
+				]);
+
+				value(await runtime.turns.queue.remove('a1', upper.itemId));
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
 		});
 
 		it('moves a waiting message, the way dragging its queued card does', async () => {

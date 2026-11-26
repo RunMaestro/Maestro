@@ -74,6 +74,7 @@ import { createOutputParser } from '../parsers/parser-factory';
 import type { MaestroPaths } from '../paths/resolve';
 import {
 	createExecutionQueue,
+	joinMergedQueueImages,
 	joinMergedQueueText,
 	TurnCollisionError,
 	type ExecutionQueue,
@@ -208,6 +209,8 @@ function toQueuedTurn(item: TurnItem): QueuedTurn {
 		text: item.text,
 		paused: item.paused === true,
 		turnSettings: parseQueuedTurnSettings(item.turnSettings) ?? {},
+		// The images ride along, so a hosted card draws them as a local card does.
+		...(item.images?.length ? { images: [...item.images] } : {}),
 	};
 }
 
@@ -872,10 +875,15 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				}
 				// The upper message is the turn that runs first: it keeps its own settings and hold.
 				const mergedIntoId =
-					queues.get(agentId)?.merge(itemId, (upper, lower) => ({
-						...upper,
-						text: joinMergedQueueText(upper.text, lower.text),
-					})) ?? null;
+					queues.get(agentId)?.merge(itemId, (upper, lower) => {
+						const images = joinMergedQueueImages(upper.images, lower.images);
+						const { images: _upperImages, ...rest } = upper;
+						return {
+							...rest,
+							text: joinMergedQueueText(upper.text, lower.text),
+							...(images ? { images } : {}),
+						};
+					}) ?? null;
 				return ok(mergedIntoId ? { merged: true, mergedIntoId } : { merged: false });
 			},
 			// A headless host runs `claude --print` and `codex exec`, which take no input once a turn
@@ -891,24 +899,39 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				);
 			},
 			edit: async (agentId, itemId, edit) => {
-				if (!repository.getAgent(agentId)) {
+				const record = repository.getAgent(agentId);
+				if (!record) {
 					return fail('turns.queue.edit', 'not-found', `No agent ${agentId}.`);
 				}
-				// A headless host queues no images, so an edit that carries some is refused whole
-				// rather than run without them.
-				if (edit.images && edit.images.length > 0) {
-					return fail(
-						'turns.queue.edit',
-						'unsupported',
-						'This host does not queue images. Edit the message without them.'
-					);
+				// `images` replaces the message's images when given (an empty list removes them all)
+				// and keeps them when absent, as the desktop's Edit does. They are admitted as a send's
+				// are, so an edit is never a way past the bounds.
+				let images: string[] | undefined;
+				if (edit.images !== undefined) {
+					if (edit.images.length > 0 && !agentIdCanReadImages(record.toolType)) {
+						return fail(
+							'turns.queue.edit',
+							'unsupported',
+							`${getAgentDisplayName(record.toolType)} cannot read images. Edit the message without them.`
+						);
+					}
+					const admitted = admitTurnImages(edit.images);
+					if (!admitted.ok) return fail('turns.queue.edit', 'invalid', admitted.error);
+					images = admitted.images;
 				}
 				const found =
-					queues.get(agentId)?.update(itemId, (item) => ({
-						...item,
-						text: edit.text,
-						...(edit.turnSettings ? { turnSettings: { ...edit.turnSettings } } : {}),
-					})) ?? false;
+					queues.get(agentId)?.update(itemId, (item) => {
+						const next: TurnItem = {
+							...item,
+							text: edit.text,
+							...(edit.turnSettings ? { turnSettings: { ...edit.turnSettings } } : {}),
+						};
+						if (images !== undefined) {
+							if (images.length > 0) next.images = images;
+							else delete next.images;
+						}
+						return next;
+					}) ?? false;
 				return ok({ found });
 			},
 			move: async (agentId, itemId, toIndex, tabId) => {

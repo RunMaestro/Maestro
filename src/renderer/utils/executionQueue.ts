@@ -32,6 +32,7 @@ import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { supportsNativeSteering } from '../../shared/maestro-lib/providers/native-control';
 import {
 	findQueueMergeTarget,
+	joinMergedQueueImages,
 	joinMergedQueueText,
 	moveQueueEntry,
 } from '../../shared/maestro-lib/turns/queue';
@@ -561,13 +562,13 @@ export function mergeQueuedItemIntoPrevious(
 	const item = queue.find((i) => i.id === itemId);
 	if (!target || !item) return null;
 	const text = joinMergedQueueText(target.text, item.text);
-	const images = [...(target.images ?? []), ...(item.images ?? [])];
+	const images = joinMergedQueueImages(target.images, item.images);
 	const merged: QueuedItem = {
 		...target,
 		// Combining queued data cannot promote automatic/unknown work to a human turn.
 		querySource: target.querySource === 'user' ? item.querySource : target.querySource,
 		text,
-		images: images.length > 0 ? images : undefined,
+		images,
 		crossAgentMention: target.crossAgentMention || item.crossAgentMention || undefined,
 		mentionRouting: target.mentionRouting ?? item.mentionRouting,
 	};
