@@ -69,6 +69,21 @@ describe('mergeHostedLogs', () => {
 		expect(settled.map((entry) => entry.text)).toEqual(['Synopsis saved to history: x']);
 	});
 
+	it('settles a saved line the host rewrote while a turn runs on its tab, from the live entry (CodeRabbit on #2154)', () => {
+		const pending = { ...record('p1'), source: 'system', text: 'Generating history synopsis...' };
+		const first = mergeHostedLogs([], [pending], undefined);
+		// The busy tab's live turn carries the rewrite under the saved line's id; the saved
+		// transcript is read again only when the turn ends.
+		const settled = mergeHostedLogs(
+			first,
+			[pending],
+			[{ ...pending, text: 'Synopsis saved to history: x' }, record('a1')]
+		);
+		expect(settled.map((entry) => entry.text)).toEqual(['Synopsis saved to history: x', 'a1']);
+		expect(settled.filter((entry) => entry.id === 'p1')).toHaveLength(1);
+		expect(settled[0].hostLive).toBeUndefined();
+	});
+
 	it('keeps local entries the host read window does not hold, ahead of the host entries', () => {
 		const merged = mergeHostedLogs([local('a'), local('b')], [record('b'), record('c')], undefined);
 		expect(merged.map((entry) => entry.id)).toEqual(['a', 'b', 'c']);

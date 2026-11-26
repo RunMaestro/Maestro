@@ -211,8 +211,15 @@ export function mergeHostedLogs(
 	persisted: readonly LogEntryRecord[] | undefined,
 	tail: readonly LogEntryRecord[] | undefined
 ): LogEntry[] {
-	const kept = local.filter((entry) => !entry.hostLive);
-	const hostEntries = persisted ? persistedView(persisted) : [];
+	// A live entry with the id of one already drawn is that entry rewritten in place while a turn
+	// runs (a `/history` progress line settled to its outcome, M22): the line takes its new text.
+	const rewrites = new Map((tail ?? []).map((record) => [record.id, record.text]));
+	const rewritten = (entry: LogEntry): LogEntry => {
+		const text = rewrites.get(entry.id);
+		return text === undefined || text === entry.text ? entry : { ...entry, text };
+	};
+	const kept = local.filter((entry) => !entry.hostLive).map(rewritten);
+	const hostEntries = persisted ? persistedView(persisted).map(rewritten) : [];
 	const hostIds = new Set(hostEntries.map((entry) => entry.id));
 	const older = persisted ? kept.filter((entry) => !hostIds.has(entry.id)) : kept;
 	const seen = new Set([...older.map((entry) => entry.id), ...hostIds]);

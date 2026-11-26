@@ -624,14 +624,17 @@ export function fireHostStartedMentions(
 /**
  * The soonest time a waiting consult's limit runs out (its start grace after it left the host
  * queue, or its time limit), when no change from the host may come to run the sync. Undefined when
- * nothing waits.
+ * nothing waits. A grace that has run out is not a deadline again: the sync it armed has judged
+ * it, and only a change from the host (or the time limit) can move it on, so it never re-arms a
+ * timer that fires at once, sync after sync (Greptile and CodeRabbit on #2154).
  */
-export function nextHostStartDeadline(): number | undefined {
+export function nextHostStartDeadline(now = Date.now()): number | undefined {
 	let soonest: number | undefined;
 	for (const waiting of mentionsAwaitingHostStart.values()) {
 		const ttl = (waiting.lastSeenQueuedAt ?? waiting.queuedAt) + HOST_START_MENTION_TTL_MS;
-		const grace = waiting.goneAt === undefined ? ttl : waiting.goneAt + HOST_QUEUE_START_GRACE_MS;
-		const deadline = Math.min(ttl, grace);
+		const grace =
+			waiting.goneAt === undefined ? undefined : waiting.goneAt + HOST_QUEUE_START_GRACE_MS;
+		const deadline = grace !== undefined && grace >= now ? Math.min(ttl, grace) : ttl;
 		if (soonest === undefined || deadline < soonest) soonest = deadline;
 	}
 	return soonest;

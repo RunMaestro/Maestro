@@ -168,7 +168,8 @@ export async function interruptTurn(
 		// have: Stop ends it too, so it is never sent again when the host is back.
 		const cutTabs = cutHostedTurnTabs(sessionId, scopeTabId);
 		const stopHere = [...new Set([...hostBusy, ...cutTabs])];
-		if (peer && peer.connection !== 'connected' && stopHere.length > 0) {
+		const hostNotTold = !!peer && peer.connection !== 'connected' && stopHere.length > 0;
+		if (hostNotTold) {
 			// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
 			endHostedTurnsHere(sessionId, stopHere, peer.name);
 		} else {
@@ -176,15 +177,22 @@ export async function interruptTurn(
 			if (forward) await interruptHostedTurn(session, scopeTabId);
 		}
 		const consultsCanceled = await cancelConsults(sessionId, scopeTabId);
-		// A consult ended here on a tab whose turn the host did not stop (a mention with no turn
-		// yet, or one held for its reply): the host writes no note there, so the tab gets the one a
-		// local Stop writes on it (`settle` below). A tab the host stopped ends on the host's own.
+		// The host writes no note where it did not stop a turn, so those tabs get the one a local
+		// Stop writes (`settle` below): every tab Stop ended here because the host could not be told
+		// (CodeRabbit on #2154), and the tab of a consult ended here whose turn the host did not stop
+		// (a mention with no turn yet, or one held for its reply). A tab the host stopped ends on the
+		// host's own.
+		const noteTabIds = new Set(hostNotTold ? stopHere : []);
 		const noteTabId = scopedTab?.id ?? getActiveTab(session)?.id;
-		if (consultsCanceled > 0 && noteTabId && !stopHere.includes(noteTabId)) {
-			const note = systemLog(TURN_CANCELED_NOTE);
+		if (consultsCanceled > 0 && noteTabId && (hostNotTold || !stopHere.includes(noteTabId))) {
+			noteTabIds.add(noteTabId);
+		}
+		if (noteTabIds.size > 0) {
 			updateSessionWith(sessionId, (s) => ({
 				...s,
-				aiTabs: s.aiTabs.map((t) => (t.id === noteTabId ? { ...t, logs: [...t.logs, note] } : t)),
+				aiTabs: s.aiTabs.map((t) =>
+					noteTabIds.has(t.id) ? { ...t, logs: [...t.logs, systemLog(TURN_CANCELED_NOTE)] } : t
+				),
 			}));
 		}
 		const wasBusy = forward || stopHere.length > 0 || recoveriesEnded > 0 || consultsCanceled > 0;

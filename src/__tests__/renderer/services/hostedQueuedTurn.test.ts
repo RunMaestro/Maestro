@@ -27,12 +27,14 @@ import {
 	HOST_QUEUE_START_GRACE_MS,
 	hostedHandoffStep,
 	hostedHandoffTurn,
+	nextHostedHandoffDeadline,
 	resetHostEntryClaims,
 } from '../../../renderer/services/crossAgentHandoff';
 import {
 	dropStoppedHostStartMentions,
 	fireHostStartedMentions,
 	HOST_START_MENTION_TTL_MS,
+	nextHostStartDeadline,
 	pruneHostStartedMentions,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
@@ -1036,6 +1038,46 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			await flush();
 			return text;
 		};
+
+		it('a start grace that ran out is not armed again, so no timer fires sync after sync (Greptile and CodeRabbit on #2154)', async () => {
+			const id = 'deadline';
+			const queuedAt = Date.now();
+			const text = await drainQueued(id, 'parallel');
+			hostSays(id, text, { queued: false });
+			const goneAt = queuedAt + 5;
+			fireHostStartedMentions(row(), undefined, goneAt);
+			const grace = goneAt + HOST_QUEUE_START_GRACE_MS;
+			expect(nextHostStartDeadline(goneAt)).toBe(grace);
+			expect(nextHostStartDeadline(grace)).toBe(grace);
+			// Judged once past the grace, still waiting: only the time limit is left to wait for.
+			fireHostStartedMentions(row(), undefined, grace + 1);
+			const ttl = nextHostStartDeadline(grace + 1);
+			expect(ttl).toBeGreaterThanOrEqual(queuedAt + HOST_START_MENTION_TTL_MS);
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+			// Let it go, so no later test sees it waiting.
+			pruneHostStartedMentions(new Set());
+		});
+
+		it('a hand-off: a start grace that ran out is no deadline (Greptile and CodeRabbit on #2154)', () => {
+			const tab = (goneAt: number) => ({
+				...createMockSession({ id: 'h' }),
+				aiTabs: [
+					{
+						id: 't1',
+						logs: [],
+						pendingMentionHandoff: {
+							targets: [],
+							message: 'm',
+							hostTurn: { stage: 'sent' as const, queueItemId: 'q', goneAt },
+						},
+					},
+				],
+			});
+			const grace = 1_000 + HOST_QUEUE_START_GRACE_MS;
+			expect(nextHostedHandoffDeadline([tab(1_000)] as never, 1_000)).toBe(grace);
+			expect(nextHostedHandoffDeadline([tab(1_000)] as never, grace)).toBe(grace);
+			expect(nextHostedHandoffDeadline([tab(1_000)] as never, grace + 1)).toBeUndefined();
+		});
 
 		describe.each(['parallel', 'consult-first'] as const)('a %s consult', (routing) => {
 			it('busy state first: the new turn is not taken for the turn ahead, and it consults', async () => {

@@ -264,15 +264,21 @@ export const HOST_QUEUE_START_GRACE_MS = 15_000;
 
 /**
  * The soonest time a hosted hand-off that left the host queue runs out of its start grace, over
- * `sessions`' tabs. Undefined when none waits on one.
+ * `sessions`' tabs. Undefined when none waits on one. A grace that has run out is no deadline:
+ * the sync it armed judged it, and a change from the host moves it on from there, so no timer
+ * fires again at once, sync after sync (Greptile and CodeRabbit on #2154).
  */
-export function nextHostedHandoffDeadline(sessions: readonly Session[]): number | undefined {
+export function nextHostedHandoffDeadline(
+	sessions: readonly Session[],
+	now = Date.now()
+): number | undefined {
 	let soonest: number | undefined;
 	for (const session of sessions) {
 		for (const tab of session.aiTabs) {
 			const goneAt = tab.pendingMentionHandoff?.hostTurn?.goneAt;
 			if (goneAt === undefined) continue;
 			const deadline = goneAt + HOST_QUEUE_START_GRACE_MS;
+			if (deadline < now) continue;
 			if (soonest === undefined || deadline < soonest) soonest = deadline;
 		}
 	}
