@@ -115,6 +115,46 @@ describe('hostedQueuedTurn', () => {
 		}
 	);
 
+	// Parity round 3, N1: a queued prompt handed to the host names its tab as the local drain names
+	// the tab it runs (`queuedItemNamingText()`); a command names nothing in either.
+	it('hosted: a queued prompt handed to the host names its tab, a command does not', async () => {
+		const generateTabName = vi.fn().mockResolvedValue('Wake Up Call');
+		maestro.tabNaming = { generateTabName };
+		useSettingsStore.setState({ automaticTabNamingEnabled: true });
+		try {
+			seed('hosted');
+			useSessionStore.setState((state) => ({
+				sessions: state.sessions.map((s) => ({
+					...s,
+					aiTabs: s.aiTabs.map((tab) => ({ ...tab, name: null })),
+				})),
+			}));
+			enqueuePromptForTab({
+				sessionId: 'row',
+				tabId: 't1',
+				text: '/commit fix',
+				slashCommand: true,
+			});
+			await flush();
+			expect(generateTabName).not.toHaveBeenCalled();
+
+			enqueuePromptForTab({ sessionId: 'row', tabId: 't1', text: 'wake up' });
+			await flush();
+			expect(generateTabName).toHaveBeenCalledExactlyOnceWith(
+				expect.objectContaining({ userMessage: 'wake up' })
+			);
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].name).toBe('Wake Up Call');
+			expect(act$).toHaveBeenCalledWith('box', 'h1', {
+				kind: 'rename-tab',
+				tabId: 't1',
+				name: 'Wake Up Call',
+			});
+		} finally {
+			useSettingsStore.setState({ automaticTabNamingEnabled: false });
+			delete maestro.tabNaming;
+		}
+	});
+
 	it.each(AGENT_MODES)('%s: only a hosted agent hands its queued items to a host', (mode) => {
 		const session = seed(mode);
 		expect(isQueuedItemForHost(session, queuedMessage())).toBe(mode === 'hosted');

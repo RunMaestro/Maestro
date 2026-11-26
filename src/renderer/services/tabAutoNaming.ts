@@ -21,7 +21,7 @@ import { renameHostedTab } from './hostedTurns';
 import { useSettingsStore } from '../stores/settingsStore';
 import { extractQuickTabName } from '../utils/tabHelpers';
 import { captureException } from '../utils/sentry';
-import type { AITab, Session } from '../types';
+import type { AITab, QueuedItem, Session } from '../types';
 
 /**
  * Ceiling on the text handed to the namer. Richer context produces names that
@@ -293,6 +293,17 @@ export function requestTabAutoNameForMessage(
 		}
 		captureException(error, { extra: { operation: 'tab-auto-name', label, tabId } });
 	}
+}
+
+/**
+ * The text a queued item names its tab from as it runs, or undefined when it names nothing: a
+ * command (its text is a command name, not a request), a released consult hold (`agentContext`,
+ * Maestro's own "X replied" note), or a turn still waiting on a consult. One rule for every drain:
+ * the local queue drain and a hosted agent's hand-off to its host both ask it.
+ */
+export function queuedItemNamingText(item: QueuedItem): string | undefined {
+	if (item.type !== 'message' || item.agentContext || item.awaitingConsult) return undefined;
+	return item.text?.trim() ? item.text : undefined;
 }
 
 /**

@@ -2730,6 +2730,12 @@ describe('mode parity: tab bar actions', () => {
 			addedLogs: added?.logs.length,
 			addedState: added?.state,
 			addedStarred: !!added?.starred,
+			// Parity round 3, N2: the per-tab composer defaults a new tab starts with.
+			addedSaveToHistory: added?.saveToHistory,
+			addedShowThinking: added?.showThinking,
+			addedReadOnly: added?.readOnlyMode,
+			addedModel: added?.customModel,
+			addedEffort: added?.customEffort,
 		};
 	}
 
@@ -2744,12 +2750,46 @@ describe('mode parity: tab bar actions', () => {
 			addedLogs: 0,
 			addedState: 'idle',
 			addedStarred: false,
+			addedSaveToHistory: true,
+			addedShowThinking: 'off',
+			addedReadOnly: undefined,
+			addedModel: undefined,
+			addedEffort: undefined,
 		});
 		expect(outcomes[1]).toEqual(outcomes[0]);
 		expect(outcomes[2]).toEqual(outcomes[0]);
-		// Transport only: the hosted tab was made by its host.
-		expect(federationAct).toHaveBeenCalledTimes(1);
-		expect(federationAct).toHaveBeenCalledWith('box', 'h1', { kind: 'new-tab' });
+		// Transport only: the hosted tab was made by its host, which holds the same defaults.
+		expect(federationAct.mock.calls.map(([, , action]) => action)).toEqual([
+			{ kind: 'new-tab' },
+			{
+				kind: 'update-tab',
+				tabId: 'tab-new',
+				patch: { saveToHistory: true, thinking: 'off' },
+			},
+		]);
+	});
+
+	// Parity round 3, N2: a new tab follows the user's own defaults in every mode, so a hosted
+	// tab never starts with Save to History off when a local one starts with it on.
+	it("New tab starts with the user's Save to History and thinking defaults, in every mode", async () => {
+		useSettingsStore.setState({
+			defaultSaveToHistory: false,
+			defaultShowThinking: 'sticky',
+		} as any);
+		try {
+			const outcomes = [];
+			for (const mode of AGENT_MODES) outcomes.push(await newTabOutcome(mode));
+			expect(outcomes[0]).toMatchObject({ addedSaveToHistory: false, addedShowThinking: 'sticky' });
+			expect(outcomes[1]).toEqual(outcomes[0]);
+			expect(outcomes[2]).toEqual(outcomes[0]);
+			expect(federationAct).toHaveBeenCalledWith('box', 'h1', {
+				kind: 'update-tab',
+				tabId: 'tab-new',
+				patch: { saveToHistory: false, thinking: 'sticky' },
+			});
+		} finally {
+			useSettingsStore.setState({ defaultSaveToHistory: true, defaultShowThinking: 'off' } as any);
+		}
 	});
 
 	it('Close and Star change the strip the same way in every mode', () => {

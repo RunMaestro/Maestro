@@ -25,6 +25,7 @@ import {
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
 import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
+import { DEFAULT_TAB_DEFAULTS } from '../../../shared/maestro-lib/agents/rules';
 import type { MessagePin } from '../../../shared/messagePins';
 import { collectGroupMemberTabKeys } from '../../../shared/tabStripMembership';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
@@ -1187,8 +1188,9 @@ export function createTab(
 		starred = false,
 		usageStats,
 		pinnedMessages,
-		saveToHistory = true,
-		showThinking = 'off',
+		// The one default for a new tab, shared with a hosted agent's new tab (`openHostedTab()`).
+		saveToHistory = DEFAULT_TAB_DEFAULTS.saveToHistory,
+		showThinking = DEFAULT_TAB_DEFAULTS.showThinking,
 		activate: activateOption = true,
 		hidden = false,
 		id,

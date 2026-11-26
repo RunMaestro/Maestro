@@ -557,6 +557,43 @@ describe('PeerMirrorService', () => {
 			expect(a.historyList).toHaveBeenCalledTimes(1);
 		});
 
+		// Parity round 3, N4: a turn sent from this machine carries its name on the host; here it
+		// reads as a local entry (no host pill), as a local or SSH agent's own entry does.
+		it("reads an entry stamped with this machine's name as local, and keeps another machine's", async () => {
+			const a = fakeHost('a');
+			a.historyList.mockResolvedValueOnce({
+				ok: true,
+				value: [
+					{
+						id: 'mine',
+						type: 'USER',
+						timestamp: 2,
+						summary: 's',
+						projectPath: '/p',
+						hostname: 'laptop.local',
+					},
+					{
+						id: 'theirs',
+						type: 'USER',
+						timestamp: 1,
+						summary: 's',
+						projectPath: '/p',
+						hostname: 'desk.local',
+					},
+				],
+			});
+			const h = harness([remoteOf('a')], { a });
+			h.deps.originHost = 'laptop.local';
+			h.service.start();
+			await settle();
+			const entries = await h.service.history('a', 'a-a1');
+			expect(entries.map((e) => [e.id, e.hostname])).toEqual([
+				['mine', undefined],
+				['theirs', 'desk.local'],
+			]);
+			expect('hostname' in entries[0]).toBe(false);
+		});
+
 		it('keeps a cache per agent and drops only the agent whose turn ended', async () => {
 			const a = fakeHost('a');
 			a.setAgents([agent('a-a1'), agent('a-a2')]);
