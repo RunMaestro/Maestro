@@ -1132,6 +1132,38 @@ describe('director-notes IPC handlers', () => {
 			expect(result.stats.agentCount).toBe(2);
 		});
 
+		// History sharing is one setting stored in two fields; Director's Notes reads
+		// the remote folder for an SSH agent that shares through either one.
+		it('reads the remote folder of an SSH agent shared through either field', async () => {
+			mockGetSessionsStore.mockReturnValue({
+				get: vi.fn().mockReturnValue([
+					{
+						id: 'session-1',
+						name: 'Local Agent',
+						cwd: '/remote/project',
+						projectRoot: '/remote/project',
+						sessionSshRemoteConfig: {
+							enabled: true,
+							remoteId: 'petopswatt',
+							shareHistoryToProjectDir: true,
+						},
+					},
+				]),
+			});
+			mockGetSshRemoteById.mockReturnValue({ id: 'petopswatt', host: 'petopswatt', port: 22 });
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			await handler!({} as any, { lookbackDays: 7 });
+
+			expect(mockReadRemoteEntriesSsh).toHaveBeenCalledWith(
+				'/remote/project',
+				expect.objectContaining({ id: 'petopswatt' }),
+				expect.anything()
+			);
+		});
+
 		it('reads a peer host’s file up to the user’s entry limit', async () => {
 			withSshAgent();
 			mockGetSettingsStore.mockReturnValue({

@@ -10,6 +10,11 @@
  * fetched copy. This module is that one fetch-then-act step; menus and toolbars
  * call it instead of branching on the agent's mode.
  *
+ * Open in Default App and Reveal hand the copy of a remote file to another app,
+ * so main watches that copy and writes a change saved there back to the remote
+ * file (never over a remote change: `fs:watchRemoteCopy`). A center flash says
+ * the user has a copy that saves back.
+ *
  * A remote DIRECTORY has no location on this machine at all. The nearest honest
  * thing is the Files panel at that folder, with a center flash that says so.
  */
@@ -263,9 +268,63 @@ async function runFileAction(
 	}
 }
 
-/** Open a file in this machine's default app (a remote file opens its fetched copy). */
+/**
+ * Have main write a change saved in the fetched copy back to the remote file.
+ * Resolves whether it will: a watch that cannot start leaves a copy that does
+ * not save back, and the flash must say that instead.
+ */
+async function watchCopyForWriteBack(
+	target: FileActionTarget & { sshRemoteId: string }
+): Promise<boolean> {
+	try {
+		await window.maestro.fs.watchRemoteCopy(target.path, target.sshRemoteId);
+		return true;
+	} catch (error) {
+		captureException(error, {
+			extra: { action: 'watch-remote-copy', path: target.path, sshRemoteId: target.sshRemoteId },
+		});
+		return false;
+	}
+}
+
+/** Say once, after the copy is handed over, what the user is holding. */
+function flashRemoteCopy(savesBack: boolean): void {
+	notifyCenterFlash({
+		message: 'This is a copy of the remote file',
+		detail: savesBack
+			? 'Changes you save go back to the remote host.'
+			: 'Changes you save stay on this computer.',
+		color: savesBack ? 'theme' : 'yellow',
+		duration: 4000,
+	});
+}
+
+/**
+ * Hand a file to another app on this machine (the default app, the file
+ * manager). A local file goes as it is. A remote file goes as its fetched copy,
+ * which main watches and saves back, and a flash says so.
+ */
+async function handOverFile(
+	title: string,
+	target: FileActionTarget,
+	action: (localPath: string) => Promise<unknown> | unknown
+): Promise<boolean> {
+	let savesBack: boolean | null = null;
+	const done = await runFileAction(title, target, action, async (fileTarget) => {
+		const localPath = await fetchLocalCopy(fileTarget);
+		if (isRemote(fileTarget)) savesBack = await watchCopyForWriteBack(fileTarget);
+		return localPath;
+	});
+	if (done && savesBack !== null) flashRemoteCopy(savesBack);
+	return done;
+}
+
+/**
+ * Open a file in this machine's default app. A remote file opens its fetched
+ * copy, and a change saved there goes back to the remote file.
+ */
 export function openFileInDefaultApp(target: FileActionTarget): Promise<boolean> {
-	return runFileAction('Open failed', target, (localPath) =>
+	return handOverFile('Open failed', target, (localPath) =>
 		window.maestro.shell.openPath(localPath)
 	);
 }
@@ -315,8 +374,9 @@ function showRemoteFolderInFilesPanel(sessionId: string | undefined, path: strin
 /**
  * Reveal a file or folder in this machine's file manager.
  *
- * A remote file is fetched and its local copy revealed. A remote folder has no
- * location here, so it is shown in the Files panel instead.
+ * A remote file is fetched and its local copy revealed (it saves back, as for
+ * Open). A remote folder has no location here, so it is shown in the Files
+ * panel instead.
  */
 export async function revealInFileManager(
 	target: FileActionTarget & { isDirectory?: boolean },
@@ -326,7 +386,7 @@ export async function revealInFileManager(
 		showRemoteFolderInFilesPanel(options.sessionId, target.path);
 		return true;
 	}
-	return runFileAction('Reveal failed', target, (localPath) =>
+	return handOverFile('Reveal failed', target, (localPath) =>
 		window.maestro.shell.showItemInFolder(localPath)
 	);
 }

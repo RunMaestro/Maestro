@@ -69,7 +69,7 @@ Every tab reads two sources, and so does the AI synopsis:
 - **This machine's agents**, including any whose process runs over SSH. A remote agent you drive from here is recorded here, so its runs are always covered.
 - **Peer Maestro instances** that worked on the same project from a different machine, via [Cross-Host Shared History](/history#cross-host-shared-history). Their entries carry the originating hostname, and their agents appear in the list named `Agent (hostname)`.
 
-The second source needs the sharing toggles turned on: **Sync history to remote** on the SSH agent here, and **This agent is remote-controlled** on the agent over there. Without them, Director's Notes sees only what this machine did.
+The second source needs the **Share history in the project folder** toggle turned on, both on the SSH agent here and on the agent over there. Without them, Director's Notes sees only what this machine did.
 
 ### AI Overview
 
