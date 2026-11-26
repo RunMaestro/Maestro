@@ -48,13 +48,8 @@ import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsSto
 import { cancelRecoveryForTab, hasPendingRetry, isHeldByRecovery } from '../stores/retryStore';
 import type { AITab, LogEntry, Session } from '../types';
 import { nextThinkingMode, THINKING_MODES, type ThinkingMode } from '../../shared/types';
-import {
-	closeTab,
-	createTab,
-	getTabDisplayName,
-	revealAiTab,
-	setShowThinkingFields,
-} from '../utils/tabHelpers';
+import { closeTab, createTab, getTabDisplayName, revealAiTab } from '../utils/tabHelpers';
+import { setTabThinkingMode } from './tabThinkingMode';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { isAiTabHidden, visibleAiTabs } from '../utils/unifiedTabOrderUtils';
 import {
@@ -314,15 +309,13 @@ function thinkingMode(): ThinkingMode {
  */
 function applyThinking(c: Chat, sessionId: string, tabId: string, mode: ThinkingMode): void {
 	const owned = c.ownedTabIds.has(tabId);
-	updateSessionWith(sessionId, (s) => {
-		const tab = s.aiTabs.find((t) => t.id === tabId);
-		if (!tab) return s;
-		const current = tab.showThinking ?? 'off';
-		const raise = THINKING_MODES.indexOf(mode) > THINKING_MODES.indexOf(current);
-		if (current === mode || (!owned && !raise)) return s;
-		const fields = setShowThinkingFields(tab, mode);
-		return { ...s, aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, ...fields } : t)) };
-	});
+	const tab = findSession(sessionId)?.aiTabs.find((t) => t.id === tabId);
+	if (!tab) return;
+	const current = tab.showThinking ?? 'off';
+	const raise = THINKING_MODES.indexOf(mode) > THINKING_MODES.indexOf(current);
+	if (current === mode || (!owned && !raise)) return;
+	// The one write every Thinking control goes through: it also tells a hosted agent's host.
+	setTabThinkingMode(sessionId, tabId, mode);
 }
 
 /** Remember the mode, and apply it to every tab the chat has sent into. */

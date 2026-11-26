@@ -263,6 +263,18 @@ export interface AgentImportInput {
 	/** The tab the person was looking at. Absent, or not one of `tabs`: the first tab. */
 	activeTabId?: string;
 	queue?: AgentImportQueuedMessage[];
+	/**
+	 * The id of this agent's earlier copy on the host, left there by a Move Back while the host was
+	 * down. The host replaces that copy with this import in one write: its name and directory do
+	 * not refuse the import. A host that does not know the field refuses on the name as before.
+	 */
+	replacesAgentId?: string;
+	/**
+	 * The id of the agent this import moves, on the machine it moves from. The host stores it on
+	 * the record (`liftedFromAgentId`) and replaces a copy (`replacesAgentId`) only when that copy
+	 * carries the same id and the same name: a wrong `replacesAgentId` never removes another agent.
+	 */
+	liftedFromAgentId?: string;
 }
 
 export interface AgentImportReceipt {
@@ -1078,9 +1090,10 @@ export type MaestroEvent =
 	| { type: 'turn'; agentId: string; tabId: string; event: TurnEvent }
 	/**
 	 * The agent's execution queue changed (a message waits, starts, is removed, held, or released).
-	 * Carries every waiting item, in order, so a listener replaces what it held. Only a host whose
-	 * runtime owns the queue says this: the desktop's bridge does not, so a client attached to a
-	 * desktop reads the queue with `turns.queue.list` instead.
+	 * Carries every waiting item, in order, so a listener replaces what it held. A headless host
+	 * says it as its runtime's queue changes; a desktop says it as its stored agents are written
+	 * (`broadcastDesktopQueueChanges()`), and an older desktop not at all, so a client reads the
+	 * queue with `turns.queue.list` on attach.
 	 */
 	| {
 			type: 'queue.changed';
@@ -1091,7 +1104,7 @@ export type MaestroEvent =
 			/**
 			 * This host names every item that leaves its queue (`exit`), so one that is gone from a
 			 * list without a name is still on its way (its start is in flight). An older headless
-			 * host, and a desktop host, do not say it.
+			 * host, and an older desktop host, do not say it.
 			 */
 			namesExits?: true;
 	  }

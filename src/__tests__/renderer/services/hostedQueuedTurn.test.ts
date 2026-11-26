@@ -27,11 +27,14 @@ import {
 	HOST_QUEUE_START_GRACE_MS,
 	hostedHandoffStep,
 	hostedHandoffTurn,
+	nextHostedHandoffDeadline,
+	resetHostEntryClaims,
 } from '../../../renderer/services/crossAgentHandoff';
 import {
 	dropStoppedHostStartMentions,
 	fireHostStartedMentions,
 	HOST_START_MENTION_TTL_MS,
+	nextHostStartDeadline,
 	pruneHostStartedMentions,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
@@ -106,6 +109,9 @@ const queuedMessage = (overrides: Partial<QueuedItem> = {}): QueuedItem => ({
 	text: 'wake up',
 	...overrides,
 });
+
+// A host entry matched to one message in a test is never held for another test's message.
+beforeEach(() => resetHostEntryClaims());
 
 describe('hostedQueuedTurn', () => {
 	beforeEach(() => {
@@ -542,6 +548,9 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			{ id: 'a', timestamp: 4, source: 'ai', text: 'done' },
 		];
 		expect(idleLate(ranWhileDetached, true)).toBe('running');
+		// The cases below are other hand-offs on fresh tabs that reuse the entry ids above: entry `u`
+		// now belongs to h9's message, so forget that before them.
+		resetHostEntryClaims();
 		// The turn ended but the tab still draws what it streamed: read the saved transcript first.
 		expect(
 			hostedHandoffStep(
@@ -1030,6 +1039,70 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			return text;
 		};
 
+		it('a start grace that ran out is not armed again, so no timer fires sync after sync (Greptile and CodeRabbit on #2154)', async () => {
+			const id = 'deadline';
+			const queuedAt = Date.now();
+			const text = await drainQueued(id, 'parallel');
+			hostSays(id, text, { queued: false });
+			const goneAt = queuedAt + 5;
+			fireHostStartedMentions(row(), undefined, goneAt);
+			const grace = goneAt + HOST_QUEUE_START_GRACE_MS;
+			expect(nextHostStartDeadline(goneAt)).toBe(grace);
+			expect(nextHostStartDeadline(grace)).toBe(grace);
+			// Judged once past the grace, still waiting: only the time limit is left to wait for.
+			fireHostStartedMentions(row(), undefined, grace + 1);
+			const ttl = nextHostStartDeadline(grace + 1);
+			expect(ttl).toBeGreaterThanOrEqual(queuedAt + HOST_START_MENTION_TTL_MS);
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+			// Let it go, so no later test sees it waiting.
+			pruneHostStartedMentions(new Set());
+		});
+
+		it('a host that names its exits: a consult never seen waiting starts on its own entry, not only on a name that may never come (CodeRabbit on #2154)', async () => {
+			const id = 'unseen';
+			const text = await drainQueued(id, 'parallel');
+			// The message joined and left the host queue between two of its frames: no name for it.
+			hostSays(id, text, { queued: false, busy: 200, ran: true });
+			fireHostStartedMentions(row(), []);
+			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		});
+
+		it('a host that names its exits: a consult never seen waiting, with no entry of its own yet, waits (CodeRabbit on #2154)', async () => {
+			const id = 'unseen-wait';
+			const text = await drainQueued(id, 'parallel');
+			hostSays(id, text, { queued: false, busy: 100 });
+			// One clock read: every later time derives from it, so no sync lands past the grace early.
+			const now = Date.now();
+			fireHostStartedMentions(row(), [], now);
+			fireHostStartedMentions(row(), [], now + HOST_QUEUE_START_GRACE_MS + 1);
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+			expect(row().aiTabs[0].logs.some((entry) => /removed before it ran/.test(entry.text))).toBe(
+				false
+			);
+			pruneHostStartedMentions(new Set());
+		});
+
+		it('a hand-off: a start grace that ran out is no deadline (Greptile and CodeRabbit on #2154)', () => {
+			const tab = (goneAt: number) => ({
+				...createMockSession({ id: 'h' }),
+				aiTabs: [
+					{
+						id: 't1',
+						logs: [],
+						pendingMentionHandoff: {
+							targets: [],
+							message: 'm',
+							hostTurn: { stage: 'sent' as const, queueItemId: 'q', goneAt },
+						},
+					},
+				],
+			});
+			const grace = 1_000 + HOST_QUEUE_START_GRACE_MS;
+			expect(nextHostedHandoffDeadline([tab(1_000)] as never, 1_000)).toBe(grace);
+			expect(nextHostedHandoffDeadline([tab(1_000)] as never, grace)).toBe(grace);
+			expect(nextHostedHandoffDeadline([tab(1_000)] as never, grace + 1)).toBeUndefined();
+		});
+
 		describe.each(['parallel', 'consult-first'] as const)('a %s consult', (routing) => {
 			it('busy state first: the new turn is not taken for the turn ahead, and it consults', async () => {
 				const id = `a-${routing}`;
@@ -1121,9 +1194,11 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				fireHostStartedMentions(row(), [], Date.now(), 0);
 				// Detached: it started and ended. The reconnect reads the queue whole and the tab idle.
 				hostSays(id, text, { queued: false });
-				const late = Date.now() + HOST_QUEUE_START_GRACE_MS + 1;
+				// One clock read for both: `late` must be past the grace counted from this sync.
+				const now = Date.now();
+				const late = now + HOST_QUEUE_START_GRACE_MS + 1;
 				const stale = { read: vi.fn(), isCurrent: () => false };
-				fireHostStartedMentions(row(), [], Date.now(), 1, stale);
+				fireHostStartedMentions(row(), [], now, 1, stale);
 				fireHostStartedMentions(row(), [], late, 1, stale);
 				expect(stale.read).toHaveBeenCalledWith('t1');
 				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
@@ -1213,6 +1288,173 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 			});
 		});
+
+		describe.each(['parallel', 'consult-first'] as const)(
+			'a %s consult whose turn starts and ends between two syncs (M20)',
+			(routing) => {
+				const lateNote =
+					'Backend was asked after the turn ran: the host did not say when the message started.';
+				// One clock read per test: every sync gets its time from it, so `late` is always past the
+				// grace counted from the sync that stamped the gone time (a second read could land later).
+				let now = 0;
+				let late = 0;
+				beforeEach(() => {
+					now = Date.now();
+					late = now + HOST_QUEUE_START_GRACE_MS + 1;
+				});
+
+				it('a host that names its starts: the named start consults once, with no busy state ever seen', async () => {
+					const id = `m20n-${routing}`;
+					const text = await drainQueued(id, routing);
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					// Between two syncs it started and ended: the tab reads idle, its turn never seen.
+					hostSays(id, text, { queued: false });
+					fireHostStartedMentions(row(), [started(id)], now);
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(lateNote);
+				});
+
+				it('a host that names its starts: one that started and ended before its first queue frame consults once', async () => {
+					const id = `m20m-${routing}`;
+					const text = await drainQueued(id, routing);
+					hostSays(id, text, { queued: false });
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				});
+
+				it('an older host: seen waiting, then gone with the tab idle, it consults late from the saved transcript, and says so', async () => {
+					const id = `m20o-${routing}`;
+					const text = await drainQueued(id, routing);
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), undefined, now);
+					hostSays(id, text, { queued: false });
+					fireHostStartedMentions(row(), undefined, now);
+					const stale = { read: vi.fn(), isCurrent: () => false };
+					fireHostStartedMentions(row(), undefined, late, 0, stale);
+					expect(stale.read).toHaveBeenCalledWith('t1');
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					hostSays(id, text, { queued: false, logs: true });
+					const current = { read: vi.fn(), isCurrent: () => true };
+					fireHostStartedMentions(row(), undefined, late, 0, current);
+					fireHostStartedMentions(row(), undefined, late, 0, current);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(lateNote);
+				});
+
+				it('an older host: never listed in the host queue, gone with the tab idle, it consults late instead of waiting out the time limit', async () => {
+					const id = `m20u-${routing}`;
+					const text = await drainQueued(id, routing);
+					// Started and ended before any queue frame showed it.
+					hostSays(id, text, { queued: false });
+					fireHostStartedMentions(row(), undefined, now);
+					const stale = { read: vi.fn(), isCurrent: () => false };
+					fireHostStartedMentions(row(), undefined, late, 0, stale);
+					expect(stale.read).toHaveBeenCalledWith('t1');
+					hostSays(id, text, { queued: false, logs: true });
+					fireHostStartedMentions(row(), undefined, late, 0, {
+						read: vi.fn(),
+						isCurrent: () => true,
+					});
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(lateNote);
+				});
+
+				it('an older host: never listed, its absence is no removal, while the turn ahead runs or the tab idles', async () => {
+					const id = `m20w-${routing}`;
+					const text = await drainQueued(id, routing);
+					const removedNote =
+						'Nothing was asked of Backend: the message was removed before it ran.';
+					hostSays(id, text, { queued: false, busy: 100 });
+					fireHostStartedMentions(row(), undefined, now);
+					fireHostStartedMentions(row(), undefined, late);
+					hostSays(id, text, { queued: false });
+					fireHostStartedMentions(row(), undefined, late, 0, {
+						read: vi.fn(),
+						isCurrent: () => true,
+					});
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(removedNote);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					// Then it runs.
+					hostSays(id, text, { queued: false, busy: 200, ran: true });
+					fireHostStartedMentions(row(), undefined, late);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(lateNote);
+				});
+			}
+		);
+
+		describe.each(['parallel', 'consult-first'] as const)(
+			'a %s consult of the turn Stop ended never fires after Stop (M24)',
+			(routing) => {
+				const stoppedNote = 'Nothing was asked of Backend: the turn was stopped.';
+				const lateNote =
+					'Backend was asked after the turn ran: the host did not say when the message started.';
+
+				it('one the host queue never listed (a desktop host): Stop lets it go, and its saved entry fires nothing', async () => {
+					const id = `m24-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					const late = now + HOST_QUEUE_START_GRACE_MS + 1;
+					// The host runs it: no queue frame ever listed it, and its user entry is not drawn yet.
+					hostSays(id, text, { queued: false, busy: 200 });
+					fireHostStartedMentions(row(), undefined, now);
+					dropStoppedHostStartMentions('row', ['t1']);
+					const notes = () => row().aiTabs[0].logs.map((entry) => entry.text);
+					expect(notes().filter((entry) => entry === stoppedNote)).toHaveLength(1);
+					// The stopped turn's saved transcript holds its message: before M24 it consulted here.
+					hostSays(id, text, { queued: false, logs: true });
+					const current = { read: vi.fn(), isCurrent: () => true };
+					fireHostStartedMentions(row(), undefined, late, 0, current);
+					fireHostStartedMentions(row(), [started(id)], late, 1, current);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(notes()).not.toContain(lateNote);
+				});
+
+				it('one gone from a host that names its exits, with no name yet (its start in flight): Stop lets it go', async () => {
+					const id = `m24n-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					hostSays(id, text, { queued: false, busy: 200 });
+					fireHostStartedMentions(row(), [], now);
+					dropStoppedHostStartMentions('row', ['t1']);
+					// The start's name lands after Stop: it ran as the stopped turn, so nothing is asked.
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it('Stop on another tab keeps it', async () => {
+					const id = `m24t-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: false, busy: 200 });
+					fireHostStartedMentions(row(), undefined, now);
+					dropStoppedHostStartMentions('row', ['another-tab']);
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				});
+
+				it('one the host queued behind the turn Stop ends, not listed yet: it still waits, and consults once when it starts (CodeRabbit on #2154)', async () => {
+					const id = `m24w-${routing}`;
+					// The host's record runs the turn ahead at the receipt, so the receipt records it.
+					hydrateHost(100);
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					// Stop lands before any queue frame listed the message: the tab runs the turn ahead.
+					dropStoppedHostStartMentions('row', ['t1']);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
+					// Its own turn starts after Stop.
+					hostSays(id, text, { queued: false, busy: 300, ran: true });
+					fireHostStartedMentions(row(), [started(id)], now);
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				});
+			}
+		);
 
 		describe('a hand-off', () => {
 			const releasesWithItsAnswer = (text: string, hostExits?: QueueExit[]) => {
@@ -1313,9 +1555,11 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				followHostedHandoffs(row(), undefined, [], Date.now(), 0);
 				// Detached: it started and ended. The reconnect reads the queue whole and the tab idle.
 				hostSays('h-t', text, { queued: false });
-				const late = Date.now() + HOST_QUEUE_START_GRACE_MS + 1;
+				// One clock read for both: `late` must be past the grace counted from this sync.
+				const now = Date.now();
+				const late = now + HOST_QUEUE_START_GRACE_MS + 1;
 				const stale = { read: vi.fn(), isCurrent: () => false };
-				followHostedHandoffs(row(), stale, [], Date.now(), 1);
+				followHostedHandoffs(row(), stale, [], now, 1);
 				followHostedHandoffs(row(), stale, [], late, 1);
 				expect(stale.read).toHaveBeenCalledWith('t1');
 				expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
@@ -1366,6 +1610,28 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 						started('h-l'),
 					])
 				).toBe('wait');
+			});
+
+			it('an older host: a hand-off never listed in the host queue, whose turn started and ended between two syncs, releases once with its answer (M20)', async () => {
+				const text = await drainQueued('h-m20', 'handoff');
+				hostSays('h-m20', text, { queued: false });
+				// One clock read: the gone time and `late` both derive from it.
+				const now = Date.now();
+				followHostedHandoffs(row(), undefined, undefined, now);
+				const late = now + HOST_QUEUE_START_GRACE_MS + 1;
+				const stale = { read: vi.fn(), isCurrent: () => false };
+				followHostedHandoffs(row(), stale, undefined, late);
+				expect(stale.read).toHaveBeenCalledWith('t1');
+				hostSays('h-m20', text, { queued: false, logs: true });
+				const current = { read: vi.fn(), isCurrent: () => true };
+				followHostedHandoffs(row(), current, undefined, late);
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
+				followHostedHandoffs(row(), current, undefined, late);
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
+					targetSessionId: 'backend',
+					handoffAnswer: 'The cache is stale.',
+				});
 			});
 
 			it('a host that names its exits: a named removal drops it with a note; an unnamed gap waits', async () => {
@@ -1527,10 +1793,12 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			await queueOnHost('m15-stopped', 100);
 			busy(100, 'm15-stopped');
 			fireHostStartedMentions(row());
-			// It left the host queue; its start is not confirmed yet when Stop lands.
-			busy(undefined);
+			// It left the host queue and the tab runs a new turn (its own): Stop ends that turn, while
+			// its start is not confirmed yet.
+			busy(150);
+			hydrateHost(150);
 			fireHostStartedMentions(row());
-			dropStoppedHostStartMentions('row', 't1');
+			dropStoppedHostStartMentions('row', ['t1']);
 			expect(notes()).toEqual(['Nothing was asked of Backend: the turn was stopped.']);
 			busy(200);
 			fireHostStartedMentions(row());
@@ -1539,7 +1807,7 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			await queueOnHost('m15-waits', 100);
 			busy(100, 'm15-waits');
 			fireHostStartedMentions(row());
-			dropStoppedHostStartMentions('row');
+			dropStoppedHostStartMentions('row', ['t1']);
 			busy(300, undefined, true);
 			fireHostStartedMentions(row());
 			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);

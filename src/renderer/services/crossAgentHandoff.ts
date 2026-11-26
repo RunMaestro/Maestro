@@ -30,6 +30,7 @@
 import type { QueueExit, TurnSendReceipt } from '../../shared/maestro-lib/client/types';
 import { queueExitOf } from '../../shared/maestro-lib/client/peer-mirror';
 import { PROMPT_LAYER_SEPARATOR } from '../../shared/maestro-lib/turns/prompt';
+import { collapseWhitespace } from '../../shared/stringUtils';
 import type { AITab, ConsultHoldTarget, LogEntry, MentionHandoff, Session } from '../types';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { sendCrossAgentRequest } from '../hooks/agent/useCrossAgentDispatch';
@@ -119,15 +120,30 @@ export function noteSkippedMention(
 	kind: 'handoff' | 'consult' = 'handoff'
 ) {
 	const names = formatConsultedAgentNames(targets.map((t) => t.targetAgentName));
-	const entry: LogEntry = {
-		id: generateId(),
-		timestamp: Date.now(),
-		source: 'system',
-		text:
-			kind === 'handoff'
-				? `Nothing was handed off to ${names}: ${why}`
-				: `Nothing was asked of ${names}: ${why}`,
-	};
+	appendMentionNote(
+		sessionId,
+		tabId,
+		kind === 'handoff'
+			? `Nothing was handed off to ${names}: ${why}`
+			: `Nothing was asked of ${names}: ${why}`
+	);
+}
+
+/**
+ * A system note on the source tab saying a consult went out only after its turn ran: a host that
+ * does not say when a queued message starts showed the start in the saved transcript (M20).
+ */
+export function noteLateMention(sessionId: string, tabId: string, targets: ConsultHoldTarget[]) {
+	const names = formatConsultedAgentNames(targets.map((t) => t.targetAgentName));
+	appendMentionNote(
+		sessionId,
+		tabId,
+		`${names} ${targets.length === 1 ? 'was' : 'were'} asked after the turn ran: the host did not say when the message started.`
+	);
+}
+
+function appendMentionNote(sessionId: string, tabId: string, text: string) {
+	const entry: LogEntry = { id: generateId(), timestamp: Date.now(), source: 'system', text };
 	updateAiTab(sessionId, tabId, (tab) => ({ ...tab, logs: [...tab.logs, entry] }));
 }
 
@@ -214,7 +230,9 @@ export function markHandoffSentToHost(
 	/** The send boundary when the host took the turn, for a hand-off armed later than that. */
 	boundary?: { afterEntryId: string | undefined },
 	/** The mirror's count of whole host-queue reads now (`MirroredPeer.queueReads`). */
-	queueReads = 0
+	queueReads = 0,
+	/** How many images the message carried: an image-only message is matched by it. */
+	imageCount = 0
 ): void {
 	updateAiTab(sessionId, tabId, (tab) => {
 		if (!tab.pendingMentionHandoff) return tab;
@@ -229,6 +247,7 @@ export function markHandoffSentToHost(
 						? { queueItemId: receipt.itemId, readsAtSeen: queueReads }
 						: {}),
 					...(afterEntryId ? { afterEntryId } : {}),
+					...(imageCount > 0 ? { imageCount } : {}),
 				},
 			},
 		};
@@ -245,15 +264,21 @@ export const HOST_QUEUE_START_GRACE_MS = 15_000;
 
 /**
  * The soonest time a hosted hand-off that left the host queue runs out of its start grace, over
- * `sessions`' tabs. Undefined when none waits on one.
+ * `sessions`' tabs. Undefined when none waits on one. A grace that has run out is no deadline:
+ * the sync it armed judged it, and a change from the host moves it on from there, so no timer
+ * fires again at once, sync after sync (Greptile and CodeRabbit on #2154).
  */
-export function nextHostedHandoffDeadline(sessions: readonly Session[]): number | undefined {
+export function nextHostedHandoffDeadline(
+	sessions: readonly Session[],
+	now = Date.now()
+): number | undefined {
 	let soonest: number | undefined;
 	for (const session of sessions) {
 		for (const tab of session.aiTabs) {
 			const goneAt = tab.pendingMentionHandoff?.hostTurn?.goneAt;
 			if (goneAt === undefined) continue;
 			const deadline = goneAt + HOST_QUEUE_START_GRACE_MS;
+			if (deadline < now) continue;
 			if (soonest === undefined || deadline < soonest) soonest = deadline;
 		}
 	}
@@ -272,33 +297,99 @@ function entriesAfter(logs: LogEntry[], afterEntryId: string | undefined): LogEn
 }
 
 /**
- * Where, in `entries`, the host wrote the user entry of `message`: the first user entry whose text
- * is the message, or holds it as one whole layer (an older host that takes no agent-only text gets
- * the consult's replies and notes laid around the message, `withTurnAgentText()`). A message with
- * no text (images only) cannot be told apart: the first user entry is taken. -1 while none.
+ * A message this window handed a host, as the host's transcript can show it: the queue item the
+ * host's receipt named (`itemId`), its text, and how many images it carried.
  */
-function userEntryIndexOf(entries: LogEntry[], message: string | undefined): number {
-	const wanted = message?.trim();
-	return entries.findIndex((entry) => {
-		if (entry.source !== 'user') return false;
-		if (!wanted) return true;
-		const text = (entry.text ?? '').trim();
-		return (
-			text === wanted || text.split(PROMPT_LAYER_SEPARATOR).some((layer) => layer.trim() === wanted)
+export interface HostedMessageRef {
+	itemId?: string;
+	text?: string;
+	imageCount?: number;
+}
+
+/** The most user entries a host wrote that this window has matched to a message at once. */
+export const MAX_HOST_ENTRY_CLAIMS = 1000;
+
+/**
+ * Which queued message each host user entry was matched to (entry id to the host's queue item id),
+ * so two messages with the same text never share one entry: the first to match it keeps it, and the
+ * second waits for its own. Bounded; the oldest claim goes first.
+ */
+const hostEntryClaims = new Map<string, string>();
+
+function claimHostEntry(entryId: string, itemId: string): void {
+	if (hostEntryClaims.get(entryId) === itemId) return;
+	hostEntryClaims.set(entryId, itemId);
+	for (const oldest of hostEntryClaims.keys()) {
+		if (hostEntryClaims.size <= MAX_HOST_ENTRY_CLAIMS) break;
+		hostEntryClaims.delete(oldest);
+	}
+}
+
+/** Forget every claim (tests). */
+export function resetHostEntryClaims(): void {
+	hostEntryClaims.clear();
+}
+
+/** Whether `text` is `wanted`, or holds it as one whole layer, whitespace collapsed in both. */
+function textHoldsMessage(text: string, wanted: string): boolean {
+	return (
+		collapseWhitespace(text) === wanted ||
+		text.split(PROMPT_LAYER_SEPARATOR).some((layer) => collapseWhitespace(layer) === wanted)
+	);
+}
+
+/**
+ * Where, in `entries`, the host wrote the user entry of `message`. -1 while none.
+ *
+ * By identity first: a host stamps each user entry with the queue item it ran from
+ * (`queuedItemId`), so the entry stamped with the message's own item id is its entry, and one
+ * stamped with another item's id never is. An older host stamps none; then the entry is the first
+ * one no other message claimed (`hostEntryClaims`) whose text is the message, whitespace collapsed,
+ * or holds it as one whole layer (an older host that takes no agent-only text gets the consult's
+ * replies and notes laid around the message, `withTurnAgentText()`). A message with no text (images
+ * only) matches an entry with no text and the same number of images, never the first entry there;
+ * a message of which neither is known takes the first user entry. A matched entry is claimed for
+ * the message's item.
+ */
+function userEntryIndexOf(entries: LogEntry[], message: HostedMessageRef): number {
+	const itemId = message.itemId;
+	if (itemId) {
+		const own = entries.findIndex(
+			(entry) => entry.source === 'user' && entry.queuedItemId === itemId
 		);
+		if (own !== -1) {
+			claimHostEntry(entries[own].id, itemId);
+			return own;
+		}
+	}
+	const wanted = collapseWhitespace(message.text ?? '');
+	// Neither its text nor its images known: the first user entry is its own.
+	const unknown = message.text === undefined && message.imageCount === undefined;
+	const index = entries.findIndex((entry) => {
+		if (entry.source !== 'user') return false;
+		// Another queued message's entry: stamped with its id, or matched to it already.
+		if (itemId && entry.queuedItemId) return false;
+		const claimedBy = hostEntryClaims.get(entry.id);
+		if (claimedBy !== undefined && claimedBy !== itemId) return false;
+		if (unknown) return true;
+		if (wanted) return textHoldsMessage(entry.text ?? '', wanted);
+		if (!textHoldsMessage(entry.text ?? '', '')) return false;
+		return message.imageCount === undefined || (entry.images?.length ?? 0) === message.imageCount;
 	});
+	if (index !== -1 && itemId) claimHostEntry(entries[index].id, itemId);
+	return index;
 }
 
 /**
  * The one turn a hosted hand-off waits on: from the user entry the host wrote for its message after
- * the send boundary (`message`; the first user entry when unknown) up to the next user entry. The
- * turn the message was queued behind, a later turn that ended before the same sync, and the end of
- * a turn still running at the send are none of them. Empty until the host wrote the message.
+ * the send boundary (`userEntryIndexOf()`) up to the next user entry. The turn the message was
+ * queued behind, a later turn that ended before the same sync, and the end of a turn still running
+ * at the send are none of them. Empty until the host wrote the message.
  */
 function ownTurnEntries(
 	logs: LogEntry[],
 	afterEntryId: string | undefined,
-	message?: string
+	message: HostedMessageRef
 ): LogEntry[] {
 	const after = entriesAfter(logs, afterEntryId);
 	const start = userEntryIndexOf(after, message);
@@ -311,9 +402,20 @@ function ownTurnEntries(
 export function hostRanMessage(
 	logs: LogEntry[],
 	afterEntryId: string | undefined,
-	message: string | undefined
+	message: HostedMessageRef
 ): boolean {
 	return userEntryIndexOf(entriesAfter(logs, afterEntryId), message) !== -1;
+}
+
+/** A hosted hand-off's message, as `userEntryIndexOf()` matches it. */
+function handoffMessageRef(handoff: MentionHandoff | undefined): HostedMessageRef {
+	return {
+		...(handoff?.hostTurn?.queueItemId ? { itemId: handoff.hostTurn.queueItemId } : {}),
+		...(handoff?.message !== undefined ? { text: handoff.message } : {}),
+		...(handoff?.hostTurn?.imageCount !== undefined
+			? { imageCount: handoff.hostTurn.imageCount }
+			: {}),
+	};
 }
 
 /** A hosted tab's saved transcript, as the sync reads it for a turn's own entries. */
@@ -331,19 +433,24 @@ export interface HostedTranscriptAccess {
  * (`hostRanMessage()`, live as the turn starts, or in the saved transcript after it): another
  * message's turn, or a turn that started at another time, never counts as its start.
  * - `started`: its user entry is on the tab.
- * - `left`: first seen gone (the caller records `goneAt`).
+ * - `left`: first seen gone (the caller records `goneAt`), also when the host's queue never showed
+ *   it: a turn that started and ended between two syncs is gone before its first frame (M20).
  * - `wait`: its start may still show (inside `HOST_QUEUE_START_GRACE_MS`), or the tab runs a turn
  *   whose own entry has not come (a host that does not stream it): the saved transcript decides
  *   once that turn ends.
  * - `read`: the tab is idle and its saved transcript is not current: read it before deciding.
  * - `removed`: past the grace, the tab still runs the turn it was queued behind, or is idle with a
- *   current transcript that never shows the message.
+ *   current transcript that never shows the message. Only for a message the host's queue showed
+ *   (`seenQueued`): one it never showed (a host whose queue is not mirrored, or a start before the
+ *   first frame) proves nothing by its absence, so it waits for its entry, late rather than lost.
  */
 export function judgeUnnamedHostStart(
 	tab: Pick<AITab, 'state' | 'logs' | 'thinkingStartTime'> | undefined,
 	waiting: {
 		afterEntryId: string | undefined;
-		message: string | undefined;
+		message: HostedMessageRef;
+		/** The host's queue showed it waiting (else its absence there proves nothing). */
+		seenQueued: boolean;
 		/** The turn it was queued behind is recorded (`turnStartedAt`, the host's clock). */
 		aheadKnown: boolean;
 		turnStartedAt?: number;
@@ -356,10 +463,12 @@ export function judgeUnnamedHostStart(
 	if (waiting.goneAt === undefined) return 'left';
 	if (now - waiting.goneAt <= HOST_QUEUE_START_GRACE_MS) return 'wait';
 	if (tab?.state === 'busy') {
-		const ahead = waiting.aheadKnown && tab.thinkingStartTime === waiting.turnStartedAt;
+		const ahead =
+			waiting.seenQueued && waiting.aheadKnown && tab.thinkingStartTime === waiting.turnStartedAt;
 		return ahead ? 'removed' : 'wait';
 	}
-	return transcriptCurrent ? 'removed' : 'read';
+	if (!transcriptCurrent) return 'read';
+	return waiting.seenQueued ? 'removed' : 'wait';
 }
 
 /**
@@ -391,7 +500,7 @@ export function hostedHandoffStep(
 ): 'wait' | 'running' | 'read' | 'release' | 'drop' | 'seen-queued' | 'left-queue' {
 	const hostTurn = tab.pendingMentionHandoff?.hostTurn;
 	if (!hostTurn) return 'wait';
-	const message = tab.pendingMentionHandoff?.message;
+	const message = handoffMessageRef(tab.pendingMentionHandoff);
 	// A whole read of the host queue since it was last seen waiting (a reconnect) may have missed
 	// its named exit: from here the tab's state decides, as for a host that names none.
 	const readSince = hostReads > (hostTurn.readsAtSeen ?? 0);
@@ -415,11 +524,14 @@ export function hostedHandoffStep(
 	if (hostTurn.queueItemId && hostQueueItemIds.has(hostTurn.queueItemId)) {
 		// The turn ahead is what the tab runs when it is first seen waiting, never overwritten; a
 		// sighting after a read moves only the read count.
-		return hostTurn.seenQueued && !readSince ? 'wait' : 'seen-queued';
+		return hostTurn.seenQueued && !readSince && hostTurn.goneAt === undefined
+			? 'wait'
+			: 'seen-queued';
 	}
 	if (queued) {
-		// Named exits: gone without a name, its start (or its first frame) is still coming.
-		if (hostExits && !readSince) return 'wait';
+		// Named exits: gone without a name, its start (or its first frame) is still coming. Unless it
+		// was never seen waiting: no name may ever come for it, so its own entry decides.
+		if (hostExits && !readSince && hostTurn.seenQueued) return 'wait';
 		// Unnamed: it ran only when the host wrote its own message on the tab; another message's
 		// turn is never its start, and nothing it never ran is handed off.
 		const verdict = judgeUnnamedHostStart(
@@ -427,6 +539,7 @@ export function hostedHandoffStep(
 			{
 				afterEntryId: hostTurn.afterEntryId,
 				message,
+				seenQueued: !!hostTurn.seenQueued,
 				aheadKnown: !!hostTurn.seenQueued,
 				turnStartedAt: hostTurn.turnStartedAt,
 				goneAt: hostTurn.goneAt,
@@ -437,7 +550,7 @@ export function hostedHandoffStep(
 		if (verdict === 'started') return 'running';
 		if (verdict === 'removed') return 'drop';
 		if (verdict === 'read') return 'read';
-		return verdict === 'left' && hostTurn.seenQueued ? 'left-queue' : 'wait';
+		return verdict === 'left' ? 'left-queue' : 'wait';
 	}
 	if (tab.state === 'busy') return hostTurn.stage === 'sent' ? 'running' : 'wait';
 	if (tab.logs.some((entry) => entry.hostLive)) return 'read';
@@ -458,7 +571,7 @@ export function hostedHandoffTurn(
 	logs: LogEntry[],
 	afterEntryId: string | undefined,
 	/** The hand-off's message: its turn starts at the user entry the host wrote for it. */
-	message?: string
+	message: HostedMessageRef = {}
 ): HandoffTurn | null {
 	const fromSend = collectHandoffTurn(ownTurnEntries(logs, afterEntryId, message));
 	if (!fromSend) return null;
@@ -470,7 +583,7 @@ export function releaseHostedHandoff(sessionId: string, tab: AITab): void {
 	const handoff = tab.pendingMentionHandoff;
 	void releaseMentionHandoff(sessionId, tab.id, {
 		failed: !!tab.agentError,
-		turn: hostedHandoffTurn(tab.logs, handoff?.hostTurn?.afterEntryId, handoff?.message),
+		turn: hostedHandoffTurn(tab.logs, handoff?.hostTurn?.afterEntryId, handoffMessageRef(handoff)),
 	});
 }
 
@@ -566,6 +679,8 @@ export function followHostedHandoffs(
 									...current.pendingMentionHandoff.hostTurn,
 									seenQueued: true,
 									readsAtSeen: hostReads,
+									// Listed again (a frame that came late): its gone time starts over.
+									goneAt: undefined,
 									turnStartedAt: current.pendingMentionHandoff.hostTurn.seenQueued
 										? current.pendingMentionHandoff.hostTurn.turnStartedAt
 										: current.state === 'busy'

@@ -162,3 +162,47 @@ export function autoRunMaestroPMaxWaitSeconds(settings: {
 	if (maxDuration > 0) return Math.ceil(maxDuration * 60);
 	return AUTO_RUN_UNWATCHED_MAX_WAIT_SECONDS;
 }
+
+/**
+ * Return true when `binaryPath` looks like a maestro-p binary (by basename).
+ *
+ * Canonical implementation shared by every surface. Recognises the bundled
+ * `maestro-p.js` script, a packaged `maestro-p` executable, and the Windows
+ * `.exe` variant. Used to detect power-user setups where the `Path` field
+ * points directly at maestro-p (bypassing the token-source toggle) so the
+ * resolved mode still surfaces as `interactive`, and to avoid pointing
+ * `MAESTRO_CLAUDE_BIN` at maestro-p itself (which would make it drive itself
+ * instead of the claude TUI).
+ */
+export function isMaestroPBinaryPath(binaryPath: string | undefined | null): boolean {
+	if (!binaryPath) return false;
+	// Split on both `/` and `\` so a Windows-style path resolves correctly when
+	// this code runs on POSIX (path.basename on POSIX doesn't treat `\` as a
+	// separator, which would otherwise leave the whole `C:\…` string as the
+	// "basename" and miss the match).
+	const base = (binaryPath.split(/[\\/]/).pop() ?? '').toLowerCase();
+	return base === 'maestro-p' || base === 'maestro-p.js' || base === 'maestro-p.exe';
+}
+
+/**
+ * Whether a Claude Code turn of this agent can run through the claude TUI (maestro-p), as the
+ * spawn decides it (`resolveClaudeSpawnModeCore()` in `maestro-lib/launch/interactive-mode.ts`),
+ * read from the agent's form alone:
+ *
+ * - The token mode (`getClaudeTokenMode()`), whose unset default is the TUI over SSH and API
+ *   locally. That default is the only reason an SSH (or hosted) agent with no token source chosen
+ *   runs the TUI where a local one does not.
+ * - Over SSH only an explicit `interactive` runs the TUI; a stored `dynamic` falls back to API.
+ * - Locally, `dynamic` starts on the TUI, and a Path field that points at maestro-p runs the TUI
+ *   whatever the token mode says.
+ *
+ * One answer for every agent that runs that way, whatever its mode.
+ */
+export function claudeTurnMayUseTui(
+	src: (ClaudeTokenModeSource & { customPath?: string | null }) | null | undefined,
+	opts?: GetClaudeTokenModeOptions
+): boolean {
+	const mode = getClaudeTokenMode(src, opts);
+	if (opts?.sshEnabled) return mode === 'interactive';
+	return mode !== 'api' || isMaestroPBinaryPath(src?.customPath);
+}

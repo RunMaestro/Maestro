@@ -12,7 +12,7 @@ import { ThemedSelect } from '../shared/ThemedSelect';
 import { AgentResilienceSection } from './AgentResilienceSection';
 import { AgentCotExportSection } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
-import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
+import { claudeTurnMayUseTui } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -892,12 +892,14 @@ export function EditAgentModal({
 
 	const agentName = getAgentDisplayName(selectedToolType);
 	// Whether a turn of this agent can run through the claude TUI, as the form
-	// stands now. Dynamic counts: it starts on the TUI and leaves it only near a
-	// limit. Read through the one resolver every spawn uses, so an SSH agent
-	// that was never configured (TUI by default) is answered the same way here.
+	// stands now, by the spawn's own rule (`claudeTurnMayUseTui()`): the same
+	// answer for every agent that runs that way, local, SSH or hosted.
 	const usesInteractiveTokenSource =
 		selectedToolType === 'claude-code' &&
-		getClaudeTokenMode({ enableMaestroP, maestroPMode }, { sshEnabled: !!isSshEnabled }) !== 'api';
+		claudeTurnMayUseTui(
+			{ enableMaestroP, maestroPMode, customPath: customPath.trim() || undefined },
+			{ sshEnabled: !!isSshEnabled }
+		);
 
 	return (
 		<Modal

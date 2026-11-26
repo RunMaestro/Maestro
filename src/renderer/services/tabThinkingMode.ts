@@ -1,7 +1,9 @@
 /**
  * Changing an AI tab's thinking mode (`'off' | 'on' | 'sticky'`), the one write every control
  * goes through: the composer's Thinking pill, its shortcut, the command palette, the prompt
- * composer, and the phone options sheet.
+ * composer, the phone options sheet, Quick Chat, and `maestro-cli tab thinking` (its tab patch,
+ * `useAppRemoteEventListeners`). Only a new tab's starting mode is set elsewhere, where the tab is
+ * made, from the user's default.
  *
  * It writes the tab with the shared field patch (`setShowThinkingFields()`, which also drops the
  * stored reasoning when the mode goes off), then hands the mode to a hosted agent's host

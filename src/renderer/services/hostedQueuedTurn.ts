@@ -68,6 +68,7 @@ import {
 	HOST_QUEUE_START_GRACE_MS,
 	judgeUnnamedHostStart,
 	markHandoffSentToHost,
+	noteLateMention,
 	noteSkippedMention,
 	type HostedTranscriptAccess,
 } from './crossAgentHandoff';
@@ -429,13 +430,27 @@ function fireMentionsForHostTurn(
 			const current = selectSessionById(sessionId)(useSessionStore.getState());
 			if (!current) return;
 			dispatchCrossAgentMentions(mention, item.text ?? '', current, tabId, item.images);
-			markHandoffSentToHost(sessionId, tabId, receipt, boundary, queueReads);
+			markHandoffSentToHost(
+				sessionId,
+				tabId,
+				receipt,
+				boundary,
+				queueReads,
+				item.images?.length ?? 0
+			);
 		});
 		return;
 	}
 	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
 	if (mention.routing === 'handoff') {
-		markHandoffSentToHost(sessionId, tabId, receipt, undefined, queueReads);
+		markHandoffSentToHost(
+			sessionId,
+			tabId,
+			receipt,
+			undefined,
+			queueReads,
+			item.images?.length ?? 0
+		);
 	}
 }
 
@@ -544,15 +559,38 @@ export function pruneHostStartedMentions(hostedSessionIds: ReadonlySet<string>):
 }
 
 /**
- * Stop ended the agent's turn (or `tabId`'s): a consult whose message already left the host's
- * queue and whose start is not confirmed yet belonged to that turn, so it goes, with a note. One
- * still waiting in the host's queue (or never seen there) stays: that message runs later, and
- * consults when it starts, as a local queued message does after Stop.
+ * Stop ended the turns of `stoppedTabIds` (those it told the host to stop, or ended here): a
+ * consult of one of those tabs whose message may be the turn Stop ended goes, with a note, so
+ * nothing consults after Stop (M24). That is every one the host's queue does not list waiting,
+ * also one it never listed (a turn that joined and left between two frames, or an older desktop
+ * host) or whose start's name is still on its way, unless the tab still runs the very turn the
+ * message was queued behind (`turnStartedAt`, the host's clock): then Stop ended that turn, and
+ * the message still waits, listed or not yet listed (CodeRabbit on #2154). One the host's queue
+ * lists stays, and one on a tab Stop did not end: those messages run later, and consult when they
+ * start, as a local queued message does after Stop.
  */
-export function dropStoppedHostStartMentions(sessionId: string, tabId?: string): void {
+export function dropStoppedHostStartMentions(
+	sessionId: string,
+	stoppedTabIds: readonly string[]
+): void {
+	if (stoppedTabIds.length === 0) return;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const stillWaiting = new Set(
+		(session?.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
+	);
 	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
-		if (waiting.sessionId !== sessionId || waiting.goneAt === undefined) continue;
-		if (tabId && waiting.item.tabId && waiting.item.tabId !== tabId) continue;
+		if (waiting.sessionId !== sessionId || stillWaiting.has(hostItemId)) continue;
+		const tabId = waiting.item.tabId || session?.activeTabId;
+		if (!tabId || !stoppedTabIds.includes(tabId)) continue;
+		// The host's own record, as the receipt read it: the local tab may read idle between the
+		// drain's release and the next sync while the host runs the turn ahead.
+		const running = hostTurnAhead(sessionId, tabId);
+		const behindStoppedTurn =
+			!!waiting.aheadKnown &&
+			waiting.turnStartedAt !== undefined &&
+			running.busy &&
+			running.startedAt === waiting.turnStartedAt;
+		if (behindStoppedTurn) continue;
 		letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 	}
 }
@@ -567,7 +605,7 @@ export function dropStoppedHostStartMentions(sessionId: string, tabId?: string):
  * seen waiting (`hostReads`, a reconnect): the exit named while this window was not attached is
  * missing, so that item is judged by the rules below.
  *
- * An older headless host, and a desktop host, name none. Then the item started when it is not in
+ * An older host, headless or desktop, names none. Then the item started when it is not in
  * the host's queue and the host wrote its own message's user entry on the tab after the send
  * boundary (`judgeUnnamedHostStart()`): live as its turn starts, or in the saved transcript, read
  * once the tab is idle, when it ran while this window was not attached. A turn of another message
@@ -608,6 +646,8 @@ export function fireHostStartedMentions(
 				waiting.seenQueued = true;
 				waiting.lastSeenQueuedAt = now;
 				waiting.readsAtSeen = hostReads;
+				// Listed again (its first frame came late): its gone time starts over.
+				waiting.goneAt = undefined;
 				if (!waiting.aheadKnown) {
 					waiting.aheadKnown = true;
 					waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
@@ -621,8 +661,10 @@ export function fireHostStartedMentions(
 			}
 			// Named exits: gone without a name, its start (or its first frame) is still coming.
 			// Unless the queue was read whole since it was last seen waiting (a reconnect): a start
-			// named while this window was not attached never comes, so the tab decides.
-			if (hostExits && hostReads <= (waiting.readsAtSeen ?? 0)) continue;
+			// named while this window was not attached never comes, so the tab decides. And unless it
+			// was never seen waiting (it joined and left between two of the host's frames): no name
+			// may ever come for it, so its own entry on the tab decides (CodeRabbit on #2154).
+			if (hostExits && waiting.seenQueued && hostReads <= (waiting.readsAtSeen ?? 0)) continue;
 			// Unnamed: it ran only when the host wrote its own message on the tab (live as it starts,
 			// or in the saved transcript after it ran while this window was not attached). Another
 			// message's turn is never its start.
@@ -630,7 +672,12 @@ export function fireHostStartedMentions(
 				tab,
 				{
 					afterEntryId: waiting.afterEntryId,
-					message: waiting.item.text,
+					message: {
+						itemId: hostItemId,
+						text: waiting.item.text,
+						imageCount: waiting.item.images?.length ?? 0,
+					},
+					seenQueued: waiting.seenQueued,
 					aheadKnown: !!waiting.aheadKnown,
 					turnStartedAt: waiting.turnStartedAt,
 					goneAt: waiting.goneAt,
@@ -643,9 +690,16 @@ export function fireHostStartedMentions(
 				continue;
 			}
 			if (verdict !== 'started') {
-				if (verdict === 'left' && waiting.seenQueued) waiting.goneAt = now;
+				// Gone, also when never listed: a turn that started and ended between two syncs leaves
+				// no frame, and its saved transcript is read once the grace is over (M20).
+				if (verdict === 'left') waiting.goneAt = now;
 				if (verdict === 'read' && tabId) transcript.read(tabId);
 				continue;
+			}
+			// Its own entry is in the saved transcript and the tab no longer runs it: the turn ran
+			// without the consult beside it. Late is better than never: consult now, and say so.
+			if (tab && tab.state !== 'busy' && tabId) {
+				noteLateMention(session.id, tabId, resolveConsultTargets(waiting.mention.targetSessionIds));
 			}
 		}
 		mentionsAwaitingHostStart.delete(hostItemId);
@@ -662,14 +716,17 @@ export function fireHostStartedMentions(
 /**
  * The soonest time a waiting consult's limit runs out (its start grace after it left the host
  * queue, or its time limit), when no change from the host may come to run the sync. Undefined when
- * nothing waits.
+ * nothing waits. A grace that has run out is not a deadline again: the sync it armed has judged
+ * it, and only a change from the host (or the time limit) can move it on, so it never re-arms a
+ * timer that fires at once, sync after sync (Greptile and CodeRabbit on #2154).
  */
-export function nextHostStartDeadline(): number | undefined {
+export function nextHostStartDeadline(now = Date.now()): number | undefined {
 	let soonest: number | undefined;
 	for (const waiting of mentionsAwaitingHostStart.values()) {
 		const ttl = (waiting.lastSeenQueuedAt ?? waiting.queuedAt) + HOST_START_MENTION_TTL_MS;
-		const grace = waiting.goneAt === undefined ? ttl : waiting.goneAt + HOST_QUEUE_START_GRACE_MS;
-		const deadline = Math.min(ttl, grace);
+		const grace =
+			waiting.goneAt === undefined ? undefined : waiting.goneAt + HOST_QUEUE_START_GRACE_MS;
+		const deadline = grace !== undefined && grace >= now ? Math.min(ttl, grace) : ttl;
 		if (soonest === undefined || deadline < soonest) soonest = deadline;
 	}
 	return soonest;

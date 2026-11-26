@@ -36,7 +36,7 @@ import { interrupt } from '../../../cli/commands/interrupt';
 import { ask } from '../../../cli/commands/ask';
 import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
 import { send } from '../../../cli/commands/send';
-import { tabClose, tabNew, tabRename, tabStar } from '../../../cli/commands/tab';
+import { tabClose, tabNew, tabRename, tabStar, tabThinking } from '../../../cli/commands/tab';
 import { updateAgent } from '../../../cli/commands/update-agent';
 import { ExitCode } from '../../../cli/exit-codes';
 import type {
@@ -95,6 +95,7 @@ function fakePeer(agent: AgentRecord, bridgeReply: Record<string, unknown> = {})
 			rename: vi.fn(async () => ok(undefined)),
 			star: vi.fn(async () => ok(undefined)),
 			close: vi.fn(async () => ok(undefined)),
+			update: vi.fn(async () => ok(undefined)),
 		},
 		turns: {
 			send: vi.fn(async () => ok({ status: 'started' as const })),
@@ -641,6 +642,29 @@ describe('peer:agent targets', () => {
 			expect(peer.client.tabs.star).toHaveBeenCalledWith(AGENT_ID, 'tab-aaaa1111', true);
 			await tabStar('tab-bbbb', false, { agent: `${PEER}:docs`, json: true });
 			expect(peer.client.tabs.star).toHaveBeenLastCalledWith(AGENT_ID, 'tab-bbbb2222', false);
+		});
+
+		it("tab thinking sets the mode on the host's tab, and cycle reads the host's mode (T6)", async () => {
+			const peer = fakePeer(
+				agentWith([
+					{ id: 'tab-aaaa1111', state: 'idle', showThinking: 'on' },
+					{ id: 'tab-bbbb2222', state: 'idle' },
+				])
+			);
+			await tabThinking('tab-bbbb', 'sticky', { agent: `${PEER}:docs`, json: true });
+			expect(peer.client.tabs.update).toHaveBeenCalledWith(AGENT_ID, 'tab-bbbb2222', {
+				thinking: 'sticky',
+			});
+			await tabThinking('active', 'cycle', { agent: `${PEER}:docs`, json: true });
+			expect(peer.client.tabs.update).toHaveBeenLastCalledWith(AGENT_ID, 'tab-aaaa1111', {
+				thinking: 'sticky',
+			});
+			expect(peer.client.tabs.update).toHaveBeenCalledTimes(2);
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				success: true,
+				tabId: 'tab-bbbb2222',
+				peer: PEER,
+			});
 		});
 
 		it('tab close resolves the tab on the host by prefix and closes it there', async () => {

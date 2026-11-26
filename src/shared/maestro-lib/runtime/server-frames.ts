@@ -147,6 +147,9 @@ export function progressToWire(progress: AutoRunProgress): AutoRunBroadcastState
 		loopEnabled: progress.loopEnabled,
 		loopIteration: progress.loopIteration,
 		...(progress.startTime !== undefined ? { startTime: progress.startTime } : {}),
+		...(progress.initialTasksDone !== undefined
+			? { initialCompletedTasks: progress.initialTasksDone }
+			: {}),
 		...(progress.worktreeBranch ? { worktreeBranch: progress.worktreeBranch } : {}),
 		...(pause
 			? {

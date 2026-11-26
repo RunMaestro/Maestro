@@ -385,9 +385,11 @@ describe('runtime turns', () => {
 		});
 
 		// P7: a 'sticky' tab keeps the turn's thinking and tool cards past the turn's end, as a local
-		// tab's exit cleanup does; an 'on' tab drops them (`logsKeptAtTurnEnd()`).
+		// tab's exit cleanup does; an 'on' tab drops them (`logsKeptAtTurnEnd()`). T2: a Claude reply
+		// is a thinking chunk too (`partialTextRoute()`), so a sticky tab keeps its copy, as a local
+		// and an SSH tab do.
 		it.each([
-			['sticky', ['user', 'thinking', 'tool', 'stdout']],
+			['sticky', ['user', 'thinking', 'tool', 'thinking', 'stdout']],
 			['on', ['user', 'stdout']],
 		])(
 			'keeps what a %s tab keeps of the thinking and tool cards',
@@ -430,15 +432,17 @@ describe('runtime turns', () => {
 				if (showThinking === 'sticky') {
 					expect(entries[1].text).toBe('Plan it.');
 					expect(entries[2]).toMatchObject({ source: 'tool', text: 'Read' });
+					expect(entries[3]).toMatchObject({ source: 'thinking', text: 'Done.' });
 				}
 				expect(entries.at(-1)?.text).toBe('Done.');
 			}
 		);
 
 		// P12: the host folds the cards only a sticky tab keeps, never the answer text, and nothing
-		// for any other tab.
+		// for any other tab. T2: each Claude text partial is a thinking chunk (`partialTextRoute()`),
+		// said once, so the chunks of one block stay one card; the result's answer closes the block.
 		it.each([
-			['sticky', ['thinking', 'text', 'tool', 'thinking', 'text']],
+			['sticky', ['thinking', 'thinking', 'thinking', 'tool', 'thinking', 'thinking', 'text']],
 			['on', []],
 			['off', []],
 		])('folds only what a %s tab keeps past the turn', async (showThinking, folded) => {
@@ -902,12 +906,16 @@ describe('runtime turns', () => {
 				expect(value(await runtime.turns.send('a1', 't1', { text: '/history' }))).toEqual({
 					status: 'ran',
 				});
-				await settle(runtime, 4);
+				await vi.waitFor(
+					async () => expect((await transcript(runtime)).at(-1)?.text).toMatch(/^Synopsis saved/),
+					{ timeout: 8_000 }
+				);
 
+				// One line per run, as on the desktop: the outcome replaced the progress line (M22).
 				const lines = await transcriptLines(runtime);
-				expect(lines[2]).toEqual(['system', HISTORY_COMMAND_TEXT.pending]);
-				expect(lines[3][0]).toBe('system');
-				expect(lines[3][1]).toMatch(/^Synopsis saved to history: /);
+				expect(lines).toHaveLength(3);
+				expect(lines[2][0]).toBe('system');
+				expect(lines[2][1]).toMatch(/^Synopsis saved to history: /);
 				// The synopsis resumed the tab's own conversation.
 				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
 				expect(argv).toContain(CAPTURED_CLAUDE_CODE_SESSION_ID);
@@ -916,7 +924,7 @@ describe('runtime turns', () => {
 					(entry) => entry.type === 'AUTO'
 				);
 				expect(auto).toHaveLength(1);
-				expect(lines[3][1]).toBe(HISTORY_COMMAND_TEXT.saved(auto[0].summary));
+				expect(lines[2][1]).toBe(HISTORY_COMMAND_TEXT.saved(auto[0].summary));
 			});
 
 			it('never runs two writers on one provider session: /history twice and a send take turns', async () => {
@@ -1007,9 +1015,16 @@ describe('runtime turns', () => {
 				value(await runtime.turns.interrupt('a1', 't1'));
 				await turn.outcome();
 				await vi.waitFor(() => expect(argvFiles).toHaveLength(2), { timeout: 8_000 });
+				// The outcome takes the progress line's place, where /history was typed (M22).
 				await vi.waitFor(
-					async () => expect((await transcript(runtime)).at(-1)?.text).toMatch(/^Synopsis saved/),
+					async () =>
+						expect(
+							(await transcript(runtime)).some((entry) => /^Synopsis saved/.test(entry.text))
+						).toBe(true),
 					{ timeout: 8_000 }
+				);
+				expect((await transcript(runtime)).map((entry) => entry.text)).not.toContain(
+					HISTORY_COMMAND_TEXT.pending
 				);
 				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
 				expect(argv).toContain(CAPTURED_CLAUDE_CODE_SESSION_ID);
@@ -1030,7 +1045,6 @@ describe('runtime turns', () => {
 				await vi.waitFor(
 					async () =>
 						expect((await transcript(runtime)).map((entry) => entry.text)).toEqual([
-							HISTORY_COMMAND_TEXT.pending,
 							HISTORY_COMMAND_TEXT.failed,
 						]),
 					{ timeout: 8_000 }
@@ -1472,6 +1486,25 @@ describe('runtime turns', () => {
 			]);
 			expect(changes.every((change) => change.namesExits === true)).toBe(true);
 			expect(changes[3].items).toEqual([]);
+		});
+
+		it('stamps each user entry with the queue item it ran from, so a client that queued it finds its turn by id (M23)', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'same text' }));
+			await turn.started();
+			hold = false;
+			// The same text twice: only the id tells the two turns apart.
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'same text' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome(2);
+			const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+			expect(users).toHaveLength(2);
+			expect(users[0].queuedItemId).toEqual(expect.any(String));
+			expect(users[0].queuedItemId).not.toBe(queued.itemId);
+			expect(users[1].queuedItemId).toBe(queued.itemId);
 		});
 
 		it('holds and releases a waiting message, and says when none has that id', async () => {
