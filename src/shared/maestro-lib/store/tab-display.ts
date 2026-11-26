@@ -46,3 +46,17 @@ export function getTabDisplayName(tab: TabLabelFields): string {
 	if (tab.agentSessionId) return formatSessionId(tab.agentSessionId);
 	return 'New Session';
 }
+
+/**
+ * The tab name a History entry records for a turn of the tab: the tab's own name (auto or
+ * manual), else the short form of `agentSessionId`, else nothing. The same rule on the desktop
+ * (a local or SSH turn's exit) and on a Federation host (`createTurnRecorder()` and the synopsis
+ * that writes the entry), so the History chip of a hosted turn reads what a local one does.
+ */
+export function historyEntryTabName(
+	tab: Pick<TabLabelFields, 'name'> | undefined,
+	agentSessionId?: string | null
+): string | undefined {
+	if (tab?.name) return tab.name;
+	return agentSessionId ? formatSessionId(agentSessionId) : undefined;
+}

@@ -263,6 +263,18 @@ export interface AgentImportInput {
 	/** The tab the person was looking at. Absent, or not one of `tabs`: the first tab. */
 	activeTabId?: string;
 	queue?: AgentImportQueuedMessage[];
+	/**
+	 * The id of this agent's earlier copy on the host, left there by a Move Back while the host was
+	 * down. The host replaces that copy with this import in one write: its name and directory do
+	 * not refuse the import. A host that does not know the field refuses on the name as before.
+	 */
+	replacesAgentId?: string;
+	/**
+	 * The id of the agent this import moves, on the machine it moves from. The host stores it on
+	 * the record (`liftedFromAgentId`) and replaces a copy (`replacesAgentId`) only when that copy
+	 * carries the same id and the same name: a wrong `replacesAgentId` never removes another agent.
+	 */
+	liftedFromAgentId?: string;
 }
 
 export interface AgentImportReceipt {

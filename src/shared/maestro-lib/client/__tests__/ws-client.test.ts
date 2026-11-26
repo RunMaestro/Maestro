@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { importInputFromMessage } from '../../runtime/server-requests';
 import { createWsMaestroClient } from '../ws-client';
 import { TRANSCRIPT_CHANGED_CHANNEL } from '../bridge-frames';
 import { normalizeOriginHost } from '../types';
@@ -315,6 +316,22 @@ describe('createWsMaestroClient', () => {
 				});
 			});
 
+			it('names the copy the import replaces, and reads it back on the host (T5)', async () => {
+				bridge.typed.set(
+					'import_agent',
+					reply('import_agent_result', { sessionId: 'host-agent', queued: 0 })
+				);
+				await client.agents.import({ ...input, replacesAgentId: 'stale-1' });
+				const sent = bridge.sent('import_agent')[0];
+				expect(sent).toMatchObject({ replacesAgentId: 'stale-1' });
+				const read = importInputFromMessage(sent as never);
+				expect(read.ok && read.input.replacesAgentId).toBe('stale-1');
+				// An absent or blank id replaces nothing.
+				const plain = importInputFromMessage({ ...sent, replacesAgentId: '' } as never);
+				expect(plain.ok).toBe(true);
+				if (plain.ok) expect(plain.input).not.toHaveProperty('replacesAgentId');
+			});
+
 			it('passes on the notices for queued messages the host did not accept', async () => {
 				bridge.typed.set(
 					'import_agent',
@@ -419,6 +436,24 @@ describe('createWsMaestroClient', () => {
 					agent: expect.objectContaining({ name: 'New name' }),
 				})
 			);
+		});
+
+		it('reads an agent busy from the live get_sessions projection while its stored record reads idle (T8)', async () => {
+			agents = [
+				agentRecord(A1, { state: 'idle', aiTabs: [{ id: A1_TAB, state: 'idle' }] }),
+				agentRecord('a2'),
+			];
+			bridge.typed.set('get_sessions', () => ({
+				type: 'sessions_list',
+				sessions: [
+					{ id: A1, state: 'busy' },
+					{ id: 'a2', state: 'idle' },
+				],
+			}));
+			const result = await client.agents.get(A1);
+			expect(result.ok && result.value.state).toBe('busy');
+			const list = await client.agents.list();
+			expect(list.ok && list.value.map((a) => a.id)).toEqual([A1, 'a2']);
 		});
 
 		it('stops a busy tab process before deleting the agent (gap G6)', async () => {

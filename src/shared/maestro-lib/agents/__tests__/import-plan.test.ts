@@ -57,6 +57,107 @@ describe('planAgentImport', () => {
 		expect(plan).toMatchObject({ ok: false, code: 'invalid' });
 	});
 
+	// T5: the agent's own copy, left by a Move Back while the host was down, is replaced.
+	it('replaces the copy it names, whose name and directory are then no conflict', () => {
+		const stale = {
+			id: 'stale-1',
+			name: 'Substrate',
+			cwd: '/work/substrate',
+			liftedFromAgentId: 'local-1',
+		};
+		const plan = planAgentImport(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			context({ agents: [stale] })
+		);
+		expect(plan).toMatchObject({ ok: true, replaces: 'stale-1' });
+		// The new record carries the marker the next lift of the same agent is checked against.
+		expect(plan.ok && plan.agent.liftedFromAgentId).toBe('local-1');
+	});
+
+	it('still refuses another agent with the name when it replaces one', () => {
+		const plan = planAgentImport(
+			input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+			context({
+				agents: [
+					{ id: 'stale-1', name: 'Substrate', cwd: '/elsewhere', liftedFromAgentId: 'local-1' },
+					{ id: 'other', name: 'substrate', cwd: '/elsewhere' },
+				],
+			})
+		);
+		expect(plan).toMatchObject({ ok: false, code: 'invalid' });
+	});
+
+	// T9: the host checks WHICH agent it is asked to replace.
+	describe('the copy it is asked to replace (T9)', () => {
+		const unrelated = { id: 'docs-1', name: 'Docs', cwd: '/work/docs' };
+
+		it('never removes an unrelated agent a wrong replacesAgentId names', () => {
+			const plan = planAgentImport(
+				input({ replacesAgentId: 'docs-1', liftedFromAgentId: 'local-1' }),
+				context({ agents: [unrelated] })
+			);
+			expect(plan).toEqual({
+				ok: false,
+				code: 'rejected',
+				message:
+					'The copy docs-1 carries no record of the agent it was moved from, so it is not replaced. Remove it from the machine you move from (maestro-cli remove-agent <peer>:docs-1), then move again.',
+			});
+		});
+
+		it('refuses a copy another agent was moved into, even with the same name', () => {
+			const plan = planAgentImport(
+				input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+				context({
+					agents: [
+						{
+							id: 'stale-1',
+							name: 'Substrate',
+							cwd: '/work/substrate',
+							liftedFromAgentId: 'someone-else',
+						},
+					],
+				})
+			);
+			expect(plan).toMatchObject({ ok: false, code: 'rejected' });
+			expect(!plan.ok && plan.message).toMatch(/was moved from another agent/);
+		});
+
+		it('refuses a copy of the agent under another name, and a move that does not say which agent it is', () => {
+			const renamed = {
+				id: 'stale-1',
+				name: 'Renamed',
+				cwd: '/work/substrate',
+				liftedFromAgentId: 'local-1',
+			};
+			const byName = planAgentImport(
+				input({ replacesAgentId: 'stale-1', liftedFromAgentId: 'local-1' }),
+				context({ agents: [renamed] })
+			);
+			expect(!byName.ok && byName.message).toMatch(/is named "Renamed", not "Substrate"/);
+			const anonymous = planAgentImport(
+				input({ replacesAgentId: 'stale-1' }),
+				context({ agents: [{ ...renamed, name: 'Substrate' }] })
+			);
+			expect(!anonymous.ok && anonymous.message).toMatch(/does not say which agent it is/);
+		});
+
+		it('refuses a marker that is not an id', () => {
+			const plan = planAgentImport(input({ liftedFromAgentId: 'x'.repeat(201) }), context());
+			expect(plan).toMatchObject({ ok: false, code: 'invalid' });
+		});
+	});
+
+	it('replaces nothing when the copy it names is gone, and checks the name as before', () => {
+		const plan = planAgentImport(
+			input({ replacesAgentId: 'gone' }),
+			context({ agents: [{ id: 'x', name: 'substrate', cwd: '/elsewhere' }] })
+		);
+		expect(plan).toMatchObject({ ok: false, code: 'invalid' });
+		const free = planAgentImport(input({ replacesAgentId: 'gone' }), context());
+		expect(free.ok).toBe(true);
+		expect(free).not.toHaveProperty('replaces');
+	});
+
 	it('refuses a group the host lacks as not found', () => {
 		const plan = planAgentImport(
 			input({ agent: { ...input().agent, groupId: 'missing' } }),

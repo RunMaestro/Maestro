@@ -95,6 +95,7 @@ describe('maestro-cli unlift', () => {
 		expect(deps.connect).toHaveBeenCalledWith('remote-1');
 		expect(deps.restoreInDesktop).toHaveBeenCalledWith('agent-1', {
 			tabs: [{ id: 'tab-1', agentSessionId: 'sess-1', logs: [] }],
+			leftOnHost: { peer: 'build-box', agentId: 'host-1', at: 1 },
 		});
 		expect(deps.restoreOnDisk).not.toHaveBeenCalled();
 		expect(remove).toHaveBeenCalledWith('host-1');

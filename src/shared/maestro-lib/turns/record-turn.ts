@@ -30,7 +30,7 @@
  * Usage is recorded for every turn that ran.
  */
 
-import { formatSessionId } from '../store/tab-display';
+import { historyEntryTabName } from '../store/tab-display';
 import { TURN_CANCELED_NOTE, type LogEntryRecord } from '../store/transcript';
 import type { AgentRecord, AITabRecord } from '../store/records';
 import type { NativeSessionBinding } from '../agents/providerSwap';
@@ -392,8 +392,7 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 				summary,
 				...(completed.answerText ? { fullResponse: completed.answerText } : {}),
 				...(completed.sessionId ? { agentSessionId: completed.sessionId } : {}),
-				sessionName:
-					tab.name || (completed.sessionId ? formatSessionId(completed.sessionId) : undefined),
+				sessionName: historyEntryTabName(tab, completed.sessionId),
 				projectPath: turn.scope?.projectPath ?? agent.cwd ?? '',
 				...(provider === 'grok'
 					? {

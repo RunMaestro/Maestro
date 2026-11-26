@@ -22,6 +22,10 @@ import { tabDefaultsFromSettings } from '../../shared/maestro-lib/agents/rules';
 import { broadcastSessionLifecycle } from '../ipc/handlers/persistence';
 import { getGroupsStore, getSessionsStore, getSettingsStore } from '../stores/getters';
 import type { StoredSession } from '../stores/types';
+import { removeAgentFiles } from '../../shared/maestro-lib/agents/removal-files';
+import { isAgentBusy, type ProcessLivenessProbe } from '../utils/agent-busy';
+import { getAppUserDataDir } from '../utils/app-user-data';
+import { captureException } from '../utils/sentry';
 
 /** What `enqueueCommand` answers, as far as an import reads it. */
 export interface ImportEnqueueResult {
@@ -36,8 +40,18 @@ export interface DesktopAgentImportDeps {
 	setSessions(sessions: StoredSession[]): void;
 	getGroupIds(): string[];
 	getSettings(): Record<string, unknown>;
-	/** Tell every window and web client the agent entered the store. */
-	announceAdded(agent: StoredSession): void;
+	/**
+	 * The live process table the copy an import replaces is read from and stopped on. Absent (the
+	 * table is not up yet): a replace is refused, since nobody can tell whether that copy runs a turn.
+	 */
+	processes?: DesktopAgentProcesses;
+	/** Remove the files a removed agent leaves beside its record (`removeAgentFiles()`). */
+	removeFiles(agentId: string): Promise<void>;
+	/**
+	 * Tell every window and web client the agent entered the store, and which agents it replaced
+	 * (the copy an earlier Move Back left here) left it.
+	 */
+	announceAdded(agent: StoredSession, removedIds?: string[]): void;
 	enqueue(
 		agentId: string,
 		tabId: string,
@@ -58,11 +72,45 @@ export type DesktopAgentImportResult =
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/** The slice of the ProcessManager replacing an agent's copy reads and stops. */
+export type ImportProcessTable = ProcessLivenessProbe & {
+	kill(processId: string): boolean;
+	closeAgent(agentId: string): void;
+};
+
+/** What replacing an agent's copy asks of this desktop's processes. */
+export interface DesktopAgentProcesses {
+	/** Whether any tab of the agent runs a turn now: the live table (`isAgentBusy()`), never `state`. */
+	isBusy(agent: StoredSession): boolean;
+	/** Stop every process the agent owns, as a remove does: AI turns, native runtimes, terminals. */
+	stop(agent: StoredSession): void;
+}
+
+/** The desktop's process table, read and stopped the way removing an agent does. */
+export function desktopAgentProcesses(table: ImportProcessTable): DesktopAgentProcesses {
+	return {
+		isBusy: (agent) => isAgentBusy(agent, table),
+		stop: (agent) => {
+			// Every AI process of every tab plus retained runtimes (`killAgentAiProcesses()` in the
+			// renderer ends in the same `closeAgent`), then the agent's terminals.
+			table.closeAgent(agent.id);
+			table.kill(`${agent.id}-terminal`);
+			for (const tab of agent.terminalTabs ?? []) {
+				if (tab && typeof tab.id === 'string') table.kill(`${agent.id}-terminal-${tab.id}`);
+			}
+		},
+	};
+}
+
 /** The desktop's stores and lifecycle push, with the bridge's own `enqueueCommand` for the queue. */
 export function buildDesktopAgentImportDeps(
-	enqueue: DesktopAgentImportDeps['enqueue']
+	enqueue: DesktopAgentImportDeps['enqueue'],
+	processTable: ImportProcessTable | null | undefined
 ): DesktopAgentImportDeps {
 	return {
+		...(processTable ? { processes: desktopAgentProcesses(processTable) } : {}),
+		// The desktop keeps closed tabs on the record, so only the playbooks file is left to remove.
+		removeFiles: (agentId) => removeAgentFiles({ userDataDir: getAppUserDataDir() }, agentId),
 		getSessions: () => {
 			const sessions = getSessionsStore().get('sessions', []);
 			return Array.isArray(sessions) ? sessions : [];
@@ -73,8 +121,8 @@ export function buildDesktopAgentImportDeps(
 			return Array.isArray(groups) ? groups.map((group) => group.id) : [];
 		},
 		getSettings: () => getSettingsStore().store as unknown as Record<string, unknown>,
-		announceAdded: (agent) =>
-			broadcastSessionLifecycle(undefined, { added: [agent], removedIds: [] }),
+		announceAdded: (agent, removedIds = []) =>
+			broadcastSessionLifecycle(undefined, { added: [agent], removedIds }),
 		enqueue,
 	};
 }
@@ -93,14 +141,55 @@ export async function importAgentIntoDesktop(
 	});
 	if (!planned.ok) return planned;
 
-	// The maestro-lib record is the stored shape: the store keeps what the record holds.
+	// The agent's earlier copy a Move Back left here (`planned.replaces`) leaves the way a remove
+	// takes an agent away: refused while it runs a turn (the live table, read in the same tick as
+	// the write, so no turn starts between the two), its processes stopped, its files removed.
+	const replaced = planned.replaces
+		? sessions.find((session) => session.id === planned.replaces)
+		: undefined;
+	if (replaced) {
+		if (!deps.processes) {
+			return {
+				ok: false,
+				code: 'rejected',
+				message: `This Maestro cannot tell yet whether the copy this import replaces (${replaced.id}) is running a turn. Try the move again in a moment.`,
+			};
+		}
+		if (deps.processes.isBusy(replaced)) {
+			return {
+				ok: false,
+				code: 'rejected',
+				message: `The copy this import replaces (${replaced.id}) is running a turn. Wait for it to finish, or stop it, then move again.`,
+			};
+		}
+		deps.processes.stop(replaced);
+	}
+
+	// The maestro-lib record is the stored shape: the store keeps what the record holds. The
+	// replaced copy goes in the same write.
 	const agent = planned.agent as unknown as StoredSession;
-	deps.setSessions([...sessions, agent]);
-	deps.announceAdded(agent);
+	const kept = replaced ? sessions.filter((session) => session.id !== replaced.id) : sessions;
+	deps.setSessions([...kept, agent]);
+	deps.announceAdded(agent, replaced ? [replaced.id] : []);
+	const notices: string[] = [];
+	if (replaced) {
+		try {
+			await deps.removeFiles(replaced.id);
+		} catch (error) {
+			// The agent is moved; a playbooks file left behind does not undo that, but it is said.
+			void captureException(error, {
+				area: 'federation',
+				operation: 'import-replace-files',
+				agentId: replaced.id,
+			});
+			notices.push(
+				`The playbooks of the replaced copy (${replaced.id}) were not removed: ${error instanceof Error ? error.message : String(error)}`
+			);
+		}
+	}
 
 	const sleep = deps.sleep ?? defaultSleep;
 	let queued = 0;
-	const notices: string[] = [];
 	for (const item of input.queue ?? []) {
 		let result: ImportEnqueueResult = { success: false };
 		for (let attempt = 1; attempt <= IMPORT_ENQUEUE_ATTEMPTS; attempt++) {

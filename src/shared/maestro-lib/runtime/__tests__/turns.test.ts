@@ -385,9 +385,11 @@ describe('runtime turns', () => {
 		});
 
 		// P7: a 'sticky' tab keeps the turn's thinking and tool cards past the turn's end, as a local
-		// tab's exit cleanup does; an 'on' tab drops them (`logsKeptAtTurnEnd()`).
+		// tab's exit cleanup does; an 'on' tab drops them (`logsKeptAtTurnEnd()`). T2: a Claude reply
+		// is a thinking chunk too (`partialTextRoute()`), so a sticky tab keeps its copy, as a local
+		// and an SSH tab do.
 		it.each([
-			['sticky', ['user', 'thinking', 'tool', 'stdout']],
+			['sticky', ['user', 'thinking', 'tool', 'thinking', 'stdout']],
 			['on', ['user', 'stdout']],
 		])(
 			'keeps what a %s tab keeps of the thinking and tool cards',
@@ -430,15 +432,17 @@ describe('runtime turns', () => {
 				if (showThinking === 'sticky') {
 					expect(entries[1].text).toBe('Plan it.');
 					expect(entries[2]).toMatchObject({ source: 'tool', text: 'Read' });
+					expect(entries[3]).toMatchObject({ source: 'thinking', text: 'Done.' });
 				}
 				expect(entries.at(-1)?.text).toBe('Done.');
 			}
 		);
 
 		// P12: the host folds the cards only a sticky tab keeps, never the answer text, and nothing
-		// for any other tab.
+		// for any other tab. T2: each Claude text partial is a thinking chunk (`partialTextRoute()`),
+		// said once, so the chunks of one block stay one card; the result's answer closes the block.
 		it.each([
-			['sticky', ['thinking', 'text', 'tool', 'thinking', 'text']],
+			['sticky', ['thinking', 'thinking', 'thinking', 'tool', 'thinking', 'thinking', 'text']],
 			['on', []],
 			['off', []],
 		])('folds only what a %s tab keeps past the turn', async (showThinking, folded) => {
