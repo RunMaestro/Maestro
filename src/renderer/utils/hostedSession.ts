@@ -341,6 +341,19 @@ function hostedTabUnread(
 	return unread && isAiTabHidden(local) ? local.hasUnread : unread;
 }
 
+/**
+ * When the turn a host tab runs started, as the host tells it (its record, else the live turn's
+ * first event); undefined when the tab is idle or the host has not said. The projection draws this
+ * as the tab's `thinkingStartTime`.
+ */
+export function hostTabTurnStartedAt(
+	host: Pick<AITabRecord, 'state' | 'thinkingStartTime'>,
+	liveTurn: Pick<LiveTurn, 'startedAt'> | undefined
+): number | undefined {
+	if (host.state !== 'busy') return undefined;
+	return host.thinkingStartTime ?? liveTurn?.startedAt;
+}
+
 function projectTab(
 	local: AITab,
 	host: AITabRecord,
@@ -366,7 +379,7 @@ function projectTab(
 				})
 			: merged;
 	const thinkingStartTime = busy
-		? (host.thinkingStartTime ?? liveTurn?.startedAt ?? local.thinkingStartTime)
+		? (hostTabTurnStartedAt(host, liveTurn) ?? local.thinkingStartTime)
 		: undefined;
 	const name = host.name ?? null;
 	const agentSessionId = host.agentSessionId ?? local.agentSessionId ?? null;

@@ -1,4 +1,5 @@
 import type { ManagedQueueRoutingProgress } from '../../../../shared/crossAgentTypes';
+import { HOST_CAPABILITIES } from '../../../../shared/maestro-lib/client/types';
 /**
  * WebSocket Message Handlers for Web Server
  *
@@ -418,6 +419,16 @@ export class WebSocketMessageHandler {
 
 			case 'get_app_info':
 				this.handleGetAppInfo(client, message);
+				break;
+
+			// What this host does beyond the base protocol (the headless host answers the same).
+			case 'host_capabilities':
+				this.send(client, {
+					type: 'host_capabilities_result',
+					requestId: message.requestId,
+					success: true,
+					capabilities: [...HOST_CAPABILITIES],
+				});
 				break;
 
 			case 'select_tab':

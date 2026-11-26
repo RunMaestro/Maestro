@@ -52,6 +52,7 @@ import type {
 	ClientMethod,
 	ClientResult,
 	QueuedTurn,
+	QueueExit,
 	TurnEvent,
 	TurnInput,
 	TurnOverrides,
@@ -941,16 +942,33 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	// Queues
 	// -----------------------------------------------------------------------
 
-	/** Tell every listener what now waits for the agent: the whole list, in order. */
-	function emitQueue(agentId: string): void {
+	/**
+	 * Tell every listener what now waits for the agent: the whole list, in order. A change that takes
+	 * an item out names how it left (started or removed), so a client never infers it from the
+	 * tab's state, and never takes a start still in flight for a removal.
+	 */
+	function emitQueue(agentId: string, exit?: QueueExit): void {
 		const items = queues.get(agentId)?.items() ?? [];
-		bus.emit({ type: 'queue.changed', agentId, items: items.map(toQueuedTurn) });
+		bus.emit({
+			type: 'queue.changed',
+			agentId,
+			items: items.map(toQueuedTurn),
+			namesExits: true,
+			...(exit ? { exit } : {}),
+		});
 	}
 
 	function onQueueEvent(agentId: string, event: QueueEvent<TurnItem>): void {
 		// Every event but a turn's end, and a start that never waited, changes what waits.
 		if (event.type !== 'ended' && !(event.type === 'started' && event.direct)) {
-			emitQueue(agentId);
+			emitQueue(
+				agentId,
+				event.type === 'started'
+					? { itemId: event.item.id, exit: 'started' }
+					: event.type === 'removed'
+						? { itemId: event.item.id, exit: 'removed' }
+						: undefined
+			);
 		}
 		switch (event.type) {
 			case 'started':

@@ -413,12 +413,19 @@ export function handleSendCommand(
 				background,
 				mentionRouting
 			)
-			.then((success) => {
+			.then((outcome) => {
+				const success = !!outcome;
 				if (!success) cancelArmedCallback();
+				// A hosted agent's host queued it behind the running turn: say so, as a headless
+				// host's own reply does, so the CLI prints what happened.
+				const queued = typeof outcome === 'object' ? outcome : undefined;
 				ctx.send(client, {
 					type: 'command_result',
 					success,
 					sessionId,
+					...(queued
+						? { queued: true, itemId: queued.itemId, queuePosition: queued.queuePosition }
+						: {}),
 					...(coverage.receipt
 						? {
 								dispatchId,
