@@ -1030,6 +1030,19 @@ export function createRequestHandler(
 				};
 			}
 
+			// Stop on an asker on another machine: its consults here end as stopped ones.
+			case 'cross_agent_cancel': {
+				const cancel = client.consults.cancel;
+				if (!cancel) {
+					return refusal('cross_agent_cancel_result', 'This host cannot stop a consult.');
+				}
+				return outcome(
+					'cross_agent_cancel_result',
+					await cancel({ askerKey: str(message.askerKey) ?? '' }),
+					(value) => ({ canceled: value.canceled })
+				);
+			}
+
 			default:
 				return undefined;
 		}

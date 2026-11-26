@@ -289,4 +289,21 @@ describe('M4 end-to-end: headless group chat and consults', () => {
 		// The agent's own tab is untouched.
 		expect(responder.aiTabs[0].logs).toEqual([]);
 	});
+
+	// G1: Stop on a remote asker reaches this host by its key, and a key that is not one stops
+	// nothing, never the stand-in tab other askers share.
+	it('stops a remote asker by its key and refuses a key it cannot read', async () => {
+		const runtime = await startRuntime([seedAgent('responder', 'Responder')]);
+		try {
+			const key = buildRemoteAskerKey({ machine: 'laptop', agentId: 'a', tabId: 't' });
+			expect(await runtime.consults.cancel?.({ askerKey: key })).toEqual({
+				ok: true,
+				value: { canceled: 0 },
+			});
+			const refused = await runtime.consults.cancel?.({ askerKey: 'cli-ask' });
+			expect(refused?.ok).toBe(false);
+		} finally {
+			await runtime.connection.close();
+		}
+	});
 });

@@ -203,7 +203,7 @@ describe('A1.7: a consult of a local, SSH, or hosted target', () => {
 		expect(completion?.error).toBe('The host is not connected.');
 	});
 
-	it('ends a hosted consult on Stop as a stopped consult, as main ends a local one, and drops a late answer', async () => {
+	it('ends a hosted consult on Stop as a stopped consult here and on the host, as main ends a local one, and drops a late answer', async () => {
 		seed('hosted');
 		let completion: CrossAgentCompletion | undefined;
 		let answer!: (value: unknown) => void;
@@ -214,6 +214,13 @@ describe('A1.7: a consult of a local, SSH, or hosted target', () => {
 		expect(cancelHostedConsults('src', 'tab')).toBe(1);
 		expect(bubble().text).toContain('Target was stopped.');
 		expect(completion?.canceled).toBe(true);
+		// G1: Stop reaches the run on the host too, keyed on the same asker as the consult, so the
+		// host records it as stopped, as main records a local target's.
+		expect(act$).toHaveBeenLastCalledWith('box', 'h1', {
+			kind: 'consult-cancel',
+			asker: { agentId: 'src', tabId: 'tab' },
+		});
+		expect(act$.mock.calls[0][2].asker).toEqual({ agentId: 'src', tabId: 'tab' });
 
 		answer({ ok: true, result: { kind: 'consult', answer: ANSWER } });
 		await asked;

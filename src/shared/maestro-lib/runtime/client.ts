@@ -39,6 +39,7 @@ import type {
 	Unsubscribe,
 } from '../client/types';
 import type { SshRemoteConfig } from '../../types';
+import { parseWireAskerKey, remoteAskerConsultKey } from '../../crossAgentTypes';
 import type { MaestroPaths } from '../paths/resolve';
 import { readStoreDocument } from '../store/io';
 import { sliceTranscript, transcriptOf, type LogEntryRecord } from '../store/transcript';
@@ -295,6 +296,15 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		// A fenced runtime does not start a consult: its answer could not be recorded.
 		consults: {
 			ask: (input) => Promise.resolve(gate('consults.ask', true) ?? deps.consults.api.ask(input)),
+			// Stop only reduces what runs, so it stays available when fenced. An asker key that is not
+			// one stops nothing: it must never reach the stand-in tab other askers share.
+			cancel: (input) =>
+				guarded<{ canceled: number }>('consults.cancel', () => {
+					const askerKey = parseWireAskerKey(input.askerKey);
+					if (!askerKey) return fail('consults.cancel', 'invalid', 'The asker key is not valid.');
+					const key = remoteAskerConsultKey(askerKey);
+					return ok({ canceled: deps.consults.cancelForSource(key.sourceSessionId) });
+				}),
 		},
 
 		history: {

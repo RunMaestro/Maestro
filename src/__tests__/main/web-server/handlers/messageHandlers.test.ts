@@ -67,6 +67,10 @@ vi.mock('../../../../main/feedback', () => ({
 	}),
 	subscribeFeedbackIssue: vi.fn().mockResolvedValue({ success: true }),
 }));
+const cancelCrossAgentRequestsForSource = vi.hoisted(() => vi.fn(() => 2));
+vi.mock('../../../../main/cross-agent/cross-agent-router', () => ({
+	cancelCrossAgentRequestsForSource,
+}));
 vi.mock('../../../../main/debug-package', () => ({
 	generateDebugPackage: vi.fn().mockResolvedValue({
 		success: true,
@@ -745,6 +749,39 @@ describe('WebSocketMessageHandler', () => {
 				expect(handedOff).toBe(true);
 				expect(sent).toBe(handedOff);
 			});
+		});
+
+		// G1: Stop on an asker on another machine ends its consults here, and only its own.
+		it('stops the consults one remote asker has running, keyed on its asker key', async () => {
+			cancelCrossAgentRequestsForSource.mockClear();
+			handler.handleMessage(client, {
+				type: 'cross_agent_cancel',
+				askerKey: 'laptop/agent-a/tab-1',
+				requestId: 'r-stop',
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(cancelCrossAgentRequestsForSource).toHaveBeenCalledWith(
+				'remote-asker:laptop/agent-a/tab-1'
+			);
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'cross_agent_cancel_result',
+				requestId: 'r-stop',
+				success: true,
+				canceled: 2,
+			});
+		});
+
+		it('stops nothing for a key it cannot read, never the shared stand-in tab', async () => {
+			cancelCrossAgentRequestsForSource.mockClear();
+			handler.handleMessage(client, { type: 'cross_agent_cancel', askerKey: 'cli-ask' });
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(cancelCrossAgentRequestsForSource).not.toHaveBeenCalled();
+			expect(JSON.parse((client.socket.send as any).mock.calls[0][0]).success).toBe(false);
 		});
 
 		it('clamps an absurd timeout instead of holding a process for a day', async () => {

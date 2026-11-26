@@ -123,6 +123,7 @@ export type ClientMethod =
 	| 'groupChats.rename'
 	| 'groupChats.remove'
 	| 'consults.ask'
+	| 'consults.cancel'
 	| 'settings.get'
 	| 'settings.sshRemotes'
 	| 'providers.list'
@@ -848,6 +849,13 @@ export interface ConsultsApi {
 	 * stopped; the error message says which. A partial answer is not returned.
 	 */
 	ask(input: ConsultAskInput): Promise<ClientResult<ConsultAnswer>>;
+	/**
+	 * Stop the consults one asker on another machine (`askerKey`, `buildRemoteAskerKey()`) has
+	 * running here, as Stop on a local asker ends the consults it started. Each ends as a stopped
+	 * consult on its consult tab and in History. Answers how many were stopped; a host that cannot
+	 * stop them answers `unsupported`.
+	 */
+	cancel?(input: { askerKey: string }): Promise<ClientResult<{ canceled: number }>>;
 }
 
 // ---------------------------------------------------------------------------

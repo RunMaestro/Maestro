@@ -87,6 +87,7 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'send-now-queued': 'Could not send the queued message now',
 	'side-question': 'Could not ask the side question',
 	consult: 'Could not consult the agent',
+	'consult-cancel': 'Could not stop the consult',
 	'update-agent': 'Could not change the agent on its host',
 	'update-tab': 'Could not change the tab on its host',
 	'auto-run': 'Auto Run did not start',
@@ -401,6 +402,20 @@ export async function askMirrorConsult(
 				...(answer.result.agentName ? { agentName: answer.result.agentName } : {}),
 			}
 		: { error: 'The host answered something else.' };
+}
+
+/**
+ * Stop on the asking tab, carried to the host: end the consults that tab has running there, which
+ * end as stopped ones in the host's consult tab and History, as main ends a local target's. No
+ * toast: the bubble already shows the consult stopped, and a host that is down has nothing running
+ * that this machine could reach.
+ */
+export async function cancelMirrorConsult(
+	peerId: string,
+	agentId: string,
+	asker: { agentId: string; tabId: string }
+): Promise<void> {
+	await callMirroredAgentAction(peerId, agentId, { kind: 'consult-cancel', asker });
 }
 
 /** Close a mirrored tab on its host: it moves to the host's closed-tab history. */

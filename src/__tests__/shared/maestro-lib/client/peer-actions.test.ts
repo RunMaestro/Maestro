@@ -367,6 +367,37 @@ describe('runPeerAgentAction', () => {
 		});
 	});
 
+	it('carries Stop to the host for the consults that asker has running there (G1)', async () => {
+		const { client, asClient } = fakeClient();
+		const cancel = vi.fn().mockResolvedValue({ ok: true, value: { canceled: 1 } });
+		(client.consults as unknown as { cancel: typeof cancel }).cancel = cancel;
+		expect(
+			await runPeerAgentAction(
+				asClient,
+				agent,
+				{ kind: 'consult-cancel', asker: { agentId: 'src', tabId: 'tab-1' } },
+				{ originHost: 'laptop' }
+			)
+		).toEqual(ok({ kind: 'consult-cancel', canceled: 1 }));
+		expect(cancel).toHaveBeenCalledWith({
+			askerKey: buildRemoteAskerKey({ machine: 'laptop', agentId: 'src', tabId: 'tab-1' }),
+		});
+		expect(
+			parsePeerAgentAction({ kind: 'consult-cancel', asker: { agentId: 'a', tabId: 't' } })
+		).toEqual({ kind: 'consult-cancel', asker: { agentId: 'a', tabId: 't' } });
+		expect(() => parsePeerAgentAction({ kind: 'consult-cancel' })).toThrow('Missing asker');
+	});
+
+	it('answers unsupported for Stop on a host client with no consult cancel', async () => {
+		const { asClient } = fakeClient();
+		const stopped = await runPeerAgentAction(asClient, agent, {
+			kind: 'consult-cancel',
+			asker: { agentId: 'src', tabId: 'tab-1' },
+		});
+		expect(stopped.ok).toBe(false);
+		if (!stopped.ok) expect(stopped.error.code).toBe('unsupported');
+	});
+
 	it('edits a waiting message on the host', async () => {
 		const { client, asClient } = fakeClient();
 		const edit = { text: 'new', turnSettings: { model: 'm' } };

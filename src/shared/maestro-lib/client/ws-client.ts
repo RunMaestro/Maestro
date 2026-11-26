@@ -54,6 +54,7 @@ import { buildSnapshotKey, type AgentCapabilitiesSnapshotMap } from '../../agent
 import { stripBlankEnvVars } from '../../agentEnvironment';
 import { validateGroupAppearance } from '../../groupAppearance';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../webLogin';
+import { parseWireAskerKey } from '../../crossAgentTypes';
 import type { AgentError, HistoryEntry, SshRemoteConfig } from '../../types';
 import {
 	parseQueueSteerResult,
@@ -131,6 +132,8 @@ import {
 const LOG_CONTEXT = '[WsMaestroClient]';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+/** How long Stop waits for a host to confirm it stopped a consult. An older host never answers. */
+const CONSULT_CANCEL_TIMEOUT_MS = 10_000;
 /** The host's own consult bounds (`handleCrossAgentAsk` clamps again). */
 const DEFAULT_CONSULT_TIMEOUT_MS = 600_000;
 const MIN_CONSULT_TIMEOUT_MS = 10_000;
@@ -466,6 +469,7 @@ class WsMaestroClient implements MaestroClient {
 
 	readonly consults = {
 		ask: (input: ConsultAskInput) => this.consultsAsk(input),
+		cancel: (input: { askerKey: string }) => this.consultsCancel(input),
 	};
 
 	readonly history = {
@@ -2451,6 +2455,26 @@ class WsMaestroClient implements MaestroClient {
 		}
 		const text = asString(reply.error);
 		return this.fail(method, classifyFailure(text), text ?? `${who} did not answer.`);
+	}
+
+	/** Stop one remote asker's consults on the host (`cross_agent_cancel`). */
+	private async consultsCancel(input: {
+		askerKey: string;
+	}): Promise<ClientResult<{ canceled: number }>> {
+		const method: ClientMethod = 'consults.cancel';
+		const askerKey = parseWireAskerKey(input.askerKey);
+		if (!askerKey) return this.fail(method, 'invalid', 'The asker key is not valid.');
+		const sent = await this.send(
+			method,
+			{ type: 'cross_agent_cancel', askerKey },
+			'cross_agent_cancel_result',
+			{ timeoutMs: CONSULT_CANCEL_TIMEOUT_MS }
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		const canceled = checked.value.canceled;
+		return ok({ canceled: typeof canceled === 'number' && canceled > 0 ? canceled : 0 });
 	}
 
 	// =======================================================================

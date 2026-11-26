@@ -107,6 +107,11 @@ export type PeerAgentAction =
 			question: string;
 			asker?: { agentId: string; tabId: string };
 	  } & Omit<RemoteAskerContext, 'askerKey'>)
+	/**
+	 * Stop on the asking tab: end the consults that tab (`asker`, as the consult named it) has
+	 * running on the host, which end there as stopped ones, as main ends a local target's.
+	 */
+	| { kind: 'consult-cancel'; asker: { agentId: string; tabId: string } }
 	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
 	| { kind: 'update-agent'; patch: AgentPatch }
 	/** Change one tab's composer settings on the host. */
@@ -156,6 +161,8 @@ export type PeerAgentActionResult =
 	| { kind: 'side-question'; tabId: string; answer: string }
 	/** `agentName`: the consulted agent's name, as the host reports it. */
 	| { kind: 'consult'; answer: string; agentName?: string }
+	/** `canceled`: how many consults the host stopped (0: none was running, or it already ended). */
+	| { kind: 'consult-cancel'; canceled: number }
 	| { kind: 'update-agent'; applied: AgentPatchField[]; notices?: string[] }
 	| { kind: 'update-tab'; tabId: string }
 	/** The host accepted the launch; the run's progress arrives as `autorun` events. */
@@ -184,6 +191,7 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'send-now-queued',
 	'side-question',
 	'consult',
+	'consult-cancel',
 	'update-agent',
 	'update-tab',
 	'auto-run',
@@ -199,6 +207,18 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 export interface PeerActionContext {
 	/** This machine's hostname: a send stamps its History entry with it on the host (`originHost`). */
 	originHost?: string;
+}
+
+/** The asker key the host keeps a consult tab per: this machine, the asking agent, its tab. */
+function remoteAskerKeyOf(
+	asker: { agentId: string; tabId: string },
+	context: PeerActionContext
+): string {
+	return buildRemoteAskerKey({
+		machine: context.originHost ?? '',
+		agentId: asker.agentId,
+		tabId: asker.tabId,
+	});
 }
 
 export async function runPeerAgentAction(
@@ -332,15 +352,7 @@ export async function runPeerAgentAction(
 				question: action.question,
 				...(action.transcript ? { transcript: action.transcript } : {}),
 				...(action.fromAgentName ? { fromAgentName: action.fromAgentName } : {}),
-				...(action.asker
-					? {
-							askerKey: buildRemoteAskerKey({
-								machine: context.originHost ?? '',
-								agentId: action.asker.agentId,
-								tabId: action.asker.tabId,
-							}),
-						}
-					: {}),
+				...(action.asker ? { askerKey: remoteAskerKeyOf(action.asker, context) } : {}),
 				...(action.handoffAnswer !== undefined ? { handoffAnswer: action.handoffAnswer } : {}),
 			});
 			return asked.ok
@@ -353,6 +365,24 @@ export async function runPeerAgentAction(
 						},
 					}
 				: asked;
+		}
+		case 'consult-cancel': {
+			if (!client.consults.cancel) {
+				return {
+					ok: false,
+					error: {
+						code: 'unsupported',
+						message: 'This host cannot stop a consult.',
+						method: 'consults.cancel',
+					},
+				};
+			}
+			const stopped = await client.consults.cancel({
+				askerKey: remoteAskerKeyOf(action.asker, context),
+			});
+			return stopped.ok
+				? { ok: true, value: { kind: 'consult-cancel', canceled: stopped.value.canceled } }
+				: stopped;
 		}
 		case 'update-agent': {
 			const updated = await client.agents.update(agent.id, action.patch);
@@ -503,14 +533,7 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 		case 'consult': {
 			if (!nonEmptyString(value.question)) throw new Error('The question is empty.');
 			const transcript = parseWireTranscript(value.transcript);
-			const rawAsker =
-				value.asker && typeof value.asker === 'object'
-					? (value.asker as Record<string, unknown>)
-					: undefined;
-			const asker =
-				rawAsker && nonEmptyString(rawAsker.agentId) && nonEmptyString(rawAsker.tabId)
-					? { agentId: rawAsker.agentId, tabId: rawAsker.tabId }
-					: undefined;
+			const asker = parseAsker(value.asker);
 			return {
 				kind,
 				question: value.question.trim(),
@@ -521,6 +544,11 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				...(asker ? { asker } : {}),
 				...(typeof value.handoffAnswer === 'string' ? { handoffAnswer: value.handoffAnswer } : {}),
 			};
+		}
+		case 'consult-cancel': {
+			const asker = parseAsker(value.asker);
+			if (!asker) throw new Error('Missing asker');
+			return { kind, asker };
 		}
 		case 'update-agent':
 			return { kind, patch: parseAgentPatch(value.patch) };
@@ -538,6 +566,15 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			return { kind, control };
 		}
 	}
+}
+
+/** The asking agent and tab a consult names, or undefined when either is missing. */
+function parseAsker(raw: unknown): { agentId: string; tabId: string } | undefined {
+	if (!raw || typeof raw !== 'object') return undefined;
+	const asker = raw as Record<string, unknown>;
+	return nonEmptyString(asker.agentId) && nonEmptyString(asker.tabId)
+		? { agentId: asker.agentId, tabId: asker.tabId }
+		: undefined;
 }
 
 function launchRecord(raw: unknown): Record<string, unknown> {
