@@ -88,7 +88,11 @@ export function getSteerSupport(
 		return {
 			kind: 'unsupported',
 			reason: 'ssh-remote',
-			detail: `This agent runs on an SSH remote. A turn on another host cannot be steered.`,
+			// LOCKED (parity B1.15): maestro-p opens its steering socket on the remote, and
+			// Maestro's steering client dials a local Unix socket; nothing forwards it. The
+			// row stays in the menu with this reason, in every mode.
+			detail:
+				"This agent runs on an SSH remote, where a running turn's input channel cannot be reached from here. Queue the message and it sends when the turn ends.",
 		};
 	}
 	if (session.toolType === 'claude-code') {
