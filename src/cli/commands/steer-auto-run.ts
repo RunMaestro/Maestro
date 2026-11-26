@@ -17,6 +17,7 @@ import { formatSuccess } from '../output/formatter';
 import { isQuiet } from '../output/verbosity';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { MAX_STEERING_NOTE_LENGTH } from '../../shared/autorunSteering';
+import { getCliActivityForSession, isSessionBusyWithCli } from '../../shared/cli-activity';
 import type {
 	SteeringCommandRequest,
 	SteeringDeliverySummary,
@@ -80,8 +81,27 @@ function describeReply(delivery: SteeringDeliverySummary, steerable: boolean): s
 }
 
 /**
+ * Why a note cannot reach this agent's run, when the run is a headless one.
+ *
+ * A headless run (`goal-run` or `playbook` without `--visible`) is driven by a
+ * maestro-cli process, not by the desktop that holds the notes, so a note sent
+ * to it would wait forever under "Waiting for the next task". Refuse instead,
+ * and say how to start a run that can be steered.
+ */
+export function headlessRunSteeringBlocker(sessionId: string): string | null {
+	if (!isSessionBusyWithCli(sessionId)) return null;
+	const activity = getCliActivityForSession(sessionId);
+	const what = activity?.playbookName ? `"${activity.playbookName}"` : 'An Auto Run';
+	const pid = activity?.pid ? ` (PID ${activity.pid})` : '';
+	return (
+		`${what} is running headless in maestro-cli${pid}, and steering notes reach only a run the desktop drives. ` +
+		'Start the run with --visible to steer it.'
+	);
+}
+
+/**
  * `maestro-cli steer-auto-run send <note> -a <agent>` - park a note for the
- * next task of a running Auto Run.
+ * next task (or goal iteration) of a running Auto Run.
  *
  * The length is checked HERE as well as on the far side: the panel caps a note
  * as it is typed, where the operator watches the box stop accepting text, but a
@@ -97,6 +117,8 @@ export async function steerAutoRunSend(note: string, options: SteerAutoRunOption
 		);
 	}
 	const sessionId = resolveAgentOrFail(options.agent, options.json);
+	const headless = headlessRunSteeringBlocker(sessionId);
+	if (headless) failCommand(headless, options.json);
 
 	const result = await sendSteering(
 		{
@@ -114,7 +136,9 @@ export async function steerAutoRunSend(note: string, options: SteerAutoRunOption
 	}
 	if (isQuiet()) return;
 	console.log(
-		formatSuccess(`Steering note queued for ${sessionId}; it opens the next Auto Run task`)
+		formatSuccess(
+			`Steering note queued for ${sessionId}; it opens the next Auto Run task or goal iteration`
+		)
 	);
 	if (result.note) console.log(`  Note: ${result.note.id}`);
 }
@@ -150,7 +174,7 @@ export async function steerAutoRunList(options: SteerAutoRunOptions): Promise<vo
 		return;
 	}
 	if (pending.length > 0) {
-		console.log(`Waiting for the next task (${pending.length}):`);
+		console.log(`Waiting for the next task or iteration (${pending.length}):`);
 		for (const note of pending) {
 			console.log(`  ${note.id}  ${formatTime(note.timestamp)}  ${oneLine(note.text)}`);
 		}

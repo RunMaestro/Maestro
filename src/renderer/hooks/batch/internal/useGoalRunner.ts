@@ -62,6 +62,17 @@ import {
 	formatDelegationResultsBlock,
 	type AutoRunDelegation,
 } from '../../../../shared/autoRunDelegation';
+import {
+	formatSteeringNotesBlock,
+	joinAutoRunPromptBlocks,
+	type AutoRunSteeringNote,
+} from '../../../../shared/autorunSteering';
+import {
+	clearPendingSteeringNotes,
+	clearSteeringNotes,
+	recordSteeringResponse,
+	takeSteeringNotesForDispatch,
+} from '../../../services/autoRunSteering';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 
 type UpdateBatchStateFn = (
@@ -330,6 +341,10 @@ export function useGoalRunner({
 				// Report the launch so an update restart can save this run's place.
 				trackAutoRunLaunch(sessionId, config, folderPath);
 
+				// A steering note belongs to the run it was typed during. Anything left
+				// over from a previous run must not open this run's first iteration.
+				clearSteeringNotes(sessionId);
+
 				// Goal mode expresses progress as a percent, so we model it as 100 "tasks".
 				// Empty documents/lockedDocuments arrays mark this as a document-less run.
 				dispatch({
@@ -499,6 +514,8 @@ export function useGoalRunner({
 			// Results handed to an iteration that a limit pause then retries: the
 			// retry is the same iteration, so it gets them again.
 			let retryDelegationResults: AutoRunDelegation[] = [];
+			// The same for steering notes: a retried iteration still owes them a reply.
+			let retrySteeringNotes: AutoRunSteeringNote[] = [];
 
 			const history: GoalIterationRecord[] = [];
 			let exitReason: GoalExitReason = 'stopped-by-user';
@@ -535,6 +552,10 @@ export function useGoalRunner({
 				}
 				const delegationResults = [...retryDelegationResults, ...delegated.results];
 				retryDelegationResults = [];
+				// Taken once per iteration, as a document run takes them once per task:
+				// a note sent after this line opens the NEXT iteration.
+				const steeringNotes = [...retrySteeringNotes, ...takeSteeringNotesForDispatch(sessionId)];
+				retrySteeringNotes = [];
 
 				iteration++;
 
@@ -553,14 +574,22 @@ export function useGoalRunner({
 				};
 				// Each goal iteration spawns a fresh provider session, so prefix the
 				// agent's New Session Message onto every spawn (matches interactive behavior).
-				// Delegated results ride in front, after substitution, so a `{{...}}` in
-				// another agent's report stays literal (same rule as steering notes).
+				// Steering notes and delegated results ride in front, after substitution,
+				// so a `{{...}}` the operator or another agent wrote stays literal.
+				const steeringBlock = formatSteeringNotesBlock(steeringNotes, 'goal');
 				const delegationBlock = formatDelegationResultsBlock(delegationResults);
 				const substitutedPrompt = substituteTemplateVariables(goalPromptTemplate, templateContext);
 				const prompt = prependNewSessionMessage(
-					delegationBlock ? `${delegationBlock}\n\n---\n\n${substitutedPrompt}` : substitutedPrompt,
+					joinAutoRunPromptBlocks([steeringBlock, delegationBlock, substitutedPrompt]),
 					session.newSessionMessage
 				);
+				if (steeringBlock) {
+					logger.info(
+						`[GoalRunner] Delivering ${steeringNotes.length} steering note(s)`,
+						undefined,
+						{ iteration }
+					);
+				}
 
 				const iterationStart = Date.now();
 				let result: Awaited<ReturnType<SpawnAgentFn>>;
@@ -630,6 +659,12 @@ export function useGoalRunner({
 						if (action === 'abort' || action === 'skip-document') {
 							exitReason = 'stopped-by-user';
 							exitDetail = 'Stopped by user.';
+							// The notes this iteration took get an answer, not "working on it".
+							recordSteeringResponse(sessionId, steeringNotes, {
+								summary: `Iteration ${iteration} stopped before it finished`,
+								text: pausedError.message,
+								success: false,
+							});
 							break;
 						}
 
@@ -637,6 +672,7 @@ export function useGoalRunner({
 						// attempt is not counted, then loop back to re-spawn the same prompt.
 						iteration--;
 						retryDelegationResults = delegationResults;
+						retrySteeringNotes = steeringNotes;
 						continue;
 					}
 				}
@@ -722,6 +758,14 @@ export function useGoalRunner({
 				const fullResponse = stripMaestroMarkers(rawFullResponse);
 				const rationaleText = markers.rationale?.trim();
 				const iterationSummary = `Goal progress: ${displayProgress}% - ${rationaleText || synopsis}`;
+
+				// Bring the iteration's reply back to the notes it was steered by, as a
+				// document run does for a task. A failed iteration answers them too.
+				recordSteeringResponse(sessionId, steeringNotes, {
+					summary: iterationSummary,
+					text: fullResponse,
+					success: result.success,
+				});
 				onAddHistoryEntry({
 					type: 'AUTO',
 					timestamp: Date.now(),
@@ -952,6 +996,10 @@ export function useGoalRunner({
 					}
 				}
 			}
+
+			// No iteration is left to take a note that is still waiting. The delivered
+			// notes stay until the next run: the last reply has only just landed.
+			clearPendingSteeringNotes(sessionId);
 
 			// Always flush debounced updates and dispatch COMPLETE_BATCH to clean up state.
 			flushDebouncedUpdate(sessionId);

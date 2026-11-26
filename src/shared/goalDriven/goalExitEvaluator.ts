@@ -66,20 +66,33 @@ function normalizeProgressSeries(history: GoalIterationRecord[]): number[] {
  *
  * A stall means the last `STALL_THRESHOLD` iterations show no upward progress
  * movement - every consecutive pair within that window is flat or declining.
- * Requires at least `STALL_THRESHOLD` entries. Returns the normalized value the
- * run is stuck at (for the human-readable detail), or `null` when not stalled.
+ * Requires at least `STALL_THRESHOLD` entries.
  */
-function detectStall(series: number[]): number | null {
+function detectStall(series: number[]): boolean {
 	if (series.length < STALL_THRESHOLD) {
-		return null;
+		return false;
 	}
 	const window = series.slice(series.length - STALL_THRESHOLD);
 	for (let i = 1; i < window.length; i++) {
 		if (window[i] > window[i - 1]) {
-			return null; // an upward tick within the window resets the stall
+			return false; // an upward tick within the window resets the stall
 		}
 	}
-	return window[window.length - 1];
+	return true;
+}
+
+/**
+ * The percent a stalled run is stuck at, as the user saw it.
+ *
+ * The run shows a whole-percent high-water mark (`resolveGoalIterationProgress`),
+ * so a self-report that dips after a peak never moves the bar back. The stall
+ * detail names that same number. The latest raw report would name the dip: a
+ * run that reported 48, 42, 36 showed 48% everywhere and then stopped with
+ * "stuck at 36%". `Math.round(max)` equals the running max of rounded values,
+ * so this is exactly the displayed figure.
+ */
+function stalledAtPercent(series: number[]): number {
+	return Math.round(Math.max(0, ...series));
 }
 
 /**
@@ -146,14 +159,14 @@ export function evaluateGoalExit(
 	}
 
 	// 4. Stall - running without moving the number is no real progress. Use the
-	// normalized series so a silent (missing-progress) latest iteration reports
-	// the value it's stuck at rather than a raw null.
-	const stuckAt = detectStall(normalizeProgressSeries(history));
-	if (stuckAt !== null) {
+	// normalized series so a silent (missing-progress) iteration counts as flat
+	// rather than a raw null. The detail names the high-water mark the user saw.
+	const series = normalizeProgressSeries(history);
+	if (detectStall(series)) {
 		return {
 			action: 'stop',
 			reason: 'stalled',
-			detail: `No progress across the last ${STALL_THRESHOLD} iterations (stuck at ${stuckAt}%).`,
+			detail: `No progress across the last ${STALL_THRESHOLD} iterations (stuck at ${stalledAtPercent(series)}%).`,
 		};
 	}
 
