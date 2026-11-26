@@ -34,6 +34,7 @@ import {
 } from '../stores/thoughtStreamStore';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useSshOutageStore } from '../stores/sshOutageStore';
 import {
 	projectHostedSession,
 	releaseHostedSession,
@@ -48,6 +49,13 @@ import { closingHostTabIds, hostingEnabled } from './hostedTurns';
 import { clearPendingSteeringNotes, refreshHostedSteering } from './autoRunSteering';
 import { useAutoRunSteeringStore } from '../stores/autoRunSteeringStore';
 import { readMirrorTranscript } from './peerMirror';
+import {
+	hostLinkLostError,
+	hostedTurnsEndedHere,
+	noteHostedTurnsCut,
+	settleCutHostedTurns,
+	type HostLink,
+} from './hostedLinkLoss';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
 function hostedInput(session: { liftedTo?: unknown }):
@@ -56,6 +64,7 @@ function hostedInput(session: { liftedTo?: unknown }):
 			agentId: string;
 			input: HostedProjectionInput;
 			connected: boolean;
+			link: HostLink;
 			autoRun: AutoRunBroadcastState | null;
 			/** How the host queue items that last left it left, when the host names that. */
 			queueExits: readonly QueueExit[] | undefined;
@@ -71,6 +80,14 @@ function hostedInput(session: { liftedTo?: unknown }):
 		peerId: pointer.peer,
 		agentId: agent.id,
 		connected: peer.connection === 'connected',
+		link: {
+			peerId: pointer.peer,
+			agentId: agent.id,
+			remoteId: peer.remoteId,
+			remoteName: peer.name,
+			connection: peer.connection,
+			agent,
+		},
 		autoRun: peer.autoRuns?.[agent.id] ?? null,
 		queueExits: peer.queueExits?.[agent.id],
 		input: {
@@ -207,8 +224,19 @@ export function syncHostedAgents(): void {
 			hosted.autoRun,
 			hosted.connected
 		);
+		// A lost link ends the turns the host last reported running, as a cut SSH link does; once
+		// the host is back, how each one ended is read from the host.
+		const linkLost = hostLinkLostError(session, hosted.link);
+		if (linkLost) noteHostedTurnsCut(session, hosted.link);
+		else if (hosted.connected) settleCutHostedTurns(session.id, hosted.link);
+		const endedHere = hostedTurnsEndedHere(session.id, hosted.connected);
 		// The unread rule reads whether this agent is the one on screen, as a local tab's does.
-		const input = { ...hosted.input, viewing: session.id === activeSessionId };
+		const input: HostedProjectionInput = {
+			...hosted.input,
+			viewing: session.id === activeSessionId,
+			...(linkLost ? { linkLost } : {}),
+			...(endedHere ? { endedHere } : {}),
+		};
 		const next = projectHostedSession(session, input);
 		if (next !== session) {
 			updateSessionWith(session.id, (current) =>
@@ -271,6 +299,10 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 		});
 	};
 	const offMirror = usePeerMirrorStore.subscribe(schedule);
+	// An outage confirmed or cleared changes how a hosted turn is drawn (`hostLinkLostError()`).
+	const offOutages = useSshOutageStore.subscribe((state, prev) => {
+		if (state.outages !== prev.outages) schedule();
+	});
 	const offSettings = useSettingsStore.subscribe((state, prev) => {
 		if (state.federationHostedAgents !== prev.federationHostedAgents) schedule();
 	});
@@ -283,6 +315,7 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 	return () => {
 		announcesRunEnds = false;
 		offMirror();
+		offOutages();
 		offSettings();
 		offSessions();
 	};

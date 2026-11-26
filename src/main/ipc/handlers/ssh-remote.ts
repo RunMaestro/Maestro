@@ -15,7 +15,7 @@ import Store from 'electron-store';
 import * as crypto from 'crypto';
 import { SshRemoteConfig, SshRemoteTestResult } from '../../../shared/types';
 import { sshRemoteManager } from '../../ssh-remote-manager';
-import { checkSshRemote, getUnreachableSshRemotes, noteSshExit } from '../../ssh-reachability';
+import { checkRemoteLink, getUnreachableSshRemotes, noteSshExit } from '../../ssh-reachability';
 import type { SshReachabilityEvent } from '../../../shared/sshConnection';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
@@ -321,7 +321,7 @@ export function registerSshRemoteHandlers(deps: SshRemoteHandlerDependencies): v
 		createIpcHandler(
 			handlerOpts('checkReachability'),
 			async (remoteId: string): Promise<{ reachable: boolean; event?: SshReachabilityEvent }> => {
-				const reachable = await checkSshRemote(remoteId);
+				const reachable = await checkRemoteLink(remoteId);
 				const event = getUnreachableSshRemotes().find((e) => e.remoteId === remoteId);
 				return { reachable, event };
 			}

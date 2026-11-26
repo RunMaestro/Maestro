@@ -325,6 +325,10 @@ class WsMaestroClient implements MaestroClient {
 	private readonly requestTimeoutMs: number;
 	private readonly reconnectInitialMs: number;
 	private readonly reconnectMaxMs: number;
+	/** The reconnect attempt dialing right now, so a second one joins it. */
+	private reconnectInFlight:
+		| Promise<ClientResult<{ host: HostInfo; resumed: boolean }>>
+		| undefined;
 	private readonly heartbeatIntervalMs: number;
 	private readonly heartbeatTimeoutMs: number;
 	private readonly reconcileIntervalMs: number;
@@ -1437,7 +1441,22 @@ class WsMaestroClient implements MaestroClient {
 		this.reconnectTimer = undefined;
 	}
 
-	private async tryReconnect(
+	/**
+	 * One reconnect attempt at a time: a caller's `reconnect()` while the backoff's own attempt is
+	 * dialing joins that attempt instead of opening a second socket beside it.
+	 */
+	private tryReconnect(
+		method: 'connection.reconnect'
+	): Promise<ClientResult<{ host: HostInfo; resumed: boolean }>> {
+		if (this.reconnectInFlight) return this.reconnectInFlight;
+		const attempt = this.tryReconnectOnce(method).finally(() => {
+			if (this.reconnectInFlight === attempt) this.reconnectInFlight = undefined;
+		});
+		this.reconnectInFlight = attempt;
+		return attempt;
+	}
+
+	private async tryReconnectOnce(
 		method: 'connection.reconnect'
 	): Promise<ClientResult<{ host: HostInfo; resumed: boolean }>> {
 		if (this.closedByCaller) return this.fail(method, 'host-unavailable', 'The client was closed.');

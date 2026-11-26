@@ -19,6 +19,8 @@
  */
 
 import { hostedTargetOf, interruptHostedTurn } from './hostedTurns';
+import { cutHostedTurnTabs, endHostedTurnsHere, markHostedTurnsStopped } from './hostedLinkLoss';
+import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { TURN_CANCELED_NOTE } from '../../shared/maestro-lib/store/transcript';
 import type { AITab, LogEntry, QueuedItem, Session, SessionState } from '../types';
 import { useSessionStore, selectSessionById, updateSessionWith } from '../stores/sessionStore';
@@ -131,6 +133,15 @@ export async function interruptTurn(
 	}
 	const scopeTabId = tabId ?? undefined;
 
+	// Ended first and synchronously, before any await, so no retry timer can
+	// resend the stopped prompt while the stop is still running: for a hosted
+	// agent too, whose message kept while its host was down waits on the same
+	// retry. A compaction is part of the turn being stopped: ending it first makes
+	// the kill below read as a cancel, not a failed compaction, and releases the
+	// prompt it held.
+	const recoveriesEnded =
+		cancelContextCompaction(sessionId, scopeTabId) + stopRetriesForAgent(sessionId, scopeTabId);
+
 	// A hosted agent's turns run on its Federation host: Stop goes there. A terminal command is
 	// this machine's own (it runs over SSH from here), so it keeps the local path below.
 	const terminalCommand =
@@ -152,27 +163,32 @@ export async function interruptTurn(
 		dropMentionHandoffs(sessionId, scopeTabId);
 		// A consult of the stopped turn whose start the host has not confirmed yet goes with it.
 		dropStoppedHostStartMentions(sessionId, scopeTabId);
-		if (forward) await interruptHostedTurn(session, scopeTabId);
+		const peer = usePeerMirrorStore.getState().peers[hostedTargetOf(session)?.peerId ?? ''];
+		// A turn the lost link cut is drawn idle here while the host may still run it, or may not
+		// have: Stop ends it too, so it is never sent again when the host is back.
+		const cutTabs = cutHostedTurnTabs(sessionId, scopeTabId);
+		const stopHere = [...new Set([...hostBusy, ...cutTabs])];
+		if (peer && peer.connection !== 'connected' && stopHere.length > 0) {
+			// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
+			endHostedTurnsHere(sessionId, stopHere, peer.name);
+		} else {
+			markHostedTurnsStopped(sessionId, cutTabs, peer?.name ?? '');
+			if (forward) await interruptHostedTurn(session, scopeTabId);
+		}
 		const consultsCanceled = await cancelConsults(sessionId, scopeTabId);
-		const wasBusy = forward || consultsCanceled > 0;
+		const wasBusy = forward || stopHere.length > 0 || recoveriesEnded > 0 || consultsCanceled > 0;
 		return {
 			success: true,
 			sessionId,
 			tabId,
 			wasBusy,
 			interrupted: wasBusy,
-			stoppedTabIds: hostBusy,
+			stoppedTabIds: stopHere,
 			exited: false,
 		};
 	}
 
-	// Ended first and synchronously, before any await, so no retry timer can
-	// resend the stopped prompt while the stop is still running. A compaction is
-	// part of the turn being stopped: ending it first makes the kill below read
-	// as a cancel, not a failed compaction, and releases the prompt it held. A
-	// hand-off armed for the turn must not fire when it stops: Stop means stop.
-	const recoveriesEnded =
-		cancelContextCompaction(sessionId, scopeTabId) + stopRetriesForAgent(sessionId, scopeTabId);
+	// A hand-off armed for the turn must not fire when it stops: Stop means stop.
 	dropMentionHandoffs(sessionId, scopeTabId);
 
 	// A `@mention` fans the turn out to one `cross-agent-*` process per target,
