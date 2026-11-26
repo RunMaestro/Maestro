@@ -1799,7 +1799,10 @@ describe('useInputProcessing', () => {
 				{ held: false, nameFrom: { text: 'hello' } }
 			);
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
-			expect(mockSetSessions).not.toHaveBeenCalled();
+			// Nothing is drawn here: the host's record brings the bubble. Only Up-arrow recall is.
+			const live = useSessionStore.getState().sessions.find((s) => s.id === session.id)!;
+			expect(live.aiTabs).toEqual(session.aiTabs);
+			expect(live.aiCommandHistory).toEqual(['hello']);
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 		});
 
@@ -2178,6 +2181,62 @@ describe('useInputProcessing', () => {
 			expect(settings[0]).toEqual({ model: 'opus', effort: 'high', readOnly: true });
 			expect(settings[1]).toEqual(settings[0]);
 			expect(settings[2]).toEqual(settings[0]);
+		});
+
+		// Parity round 3, N6: Up arrow recalls a sent message in every mode.
+		it('local, SSH, and hosted agents add a sent message to Up-arrow recall', async () => {
+			const actual = await vi.importActual<typeof import('../../../renderer/services/hostedTurns')>(
+				'../../../renderer/services/hostedTurns'
+			);
+			const maestro = window.maestro as unknown as Record<string, unknown>;
+			maestro.federation = {
+				act: vi.fn().mockResolvedValue({
+					ok: true,
+					result: { kind: 'send', receipt: { status: 'started' } },
+				}),
+			};
+			const recalls: Array<string[] | undefined> = [];
+			try {
+				for (const [mode, fields] of modes) {
+					const tab = createMockTab();
+					const { peer } = replacePeerAgents(
+						createMirroredPeer({ peerId: 'build-box', remoteId: 'build-box', name: 'Box' }),
+						[{ id: 'host-1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: tab.id }] }],
+						[],
+						1
+					);
+					usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+					if (mode === 'hosted') {
+						vi.mocked(sendHostedTurn).mockImplementationOnce(actual.sendHostedTurn);
+					}
+					const session = createMockSession({
+						state: 'idle',
+						aiTabs: [tab],
+						activeTabId: tab.id,
+						aiCommandHistory: ['earlier'],
+						...fields,
+					});
+					const deps = createDeps({
+						activeSession: session,
+						sessionsRef: { current: [session] },
+						inputValue: '  Fix the login bug  ',
+					});
+					const { result, unmount } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+					unmount();
+					recalls.push(
+						useSessionStore.getState().sessions.find((s) => s.id === session.id)?.aiCommandHistory
+					);
+				}
+			} finally {
+				delete maestro.federation;
+				usePeerMirrorStore.setState({ peers: {} } as never);
+			}
+			expect(recalls[0]).toEqual(['earlier', 'Fix the login bug']);
+			expect(recalls[1]).toEqual(recalls[0]);
+			expect(recalls[2]).toEqual(recalls[0]);
 		});
 
 		// Parity round 3, N1: a hosted tab is named from its first message as a local and an SSH

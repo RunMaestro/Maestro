@@ -217,6 +217,17 @@ export function composerSendNamesTab(
 }
 
 /**
+ * The recall history (Up arrow in the composer) with `typed` added, as every send adds what the
+ * user typed: trimmed, skipped when empty or the same as the newest entry. Same array back then.
+ */
+function withRecallEntry(history: readonly string[] | undefined, typed: string): string[] {
+	const current = history ? [...history] : [];
+	const text = typed.trim();
+	if (!text || current[current.length - 1] === text) return current;
+	return [...current, text];
+}
+
+/**
  * Dependencies for the useInputProcessing hook.
  */
 export interface UseInputProcessingDeps {
@@ -693,6 +704,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					clearSentDesignPicks();
 					syncAiInputToSession('', syncTarget);
 					if (inputRef.current) inputRef.current.style.height = 'auto';
+				}
+				// Up arrow recalls it, as it recalls a message a local send took.
+				if (receipt) {
+					updateSessionWith(activeSession.id, (s) => {
+						const aiCommandHistory = withRecallEntry(s.aiCommandHistory, text);
+						return aiCommandHistory.length === (s.aiCommandHistory?.length ?? 0)
+							? s
+							: { ...s, aiCommandHistory };
+					});
 				}
 				return;
 			}
@@ -1648,16 +1668,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// Add command to history (separate histories for AI and terminal modes).
 				// What the user typed, not the chips expanded around it.
 				const historyKey = currentMode === 'ai' ? 'aiCommandHistory' : 'shellCommandHistory';
-				const currentHistory =
-					currentMode === 'ai' ? s.aiCommandHistory || [] : s.shellCommandHistory || [];
-				const newHistory = [...currentHistory];
-				const historyText = typedText.trim();
-				if (
-					historyText &&
-					(newHistory.length === 0 || newHistory[newHistory.length - 1] !== historyText)
-				) {
-					newHistory.push(historyText);
-				}
+				const newHistory = withRecallEntry(
+					currentMode === 'ai' ? s.aiCommandHistory : s.shellCommandHistory,
+					typedText
+				);
 
 				// For terminal mode (legacy), add to shellLogs
 				if (currentMode !== 'ai') {
