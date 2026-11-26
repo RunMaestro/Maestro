@@ -31,7 +31,7 @@ import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/re
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem, Session, UnifiedTabRef } from '../types';
-import { mirrorLogEntry, mirrorQueuedItem, mirrorTab } from './peerMirrorView';
+import { mirrorLogEntry, mirrorQueuedItem, mirrorTab, mirrorUsageStats } from './peerMirrorView';
 import { isAiTabHidden } from './unifiedTabOrderUtils';
 
 /** One tab's transcript as the mirror holds it (`MirrorTranscriptSlot`, the fields read here). */
@@ -275,6 +275,13 @@ function projectTab(
 	const state = busy ? 'busy' : 'idle';
 	const agentError = hostedTabError(local, busy, logs);
 	const hasUnread = hostedTabUnread(local, logs, watched);
+	// The host runs the turns, so its tab's usage is what the header's gauge and cost pill read. A
+	// host that reports none (an older host) leaves the usage this tab already had.
+	const hostUsage = mirrorUsageStats(host.usageStats);
+	const usageStats =
+		hostUsage && !(local.usageStats && canonicalJson(local.usageStats) === canonicalJson(hostUsage))
+			? hostUsage
+			: local.usageStats;
 	if (
 		local.name === name &&
 		local.agentSessionId === agentSessionId &&
@@ -284,7 +291,8 @@ function projectTab(
 		local.logs === logs &&
 		local.agentError === agentError &&
 		local.hasUnread === hasUnread &&
-		local.hostSeenAt === hostSeenAt
+		local.hostSeenAt === hostSeenAt &&
+		local.usageStats === usageStats
 	) {
 		return local;
 	}
@@ -299,6 +307,7 @@ function projectTab(
 		agentError,
 		...(hasUnread !== undefined ? { hasUnread } : {}),
 		...(hostSeenAt !== undefined ? { hostSeenAt } : {}),
+		...(usageStats ? { usageStats } : {}),
 	};
 }
 
