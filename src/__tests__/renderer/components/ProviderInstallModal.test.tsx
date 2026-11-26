@@ -11,6 +11,7 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { Session } from '../../../renderer/types';
+import { AGENT_MODES, agentModeFields } from '../../helpers';
 
 const render = (ui: React.ReactElement) => rtlRender(<LayerStackProvider>{ui}</LayerStackProvider>);
 
@@ -108,6 +109,42 @@ describe('ProviderInstallModal', () => {
 		);
 		expect(mockWrite).toHaveBeenCalledWith(ptySessionId, 'npm install -g @openai/codex; exit $?\r');
 		expect(screen.queryByTestId('provider-install-retry')).toBeNull();
+	});
+
+	it.each(AGENT_MODES)('draws the same dialog and installs where a %s agent runs', async (mode) => {
+		// A Windows host, so a remote agent's POSIX line is visibly not this machine's.
+		platformState.current = 'win32';
+		const claude = {
+			...session,
+			toolType: 'claude-code',
+			...agentModeFields(mode),
+		} as unknown as Session;
+		render(
+			<ProviderInstallModal
+				theme={mockTheme}
+				session={claude}
+				onClose={vi.fn()}
+				onRetry={vi.fn()}
+			/>
+		);
+		const ptySessionId = await startInstall();
+		const spawn = mockSpawnTerminalTab.mock.calls[0][0];
+
+		expect(screen.getByTestId('provider-install-status')).toHaveTextContent(
+			'Installing Claude Code. Answer any prompts above.'
+		);
+		if (mode === 'local') {
+			expect(spawn.sessionSshRemoteConfig).toBeUndefined();
+			expect(screen.getByTestId('provider-install-command')).toHaveTextContent('install.ps1');
+		} else {
+			// The shell starts on the remote and types the remote's POSIX command.
+			expect(spawn.sessionSshRemoteConfig).toMatchObject({ enabled: true, remoteId: 'r1' });
+			expect(spawn.cwd).toBe('');
+			expect(mockWrite).toHaveBeenCalledWith(
+				ptySessionId,
+				"bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash'; exit $?\r"
+			);
+		}
 	});
 
 	it('reports success, refreshes detection, and offers Retry when the install exits 0', async () => {

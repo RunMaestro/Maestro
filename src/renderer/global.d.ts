@@ -1877,7 +1877,10 @@ interface MaestroAPI {
 			ref: string,
 			filePath: string
 		) => Promise<{ content?: string; error?: string }>;
-		checkGhCli: (ghPath?: string) => Promise<{ installed: boolean; authenticated: boolean }>;
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		) => Promise<{ installed: boolean; authenticated: boolean }>;
 		createGist: (
 			filename: string,
 			content: string,
@@ -1948,7 +1951,10 @@ interface MaestroAPI {
 			branch?: string;
 			error?: string;
 		}>;
-		checkGhCli: (ghPath?: string) => Promise<{
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		) => Promise<{
 			installed: boolean;
 			authenticated: boolean;
 		}>;

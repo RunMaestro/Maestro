@@ -17,7 +17,9 @@ import {
 } from '../../../renderer/utils/contextUsage';
 import type { UsageStats } from '../../../shared/types';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
-import { resolveAgentAccountKey } from '../../../shared/providerProfiles';
+import { REMOTE_ACCOUNT_HOME_DIR, resolveAgentAccountKey } from '../../../shared/providerProfiles';
+import { buildSnapshotKey } from '../../../shared/agentCapabilities';
+import { AGENT_MODES, agentModeFields } from '../../helpers/mockSession';
 import { getHomeDirAsync } from '../../../renderer/utils/homeDir';
 
 describe('estimateContextUsage', () => {
@@ -914,4 +916,38 @@ describe('Grok context percentage from an account-scoped snapshot', () => {
 		expect(other?.accountKey).not.toBe(accountKey);
 		expect(estimateContextUsage(stats, 'grok', undefined, other)).toBeNull();
 	});
+
+	it.each(AGENT_MODES)(
+		"reads the same percentage for a %s agent from its own machine's account catalog",
+		async (mode) => {
+			const modeSession = { ...session, ...agentModeFields(mode) };
+			const remoteId = mode === 'local' ? undefined : 'r1';
+			// Each machine's account catalog lands on that machine's snapshot: the
+			// local one under this home, a remote's under the remote home key that
+			// probeRemoteGrokContextWindows records.
+			useAgentStore.setState({
+				capabilitySnapshots: {
+					grok: {
+						status: 'ok',
+						accountModelContextWindows: { [accountKey]: { windows: { 'grok-4.5': 256000 } } },
+						lastProbedAt: 1,
+					},
+					[buildSnapshotKey('grok', 'r1')]: {
+						status: 'ok',
+						accountModelContextWindows: {
+							[resolveAgentAccountKey('grok', undefined, REMOTE_ACCOUNT_HOME_DIR)!]: {
+								windows: { 'grok-4.5': 256000 },
+							},
+						},
+						lastProbedAt: 1,
+					},
+				},
+			});
+			resolveGrokContextSelection(modeSession);
+			await flush();
+			const selection = resolveGrokContextSelection(modeSession);
+			expect(selection?.model).toBe('grok-4.5');
+			expect(estimateContextUsage(stats, 'grok', remoteId, selection)).toBe(20);
+		}
+	);
 });

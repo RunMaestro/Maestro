@@ -411,8 +411,9 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 						</div>
 					)}
 
-					{/* Command Line - full width (very long). For SSH spawns this is the local
-					    `ssh ... /bin/bash` invocation; the remote agent command is shown above. */}
+					{/* Command Line - full width (very long). One heading in every mode: for an SSH
+					    spawn this is the local `ssh ... /bin/bash` invocation that runs it, and the
+					    remote agent command is shown above. */}
 					<div
 						className="col-span-2 lg:col-span-4 p-4 rounded-lg"
 						style={{ backgroundColor: theme.colors.bgMain }}
@@ -423,7 +424,7 @@ export function ProcessDetailView({ theme, detail, onBack, onClose }: ProcessDet
 								className="text-xs font-medium uppercase tracking-wide"
 								style={{ color: theme.colors.textDim }}
 							>
-								{detail.sshRemoteCommand ? 'SSH Command' : 'Command Line'}
+								Command Line
 							</span>
 						</div>
 						<code

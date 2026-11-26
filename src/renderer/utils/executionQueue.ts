@@ -1033,7 +1033,8 @@ const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'too-long': `${STEERING_TOO_LONG_DETAIL[0].toUpperCase()}${STEERING_TOO_LONG_DETAIL.slice(1)}.`,
 	paused: 'The message is paused. Resume it from its queued card.',
 	'waiting-for-connection': 'The message is waiting for the agent to reconnect.',
-	'ssh-remote': 'A turn on an SSH remote cannot be steered.',
+	'ssh-remote':
+		'This turn runs on an SSH remote, where its input channel cannot be reached from here. Queue the message and it sends when the turn ends.',
 	'steer-in-flight': 'A steer for this message is already waiting for an answer.',
 	'tui-command-prefix':
 		'A message that starts with / or ! would run as a command in the running turn.',

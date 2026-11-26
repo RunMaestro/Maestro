@@ -676,10 +676,15 @@ describe('agents IPC handlers', () => {
 				await handler!({} as any, 'remote-1');
 
 				// The remote detection piggybacks one extra maestro-p launch test
-				// (`maestro-p --version`) on top of the per-agent binary probes, so the
-				// total is AGENT_DEFINITIONS.length + 1.
+				// (`maestro-p --version`) on top of the per-agent binary probes, and,
+				// when Grok is found, one read of its account catalog (`sh -c cat ...`)
+				// for the context gauge, so the total is AGENT_DEFINITIONS.length + 2.
 				const calls = vi.mocked(buildSshCommand).mock.calls;
-				expect(calls.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length + 1);
+				const hasGrok = agentCapabilities.AGENT_DEFINITIONS.some((a) => a.id === 'grok');
+				expect(calls.length).toBe(
+					agentCapabilities.AGENT_DEFINITIONS.length + 1 + (hasGrok ? 1 : 0)
+				);
+				expect(calls.filter(([, o]) => o.command === 'sh')).toHaveLength(hasGrok ? 1 : 0);
 
 				// The maestro-p availability check is a LAUNCH test, not a path check:
 				// it runs `maestro-p --version` (which loads node + node-pty) rather
@@ -691,7 +696,9 @@ describe('agents IPC handlers', () => {
 				// Every other (per-agent) probe should invoke 'command -v <binary>',
 				// never 'which'. Asserting one such call per AGENT_DEFINITION catches
 				// regressions that silently skip agents instead of just dropping to zero.
-				const agentProbes = calls.filter(([, o]) => o.command !== 'maestro-p');
+				const agentProbes = calls.filter(
+					([, o]) => o.command !== 'maestro-p' && o.command !== 'sh'
+				);
 				expect(agentProbes.length).toBe(agentCapabilities.AGENT_DEFINITIONS.length);
 				for (const [, options] of agentProbes) {
 					expect(options.command).toBe('command');

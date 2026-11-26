@@ -92,7 +92,7 @@ describe('LocationDistributionChart', () => {
 			within(legend)
 				.getAllByRole('listitem')
 				.map((i) => i.getAttribute('aria-label'))
-		).toEqual(['Local: 90.0%, 90', 'SSH Remote: 10.0%, 10']);
+		).toEqual(['Local: 90.0%, 90', 'Remote: 10.0%, 10']);
 	});
 
 	it('shows the shared empty state with no queries', () => {

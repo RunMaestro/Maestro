@@ -1,9 +1,11 @@
 /**
  * LocationDistributionChart ("Query Location")
  *
- * Donut showing how many of the range's queries ran locally vs on an SSH
- * remote. The Overview draws it only when at least one query ran remotely: for
- * everyone else it would be a permanent 100% Local ring.
+ * Donut showing how many of the range's queries this machine ran for Local
+ * agents vs Remote (SSH) agents, labeled with the mode pill's words. A Hosted
+ * agent's queries run on its host and are recorded in the host's stats, so they
+ * are not in either slice. The Overview draws it only when at least one query
+ * ran remotely: for everyone else it would be a permanent 100% Local ring.
  */
 
 import { memo, useMemo } from 'react';
@@ -13,6 +15,7 @@ import { COLORBLIND_BINARY_PALETTE } from '../../constants/colorblindPalettes';
 import { formatNumber } from '../../../shared/formatters';
 import { DistributionDonut, type DonutSliceDatum } from './DistributionDonut';
 import { accentBrightness } from './delegationColors';
+import { AGENT_MODE_LABELS } from '../../utils/agentModeLabels';
 
 interface LocationDistributionChartProps {
 	/** Aggregated stats data from the API */
@@ -39,13 +42,13 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 		(): DonutSliceDatum[] => [
 			{
 				key: 'local',
-				label: 'Local',
+				label: AGENT_MODE_LABELS.local,
 				value: data.byLocation?.local ?? 0,
 				color: colorBlindMode ? COLORBLIND_BINARY_PALETTE.primary : theme.colors.accent,
 			},
 			{
 				key: 'remote',
-				label: 'SSH Remote',
+				label: AGENT_MODE_LABELS.remote,
 				value: data.byLocation?.remote ?? 0,
 				color: colorBlindMode ? COLORBLIND_BINARY_PALETTE.secondary : remoteColor(theme),
 			},
@@ -59,7 +62,7 @@ export const LocationDistributionChart = memo(function LocationDistributionChart
 			className="p-4 rounded-lg"
 			style={{ backgroundColor: theme.colors.bgMain }}
 			role="figure"
-			aria-label="Query location chart showing queries run locally and on SSH remotes."
+			aria-label="Query location chart showing queries run by Local and Remote agents."
 		>
 			<div className="flex items-center justify-between mb-4">
 				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>

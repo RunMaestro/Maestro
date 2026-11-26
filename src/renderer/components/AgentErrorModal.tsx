@@ -72,9 +72,10 @@ interface AgentErrorModalProps {
 }
 
 /**
- * Get the icon for an error type
+ * Get the icon for an error type. Exported so the SSH outage dialog, which takes the agent error
+ * modal's slot for a lost connection, draws the same header mark as a Connection Error.
  */
-function getErrorIcon(type: AgentErrorType): React.ReactNode {
+export function getErrorIcon(type: AgentErrorType): React.ReactNode {
 	switch (type) {
 		case 'auth_expired':
 			return <KeyRound className="w-6 h-6" />;

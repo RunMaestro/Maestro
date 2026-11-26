@@ -10,6 +10,8 @@ import { render, screen } from '@testing-library/react';
 import { SessionStats } from '../../../../renderer/components/UsageDashboard/SessionStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { AGENT_MODES, agentModeFields } from '../../../helpers';
 
 const theme = THEMES['dracula'];
 
@@ -80,7 +82,27 @@ describe('SessionStats - cards', () => {
 
 		render(<SessionStats sessions={sessions} theme={theme} />);
 
-		expect(screen.getByText('2 remote')).toBeInTheDocument();
+		expect(screen.getByText('2 Remote')).toBeInTheDocument();
+	});
+
+	it('counts each agent under the mode its pill shows, in the pill words', () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const sessions = AGENT_MODES.map((mode) => makeSession(agentModeFields(mode)));
+
+		render(<SessionStats sessions={sessions} theme={theme} />);
+
+		const cards = screen.getByTestId('session-stats-cards');
+		expect(cards.textContent).toContain('Local Agents');
+		expect(screen.getByText('1 Remote · 1 Hosted')).toBeInTheDocument();
+	});
+
+	it('counts a lifted agent as Remote while hosted agents are off, as its pill does', () => {
+		useSettingsStore.setState({ federationHostedAgents: false });
+		const sessions = AGENT_MODES.map((mode) => makeSession(agentModeFields(mode)));
+
+		render(<SessionStats sessions={sessions} theme={theme} />);
+
+		expect(screen.getByText('2 Remote')).toBeInTheDocument();
 	});
 
 	it('excludes terminal sessions from every count', () => {

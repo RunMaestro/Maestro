@@ -45,7 +45,6 @@ import {
 } from '../../utils/agentWorkingDirectory';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
 import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
-import { useTabStore } from '../../stores/tabStore';
 import {
 	createTabPidChangeHandler,
 	createTabStateChangeHandler,
@@ -553,21 +552,16 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						});
 					}
 				},
-				onSpawnFailure: (tabId, isPersistent, message) => {
+				onSpawnFailure: (tabId, message) => {
 					// No xterm to write into from here, so report through the store and a
-					// toast. Persistent tabs stay as restartable husks exactly as they do
-					// on the view path; scratch tabs are closed.
+					// toast. The tab stays as a restartable exited tab in every mode, exactly
+					// as it does on the view path.
 					logger.warn('Background terminal PTY spawn failed', 'RemoteEvents', {
 						sessionId,
 						tabId,
-						isPersistent,
 						message,
 					});
-					if (isPersistent) {
-						createTabStateChangeHandler(sessionId)(tabId, 'exited');
-					} else {
-						useTabStore.getState().closeTerminalTab(tabId, 'spawn-failure');
-					}
+					createTabStateChangeHandler(sessionId)(tabId, 'exited');
 					notifyToast({ type: 'error', title: 'Failed to start terminal', message });
 				},
 			});

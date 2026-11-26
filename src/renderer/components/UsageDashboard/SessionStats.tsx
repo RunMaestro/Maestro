@@ -3,8 +3,8 @@
  *
  * The "Agent Statistics" section of the Agent Overview tab: the shape of the
  * live agent list. Total agents (with how many ran a query in the selected
- * range), agents in Git repos versus plain folders, local versus remote, and a
- * bar per provider.
+ * range), agents in Git repos versus plain folders, Local versus Remote and
+ * Hosted (the mode pill's words), and a bar per provider.
  *
  * Everything here describes the agents that exist NOW, except the "active"
  * footnote, which is the one number that moves with the range picker.
@@ -16,6 +16,8 @@ import type { Theme, Session, ToolType } from '../../types';
 import type { StatsAggregation } from '../../../shared/stats-types';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { AGENT_MODE_LABELS, agentModeKind } from '../../utils/agentModeLabels';
 import { formatNumber } from '../../../shared/formatters';
 import { StatCardGrid, type StatCardDatum } from '../widgets';
 import {
@@ -41,19 +43,6 @@ interface SessionStatsProps {
 	data?: StatsAggregation;
 }
 
-/**
- * Whether an agent runs over SSH. `sshRemoteId` is set once the AI process has
- * spawned on the remote; `sessionSshRemoteConfig.enabled` is set before that,
- * so both are checked.
- */
-function isRemoteAgent(session: Session): boolean {
-	return (
-		Boolean(session.cwd?.includes('://')) ||
-		Boolean(session.sshRemoteId) ||
-		Boolean(session.sessionSshRemoteConfig?.enabled)
-	);
-}
-
 export const SessionStats = memo(function SessionStats({
 	sessions,
 	theme,
@@ -66,12 +55,14 @@ export const SessionStats = memo(function SessionStats({
 		[sessions]
 	);
 
+	// A lifted record counts as Hosted only while hosted agents are on, as its mode pill shows it.
+	const hostingOn = useSettingsStore((s) => s.federationHostedAgents === true);
+
 	const stats = useMemo(() => {
 		const byProvider: Record<string, number> = {};
 		let gitRepos = 0;
 		let plainFolders = 0;
-		let remote = 0;
-		let local = 0;
+		const byMode = { local: 0, remote: 0, hosted: 0 };
 		let bookmarked = 0;
 		let worktreeParents = 0;
 
@@ -79,8 +70,7 @@ export const SessionStats = memo(function SessionStats({
 			byProvider[session.toolType] = (byProvider[session.toolType] || 0) + 1;
 			if (session.isGitRepo) gitRepos++;
 			else plainFolders++;
-			if (isRemoteAgent(session)) remote++;
-			else local++;
+			byMode[agentModeKind(session, hostingOn)]++;
 			if (session.bookmarked) bookmarked++;
 			if (isParentAgent(session, agentSessions)) worktreeParents++;
 		}
@@ -90,12 +80,11 @@ export const SessionStats = memo(function SessionStats({
 			byProvider,
 			gitRepos,
 			plainFolders,
-			remote,
-			local,
+			byMode,
 			bookmarked,
 			worktreeParents,
 		};
-	}, [agentSessions]);
+	}, [agentSessions, hostingOn]);
 
 	// Agents that recorded work inside the dashboard's selected range. This
 	// moves with the range picker, unlike every other number on this card.
@@ -129,10 +118,14 @@ export const SessionStats = memo(function SessionStats({
 			},
 			{ label: 'Agents in Plain Folders', value: stats.plainFolders, icon: Folder },
 			{
-				label: 'Local Agents',
-				value: stats.local,
+				label: `${AGENT_MODE_LABELS.local} Agents`,
+				value: stats.byMode.local,
 				icon: Laptop,
-				caption: stats.remote > 0 ? `${formatNumber(stats.remote)} remote` : undefined,
+				caption:
+					(['remote', 'hosted'] as const)
+						.filter((kind) => stats.byMode[kind] > 0)
+						.map((kind) => `${formatNumber(stats.byMode[kind])} ${AGENT_MODE_LABELS[kind]}`)
+						.join(' · ') || undefined,
 			},
 		];
 	}, [stats, activeAgentCount]);

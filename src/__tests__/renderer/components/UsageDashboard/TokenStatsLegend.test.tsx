@@ -464,7 +464,10 @@ describe('TokenStats framing', () => {
 		});
 		const coverage = await screen.findByTestId('token-stats-coverage');
 		expect(coverage.textContent).toContain('Partial token data for Codex');
-		expect(coverage.textContent).toContain('agents running over SSH');
+		expect(coverage.textContent).toContain(
+			'agents whose conversations are stored on another computer'
+		);
+		expect(coverage.textContent).not.toMatch(/SSH|remote|hosted/i);
 		expect(coverage.textContent).toContain('Grok');
 	});
 

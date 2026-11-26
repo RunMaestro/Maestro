@@ -22,6 +22,7 @@ import { memo } from 'react';
 import type { Theme } from '../../types';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { MiniBadge } from '../ui/MiniBadge';
+import { agentModePillLabel } from '../../utils/agentModeLabels';
 import type { AutoFederationAgentState } from '../../../shared/federationAuto';
 import type { PeerMirrorConnection } from '../../../shared/maestro-lib/client/peer-mirror';
 
@@ -73,7 +74,7 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 } {
 	if (mode.kind === 'local') {
 		return {
-			label: 'LOCAL',
+			label: agentModePillLabel('local'),
 			title: 'Local agent',
 			lines: ['This Maestro starts every turn on this machine.'],
 		};
@@ -90,7 +91,7 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 							...(mode.error ? [mode.error] : []),
 						];
 		return {
-			label: 'HOSTED',
+			label: agentModePillLabel('hosted'),
 			title: `Hosted on ${mode.peerName}`,
 			lines: [
 				'Keeps running while this machine sleeps or is off.',
@@ -113,7 +114,7 @@ export function federationBadgeCopy(mode: FederationBadgeMode): {
 				? 'Maestro could not move it onto the host automatically:'
 				: manualNext;
 	return {
-		label: 'REMOTE',
+		label: agentModePillLabel('remote'),
 		title: `Remote agent${where} (SSH)`,
 		lines: [
 			...(mode.connectionFailed ? [`Could not reach the remote${where} over SSH.`] : []),

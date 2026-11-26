@@ -11,6 +11,7 @@ import type {
 	ParquetQueryResult,
 } from '../../../shared/parquet/types';
 import { mockTheme } from '../../helpers/mockTheme';
+import { AGENT_MODES, agentModeFields } from '../../helpers';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 // lucide-react icons are auto-mocked globally in src/__tests__/setup.ts
@@ -339,6 +340,32 @@ describe('ParquetViewer', () => {
 		expect(screen.getByText(/4\.0 MB of 16\.0 MB/)).toBeInTheDocument();
 		expect(screen.queryByText(/Reading parquet footer/)).not.toBeInTheDocument();
 	});
+
+	it.each(AGENT_MODES)(
+		'reads a %s file with the same summary and no mode words in its wait',
+		async (mode) => {
+			const remote = mode !== 'local';
+			open.mockReturnValue(new Promise(() => {}));
+			const remoteId = (agentModeFields(mode) as { sshRemoteId?: string }).sshRemoteId;
+			renderViewer(remoteId ? { sshRemoteId: remoteId } : {});
+			if (remote) {
+				act(() => {
+					fetchProgressListeners.forEach((l) =>
+						l({
+							remotePath: '/data/events.parquet',
+							receivedBytes: 1,
+							totalBytes: 4,
+							done: false,
+						})
+					);
+				});
+				expect(await screen.findByText('Downloading events.parquet...')).toBeInTheDocument();
+			} else {
+				expect(screen.getByText(/Reading parquet footer/)).toBeInTheDocument();
+			}
+			expect(document.body.textContent).not.toMatch(/remote|SSH/i);
+		}
+	);
 
 	it('ignores progress for a file this tab is not opening', async () => {
 		// Every viewer in the window hears every event. Without the path check,

@@ -31,6 +31,7 @@ import { Modal } from './ui/Modal';
 import {
 	LoginTerminal,
 	loginPtySessionId,
+	loginTerminalSshConfig,
 	resolveLoginShell,
 	type LoginTerminalStatus,
 } from './LoginTerminal';
@@ -164,31 +165,16 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 		return credentialKindBlocksLogin(classifyCredentialKind(session.toolType, env), agentName);
 	}, [providerEnv, effectiveEnv, session.toolType, agentName]);
 
-	// Same SSH resolution as a terminal tab: an agent that runs on a remote host
-	// must re-authenticate on that host, not on this laptop.
-	const sshConfig = useMemo(() => {
-		// Only paths that are definitely REMOTE are used. A terminal tab falls
-		// back to `session.cwd` here, but this shell exists solely to run a login:
-		// it gains nothing from the project directory, and main turns the override
-		// into a `cd` that the remote shell runs before anything else - so a stale
-		// or local-looking path kills the session before the login can start.
-		// Landing in the remote home directory is always safe.
-		if (session.sessionSshRemoteConfig?.enabled) {
-			return {
-				...session.sessionSshRemoteConfig,
-				workingDirOverride:
-					session.sessionSshRemoteConfig.workingDirOverride || session.remoteCwd || undefined,
-			};
-		}
-		if (session.sshRemoteId) {
-			return {
-				enabled: true,
-				remoteId: session.sshRemoteId,
-				workingDirOverride: session.remoteCwd || undefined,
-			};
-		}
-		return undefined;
-	}, [session.sessionSshRemoteConfig, session.sshRemoteId, session.remoteCwd]);
+	// An agent that runs on a remote host must re-authenticate on that host, not on this laptop.
+	const sshConfig = useMemo(
+		() =>
+			loginTerminalSshConfig({
+				sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+				sshRemoteId: session.sshRemoteId,
+				remoteCwd: session.remoteCwd,
+			}),
+		[session.sessionSshRemoteConfig, session.sshRemoteId, session.remoteCwd]
+	);
 
 	// A remote login cannot use a browser callback on the remote's localhost,
 	// so providers with a device-code flow switch to it over SSH.
