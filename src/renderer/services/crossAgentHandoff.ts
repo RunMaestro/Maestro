@@ -119,15 +119,30 @@ export function noteSkippedMention(
 	kind: 'handoff' | 'consult' = 'handoff'
 ) {
 	const names = formatConsultedAgentNames(targets.map((t) => t.targetAgentName));
-	const entry: LogEntry = {
-		id: generateId(),
-		timestamp: Date.now(),
-		source: 'system',
-		text:
-			kind === 'handoff'
-				? `Nothing was handed off to ${names}: ${why}`
-				: `Nothing was asked of ${names}: ${why}`,
-	};
+	appendMentionNote(
+		sessionId,
+		tabId,
+		kind === 'handoff'
+			? `Nothing was handed off to ${names}: ${why}`
+			: `Nothing was asked of ${names}: ${why}`
+	);
+}
+
+/**
+ * A system note on the source tab saying a consult went out only after its turn ran: a host that
+ * does not say when a queued message starts showed the start in the saved transcript (M20).
+ */
+export function noteLateMention(sessionId: string, tabId: string, targets: ConsultHoldTarget[]) {
+	const names = formatConsultedAgentNames(targets.map((t) => t.targetAgentName));
+	appendMentionNote(
+		sessionId,
+		tabId,
+		`${names} ${targets.length === 1 ? 'was' : 'were'} asked after the turn ran: the host did not say when the message started.`
+	);
+}
+
+function appendMentionNote(sessionId: string, tabId: string, text: string) {
+	const entry: LogEntry = { id: generateId(), timestamp: Date.now(), source: 'system', text };
 	updateAiTab(sessionId, tabId, (tab) => ({ ...tab, logs: [...tab.logs, entry] }));
 }
 
@@ -331,19 +346,24 @@ export interface HostedTranscriptAccess {
  * (`hostRanMessage()`, live as the turn starts, or in the saved transcript after it): another
  * message's turn, or a turn that started at another time, never counts as its start.
  * - `started`: its user entry is on the tab.
- * - `left`: first seen gone (the caller records `goneAt`).
+ * - `left`: first seen gone (the caller records `goneAt`), also when the host's queue never showed
+ *   it: a turn that started and ended between two syncs is gone before its first frame (M20).
  * - `wait`: its start may still show (inside `HOST_QUEUE_START_GRACE_MS`), or the tab runs a turn
  *   whose own entry has not come (a host that does not stream it): the saved transcript decides
  *   once that turn ends.
  * - `read`: the tab is idle and its saved transcript is not current: read it before deciding.
  * - `removed`: past the grace, the tab still runs the turn it was queued behind, or is idle with a
- *   current transcript that never shows the message.
+ *   current transcript that never shows the message. Only for a message the host's queue showed
+ *   (`seenQueued`): one it never showed (a host whose queue is not mirrored, or a start before the
+ *   first frame) proves nothing by its absence, so it waits for its entry, late rather than lost.
  */
 export function judgeUnnamedHostStart(
 	tab: Pick<AITab, 'state' | 'logs' | 'thinkingStartTime'> | undefined,
 	waiting: {
 		afterEntryId: string | undefined;
 		message: string | undefined;
+		/** The host's queue showed it waiting (else its absence there proves nothing). */
+		seenQueued: boolean;
 		/** The turn it was queued behind is recorded (`turnStartedAt`, the host's clock). */
 		aheadKnown: boolean;
 		turnStartedAt?: number;
@@ -356,10 +376,12 @@ export function judgeUnnamedHostStart(
 	if (waiting.goneAt === undefined) return 'left';
 	if (now - waiting.goneAt <= HOST_QUEUE_START_GRACE_MS) return 'wait';
 	if (tab?.state === 'busy') {
-		const ahead = waiting.aheadKnown && tab.thinkingStartTime === waiting.turnStartedAt;
+		const ahead =
+			waiting.seenQueued && waiting.aheadKnown && tab.thinkingStartTime === waiting.turnStartedAt;
 		return ahead ? 'removed' : 'wait';
 	}
-	return transcriptCurrent ? 'removed' : 'read';
+	if (!transcriptCurrent) return 'read';
+	return waiting.seenQueued ? 'removed' : 'wait';
 }
 
 /**
@@ -415,7 +437,9 @@ export function hostedHandoffStep(
 	if (hostTurn.queueItemId && hostQueueItemIds.has(hostTurn.queueItemId)) {
 		// The turn ahead is what the tab runs when it is first seen waiting, never overwritten; a
 		// sighting after a read moves only the read count.
-		return hostTurn.seenQueued && !readSince ? 'wait' : 'seen-queued';
+		return hostTurn.seenQueued && !readSince && hostTurn.goneAt === undefined
+			? 'wait'
+			: 'seen-queued';
 	}
 	if (queued) {
 		// Named exits: gone without a name, its start (or its first frame) is still coming.
@@ -427,6 +451,7 @@ export function hostedHandoffStep(
 			{
 				afterEntryId: hostTurn.afterEntryId,
 				message,
+				seenQueued: !!hostTurn.seenQueued,
 				aheadKnown: !!hostTurn.seenQueued,
 				turnStartedAt: hostTurn.turnStartedAt,
 				goneAt: hostTurn.goneAt,
@@ -437,7 +462,7 @@ export function hostedHandoffStep(
 		if (verdict === 'started') return 'running';
 		if (verdict === 'removed') return 'drop';
 		if (verdict === 'read') return 'read';
-		return verdict === 'left' && hostTurn.seenQueued ? 'left-queue' : 'wait';
+		return verdict === 'left' ? 'left-queue' : 'wait';
 	}
 	if (tab.state === 'busy') return hostTurn.stage === 'sent' ? 'running' : 'wait';
 	if (tab.logs.some((entry) => entry.hostLive)) return 'read';
@@ -566,6 +591,8 @@ export function followHostedHandoffs(
 									...current.pendingMentionHandoff.hostTurn,
 									seenQueued: true,
 									readsAtSeen: hostReads,
+									// Listed again (a frame that came late): its gone time starts over.
+									goneAt: undefined,
 									turnStartedAt: current.pendingMentionHandoff.hostTurn.seenQueued
 										? current.pendingMentionHandoff.hostTurn.turnStartedAt
 										: current.state === 'busy'

@@ -66,6 +66,7 @@ import {
 	HOST_QUEUE_START_GRACE_MS,
 	judgeUnnamedHostStart,
 	markHandoffSentToHost,
+	noteLateMention,
 	noteSkippedMention,
 	type HostedTranscriptAccess,
 } from './crossAgentHandoff';
@@ -481,7 +482,10 @@ export function pruneHostStartedMentions(hostedSessionIds: ReadonlySet<string>):
  */
 export function dropStoppedHostStartMentions(sessionId: string, tabId?: string): void {
 	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
+		// One the host's queue never showed (a desktop host, whose queue is not mirrored) may still
+		// wait there: its absence is no sign it ran, so it stays, as a still-queued message does.
 		if (waiting.sessionId !== sessionId || waiting.goneAt === undefined) continue;
+		if (!waiting.seenQueued) continue;
 		if (tabId && waiting.item.tabId && waiting.item.tabId !== tabId) continue;
 		letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 	}
@@ -538,6 +542,8 @@ export function fireHostStartedMentions(
 				waiting.seenQueued = true;
 				waiting.lastSeenQueuedAt = now;
 				waiting.readsAtSeen = hostReads;
+				// Listed again (its first frame came late): its gone time starts over.
+				waiting.goneAt = undefined;
 				if (!waiting.aheadKnown) {
 					waiting.aheadKnown = true;
 					waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
@@ -561,6 +567,7 @@ export function fireHostStartedMentions(
 				{
 					afterEntryId: waiting.afterEntryId,
 					message: waiting.item.text,
+					seenQueued: waiting.seenQueued,
 					aheadKnown: !!waiting.aheadKnown,
 					turnStartedAt: waiting.turnStartedAt,
 					goneAt: waiting.goneAt,
@@ -573,9 +580,16 @@ export function fireHostStartedMentions(
 				continue;
 			}
 			if (verdict !== 'started') {
-				if (verdict === 'left' && waiting.seenQueued) waiting.goneAt = now;
+				// Gone, also when never listed: a turn that started and ended between two syncs leaves
+				// no frame, and its saved transcript is read once the grace is over (M20).
+				if (verdict === 'left') waiting.goneAt = now;
 				if (verdict === 'read' && tabId) transcript.read(tabId);
 				continue;
+			}
+			// Its own entry is in the saved transcript and the tab no longer runs it: the turn ran
+			// without the consult beside it. Late is better than never: consult now, and say so.
+			if (tab && tab.state !== 'busy' && tabId) {
+				noteLateMention(session.id, tabId, resolveConsultTargets(waiting.mention.targetSessionIds));
 			}
 		}
 		mentionsAwaitingHostStart.delete(hostItemId);
