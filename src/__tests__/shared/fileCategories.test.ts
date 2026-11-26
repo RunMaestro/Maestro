@@ -152,15 +152,27 @@ describe('isLaunchableFile', () => {
 		expect(isLaunchableFile('/home/me/tool.appimage', { windows: false })).toBe(true);
 	});
 
-	it('counts .js, .jse, and .appref-ms only on Windows, where Windows executes them', () => {
+	it('counts Windows scripts, ClickOnce, and App Installer packages only on Windows', () => {
 		for (const name of [
 			'C:\\Users\\me\\run.js',
 			'C:\\Users\\me\\run.jse',
 			'C:\\Users\\me\\Launch.appref-ms',
+			'C:\\Users\\me\\Setup.application',
+			'C:\\Users\\me\\App.appinstaller',
+			'C:\\Users\\me\\App.msixbundle',
+			'C:\\Users\\me\\App.appxbundle',
 		]) {
 			expect(isLaunchableFile(name, { windows: true })).toBe(true);
 			expect(isLaunchableFile(name, { windows: false })).toBe(false);
 		}
+	});
+
+	it('counts leading-dot executable basenames such as .exe on Windows without affecting dotfiles like .bashrc', () => {
+		for (const name of ['C:\\Temp\\.exe', 'C:\\Temp\\.exe.', 'C:\\Temp\\.exe::$DATA']) {
+			expect(isLaunchableFile(name, { windows: true })).toBe(true);
+		}
+		expect(isLaunchableFile('/tmp/.bashrc', { windows: false })).toBe(false);
+		expect(isLaunchableFile('C:\\Users\\me\\.bashrc', { windows: true })).toBe(false);
 	});
 
 	it('reads a name the way Windows opens it: no trailing dots, spaces or stream suffix', () => {

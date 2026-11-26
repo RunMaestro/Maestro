@@ -229,6 +229,28 @@ describe('a customizations file that is not valid JSON', () => {
 		);
 	});
 
+	it('falls back to an independent copy when unlinking the original fails so saving does not overwrite the sidecar', async () => {
+		const torn = tornDocument();
+		const target = customizationsPath();
+		fs.writeFileSync(target, torn, 'utf-8');
+		const origUnlink = fs.unlinkSync;
+		vi.spyOn(fs, 'unlinkSync').mockImplementation((p) => {
+			if (String(p) === target) {
+				throw new Error('EBUSY: resource busy or locked');
+			}
+			return origUnlink(p);
+		});
+		const { initializePrompts, savePrompt } = await loadPromptManager();
+		await initializePrompts();
+
+		const preserved = sidecars();
+		expect(preserved).toHaveLength(1);
+		await savePrompt(PROMPT.id, 'new saved content');
+
+		// The sidecar must keep the original corrupt bytes, not the newly saved JSON.
+		expect(readSidecar(preserved[0])).toBe(torn);
+	});
+
 	it('lets the user customize again afterwards, and leaves the preserved copy alone', async () => {
 		const torn = tornDocument();
 		fs.writeFileSync(customizationsPath(), torn, 'utf-8');

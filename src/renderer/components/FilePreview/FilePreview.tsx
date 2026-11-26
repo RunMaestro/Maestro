@@ -2767,12 +2767,10 @@ export const FilePreview = React.memo(
 						</div>
 					) : isEditableText && markdownEditMode ? (
 						// Edit mode - CodeMirror 6 editor for any text file.
-						// Key on file path so switching files remounts the editor -
-						// keeps each file's undo history isolated (the previous
-						// textarea-based implementation got that "for free" since
-						// changing value reset the input).
+						// Key on editOwnerKey (session + SSH remote + file path) so switching
+						// files or sessions remounts the editor and isolates undo history.
 						<MarkdownEditor
-							key={file.path}
+							key={editOwnerKey}
 							ref={editorRef}
 							value={editContent}
 							onChange={setEditContent}

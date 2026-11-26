@@ -372,18 +372,25 @@ describe('clean playbooks: a Storage Location that is not in use', () => {
 	});
 
 	it('captures sessions and sync fallback status in one resolution pass', () => {
-		const lateMount = path.join(dataDir, 'late-sync-mount');
-		nameStorageLocation(lateMount);
-		writeAgents('old-agent');
+		// Create the late-mount parent outside `/tmp` and `/var`, which `isValidSyncPath()`
+		// rejects as sensitive directories on Linux before checking whether the folder exists.
+		const lateMountParent = fs.mkdtempSync(path.join(os.homedir(), '.maestro-clean-playbooks-'));
+		const lateMount = path.join(lateMountParent, 'Storage');
+		try {
+			nameStorageLocation(lateMount);
+			writeAgents('old-agent');
 
-		const scan = readSessionsWithSyncResolution();
-		expect(scan.sessions.map((s) => s.id)).toEqual(['old-agent']);
-		expect(scan.syncDir).toBe(dataDir);
-		expect(scan.fallbackReason).toContain(`Custom sync path does not exist: ${lateMount}`);
+			const scan = readSessionsWithSyncResolution();
+			expect(scan.sessions.map((s) => s.id)).toEqual(['old-agent']);
+			expect(scan.syncDir).toBe(dataDir);
+			expect(scan.fallbackReason).toContain(`Custom sync path does not exist: ${lateMount}`);
 
-		// Even if the custom sync folder appears right after reading, the captured scan
-		// preserves the fallback status of the sessions that were actually read.
-		fs.mkdirSync(lateMount, { recursive: true });
-		expect(scan.fallbackReason).toContain(`Custom sync path does not exist: ${lateMount}`);
+			// Even if the custom sync folder appears right after reading, the captured scan
+			// preserves the fallback status of the sessions that were actually read.
+			fs.mkdirSync(lateMount, { recursive: true });
+			expect(scan.fallbackReason).toContain(`Custom sync path does not exist: ${lateMount}`);
+		} finally {
+			fs.rmSync(lateMountParent, { recursive: true, force: true });
+		}
 	});
 });

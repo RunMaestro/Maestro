@@ -1047,6 +1047,62 @@ describe('useFilePreviewTabHandlers', () => {
 				navigationIndex: 1,
 			});
 		});
+
+		it('ignores a superseded older history read when a newer selection finishes first', async () => {
+			setupDraftOnB({
+				editContent: undefined,
+				editContentPath: undefined,
+				navigationHistory: [
+					{ path: '/repo/b.ts', name: 'b' },
+					{ path: '/repo/a.ts', name: 'a' },
+					{ path: '/repo/b.ts', name: 'b' },
+				],
+				navigationIndex: 2,
+			});
+			let resolveA!: (value: string | null) => void;
+			let resolveB!: (value: string | null) => void;
+			vi.mocked(window.maestro.fs.readFile)
+				.mockReturnValueOnce(
+					new Promise((resolve) => {
+						resolveA = resolve;
+					})
+				)
+				.mockReturnValueOnce(
+					new Promise((resolve) => {
+						resolveB = resolve;
+					})
+				);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			let navA!: Promise<void>;
+			let navB!: Promise<void>;
+			act(() => {
+				navA = result.current.handleFileTabNavigateToIndex(1);
+				navB = result.current.handleFileTabNavigateToIndex(0);
+			});
+
+			// Newer selection (B at index 0) completes first.
+			await act(async () => {
+				resolveB('b fresh');
+				await navB;
+			});
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				content: 'b fresh',
+				navigationIndex: 0,
+			});
+
+			// Superseded older selection (A at index 1) resolves second and must be ignored.
+			await act(async () => {
+				resolveA('a stale');
+				await navA;
+			});
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				content: 'b fresh',
+				navigationIndex: 0,
+			});
+		});
 	});
 
 	// -----------------------------------------------------------------------

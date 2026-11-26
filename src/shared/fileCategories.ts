@@ -325,10 +325,19 @@ export const LAUNCHABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Scripts and ClickOnce shortcuts Windows runs on open. Launchable only on
- * Windows: other systems open a `.js` in an editor.
+ * Scripts, ClickOnce references/manifests, and App Installer packages Windows
+ * runs or installs on open. Launchable only on Windows: other systems open a
+ * `.js` in an editor.
  */
-const WINDOWS_LAUNCHABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set(['js', 'jse', 'appref-ms']);
+const WINDOWS_LAUNCHABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
+	'js',
+	'jse',
+	'appref-ms',
+	'application',
+	'appinstaller',
+	'msixbundle',
+	'appxbundle',
+]);
 
 /**
  * Whether the OS would run, install, or mount this file (or folder: an `.app`
@@ -357,8 +366,12 @@ export function isLaunchableFile(
 }
 
 function hasLaunchableExtension(name: string, windows: boolean): boolean {
-	const ext = getFileExtension(name);
-	if (!ext) return false;
+	// Unlike `getFileExtension()`, treat a leading dot (e.g. `.exe` on Windows)
+	// as an extension so an executable with an empty stem cannot bypass the guard.
+	const baseName = name.split(/[\\/]/).pop() || '';
+	const lastDot = baseName.lastIndexOf('.');
+	if (lastDot < 0 || lastDot === baseName.length - 1) return false;
+	const ext = baseName.slice(lastDot + 1).toLowerCase();
 	return (
 		LAUNCHABLE_FILE_EXTENSIONS.has(ext) || (windows && WINDOWS_LAUNCHABLE_FILE_EXTENSIONS.has(ext))
 	);

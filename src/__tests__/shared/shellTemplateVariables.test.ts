@@ -108,6 +108,10 @@ describe('substituteShellTemplateVariables', () => {
 
 		const word = substituteShellTemplateVariables('echo a#{{CUE_GH_TITLE}}', titled('x'));
 		expect(word.command).toBe(`echo a#"\${${TITLE}}"`);
+
+		// Nonbreaking space is not a POSIX shell token separator, so `#` after it stays in the word.
+		const nbspWord = substituteShellTemplateVariables(`echo a\u00a0#{{CUE_GH_TITLE}}`, titled('x'));
+		expect(nbspWord.command).toBe(`echo a\u00a0#"\${${TITLE}}"`);
 	});
 
 	it('inserts {{MAESTRO_CLI_PATH}} as the command Maestro wrote for it', () => {
@@ -240,6 +244,32 @@ describe('substituteShellTemplateVariables', () => {
 					'EOF',
 					`echo "\${${TITLE}}"`,
 				].join('\n')
+			);
+		});
+
+		it('keeps an empty value in an unquoted heredoc as an expansion so it cannot form the delimiter', () => {
+			const template = ['cat <<EOF', '{{CUE_GH_TITLE}}EOF', 'still-in-body', 'EOF'].join('\n');
+			const result = substituteShellTemplateVariables(template, titled(''));
+			expect(result.command).toBe(
+				['cat <<EOF', `\${${TITLE}}EOF`, 'still-in-body', 'EOF'].join('\n')
+			);
+			expect(result.env).toEqual({ [TITLE]: '' });
+		});
+
+		it('applies double-quote escape rules to double-quoted heredoc delimiters', () => {
+			const template = ['cat <<"A\\$B"', 'literal body', 'A$B', 'echo {{CUE_GH_TITLE}}'].join('\n');
+			const result = substituteShellTemplateVariables(template, titled('after'));
+			expect(result.command).toBe(
+				['cat <<"A\\$B"', 'literal body', 'A$B', `echo "\${${TITLE}}"`].join('\n')
+			);
+
+			// Backslash before non-special characters stays literal in double quotes.
+			const literalSlash = ['cat <<"A\\nB"', 'literal body', 'A\\nB', 'echo {{CUE_GH_TITLE}}'].join(
+				'\n'
+			);
+			const res2 = substituteShellTemplateVariables(literalSlash, titled('after'));
+			expect(res2.command).toBe(
+				['cat <<"A\\nB"', 'literal body', 'A\\nB', `echo "\${${TITLE}}"`].join('\n')
 			);
 		});
 	});

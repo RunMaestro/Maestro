@@ -78,10 +78,19 @@ export function quarantineCorruptStore(storePath: string, contents: string): str
 			fs.linkSync(storePath, candidate);
 			try {
 				fs.unlinkSync(storePath);
-			} catch {
-				// Sidecar is preserved even if removing the original fails.
+				return candidate;
+			} catch (unlinkErr) {
+				// A hard link shares the same inode as `storePath`; if removing the
+				// original fails, a later write to `storePath` would overwrite the
+				// sidecar too. Remove the link and fall through to an independent copy.
+				try {
+					fs.unlinkSync(candidate);
+				} catch {
+					// Best-effort cleanup of the unused hard link.
+				}
+				renameErr = unlinkErr;
+				break;
 			}
-			return candidate;
 		} catch (err) {
 			const code = (err as NodeJS.ErrnoException).code;
 			if (code === 'EEXIST') continue;

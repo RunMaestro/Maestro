@@ -471,6 +471,20 @@ describe('debug IPC handlers', () => {
 			expect(bad.success).toBe(false);
 			expect(escaped.success).toBe(false);
 		});
+
+		it('retains registration and reports failure when unlink fails with a non-ENOENT error', async () => {
+			const handler = handlers.get('debug:discardTrace');
+			const target = '/Users/test/Desktop/maestro-profile-2026-11-24T12-34-56.zip';
+			const realPath = '/private/Users/test/Desktop/maestro-profile-2026-11-24T12-34-56.zip';
+			vi.mocked(profiling.checkFeedbackTraceBundle).mockResolvedValue({ ok: true, realPath });
+			const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+			vi.mocked(fs.promises.unlink).mockRejectedValueOnce(eacces);
+
+			const result = await handler!({} as any, target);
+
+			expect(result.success).toBe(false);
+			expect(profiling.forgetFeedbackTraceBundle).not.toHaveBeenCalled();
+		});
 	});
 
 	// The simulated failure has to travel the REAL event channel, because the

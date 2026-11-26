@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import {
 	selectActiveSession,
 	updateFileTab,
@@ -47,6 +47,10 @@ function confirmDiscardEdits(
 }
 
 export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
+	// Monotonic counter per file tab so an older in-flight history `readFile`
+	// cannot overwrite a newer history selection that already completed.
+	const historyNavRequestRef = useRef<Map<string, number>>(new Map());
+
 	const handleOpenFileTab = useCallback(
 		(
 			file: FileTabOpenParams,
@@ -510,9 +514,12 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 		const expectedEditContent = currentTab.editContent;
 
 		const moveToEntry = async () => {
+			const requestId = (historyNavRequestRef.current.get(currentTab.id) ?? 0) + 1;
+			historyNavRequestRef.current.set(currentTab.id, requestId);
 			try {
 				const content = await window.maestro.fs.readFile(historyEntry.path, currentTab.sshRemoteId);
 				if (content === null) return;
+				if (historyNavRequestRef.current.get(currentTab.id) !== requestId) return;
 
 				updateFileTab(currentSession.id, currentTab.id, (tab) => {
 					// Revalidate before replacing: the editor stays usable while `readFile` runs

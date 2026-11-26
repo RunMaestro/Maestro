@@ -432,7 +432,16 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 		createIpcHandler(handlerOpts('discardTrace', false), async (filePath?: string) => {
 			const trace = await checkFeedbackTraceBundle(filePath);
 			if (!trace.ok) return { success: false };
-			await fs.promises.unlink(trace.realPath).catch(() => {});
+			try {
+				await fs.promises.unlink(trace.realPath);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+					return {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					};
+				}
+			}
 			forgetFeedbackTraceBundle(trace.realPath);
 			return { success: true };
 		})

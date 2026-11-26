@@ -1445,9 +1445,20 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 				const agentConfigValues = agents.providerConfig(chat.moderatorAgentId);
 				const loggedConfigValues = {
 					...agentConfigValues,
-					customEnvVars: agentConfigValues.customEnvVars
-						? maskEnvVarValues(agentConfigValues.customEnvVars as Record<string, unknown>)
-						: undefined,
+					...(agentConfigValues.customEnvVars
+						? {
+								customEnvVars: maskEnvVarValues(
+									agentConfigValues.customEnvVars as Record<string, unknown>
+								),
+							}
+						: {}),
+					...(agentConfigValues.customEnvVarsDisabled
+						? {
+								customEnvVarsDisabled: maskEnvVarValues(
+									agentConfigValues.customEnvVarsDisabled as Record<string, unknown>
+								),
+							}
+						: {}),
 				};
 				logger.debug(
 					`[GroupChat:Debug] agentConfigValues for ${chat.moderatorAgentId}: ${JSON.stringify(loggedConfigValues)}`

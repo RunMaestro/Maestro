@@ -11,6 +11,7 @@
  * here, passes.
  */
 
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { app } from 'electron';
@@ -22,12 +23,27 @@ const TRACE_BUNDLE_NAME = /^maestro-profile-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\
 /** Cap on remembered capture paths so the registry cannot grow unbounded. */
 const MAX_CAPTURED_TRACE_BUNDLES = 64;
 
+interface CapturedTraceRecord {
+	size: number;
+	sha256: string;
+}
+
 /**
- * Canonical real paths of trace bundles written by `debug:stopProfilingToFile`
- * in this process. Checking directory and filename alone is not enough when a
- * caller can copy an arbitrary file into temp under the expected filename.
+ * Canonical real paths and content digests of trace bundles written by
+ * `debug:stopProfilingToFile` in this process. Binding each registered path to
+ * its captured byte size and SHA-256 ensures that overwriting a registered temp
+ * file (e.g. via `fs:copyPath` with `overwrite: true`) cannot exfiltrate
+ * unrelated files.
  */
-const capturedTraceBundles = new Set<string>();
+const capturedTraceBundles = new Map<string, CapturedTraceRecord>();
+
+async function hashTraceBundle(realPath: string): Promise<CapturedTraceRecord> {
+	const content = await fs.promises.readFile(realPath);
+	return {
+		size: content.length,
+		sha256: crypto.createHash('sha256').update(content).digest('hex'),
+	};
+}
 
 /** The folder trace bundles for Feedback are written to. */
 function traceBundleDir(): string {
@@ -36,15 +52,17 @@ function traceBundleDir(): string {
 
 /**
  * Record a trace bundle that `debug:stopProfilingToFile` just wrote so
- * `checkFeedbackTraceBundle()` accepts it on submit, retry, or discard.
+ * `checkFeedbackTraceBundle()` accepts only those captured bytes on submit,
+ * retry, or discard.
  */
 export async function recordFeedbackTraceBundle(bundlePath: string): Promise<string> {
 	const realPath = await fs.promises.realpath(bundlePath);
+	const digest = await hashTraceBundle(realPath);
 	// Refresh insertion order and enforce the cap.
 	capturedTraceBundles.delete(realPath);
-	capturedTraceBundles.add(realPath);
+	capturedTraceBundles.set(realPath, digest);
 	while (capturedTraceBundles.size > MAX_CAPTURED_TRACE_BUNDLES) {
-		const oldest = capturedTraceBundles.values().next().value;
+		const oldest = capturedTraceBundles.keys().next().value;
 		if (oldest === undefined) break;
 		capturedTraceBundles.delete(oldest);
 	}
@@ -117,8 +135,22 @@ export async function checkFeedbackTraceBundle(
 	if (!stats.isFile()) {
 		return { ok: false, reason: 'not a regular file' };
 	}
-	if (!capturedTraceBundles.has(realPath)) {
+	const recorded = capturedTraceBundles.get(realPath);
+	if (!recorded) {
 		return { ok: false, reason: 'not a trace bundle Maestro captured' };
+	}
+	if (stats.size !== recorded.size) {
+		return { ok: false, reason: 'trace bundle was modified after capture' };
+	}
+	let current: CapturedTraceRecord;
+	try {
+		current = await hashTraceBundle(realPath);
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code ?? 'unknown error';
+		return { ok: false, reason: `no readable file there (${code})` };
+	}
+	if (current.sha256 !== recorded.sha256) {
+		return { ok: false, reason: 'trace bundle was modified after capture' };
 	}
 	return { ok: true, realPath };
 }

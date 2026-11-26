@@ -97,6 +97,23 @@ describe('checkFeedbackTraceBundle', () => {
 		});
 	});
 
+	it('refuses a registered trace bundle whose contents were replaced after capture', async () => {
+		const candidate = path.join(bundleDir, 'maestro-profile-2026-11-24T12-34-57.zip');
+		fs.writeFileSync(candidate, 'original-zip-bytes');
+		await recordFeedbackTraceBundle(candidate);
+		// Same-length replacement defeats a size-only check; different-length also fails.
+		fs.writeFileSync(candidate, 'replaced-key-bytes');
+		await expect(checkFeedbackTraceBundle(candidate)).resolves.toEqual({
+			ok: false,
+			reason: 'trace bundle was modified after capture',
+		});
+		fs.writeFileSync(candidate, 'much-longer-private-key-contents');
+		await expect(checkFeedbackTraceBundle(candidate)).resolves.toEqual({
+			ok: false,
+			reason: 'trace bundle was modified after capture',
+		});
+	});
+
 	it('refuses a path outside the bundle folder, even with the right name', async () => {
 		const result = await checkFeedbackTraceBundle(path.join(outside, VALID_NAME));
 		expect(result).toEqual({ ok: false, reason: 'not in the folder Maestro writes traces to' });

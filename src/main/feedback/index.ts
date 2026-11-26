@@ -1777,8 +1777,18 @@ export async function submitFeedbackConversation(
 			// The issue exists, so the trace has served its purpose. If creation
 			// failed above, it is kept (and stays registered) for the retry.
 			if (performanceTracePath) {
-				await fs.unlink(performanceTracePath).catch(() => {});
-				forgetFeedbackTraceBundle(performanceTracePath);
+				let removed = false;
+				try {
+					await fs.unlink(performanceTracePath);
+					removed = true;
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+						removed = true;
+					}
+				}
+				if (removed) {
+					forgetFeedbackTraceBundle(performanceTracePath);
+				}
 			}
 			return {
 				success: true,

@@ -24,9 +24,19 @@ export function foldPathCase(p: string, platform: NodeJS.Platform = process.plat
  */
 export { realpathThroughAncestor } from '../../shared/pathUtils';
 
+function isWindowsStylePath(p: string): boolean {
+	return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\');
+}
+
 /** Whether absolute path `child` is `parent` or inside it, compared as given (fold and resolve first). */
 export function isPathWithin(child: string, parent: string): boolean {
-	const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '') || '/';
+	const windows = isWindowsStylePath(child) || isWindowsStylePath(parent);
+	const norm = (p: string): string => {
+		// Convert backslashes only for Windows-style paths; on POSIX a backslash is
+		// a literal filename character and must not fold a sibling into a descendant.
+		const slashNormalized = windows ? p.replace(/\\/g, '/') : p;
+		return slashNormalized.replace(/\/+$/, '') || '/';
+	};
 	const c = norm(child);
 	const p = norm(parent);
 	if (c === p) return true;

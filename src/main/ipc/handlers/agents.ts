@@ -1313,17 +1313,18 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						stderr: safeStderr,
 					});
 
-					// Check for SSH connection errors
+					// Check for SSH connection errors using sanitized stderr so Node's
+					// `Command failed: <argv>` fallback cannot leak remoteEnv secrets.
 					let connectionError: string | undefined;
 					if (
-						result.stderr &&
-						(result.stderr.includes('Connection refused') ||
-							result.stderr.includes('Connection timed out') ||
-							result.stderr.includes('No route to host') ||
-							result.stderr.includes('Could not resolve hostname') ||
-							result.stderr.includes('Permission denied'))
+						safeStderr &&
+						(safeStderr.includes('Connection refused') ||
+							safeStderr.includes('Connection timed out') ||
+							safeStderr.includes('No route to host') ||
+							safeStderr.includes('Could not resolve hostname') ||
+							safeStderr.includes('Permission denied'))
 					) {
-						connectionError = result.stderr.trim().split('\n')[0];
+						connectionError = safeStderr.trim().split('\n')[0];
 						logger.warn(
 							`SSH connection error for ${sshConfig.host}: ${connectionError}`,
 							LOG_CONTEXT

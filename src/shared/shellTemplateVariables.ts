@@ -102,10 +102,11 @@ export function substituteShellTemplateVariables(
 			// A backslash right before the placeholder escapes the first character
 			// written in its place. Doubling it keeps that backslash literal.
 			const lead = escaped ? '\\' : '';
-			// An empty value needs no variable: it is one empty word unquoted and
-			// nothing inside quotes. (An SSH remote would not export it either; a
-			// value of only spaces is dropped there the same way and expands empty.)
-			if (value === '') return where === 'plain' ? `${lead}''` : lead;
+			// An empty value needs no variable outside heredocs: it is one empty word
+			// unquoted and nothing inside quotes. Inside an unquoted heredoc, keep an
+			// explicit expansion so deleting the placeholder cannot turn a line like
+			// `{{VAR}}EOF` into the heredoc terminator `EOF`.
+			if (value === '' && where !== 'heredoc') return where === 'plain' ? `${lead}''` : lead;
 			const envName = envNameFor(name);
 			env[envName] = value;
 			const ref = `\${${envName}}`;
@@ -162,8 +163,8 @@ interface ArithmeticFrame {
 	returnMode: 'plain' | 'double' | 'heredoc' | 'arithmetic';
 }
 
-/** Characters that end a word, so a `#` after one starts a comment. */
-const WORD_BREAK = /[\s;&|()<>]/;
+/** POSIX shell token separators that end a word, so `#` after one starts a comment. */
+const WORD_BREAK = /[ \t\n;&|()<>]/;
 
 /**
  * Whether an unquoted `((` starting at `start` (the index right after `((`)
@@ -410,6 +411,22 @@ class ShellQuoteTracker {
 	private readDelimiter(ch: string, idx: number): void {
 		const word = this.word as DelimiterWord;
 		if (word.quote) {
+			if (word.quote === '"') {
+				if (word.escaped) {
+					word.escaped = false;
+					if (ch === '\n') return;
+					if (ch === '$' || ch === '`' || ch === '"' || ch === '\\') {
+						word.text += ch;
+					} else {
+						word.text += `\\${ch}`;
+					}
+					return;
+				}
+				if (ch === '\\') {
+					word.escaped = true;
+					return;
+				}
+			}
 			if (ch === word.quote) word.quote = null;
 			else word.text += ch;
 			return;
