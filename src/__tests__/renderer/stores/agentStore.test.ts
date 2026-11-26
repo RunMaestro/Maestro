@@ -1411,6 +1411,28 @@ describe('agentStore', () => {
 			unmount();
 		});
 
+		// A managed spawn's prompt must equal the item text, so agent-only text cannot ride on it:
+		// the item is held with the reason, never run without the notes (CodeRabbit on #2148).
+		it.each([
+			['agentContext', { agentContext: 'Replies: ...' }],
+			['agentNotes', { agentNotes: 'Asked @Backend.' }],
+		] as const)(
+			'holds a managed queue item that carries %s, and spawns nothing',
+			async (_n, extra) => {
+				const item = createQueuedItem({ pendingAdmissionId: 'dispatch-1', ...extra });
+				useSessionStore
+					.getState()
+					.setSessions([createMockSession({ id: 'session-1', executionQueue: [item] })]);
+				await useAgentStore
+					.getState()
+					.processQueuedItem('session-1', item, defaultDeps)
+					.catch(() => undefined);
+				expect(mockSpawn).not.toHaveBeenCalled();
+				const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+				expect(logs.some((log) => log.text.includes('DispatchQueueRoutingUnsupported'))).toBe(true);
+			}
+		);
+
 		it.each(['user', 'auto', undefined] as const)(
 			'preserves queued message and command provenance %s without promoting unknown callers',
 			async (querySource) => {

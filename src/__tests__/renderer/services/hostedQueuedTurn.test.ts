@@ -1176,6 +1176,25 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				releasesWithItsAnswer(text, [started('h-e')]);
 			});
 
+			it('a named start on an idle tab that still draws a stream reads the saved transcript (CodeRabbit on #2148)', () => {
+				const tab = {
+					state: 'idle' as const,
+					logs: [{ id: 'l', timestamp: 1, source: 'ai' as const, text: 'done', hostLive: true }],
+					pendingMentionHandoff: {
+						targets: [],
+						message: 'm',
+						hostTurn: { stage: 'sent', queueItemId: 'h-l', turnStartedAt: 100, seenQueued: true },
+					} as never,
+				};
+				expect(hostedHandoffStep(tab, new Set(), false, [started('h-l')])).toBe('read');
+				// Busy with the turn ahead, it still waits.
+				expect(
+					hostedHandoffStep({ ...tab, state: 'busy', thinkingStartTime: 100 }, new Set(), false, [
+						started('h-l'),
+					])
+				).toBe('wait');
+			});
+
 			it('a host that names its exits: a named removal drops it with a note; an unnamed gap waits', async () => {
 				const text = await drainQueued('h-d', 'handoff');
 				hostSays('h-d', text, { queued: true, busy: 100 });

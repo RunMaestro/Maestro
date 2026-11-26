@@ -242,6 +242,23 @@ export function markHandoffSentToHost(
  */
 export const HOST_QUEUE_START_GRACE_MS = 15_000;
 
+/**
+ * The soonest time a hosted hand-off that left the host queue runs out of its start grace, over
+ * `sessions`' tabs. Undefined when none waits on one.
+ */
+export function nextHostedHandoffDeadline(sessions: readonly Session[]): number | undefined {
+	let soonest: number | undefined;
+	for (const session of sessions) {
+		for (const tab of session.aiTabs) {
+			const goneAt = tab.pendingMentionHandoff?.hostTurn?.goneAt;
+			if (goneAt === undefined) continue;
+			const deadline = goneAt + HOST_QUEUE_START_GRACE_MS;
+			if (soonest === undefined || deadline < soonest) soonest = deadline;
+		}
+	}
+	return soonest;
+}
+
 /** The send boundary of a hosted turn: the last entry the tab holds that is not live. */
 export function handoffSendBoundary(logs: LogEntry[]): string | undefined {
 	return [...logs].reverse().find((entry) => !entry.hostLive)?.id;
@@ -307,7 +324,10 @@ export function hostedHandoffStep(
 			tab.state === 'busy' &&
 			(!hostTurn.seenQueued || tab.thinkingStartTime !== hostTurn.turnStartedAt);
 		if (ownTurnBusy) return 'running';
-		if (tab.state === 'busy' || tab.logs.some((entry) => entry.hostLive)) return 'wait';
+		if (tab.state === 'busy') return 'wait';
+		// Idle while it still draws a stream: a turn ended whose saved answer is not here yet. The
+		// read is safe: only this turn's own entries after the send can release it.
+		if (tab.logs.some((entry) => entry.hostLive)) return 'read';
 		if (collectHandoffTurn(ownTurnEntries(tab.logs, hostTurn.afterEntryId))) return 'release';
 		return transcriptCurrent ? 'wait' : 'read';
 	}

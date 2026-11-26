@@ -661,7 +661,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		if (plainQueueKey && pendingPlainQueueDispatches.has(plainQueueKey)) return false;
 		if (plainQueueKey) pendingPlainQueueDispatches.add(plainQueueKey);
 		try {
-			if (managedQueue && (item.type !== 'message' || item.agentContext))
+			// A managed spawn's prompt must equal the item text, so agent-only text (a consult's
+			// replies ahead, a Federation sender's @mention notes behind) cannot ride on it.
+			if (managedQueue && (item.type !== 'message' || item.agentContext || item.agentNotes))
 				throw new Error('DispatchQueueRoutingUnsupported');
 			if (managedQueue && item.crossAgentMention && !deps.managedStepId) {
 				if (deps.isCancelled?.()) return false;

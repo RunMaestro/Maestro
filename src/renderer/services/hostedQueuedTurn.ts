@@ -565,6 +565,22 @@ export function fireHostStartedMentions(
 }
 
 /**
+ * The soonest time a waiting consult's limit runs out (its start grace after it left the host
+ * queue, or its time limit), when no change from the host may come to run the sync. Undefined when
+ * nothing waits.
+ */
+export function nextHostStartDeadline(): number | undefined {
+	let soonest: number | undefined;
+	for (const waiting of mentionsAwaitingHostStart.values()) {
+		const ttl = (waiting.lastSeenQueuedAt ?? waiting.queuedAt) + HOST_START_MENTION_TTL_MS;
+		const grace = waiting.goneAt === undefined ? ttl : waiting.goneAt + HOST_QUEUE_START_GRACE_MS;
+		const deadline = Math.min(ttl, grace);
+		if (soonest === undefined || deadline < soonest) soonest = deadline;
+	}
+	return soonest;
+}
+
+/**
  * Take `itemId` out of a hosted agent's queue on this machine and send it to the host. The take
  * and the check are one store update, so no drain runs it here too. Answers whether it was handed
  * over (false: the agent is not hosted, or the item is not one this machine holds for it).

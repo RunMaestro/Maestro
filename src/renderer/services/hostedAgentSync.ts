@@ -43,8 +43,12 @@ import {
 import { applyAutoRunMirrorFrame } from '../hooks/batch/useAutoRunStateMirror';
 import { useBatchStore } from '../stores/batchStore';
 import { mirroredRunCompleteInfo, notifyAutoRunComplete } from './autoRunCompletion';
-import { followHostedHandoffs } from './crossAgentHandoff';
-import { fireHostStartedMentions, pruneHostStartedMentions } from './hostedQueuedTurn';
+import { followHostedHandoffs, nextHostedHandoffDeadline } from './crossAgentHandoff';
+import {
+	fireHostStartedMentions,
+	nextHostStartDeadline,
+	pruneHostStartedMentions,
+} from './hostedQueuedTurn';
 import { closingHostTabIds, hostingEnabled } from './hostedTurns';
 import { clearPendingSteeringNotes, refreshHostedSteering } from './autoRunSteering';
 import { useAutoRunSteeringStore } from '../stores/autoRunSteeringStore';
@@ -295,12 +299,30 @@ export function syncHostedAgents(): void {
 export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {}): () => void {
 	announcesRunEnds = options.announcesRunEnds === true;
 	let scheduled = false;
+	// A consult or hand-off waiting on a host start runs out of time with no change from the host
+	// to run the sync (a quiet host, an idle user): one timer runs it again at the soonest limit.
+	let recheck: ReturnType<typeof setTimeout> | undefined;
+	const armRecheck = () => {
+		if (recheck !== undefined) clearTimeout(recheck);
+		recheck = undefined;
+		const deadlines = [
+			nextHostStartDeadline(),
+			nextHostedHandoffDeadline(useSessionStore.getState().sessions),
+		].filter((at): at is number => at !== undefined);
+		if (deadlines.length === 0) return;
+		const delay = Math.max(0, Math.min(...deadlines) - Date.now()) + 1;
+		recheck = setTimeout(() => {
+			recheck = undefined;
+			schedule();
+		}, delay);
+	};
 	const schedule = () => {
 		if (scheduled) return;
 		scheduled = true;
 		queueMicrotask(() => {
 			scheduled = false;
 			syncHostedAgents();
+			armRecheck();
 		});
 	};
 	const offMirror = usePeerMirrorStore.subscribe(schedule);
@@ -319,6 +341,8 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 	schedule();
 	return () => {
 		announcesRunEnds = false;
+		if (recheck !== undefined) clearTimeout(recheck);
+		recheck = undefined;
 		offMirror();
 		offOutages();
 		offSettings();

@@ -6,6 +6,7 @@
 import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startHostedAgentSync, syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
+import { HOST_QUEUE_START_GRACE_MS } from '../../../renderer/services/crossAgentHandoff';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -114,6 +115,47 @@ describe('hostedAgentSync', () => {
 		act(() => hydrateHost('idle'));
 		await flush();
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].state).toBe('busy');
+	});
+
+	// A quiet host sends nothing to run the sync, so the start grace of a hand-off that left the
+	// host queue runs out on a timer, not on the next unrelated change (CodeRabbit on #2148).
+	it('drops a hand-off whose start grace ran out with no change from the host', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+		try {
+			const tab = createMockAITab({
+				id: 't1',
+				logs: [],
+				pendingMentionHandoff: {
+					targets: [{ targetSessionId: 'backend', targetAgentName: 'Backend' }],
+					message: 'then tell @Backend',
+					hostTurn: {
+						stage: 'sent',
+						queueItemId: 'gone',
+						seenQueued: true,
+						turnStartedAt: 100,
+						goneAt: Date.now(),
+					},
+				},
+			});
+			useSessionStore.setState({
+				sessions: [{ ...row(), aiTabs: [tab] }],
+				activeSessionId: 'other',
+			});
+			hydrateHost('idle');
+			const stop = startHostedAgentSync();
+			await flush();
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].pendingMentionHandoff).toBeDefined();
+			await act(async () => {
+				vi.advanceTimersByTime(HOST_QUEUE_START_GRACE_MS + 2);
+			});
+			await flush();
+			const after = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(after.pendingMentionHandoff).toBeUndefined();
+			expect(after.logs.some((log) => log.text.includes('removed before it ran'))).toBe(true);
+			stop();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('with hosted agents off, folds nothing in and releases each record once', () => {
