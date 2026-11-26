@@ -665,6 +665,7 @@ interface MaestroAPI {
 					mode: 'interactive' | 'api';
 					reason: 'auto' | 'limit';
 					configDirKey: string;
+					steeringUnavailable?: import('../shared/chatSteering').SteeringUnavailableReason;
 				}
 			) => void
 		) => () => void;
