@@ -424,7 +424,10 @@ export async function steerMirrorAutoRun(
 			ok: false,
 			error: mirroredActionError(answer),
 			unsupported: answer.code === 'unsupported',
-			...(answer.unknown ? { unknown: true } : {}),
+			// A connection lost, or a call timed out, after the command left: the host may have it.
+			...(answer.unknown || answer.code === 'host-lost' || answer.code === 'timeout'
+				? { unknown: true }
+				: {}),
 		};
 	}
 	if (answer.result.kind !== 'steer-auto-run' || !answer.result.result) {

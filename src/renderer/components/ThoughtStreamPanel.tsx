@@ -558,11 +558,22 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		return [...matched].reverse();
 	}, [feed, query]);
 
+	// The agent the Steer draft was typed for, and the draft, as the effects below last saw them.
+	const draftRef = useRef({ sessionId: panelSessionId, draft: steerDraft });
+
 	// Steering is only on offer while a run this client owns is in flight, so a
 	// run that ends with the composer open must put it away rather than leave a
 	// Send button that can no longer deliver anything.
 	useEffect(() => {
 		if (!canSteer) {
+			// What was typed is the operator's: kept under its agent (`returnDraft()`) for the next
+			// run that can be steered, and cleared once here, so moving to another agent in the same
+			// commit does not park it twice.
+			const typed = draftRef.current;
+			if (typed.sessionId && typed.draft.trim()) {
+				useAutoRunSteeringStore.getState().returnDraft(typed.sessionId, typed.draft);
+			}
+			draftRef.current = { ...typed, draft: '' };
 			setBarMode('buttons');
 			setSteerDraft('');
 		}
@@ -571,7 +582,6 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	// The draft belongs to the agent it was typed for: when the panel moves to another agent, it
 	// is parked under the one it left (as a returned note, which the effect below takes back when
 	// the panel shows that agent again), so a note typed for one run can never be sent to another.
-	const draftRef = useRef({ sessionId: panelSessionId, draft: steerDraft });
 	useEffect(() => {
 		const parked = draftRef.current;
 		draftRef.current = { sessionId: panelSessionId, draft: steerDraft };

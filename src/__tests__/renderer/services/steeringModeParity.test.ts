@@ -450,3 +450,109 @@ describe("what this window keeps about a host's steering ends with the run (P11)
 		expect(act.mock.calls.length).toBe(calls + 1);
 	});
 });
+
+describe('a hosted steering answer that comes back too late (review, round three)', () => {
+	const returned = () => useAutoRunSteeringStore.getState().returnedDrafts[SID];
+	const pending = () => (useAutoRunSteeringStore.getState().notes[SID] ?? []).map((n) => n.text);
+	/** Hold the next send until `release()`, then answer it with `answer`. */
+	function holdSend(answer: () => unknown) {
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		act.mockImplementation(async (peer: string, agent: string, action: any) => {
+			if (action.input.action === 'send') {
+				await held;
+				return answer();
+			}
+			return hostAnswer(peer, agent, action);
+		});
+		return () => release();
+	}
+
+	it('applies no older-host mark from a run already forgotten, and hands the note back', async () => {
+		setUp('hosted');
+		const release = holdSend(() => ({ ok: false, error: 'Too old.', code: 'unsupported' }));
+		submitSteeringNote({ sessionId: SID, text: 'Sent to the old run', announce: false });
+		await vi.waitFor(() => expect(act).toHaveBeenCalled());
+		forgetHostedSteering(SID);
+		release();
+		await settled();
+		expect(returned()).toEqual(['Sent to the old run']);
+		// The mark was not set: this run's list is still read.
+		const calls = act.mock.calls.length;
+		await refreshHostedSteering(SID);
+		expect(act.mock.calls.length).toBe(calls + 1);
+	});
+
+	it('treats a connection lost after the send as an unknown outcome, not a refusal', async () => {
+		setUp('hosted');
+		listFails = true;
+		act.mockImplementation(async (peer: string, agent: string, action: any) =>
+			action.input.action === 'send'
+				? { ok: false, error: 'The host connection was lost.', code: 'host-lost' }
+				: hostAnswer(peer, agent, action)
+		);
+		submitSteeringNote({ sessionId: SID, text: 'Maybe there', announce: false });
+		await settled();
+		expect(pending()).toEqual(['Maybe there']);
+		expect(returned()).toBeUndefined();
+	});
+
+	it('drops the waiting copy of a lost-answer send when the run is forgotten, keeping its text', async () => {
+		setUp('hosted');
+		listFails = true;
+		act.mockImplementation(async (peer: string, agent: string, action: any) =>
+			action.input.action === 'send'
+				? { ok: false, error: 'The connection dropped.', unknown: true }
+				: hostAnswer(peer, agent, action)
+		);
+		submitSteeringNote({ sessionId: SID, text: 'Unsettled', announce: false });
+		await settled();
+		forgetHostedSteering(SID);
+		expect(pending()).toEqual([]);
+		expect(returned()).toEqual(['Unsettled']);
+	});
+
+	it('takes back a lost-answer send on the host by its id once a list finds it', async () => {
+		setUp('hosted');
+		listFails = true;
+		act.mockImplementation(async (peer: string, agent: string, action: any) => {
+			if (action.input.action === 'send') {
+				await hostAnswer(peer, agent, action);
+				return { ok: false, error: 'The connection dropped.', unknown: true };
+			}
+			return hostAnswer(peer, agent, action);
+		});
+		const note = submitSteeringNote({ sessionId: SID, text: 'Never mind', announce: false });
+		await settled();
+		cancelSteeringNote(SID, note!.id);
+		await settled();
+		listFails = false;
+		await settled();
+		await settled();
+		expect(act).toHaveBeenCalledWith('box', 'h1', {
+			kind: 'steer-auto-run',
+			input: { action: 'cancel', noteId: 'host-1' },
+		});
+		expect(hostPending).toEqual([]);
+		expect(returned()).toBeUndefined();
+	});
+
+	it('hands nothing back for a lost-answer send taken back that never landed', async () => {
+		setUp('hosted');
+		listFails = true;
+		act.mockImplementation(async (peer: string, agent: string, action: any) =>
+			action.input.action === 'send'
+				? { ok: false, error: 'The connection dropped.', unknown: true }
+				: hostAnswer(peer, agent, action)
+		);
+		const note = submitSteeringNote({ sessionId: SID, text: 'Not wanted', announce: false });
+		await settled();
+		cancelSteeringNote(SID, note!.id);
+		listFails = false;
+		await settled();
+		expect(pending()).toEqual([]);
+		expect(returned()).toBeUndefined();
+	});
+});

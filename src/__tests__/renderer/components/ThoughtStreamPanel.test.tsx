@@ -534,6 +534,22 @@ describe('ThoughtStreamPanel steering', () => {
 		expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('for the first run');
 	});
 
+	it('keeps an unsent draft for the next run when the run ends (review)', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+		fireEvent.click(steerButton()!);
+		fireEvent.change(screen.getByPlaceholderText(/Steer the Auto Run/), {
+			target: { value: 'try the fixtures' },
+		});
+
+		act(() => useBatchStore.setState({ batchRunStates: {} } as never));
+		expect(useAutoRunSteeringStore.getState().returnedDrafts[SID]).toEqual(['try the fixtures']);
+
+		act(() => runFor(SID));
+		expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('try the fixtures');
+	});
+
 	it('sends on Enter and keeps typing on Shift+Enter', () => {
 		runFor(SID);
 		useThoughtStreamStore.getState().openPanel(SID);
