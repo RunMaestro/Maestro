@@ -108,11 +108,20 @@ let memo: MemoEntry | null = null;
 /** Shared by concurrent callers so a double mount can't run two collections. */
 let inflight: Promise<LocalCollection> | null = null;
 
-/** The last count of the agents on another computer, and which agents it asked about. */
+/** The last count of the agents on another computer, and which targets it asked about. */
 interface RemoteEntry {
 	computedAt: number;
-	agentIds: Set<string>;
+	/** {@link remoteTargetKey} of every agent it asked about. */
+	targets: Set<string>;
 	result: RemoteBreakdowns;
+}
+
+/**
+ * What one remote agent's count is of: the agent, where its conversations are, and which
+ * provider. A count of an agent whose working directory or remote changed is not its count now.
+ */
+function remoteTargetKey(agent: RemoteTokenAgent): string {
+	return canonicalJson([agent.id, agent.remoteId, agent.provider, agent.projectPath]);
 }
 
 /**
@@ -123,11 +132,15 @@ interface RemoteEntry {
  */
 let remoteMemo: RemoteEntry | null = null;
 let remoteInflight: Promise<RemoteEntry> | null = null;
+/** Bumped on invalidation, so a refresh started before it neither is joined nor fills the memo. */
+let remoteGeneration = 0;
 
 /** Reset the in-memory memo (call on external stats changes / tests). */
 export function invalidateTokenUsageMemo(): void {
 	memo = null;
 	remoteMemo = null;
+	remoteInflight = null;
+	remoteGeneration++;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +258,8 @@ async function collectRemoteAgentBreakdowns(
  */
 function refreshRemote(agents: readonly RemoteTokenAgent[]): Promise<RemoteEntry> {
 	if (remoteInflight) return remoteInflight;
-	const agentIds = new Set(agents.map((agent) => agent.id));
+	const targets = new Set(agents.map(remoteTargetKey));
+	const generation = remoteGeneration;
 	const pending = (async (): Promise<RemoteEntry> => {
 		let result: RemoteBreakdowns;
 		try {
@@ -261,8 +275,8 @@ function refreshRemote(agents: readonly RemoteTokenAgent[]): Promise<RemoteEntry
 				partial: [],
 			};
 		}
-		const entry = { computedAt: Date.now(), agentIds, result };
-		remoteMemo = entry;
+		const entry = { computedAt: Date.now(), targets, result };
+		if (generation === remoteGeneration) remoteMemo = entry;
 		return entry;
 	})();
 	remoteInflight = pending;
@@ -272,9 +286,12 @@ function refreshRemote(agents: readonly RemoteTokenAgent[]): Promise<RemoteEntry
 	return pending;
 }
 
-/** Whether `entry` asked about exactly the agents in `agents`. */
+/** Whether `entry` asked about exactly the targets of `agents`. */
 function askedAbout(entry: RemoteEntry, agents: readonly RemoteTokenAgent[]): boolean {
-	return entry.agentIds.size === agents.length && agents.every((a) => entry.agentIds.has(a.id));
+	return (
+		entry.targets.size === agents.length &&
+		agents.every((agent) => entry.targets.has(remoteTargetKey(agent)))
+	);
 }
 
 /** The remote count a read uses, and whether a newer one is still being read. */
@@ -303,8 +320,10 @@ async function loadRemote(force: boolean, waitForRemote: boolean): Promise<Remot
 	}
 	const refresh = refreshRemote(agents);
 	if (waitForRemote) {
-		const entry = await refresh;
-		return { agents, entry, refreshing: false };
+		// A refresh already running may be for an older set of agents: then ask again, for these.
+		let entry = await refresh;
+		if (!askedAbout(entry, agents)) entry = await refreshRemote(agents);
+		return { agents, entry, refreshing: !askedAbout(entry, agents) };
 	}
 	return { agents, entry: remoteMemo, refreshing: true };
 }
@@ -315,27 +334,37 @@ async function loadRemote(force: boolean, waitForRemote: boolean): Promise<Remot
  */
 function withRemote(local: LocalCollection, remote: RemoteRead): Collection {
 	const result = remote.entry?.result;
-	const asked = remote.entry?.agentIds ?? new Set<string>();
-	const current = new Set(remote.agents.map((agent) => agent.id));
-	const pending = remote.agents.filter((agent) => !asked.has(agent.id));
+	const asked = remote.entry?.targets ?? new Set<string>();
+	const current = new Set(remote.agents.map(remoteTargetKey));
+	const pending = remote.agents.filter((agent) => !asked.has(remoteTargetKey(agent)));
 	const pairs = new Set(result?.pairs ?? []);
 	for (const agent of pending) pairs.add(remoteProjectPairKey(agent.provider, agent.projectPath));
+	// A count served while it refreshes may hold projects no current agent asks about any more (an
+	// agent removed or moved): leave those out, and keep a project another agent still asks about.
+	const wanted = new Set(
+		remote.agents.map((agent) => remoteProjectPairKey(agent.provider, agent.projectPath))
+	);
+	const remoteBreakdowns = (result?.breakdowns ?? []).filter((breakdown) =>
+		wanted.has(remoteProjectPairKey(breakdown.agentType, breakdown.projectPath))
+	);
 	return {
-		breakdowns: result ? [...local.breakdowns, ...result.breakdowns] : local.breakdowns,
+		breakdowns: remoteBreakdowns.length
+			? [...local.breakdowns, ...remoteBreakdowns]
+			: local.breakdowns,
 		excluded: {
 			...local.excluded,
 			// A remote pair of a stored agent is now counted, named below, or being
 			// read; what is left belongs to agents that no longer exist here.
 			remoteProjects: [...local.remotePairs].filter((pair) => !pairs.has(pair)).length,
 			notCountedAgents: (result?.notCounted ?? [])
-				.filter((agent) => current.has(agent.id))
+				.filter((agent) => current.has(remoteTargetKey(agent)))
 				.map((agent) => agent.name),
 			pendingAgents: pending.map((agent) => agent.name),
 			remoteRefreshing: remote.refreshing,
 			partialAgents: [
 				...(local.excluded.partialAgents ?? []),
 				...(result?.partial ?? [])
-					.filter(({ agent }) => current.has(agent.id))
+					.filter(({ agent }) => current.has(remoteTargetKey(agent)))
 					.map(({ agent, skippedFiles }) => ({ name: agent.name, conversations: skippedFiles })),
 			],
 		},

@@ -328,4 +328,89 @@ describe('token totals count a local, an SSH, and a hosted agent the same', () =
 		expect(notes.local).toContain('Not counted: 1 conversation of Build Box (too large to read).');
 		expect(notes.local).not.toMatch(/SSH|remote|hosted|federation/i);
 	});
+
+	describe('the remote count kept apart', () => {
+		/** A host that answers only when released, and how often it was asked. */
+		function slowHost() {
+			const releases: Array<() => void> = [];
+			const ask = vi.fn(async (_remoteId: string, projects: ProjectTokenUsageProject[]) => {
+				await new Promise<void>((resolve) => releases.push(resolve));
+				return hostAnswers(projects);
+			});
+			vi.mocked(getPeerMirrorService).mockReturnValue({
+				projectTokenUsage: ask,
+			} as unknown as ReturnType<typeof getPeerMirrorService>);
+			const releaseAll = async () => {
+				await vi.waitFor(() => expect(releases.length).toBeGreaterThan(0));
+				while (releases.length) releases.shift()!();
+			};
+			return { ask, releaseAll };
+		}
+
+		function agentAt(cwd: string, id = 'agent-1', name = 'Build Box') {
+			return createModeSession('hosted', { id, name, toolType: 'claude-code', cwd });
+		}
+
+		it('does not reuse the count of an agent whose working directory moved', async () => {
+			setMode('hosted');
+			await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
+			vi.mocked(getLiveSessions).mockReturnValue([agentAt('/home/dev/other')] as never);
+			const host = slowHost();
+			const moved = await getTokenUsageAggregate(QUERY, false);
+			expect(moved.excluded.pendingAgents).toEqual(['Build Box']);
+			expect(moved.excluded.remoteRefreshing).toBe(true);
+			// The old folder's conversations are not shown for the moved agent.
+			expect(moved.totals.sessionCount).toBe(0);
+			await host.releaseAll();
+			await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
+		});
+
+		it('a waited read covers an agent added while an older refresh was running', async () => {
+			setMode('hosted');
+			const host = slowHost();
+			const background = getTokenUsageAggregate(QUERY, true);
+			await vi.waitFor(() => expect(host.ask).toHaveBeenCalledTimes(1));
+			vi.mocked(getLiveSessions).mockReturnValue([
+				agentAt(PROJECT),
+				agentAt('/home/dev/second', 'agent-2', 'Second Box'),
+			] as never);
+			const waited = getTokenUsageAggregate(QUERY, false, { waitForRemote: true });
+			await host.releaseAll();
+			await host.releaseAll();
+			const full = await waited;
+			await background;
+			expect(full.excluded.pendingAgents).toEqual([]);
+			expect(full.excluded.remoteRefreshing).toBe(false);
+		});
+
+		it('leaves a removed agent out of the count it serves while refreshing', async () => {
+			setMode('hosted');
+			await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
+			vi.mocked(getLiveSessions).mockReturnValue([
+				agentAt('/home/dev/second', 'agent-2', 'Second Box'),
+			] as never);
+			const host = slowHost();
+			const served = await getTokenUsageAggregate(QUERY, true);
+			expect(served.totals.sessionCount).toBe(0);
+			expect(served.excluded.pendingAgents).toEqual(['Second Box']);
+			await host.releaseAll();
+			await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
+		});
+
+		it('a refresh started before an invalidation does not fill the memo after it', async () => {
+			setMode('hosted');
+			const host = slowHost();
+			await getTokenUsageAggregate(QUERY, true);
+			await vi.waitFor(() => expect(host.ask).toHaveBeenCalledTimes(1));
+			invalidateTokenUsageMemo();
+			await host.releaseAll();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			// Nothing fresh is remembered: the next read asks again.
+			const next = await getTokenUsageAggregate(QUERY, false);
+			expect(next.excluded.remoteRefreshing).toBe(true);
+			await vi.waitFor(() => expect(host.ask).toHaveBeenCalledTimes(2));
+			await host.releaseAll();
+			await getTokenUsageAggregate(QUERY, true, { waitForRemote: true });
+		});
+	});
 });
