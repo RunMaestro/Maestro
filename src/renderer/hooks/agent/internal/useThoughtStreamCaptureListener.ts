@@ -11,20 +11,18 @@
  * ten minutes shows those ten minutes rather than an empty log. The store
  * bounds the buffers (see MAX_THOUGHT_CHARS_PER_SESSION / MAX_CAPTURED_SESSIONS).
  *
- * Chunks are coalesced on a THOUGHT_FLUSH_MS timer, not requestAnimationFrame:
- * rAF is paused while the window is hidden or minimized, which is exactly when
- * a long unattended run is producing the reasoning the user later wants to read.
- * A timer keeps flushing (throttled, not stopped) in the background, and at one
- * store write every 250ms per session the always-on path stays cheap.
+ * Chunks are coalesced on a THOUGHT_FLUSH_MS timer by `createThoughtCoalescer()`,
+ * the same coalescer a hosted run's reasoning goes through (`hostedAgentSync`).
  */
 
-import { useEffect, useRef } from 'react';
-import { useThoughtStreamStore } from '../../../stores/thoughtStreamStore';
+import { useEffect } from 'react';
+import { createThoughtCoalescer } from '../../../stores/thoughtStreamStore';
 import { parseSessionId } from '../../../utils/sessionIdParser';
 import type { ParsedSessionId } from '../../../utils/sessionIdParser';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
 
-/** Coalescing window for the raw chunk stream. */
+export { THOUGHT_FLUSH_MS } from '../../../stores/thoughtStreamStore';
+
 /**
  * Streaming-id types the Thought Stream captures.
  *
@@ -43,27 +41,11 @@ import { useOwnedSessionGate } from './useOwnedSessionGate';
  */
 export const AUTO_RUN_SESSION_TYPES: ReadonlySet<ParsedSessionId['type']> = new Set(['batch']);
 
-export const THOUGHT_FLUSH_MS = 250;
-
 export function useThoughtStreamCaptureListener(): void {
-	const bufferRef = useRef<Map<string, string>>(new Map());
-	const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const ownedGate = useOwnedSessionGate();
 
 	useEffect(() => {
-		const buffer = bufferRef.current;
-
-		const flush = () => {
-			flushTimerRef.current = null;
-			if (buffer.size === 0) return;
-			const chunks = new Map(buffer);
-			buffer.clear();
-			const appendThought = useThoughtStreamStore.getState().appendThought;
-			for (const [chunkKey, text] of chunks) {
-				const sepIndex = chunkKey.indexOf(':');
-				appendThought(chunkKey.slice(0, sepIndex), chunkKey.slice(sepIndex + 1), text);
-			}
-		};
+		const coalescer = createThoughtCoalescer();
 
 		const unsubscribe = window.maestro.process.onThinkingChunk?.(
 			(sessionId: string, content: string) => {
@@ -92,25 +74,16 @@ export function useThoughtStreamCaptureListener(): void {
 				// Interactive tabs carry a real tabId; batch/synopsis spawns don't, so
 				// fall back to the full streaming id to keep parallel spawns distinct.
 				const tabId = parsed.tabId ?? parsed.actualSessionId;
-				const key = `${parsed.baseSessionId}:${tabId}`;
-				buffer.set(key, (buffer.get(key) || '') + content);
-
-				if (flushTimerRef.current === null) {
-					flushTimerRef.current = setTimeout(flush, THOUGHT_FLUSH_MS);
-				}
+				coalescer.add(parsed.baseSessionId, tabId, content);
 			}
 		);
 
 		return () => {
 			unsubscribe?.();
-			if (flushTimerRef.current !== null) {
-				clearTimeout(flushTimerRef.current);
-				flushTimerRef.current = null;
-			}
 			// Land whatever was mid-coalesce rather than dropping it - a teardown
 			// mid-run (window close, hot reload) should not lose the last quarter
 			// second of reasoning.
-			flush();
+			coalescer.dispose();
 		};
 	}, [ownedGate]);
 }

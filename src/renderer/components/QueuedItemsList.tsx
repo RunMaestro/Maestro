@@ -13,7 +13,7 @@ import {
 	ImageIcon,
 	Merge,
 } from 'lucide-react';
-import type { Theme, QueuedItem, QueuedItemEditPatch } from '../types';
+import type { Theme, QueuedItem, ModalSaveOutcome, QueuedItemEditPatch } from '../types';
 import type {
 	BusyTabSummary,
 	ForceSendEligibility,
@@ -86,7 +86,7 @@ interface QueuedItemsListProps {
 	onTogglePauseQueuedItem?: (itemId: string) => void;
 	// Edit a queued message's prompt text and attached images. Only wired for
 	// message items (commands have no image attachments).
-	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => Promise<ModalSaveOutcome>;
 	// Fold a queued message into the message drawn directly above it.
 	onMergeQueuedItem?: (itemId: string) => void;
 	onReorderItems?: (fromIndex: number, toIndex: number) => void;
@@ -185,15 +185,27 @@ export const QueuedItemsList = memo(
 		const removeConfirmButtonRef = useRef<HTMLButtonElement>(null);
 		const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
 
-		// A queued item can be dispatched or removed while its edit modal is open
-		// (or while this list is unmounted). Drop the id once the item leaves the
-		// queue so the modal closes instead of lingering as dead state.
+		// The item the open edit modal edits, captured when it opened (as the Execution
+		// Queue browser does). A queued item can be dispatched or removed while its
+		// modal is open, even while a save waits on a host: the modal stays open with
+		// what the person typed, and its Save says the message left the queue.
+		const liveEditItem = editItemId
+			? filteredQueue.find((item) => item.id === editItemId)
+			: undefined;
+		const [editTarget, setEditTarget] = useState<QueuedItem | null>(null);
+		if (liveEditItem && editTarget !== liveEditItem) setEditTarget(liveEditItem);
+		else if (!editItemId && editTarget) setEditTarget(null);
+		const editItem = liveEditItem ?? (editTarget?.id === editItemId ? editTarget : undefined);
+
+		// An id whose item left the queue (or while this list is unmounted) before
+		// its modal opened is dead state: drop it.
 		//
 		// This checks the WHOLE queue, not this tab's slice: "Edit Last Queued
 		// Message" can target a message on another tab and switch to it, and
 		// clearing on the filtered list would race that switch and cancel the open.
 		// Not being on this tab means "not visible yet", not "gone".
-		const editItemMissing = !!editItemId && !executionQueue.some((item) => item.id === editItemId);
+		const editItemMissing =
+			!!editItemId && !editItem && !executionQueue.some((item) => item.id === editItemId);
 		useEffect(() => {
 			if (editItemMissing) setEditItemId(null);
 		}, [editItemMissing, setEditItemId]);
@@ -530,20 +542,14 @@ export const QueuedItemsList = memo(
 				)}
 
 				{/* Edit queued message modal */}
-				{editItemId &&
-					onEditQueuedItem &&
-					(() => {
-						const editItem = filteredQueue.find((item) => item.id === editItemId);
-						if (!editItem) return null;
-						return (
-							<QueuedItemEditModal
-								item={editItem}
-								theme={theme}
-								onClose={() => setEditItemId(null)}
-								onSave={(patch) => onEditQueuedItem(editItem.id, patch)}
-							/>
-						);
-					})()}
+				{editItem && onEditQueuedItem && (
+					<QueuedItemEditModal
+						item={editItem}
+						theme={theme}
+						onClose={() => setEditItemId(null)}
+						onSave={(patch) => onEditQueuedItem(editItem.id, patch)}
+					/>
+				)}
 			</>
 		);
 	}

@@ -15,7 +15,8 @@ vi.mock('../../../../../../renderer/stores/notificationStore', () => ({
 	notifyToast: vi.fn(),
 }));
 
-vi.mock('../../../../../../shared/synopsis', () => ({
+vi.mock('../../../../../../shared/synopsis', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../../../shared/synopsis')>()),
 	parseSynopsis: vi.fn(),
 }));
 

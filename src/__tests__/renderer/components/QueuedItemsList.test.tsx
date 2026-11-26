@@ -425,7 +425,7 @@ describe('QueuedItemsList edit modal', () => {
 	const editable = item({ id: 'q1', text: 'a queued message' });
 
 	function renderList(queue: QueuedItem[] = [editable]) {
-		const onEditQueuedItem = vi.fn();
+		const onEditQueuedItem = vi.fn(async () => ({ saved: true as const }));
 		const utils = render(
 			<LayerStackProvider>
 				<QueuedItemsList
@@ -517,19 +517,50 @@ describe('QueuedItemsList edit modal', () => {
 		expect(screen.getByPlaceholderText('Message to send…')).toBeInTheDocument();
 	});
 
-	it('clears the id when the item is dispatched out of the queue', () => {
+	// As the Execution Queue browser does: the open modal edits the item captured when it opened,
+	// so a message that starts while its modal is open (even while a save waits on a host) keeps
+	// what the person typed, and the save says why it did not land.
+	it('keeps the open modal and the typed text when its item leaves the queue', async () => {
 		useUIStore.getState().setEditingQueuedItemId('q1');
-		const { rerender } = renderList();
+		const onEditQueuedItem = vi.fn(async () => ({
+			saved: false as const,
+			reason: 'It no longer waits in the queue: it may have started already.',
+		}));
+		const { rerender } = render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={[editable]}
+					theme={mockTheme}
+					onEditQueuedItem={onEditQueuedItem}
+				/>
+			</LayerStackProvider>
+		);
+		fireEvent.change(screen.getByPlaceholderText('Message to send…'), {
+			target: { value: 'typed' },
+		});
 
 		rerender(
 			<LayerStackProvider>
 				<QueuedItemsList
 					executionQueue={[item({ id: 'q2', text: 'the next one' })]}
 					theme={mockTheme}
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={onEditQueuedItem}
 				/>
 			</LayerStackProvider>
 		);
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q1');
+		expect(screen.getByPlaceholderText('Message to send…')).toHaveValue('typed');
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(await screen.findByRole('alert')).toHaveTextContent(
+			'Not saved: It no longer waits in the queue: it may have started already.'
+		);
+		expect(onEditQueuedItem).toHaveBeenCalledWith('q1', expect.objectContaining({ text: 'typed' }));
+	});
+
+	it('clears an id whose item left the queue before its modal opened', () => {
+		useUIStore.getState().setEditingQueuedItemId('q1');
+		renderList([item({ id: 'q2', text: 'the next one' })]);
 
 		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
 		expect(screen.queryByPlaceholderText('Message to send…')).not.toBeInTheDocument();
@@ -546,7 +577,7 @@ describe('QueuedItemsList edit modal', () => {
 					executionQueue={[editable, item({ id: 'q-other', tabId: 'tab-2' })]}
 					theme={mockTheme}
 					activeTabId="tab-1"
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			</LayerStackProvider>
 		);
@@ -565,7 +596,7 @@ describe('QueuedItemsList edit modal', () => {
 					executionQueue={queue}
 					theme={mockTheme}
 					activeTabId="tab-1"
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			</LayerStackProvider>
 		);
@@ -576,7 +607,7 @@ describe('QueuedItemsList edit modal', () => {
 					executionQueue={queue}
 					theme={mockTheme}
 					activeTabId="tab-2"
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			</LayerStackProvider>
 		);

@@ -12,6 +12,7 @@ import type {
 	BatchRunConfig,
 	SnoozeContent,
 	ThinkingMode,
+	ModalSaveOutcome,
 	QueuedItemEditPatch,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
@@ -303,7 +304,11 @@ export interface AppUtilityModalsProps {
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
-	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
+	onEditQueueItem: (
+		sessionId: string,
+		itemId: string,
+		patch: QueuedItemEditPatch
+	) => Promise<ModalSaveOutcome>;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
 	onMergeQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)

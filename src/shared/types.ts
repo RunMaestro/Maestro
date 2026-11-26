@@ -57,6 +57,19 @@ export function asThinkingMode(value: unknown): ThinkingMode | undefined {
 }
 
 /**
+ * The exit clearing point of {@link ThinkingMode}: what a tab's transcript keeps once its turn
+ * ends. 'sticky' keeps the `thinking` and `tool` entries; 'on' and 'off' drop them. One rule for
+ * the desktop's exit cleanup (`cleanupExitedTabLogs()`) and a headless host's turn record
+ * (`buildTurnTranscript()`), so a sticky tab reads the same in every mode. Returns `logs` itself
+ * when nothing is dropped.
+ */
+export function logsKeptAtTurnEnd<T extends { source: string }>(logs: T[], mode: unknown): T[] {
+	if (mode === 'sticky') return logs;
+	const kept = logs.filter((log) => log.source !== 'thinking' && log.source !== 'tool');
+	return kept.length === logs.length ? logs : kept;
+}
+
+/**
  * Capability flags that determine what features are available for each agent.
  *
  * This is the single canonical definition. All other AgentCapabilities types

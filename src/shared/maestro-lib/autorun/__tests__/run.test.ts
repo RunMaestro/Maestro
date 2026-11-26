@@ -273,6 +273,22 @@ describe('the run tracker', () => {
 		expect(many.tail[0]).toBe('line 30');
 		expect(many.tail.at(-1)).toBe(`line ${AUTO_RUN_TAIL_LINES + 29}`);
 	});
+
+	it('adds one tail line per tool call that starts, and none for its finish or for reasoning', () => {
+		const run = replay([
+			{
+				kind: 'tool',
+				at: 1,
+				processId: 'p',
+				toolName: 'Read',
+				state: { status: 'running', input: { file_path: '/w/src/a.ts' } },
+			},
+			{ kind: 'tool', at: 2, processId: 'p', toolName: 'Read', state: { status: 'completed' } },
+			{ kind: 'thinking', at: 3, processId: 'p', text: 'Now the tests' },
+		]);
+		expect(run.tail).toHaveLength(1);
+		expect(run.tail[0]).toMatch(/^Read .*a\.ts$/);
+	});
 });
 
 describe('validateAutoRunLaunch', () => {

@@ -12,16 +12,16 @@
  */
 
 import { useCallback } from 'react';
-import type { QueuedItem, QueuedItemEditPatch } from '../../types';
+import type { QueuedItem, ModalSaveOutcome, QueuedItemEditPatch } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
 import { useSessionStore } from '../../stores/sessionStore';
 import {
-	editQueuedItem,
 	mergeQueuedItemIntoAbove,
 	removeQueuedItem,
 	reorderQueuedItems,
+	saveQueuedItemEdit,
 	sendQueuedItemNow,
 	toggleQueuedItemPaused,
 } from '../../services/queuedPrompt';
@@ -49,7 +49,11 @@ export interface UseQueueHandlersReturn {
 	/** Toggle the held/paused state of a queued item (held items are skipped by dispatch) */
 	handleTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
 	/** Edit a queued message's prompt text and attached images within a session */
-	handleEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
+	handleEditQueueItem: (
+		sessionId: string,
+		itemId: string,
+		patch: QueuedItemEditPatch
+	) => Promise<ModalSaveOutcome>;
 	/** Dispatch one queued item immediately, out of queue order */
 	handleForceSendQueueItem: (sessionId: string, itemId: string) => void;
 	/**
@@ -105,12 +109,13 @@ export function useQueueHandlers({
 		toggleQueuedItemPaused(sessionId, itemId);
 	}, []);
 
-	// Edit: the same service the inline card's Edit and `maestro-cli queue edit`
-	// reach, so the rules (and a hosted item's route to its host) cannot differ.
+	// Edit: the same service the inline card's Edit reaches (and `maestro-cli queue
+	// edit` through `editQueuedItem`), so the rules (and a hosted item's route to its
+	// host) cannot differ. It answers once the host has, so a refused save keeps the
+	// modal open with what the user typed.
 	const handleEditQueueItem = useCallback(
-		(sessionId: string, itemId: string, patch: QueuedItemEditPatch) => {
-			editQueuedItem(sessionId, itemId, patch);
-		},
+		(sessionId: string, itemId: string, patch: QueuedItemEditPatch) =>
+			saveQueuedItemEdit(sessionId, itemId, patch),
 		[]
 	);
 

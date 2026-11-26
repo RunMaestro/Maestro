@@ -13,7 +13,9 @@
  * run would use, as a mirror (`applyAutoRunMirrorFrame()`), so the Auto Run panel, the progress
  * pill, and the Left Bar draw it as they draw a local run; its controls go to the host. When the
  * host's run ends, the window that owns app-wide effects raises the same "Auto-Run Complete" toast
- * a local run raises (`notifyAutoRunComplete()`).
+ * a local run raises (`notifyAutoRunComplete()`). The run's reasoning and tool calls feed the same
+ * Thought Stream a local run's do (`feedHostedAutoRunActivity()`), and its steering notes are
+ * read back from the host as the run moves on (`refreshHostedSteering()`).
  *
  * With hosted agents switched off (`hostingEnabled()`) it folds nothing in, and releases each
  * hosted record once (`releaseHostedSession()`), so it works as its SSH agent.
@@ -22,7 +24,13 @@
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
+import type { MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
+import {
+	captureToolActivity,
+	createThoughtCoalescer,
+	type ThoughtCoalescer,
+} from '../stores/thoughtStreamStore';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useSshOutageStore } from '../stores/sshOutageStore';
@@ -37,6 +45,8 @@ import { mirroredRunCompleteInfo, notifyAutoRunComplete } from './autoRunComplet
 import { followHostedHandoffs } from './crossAgentHandoff';
 import { fireHostStartedMentions } from './hostedQueuedTurn';
 import { closingHostTabIds, hostingEnabled } from './hostedTurns';
+import { clearPendingSteeringNotes, refreshHostedSteering } from './autoRunSteering';
+import { useAutoRunSteeringStore } from '../stores/autoRunSteeringStore';
 import { readMirrorTranscript } from './peerMirror';
 import {
 	hostLinkLostError,
@@ -116,6 +126,43 @@ function syncHostedAutoRun(
 		// host sends its final counts before that `null`, so the last mirror holds how it ended.
 		notifyAutoRunComplete(mirroredRunCompleteInfo(sessionId, sessionName, before));
 	}
+	if (ended) {
+		// The run's end drops the notes no task took, as a local run's end does. The host records a
+		// task's reply before its last frame, so a reply still to come is read now.
+		clearPendingSteeringNotes(sessionId);
+		if (connected && awaitsHostSteering(sessionId)) void refreshHostedSteering(sessionId);
+		steeringPositions.delete(sessionId);
+	} else if (connected && frame?.isRunning) {
+		// First seen (a new window, a reload, another client's note), or the run moved to another
+		// task: what the host holds may have changed. Read it again.
+		const position = runPosition(frame);
+		const moved = steeringPositions.get(sessionId) !== position;
+		steeringPositions.set(sessionId, position);
+		if (moved || awaitsHostSteering(sessionId)) void refreshHostedSteering(sessionId);
+	}
+}
+
+/** Where each hosted run was when its steering was last read, by record id. */
+const steeringPositions = new Map<string, string>();
+
+/** A run's place: a task taking notes or replying moves it. */
+function runPosition(frame: AutoRunBroadcastState): string {
+	return [
+		frame.currentDocumentIndex,
+		frame.completedTasksAcrossAllDocs,
+		frame.currentTaskIndex,
+		frame.goalIteration,
+		frame.loopIteration,
+	].join(':');
+}
+
+/** Whether a hosted record shows a note the host may since have taken, or a reply still to come. */
+function awaitsHostSteering(sessionId: string): boolean {
+	const { notes, delivered } = useAutoRunSteeringStore.getState();
+	return (
+		(notes[sessionId]?.length ?? 0) > 0 ||
+		(delivered[sessionId] ?? []).some((note) => note.response === undefined)
+	);
 }
 
 /** Whether this window raises the toast a hosted run's end raises (`startHostedAgentSync()`). */
@@ -258,4 +305,56 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 		offSettings();
 		offSessions();
 	};
+}
+
+/** The longest run process id kept as a Thought Stream key; a host's id past this is cut. */
+const MAX_HOSTED_PROCESS_ID_CHARS = 200;
+
+/** A hosted run's reasoning goes through the same coalescer a local run's does. */
+let hostedThoughts: ThoughtCoalescer | null = null;
+
+/** The record a host's agent is drawn as, while hosted agents are on. */
+function hostedRecordIdOf(peerId: string, agentId: string): string | undefined {
+	if (!hostingEnabled()) return undefined;
+	return useSessionStore.getState().sessions.find((session) => {
+		const pointer = readLiftedTo(session.liftedTo);
+		return pointer?.peer === peerId && pointer.agentId === agentId;
+	})?.id;
+}
+
+/**
+ * Feed a hosted run's reasoning and tool calls to this window's Thought Stream, under the record
+ * the agent is drawn as, keyed by the run's process the way a local run's are
+ * (`useThoughtStreamCaptureListener`, `useThoughtStreamToolListener`). So the panel counts the same
+ * thoughts and actions, and lists the same entries, whichever machine runs the task. Returns
+ * whether the push was one of these (nothing else is fed here).
+ */
+export function feedHostedAutoRunActivity(push: MirrorPush): boolean {
+	const { event } = push;
+	if (event.type !== 'agent.autorunActivity') return false;
+	const sessionId = hostedRecordIdOf(push.peerId, event.agentId);
+	if (!sessionId) return true;
+	const { activity } = event;
+	if (typeof activity.processId !== 'string' || !activity.processId) return true;
+	const processId = activity.processId.slice(0, MAX_HOSTED_PROCESS_ID_CHARS);
+	hostedThoughts ??= createThoughtCoalescer();
+	if (activity.kind === 'thinking') {
+		if (typeof activity.text === 'string') hostedThoughts.add(sessionId, processId, activity.text);
+		return true;
+	}
+	if (activity.kind !== 'tool' || typeof activity.toolName !== 'string') return true;
+	// `captureToolActivity()` lands the reasoning before the call first.
+	captureToolActivity(sessionId, processId, {
+		toolName: activity.toolName,
+		state: activity.state,
+		...(typeof activity.toolCallId === 'string' ? { toolCallId: activity.toolCallId } : {}),
+		...(typeof activity.at === 'number' ? { timestamp: activity.at } : {}),
+	});
+	return true;
+}
+
+/** Land a hosted run's buffered reasoning and stop its timer (the mirror bridge unmounting). */
+export function flushHostedAutoRunActivity(): void {
+	hostedThoughts?.dispose();
+	hostedThoughts = null;
 }

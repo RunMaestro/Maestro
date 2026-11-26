@@ -238,6 +238,53 @@ describe('framesForEvent', () => {
 		).toEqual({ type: 'bridge.event', channel: 'process:data', args: ['a1-batch-5', 'ticking'] });
 	});
 
+	it("sends a run's reasoning and tool calls on the desktop's own channels", () => {
+		const state = createFrameState();
+		expect(
+			framesForEvent(
+				{
+					type: 'autorun',
+					agentId: 'a1',
+					event: { kind: 'thinking', at: 3, processId: 'a1-batch-5', text: 'Reading first' },
+				},
+				state
+			)
+		).toEqual([
+			{
+				type: 'bridge.event',
+				channel: 'process:thinking-chunk',
+				args: ['a1-batch-5', 'Reading first'],
+			},
+		]);
+		const toolState = { status: 'running', input: { file_path: '/w/a.ts' } };
+		expect(
+			framesForEvent(
+				{
+					type: 'autorun',
+					agentId: 'a1',
+					event: {
+						kind: 'tool',
+						at: 4,
+						processId: 'a1-batch-5',
+						toolName: 'Read',
+						state: toolState,
+						toolCallId: 'c1',
+					},
+				},
+				state
+			)
+		).toEqual([
+			{
+				type: 'bridge.event',
+				channel: 'process:tool-execution',
+				args: [
+					'a1-batch-5',
+					{ toolName: 'Read', state: toolState, toolCallId: 'c1', timestamp: 4 },
+				],
+			},
+		]);
+	});
+
 	it('pushes how a run ended as autorun_ended, so a remote client is told too', () => {
 		const outcome = { status: 'error', reason: 'ENOSPC' } as const;
 		expect(
