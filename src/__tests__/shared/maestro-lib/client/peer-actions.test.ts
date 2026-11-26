@@ -717,6 +717,14 @@ describe('parsePeerAgentAction', () => {
 		expect(() =>
 			parsePeerAgentAction({ kind: 'edit-queued', itemId: 'q1', edit: { text: ' ' } })
 		).toThrow('Missing text');
+		// An image-only queued message keeps its empty text through an Edit.
+		expect(
+			parsePeerAgentAction({
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: { text: '', images: ['data:image/png;base64,iVBORw0KGgo='] },
+			})
+		).toMatchObject({ kind: 'edit-queued', edit: { text: '' } });
 		expect(() =>
 			parsePeerAgentAction({
 				kind: 'edit-queued',

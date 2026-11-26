@@ -564,7 +564,11 @@ export interface QueuedTurnEdit {
 export function parseQueuedTurnEdit(
 	raw: Record<string, unknown>
 ): { edit: QueuedTurnEdit } | { error: string } {
-	if (typeof raw.text !== 'string' || !raw.text.trim()) return { error: 'Missing text' };
+	// An image-only message is a message: its Edit may keep the text empty while it keeps images.
+	const keepsImages = Array.isArray(raw.images) && raw.images.length > 0;
+	if (typeof raw.text !== 'string' || (!raw.text.trim() && !keepsImages)) {
+		return { error: 'Missing text' };
+	}
 	const turnSettings = parseQueuedTurnSettings(raw.turnSettings);
 	if (raw.turnSettings !== undefined && !turnSettings) {
 		return { error: 'turnSettings must be an object' };

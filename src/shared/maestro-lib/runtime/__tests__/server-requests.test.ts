@@ -1187,10 +1187,22 @@ describe('live tab state and the host queue', () => {
 			success: false,
 			error: 'images must be a list of strings',
 		});
+		// An image-only message keeps its empty text through an Edit, over the wire too.
+		const png = 'data:image/png;base64,iVBORw0KGgo=';
+		expect(await handle({ ...base, itemId: 'q1', text: '', images: [png] })).toEqual({
+			type: 'edit_queue_item_result',
+			success: true,
+			found: true,
+		});
+		expect(await handle({ ...base, itemId: 'q1', text: '', images: [] })).toMatchObject({
+			success: false,
+			error: 'Missing text',
+		});
 		// The refusals never reached the queue; an empty effort is dropped, not sent.
 		expect(editCalls).toEqual([
 			['a1', 'q1', { text: 'new', turnSettings: { model: 'm' } }],
 			['a1', 'q9', { text: 'new' }],
+			['a1', 'q1', { text: '', images: [png] }],
 		]);
 	});
 

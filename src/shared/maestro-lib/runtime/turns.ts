@@ -74,6 +74,7 @@ import { createOutputParser } from '../parsers/parser-factory';
 import type { MaestroPaths } from '../paths/resolve';
 import {
 	createExecutionQueue,
+	findQueueMergeTarget,
 	joinMergedQueueImages,
 	joinMergedQueueText,
 	TurnCollisionError,
@@ -937,6 +938,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				if (!repository.getAgent(agentId)) {
 					return fail('turns.queue.merge', 'not-found', `No agent ${agentId}.`);
 				}
+				// The merged message is one message: its images meet a send's bounds, or nothing merges.
+				const queue = queues.get(agentId);
+				const lower = queue?.items().find((item) => item.id === itemId);
+				const upper = queue && lower ? findQueueMergeTarget(queue.items(), itemId) : null;
+				if (upper && lower) {
+					const admitted = admitTurnImages(joinMergedQueueImages(upper.images, lower.images));
+					if (!admitted.ok) return fail('turns.queue.merge', 'invalid', admitted.error);
+				}
 				// The upper message is the turn that runs first: it keeps its own settings and hold.
 				const mergedIntoId =
 					queues.get(agentId)?.merge(itemId, (upper, lower) => {
@@ -982,6 +991,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 					const admitted = admitTurnImages(edit.images);
 					if (!admitted.ok) return fail('turns.queue.edit', 'invalid', admitted.error);
 					images = admitted.images;
+				}
+				// An image-only message may keep its text empty; a message with neither is nothing.
+				const current = queues
+					.get(agentId)
+					?.items()
+					.find((item) => item.id === itemId);
+				if (current && !edit.text.trim() && !(images ?? current.images ?? []).length) {
+					return fail('turns.queue.edit', 'invalid', 'There is nothing to send.');
 				}
 				const found =
 					queues.get(agentId)?.update(itemId, (item) => {

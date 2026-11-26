@@ -1130,6 +1130,57 @@ describe('runtime turns', () => {
 				await turn.outcome();
 			});
 
+			it('keeps an image-only message image-only through an Edit, and refuses an edit to nothing', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const queued = value(await runtime.turns.send('a1', 't1', { text: '', images: [PNG] }));
+				if (queued.status !== 'queued') throw new Error('expected queued');
+
+				value(await runtime.turns.queue.edit('a1', queued.itemId, { text: '', images: [JPEG] }));
+				expect(value(await runtime.turns.queue.list('a1'))[0]).toMatchObject({
+					text: '',
+					images: [JPEG],
+				});
+				expect(
+					errorOf(await runtime.turns.queue.edit('a1', queued.itemId, { text: ' ', images: [] }))
+						.code
+				).toBe('invalid');
+				expect(value(await runtime.turns.queue.list('a1'))[0]).toMatchObject({ images: [JPEG] });
+
+				value(await runtime.turns.queue.remove('a1', queued.itemId));
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
+
+			it('refuses a merge whose images together pass the bounds, and changes neither message', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const eleven = Array.from({ length: 11 }, () => PNG);
+				const upper = value(await runtime.turns.send('a1', 't1', { text: 'up', images: eleven }));
+				const lower = value(await runtime.turns.send('a1', 't1', { text: 'down', images: eleven }));
+				if (upper.status !== 'queued' || lower.status !== 'queued')
+					throw new Error('expected queued');
+
+				const refused = errorOf(await runtime.turns.queue.merge('a1', lower.itemId));
+				expect(refused.code).toBe('invalid');
+				expect(refused.message).toContain('20 images');
+				expect(value(await runtime.turns.queue.list('a1')).map((item) => item.text)).toEqual([
+					'up',
+					'down',
+				]);
+
+				value(await runtime.turns.queue.remove('a1', upper.itemId));
+				value(await runtime.turns.queue.remove('a1', lower.itemId));
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
+
 			it("merges the lower message's images after the upper's, as the desktop's merge does", async () => {
 				hold = true;
 				const runtime = await start();
