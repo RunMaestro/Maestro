@@ -20,12 +20,25 @@
  */
 
 import type { QueuedItem, Session } from '../types';
+import type { TurnSendReceipt } from '../../shared/maestro-lib/client/types';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { recoverQueuedItem } from '../utils/executionQueue';
 import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
 
-/** Items on their way to a host, so a second trigger in the same window cannot send one twice. */
-const sendsInFlight = new Set<string>();
+/**
+ * Items on their way to a host, each with the host's receipt to come (null: refused, and the item
+ * is back in this queue held). A second trigger in the same window cannot send one twice.
+ */
+const sendsInFlight = new Map<string, Promise<TurnSendReceipt | null>>();
+
+/**
+ * The host's answer for an item this queue handed over and is still sending, or undefined when it
+ * is not on its way to a host. A caller that follows the turn (Quick Chat) reads the receipt: a
+ * `queued` one names the host's queue item that now stands for it.
+ */
+export function queuedItemHostSend(itemId: string): Promise<TurnSendReceipt | null> | undefined {
+	return sendsInFlight.get(itemId);
+}
 
 /** The text a queued item sends to a host: a message's text, or a command as it was typed. */
 export function queuedItemHostText(item: QueuedItem): string {
@@ -67,30 +80,35 @@ function holdRefusedItem(sessionId: string, item: QueuedItem, index: number): vo
 	});
 }
 
-/** Send one item that is no longer in this queue to the host. Resolves whether the host took it. */
-async function forwardToHost(sessionId: string, item: QueuedItem, index: number): Promise<boolean> {
+/** Send one item that is no longer in this queue to the host. Resolves the host's receipt. */
+function forwardToHost(
+	sessionId: string,
+	item: QueuedItem,
+	index: number
+): Promise<TurnSendReceipt | null> {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	if (!session || !hostedTargetOf(session)) {
 		holdRefusedItem(sessionId, item, index);
-		return false;
+		return Promise.resolve(null);
 	}
-	sendsInFlight.add(item.id);
-	try {
-		const receipt = await sendHostedTurn(
-			session,
-			item.tabId,
-			queuedItemHostText(item),
-			item.images ?? [],
-			{ held: item.paused === true }
-		);
-		if (!receipt) holdRefusedItem(sessionId, item, index);
-		return !!receipt;
-	} catch (error) {
-		holdRefusedItem(sessionId, item, index);
-		throw error;
-	} finally {
-		sendsInFlight.delete(item.id);
-	}
+	const send = sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
+		held: item.paused === true,
+	}).then(
+		(receipt) => {
+			if (!receipt) holdRefusedItem(sessionId, item, index);
+			return receipt;
+		},
+		(error: unknown) => {
+			holdRefusedItem(sessionId, item, index);
+			throw error;
+		}
+	);
+	sendsInFlight.set(item.id, send);
+	const settle = () => {
+		if (sendsInFlight.get(item.id) === send) sendsInFlight.delete(item.id);
+	};
+	send.then(settle, settle);
+	return send;
 }
 
 /**
