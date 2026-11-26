@@ -153,10 +153,11 @@ export async function reopenHostedClosedEntry(
 	if (entry.type !== 'ai' || pendingHostedReopens.has(session.id)) return null;
 	pendingHostedReopens.add(session.id);
 	try {
+		// Back in its old slot, as a local reopen restores it (`restoreClosedAiTab()`).
 		const reopened = await reopenHostedClosedTab(
 			session,
 			{ tabId: entry.tab.id },
-			options.background ? { background: true } : {}
+			{ slot: entry.unifiedIndex, ...(options.background ? { background: true } : {}) }
 		);
 		if (reopened) {
 			// The draft and staged images were this machine's, as a local tab's are: they come back

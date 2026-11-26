@@ -221,6 +221,142 @@ describe('projectHostedSession', () => {
 		expect(next.unifiedTabOrder.map((ref) => ref.id)).toEqual(['t1', 'kept', 't2']);
 	});
 
+	// Parity round 5, P1: a tab closed on the host is gone here and stays gone.
+	it('drops a tab the host reported and then closed, keeping one from before the move', () => {
+		const kept = createMockAITab({ id: 'kept', agentSessionId: 'older', logs: [local('k')] });
+		const session = hostedRow([
+			createMockAITab({ id: 't1' }),
+			kept,
+			createMockAITab({ id: 't2', agentSessionId: 's2' }),
+		]);
+		const seen = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't2', agentSessionId: 's2' }] }),
+		});
+		expect(seen.aiTabs.find((tab) => tab.id === 't2')?.hostSeenAt).toBe(1);
+		expect(seen.aiTabs.find((tab) => tab.id === 'kept')?.hostSeenAt).toBeUndefined();
+		// The host closed t2: the record drops it and its strip slot; the kept tab stays.
+		const closed = projectHostedSession(seen, { agent: host({ aiTabs: [{ id: 't1' }] }) });
+		expect(closed.aiTabs.map((tab) => tab.id)).toEqual(['t1', 'kept']);
+		expect(closed.unifiedTabOrder.map((ref) => ref.id)).toEqual(['t1', 'kept']);
+		expect(projectHostedSession(closed, { agent: host({ aiTabs: [{ id: 't1' }] }) })).toBe(closed);
+	});
+
+	it('never draws back a tab closed here while the host still lists it', () => {
+		const session = hostedRow([createMockAITab({ id: 't1' })]);
+		const next = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't2' }] }),
+			closing: new Set(['t2']),
+		});
+		expect(next.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+		expect(next.unifiedTabOrder.map((ref) => ref.id)).toEqual(['t1']);
+	});
+
+	it('keeps a tab marked by an earlier hosting, and one the host only hid', () => {
+		const earlier = createMockAITab({ id: 'earlier', agentSessionId: 'e', hostSeenAt: 0 });
+		const hidden = createMockAITab({
+			id: 'consult',
+			agentSessionId: 'c',
+			hidden: true,
+			hostSeenAt: 1,
+		});
+		const session = hostedRow([createMockAITab({ id: 't1' }), earlier, hidden]);
+		const next = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 'consult', hidden: true }] }),
+		});
+		expect(next.aiTabs.map((tab) => tab.id)).toEqual(['t1', 'earlier', 'consult']);
+	});
+
+	it('keeps the draft of a tab another client closed on the host, for Cmd+Shift+T', () => {
+		const drafted = createMockAITab({
+			id: 't2',
+			agentSessionId: 's2',
+			inputValue: 'half a thought',
+			stagedImages: ['data:image/png;base64,AAAA'],
+			hostSeenAt: 1,
+		});
+		const session = hostedRow([createMockAITab({ id: 't1', hostSeenAt: 1 }), drafted]);
+		const closed = projectHostedSession(session, { agent: host({ aiTabs: [{ id: 't1' }] }) });
+		expect(closed.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+		expect(closed.closedTabHistory?.[0]).toMatchObject({
+			index: 1,
+			tab: { id: 't2', inputValue: 'half a thought', stagedImages: drafted.stagedImages },
+		});
+	});
+
+	it('drops the last conversation another client closed while another tab kind remains', () => {
+		const session = {
+			...hostedRow([createMockAITab({ id: 't1', agentSessionId: 's1', hostSeenAt: 1 })]),
+			terminalTabs: [{ id: 'term-1' } as never],
+		};
+		const closed = projectHostedSession(session, { agent: host({ aiTabs: [] }) });
+		expect(closed.aiTabs).toEqual([]);
+		// A record whose tab list is not known yet closes nothing.
+		const unknown = projectHostedSession(session, { agent: host({ aiTabs: undefined }) });
+		expect(unknown.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+	});
+
+	it('marks a tab the host lists as hidden, and closes it when the host drops it', () => {
+		const consult = createMockAITab({
+			id: 'consult',
+			agentSessionId: 'c',
+			hidden: true,
+			logs: [local('c')],
+		});
+		const session = hostedRow([createMockAITab({ id: 't1' }), consult]);
+		const seen = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 'consult', hidden: true }] }),
+		});
+		expect(seen.aiTabs.find((tab) => tab.id === 'consult')?.hostSeenAt).toBe(1);
+		const gone = projectHostedSession(seen, { agent: host({ aiTabs: [{ id: 't1' }] }) });
+		expect(gone.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+	});
+
+	it('keeps a blank tab the host lists only as hidden', () => {
+		const blankHidden = createMockAITab({ id: 'consult', logs: [], agentSessionId: null });
+		const session = hostedRow([blankHidden]);
+		const next = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 'consult', hidden: true }] }),
+		});
+		expect(next.aiTabs.map((tab) => tab.id)).toEqual(['consult']);
+	});
+
+	it('takes a host-closed tab out of its tile group', () => {
+		const tabs = ['t1', 't2', 't3'].map((id) =>
+			createMockAITab({ id, agentSessionId: `s-${id}`, hostSeenAt: 1 })
+		);
+		const leaf = (id: string) => ({
+			kind: 'leaf' as const,
+			id: `pane-${id}`,
+			tab: { type: 'ai' as const, id },
+		});
+		const session = {
+			...hostedRow(tabs),
+			tabGroups: [
+				{
+					id: 'g1',
+					name: 'Pair',
+					createdAt: 1,
+					layout: {
+						kind: 'split' as const,
+						id: 'split-1',
+						direction: 'row' as const,
+						children: [leaf('t1'), leaf('t2')],
+						sizes: [0.5, 0.5],
+					},
+					focusedPaneId: 'pane-t2',
+				},
+			],
+			activeGroupId: 'g1',
+		} as never;
+		const closed = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't3' }] }),
+		});
+		expect(closed.aiTabs.map((tab) => tab.id)).toEqual(['t1', 't3']);
+		// One pane left is no group: it dissolves, as after a local close.
+		expect(closed.tabGroups).toEqual([]);
+		expect(closed.activeGroupId ?? null).toBeNull();
+	});
+
 	it("drops an added agent's blank starting tab once the host has tabs", () => {
 		const session = hostedRow([createMockAITab({ id: 'blank', logs: [], agentSessionId: null })]);
 		const next = projectHostedSession(session, { agent: host() });

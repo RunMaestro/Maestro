@@ -1118,6 +1118,19 @@ describe('live tab state and the host queue', () => {
 		]);
 	});
 
+	it('sends no tab list for an agent whose tabs could not be listed, never an empty one', async () => {
+		const { client } = hostClient();
+		const failing = {
+			...client,
+			tabs: { list: async () => fail('failed', 'The store could not be read.') },
+		} as unknown as MaestroClient;
+		const reply = (await createRequestHandler(failing, { liveTabs })({
+			type: 'get_sessions',
+		})) as { sessions: Array<Record<string, unknown>> };
+		expect(reply.sessions[0]).toMatchObject({ id: 'a1' });
+		expect(reply.sessions[0]).not.toHaveProperty('aiTabs');
+	});
+
 	it('holds and releases a waiting message with set_queue_item_paused', async () => {
 		const { client, setPausedCalls } = hostClient();
 		const handle = createRequestHandler(client);

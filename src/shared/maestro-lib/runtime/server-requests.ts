@@ -460,19 +460,25 @@ async function projectSessions(client: MaestroClient, live: LiveAgent): Promise<
 				groupId: agent.groupId ?? null,
 				...(agent.bookmarked !== undefined ? { bookmarked: agent.bookmarked } : {}),
 				...(typeof agent.activeTabId === 'string' ? { activeTabId: agent.activeTabId } : {}),
-				aiTabs: tabs.map((tab) => ({
-					id: tab.id,
-					agentSessionId: tab.agentSessionId ?? null,
-					name: tab.name ?? null,
-					...(tab.starred !== undefined ? { starred: tab.starred } : {}),
-					...(tab.state ? { state: tab.state } : {}),
-					...(tab.thinkingStartTime !== undefined
-						? { thinkingStartTime: tab.thinkingStartTime }
-						: {}),
-					...(tab.hasUnread !== undefined ? { hasUnread: tab.hasUnread } : {}),
-					...(tab.usageStats !== undefined ? { usageStats: tab.usageStats } : {}),
-					...(tab.createdAt !== undefined ? { createdAt: tab.createdAt } : {}),
-				})),
+				// A list that failed says nothing about the tabs: send none, so a client keeps the tabs
+				// it holds. An empty list would read as "every tab was closed".
+				...(listed.ok
+					? {
+							aiTabs: tabs.map((tab) => ({
+								id: tab.id,
+								agentSessionId: tab.agentSessionId ?? null,
+								name: tab.name ?? null,
+								...(tab.starred !== undefined ? { starred: tab.starred } : {}),
+								...(tab.state ? { state: tab.state } : {}),
+								...(tab.thinkingStartTime !== undefined
+									? { thinkingStartTime: tab.thinkingStartTime }
+									: {}),
+								...(tab.hasUnread !== undefined ? { hasUnread: tab.hasUnread } : {}),
+								...(tab.usageStats !== undefined ? { usageStats: tab.usageStats } : {}),
+								...(tab.createdAt !== undefined ? { createdAt: tab.createdAt } : {}),
+							})),
+						}
+					: {}),
 			};
 		})
 	);

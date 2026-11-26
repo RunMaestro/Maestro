@@ -6,6 +6,7 @@ import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { requestDesktopTabCloses } from '../../../services/desktopTabClose';
+import { closeHostedTab } from '../../../services/hostedTurns';
 import {
 	closeBrowserTab as closeBrowserTabHelper,
 	hasActiveWizard,
@@ -85,6 +86,11 @@ export function useUnifiedTabHandlers({
 
 			const terminalTabIds = getTerminalTabIds(refsToClose);
 			refsToClose.filter((ref) => ref.type === 'ai').forEach((ref) => clearLiveDraft(ref.id));
+			// A hosted agent's tabs close on its host too, as one tab's close does, so the host
+			// sync does not bring them back.
+			refsToClose
+				.filter((ref) => ref.type === 'ai')
+				.forEach((ref) => closeHostedTab(session, ref.id));
 			const wizardTabIds = getWizardTabIds(session, refsToClose);
 
 			setSessions((prev: Session[]) =>

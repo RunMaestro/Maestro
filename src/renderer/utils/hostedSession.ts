@@ -10,8 +10,10 @@
  * from Host has every conversation.
  *
  * Rules, so nothing is lost and nothing runs twice:
- * - Tabs match by id (a lift keeps tab ids). A host tab this record lacks is appended. A local tab
- *   the host does not have stays (a conversation kept from before the move), idle.
+ * - Tabs match by id (a lift keeps tab ids). A host tab this record lacks is appended, unless it
+ *   was just closed here and the host has not caught up (`closing`). A tab the host reported in
+ *   this hosting (`hostSeenAt`) and no longer lists was closed on the host: it goes here too. A
+ *   local tab the host never reported stays (a conversation kept from before the move), idle.
  * - A transcript is merged, never replaced: local entries the host's read window does not hold
  *   stay, in time order among the host's. Live entries carry `hostLive` and are rebuilt on every
  *   sync.
@@ -22,14 +24,17 @@
 
 import { canonicalJson } from '../../shared/canonicalJson';
 import type { LiveTurn } from '../../shared/maestro-lib/client/live-turn';
+import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/records';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem, Session, UnifiedTabRef } from '../types';
-import { mirrorLogEntry, mirrorQueuedItem, mirrorTab } from './peerMirrorView';
+import { mirrorLogEntry, mirrorQueuedItem, mirrorTab, mirrorUsageStats } from './peerMirrorView';
 import { isAiTabHidden } from './unifiedTabOrderUtils';
+import { normalizeTabGroups } from './panelLayout';
+import { closeTab } from './tabHelpers';
 
 /** One tab's transcript as the mirror holds it (`MirrorTranscriptSlot`, the fields read here). */
 export interface HostedTranscript {
@@ -49,6 +54,8 @@ export interface HostedProjectionInput {
 	queue?: readonly QueuedTurn[];
 	/** This record is the agent the window shows now (the unread rule reads it). */
 	viewing?: boolean;
+	/** Tabs closed here whose close the host has not reported yet: never drawn back. */
+	closing?: ReadonlySet<string>;
 }
 
 const persistedViews = new WeakMap<readonly LogEntryRecord[], LogEntry[]>();
@@ -264,7 +271,8 @@ function projectTab(
 	host: AITabRecord,
 	logs: LogEntry[],
 	liveTurn: LiveTurn | undefined,
-	watched: boolean
+	watched: boolean,
+	hostSeenAt: number | undefined
 ): AITab {
 	const busy = host.state === 'busy';
 	const thinkingStartTime = busy
@@ -276,6 +284,13 @@ function projectTab(
 	const state = busy ? 'busy' : 'idle';
 	const agentError = hostedTabError(local, busy, logs);
 	const hasUnread = hostedTabUnread(local, logs, watched);
+	// The host runs the turns, so its tab's usage is what the header's gauge and cost pill read. A
+	// host that reports none (an older host) leaves the usage this tab already had.
+	const hostUsage = mirrorUsageStats(host.usageStats);
+	const usageStats =
+		hostUsage && !(local.usageStats && canonicalJson(local.usageStats) === canonicalJson(hostUsage))
+			? hostUsage
+			: local.usageStats;
 	if (
 		local.name === name &&
 		local.agentSessionId === agentSessionId &&
@@ -284,7 +299,9 @@ function projectTab(
 		local.thinkingStartTime === thinkingStartTime &&
 		local.logs === logs &&
 		local.agentError === agentError &&
-		local.hasUnread === hasUnread
+		local.hasUnread === hasUnread &&
+		local.hostSeenAt === hostSeenAt &&
+		local.usageStats === usageStats
 	) {
 		return local;
 	}
@@ -298,6 +315,8 @@ function projectTab(
 		logs,
 		agentError,
 		...(hasUnread !== undefined ? { hasUnread } : {}),
+		...(hostSeenAt !== undefined ? { hostSeenAt } : {}),
+		...(usageStats ? { usageStats } : {}),
 	};
 }
 
@@ -315,10 +334,29 @@ export function hostRunView<T extends Pick<Session, 'sshRemoteId' | 'sessionSshR
 }
 
 /** `session` with the host's tabs, transcripts, busy state, and queue folded in. */
-export function projectHostedSession(session: Session, input: HostedProjectionInput): Session {
+export function projectHostedSession(incoming: Session, input: HostedProjectionInput): Session {
 	const { agent } = input;
 	const hostTabs = (agent.aiTabs ?? []).filter((tab) => !tab.hidden);
 	const hostById = new Map(hostTabs.map((tab) => [tab.id, tab]));
+	// Every tab the host lists, hidden ones too: a tab it hid is not a tab it closed.
+	const hostListed = new Set((agent.aiTabs ?? []).map((tab) => tab.id));
+	// The hosting these tabs belong to: a mark from an earlier one says nothing about this host.
+	const hostingAt = readLiftedTo(incoming.liftedTo)?.at;
+	// Reported by the host in this hosting and no longer listed: the host closed it (another
+	// client, or a close from here the host took). A record that lists no tabs at all is not
+	// known yet, and closes nothing.
+	const closedOnHost = (tab: AITab) =>
+		Array.isArray(agent.aiTabs) &&
+		hostingAt !== undefined &&
+		tab.hostSeenAt === hostingAt &&
+		!hostListed.has(tab.id);
+	// Close each such tab here as a local close does (`closeTab()`): the closed-tab history keeps
+	// what only this machine holds (a draft, staged images), so Cmd+Shift+T brings it back, and
+	// the strip, the active tab, and the tile groups settle as they do after any close.
+	let session = incoming;
+	for (const tab of incoming.aiTabs) {
+		if (closedOnHost(tab)) session = closeTab(session, tab.id)?.session ?? session;
+	}
 	const logsFor = (tabId: string, local: LogEntry[]): LogEntry[] => {
 		const key = liveTurnKey(agent.id, tabId);
 		const slot = input.transcripts?.[key];
@@ -330,17 +368,20 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 		);
 	};
 
-	let changed = false;
+	let changed = session !== incoming;
 	const localIds = new Set(session.aiTabs.map((tab) => tab.id));
-	// An added agent starts with one blank local tab; once the host has tabs it is only noise.
+	// An added agent starts with one blank local tab; once the host has a tab to show it is only
+	// noise. A tab the host lists (a hidden one too) is the host's, never this placeholder.
 	const isBlankLocalOnly = (tab: AITab) =>
-		!hostById.has(tab.id) &&
+		!hostListed.has(tab.id) &&
 		!tab.agentSessionId &&
 		(tab.logs?.length ?? 0) === 0 &&
 		!tab.inputValue &&
 		(tab.stagedImages?.length ?? 0) === 0;
 	const dropped = new Set(
-		hostTabs.length > 0 ? session.aiTabs.filter(isBlankLocalOnly).map((tab) => tab.id) : []
+		hostTabs.length > 0
+			? session.aiTabs.filter((tab) => isBlankLocalOnly(tab)).map((tab) => tab.id)
+			: []
 	);
 
 	const aiTabs: AITab[] = [];
@@ -350,6 +391,15 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 			continue;
 		}
 		const host = hostById.get(local.id);
+		if (!host && hostListed.has(local.id)) {
+			// A tab the host lists as hidden: the host's, so marked as reported, and closed here when
+			// the host stops listing it.
+			if (hostingAt !== undefined && local.hostSeenAt !== hostingAt) {
+				aiTabs.push({ ...local, hostSeenAt: hostingAt });
+				changed = true;
+			} else aiTabs.push(local);
+			continue;
+		}
 		if (!host) {
 			// The host does not have it: a conversation kept from before the move. Nothing runs it.
 			if (local.state === 'busy' && !local.hidden) {
@@ -363,16 +413,18 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 			host,
 			logsFor(local.id, local.logs ?? []),
 			input.liveTurns?.[liveTurnKey(agent.id, local.id)],
-			input.viewing === true && local.id === session.activeTabId
+			input.viewing === true && local.id === session.activeTabId,
+			hostingAt ?? local.hostSeenAt
 		);
 		if (next !== local) changed = true;
 		aiTabs.push(next);
 	}
 	const added: AITab[] = [];
 	for (const host of hostTabs) {
-		if (localIds.has(host.id)) continue;
+		if (localIds.has(host.id) || input.closing?.has(host.id)) continue;
 		const tab = mirrorTab(host);
 		tab.logs = logsFor(host.id, []);
+		if (hostingAt !== undefined) tab.hostSeenAt = hostingAt;
 		added.push(tab);
 	}
 	if (added.length > 0) {
@@ -435,7 +487,7 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 	if (state !== session.state || busySource !== session.busySource) changed = true;
 
 	if (!changed) return session;
-	return {
+	const projected: Session = {
 		...session,
 		aiTabs,
 		activeTabId,
@@ -446,6 +498,8 @@ export function projectHostedSession(session: Session, input: HostedProjectionIn
 		agentError,
 		agentErrorTabId,
 	};
+	// A tab left the strip: its pane leaves its tile group, as after a local close.
+	return session !== incoming || dropped.size > 0 ? normalizeTabGroups(projected) : projected;
 }
 
 /**
