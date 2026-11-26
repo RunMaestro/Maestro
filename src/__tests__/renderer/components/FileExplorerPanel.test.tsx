@@ -3929,6 +3929,22 @@ describe('FileExplorerPanel', () => {
 			expect(panelHtml('hosted', stats as Partial<Session>)).toBe(local);
 		});
 
+		it('draws a capped count as "N+" the same in every mode', () => {
+			const stats = {
+				fileTreeStats: {
+					fileCount: 50000,
+					folderCount: 2,
+					totalSize: 2048,
+					fileCountCapped: true,
+				},
+			} as Partial<Session>;
+			const local = panelHtml('local', stats);
+			expect(local).toContain('50,000+');
+			expect(local).toContain('2 KB+');
+			expect(panelHtml('ssh', stats)).toBe(local);
+			expect(panelHtml('hosted', stats)).toBe(local);
+		});
+
 		it('draws the same loading state, with the same Stop loading, in every mode', () => {
 			const loading = { fileTree: [], fileTreeLoading: true } as Partial<Session>;
 			const local = panelHtml('local', loading);

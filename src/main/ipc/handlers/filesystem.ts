@@ -471,6 +471,8 @@ interface DirectorySizeResult {
 	totalSize: number;
 	fileCount: number;
 	folderCount: number;
+	/** The walk stopped counting files at {@link DIRECTORY_SIZE_MAX_FILES}: the count and size are at least these. */
+	fileCountCapped: boolean;
 }
 
 /**
@@ -486,6 +488,13 @@ const DIRECTORY_SIZE_CACHE_MS = 2_000;
 
 /** How deep the Files panel's size walk goes: entries up to 10 levels below the root, in every mode. */
 const DIRECTORY_SIZE_MAX_DEPTH = 10;
+
+/**
+ * The most files the Files panel's size walk counts, in every mode. A remote
+ * walk lists every file over SSH, so a huge tree would send megabytes of
+ * paths; past the cap the footer shows the count as "N+".
+ */
+export const DIRECTORY_SIZE_MAX_FILES = 50_000;
 
 /**
  * Request budget for fs:fetchImageAsBase64. The renderer blocks a preview on
@@ -1190,6 +1199,7 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 						maxDepth: DIRECTORY_SIZE_MAX_DEPTH,
 						ignorePatterns: effectivePatterns,
 						withSizes: true,
+						maxFiles: DIRECTORY_SIZE_MAX_FILES,
 					},
 					remote
 				);
@@ -1198,7 +1208,7 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 				}
 				const kept = (relative: string) =>
 					!relative.split('/').some((name) => shouldIgnore(name, effectivePatterns));
-				const { directories, files, fileSizes } = listed.data;
+				const { directories, files, fileSizes, truncated } = listed.data;
 				let totalSize = 0;
 				let fileCount = 0;
 				files.forEach((file, index) => {
@@ -1206,7 +1216,12 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 					fileCount++;
 					totalSize += fileSizes?.[index] ?? 0;
 				});
-				return { totalSize, fileCount, folderCount: directories.filter(kept).length };
+				return {
+					totalSize,
+					fileCount,
+					folderCount: directories.filter(kept).length,
+					fileCountCapped: truncated,
+				};
 			}
 
 			async function computeDirectorySize(): Promise<DirectorySizeResult> {
@@ -1229,6 +1244,7 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 				let totalSize = 0;
 				let fileCount = 0;
 				let folderCount = 0;
+				let fileCountCapped = false;
 
 				const calculateSize = async (currentPath: string, depth: number = 0): Promise<void> => {
 					// Limit recursion depth to match file tree loading
@@ -1269,6 +1285,11 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 								folderCount++;
 								await calculateSize(childPath, depth + 1);
 							} else if (kind.isFile) {
+								// The remote walk's cap, so a huge tree reads "N+" in every mode.
+								if (fileCount >= DIRECTORY_SIZE_MAX_FILES) {
+									fileCountCapped = true;
+									continue;
+								}
 								fileCount++;
 								filePaths.push(childPath);
 							}
@@ -1296,6 +1317,7 @@ export function registerFilesystemHandlers(deps: FilesystemHandlerDependencies =
 					totalSize,
 					fileCount,
 					folderCount,
+					fileCountCapped,
 				};
 			}
 		}

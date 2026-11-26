@@ -30,6 +30,8 @@ export interface DirectorySizeInfo {
 	totalSize: number;
 	fileCount: number;
 	folderCount: number;
+	/** The walk stopped counting files at its cap: the count and size are at least these ("N+"). */
+	fileCountCapped?: boolean;
 }
 
 /**

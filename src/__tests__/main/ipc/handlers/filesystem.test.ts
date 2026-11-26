@@ -139,6 +139,7 @@ vi.mock('../../../../main/stores', () => ({
 }));
 
 import {
+	DIRECTORY_SIZE_MAX_FILES,
 	registerFilesystemHandlers,
 	REMOTE_FOLDER_DOWNLOAD_MAX_BYTES,
 	REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH,
@@ -2082,9 +2083,70 @@ describe('filesystem handlers', () => {
 						true
 					);
 				}
-				expect(results.local).toEqual({ totalSize: 15, fileCount: 3, folderCount: 2 });
+				expect(results.local).toEqual({
+					totalSize: 15,
+					fileCount: 3,
+					folderCount: 2,
+					fileCountCapped: false,
+				});
 				expect(results.ssh).toEqual(results.local);
 				expect(results.hosted).toEqual(results.local);
+			});
+
+			it('stops counting a huge tree at the same cap in every mode, and says so', async () => {
+				const handler = registeredHandlers.get('fs:directorySize');
+				const total = DIRECTORY_SIZE_MAX_FILES + 5;
+				const names = Array.from({ length: total }, (_, i) => `f${i}.txt`);
+				const results: Record<string, unknown> = {};
+				for (const mode of ['local', 'ssh', 'hosted'] as const) {
+					if (mode === 'local') {
+						const mockFs = (await import('fs/promises')).default;
+						vi.mocked(mockFs.readFile).mockRejectedValue(new Error('ENOENT'));
+						vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) =>
+							String(dirPath).replace(/\\/g, '/') === '/srv/huge'
+								? (names.map((name) => ({
+										name,
+										isDirectory: () => false,
+										isFile: () => true,
+										isSymbolicLink: () => false,
+									})) as any)
+								: []
+						);
+						vi.mocked(mockFs.stat).mockResolvedValue({ size: 1 } as any);
+					} else {
+						vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1', host: 'box' } as any);
+						// The listing itself is capped on the remote (`head`), and says it was.
+						vi.mocked(listTreeRemote).mockResolvedValue({
+							success: true,
+							data: {
+								directories: [],
+								files: names.slice(0, DIRECTORY_SIZE_MAX_FILES),
+								fileSizes: names.slice(0, DIRECTORY_SIZE_MAX_FILES).map(() => 1),
+								truncated: true,
+							},
+						});
+					}
+					results[mode] = await handler!(
+						{},
+						'/srv/huge',
+						mode === 'local' ? undefined : 'r1',
+						[],
+						false
+					);
+				}
+				expect(results.local).toEqual({
+					totalSize: DIRECTORY_SIZE_MAX_FILES,
+					fileCount: DIRECTORY_SIZE_MAX_FILES,
+					folderCount: 0,
+					fileCountCapped: true,
+				});
+				expect(results.ssh).toEqual(results.local);
+				expect(results.hosted).toEqual(results.local);
+				expect(listTreeRemote).toHaveBeenCalledWith(
+					'/srv/huge',
+					expect.objectContaining({ maxFiles: DIRECTORY_SIZE_MAX_FILES }),
+					expect.anything()
+				);
 			});
 
 			it('asks the remote for the same patterns, its own .gitignore, and the same depth', async () => {
@@ -2098,7 +2160,12 @@ describe('filesystem handlers', () => {
 				);
 				expect(listTreeRemote).toHaveBeenCalledWith(
 					'/srv/remote-only',
-					{ maxDepth: 10, ignorePatterns: ['.git', 'dist'], withSizes: true },
+					{
+						maxDepth: 10,
+						ignorePatterns: ['.git', 'dist'],
+						withSizes: true,
+						maxFiles: DIRECTORY_SIZE_MAX_FILES,
+					},
 					expect.objectContaining({ id: 'r1' })
 				);
 			});
@@ -2146,7 +2213,7 @@ describe('filesystem handlers', () => {
 			]);
 			const c = await handler!({}, '/dedupe', undefined, patterns, false);
 
-			expect(a).toEqual({ totalSize: 7, fileCount: 1, folderCount: 0 });
+			expect(a).toEqual({ totalSize: 7, fileCount: 1, folderCount: 0, fileCountCapped: false });
 			expect(b).toEqual(a);
 			expect(c).toEqual(a);
 			expect(vi.mocked(mockFs.readdir)).toHaveBeenCalledTimes(1);

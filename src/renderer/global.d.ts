@@ -2174,6 +2174,7 @@ interface MaestroAPI {
 			totalSize: number;
 			fileCount: number;
 			folderCount: number;
+			fileCountCapped?: boolean;
 		}>;
 		fetchImageAsBase64: (url: string) => Promise<string | null>;
 		rename: (
