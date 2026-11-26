@@ -152,6 +152,7 @@ import { installAutoRunSnapshotResponder } from './services/debugPackage';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
 import { useAutoRunRestartResume } from './hooks/batch/useAutoRunRestartResume';
+import { useGroupChatAutoRunTrigger } from './hooks/groupChat/useGroupChatAutoRunTrigger';
 import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
@@ -234,7 +235,7 @@ import type {
 } from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { editQueuedItem } from './services/queuedPrompt';
+import { saveQueuedItemEdit } from './services/queuedPrompt';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -1815,6 +1816,8 @@ function MaestroConsoleInner() {
 	// Starts the Auto Runs the update modal saved before the app restarted, at
 	// the document and loop pass each one stopped on. Primary window only.
 	useAutoRunRestartResume({ enabled: isLifecycleOwner, sessionsLoaded, startBatchRun });
+	// A group chat moderator's `!autorun` starts the participant's run here.
+	useGroupChatAutoRunTrigger({ enabled: isLifecycleOwner, startBatchRun });
 
 	// --- AGENT CAPABILITY CACHE PRIMING ---
 	// One bulk fetch on mount so synchronous `hasCapabilityCached` callers that
@@ -1839,10 +1842,13 @@ function MaestroConsoleInner() {
 	}, []);
 
 	// Edit a queued message's prompt text and attached images in place. Same
-	// service `maestro-cli queue edit` reaches; a hosted card's edit goes to its host.
-	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
-		editQueuedItem(activeSessionIdRef.current, itemId, patch);
-	}, []);
+	// rules `maestro-cli queue edit` reaches; a hosted card's edit goes to its host,
+	// and the answer comes back so a refused save keeps the modal open.
+	const handleEditQueuedItem = useCallback(
+		(itemId: string, patch: QueuedItemEditPatch) =>
+			saveQueuedItemEdit(activeSessionIdRef.current, itemId, patch),
+		[]
+	);
 
 	// Reorder a queued item within the active session's inline chat list. The
 	// inline list is filtered to a single tab, so fromIndex/toIndex address that

@@ -13,6 +13,7 @@
 import {
 	normalizeTurnOverrides,
 	type QueuedTurnEdit,
+	type TurnInput,
 	type TurnOverrides,
 	type TurnSendReceipt,
 } from '../../shared/maestro-lib/client/types';
@@ -22,7 +23,11 @@ import type {
 	PeerAgentActionResult,
 } from '../../shared/maestro-lib/client/peer-actions';
 import type { QueueSteerResult } from '../../shared/chatSteering';
-import type { RemoteAskerContext } from '../../shared/crossAgentTypes';
+import type {
+	SteeringCommandInput,
+	SteeringCommandResult,
+} from '../../shared/autoRunSteeringCommands';
+import type { ClosedTabSummary } from '../../shared/closedTabCommands';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
@@ -88,11 +93,15 @@ const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	'send-now-queued': 'Could not send the queued message now',
 	'side-question': 'Could not ask the side question',
 	consult: 'Could not consult the agent',
+	'consult-cancel': 'Could not stop the consult',
+	'closed-tabs': 'Could not read the closed tabs',
+	'reopen-tab': 'Could not reopen the tab',
 	'update-agent': 'Could not change the agent on its host',
 	'update-tab': 'Could not change the tab on its host',
 	'auto-run': 'Auto Run did not start',
 	'goal-run': 'Auto Run did not start',
 	'auto-run-control': 'Auto Run control failed',
+	'steer-auto-run': 'Could not steer the Auto Run',
 };
 
 /** What the main-process service answered for one action (`PeerMirrorService.act()`). */
@@ -132,17 +141,45 @@ export async function actOnMirroredAgent(
 	const answer = await callMirroredAgentAction(peerId, agentId, action);
 	if (!answer) return null;
 	if (answer.ok) return answer.result;
-	const error = answer.unknown
+	notifyToast({
+		color: 'red',
+		title: ACTION_FAILURE_TITLES[action.kind],
+		message: mirroredActionError(answer),
+	});
+	return null;
+}
+
+/** Why an action on a hosted agent has no result: its host never answered. */
+export const HOST_NO_ANSWER_REASON =
+	"The agent's host did not answer. It may be offline: check the agent in Maestro.";
+
+/**
+ * `actOnMirroredAgent` with no toast, for a modal that shows the reason itself and keeps what the
+ * person typed (Edit Queued Message, Rename Tab): the host's result, or why it did not take the
+ * action (the host's own words, or `HOST_NO_ANSWER_REASON`).
+ */
+export async function actOnMirroredAgentQuietly(
+	peerId: string,
+	agentId: string,
+	action: PeerAgentAction
+): Promise<{ result: PeerAgentActionResult } | { error: string }> {
+	const answer = await callMirroredAgentAction(peerId, agentId, action);
+	if (!answer) return { error: HOST_NO_ANSWER_REASON };
+	return answer.ok ? { result: answer.result } : { error: mirroredActionError(answer) };
+}
+
+/** The words for an action the host did not take, as the red toast and a modal's own line say it. */
+function mirroredActionError(answer: Extract<MirroredActionAnswer, { ok: false }>): string {
+	return answer.unknown
 		? `${answer.error} The host may have taken it: check the tab before sending again.`
 		: answer.error;
-	notifyToast({ color: 'red', title: ACTION_FAILURE_TITLES[action.kind], message: error });
-	return null;
 }
 
 /**
  * Send what the person typed to one mirrored tab, with this conductor's own tab choices for that
  * one turn. The host's receipt when it took it (ran, queued, or held), null when it did not.
  * `held` is Queue Held: the host queues it paused, even on an idle tab, as a local Queue Held does.
+ * `agentText` is the agent-only context and notes an `@mention` adds to this one turn.
  */
 export async function sendToMirroredTab(
 	peerId: string,
@@ -151,7 +188,8 @@ export async function sendToMirroredTab(
 	text: string,
 	overrides?: TurnOverrides,
 	images?: readonly string[],
-	held?: boolean
+	held?: boolean,
+	agentText: Pick<TurnInput, 'agentContext' | 'agentNotes'> = {}
 ): Promise<TurnSendReceipt | null> {
 	const clean = normalizeTurnOverrides(overrides);
 	const result = await actOnMirroredAgent(peerId, agentId, {
@@ -161,6 +199,8 @@ export async function sendToMirroredTab(
 		...(images && images.length > 0 ? { images: [...images] } : {}),
 		...(clean ? { overrides: clean } : {}),
 		...(held === true ? { held: true } : {}),
+		...(agentText.agentContext ? { agentContext: agentText.agentContext } : {}),
+		...(agentText.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
 	});
 	return result?.kind === 'send' ? result.receipt : null;
 }
@@ -360,6 +400,27 @@ export async function steerMirrorQueuedItem(
 }
 
 /**
+ * The Thought Stream's Steer on a mirrored agent's run (send, list, cancel, dismiss). The host's
+ * answer as is, a refusal included (`success: false`, no toast: the caller says it where the user
+ * looked). Null when the host could not be reached (a red toast, unless `quiet`).
+ */
+export async function steerMirrorAutoRun(
+	peerId: string,
+	agentId: string,
+	input: SteeringCommandInput,
+	options: { quiet?: boolean } = {}
+): Promise<SteeringCommandResult | null> {
+	const action = { kind: 'steer-auto-run' as const, input };
+	// `quiet`: a background read, whose failure is not news (the next one tries again).
+	if (options.quiet) {
+		const answer = await callMirroredAgentAction(peerId, agentId, action);
+		return answer?.ok && answer.result.kind === 'steer-auto-run' ? answer.result.result : null;
+	}
+	const result = await actOnMirroredAgent(peerId, agentId, action);
+	return result?.kind === 'steer-auto-run' ? result.result : null;
+}
+
+/**
  * Ask a `/btw` side question of a mirrored tab: the host forks its own tab and answers. Answers
  * the reply text, or `{ error }` with no toast: the side-question card shows the failure where
  * the answer would have gone, as it does for a local agent.
@@ -391,7 +452,7 @@ export async function askMirrorSideQuestion(
 export async function askMirrorConsult(
 	peerId: string,
 	agentId: string,
-	consult: { question: string } & RemoteAskerContext
+	consult: Omit<Extract<PeerAgentAction, { kind: 'consult' }>, 'kind'>
 ): Promise<{ answer: string; agentName?: string } | { error: string }> {
 	const answer = await callMirroredAgentAction(peerId, agentId, { kind: 'consult', ...consult });
 	if (!answer) return { error: 'Federation is not available in this window.' };
@@ -404,13 +465,66 @@ export async function askMirrorConsult(
 		: { error: 'The host answered something else.' };
 }
 
-/** Close a mirrored tab on its host: it moves to the host's closed-tab history. */
+/**
+ * Stop on the asking tab, carried to the host: end the consults that tab has running there, which
+ * end as stopped ones in the host's consult tab and History, as main ends a local target's. The
+ * bubble already shows the consult stopped; a Stop that did not reach the host is a red toast,
+ * since the host may still finish that consult. Answers whether the host took it.
+ */
+export async function cancelMirrorConsult(
+	peerId: string,
+	agentId: string,
+	asker: { agentId: string; tabId: string }
+): Promise<boolean> {
+	const answer = await callMirroredAgentAction(peerId, agentId, { kind: 'consult-cancel', asker });
+	if (answer?.ok) return true;
+	notifyToast({
+		color: 'red',
+		title: ACTION_FAILURE_TITLES['consult-cancel'],
+		message: `${answer?.error ?? 'Federation is not available in this window.'} The host may still finish the consult.`,
+	});
+	return false;
+}
+
+/**
+ * The closed-tab stack of a mirrored agent, read from its host, newest first and bounded. Empty
+ * with no toast when the host cannot say (down, or an older host): a Quick Chat route then simply
+ * has no closed conversation to offer, as a local agent with none.
+ */
+export async function readMirrorClosedTabs(
+	peerId: string,
+	agentId: string
+): Promise<ClosedTabSummary[]> {
+	const answer = await callMirroredAgentAction(peerId, agentId, { kind: 'closed-tabs' });
+	return answer?.ok && answer.result.kind === 'closed-tabs' ? answer.result.closedTabs : [];
+}
+
+/**
+ * Reopen a closed tab of a mirrored agent on its host, in the background: the newest, or the one
+ * closed as `tabId`. The tab open there now, or null after a red toast when the host refused.
+ */
+export async function reopenMirrorClosedTab(
+	peerId: string,
+	agentId: string,
+	target: { index?: number; tabId?: string }
+): Promise<{ tabId: string; wasDuplicate?: boolean } | null> {
+	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'reopen-tab', ...target });
+	return result?.kind === 'reopen-tab'
+		? { tabId: result.tabId, ...(result.wasDuplicate ? { wasDuplicate: true } : {}) }
+		: null;
+}
+
+/**
+ * Close a mirrored tab on its host: it moves to the host's closed-tab history. Whether the host
+ * took it (a refusal is a red toast).
+ */
 export async function closeMirrorTab(
 	peerId: string,
 	agentId: string,
 	tabId: string
-): Promise<void> {
-	await actOnMirroredAgent(peerId, agentId, { kind: 'close-tab', tabId });
+): Promise<boolean> {
+	const result = await actOnMirroredAgent(peerId, agentId, { kind: 'close-tab', tabId });
+	return result !== null;
 }
 
 /** Star or unstar a mirrored tab on its host. */

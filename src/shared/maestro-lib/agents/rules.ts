@@ -52,7 +52,9 @@ import type {
 	TabRefRecord,
 } from '../store/records';
 import type { LogEntryRecord } from '../store/transcript';
+import { switchTabProvider } from '../translation/session';
 import {
+	matchesNativeSessionBinding,
 	switchAgentProvider,
 	updateProviderSlot,
 	type NativeSessionBinding,
@@ -388,6 +390,68 @@ export function findConsultTabRecord(
 	);
 }
 
+/**
+ * How many hidden consult tabs one agent keeps. Each (asking agent, asking tab) pairing gets its
+ * own, and a remote asker sends a key of its own per conversation, so without a cap a peer that
+ * sends many keys grows the agent's tab list without bound. Past the cap the least recently used
+ * idle one gives up its slot to the new pairing.
+ */
+export const MAX_CONSULT_TABS_PER_AGENT = 50;
+
+/** The fields of a tab, desktop (`AITab`) or headless (`AITabRecord`), the consult cap reads. */
+export interface ConsultCapTab {
+	id: string;
+	hidden?: boolean;
+	consultOrigin?: ConsultTabKey;
+	state?: string;
+	logs?: unknown[];
+	createdAt?: number;
+}
+
+/** When a consult tab was last used: its newest transcript entry, or its creation. */
+export function consultTabLastUsedAt(tab: ConsultCapTab): number {
+	let latest = typeof tab.createdAt === 'number' ? tab.createdAt : 0;
+	for (const entry of Array.isArray(tab.logs) ? tab.logs : []) {
+		const at = (entry as { timestamp?: unknown } | null)?.timestamp;
+		if (typeof at === 'number' && at > latest) latest = at;
+	}
+	return latest;
+}
+
+/** What the consult cap must leave alone, and the cap itself. */
+export interface ConsultCapOptions {
+	/**
+	 * Consult tabs a consult is running in now. Neither host stores a consult tab as busy while
+	 * its consult runs (the consult is a background process, not a turn of the tab), so the
+	 * caller names them: the desktop from its in-flight consults, a headless host from its own.
+	 */
+	inUseTabIds?: ReadonlySet<string>;
+	cap?: number;
+}
+
+/**
+ * The hidden consult tab a NEW pairing replaces, or `undefined` when the agent is under the cap
+ * and the new tab is simply added. Only hidden consult tabs count: a consult tab the person
+ * revealed is theirs now. A consult tab in use (named in `inUseTabIds`, or stored busy) is never
+ * chosen, so a consult in flight keeps its tab and its answer lands; when every one is in use the
+ * new tab is added past the cap rather than refused. Both host kinds (the desktop's
+ * `ensureConsultTab` and the headless `openConsultTabRecord`) call this one rule.
+ */
+export function consultTabToReplace<T extends ConsultCapTab>(
+	tabs: readonly T[] | undefined,
+	options: ConsultCapOptions = {}
+): T | undefined {
+	const cap = options.cap ?? MAX_CONSULT_TABS_PER_AGENT;
+	const consultTabs = (tabs ?? []).filter((tab) => tab.consultOrigin && tab.hidden === true);
+	if (consultTabs.length < cap) return undefined;
+	let oldest: T | undefined;
+	for (const tab of consultTabs) {
+		if (tab.state === 'busy' || options.inUseTabIds?.has(tab.id)) continue;
+		if (!oldest || consultTabLastUsedAt(tab) < consultTabLastUsedAt(oldest)) oldest = tab;
+	}
+	return oldest;
+}
+
 /** What opening a consult tab writes: who asked, what the tab is called, and the question. */
 export interface ConsultTabOpen {
 	key: ConsultTabKey;
@@ -395,6 +459,8 @@ export interface ConsultTabOpen {
 	name: string;
 	/** The question, as the first (or next) user entry of the consult tab. */
 	question: LogEntryRecord;
+	/** Consult tabs of this agent a consult is running in now: the cap never replaces them. */
+	inUseTabIds?: ReadonlySet<string>;
 }
 
 /**
@@ -436,12 +502,17 @@ export function openConsultTabRecord(
 		hidden: true,
 		consultOrigin: { ...open.key },
 	};
+	// At the cap, the least recently used hidden consult tab gives up its slot. The new pairing
+	// gets a fresh tab (never the old one's provider session), so no asker resumes another's.
+	const replaced = consultTabToReplace(agent.aiTabs, { inUseTabIds: open.inUseTabIds });
+	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
+	const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
 	return {
 		agent: {
 			...agent,
-			aiTabs: [...(Array.isArray(agent.aiTabs) ? agent.aiTabs : []), tab],
+			aiTabs: [...tabs.filter((entry) => entry.id !== replaced?.id), tab],
 			unifiedTabOrder: [
-				...(Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : []),
+				...order.filter((ref) => !(ref.type === 'ai' && ref.id === replaced?.id)),
 				{ type: 'ai', id: tab.id },
 			],
 		},
@@ -509,7 +580,12 @@ export function closeTabRecord(
 	const index = tabs.findIndex((tab) => tab.id === tabId);
 	if (index === -1 || tabs[index].hidden === true) return null;
 
-	const closed: ClosedTabRecord = { tab: { ...tabs[index] }, index, closedAt: ctx.now() };
+	const closed: ClosedTabRecord = {
+		tab: { ...tabs[index] },
+		index,
+		closedAt: ctx.now(),
+		...(typeof agent.toolType === 'string' ? { toolType: agent.toolType } : {}),
+	};
 	let aiTabs = tabs.filter((tab) => tab.id !== tabId);
 	const visible = aiTabs.filter((tab) => tab.hidden !== true);
 	const otherTabs =
@@ -537,6 +613,72 @@ export function closeTabRecord(
 		agent: { ...agent, aiTabs, unifiedTabOrder: order, activeTabId },
 		closed,
 		...(freshTab ? { freshTab } : {}),
+	};
+}
+
+export interface ReopenTabOutcome {
+	agent: AgentRecord;
+	/** The tab that is open now. */
+	tabId: string;
+	/** The conversation already had a tab: nothing was added, and `tabId` names that tab. */
+	wasDuplicate?: boolean;
+}
+
+/**
+ * Reopen one archived tab (Cmd+Shift+T, a Federation peer's reopen): back where it sat in
+ * `aiTabs`, at the end of the strip order, in the background (the active tab, the other active
+ * ids, and `inputMode` are never touched). A conversation that already has a visible tab is not
+ * opened twice (same session id, and the same observed binding when it has one). The tab keeps its
+ * id unless another tab took it since.
+ */
+export function reopenTabRecord(
+	agent: AgentRecord,
+	closed: ClosedTabRecord,
+	ctx: RuleContext
+): ReopenTabOutcome {
+	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
+	// The live session fields belong to the provider the tab closed under. After a provider switch
+	// they are parked under it, so the next turn never resumes another provider's session.
+	const owner = typeof closed.toolType === 'string' ? closed.toolType : agent.toolType;
+	// The record's fields are the translation tab's, with `agentSessionId` optional on disk.
+	type ParkableTab = Parameters<typeof switchTabProvider>[0];
+	const archived: AITabRecord =
+		typeof owner === 'string' && typeof agent.toolType === 'string'
+			? (switchTabProvider(
+					closed.tab as unknown as ParkableTab,
+					owner as ToolType,
+					agent.toolType as ToolType
+				) as unknown as AITabRecord)
+			: closed.tab;
+	const sessionId = archived.agentSessionId;
+	// A native session id alone does not prove the same conversation: an archived tab that carries
+	// a binding is a duplicate only of a tab with the same observed binding.
+	const binding = archived.nativeSessionBinding;
+	const open = sessionId
+		? tabs.find(
+				(tab) =>
+					tab.hidden !== true &&
+					tab.agentSessionId === sessionId &&
+					(binding === undefined
+						? tab.nativeSessionBinding === undefined
+						: matchesNativeSessionBinding(tab.nativeSessionBinding, binding))
+			)
+		: undefined;
+	if (open) return { agent, tabId: open.id, wasDuplicate: true };
+	const id = tabs.some((tab) => tab.id === archived.id) ? ctx.newId() : archived.id;
+	const tab: AITabRecord = { ...archived, id, state: 'idle' };
+	const at = Math.max(
+		0,
+		Math.min(Number.isInteger(closed.index) ? closed.index : tabs.length, tabs.length)
+	);
+	const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
+	return {
+		agent: {
+			...agent,
+			aiTabs: [...tabs.slice(0, at), tab, ...tabs.slice(at)],
+			unifiedTabOrder: [...order, { type: 'ai', id }],
+		},
+		tabId: id,
 	};
 }
 

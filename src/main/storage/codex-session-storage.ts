@@ -28,6 +28,7 @@ import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../stores/types';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { isExpectedSessionReadError } from '../utils/session-read-errors';
 import { getAppUserDataDir } from '../utils/app-user-data';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
 import type {
@@ -38,10 +39,12 @@ import type {
 } from '../agents';
 import type { DeleteMessagePairResult } from '../agents';
 import { MESSAGE_NOT_IN_TRANSCRIPT } from '../agents/session-storage';
+import type { SessionListObserver, SkippedSessionFile } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
-import { forEachJsonlLine, readFirstJsonlLine } from '../utils/jsonl-stream';
+import { readFirstJsonlLine } from '../utils/jsonl-stream';
+import { forEachLocalTranscriptLine, readRemoteTranscript } from './transcript-read';
 import { CodexTokenCounts } from '../../shared/codexTokenUsage';
 import { runTranscriptParse } from '../transcript-parse/transcript-parse-pool';
 import {
@@ -127,6 +130,39 @@ function isSessionForProject(sessionProjectPath: string, projectPath: string): b
 	return normalizedSession.startsWith(prefix);
 }
 
+/**
+ * How far into a rollout its `session_meta` line is looked for. The line carries the working
+ * directory and the instructions, so it is long, but a header past this is not read at all.
+ */
+const ROLLOUT_HEADER_MAX_BYTES = 1024 * 1024;
+
+/** The working directory a rollout's first line (`session_meta`) names, if it can be read. */
+async function readRolloutCwd(filePath: string): Promise<string | undefined> {
+	try {
+		const firstLine = await readFirstJsonlLine(filePath, { maxBytes: ROLLOUT_HEADER_MAX_BYTES });
+		if (!firstLine) return undefined;
+		const metadata = JSON.parse(firstLine) as { payload?: { cwd?: unknown }; cwd?: unknown };
+		const cwd = metadata?.payload?.cwd ?? metadata?.cwd;
+		return typeof cwd === 'string' && cwd ? cwd : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The oversized rollouts that belong to `projectPath`. One whose working directory could not be
+ * read may belong to any project, so it counts against every one: a total is then named short
+ * rather than quietly short.
+ */
+function skippedForProject(
+	oversized: ReadonlyArray<{ file: SkippedSessionFile; cwd: string | undefined }>,
+	projectPath: string
+): SkippedSessionFile[] {
+	return oversized
+		.filter(({ cwd }) => cwd === undefined || isSessionForProject(cwd, projectPath))
+		.map(({ file }) => file);
+}
+
 interface CodexSessionCacheEntry {
 	session: AgentSessionInfo;
 	fileMtimeMs: number;
@@ -179,7 +215,9 @@ async function saveCodexSessionCache(cache: CodexSessionCache): Promise<void> {
 async function parseSessionFile(
 	filePath: string,
 	sessionId: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	/** Called when the file is there but could not be read (never for an oversized or empty one). */
+	onUnreadable?: () => void
 ): Promise<AgentSessionInfo | null> {
 	try {
 		if (stats.size > MAX_SESSION_FILE_SIZE) {
@@ -198,10 +236,17 @@ async function parseSessionFile(
 			mtimeMs: stats.mtimeMs,
 		});
 	} catch (error) {
+		// Left out of every total from here on: say so, unless the file is simply gone.
+		if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') onUnreadable?.();
 		// RangeError: Invalid string length occurs when a single line is too large for
 		// V8 string allocation. This is expected and not worth reporting to Sentry.
 		if (error instanceof RangeError) {
 			logger.warn('Codex session file too large to parse', LOG_CONTEXT, { filePath });
+			return null;
+		}
+		// Unreadable or gone: the environment, not a Maestro bug.
+		if (isExpectedSessionReadError(error)) {
+			logger.warn(`Could not read Codex session file: ${filePath}`, LOG_CONTEXT, error);
 			return null;
 		}
 		logger.error(`Error reading Codex session file: ${filePath}`, LOG_CONTEXT, error);
@@ -266,19 +311,29 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * Find all session files, organized by date directories
 	 */
 	private async findAllSessionFiles(
-		accountDir?: string
+		accountDir?: string,
+		/** Counts the folders that are there but could not be listed (their rollouts are missed). */
+		unreadable?: { dirs: number }
 	): Promise<Array<{ filePath: string; filename: string }>> {
 		const sessionsDir = this.getSessionsDir(accountDir);
 		const sessionFiles: Array<{ filePath: string; filename: string }> = [];
+		const missed = (error: unknown): void => {
+			if (unreadable && (error as NodeJS.ErrnoException)?.code !== 'ENOENT') unreadable.dirs++;
+		};
 
+		// A missing root is an account with no rollouts; one that is there but cannot be listed
+		// misses all of them, and says so.
+		let years: string[];
 		try {
 			await fs.access(sessionsDir);
-		} catch {
+			years = await fs.readdir(sessionsDir);
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException)?.code;
+			if (code !== 'ENOENT' && code !== 'ENOTDIR') missed(error);
 			return [];
 		}
 
 		// Scan YYYY directories
-		const years = await fs.readdir(sessionsDir);
 		for (const year of years) {
 			if (!/^\d{4}$/.test(year)) continue;
 
@@ -286,12 +341,19 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			try {
 				const yearStat = await fs.stat(yearDir);
 				if (!yearStat.isDirectory()) continue;
-			} catch {
+			} catch (error) {
+				missed(error);
 				continue;
 			}
 
-			// Scan MM directories
-			const months = await fs.readdir(yearDir);
+			// Scan MM directories; an unlisted year misses only its own rollouts.
+			let months: string[];
+			try {
+				months = await fs.readdir(yearDir);
+			} catch (error) {
+				missed(error);
+				continue;
+			}
 			for (const month of months) {
 				if (!/^\d{2}$/.test(month)) continue;
 
@@ -299,12 +361,19 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				try {
 					const monthStat = await fs.stat(monthDir);
 					if (!monthStat.isDirectory()) continue;
-				} catch {
+				} catch (error) {
+					missed(error);
 					continue;
 				}
 
-				// Scan DD directories
-				const days = await fs.readdir(monthDir);
+				// Scan DD directories; an unlisted month misses only its own rollouts.
+				let days: string[];
+				try {
+					days = await fs.readdir(monthDir);
+				} catch (error) {
+					missed(error);
+					continue;
+				}
 				for (const day of days) {
 					if (!/^\d{2}$/.test(day)) continue;
 
@@ -323,7 +392,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 								});
 							}
 						}
-					} catch {
+					} catch (error) {
+						missed(error);
 						continue;
 					}
 				}
@@ -589,22 +659,22 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	}
 
 	/**
-	 * List sessions for a project.
-	 *
-	 * `accountDir` selects which `CODEX_HOME` account's rollouts to read;
-	 * undefined reads the default account. See {@link AgentSessionStorage}.
+	 * Every local session of one account that has a working directory, newest
+	 * first: one walk of its rollouts, served from the parse cache where a file
+	 * is unchanged. Callers filter by project.
 	 */
-	async listSessions(
-		projectPath: string,
-		sshConfig?: SshRemoteConfig,
-		accountDir?: string
-	): Promise<AgentSessionInfo[]> {
-		// Use SSH remote access if config provided
-		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig, accountDir);
-		}
+	private async scanLocalSessions(accountDir?: string): Promise<{
+		sessions: AgentSessionInfo[];
+		fileCount: number;
+		/**
+		 * Rollouts left out (past the size cap, or unreadable), with the working directory their first
+		 * line names when it can be read.
+		 */
+		oversized: Array<{ file: SkippedSessionFile; cwd: string | undefined }>;
+	}> {
 		const sessionsDir = this.getSessionsDir(accountDir);
-		const allSessionFiles = await this.findAllSessionFiles(accountDir);
+		const unreadableDirs = { dirs: 0 };
+		const allSessionFiles = await this.findAllSessionFiles(accountDir, unreadableDirs);
 
 		const cache = (await loadCodexSessionCache()) || {
 			version: CODEX_SESSION_CACHE_VERSION,
@@ -613,6 +683,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		};
 
 		const sessions: AgentSessionInfo[] = [];
+		const oversized: Array<{ file: SkippedSessionFile; cwd: string | undefined }> = [];
 		const currentFilePaths = new Set<string>();
 		let cacheUpdated = false;
 
@@ -624,7 +695,26 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				const fileStat = await fs.stat(filePath);
 				if (fileStat.size === 0) continue;
 				stats = { size: fileStat.size, mtimeMs: fileStat.mtimeMs };
+				if (stats.size > MAX_SESSION_FILE_SIZE) {
+					// Never parsed (`parseSessionFile`), so its usage is missing from every
+					// total. Its first line names its working directory, so the listing can
+					// say which project is short.
+					oversized.push({
+						file: { sizeBytes: stats.size, reason: 'too-large' },
+						cwd: await readRolloutCwd(filePath),
+					});
+					// Left out whole: an older cached reading of the same path is not served either.
+					continue;
+				}
 			} catch (error) {
+				// Listed but not stattable: its usage is missing, and its project unknown.
+				if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+					oversized.push({ file: { sizeBytes: 0, reason: 'unreadable' }, cwd: undefined });
+				}
+				if (isExpectedSessionReadError(error)) {
+					logger.warn(`Could not stat Codex session file: ${filename}`, LOG_CONTEXT, error);
+					continue;
+				}
 				logger.error(`Error stating Codex session file: ${filename}`, LOG_CONTEXT, error);
 				captureException(error, { operation: 'codexStorage:statSessionFile', filename });
 				continue;
@@ -632,27 +722,31 @@ export class CodexSessionStorage extends BaseSessionStorage {
 
 			const cached = cache.sessions[filePath];
 			if (cached && cached.fileMtimeMs >= stats.mtimeMs) {
-				if (
-					cached.session.projectPath &&
-					isSessionForProject(cached.session.projectPath, projectPath)
-				) {
-					sessions.push(cached.session);
-				}
+				if (cached.session.projectPath) sessions.push(cached.session);
 				continue;
 			}
 
 			const sessionId = extractSessionIdFromFilename(filename) || filename;
-			const session = await parseSessionFile(filePath, sessionId, {
-				size: stats.size,
-				mtimeMs: stats.mtimeMs,
-			});
+			let unreadableFile = false;
+			const session = await parseSessionFile(
+				filePath,
+				sessionId,
+				{ size: stats.size, mtimeMs: stats.mtimeMs },
+				() => {
+					unreadableFile = true;
+				}
+			);
+			if (unreadableFile) {
+				oversized.push({
+					file: { sizeBytes: stats.size, reason: 'unreadable' },
+					cwd: await readRolloutCwd(filePath),
+				});
+			}
 
 			if (session) {
 				cache.sessions[filePath] = { session, fileMtimeMs: stats.mtimeMs };
 				cacheUpdated = true;
-				if (session.projectPath && isSessionForProject(session.projectPath, projectPath)) {
-					sessions.push(session);
-				}
+				if (session.projectPath) sessions.push(session);
 			}
 		}
 
@@ -665,10 +759,11 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		// reachable by any prefix, so they survive until the cache version is
 		// bumped. They are a handful of stale records, not stale numbers: every
 		// session served to a caller comes from the account it just walked.
+		// A walk that could not list a folder did not see its rollouts: keep their entries.
 		const accountPrefix = sessionsDir.endsWith(path.sep)
 			? sessionsDir
 			: `${sessionsDir}${path.sep}`;
-		for (const cachedPath of Object.keys(cache.sessions)) {
+		for (const cachedPath of unreadableDirs.dirs > 0 ? [] : Object.keys(cache.sessions)) {
 			if (!cachedPath.startsWith(accountPrefix)) continue;
 			if (!currentFilePaths.has(cachedPath)) {
 				delete cache.sessions[cachedPath];
@@ -683,8 +778,63 @@ export class CodexSessionStorage extends BaseSessionStorage {
 
 		// Sort by modified date (newest first)
 		sessions.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+		// A date folder that could not be listed may hold rollouts of any project.
+		for (let i = 0; i < unreadableDirs.dirs; i++) {
+			oversized.push({ file: { sizeBytes: 0, reason: 'unreadable' }, cwd: undefined });
+		}
+		return { sessions, fileCount: allSessionFiles.length, oversized };
+	}
 
-		if (allSessionFiles.length === 0) {
+	/**
+	 * The local sessions of several projects of one account, from ONE walk of
+	 * its rollouts (`listSessions` walks them all for every project). Each
+	 * project gets what `listSessions(projectPath, undefined, accountDir)` would
+	 * return for it.
+	 */
+	async listSessionsForProjects(
+		projectPaths: readonly string[],
+		accountDir?: string,
+		observer?: { onSkippedFile?(projectPath: string, file: SkippedSessionFile): void }
+	): Promise<Map<string, AgentSessionInfo[]>> {
+		const { sessions: all, oversized } = await this.scanLocalSessions(accountDir);
+		const byProject = new Map<string, AgentSessionInfo[]>();
+		for (const projectPath of projectPaths) {
+			for (const skipped of skippedForProject(oversized, projectPath)) {
+				observer?.onSkippedFile?.(projectPath, skipped);
+			}
+			const sessions = all.filter(
+				(session) => session.projectPath && isSessionForProject(session.projectPath, projectPath)
+			);
+			byProject.set(projectPath, this.attachOriginInfo(sessions, projectPath));
+		}
+		return byProject;
+	}
+
+	/**
+	 * List sessions for a project.
+	 *
+	 * `accountDir` selects which `CODEX_HOME` account's rollouts to read;
+	 * undefined reads the default account. See {@link AgentSessionStorage}.
+	 */
+	async listSessions(
+		projectPath: string,
+		sshConfig?: SshRemoteConfig,
+		accountDir?: string,
+		observer?: SessionListObserver
+	): Promise<AgentSessionInfo[]> {
+		// Use SSH remote access if config provided
+		if (sshConfig) {
+			return this.listSessionsRemote(projectPath, sshConfig, accountDir);
+		}
+		const { sessions: all, fileCount, oversized } = await this.scanLocalSessions(accountDir);
+		for (const skipped of skippedForProject(oversized, projectPath)) {
+			observer?.onSkippedFile?.(skipped);
+		}
+		const sessions = all.filter(
+			(session) => session.projectPath && isSessionForProject(session.projectPath, projectPath)
+		);
+
+		if (fileCount === 0) {
 			logger.info(`No Codex sessions found`, LOG_CONTEXT);
 		} else {
 			logger.info(
@@ -933,15 +1083,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				logger.warn(`Codex session file not found on remote: ${sessionId}`, LOG_CONTEXT);
 				return { messages: [], total: 0, hasMore: false };
 			}
-			const result = await readFileRemote(sessionFilePath, sshConfig);
-			if (!result.success || !result.data) {
-				logger.error(
-					`Failed to read remote Codex session: ${sessionId} - ${result.error}`,
-					LOG_CONTEXT
-				);
-				return { messages: [], total: 0, hasMore: false };
-			}
-			for (const line of result.data.split('\n')) {
+			// A transcript that does not exist is an empty conversation; one that exists and cannot be
+			// read rejects, in every mode (see transcript-read.ts).
+			const content = await readRemoteTranscript(sessionFilePath, sshConfig);
+			for (const line of (content ?? '').split('\n')) {
 				if (line.trim()) collect(line);
 			}
 			return page.result();
@@ -961,7 +1106,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			}
 		} else {
 			// Streamed, never read whole: a rollout can be hundreds of MB (#1862).
-			await forEachJsonlLine(sessionFilePath, collect);
+			await forEachLocalTranscriptLine(sessionFilePath, collect);
 		}
 		return page.result();
 	}

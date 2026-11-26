@@ -5,7 +5,7 @@ import * as os from 'os';
 import { randomUUID } from 'crypto';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
-import { parseDataUrl } from '../../../shared/maestro-lib/launch/image-refs';
+import { writeImageTempFile } from '../../../shared/maestro-lib/launch/image-delivery';
 
 // The pure half lives in maestro-lib; re-exported so existing importers keep working.
 export {
@@ -15,34 +15,18 @@ export {
 
 /**
  * Save a base64 data URL image to a unique, exclusively-created temp file.
- * Returns the full path to the temp file, or null on failure.
+ * Returns the full path to the temp file, or null on failure. The write itself is
+ * `writeImageTempFile()`, which the headless host's turns use too.
  */
 export function saveImageToTempFile(dataUrl: string, index: number): string | null {
-	const parsed = parseDataUrl(dataUrl);
-	if (!parsed) {
-		logger.warn('[ProcessManager] Failed to parse data URL for temp file', 'ProcessManager');
-		return null;
-	}
-
-	const ext = parsed.mediaType.split('/')[1] || 'png';
-
 	try {
-		const buffer = Buffer.from(parsed.base64, 'base64');
-		for (;;) {
-			const filename = `maestro-image-${Date.now()}-${process.pid}-${randomUUID()}-${index}.${ext}`;
-			const tempPath = path.join(os.tmpdir(), filename);
-			try {
-				fs.writeFileSync(tempPath, buffer, { mode: 0o600, flag: 'wx' });
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
-				throw error;
-			}
-			logger.debug('[ProcessManager] Saved image to temp file', 'ProcessManager', {
-				tempPath,
-				size: buffer.length,
-			});
-			return tempPath;
+		const tempPath = writeImageTempFile(dataUrl, index);
+		if (!tempPath) {
+			logger.warn('[ProcessManager] Failed to parse data URL for temp file', 'ProcessManager');
+			return null;
 		}
+		logger.debug('[ProcessManager] Saved image to temp file', 'ProcessManager', { tempPath });
+		return tempPath;
 	} catch (error) {
 		void captureException(error);
 		logger.error('[ProcessManager] Failed to save image to temp file', 'ProcessManager', {

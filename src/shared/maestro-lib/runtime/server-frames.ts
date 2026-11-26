@@ -15,6 +15,7 @@
 import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { AutoRunProgress } from '../autorun/progress';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
+import { TRANSCRIPT_CHANGED_CHANNEL, transcriptChangedArgs } from '../client/bridge-frames';
 import type { AutoRunOutcome, MaestroEvent, QueuedTurn, TurnEvent } from '../client/types';
 import type { GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
 import type { AgentRecord, AITabRecord } from '../store/records';
@@ -243,14 +244,17 @@ function turnFrames(agentId: string, tabId: string, event: TurnEvent, state: Fra
 			);
 			return frames;
 		}
-		// `started` is learned from the first frame, and a `gap` is the client's own signal.
-		case 'started':
+		// A transcript that grew outside a turn: the client reads the tab again. (A client's own
+		// `gap`, for events it missed, never comes from here.)
 		case 'gap':
+			return [bridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, ...transcriptChangedArgs(agentId, tabId))];
+		// `started` is learned from the first frame.
+		case 'started':
 			return [];
 	}
 }
 
-/** A run's progress, output, and usage: the flat state frame and the run's own batch process. */
+/** A run's progress, output, usage, reasoning, and tool calls: the flat state frame and the run's own batch process. */
 function autoRunFrames(agentId: string, run: AutoRunRunEvent): Frame[] {
 	switch (run.kind) {
 		case 'state':
@@ -259,6 +263,18 @@ function autoRunFrames(agentId: string, run: AutoRunRunEvent): Frame[] {
 			return [bridgeEvent('process:data', run.processId, run.text)];
 		case 'usage':
 			return [bridgeEvent('process:usage', run.processId, run.usage)];
+		case 'thinking':
+			return [bridgeEvent('process:thinking-chunk', run.processId, run.text)];
+		case 'tool':
+			// The desktop's own `process:tool-execution` payload, which `parseBatchFrame()` reads.
+			return [
+				bridgeEvent('process:tool-execution', run.processId, {
+					toolName: run.toolName,
+					...(run.state !== undefined ? { state: run.state } : {}),
+					...(run.toolCallId ? { toolCallId: run.toolCallId } : {}),
+					timestamp: run.at,
+				}),
+			];
 	}
 }
 

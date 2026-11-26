@@ -23,6 +23,7 @@ import type { LogEntry, Session, ToolType } from '../../types';
 import { updateSessionWith, updateAiTab, useSessionStore } from '../../stores/sessionStore';
 import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { createTab } from '../../utils/tabHelpers';
+import { consultTabToReplace } from '../../../shared/maestro-lib/agents/rules';
 import { generateId } from '../../utils/ids';
 import { logger } from '../../utils/logger';
 import {
@@ -34,7 +35,7 @@ import {
 import { parseSynopsis } from '../../../shared/synopsis';
 import { settleConsultHold, settleManagedQueue } from '../../services/crossAgentConsultHold';
 import { hostedTargetOf, type HostedTarget } from '../../services/hostedTurns';
-import { askMirrorConsult } from '../../services/peerMirror';
+import { askMirrorConsult, cancelMirrorConsult } from '../../services/peerMirror';
 import {
 	buildConsultHistoryEntry,
 	buildConsultTabName,
@@ -214,6 +215,34 @@ export function buildCrossAgentLogEntry(
 }
 
 /**
+ * Consult tabs a consult is running in now, as `targetSessionId -> tabId -> count`. A consult tab
+ * is never marked busy (the consult is a background process, not a turn of that tab), so this is
+ * how the consult tab cap (`consultTabToReplace`) leaves a running consult's tab alone. Held from
+ * `ensureConsultTab` until the consult's terminal chunk, or until its send fails.
+ */
+const consultTabsInUse = new Map<string, Map<string, number>>();
+
+function holdConsultTab(targetSessionId: string, tabId: string): void {
+	let tabs = consultTabsInUse.get(targetSessionId);
+	if (!tabs) {
+		tabs = new Map();
+		consultTabsInUse.set(targetSessionId, tabs);
+	}
+	tabs.set(tabId, (tabs.get(tabId) ?? 0) + 1);
+}
+
+/** Release one hold taken by `ensureConsultTab`. Safe for a tab never held. */
+export function releaseConsultTab(targetSessionId: string, tabId: string | undefined): void {
+	if (!tabId) return;
+	const tabs = consultTabsInUse.get(targetSessionId);
+	const count = tabs?.get(tabId);
+	if (!tabs || count === undefined) return;
+	if (count > 1) tabs.set(tabId, count - 1);
+	else tabs.delete(tabId);
+	if (tabs.size === 0) consultTabsInUse.delete(targetSessionId);
+}
+
+/**
  * Find-or-create the consult tab on the TARGET agent for this (source tab ->
  * target) pairing, and append the user's question to it.
  *
@@ -272,7 +301,22 @@ export function ensureConsultTab(opts: {
 		// consult must leave the target's view exactly as the user left it. Missing
 		// activeGroupId in particular would silently pop the target out of a tiled
 		// group it was displaying.
-		const created = createTab(session, {
+		// At the cap, the least recently used hidden consult tab gives up its slot (the same rule
+		// a headless host applies), and the new pairing starts on a fresh tab of its own.
+		const inUse = consultTabsInUse.get(opts.targetSessionId);
+		const replaced = consultTabToReplace(session.aiTabs, {
+			inUseTabIds: inUse ? new Set(inUse.keys()) : undefined,
+		});
+		const base = replaced
+			? {
+					...session,
+					aiTabs: session.aiTabs.filter((t) => t.id !== replaced.id),
+					unifiedTabOrder: session.unifiedTabOrder.filter(
+						(ref) => !(ref.type === 'ai' && ref.id === replaced.id)
+					),
+				}
+			: session;
+		const created = createTab(base, {
 			name: buildConsultTabName(opts.sourceAgentName),
 			logs: [questionEntry],
 			saveToHistory: false,
@@ -305,6 +349,8 @@ export function ensureConsultTab(opts: {
 	});
 
 	if (!resolvedTabId) return null;
+	// The consult now runs in this tab: the cap must not hand its slot to another pairing.
+	holdConsultTab(opts.targetSessionId, resolvedTabId);
 	return { targetTabId: resolvedTabId, resumeAgentSessionId };
 }
 
@@ -570,6 +616,7 @@ export function applyCrossAgentChunk(
 		// caller so its History shows who consulted it (and about what).
 		recordConsultHistory(tracked, chunk, spawnBackgroundSynopsis);
 		map.delete(chunk.requestId);
+		releaseConsultTab(chunk.targetSessionId, tracked.targetTabId);
 		const completion: CrossAgentCompletion = {
 			text: accumulated,
 			error: chunk.error,
@@ -663,16 +710,25 @@ function sendHostedConsult(
 			...fields,
 		});
 	};
+	// The host keeps one consult tab per asking (machine, agent, tab), as this machine keeps one per
+	// asking tab, so a follow-up from this tab continues its own thread there.
+	const asker = { agentId: opts.sourceSessionId, tabId: opts.sourceTabId };
 	hostedConsults.set(requestId, {
 		sourceSessionId: opts.sourceSessionId,
 		sourceTabId: opts.sourceTabId,
-		stop: () => finish({ canceled: true }),
+		// Stop ends the wait here at once and the run on the host, so the host records the consult
+		// as stopped, as main records a local target's.
+		stop: () => {
+			finish({ canceled: true });
+			void cancelMirrorConsult(host.peerId, host.agentId, asker);
+		},
 	});
 
 	return askMirrorConsult(host.peerId, host.agentId, {
 		question: opts.userPrompt,
 		...(transcript.length > 0 ? { transcript } : {}),
 		fromAgentName: opts.sourceAgentName,
+		asker,
 		...(opts.handoffAnswer !== undefined ? { handoffAnswer: opts.handoffAnswer } : {}),
 	}).then((reply) => {
 		if ('error' in reply) finish({ error: reply.error });
@@ -812,6 +868,8 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): Promi
 			// A rejected send never produces a chunk, so nothing else will ever
 			// settle a caller blocked on the answer - or the source turn's consult
 			// hold, which would otherwise wait on this target forever.
+			// No chunk will ever release the consult tab this send held.
+			releaseConsultTab(opts.targetSessionId, consult?.targetTabId);
 			if (opts.managedQueue) throw err; // native uncertainty owns the held queue row
 			const error = err instanceof Error ? err.message : String(err);
 			settleConsultHold({

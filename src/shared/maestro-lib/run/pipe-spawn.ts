@@ -29,7 +29,7 @@ import { isWindows } from '../../platformDetection';
 import type { QuerySource } from '../../querySource';
 import { logger } from '../host';
 import { buildChildProcessEnv } from '../launch/env';
-import { buildImagePromptPrefix } from '../launch/image-refs';
+import { planImageDelivery } from '../launch/image-delivery';
 import { buildPromptArgv, encodeStdinPrompt, type PromptDelivery } from '../launch/prompt-delivery';
 import { buildStreamJsonMessage } from '../launch/stream-json-message';
 import {
@@ -217,75 +217,55 @@ export function planPipeSpawn(
 		// No legacy image writer, prompt builder or stdin assembly may run for
 		// this turn. startTurn owns local files; the SSH script owns remote files.
 		finalArgs = [...args];
-	} else if (hasImages && prompt && capabilities.supportsStreamJsonInput) {
-		// For agents that support stream-json input (like Claude Code)
-		// Always add --input-format stream-json when sending images via stdin.
-		// This flag is required for Claude Code to parse the JSON+base64 message
-		// correctly; without it, the raw JSON is treated as plain text prompt.
-		const needsInputFormat = !args.includes('--input-format')
-			? ['--input-format', 'stream-json']
-			: [];
-		finalArgs = [...args, ...needsInputFormat];
-		// Prompt will be sent via stdin as stream-json with embedded images (not in CLI args)
-	} else if (hasImages && prompt && (imageArgs || imagePromptBuilder)) {
-		// For agents that use file-based image args (like Codex, OpenCode) or
-		// prompt-embedded image mentions (like Copilot's @path syntax)
+	} else if (
+		hasImages &&
+		prompt &&
+		(capabilities.supportsStreamJsonInput || imageArgs || imagePromptBuilder)
+	) {
+		// One rule for every spawn that carries images (`planImageDelivery`): one stream-json
+		// message on stdin for a provider that reads it (Claude Code), temp files otherwise, as
+		// image arguments (Codex, OpenCode) or named in the prompt (Copilot, a Codex resume).
 		const saveImageToTempFile = host.saveImageToTempFile;
-		if (!saveImageToTempFile) {
-			throw new Error('This provider takes images as files, and no image writer was supplied.');
-		}
-		finalArgs = [...args];
-		tempFiles = [];
-		for (let i = 0; i < images.length; i++) {
-			const tempPath = saveImageToTempFile(images[i], i);
-			if (tempPath) {
-				tempFiles.push(tempPath);
+		const delivery = planImageDelivery(
+			{
+				args,
+				prompt,
+				images,
+				capabilities,
+				imageArgs,
+				imagePromptBuilder,
+				promptArgs,
+				noPromptSeparator,
+				promptViaStdin,
+			},
+			(image, index) => {
+				if (!saveImageToTempFile) {
+					throw new Error('This provider takes images as files, and no image writer was supplied.');
+				}
+				return saveImageToTempFile(image, index);
 			}
+		);
+		if (delivery.via === 'files' && delivery.dropped > 0) {
+			// A turn that runs without one of its images answers as if it had seen them all.
+			removeTempFiles(delivery.tempFiles);
+			throw new Error(
+				'An attached image could not be written for the agent to read, so the turn was not started.'
+			);
 		}
-
-		const isResumeWithPromptEmbed =
-			capabilities.imageResumeMode === 'prompt-embed' && args.some((a) => a === 'resume');
-		const shouldEmbedImagesInPrompt = !!imagePromptBuilder || isResumeWithPromptEmbed;
-
-		if (shouldEmbedImagesInPrompt) {
-			// Some agents consume images by mentioning temp file paths inside the prompt
-			// instead of accepting a dedicated CLI image flag.
-			const imagePrefix = imagePromptBuilder
-				? imagePromptBuilder(tempFiles)
-				: buildImagePromptPrefix(tempFiles);
-			effectivePrompt = imagePrefix + prompt;
-			if (!promptViaStdin) {
-				finalArgs = [
-					...finalArgs,
-					...buildPromptArgv({ promptArgs, noPromptSeparator }, effectivePrompt),
-				];
-				promptAddedToArgs = true;
-			}
-			logger.debug('[ProcessManager] Embedded image paths in prompt', LOG_CONTEXT, {
+		if (delivery.via === 'files') {
+			finalArgs = delivery.args;
+			tempFiles = delivery.tempFiles;
+			effectivePrompt = delivery.prompt;
+			promptAddedToArgs = delivery.promptInArgs;
+			logger.debug('[ProcessManager] Using file-based images', LOG_CONTEXT, {
 				sessionId,
 				imageCount: images.length,
-				tempFiles: tempFiles,
-				embedMode: imagePromptBuilder ? 'prompt-builder' : 'resume-prompt-embed',
+				tempFiles,
 				promptViaStdin,
 			});
 		} else {
-			// Initial spawn: use -i flag as before
-			for (const tempPath of tempFiles) {
-				if (!imageArgs) {
-					continue;
-				}
-				finalArgs = [...finalArgs, ...imageArgs(tempPath)];
-			}
-			if (!promptViaStdin) {
-				finalArgs = [...finalArgs, ...buildPromptArgv({ promptArgs, noPromptSeparator }, prompt)];
-				promptAddedToArgs = true;
-			}
-			logger.debug('[ProcessManager] Using file-based image args', LOG_CONTEXT, {
-				sessionId,
-				imageCount: images.length,
-				tempFiles: tempFiles,
-				promptViaStdin,
-			});
+			// The stream-json message itself is written to stdin below, once the mode is known.
+			finalArgs = delivery.via === 'stream-json' ? delivery.args : [...args];
 		}
 	} else if (prompt && !promptViaStdin && !promptAddedToArgs) {
 		// Regular batch mode - prompt as CLI arg

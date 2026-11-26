@@ -238,15 +238,21 @@ describe('ChildProcessSpawner', () => {
 			const actual = await vi.importActual<
 				typeof import('../../../../main/process-manager/utils/imageUtils')
 			>('../../../../main/process-manager/utils/imageUtils');
+			// The file is created exclusively (`wx`, owner-only), then written through its descriptor.
+			let nextFd = 40;
+			const open = vi.spyOn(fs, 'openSync').mockImplementation(() => nextFd++);
 			const write = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+			vi.spyOn(fs, 'closeSync').mockImplementation(() => undefined);
 			vi.spyOn(Date, 'now').mockReturnValue(123456);
 			try {
 				const first = actual.saveImageToTempFile('data:image/png;base64,YQ==', 0);
 				const second = actual.saveImageToTempFile('data:image/png;base64,Yg==', 0);
 				expect(first).not.toBeNull();
 				expect(second).not.toBe(first);
-				expect(write).toHaveBeenCalledWith(first, Buffer.from('a'), { mode: 0o600, flag: 'wx' });
-				expect(write).toHaveBeenCalledWith(second, Buffer.from('b'), { mode: 0o600, flag: 'wx' });
+				expect(open).toHaveBeenCalledWith(first, 'wx', 0o600);
+				expect(open).toHaveBeenCalledWith(second, 'wx', 0o600);
+				expect(write).toHaveBeenCalledWith(40, Buffer.from('a'));
+				expect(write).toHaveBeenCalledWith(41, Buffer.from('b'));
 			} finally {
 				vi.restoreAllMocks();
 			}

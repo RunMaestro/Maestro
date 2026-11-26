@@ -11,10 +11,21 @@
  * under two seconds. `--no-session-persistence` keeps it from leaving a
  * transcript behind, which would otherwise show up as a stray session in the
  * folder's session list on every probe.
+ *
+ * The probe runs where the agent runs. For an SSH agent (and a hosted one,
+ * which keeps its SSH remote) that is the remote, over SSH, in the agent's
+ * folder there: the folder does not exist on this machine, and this machine's
+ * commands are not the remote's. A remote that cannot be reached gives no
+ * list; the probe never falls back to running here.
  */
 
-import { execFileNoThrow } from '../utils/execFile';
+import type { SshRemoteConfig } from '../../shared/types';
+import { execFileNoThrow, type ExecResult } from '../utils/execFile';
+import { agentEnvOverRemote, buildSshCommand, execSshCommand } from '../utils/ssh-command-builder';
+import { stripAnsi } from '../utils/stripAnsi';
 import { logger } from '../utils/logger';
+import { createTtlPromiseCache } from '../utils/ttl-promise-cache';
+import { canonicalJson } from '../../shared/canonicalJson';
 
 const LOG_CONTEXT = '[ClaudeSlashCommands]';
 
@@ -30,6 +41,12 @@ const NO_PERSISTENCE_FLAG = '--no-session-persistence';
 // Commands change when the user adds a skill, plugin, or MCP server, which is
 // rare; one probe per folder in this window is plenty.
 const CACHE_TTL_MS = 30 * 60 * 1000;
+/**
+ * A failed probe is kept this long: a remote that cannot be reached would
+ * otherwise start a new probe (up to the probe's timeout) on every composer
+ * open. Short, so a host that comes back is asked again soon.
+ */
+export const CLAUDE_SLASH_PROBE_FAILURE_TTL_MS = 30 * 1000;
 
 /** The `slash_commands` of the first `init` event in stream-json output, or null. */
 export function parseInitSlashCommands(stdout: string): string[] | null {
@@ -57,14 +74,60 @@ export async function probeClaudeSlashCommands(
 	cwd: string,
 	env?: NodeJS.ProcessEnv
 ): Promise<string[] | null> {
-	const run = (args: string[]) =>
+	return runProbe((args) =>
 		env
 			? execFileNoThrow(commandPath, [...args, '--', '/help'], cwd, { env })
-			: execFileNoThrow(commandPath, [...args, '--', '/help'], cwd);
+			: execFileNoThrow(commandPath, [...args, '--', '/help'], cwd)
+	);
+}
 
+/** Bound on one remote probe: an SSH round trip plus claude's start. */
+const REMOTE_PROBE_TIMEOUT_MS = 30_000;
+
+/**
+ * {@link probeClaudeSlashCommands} on an SSH remote: `binary` (the agent's
+ * custom path there, or the provider's binary name) runs in `cwd` on the
+ * remote, with the remote's environment and then `env`, the agent's own vars.
+ */
+export async function probeClaudeSlashCommandsRemote(
+	sshRemote: SshRemoteConfig,
+	binary: string,
+	cwd: string,
+	env: Record<string, string> = {}
+): Promise<string[] | null> {
+	// The agent's own vars (its `CLAUDE_CONFIG_DIR` account) over the remote's;
+	// a blank agent value cancels the remote's, then is dropped.
+	const target = agentEnvOverRemote(sshRemote, env);
+	return runProbe(async (args) => {
+		const sshCommand = await buildSshCommand(target.config, {
+			command: binary,
+			args: [...args, '--', '/help'],
+			cwd,
+			env: target.env,
+		});
+		const result = await execSshCommand(sshRemote, sshCommand, {
+			timeout: REMOTE_PROBE_TIMEOUT_MS,
+		});
+		// A forced TTY (`--print` over SSH) can paint escape sequences around the JSON.
+		return { ...result, stdout: stripAnsi(result.stdout ?? '') };
+	});
+}
+
+/**
+ * Whether claude refused to start because it does not know
+ * {@link NO_PERSISTENCE_FLAG}. Over SSH the forced TTY carries stderr on stdout,
+ * so both streams are read.
+ */
+function rejectedPersistenceFlag(result: ExecResult): boolean {
+	if (result.exitCode === 0) return false;
+	const refusal = /unknown option\W+--no-session-persistence/i;
+	return refusal.test(result.stderr ?? '') || refusal.test(result.stdout ?? '');
+}
+
+async function runProbe(run: (args: string[]) => Promise<ExecResult>): Promise<string[] | null> {
 	let result = await run([...PROBE_ARGS, NO_PERSISTENCE_FLAG]);
 	// A claude too old to know the flag refuses to start; ask again without it.
-	if (result.exitCode !== 0 && /unknown option/i.test(result.stderr ?? '')) {
+	if (rejectedPersistenceFlag(result)) {
 		result = await run(PROBE_ARGS);
 	}
 	if (result.exitCode !== 0 && !result.stdout) {
@@ -80,18 +143,16 @@ export async function probeClaudeSlashCommands(
 	return commands;
 }
 
-interface CacheEntry {
-	at: number;
-	commands: Promise<string[] | null>;
-}
-
-const cache = new Map<string, CacheEntry>();
+/** One probe per key in the window; a failed probe (null) is kept only briefly. */
+const cache = createTtlPromiseCache<string[] | null>(CACHE_TTL_MS, (found) => found !== null, {
+	failureTtlMs: CLAUDE_SLASH_PROBE_FAILURE_TTL_MS,
+});
 
 /**
  * {@link probeClaudeSlashCommands}, at most once per binary, folder, and config
  * dir in {@link CACHE_TTL_MS}. Concurrent callers share one probe, so several
- * tabs starting at once spawn one claude, not several. A failed probe is not
- * cached, so the next turn tries again.
+ * tabs starting at once spawn one claude, not several. A failed probe is kept
+ * for {@link CLAUDE_SLASH_PROBE_FAILURE_TTL_MS}, then tried again.
  */
 export function probeClaudeSlashCommandsCached(
 	commandPath: string,
@@ -99,15 +160,26 @@ export function probeClaudeSlashCommandsCached(
 	env: NodeJS.ProcessEnv
 ): Promise<string[] | null> {
 	const key = [commandPath, cwd, env.CLAUDE_CONFIG_DIR ?? ''].join('\0');
-	const now = Date.now();
-	const hit = cache.get(key);
-	if (hit && now - hit.at < CACHE_TTL_MS) return hit.commands;
-	const commands = probeClaudeSlashCommands(commandPath, cwd, env).then((found) => {
-		if (!found) cache.delete(key);
-		return found;
-	});
-	cache.set(key, { at: now, commands });
-	return commands;
+	return cache.get(key, () => probeClaudeSlashCommands(commandPath, cwd, env));
+}
+
+/**
+ * {@link probeClaudeSlashCommandsRemote}, at most once per remote, binary,
+ * folder, and agent env in {@link CACHE_TTL_MS}, so opening an SSH agent does not start an SSH
+ * round trip each time. Keyed by the remote's id: two remotes never share a
+ * list. A failed probe (an unreachable remote) is kept for
+ * {@link CLAUDE_SLASH_PROBE_FAILURE_TTL_MS}, so composer opens do not each start an SSH probe.
+ */
+export function probeClaudeSlashCommandsRemoteCached(
+	sshRemote: SshRemoteConfig,
+	binary: string,
+	cwd: string,
+	env: Record<string, string> = {}
+): Promise<string[] | null> {
+	// The account is part of the key: two agents on one remote with different
+	// config dirs see their own commands.
+	const key = ['ssh', sshRemote.id, binary, cwd, canonicalJson(env)].join('\0');
+	return cache.get(key, () => probeClaudeSlashCommandsRemote(sshRemote, binary, cwd, env));
 }
 
 /** For tests: forget every cached probe. */

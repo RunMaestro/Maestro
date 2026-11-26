@@ -21,7 +21,7 @@ import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
  * an IPC listener) run outside React.
  */
 
-import type { AITab, QueuedItem, QueuedItemEditPatch, Session } from '../types';
+import type { AITab, ModalSaveOutcome, QueuedItem, QueuedItemEditPatch, Session } from '../types';
 import { selectSessionById, useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { hostedTargetOf } from './hostedTurns';
 import { notifyToast } from '../stores/notificationStore';
@@ -29,6 +29,8 @@ import { handQueuedItemToHost } from './hostedQueuedTurn';
 import {
 	type HostMergeAnswer,
 	type HostQueueAnswer,
+	HOST_NO_ANSWER_REASON,
+	actOnMirroredAgentQuietly,
 	editMirrorQueuedItem,
 	mergeMirrorQueuedItem,
 	moveMirrorQueuedItem,
@@ -406,11 +408,7 @@ async function settledHostAnswer<T extends HostQueueAnswer | HostMergeAnswer>(
 	answer: Promise<T>
 ): Promise<Exclude<T, null>> {
 	const result = await answer;
-	if (result === null) {
-		throw new Error(
-			"The agent's host did not answer. It may be offline: check the agent in Maestro."
-		);
-	}
+	if (result === null) throw new Error(HOST_NO_ANSWER_REASON);
 	return result as Exclude<T, null>;
 }
 
@@ -655,13 +653,51 @@ function editOnHost(
 	itemId: string,
 	edit: QueuedTurnEdit
 ): Promise<HostQueueAnswer> {
-	// The mirror holds the host item's images, so the edit's list is the whole list, as it is
-	// for a local item: an empty one clears them, and an absent one keeps the host's own.
-	return editMirrorQueuedItem(hosted.peerId, hosted.agentId, itemId, {
+	return editMirrorQueuedItem(hosted.peerId, hosted.agentId, itemId, hostQueuedEdit(edit));
+}
+
+/**
+ * An edit as a host takes it. The mirror holds the host item's images, so the edit's list is the
+ * whole list, as it is for a local item: an empty one clears them, and an absent one keeps the
+ * host's own.
+ */
+function hostQueuedEdit(edit: QueuedTurnEdit): QueuedTurnEdit {
+	return {
 		text: edit.text,
 		...(edit.turnSettings ? { turnSettings: edit.turnSettings } : {}),
 		...(edit.images ? { images: edit.images } : {}),
+	};
+}
+
+/** Why an edit did not land: the message left the queue (it started, or was removed). */
+export const QUEUED_EDIT_GONE_REASON =
+	'It no longer waits in the queue: it may have started already.';
+
+/**
+ * `editQueuedItem` for the Edit Queued Message modal (the queued card's Edit and the Execution
+ * Queue's Edit): it waits for a hosted agent's host and answers with the reason a save did not
+ * land, instead of a toast, so the modal can stay open with what the person typed. A local item
+ * that left the queue gets the same reason a host gives.
+ */
+export async function saveQueuedItemEdit(
+	sessionId: string,
+	itemId: string,
+	edit: QueuedTurnEdit
+): Promise<ModalSaveOutcome> {
+	const hosted = hostQueuedItemTarget(sessionId, itemId);
+	if (!hosted) {
+		return editQueuedItem(sessionId, itemId, edit)
+			? { saved: true }
+			: { saved: false, reason: QUEUED_EDIT_GONE_REASON };
+	}
+	const answer = await actOnMirroredAgentQuietly(hosted.peerId, hosted.agentId, {
+		kind: 'edit-queued',
+		itemId,
+		edit: hostQueuedEdit(edit),
 	});
+	if ('error' in answer) return { saved: false, reason: answer.error };
+	if (answer.result.kind !== 'edit-queued') return { saved: false, reason: HOST_NO_ANSWER_REASON };
+	return answer.result.found ? { saved: true } : { saved: false, reason: QUEUED_EDIT_GONE_REASON };
 }
 
 /**

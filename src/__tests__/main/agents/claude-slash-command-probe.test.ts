@@ -11,16 +11,34 @@ vi.mock('../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
 
+vi.mock('../../../main/utils/ssh-command-builder', async (importOriginal) => ({
+	// The real env layering; only the command builder is faked.
+	agentEnvOverRemote: (
+		await importOriginal<typeof import('../../../main/utils/ssh-command-builder')>()
+	).agentEnvOverRemote,
+	buildSshCommand: vi.fn(
+		async (_remote: unknown, options: { command: string; args: string[] }) => ({
+			command: 'ssh',
+			args: ['box', options.command, ...options.args],
+		})
+	),
+	execSshCommand: vi.fn(),
+}));
+
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 import { execFileNoThrow } from '../../../main/utils/execFile';
+import { buildSshCommand, execSshCommand } from '../../../main/utils/ssh-command-builder';
+import type { SshRemoteConfig } from '../../../shared/types';
 import {
+	CLAUDE_SLASH_PROBE_FAILURE_TTL_MS,
 	clearClaudeSlashCommandCache,
 	parseInitSlashCommands,
 	probeClaudeSlashCommands,
 	probeClaudeSlashCommandsCached,
+	probeClaudeSlashCommandsRemoteCached,
 } from '../../../main/agents/claude-slash-command-probe';
 
 const initLine = (commands: string[]) =>
@@ -28,6 +46,8 @@ const initLine = (commands: string[]) =>
 
 beforeEach(() => {
 	vi.mocked(execFileNoThrow).mockReset();
+	vi.mocked(execSshCommand).mockReset();
+	vi.mocked(buildSshCommand).mockClear();
 	clearClaudeSlashCommandCache();
 });
 
@@ -126,15 +146,175 @@ describe('probeClaudeSlashCommandsCached', () => {
 		expect(execFileNoThrow).toHaveBeenCalledTimes(3);
 	});
 
-	it('does not cache a failed probe', async () => {
-		vi.mocked(execFileNoThrow)
-			.mockResolvedValueOnce({ stdout: '', stderr: 'boom', exitCode: 1 })
+	it('keeps a failed probe briefly, then tries again', async () => {
+		vi.useFakeTimers();
+		try {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ stdout: '', stderr: 'boom', exitCode: 1 })
+				.mockResolvedValueOnce({ stdout: initLine(['/help']), stderr: '', exitCode: 0 });
+
+			const env = {};
+			await expect(probeClaudeSlashCommandsCached('/bin/claude', '/proj', env)).resolves.toBeNull();
+			await expect(probeClaudeSlashCommandsCached('/bin/claude', '/proj', env)).resolves.toBeNull();
+			expect(execFileNoThrow).toHaveBeenCalledTimes(1);
+
+			vi.advanceTimersByTime(CLAUDE_SLASH_PROBE_FAILURE_TTL_MS);
+			await expect(probeClaudeSlashCommandsCached('/bin/claude', '/proj', env)).resolves.toEqual([
+				'/help',
+			]);
+			expect(execFileNoThrow).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
+describe('probeClaudeSlashCommandsRemoteCached', () => {
+	const remote = (id: string) =>
+		({
+			id,
+			name: id,
+			host: `${id}.example.com`,
+			remoteEnv: { FOO: '1' },
+		}) as unknown as SshRemoteConfig;
+
+	it('runs the probe on the remote, in the folder there, never on this machine', async () => {
+		vi.mocked(execSshCommand).mockResolvedValue({
+			stdout: '\u001b[?25l' + initLine(['/help', '/deploy']).replace('\n', '\r\n'),
+			stderr: '',
+			exitCode: 0,
+		});
+
+		await expect(
+			probeClaudeSlashCommandsRemoteCached(remote('box'), 'claude', '/srv/project')
+		).resolves.toEqual(['/help', '/deploy']);
+		expect(buildSshCommand).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'box' }),
+			expect.objectContaining({
+				command: 'claude',
+				cwd: '/srv/project',
+				env: { FOO: '1' },
+				args: expect.arrayContaining(['--print', '--no-session-persistence', '--', '/help']),
+			})
+		);
+		expect(execFileNoThrow).not.toHaveBeenCalled();
+	});
+
+	it('does not start a new SSH probe on every composer open while the remote cannot be reached', async () => {
+		vi.useFakeTimers();
+		try {
+			vi.mocked(execSshCommand).mockResolvedValue({
+				stdout: '',
+				stderr: 'ssh: connect to host box.example.com port 22: Operation timed out',
+				exitCode: 255,
+			});
+			for (let open = 0; open < 5; open++) {
+				await expect(
+					probeClaudeSlashCommandsRemoteCached(remote('box'), 'claude', '/srv/p')
+				).resolves.toBeNull();
+			}
+			expect(execSshCommand).toHaveBeenCalledTimes(1);
+
+			vi.advanceTimersByTime(CLAUDE_SLASH_PROBE_FAILURE_TTL_MS);
+			await probeClaudeSlashCommandsRemoteCached(remote('box'), 'claude', '/srv/p');
+			expect(execSshCommand).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('probes each remote once, and never shares one list between remotes', async () => {
+		vi.mocked(execSshCommand).mockImplementation(async (config) => ({
+			stdout: initLine([`/${(config as SshRemoteConfig).id}-only`]),
+			stderr: '',
+			exitCode: 0,
+		}));
+
+		const a = await probeClaudeSlashCommandsRemoteCached(remote('a'), 'claude', '/srv/p');
+		const again = await probeClaudeSlashCommandsRemoteCached(remote('a'), 'claude', '/srv/p');
+		const b = await probeClaudeSlashCommandsRemoteCached(remote('b'), 'claude', '/srv/p');
+		expect(a).toEqual(['/a-only']);
+		expect(again).toEqual(['/a-only']);
+		expect(b).toEqual(['/b-only']);
+		expect(execSshCommand).toHaveBeenCalledTimes(2);
+	});
+
+	it("probes with the agent's own account, and keeps one list per account", async () => {
+		vi.mocked(execSshCommand).mockImplementation(async (_config, command) => ({
+			stdout: initLine([`/${(command as { args: string[] }).args.length}`]),
+			stderr: '',
+			exitCode: 0,
+		}));
+
+		await probeClaudeSlashCommandsRemoteCached(remote('box'), 'claude', '/srv/p', {
+			CLAUDE_CONFIG_DIR: '~/.claude-work',
+		});
+		await probeClaudeSlashCommandsRemoteCached(remote('box'), 'claude', '/srv/p', {
+			CLAUDE_CONFIG_DIR: '~/.claude-home',
+		});
+		expect(buildSshCommand).toHaveBeenNthCalledWith(
+			1,
+			expect.anything(),
+			expect.objectContaining({ env: { FOO: '1', CLAUDE_CONFIG_DIR: '~/.claude-work' } })
+		);
+		// Two accounts on one remote: two probes, never a shared list.
+		expect(execSshCommand).toHaveBeenCalledTimes(2);
+	});
+
+	it("lets a blank agent value cancel the remote's own, and never exports it", async () => {
+		vi.mocked(execSshCommand).mockResolvedValue({
+			stdout: initLine(['/help']),
+			stderr: '',
+			exitCode: 0,
+		});
+		const withAccount = {
+			...remote('acct'),
+			remoteEnv: { FOO: '1', CLAUDE_CONFIG_DIR: '~/.claude-work' },
+		} as unknown as SshRemoteConfig;
+
+		await probeClaudeSlashCommandsRemoteCached(withAccount, 'claude', '/srv/p', {
+			CLAUDE_CONFIG_DIR: '',
+		});
+		// The remote's own layer is merged here, so the builder cannot put it back.
+		expect(buildSshCommand).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'acct', remoteEnv: {} }),
+			expect.objectContaining({ env: { FOO: '1' } })
+		);
+	});
+
+	it('asks again without the flag when the refusal arrives on the TTY (stdout)', async () => {
+		vi.mocked(execSshCommand)
+			.mockResolvedValueOnce({
+				stdout: "error: unknown option '--no-session-persistence'\r\n",
+				stderr: '',
+				exitCode: 1,
+			})
 			.mockResolvedValueOnce({ stdout: initLine(['/help']), stderr: '', exitCode: 0 });
 
-		const env = {};
-		await expect(probeClaudeSlashCommandsCached('/bin/claude', '/proj', env)).resolves.toBeNull();
-		await expect(probeClaudeSlashCommandsCached('/bin/claude', '/proj', env)).resolves.toEqual([
-			'/help',
-		]);
+		await expect(
+			probeClaudeSlashCommandsRemoteCached(remote('old'), 'claude', '/srv/p')
+		).resolves.toEqual(['/help']);
+		const second = vi.mocked(buildSshCommand).mock.calls[1][1] as { args: string[] };
+		expect(second.args).not.toContain('--no-session-persistence');
+	});
+
+	it('does not retry for any other unknown option', async () => {
+		vi.mocked(execSshCommand).mockResolvedValue({
+			stdout: "error: unknown option '--output-format'",
+			stderr: '',
+			exitCode: 1,
+		});
+
+		await probeClaudeSlashCommandsRemoteCached(remote('other'), 'claude', '/srv/p');
+		expect(execSshCommand).toHaveBeenCalledTimes(1);
+	});
+
+	it('gives no list for an unreachable remote, and never falls back to this machine', async () => {
+		vi.mocked(execSshCommand).mockResolvedValue({ stdout: '', stderr: 'timed out', exitCode: 255 });
+
+		await expect(
+			probeClaudeSlashCommandsRemoteCached(remote('down'), 'claude', '/srv/p')
+		).resolves.toBeNull();
+		expect(execFileNoThrow).not.toHaveBeenCalled();
 	});
 });

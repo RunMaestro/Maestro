@@ -489,6 +489,13 @@ export interface QueuedItemEditPatch {
 	turnSettings: QueuedTurnSettings;
 }
 
+/**
+ * What a modal's save did, for a modal that sends what the person typed somewhere that can refuse
+ * it (a hosted agent's host): Edit Queued Message (`saveQueuedItemEdit()`) and Rename Tab. The
+ * modal closes only on `saved`; otherwise it keeps the person's input and shows `reason` in it.
+ */
+export type ModalSaveOutcome = { saved: true } | { saved: false; reason: string };
+
 /** One agent a held turn is waiting to hear from. */
 export interface ConsultHoldTarget {
 	targetSessionId: string;
@@ -520,6 +527,21 @@ export interface MentionHandoff {
 	targets: ConsultHoldTarget[];
 	/** The user's message, verbatim, relayed alongside the answer. */
 	message: string;
+	/**
+	 * A hosted agent's turn runs on its host, so no local exit releases the hand-off: the host's
+	 * tab state does (`followHostedHandoffs()`). `sent` once the host took the turn (`queueItemId`
+	 * when it waits in the host's queue; `afterEntryId` the tab's last entry then), `running` once
+	 * the host tab reads busy with it.
+	 */
+	hostTurn?: {
+		stage: 'sent' | 'running';
+		queueItemId?: string;
+		afterEntryId?: string;
+		/** The host's queue frame showed `queueItemId` waiting. */
+		seenQueued?: boolean;
+		/** The start time of the turn it was queued behind (the tab's `thinkingStartTime`). */
+		turnStartedAt?: number;
+	};
 }
 
 export interface QueuedItem {
@@ -959,6 +981,13 @@ export interface AITab {
 	 * to its original position rather than appending it to the end of the strip.
 	 */
 	hidden?: boolean;
+	/**
+	 * On a hosted agent's tab: the `liftedTo.at` of the hosting during which the host reported
+	 * this tab (`projectHostedSession()`). A tab the host reported and then stopped listing was
+	 * closed on the host, so the record drops it too; a tab without it (or from an earlier
+	 * hosting) is a conversation kept from before the move, and stays.
+	 */
+	hostSeenAt?: number;
 	/**
 	 * Set on a tab Quick Chat created (the hotkey-summoned floating chat window,
 	 * see src/shared/quickChat.ts). An ephemeral Quick Chat tab is also `hidden`
@@ -1481,6 +1510,8 @@ export interface Session {
 		fileCount: number;
 		folderCount: number;
 		totalSize: number;
+		/** The size walk stopped counting files at its cap: the footer shows "N+". */
+		fileCountCapped?: boolean;
 	};
 	/** True when the last file tree load hit the entry cap and stopped early. */
 	fileTreeTruncated?: boolean;

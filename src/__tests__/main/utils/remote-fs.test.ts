@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'child_process';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -17,6 +18,8 @@ import {
 	listFilesWithStatsRemote,
 	directorySizeRemote,
 	writeFileRemote,
+	replaceFileRemoteIfUnchanged,
+	sha256FileRemote,
 	existsRemote,
 	mkdirRemote,
 	compressFolderRemote,
@@ -2617,6 +2620,359 @@ finally:
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Failed to parse du output');
+		});
+	});
+
+	describe('sha256FileRemote', () => {
+		const run = (command: string) => {
+			const out = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+			return { stdout: out.stdout, stderr: out.stderr, exitCode: out.status ?? 1 };
+		};
+		const deps = (): RemoteFsDeps => ({
+			buildSshArgs: vi.fn().mockReturnValue(['host']),
+			execSsh: vi.fn(async (_ssh: string, args: string[]) => run(args.at(-1)!)),
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'hashes the file on the remote, sending nothing back but the digest, and reads a missing file as null',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sha-'));
+				try {
+					const file = path.join(dir, "it's here.md");
+					fs.writeFileSync(file, 'fetched');
+					const remote = deps();
+					const result = await sha256FileRemote(file, baseConfig, remote);
+					expect(result).toEqual({
+						success: true,
+						data: createHash('sha256').update('fetched').digest('hex'),
+					});
+					// No payload on stdin, and none of the file's bytes on stdout.
+					expect((remote.execSsh as any).mock.calls[0][2]).toBeUndefined();
+					await expect(
+						sha256FileRemote(path.join(dir, 'gone.md'), baseConfig, deps())
+					).resolves.toEqual({ success: true, data: null });
+				} finally {
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'hashes a file whose name holds a backslash, and fails on a file it cannot read',
+			async () => {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sha-'));
+				try {
+					const file = path.join(dir, 'back\\slash.md');
+					fs.writeFileSync(file, 'fetched');
+					await expect(sha256FileRemote(file, baseConfig, deps())).resolves.toEqual({
+						success: true,
+						data: createHash('sha256').update('fetched').digest('hex'),
+					});
+					// Root reads every file, so the unreadable case needs a normal user.
+					if (process.getuid?.() === 0) return;
+					fs.chmodSync(file, 0o000);
+					const unreadable = await sha256FileRemote(file, baseConfig, deps());
+					expect(unreadable.success).toBe(false);
+					expect(unreadable.error).toContain('Permission denied');
+				} finally {
+					fs.rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it('says so when the remote has no hash tool', async () => {
+			const result = await sha256FileRemote(
+				'/srv/a.md',
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 5 })
+			);
+			expect(result).toEqual({
+				success: false,
+				error: 'The remote host has no sha256sum or shasum to check /srv/a.md',
+			});
+		});
+	});
+
+	describe('replaceFileRemoteIfUnchanged', () => {
+		const sha = (text: string) => createHash('sha256').update(Buffer.from(text)).digest('hex');
+
+		/** Deps that run the generated command with this machine's sh, as the remote would. */
+		function runLocally(
+			env?: NodeJS.ProcessEnv,
+			arrived: (input: string) => string = (input) => input
+		): RemoteFsDeps {
+			return {
+				buildSshArgs: vi.fn().mockReturnValue(['host']),
+				execSsh: vi.fn(async (_ssh: string, args: string[], input?: string) => {
+					const out = spawnSync('sh', ['-c', args.at(-1)!], {
+						input: input === undefined ? undefined : arrived(input),
+						encoding: 'utf8',
+						env,
+					});
+					return { stdout: out.stdout, stderr: out.stderr, exitCode: out.status ?? 1 };
+				}),
+			};
+		}
+
+		let dir: string;
+		beforeEach(() => {
+			dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-replace-'));
+		});
+		afterEach(() => {
+			fs.rmSync(dir, { recursive: true, force: true });
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'writes over the file only while it holds the expected bytes',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(file, 0o640);
+
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(result).toEqual({ success: true });
+				expect(fs.readFileSync(file, 'utf8')).toBe('edited');
+				// Written into the file, so its mode is the user's, not a temp file's.
+				expect(fs.statSync(file).mode & 0o777).toBe(0o640);
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'leaves a file that changed alone and says so',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'someone else');
+
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(result).toMatchObject({ success: false, changed: true });
+				expect(fs.readFileSync(file, 'utf8')).toBe('someone else');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'reads a file that was deleted as changed, and a retried write that landed as written',
+			async () => {
+				const gone = await replaceFileRemoteIfUnchanged(
+					path.join(dir, 'gone.md'),
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(gone).toMatchObject({ success: false, changed: true });
+				expect(fs.existsSync(path.join(dir, 'gone.md'))).toBe(false);
+
+				const file = path.join(dir, 'landed.md');
+				fs.writeFileSync(file, 'edited');
+				const again = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(again).toEqual({ success: true });
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'finishes the copy into the file when the connection hangs up during it',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				// A `cat` that hangs up the script and itself, as a dropped SSH session
+				// does, after the target was already opened (and truncated) for it.
+				const bin = path.join(dir, 'bin');
+				fs.mkdirSync(bin);
+				const realCat = spawnSync('sh', ['-c', 'command -v cat'], {
+					encoding: 'utf8',
+				}).stdout.trim();
+				fs.writeFileSync(
+					path.join(bin, 'cat'),
+					`#!/bin/sh\nkill -HUP $PPID\nkill -HUP $$\nexec ${realCat} "$@"\n`,
+					{ mode: 0o755 }
+				);
+
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited after the hang-up'),
+					sha('fetched'),
+					baseConfig,
+					runLocally({ ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` })
+				);
+				expect(fs.readFileSync(file, 'utf8')).toBe('edited after the hang-up');
+				expect(result).toEqual({ success: true });
+			}
+		);
+
+		it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+			'reads a target it cannot read as a failure, never as a change by someone else',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(file, 0o200);
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally()
+				);
+				expect(result.success).toBe(false);
+				expect(result.changed).toBeUndefined();
+				expect(result.error).toContain('Permission denied');
+			}
+		);
+
+		/** A PATH with `tool` replaced by `body` (a sh script; `$REAL` is the real one). */
+		function pathWithShim(tool: string, body: string): NodeJS.ProcessEnv {
+			const bin = path.join(dir, 'bin');
+			fs.mkdirSync(bin, { recursive: true });
+			const real = spawnSync('sh', ['-c', `command -v ${tool}`], {
+				encoding: 'utf8',
+			}).stdout.trim();
+			fs.writeFileSync(path.join(bin, tool), `#!/bin/sh\nREAL=${real}\n${body}\n`, {
+				mode: 0o755,
+			});
+			return { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}` };
+		}
+
+		it.skipIf(process.platform === 'win32')(
+			'refuses an upload cut short, even at a base64 boundary, and leaves the file alone',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited and longer'),
+					sha('fetched'),
+					baseConfig,
+					runLocally(undefined, (input) => input.slice(0, 8))
+				);
+				expect(result).toMatchObject({ success: false });
+				expect(result.changed).toBeUndefined();
+				expect(result.error).toContain('The upload did not arrive whole');
+				expect(fs.readFileSync(file, 'utf8')).toBe('fetched');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			'puts the file back as it was when the copy into it fails midway',
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				// The copy into the target writes a prefix and fails (a full disk); the
+				// copy that puts the earlier bytes back works.
+				const env = pathWithShim('cat', 'head -c 3 "$1"\nexit 1');
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally(env)
+				);
+				expect(result.success).toBe(false);
+				expect(result.changed).toBeUndefined();
+				expect(result.error).toContain('it was left as it was');
+				expect(fs.readFileSync(file, 'utf8')).toBe('fetched');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32')(
+			"keeps its backup of the file private, whatever the file's own mode",
+			async () => {
+				const file = path.join(dir, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(file, 0o644);
+				// Note the mode of each copy's destination before it is written.
+				const log = path.join(dir, 'modes.log');
+				const env = pathWithShim(
+					'cp',
+					`ls -l "$2" | cut -c1-10 >> ${JSON.stringify(log)}\nexec "$REAL" "$@"`
+				);
+				const result = await replaceFileRemoteIfUnchanged(
+					file,
+					Buffer.from('edited'),
+					sha('fetched'),
+					baseConfig,
+					runLocally(env)
+				);
+				expect(result).toEqual({ success: true });
+				expect(fs.readFileSync(log, 'utf8').split('\n')[0]).toBe('-rw-------');
+			}
+		);
+
+		it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+			'reads a file in a folder it cannot search as a failure, never as deleted',
+			async () => {
+				const sub = path.join(dir, 'locked');
+				fs.mkdirSync(sub);
+				const file = path.join(sub, 'notes.md');
+				fs.writeFileSync(file, 'fetched');
+				fs.chmodSync(sub, 0o600);
+				try {
+					const hashed = await sha256FileRemote(file, baseConfig, runLocally());
+					expect(hashed.success).toBe(false);
+					expect(hashed.error).toContain('Permission denied');
+					const written = await replaceFileRemoteIfUnchanged(
+						file,
+						Buffer.from('edited'),
+						sha('fetched'),
+						baseConfig,
+						runLocally()
+					);
+					expect(written.success).toBe(false);
+					expect(written.changed).toBeUndefined();
+				} finally {
+					fs.chmodSync(sub, 0o700);
+				}
+				expect(fs.readFileSync(file, 'utf8')).toBe('fetched');
+			}
+		);
+
+		it('never runs the write twice after a dropped connection', async () => {
+			const deps = createMockDeps({
+				stdout: '',
+				stderr: 'client_loop: send disconnect: Broken pipe',
+				exitCode: 255,
+			});
+			const result = await replaceFileRemoteIfUnchanged(
+				'/srv/a.md',
+				Buffer.from('edited'),
+				sha('fetched'),
+				baseConfig,
+				deps
+			);
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			expect(result.success).toBe(false);
+			expect(result.changed).toBeUndefined();
+		});
+
+		it('streams the bytes on stdin and refuses a malformed digest', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+			await replaceFileRemoteIfUnchanged(
+				'/srv/a.md',
+				Buffer.from('edited'),
+				sha('x'),
+				baseConfig,
+				deps
+			);
+			expect((deps.execSsh as any).mock.calls[0][2]).toBe(Buffer.from('edited').toString('base64'));
+			await expect(
+				replaceFileRemoteIfUnchanged('/srv/a.md', Buffer.from(''), 'nope', baseConfig, deps)
+			).rejects.toThrow(RangeError);
 		});
 	});
 

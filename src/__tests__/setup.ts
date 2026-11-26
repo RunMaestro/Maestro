@@ -376,6 +376,10 @@ const mockMaestro = {
 		// path. Test fixtures set `.path` on their fake File objects.
 		getPathForFile: vi.fn((file?: { path?: string }) => file?.path ?? ''),
 		writeFile: vi.fn().mockResolvedValue({ success: true }),
+		// Main watches a fetched remote copy and writes saved changes back.
+		watchRemoteCopy: vi.fn((remotePath: string) =>
+			Promise.resolve({ path: remotePath, savesBack: true })
+		),
 		writeImageFile: vi.fn().mockResolvedValue({ success: true }),
 		mkdir: vi.fn().mockResolvedValue({ success: true }),
 		stat: vi.fn().mockResolvedValue({
@@ -721,7 +725,7 @@ const mockMaestro = {
 			},
 			speed: emptyTokenSpeedSummary(),
 			coverageByAgent: {},
-			excluded: { unsupportedAgents: [], remoteProjects: 0 },
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] },
 			granularity: 'day',
 			windowStartMs: 0,
 			windowEndMs: 0,

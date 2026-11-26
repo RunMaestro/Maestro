@@ -1,3 +1,4 @@
+import type { ClosedTabSummary } from '../../closedTabCommands';
 import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
 /**
  * The `MaestroClient` interface: the one surface the TUI programs against.
@@ -26,6 +27,8 @@ import type {
 } from '../../types';
 import type { CodexTransport } from '../../codexTransport';
 import type { QueueSteerResult } from '../../chatSteering';
+import type { SteeringCommandInput, SteeringCommandResult } from '../../autoRunSteeringCommands';
+import type { ProjectTokenUsage, ProjectTokenUsageProject } from '../../projectTokenUsage';
 import type { HarnessControlMode } from '../providers/native-control';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
@@ -96,6 +99,8 @@ export type ClientMethod =
 	| 'tabs.star'
 	| 'tabs.update'
 	| 'tabs.transcript'
+	| 'tabs.closed'
+	| 'tabs.reopen'
 	| 'turns.send'
 	| 'turns.interrupt'
 	| 'turns.queue.list'
@@ -109,12 +114,14 @@ export type ClientMethod =
 	| 'history.list'
 	| 'history.remove'
 	| 'history.update'
+	| 'usage.projectTokens'
 	| 'autoRun.launch'
 	| 'autoRun.launchGoal'
 	| 'autoRun.stop'
 	| 'autoRun.resume'
 	| 'autoRun.skip'
 	| 'autoRun.abort'
+	| 'autoRun.steer'
 	| 'groupChats.list'
 	| 'groupChats.get'
 	| 'groupChats.create'
@@ -123,6 +130,7 @@ export type ClientMethod =
 	| 'groupChats.rename'
 	| 'groupChats.remove'
 	| 'consults.ask'
+	| 'consults.cancel'
 	| 'settings.get'
 	| 'settings.sshRemotes'
 	| 'providers.list'
@@ -395,6 +403,21 @@ export interface TabsApi {
 	rename(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
 	/** The tab moves to the host's closed-tab history. */
 	close(agentId: string, tabId: string): Promise<ClientResult<void>>;
+	/**
+	 * The agent's closed-tab stack, newest first (what Cmd+Shift+T reopens next is index 0),
+	 * bounded as a stack here is (`parseWireClosedTabs()`). A host that keeps none answers
+	 * `unsupported`.
+	 */
+	closed?(agentId: string): Promise<ClientResult<ClosedTabSummary[]>>;
+	/**
+	 * Reopen one closed AI tab in the background (the host's view does not move): the newest, or the
+	 * one closed as `tabId`. `wasDuplicate`: the conversation was already open, and `tabId` names
+	 * that tab.
+	 */
+	reopen?(
+		agentId: string,
+		target: { index?: number; tabId?: string }
+	): Promise<ClientResult<{ tabId: string; wasDuplicate?: boolean }>>;
 	star(agentId: string, tabId: string, starred: boolean): Promise<ClientResult<void>>;
 	update(agentId: string, tabId: string, patch: TabPatch): Promise<ClientResult<void>>;
 	/** CH-5. The tab's transcript as the host persisted it, oldest first. */
@@ -434,9 +457,45 @@ export interface TurnInput {
 	overrides?: TurnOverrides;
 	/**
 	 * Queue Held: the host queues the message paused, even on an idle tab, until someone resumes
-	 * it. The same `held` flag `maestro-cli dispatch --held` sends. A headless host refuses it.
+	 * it. The same `held` flag `maestro-cli dispatch --held` sends. A headless host older than this
+	 * field refuses it; a newer one queues it paused, as a desktop host does.
 	 */
 	held?: boolean;
+	/**
+	 * Agent-only text this one turn's prompt carries AHEAD of `text`, joined by a `---` rule, as a
+	 * local turn carries a queued item's `agentContext` (a released consult's replies). Never drawn
+	 * in the transcript, which shows `text` alone. A host that does not know the field ignores it.
+	 */
+	agentContext?: string;
+	/**
+	 * Agent-only notes this one turn's prompt carries AFTER `text`, joined by a `---` rule, as a
+	 * local turn carries its `@mention` notes (`withMentionTurnNotes()`: a consult is running, the
+	 * answer is handed off). Never drawn in the transcript. A host that does not know it ignores it.
+	 */
+	agentNotes?: string;
+}
+
+/** The most characters `TurnInput.agentContext` or `agentNotes` may hold, each. */
+export const MAX_TURN_AGENT_TEXT_CHARS = 1_000_000;
+
+/**
+ * The agent-only text (`agentContext`, `agentNotes`) a client sent: `{ ok, value }` with a blank
+ * or absent field as no value, or the reason a present field cannot be taken (not text, too long).
+ * Never dropped silently: a turn without the context it was sent with answers the wrong question.
+ */
+export function readTurnAgentText(
+	value: unknown,
+	field: 'agentContext' | 'agentNotes'
+): { ok: true; value?: string } | { ok: false; error: string } {
+	if (value === undefined || value === null) return { ok: true };
+	if (typeof value !== 'string') return { ok: false, error: `${field} must be text.` };
+	if (value.length > MAX_TURN_AGENT_TEXT_CHARS) {
+		return {
+			ok: false,
+			error: `${field} is longer than ${MAX_TURN_AGENT_TEXT_CHARS} characters.`,
+		};
+	}
+	return value.trim() ? { ok: true, value } : { ok: true };
 }
 
 /** One sender's own tab choices, applied to this one turn only; never stored on the host tab. */
@@ -563,7 +622,11 @@ export interface QueuedTurnEdit {
 export function parseQueuedTurnEdit(
 	raw: Record<string, unknown>
 ): { edit: QueuedTurnEdit } | { error: string } {
-	if (typeof raw.text !== 'string' || !raw.text.trim()) return { error: 'Missing text' };
+	// An image-only message is a message: its Edit may keep the text empty while it keeps images.
+	const keepsImages = Array.isArray(raw.images) && raw.images.length > 0;
+	if (typeof raw.text !== 'string' || (!raw.text.trim() && !keepsImages)) {
+		return { error: 'Missing text' };
+	}
 	const turnSettings = parseQueuedTurnSettings(raw.turnSettings);
 	if (raw.turnSettings !== undefined && !turnSettings) {
 		return { error: 'turnSettings must be an object' };
@@ -655,7 +718,9 @@ export interface TurnsApi {
 		 * Hand a waiting message to the turn already running on its tab: the queued card's Steer.
 		 * The host runs its own steer (the same `steerQueuedItem()` its Steer button runs), so the
 		 * message leaves its queue only once the agent has it, and comes back if it never takes it.
-		 * `outcome` says what happened; a headless host answers `unsupported`.
+		 * `outcome` says what happened. A headless host types it into the Claude TUI turn it runs
+		 * (`runtime/steering.ts`) and answers `not-steerable` for a turn that takes no input; an older
+		 * headless host answers `unsupported`.
 		 */
 		steer(agentId: string, itemId: string): Promise<ClientResult<QueueSteerResult>>;
 		/**
@@ -723,6 +788,13 @@ export interface AutoRunApi {
 	skip(agentId: string): Promise<ClientResult<void>>;
 	/** AR-7. End a run parked on an error. */
 	abort(agentId: string): Promise<ClientResult<void>>;
+	/**
+	 * The Thought Stream's Steer: send a note for the run's next task, list what waits and what
+	 * came back, take a waiting note back, or dismiss a delivered one. The host answers with the
+	 * desktop's own result (`auto_run_steering_command`); a refusal (no run, the cap) is a result
+	 * with `success: false`, not an error. An older host answers `unsupported`.
+	 */
+	steer(agentId: string, input: SteeringCommandInput): Promise<ClientResult<SteeringCommandResult>>;
 }
 
 /**
@@ -804,6 +876,12 @@ export interface ConsultAskInput {
 	transcript?: CrossAgentTranscriptEntry[];
 	/** The asker's display name, for an asker the host does not hold: names the consult tab. */
 	fromAgentName?: string;
+	/**
+	 * For an asker the host does not hold: who it is, as (machine, agent, tab)
+	 * (`buildRemoteAskerKey()`). The host keeps one consult tab per key; without one, every such
+	 * asker shares one.
+	 */
+	askerKey?: string;
 	/** How long to wait for the answer. The host clamps it to 10 seconds through an hour. Default 600000. */
 	timeoutMs?: number;
 	/**
@@ -814,7 +892,8 @@ export interface ConsultAskInput {
 	/**
 	 * Ask a `/btw` side question instead of consulting: the host answers from a throwaway fork of
 	 * the target's tab (`targetTabId`, or its active tab), with tools off, and nothing lands in that
-	 * tab's transcript. A headless host refuses it.
+	 * tab's transcript. A headless host answers it as a desktop host does (`runtime/side-questions.ts`);
+	 * one older than that refuses it with a message that says so.
 	 */
 	sideQuestion?: boolean;
 	/** With `sideQuestion`: the target's AI tab to fork. */
@@ -842,6 +921,13 @@ export interface ConsultsApi {
 	 * stopped; the error message says which. A partial answer is not returned.
 	 */
 	ask(input: ConsultAskInput): Promise<ClientResult<ConsultAnswer>>;
+	/**
+	 * Stop the consults one asker on another machine (`askerKey`, `buildRemoteAskerKey()`) has
+	 * running here, as Stop on a local asker ends the consults it started. Each ends as a stopped
+	 * consult on its consult tab and in History. Answers how many were stopped; a host that cannot
+	 * stop them answers `unsupported`.
+	 */
+	cancel?(input: { askerKey: string }): Promise<ClientResult<{ canceled: number }>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -984,6 +1070,22 @@ export interface EventsApi {
 	subscribe(listener: (event: MaestroEvent) => void, filter?: EventFilter): Unsubscribe;
 }
 
+/**
+ * Reads about what the host's providers used, computed on the host where the transcripts are. A
+ * host older than this answers `unsupported`.
+ */
+export interface UsageApi {
+	/**
+	 * The token usage of these projects' conversations on the host, one numeric breakdown per
+	 * conversation (`get_project_token_usage`). The reply is parsed as untrusted input
+	 * (`parseProjectTokenUsageReply()`); no transcript text is sent.
+	 */
+	projectTokens(
+		projects: readonly ProjectTokenUsageProject[],
+		options?: { timeoutMs?: number }
+	): Promise<ClientResult<ProjectTokenUsage>>;
+}
+
 export interface MaestroClient {
 	readonly connection: ConnectionApi;
 	readonly agents: AgentsApi;
@@ -994,6 +1096,8 @@ export interface MaestroClient {
 	readonly groupChats: GroupChatsApi;
 	readonly consults: ConsultsApi;
 	readonly history: HistoryApi;
+	/** Served by the WebSocket client; an in-process runtime has no remote usage to read. */
+	readonly usage?: UsageApi;
 	readonly settings: SettingsApi;
 	readonly providers: ProvidersApi;
 	readonly events: EventsApi;

@@ -2226,7 +2226,10 @@ set - runs `gh pr create` once the batch completes. See
 Once an Auto Run is going, these commands stop it or recover it from an error pause - the counterpart to launching with `auto-run --launch`. They require the desktop app to be running.
 
 ```bash
-# Stop the active Auto Run for an agent
+# Stop the active Auto Run for an agent (it finishes the current task or goal iteration first)
+maestro-cli stop-auto-run -a <agent-id>
+
+# Run it again on a run already stopping to end it now, like the Force Kill button
 maestro-cli stop-auto-run -a <agent-id>
 
 # When an Auto Run pauses on an error, choose how to proceed:

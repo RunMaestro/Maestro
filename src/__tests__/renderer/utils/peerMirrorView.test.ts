@@ -30,6 +30,17 @@ const entry = (id: string, text: string, extra: Partial<LogEntryRecord> = {}): L
 });
 
 describe('mirrorLogEntry', () => {
+	it('keeps the steer mark on a message the host steered into its running turn (M4)', () => {
+		expect(mirrorLogEntry(entry('s1', 'go left', { source: 'user', steered: true })).steered).toBe(
+			true
+		);
+		// Only a real mark: anything else from the wire draws no header.
+		expect(
+			mirrorLogEntry(entry('s2', 'hi', { source: 'user', steered: 'yes' as unknown as boolean }))
+				.steered
+		).toBeUndefined();
+	});
+
 	it('copies the drawn fields and maps an unknown kind to a system line', () => {
 		expect(mirrorLogEntry(entry('e1', 'hi', { source: 'future-kind' })).source).toBe('system');
 		const mapped = mirrorLogEntry(
@@ -89,6 +100,29 @@ describe('tabs', () => {
 			mirrorTab({ id: 't1', state: 'idle', thinkingStartTime: 42 }).thinkingStartTime
 		).toBeUndefined();
 		expect(mirrorTab({ id: 't1', thinkingStartTime: 42 }).thinkingStartTime).toBeUndefined();
+	});
+
+	// Parity round 3, N2: a tab the host opened (another client, the CLI) shows the composer
+	// settings the host will run it with, so its pills match a local tab's.
+	it("carries the host tab's Save to History, thinking, read-only, model, and effort", () => {
+		expect(
+			mirrorTab({
+				id: 't1',
+				saveToHistory: true,
+				showThinking: 'sticky',
+				readOnlyMode: false,
+				customModel: 'opus',
+				customEffort: 'high',
+			})
+		).toMatchObject({
+			saveToHistory: true,
+			showThinking: 'sticky',
+			readOnlyMode: false,
+			customModel: 'opus',
+			customEffort: 'high',
+		});
+		const bare = mirrorTab({ id: 't1', showThinking: 'loud' });
+		expect('saveToHistory' in bare || 'showThinking' in bare || 'customModel' in bare).toBe(false);
 	});
 });
 

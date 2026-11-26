@@ -34,6 +34,7 @@ import { cancelContextCompaction, stopRetriesForAgent } from '../../../renderer/
 import { dropMentionHandoffs } from '../../../renderer/services/crossAgentHandoff';
 import { interruptMirroredAgent } from '../../../renderer/services/peerMirror';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
 
 const originalMaestro = window.maestro;
 const processApi = {
@@ -359,6 +360,72 @@ describe('interruptTurn: a signal that fails', () => {
 	});
 });
 
+describe('interruptTurn: an Auto Run task turn, which runs on no tab', () => {
+	afterEach(() => {
+		useSettingsStore.setState({ federationHostedAgents: false });
+		useBatchStore.setState({ batchRunStates: {} } as never);
+	});
+
+	it('stops the running Auto Run turn and reports it in every mode', async () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const results = [];
+		for (const mode of AGENT_MODES) {
+			vi.clearAllMocks();
+			processApi.interrupt.mockResolvedValue(true);
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 0 });
+			// A goal run's iteration: the agent's tabs are idle and its turn is `-batch-`.
+			processApi.getActiveProcesses.mockResolvedValue([
+				{ sessionId: 'agent-1-batch-1700', isTerminal: false },
+			]);
+			useBatchStore.setState({
+				batchRunStates: { 'agent-1': { isRunning: true, isStopping: true } },
+			} as never);
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+			seedAgent({
+				state: 'idle',
+				busySource: undefined,
+				aiTabs: [createMockAITab({ id: 'tab-a', state: 'idle' })],
+				sshRemoteId,
+				sessionSshRemoteConfig,
+				liftedTo,
+			});
+
+			results.push(await interruptTurn('agent-1'));
+
+			if (mode === 'hosted') {
+				// The host runs the Auto Run: the stop goes there.
+				expect(interruptMirroredAgent).toHaveBeenCalledWith('box', 'h1', undefined);
+			} else {
+				expect(processApi.interrupt.mock.calls.map(([id]) => id)).toContain('agent-1-batch-1700');
+			}
+		}
+		const [local, ssh, hosted] = results;
+		expect(local).toEqual({
+			success: true,
+			sessionId: 'agent-1',
+			tabId: null,
+			wasBusy: true,
+			interrupted: true,
+			stoppedTabIds: [],
+			exited: false,
+		});
+		expect(ssh).toEqual(local);
+		expect(hosted).toEqual(local);
+	});
+
+	it('leaves the Auto Run turn alone when the stop names one tab', async () => {
+		processApi.getActiveProcesses.mockResolvedValue([
+			{ sessionId: 'agent-1-batch-1700', isTerminal: false },
+		]);
+		seedAgent({ aiTabs: [createMockAITab({ id: 'tab-a', state: 'idle' })] });
+
+		const result = await interruptTurn('agent-1', { tabId: 'tab-a' });
+
+		expect(result.wasBusy).toBe(false);
+		expect(processApi.interrupt).not.toHaveBeenCalled();
+	});
+});
+
 describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 	afterEach(() => {
 		useSettingsStore.setState({ federationHostedAgents: false });
@@ -403,5 +470,29 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 		});
 		expect(ssh).toEqual(local);
 		expect(hosted).toEqual(local);
+	});
+
+	// Parity M7: a hosted agent's `@mentions` run on this machine, so Stop ends them here as it
+	// does for a local agent: the consults, and the hand-off armed for the turn.
+	it.each(AGENT_MODES)("%s: Stop ends the turn's consults and drops its hand-off", async (mode) => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		vi.clearAllMocks();
+		processApi.interrupt.mockResolvedValue(true);
+		processApi.getActiveProcesses.mockResolvedValue([]);
+		crossAgentApi.cancel.mockResolvedValue({ canceled: 1 });
+		const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+		seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
+
+		const result = await interruptTurn('agent-1', { tabId: 'tab-a' });
+
+		expect(crossAgentApi.cancel).toHaveBeenCalledWith('agent-1', 'tab-a');
+		expect(dropMentionHandoffs).toHaveBeenCalledWith('agent-1', 'tab-a');
+		// Before any await: a host update meanwhile cannot release the stopped hand-off.
+		if (mode === 'hosted') {
+			expect(vi.mocked(dropMentionHandoffs).mock.invocationCallOrder[0]).toBeLessThan(
+				vi.mocked(interruptMirroredAgent).mock.invocationCallOrder[0]
+			);
+		}
+		expect(result).toMatchObject({ success: true, wasBusy: true, interrupted: true });
 	});
 });

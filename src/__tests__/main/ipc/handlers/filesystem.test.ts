@@ -23,6 +23,25 @@ vi.mock('electron', () => ({
 	},
 }));
 
+// The write-back watcher of a remote copy: each test fires its events by hand.
+const chokidarWatchers: Array<{ path: string; handlers: Map<string, Function>; close: Function }> =
+	[];
+vi.mock('chokidar', () => ({
+	watch: vi.fn((watchedPath: string) => {
+		const watcher = {
+			path: watchedPath,
+			handlers: new Map<string, Function>(),
+			close: vi.fn(),
+			on(event: string, handler: Function) {
+				watcher.handlers.set(event, handler);
+				return watcher;
+			},
+		};
+		chokidarWatchers.push(watcher);
+		return watcher;
+	}),
+}));
+
 // Mock the drag-out icon so the handler doesn't reach into Electron's nativeImage.
 vi.mock('../../../../main/utils/file-tree-walk', () => ({
 	walkLocalFileTree: vi.fn(),
@@ -102,6 +121,8 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 	countItemsRemote: vi.fn(),
 	compressFolderRemote: vi.fn(),
 	writeFileRemote: vi.fn(),
+	replaceFileRemoteIfUnchanged: vi.fn(),
+	sha256FileRemote: vi.fn(),
 	existsRemote: vi.fn(),
 	readBinaryFileRemoteAsBase64: vi.fn(),
 	listTreeRemote: vi.fn(),
@@ -118,12 +139,17 @@ vi.mock('../../../../main/stores', () => ({
 }));
 
 import {
+	DIRECTORY_SIZE_MAX_FILES,
 	registerFilesystemHandlers,
 	REMOTE_FOLDER_DOWNLOAD_MAX_BYTES,
 	REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH,
 	REMOTE_FOLDER_DOWNLOAD_MAX_FILE_BYTES,
 	remoteFolderTooLarge,
 } from '../../../../main/ipc/handlers/filesystem';
+import {
+	REMOTE_COPY_WRITE_BACK_MAX_BYTES,
+	remoteCopyTooLargeMessage,
+} from '../../../../main/utils/remote-copy-write-back';
 import { walkLocalFileTree } from '../../../../main/utils/file-tree-walk';
 import fs from 'fs/promises';
 import { getSshRemoteById } from '../../../../main/stores';
@@ -140,11 +166,14 @@ import {
 	deleteRemote,
 	deleteManyRemote,
 	writeFileRemote,
+	replaceFileRemoteIfUnchanged,
+	sha256FileRemote,
 	existsRemote,
 	compressFolderRemote,
 } from '../../../../main/utils/remote-fs';
 import { existsSync } from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { withPlatform } from '../../../helpers/pathExpect';
 
 /**
@@ -246,6 +275,179 @@ describe('filesystem handlers', () => {
 			const result = await handler({}, '/work/a/notes.pdf', 'r1', '/Users/me/notes.pdf');
 			expect(result).toEqual({ success: true, path: '/Users/me/notes.pdf' });
 			expect(fs.rename).toHaveBeenCalledWith(expect.any(String), '/Users/me/notes.pdf');
+		});
+	});
+
+	describe('fs:watchRemoteCopy', () => {
+		const safeSend = vi.fn();
+		const fetched = Buffer.from('fetched');
+		const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+		beforeEach(() => {
+			chokidarWatchers.length = 0;
+			registerFilesystemHandlers({ safeSend });
+			vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1' } as any);
+			vi.mocked(readBinaryFileRemoteAsBase64).mockResolvedValue({
+				success: true,
+				data: fetched.toString('base64'),
+			} as any);
+			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({ success: true });
+			vi.mocked(sha256FileRemote).mockResolvedValue({ success: true, data: sha(fetched) });
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		/** The app saves the copy as `text`; the watcher fires and the debounce runs out. */
+		async function saveCopyAs(text: string): Promise<void> {
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from(text) as any);
+			chokidarWatchers[0].handlers.get('change')!();
+			await vi.advanceTimersByTimeAsync(1000);
+		}
+
+		it('watches the copy the download made, never a path the caller names', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			const download = await registeredHandlers.get('fs:downloadRemoteFile')!(
+				{},
+				'/work/a/notes.md',
+				'r1'
+			);
+			const watched = await registeredHandlers.get('fs:watchRemoteCopy')!(
+				{},
+				'/work/a/notes.md',
+				'r1'
+			);
+			expect(watched).toEqual({ path: download.path, savesBack: true });
+			expect(chokidarWatchers.map((w) => w.path)).toEqual([download.path]);
+		});
+
+		it('does not watch a copy too large to send back, and says why', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(
+				Buffer.alloc(REMOTE_COPY_WRITE_BACK_MAX_BYTES + 1) as any
+			);
+			const watched = await registeredHandlers.get('fs:watchRemoteCopy')!(
+				{},
+				'/work/a/big.bin',
+				'r1'
+			);
+			expect(watched).toMatchObject({
+				savesBack: false,
+				reason: remoteCopyTooLargeMessage(),
+			});
+			expect(chokidarWatchers).toEqual([]);
+		});
+
+		it('refuses an unknown remote', async () => {
+			vi.mocked(getSshRemoteById).mockReturnValue(undefined as any);
+			await expect(
+				registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'gone')
+			).rejects.toThrow('SSH remote not found: gone');
+		});
+
+		it('writes a saved change back over the fetched bytes only, and flashes that it did', async () => {
+			vi.useFakeTimers();
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
+			await saveCopyAs('edited');
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledWith(
+				'/work/a/notes.md',
+				Buffer.from('edited'),
+				sha(fetched),
+				{ id: 'r1' }
+			);
+			expect(writeFileRemote).not.toHaveBeenCalled();
+			expect(safeSend).toHaveBeenCalledWith(
+				'remote:notifyCenterFlash',
+				expect.objectContaining({ message: 'Saved to the remote host', detail: 'notes.md' })
+			);
+		});
+
+		it('keeps the user version, never over an earlier one, when the remote file changed', async () => {
+			vi.useFakeTimers();
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
+			vi.mocked(sha256FileRemote).mockResolvedValue({
+				success: true,
+				data: sha(Buffer.from('someone else')),
+			});
+			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({
+				success: false,
+				changed: true,
+				error: 'The remote file changed',
+			});
+			await saveCopyAs('edited');
+			const kept = vi.mocked(fs.writeFile).mock.calls.at(-1)!;
+			expect(path.basename(kept[0] as string)).toMatch(/^notes \(your version \d{8}-\d{6}\)\.md$/);
+			expect(kept[1]).toEqual(Buffer.from('edited'));
+			expect(kept[2]).toEqual({ flag: 'wx' });
+			expect(safeSend).toHaveBeenCalledWith(
+				'remote:notifyToast',
+				expect.objectContaining({
+					title: 'Not saved to the remote host',
+					color: 'red',
+					message: expect.stringContaining('Later changes to this copy are not saved back'),
+				})
+			);
+			// A later save is not sent, and no second toast says so again.
+			safeSend.mockClear();
+			await saveCopyAs('edited again');
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledTimes(1);
+			expect(safeSend).not.toHaveBeenCalled();
+		});
+
+		it('sees a save by polling when no file event arrives, and says once when the watcher fails', async () => {
+			vi.useFakeTimers();
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			vi.mocked(fs.stat).mockResolvedValue({ size: 7, mtimeMs: 1 } as any);
+			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
+			// The app saves; the OS never reports it.
+			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from('edited!') as any);
+			vi.mocked(fs.stat).mockResolvedValue({ size: 7, mtimeMs: 2 } as any);
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledWith(
+				'/work/a/notes.md',
+				Buffer.from('edited!'),
+				sha(fetched),
+				{ id: 'r1' }
+			);
+
+			chokidarWatchers[0].handlers.get('error')!(new Error('EMFILE'));
+			chokidarWatchers[0].handlers.get('error')!(new Error('EMFILE'));
+			await vi.advanceTimersByTimeAsync(0);
+			const notices = safeSend.mock.calls.filter(
+				([channel, toast]) =>
+					channel === 'remote:notifyToast' && toast.title === 'No longer saving to the remote host'
+			);
+			expect(notices).toHaveLength(1);
+		});
+
+		it('a second Open keeps a copy whose saved change has not reached the remote', async () => {
+			vi.useFakeTimers();
+			vi.mocked(fs.readFile).mockResolvedValue(fetched as any);
+			const download = registeredHandlers.get('fs:downloadRemoteFile')!;
+			await download({}, '/work/a/notes.md', 'r1');
+			await registeredHandlers.get('fs:watchRemoteCopy')!({}, '/work/a/notes.md', 'r1');
+			vi.mocked(replaceFileRemoteIfUnchanged).mockResolvedValue({
+				success: false,
+				error: 'Connection refused',
+			});
+			await saveCopyAs('edited');
+			vi.mocked(fs.rename).mockClear();
+			vi.mocked(readBinaryFileRemoteAsBase64).mockClear();
+
+			await download({}, '/work/a/notes.md', 'r1');
+			// The change was sent again first; it still failed, so the copy was not
+			// replaced and nothing was fetched over it.
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenCalledTimes(2);
+			expect(readBinaryFileRemoteAsBase64).not.toHaveBeenCalled();
+			expect(fs.rename).not.toHaveBeenCalled();
+			expect(replaceFileRemoteIfUnchanged).toHaveBeenLastCalledWith(
+				'/work/a/notes.md',
+				Buffer.from('edited'),
+				sha(fetched),
+				{ id: 'r1' }
+			);
 		});
 	});
 
@@ -1800,22 +2002,183 @@ describe('filesystem handlers', () => {
 	});
 
 	describe('fs:directorySize', () => {
-		it('should calculate directory size for remote via SSH', async () => {
-			const mockSshConfig = { id: 'remote-1', host: 'server.com', username: 'user' };
-			vi.mocked(getSshRemoteById).mockReturnValue(mockSshConfig as any);
-			vi.mocked(directorySizeRemote).mockResolvedValue({ success: true, data: 1024000 });
-			vi.mocked(countItemsRemote).mockResolvedValue({
-				success: true,
-				data: { fileCount: 50, folderCount: 5 },
+		// The same tree gives the same footer wherever the agent runs: the remote walk
+		// applies the local walk's patterns, root .gitignore, and depth.
+		describe('the same tree, local or on an SSH remote', () => {
+			// project/: src/index.ts (10 B), .git/HEAD (5 B), dist/out.js (7 B), app.ts (3 B)
+			const mockLocalTree = async () => {
+				const mockFs = (await import('fs/promises')).default;
+				vi.mocked(mockFs.readFile).mockImplementation(async (filePath: any) => {
+					if (String(filePath).endsWith('.gitignore')) return 'dist\n';
+					throw new Error('ENOENT');
+				});
+				vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
+					const p = String(dirPath).replace(/\\/g, '/');
+					const entry = (name: string, kind: 'dir' | 'file' | 'link') => ({
+						name,
+						isDirectory: () => kind === 'dir',
+						isFile: () => kind === 'file',
+						isSymbolicLink: () => kind === 'link',
+					});
+					const dir = (name: string) => entry(name, 'dir');
+					const file = (name: string) => entry(name, 'file');
+					if (p === '/srv/tree')
+						return [
+							dir('src'),
+							dir('.git'),
+							dir('dist'),
+							file('app.ts'),
+							// A link to a folder: counted as the folder, as the tree draws it.
+							entry('lib', 'link'),
+						] as any;
+					if (p.endsWith('/lib')) return [file('util.ts')] as any;
+					if (p.endsWith('/src')) return [file('index.ts')] as any;
+					if (p.endsWith('/.git')) return [file('HEAD')] as any;
+					if (p.endsWith('/dist')) return [file('out.js')] as any;
+					return [];
+				});
+				vi.mocked(mockFs.stat).mockImplementation(async (filePath: any) => {
+					const p = String(filePath).replace(/\\/g, '/');
+					// The link resolves to a folder; every other path is a file.
+					if (p.endsWith('/lib')) return { isDirectory: () => true, isFile: () => false } as any;
+					const sizes: Record<string, number> = {
+						'util.ts': 2,
+						'index.ts': 10,
+						HEAD: 5,
+						'out.js': 7,
+						'app.ts': 3,
+					};
+					return { size: sizes[p.split('/').pop()!] ?? 0 } as any;
+				});
+			};
+			const mockRemoteTree = () => {
+				vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1', host: 'box' } as any);
+				vi.mocked(readFileRemote).mockResolvedValue({ success: true, data: 'dist\n' });
+				// What `find` returns once the patterns it was given are pruned: `.git`
+				// stays because the remote's `find -name` is asked for `.GIT`.
+				// `find -L` lists the linked folder `lib` as a folder, as the local walk now counts it.
+				vi.mocked(listTreeRemote).mockResolvedValue({
+					success: true,
+					data: {
+						directories: ['src', '.git', 'lib'],
+						files: ['src/index.ts', '.git/HEAD', 'app.ts', 'lib/util.ts'],
+						fileSizes: [10, 5, 3, 2],
+						truncated: false,
+					},
+				});
+			};
+
+			it('counts and sizes the tree the same in every mode', async () => {
+				const handler = registeredHandlers.get('fs:directorySize');
+				const results: Record<string, unknown> = {};
+				for (const mode of ['local', 'ssh', 'hosted'] as const) {
+					if (mode === 'local') await mockLocalTree();
+					else mockRemoteTree();
+					// A hosted agent keeps its SSH remote, so the Files panel asks the same way.
+					results[mode] = await handler!(
+						{},
+						'/srv/tree',
+						mode === 'local' ? undefined : 'r1',
+						['.GIT', 'node_modules'],
+						true
+					);
+				}
+				expect(results.local).toEqual({
+					totalSize: 15,
+					fileCount: 3,
+					folderCount: 2,
+					fileCountCapped: false,
+				});
+				expect(results.ssh).toEqual(results.local);
+				expect(results.hosted).toEqual(results.local);
 			});
 
-			const handler = registeredHandlers.get('fs:directorySize');
-			const result = await handler!({}, '/remote/folder', 'remote-1');
+			it('stops counting a huge tree at the same cap in every mode, and says so', async () => {
+				const handler = registeredHandlers.get('fs:directorySize');
+				const total = DIRECTORY_SIZE_MAX_FILES + 5;
+				const names = Array.from({ length: total }, (_, i) => `f${i}.txt`);
+				const results: Record<string, unknown> = {};
+				for (const mode of ['local', 'ssh', 'hosted'] as const) {
+					if (mode === 'local') {
+						const mockFs = (await import('fs/promises')).default;
+						vi.mocked(mockFs.readFile).mockRejectedValue(new Error('ENOENT'));
+						vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) =>
+							String(dirPath).replace(/\\/g, '/') === '/srv/huge'
+								? (names.map((name) => ({
+										name,
+										isDirectory: () => false,
+										isFile: () => true,
+										isSymbolicLink: () => false,
+									})) as any)
+								: []
+						);
+						vi.mocked(mockFs.stat).mockResolvedValue({ size: 1 } as any);
+					} else {
+						vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1', host: 'box' } as any);
+						// The listing itself is capped on the remote (`head`), and says it was.
+						vi.mocked(listTreeRemote).mockResolvedValue({
+							success: true,
+							data: {
+								directories: [],
+								files: names.slice(0, DIRECTORY_SIZE_MAX_FILES),
+								fileSizes: names.slice(0, DIRECTORY_SIZE_MAX_FILES).map(() => 1),
+								truncated: true,
+							},
+						});
+					}
+					results[mode] = await handler!(
+						{},
+						'/srv/huge',
+						mode === 'local' ? undefined : 'r1',
+						[],
+						false
+					);
+				}
+				expect(results.local).toEqual({
+					totalSize: DIRECTORY_SIZE_MAX_FILES,
+					fileCount: DIRECTORY_SIZE_MAX_FILES,
+					folderCount: 0,
+					fileCountCapped: true,
+				});
+				expect(results.ssh).toEqual(results.local);
+				expect(results.hosted).toEqual(results.local);
+				expect(listTreeRemote).toHaveBeenCalledWith(
+					'/srv/huge',
+					expect.objectContaining({ maxFiles: DIRECTORY_SIZE_MAX_FILES }),
+					expect.anything()
+				);
+			});
 
-			expect(result).toEqual({
-				totalSize: 1024000,
-				fileCount: 50,
-				folderCount: 5,
+			it('asks the remote for the same patterns, its own .gitignore, and the same depth', async () => {
+				mockRemoteTree();
+				const handler = registeredHandlers.get('fs:directorySize');
+				await handler!({}, '/srv/remote-only', 'r1', ['.git'], true);
+
+				expect(readFileRemote).toHaveBeenCalledWith(
+					'/srv/remote-only/.gitignore',
+					expect.objectContaining({ id: 'r1' })
+				);
+				expect(listTreeRemote).toHaveBeenCalledWith(
+					'/srv/remote-only',
+					{
+						maxDepth: 10,
+						ignorePatterns: ['.git', 'dist'],
+						withSizes: true,
+						maxFiles: DIRECTORY_SIZE_MAX_FILES,
+					},
+					expect.objectContaining({ id: 'r1' })
+				);
+			});
+
+			it('fails loudly, never counting here, when the remote cannot be read', async () => {
+				vi.mocked(getSshRemoteById).mockReturnValue({ id: 'r1', host: 'box' } as any);
+				vi.mocked(listTreeRemote).mockResolvedValue({ success: false, error: 'ssh: timed out' });
+				const mockFs = (await import('fs/promises')).default;
+				vi.mocked(mockFs.readdir).mockClear();
+
+				const handler = registeredHandlers.get('fs:directorySize');
+				await expect(handler!({}, '/srv/down', 'r1', [], false)).rejects.toThrow('ssh: timed out');
+				expect(mockFs.readdir).not.toHaveBeenCalled();
 			});
 		});
 
@@ -1828,7 +2191,14 @@ describe('filesystem handlers', () => {
 
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
 				if (dirPath === '/dedupe') {
-					return [{ name: 'file.txt', isDirectory: () => false, isFile: () => true }] as any;
+					return [
+						{
+							name: 'file.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+					] as any;
 				}
 				return [];
 			});
@@ -1843,7 +2213,7 @@ describe('filesystem handlers', () => {
 			]);
 			const c = await handler!({}, '/dedupe', undefined, patterns, false);
 
-			expect(a).toEqual({ totalSize: 7, fileCount: 1, folderCount: 0 });
+			expect(a).toEqual({ totalSize: 7, fileCount: 1, folderCount: 0, fileCountCapped: false });
 			expect(b).toEqual(a);
 			expect(c).toEqual(a);
 			expect(vi.mocked(mockFs.readdir)).toHaveBeenCalledTimes(1);
@@ -1854,12 +2224,29 @@ describe('filesystem handlers', () => {
 
 			vi.mocked(mockFs.readdir).mockImplementation(async (dirPath: any) => {
 				if (dirPath === '/one') {
-					return [{ name: 'a.txt', isDirectory: () => false, isFile: () => true }] as any;
+					return [
+						{
+							name: 'a.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+					] as any;
 				}
 				if (dirPath === '/two') {
 					return [
-						{ name: 'a.txt', isDirectory: () => false, isFile: () => true },
-						{ name: 'b.txt', isDirectory: () => false, isFile: () => true },
+						{
+							name: 'a.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'b.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
 					] as any;
 				}
 				return [];
@@ -1884,13 +2271,35 @@ describe('filesystem handlers', () => {
 				const p = String(dirPath).replace(/\\/g, '/');
 				if (p === '/project') {
 					return [
-						{ name: 'src', isDirectory: () => true, isFile: () => false },
-						{ name: '.git', isDirectory: () => true, isFile: () => false },
-						{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
+						{
+							name: 'src',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: '.git',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'file.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
 					] as any;
 				}
 				if (p.includes('/src')) {
-					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
+					return [
+						{
+							name: 'index.ts',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+					] as any;
 				}
 				return [];
 			});
@@ -1909,13 +2318,35 @@ describe('filesystem handlers', () => {
 				const p = String(dirPath).replace(/\\/g, '/');
 				if (p === '/project') {
 					return [
-						{ name: 'src', isDirectory: () => true, isFile: () => false },
-						{ name: '.git', isDirectory: () => true, isFile: () => false },
-						{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
+						{
+							name: 'src',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: '.git',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'file.txt',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
 					] as any;
 				}
 				if (p.includes('/src')) {
-					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
+					return [
+						{
+							name: 'index.ts',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+					] as any;
 				}
 				return [];
 			});
@@ -1946,14 +2377,41 @@ describe('filesystem handlers', () => {
 				const p = String(dirPath).replace(/\\/g, '/');
 				if (p === '/project') {
 					return [
-						{ name: 'src', isDirectory: () => true, isFile: () => false },
-						{ name: 'dist', isDirectory: () => true, isFile: () => false },
-						{ name: 'app.ts', isDirectory: () => false, isFile: () => true },
-						{ name: 'debug.log', isDirectory: () => false, isFile: () => true },
+						{
+							name: 'src',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'dist',
+							isDirectory: () => true,
+							isFile: () => false,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'app.ts',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+						{
+							name: 'debug.log',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
 					] as any;
 				}
 				if (p.includes('/src')) {
-					return [{ name: 'index.ts', isDirectory: () => false, isFile: () => true }] as any;
+					return [
+						{
+							name: 'index.ts',
+							isDirectory: () => false,
+							isFile: () => true,
+							isSymbolicLink: () => false,
+						},
+					] as any;
 				}
 				return [];
 			});

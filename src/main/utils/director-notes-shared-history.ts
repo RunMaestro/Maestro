@@ -46,6 +46,7 @@ import {
 	readRemoteEntriesSsh,
 } from '../shared-history-manager';
 import { resolveHistoryEntryLimit } from '../../shared/history';
+import { sharesHistoryInProject } from '../../shared/historySharing';
 import type { HistoryEntry } from '../../shared/types';
 
 const LOG_CONTEXT = '[DirectorNotes:SharedHistory]';
@@ -183,7 +184,7 @@ export function sharedEntryAgentName(entry: HistoryEntry): string {
  * Resolve the distinct shared-history locations implied by the stored agents.
  *
  * SSH agents contribute their remote project dir, but only when the user opted
- * into `syncHistory` - the same gate `buildSharedHistoryContext()` applies in
+ * into History sharing (`sharesHistoryInProject()`) - the same gate `buildSharedHistoryContext()` applies in
  * the renderer, so Director's Notes never reaches over a network the History
  * panel would not have reached over either.
  *
@@ -200,10 +201,15 @@ function collectScopes(): SharedHistoryScope[] {
 
 	for (const session of storedSessions) {
 		const ssh = session.sessionSshRemoteConfig as
-			| { enabled?: boolean; remoteId?: string | null; syncHistory?: boolean }
+			| {
+					enabled?: boolean;
+					remoteId?: string | null;
+					syncHistory?: boolean;
+					shareHistoryToProjectDir?: boolean;
+			  }
 			| undefined;
 
-		if (ssh?.enabled && ssh.remoteId && ssh.syncHistory) {
+		if (ssh?.enabled && ssh.remoteId && sharesHistoryInProject(ssh)) {
 			const dir = session.cwd;
 			if (!dir) continue;
 			const key = `ssh:${ssh.remoteId}:${dir}`;

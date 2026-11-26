@@ -193,10 +193,24 @@ describe('createRuntimeHistory', () => {
 
 		it('creates the directory for an agent that opted in on its SSH record', () => {
 			addAgent('a1', {
-				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', shareHistoryToProjectDir: true },
+				sessionSshRemoteConfig: { enabled: false, remoteId: null, shareHistoryToProjectDir: true },
 			} as Partial<AgentRecord>);
 			make().share('a1', entry('e1', 1));
 			expect(readShared('box.host').map((e) => e.id)).toEqual(['e1']);
+		});
+
+		it('never writes the project of an agent whose turns run over SSH (it lives on the remote)', () => {
+			addAgent('a1', {
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'r1',
+					syncHistory: true,
+					shareHistoryToProjectDir: true,
+				},
+			} as Partial<AgentRecord>);
+			fs.mkdirSync(sharedHistoryDir(project), { recursive: true });
+			make().share('a1', entry('e1', 1));
+			expect(fs.readdirSync(sharedHistoryDir(project))).toEqual([]);
 		});
 
 		it('never creates the directory for an agent that did not opt in', () => {

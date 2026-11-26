@@ -48,6 +48,7 @@ import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import { getClientInstanceId } from '../../../utils/clientInstance';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
 import type { AutoRunSpawnAgentFn } from '../useDocumentProcessor';
+import { AUTO_RUN_TURN_ABORTED, untilAutoRunTurnAborted } from './autoRunTurnAbort';
 import {
 	awaitDelegationsBeforeTurn,
 	beginAutoRunDelegations,
@@ -62,6 +63,17 @@ import {
 	formatDelegationResultsBlock,
 	type AutoRunDelegation,
 } from '../../../../shared/autoRunDelegation';
+import {
+	formatSteeringNotesBlock,
+	joinAutoRunPromptBlocks,
+	type AutoRunSteeringNote,
+} from '../../../../shared/autorunSteering';
+import {
+	clearPendingSteeringNotes,
+	clearSteeringNotes,
+	recordSteeringResponse,
+	takeSteeringNotesForDispatch,
+} from '../../../services/autoRunSteering';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 
 type UpdateBatchStateFn = (
@@ -330,6 +342,10 @@ export function useGoalRunner({
 				// Report the launch so an update restart can save this run's place.
 				trackAutoRunLaunch(sessionId, config, folderPath);
 
+				// A steering note belongs to the run it was typed during. Anything left
+				// over from a previous run must not open this run's first iteration.
+				clearSteeringNotes(sessionId);
+
 				// Goal mode expresses progress as a percent, so we model it as 100 "tasks".
 				// Empty documents/lockedDocuments arrays mark this as a document-less run.
 				dispatch({
@@ -499,6 +515,8 @@ export function useGoalRunner({
 			// Results handed to an iteration that a limit pause then retries: the
 			// retry is the same iteration, so it gets them again.
 			let retryDelegationResults: AutoRunDelegation[] = [];
+			// The same for steering notes: a retried iteration still owes them a reply.
+			let retrySteeringNotes: AutoRunSteeringNote[] = [];
 
 			const history: GoalIterationRecord[] = [];
 			let exitReason: GoalExitReason = 'stopped-by-user';
@@ -535,6 +553,10 @@ export function useGoalRunner({
 				}
 				const delegationResults = [...retryDelegationResults, ...delegated.results];
 				retryDelegationResults = [];
+				// Taken once per iteration, as a document run takes them once per task:
+				// a note sent after this line opens the NEXT iteration.
+				const steeringNotes = [...retrySteeringNotes, ...takeSteeringNotesForDispatch(sessionId)];
+				retrySteeringNotes = [];
 
 				iteration++;
 
@@ -553,14 +575,22 @@ export function useGoalRunner({
 				};
 				// Each goal iteration spawns a fresh provider session, so prefix the
 				// agent's New Session Message onto every spawn (matches interactive behavior).
-				// Delegated results ride in front, after substitution, so a `{{...}}` in
-				// another agent's report stays literal (same rule as steering notes).
+				// Steering notes and delegated results ride in front, after substitution,
+				// so a `{{...}}` the operator or another agent wrote stays literal.
+				const steeringBlock = formatSteeringNotesBlock(steeringNotes, 'goal');
 				const delegationBlock = formatDelegationResultsBlock(delegationResults);
 				const substitutedPrompt = substituteTemplateVariables(goalPromptTemplate, templateContext);
 				const prompt = prependNewSessionMessage(
-					delegationBlock ? `${delegationBlock}\n\n---\n\n${substitutedPrompt}` : substitutedPrompt,
+					joinAutoRunPromptBlocks([steeringBlock, delegationBlock, substitutedPrompt]),
 					session.newSessionMessage
 				);
+				if (steeringBlock) {
+					logger.info(
+						`[GoalRunner] Delivering ${steeringNotes.length} steering note(s)`,
+						undefined,
+						{ iteration }
+					);
+				}
 
 				const iterationStart = Date.now();
 				let result: Awaited<ReturnType<SpawnAgentFn>>;
@@ -576,6 +606,20 @@ export function useGoalRunner({
 					result = { success: false, error: String(error) };
 				}
 				const elapsedTimeMs = Date.now() - iterationStart;
+
+				// A turn that ended because the run was force-ended (Force Kill, or a second stop
+				// or abort on a stopping run) finished nothing: the run ends here, without
+				// recording the iteration or waiting on anything else.
+				if (result.error === AUTO_RUN_TURN_ABORTED) {
+					exitReason = 'stopped-by-user';
+					exitDetail = 'Stopped by user.';
+					recordSteeringResponse(sessionId, steeringNotes, {
+						summary: `Iteration ${iteration} stopped before it finished`,
+						text: result.error ?? 'Stopped by user.',
+						success: false,
+					});
+					break;
+				}
 
 				// Limit pause: if this iteration's spawn hit a token/API/credit or rate
 				// limit, do NOT consume the iteration. The agent-error listener has
@@ -630,6 +674,12 @@ export function useGoalRunner({
 						if (action === 'abort' || action === 'skip-document') {
 							exitReason = 'stopped-by-user';
 							exitDetail = 'Stopped by user.';
+							// The notes this iteration took get an answer, not "working on it".
+							recordSteeringResponse(sessionId, steeringNotes, {
+								summary: `Iteration ${iteration} stopped before it finished`,
+								text: pausedError.message,
+								success: false,
+							});
 							break;
 						}
 
@@ -637,6 +687,7 @@ export function useGoalRunner({
 						// attempt is not counted, then loop back to re-spawn the same prompt.
 						iteration--;
 						retryDelegationResults = delegationResults;
+						retrySteeringNotes = steeringNotes;
 						continue;
 					}
 				}
@@ -722,6 +773,14 @@ export function useGoalRunner({
 				const fullResponse = stripMaestroMarkers(rawFullResponse);
 				const rationaleText = markers.rationale?.trim();
 				const iterationSummary = `Goal progress: ${displayProgress}% - ${rationaleText || synopsis}`;
+
+				// Bring the iteration's reply back to the notes it was steered by, as a
+				// document run does for a task. A failed iteration answers them too.
+				recordSteeringResponse(sessionId, steeringNotes, {
+					summary: iterationSummary,
+					text: fullResponse,
+					success: result.success,
+				});
 				onAddHistoryEntry({
 					type: 'AUTO',
 					timestamp: Date.now(),
@@ -803,35 +862,45 @@ export function useGoalRunner({
 				// resume - without it the resumed "session" has no context and the note
 				// would be worthless, so we'd rather carry nothing forward. Mirrors the
 				// CLI runner (src/cli/services/goal-runner.ts) exactly.
+				// A run asked to stop ends at the top of the loop, so no next iteration reads a
+				// handoff: skip it rather than make the stop wait on one more turn.
 				if (
 					result.success &&
 					result.agentSessionId &&
+					!stopRequestedRefs.current[sessionId] &&
 					hasCapabilityCached(session.toolType, 'supportsResume')
 				) {
+					const handoffSessionId = result.agentSessionId;
 					try {
-						const handoff = await spawnBackgroundSynopsis(
+						// In the run's abort scope, so a force-end does not wait on the synopsis.
+						const handoff = await untilAutoRunTurnAborted(
 							sessionId,
-							effectiveCwd,
-							result.agentSessionId,
-							GOAL_SYNOPSIS_REQUEST_PROMPT,
-							session.toolType,
-							{
-								customPath: session.customPath,
-								customArgs: session.customArgs,
-								customEnvVars: session.customEnvVars,
-								// Mirror the primary iteration's effective config: the run-scoped
-								// model/effort override wins over the session default so the handoff
-								// synopsis spawns under the same configuration as the goal run itself.
-								// Same truthiness test as `runOverrides`, so an empty run value falls
-								// back to the session's model exactly as the iteration's spawn did.
-								customModel: config.model || session.customModel,
-								customEffort: config.effort || session.customEffort,
-								customContextWindow: session.customContextWindow,
-								enableMaestroP: session.enableMaestroP,
-								maestroPMode: session.maestroPMode,
-								maestroPPath: session.maestroPPath,
-								sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-							}
+							() =>
+								spawnBackgroundSynopsis(
+									sessionId,
+									effectiveCwd,
+									handoffSessionId,
+									GOAL_SYNOPSIS_REQUEST_PROMPT,
+									session.toolType,
+									{
+										customPath: session.customPath,
+										customArgs: session.customArgs,
+										customEnvVars: session.customEnvVars,
+										// Mirror the primary iteration's effective config: the run-scoped
+										// model/effort override wins over the session default so the handoff
+										// synopsis spawns under the same configuration as the goal run itself.
+										// Same truthiness test as `runOverrides`, so an empty run value falls
+										// back to the session's model exactly as the iteration's spawn did.
+										customModel: config.model || session.customModel,
+										customEffort: config.effort || session.customEffort,
+										customContextWindow: session.customContextWindow,
+										enableMaestroP: session.enableMaestroP,
+										maestroPMode: session.maestroPMode,
+										maestroPPath: session.maestroPPath,
+										sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+									}
+								),
+							() => ({ success: false, response: '' })
 						);
 						if (handoff.usageStats) {
 							totalInputTokens += handoff.usageStats.inputTokens || 0;
@@ -952,6 +1021,10 @@ export function useGoalRunner({
 					}
 				}
 			}
+
+			// No iteration is left to take a note that is still waiting. The delivered
+			// notes stay until the next run: the last reply has only just landed.
+			clearPendingSteeringNotes(sessionId);
 
 			// Always flush debounced updates and dispatch COMPLETE_BATCH to clean up state.
 			flushDebouncedUpdate(sessionId);

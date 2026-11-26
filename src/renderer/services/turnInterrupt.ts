@@ -22,6 +22,7 @@ import { hostedTargetOf, interruptHostedTurn } from './hostedTurns';
 import { TURN_CANCELED_NOTE } from '../../shared/maestro-lib/store/transcript';
 import type { AITab, LogEntry, QueuedItem, Session, SessionState } from '../types';
 import { useSessionStore, selectSessionById, updateSessionWith } from '../stores/sessionStore';
+import { useBatchStore } from '../stores/batchStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../stores/retryStore';
 import { dropMentionHandoffs } from './crossAgentHandoff';
 import { cancelHostedConsults } from '../hooks/agent/useCrossAgentDispatch';
@@ -139,13 +140,24 @@ export async function interruptTurn(
 				? [scopedTab.id]
 				: []
 			: getBusyTabs(session).map((t) => t.id);
-		if (hostBusy.length > 0) await interruptHostedTurn(session, scopeTabId);
+		// An Auto Run task's turn runs on no tab, on the host as it would here: its run is the
+		// sign that the agent has a turn to stop.
+		const hostRunsAutoRun =
+			!scopedTab && useBatchStore.getState().batchRunStates[sessionId]?.isRunning === true;
+		const forward = hostBusy.length > 0 || hostRunsAutoRun;
+		// The agent's `@mentions` run here, as a local agent's do: Stop ends them and the hand-off
+		// armed for the turn, the same as below. The hand-off goes first, before any await, so a
+		// host update that lands meanwhile cannot release it.
+		dropMentionHandoffs(sessionId, scopeTabId);
+		if (forward) await interruptHostedTurn(session, scopeTabId);
+		const consultsCanceled = await cancelConsults(sessionId, scopeTabId);
+		const wasBusy = forward || consultsCanceled > 0;
 		return {
 			success: true,
 			sessionId,
 			tabId,
-			wasBusy: hostBusy.length > 0,
-			interrupted: hostBusy.length > 0,
+			wasBusy,
+			interrupted: wasBusy,
 			stoppedTabIds: hostBusy,
 			exited: false,
 		};
@@ -163,17 +175,7 @@ export async function interruptTurn(
 	// A `@mention` fans the turn out to one `cross-agent-*` process per target,
 	// none carrying this agent's id, so only main's consult registry reaches
 	// them. Left running they stream answers into a conversation already stopped.
-	let consultsCanceled = 0;
-	try {
-		({ canceled: consultsCanceled } = await window.maestro.crossAgent.cancel(
-			sessionId,
-			scopeTabId
-		));
-	} catch (crossAgentErr) {
-		logger.warn('[turnInterrupt] Failed to cancel cross-agent consults:', undefined, crossAgentErr);
-	}
-	// A consult of a hosted agent runs on its host, so no process here holds it: end the wait.
-	consultsCanceled += cancelHostedConsults(sessionId, scopeTabId);
+	const consultsCanceled = await cancelConsults(sessionId, scopeTabId);
 
 	const busyTabIds = scopedTab
 		? scopedTab.state === 'busy'
@@ -181,7 +183,7 @@ export async function interruptTurn(
 			: []
 		: getBusyTabs(session, { includeOrphans: true }).map((t) => t.id);
 	const primaryTabId = scopedTab?.id ?? getActiveTab(session)?.id ?? 'default';
-	const { targets, liveTabIds } = await collectInterruptTargets(
+	const { targets, liveTabIds, liveTurns } = await collectInterruptTargets(
 		sessionId,
 		tabId,
 		primaryTabId,
@@ -193,6 +195,8 @@ export async function interruptTurn(
 	const wasBusy =
 		busyTabIds.length > 0 ||
 		liveTabIds.length > 0 ||
+		// A live turn on no tab: an Auto Run task's `-batch-` process.
+		liveTurns > 0 ||
 		recoveriesEnded > 0 ||
 		consultsCanceled > 0 ||
 		runningTerminalCommand;
@@ -300,12 +304,28 @@ export async function interruptTurn(
  * settled (issue #1448) has no other handle. Tab scope reads it for that tab's
  * `-fp-` siblings. A failed read still signals what can be named.
  */
+/**
+ * End the `@mention` consults this machine runs for the agent's tab (or every tab): the
+ * `cross-agent-*` processes main holds, and the waits on consults of hosted agents. Answers how
+ * many it ended.
+ */
+async function cancelConsults(sessionId: string, scopeTabId: string | undefined): Promise<number> {
+	let canceled = 0;
+	try {
+		({ canceled } = await window.maestro.crossAgent.cancel(sessionId, scopeTabId));
+	} catch (crossAgentErr) {
+		logger.warn('[turnInterrupt] Failed to cancel cross-agent consults:', undefined, crossAgentErr);
+	}
+	// A consult of a hosted agent runs on its host, so no process here holds it: end the wait.
+	return canceled + cancelHostedConsults(sessionId, scopeTabId);
+}
+
 async function collectInterruptTargets(
 	sessionId: string,
 	tabId: string | null,
 	primaryTabId: string,
 	busyTabIds: string[]
-): Promise<{ targets: string[]; liveTabIds: string[] }> {
+): Promise<{ targets: string[]; liveTabIds: string[]; liveTurns: number }> {
 	const targets = [`${sessionId}-ai-${primaryTabId}`];
 	for (const busyTabId of busyTabIds) {
 		const id = `${sessionId}-ai-${busyTabId}`;
@@ -313,12 +333,14 @@ async function collectInterruptTargets(
 	}
 
 	const liveTabIds = new Set<string>();
+	let liveTurns = 0;
 	try {
 		const active = await window.maestro.process.getActiveProcesses({
 			includeChildProcesses: false,
 		});
 		for (const proc of active) {
 			if (proc.isTerminal || !isTurnProcessInScope(proc.sessionId, sessionId, tabId)) continue;
+			liveTurns++;
 			if (!targets.includes(proc.sessionId)) targets.push(proc.sessionId);
 			const parsed = parseSessionId(proc.sessionId);
 			if (parsed.tabId) liveTabIds.add(parsed.tabId);
@@ -327,7 +349,7 @@ async function collectInterruptTargets(
 		logger.warn('[turnInterrupt] Could not list live turn processes:', undefined, lookupErr);
 	}
 
-	return { targets, liveTabIds: [...liveTabIds] };
+	return { targets, liveTabIds: [...liveTabIds], liveTurns };
 }
 
 // ============================================================================

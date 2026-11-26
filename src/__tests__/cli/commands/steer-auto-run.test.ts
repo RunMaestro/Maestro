@@ -35,6 +35,15 @@ vi.mock('../../../cli/services/storage', () => ({
 	getSessionHistoryMtimeMs: vi.fn(() => 0),
 }));
 
+const cliActivity = vi.hoisted(() => ({
+	busy: false,
+	activity: undefined as { playbookName: string; pid: number } | undefined,
+}));
+vi.mock('../../../shared/cli-activity', () => ({
+	isSessionBusyWithCli: vi.fn(() => cliActivity.busy),
+	getCliActivityForSession: vi.fn(() => cliActivity.activity),
+}));
+
 import {
 	steerAutoRunCancel,
 	steerAutoRunDismiss,
@@ -118,6 +127,8 @@ describe('maestro-cli steer-auto-run', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		sent = [];
+		cliActivity.busy = false;
+		cliActivity.activity = undefined;
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		// The real `process.exit` never returns, and `failCommand` is typed
@@ -152,6 +163,26 @@ describe('maestro-cli steer-auto-run', () => {
 				sessionId: 'agent-1',
 				note: { id: 'note-new' },
 			});
+		});
+
+		// A headless run's loop is in a maestro-cli process the desktop's notes never
+		// reach: queuing the note would leave it waiting through every iteration.
+		it('refuses a note for a run that runs headless in maestro-cli', async () => {
+			cliActivity.busy = true;
+			cliActivity.activity = { playbookName: 'Goal: ship it', pid: 4242 };
+			const errors = vi.mocked(console.error);
+
+			await expectExit(steerAutoRunSend('use the v3 endpoint', { agent: 'alpha', json: true }));
+
+			expect(sent).toHaveLength(0);
+			const output = [...errors.mock.calls, ...logSpy.mock.calls].map(String).join('\n');
+			expect(output).toContain('running headless in maestro-cli (PID 4242)');
+			expect(output).toContain('--visible');
+		});
+
+		it('says the note opens the next task or goal iteration', async () => {
+			await steerAutoRunSend('use the v3 endpoint', { agent: 'alpha' });
+			expect(printed(logSpy)).toContain('it opens the next Auto Run task or goal iteration');
 		});
 
 		it('refuses an empty note without talking to the desktop', async () => {

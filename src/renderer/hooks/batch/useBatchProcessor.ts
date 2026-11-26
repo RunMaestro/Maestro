@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useEffect, useMemo } from 'react';
 import type {
 	BatchRunState,
 	BatchRunConfig,
@@ -10,7 +10,7 @@ import type {
 } from '../../types';
 // Extracted batch processing modules
 import { countUnfinishedTasks, uncheckAllTasks } from './batchUtils';
-import { useBatchStore } from '../../stores/batchStore';
+import { isAutoRunAlreadyStopping, useBatchStore } from '../../stores/batchStore';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
@@ -28,6 +28,7 @@ import {
 	type ErrorResolutionEntry,
 } from './internal/useBatchControlActions';
 import { useBatchKillAction } from './internal/useBatchKillAction';
+import { abortableAutoRunSpawn } from './internal/autoRunTurnAbort';
 import { useBatchRunner } from './internal/useBatchRunner';
 import { useGoalRunner, type UseGoalRunnerDeps } from './internal/useGoalRunner';
 import type { AutoRunKind } from '../../../shared/stats-types';
@@ -305,6 +306,21 @@ export function useBatchProcessor({
 		onComplete,
 	});
 
+	// Every task turn is awaited through an abort scope, so a force-end releases a turn that
+	// never settles (see autoRunTurnAbort.ts). Both runners spawn through this one wrapper.
+	const abortableSpawn = useMemo(() => abortableAutoRunSpawn(onSpawnAgent), [onSpawnAgent]);
+
+	// A stop or an abort that reaches a run already stopping is a force-end: the first request is
+	// still waiting for the current turn, and a second one (the CLI's way to the panel's Force
+	// Kill, which shows only while a run is stopping) must end a run whose turn never settles.
+	const stopOrForceEnd = useCallback(
+		(sessionId: string, gentle: (sessionId: string) => void) => {
+			if (isAutoRunAlreadyStopping(sessionId)) void killBatchRun(sessionId);
+			else gentle(sessionId);
+		},
+		[killBatchRun]
+	);
+
 	// Use extracted worktree manager hook for git worktree operations
 	const worktreeManager = useWorktreeManager();
 
@@ -336,7 +352,7 @@ export function useBatchProcessor({
 		groups,
 		autoRunStats,
 		onUpdateSession,
-		onSpawnAgent,
+		onSpawnAgent: abortableSpawn,
 		onAddHistoryEntry,
 		onComplete,
 		onPRResult,
@@ -359,7 +375,7 @@ export function useBatchProcessor({
 		dispatch,
 		timeTracking,
 		groups,
-		onSpawnAgent,
+		onSpawnAgent: abortableSpawn,
 		spawnBackgroundSynopsis,
 		onAddHistoryEntry,
 		onComplete,
@@ -428,7 +444,7 @@ export function useBatchProcessor({
 						throw new Error('No host-owned Auto Run is active for this agent');
 					switch (control.action) {
 						case 'stop':
-							stopBatchRun(sessionId);
+							stopOrForceEnd(sessionId, stopBatchRun);
 							break;
 						case 'kill':
 							await killBatchRun(sessionId);
@@ -444,10 +460,12 @@ export function useBatchProcessor({
 						case 'resume':
 						case 'skip-document':
 						case 'abort':
-							if (!state.errorPaused) throw new Error('Auto Run is not paused');
+							// An abort on a run already stopping ends it, paused or not.
+							if (!state.errorPaused && !(control.action === 'abort' && state.isStopping))
+								throw new Error('Auto Run is not paused');
 							if (control.action === 'resume') resumeAfterError(sessionId);
 							else if (control.action === 'skip-document') skipCurrentDocument(sessionId);
-							else abortBatchOnError(sessionId);
+							else stopOrForceEnd(sessionId, abortBatchOnError);
 							break;
 						default:
 							throw new Error('Unknown Auto Run control');
@@ -463,6 +481,7 @@ export function useBatchProcessor({
 		);
 	}, [
 		stopBatchRun,
+		stopOrForceEnd,
 		killBatchRun,
 		pauseBatchOnError,
 		resumeAfterError,
@@ -475,9 +494,9 @@ export function useBatchProcessor({
 	// The panel's controls for a hosted agent go to its host; every other run is this window's.
 	const stopOrHost = useCallback(
 		(sessionId: string) => {
-			if (!controlOnHost(sessionId, 'stop')) stopBatchRun(sessionId);
+			if (!controlOnHost(sessionId, 'stop')) stopOrForceEnd(sessionId, stopBatchRun);
 		},
-		[stopBatchRun]
+		[stopBatchRun, stopOrForceEnd]
 	);
 	const killOrHost = useCallback(
 		async (sessionId: string) => {
@@ -499,9 +518,9 @@ export function useBatchProcessor({
 	);
 	const abortOrHost = useCallback(
 		(sessionId: string) => {
-			if (!controlOnHost(sessionId, 'abort')) abortBatchOnError(sessionId);
+			if (!controlOnHost(sessionId, 'abort')) stopOrForceEnd(sessionId, abortBatchOnError);
 		},
-		[abortBatchOnError]
+		[abortBatchOnError, stopOrForceEnd]
 	);
 
 	return {

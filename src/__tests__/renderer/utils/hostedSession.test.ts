@@ -7,11 +7,15 @@
 import { describe, expect, it } from 'vitest';
 import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
-import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
+import type {
+	LogEntryRecord,
+	LogEntryToolState,
+} from '../../../shared/maestro-lib/store/transcript';
 import {
 	mergeHostedLogs,
 	projectHostedSession,
 	releaseHostedSession,
+	type HostedProjectionInput,
 } from '../../../renderer/utils/hostedSession';
 import { isRunnableQueueItem, nextRunnableQueueItem } from '../../../renderer/utils/executionQueue';
 import type { LogEntry } from '../../../renderer/types';
@@ -98,9 +102,71 @@ describe('mergeHostedLogs', () => {
 		expect(mergeHostedLogs(first, [record('a')], [record('live', 'x')])).toBe(first);
 		expect(mergeHostedLogs(first, [record('a')], [record('live', 'xy')])).not.toBe(first);
 	});
+
+	// Live pass L8: a hosted tool call froze the window. The mirror builds a new tool card object on
+	// every pass, so an identity check never settled and the sync rewrote the record forever.
+	it('settles on a live tool card, and still redraws it when its state changes', () => {
+		const tool = (status: LogEntryToolState['status'], output?: string): LogEntryRecord => ({
+			id: 'tool-1',
+			timestamp: 2,
+			source: 'tool',
+			text: 'Read',
+			metadata: { toolState: { status, input: { file_path: '/p/README.md' }, output } },
+		});
+		const first = mergeHostedLogs([], [record('a')], [tool('running')]);
+		expect(first[1].metadata?.toolState?.status).toBe('running');
+		expect(mergeHostedLogs(first, [record('a')], [tool('running')])).toBe(first);
+		const done = mergeHostedLogs(first, [record('a')], [tool('completed', '# Parity')]);
+		expect(done).not.toBe(first);
+		expect(done[1].metadata?.toolState).toMatchObject({ status: 'completed', output: '# Parity' });
+		expect(mergeHostedLogs(done, [record('a')], [tool('completed', '# Parity')])).toBe(done);
+	});
+
+	// Parity round 3, N3: the tick follows the local rule (the answer arrived), not the host's flag.
+	it("ticks a host message once the host recorded its answer, keeps a local entry's own flag, and stays stable", () => {
+		const sent = { ...record('u1'), delivered: true };
+		const answer: LogEntryRecord = { id: 'a1', timestamp: 2, source: 'stdout', text: 'Done' };
+		const waiting = mergeHostedLogs([], [sent], undefined);
+		expect(waiting[0].delivered).toBe(false);
+		expect(mergeHostedLogs(waiting, [sent], undefined)).toBe(waiting);
+		// Partial text streaming in a live entry is not the answer yet, as a local tab's is not.
+		const streaming = mergeHostedLogs(waiting, [sent], [{ ...answer, id: 'p1', text: 'Do' }]);
+		expect(streaming[0].delivered).toBe(false);
+		const answered = mergeHostedLogs(streaming, [sent, answer], undefined);
+		expect(answered[0].delivered).toBe(true);
+		expect(mergeHostedLogs(answered, [sent, answer], undefined)).toBe(answered);
+		// A message written here before the move keeps the flag it was given here.
+		const kept = mergeHostedLogs([local('old', { delivered: true })], [sent], undefined);
+		expect(kept.map((entry) => [entry.id, entry.delivered])).toEqual([
+			['old', true],
+			['u1', false],
+		]);
+	});
 });
 
 describe('projectHostedSession', () => {
+	// Parity round 3, N6: unread follows the local rule (the answer of a watched run arrived).
+	it('marks a tab unread when the answer of a run it watched arrives, never for a loaded conversation', () => {
+		const key = liveTurnKey('h1', 't2');
+		const answer = { id: 'a1', timestamp: 3, source: 'stdout', text: 'Done' } as LogEntryRecord;
+		const transcripts = { [key]: { entries: [record('u1'), answer], loaded: true } };
+		// First read of an idle conversation (startup): nothing new happened, so nothing is unread.
+		const loaded = projectHostedSession(hostedRow(), {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't2', state: 'idle' }] }),
+			transcripts,
+		});
+		expect(loaded.aiTabs.find((tab) => tab.id === 't2')?.hasUnread).toBeUndefined();
+		// A host tab first seen running (another client opened it), whose answer then arrives.
+		const running = projectHostedSession(hostedRow(), {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't2', state: 'busy' }] }),
+		});
+		const answered = projectHostedSession(running, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't2', state: 'idle' }] }),
+			transcripts,
+		});
+		expect(answered.aiTabs.find((tab) => tab.id === 't2')?.hasUnread).toBe(true);
+	});
+
 	it("takes the host's name, star, provider session, and busy state onto the matching tab", () => {
 		const session = hostedRow();
 		const next = projectHostedSession(session, {
@@ -153,6 +219,142 @@ describe('projectHostedSession', () => {
 		expect(next.aiTabs.map((tab) => tab.id)).toEqual(['t1', 'kept', 't2']);
 		expect(next.aiTabs[1]).toBe(kept);
 		expect(next.unifiedTabOrder.map((ref) => ref.id)).toEqual(['t1', 'kept', 't2']);
+	});
+
+	// Parity round 5, P1: a tab closed on the host is gone here and stays gone.
+	it('drops a tab the host reported and then closed, keeping one from before the move', () => {
+		const kept = createMockAITab({ id: 'kept', agentSessionId: 'older', logs: [local('k')] });
+		const session = hostedRow([
+			createMockAITab({ id: 't1' }),
+			kept,
+			createMockAITab({ id: 't2', agentSessionId: 's2' }),
+		]);
+		const seen = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't2', agentSessionId: 's2' }] }),
+		});
+		expect(seen.aiTabs.find((tab) => tab.id === 't2')?.hostSeenAt).toBe(1);
+		expect(seen.aiTabs.find((tab) => tab.id === 'kept')?.hostSeenAt).toBeUndefined();
+		// The host closed t2: the record drops it and its strip slot; the kept tab stays.
+		const closed = projectHostedSession(seen, { agent: host({ aiTabs: [{ id: 't1' }] }) });
+		expect(closed.aiTabs.map((tab) => tab.id)).toEqual(['t1', 'kept']);
+		expect(closed.unifiedTabOrder.map((ref) => ref.id)).toEqual(['t1', 'kept']);
+		expect(projectHostedSession(closed, { agent: host({ aiTabs: [{ id: 't1' }] }) })).toBe(closed);
+	});
+
+	it('never draws back a tab closed here while the host still lists it', () => {
+		const session = hostedRow([createMockAITab({ id: 't1' })]);
+		const next = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't2' }] }),
+			closing: new Set(['t2']),
+		});
+		expect(next.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+		expect(next.unifiedTabOrder.map((ref) => ref.id)).toEqual(['t1']);
+	});
+
+	it('keeps a tab marked by an earlier hosting, and one the host only hid', () => {
+		const earlier = createMockAITab({ id: 'earlier', agentSessionId: 'e', hostSeenAt: 0 });
+		const hidden = createMockAITab({
+			id: 'consult',
+			agentSessionId: 'c',
+			hidden: true,
+			hostSeenAt: 1,
+		});
+		const session = hostedRow([createMockAITab({ id: 't1' }), earlier, hidden]);
+		const next = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 'consult', hidden: true }] }),
+		});
+		expect(next.aiTabs.map((tab) => tab.id)).toEqual(['t1', 'earlier', 'consult']);
+	});
+
+	it('keeps the draft of a tab another client closed on the host, for Cmd+Shift+T', () => {
+		const drafted = createMockAITab({
+			id: 't2',
+			agentSessionId: 's2',
+			inputValue: 'half a thought',
+			stagedImages: ['data:image/png;base64,AAAA'],
+			hostSeenAt: 1,
+		});
+		const session = hostedRow([createMockAITab({ id: 't1', hostSeenAt: 1 }), drafted]);
+		const closed = projectHostedSession(session, { agent: host({ aiTabs: [{ id: 't1' }] }) });
+		expect(closed.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+		expect(closed.closedTabHistory?.[0]).toMatchObject({
+			index: 1,
+			tab: { id: 't2', inputValue: 'half a thought', stagedImages: drafted.stagedImages },
+		});
+	});
+
+	it('drops the last conversation another client closed while another tab kind remains', () => {
+		const session = {
+			...hostedRow([createMockAITab({ id: 't1', agentSessionId: 's1', hostSeenAt: 1 })]),
+			terminalTabs: [{ id: 'term-1' } as never],
+		};
+		const closed = projectHostedSession(session, { agent: host({ aiTabs: [] }) });
+		expect(closed.aiTabs).toEqual([]);
+		// A record whose tab list is not known yet closes nothing.
+		const unknown = projectHostedSession(session, { agent: host({ aiTabs: undefined }) });
+		expect(unknown.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+	});
+
+	it('marks a tab the host lists as hidden, and closes it when the host drops it', () => {
+		const consult = createMockAITab({
+			id: 'consult',
+			agentSessionId: 'c',
+			hidden: true,
+			logs: [local('c')],
+		});
+		const session = hostedRow([createMockAITab({ id: 't1' }), consult]);
+		const seen = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 'consult', hidden: true }] }),
+		});
+		expect(seen.aiTabs.find((tab) => tab.id === 'consult')?.hostSeenAt).toBe(1);
+		const gone = projectHostedSession(seen, { agent: host({ aiTabs: [{ id: 't1' }] }) });
+		expect(gone.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+	});
+
+	it('keeps a blank tab the host lists only as hidden', () => {
+		const blankHidden = createMockAITab({ id: 'consult', logs: [], agentSessionId: null });
+		const session = hostedRow([blankHidden]);
+		const next = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 'consult', hidden: true }] }),
+		});
+		expect(next.aiTabs.map((tab) => tab.id)).toEqual(['consult']);
+	});
+
+	it('takes a host-closed tab out of its tile group', () => {
+		const tabs = ['t1', 't2', 't3'].map((id) =>
+			createMockAITab({ id, agentSessionId: `s-${id}`, hostSeenAt: 1 })
+		);
+		const leaf = (id: string) => ({
+			kind: 'leaf' as const,
+			id: `pane-${id}`,
+			tab: { type: 'ai' as const, id },
+		});
+		const session = {
+			...hostedRow(tabs),
+			tabGroups: [
+				{
+					id: 'g1',
+					name: 'Pair',
+					createdAt: 1,
+					layout: {
+						kind: 'split' as const,
+						id: 'split-1',
+						direction: 'row' as const,
+						children: [leaf('t1'), leaf('t2')],
+						sizes: [0.5, 0.5],
+					},
+					focusedPaneId: 'pane-t2',
+				},
+			],
+			activeGroupId: 'g1',
+		} as never;
+		const closed = projectHostedSession(session, {
+			agent: host({ aiTabs: [{ id: 't1' }, { id: 't3' }] }),
+		});
+		expect(closed.aiTabs.map((tab) => tab.id)).toEqual(['t1', 't3']);
+		// One pane left is no group: it dissolves, as after a local close.
+		expect(closed.tabGroups).toEqual([]);
+		expect(closed.activeGroupId ?? null).toBeNull();
 	});
 
 	it("drops an added agent's blank starting tab once the host has tabs", () => {
@@ -223,6 +425,32 @@ describe('projectHostedSession', () => {
 	it('returns the same record when it already matches the host', () => {
 		const first = projectHostedSession(hostedRow(), { agent: host() });
 		expect(projectHostedSession(first, { agent: host() })).toBe(first);
+	});
+
+	it('returns the same record while a live tool call runs, so the sync settles', () => {
+		const key = liveTurnKey('h1', 't1');
+		const input: HostedProjectionInput = {
+			agent: host(),
+			transcripts: { [key]: { entries: [record('old')], loaded: true } },
+			liveTurns: {
+				[key]: {
+					startedAt: 1,
+					busy: true,
+					entries: [
+						{
+							id: 'tool-1',
+							timestamp: 2,
+							source: 'tool',
+							text: 'Read',
+							metadata: { toolState: { status: 'running', input: { file_path: 'README.md' } } },
+						},
+					],
+				},
+			},
+		};
+		const first = projectHostedSession(hostedRow(), input);
+		expect(first.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['old', 'tool-1']);
+		expect(projectHostedSession(first, input)).toBe(first);
 	});
 
 	describe('the error banner', () => {

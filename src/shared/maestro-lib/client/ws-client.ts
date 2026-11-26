@@ -54,12 +54,27 @@ import { buildSnapshotKey, type AgentCapabilitiesSnapshotMap } from '../../agent
 import { stripBlankEnvVars } from '../../agentEnvironment';
 import { validateGroupAppearance } from '../../groupAppearance';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../webLogin';
+import { parseWireAskerKey } from '../../crossAgentTypes';
+import { parseWireClosedTabs } from '../../closedTabHistory';
+import type { ClosedTabSummary } from '../../closedTabCommands';
 import type { AgentError, HistoryEntry, SshRemoteConfig } from '../../types';
 import {
 	parseQueueSteerResult,
 	QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS,
 	type QueueSteerResult,
 } from '../../chatSteering';
+import {
+	normalizeSteeringCommandResult,
+	type SteeringCommandInput,
+	type SteeringCommandResult,
+} from '../../autoRunSteeringCommands';
+import {
+	PROJECT_TOKEN_USAGE_REPLY,
+	parseProjectTokenUsageReply,
+	projectTokenUsageRequest,
+	type ProjectTokenUsage,
+	type ProjectTokenUsageProject,
+} from '../../projectTokenUsage';
 import {
 	BridgeConnection,
 	CommandTimeoutError,
@@ -80,8 +95,10 @@ import {
 	isUnsupportedInvokeError,
 	parseBatchFrame,
 	parseProcessFrame,
+	parseTranscriptChangedFrame,
 	parseUserInputFrame,
 	resolveBridgeOutcome,
+	TRANSCRIPT_CHANGED_CHANNEL,
 	type ProcessFrame,
 	type ProcessTarget,
 } from './bridge-frames';
@@ -131,6 +148,8 @@ import {
 const LOG_CONTEXT = '[WsMaestroClient]';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+/** How long Stop waits for a host to confirm it stopped a consult. An older host never answers. */
+const CONSULT_CANCEL_TIMEOUT_MS = 10_000;
 /** The host's own consult bounds (`handleCrossAgentAsk` clamps again). */
 const DEFAULT_CONSULT_TIMEOUT_MS = 600_000;
 const MIN_CONSULT_TIMEOUT_MS = 10_000;
@@ -387,6 +406,9 @@ class WsMaestroClient implements MaestroClient {
 		create: (agentId: string) => this.tabsCreate(agentId),
 		rename: (agentId: string, tabId: string, name: string) => this.tabsRename(agentId, tabId, name),
 		close: (agentId: string, tabId: string) => this.tabsClose(agentId, tabId),
+		closed: (agentId: string) => this.tabsClosed(agentId),
+		reopen: (agentId: string, target: { index?: number; tabId?: string }) =>
+			this.tabsReopen(agentId, target),
 		star: (agentId: string, tabId: string, starred: boolean) =>
 			this.tabsStar(agentId, tabId, starred),
 		update: (agentId: string, tabId: string, patch: TabPatch) =>
@@ -452,6 +474,7 @@ class WsMaestroClient implements MaestroClient {
 				'abort_auto_run_error',
 				'abort_auto_run_error_result'
 			),
+		steer: (agentId: string, input: SteeringCommandInput) => this.autoRunSteer(agentId, input),
 	};
 
 	readonly groupChats = {
@@ -466,6 +489,7 @@ class WsMaestroClient implements MaestroClient {
 
 	readonly consults = {
 		ask: (input: ConsultAskInput) => this.consultsAsk(input),
+		cancel: (input: { askerKey: string }) => this.consultsCancel(input),
 	};
 
 	readonly history = {
@@ -473,6 +497,13 @@ class WsMaestroClient implements MaestroClient {
 		remove: (agentId: string, entryId: string) => this.historyRemove(agentId, entryId),
 		update: (agentId: string, entryId: string, updates: HistoryEntryUpdates) =>
 			this.historyUpdate(agentId, entryId, updates),
+	};
+
+	readonly usage = {
+		projectTokens: (
+			projects: readonly ProjectTokenUsageProject[],
+			options?: { timeoutMs?: number }
+		) => this.usageProjectTokens(projects, options),
 	};
 
 	readonly settings = {
@@ -1111,6 +1142,20 @@ class WsMaestroClient implements MaestroClient {
 					at: this.now(),
 					entry: input.entry as LogEntryRecord,
 				});
+				return;
+			}
+			case TRANSCRIPT_CHANGED_CHANNEL: {
+				// A host wrote to an idle tab outside a turn (`/skills`, `/history`): read it again.
+				const target = parseTranscriptChangedFrame(args);
+				const resolved = target ? this.resolveTarget(target) : undefined;
+				if (
+					!resolved ||
+					this.turnStates.get(this.turnKey(resolved.agentId, resolved.tabId))?.running
+				) {
+					// A running turn's own end reads the tab again, so its live text is never dropped.
+					return;
+				}
+				this.emitTurn(resolved.agentId, resolved.tabId, { kind: 'gap', at: this.now() });
 				return;
 			}
 			default: {
@@ -1872,6 +1917,8 @@ class WsMaestroClient implements MaestroClient {
 		const turnOverrides = normalizeTurnOverrides(input.overrides);
 		if (turnOverrides) message.turnOverrides = turnOverrides;
 		if (input.held === true) message.held = true;
+		if (input.agentContext) message.agentContext = input.agentContext;
+		if (input.agentNotes) message.agentNotes = input.agentNotes;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)
@@ -2054,6 +2101,31 @@ class WsMaestroClient implements MaestroClient {
 					typeof entry.type === 'string'
 			)
 		);
+	}
+
+	/**
+	 * Both host kinds answer it (a desktop and a headless host); an older host echoes it, which
+	 * reads as `unsupported`. The numbers are parsed as untrusted input.
+	 */
+	private async usageProjectTokens(
+		projects: readonly ProjectTokenUsageProject[],
+		options: { timeoutMs?: number } = {}
+	): Promise<ClientResult<ProjectTokenUsage>> {
+		const request = projectTokenUsageRequest(projects);
+		const sent = await this.send(
+			'usage.projectTokens',
+			{ ...request },
+			PROJECT_TOKEN_USAGE_REPLY,
+			options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult('usage.projectTokens', sent.value);
+		if (!checked.ok) return checked;
+		const usage = parseProjectTokenUsageReply(sent.value, request.projects);
+		if (!usage) {
+			return this.fail('usage.projectTokens', 'failed', 'The host answered no token usage.');
+		}
+		return ok(usage);
 	}
 
 	/** The message `maestro-cli queue hold` sends a desktop, which a headless host answers too. */
@@ -2282,6 +2354,33 @@ class WsMaestroClient implements MaestroClient {
 		return result.ok ? ok(undefined) : result;
 	}
 
+	/**
+	 * The message `maestro-cli steer-auto-run` sends a desktop, which a headless host answers too.
+	 * A refusal (no run, the cap, a note already taken) is the host's answer, not a failure.
+	 */
+	private async autoRunSteer(
+		agentId: string,
+		input: SteeringCommandInput
+	): Promise<ClientResult<SteeringCommandResult>> {
+		const method: ClientMethod = 'autoRun.steer';
+		const gate = this.requireConnected(method);
+		if (gate) return gate;
+		const sent = await this.send(
+			method,
+			{
+				type: 'auto_run_steering_command',
+				sessionId: agentId,
+				action: input.action,
+				...(input.text !== undefined ? { text: input.text } : {}),
+				...(input.noteId !== undefined ? { noteId: input.noteId } : {}),
+				...(input.deliveryId !== undefined ? { deliveryId: input.deliveryId } : {}),
+			},
+			'auto_run_steering_command_result'
+		);
+		if (!sent.ok) return sent;
+		return ok(normalizeSteeringCommandResult(sent.value));
+	}
+
 	// =======================================================================
 	// Group chats
 	// =======================================================================
@@ -2432,6 +2531,7 @@ class WsMaestroClient implements MaestroClient {
 				withContext: input.withContext === true,
 				...(input.transcript ? { transcript: input.transcript } : {}),
 				...(input.fromAgentName ? { fromAgentName: input.fromAgentName } : {}),
+				...(input.askerKey ? { askerKey: input.askerKey } : {}),
 				timeoutMs,
 				...(input.handoffAnswer !== undefined ? { handoffAnswer: input.handoffAnswer } : {}),
 				...(input.sideQuestion === true ? { sideQuestion: true } : {}),
@@ -2450,6 +2550,66 @@ class WsMaestroClient implements MaestroClient {
 		}
 		const text = asString(reply.error);
 		return this.fail(method, classifyFailure(text), text ?? `${who} did not answer.`);
+	}
+
+	/** The agent's closed-tab stack on the host (`closed_tab_command` list), bounded. */
+	private async tabsClosed(agentId: string): Promise<ClientResult<ClosedTabSummary[]>> {
+		const method: ClientMethod = 'tabs.closed';
+		const sent = await this.send(
+			method,
+			{ type: 'closed_tab_command', action: 'list', sessionId: agentId },
+			'closed_tab_command_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		return checked.ok ? ok(parseWireClosedTabs(checked.value.closedTabs)) : checked;
+	}
+
+	/** Reopen a closed AI tab on the host in the background (`closed_tab_command` reopen). */
+	private async tabsReopen(
+		agentId: string,
+		target: { index?: number; tabId?: string }
+	): Promise<ClientResult<{ tabId: string; wasDuplicate?: boolean }>> {
+		const method: ClientMethod = 'tabs.reopen';
+		const sent = await this.send(
+			method,
+			{
+				type: 'closed_tab_command',
+				action: 'reopen',
+				sessionId: agentId,
+				...(target.tabId ? { tabId: target.tabId } : { index: target.index ?? 0 }),
+				background: true,
+			},
+			'closed_tab_command_result'
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		const tabId = asString(checked.value.tabId);
+		if (!tabId || (checked.value.tabType !== undefined && checked.value.tabType !== 'ai')) {
+			return this.fail(method, 'rejected', 'The host did not reopen an AI tab.');
+		}
+		return ok({ tabId, ...(checked.value.wasDuplicate === true ? { wasDuplicate: true } : {}) });
+	}
+
+	/** Stop one remote asker's consults on the host (`cross_agent_cancel`). */
+	private async consultsCancel(input: {
+		askerKey: string;
+	}): Promise<ClientResult<{ canceled: number }>> {
+		const method: ClientMethod = 'consults.cancel';
+		const askerKey = parseWireAskerKey(input.askerKey);
+		if (!askerKey) return this.fail(method, 'invalid', 'The asker key is not valid.');
+		const sent = await this.send(
+			method,
+			{ type: 'cross_agent_cancel', askerKey },
+			'cross_agent_cancel_result',
+			{ timeoutMs: CONSULT_CANCEL_TIMEOUT_MS }
+		);
+		if (!sent.ok) return sent;
+		const checked = this.checkResult(method, sent.value);
+		if (!checked.ok) return checked;
+		const canceled = checked.value.canceled;
+		return ok({ canceled: typeof canceled === 'number' && canceled > 0 ? canceled : 0 });
 	}
 
 	// =======================================================================

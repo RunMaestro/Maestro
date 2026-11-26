@@ -34,8 +34,9 @@ import {
 	selectContextWindow,
 } from '../../crossAgentContext';
 import {
-	CROSS_AGENT_ASK_SESSION_ID,
 	CROSS_AGENT_ASK_TAB_ID,
+	parseWireAskerKey,
+	remoteAskerConsultKey,
 	type CrossAgentRequest,
 	type CrossAgentResponseChunk,
 	type CrossAgentTranscriptEntry,
@@ -68,6 +69,7 @@ import { toTurnAgent } from '../turns/records';
 import { createHistoryWriter, type HistoryWriter } from '../turns/history';
 import type { BackgroundTurns } from './background-turns';
 import type { DataDirVerdict } from './data-dir-lock';
+import type { RuntimeSideQuestions } from './side-questions';
 import type { RuntimeTurnOptions } from './turns';
 
 const LOG_CONTEXT = '[RuntimeConsults]';
@@ -93,6 +95,11 @@ export interface RuntimeConsultsOptions {
 	minTimeoutMs?: number;
 	/** Where the bundled prompts and the CLI are, as chat turns read them for the target's system prompt. */
 	options?: Pick<RuntimeTurnOptions, 'bundledPromptsDir' | 'moduleDirectory' | 'maestroCliPath'>;
+	/**
+	 * Answers a `/btw` side question (`sideQuestion`), which forks the target's tab instead of
+	 * consulting it (`RuntimeTurns.sideQuestions`). Absent: a side question is refused.
+	 */
+	sideQuestions?: Pick<RuntimeSideQuestions, 'ask'>;
 }
 
 /**
@@ -107,6 +114,12 @@ export interface RuntimeConsults {
 	readonly api: { ask(input: RuntimeConsultInput): Promise<ClientResult<ConsultAnswer>> };
 	/** Stop every consult `agentId` (or its tab `tabId`) asked for. Answers how many were stopped. */
 	cancelForSource(agentId: string, tabId?: string): number;
+	/**
+	 * Stop on an asker on another machine (`consults.cancel`): every consult of that consult-tab key,
+	 * including one still waiting its turn or writing its question, which ends as stopped when its
+	 * turn comes. The asker cannot see that queue, so its Stop must not miss what waits in it.
+	 */
+	cancelForRemoteAsker(sourceSessionId: string): number;
 	/** Consults running now. With the group chat rounds, the work `host stop` refuses to cut off. */
 	inFlight(): number;
 	/**
@@ -156,6 +169,25 @@ function toTargetSession(record: AgentRecord): CrossAgentTargetSession | undefin
 	};
 }
 
+/** The terminal chunk of a consult Stop ended before its process started: stopped, nothing said. */
+function stoppedChunk(
+	request: CrossAgentRequest,
+	target: CrossAgentTargetSession
+): CrossAgentResponseChunk {
+	return {
+		requestId: request.requestId,
+		sourceSessionId: request.sourceSessionId,
+		sourceTabId: request.sourceTabId,
+		targetSessionId: request.targetSessionId,
+		targetTabId: request.targetTabId,
+		targetAgentName: target.name,
+		targetToolType: target.toolType,
+		chunk: '',
+		done: true,
+		canceled: true,
+	};
+}
+
 export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeConsults {
 	const { paths, repository, background } = options;
 	const ctx: RuleContext = { ...DEFAULT_RULE_CONTEXT, ...options.rules };
@@ -165,7 +197,18 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 
 	/** Consults that share a consult tab run one at a time; different tabs and agents run at once (GD18). */
 	const order = createKeyedWriteQueue();
+	/**
+	 * Consults asked but not started yet (waiting behind another on their consult tab, or writing
+	 * the question): a remote asker's Stop finds no process for them, so it marks them here and they
+	 * end as stopped the moment their turn comes (`cancelForRemoteAsker`).
+	 */
+	const waiting = new Set<{ sourceSessionId: string; sourceTabId: string; stopped: boolean }>();
 	let inFlight = 0;
+	/**
+	 * Consult tabs a consult is running in now, by consulted agent. A consult tab is never stored
+	 * busy, so this is how the consult tab cap (`consultTabToReplace`) leaves a running one alone.
+	 */
+	const consultTabsInUse = new Map<string, Set<string>>();
 	let disposed = false;
 	/** Every ask not yet finished, so shutdown can wait for what each one writes down. */
 	const pending = new Set<Promise<unknown>>();
@@ -238,17 +281,18 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 	async function askNow(input: RuntimeConsultInput): Promise<Answer> {
 		const method: ClientMethod = 'consults.ask';
 		if (disposed) return fail(method, 'host-unavailable', 'The runtime is closing.');
-		const question = input.question.trim();
-		if (!question) return fail(method, 'invalid', 'The question is empty.');
-		// A side question forks a desktop tab's provider session (`/btw`); answering it as a consult
-		// would add a turn to a consult tab instead, so refuse it rather than answer something else.
+		// A side question forks the target tab's provider session (`/btw`); answering it as a consult
+		// would add a turn to a consult tab instead, so it goes to the side questions or is refused.
 		if (input.sideQuestion === true) {
+			if (options.sideQuestions) return options.sideQuestions.ask(input);
 			return fail(
 				method,
 				'rejected',
 				'This host does not answer side questions (/btw). Run it on a desktop host.'
 			);
 		}
+		const question = input.question.trim();
+		if (!question) return fail(method, 'invalid', 'The question is empty.');
 		const record = repository.getAgent(input.targetAgentId);
 		if (!record) return fail(method, 'not-found', `No agent ${input.targetAgentId}.`);
 		if (input.fromAgentId && input.fromAgentId === input.targetAgentId) {
@@ -264,10 +308,11 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		const sourceName = source?.name ?? (input.fromAgentName?.trim() || UNNAMED_ASKER);
 		// Keyed on the CALLING AGENT and a constant tab, never the caller's active tab, so one consult
 		// tab per pairing survives the agent switching tabs and a follow-up resumes the thread (req-D2).
-		const key = {
-			sourceSessionId: source?.id ?? CROSS_AGENT_ASK_SESSION_ID,
-			sourceTabId: CROSS_AGENT_ASK_TAB_ID,
-		};
+		// An asker on another machine is keyed on its own (machine, agent, tab), under a prefix no
+		// agent here has, so it reaches its own consult tab and no other.
+		const key = source
+			? { sourceSessionId: source.id, sourceTabId: CROSS_AGENT_ASK_TAB_ID }
+			: remoteAskerConsultKey(parseWireAskerKey(input.askerKey));
 		const timeoutMs = Math.min(
 			Math.max(input.timeoutMs ?? DEFAULT_TIMEOUT_MS, options.minTimeoutMs ?? MIN_TIMEOUT_MS),
 			MAX_TIMEOUT_MS
@@ -288,7 +333,10 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		}, timeoutMs);
 		timer.handle.unref?.();
 
+		const pendingStart = { ...key, stopped: false };
+		waiting.add(pendingStart);
 		inFlight += 1;
+		let heldTabId: string | undefined;
 		try {
 			return await order.enqueue(`${target.id}\u0000${key.sourceSessionId}`, async () => {
 				// A runtime that closed while this waited its turn starts nothing it cannot record.
@@ -314,9 +362,17 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 					key,
 					name: buildConsultTabName(sourceName),
 					question: questionEntry,
+					inUseTabIds: consultTabsInUse.get(target.id),
 				});
 				if (!opened.ok) return opened;
 				const tabId = opened.value.tabId;
+				heldTabId = tabId;
+				let inUse = consultTabsInUse.get(target.id);
+				if (!inUse) {
+					inUse = new Set();
+					consultTabsInUse.set(target.id, inUse);
+				}
+				inUse.add(tabId);
 				// The wait ran out while the question was being written: nothing is started for it.
 				if (timer.expired) {
 					return fail<AnswerValue>(
@@ -344,35 +400,40 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 					createdAt: now(),
 				};
 
-				const chunk = await new Promise<CrossAgentResponseChunk>((resolve) => {
-					void service.start(request, {
-						runner: background.consultRunner(),
-						resolveAgent: (providerId) => background.resolveAgent(providerId),
-						sshStore: background.sshStore,
-						getTargetSession: (id) => {
-							const found = repository.getAgent(id);
-							return found ? (toTargetSession(found) ?? null) : null;
-						},
-						getCustomEnvVars: (toolType) =>
-							agentConfigs()[toolType]?.customEnvVars as Record<string, string> | undefined,
-						getAgentConfig: (toolType) => agentConfigs()[toolType],
-						writable: writableFor(isHandoff),
-						// The target answers as itself: the system prompt its own chat turn carries.
-						getSystemPrompt: (consulted) => {
-							const stored = repository.getAgent(consulted.id);
-							return loadStandInSystemPrompt(
-								stored ? toTurnAgent(stored) : undefined,
-								promptSources,
-								{
-									isSsh: consulted.sshRemoteConfig?.enabled === true,
-								}
-							);
-						},
-						onChunk: (piece) => {
-							if (piece.done) resolve(piece);
-						},
-					});
-				});
+				// Stopped while it waited: it ends as a stopped consult with nothing said, and from here
+				// on a Stop reaches the service, which registers the consult as `start` is called.
+				waiting.delete(pendingStart);
+				const chunk = pendingStart.stopped
+					? stoppedChunk(request, target)
+					: await new Promise<CrossAgentResponseChunk>((resolve) => {
+							void service.start(request, {
+								runner: background.consultRunner(),
+								resolveAgent: (providerId) => background.resolveAgent(providerId),
+								sshStore: background.sshStore,
+								getTargetSession: (id) => {
+									const found = repository.getAgent(id);
+									return found ? (toTargetSession(found) ?? null) : null;
+								},
+								getCustomEnvVars: (toolType) =>
+									agentConfigs()[toolType]?.customEnvVars as Record<string, string> | undefined,
+								getAgentConfig: (toolType) => agentConfigs()[toolType],
+								writable: writableFor(isHandoff),
+								// The target answers as itself: the system prompt its own chat turn carries.
+								getSystemPrompt: (consulted) => {
+									const stored = repository.getAgent(consulted.id);
+									return loadStandInSystemPrompt(
+										stored ? toTurnAgent(stored) : undefined,
+										promptSources,
+										{
+											isSsh: consulted.sshRemoteConfig?.enabled === true,
+										}
+									);
+								},
+								onChunk: (piece) => {
+									if (piece.done) resolve(piece);
+								},
+							});
+						});
 
 				// A failed or stopped consult keeps what the target managed to say, and the reason after it.
 				const note = crossAgentTerminationNote(chunk);
@@ -439,14 +500,30 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 				return ok({ answer: chunk.chunk.trim(), agentName: target.name });
 			});
 		} finally {
+			waiting.delete(pendingStart);
 			inFlight -= 1;
 			clearTimeout(timer.handle);
+			if (heldTabId) {
+				const inUse = consultTabsInUse.get(target.id);
+				inUse?.delete(heldTabId);
+				if (inUse?.size === 0) consultTabsInUse.delete(target.id);
+			}
 		}
 	}
 
 	return {
 		api: { ask },
 		cancelForSource: (agentId, tabId) => service.cancelForSource(agentId, tabId),
+		cancelForRemoteAsker: (sourceSessionId) => {
+			let marked = 0;
+			for (const pending of waiting) {
+				if (!pending.stopped && pending.sourceSessionId === sourceSessionId) {
+					pending.stopped = true;
+					marked += 1;
+				}
+			}
+			return marked + service.cancelForSource(sourceSessionId);
+		},
 		inFlight: () => inFlight,
 		dispose() {
 			disposed = true;

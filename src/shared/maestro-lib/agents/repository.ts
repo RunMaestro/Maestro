@@ -50,6 +50,7 @@ import { logger } from '../host';
 import { unusableCwdReason } from '../launch/cwd';
 import { planAgentImport } from './import-plan';
 import type { MaestroPaths } from '../paths/resolve';
+import { hasInlineSessionImages, type SessionImageStore } from '../store/session-images';
 import type { DataDirVerdict } from '../runtime/data-dir-lock';
 import {
 	GROUPS_REGISTRY,
@@ -70,7 +71,15 @@ import type {
 } from '../store/records';
 import { agentsOf, groupsOf, optionalArrayShape, visibleAiTabsOf } from '../store/read-stores';
 import type { LogEntryRecord } from '../store/transcript';
-import { archiveClosedTab, removeClosedTabArchive } from './closed-tabs';
+import {
+	archiveClosedTab,
+	closedTabsFile,
+	readClosedTabs,
+	removeClosedTabArchive,
+	takeClosedTab,
+} from './closed-tabs';
+import type { ClosedTabSummary } from '../../closedTabCommands';
+import { getTabDisplayName } from '../store/tab-display';
 import {
 	activeAgentAfterRemoval,
 	addTabRecord,
@@ -87,6 +96,7 @@ import {
 	checkAgentCreateInput,
 	checkAgentName,
 	closeTabRecord,
+	reopenTabRecord,
 	DEFAULT_RULE_CONTEXT,
 	DEFAULT_TAB_DEFAULTS,
 	groupsWithout,
@@ -145,6 +155,13 @@ export interface AgentRepositoryOptions {
 	readTabDefaults?: () => Promise<TabDefaults>;
 	/** Why a local working directory cannot be used, or null. Default: `unusableCwdReason`. */
 	checkCwd?: (cwd: string) => string | null;
+	/**
+	 * The data directory's session image store. When given, every sessions write first moves an
+	 * inline image (a transcript entry's, a draft's, a stored queue item's) into the store and keeps
+	 * its `maestro-image://` ref, as the desktop's persistence does, so the sessions file never
+	 * carries base64 and stays small enough to rewrite on each change.
+	 */
+	images?: Pick<SessionImageStore, 'relocateSessionImages'>;
 }
 
 /** Why the repository could not load its documents. The runtime unions these into `RuntimeRefusal`. */
@@ -205,6 +222,13 @@ export interface AgentRepository {
 	createTab(agentId: string): Promise<ClientResult<{ tabId: string }>>;
 	renameTab(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
 	closeTab(agentId: string, tabId: string): Promise<ClientResult<void>>;
+	/** The agent's closed-tab archive as summaries, newest first (`closed_tab_command` list). */
+	listClosedTabs(agentId: string): Promise<ClientResult<ClosedTabSummary[]>>;
+	/** Reopen one archived tab in the background: the newest, or the one closed as `tabId`. */
+	reopenClosedTab(
+		agentId: string,
+		target: { index?: number; tabId?: string }
+	): Promise<ClientResult<{ tabId: string; wasDuplicate?: boolean }>>;
 	starTab(agentId: string, tabId: string, starred: boolean): Promise<ClientResult<void>>;
 	updateTab(agentId: string, tabId: string, patch: TabPatch): Promise<ClientResult<void>>;
 	/**
@@ -411,6 +435,14 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		if (tabGuard && !tabGuard()) throw new TabOwnerChangedError();
 	}
 
+	/** The sessions document with every inline image moved into the image store (`options.images`). */
+	async function withStoredImages(doc: SessionsDocument): Promise<SessionsDocument> {
+		const entries = doc.sessions;
+		if (!options.images || !Array.isArray(entries) || !hasInlineSessionImages(entries)) return doc;
+		const { sessions } = await options.images.relocateSessionImages(entries);
+		return { ...doc, sessions };
+	}
+
 	async function run<T>(
 		method: ClientMethod,
 		planner: () => Promise<Planned<T>> | Planned<T>,
@@ -430,6 +462,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				// Each file's in-memory copy is replaced as soon as ITS write lands, so a
 				// failure on the second file leaves memory describing what is on disk.
 				if (plan.sessions) {
+					plan.sessions = await withStoredImages(plan.sessions);
 					guardWrite(guard);
 					await writeStoreDocument(paths.sessionsFile, plan.sessions, {
 						registry: SESSIONS_REGISTRY,
@@ -1176,8 +1209,77 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		});
 	}
 
+	async function listClosedTabs(agentId: string): Promise<ClientResult<ClosedTabSummary[]>> {
+		if (!findAgent(agentId)) return noAgent('tabs.closed', agentId);
+		const archive = await readClosedTabs(closedTabsFile(paths.syncDir, agentId));
+		return {
+			ok: true,
+			value: archive.map((entry, index) => ({
+				index,
+				type: 'ai' as const,
+				label: getTabDisplayName(entry.tab),
+				tabId: entry.tab.id,
+				closedAt: entry.closedAt,
+				...(entry.tab.agentSessionId ? { agentSessionId: entry.tab.agentSessionId } : {}),
+			})),
+		};
+	}
+
+	/**
+	 * Reopen an archived tab: the archive loses the entry only once the tab is back in the record
+	 * (`after`, so a failed write leaves it archived, never lost), and a conversation
+	 * that already has a tab is answered with that tab, its entry dropped, as the desktop does.
+	 */
+	function reopenClosedTab(
+		agentId: string,
+		target: { index?: number; tabId?: string }
+	): Promise<ClientResult<{ tabId: string; wasDuplicate?: boolean }>> {
+		const method: ClientMethod = 'tabs.reopen';
+		return run(method, async () => {
+			const agent = findAgent(agentId);
+			if (!agent) return noAgent(method, agentId);
+			const taken = await takeClosedTab(paths.syncDir, agentId, (archive) =>
+				target.tabId
+					? archive.findIndex((entry) => entry.tab.id === target.tabId)
+					: (target.index ?? 0)
+			);
+			if (!taken) {
+				return failure(method, 'not-found', 'There is no closed tab to reopen.');
+			}
+			const outcome = reopenTabRecord(agent, taken.closed, ctx);
+			const value = {
+				tabId: outcome.tabId,
+				...(outcome.wasDuplicate ? { wasDuplicate: true } : {}),
+			};
+			if (outcome.wasDuplicate) {
+				// No record changes, so `before` carries the archive write: it is fenced like any write.
+				return { ok: true, plan: { value, before: taken.commit, events: [] } };
+			}
+			const tab = outcome.agent.aiTabs?.find((candidate) => candidate.id === outcome.tabId);
+			return {
+				ok: true,
+				plan: {
+					value,
+					// Fenced too: a process that lost the directory after its write must not take an
+					// entry a newer writer archived under the same tab id.
+					after: async () => {
+						guardWrite();
+						await taken.commit();
+					},
+					sessions: withAgents(new Map([[agentId, outcome.agent]])),
+					events: [
+						...(tab ? [{ type: 'tab.added' as const, agentId, tab: projectTab(tab) }] : []),
+						{ type: 'agent.updated', agent: project(outcome.agent) },
+					],
+				},
+			};
+		});
+	}
+
 	return {
 		load,
+		listClosedTabs,
+		reopenClosedTab,
 		listAgents: () => agents().map(project),
 		getAgent: (agentId) => {
 			const agent = findAgent(agentId);

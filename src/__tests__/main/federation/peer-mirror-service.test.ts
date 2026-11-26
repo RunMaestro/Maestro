@@ -276,6 +276,28 @@ describe('PeerMirrorService', () => {
 		expect(h.service.isRemoteConnected('a')).toBe(false);
 	});
 
+	it('asks the host on a remote for its projects token usage only while that host is connected', async () => {
+		const a = fakeHost('a', { manualReady: true });
+		const usage = { projects: [{ status: 'unsupported', breakdowns: [], complete: false }] };
+		const projectTokens = vi.fn(async () => ({ ok: true, value: usage }));
+		(a.client as unknown as { usage: unknown }).usage = { projectTokens };
+		const h = harness([remoteOf('a')], { a });
+		const projects = [{ provider: 'codex', projectPath: '/srv/app' }];
+		h.service.start();
+		await settle();
+		expect(await h.service.projectTokenUsage('a', projects, 500)).toBeUndefined();
+		a.open();
+		await settle();
+		expect(await h.service.projectTokenUsage('a', projects, 500)).toEqual(usage);
+		expect(projectTokens).toHaveBeenCalledWith(projects, { timeoutMs: 500 });
+		expect(await h.service.projectTokenUsage('unknown', projects, 500)).toBeUndefined();
+		projectTokens.mockResolvedValueOnce({
+			ok: false,
+			error: { code: 'unsupported', message: 'old', method: 'usage.projectTokens' },
+		} as never);
+		expect(await h.service.projectTokenUsage('a', projects, 500)).toBeUndefined();
+	});
+
 	it('records a host that is down as the peer state with the fix line, and keeps going', async () => {
 		const a = fakeHost('a', { manualReady: true });
 		const b = fakeHost('b');
@@ -555,6 +577,43 @@ describe('PeerMirrorService', () => {
 			expect(a.historyList).toHaveBeenCalledWith('a-a1');
 			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h1']);
 			expect(a.historyList).toHaveBeenCalledTimes(1);
+		});
+
+		// Parity round 3, N4: a turn sent from this machine carries its name on the host; here it
+		// reads as a local entry (no host pill), as a local or SSH agent's own entry does.
+		it("reads an entry stamped with this machine's name as local, and keeps another machine's", async () => {
+			const a = fakeHost('a');
+			a.historyList.mockResolvedValueOnce({
+				ok: true,
+				value: [
+					{
+						id: 'mine',
+						type: 'USER',
+						timestamp: 2,
+						summary: 's',
+						projectPath: '/p',
+						hostname: 'laptop.local',
+					},
+					{
+						id: 'theirs',
+						type: 'USER',
+						timestamp: 1,
+						summary: 's',
+						projectPath: '/p',
+						hostname: 'desk.local',
+					},
+				],
+			});
+			const h = harness([remoteOf('a')], { a });
+			h.deps.originHost = 'laptop.local';
+			h.service.start();
+			await settle();
+			const entries = await h.service.history('a', 'a-a1');
+			expect(entries.map((e) => [e.id, e.hostname])).toEqual([
+				['mine', undefined],
+				['theirs', 'desk.local'],
+			]);
+			expect('hostname' in entries[0]).toBe(false);
 		});
 
 		it('keeps a cache per agent and drops only the agent whose turn ended', async () => {

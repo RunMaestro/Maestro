@@ -39,8 +39,10 @@ import type {
 	Unsubscribe,
 } from '../client/types';
 import type { SshRemoteConfig } from '../../types';
+import { parseWireAskerKey, remoteAskerConsultKey } from '../../crossAgentTypes';
 import type { MaestroPaths } from '../paths/resolve';
 import { readStoreDocument } from '../store/io';
+import { withInlineEntryImages } from '../launch/image-refs';
 import { sliceTranscript, transcriptOf, type LogEntryRecord } from '../store/transcript';
 
 /** Where the runtime is in its life, which decides what a call may do. */
@@ -70,7 +72,12 @@ export interface RuntimeClientDeps {
 	/** Create, read, send into, stop, rename, and delete group chats. */
 	groupChats: GroupChatsApi;
 	/** Ask another agent. `cancelForSource` is how Stop on the asker reaches the consults it started. */
-	consults: { api: ConsultsApi; cancelForSource(agentId: string): number };
+	consults: {
+		api: ConsultsApi;
+		cancelForSource(agentId: string): number;
+		/** Stop on an asker on another machine, including what waits in this host's queue. */
+		cancelForRemoteAsker(sourceSessionId: string): number;
+	};
 	/** An agent's History, with the shared History of its project. */
 	history: HistoryApi;
 }
@@ -210,6 +217,10 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 			rename: (agentId, tabId, name) =>
 				guarded('tabs.rename', () => repository.renameTab(agentId, tabId, name)),
 			close: (agentId, tabId) => guarded('tabs.close', () => repository.closeTab(agentId, tabId)),
+			closed: (agentId) => guarded('tabs.closed', () => repository.listClosedTabs(agentId)),
+			// A reopened tab is a record write, which a fenced runtime could not keep.
+			reopen: (agentId, target) =>
+				Promise.resolve(gate('tabs.reopen', true) ?? repository.reopenClosedTab(agentId, target)),
 			star: (agentId, tabId, starred) =>
 				guarded('tabs.star', () => repository.starTab(agentId, tabId, starred)),
 			update: (agentId, tabId, patch) =>
@@ -221,8 +232,12 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 					}
 					const tab = repository.getTab(agentId, tabId);
 					if (!tab) return fail('tabs.transcript', 'not-found', `No tab ${tabId}.`);
-					// A copy: the stored entries belong to the repository (R6).
-					return ok(structuredClone(sliceTranscript(transcriptOf(tab), options)));
+					// A copy: the stored entries belong to the repository (R6). An entry's images are
+					// refs into this machine's image store, which the reader cannot open: it gets the
+					// bytes, as a lift sends them (M10).
+					return ok(
+						structuredClone(sliceTranscript(transcriptOf(tab), options)).map(withInlineEntryImages)
+					);
 				}),
 		},
 
@@ -274,6 +289,8 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 			resume: (agentId) => guarded('autoRun.resume', () => deps.autoRun.resume(agentId)),
 			skip: (agentId) => guarded('autoRun.skip', () => deps.autoRun.skip(agentId)),
 			abort: (agentId) => guarded('autoRun.abort', () => deps.autoRun.abort(agentId)),
+			// A note only steers a run already going, so it stays available when fenced too.
+			steer: (agentId, input) => guarded('autoRun.steer', () => deps.autoRun.steer(agentId, input)),
 		},
 
 		groupChats: {
@@ -295,6 +312,15 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 		// A fenced runtime does not start a consult: its answer could not be recorded.
 		consults: {
 			ask: (input) => Promise.resolve(gate('consults.ask', true) ?? deps.consults.api.ask(input)),
+			// Stop only reduces what runs, so it stays available when fenced. An asker key that is not
+			// one stops nothing: it must never reach the stand-in tab other askers share.
+			cancel: (input) =>
+				guarded<{ canceled: number }>('consults.cancel', () => {
+					const askerKey = parseWireAskerKey(input.askerKey);
+					if (!askerKey) return fail('consults.cancel', 'invalid', 'The asker key is not valid.');
+					const key = remoteAskerConsultKey(askerKey);
+					return ok({ canceled: deps.consults.cancelForRemoteAsker(key.sourceSessionId) });
+				}),
 		},
 
 		history: {

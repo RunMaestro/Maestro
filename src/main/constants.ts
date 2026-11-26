@@ -76,6 +76,23 @@ export const DEMO_DATA_PATH =
 	process.env.MAESTRO_DEMO_DIR || path.join(os.tmpdir(), 'maestro-demo');
 
 /**
+ * Env var that makes a demo instance show its windows without activating the
+ * app, so a scripted demo (screenshots, live parity passes) never takes the
+ * keyboard from the person at the machine. Ignored outside DEMO_MODE.
+ */
+export const DEMO_SHOW_INACTIVE_ENV = 'MAESTRO_DEMO_SHOW_INACTIVE';
+
+export function resolveDemoShowInactive(
+	env: NodeJS.ProcessEnv = process.env,
+	demoMode: boolean = DEMO_MODE
+): boolean {
+	return demoMode && env[DEMO_SHOW_INACTIVE_ENV] === '1';
+}
+
+/** Read once at startup: whether windows show inactive (see DEMO_SHOW_INACTIVE_ENV). */
+export const DEMO_SHOW_INACTIVE = resolveDemoShowInactive();
+
+/**
  * Directory of the stores every build on this machine shares (provider configs
  * and detected capabilities), so a development build reuses the binary paths
  * and env vars already set up in the installed app.

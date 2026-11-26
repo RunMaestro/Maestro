@@ -1831,8 +1831,9 @@ describe('transferTabContext in every agent mode', () => {
 			if (mode === 'hosted') {
 				expect(outcome.newTabId).toBe(HOST_TAB);
 				const kinds = act$.mock.calls.map(([, , action]) => action.kind);
-				expect(kinds).toEqual(['new-tab', 'rename-tab', 'send']);
-				expect(act$.mock.calls[2][2]).toMatchObject({
+				// The host's new tab is given the defaults a local new tab starts with.
+				expect(kinds).toEqual(['new-tab', 'update-tab', 'rename-tab', 'send']);
+				expect(act$.mock.calls[3][2]).toMatchObject({
 					tabId: HOST_TAB,
 					text: expect.stringContaining('("Source" using claude-code)'),
 				});

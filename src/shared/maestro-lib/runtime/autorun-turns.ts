@@ -36,14 +36,16 @@ import { getClaudeTokenSourceFields, type ClaudeTokenSourceFields } from '../../
 import { usageStatsToTurnFields } from '../../turnUsageLedger';
 import type { UsageStats } from '../../types';
 import type { AgentRepository } from '../agents/repository';
+import type { NativeSessionBinding } from '../agents/providerSwap';
 import type { AutoRunTurnResult, AutoRunTurnRequest } from '../autorun/engine-types';
 import { createIdleWatchdog } from '../control/idle-watchdog';
 import { logger } from '../host';
 import { createOutputParser } from '../parsers/parser-factory';
+import type { TurnToolCall } from '../client/types';
 import type { MaestroPaths } from '../paths/resolve';
 import { readSettingsStore } from '../store/read-stores';
 import { sshRecordOf } from '../agents/rules';
-import { assembleAutoRunTurn } from '../turns/assemble';
+import { assembleAutoRunTurn, assembleSideQuestionTurn } from '../turns/assemble';
 import { loadTurnContext } from '../turns/context';
 import { describeCrash } from '../turns/record-turn';
 import { toTurnAgent } from '../turns/records';
@@ -65,15 +67,44 @@ const DEFAULT_MAX_TASK_DURATION_MIN = 480;
 /** The longest delay `setTimeout` takes. An idle budget of "never" is this. */
 const MAX_TIMER_MS = 2_147_483_647;
 
-/** What a run's process says while it works, folded by `reduceAutoRun` into the output tail and totals. */
+/**
+ * What a run's process says while it works, folded by `reduceAutoRun` into the output tail and
+ * totals. Reasoning and tool calls also reach a client's Thought Stream.
+ */
 export type AutoRunStreamEvent =
 	| { kind: 'output'; processId: string; text: string }
-	| { kind: 'usage'; processId: string; usage: UsageStats };
+	| { kind: 'usage'; processId: string; usage: UsageStats }
+	| { kind: 'thinking'; processId: string; text: string }
+	| {
+			kind: 'tool';
+			processId: string;
+			toolName: string;
+			state?: unknown;
+			toolCallId?: string;
+	  };
+
+/**
+ * A tool call in the desktop's own `process:tool-execution` state shape (`{ status, input }`).
+ * A provider's own state already has it; a call announced in an assistant message carries only its
+ * raw arguments, which go under `input` so the call's line still names its file or command.
+ */
+export function toolStateOf(tool: TurnToolCall): Record<string, unknown> {
+	const detail = tool.detail;
+	if (
+		typeof detail === 'object' &&
+		detail !== null &&
+		!Array.isArray(detail) &&
+		('status' in detail || 'input' in detail)
+	) {
+		return detail as Record<string, unknown>;
+	}
+	return { status: tool.status, ...(detail !== undefined ? { input: detail } : {}) };
+}
 
 export interface AutoRunTurnRunnerOptions {
 	agentId: string;
 	paths: MaestroPaths;
-	repository: Pick<AgentRepository, 'getAgent'>;
+	repository: Pick<AgentRepository, 'getAgent'> & Partial<Pick<AgentRepository, 'writeRefusal'>>;
 	registry: ProcessRegistry;
 	statsRecorder: Pick<StatsRecorder, 'recordQuery'>;
 	/** What the host told the runtime about prompts, the CLI script, and maestro-p. */
@@ -81,6 +112,24 @@ export interface AutoRunTurnRunnerOptions {
 	deps: Pick<RuntimeTurnDeps, 'runAgentTurn' | 'probeBinary' | 'readGitBranch' | 'now'>;
 	/** The run's live output and usage, for the progress stream. */
 	onStream(event: AutoRunStreamEvent): void;
+	/**
+	 * The registry slot the turn's process is filed under. Default `AUTORUN_PROCESS_TAB_ID`; a
+	 * tab's `/history` synopsis uses its own slot beside the tab (`synopsisProcessSlot`).
+	 */
+	processTabId?: string;
+	/**
+	 * The ownership of the tab session a turn resumes (a synopsis resumes a tab's): a Grok resume
+	 * is refused without it, as a chat turn's would be (`runAgentTurn`).
+	 */
+	retainedNativeSessionBinding?: NativeSessionBinding;
+	/**
+	 * Each turn is a `/btw` side question (`runtime/side-questions.ts`): `request.prompt` is the
+	 * question, assembled by `assembleSideQuestionTurn` as a read-only throwaway fork with tools
+	 * off. Claude runs `claude --print` whatever its token source (maestro-p tails the transcript
+	 * it resumed, which a fork never writes), and no usage row is written, as the desktop's
+	 * `sideQuestion:ask` writes none.
+	 */
+	sideQuestion?: boolean;
 }
 
 export interface AutoRunTurnRunner {
@@ -149,27 +198,36 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 		});
 		if (!loaded.ok) return attempt(failure(loaded.message));
 
-		const assembled = assembleAutoRunTurn(
-			agent,
-			{
-				prompt: request.prompt,
-				resumeSessionId: request.resumeSessionId,
-				model: request.model,
-				effort: request.effort,
-			},
-			loaded.context
-		);
+		const input = {
+			resumeSessionId: request.resumeSessionId,
+			model: request.model,
+			effort: request.effort,
+		};
+		const assembled = options.sideQuestion
+			? assembleSideQuestionTurn(agent, { ...input, question: request.prompt }, loaded.context)
+			: assembleAutoRunTurn(agent, { ...input, prompt: request.prompt }, loaded.context);
 		if (!assembled.ok) return attempt(failure(assembled.message));
 		const turn = assembled.turn;
 		const provider = turn.settings.provider;
 
+		// Nothing starts once the turn was stopped, or the host stopped being the data directory's
+		// writer (shutdown, fencing): the process would outlive the lock it was started under.
+		if (request.signal?.aborted) return attempt(failure('The turn was stopped before it started.'));
+		const fenced = repository.writeRefusal?.();
+		if (fenced) return attempt(failure(fenced));
 		const sessionId = `${agentId}-batch-${deps.now()}`;
 		const started = await startTurn(turn, {
 			sessionId,
 			sshStore,
-			claudeTokenSource: getClaudeTokenSourceFields(record as ClaudeTokenSourceFields),
+			...(options.sideQuestion
+				? {}
+				: { claudeTokenSource: getClaudeTokenSourceFields(record as ClaudeTokenSourceFields) }),
 			maestroPBinPath: host.maestroPBinPath ?? null,
 			...(request.signal ? { signal: request.signal } : {}),
+			...(host.grokLaunchScope ? { grokLaunchScope: host.grokLaunchScope } : {}),
+			...(options.retainedNativeSessionBinding
+				? { retainedNativeSessionBinding: structuredClone(options.retainedNativeSessionBinding) }
+				: {}),
 		});
 		if (!started.ok) return attempt(failure(started.message));
 		const process = started.run;
@@ -211,6 +269,16 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 							options.onStream({ kind: 'output', processId: sessionId, text: event.text });
 						} else if (event.kind === 'usage') {
 							options.onStream({ kind: 'usage', processId: sessionId, usage: event.usage });
+						} else if (event.kind === 'thinking') {
+							options.onStream({ kind: 'thinking', processId: sessionId, text: event.text });
+						} else if (event.kind === 'tool') {
+							options.onStream({
+								kind: 'tool',
+								processId: sessionId,
+								toolName: event.tool.name,
+								state: toolStateOf(event.tool),
+								...(event.tool.id ? { toolCallId: event.tool.id } : {}),
+							});
 						}
 					}
 				}
@@ -225,7 +293,7 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 			return completed;
 		})();
 
-		registry.register(agentId, AUTORUN_PROCESS_TAB_ID, {
+		registry.register(agentId, options.processTabId ?? AUTORUN_PROCESS_TAB_ID, {
 			interrupt: () => process.interrupt(),
 			terminate: () => process.terminate(),
 			terminateNow: () => process.terminateNow(),
@@ -235,17 +303,19 @@ export function createAutoRunTurnRunner(options: AutoRunTurnRunnerOptions): Auto
 		const endedAt = deps.now();
 
 		// The usage row the desktop writes for every turn it spawns, marked as automation.
-		await statsRecorder.recordQuery({
-			sessionId: agentId,
-			agentType: provider,
-			source: 'auto',
-			startTime: startedAt,
-			duration: endedAt - startedAt,
-			projectPath: agent.cwd,
-			isRemote: sshRecordOf(record.sessionSshRemoteConfig)?.enabled === true,
-			isWorktree: typeof record.parentSessionId === 'string' && record.parentSessionId !== '',
-			...usageStatsToTurnFields(completed.usage),
-		});
+		if (!options.sideQuestion) {
+			await statsRecorder.recordQuery({
+				sessionId: agentId,
+				agentType: provider,
+				source: 'auto',
+				startTime: startedAt,
+				duration: endedAt - startedAt,
+				projectPath: agent.cwd,
+				isRemote: sshRecordOf(record.sessionSshRemoteConfig)?.enabled === true,
+				isWorktree: typeof record.parentSessionId === 'string' && record.parentSessionId !== '',
+				...usageStatsToTurnFields(completed.usage),
+			});
+		}
 
 		const finishedWell =
 			completed.outcome === 'completed' || completed.outcome === 'completed-with-warning';

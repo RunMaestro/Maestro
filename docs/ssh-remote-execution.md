@@ -295,6 +295,7 @@ The File Explorer works seamlessly with remote agents:
 - Open and edit files directly
 - Use `@` file mentions to reference remote files in prompts
 - Compress a folder into a `.zip` on the remote host (requires `zip` there)
+- **Open in Default App** and **Reveal** hand your computer's app a copy of the remote file. A change you save in that app goes back to the remote file while Maestro runs. If the remote file changed since you opened it, Maestro does not overwrite it: it keeps your version beside the copy and tells you where.
 
 ### Remote Auto Run
 
@@ -477,12 +478,12 @@ project/
 
 ### Enabling Shared History
 
-Shared history is enabled per-session via the **Sync history to remote** toggle, which appears in the SSH Remote Execution dropdown when an SSH host is selected:
+Shared history is enabled per agent with the **Share history in the project folder** toggle, which appears under SSH Remote Execution for every agent, local or remote:
 
-1. Create or edit an agent session
-2. Select an SSH remote from the dropdown
-3. The **Sync history to remote** checkbox appears below the status indicator (disabled by default)
-4. When enabled, every history entry is written to both your local Maestro store and the remote project's `.maestro/history/` directory
+1. Create or edit an agent
+2. Pick Local Execution or an SSH remote from the dropdown
+3. Turn on **Share history in the project folder** below the status indicator (off by default)
+4. When enabled, every history entry is written to both your local Maestro store and `.maestro/history/` in the project folder where the agent runs: on the remote for an SSH agent, on this machine for a local agent
 
 ### Use Case: Same User, Multiple Machines
 

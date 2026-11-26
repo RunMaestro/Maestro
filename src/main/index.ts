@@ -221,6 +221,7 @@ import { runSettingsMigrations } from './stores/migrations';
 import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
 import {
 	ensureCliServer,
+	flushRemoteCopyWriteBack,
 	startCliDiscoveryWatchdog,
 	stopCliDiscoveryWatchdog,
 } from './ipc/handlers';
@@ -249,7 +250,7 @@ import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
 import { closeAllParquetFiles } from './parquet/parquet-file';
 import { closeAllSqliteDatabases } from './sqlite/sqlite-database';
-import { DEMO_MODE, DEMO_DATA_PATH, resolveSharedDataPath } from './constants';
+import { DEMO_MODE, DEMO_DATA_PATH, DEMO_SHOW_INACTIVE, resolveSharedDataPath } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
 import { setupDeepLinkHandling, flushPendingDeepLink } from './deep-links';
@@ -803,6 +804,7 @@ const windowManager = createWindowManager({
 	windowRegistry,
 	settingsStore: store,
 	getIsQuitting: () => quitHandler?.isQuitConfirmed() ?? false,
+	showInactive: DEMO_SHOW_INACTIVE,
 });
 
 // Deps shared by every cadenza HUD window operation (the HUD reuses the main
@@ -1136,10 +1138,7 @@ function restoreWindows() {
 		}
 	}
 
-	const focusWindow = focusSpec ? created[specs.indexOf(focusSpec)] : undefined;
-	if (focusWindow && !focusWindow.isDestroyed()) {
-		focusWindow.focus();
-	}
+	windowManager.focusRestoredWindow(focusSpec ? created[specs.indexOf(focusSpec)] : undefined);
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
@@ -4150,6 +4149,7 @@ quitHandler = createQuitHandler({
 	getHistoryManager,
 	tunnelManager,
 	closeStatsDB,
+	flushPendingRemoteWrites: flushRemoteCopyWriteBack,
 	stopCliWatcher: () => {
 		cliWatcher.stop();
 		// Tear down the discovery-file watchdog so it doesn't try to rewrite

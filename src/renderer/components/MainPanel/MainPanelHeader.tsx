@@ -39,7 +39,10 @@ import {
 	formatConversationDuration,
 } from '../../../shared/tabConversationStats';
 import { useProviderProfiles } from '../../hooks/stats/useProviderProfiles';
-import { isImplicitDefaultProfile } from '../../../shared/providerProfiles';
+import {
+	isImplicitDefaultProfile,
+	profileAccountShortLabel,
+} from '../../../shared/providerProfiles';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 /** Snapshot an element's viewport rect as plain numbers for the timeline anchor. */
@@ -158,15 +161,16 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	// and while $HOME is still resolving.
 	const profileSessions = useMemo(() => [activeSession], [activeSession]);
 	const activeProfile = useProviderProfiles(profileSessions).profiles[0];
-	// Named only for a provider that splits: a config-dir account, a billed
-	// credential, or either one on a remote host.
+	// Named only for a provider that splits: a config-dir account or a billed
+	// credential. The account alone, never `@ host`: the same account reads the
+	// same in every mode, and the mode pill says where the agent runs.
 	const activeProfileLabel =
 		activeProfile && (activeProfile.accountKey || activeProfile.credential)
-			? activeProfile.shortLabel
+			? profileAccountShortLabel(activeSession.toolType, activeProfile)
 			: null;
 	// The header fallback (shown while the gauge has no window) names only an
-	// account that tells several apart; the implicit default ("Codex default")
-	// is the one every single-account user is on.
+	// account that tells several apart; the implicit default ("Codex default"),
+	// here or on a remote, is the one every single-account user is on.
 	const showProfileFallback =
 		!!activeProfile &&
 		!!activeSession &&

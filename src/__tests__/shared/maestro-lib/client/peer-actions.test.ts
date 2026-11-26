@@ -11,6 +11,7 @@ import {
 	runPeerAgentAction,
 } from '../../../../shared/maestro-lib/client/peer-actions';
 import type { ClientResult, MaestroClient } from '../../../../shared/maestro-lib/client/types';
+import { buildRemoteAskerKey } from '../../../../shared/crossAgentTypes';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
@@ -62,6 +63,9 @@ function fakeClient() {
 			resume: vi.fn(async () => ok(undefined)),
 			skip: vi.fn(async () => ok(undefined)),
 			abort: vi.fn(async () => ok(undefined)),
+			steer: vi.fn(async () =>
+				ok({ success: false, error: 'No Auto Run is active on this agent' })
+			),
 		},
 	};
 	return { client, asClient: client as unknown as MaestroClient };
@@ -350,6 +354,89 @@ describe('runPeerAgentAction', () => {
 		});
 	});
 
+	it('names the asker to the host by (this machine, asking agent, asking tab), for its own consult tab', async () => {
+		const { client, asClient } = fakeClient();
+		client.consults.ask.mockResolvedValue({ ok: true, value: { answer: 'a' } });
+		await runPeerAgentAction(
+			asClient,
+			agent,
+			{ kind: 'consult', question: 'q', asker: { agentId: 'src', tabId: 'tab-1' } },
+			{ originHost: 'laptop' }
+		);
+		expect(client.consults.ask).toHaveBeenCalledWith({
+			targetAgentId: 'a1',
+			question: 'q',
+			askerKey: buildRemoteAskerKey({ machine: 'laptop', agentId: 'src', tabId: 'tab-1' }),
+		});
+	});
+
+	it('carries Stop to the host for the consults that asker has running there (G1)', async () => {
+		const { client, asClient } = fakeClient();
+		const cancel = vi.fn().mockResolvedValue({ ok: true, value: { canceled: 1 } });
+		(client.consults as unknown as { cancel: typeof cancel }).cancel = cancel;
+		expect(
+			await runPeerAgentAction(
+				asClient,
+				agent,
+				{ kind: 'consult-cancel', asker: { agentId: 'src', tabId: 'tab-1' } },
+				{ originHost: 'laptop' }
+			)
+		).toEqual(ok({ kind: 'consult-cancel', canceled: 1 }));
+		expect(cancel).toHaveBeenCalledWith({
+			askerKey: buildRemoteAskerKey({ machine: 'laptop', agentId: 'src', tabId: 'tab-1' }),
+		});
+		expect(
+			parsePeerAgentAction({ kind: 'consult-cancel', asker: { agentId: 'a', tabId: 't' } })
+		).toEqual({ kind: 'consult-cancel', asker: { agentId: 'a', tabId: 't' } });
+		expect(() => parsePeerAgentAction({ kind: 'consult-cancel' })).toThrow('Missing asker');
+	});
+
+	it('answers unsupported for Stop on a host client with no consult cancel', async () => {
+		const { asClient } = fakeClient();
+		const stopped = await runPeerAgentAction(asClient, agent, {
+			kind: 'consult-cancel',
+			asker: { agentId: 'src', tabId: 'tab-1' },
+		});
+		expect(stopped.ok).toBe(false);
+		if (!stopped.ok) expect(stopped.error.code).toBe('unsupported');
+	});
+
+	it('reads the host closed-tab stack bounded, and reopens one there (G5)', async () => {
+		const { client, asClient } = fakeClient();
+		const tabs = client.tabs as unknown as Record<string, unknown>;
+		tabs.closed = vi.fn(async () =>
+			ok([
+				{ index: 7, type: 'ai', label: 'Tax', tabId: 'h-tax', closedAt: 5, agentSessionId: 's1' },
+				{ type: 'bogus', tabId: 'x' },
+			])
+		);
+		tabs.reopen = vi.fn(async () => ok({ tabId: 'h-tax' }));
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'closed-tabs' })).toEqual(
+			ok({
+				kind: 'closed-tabs',
+				closedTabs: [
+					{ index: 0, type: 'ai', label: 'Tax', tabId: 'h-tax', closedAt: 5, agentSessionId: 's1' },
+				],
+			})
+		);
+		expect(
+			await runPeerAgentAction(asClient, agent, { kind: 'reopen-tab', tabId: 'h-tax' })
+		).toEqual(ok({ kind: 'reopen-tab', tabId: 'h-tax' }));
+		expect(tabs.reopen).toHaveBeenCalledWith('a1', { tabId: 'h-tax' });
+		expect(parsePeerAgentAction({ kind: 'reopen-tab' })).toEqual({ kind: 'reopen-tab', index: 0 });
+		expect(() => parsePeerAgentAction({ kind: 'reopen-tab', index: -1 })).toThrow();
+		expect(parsePeerAgentAction({ kind: 'closed-tabs', extra: 1 })).toEqual({
+			kind: 'closed-tabs',
+		});
+	});
+
+	it('answers unsupported for closed tabs on a host client that keeps none', async () => {
+		const { asClient } = fakeClient();
+		const read = await runPeerAgentAction(asClient, agent, { kind: 'closed-tabs' });
+		expect(read.ok).toBe(false);
+		if (!read.ok) expect(read.error.code).toBe('unsupported');
+	});
+
 	it('edits a waiting message on the host', async () => {
 		const { client, asClient } = fakeClient();
 		const edit = { text: 'new', turnSettings: { model: 'm' } };
@@ -518,6 +605,17 @@ describe('parsePeerAgentAction', () => {
 		});
 		expect(
 			parsePeerAgentAction({
+				kind: 'consult',
+				question: 'how?',
+				asker: { agentId: 'src', tabId: 'tab-1', extra: 1 },
+				askerKey: 'forged/key/here',
+			})
+		).toEqual({ kind: 'consult', question: 'how?', asker: { agentId: 'src', tabId: 'tab-1' } });
+		expect(
+			parsePeerAgentAction({ kind: 'consult', question: 'how?', asker: { agentId: 'src' } })
+		).toEqual({ kind: 'consult', question: 'how?' });
+		expect(
+			parsePeerAgentAction({
 				kind: 'update-agent',
 				patch: {
 					model: null,
@@ -628,6 +726,32 @@ describe('parsePeerAgentAction', () => {
 		}
 	});
 
+	// Parity M7: the agent-only text a hosted agent's `@mention` adds to its turn.
+	it("carries an @mention's agent-only text to turns.send, and refuses one it cannot take", async () => {
+		const { client, asClient } = fakeClient();
+		await runPeerAgentAction(asClient, agent, {
+			kind: 'send',
+			tabId: 't2',
+			text: 'hi',
+			agentContext: 'REPLIES',
+			agentNotes: 'NOTES',
+		});
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', {
+			text: 'hi',
+			agentContext: 'REPLIES',
+			agentNotes: 'NOTES',
+		});
+		expect(
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', agentNotes: 'NOTES' })
+		).toEqual({ kind: 'send', tabId: 't1', text: 'hi', agentNotes: 'NOTES' });
+		expect(
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', agentContext: '  ' })
+		).toEqual({ kind: 'send', tabId: 't1', text: 'hi' });
+		expect(() =>
+			parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', agentContext: 7 })
+		).toThrow('agentContext must be text.');
+	});
+
 	it('reads a send with turn overrides: checked fields kept, an empty set dropped', () => {
 		expect(
 			parsePeerAgentAction({
@@ -717,6 +841,14 @@ describe('parsePeerAgentAction', () => {
 		expect(() =>
 			parsePeerAgentAction({ kind: 'edit-queued', itemId: 'q1', edit: { text: ' ' } })
 		).toThrow('Missing text');
+		// An image-only queued message keeps its empty text through an Edit.
+		expect(
+			parsePeerAgentAction({
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: { text: '', images: ['data:image/png;base64,iVBORw0KGgo='] },
+			})
+		).toMatchObject({ kind: 'edit-queued', edit: { text: '' } });
 		expect(() =>
 			parsePeerAgentAction({
 				kind: 'edit-queued',
@@ -800,6 +932,42 @@ describe('Auto Run actions', () => {
 			expect(client.autoRun[control]).toHaveBeenCalledWith('a1');
 		}
 	);
+
+	it("sends a steering command to the host's run and answers with its result, a refusal included", async () => {
+		const { client, asClient } = fakeClient();
+		const input = { action: 'send' as const, text: 'Prefer the fixtures' };
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'steer-auto-run', input })).toEqual(
+			ok({
+				kind: 'steer-auto-run',
+				result: { success: false, error: 'No Auto Run is active on this agent' },
+			})
+		);
+		expect(client.autoRun.steer).toHaveBeenCalledWith('a1', input);
+	});
+
+	it('reads a steering command that crossed IPC as the host reads one', () => {
+		expect(
+			parsePeerAgentAction({
+				kind: 'steer-auto-run',
+				input: { action: 'send', text: '  note  ', sessionId: 'ignored', background: true },
+			})
+		).toEqual({ kind: 'steer-auto-run', input: { action: 'send', text: 'note' } });
+		expect(
+			parsePeerAgentAction({ kind: 'steer-auto-run', input: { action: 'cancel', noteId: 'n1' } })
+		).toEqual({ kind: 'steer-auto-run', input: { action: 'cancel', noteId: 'n1' } });
+		expect(() =>
+			parsePeerAgentAction({
+				kind: 'steer-auto-run',
+				input: { action: 'send', text: 'x'.repeat(5000) },
+			})
+		).toThrow(/the limit is/);
+		expect(() =>
+			parsePeerAgentAction({ kind: 'steer-auto-run', input: { action: 'nuke' } })
+		).toThrow(/Invalid or missing steering action/);
+		expect(() => parsePeerAgentAction({ kind: 'steer-auto-run' })).toThrow(
+			'steer-auto-run needs an input'
+		);
+	});
 
 	it('reads a launch that crossed IPC, checked by the launch rules', () => {
 		expect(

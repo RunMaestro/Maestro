@@ -223,6 +223,41 @@ describe('evaluateGoalExit', () => {
 				expect(decision.detail).toContain('50%');
 			}
 		});
+
+		it('names the percent the user saw when the raw reports dip after a peak', () => {
+			// A real run on 2026-11-25: raw self-reports 30, 42, 38, 48, 42, 36 were
+			// displayed as the high-water mark 30, 42, 42, 48, 48, 48, and the run
+			// was stopped with "stuck at 36%". The detail must name 48.
+			const history = [30, 42, 38, 48, 42, 36].map((p, i) => rec(i + 1, p));
+			const decision = evaluateGoalExit(history, config());
+			expect(decision).toEqual({
+				action: 'stop',
+				reason: 'stalled',
+				detail: `No progress across the last ${STALL_THRESHOLD} iterations (stuck at 48%).`,
+			});
+		});
+
+		it('stalls the displayed 30, 42, 42, 48, 48, 48 series at 48%', () => {
+			const history = [30, 42, 42, 48, 48, 48].map((p, i) => rec(i + 1, p));
+			const decision = evaluateGoalExit(history, config());
+			expect(decision.action).toBe('stop');
+			if (decision.action === 'stop') {
+				expect(decision.reason).toBe('stalled');
+				expect(decision.detail).toContain('stuck at 48%');
+			}
+		});
+
+		it('rounds a fractional high-water mark the way the progress bar does', () => {
+			const history = [rec(1, 48.4), rec(2, 48.2), rec(3, 48.1)];
+			const decision = evaluateGoalExit(history, config());
+			expect(decision.action === 'stop' && decision.detail).toContain('stuck at 48%');
+		});
+
+		it('does not change when a dipping run stalls', () => {
+			// 48 -> 42 -> 50: the upward tick still resets the window.
+			const history = [rec(1, 48), rec(2, 42), rec(3, 50)];
+			expect(evaluateGoalExit(history, config())).toEqual({ action: 'continue' });
+		});
 	});
 
 	describe('priority ordering', () => {

@@ -13,7 +13,7 @@ import {
 	type LogEntryRecord,
 	type LogEntrySource,
 } from '../../shared/maestro-lib/store/transcript';
-import type { AgentError } from '../../shared/types';
+import { asThinkingMode, type AgentError, type UsageStats } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem } from '../types';
 
 const KNOWN_SOURCES = new Set<string>(LOG_ENTRY_SOURCES);
@@ -50,6 +50,8 @@ export function mirrorLogEntry(record: LogEntryRecord): LogEntry {
 	if (record.images?.length) entry.images = record.images;
 	if (record.delivered !== undefined) entry.delivered = record.delivered;
 	if (record.readOnly !== undefined) entry.readOnly = record.readOnly;
+	// A message the host steered into its running turn wears the same header as a local one.
+	if (record.steered === true) entry.steered = true;
 	if (record.aiCommand) entry.aiCommand = record.aiCommand;
 	if (record.turnModel) entry.turnModel = record.turnModel;
 	if (record.turnEffort) entry.turnEffort = record.turnEffort;
@@ -86,8 +88,82 @@ export function mirrorLogEntry(record: LogEntryRecord): LogEntry {
 	return entry;
 }
 
-/** A host tab as the tab strip draws it: name, star, and busy state; no transcript, no draft. */
+/** A token count off the wire: a finite, non-negative number, or nothing. */
+function tokenCount(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+const USAGE_TOKEN_FIELDS = [
+	'inputTokens',
+	'outputTokens',
+	'cacheReadInputTokens',
+	'cacheCreationInputTokens',
+] as const;
+
+/**
+ * A host tab's token usage, read off the wire: the fields the header's context gauge, cost pill,
+ * and usage tooltip read (`useContextWindow()`, `MainPanelHeader`). A value with no valid token
+ * counts (a malformed record from a newer or older host) is dropped, and the tab shows no gauge,
+ * as a local tab before its first turn does. The host's accounting detail stays on the host.
+ */
+export function mirrorUsageStats(value: unknown): UsageStats | undefined {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	const counts: Partial<Record<(typeof USAGE_TOKEN_FIELDS)[number], number>> = {};
+	for (const field of USAGE_TOKEN_FIELDS) {
+		const count = tokenCount(raw[field]);
+		if (count === undefined) return undefined;
+		counts[field] = count;
+	}
+	const usage: UsageStats = {
+		inputTokens: counts.inputTokens ?? 0,
+		outputTokens: counts.outputTokens ?? 0,
+		cacheReadInputTokens: counts.cacheReadInputTokens ?? 0,
+		cacheCreationInputTokens: counts.cacheCreationInputTokens ?? 0,
+		totalCostUsd: tokenCount(raw.totalCostUsd) ?? 0,
+		contextWindow: tokenCount(raw.contextWindow) ?? 0,
+	};
+	if (raw.contextWindowResolved === true) usage.contextWindowResolved = true;
+	if (typeof raw.contextWindowModel === 'string' && raw.contextWindowModel) {
+		usage.contextWindowModel = raw.contextWindowModel.slice(0, 200);
+	}
+	const reasoning = tokenCount(raw.reasoningTokens);
+	if (reasoning !== undefined) usage.reasoningTokens = reasoning;
+	const absolute = raw.absoluteUsage;
+	if (typeof absolute === 'object' && absolute !== null && !Array.isArray(absolute)) {
+		const snap = absolute as Record<string, unknown>;
+		const fields = [...USAGE_TOKEN_FIELDS, 'reasoningTokens'].map((field) =>
+			tokenCount(snap[field])
+		);
+		if (fields.every((count) => count !== undefined)) {
+			const [
+				inputTokens,
+				outputTokens,
+				cacheReadInputTokens,
+				cacheCreationInputTokens,
+				reasoningTokens,
+			] = fields as number[];
+			usage.absoluteUsage = {
+				inputTokens,
+				outputTokens,
+				cacheReadInputTokens,
+				cacheCreationInputTokens,
+				reasoningTokens,
+			};
+		}
+	}
+	return usage;
+}
+
+/**
+ * A host tab as the tab strip and composer draw it: name, star, busy state, and the composer
+ * settings the host's tab holds (Save to History, thinking, read-only, model, effort), so its pills
+ * show what the host will run, and its token usage, so the header's context gauge and cost pill read
+ * what a local tab's do; no transcript, no draft.
+ */
 export function mirrorTab(record: AITabRecord): AITab {
+	const thinking = asThinkingMode(record.showThinking);
+	const usageStats = mirrorUsageStats(record.usageStats);
 	return {
 		id: record.id,
 		agentSessionId: record.agentSessionId ?? null,
@@ -103,6 +179,12 @@ export function mirrorTab(record: AITabRecord): AITab {
 			? { thinkingStartTime: record.thinkingStartTime }
 			: {}),
 		...(record.hidden ? { hidden: true } : {}),
+		...(typeof record.saveToHistory === 'boolean' ? { saveToHistory: record.saveToHistory } : {}),
+		...(thinking ? { showThinking: thinking } : {}),
+		...(typeof record.readOnlyMode === 'boolean' ? { readOnlyMode: record.readOnlyMode } : {}),
+		...(record.customModel ? { customModel: record.customModel } : {}),
+		...(record.customEffort ? { customEffort: record.customEffort } : {}),
+		...(usageStats ? { usageStats } : {}),
 	};
 }
 

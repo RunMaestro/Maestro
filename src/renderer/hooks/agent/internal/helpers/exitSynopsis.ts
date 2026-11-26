@@ -297,48 +297,9 @@ export function turnSavesToHistory(
 	return tab?.saveToHistory === true;
 }
 
-/**
- * Activity gate: did the just-completed turn do work worth synopsizing?
- *
- * A synopsis is a full session-resume spawn (a second agent round-trip), so a
- * turn that only exchanged text - a plain question answered with prose, no tool
- * use - isn't worth the cost or a History entry. We treat "ran at least one
- * tool" as the bar for meaningful work: edits, writes, file reads, searches, and
- * shell commands all surface as `source: 'tool'` log entries (including in
- * maestro-p text-stream turns), so research-only turns still qualify.
- *
- * The "turn" is everything after the last user message in the tab's logs. A
- * custom AI command (`/commit` and friends) always counts as work - it was an
- * explicit action, and its `pendingAICommandForSynopsis` path may not leave a
- * tool log of its own.
- *
- * @param logs The completed tab's full log history.
- * @param isCustomCommand True when this exit was driven by a pending custom AI command.
- * @param toolLogsObservable Whether this tab actually records tool logs. Tabs with
- *   thinking display off never emit `source: 'tool'` entries (see
- *   `thinkingLogsRecorded`), so the scan below cannot distinguish a genuine no-op
- *   turn from a tool-heavy one. When false we record the turn rather than risk
- *   silently dropping its History entry - the pre-activity-gate behavior.
- */
-export function turnDidMeaningfulWork(
-	logs: ReadonlyArray<{ source: LogEntry['source'] }>,
-	isCustomCommand = false,
-	toolLogsObservable = true
-): boolean {
-	if (isCustomCommand) return true;
-	if (!toolLogsObservable) return true;
-	let lastUserIdx = -1;
-	for (let i = logs.length - 1; i >= 0; i--) {
-		if (logs[i].source === 'user') {
-			lastUserIdx = i;
-			break;
-		}
-	}
-	for (let i = lastUserIdx + 1; i < logs.length; i++) {
-		if (logs[i].source === 'tool') return true;
-	}
-	return false;
-}
+// The activity gate lives in shared code so a headless Federation host applies the same rule to
+// its per-turn History entry (`createTurnRecorder`'s `summarize`).
+export { turnDidMeaningfulWork } from '../../../../../shared/synopsis';
 
 // Re-export the right-panel handle type for ergonomic test imports.
 export type { RightPanelHandle };

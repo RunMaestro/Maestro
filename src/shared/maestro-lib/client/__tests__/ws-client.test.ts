@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createWsMaestroClient } from '../ws-client';
+import { TRANSCRIPT_CHANGED_CHANNEL } from '../bridge-frames';
 import { normalizeOriginHost } from '../types';
 import type {
 	MaestroClient,
@@ -880,6 +881,27 @@ describe('createWsMaestroClient', () => {
 			expect(turnKinds()).toEqual([]);
 		});
 
+		it('reads a transcript-changed frame for an idle tab as a gap, so the tab is read again (M13)', async () => {
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, PID, A1, A1_TAB);
+			await vi.waitFor(() => expect(turnKinds()).toEqual(['gap']));
+			expect(turnEvents()[0]).toMatchObject({ kind: 'gap' });
+			expect(events.find((event) => event.type === 'turn')).toMatchObject({
+				agentId: A1,
+				tabId: A1_TAB,
+			});
+		});
+
+		it('leaves a running turn alone on a transcript-changed frame, and ignores a malformed one (M13)', async () => {
+			bridge.pushBridgeEvent('process:data', PID, 'partial');
+			await vi.waitFor(() => expect(turnKinds()).toContain('text'));
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, PID);
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, 42);
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, 'not-a-tab-process');
+			bridge.pushBridgeEvent('process:data', PID, ' more');
+			await vi.waitFor(() => expect(turnKinds().filter((kind) => kind === 'text')).toHaveLength(2));
+			expect(turnKinds()).not.toContain('gap');
+		});
+
 		it('sends the origin host on enqueue_command, trimmed, and leaves out one that is not a hostname', async () => {
 			bridge.typed.set(
 				'enqueue_command',
@@ -1124,6 +1146,52 @@ describe('createWsMaestroClient', () => {
 			it('answers unsupported from a desktop bridge that does not know get_history', async () => {
 				const result = await client.history.list(A1);
 				expect(result).toMatchObject({ ok: false, error: { code: 'unsupported' } });
+			});
+		});
+
+		describe('usage.projectTokens', () => {
+			const projects = [{ provider: 'claude-code', projectPath: '/srv/app' }];
+			const record = {
+				sessionId: 's1',
+				agentType: 'claude-code',
+				projectPath: '/srv/app',
+				accountKey: 'default',
+				timestampMs: 5,
+				byModel: [],
+				inputTokens: 3,
+				outputTokens: 4,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 0,
+				costEstimated: false,
+				coverage: 'full',
+			};
+
+			it('sends get_project_token_usage and keeps only records that hold together', async () => {
+				bridge.typed.set(
+					'get_project_token_usage',
+					reply('project_token_usage_result', {
+						projects: [
+							{
+								status: 'read',
+								breakdowns: [record, { ...record, sessionId: 's2', inputTokens: -1 }],
+							},
+						],
+					})
+				);
+				expect(await client.usage!.projectTokens(projects)).toEqual({
+					ok: true,
+					value: { projects: [{ status: 'read', breakdowns: [record], complete: false }] },
+				});
+				expect(bridge.sent('get_project_token_usage')[0]).toMatchObject({ projects });
+			});
+
+			it('answers unsupported from a host that does not know the message', async () => {
+				const result = await client.usage!.projectTokens(projects);
+				expect(result).toMatchObject({
+					ok: false,
+					error: { code: 'unsupported', method: 'usage.projectTokens' },
+				});
 			});
 		});
 
@@ -1853,6 +1921,24 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
+		it('always launches, and never asks a host to save a playbook or run in a worktree (M8: the desktop does those itself)', async () => {
+			await connect();
+			bridge.typed.set('configure_auto_run', reply('configure_auto_run_result'));
+			await client.autoRun.launch(A1, {
+				documents: [{ file: '/work/a1/.maestro/playbooks/first.md' }],
+				saveAsPlaybook: 'Mine',
+				worktree: { branchName: 'feat/x' },
+			} as never);
+			const message = bridge.sent('configure_auto_run')[0];
+			expect(message).toMatchObject({ launch: true });
+			// The refusals a headless host keeps for these (`server-requests.ts` `configure_auto_run`)
+			// are never reached from a hosted agent's panel: it saves a playbook and makes a
+			// worktree child on this machine (`resolveAutoRunDispatchTarget()`), then launches.
+			expect(message).not.toHaveProperty('saveAsPlaybook');
+			expect(message).not.toHaveProperty('worktree');
+			expect(message).not.toHaveProperty('worktreeTarget');
+		});
+
 		it('sends only what was chosen', async () => {
 			await connect();
 			bridge.typed.set('configure_auto_run', reply('configure_auto_run_result'));
@@ -1970,6 +2056,35 @@ describe('createWsMaestroClient', () => {
 			});
 		});
 
+		it("steers the host's run with the desktop's own message, and reads a refusal as its answer", async () => {
+			await connect();
+			const type = 'auto_run_steering_command';
+			bridge.typed.set(type, () => ({
+				type: `${type}_result`,
+				success: true,
+				note: { id: 'n1', text: 'Prefer the fixtures', timestamp: 5 },
+			}));
+			expect(
+				await client.autoRun.steer(A1, { action: 'send', text: 'Prefer the fixtures' })
+			).toEqual({
+				ok: true,
+				value: { success: true, note: { id: 'n1', text: 'Prefer the fixtures', timestamp: 5 } },
+			});
+			expect(bridge.sent(type)).toEqual([
+				expect.objectContaining({ sessionId: A1, action: 'send', text: 'Prefer the fixtures' }),
+			]);
+
+			bridge.typed.set(type, () => ({
+				type: `${type}_result`,
+				success: false,
+				error: 'No Auto Run is active on this agent',
+			}));
+			expect(await client.autoRun.steer(A1, { action: 'list' })).toEqual({
+				ok: true,
+				value: { success: false, error: 'No Auto Run is active on this agent' },
+			});
+		});
+
 		it('turns the host state frames into autorun events, with the null that clears them', async () => {
 			await connect();
 			bridge.push({
@@ -2037,7 +2152,7 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
-		it('turns the run process stream into output and usage, and none of it into a turn', async () => {
+		it('turns the run process stream into output, tool calls, usage, and reasoning, and none of it into a turn', async () => {
 			await connect();
 			bridge.pushBridgeEvent('process:data', batchId, '\u001b[1mTask one done\u001b[0m');
 			bridge.pushBridgeEvent('process:tool-execution', batchId, {
@@ -2057,12 +2172,18 @@ describe('createWsMaestroClient', () => {
 				contextWindow: 200000,
 			});
 			bridge.pushBridgeEvent('process:thinking-chunk', batchId, 'hmm');
-			await vi.waitFor(() => expect(autoRunEvents()).toHaveLength(3));
-			const [data, tool, used] = autoRunEvents();
+			await vi.waitFor(() => expect(autoRunEvents()).toHaveLength(5));
+			const [data, started, finished, used, thought] = autoRunEvents();
 			expect(data).toMatchObject({ kind: 'output', processId: batchId });
-			expect(tool).toMatchObject({ kind: 'output', processId: batchId });
-			expect(tool.kind === 'output' && tool.text).toMatch(/^Read .*index\.ts$/);
+			expect(started).toMatchObject({
+				kind: 'tool',
+				processId: batchId,
+				toolName: 'Read',
+				state: { status: 'running' },
+			});
+			expect(finished).toMatchObject({ kind: 'tool', state: { status: 'completed' } });
 			expect(used).toMatchObject({ kind: 'usage', processId: batchId });
+			expect(thought).toMatchObject({ kind: 'thinking', processId: batchId, text: 'hmm' });
 			expect(types()).not.toContain('turn');
 			// The batch process is not a tab's turn, so no tab was marked busy.
 			expect(events.filter((event) => event.type === 'tab.updated')).toEqual([]);

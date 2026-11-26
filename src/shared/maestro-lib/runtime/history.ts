@@ -18,7 +18,8 @@
 import * as fs from 'fs';
 
 import { MAX_ENTRIES_PER_SESSION, mergeEntriesById } from '../../history';
-import type { HistoryEntry } from '../../types';
+import { sharesHistoryInProject } from '../../historySharing';
+import type { AgentSshRemoteConfig, HistoryEntry } from '../../types';
 import { sshRecordOf } from '../agents/rules';
 import type { AgentRepository } from '../agents/repository';
 import type { ClientError, ClientMethod, ClientResult, HistoryApi } from '../client/types';
@@ -97,9 +98,14 @@ export function createRuntimeHistory(options: RuntimeHistoryOptions): RuntimeHis
 		const agent = repository.getAgent(agentId);
 		const project = (agent?.projectRoot || agent?.cwd || '').trim();
 		if (!agent || !project) return undefined;
-		const optedIn =
-			(sshRecordOf(agent.sessionSshRemoteConfig) as { shareHistoryToProjectDir?: unknown })
-				?.shareHistoryToProjectDir === true;
+		const ssh = sshRecordOf(agent.sessionSshRemoteConfig) as
+			| Pick<AgentSshRemoteConfig, 'enabled' | 'syncHistory' | 'shareHistoryToProjectDir'>
+			| undefined;
+		// An agent whose turns run over SSH has its project on the remote: its path
+		// is never written on this machine.
+		if (ssh?.enabled === true) return undefined;
+		// History sharing is one setting stored in two fields.
+		const optedIn = sharesHistoryInProject(ssh);
 		return optedIn || fs.existsSync(sharedHistoryDir(project)) ? project : undefined;
 	}
 

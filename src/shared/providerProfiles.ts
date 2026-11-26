@@ -245,17 +245,35 @@ export function providerProfileShortLabel(toolType: string, accountKey: string |
 }
 
 /**
- * Whether a profile is the provider's implicit `~/<subdir>` account on this
- * machine: no billed credential, no remote host, no named config dir. A user
+ * Whether a profile is the provider's implicit `~/<subdir>` account on the
+ * machine the agent runs on: no billed credential, no named config dir. A user
  * with one account is always on this profile, so naming it tells them nothing;
  * surfaces that show the account only to tell several apart skip it.
+ *
+ * The default account of an SSH remote is as implicit as the default account
+ * of this machine, so the remote host does not make it worth naming: a local,
+ * an SSH, and a hosted agent on their default account all read the same.
  */
 export function isImplicitDefaultProfile(
 	toolType: string,
-	profile: Pick<ResolvedAgentProfile, 'accountKey' | 'credential' | 'sshRemoteId'>
+	profile: Pick<ResolvedAgentProfile, 'accountKey' | 'credential'>
 ): boolean {
-	if (profile.credential || profile.sshRemoteId || !profile.accountKey) return false;
+	if (profile.credential || !profile.accountKey) return false;
 	return getAccountKeyHelpers(toolType)?.deriveShortName(profile.accountKey) === 'default';
+}
+
+/**
+ * The account alone, without the `@ host` suffix a remote profile's
+ * `shortLabel` carries: the billed credential's label, or the config-dir
+ * account's short name. Surfaces about ONE agent (the Main Window header) name
+ * the account this way, so the same account reads the same whether the agent
+ * runs here or on a remote; where the agent runs is the mode pill's job.
+ */
+export function profileAccountShortLabel(
+	toolType: string,
+	profile: Pick<ResolvedAgentProfile, 'accountKey' | 'credential'>
+): string {
+	return profile.credential?.label ?? providerProfileShortLabel(toolType, profile.accountKey);
 }
 
 /**

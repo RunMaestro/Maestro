@@ -528,6 +528,7 @@ interface MaestroAPI {
 				forceParallel?: boolean;
 			};
 		}) => Promise<void>;
+		broadcastTranscriptChanged: (sessionId: string, tabId: string) => Promise<void>;
 		interrupt: (sessionId: string) => Promise<boolean>;
 		kill: (sessionId: string) => Promise<boolean>;
 		closeAgent: (agentId: string) => Promise<boolean>;
@@ -2136,6 +2137,10 @@ interface MaestroAPI {
 			sshRemoteId: string,
 			localDestPath?: string
 		) => Promise<{ success: boolean; path: string }>;
+		watchRemoteCopy: (
+			remotePath: string,
+			sshRemoteId: string
+		) => Promise<import('../shared/types').RemoteCopyWatchResult>;
 		downloadRemoteFolder: (
 			remotePath: string,
 			sshRemoteId: string
@@ -2170,6 +2175,7 @@ interface MaestroAPI {
 			totalSize: number;
 			fileCount: number;
 			folderCount: number;
+			fileCountCapped?: boolean;
 		}>;
 		fetchImageAsBase64: (url: string) => Promise<string | null>;
 		rename: (
@@ -3980,7 +3986,12 @@ interface MaestroAPI {
 			callback: (groupChatId: string, sessionId: string) => void
 		) => () => void;
 		onAutoRunTriggered: (
-			callback: (groupChatId: string, participantName: string, filename?: string) => void
+			callback: (
+				groupChatId: string,
+				participantName: string,
+				filename?: string,
+				agentId?: string
+			) => void
 		) => () => void;
 		onAutoRunBatchComplete: (
 			callback: (groupChatId: string, participantName: string) => void
@@ -4364,10 +4375,12 @@ interface MaestroAPI {
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<Array<{ hour: number; count: number; successCount: number }>>;
 		// Token & cost usage aggregate for the Tokens tab. Reads agent session
-		// transcripts; `force` bypasses the accessor's in-memory memo.
+		// transcripts; `force` bypasses the accessor's in-memory memo;
+		// `waitForRemote` resolves once agents on another computer are counted.
 		getTokenUsage: (
 			query?: import('../shared/tokenUsage').TokenUsageQuery,
-			force?: boolean
+			force?: boolean,
+			waitForRemote?: boolean
 		) => Promise<import('../shared/tokenUsage').TokenUsageAggregate>;
 		// Progress of the long transcript scans behind the usage caches
 		getIndexingState: () => Promise<import('../shared/statsIndexing').StatsIndexingState>;

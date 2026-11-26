@@ -1,0 +1,131 @@
+/**
+ * The "History Entry Added" toast a `/history` raises, the same in every agent mode.
+ *
+ * A local or SSH agent's `/history` raises it when its handler saves the entry
+ * (`useWizardHandlers`). A hosted agent's `/history` runs on its host, which saves the entry and
+ * writes the "Synopsis saved to history" line there; a headless host has no screen to raise a
+ * toast on, and a desktop host raises it on its own. So the window that sent it watches the tab's
+ * mirrored transcript for that line (`watchHostedHistoryCommand()`) and raises the same toast.
+ */
+
+import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
+import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
+import { readHistoryCommandOutcome } from '../../shared/maestroBuiltinCommandText';
+import { notifyToast } from '../stores/notificationStore';
+import { usePeerMirrorStore } from '../stores/peerMirrorStore';
+import { selectSessionById, useSessionStore } from '../stores/sessionStore';
+import type { Session } from '../types';
+import { readMirrorTranscript } from './peerMirror';
+
+/** How long a window waits for a hosted `/history` to finish before it stops watching. */
+export const HOSTED_HISTORY_WATCH_MS = 10 * 60 * 1000;
+
+/** The group a History toast names: the agent's, a worktree child's parent's, else Ungrouped. */
+function historyToastGroupName(session: Pick<Session, 'groupId' | 'parentSessionId'>): string {
+	const state = useSessionStore.getState();
+	const groupId =
+		session.groupId ||
+		(session.parentSessionId
+			? selectSessionById(session.parentSessionId)(state)?.groupId
+			: undefined);
+	const group = groupId ? state.groups.find((candidate) => candidate.id === groupId) : null;
+	return group?.name || 'Ungrouped';
+}
+
+/** Raise the toast a saved `/history` entry raises, for the agent's tab. */
+export function notifyHistoryEntryAdded(
+	session: Pick<Session, 'id' | 'name' | 'groupId' | 'parentSessionId'>,
+	tab: { id: string; name?: string | null },
+	summary: string
+): void {
+	notifyToast({
+		type: 'success',
+		title: 'History Entry Added',
+		message: summary,
+		group: historyToastGroupName(session),
+		project: session.name,
+		sessionId: session.id,
+		tabId: tab.id,
+		tabName: tab.name || undefined,
+	});
+}
+
+/**
+ * The ids of the entries a mirrored tab holds before a `/history` is sent: every earlier run's
+ * lines, which the watch must not take for this one. This window's copy serves when it is current;
+ * a copy never read, or marked stale, is read from the host first. Undefined when that read fails.
+ */
+export async function hostedTranscriptBaseline(
+	peerId: string,
+	agentId: string,
+	tabId: string
+): Promise<ReadonlySet<string> | undefined> {
+	const slotOf = () =>
+		usePeerMirrorStore.getState().transcripts[peerId]?.[liveTurnKey(agentId, tabId)];
+	let slot = slotOf();
+	if (!slot?.loaded || slot.stale || slot.loading) {
+		await readMirrorTranscript(peerId, agentId, tabId);
+		slot = slotOf();
+	}
+	if (!slot?.loaded || slot.stale || slot.error) return undefined;
+	return new Set(slot.entries.map((entry) => entry.id));
+}
+
+/**
+ * After a host ran `/history` for a hosted agent's tab, raise the local toast once the host's line
+ * says the entry was saved. Lines in `baseline` (the tab's entries read before the send) are older
+ * runs, so only a line outside it is this run's. A caller with no baseline (the read before the
+ * send failed) does not watch: an earlier run's line could not be told from this one's, and no
+ * toast is better than a wrong one. A line that ends the run any other way (nothing to report,
+ * failed, error) ends the watch with no toast, as a local run raises none. Returns a function that
+ * stops watching.
+ */
+export function watchHostedHistoryCommand(
+	sessionId: string,
+	target: { peerId: string; agentId: string },
+	tabId: string,
+	opts: { baseline: ReadonlySet<string>; timeoutMs?: number }
+): () => void {
+	const key = liveTurnKey(target.agentId, tabId);
+	const slotOf = () => usePeerMirrorStore.getState().transcripts[target.peerId]?.[key];
+	const isNew = (entry: LogEntryRecord): boolean => !opts.baseline.has(entry.id);
+
+	let done = false;
+	let unsubscribe: () => void = () => {};
+	const stop = () => {
+		if (done) return;
+		done = true;
+		clearTimeout(timer);
+		unsubscribe();
+	};
+	const timer = setTimeout(stop, opts.timeoutMs ?? HOSTED_HISTORY_WATCH_MS);
+
+	// The store changes on every push of every peer; only a change to this tab's slot is news.
+	let seen: ReturnType<typeof slotOf>;
+	const check = () => {
+		if (done) return;
+		const slot = slotOf();
+		if (slot && slot === seen) return;
+		seen = slot;
+		// A tab that is not shown is not read on its stale mark: this watch reads it.
+		if (!slot || (slot.stale && !slot.loading)) {
+			if (!slot?.loading) void readMirrorTranscript(target.peerId, target.agentId, tabId);
+			if (!slot) return;
+		}
+		for (const entry of slot.entries) {
+			if (entry.source !== 'system' || typeof entry.text !== 'string' || !isNew(entry)) continue;
+			const outcome = readHistoryCommandOutcome(entry.text);
+			if (!outcome) continue;
+			stop();
+			if (outcome.kind !== 'saved') return;
+			const session = selectSessionById(sessionId)(useSessionStore.getState());
+			if (!session) return;
+			const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
+			notifyHistoryEntryAdded(session, { id: tabId, name: tab?.name }, outcome.summary);
+			return;
+		}
+	};
+	unsubscribe = usePeerMirrorStore.subscribe(check);
+	check();
+	return stop;
+}

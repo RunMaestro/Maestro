@@ -33,6 +33,7 @@
 import * as os from 'os';
 
 import { generateUUID } from '../../shared/uuid';
+import { withOwnHostAsLocal } from '../../shared/history';
 import {
 	PeerConnectError,
 	connectPeerClient,
@@ -76,6 +77,7 @@ import type {
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { HistoryEntry } from '../../shared/types';
 import type { SshRemoteConfig } from '../../shared/types';
+import type { ProjectTokenUsage, ProjectTokenUsageProject } from '../../shared/projectTokenUsage';
 
 /** Per-tab turn pushes are batched this long, so a fast stream is not one IPC per chunk. */
 export const MIRROR_TURN_COALESCE_MS = 50;
@@ -310,7 +312,8 @@ export class PeerMirrorService {
 		const read = (async () => {
 			const listed = await client.history.list(agentId);
 			if (!listed.ok) throw new Error(`Peer "${peerId}": ${listed.error.message}`);
-			return listed.value;
+			// A turn sent from here carries this machine's name (`originHost`); it reads as local.
+			return withOwnHostAsLocal(listed.value, this.deps.originHost ?? os.hostname());
 		})();
 		this.historyCache.set(key, read);
 		// A failed read is not kept: the next open asks again.
@@ -346,6 +349,27 @@ export class PeerMirrorService {
 		this.forgetHistory(entry, agentId);
 		if (!result.ok) throw new Error(`Peer "${peerId}": ${result.error.message}`);
 		return result.value.updated;
+	}
+
+	/**
+	 * The token usage of `projects` on the host of the remote on `remoteId`, computed there
+	 * (`get_project_token_usage`): the Usage Dashboard counts an SSH or hosted agent's
+	 * conversations this way. Undefined, never a throw, when the remote has no host attached, the
+	 * host is older than the message, or it does not answer within `timeoutMs`: the caller leaves
+	 * those agents "not counted".
+	 */
+	async projectTokenUsage(
+		remoteId: string,
+		projects: ProjectTokenUsageProject[],
+		timeoutMs: number
+	): Promise<ProjectTokenUsage | undefined> {
+		const entry = this.entries.get(remoteId);
+		const usage = entry?.connection?.client.usage;
+		if (!entry || entry.dropped || entry.state.connection !== 'connected' || !usage) {
+			return undefined;
+		}
+		const result = await usage.projectTokens(projects, { timeoutMs });
+		return result.ok ? result.value : undefined;
 	}
 
 	/** The peer's client for a History call. A peer that is not attached is an error that names it. */

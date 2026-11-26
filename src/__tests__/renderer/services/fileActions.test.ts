@@ -30,6 +30,7 @@ const remoteIdFor = (mode: AgentMode) => (mode === 'local' ? undefined : 'r1');
 
 let downloadRemoteFile: ReturnType<typeof vi.fn>;
 let downloadRemoteFolder: ReturnType<typeof vi.fn>;
+let watchRemoteCopy: ReturnType<typeof vi.fn>;
 let openPath: ReturnType<typeof vi.fn>;
 let showItemInFolder: ReturnType<typeof vi.fn>;
 let copyPath: ReturnType<typeof vi.fn>;
@@ -46,6 +47,7 @@ beforeEach(() => {
 		path: '/tmp/maestro-remote-downloads/abc/src',
 		fileCount: 3,
 	});
+	watchRemoteCopy = vi.fn().mockResolvedValue({ path: LOCAL_COPY, savesBack: true });
 	openPath = vi.fn().mockResolvedValue(undefined);
 	showItemInFolder = vi.fn().mockResolvedValue(undefined);
 	copyPath = vi.fn().mockResolvedValue({ success: true });
@@ -54,7 +56,14 @@ beforeEach(() => {
 	(window as any).maestro = {
 		...original,
 		shell: { ...original.shell, openPath, showItemInFolder },
-		fs: { ...original.fs, downloadRemoteFile, downloadRemoteFolder, copyPath, readFile },
+		fs: {
+			...original.fs,
+			downloadRemoteFile,
+			downloadRemoteFolder,
+			watchRemoteCopy,
+			copyPath,
+			readFile,
+		},
 		dialog: { ...original.dialog, saveFile },
 	};
 });
@@ -77,6 +86,27 @@ describe.each(AGENT_MODES)('file actions in %s mode', (mode) => {
 	it('reveals the file (its fetched copy when remote)', async () => {
 		await revealInFileManager(target);
 		expect(showItemInFolder).toHaveBeenCalledWith(expected);
+	});
+
+	it.each([
+		['Open in Default App', () => openFileInDefaultApp(target)],
+		['Reveal', () => revealInFileManager(target)],
+	])('%s on a remote file hands over a copy that saves back, and says so once', async (_, act) => {
+		await expect(act()).resolves.toBe(true);
+		if (mode === 'local') {
+			expect(watchRemoteCopy).not.toHaveBeenCalled();
+			expect(useCenterFlashStore.getState().active).toBeNull();
+			return;
+		}
+		// Watched right after the fetch, so the copy's bytes are the remote's.
+		expect(watchRemoteCopy).toHaveBeenCalledWith('/work/report.pdf', 'r1');
+		expect(watchRemoteCopy.mock.invocationCallOrder[0]).toBeGreaterThan(
+			downloadRemoteFile.mock.invocationCallOrder[0]
+		);
+		expect(useCenterFlashStore.getState().active).toMatchObject({
+			message: 'This is a copy of the remote file',
+			detail: 'Changes you save go back to the remote host.',
+		});
 	});
 
 	it('opens the file in the Maestro Browser as a file:// URL on this machine', async () => {
@@ -287,7 +317,10 @@ describe('fetch progress and failure', () => {
 		expect(useCenterFlashStore.getState().active?.message).toBe('Downloading…');
 		finish({ success: true, path: LOCAL_COPY });
 		await pending;
-		expect(useCenterFlashStore.getState().active).toBeNull();
+		// The Downloading flash is gone; the flash left says what was opened.
+		expect(useCenterFlashStore.getState().active?.message).toBe(
+			'This is a copy of the remote file'
+		);
 	});
 
 	it('a drag during a refetch gets no cached path: the copy is being rebuilt', async () => {
@@ -320,6 +353,33 @@ describe('fetch progress and failure', () => {
 		await Promise.all([quiet, shown]);
 		expect(downloadRemoteFile).toHaveBeenCalledTimes(1);
 		expect(useCenterFlashStore.getState().active).toBeNull();
+	});
+
+	it('says the copy stays on this computer when the write-back cannot start', async () => {
+		watchRemoteCopy.mockRejectedValueOnce(new Error('no watcher'));
+		await expect(
+			openFileInDefaultApp({ path: '/work/report.pdf', sshRemoteId: 'r1' })
+		).resolves.toBe(true);
+		expect(openPath).toHaveBeenCalledWith(LOCAL_COPY);
+		expect(useCenterFlashStore.getState().active).toMatchObject({
+			message: 'This is a copy of the remote file',
+			detail: 'Changes you save stay on this computer.',
+			color: 'yellow',
+		});
+	});
+
+	it('says why a copy too large to send back stays on this computer', async () => {
+		watchRemoteCopy.mockResolvedValueOnce({
+			path: LOCAL_COPY,
+			savesBack: false,
+			reason: 'The file is too large to save back to the remote host (over 32 MB)',
+		});
+		await openFileInDefaultApp({ path: '/work/report.pdf', sshRemoteId: 'r1' });
+		expect(useCenterFlashStore.getState().active).toMatchObject({
+			detail:
+				'The file is too large to save back to the remote host (over 32 MB). Changes you save stay on this computer.',
+			color: 'yellow',
+		});
 	});
 
 	it('never flashes for a local file', async () => {

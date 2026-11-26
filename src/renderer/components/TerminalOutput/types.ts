@@ -7,6 +7,7 @@ import type {
 	FocusArea,
 	AgentError,
 	QueuedItem,
+	ModalSaveOutcome,
 	QueuedItemEditPatch,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
@@ -202,7 +203,7 @@ export interface TerminalOutputProps {
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
 	onTogglePauseQueuedItem?: (itemId: string) => void; // Callback to toggle held/paused state of a queued item
 	onMergeQueuedItem?: (itemId: string) => void; // Fold a queued message into the one above it
-	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void; // Edit a queued message's text, images and turn settings
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => Promise<ModalSaveOutcome>; // Edit a queued message's text, images and turn settings
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void; // Reorder a queued item within the active tab's queue
 	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)

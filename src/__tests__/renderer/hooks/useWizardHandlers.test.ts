@@ -104,6 +104,16 @@ import { resetStores } from '../../helpers/resetStores';
 import { makeGrokCommandObservation } from '../../fixtures/grok-command-observation';
 import type { GrokCommandDiscoveryResult } from '../../../main/agents/grok-skills';
 import { resolve } from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { createRuntimeBuiltinCommands } from '../../../shared/maestro-lib/runtime/builtin-commands';
+import { createProcessRegistry } from '../../../shared/maestro-lib/runtime/processes';
+import { discoverClaudeSkills } from '../../../shared/maestro-lib/agents/claude-skills';
+import {
+	formatClaudeSkillsMessage,
+	HISTORY_COMMAND_TEXT,
+} from '../../../shared/maestroBuiltinCommandText';
 
 // ============================================================================
 // Test Helpers
@@ -432,7 +442,10 @@ describe('useWizardHandlers', () => {
 									next.cwd,
 									next.customPath,
 									undefined,
-									...(toolType === 'codex' ? [next.customEnvVars] : []),
+									// The agent's own vars pick its account for Codex and Claude.
+									...(toolType === 'codex' || toolType === 'claude-code'
+										? [next.customEnvVars]
+										: []),
 								],
 							];
 				expect(discover.mock.calls).toEqual(expectedCalls);
@@ -891,6 +904,147 @@ describe('useWizardHandlers', () => {
 			await act(async () => {});
 			expect(useSessionStore.getState().sessions[0].agentCommands).toEqual([]);
 			expect((window as any).maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
+		});
+
+		// The `/` menu lists the commands found on the machine the agent runs on:
+		// this one for a local agent, the SSH remote (asked over SSH) for an SSH or
+		// hosted one. This machine's command folders never fill a remote agent's menu.
+		it.each(AGENT_MODES)('lists the commands found where a %s Claude agent runs', async (mode) => {
+			const session = createMockSession({ agentCommands: undefined, ...agentModeFields(mode) });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const discover = (window as any).maestro.agents.discoverSlashCommands;
+			discover.mockResolvedValue([{ name: '/review' }, { name: 'deploy' }]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			const remoteId = mode === 'local' ? undefined : 'r1';
+			expect(discover).toHaveBeenCalledWith('claude-code', session.cwd, undefined, remoteId);
+			expect((window as any).maestro.claude.getCommands).toHaveBeenCalledTimes(
+				mode === 'local' ? 1 : 0
+			);
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/review',
+				'/deploy',
+			]);
+		});
+
+		it.each(['ssh', 'hosted'] as const)(
+			"replaces a %s Claude agent's stored list with the remote's, once per selection",
+			async (mode) => {
+				const session = createMockSession({
+					...agentModeFields(mode),
+					agentCommands: [{ command: '/this-machine-only', description: 'Stale' }],
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+				const discover = (window as any).maestro.agents.discoverSlashCommands;
+				discover.mockResolvedValue([{ name: '/remote-only' }]);
+
+				renderHook(() => useWizardHandlers(createMockDeps()));
+				await act(async () => {});
+
+				expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual(
+					['/remote-only']
+				);
+				// Its own write does not start another discovery.
+				expect(discover).toHaveBeenCalledTimes(1);
+			}
+		);
+
+		it("drops a remote Claude agent's stale list when its remote cannot be asked", async () => {
+			const session = createMockSession({
+				...agentModeFields('ssh'),
+				agentCommands: [{ command: '/this-machine-only', description: 'Stale' }],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(window as any).maestro.agents.discoverSlashCommands.mockRejectedValue(
+				new Error('bridge closed')
+			);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			expect(useSessionStore.getState().sessions[0].agentCommands).toEqual([]);
+		});
+
+		it('finds the commands again here when a Claude agent moves off its remote', async () => {
+			const session = createMockSession({ ...agentModeFields('ssh'), agentCommands: undefined });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const discover = (window as any).maestro.agents.discoverSlashCommands;
+			discover.mockResolvedValue([{ name: '/remote-only' }]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/remote-only',
+			]);
+
+			discover.mockResolvedValue([{ name: '/local-only' }]);
+			await act(async () => {
+				useSessionStore.getState().updateSession(session.id, {
+					sshRemoteId: undefined,
+					sessionSshRemoteConfig: undefined,
+				});
+			});
+			await act(async () => {});
+
+			expect(discover).toHaveBeenLastCalledWith('claude-code', session.cwd, undefined, undefined);
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/local-only',
+			]);
+		});
+
+		it("finds a local Claude agent's commands again when its account changes", async () => {
+			const session = createMockSession({
+				agentCommands: undefined,
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/cfg/work' },
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const discover = (window as any).maestro.agents.discoverSlashCommands;
+			discover.mockResolvedValue([{ name: '/work-only' }]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/work-only',
+			]);
+			const callsForWork = discover.mock.calls.length;
+
+			discover.mockResolvedValue([{ name: '/home-only' }]);
+			await act(async () => {
+				useSessionStore.getState().updateSession(session.id, {
+					customEnvVars: { CLAUDE_CONFIG_DIR: '/cfg/home' },
+				});
+			});
+			await act(async () => {});
+
+			expect(discover).toHaveBeenLastCalledWith('claude-code', session.cwd, undefined, undefined, {
+				CLAUDE_CONFIG_DIR: '/cfg/home',
+			});
+			expect(discover.mock.calls.length).toBeGreaterThan(callsForWork);
+			expect(useSessionStore.getState().sessions[0].agentCommands?.map((c) => c.command)).toEqual([
+				'/home-only',
+			]);
+		});
+
+		it("never reads this machine's command folders for a remote agent whose remote id is not set", async () => {
+			const session = createMockSession({
+				agentCommands: undefined,
+				sessionSshRemoteConfig: { enabled: true, remoteId: null },
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(window as any).maestro.agents.discoverSlashCommands.mockResolvedValue([]);
+			(window as any).maestro.claude.getCommands.mockResolvedValue([
+				{ command: '/this-machine-only', description: 'Local' },
+			]);
+
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+
+			expect((window as any).maestro.claude.getCommands).not.toHaveBeenCalled();
 		});
 
 		it('fetches custom commands and agent commands for claude-code sessions', async () => {
@@ -1859,6 +2013,120 @@ describe('useWizardHandlers', () => {
 	// ========================================================================
 	// handleSkillsCommand
 	// ========================================================================
+	// M5: a hosted agent's /skills and /history run on its host. A headless host runs them in its
+	// runtime (`createRuntimeBuiltinCommands`) over the same shared pieces, so the tab reads the
+	// same as a local or SSH agent's, whose commands run here.
+	describe('/skills and /history read the same in every mode (M5)', () => {
+		const skillsRoot = () => {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-skills-'));
+			const dir = path.join(root, 'project', '.claude', 'skills', 'review');
+			fs.mkdirSync(dir, { recursive: true });
+			fs.writeFileSync(
+				path.join(dir, 'SKILL.md'),
+				'---\nname: review\ndescription: Reviews\n---\nBody'
+			);
+			fs.mkdirSync(path.join(root, 'home'));
+			return root;
+		};
+
+		/** What a headless host's runtime writes to the tab for `command`. */
+		async function hostLines(
+			command: '/skills' | '/history',
+			root: string,
+			agentSessionId: string | null
+		): Promise<Array<[string, string]>> {
+			const entries: Array<{ source: string; text: string }> = [];
+			const repository = {
+				getAgent: () => ({
+					id: 'session-1',
+					toolType: 'claude-code',
+					cwd: path.join(root, 'project'),
+					projectRoot: path.join(root, 'project'),
+				}),
+				getTab: () => ({ id: 'tab-1', agentSessionId }),
+				appendTranscript: async (_agent: string, _tab: string, list: typeof entries) => {
+					entries.push(...list);
+					return { ok: true, value: undefined };
+				},
+			};
+			let id = 0;
+			const builtins = createRuntimeBuiltinCommands({
+				paths: {} as never,
+				repository: repository as never,
+				registry: createProcessRegistry(),
+				historyWriter: {} as never,
+				statsRecorder: { recordQuery: vi.fn() },
+				host: {},
+				deps: { runAgentTurn: vi.fn(), now: () => 1 },
+				rules: { newId: () => `e${++id}` },
+				reserveTabSession: async () => () => undefined,
+				transcriptChanged: () => undefined,
+				homeDir: () => path.join(root, 'home'),
+			});
+			await builtins.run('session-1', 'tab-1', { name: command });
+			return entries.map((entry) => [entry.source, entry.text]);
+		}
+
+		it.each(AGENT_MODES)('%s: /skills writes the same two entries', async (mode) => {
+			const root = skillsRoot();
+			try {
+				let lines: Array<[string, string]>;
+				if (mode === 'hosted') {
+					lines = await hostLines('/skills', root, null);
+				} else {
+					const session = createMockSession({
+						...agentModeFields(mode),
+						projectRoot: path.join(root, 'project'),
+					});
+					useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+					(window as any).maestro.claude.getSkills.mockResolvedValue(
+						await discoverClaudeSkills(path.join(root, 'project'), path.join(root, 'home'))
+					);
+					const { result } = renderHook(() => useWizardHandlers(createMockDeps()));
+					await act(async () => {
+						await result.current.handleSkillsCommand();
+					});
+					lines = useSessionStore
+						.getState()
+						.sessions[0].aiTabs[0].logs.map((log) => [log.source, log.text]);
+				}
+				expect(lines).toEqual([
+					['user', '/skills'],
+					[
+						'system',
+						formatClaudeSkillsMessage([
+							{ name: 'review', description: 'Reviews', tokenCount: 12, source: 'project' },
+						]),
+					],
+				]);
+			} finally {
+				fs.rmSync(root, { recursive: true, force: true });
+			}
+		});
+
+		it.each(AGENT_MODES)('%s: /history with no session says so, and nothing else', async (mode) => {
+			let lines: Array<[string, string]>;
+			if (mode === 'hosted') {
+				lines = await hostLines('/history', os.tmpdir(), null);
+			} else {
+				const session = createMockSession({
+					...agentModeFields(mode),
+					aiTabs: [createMockAITab({ id: 'tab-1', agentSessionId: null, logs: [] })],
+					activeTabId: 'tab-1',
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+				const { result } = renderHook(() => useWizardHandlers(createMockDeps()));
+				await act(async () => {
+					await result.current.handleHistoryCommand();
+				});
+				lines = useSessionStore
+					.getState()
+					.sessions[0].aiTabs[0].logs.map((log) => [log.source, log.text]);
+			}
+			expect(lines).toEqual([['system', HISTORY_COMMAND_TEXT.noSession]]);
+		});
+	});
+
 	describe('handleSkillsCommand', () => {
 		it('fetches and displays skills in a table format', async () => {
 			const session = createMockSession();

@@ -1272,6 +1272,9 @@ describe('SqliteViewer converging row count', () => {
 		expect(countRows).toHaveBeenCalledTimes(1);
 	});
 
+	// Forty count passes each re-render the grid before the "Count all" link appears. A loaded
+	// Windows CI runner has taken more than the 10 s default for that (it timed out on rc twice on
+	// 2026-11-26), so this test waits longer; a fast machine still finishes in well under a second.
 	it('pauses a very large count for "Count all", which resumes it', async () => {
 		readRows.mockImplementation(async (request: SqliteRowsRequest) => eventsPage(request, 10_000));
 		let calls = 0;
@@ -1282,14 +1285,14 @@ describe('SqliteViewer converging row count', () => {
 				: countReply(request, calls * 1000, false);
 		});
 		renderViewer();
-		const button = await screen.findByTestId('sqlite-count-all');
+		const button = await screen.findByTestId('sqlite-count-all', undefined, { timeout: 30_000 });
 		expect(countRows).toHaveBeenCalledTimes(AUTO_COUNT_PASSES);
 		expect(total()).toHaveTextContent(
 			`${(AUTO_COUNT_PASSES * 1000).toLocaleString('en-US')}+ rows`
 		);
 
 		fireEvent.click(button);
-		await waitFor(() => expect(total()).toHaveTextContent('9,000,000 rows'));
+		await waitFor(() => expect(total()).toHaveTextContent('9,000,000 rows'), { timeout: 15_000 });
 		expect(countRows).toHaveBeenNthCalledWith(
 			AUTO_COUNT_PASSES + 1,
 			expect.objectContaining({
@@ -1301,7 +1304,7 @@ describe('SqliteViewer converging row count', () => {
 			})
 		);
 		expect(screen.queryByTestId('sqlite-count-all')).not.toBeInTheDocument();
-	});
+	}, 60_000);
 
 	it("replaces the rail's capped count once the unfiltered count settles", async () => {
 		countRows.mockImplementation(async (request: SqliteCountRequest) =>

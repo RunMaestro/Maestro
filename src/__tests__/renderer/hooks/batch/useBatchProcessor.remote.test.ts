@@ -202,6 +202,37 @@ describe('host-owned remote Auto Run', () => {
 	});
 });
 
+describe('a stop or an abort on a host run already stopping', () => {
+	it.each(['stop', 'abort'] as const)(
+		'force-ends it on %s, so a run whose turn never settles can be ended from a peer',
+		async (action) => {
+			local.web = false;
+			useBatchStore.setState({
+				batchRunStates: {
+					agent: { ...DEFAULT_BATCH_STATE, isRunning: true, isStopping: true },
+				},
+			});
+			const hook = renderHook(() => useBatchProcessor(deps()));
+			await act(async () => ownerControl!('agent', { action }, `${action}-reply`));
+			expect(local.kill).toHaveBeenCalledWith('agent');
+			expect(reply).toHaveBeenCalledWith(`${action}-reply`, { success: true });
+			hook.unmount();
+		}
+	);
+
+	it('still only asks a running run to stop the first time', async () => {
+		local.web = false;
+		useBatchStore.setState({
+			batchRunStates: { agent: { ...DEFAULT_BATCH_STATE, isRunning: true } },
+		});
+		const hook = renderHook(() => useBatchProcessor(deps()));
+		await act(async () => ownerControl!('agent', { action: 'stop' }, 'stop-reply'));
+		expect(local.kill).not.toHaveBeenCalled();
+		expect(useBatchStore.getState().batchRunStates.agent.isStopping).toBe(true);
+		hook.unmount();
+	});
+});
+
 describe('host-owned remote Auto Run - Grok agents', () => {
 	const grokLimit = {
 		type: 'rate_limited' as const,

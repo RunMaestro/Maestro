@@ -50,7 +50,7 @@ import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
 import { runRemoteMessagePinCommand } from '../../services/messagePins';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
-import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
+import { answerSteeringCommand } from '../../services/autoRunSteering';
 import { runRemoteDiffReviewCommand } from '../../services/diffReview';
 import { runRemoteFileReviewCommand } from '../../services/fileReview';
 import { runRemoteDesignPickCommand } from '../../services/designModePick';
@@ -1513,7 +1513,52 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// A hosted agent's line is its host's queue: the message goes there as typed, with
 					// the sender's chips, and the host runs it now, runs `/history` or `/skills` for the
 					// tab, or queues it (held when held), as this handler does below for a local agent.
-					// Nothing waits here for a drain.
+					// Nothing waits here for a drain, unless it `@mentions` another agent: the mention
+					// runs on this machine (its roster), so the message gets in this machine's line as
+					// for a local agent, and the drain consults as it hands the turn to the host
+					// (`sendTakenItemToHost()`). Never the text alone with the mention dropped.
+					// This machine holds a line for the tab (a consult's hold, a mention waiting its turn):
+					// a plain follow-up waits behind it too, as it does for a local agent.
+					const hostedLocalLine = (session.executionQueue ?? []).some(
+						(queued) => queued.tabId === resolvedTabId && !queued.hostQueued
+					);
+					if (
+						hostedTargetOf(session) &&
+						(hostedLocalLine || planCrossAgentMentions(command, sessionId, mentionRouting))
+					) {
+						const item: QueuedItem = {
+							...withQueuedTurnOverrides(
+								buildQueuedMessageItem({
+									session,
+									tab: targetTab,
+									text: command,
+									images,
+									mentionRouting,
+								}),
+								turnOverrides
+							),
+							...(held && { paused: true }),
+						};
+						// It waits in this machine's line, and an idle drain takes it at once. The caller
+						// gets its id either way, so a turn the host then refuses (back here, held) can be
+						// found and resumed.
+						updateSessionWith(sessionId, (s) => ({
+							...s,
+							executionQueue: [...s.executionQueue, item],
+						}));
+						const waiting =
+							useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.executionQueue ??
+							[];
+						reply({
+							success: true,
+							tabId: resolvedTabId,
+							queued: true,
+							queuePosition: waiting.findIndex((queued) => queued.id === item.id) + 1,
+							queueLength: waiting.length,
+							itemId: item.id,
+						});
+						return;
+					}
 					if (hostedTargetOf(session)) {
 						const receipt = await sendHostedTurn(session, resolvedTabId, command, images ?? [], {
 							held,
@@ -2576,15 +2621,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			(request, responseChannel) => {
 				const reply = (result: SteeringCommandResult) =>
 					window.maestro.process.sendRemoteAutoRunSteeringCommandResponse(responseChannel, result);
-				try {
-					reply(runRemoteSteeringCommand(request));
-				} catch (error) {
+				// A hosted agent's answer comes from its host, so the reply waits for it.
+				answerSteeringCommand(request).then(reply, (error: unknown) => {
 					logger.error('[useRemoteIntegration] Steering command failed', undefined, error);
 					reply({
 						success: false,
 						error: error instanceof Error ? error.message : String(error),
 					});
-				}
+				});
 			}
 		);
 		return () => {
