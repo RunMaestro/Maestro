@@ -77,6 +77,59 @@ describe('G5: reopening a closed tab on a local, SSH, or hosted agent', () => {
 		]);
 	});
 
+	it('brings back the unsent draft and staged images with the tab, in every mode', async () => {
+		for (const mode of AGENT_MODES) {
+			const entry = closedAi();
+			(entry.tab as { inputValue: string; stagedImages: string[] }).inputValue = 'half typed';
+			(entry.tab as { inputValue: string; stagedImages: string[] }).stagedImages = ['data:img'];
+			seed(mode, [entry]);
+			useTabStore.getState().reopenClosedTab();
+			await flush();
+			const reopened = row().aiTabs.find((tab) => tab.id !== 'main');
+			expect(reopened?.inputValue).toBe('half typed');
+			expect(reopened?.stagedImages).toEqual(['data:img']);
+		}
+	});
+
+	it('hosted: with nothing closed from this machine, reopens the host stack newest AI tab', async () => {
+		seed('hosted', []);
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+			action.kind === 'closed-tabs'
+				? {
+						ok: true,
+						result: {
+							kind: 'closed-tabs',
+							closedTabs: [{ index: 0, type: 'ai', label: 'X', tabId: 'host-x', closedAt: 1 }],
+						},
+					}
+				: { ok: true, result: { kind: 'reopen-tab', tabId: 'host-x' } }
+		);
+		useTabStore.getState().reopenClosedTab();
+		await flush();
+		await flush();
+		expect(act$).toHaveBeenCalledWith('box', 'h1', { kind: 'reopen-tab', tabId: 'host-x' });
+		expect(row().aiTabs.some((tab) => tab.id === 'host-x')).toBe(true);
+
+		act$.mockClear();
+		const viaCli = await runRemoteClosedTabCommand({
+			action: 'reopen',
+			sessionId: 'row',
+			tabId: 'host',
+			background: true,
+		});
+		expect(viaCli).toMatchObject({ success: true, tabId: 'host-x', tabType: 'ai' });
+	});
+
+	it.each(['local', 'ssh'] as const)(
+		'%s: with nothing closed, Cmd+Shift+T asks no host',
+		async (mode) => {
+			seed(mode, []);
+			useTabStore.getState().reopenClosedTab();
+			await flush();
+			expect(act$).not.toHaveBeenCalled();
+		}
+	);
+
 	it('keeps the entry and says nothing changed when the host cannot reopen it', async () => {
 		seed('hosted', [closedAi()]);
 		act$.mockResolvedValue({ ok: false, error: 'There is no closed tab to reopen.' });

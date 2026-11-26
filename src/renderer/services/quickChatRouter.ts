@@ -101,13 +101,14 @@ export function resetQuickChatRouterForTests(): void {
  * rest many times over.
  */
 async function readClosedConversations(session: Session): Promise<ClosedConversation[]> {
+	// A hosted agent's conversations run on its host, which keeps their closed tabs: they are
+	// offered from there and reopen there, so the host continues them. The cache is keyed on the
+	// host too, so a move or the hosted setting changing never serves the other source's list.
+	const host = hostedTargetOf(session);
 	const cached = closedCache.get(session.id);
-	const selectionKey = resumeSelectionKey(session);
+	const selectionKey = `${resumeSelectionKey(session)}\u0000${host ? `${host.peerId}\u0000${host.agentId}` : 'local'}`;
 	if (cached?.selectionKey === selectionKey && Date.now() - cached.at < CLOSED_CACHE_TTL_MS)
 		return cached.conversations;
-	// A hosted agent's conversations run on its host, which keeps their closed tabs: they are
-	// offered from there and reopen there, so the host continues them.
-	const host = hostedTargetOf(session);
 	if (host) {
 		const conversations = await readHostedClosedConversations(host);
 		closedCache.set(session.id, { at: Date.now(), selectionKey, conversations });

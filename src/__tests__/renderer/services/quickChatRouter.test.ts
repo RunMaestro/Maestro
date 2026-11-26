@@ -264,6 +264,31 @@ describe('routeQuickChatMessage', () => {
 		}
 	);
 
+	it('never serves one source cached list for the other when the agent stops being hosted', async () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		history([entry('s-tax', 'Explained the home office deduction', { sessionName: 'Tax' })]);
+		const act = vi.fn(async () => ({ ok: true, result: { kind: 'closed-tabs', closedTabs: [] } }));
+		(window.maestro as unknown as { federation: unknown }).federation = {
+			act,
+			historyPage: vi.fn(),
+		};
+		try {
+			const session = agentWith([buildTab()], agentModeFields('hosted'));
+			expect(await routeQuickChatMessage(session, 'home office deduction limits?', noChat)).toEqual(
+				{
+					kind: 'new',
+				}
+			);
+			useSettingsStore.setState({ federationHostedAgents: false });
+			expect(
+				await routeQuickChatMessage(session, 'home office deduction limits?', noChat)
+			).toMatchObject({ kind: 'closed', agentSessionId: 's-tax' });
+			expect(getAllPaginated).toHaveBeenCalledTimes(1);
+		} finally {
+			delete (window.maestro as unknown as { federation?: unknown }).federation;
+		}
+	});
+
 	it('offers a hosted agent no closed conversation its host cannot list, never this machine', async () => {
 		useSettingsStore.setState({ federationHostedAgents: true });
 		history([entry('s-tax', 'Explained the home office deduction', { sessionName: 'Tax' })]);

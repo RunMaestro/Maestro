@@ -53,6 +53,7 @@ import type {
 } from '../store/records';
 import type { LogEntryRecord } from '../store/transcript';
 import {
+	matchesNativeSessionBinding,
 	switchAgentProvider,
 	updateProviderSlot,
 	type NativeSessionBinding,
@@ -552,7 +553,8 @@ export interface ReopenTabOutcome {
  * Reopen one archived tab (Cmd+Shift+T, a Federation peer's reopen): back where it sat in
  * `aiTabs`, at the end of the strip order, in the background (the active tab, the other active
  * ids, and `inputMode` are never touched). A conversation that already has a visible tab is not
- * opened twice. The tab keeps its id unless another tab took it since.
+ * opened twice (same session id, and the same observed binding when it has one). The tab keeps its
+ * id unless another tab took it since.
  */
 export function reopenTabRecord(
 	agent: AgentRecord,
@@ -561,8 +563,18 @@ export function reopenTabRecord(
 ): ReopenTabOutcome {
 	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
 	const sessionId = closed.tab.agentSessionId;
+	// A native session id alone does not prove the same conversation: an archived tab that carries
+	// a binding is a duplicate only of a tab with the same observed binding.
+	const binding = closed.tab.nativeSessionBinding;
 	const open = sessionId
-		? tabs.find((tab) => tab.hidden !== true && tab.agentSessionId === sessionId)
+		? tabs.find(
+				(tab) =>
+					tab.hidden !== true &&
+					tab.agentSessionId === sessionId &&
+					(binding === undefined
+						? tab.nativeSessionBinding === undefined
+						: matchesNativeSessionBinding(tab.nativeSessionBinding, binding))
+			)
 		: undefined;
 	if (open) return { agent, tabId: open.id, wasDuplicate: true };
 	const id = tabs.some((tab) => tab.id === closed.tab.id) ? ctx.newId() : closed.tab.id;

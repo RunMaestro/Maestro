@@ -1235,7 +1235,8 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				...(outcome.wasDuplicate ? { wasDuplicate: true } : {}),
 			};
 			if (outcome.wasDuplicate) {
-				return { ok: true, plan: { value, after: taken.commit, events: [] } };
+				// No record changes, so `before` carries the archive write: it is fenced like any write.
+				return { ok: true, plan: { value, before: taken.commit, events: [] } };
 			}
 			const tab = outcome.agent.aiTabs?.find((candidate) => candidate.id === outcome.tabId);
 			return {

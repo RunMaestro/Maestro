@@ -17,6 +17,7 @@ import {
 	checkAgentImportInput,
 	checkAgentName,
 	closeTabRecord,
+	reopenTabRecord,
 	DEFAULT_TAB_DEFAULTS,
 	findConsultTabRecord,
 	groupsWithout,
@@ -372,6 +373,77 @@ describe('tabs', () => {
 			DEFAULT_TAB_DEFAULTS
 		);
 		expect(next.activeTabId).toBe(added.id);
+	});
+
+	// G5: a reopen from a Federation peer brings an archived tab back in the background, and never
+	// opens one conversation twice, where a native binding decides what "the same" is.
+	describe('reopenTabRecord', () => {
+		const bound = (account: string): NativeSessionBinding =>
+			({
+				version: 1,
+				state: 'bound',
+				provider: 'grok',
+				nativeSessionId: 's1',
+				accountRef: account,
+				host: { kind: 'local', identity: 'h' },
+				cwd: '/p',
+			}) as NativeSessionBinding;
+		const base = {
+			id: 'a1',
+			aiTabs: [{ id: 't1', agentSessionId: 's1', logs: [] }],
+			unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+			activeTabId: 't1',
+		} as unknown as AgentRecord;
+
+		it('puts the tab back where it sat, in the background', () => {
+			const outcome = reopenTabRecord(
+				{ ...base, aiTabs: [] } as AgentRecord,
+				{ tab: { id: 't9', agentSessionId: 's9', logs: [] }, index: 3, closedAt: 1 } as never,
+				makeContext()
+			);
+			expect(outcome.tabId).toBe('t9');
+			expect(outcome.agent.aiTabs?.map((tab) => tab.id)).toEqual(['t9']);
+			expect(outcome.agent.activeTabId).toBe('t1');
+		});
+
+		it('answers the open tab of the same conversation instead of opening it twice', () => {
+			const outcome = reopenTabRecord(
+				base,
+				{ tab: { id: 't2', agentSessionId: 's1', logs: [] }, index: 1, closedAt: 1 } as never,
+				makeContext()
+			);
+			expect(outcome).toMatchObject({ tabId: 't1', wasDuplicate: true });
+		});
+
+		it('matches on the observed binding, not on the session id alone', () => {
+			const withBinding = {
+				...base,
+				aiTabs: [
+					{ id: 't1', agentSessionId: 's1', logs: [], nativeSessionBinding: bound('acct-a') },
+				],
+			} as unknown as AgentRecord;
+			const other = reopenTabRecord(
+				withBinding,
+				{
+					tab: { id: 't2', agentSessionId: 's1', logs: [], nativeSessionBinding: bound('acct-b') },
+					index: 1,
+					closedAt: 1,
+				} as never,
+				makeContext()
+			);
+			expect(other.wasDuplicate).toBeUndefined();
+			expect(other.agent.aiTabs?.map((tab) => tab.id)).toEqual(['t1', 't2']);
+			const same = reopenTabRecord(
+				withBinding,
+				{
+					tab: { id: 't2', agentSessionId: 's1', logs: [], nativeSessionBinding: bound('acct-a') },
+					index: 1,
+					closedAt: 1,
+				} as never,
+				makeContext()
+			);
+			expect(same).toMatchObject({ tabId: 't1', wasDuplicate: true });
+		});
 	});
 
 	describe('closeTabRecord', () => {
