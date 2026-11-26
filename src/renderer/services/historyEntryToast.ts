@@ -96,9 +96,13 @@ export function watchHostedHistoryCommand(
 	};
 	const timer = setTimeout(stop, opts.timeoutMs ?? HOSTED_HISTORY_WATCH_MS);
 
+	// The store changes on every push of every peer; only a change to this tab's slot is news.
+	let seen: ReturnType<typeof slotOf>;
 	const check = () => {
 		if (done) return;
 		const slot = slotOf();
+		if (slot && slot === seen) return;
+		seen = slot;
 		// A tab that is not shown is not read on its stale mark: this watch reads it.
 		if (!slot || (slot.stale && !slot.loading)) {
 			if (!slot?.loading) void readMirrorTranscript(target.peerId, target.agentId, tabId);
