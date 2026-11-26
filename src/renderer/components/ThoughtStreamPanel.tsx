@@ -568,6 +568,23 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		}
 	}, [canSteer]);
 
+	// The draft belongs to the agent it was typed for: when the panel moves to another agent, it
+	// is parked under the one it left (as a returned note, which the effect below takes back when
+	// the panel shows that agent again), so a note typed for one run can never be sent to another.
+	const draftRef = useRef({ sessionId: panelSessionId, draft: steerDraft });
+	useEffect(() => {
+		const parked = draftRef.current;
+		draftRef.current = { sessionId: panelSessionId, draft: steerDraft };
+		if (parked.sessionId === panelSessionId) return;
+		if (parked.sessionId && parked.draft.trim()) {
+			useAutoRunSteeringStore.getState().returnDraft(parked.sessionId, parked.draft);
+		}
+		// Cleared here too, for the effect below, which runs in this same commit.
+		draftRef.current = { sessionId: panelSessionId, draft: '' };
+		setSteerDraft('');
+		setBarMode('buttons');
+	}, [panelSessionId, steerDraft]);
+
 	// A note that never reached the run (a hosted agent's host refused it, or was out of reach)
 	// comes back into the box, as a local refusal keeps the draft there: the text is the
 	// operator's, and the box had already cleared by the time the host answered. Only what fits
@@ -577,7 +594,10 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	);
 	useEffect(() => {
 		if (!panelSessionId || !returnedDrafts?.length || !canSteer) return;
-		const draft = steerDraft.trim() ? steerDraft : '';
+		// The draft as the parking effect above left it (this commit's `steerDraft` may be the
+		// draft of the agent the panel just left).
+		const current = draftRef.current.draft;
+		const draft = current.trim() ? current : '';
 		const room = MAX_STEERING_NOTE_LENGTH - (draft ? draft.length + 2 : 0);
 		const taken = useAutoRunSteeringStore.getState().takeReturnedDrafts(panelSessionId, room);
 		if (taken.length === 0) return;

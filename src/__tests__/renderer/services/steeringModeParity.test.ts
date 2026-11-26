@@ -356,6 +356,53 @@ describe('a note the run never got keeps its text (P9)', () => {
 		expect(pending()).toEqual(['Local again']);
 	});
 
+	it('keeps a lost-answer send waiting until a list the host answers settles it (review)', async () => {
+		setUp('hosted');
+		let listsFail = true;
+		act.mockImplementation(async (peer: string, agent: string, action: any) => {
+			if (action.input.action === 'send') {
+				return { ok: false, error: 'The connection dropped.', unknown: true };
+			}
+			if (listsFail) return { ok: false, error: 'The host is down' };
+			return hostAnswer(peer, agent, action);
+		});
+		submitSteeringNote({ sessionId: SID, text: 'Lost on the way', announce: false });
+		await settled();
+		// No list yet: neither waiting on the host for sure nor refused, so it stays as it is.
+		expect(pending()).toEqual(['Lost on the way']);
+		expect(returned()).toBeUndefined();
+		await settled();
+		expect(pending()).toEqual(['Lost on the way']);
+
+		// The host answers a list without it: it never landed, so the text comes back.
+		listsFail = false;
+		await settled();
+		expect(pending()).toEqual([]);
+		expect(returned()).toEqual(['Lost on the way']);
+	});
+
+	it('applies no list from a host the agent moved away from while it answered (review)', async () => {
+		setUp('hosted');
+		hostPending = [{ id: 'host-1', text: 'On the first host', timestamp: 1 }];
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		act.mockImplementationOnce(async (peer: string, agent: string, action: any) => {
+			await held;
+			return hostAnswer(peer, agent, action);
+		});
+		const reading = refreshHostedSteering(SID);
+		await vi.waitFor(() => expect(act).toHaveBeenCalled());
+		const [moved] = useSessionStore.getState().sessions;
+		useSessionStore.setState({
+			sessions: [{ ...moved, liftedTo: { peer: 'other-box', agentId: 'h9', at: 2 } }],
+		});
+		release();
+		await reading;
+		expect(pending()).toEqual([]);
+	});
+
 	it('stops reading the list from a host that does not know the op', async () => {
 		setUp('hosted');
 		act.mockImplementation(async () => ({

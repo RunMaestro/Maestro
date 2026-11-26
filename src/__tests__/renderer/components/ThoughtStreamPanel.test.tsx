@@ -511,6 +511,29 @@ describe('ThoughtStreamPanel steering', () => {
 		expect(useAutoRunSteeringStore.getState().returnedDrafts[SID]).toBeUndefined();
 	});
 
+	it('keeps a draft with the agent it was typed for when the panel moves to another (review)', () => {
+		const OTHER = `${SID}-other`;
+		runFor(SID);
+		const run = useBatchStore.getState().batchRunStates[SID];
+		useBatchStore.setState({ batchRunStates: { [SID]: run, [OTHER]: run } } as never);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.click(steerButton()!);
+		fireEvent.change(screen.getByPlaceholderText(/Steer the Auto Run/), {
+			target: { value: 'for the first run' },
+		});
+
+		act(() => useThoughtStreamStore.getState().openPanel(OTHER));
+		// Nothing typed for the first run can be sent to this one.
+		expect(screen.queryByPlaceholderText(/Steer the Auto Run/)).not.toBeInTheDocument();
+		fireEvent.click(steerButton()!);
+		expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('');
+
+		act(() => useThoughtStreamStore.getState().openPanel(SID));
+		expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('for the first run');
+	});
+
 	it('sends on Enter and keeps typing on Shift+Enter', () => {
 		runFor(SID);
 		useThoughtStreamStore.getState().openPanel(SID);
