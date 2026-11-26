@@ -25,7 +25,9 @@ import { formatTimestamp, formatRelativeTime } from '../../shared/formatters';
 import { DURATION_MS } from '../../shared/duration';
 import { notifyToast } from '../stores/notificationStore';
 import { logger } from '../utils/logger';
-import { SshRemotePill } from './ui/SshRemotePill';
+import { AgentModePill } from './SessionList/AgentModePill';
+import { useSessionStore } from '../stores/sessionStore';
+import { findSessionForParticipantName } from '../../shared/group-chat-types';
 
 interface ParticipantCardProps {
 	theme: Theme;
@@ -66,6 +68,12 @@ export function ParticipantCard({
 	const [confirmRemove, setConfirmRemove] = useState(false);
 	const [peekOpen, setPeekOpen] = useState(false);
 	const peekRef = useRef<HTMLPreElement>(null);
+	// The agent this participant was added from: its mode pill is the one the Left Bar draws.
+	const sourceAgent = useSessionStore((state) =>
+		participant.sourceSessionId
+			? state.sessions.find((s) => s.id === participant.sourceSessionId)
+			: findSessionForParticipantName(participant.name, state.sessions)
+	);
 
 	// Parse raw JSONL into formatted output
 	const formattedOutput = useMemo(() => {
@@ -176,12 +184,9 @@ export function ParticipantCard({
 				</span>
 			</div>
 
-			{/* Row 2: Pills row - SSH pill + session ID pill */}
+			{/* Row 2: Pills row - mode pill + session ID pill */}
 			<div className="flex items-center gap-2 mt-1.5 flex-wrap">
-				{/* SSH Remote pill - shown when running on SSH remote */}
-				{participant.sshRemoteName && (
-					<SshRemotePill remoteName={participant.sshRemoteName} size="sm" />
-				)}
+				{sourceAgent && <AgentModePill theme={theme} session={sourceAgent} />}
 				{/* Session ID pill */}
 				{isPending ? (
 					<span

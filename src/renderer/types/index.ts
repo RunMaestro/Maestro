@@ -382,10 +382,11 @@ export interface LogEntry {
 		 * REQUEST at least as much as the command line.
 		 */
 		request?: string;
-		/** Directory the command ran in (the agent's cwd, or the SSH remote's). */
+		/**
+		 * Directory the command ran in (the agent's cwd, or the remote's). The remote's name is not
+		 * kept: the mode pill is the one mark of where an agent runs.
+		 */
 		cwd: string;
-		/** SSH remote name when the agent runs remotely, else undefined. */
-		remoteName?: string;
 		status: 'running' | 'finished' | 'cancelled';
 		exitCode?: number;
 		/** Wall-clock duration in ms, set on finish. */

@@ -28,10 +28,11 @@ interface CommandModeBarProps {
 	theme: Theme;
 	/** Which rung is active. */
 	mode: 'shell' | 'ai';
-	/** Directory the command will run in (the agent's cwd, or its SSH remote's). */
+	/**
+	 * Directory the command will run in (the agent's cwd, or its remote's). The remote's name is
+	 * not drawn: the mode pill is the one mark of where an agent runs.
+	 */
 	cwd: string;
-	/** SSH remote name when the agent runs remotely, else undefined. */
-	remoteName?: string;
 	/** Whether Tab completion has anything to offer (git repos add branches/tags). */
 	isGitRepo?: boolean;
 	/** Model the suggestion will run under. AI mode only. */
@@ -44,7 +45,6 @@ export const CommandModeBar = memo(function CommandModeBar({
 	theme,
 	mode,
 	cwd,
-	remoteName,
 	isGitRepo,
 	model,
 	effort,
@@ -67,7 +67,6 @@ export const CommandModeBar = memo(function CommandModeBar({
 				{isAi ? 'AI Command' : 'Command Mode'}
 			</span>
 			<span className="truncate" style={{ color: theme.colors.textDim }} title={cwd}>
-				{remoteName ? `${remoteName}:` : ''}
 				{truncatePath(cwd, isAi ? 28 : 40)}
 			</span>
 			{isAi && <TurnSettingPills theme={theme} model={model} effort={effort} />}
