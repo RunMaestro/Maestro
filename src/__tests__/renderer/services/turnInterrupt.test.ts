@@ -23,6 +23,15 @@ vi.mock('../../../renderer/services/crossAgentHandoff', async (importOriginal) =
 	...(await importOriginal<typeof import('../../../renderer/services/crossAgentHandoff')>()),
 	dropMentionHandoffs: vi.fn(),
 }));
+vi.mock('../../../renderer/services/hostedQueuedTurn', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../renderer/services/hostedQueuedTurn')>();
+	return {
+		...actual,
+		dropStoppedHostStartMentions: vi.fn(actual.dropStoppedHostStartMentions),
+		settleStoppedHostStartMentions: vi.fn(actual.settleStoppedHostStartMentions),
+	};
+});
 vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/services/peerMirror')>()),
 	interruptMirroredAgent: vi.fn(async () => undefined),
@@ -33,6 +42,10 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../../../renderer/stores/retryStore';
 import { dropMentionHandoffs } from '../../../renderer/services/crossAgentHandoff';
 import { interruptMirroredAgent } from '../../../renderer/services/peerMirror';
+import {
+	dropStoppedHostStartMentions,
+	settleStoppedHostStartMentions,
+} from '../../../renderer/services/hostedQueuedTurn';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useCrossAgentInFlightStore } from '../../../renderer/stores/crossAgentInFlightStore';
@@ -528,6 +541,36 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 		}
 		expect(result).toMatchObject({ success: true, wasBusy: true, interrupted: true });
 	});
+
+	// Parity M25: a consult Stop may have ended waits for the host's answer to the Stop, because a
+	// start the host reported before it ran before the host stopped anything.
+	it.each([
+		['answers', async () => undefined],
+		['fails', async () => Promise.reject(new Error('link down'))],
+	] as const)(
+		'hosted: Stop settles the consults it left waiting only once the host %s (M25)',
+		async (_outcome, answer) => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			vi.clearAllMocks();
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 0 });
+			let settledBeforeAnswer = true;
+			vi.mocked(interruptMirroredAgent).mockImplementationOnce(async () => {
+				settledBeforeAnswer = vi.mocked(settleStoppedHostStartMentions).mock.calls.length > 0;
+				return answer();
+			});
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession('hosted');
+			seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
+
+			await interruptTurn('agent-1', { tabId: 'tab-a' }).catch(() => undefined);
+
+			expect(dropStoppedHostStartMentions).toHaveBeenCalledWith('agent-1', ['tab-a']);
+			expect(vi.mocked(dropStoppedHostStartMentions).mock.invocationCallOrder[0]).toBeLessThan(
+				vi.mocked(interruptMirroredAgent).mock.invocationCallOrder[0]
+			);
+			expect(settledBeforeAnswer).toBe(false);
+			expect(settleStoppedHostStartMentions).toHaveBeenCalledWith('agent-1');
+		}
+	);
 
 	// Parity M21: Stop during a consult whose tab runs no turn (a mention consulting before its
 	// turn, or a tab held for the reply) ends on the same "Canceled by user" line in every mode.

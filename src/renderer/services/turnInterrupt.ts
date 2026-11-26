@@ -27,7 +27,7 @@ import { useSessionStore, selectSessionById, updateSessionWith } from '../stores
 import { useBatchStore } from '../stores/batchStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../stores/retryStore';
 import { dropMentionHandoffs } from './crossAgentHandoff';
-import { dropStoppedHostStartMentions } from './hostedQueuedTurn';
+import { dropStoppedHostStartMentions, settleStoppedHostStartMentions } from './hostedQueuedTurn';
 import { cancelHostedConsults } from '../hooks/agent/useCrossAgentDispatch';
 import { useCrossAgentInFlightStore } from '../stores/crossAgentInFlightStore';
 import { generateId } from '../utils/ids';
@@ -170,12 +170,17 @@ export async function interruptTurn(
 		// A consult whose message may be a turn Stop ends goes with it, also before any await.
 		dropStoppedHostStartMentions(sessionId, stopHere);
 		const hostNotTold = !!peer && peer.connection !== 'connected' && stopHere.length > 0;
-		if (hostNotTold) {
-			// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
-			endHostedTurnsHere(sessionId, stopHere, peer.name);
-		} else {
-			markHostedTurnsStopped(sessionId, cutTabs, peer?.name ?? '');
-			if (forward) await interruptHostedTurn(session, scopeTabId);
+		try {
+			if (hostNotTold) {
+				// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
+				endHostedTurnsHere(sessionId, stopHere, peer.name);
+			} else {
+				markHostedTurnsStopped(sessionId, cutTabs, peer?.name ?? '');
+				if (forward) await interruptHostedTurn(session, scopeTabId);
+			}
+		} finally {
+			// The host answered (or was not told): what it reported before then ran before the stop.
+			settleStoppedHostStartMentions(sessionId);
 		}
 		const consults = await cancelConsults(sessionId, scopeTabId);
 		const consultsCanceled = consults.canceled;
