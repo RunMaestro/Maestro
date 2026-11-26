@@ -258,6 +258,32 @@ describe('startGroupChatAutoRun refusals reach the chat', () => {
 		expect(reportAutoRunComplete).toHaveBeenCalledTimes(1);
 	});
 
+	it.each(['local', 'ssh'] as const)(
+		"never reports another window's %s run that starts and ends while the launch is pending",
+		async (mode) => {
+			setAgent(mode);
+			// startBatchRun awaits its claim; meanwhile another window's run comes
+			// and goes as a mirror, then the launch is declined.
+			const startBatchRun = vi.fn(async (sessionId: string) => {
+				useBatchStore.setState({
+					batchRunStates: {
+						[sessionId]: mirror({ completedTasksAcrossAllDocs: 3, totalTasksAcrossAllDocs: 3 }),
+					},
+				});
+				useBatchStore.setState({ batchRunStates: {} });
+			});
+
+			await startGroupChatAutoRun(trigger, startBatchRun);
+
+			expect(reportAutoRunComplete).toHaveBeenCalledTimes(1);
+			expect(reportAutoRunComplete).toHaveBeenCalledWith(
+				'chat-1',
+				'Client',
+				groupChatAutoRunFailure('Client', 'Maestro declined to start the run. Its notice says why.')
+			);
+		}
+	);
+
 	it('refuses when Auto Run is turned off, before registering', async () => {
 		setAgent('local');
 		useSettingsStore.setState({ autoRunDisabled: true });

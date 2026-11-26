@@ -90,12 +90,18 @@ interface LaunchWatch {
 
 /**
  * Watch the agent's batch state from before the launch, so a run that ends at
- * once is still seen. Reports a mirrored run's end (a run a host drives), and
- * records whether this window's own run started, which is how a launch
- * `startBatchRun` declined is told apart. Stops watching when the entry is
- * consumed elsewhere (the batch processor's own completion, a failed start).
+ * once is still seen. Records whether this window's own run started, which is
+ * how a launch `startBatchRun` declined is told apart. When the launch hands
+ * the run to a host (`hostDrivesRun`), the run is a mirror here and the
+ * mirror's end reports it; otherwise a mirror is another window's run and is
+ * never reported as this one. Stops watching when the entry is consumed
+ * elsewhere (the batch processor's own completion, a failed start).
  */
-function watchLaunch(sessionId: string, trigger: GroupChatAutoRunTrigger): LaunchWatch {
+function watchLaunch(
+	sessionId: string,
+	trigger: GroupChatAutoRunTrigger,
+	hostDrivesRun: boolean
+): LaunchWatch {
 	let lastMirror: BatchRunState | undefined;
 	let ownRun = false;
 	const unsubscribe = useBatchStore.subscribe((state) => {
@@ -108,6 +114,7 @@ function watchLaunch(sessionId: string, trigger: GroupChatAutoRunTrigger): Launc
 			ownRun = true;
 			return;
 		}
+		if (!hostDrivesRun) return;
 		if (current?.mirrored === true && current.isRunning) {
 			lastMirror = current;
 			return;
@@ -223,7 +230,9 @@ export async function startGroupChatAutoRun(
 	}
 	// Register before the launch: a run can end before startBatchRun returns.
 	registerGroupChatAutoRun(session.id, trigger.groupChatId, trigger.participantName);
-	const watch = watchLaunch(session.id, trigger);
+	// The host drives a hosted agent's run; this window drives every other one.
+	const hostDrivesRun = Boolean(hostedTargetOf(session));
+	const watch = watchLaunch(session.id, trigger, hostDrivesRun);
 	try {
 		await startBatchRun(session.id, config, folderPath);
 	} catch (err) {
@@ -238,7 +247,7 @@ export async function startGroupChatAutoRun(
 	// declined the launch (it showed the reason in a notice), even when another
 	// window's run is on screen as a mirror. A run a host drives is only ever a
 	// mirror here: the host took it, and the mirror's end reports it.
-	if (hasGroupChatAutoRun(session.id) && !watch.sawOwnRun() && !hostedTargetOf(session)) {
+	if (hasGroupChatAutoRun(session.id) && !watch.sawOwnRun() && !hostDrivesRun) {
 		watch.stop();
 		consumeGroupChatAutoRun(session.id);
 		await fail('Maestro declined to start the run. Its notice says why.');
