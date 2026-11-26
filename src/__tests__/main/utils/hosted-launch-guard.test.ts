@@ -22,7 +22,6 @@ const REAL_TURNS: HostedLaunchFeature[] = [
 	'group-chat-participant',
 	'consult',
 	'cue-run',
-	'side-question',
 	'groom-context',
 ];
 

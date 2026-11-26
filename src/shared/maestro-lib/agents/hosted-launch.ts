@@ -31,6 +31,11 @@ export const HOSTED_STATELESS_HELPERS = {
 	'tab-naming': 'one cheap answer; the name reaches the host through renameHostedTab',
 	/** AI command mode's shell suggestion: one cheap answer, never written to the transcript. */
 	'ai-command': 'one cheap answer; never written to the transcript',
+	/**
+	 * `/btw` in a tab kept from before the move (a host tab asks its host): an ephemeral fork of
+	 * the tab's own provider session, which reads the conversation and never writes it.
+	 */
+	'side-question': 'an ephemeral fork; reads the conversation, never writes it',
 } as const;
 
 export type HostedStatelessHelper = keyof typeof HOSTED_STATELESS_HELPERS;
@@ -41,7 +46,6 @@ export type HostedLaunchFeature =
 	| 'group-chat-participant'
 	| 'consult'
 	| 'cue-run'
-	| 'side-question'
 	| 'groom-context';
 
 export function isHostedStatelessHelper(feature: string): feature is HostedStatelessHelper {
