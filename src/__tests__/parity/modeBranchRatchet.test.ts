@@ -64,12 +64,6 @@ const ALLOWED: Record<string, Array<{ line: string; why: string }>> = {
 	'DocumentGraph/DocumentGraphView.tsx': [
 		{ line: 'sshRemoteId: !!sshRemoteId,', why: 'A field in a log entry.' },
 	],
-	'AutoRun/AutoRunSetupModal.tsx': [
-		{
-			line: "selectedFolder.startsWith('~') && !homeDir && !sshRemoteId",
-			why: 'Transport: this machine home is looked up only for a path on this machine.',
-		},
-	],
 	'AutoRun/AutoRun.tsx': [
 		{
 			line: 'const posix = !!sshRemoteId;',

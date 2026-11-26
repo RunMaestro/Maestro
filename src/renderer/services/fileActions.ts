@@ -37,8 +37,18 @@ export interface FileActionTarget {
 /** Remote path -> the local copy fetched for it, so a repeat action is instant. */
 const localCopies = new Map<string, string>();
 
+/**
+ * Remote path -> the fetch running for it. Overlapping actions on one file or folder (two drags,
+ * an open during a drag) share one fetch, so two downloads never rebuild the same copy at once.
+ */
+const inFlightCopies = new Map<string, Promise<string>>();
+
 function copyKey(target: FileActionTarget): string {
 	return `${target.sshRemoteId}\0${target.path}`;
+}
+
+function flightKeyOf(kind: 'file' | 'folder', key: string): string {
+	return `${kind}\0${key}`;
 }
 
 function isRemote<T extends FileActionTarget>(target: T): target is T & { sshRemoteId: string } {
@@ -58,7 +68,15 @@ function errorMessage(error: unknown, fallback: string): string {
  */
 export function cachedLocalCopy(target: FileActionTarget): string | undefined {
 	if (!isRemote(target)) return target.path;
-	return localCopies.get(copyKey(target));
+	const key = copyKey(target);
+	// A fetch running for it is rebuilding the copy: the caller fetches (and joins that fetch)
+	// rather than hand out a path that is being replaced.
+	if (
+		inFlightCopies.has(flightKeyOf('file', key)) ||
+		inFlightCopies.has(flightKeyOf('folder', key))
+	)
+		return undefined;
+	return localCopies.get(key);
 }
 
 /**
@@ -73,7 +91,7 @@ export function fetchLocalCopy(
 	target: FileActionTarget,
 	options: { quiet?: boolean } = {}
 ): Promise<string> {
-	return fetchCopy(target, options, (remote) =>
+	return fetchCopy(target, options, 'file', (remote) =>
 		window.maestro.fs.downloadRemoteFile(remote.path, remote.sshRemoteId)
 	);
 }
@@ -89,14 +107,47 @@ export function fetchLocalFolderCopy(
 	target: FileActionTarget,
 	options: { quiet?: boolean } = {}
 ): Promise<string> {
-	return fetchCopy(target, options, (remote) =>
+	return fetchCopy(target, options, 'folder', (remote) =>
 		window.maestro.fs.downloadRemoteFolder(remote.path, remote.sshRemoteId)
 	);
+}
+
+/**
+ * The one fetch of a remote file or folder: joins a fetch already running for it, records the
+ * copy when it lands, and forgets the copy when it fails (the copy on disk may be gone or stale,
+ * so the next action fetches again instead of handing out that path).
+ */
+function sharedFetch(
+	target: FileActionTarget & { sshRemoteId: string },
+	kind: 'file' | 'folder',
+	download: (remote: FileActionTarget & { sshRemoteId: string }) => Promise<{ path: string }>
+): Promise<string> {
+	const key = copyKey(target);
+	const flightKey = flightKeyOf(kind, key);
+	const running = inFlightCopies.get(flightKey);
+	if (running) return running;
+	// The download starts on the next tick, so the entry is in the map before it can settle.
+	const flight = Promise.resolve()
+		.then(() => download(target))
+		.then(
+			({ path }) => {
+				localCopies.set(key, path);
+				return path;
+			},
+			(error: unknown) => {
+				localCopies.delete(key);
+				throw error;
+			}
+		)
+		.finally(() => inFlightCopies.delete(flightKey));
+	inFlightCopies.set(flightKey, flight);
+	return flight;
 }
 
 async function fetchCopy(
 	target: FileActionTarget,
 	options: { quiet?: boolean },
+	kind: 'file' | 'folder',
 	download: (remote: FileActionTarget & { sshRemoteId: string }) => Promise<{ path: string }>
 ): Promise<string> {
 	if (!isRemote(target)) return target.path;
@@ -104,9 +155,7 @@ async function fetchCopy(
 		? null
 		: notifyCenterFlash({ message: 'Downloading…', color: 'theme', duration: 0 });
 	try {
-		const { path } = await download(target);
-		localCopies.set(copyKey(target), path);
-		return path;
+		return await sharedFetch(target, kind, download);
 	} finally {
 		// Clear our own flash only: a newer flash raised mid-fetch stays up.
 		if (flashId !== null && useCenterFlashStore.getState().active?.id === flashId) {
@@ -323,4 +372,5 @@ export async function saveCopyOfFile(
 /** Test-only: forget every fetched copy. */
 export function __resetFileActionsForTests(): void {
 	localCopies.clear();
+	inFlightCopies.clear();
 }

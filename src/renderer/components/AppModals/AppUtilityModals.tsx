@@ -42,7 +42,7 @@ import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
 import { BatchRunnerModal } from '../BatchRunnerModal';
 import { AutoRunSetupModal } from '../AutoRun/AutoRunSetupModal';
-import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
+import { pathPickerRemoteId } from '../../services/pathPicker';
 import { LightboxModal } from '../LightboxModal';
 
 // Lazy-loaded heavy modals (rarely used, loaded on-demand)
@@ -785,7 +785,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onFolderSelected={onAutoRunFolderSelected}
 					currentFolder={activeSession?.autoRunFolderPath}
 					sessionName={activeSession?.name}
-					sshRemoteId={getSessionSshRemoteId(activeSession)}
+					sshRemoteId={pathPickerRemoteId(activeSession)}
 				/>
 			)}
 

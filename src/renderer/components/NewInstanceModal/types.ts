@@ -151,7 +151,6 @@ export interface NudgeMessageFieldProps {
 export interface RemotePathStatusProps {
 	theme: Theme;
 	validation: RemotePathValidationState;
-	remoteHost?: string;
 }
 
 export interface AgentPickerGridProps {
