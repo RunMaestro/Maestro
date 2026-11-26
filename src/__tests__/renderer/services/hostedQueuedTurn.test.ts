@@ -1385,6 +1385,61 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			}
 		);
 
+		describe.each(['parallel', 'consult-first'] as const)(
+			'a %s consult of the turn Stop ended never fires after Stop (M24)',
+			(routing) => {
+				const stoppedNote = 'Nothing was asked of Backend: the turn was stopped.';
+				const lateNote =
+					'Backend was asked after the turn ran: the host did not say when the message started.';
+
+				it('one the host queue never listed (a desktop host): Stop lets it go, and its saved entry fires nothing', async () => {
+					const id = `m24-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					const late = now + HOST_QUEUE_START_GRACE_MS + 1;
+					// The host runs it: no queue frame ever listed it, and its user entry is not drawn yet.
+					hostSays(id, text, { queued: false, busy: 200 });
+					fireHostStartedMentions(row(), undefined, now);
+					dropStoppedHostStartMentions('row', 't1');
+					const notes = () => row().aiTabs[0].logs.map((entry) => entry.text);
+					expect(notes().filter((entry) => entry === stoppedNote)).toHaveLength(1);
+					// The stopped turn's saved transcript holds its message: before M24 it consulted here.
+					hostSays(id, text, { queued: false, logs: true });
+					const current = { read: vi.fn(), isCurrent: () => true };
+					fireHostStartedMentions(row(), undefined, late, 0, current);
+					fireHostStartedMentions(row(), [started(id)], late, 1, current);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(notes()).not.toContain(lateNote);
+				});
+
+				it('one gone from a host that names its exits, with no name yet (its start in flight): Stop lets it go', async () => {
+					const id = `m24n-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					hostSays(id, text, { queued: false, busy: 200 });
+					fireHostStartedMentions(row(), [], now);
+					dropStoppedHostStartMentions('row');
+					// The start's name lands after Stop: it ran as the stopped turn, so nothing is asked.
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it('Stop on another tab keeps it', async () => {
+					const id = `m24t-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: false, busy: 200 });
+					fireHostStartedMentions(row(), undefined, now);
+					dropStoppedHostStartMentions('row', 'another-tab');
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				});
+			}
+		);
+
 		describe('a hand-off', () => {
 			const releasesWithItsAnswer = (text: string, hostExits?: QueueExit[]) => {
 				hostSays('', text, { queued: false, logs: true });

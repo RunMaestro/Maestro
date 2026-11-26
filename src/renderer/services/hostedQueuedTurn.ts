@@ -489,18 +489,24 @@ export function pruneHostStartedMentions(hostedSessionIds: ReadonlySet<string>):
 }
 
 /**
- * Stop ended the agent's turn (or `tabId`'s): a consult whose message already left the host's
- * queue and whose start is not confirmed yet belonged to that turn, so it goes, with a note. One
- * still waiting in the host's queue (or never seen there) stays: that message runs later, and
- * consults when it starts, as a local queued message does after Stop.
+ * Stop ended the agent's turn (or `tabId`'s): every consult of that scope whose message the host's
+ * queue does not list waiting belonged to that turn, so it goes, with a note, and nothing fires
+ * after Stop. One the host's queue still lists stays: that message runs later, and consults when
+ * it starts, as a local queued message does after Stop.
  */
 export function dropStoppedHostStartMentions(sessionId: string, tabId?: string): void {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	// What the host's queue still lists waiting: those messages run after Stop, as a local queued
+	// message does, and consult when they start.
+	const stillWaiting = new Set(
+		(session?.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
+	);
 	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
-		// One the host's queue never showed (a desktop host, whose queue is not mirrored) may still
-		// wait there: its absence is no sign it ran, so it stays, as a still-queued message does.
-		if (waiting.sessionId !== sessionId || waiting.goneAt === undefined) continue;
-		if (!waiting.seenQueued) continue;
-		if (tabId && waiting.item.tabId && waiting.item.tabId !== tabId) continue;
+		if (waiting.sessionId !== sessionId || stillWaiting.has(hostItemId)) continue;
+		if (tabId && (waiting.item.tabId || session?.activeTabId) !== tabId) continue;
+		// Not listed: its turn is the one Stop ended (or its start is still on its way), also when the
+		// queue never showed it (a turn that joined and left between two frames, or an older desktop
+		// host). Left waiting, its saved user entry would consult after Stop (M24): nothing does.
 		letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 	}
 }
