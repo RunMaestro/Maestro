@@ -41,6 +41,21 @@ describe('mirrorLogEntry', () => {
 		).toBeUndefined();
 	});
 
+	it("keeps the host's queue item id on a user entry, so a queued consult finds its own turn (M23)", () => {
+		expect(
+			mirrorLogEntry(entry('u1', 'run it', { source: 'user', queuedItemId: 'q1' })).queuedItemId
+		).toBe('q1');
+		// Only a real id: anything else from the wire is left off.
+		expect(
+			mirrorLogEntry(
+				entry('u2', 'run it', { source: 'user', queuedItemId: 7 as unknown as string })
+			).queuedItemId
+		).toBeUndefined();
+		expect(mirrorLogEntry(entry('u3', 'run it', { source: 'user' }))).not.toHaveProperty(
+			'queuedItemId'
+		);
+	});
+
 	it('copies the drawn fields and maps an unknown kind to a system line', () => {
 		expect(mirrorLogEntry(entry('e1', 'hi', { source: 'future-kind' })).source).toBe('system');
 		const mapped = mirrorLogEntry(

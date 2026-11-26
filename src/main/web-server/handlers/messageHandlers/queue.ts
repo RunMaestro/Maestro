@@ -34,7 +34,7 @@ import {
 	type TurnAgentText,
 } from '../../../../shared/maestro-lib/client/types';
 import { resolveToDataUrl } from '../../../storage/session-image-store';
-import type { QueueSessionSnapshot } from '../../types';
+import type { QueuedItemSnapshot, QueueSessionSnapshot } from '../../types';
 
 /**
  * Handle enqueue_command message - hand a CLI prompt to the renderer's
@@ -342,15 +342,23 @@ export async function withQueueImages(
 	return Promise.all(
 		queues.map(async (queue) => ({
 			...queue,
-			items: await Promise.all(
-				queue.items.map(async ({ images, ...item }) => {
-					if (!inline || !images?.length) return item;
-					const resolved = await Promise.all(images.map((image) => resolveToDataUrl(image)));
-					const inlined = resolved.filter((image): image is string => image !== null);
-					return inlined.length > 0 ? { ...item, images: inlined } : item;
-				})
-			),
+			items: await withQueueItemImages(queue.items, inline),
 		}))
+	);
+}
+
+/** One agent's queued items with their images for the client (`withQueueImages()`). */
+export async function withQueueItemImages(
+	items: QueuedItemSnapshot[],
+	inline: boolean
+): Promise<QueuedItemSnapshot[]> {
+	return Promise.all(
+		items.map(async ({ images, ...item }) => {
+			if (!inline || !images?.length) return item;
+			const resolved = await Promise.all(images.map((image) => resolveToDataUrl(image)));
+			const inlined = resolved.filter((image): image is string => image !== null);
+			return inlined.length > 0 ? { ...item, images: inlined } : item;
+		})
 	);
 }
 

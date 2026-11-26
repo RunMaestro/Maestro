@@ -110,7 +110,9 @@ export function watchHostedHistoryCommand(
 		// A tab that is not shown is not read on its stale mark: this watch reads it.
 		if (!slot || (slot.stale && !slot.loading)) {
 			if (!slot?.loading) void readMirrorTranscript(target.peerId, target.agentId, tabId);
-			if (!slot) return;
+			// The read marks the slot loading at once, which runs this check again inside it: a stale
+			// slot can already hold the saved line, and that inner run raised the one toast (M22).
+			if (!slot || done) return;
 		}
 		for (const entry of slot.entries) {
 			if (entry.source !== 'system' || typeof entry.text !== 'string' || !isNew(entry)) continue;

@@ -35,6 +35,7 @@ import { dropMentionHandoffs } from '../../../renderer/services/crossAgentHandof
 import { interruptMirroredAgent } from '../../../renderer/services/peerMirror';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useCrossAgentInFlightStore } from '../../../renderer/stores/crossAgentInFlightStore';
 
 const originalMaestro = window.maestro;
 const processApi = {
@@ -245,6 +246,38 @@ describe('interruptTurn: queued work after a whole-agent stop', () => {
 			expect(agent().executionQueue).toEqual([]);
 			expect(processQueuedItem).toHaveBeenCalledWith('agent-1', queued);
 		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('writes the line on a tab whose consult Stop ended before that tab starts its next message (CodeRabbit on #2154)', async () => {
+		vi.useFakeTimers();
+		try {
+			seedAgent({ executionQueue: [queued] });
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 1 });
+			useCrossAgentInFlightStore.setState({ requests: {} });
+			useCrossAgentInFlightStore.getState().start({
+				requestId: 'r-c',
+				sourceSessionId: 'agent-1',
+				sourceTabId: 'tab-c',
+				targetSessionId: 'backend',
+				targetAgentName: 'Backend',
+				startedAt: 1,
+			});
+			registerTurnInterruptDeps({
+				cancelPendingSynopsis: vi.fn(),
+				processQueuedItem: vi.fn().mockResolvedValue(undefined),
+				ownsQueue: () => true,
+			});
+
+			await interruptTurn('agent-1');
+			await vi.runAllTimersAsync();
+
+			const texts = tab('tab-c').logs.map((l) => l.text);
+			expect(texts.filter((text) => text === TURN_CANCELED_NOTE)).toHaveLength(1);
+			expect(tab('tab-c').state).toBe('busy');
+		} finally {
+			useCrossAgentInFlightStore.setState({ requests: {} });
 			vi.useRealTimers();
 		}
 	});
@@ -494,5 +527,93 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 			);
 		}
 		expect(result).toMatchObject({ success: true, wasBusy: true, interrupted: true });
+	});
+
+	// Parity M21: Stop during a consult whose tab runs no turn (a mention consulting before its
+	// turn, or a tab held for the reply) ends on the same "Canceled by user" line in every mode.
+	it.each(AGENT_MODES)(
+		'%s: Stop during a consult ends the tab on the same "Canceled by user" line (M21)',
+		async (mode) => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			vi.clearAllMocks();
+			processApi.interrupt.mockResolvedValue(true);
+			processApi.getActiveProcesses.mockResolvedValue([]);
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 1 });
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+			const seeded = seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
+			useSessionStore.setState({
+				sessions: [
+					{
+						...seeded,
+						state: 'idle',
+						busySource: undefined,
+						aiTabs: seeded.aiTabs.map((t) => ({ ...t, state: 'idle' as const })),
+					},
+				],
+			} as any);
+
+			const result = await interruptTurn('agent-1', { tabId: 'tab-a' });
+
+			expect(result).toMatchObject({ success: true, wasBusy: true });
+			expect(tab('tab-a').state).toBe('idle');
+			expect(tab('tab-a').logs.filter((l) => l.text === TURN_CANCELED_NOTE)).toHaveLength(1);
+			expect(tab('tab-a').logs.at(-1)?.text).toBe(TURN_CANCELED_NOTE);
+		}
+	);
+
+	// Parity M21 (review of #2154): the line goes on the tab whose consult Stop ended, not on the
+	// active tab, through the same settle in every mode.
+	it.each(AGENT_MODES)(
+		'%s: a whole-agent Stop writes "Canceled by user" on the tab whose consult it ended (M21)',
+		async (mode) => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			vi.clearAllMocks();
+			processApi.interrupt.mockResolvedValue(true);
+			processApi.getActiveProcesses.mockResolvedValue([]);
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 1 });
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+			const seeded = seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
+			useSessionStore.setState({
+				sessions: [
+					{
+						...seeded,
+						state: 'idle',
+						busySource: undefined,
+						aiTabs: seeded.aiTabs.map((t) => ({ ...t, state: 'idle' as const })),
+					},
+				],
+			} as any);
+			useCrossAgentInFlightStore.setState({ requests: {} });
+			useCrossAgentInFlightStore.getState().start({
+				requestId: 'r1',
+				sourceSessionId: 'agent-1',
+				sourceTabId: 'tab-c',
+				targetSessionId: 'backend',
+				targetAgentName: 'Backend',
+				startedAt: 1,
+			});
+
+			const result = await interruptTurn('agent-1');
+
+			expect(result).toMatchObject({ success: true, wasBusy: true });
+			const notes = (id: string) => tab(id).logs.filter((l) => l.text === TURN_CANCELED_NOTE);
+			expect(notes('tab-c')).toHaveLength(1);
+			expect(tab('tab-c').logs.at(-1)?.text).toBe(TURN_CANCELED_NOTE);
+			expect(tab('tab-c').state).toBe('idle');
+			expect(notes('tab-a')).toHaveLength(0);
+			useCrossAgentInFlightStore.setState({ requests: {} });
+		}
+	);
+
+	it('hosted: a tab whose turn the host stopped gets no second line here (the host writes it) (M21)', async () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		crossAgentApi.cancel.mockResolvedValue({ canceled: 1 });
+		const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession('hosted');
+		seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
+
+		await interruptTurn('agent-1', { tabId: 'tab-a' });
+
+		expect(interruptMirroredAgent).toHaveBeenCalled();
+		expect(tab('tab-a').logs.some((l) => l.text === TURN_CANCELED_NOTE)).toBe(false);
 	});
 });

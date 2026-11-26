@@ -109,6 +109,7 @@ import { loadAllSettings } from '../../stores/settingsStore';
 import { useRemoteGroupChat } from './useRemoteGroupChat';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { getGrokSlashCommandRefusal } from '../../slashCommands';
+import { toQueuedItemSnapshot } from '../../../shared/queueSnapshot';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -1753,22 +1754,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						sessionId: s.id,
 						name: s.name,
 						state: s.state,
-						items: (s.executionQueue ?? []).map((item) => ({
-							id: item.id,
-							timestamp: item.timestamp,
-							tabId: item.tabId,
-							type: item.type,
-							...(item.text !== undefined ? { text: item.text } : {}),
-							...(item.command !== undefined ? { command: item.command } : {}),
-							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
-							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
-							...(item.paused !== undefined ? { paused: item.paused } : {}),
-							...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
-							// A client's hosted queued card draws the model and effort it runs with.
-							...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
-							// Store refs as held: main inlines them only for a client that asks.
-							...(item.images?.length ? { images: item.images } : {}),
-						})),
+						items: (s.executionQueue ?? []).map(toQueuedItemSnapshot),
 					}));
 					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
 						success: true,
