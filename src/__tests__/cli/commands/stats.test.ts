@@ -360,6 +360,17 @@ describe('stats-project-tokens (the host op behind remote and hosted agents)', (
 		);
 	});
 
+	it('keeps in JSON how many conversations a read project left out', async () => {
+		sendCommand.mockResolvedValue({
+			type: 'project_token_usage_result',
+			success: true,
+			projects: [{ status: 'read', skipped: 2, breakdowns: [] }],
+		});
+		await statsProjectTokens({ provider: 'codex', project: ['/x'], json: true });
+		const out = JSON.parse(logSpy.mock.calls[0][0] as string);
+		expect(out.projects[0]).toMatchObject({ status: 'read', skippedFiles: 2 });
+	});
+
 	it('says which project was not counted in full', async () => {
 		sendCommand.mockResolvedValue({
 			type: 'project_token_usage_result',

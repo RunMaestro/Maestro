@@ -232,6 +232,8 @@ export async function statsProjectTokens(options: StatsProjectTokensOptions): Pr
 							...project,
 							status: result.status,
 							complete: result.complete,
+							// How many conversations the host left out of a read project (0 when none).
+							skippedFiles: result.skippedFiles ?? 0,
 							breakdowns: result.breakdowns,
 						})),
 					},

@@ -28,6 +28,7 @@ import {
 } from './tokenUsage';
 import type { UsageAccounting, UsageCost } from './types';
 import { mergeUsageCost } from './maestro-lib/streaming/usage-totals';
+import { serializedJsonByteLength } from './jsonUtils';
 
 /** The request message type. */
 export const PROJECT_TOKEN_USAGE_MESSAGE = 'get_project_token_usage';
@@ -50,6 +51,12 @@ export const PROJECT_TOKEN_USAGE_FAILED = 'The host could not read the token usa
 export const MAX_PROJECT_TOKEN_USAGE_PROJECTS = 64;
 /** The most conversations one reply may carry, over all its projects. */
 export const MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS = 50_000;
+/**
+ * The most bytes of conversations one reply may carry. Well under what a peer socket receives in
+ * one message (the `ws` default of 100 MiB, the host server's 32 MiB), so a reply the host sends is
+ * never one the requester's socket drops.
+ */
+export const MAX_PROJECT_TOKEN_USAGE_REPLY_BYTES = 16 * 1024 * 1024;
 /** The most model buckets one conversation may carry; the rest fold into one unnamed bucket. */
 const MAX_MODELS_PER_SESSION = 64;
 /** A token count past this is not a real conversation. */
@@ -348,20 +355,37 @@ export function wireAccountLabels(usage: ProjectTokenUsage): Map<string, string>
  * left out and their project says so (`truncated`), so the requester never reads it as whole.
  * Accounts go by their {@link wireAccountLabels}, never by a path of the host.
  */
-export function projectTokenUsageReplyFrame(usage: ProjectTokenUsage): Json {
+export function projectTokenUsageReplyFrame(
+	usage: ProjectTokenUsage,
+	options: { maxBytes?: number } = {}
+): Json {
 	const labels = wireAccountLabels(usage);
 	let room = MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS;
+	let bytesLeft = options.maxBytes ?? MAX_PROJECT_TOKEN_USAGE_REPLY_BYTES;
 	return {
 		type: PROJECT_TOKEN_USAGE_REPLY,
 		success: true,
 		projects: usage.projects.map((project) => {
-			const kept = project.breakdowns.slice(0, Math.max(0, room));
-			room -= kept.length;
+			const kept: Json[] = [];
+			for (const breakdown of project.breakdowns) {
+				if (room <= 0) break;
+				const entry = breakdownToWire(
+					breakdown,
+					labels.get(breakdown.accountKey) ?? DEFAULT_ACCOUNT_KEY
+				);
+				// Past the byte budget the rest are left out, like past the count cap.
+				const size = serializedJsonByteLength(entry) ?? Number.POSITIVE_INFINITY;
+				if (size > bytesLeft) {
+					room = 0;
+					break;
+				}
+				bytesLeft -= size;
+				room--;
+				kept.push(entry);
+			}
 			return {
 				status: project.status,
-				breakdowns: kept.map((breakdown) =>
-					breakdownToWire(breakdown, labels.get(breakdown.accountKey) ?? DEFAULT_ACCOUNT_KEY)
-				),
+				breakdowns: kept,
 				...(kept.length < project.breakdowns.length || !project.complete
 					? { truncated: true }
 					: {}),

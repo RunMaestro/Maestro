@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS,
+	MAX_PROJECT_TOKEN_USAGE_REPLY_BYTES,
 	MAX_PROJECT_TOKEN_USAGE_PROJECTS,
 	PROJECT_TOKEN_USAGE_MESSAGE,
 	PROJECT_TOKEN_USAGE_REPLY,
@@ -163,6 +164,30 @@ describe('project token usage reply', () => {
 		expect(frame.projects[0].breakdowns).toHaveLength(MAX_PROJECT_TOKEN_USAGE_BREAKDOWNS);
 		expect(frame.projects[0].truncated).toBe(true);
 		expect(parseProjectTokenUsageReply(frame, ASKED)!.projects[0].complete).toBe(false);
+	});
+
+	it('leaves out the conversations past the byte budget and marks their projects cut', () => {
+		const one = JSON.stringify(
+			(
+				projectTokenUsageReplyFrame({ projects: [read([breakdown()])] }) as {
+					projects: Array<{ breakdowns: unknown[] }>;
+				}
+			).projects[0].breakdowns[0]
+		).length;
+		const frame = projectTokenUsageReplyFrame(
+			{
+				projects: [
+					read([breakdown({ sessionId: 'a' }), breakdown({ sessionId: 'b' })]),
+					read([breakdown({ sessionId: 'c' })]),
+				],
+			},
+			{ maxBytes: one * 1.5 }
+		) as { projects: Array<{ breakdowns: unknown[]; truncated?: boolean }> };
+		expect(frame.projects.map((p) => [p.breakdowns.length, p.truncated === true])).toEqual([
+			[1, true],
+			[0, true],
+		]);
+		expect(MAX_PROJECT_TOKEN_USAGE_REPLY_BYTES).toBeLessThan(32 * 1024 * 1024);
 	});
 
 	it('folds model buckets past the cap into one, keeping the session whole', () => {
