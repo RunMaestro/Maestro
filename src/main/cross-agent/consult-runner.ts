@@ -108,6 +108,9 @@ export function createDesktopConsultRunner(
 			try {
 				const result = await spawnGroupChatAgent({
 					...toSpawnGroupChatAgentConfig(spawn, { processManager, sshStore }),
+					// Only the native queue hands in an admission: a managed consult, whose admission must
+					// stay on this machine, so a hosted target runs it here by a named rule (HOSTED_SSH_RUNS).
+					...(nativeAdmission ? { launchFeature: 'managed-consult' as const } : {}),
 					beforeSpawn: () => {
 						nativeAdmission?.beforeSpawn();
 						spawnAttempted = true;

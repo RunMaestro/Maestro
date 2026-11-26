@@ -219,6 +219,7 @@ export function registerCommandCallbacks(
 					targetTabId: params.targetTabId,
 					transcript: params.transcript,
 					fromAgentName: params.fromAgentName,
+					askerKey: params.askerKey,
 					handoffAnswer: params.handoffAnswer,
 				},
 			],

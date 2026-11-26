@@ -20,7 +20,13 @@
 // A send to a busy tab waits in the HOST's execution queue, as it would for a local agent.
 
 import type { QueueSteerResult } from '../../chatSteering';
-import { parseWireTranscript, type RemoteAskerContext } from '../../crossAgentTypes';
+import {
+	buildRemoteAskerKey,
+	parseWireTranscript,
+	type RemoteAskerContext,
+} from '../../crossAgentTypes';
+import { parseWireClosedTabs } from '../../closedTabHistory';
+import type { ClosedTabSummary } from '../../closedTabCommands';
 import { isCodexTransport } from '../../codexTransport';
 import {
 	validateAutoRunLaunch,
@@ -35,6 +41,7 @@ import type {
 	AgentPatch,
 	AgentPatchField,
 	ClientError,
+	ClientMethod,
 	ClientResult,
 	MaestroClient,
 	QueuedTurnEdit,
@@ -95,9 +102,23 @@ export type PeerAgentAction =
 	 * Consult the host's agent for an agent on this machine (a typed `@mention`, `maestro-cli
 	 * ask`): the host runs the consult in its own hidden consult tab and records it in its History,
 	 * as a consult of a local agent does here. The asker is not on the host, so it sends its own
-	 * windowed context and name (`RemoteAskerContext`).
+	 * windowed context and name (`RemoteAskerContext`). `asker` is the asking agent and tab here:
+	 * with this machine's hostname it becomes the asker key the host keeps one consult tab per.
 	 */
-	| ({ kind: 'consult'; question: string } & RemoteAskerContext)
+	| ({
+			kind: 'consult';
+			question: string;
+			asker?: { agentId: string; tabId: string };
+	  } & Omit<RemoteAskerContext, 'askerKey'>)
+	/**
+	 * Stop on the asking tab: end the consults that tab (`asker`, as the consult named it) has
+	 * running on the host, which end there as stopped ones, as main ends a local target's.
+	 */
+	| { kind: 'consult-cancel'; asker: { agentId: string; tabId: string } }
+	/** Read the agent's closed-tab stack on the host (Quick Chat, Cmd+Shift+T). */
+	| { kind: 'closed-tabs' }
+	/** Reopen a closed tab on the host in the background: the newest, or the one closed as `tabId`. */
+	| { kind: 'reopen-tab'; index?: number; tabId?: string }
 	/** Change the agent's settings on the host (Federation settings sync). `ssh` is never sent. */
 	| { kind: 'update-agent'; patch: AgentPatch }
 	/** Change one tab's composer settings on the host. */
@@ -147,6 +168,12 @@ export type PeerAgentActionResult =
 	| { kind: 'side-question'; tabId: string; answer: string }
 	/** `agentName`: the consulted agent's name, as the host reports it. */
 	| { kind: 'consult'; answer: string; agentName?: string }
+	/** `canceled`: how many consults the host stopped (0: none was running, or it already ended). */
+	| { kind: 'consult-cancel'; canceled: number }
+	/** The host's stack, newest first, bounded (`parseWireClosedTabs()`). */
+	| { kind: 'closed-tabs'; closedTabs: ClosedTabSummary[] }
+	/** `tabId`: the tab open on the host now. `wasDuplicate`: it was already open. */
+	| { kind: 'reopen-tab'; tabId: string; wasDuplicate?: boolean }
 	| { kind: 'update-agent'; applied: AgentPatchField[]; notices?: string[] }
 	| { kind: 'update-tab'; tabId: string }
 	/** The host accepted the launch; the run's progress arrives as `autorun` events. */
@@ -175,6 +202,9 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 	'send-now-queued',
 	'side-question',
 	'consult',
+	'consult-cancel',
+	'closed-tabs',
+	'reopen-tab',
 	'update-agent',
 	'update-tab',
 	'auto-run',
@@ -190,6 +220,29 @@ const ACTION_KINDS: readonly PeerAgentActionKind[] = [
 export interface PeerActionContext {
 	/** This machine's hostname: a send stamps its History entry with it on the host (`originHost`). */
 	originHost?: string;
+}
+
+/** An action the host's client has no call for (an older host): a stated refusal. */
+function unsupportedAction(
+	method: ClientMethod,
+	what: string
+): ClientResult<PeerAgentActionResult> {
+	return {
+		ok: false,
+		error: { code: 'unsupported', message: `This host cannot ${what}.`, method },
+	};
+}
+
+/** The asker key the host keeps a consult tab per: this machine, the asking agent, its tab. */
+function remoteAskerKeyOf(
+	asker: { agentId: string; tabId: string },
+	context: PeerActionContext
+): string {
+	return buildRemoteAskerKey({
+		machine: context.originHost ?? '',
+		agentId: asker.agentId,
+		tabId: asker.tabId,
+	});
 }
 
 export async function runPeerAgentAction(
@@ -323,6 +376,7 @@ export async function runPeerAgentAction(
 				question: action.question,
 				...(action.transcript ? { transcript: action.transcript } : {}),
 				...(action.fromAgentName ? { fromAgentName: action.fromAgentName } : {}),
+				...(action.asker ? { askerKey: remoteAskerKeyOf(action.asker, context) } : {}),
 				...(action.handoffAnswer !== undefined ? { handoffAnswer: action.handoffAnswer } : {}),
 			});
 			return asked.ok
@@ -335,6 +389,38 @@ export async function runPeerAgentAction(
 						},
 					}
 				: asked;
+		}
+		case 'consult-cancel': {
+			if (!client.consults.cancel) return unsupportedAction('consults.cancel', 'stop a consult');
+			const stopped = await client.consults.cancel({
+				askerKey: remoteAskerKeyOf(action.asker, context),
+			});
+			return stopped.ok
+				? { ok: true, value: { kind: 'consult-cancel', canceled: stopped.value.canceled } }
+				: stopped;
+		}
+		case 'closed-tabs': {
+			if (!client.tabs.closed) return unsupportedAction('tabs.closed', 'keep closed tabs');
+			const read = await client.tabs.closed(agent.id);
+			return read.ok
+				? { ok: true, value: { kind: 'closed-tabs', closedTabs: parseWireClosedTabs(read.value) } }
+				: read;
+		}
+		case 'reopen-tab': {
+			if (!client.tabs.reopen) return unsupportedAction('tabs.reopen', 'reopen a closed tab');
+			const reopened = await client.tabs.reopen(agent.id, {
+				...(action.tabId ? { tabId: action.tabId } : { index: action.index ?? 0 }),
+			});
+			return reopened.ok
+				? {
+						ok: true,
+						value: {
+							kind: 'reopen-tab',
+							tabId: reopened.value.tabId,
+							...(reopened.value.wasDuplicate ? { wasDuplicate: true } : {}),
+						},
+					}
+				: reopened;
 		}
 		case 'update-agent': {
 			const updated = await client.agents.update(agent.id, action.patch);
@@ -485,6 +571,7 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 		case 'consult': {
 			if (!nonEmptyString(value.question)) throw new Error('The question is empty.');
 			const transcript = parseWireTranscript(value.transcript);
+			const asker = parseAsker(value.asker);
 			return {
 				kind,
 				question: value.question.trim(),
@@ -492,8 +579,26 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				...(nonEmptyString(value.fromAgentName)
 					? { fromAgentName: value.fromAgentName.trim() }
 					: {}),
+				...(asker ? { asker } : {}),
 				...(typeof value.handoffAnswer === 'string' ? { handoffAnswer: value.handoffAnswer } : {}),
 			};
+		}
+		case 'closed-tabs':
+			return { kind };
+		case 'reopen-tab': {
+			if (typeof value.tabId === 'string' && value.tabId.trim()) {
+				return { kind, tabId: value.tabId.trim() };
+			}
+			const index = value.index ?? 0;
+			if (typeof index !== 'number' || !Number.isInteger(index) || index < 0) {
+				throw new Error('index must be a non-negative integer');
+			}
+			return { kind, index };
+		}
+		case 'consult-cancel': {
+			const asker = parseAsker(value.asker);
+			if (!asker) throw new Error('Missing asker');
+			return { kind, asker };
 		}
 		case 'update-agent':
 			return { kind, patch: parseAgentPatch(value.patch) };
@@ -511,6 +616,15 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			return { kind, control };
 		}
 	}
+}
+
+/** The asking agent and tab a consult names, or undefined when either is missing. */
+function parseAsker(raw: unknown): { agentId: string; tabId: string } | undefined {
+	if (!raw || typeof raw !== 'object') return undefined;
+	const asker = raw as Record<string, unknown>;
+	return nonEmptyString(asker.agentId) && nonEmptyString(asker.tabId)
+		? { agentId: asker.agentId, tabId: asker.tabId }
+		: undefined;
 }
 
 function launchRecord(raw: unknown): Record<string, unknown> {

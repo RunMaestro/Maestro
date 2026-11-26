@@ -21,6 +21,7 @@ import {
 	createMirroredPeer,
 	replacePeerAgents,
 } from '../../../shared/maestro-lib/client/peer-mirror';
+import { buildRemoteAskerKey } from '../../../shared/crossAgentTypes';
 import { resetStores } from '../../helpers';
 import { AGENT_MODES, createMockSession, createModeSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
@@ -153,6 +154,7 @@ describe('A1.7: a consult of a local, SSH, or hosted target', () => {
 						timestamp,
 					})),
 					fromAgentName: 'Source',
+					asker: { agentId: 'src', tabId: 'tab' },
 				});
 				// The host keeps the consult tab and History: nothing is written here for it.
 				const target = useSessionStore.getState().sessions[1];
@@ -201,7 +203,7 @@ describe('A1.7: a consult of a local, SSH, or hosted target', () => {
 		expect(completion?.error).toBe('The host is not connected.');
 	});
 
-	it('ends a hosted consult on Stop as a stopped consult, as main ends a local one, and drops a late answer', async () => {
+	it('ends a hosted consult on Stop as a stopped consult here and on the host, as main ends a local one, and drops a late answer', async () => {
 		seed('hosted');
 		let completion: CrossAgentCompletion | undefined;
 		let answer!: (value: unknown) => void;
@@ -212,11 +214,106 @@ describe('A1.7: a consult of a local, SSH, or hosted target', () => {
 		expect(cancelHostedConsults('src', 'tab')).toBe(1);
 		expect(bubble().text).toContain('Target was stopped.');
 		expect(completion?.canceled).toBe(true);
+		// G1: Stop reaches the run on the host too, keyed on the same asker as the consult, so the
+		// host records it as stopped, as main records a local target's.
+		expect(act$).toHaveBeenLastCalledWith('box', 'h1', {
+			kind: 'consult-cancel',
+			asker: { agentId: 'src', tabId: 'tab' },
+		});
+		expect(act$.mock.calls[0][2].asker).toEqual({ agentId: 'src', tabId: 'tab' });
 
 		answer({ ok: true, result: { kind: 'consult', answer: ANSWER } });
 		await asked;
 		expect(bubble().text).not.toContain(ANSWER);
 		expect(cancelHostedConsults('src')).toBe(0);
+	});
+
+	// G2: a follow-up from the same asking tab continues its own consult thread on the target, and
+	// another asking tab starts its own, whether the target answers here or on its host.
+	it('keeps one consult thread per asking tab, in every mode', async () => {
+		const threads: string[][] = [];
+		for (const mode of AGENT_MODES) {
+			seed(mode);
+			useSessionStore.setState((state) => ({
+				sessions: state.sessions.map((session) =>
+					session.id === 'src'
+						? { ...session, aiTabs: [...session.aiTabs, createMockAITab({ id: 'tab-2' })] }
+						: session
+				),
+			}));
+			send.mockResolvedValue({ requestId: `rq-${mode}` });
+			act$.mockResolvedValue({ ok: true, result: { kind: 'consult', answer: ANSWER } });
+			for (const sourceTabId of ['tab', 'tab', 'tab-2']) {
+				await sendCrossAgentRequest({
+					sourceSessionId: 'src',
+					sourceAgentName: 'Source',
+					sourceTabId,
+					targetSessionId: 'tgt',
+					userPrompt: QUESTION,
+					sourceLogs: [],
+				});
+			}
+			// The thread a consult lands in: the consult tab here, or the asker key on the host.
+			const thread =
+				mode === 'hosted'
+					? act$.mock.calls.map(([, , action]) =>
+							buildRemoteAskerKey({ machine: 'laptop', ...action.asker })
+						)
+					: send.mock.calls.map(([request]) => request.targetTabId as string);
+			threads.push(thread);
+			send.mockReset();
+			act$.mockReset();
+		}
+		for (const thread of threads) {
+			expect(thread).toHaveLength(3);
+			expect(thread[1]).toBe(thread[0]);
+			expect(thread[2]).not.toBe(thread[0]);
+		}
+	});
+
+	// G3: a Pianola-managed consult stays with main's managed queue on this machine in every mode
+	// (its admission cannot move to a host that does not hold the queue): the same request, no
+	// consult tab, and the same bubble when the answer lands.
+	it('runs a managed consult through main in every mode and draws the same bubble', async () => {
+		const bubbles: ReturnType<typeof bubble>[] = [];
+		for (const mode of AGENT_MODES) {
+			seed(mode);
+			send.mockResolvedValue({ requestId: `managed-${mode}` });
+			await sendCrossAgentRequest({
+				sourceSessionId: 'src',
+				sourceAgentName: 'Source',
+				sourceTabId: 'tab',
+				targetSessionId: 'tgt',
+				userPrompt: QUESTION,
+				sourceLogs: SOURCE_LOGS,
+				managedQueue: { dispatchId: 'd1', generation: 'g1' },
+			});
+			expect(act$).not.toHaveBeenCalled();
+			expect(send).toHaveBeenCalledTimes(1);
+			expect(send.mock.calls[0][0]).toMatchObject({
+				targetSessionId: 'tgt',
+				transcript: [],
+				managedQueue: { dispatchId: 'd1', generation: 'g1' },
+			});
+			expect(send.mock.calls[0][0].targetTabId).toBeUndefined();
+			applyCrossAgentChunk({
+				requestId: `managed-${mode}`,
+				sourceSessionId: 'src',
+				sourceTabId: 'tab',
+				targetSessionId: 'tgt',
+				targetAgentName: 'Target',
+				targetToolType: 'codex',
+				chunk: ANSWER,
+				done: true,
+			});
+			const target = useSessionStore.getState().sessions[1];
+			expect(target.aiTabs.some((tab) => tab.consultOrigin)).toBe(false);
+			bubbles.push(bubble());
+			send.mockReset();
+		}
+		expect(bubbles[0].text).toBe(ANSWER);
+		expect(bubbles[1]).toEqual(bubbles[0]);
+		expect(bubbles[2]).toEqual(bubbles[0]);
 	});
 
 	it('sends a hand-off answer to the host for the target to act on', async () => {
@@ -235,6 +332,7 @@ describe('A1.7: a consult of a local, SSH, or hosted target', () => {
 			kind: 'consult',
 			question: 'then send it to @Target',
 			fromAgentName: 'Source',
+			asker: { agentId: 'src', tabId: 'tab' },
 			handoffAnswer: 'the final plan',
 		});
 	});
