@@ -24,6 +24,7 @@ import type { TurnSendReceipt } from '../../shared/maestro-lib/client/types';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { recoverQueuedItem } from '../utils/executionQueue';
 import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
+import { queuedItemNamingText } from './tabAutoNaming';
 
 /**
  * Items on their way to a host, each with the host's receipt to come (null: refused, and the item
@@ -91,8 +92,11 @@ function forwardToHost(
 		holdRefusedItem(sessionId, item, index);
 		return Promise.resolve(null);
 	}
+	// Named from the message as the local drain names a tab it runs (`queuedItemNamingText()`).
+	const namingText = queuedItemNamingText(item);
 	const send = sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
 		held: item.paused === true,
+		...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
 	}).then(
 		(receipt) => {
 			if (!receipt) holdRefusedItem(sessionId, item, index);

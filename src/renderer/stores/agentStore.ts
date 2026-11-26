@@ -81,7 +81,7 @@ import {
 	SPAWN_COLLISION_MAX_ATTEMPTS,
 } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
-import { requestTabAutoNameForMessage } from '../services/tabAutoNaming';
+import { queuedItemNamingText, requestTabAutoNameForMessage } from '../services/tabAutoNaming';
 import { admitGrokNativeCommand, getGrokSlashCommandRefusal } from '../slashCommands';
 import type { GrokAcpNativeCommandIntent } from '../../shared/maestro-lib/grok/acp-turn';
 import {
@@ -590,14 +590,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// way the composer does. A released consult hold (`agentContext`) is
 		// skipped: its text is Maestro's own "X replied" note, not something the
 		// user asked for, and the message it continues was named when it was sent.
-		if (
-			!managedQueue &&
-			item.type === 'message' &&
-			item.text?.trim() &&
-			!item.agentContext &&
-			!item.awaitingConsult
-		) {
-			requestTabAutoNameForMessage(session, targetTab.id, item.text, 'queue');
+		const namingText = managedQueue ? undefined : queuedItemNamingText(item);
+		if (namingText) {
+			requestTabAutoNameForMessage(session, targetTab.id, namingText, 'queue');
 		}
 
 		// Cross-agent `@mentions` inside a QUEUED message fire HERE, as the message

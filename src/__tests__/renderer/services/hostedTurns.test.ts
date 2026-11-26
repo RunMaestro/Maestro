@@ -190,6 +190,49 @@ describe('hostedTurns', () => {
 		expect(shown.activeTabId).toBe('t-new');
 	});
 
+	it('names the tab the message landed in once the host took it, and none when it refused', async () => {
+		hydrateHost();
+		const generateTabName = vi.fn().mockResolvedValue('Carry On');
+		maestro.tabNaming = { generateTabName };
+		useSettingsStore.setState({ automaticTabNamingEnabled: true });
+		try {
+			const base = row();
+			const session = createMockSession({
+				...base,
+				aiTabs: base.aiTabs.map((tab) => ({ ...tab, name: null })),
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			act$.mockResolvedValueOnce({ ok: false, error: 'host is down' });
+			expect(
+				await sendHostedTurn(session, 't1', 'carry on', [], { nameFrom: { text: 'carry on' } })
+			).toBeNull();
+			expect(generateTabName).not.toHaveBeenCalled();
+
+			// A kept tab's message opens a new host tab: that tab is the one named.
+			act$
+				.mockResolvedValueOnce({ ok: true, result: { kind: 'new-tab', tabId: 't-new' } })
+				.mockResolvedValueOnce({
+					ok: true,
+					result: { kind: 'send', receipt: { status: 'started' } },
+				});
+			await sendHostedTurn(session, 'kept', 'carry on', [], { nameFrom: { text: 'carry on' } });
+			await act(async () => {
+				await Promise.resolve();
+			});
+			const tabs = useSessionStore.getState().sessions[0].aiTabs;
+			expect(tabs.find((tab) => tab.id === 't-new')?.name).toBe('Carry On');
+			expect(tabs.find((tab) => tab.id === 'kept')?.name).toBeNull();
+			expect(act$).toHaveBeenCalledWith('box', 'h1', {
+				kind: 'rename-tab',
+				tabId: 't-new',
+				name: 'Carry On',
+			});
+		} finally {
+			useSettingsStore.setState({ automaticTabNamingEnabled: false });
+			delete maestro.tabNaming;
+		}
+	});
+
 	it('refuses at once while the host is not in the mirror, sending nothing', async () => {
 		expect(await sendHostedTurn(row(), 't1', 'hi', [])).toBeNull();
 		expect(act$).not.toHaveBeenCalled();

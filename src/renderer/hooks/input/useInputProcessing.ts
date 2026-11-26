@@ -175,6 +175,48 @@ export function hostedSendRunsHere(
 }
 
 /**
+ * The prompt command a slash message names: one of the user's custom AI commands, or one the
+ * agent advertised with a prompt (never for Grok, whose slash text is its own native command).
+ */
+function findPromptCommand(
+	baseCommand: string,
+	customAICommands: readonly CustomAICommand[],
+	session: Pick<Session, 'toolType' | 'agentCommands'>
+): Pick<CustomAICommand, 'command' | 'description' | 'prompt'> | undefined {
+	const custom = customAICommands.find((cmd) => cmd.command === baseCommand);
+	if (custom) return custom;
+	if (session.toolType === 'grok') return undefined;
+	const advertised = session.agentCommands?.find(
+		(cmd) => cmd.command === baseCommand && cmd.prompt
+	);
+	return advertised
+		? {
+				command: advertised.command,
+				description: advertised.description,
+				prompt: advertised.prompt!,
+			}
+		: undefined;
+}
+
+/**
+ * Whether a composer send names its tab from `text`, in every mode. A local send returns before
+ * the namer for Maestro's own commands, a matched prompt command, and any Grok slash command; the
+ * rest (a message, or slash text the agent takes as typed) is named. A hosted send asks the same.
+ */
+export function composerSendNamesTab(
+	text: string,
+	customAICommands: readonly CustomAICommand[],
+	session: Pick<Session, 'toolType' | 'agentCommands'>
+): boolean {
+	const command = text.trim();
+	if (!command.startsWith('/')) return true;
+	if (parseMaestroBuiltinCommand(command, session.toolType)) return false;
+	if (session.toolType === 'grok') return false;
+	const baseCommand = command.split(/\s/, 1)[0];
+	return !findPromptCommand(baseCommand, customAICommands, session);
+}
+
+/**
  * Dependencies for the useInputProcessing hook.
  */
 export interface UseInputProcessingDeps {
@@ -632,6 +674,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				try {
 					receipt = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
 						held: options?.hold === true,
+						// Named from what the user typed, as a local send is (chips only: their blocks).
+						...(composerSendNamesTab(text, customAICommands, activeSession)
+							? { nameFrom: { text: text.trim() ? text : hostedText } }
+							: {}),
 					});
 				} finally {
 					releaseSubmit?.();
@@ -720,21 +766,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							: commandText.substring(0, firstWhitespaceIndex);
 
 					// Check custom AI commands first, then agent-discovered commands with prompts
-					const matchingAgentCommand =
-						activeSession.toolType === 'grok'
-							? undefined
-							: activeSession.agentCommands?.find(
-									(cmd) => cmd.command === baseCommand && cmd.prompt
-								);
-					const matchingCustomCommand =
-						customAICommands.find((cmd) => cmd.command === baseCommand) ||
-						(matchingAgentCommand
-							? {
-									command: matchingAgentCommand.command,
-									description: matchingAgentCommand.description,
-									prompt: matchingAgentCommand.prompt!,
-								}
-							: undefined);
+					const matchingCustomCommand = findPromptCommand(
+						baseCommand,
+						customAICommands,
+						activeSession
+					);
 					// Any other Grok slash text is a native command: admitted against this
 					// tab's live catalog, or refused here keeping the draft, images and target.
 					// No naming, mention consult, Claude skill scan or ordinary prompt follows.

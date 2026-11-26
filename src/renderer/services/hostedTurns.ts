@@ -51,6 +51,7 @@ import {
 	sendToMirroredTab,
 	starMirrorTab,
 } from './peerMirror';
+import { requestTabAutoNameForMessage } from './tabAutoNaming';
 
 export interface HostedTarget {
 	peerId: string;
@@ -263,13 +264,21 @@ export async function startHostedConversation(
  * `opts.held` is Queue Held: the host queues the message paused, even on an idle tab.
  * `opts.overrides` are a sender's own chips for this one message (a Federation client's
  * `TurnInput.overrides`); they win over the tab's settings, as they do on a local queued item.
+ * `opts.nameFrom` is the text the tab is named from once the host took the message, through the
+ * namer a local send calls (`requestTabAutoNameForMessage()`), so a hosted tab gets its name from
+ * its first message as a local one does. The caller leaves it out where a local send does not name
+ * (a matched slash command, a consult's note).
  */
 export async function sendHostedTurn(
 	session: Session,
 	tabId: string | undefined,
 	text: string,
 	images: readonly string[],
-	opts: { held?: boolean; overrides?: TurnOverrides } = {}
+	opts: {
+		held?: boolean;
+		overrides?: TurnOverrides;
+		nameFrom?: { text: string; label?: string };
+	} = {}
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
@@ -321,6 +330,10 @@ export async function sendHostedTurn(
 				? { ...candidate, pendingMergedContext: undefined }
 				: candidate
 		);
+	}
+	// The tab the message landed in: a kept tab's message opened a new host tab above.
+	if (receipt && opts.nameFrom && hostTabId) {
+		requestTabAutoNameForMessage(session, hostTabId, opts.nameFrom.text, opts.nameFrom.label);
 	}
 	return receipt;
 }

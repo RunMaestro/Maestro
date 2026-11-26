@@ -138,7 +138,11 @@ vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 
 // Tab auto-naming is fire-and-forget and covered in services/tabAutoNaming.test.ts;
 // here we only assert which queued items the drain hands to it (issue #1531).
-vi.mock('../../../renderer/services/tabAutoNaming', () => ({
+vi.mock('../../../renderer/services/tabAutoNaming', async (importOriginal) => ({
+	// The real rule for which queued items name a tab; only the namer itself is mocked.
+	queuedItemNamingText: (
+		await importOriginal<typeof import('../../../renderer/services/tabAutoNaming')>()
+	).queuedItemNamingText,
 	requestTabAutoNameForMessage: vi.fn(),
 }));
 
