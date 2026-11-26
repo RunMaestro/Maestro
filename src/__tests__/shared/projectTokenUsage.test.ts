@@ -203,6 +203,39 @@ describe('project token usage reply', () => {
 		expect(parsed!.projects[0].complete).toBe(false);
 	});
 
+	it.each(['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'prototype'])(
+		'drops a record that names %s as its id, path, account, or model, and leaves its project not complete',
+		(key) => {
+			const spoilers: Array<(record: Record<string, unknown>) => void> = [
+				(record) => (record.sessionId = key),
+				(record) => (record.projectPath = key),
+				(record) => (record.accountKey = key),
+				(record) => ((record.byModel as Array<Record<string, unknown>>)[0].model = key),
+				(record) => ((record.byModel as Array<Record<string, unknown>>)[0].rawModel = key),
+			];
+			for (const spoil of spoilers) {
+				const frame = replyWith({}) as {
+					projects: Array<{ breakdowns: Array<Record<string, unknown>> }>;
+				};
+				spoil(frame.projects[0].breakdowns[0]);
+				const parsed = parseProjectTokenUsageReply(frame, ASKED);
+				expect(parsed!.projects[0].breakdowns).toEqual([]);
+				expect(parsed!.projects[0].complete).toBe(false);
+			}
+		}
+	);
+
+	it('refuses a request whose provider or project names a prototype key', () => {
+		for (const key of ['__proto__', 'constructor', 'toString']) {
+			expect(
+				parseProjectTokenUsageRequest({ projects: [{ provider: key, projectPath: '/srv/app' }] })
+			).toBeUndefined();
+			expect(
+				parseProjectTokenUsageRequest({ projects: [{ provider: 'codex', projectPath: key }] })
+			).toBeUndefined();
+		}
+	});
+
 	it('keeps only known coverage and origin words', () => {
 		const parsed = parseProjectTokenUsageReply(
 			replyWith({ coverage: 'everything', origin: 'robot' }),

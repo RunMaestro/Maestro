@@ -387,7 +387,7 @@ function aggregate(
 	const byProject = new Map<string, { total: TokenUsageTotals; label: string }>();
 	const byAccount = new Map<string, { total: TokenUsageTotals; label: string }>();
 	const timeline = new Map<number, TokenUsageTimeBucket>();
-	const coverageByAgent: Record<string, TokenCoverage> = {};
+	const coverageByAgent = keyedRecord<TokenCoverage>();
 
 	/** Get-or-create a group entry, so callers can bump tokens or session count. */
 	const group = (
@@ -494,6 +494,15 @@ function localDayKey(ms: number): string {
 	).padStart(2, '0')}`;
 }
 
+/**
+ * An empty record with no prototype. The series are keyed by strings a remote host supplies (a
+ * conversation id), and a plain object indexed by `__proto__` reaches `Object.prototype`; with no
+ * prototype every key is only ever an own property.
+ */
+function keyedRecord<T>(): Record<string, T> {
+	return Object.create(null) as Record<string, T>;
+}
+
 /** Add `n` into `map[key]`, creating the entry when absent. */
 function bump(map: Record<string, number>, key: string, n: number): void {
 	map[key] = (map[key] ?? 0) + n;
@@ -507,10 +516,10 @@ function bump(map: Record<string, number>, key: string, n: number): void {
  */
 function buildSeries(all: SessionTokenBreakdown[], sinceMs: number, untilMs: number): TokenSeries {
 	const series: TokenSeries = {
-		byDay: {},
-		byHour: {},
-		byAgentByDay: {},
-		bySessionByDay: {},
+		byDay: keyedRecord(),
+		byHour: keyedRecord(),
+		byAgentByDay: keyedRecord(),
+		bySessionByDay: keyedRecord(),
 		bySource: { user: 0, auto: 0 },
 	};
 
@@ -538,7 +547,7 @@ function buildSeries(all: SessionTokenBreakdown[], sinceMs: number, untilMs: num
 
 			let agentDays = series.byAgentByDay[s.agentType];
 			if (!agentDays) {
-				agentDays = {};
+				agentDays = keyedRecord();
 				series.byAgentByDay[s.agentType] = agentDays;
 			}
 			bump(agentDays, day, tokens);
@@ -546,7 +555,7 @@ function buildSeries(all: SessionTokenBreakdown[], sinceMs: number, untilMs: num
 			if (!ambiguous.has(s.sessionId)) {
 				let sessionDays = series.bySessionByDay[s.sessionId];
 				if (!sessionDays) {
-					sessionDays = {};
+					sessionDays = keyedRecord();
 					series.bySessionByDay[s.sessionId] = sessionDays;
 				}
 				bump(sessionDays, day, tokens);

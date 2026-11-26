@@ -93,6 +93,22 @@ function boundedString(value: unknown, max: number): string | undefined {
 	return typeof value === 'string' && value.length > 0 && value.length <= max ? value : undefined;
 }
 
+/**
+ * Whether `key` names something every plain object already has (`__proto__`, `constructor`,
+ * `toString`, ...). A host-supplied string that becomes an object key on the requester must not be
+ * one: indexing a plain object by it reaches `Object.prototype`, and a write through it pollutes
+ * every object in the process.
+ */
+export function isPrototypeKey(key: string): boolean {
+	return key in Object.prototype || key === 'prototype';
+}
+
+/** A {@link boundedString} that is safe as an object key, else undefined. */
+function keyString(value: unknown, max: number): string | undefined {
+	const text = boundedString(value, max);
+	return text !== undefined && !isPrototypeKey(text) ? text : undefined;
+}
+
 /** A finite number in `[0, max]`, else undefined. */
 function boundedNumber(value: unknown, max: number): number | undefined {
 	return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= max
@@ -158,8 +174,9 @@ export function parseProjectTokenUsageRequest(
 	const projects: ProjectTokenUsageProject[] = [];
 	for (const raw of message.projects) {
 		if (!isObject(raw)) return undefined;
-		const provider = boundedString(raw.provider, MAX_PROVIDER_LENGTH);
-		const projectPath = boundedString(raw.projectPath, MAX_PATH_LENGTH);
+		// The host looks storages and coverage up by provider, so it too must be a safe key.
+		const provider = keyString(raw.provider, MAX_PROVIDER_LENGTH);
+		const projectPath = keyString(raw.projectPath, MAX_PATH_LENGTH);
 		if (!provider || !projectPath) return undefined;
 		projects.push({ provider, projectPath });
 	}
@@ -317,7 +334,10 @@ function parseCost(raw: unknown): UsageCost | undefined {
 				...(ticks !== undefined ? { costUsdTicks: ticks } : {}),
 			};
 		case 'estimated': {
-			const model = typeof raw.model === 'string' && raw.model.length <= MAX_MODEL_LENGTH;
+			const model =
+				typeof raw.model === 'string' &&
+				raw.model.length <= MAX_MODEL_LENGTH &&
+				!isPrototypeKey(raw.model);
 			const revision = boundedString(raw.pricingRevision, MAX_LABEL_LENGTH);
 			const completeness =
 				typeof raw.completeness === 'string' && COMPLETENESS.has(raw.completeness)
@@ -358,11 +378,19 @@ function parseLifetime(
 function parseModel(raw: unknown): ModelTokenUsage | undefined {
 	if (!isObject(raw)) return undefined;
 	const model =
-		typeof raw.model === 'string' && raw.model.length <= MAX_MODEL_LENGTH ? raw.model : undefined;
+		typeof raw.model === 'string' &&
+		raw.model.length <= MAX_MODEL_LENGTH &&
+		!isPrototypeKey(raw.model)
+			? raw.model
+			: undefined;
 	const rawModel =
-		typeof raw.rawModel === 'string' && raw.rawModel.length <= MAX_MODEL_LENGTH
+		typeof raw.rawModel === 'string' &&
+		raw.rawModel.length <= MAX_MODEL_LENGTH &&
+		!isPrototypeKey(raw.rawModel)
 			? raw.rawModel
 			: undefined;
+	// A rawModel that is present but unusable spoils the record, rather than quietly regrouping it.
+	if (raw.rawModel !== undefined && rawModel === undefined) return undefined;
 	const inputTokens = boundedNumber(raw.inputTokens, MAX_TOKENS);
 	const outputTokens = boundedNumber(raw.outputTokens, MAX_TOKENS);
 	const cacheReadTokens = boundedNumber(raw.cacheReadTokens, MAX_TOKENS);
@@ -398,9 +426,10 @@ function parseModel(raw: unknown): ModelTokenUsage | undefined {
 /** One conversation from the wire for a project of `provider`, or undefined when it does not hold together. */
 function parseBreakdown(raw: unknown, provider: string): SessionTokenBreakdown | undefined {
 	if (!isObject(raw)) return undefined;
-	const sessionId = boundedString(raw.sessionId, MAX_ID_LENGTH);
-	const projectPath = boundedString(raw.projectPath, MAX_PATH_LENGTH);
-	const accountKey = boundedString(raw.accountKey, MAX_PATH_LENGTH);
+	// Each of these becomes an object or map key on the requester (series, groups, the dedupe key).
+	const sessionId = keyString(raw.sessionId, MAX_ID_LENGTH);
+	const projectPath = keyString(raw.projectPath, MAX_PATH_LENGTH);
+	const accountKey = keyString(raw.accountKey, MAX_PATH_LENGTH);
 	const timestampMs = boundedNumber(raw.timestampMs, MAX_TIMESTAMP_MS);
 	const inputTokens = boundedNumber(raw.inputTokens, MAX_TOKENS);
 	const outputTokens = boundedNumber(raw.outputTokens, MAX_TOKENS);

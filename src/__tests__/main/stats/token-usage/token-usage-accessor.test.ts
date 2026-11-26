@@ -815,6 +815,31 @@ describe('buildSeries', () => {
 		expect(s.bySessionByDay).toEqual({});
 	});
 
+	it('never writes through a conversation id that names a prototype key', () => {
+		const ms = new Date(2026, 4, 20, 9, 0).getTime();
+		const day = localDayKey(ms);
+		try {
+			const s = buildSeries(
+				[
+					at(ms, { sessionId: '__proto__' }),
+					at(ms, { sessionId: 'constructor', agentType: '__proto__' }),
+				],
+				ALL,
+				NONE
+			);
+			expect(Object.getOwnPropertyDescriptor(s.bySessionByDay, '__proto__')?.value).toEqual({
+				[day]: 15,
+			});
+			expect(Object.getOwnPropertyDescriptor(s.bySessionByDay, 'constructor')?.value).toEqual({
+				[day]: 15,
+			});
+			expect(({} as Record<string, unknown>)[day]).toBeUndefined();
+		} finally {
+			delete (Object.prototype as Record<string, unknown>)[day];
+			delete (Function.prototype as Record<string, unknown>)[day];
+		}
+	});
+
 	it('keeps a timestamp-less session out of the day/hour buckets but still in bySource', () => {
 		const s = buildSeries([at(0, { origin: 'user' })], ALL, NONE);
 		expect(s.byDay).toEqual({});
