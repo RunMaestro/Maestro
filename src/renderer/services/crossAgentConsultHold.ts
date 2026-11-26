@@ -113,12 +113,17 @@ export async function loadCrossAgentConsultPrompts(force = false): Promise<void>
  * sending a note with its placeholders still in it.
  */
 export function withConsultPendingNote(prompt: string, targets: ConsultHoldTarget[]): string {
-	if (targets.length === 0 || !pendingNoteTemplate) return prompt;
-	const note = buildConsultPendingNote(
+	const note = consultPendingNoteText(targets);
+	return note ? `${prompt}\n\n---\n\n${note}` : prompt;
+}
+
+/** The pending note alone, or undefined when nothing is consulted or the prompt has not loaded. */
+export function consultPendingNoteText(targets: ConsultHoldTarget[]): string | undefined {
+	if (targets.length === 0 || !pendingNoteTemplate) return undefined;
+	return buildConsultPendingNote(
 		pendingNoteTemplate,
 		targets.map((t) => t.targetAgentName)
 	);
-	return `${prompt}\n\n---\n\n${note}`;
 }
 
 /**
@@ -127,12 +132,17 @@ export function withConsultPendingNote(prompt: string, targets: ConsultHoldTarge
  * nothing is handed off or the prompt has not loaded.
  */
 export function withHandoffPendingNote(prompt: string, targets: ConsultHoldTarget[]): string {
-	if (targets.length === 0 || !handoffNoteTemplate) return prompt;
-	const note = buildHandoffPendingNote(
+	const note = handoffPendingNoteText(targets);
+	return note ? `${prompt}\n\n---\n\n${note}` : prompt;
+}
+
+/** The hand-off note alone, or undefined when nothing is handed off or the prompt has not loaded. */
+export function handoffPendingNoteText(targets: ConsultHoldTarget[]): string | undefined {
+	if (targets.length === 0 || !handoffNoteTemplate) return undefined;
+	return buildHandoffPendingNote(
 		handoffNoteTemplate,
 		targets.map((t) => t.targetAgentName)
 	);
-	return `${prompt}\n\n---\n\n${note}`;
 }
 
 /** What the hold reads as in the queue while it waits. */

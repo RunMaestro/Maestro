@@ -41,6 +41,9 @@ const LOG_CONTEXT = '[RuntimeSteering]';
 export interface SteerableItem extends QueueItem {
 	text: string;
 	images?: string[];
+	/** Agent-only text the message carries (`TurnInput.agentContext` / `agentNotes`). */
+	agentContext?: string;
+	agentNotes?: string;
 }
 
 /** The turn running on a tab, as the steer judges it. */
@@ -92,7 +95,8 @@ export type RuntimeSteerBlockedReason =
 	| 'paused'
 	| 'tui-command-prefix'
 	| 'read-only'
-	| 'has-images';
+	| 'has-images'
+	| 'has-agent-context';
 
 const STAYS_QUEUED = 'the message stays queued and sends when the current turn ends';
 
@@ -119,6 +123,8 @@ export function runtimeSteerBlockedReason(
 	if (item.readOnly && !turn.readOnly) return 'read-only';
 	// A running turn cannot take an attachment: typing the text alone would lose the images.
 	if (item.images?.length) return 'has-images';
+	// Steering types the text alone: a consult's replies or notes would never reach the agent.
+	if (item.agentContext || item.agentNotes) return 'has-agent-context';
 	return null;
 }
 

@@ -17,12 +17,39 @@
  * typed one. A held item goes held (the host queues it paused). A host that refuses (it is down,
  * or the tab is gone) has already said so in a toast; the item comes back into this queue held,
  * in the place it left, so nothing is lost and Resume sends it again.
+ *
+ * An `@mention` runs HERE, as a local agent's does: the mentioned agent is in this machine's
+ * roster, not the host's. A queued message that mentions one waits in this queue for its turn
+ * (never handed over at once), and when the drain takes it the consult fires as the turn goes to
+ * the host: a leading mention (`crossAgentOnly`) consults and sends nothing, a parallel consult
+ * holds the tab as it does locally, a hand-off is armed for when the host's turn ends. The turn
+ * carries the agent-only notes and a released consult's replies (`agentContext`) to the host, so
+ * its transcript shows what a local one shows. A host that refuses the turn consults nobody.
  */
 
 import type { QueuedItem, Session } from '../types';
-import type { TurnSendReceipt } from '../../shared/maestro-lib/client/types';
+import type { TurnOverrides, TurnSendReceipt } from '../../shared/maestro-lib/client/types';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
-import { recoverQueuedItem } from '../utils/executionQueue';
+import {
+	applyQueuedItemAbort,
+	applyQueuedItemRelease,
+	queuedItemOwnerTabId,
+	recoverQueuedItem,
+} from '../utils/executionQueue';
+import { withoutDesignPickPageText } from '../utils/designModePicker';
+import {
+	dispatchCrossAgentMentions,
+	mentionTurnNotes,
+	planCrossAgentMentions,
+	previewMentionDispatch,
+	type CrossAgentMentionPlan,
+} from './crossAgentMentions';
+import {
+	deferHostedHandoff,
+	handoffSendBoundary,
+	hasDeferredHostedHandoff,
+	markHandoffSentToHost,
+} from './crossAgentHandoff';
 import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
 import { queuedItemNamingText } from './tabAutoNaming';
 
@@ -81,11 +108,43 @@ function holdRefusedItem(sessionId: string, item: QueuedItem, index: number): vo
 	});
 }
 
+/**
+ * The `@mentions` a queued message names, resolved now as the local drain resolves them: from the
+ * text without its Design Mode chips' page text, with the routing the user picked. Null when it
+ * names nobody (or was not queued as a mention).
+ */
+export function queuedItemMentionPlan(
+	session: Pick<Session, 'id'>,
+	item: QueuedItem
+): CrossAgentMentionPlan | null {
+	if (!item.crossAgentMention || item.type !== 'message' || !item.text?.trim()) return null;
+	return planCrossAgentMentions(
+		withoutDesignPickPageText(item.text, item.designPickPageText),
+		session.id,
+		item.mentionRouting
+	);
+}
+
+/**
+ * The choices an item froze when it was queued (`turnSettings`, `readOnlyMode`), as the host's
+ * per-turn overrides, so a change to the tab while it waits does not change how it runs. Undefined
+ * when it froze none (the tab's live choices decide, as the local drain falls back).
+ */
+export function queuedItemHostOverrides(item: QueuedItem): TurnOverrides | undefined {
+	const overrides: TurnOverrides = {
+		...(item.turnSettings?.model ? { model: item.turnSettings.model } : {}),
+		...(item.turnSettings?.effort ? { effort: item.turnSettings.effort } : {}),
+		...(typeof item.readOnlyMode === 'boolean' ? { readOnly: item.readOnlyMode } : {}),
+	};
+	return Object.keys(overrides).length > 0 ? overrides : undefined;
+}
+
 /** Send one item that is no longer in this queue to the host. Resolves the host's receipt. */
 function forwardToHost(
 	sessionId: string,
 	item: QueuedItem,
-	index: number
+	index: number,
+	mention: CrossAgentMentionPlan | null = null
 ): Promise<TurnSendReceipt | null> {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	if (!session || !hostedTargetOf(session)) {
@@ -94,12 +153,20 @@ function forwardToHost(
 	}
 	// Named from the message as the local drain names a tab it runs (`queuedItemNamingText()`).
 	const namingText = queuedItemNamingText(item);
+	// What the consult will tell the turn, before it fires: a refused turn consults nobody.
+	const agentNotes = mention ? mentionTurnNotes(previewMentionDispatch(mention)) : undefined;
+	// The model, effort, and read-only it was queued with, as the local drain runs it on them.
+	const overrides = queuedItemHostOverrides(item);
 	const send = sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
 		held: item.paused === true,
+		...(overrides ? { overrides } : {}),
 		...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
+		...(item.agentContext ? { agentContext: item.agentContext } : {}),
+		...(agentNotes ? { agentNotes } : {}),
 	}).then(
 		(receipt) => {
 			if (!receipt) holdRefusedItem(sessionId, item, index);
+			else if (mention) fireMentionsForHostTurn(sessionId, item, mention, receipt);
 			return receipt;
 		},
 		(error: unknown) => {
@@ -116,6 +183,113 @@ function forwardToHost(
 }
 
 /**
+ * The host took a turn that mentions other agents: consult them now, as a local turn's dispatch
+ * does, and follow the host's tab for a hand-off. Read from the live store, so the consult sees
+ * the conversation as it stands.
+ */
+function fireMentionsForHostTurn(
+	sessionId: string,
+	item: QueuedItem,
+	mention: CrossAgentMentionPlan,
+	receipt: TurnSendReceipt
+): void {
+	// A turn the host queued behind another is not this agent's turn yet: its consult waits for
+	// it to start (`fireHostStartedMentions()`). A hand-off consults nobody until the turn ends.
+	if (receipt.status === 'queued' && mention.routing !== 'handoff') {
+		// The turn it waits behind is read from the host's tab while it is seen queued.
+		mentionsAwaitingHostStart.set(receipt.itemId, {
+			sessionId,
+			item,
+			mention,
+			seenQueued: false,
+			queuedAt: Date.now(),
+		});
+		return;
+	}
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tabId = item.tabId || session?.activeTabId;
+	if (!session || !tabId) return;
+	// A tab holds one hand-off. While one is armed, this one waits (with the send boundary it has
+	// now) until that one released with its own turn's answer, as a local tab's next turn runs
+	// only after its exit released the last one. Neither replaces nor releases the other early.
+	const armed = session.aiTabs.find((tab) => tab.id === tabId);
+	if (
+		mention.routing === 'handoff' &&
+		(armed?.pendingMentionHandoff || hasDeferredHostedHandoff(sessionId, tabId))
+	) {
+		const boundary = { afterEntryId: handoffSendBoundary(armed?.logs ?? []) };
+		deferHostedHandoff(sessionId, tabId, () => {
+			const current = selectSessionById(sessionId)(useSessionStore.getState());
+			if (!current) return;
+			dispatchCrossAgentMentions(mention, item.text ?? '', current, tabId, item.images);
+			markHandoffSentToHost(sessionId, tabId, receipt, boundary);
+		});
+		return;
+	}
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	if (mention.routing === 'handoff') markHandoffSentToHost(sessionId, tabId, receipt);
+}
+
+/** Consults of turns the host queued, by the host's queue item id, until that item starts. */
+const mentionsAwaitingHostStart = new Map<
+	string,
+	{
+		sessionId: string;
+		item: QueuedItem;
+		mention: CrossAgentMentionPlan;
+		seenQueued: boolean;
+		/** When the turn the host queued it behind started (the tab's `thinkingStartTime` then). */
+		turnStartedAt?: number;
+		/** When the host's receipt said it was queued. */
+		queuedAt: number;
+	}
+>();
+
+/**
+ * Fire the consults of turns the host queued once they start: the item is not in the host's queue
+ * and its tab reads busy with a turn that is not the one it was queued behind (it was seen queued,
+ * or the tab's turn started at another time). One seen queued that left while the tab is idle was
+ * taken out of the host's queue, so nobody is consulted for it.
+ */
+export function fireHostStartedMentions(session: Session): void {
+	if (mentionsAwaitingHostStart.size === 0) return;
+	const hostQueued = new Set(
+		(session.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
+	);
+	for (const [hostItemId, waiting] of mentionsAwaitingHostStart) {
+		if (waiting.sessionId !== session.id) continue;
+		const tabId = waiting.item.tabId || session.activeTabId;
+		const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
+		if (hostQueued.has(hostItemId)) {
+			// While it waits, the turn ahead is whatever the host's tab runs now.
+			waiting.seenQueued = true;
+			waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
+			continue;
+		}
+		// Its turn, not the one it waited behind: a removal while that turn runs consults nobody.
+		// Never seen waiting (its queue frame had not come): only a turn that started after the
+		// receipt can be it, not the one running when the host queued it.
+		const started =
+			tab?.state === 'busy' &&
+			(waiting.seenQueued
+				? tab.thinkingStartTime !== waiting.turnStartedAt
+				: (tab.thinkingStartTime ?? 0) >= waiting.queuedAt);
+		if (!started) {
+			if (waiting.seenQueued) mentionsAwaitingHostStart.delete(hostItemId);
+			continue;
+		}
+		mentionsAwaitingHostStart.delete(hostItemId);
+		dispatchCrossAgentMentions(
+			waiting.mention,
+			waiting.item.text ?? '',
+			session,
+			tabId,
+			waiting.item.images
+		);
+	}
+}
+
+/**
  * Take `itemId` out of a hosted agent's queue on this machine and send it to the host. The take
  * and the check are one store update, so no drain runs it here too. Answers whether it was handed
  * over (false: the agent is not hosted, or the item is not one this machine holds for it).
@@ -124,6 +298,8 @@ export function handQueuedItemToHost(sessionId: string, itemId: string): boolean
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const item = session?.executionQueue?.find((queued) => queued.id === itemId);
 	if (!session || !item || !isQueuedItemForHost(session, item)) return false;
+	// A message that mentions another agent waits here for the drain, which consults as it sends.
+	if (item.crossAgentMention) return false;
 	type Taken = { item: QueuedItem; index: number };
 	let taken: Taken | null = null;
 	updateSessionWith(sessionId, (s) => {
@@ -144,12 +320,30 @@ export function handQueuedItemToHost(sessionId: string, itemId: string): boolean
  * Send an item a drain already took out of this queue to the host. A refusal puts it back at the
  * head of the queue, held. Resolves true either way: the host runs it, or the queue holds it, so
  * the caller has nothing left to restore.
+ *
+ * The tab the dequeue marked running is released first: the host's update draws the turn, and
+ * the card the dequeue wrote goes (the host writes the user's entry). A message addressed only at
+ * the agents it mentions (`crossAgentOnly`) is the exception: its consult IS the dispatch, nothing
+ * goes to the host, and the card stays as the user's bubble, as for a local agent.
  */
 export async function sendTakenItemToHost(sessionId: string, item: QueuedItem): Promise<boolean> {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const mention = session ? queuedItemMentionPlan(session, item) : null;
+	// Addressed only at the agents it mentions: never sent to this agent, even when the agent it
+	// named is gone by now (the local drain runs no turn for it either).
+	if (session && item.crossAgentMention && item.crossAgentOnly) {
+		updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, queuedItemOwnerTabId(s, item)));
+		const tabId = item.tabId || session.activeTabId;
+		if (mention && tabId) {
+			dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+		}
+		return true;
+	}
+	updateSessionWith(sessionId, (s) => applyQueuedItemAbort(s, item, queuedItemOwnerTabId(s, item)));
 	if (sendsInFlight.has(item.id)) return true;
 	// A drain never takes a held item, so a held one here was sent on purpose (Force Send on a
 	// card the host refused earlier, or a retry). It runs now: sending it held would park it on
 	// the host and take its card away from the user who just asked for it to go.
-	await forwardToHost(sessionId, { ...item, paused: false }, 0);
+	await forwardToHost(sessionId, { ...item, paused: false }, 0, mention);
 	return true;
 }
