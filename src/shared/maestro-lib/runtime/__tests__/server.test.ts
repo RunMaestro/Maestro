@@ -231,6 +231,31 @@ describe('runtime server', () => {
 		);
 	});
 
+	it('tells an attached client to read a tab again when /skills writes to it outside a turn (M13)', async () => {
+		value(await client.connection.connect());
+		const seen: MaestroEvent[] = [];
+		client.events.subscribe((event) => seen.push(event), { types: ['turn'] });
+
+		const receipt = value(await client.turns.send('a1', 't1', { text: '/skills' }));
+		expect(receipt).toEqual({ status: 'ran' });
+		// The idle tab's new rows arrive as a `gap` at once, not with the tab's next turn.
+		await waitFor(
+			() =>
+				seen.some(
+					(event) =>
+						event.type === 'turn' &&
+						event.agentId === 'a1' &&
+						event.tabId === 't1' &&
+						event.event.kind === 'gap'
+				),
+			'the gap for the /skills rows'
+		);
+		await waitFor(() => seen.filter((event) => event.type === 'turn').length >= 2, 'both rows');
+		const texts = value(await client.tabs.transcript('a1', 't1')).map((entry) => entry.text);
+		expect(texts[1]).toBe('/skills');
+		expect(texts[2]).toContain('Skills');
+	});
+
 	it('answers group chat and consult requests with a reason, not a crash', async () => {
 		value(await client.connection.connect());
 		expect(value(await client.groupChats.list())).toEqual([]);

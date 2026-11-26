@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createWsMaestroClient } from '../ws-client';
+import { TRANSCRIPT_CHANGED_CHANNEL } from '../bridge-frames';
 import { normalizeOriginHost } from '../types';
 import type {
 	MaestroClient,
@@ -878,6 +879,27 @@ describe('createWsMaestroClient', () => {
 			expect(result).toEqual({ ok: true, value: { status: 'ran' } });
 			expect(bridge.sent('enqueue_command')[0]).toMatchObject({ command: '/history' });
 			expect(turnKinds()).toEqual([]);
+		});
+
+		it('reads a transcript-changed frame for an idle tab as a gap, so the tab is read again (M13)', async () => {
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, PID, A1, A1_TAB);
+			await vi.waitFor(() => expect(turnKinds()).toEqual(['gap']));
+			expect(turnEvents()[0]).toMatchObject({ kind: 'gap' });
+			expect(events.find((event) => event.type === 'turn')).toMatchObject({
+				agentId: A1,
+				tabId: A1_TAB,
+			});
+		});
+
+		it('leaves a running turn alone on a transcript-changed frame, and ignores a malformed one (M13)', async () => {
+			bridge.pushBridgeEvent('process:data', PID, 'partial');
+			await vi.waitFor(() => expect(turnKinds()).toContain('text'));
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, PID);
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, 42);
+			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, 'not-a-tab-process');
+			bridge.pushBridgeEvent('process:data', PID, ' more');
+			await vi.waitFor(() => expect(turnKinds().filter((kind) => kind === 'text')).toHaveLength(2));
+			expect(turnKinds()).not.toContain('gap');
 		});
 
 		it('sends the origin host on enqueue_command, trimmed, and leaves out one that is not a hostname', async () => {
@@ -1906,6 +1928,24 @@ describe('createWsMaestroClient', () => {
 					effort: 'high',
 				}),
 			]);
+		});
+
+		it('always launches, and never asks a host to save a playbook or run in a worktree (M8: the desktop does those itself)', async () => {
+			await connect();
+			bridge.typed.set('configure_auto_run', reply('configure_auto_run_result'));
+			await client.autoRun.launch(A1, {
+				documents: [{ file: '/work/a1/.maestro/playbooks/first.md' }],
+				saveAsPlaybook: 'Mine',
+				worktree: { branchName: 'feat/x' },
+			} as never);
+			const message = bridge.sent('configure_auto_run')[0];
+			expect(message).toMatchObject({ launch: true });
+			// The refusals a headless host keeps for these (`server-requests.ts` `configure_auto_run`)
+			// are never reached from a hosted agent's panel: it saves a playbook and makes a
+			// worktree child on this machine (`resolveAutoRunDispatchTarget()`), then launches.
+			expect(message).not.toHaveProperty('saveAsPlaybook');
+			expect(message).not.toHaveProperty('worktree');
+			expect(message).not.toHaveProperty('worktreeTarget');
 		});
 
 		it('sends only what was chosen', async () => {

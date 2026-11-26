@@ -55,6 +55,7 @@ import { applyDefaultAgentTokenProxy } from '../../services/agentGateway';
 import { useUIStore } from '../../stores/uiStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
+import { notifyHistoryEntryAdded } from '../../services/historyEntryToast';
 import { getActiveTab, createTab, flattenWizardIntoTab } from '../../utils/tabHelpers';
 import {
 	requestWizardTabAutoName,
@@ -114,7 +115,10 @@ function resolveBuiltinCommandTarget(target: BuiltinCommandTarget | undefined): 
 	const tab = target
 		? saved.aiTabs.find((candidate) => candidate.id === target.tabId)
 		: (getActiveTab(saved) ?? undefined);
-	return { session: projectTabProvider(saved, tab).agent, tab };
+	if (!tab) return { session: projectTabProvider(saved, undefined).agent, tab: undefined };
+	// The tab as its provider sees it too: its session id is that provider's slot.
+	const projected = projectTabProvider(saved, tab);
+	return { session: projected.agent, tab: projected.tab ?? tab };
 }
 import {
 	formatClaudeSkillsMessage,
@@ -915,19 +919,6 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 						return;
 					}
 
-					const currentGroups = useSessionStore.getState().groups;
-					// Worktree children inherit group from parent
-					const effectiveGroupId =
-						currentSession.groupId ||
-						(currentSession.parentSessionId
-							? selectSessionById(currentSession.parentSessionId)(useSessionStore.getState())
-									?.groupId
-							: undefined);
-					const group = effectiveGroupId
-						? currentGroups.find((g) => g.id === effectiveGroupId)
-						: null;
-					const groupName = group?.name || 'Ungrouped';
-
 					const elapsedTimeMs = historySynopsisElapsedMs(activeTab, synopsisTime);
 
 					addHistoryEntry({
@@ -953,16 +944,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 						),
 					}));
 
-					notifyToast({
-						type: 'success',
-						title: 'History Entry Added',
-						message: parsed.shortSummary,
-						group: groupName,
-						project: currentSession.name,
-						sessionId: currentSession.id,
-						tabId: activeTab.id,
-						tabName: activeTab.name || undefined,
-					});
+					notifyHistoryEntryAdded(currentSession, activeTab, parsed.shortSummary);
 				} else {
 					updateAiTab(currentSession.id, activeTab.id, (tab) => ({
 						...tab,

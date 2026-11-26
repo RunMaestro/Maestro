@@ -26,6 +26,8 @@ import {
 	type PeerMirrorService,
 } from '../../federation';
 import { AutoFederationCoordinator } from '../../federation/auto-federation';
+import { getDispatchCallbackRegistry } from '../../dispatch-callbacks';
+import { feedHostedTurnToDispatchCallbacks } from '../../dispatch-callbacks/hosted-turn-feed';
 import type { AutoFederationSnapshot } from '../../../shared/federationAuto';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -459,6 +461,15 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 	onMirrorPush((push) => {
 		if (push.event.type === 'peer.state') auto.nudge();
 	});
+	// `dispatch <hosted agent> --notify-on-complete`: the host's turn events settle the callback,
+	// as a local turn's process events do.
+	onMirrorPush((push) =>
+		feedHostedTurnToDispatchCallbacks(
+			push,
+			() => arrayOfRecords(deps.readSessions()) as Array<{ id: string; liftedTo?: unknown }>,
+			getDispatchCallbackRegistry()
+		)
+	);
 	deps.watchSessions?.(() => auto.nudge());
 	auto.start();
 	ipcMain.handle(

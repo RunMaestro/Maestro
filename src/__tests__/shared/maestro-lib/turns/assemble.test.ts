@@ -114,6 +114,37 @@ describe('the user prompt (PA1: composer rules for every message)', () => {
 		});
 		expect(turn.prompt.startsWith(`CTX${SEP}rules${SEP}hello${SEP}nudge`)).toBe(true);
 	});
+
+	// Parity M7: a hosted agent's `@mention` hands its host the same agent-only text a local turn
+	// gets from the queue drain: a released consult's replies ahead of the message, the mention's
+	// notes after everything, and neither in the transcript entry.
+	it("carries an @mention's agent-only context and notes where the drain puts them (M7)", () => {
+		const turn = assemble({
+			agent: { newSessionMessage: 'rules' },
+			tab: { pendingMergedContext: 'CTX' },
+			message: { text: 'hello', agentContext: 'REPLIES', agentNotes: 'CONSULTING' },
+			toolType: 'codex',
+			context: { prompts: { imageOnlyDefault: '', maestroSystem: undefined } },
+		});
+		expect(turn.prompt).toBe(`CTX${SEP}rules${SEP}REPLIES${SEP}hello${SEP}CONSULTING`);
+		expect(turn.entry.text).toBe('hello');
+		expect(assemble().prompt).not.toContain('CONSULTING');
+	});
+
+	it('carries the agent-only text on a Maestro command too, and keeps the entry the command (M7)', () => {
+		const turn = assemble({
+			message: {
+				text: '/review a.ts',
+				command: { command: '/review', prompt: 'Review $ARGUMENTS', args: 'a.ts' },
+				agentContext: 'REPLIES',
+				agentNotes: 'CONSULTING',
+			},
+			toolType: 'codex',
+			context: { prompts: { imageOnlyDefault: '', maestroSystem: undefined } },
+		});
+		expect(turn.prompt).toBe(`REPLIES${SEP}Review a.ts${SEP}CONSULTING`);
+		expect(turn.entry.text).toBe('Review a.ts');
+	});
 });
 
 describe('a Maestro command', () => {

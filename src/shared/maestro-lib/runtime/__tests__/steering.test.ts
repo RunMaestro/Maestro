@@ -205,6 +205,9 @@ describe('runtimeSteerBlockedReason', () => {
 	it.each([
 		['a slash command', item({ text: '/compact' }), tui, 'tui-command-prefix'],
 		['a message with images', item({ images: ['data:image/png;base64,AA=='] }), tui, 'has-images'],
+		// M7: a consult's replies or the @mention notes ride only a normal send.
+		['a message with consult replies', item({ agentContext: 'REPLIES' }), tui, 'has-agent-context'],
+		['a message with @mention notes', item({ agentNotes: 'NOTES' }), tui, 'has-agent-context'],
 		['a read-only message into a writing turn', item({ readOnly: true }), tui, 'read-only'],
 		['an empty message', item({ text: '  ' }), tui, 'nothing-to-type'],
 		['a codex exec turn', item(), { provider: 'codex', readOnly: false }, 'codex-exec'],

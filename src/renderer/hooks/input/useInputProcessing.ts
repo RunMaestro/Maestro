@@ -667,7 +667,29 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// tab's own settings go there (`sendHostedTurn()`), and the host queues it when the tab is
 			// busy. Nothing spawns here. The draft clears only once the host took it, so a host that
 			// is down leaves it in place. `/wizard` and a running wizard take the path below, as
-			// they do for every agent (`hostedSendRunsHere()`).
+			// they do for every agent (`hostedSendRunsHere()`). So does a message that `@mentions`
+			// another agent: the mentioned agent is in this machine's roster, so the mention plans
+			// and consults here as for a local agent (bubble, hold, hand-off), and its turn reaches
+			// the host through this machine's queue (`sendTakenItemToHost()`).
+			const hostedMessageMentions = (): boolean => {
+				if (overrideInputValue !== undefined || !onPlanCrossAgentMentions) return false;
+				const typed = stripShellCommandEscape(effectiveInputValue);
+				if (typed.trim().startsWith('/')) return false;
+				const expanded = designPicks.length > 0 ? expandDesignPicks(designPicks, typed) : null;
+				const planText = expanded
+					? withoutDesignPickPageText(expanded.text, expanded.pageText)
+					: typed;
+				const tabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
+				return onPlanCrossAgentMentions(planText, activeSession, tabId) !== null;
+			};
+			// This machine holds a line for the tab (a consult's hold, a mention waiting its turn):
+			// the message waits behind it, as it would for a local agent, instead of overtaking it.
+			const hostedTabHasLocalLine = (): boolean => {
+				const tabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
+				return (activeSession.executionQueue ?? []).some(
+					(item) => item.tabId === tabId && !item.hostQueued
+				);
+			};
 			if (
 				activeSession.inputMode === 'ai' &&
 				hostedTargetOf(activeSession) &&
@@ -675,7 +697,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					toolType: activeSession.toolType,
 					isWizardActive: !!isWizardActive,
 					handles: { wizard: !!onWizardCommand },
-				})
+				}) &&
+				!hostedMessageMentions() &&
+				!hostedTabHasLocalLine()
 			) {
 				const text = stripShellCommandEscape(effectiveInputValue);
 
@@ -1433,7 +1457,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					liveTab?.id || liveSession.activeTabId
 				);
 
+				// A hosted agent's turn runs on its host, so it never spawns here: it queues, and the
+				// drain sends it there as it fires its `@mentions` (`sendTakenItemToHost()`).
+				const hostedTurn = !!hostedTargetOf(liveSession);
+
 				const shouldQueue =
+					hostedTurn ||
 					(liveTab &&
 						Boolean(
 							pendingTranslationSource(

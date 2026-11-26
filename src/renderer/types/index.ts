@@ -571,6 +571,21 @@ export interface MentionHandoff {
 	 * the user typed the message.
 	 */
 	sourceConsultChain?: ConsultChain;
+	/**
+	 * A hosted agent's turn runs on its host, so no local exit releases the hand-off: the host's
+	 * tab state does (`followHostedHandoffs()`). `sent` once the host took the turn (`queueItemId`
+	 * when it waits in the host's queue; `afterEntryId` the tab's last entry then), `running` once
+	 * the host tab reads busy with it.
+	 */
+	hostTurn?: {
+		stage: 'sent' | 'running';
+		queueItemId?: string;
+		afterEntryId?: string;
+		/** The host's queue frame showed `queueItemId` waiting. */
+		seenQueued?: boolean;
+		/** The start time of the turn it was queued behind (the tab's `thinkingStartTime`). */
+		turnStartedAt?: number;
+	};
 }
 
 export interface QueuedItem {

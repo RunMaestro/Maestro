@@ -575,6 +575,7 @@ describe('process IPC handlers', () => {
 				'process:write',
 				'process:steer',
 				'process:broadcast-user-input',
+				'process:broadcast-transcript-changed',
 				'process:interrupt',
 				'process:closeAgent',
 				'process:kill',
@@ -596,6 +597,33 @@ describe('process IPC handlers', () => {
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
 			expect(ipcMain.on).toHaveBeenCalledWith('concerto-html:release', expect.any(Function));
+		});
+	});
+
+	describe('process:broadcast-transcript-changed (M13)', () => {
+		it("tells this host's Federation clients to read the tab again, and ignores malformed ids", async () => {
+			const safeSendSpy = vi.fn();
+			deps = { ...deps, safeSend: safeSendSpy };
+			handlers.clear();
+			vi.mocked(ipcMain.handle).mockImplementation((channel, h) => {
+				handlers.set(channel, h);
+			});
+			registerProcessHandlers(deps);
+			const handler = handlers.get('process:broadcast-transcript-changed')!;
+
+			await handler({} as any, 'agent-1', 'tab-2');
+			expect(safeSendSpy).toHaveBeenCalledExactlyOnceWith(
+				'process:transcript-changed',
+				'agent-1-ai-tab-2',
+				'agent-1',
+				'tab-2'
+			);
+
+			safeSendSpy.mockClear();
+			await handler({} as any, 'agent-1', 42);
+			await handler({} as any, '', 'tab-2');
+			await handler({} as any, { id: 'x' }, 'tab-2');
+			expect(safeSendSpy).not.toHaveBeenCalled();
 		});
 	});
 

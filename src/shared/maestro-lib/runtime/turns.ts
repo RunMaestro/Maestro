@@ -70,11 +70,13 @@ import {
 	normalizeOriginHost,
 	normalizeTurnOverrides,
 	parseQueuedTurnSettings,
+	readTurnAgentText,
 } from '../client/types';
 import { logger } from '../host';
 import { admitTurnImages, turnImageBoundsError } from '../launch/image-delivery';
 import { inlineImageList, withInlineEntryImages } from '../launch/image-refs';
 import type { SessionImageStore } from '../store/session-images';
+import type { LogEntryRecord } from '../store/transcript';
 import { agentIdCanReadImages } from '../providers/capabilities';
 import { getAgentDisplayName } from '../../agentMetadata';
 import { steeringSocketPathFor } from '../../chatSteeringSocket';
@@ -223,6 +225,10 @@ interface TurnItem extends QueueItem {
 	 * written to the tab record.
 	 */
 	overrides?: TurnOverrides;
+	/** Agent-only text ahead of `text` when it runs (`TurnInput.agentContext`). */
+	agentContext?: string;
+	/** Agent-only notes behind `text` when it runs (`TurnInput.agentNotes`). */
+	agentNotes?: string;
 }
 
 type Verdict = { ok: true } | { ok: false; message: string };
@@ -380,9 +386,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		rules: ctx,
 		reserveTabSession,
 		...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
-		// A transcript that grew outside a turn: `gap` is the event that tells a client to read
-		// the tab again, which an older client already honors.
-		transcriptChanged: (agentId, tabId) => emitTurn(agentId, tabId, { kind: 'gap' }),
+		transcriptChanged: (agentId, tabId, entry) => announceEntry(agentId, tabId, entry),
 	});
 
 	// `/btw`: a read-only fork of a tab's session, beside whatever the tab runs, as a desktop host forks it.
@@ -396,6 +400,15 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	});
 
 	const queues = new Map<string, ExecutionQueue<TurnItem>>();
+	/**
+	 * An entry written to a tab outside its turn's own stream (a steer, `/skills`, `/history`).
+	 * Mid-turn it joins the live turn in order; on an idle tab `gap` tells clients to read the tab
+	 * again (`TRANSCRIPT_CHANGED_CHANNEL` on the wire), so it shows at once, as a local agent's does.
+	 */
+	const announceEntry = (agentId: string, tabId: string, entry: LogEntryRecord): void => {
+		if (queues.get(agentId)?.isTabBusy(tabId)) emitTurn(agentId, tabId, { kind: 'user', entry });
+		else emitTurn(agentId, tabId, { kind: 'gap' });
+	};
 	// Steer Running Turn: a TUI turn this host runs takes a waiting message over its socket.
 	const steering = createRuntimeSteering<TurnItem>({
 		queueOf: (agentId) => queues.get(agentId),
@@ -409,9 +422,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				);
 				return;
 			}
-			// Mid-turn the entry joins the live turn in order; on an idle tab clients read the tab again.
-			if (queues.get(agentId)?.isTabBusy(tabId)) emitTurn(agentId, tabId, { kind: 'user', entry });
-			else emitTurn(agentId, tabId, { kind: 'gap' });
+			announceEntry(agentId, tabId, entry);
 		},
 		newId: () => ctx.newId(),
 		now: () => deps.now(),
@@ -590,6 +601,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			...(command ? { command } : {}),
 			...(item.readOnly ? { readOnly: true } : {}),
 			...(item.overrides?.readOnly !== undefined ? { tabReadOnly: item.overrides.readOnly } : {}),
+			...(item.agentContext ? { agentContext: item.agentContext } : {}),
+			...(item.agentNotes ? { agentNotes: item.agentNotes } : {}),
 		};
 		const assembled = assembleTurn(agent, tab, message, {
 			...loaded.context,
@@ -1029,6 +1042,13 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// A lifted agent runs on its host now: a turn here would resume the session the host owns.
 		const lifted = liftedSendRefusal(record);
 		if (lifted) return fail(method, 'rejected', lifted);
+		// Agent-only text a desktop's `@mention` adds (a consult's replies, its notes). One this
+		// host cannot take refuses the send before anything runs, a builtin included: the turn
+		// would answer without what it was sent with.
+		const agentContext = readTurnAgentText(input.agentContext, 'agentContext');
+		if (!agentContext.ok) return fail(method, 'invalid', agentContext.error);
+		const agentNotes = readTurnAgentText(input.agentNotes, 'agentNotes');
+		if (!agentNotes.ok) return fail(method, 'invalid', agentNotes.error);
 		const tabRecord = repository.getTab(agentId, tabId);
 		// Maestro's own commands. `/history` and `/skills` run here for the tab, as a desktop host
 		// runs them for a send it receives; one that needs the typing window's composer is refused,
@@ -1102,6 +1122,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const originHost = normalizeOriginHost(input.originHost);
 		if (originHost) item.originHost = originHost;
 		if (overrides) item.overrides = overrides;
+		if (agentContext.value) item.agentContext = agentContext.value;
+		if (agentNotes.value) item.agentNotes = agentNotes.value;
 
 		const queue = queueFor(agentId);
 		const attempt = new Promise<Verdict>((resolve) => verdicts.set(item.id, resolve));

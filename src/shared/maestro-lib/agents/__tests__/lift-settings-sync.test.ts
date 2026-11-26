@@ -112,6 +112,23 @@ describe('planLiftedSettingsSync', () => {
 		expect(plan.pushed.customModel).toEqual({ local: 'sonnet', host: 'opus' });
 	});
 
+	it('sends a provider switched here as the provider alone, never a conversion the host would refuse (M8)', () => {
+		// Switch Provider on a hosted agent runs on this machine (`switchAgentProvider()`), and
+		// Convert runs `agents:translateProvider` here too; the host only hears the new provider,
+		// so its `update_session_config` refusal for `migrationAction` is never reached.
+		const plan = planLiftedSettingsSync({
+			local: local({ toolType: 'codex' }),
+			host: host(),
+			baseline: agreed(),
+			now: 0,
+		});
+		expect(plan.pushes).toHaveLength(1);
+		const action = plan.pushes[0].action as { kind: string; patch: Record<string, unknown> };
+		expect(action.kind).toBe('update-agent');
+		expect(Object.values(action.patch)).toContain('codex');
+		expect(JSON.stringify(plan.pushes)).not.toContain('migration');
+	});
+
 	it('takes a setting another conductor changed on the host', () => {
 		const plan = planLiftedSettingsSync({
 			local: local(),

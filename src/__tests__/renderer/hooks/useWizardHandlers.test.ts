@@ -1,4 +1,3 @@
-import { agentCommandScope } from '../../../renderer/utils/agentCommands';
 /**
  * Tests for useWizardHandlers hook
  *
@@ -88,6 +87,7 @@ import {
 import { AGENT_MODES, agentModeFields } from '../../helpers';
 
 import { useWizardHandlers } from '../../../renderer/hooks/wizard/useWizardHandlers';
+import { agentCommandScope } from '../../../renderer/utils/agentCommands';
 import type { UseWizardHandlersDeps } from '../../../renderer/hooks/wizard/useWizardHandlers';
 import { updateSessionWith, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';

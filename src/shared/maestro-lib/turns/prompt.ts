@@ -42,18 +42,25 @@ export interface MessagePromptInput {
 	agentSessionId?: string | null;
 	newSessionMessage?: string;
 	readOnly: boolean;
+	/**
+	 * Agent-only context ahead of the message (`TurnInput.agentContext`: a released consult's
+	 * replies), as the queue drain puts a queued item's `agentContext` ahead of its text.
+	 */
+	agentContext?: string;
 }
 
 /**
  * The composer's layering of one message:
  *
  * 1. An image-only message becomes the default prompt. The test sees the text AFTER the
- *    nudge, so with a nudge set an image-only message is just the nudge (F5).
+ *    nudge, so with a nudge set an image-only message is just the nudge (F5). Agent-only
+ *    context, when the message carries some, goes in front of that.
  * 2. The first turn of a provider session gets the new-session message in front.
  * 3. A read-only turn gets the plan instruction behind.
  */
 export function buildMessagePrompt(input: MessagePromptInput): string {
 	let prompt = input.hasImages && !input.text.trim() ? input.imageOnlyDefault : input.text;
+	if (input.agentContext) prompt = `${input.agentContext}${PROMPT_LAYER_SEPARATOR}${prompt}`;
 	prompt = prependNewSessionMessageOnFirstTurn(
 		prompt,
 		input.newSessionMessage,
@@ -63,6 +70,15 @@ export function buildMessagePrompt(input: MessagePromptInput): string {
 		prompt += READ_ONLY_PLAN_INSTRUCTION;
 	}
 	return prompt;
+}
+
+/**
+ * Put a turn's agent-only notes behind the prompt (`TurnInput.agentNotes`: a consult is running,
+ * the answer is handed off), as `withMentionTurnNotes()` puts them behind a local turn's prompt,
+ * after its merged context.
+ */
+export function appendAgentNotes(prompt: string, notes?: string): string {
+	return notes ? `${prompt}${PROMPT_LAYER_SEPARATOR}${notes}` : prompt;
 }
 
 /**
