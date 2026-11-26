@@ -14,6 +14,7 @@
  */
 
 import type { AgentRecord } from '../store/records';
+import { parseWireTranscript } from '../../crossAgentTypes';
 import { parseProcessId } from '../client/bridge-frames';
 import type { ThinkingMode, UsageStats } from '../../types';
 import type {
@@ -986,12 +987,16 @@ export function createRequestHandler(
 			// -- consults ----------------------------------------------------
 			// Waits as long as the answer takes: the caller's own timeout bounds it, not a delivery receipt.
 			case 'cross_agent_ask': {
+				// An asker on another machine sends its own windowed context: the host holds no tab of it.
+				const transcript = parseWireTranscript(message.transcript);
 				const result = await client.consults.ask({
 					targetAgentId: sessionId(message),
 					question: typeof message.question === 'string' ? message.question : '',
 					...(str(message.fromSessionId) ? { fromAgentId: str(message.fromSessionId) } : {}),
 					...(str(message.fromTabId) ? { fromTabId: str(message.fromTabId) } : {}),
 					withContext: message.withContext === true,
+					...(transcript ? { transcript } : {}),
+					...(str(message.fromAgentName) ? { fromAgentName: str(message.fromAgentName) } : {}),
 					...(num(message.timeoutMs) !== undefined ? { timeoutMs: num(message.timeoutMs) } : {}),
 					...(typeof message.handoffAnswer === 'string'
 						? { handoffAnswer: message.handoffAnswer }

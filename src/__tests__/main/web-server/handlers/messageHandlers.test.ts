@@ -599,6 +599,27 @@ describe('WebSocketMessageHandler', () => {
 			expect(callbacks.noteAgentDelegation).not.toHaveBeenCalled();
 		});
 
+		it('forwards the context, name, and hand-off of an asker on another machine (Federation)', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				transcript: [{ source: 'user', text: 'hi', timestamp: 1 }, 'junk'],
+				fromAgentName: ' Laptop Agent ',
+				handoffAnswer: 'the plan',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalledWith(
+					expect.objectContaining({
+						transcript: [{ source: 'user', text: 'hi', timestamp: 1 }],
+						fromAgentName: 'Laptop Agent',
+						handoffAnswer: 'the plan',
+					})
+				);
+			});
+		});
+
 		it('consults the target and returns the answer without touching its open tab', async () => {
 			handler.handleMessage(client, {
 				type: 'cross_agent_ask',

@@ -325,6 +325,31 @@ describe('runPeerAgentAction', () => {
 		});
 	});
 
+	it('consults the host agent for an asker on another machine, with its context and name', async () => {
+		const { client, asClient } = fakeClient();
+		const transcript = [{ source: 'user', text: 'we drop events', timestamp: 1 }];
+		client.consults.ask.mockResolvedValueOnce({
+			ok: true,
+			value: { answer: 'Use a queue.', agentName: 'Docs' },
+		});
+		expect(
+			await runPeerAgentAction(asClient, agent, {
+				kind: 'consult',
+				question: 'how do we buffer?',
+				transcript,
+				fromAgentName: 'Source',
+				handoffAnswer: 'the plan',
+			})
+		).toEqual(ok({ kind: 'consult', answer: 'Use a queue.', agentName: 'Docs' }));
+		expect(client.consults.ask).toHaveBeenCalledWith({
+			targetAgentId: 'a1',
+			question: 'how do we buffer?',
+			transcript,
+			fromAgentName: 'Source',
+			handoffAnswer: 'the plan',
+		});
+	});
+
 	it('edits a waiting message on the host', async () => {
 		const { client, asClient } = fakeClient();
 		const edit = { text: 'new', turnSettings: { model: 'm' } };
@@ -472,6 +497,25 @@ describe('parsePeerAgentAction', () => {
 		expect(
 			parsePeerAgentAction({ kind: 'side-question', tabId: 't1', question: '  which file? ' })
 		).toEqual({ kind: 'side-question', tabId: 't1', question: 'which file?' });
+		expect(
+			parsePeerAgentAction({
+				kind: 'consult',
+				question: ' how? ',
+				transcript: [{ source: 'user', text: 'hi', timestamp: 1 }, { text: 'no source' }, 'junk'],
+				fromAgentName: ' Source ',
+				handoffAnswer: '',
+			})
+		).toEqual({
+			kind: 'consult',
+			question: 'how?',
+			transcript: [{ source: 'user', text: 'hi', timestamp: 1 }],
+			fromAgentName: 'Source',
+			handoffAnswer: '',
+		});
+		expect(parsePeerAgentAction({ kind: 'consult', question: 'how?', transcript: [] })).toEqual({
+			kind: 'consult',
+			question: 'how?',
+		});
 		expect(
 			parsePeerAgentAction({
 				kind: 'update-agent',
@@ -684,6 +728,9 @@ describe('parsePeerAgentAction', () => {
 		expect(() =>
 			parsePeerAgentAction({ kind: 'side-question', tabId: 't1', question: ' ' })
 		).toThrow('The question is empty.');
+		expect(() => parsePeerAgentAction({ kind: 'consult', question: ' ' })).toThrow(
+			'The question is empty.'
+		);
 		expect(() => parsePeerAgentAction({ kind: 'side-question', question: 'q' })).toThrow(
 			'Missing tab id'
 		);

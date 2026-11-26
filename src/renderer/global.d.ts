@@ -1058,7 +1058,7 @@ interface MaestroAPI {
 					/** `ask --btw`: answer from a throwaway fork of `targetTabId`. */
 					sideQuestion?: boolean;
 					targetTabId?: string;
-				},
+				} & import('../shared/crossAgentTypes').RemoteAskerContext,
 				responseChannel: string
 			) => void
 		) => () => void;

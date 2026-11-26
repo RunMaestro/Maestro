@@ -90,6 +90,46 @@ export interface CrossAgentTranscriptEntry {
 }
 
 /**
+ * What a consult carries for an asker the answering machine does not hold: a local agent
+ * consulting a hosted agent, asked of its Federation host. The host has no tab of the asker,
+ * so the asker sends its own windowed context and name; a hand-off sends the answer to act on.
+ */
+export interface RemoteAskerContext {
+	/** The asker's windowed transcript. Wins over reading the asker's tab. */
+	transcript?: CrossAgentTranscriptEntry[];
+	/** The asker's display name: names the consult tab and the History entry. */
+	fromAgentName?: string;
+	/** A HAND-OFF: the asker's final answer, which the target acts on (`ConsultAskInput`). */
+	handoffAnswer?: string;
+}
+
+/** The most transcript entries a consult accepts off the wire. A windowed context is far smaller. */
+export const MAX_WIRE_TRANSCRIPT_ENTRIES = 200;
+
+/**
+ * Read a consult's transcript off the wire (`consults.ask` from an asker on another machine).
+ * Keeps only well-formed entries; undefined when the field is absent or holds none, so the
+ * caller falls back to the context it reads itself.
+ */
+export function parseWireTranscript(value: unknown): CrossAgentTranscriptEntry[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const entries: CrossAgentTranscriptEntry[] = [];
+	for (const raw of value.slice(-MAX_WIRE_TRANSCRIPT_ENTRIES)) {
+		if (!raw || typeof raw !== 'object') continue;
+		const entry = raw as Record<string, unknown>;
+		if (typeof entry.source !== 'string') continue;
+		entries.push({
+			source: entry.source,
+			...(typeof entry.text === 'string' ? { text: entry.text } : {}),
+			...(typeof entry.timestamp === 'number' && Number.isFinite(entry.timestamp)
+				? { timestamp: entry.timestamp }
+				: {}),
+		});
+	}
+	return entries.length > 0 ? entries : undefined;
+}
+
+/**
  * A single cross-agent dispatch: the user pinged `@target` from a source
  * agent's chat. Carries the windowed source transcript plus the user's prompt
  * so the target agent can answer with context.

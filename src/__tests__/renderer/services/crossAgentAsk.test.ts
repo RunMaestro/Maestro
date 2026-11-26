@@ -149,6 +149,23 @@ describe('runCrossAgentAsk', () => {
 		await pending;
 	});
 
+	it('uses the name, context, and hand-off an asker on another machine sends (Federation)', async () => {
+		const transcript = [{ source: 'user', text: 'we drop events', timestamp: 1 }];
+		const pending = runCrossAgentAsk({
+			targetSessionId: 'target',
+			question: 'q',
+			fromAgentName: 'Laptop Agent',
+			transcript,
+			handoffAnswer: 'the plan',
+		});
+		expect(sentOptions().sourceSessionId).toBe(CROSS_AGENT_ASK_SESSION_ID);
+		expect(sentOptions().sourceAgentName).toBe('Laptop Agent');
+		expect(sentOptions().contextTranscript).toEqual(transcript);
+		expect(sentOptions().handoffAnswer).toBe('the plan');
+		complete({ text: 'a' });
+		await pending;
+	});
+
 	it('returns the answer and the consult tab on success', async () => {
 		const pending = runCrossAgentAsk({ targetSessionId: 'target', question: 'q' });
 		complete({ text: 'Signed cookie, no session table.', targetTabId: 'consult-1' });

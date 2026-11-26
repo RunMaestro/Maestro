@@ -31,6 +31,7 @@ import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
 import type { GroupChatCreateInput, GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
 import type { ExplicitHostEndpointSource } from './discovery';
+import type { CrossAgentTranscriptEntry } from '../../crossAgentTypes';
 
 // ---------------------------------------------------------------------------
 // Results and errors
@@ -796,6 +797,13 @@ export interface ConsultAskInput {
 	fromTabId?: string;
 	/** Forward the asking tab's transcript as context. Off by default. */
 	withContext?: boolean;
+	/**
+	 * The context itself, for an asker the host does not hold (an agent on another machine
+	 * consulting this host's agent): already windowed, it wins over `withContext`.
+	 */
+	transcript?: CrossAgentTranscriptEntry[];
+	/** The asker's display name, for an asker the host does not hold: names the consult tab. */
+	fromAgentName?: string;
 	/** How long to wait for the answer. The host clamps it to 10 seconds through an hour. Default 600000. */
 	timeoutMs?: number;
 	/**
