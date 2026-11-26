@@ -82,6 +82,21 @@ export function appendAgentNotes(prompt: string, notes?: string): string {
 }
 
 /**
+ * A message with its agent-only text laid around it as one prompt: `agentContext` ahead (a released
+ * consult's replies), `agentNotes` behind (the `@mention` notes). What the queue drain and a host
+ * build from a turn's two fields, and what a host too old to take the fields is sent as its text.
+ */
+export function withTurnAgentText(
+	text: string,
+	agentText: { agentContext?: string; agentNotes?: string }
+): string {
+	const ahead = agentText.agentContext
+		? `${agentText.agentContext}${PROMPT_LAYER_SEPARATOR}${text}`
+		: text;
+	return appendAgentNotes(ahead, agentText.agentNotes);
+}
+
+/**
  * Put a tab's pending merged context (merge, Send to Agent, session recovery) in front
  * of the prompt. The caller clears the field: this only builds the text.
  */

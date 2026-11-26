@@ -24,7 +24,7 @@ import {
 import { nativeAccountRef } from '../../../agentAccountDir';
 import * as repositories from '../../agents/repository';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
-import type { ClientResult, QueuedTurn, TurnEvent } from '../../client/types';
+import type { ClientResult, QueuedTurn, QueueExit, TurnEvent } from '../../client/types';
 import { MAX_TURN_AGENT_TEXT_CHARS } from '../../client/types';
 import type { HistoryEntry } from '../../../types';
 import { parseSynopsis } from '../../../synopsis';
@@ -1433,6 +1433,45 @@ describe('runtime turns', () => {
 			// The waiting message started: nothing waits now.
 			expect(changes).toHaveLength(2);
 			expect(changes[1]).toEqual([]);
+		});
+
+		it('names how each item leaves the queue: a start or a removal, on that change only (M14)', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			const changes: Array<{ items: QueuedTurn[]; exit?: QueueExit; namesExits?: true }> = [];
+			runtime.events.subscribe(
+				(event) => {
+					if (event.type === 'queue.changed') {
+						changes.push({
+							items: event.items,
+							...(event.exit ? { exit: event.exit } : {}),
+							...(event.namesExits ? { namesExits: event.namesExits } : {}),
+						});
+					}
+				},
+				{ types: ['queue.changed'], agentId: 'a1' }
+			);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			hold = false;
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'second' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+			const removed = value(await runtime.turns.send('a1', 't1', { text: 'third' }));
+			if (removed.status !== 'queued') throw new Error('expected queued');
+			value(await runtime.turns.queue.remove('a1', removed.itemId));
+
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome(2);
+			// Added, added (no exit), the removal of `third`, then the start of `second`.
+			expect(changes.map((change) => change.exit)).toEqual([
+				undefined,
+				undefined,
+				{ itemId: removed.itemId, exit: 'removed' },
+				{ itemId: queued.itemId, exit: 'started' },
+			]);
+			expect(changes.every((change) => change.namesExits === true)).toBe(true);
+			expect(changes[3].items).toEqual([]);
 		});
 
 		it('holds and releases a waiting message, and says when none has that id', async () => {

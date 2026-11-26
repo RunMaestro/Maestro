@@ -1006,6 +1006,38 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.error).toContain('mid-turn');
 		});
 
+		// M19: a hosted agent's host has no `--force`; the CLI must print queued, not delivered.
+		it('answers a command a hosted agent host queued as a queued command_result with its item', async () => {
+			(callbacks.executeCommand as any).mockResolvedValue({
+				queued: true,
+				itemId: 'q-7',
+				queuePosition: 2,
+			});
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'test',
+				inputMode: 'ai',
+				tabId: 'busy-tab',
+				force: true,
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'command_result',
+				success: true,
+				queued: true,
+				itemId: 'q-7',
+				queuePosition: 2,
+				tabId: 'busy-tab',
+				requestId: 'req-1',
+			});
+			expect(response.error).toBeUndefined();
+		});
+
 		it('omits tabId from command_result on the no-tabId path so callers do not chain to a stale snapshot', async () => {
 			// The server's `activeTabId` snapshot can diverge from the renderer's
 			// actual write target if the user switches tabs between IPC send and
@@ -3964,6 +3996,73 @@ describe('WebSocketMessageHandler', () => {
 					{ model: 'opus', readOnly: true, saveToHistory: false }
 				);
 			});
+		});
+
+		it("forwards a Federation sender's agent-only text after the overrides slot, read as the headless host reads it (M16)", async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Mine',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+				agentContext: 'Replies:\nBackend: the cache is fine.',
+				agentNotes: '   ',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Mine',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					{ agentContext: 'Replies:\nBackend: the cache is fine.' }
+				);
+			});
+		});
+
+		it.each([
+			[{ agentContext: 42 }, 'agentContext must be text.'],
+			[{ agentNotes: 'x'.repeat(1_000_001) }, 'agentNotes is longer than 1000000 characters.'],
+		])(
+			'refuses agent-only text it cannot take, and queues nothing (M16)',
+			async (fields, error) => {
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: 'Mine',
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					...fields,
+				});
+				await vi.waitFor(() =>
+					expect(lastSend()).toMatchObject({
+						type: 'enqueue_command_result',
+						success: false,
+						error,
+					})
+				);
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			}
+		);
+
+		it('names what it does beyond the base protocol, as the headless host does (M16)', async () => {
+			handler.handleMessage(client, { type: 'host_capabilities', requestId: 'r1' });
+			await vi.waitFor(() =>
+				expect(lastSend()).toMatchObject({
+					type: 'host_capabilities_result',
+					requestId: 'r1',
+					success: true,
+					capabilities: ['turn-agent-text'],
+				})
+			);
 		});
 
 		it('forwards sessionId/command/tab/background to the callback and replies with queue info', async () => {

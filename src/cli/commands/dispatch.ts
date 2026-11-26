@@ -506,12 +506,11 @@ export async function runDispatch(
 		return { success: false, error: msg, code: 'AGENT_NOT_FOUND' };
 	}
 
-	// A hosted agent's turns run on its host: the dispatch goes there, as a desktop send does.
-	// Queueing here would start a second owner of its session.
+	// A hosted agent of this desktop is dispatched to as a local agent is: through the running
+	// desktop, which hands the turn to its host and arms the callback and the routing here (a
+	// callback wakes a local agent, a routing steers local @mentions). Only with no desktop does
+	// the dispatch go straight to the host, below, where those flags cannot apply.
 	const hostRoute = liftedPeerTarget(getSessionById(agentId));
-	if (hostRoute) {
-		return runPeerDispatch(hostRoute, message, options, queue, routingField.routing);
-	}
 
 	// A routing only steers the consults a message's `@mentions` start, so a
 	// message that mentions no other agent has nothing for it to route. Resolved
@@ -563,6 +562,12 @@ export async function runDispatch(
 				routingFields,
 				caller,
 			});
+	// Nothing reached a desktop (it fails at connect), so the host is the one place left to send.
+	if (hostRoute && result.code === MAESTRO_NOT_RUNNING_CODE) {
+		return runPeerDispatch(hostRoute, message, options, queue, routingField.routing, {
+			desktopDown: true,
+		});
+	}
 	if (!autoRunId || !result.success) return result;
 	return { ...result, autoRunTracked: callback.autoRunTracked === true && !!result.callbackId };
 }
@@ -906,8 +911,10 @@ function peerFailureResponse(error: PeerResolveError): DispatchResponse {
 
 /**
  * Dispatch to an agent on a peer's host: the same `send_command`, `new_ai_tab_with_prompt` or
- * `enqueue_command` the desktop path sends, over the peer's bridge. What only this machine can
- * resolve is refused before anything is sent: a completion callback names a LOCAL agent the host
+ * `enqueue_command` the desktop path sends, over the peer's bridge. Taken for a `peer:agent`
+ * target, and for a hosted agent of this desktop only while the desktop is not running
+ * (`desktopDown`). What only this machine's desktop can resolve is refused before anything is
+ * sent, naming which of the two cases it is: a completion callback names a LOCAL agent the host
  * cannot wake, a routing steers consults of LOCAL @mentions, and the caller's hand-off marker
  * belongs in a LOCAL transcript. Nothing is queued or replayed here: a lost acknowledgement is
  * `DISPATCH_UNKNOWN`, reconciled with the same `--dispatch-id`, as it is locally.
@@ -917,7 +924,8 @@ async function runPeerDispatch(
 	message: string,
 	options: DispatchOptions,
 	queue: boolean,
-	routing: MentionRouting | undefined
+	routing: MentionRouting | undefined,
+	{ desktopDown = false }: { desktopDown?: boolean } = {}
 ): Promise<DispatchResponse> {
 	const localOnly = options.notifyOnComplete
 		? '--notify-on-complete'
@@ -931,7 +939,9 @@ async function runPeerDispatch(
 	if (localOnly) {
 		return {
 			success: false,
-			error: `${localOnly} cannot reach across to peer "${target.peer}": a callback wakes a local agent, and a routing steers local @mentions. Dispatch without it.`,
+			error: desktopDown
+				? `${localOnly} needs the Maestro desktop running: this agent is hosted on "${target.peer}", and only the desktop can wake a local agent when its turn ends or route its @mentions. Open Maestro and dispatch again, or dispatch without it.`
+				: `${localOnly} cannot reach across to peer "${target.peer}": a callback wakes a local agent, and a routing steers local @mentions. Dispatch without it.`,
 			code: 'INVALID_OPTIONS',
 			peer: target.peer,
 		};

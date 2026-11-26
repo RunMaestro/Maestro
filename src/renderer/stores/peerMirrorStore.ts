@@ -273,7 +273,14 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 			return settled;
 		}
 		case 'agent.queue':
-			return settlePeer(state, peerId, setAgentQueue(peer, event.agentId, event.items).peer);
+			return settlePeer(
+				state,
+				peerId,
+				setAgentQueue(peer, event.agentId, event.items, {
+					exit: event.exit,
+					namesExits: event.namesExits,
+				}).peer
+			);
 		case 'agent.autorun':
 			return settlePeer(state, peerId, setAgentAutoRun(peer, event.agentId, event.state).peer);
 		case 'tab.stale': {
