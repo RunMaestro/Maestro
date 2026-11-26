@@ -230,6 +230,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
 		getMainWindow: deps.getMainWindow,
+		// Cue runs live in `cue_events`, never in the JSONL History. Without these
+		// Director's Notes reports zero Cue activity and its graph has no CUE bars.
+		getCueHistoryEntries,
+		getCueHistoryBuckets,
+		getCueHistoryFingerprint,
 	});
 
 	// Cross-agent @mention dispatch - streams a target agent's response back
@@ -653,5 +658,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerFeedbackHandlers({
 		getProcessManager: deps.getProcessManager,
 		debugPackageDeps: deps.debugPackageDeps,
+		// Lets the feedback conversation prompt say whether maestro-cli is installed.
+		getMaestroCliManager: () => deps.maestroCliManager,
 	});
 }
