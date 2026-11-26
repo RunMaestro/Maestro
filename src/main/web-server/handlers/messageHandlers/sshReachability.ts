@@ -8,7 +8,7 @@
  * closes an open dialog when the host answers.
  */
 
-import { checkSshRemote, getUnreachableSshRemotes } from '../../../ssh-reachability';
+import { checkRemoteLink, getUnreachableSshRemotes } from '../../../ssh-reachability';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /** Handle ssh_reachability_status - list the remotes currently unreachable. */
@@ -41,7 +41,7 @@ export async function handleSshReachabilityCheck(
 		});
 		return;
 	}
-	const reachable = await checkSshRemote(remoteId);
+	const reachable = await checkRemoteLink(remoteId);
 	ctx.send(client, {
 		type: 'ssh_reachability_check_result',
 		success: true,

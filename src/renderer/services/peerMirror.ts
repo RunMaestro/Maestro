@@ -138,7 +138,14 @@ export async function actOnMirroredAgent(
 	agentId: string,
 	action: PeerAgentAction
 ): Promise<PeerAgentActionResult | null> {
-	const answer = await callMirroredAgentAction(peerId, agentId, action);
+	return settleMirroredAnswer(action, await callMirroredAgentAction(peerId, agentId, action));
+}
+
+/** An action's answer as `actOnMirroredAgent()` reports it: the result, or a red toast and null. */
+function settleMirroredAnswer(
+	action: PeerAgentAction,
+	answer: MirroredActionAnswer | null
+): PeerAgentActionResult | null {
 	if (!answer) return null;
 	if (answer.ok) return answer.result;
 	notifyToast({
@@ -176,6 +183,22 @@ function mirroredActionError(answer: Extract<MirroredActionAnswer, { ok: false }
 }
 
 /**
+ * Whether an answer says the peer was not connected, so nothing reached the host: the one refusal
+ * a caller may send again without any risk of the host running it twice. Only the service's own
+ * refusal before it handed the action to the client counts (`notSent`); a send whose receipt was
+ * lost (`unknown`), or a client closed while a send was pending, never does.
+ */
+export function isHostUnavailableAnswer(answer: MirroredActionAnswer | null): boolean {
+	return (
+		!!answer &&
+		!answer.ok &&
+		answer.notSent === true &&
+		answer.code === 'host-unavailable' &&
+		!answer.unknown
+	);
+}
+
+/**
  * Send what the person typed to one mirrored tab, with this conductor's own tab choices for that
  * one turn. The host's receipt when it took it (ran, queued, or held), null when it did not.
  * `held` is Queue Held: the host queues it paused, even on an idle tab, as a local Queue Held does.
@@ -189,10 +212,16 @@ export async function sendToMirroredTab(
 	overrides?: TurnOverrides,
 	images?: readonly string[],
 	held?: boolean,
-	agentText: Pick<TurnInput, 'agentContext' | 'agentNotes'> = {}
+	agentText: Pick<TurnInput, 'agentContext' | 'agentNotes'> = {},
+	/**
+	 * Takes a refusal that sent nothing because the peer is not connected
+	 * (`isHostUnavailableAnswer()`), instead of the red toast: the caller keeps the message for a
+	 * retry. Answers null, as any refusal does.
+	 */
+	onHostUnavailable?: (message: string) => void
 ): Promise<TurnSendReceipt | null> {
 	const clean = normalizeTurnOverrides(overrides);
-	const result = await actOnMirroredAgent(peerId, agentId, {
+	const action: PeerAgentAction = {
 		kind: 'send',
 		tabId,
 		text,
@@ -201,7 +230,13 @@ export async function sendToMirroredTab(
 		...(held === true ? { held: true } : {}),
 		...(agentText.agentContext ? { agentContext: agentText.agentContext } : {}),
 		...(agentText.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
-	});
+	};
+	const answer = await callMirroredAgentAction(peerId, agentId, action);
+	if (onHostUnavailable && answer && !answer.ok && isHostUnavailableAnswer(answer)) {
+		onHostUnavailable(answer.error);
+		return null;
+	}
+	const result = settleMirroredAnswer(action, answer);
 	return result?.kind === 'send' ? result.receipt : null;
 }
 

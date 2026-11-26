@@ -139,6 +139,25 @@ describe('hostedTurns', () => {
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].pendingMergedContext).toBeUndefined();
 	});
 
+	it('never hands over again a context an earlier send spent while this one waited', async () => {
+		hydrateHost();
+		const base = row();
+		// The send's own snapshot, taken when it was typed, still holds the context; the send ahead
+		// of it in the tab's order has spent it since.
+		const snapshot = createMockSession({
+			...base,
+			aiTabs: [{ ...base.aiTabs[0], pendingMergedContext: 'Additional context' }, base.aiTabs[1]],
+		});
+		useSessionStore.setState({ sessions: [base], activeSessionId: base.id });
+		act$.mockResolvedValueOnce({
+			ok: true,
+			result: { kind: 'send', receipt: { status: 'started' } },
+		});
+
+		expect(await sendHostedTurn(snapshot, 't1', 'second', [])).toEqual({ status: 'started' });
+		expect(act$.mock.calls.map((call) => call[2].kind)).toEqual(['send']);
+	});
+
 	it('keeps the context and sends nothing when the host refuses it', async () => {
 		hydrateHost();
 		const base = row();
