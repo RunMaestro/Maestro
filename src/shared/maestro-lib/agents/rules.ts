@@ -390,6 +390,68 @@ export function findConsultTabRecord(
 	);
 }
 
+/**
+ * How many hidden consult tabs one agent keeps. Each (asking agent, asking tab) pairing gets its
+ * own, and a remote asker sends a key of its own per conversation, so without a cap a peer that
+ * sends many keys grows the agent's tab list without bound. Past the cap the least recently used
+ * idle one gives up its slot to the new pairing.
+ */
+export const MAX_CONSULT_TABS_PER_AGENT = 50;
+
+/** The fields of a tab, desktop (`AITab`) or headless (`AITabRecord`), the consult cap reads. */
+export interface ConsultCapTab {
+	id: string;
+	hidden?: boolean;
+	consultOrigin?: ConsultTabKey;
+	state?: string;
+	logs?: unknown[];
+	createdAt?: number;
+}
+
+/** When a consult tab was last used: its newest transcript entry, or its creation. */
+export function consultTabLastUsedAt(tab: ConsultCapTab): number {
+	let latest = typeof tab.createdAt === 'number' ? tab.createdAt : 0;
+	for (const entry of Array.isArray(tab.logs) ? tab.logs : []) {
+		const at = (entry as { timestamp?: unknown } | null)?.timestamp;
+		if (typeof at === 'number' && at > latest) latest = at;
+	}
+	return latest;
+}
+
+/** What the consult cap must leave alone, and the cap itself. */
+export interface ConsultCapOptions {
+	/**
+	 * Consult tabs a consult is running in now. Neither host stores a consult tab as busy while
+	 * its consult runs (the consult is a background process, not a turn of the tab), so the
+	 * caller names them: the desktop from its in-flight consults, a headless host from its own.
+	 */
+	inUseTabIds?: ReadonlySet<string>;
+	cap?: number;
+}
+
+/**
+ * The hidden consult tab a NEW pairing replaces, or `undefined` when the agent is under the cap
+ * and the new tab is simply added. Only hidden consult tabs count: a consult tab the person
+ * revealed is theirs now. A consult tab in use (named in `inUseTabIds`, or stored busy) is never
+ * chosen, so a consult in flight keeps its tab and its answer lands; when every one is in use the
+ * new tab is added past the cap rather than refused. Both host kinds (the desktop's
+ * `ensureConsultTab` and the headless `openConsultTabRecord`) call this one rule.
+ */
+export function consultTabToReplace<T extends ConsultCapTab>(
+	tabs: readonly T[] | undefined,
+	options: ConsultCapOptions = {}
+): T | undefined {
+	const cap = options.cap ?? MAX_CONSULT_TABS_PER_AGENT;
+	const consultTabs = (tabs ?? []).filter((tab) => tab.consultOrigin && tab.hidden === true);
+	if (consultTabs.length < cap) return undefined;
+	let oldest: T | undefined;
+	for (const tab of consultTabs) {
+		if (tab.state === 'busy' || options.inUseTabIds?.has(tab.id)) continue;
+		if (!oldest || consultTabLastUsedAt(tab) < consultTabLastUsedAt(oldest)) oldest = tab;
+	}
+	return oldest;
+}
+
 /** What opening a consult tab writes: who asked, what the tab is called, and the question. */
 export interface ConsultTabOpen {
 	key: ConsultTabKey;
@@ -397,6 +459,8 @@ export interface ConsultTabOpen {
 	name: string;
 	/** The question, as the first (or next) user entry of the consult tab. */
 	question: LogEntryRecord;
+	/** Consult tabs of this agent a consult is running in now: the cap never replaces them. */
+	inUseTabIds?: ReadonlySet<string>;
 }
 
 /**
@@ -438,12 +502,17 @@ export function openConsultTabRecord(
 		hidden: true,
 		consultOrigin: { ...open.key },
 	};
+	// At the cap, the least recently used hidden consult tab gives up its slot. The new pairing
+	// gets a fresh tab (never the old one's provider session), so no asker resumes another's.
+	const replaced = consultTabToReplace(agent.aiTabs, { inUseTabIds: open.inUseTabIds });
+	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
+	const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
 	return {
 		agent: {
 			...agent,
-			aiTabs: [...(Array.isArray(agent.aiTabs) ? agent.aiTabs : []), tab],
+			aiTabs: [...tabs.filter((entry) => entry.id !== replaced?.id), tab],
 			unifiedTabOrder: [
-				...(Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : []),
+				...order.filter((ref) => !(ref.type === 'ai' && ref.id === replaced?.id)),
 				{ type: 'ai', id: tab.id },
 			],
 		},

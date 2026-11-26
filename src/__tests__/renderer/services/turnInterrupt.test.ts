@@ -34,6 +34,7 @@ import { cancelContextCompaction, stopRetriesForAgent } from '../../../renderer/
 import { dropMentionHandoffs } from '../../../renderer/services/crossAgentHandoff';
 import { interruptMirroredAgent } from '../../../renderer/services/peerMirror';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
 
 const originalMaestro = window.maestro;
 const processApi = {
@@ -356,6 +357,72 @@ describe('interruptTurn: a signal that fails', () => {
 		expect(result).toMatchObject({ success: true, interrupted: true, stoppedTabIds: ['tab-b'] });
 		expect(tab('tab-b').state).toBe('idle');
 		expect(tab('tab-b').logs.at(-1)?.text).toBe('Process forcefully terminated');
+	});
+});
+
+describe('interruptTurn: an Auto Run task turn, which runs on no tab', () => {
+	afterEach(() => {
+		useSettingsStore.setState({ federationHostedAgents: false });
+		useBatchStore.setState({ batchRunStates: {} } as never);
+	});
+
+	it('stops the running Auto Run turn and reports it in every mode', async () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const results = [];
+		for (const mode of AGENT_MODES) {
+			vi.clearAllMocks();
+			processApi.interrupt.mockResolvedValue(true);
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 0 });
+			// A goal run's iteration: the agent's tabs are idle and its turn is `-batch-`.
+			processApi.getActiveProcesses.mockResolvedValue([
+				{ sessionId: 'agent-1-batch-1700', isTerminal: false },
+			]);
+			useBatchStore.setState({
+				batchRunStates: { 'agent-1': { isRunning: true, isStopping: true } },
+			} as never);
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+			seedAgent({
+				state: 'idle',
+				busySource: undefined,
+				aiTabs: [createMockAITab({ id: 'tab-a', state: 'idle' })],
+				sshRemoteId,
+				sessionSshRemoteConfig,
+				liftedTo,
+			});
+
+			results.push(await interruptTurn('agent-1'));
+
+			if (mode === 'hosted') {
+				// The host runs the Auto Run: the stop goes there.
+				expect(interruptMirroredAgent).toHaveBeenCalledWith('box', 'h1', undefined);
+			} else {
+				expect(processApi.interrupt.mock.calls.map(([id]) => id)).toContain('agent-1-batch-1700');
+			}
+		}
+		const [local, ssh, hosted] = results;
+		expect(local).toEqual({
+			success: true,
+			sessionId: 'agent-1',
+			tabId: null,
+			wasBusy: true,
+			interrupted: true,
+			stoppedTabIds: [],
+			exited: false,
+		});
+		expect(ssh).toEqual(local);
+		expect(hosted).toEqual(local);
+	});
+
+	it('leaves the Auto Run turn alone when the stop names one tab', async () => {
+		processApi.getActiveProcesses.mockResolvedValue([
+			{ sessionId: 'agent-1-batch-1700', isTerminal: false },
+		]);
+		seedAgent({ aiTabs: [createMockAITab({ id: 'tab-a', state: 'idle' })] });
+
+		const result = await interruptTurn('agent-1', { tabId: 'tab-a' });
+
+		expect(result.wasBusy).toBe(false);
+		expect(processApi.interrupt).not.toHaveBeenCalled();
 	});
 });
 
