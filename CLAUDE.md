@@ -598,6 +598,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Identity-stable callback:** `useStableCallback()` in `src/renderer/hooks/utils/useStableCallback.ts`
 - **Data a surface fetches that must survive it unmounting:** `useCachedResource()`, `revalidateCachedResource()`, `readCachedResource()` in `src/renderer/hooks/utils/useCachedResource.ts`; `useDashboardResource()`, `useTokenUsage()` in `src/renderer/components/UsageDashboard/`
 - **Steering a turn that is ALREADY RUNNING:** `getSteerEligibility()` in `src/renderer/utils/executionQueue.ts`, `steerQueuedItem()`, `requestSteerSend()` in `src/renderer/services/chatSteering.ts`, wire protocol in `src/shared/chatSteering.ts`, `steerCodexAppServerTurn()` in `src/main/codex-app-server/steering.ts`
+- **Steering a turn on an SSH remote:** `sendRemoteSteeringRequest()` in `src/main/process-manager/steering-client.ts`; `requestSteeringOverSocket()` in `src/shared/chatSteeringSocket.ts`; `runSteeringRelay()` in `src/maestro-p/steering-relay.ts`; `sshFailedBeforeSession()` in `src/shared/sshConnection.ts`
 - **Honoring the user's settings in a secondary window:** `useWindowSettingsSync()`, `usePublishTypographyVars()`, `useReloadSettingsOnExternalChange()` in `src/renderer/hooks/settings/useWindowSettingsSync.ts`
 - **Reading settings without the lifecycle effects:** `useSettingsValues()` in `src/renderer/hooks/settings/useSettings.ts`
 
