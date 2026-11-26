@@ -44,6 +44,7 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 const UNAVAILABLE = {
 	ok: false,
 	code: 'host-unavailable',
+	notSent: true,
 	error: 'Not connected to peer "box" (lost). Nothing was sent.',
 };
 
@@ -261,5 +262,40 @@ describe('a message sent while the link is down is kept for a retry', () => {
 		});
 		expect(handQueuedItemToHost(session.id, 'q3')).toBe(false);
 		expect(act$).not.toHaveBeenCalled();
+	});
+
+	it('never retries a send whose client closed while it was pending: only a refusal before sending counts', async () => {
+		const session = seed('hosted');
+		act$.mockResolvedValue({
+			ok: false,
+			code: 'host-unavailable',
+			error: 'Peer "box": The client was closed.',
+		});
+		useSessionStore.setState({
+			sessions: [{ ...session, executionQueue: [message('q1', 'wake up')] }],
+		});
+
+		handQueuedItemToHost(session.id, 'q1');
+		await flush();
+
+		expect(getRetryEntry(session.id, 't1')).toBeUndefined();
+		expect(raised).toHaveLength(0);
+		expect(queue().map((queued) => [queued.id, queued.paused === true])).toEqual([['q1', true]]);
+	});
+
+	it('keeps the message without any host step while the mirror says the host is not connected', async () => {
+		const session = seed('hosted');
+		const peer = usePeerMirrorStore.getState().peers.box;
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'reconnecting' }]);
+		useSessionStore.setState({
+			sessions: [{ ...session, executionQueue: [message('q1', 'wake up')] }],
+		});
+
+		handQueuedItemToHost(session.id, 'q1');
+		await flush();
+
+		// No new host tab, no merged-context update, no send: nothing reached the host.
+		expect(act$).not.toHaveBeenCalled();
+		expect(getRetryEntry(session.id, 't1')).toMatchObject({ heldItemId: 'q1' });
 	});
 });

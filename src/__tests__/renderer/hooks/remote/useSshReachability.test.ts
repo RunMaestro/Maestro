@@ -72,4 +72,13 @@ describe('useSshReachability', () => {
 			expect.objectContaining({ type: 'success', title: 'SSH connection restored' })
 		);
 	});
+
+	it('drops a cleared outage (the remote was deleted) without a recovery toast', () => {
+		renderHook(() => useSshReachability());
+		push(down);
+		useSshOutageStore.getState().surface('r1');
+		push({ ...up, cleared: true });
+		expect(notifyToast).not.toHaveBeenCalled();
+		expect(useSshOutageStore.getState().outages).toEqual({});
+	});
 });

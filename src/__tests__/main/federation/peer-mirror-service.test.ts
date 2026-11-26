@@ -832,7 +832,8 @@ describe('PeerMirrorService', () => {
 			await settle();
 			a.emit({ type: 'host.lost', reason: 'socket closed' });
 			const answer = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
-			expect(answer).toMatchObject({ ok: false, code: 'host-unavailable' });
+			// `notSent`: refused before the client saw it, so a caller may keep it for a retry.
+			expect(answer).toMatchObject({ ok: false, code: 'host-unavailable', notSent: true });
 			expect(answer.ok ? '' : answer.error).toContain('Nothing was sent');
 			// Back up: the refused message is not delivered late.
 			a.emit({ type: 'host.connected', host: { kind: 'headless', label: 'h' }, resumed: true });

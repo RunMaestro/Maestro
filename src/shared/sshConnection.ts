@@ -221,6 +221,11 @@ export interface SshReachabilityEvent {
 	 * this remote's hosted agents does not answer.
 	 */
 	cause?: RemoteOutageCause;
+	/**
+	 * With `reachable`: the outage ended because Maestro stopped tracking it (the remote was
+	 * deleted, or is no longer a Federation peer), not because it answered. No recovery notice.
+	 */
+	cleared?: true;
 }
 
 /** What an outage on a remote is about: the SSH link itself, or the Maestro host behind it. */

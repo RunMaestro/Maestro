@@ -37,7 +37,8 @@ export function useSshReachability(): void {
 			const ended = useSshOutageStore.getState().applyReachability(event);
 			// Only an outage the user saw announces its recovery; a remote that
 			// went down and came back unnoticed stays quiet.
-			if (ended?.surfaced && isLifecycleOwner) {
+			// A cleared outage (the remote was deleted) did not come back: nothing to announce.
+			if (ended?.surfaced && isLifecycleOwner && !event.cleared) {
 				notifyToast({
 					type: 'success',
 					title: 'SSH connection restored',

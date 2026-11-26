@@ -265,7 +265,17 @@ function clearUnreachable(remoteId: string, announce: boolean): void {
 	if (state.timer) clearInterval(state.timer);
 	unreachable.delete(remoteId);
 
-	if (!announce) return;
+	if (!announce) {
+		// The remote was deleted: windows drop its outage, with no "restored" toast.
+		deps?.emit({
+			remoteId,
+			remoteName: state.event.remoteName,
+			reachable: true,
+			since: Date.now(),
+			cleared: true,
+		});
+		return;
+	}
 	const event: SshReachabilityEvent = {
 		remoteId,
 		remoteName: state.event.remoteName,
@@ -409,7 +419,19 @@ function clearHostDown(remoteId: string, announce: boolean): void {
 	if (state.timer) clearInterval(state.timer);
 	hostDown.delete(remoteId);
 	// Behind an SSH outage the host was never shown; the SSH recovery announces the remote.
-	if (!announce || unreachable.has(remoteId)) return;
+	if (unreachable.has(remoteId)) return;
+	if (!announce) {
+		// No longer a Federation peer: windows drop the host outage, with no "restored" toast.
+		deps?.emit({
+			remoteId,
+			remoteName: state.event.remoteName,
+			reachable: true,
+			since: Date.now(),
+			cause: 'host',
+			cleared: true,
+		});
+		return;
+	}
 	const event: SshReachabilityEvent = {
 		remoteId,
 		remoteName: state.event.remoteName,
@@ -427,8 +449,12 @@ function clearHostDown(remoteId: string, announce: boolean): void {
  * --check`. Resolves true when the remote and its host both answer.
  */
 export async function checkRemoteLink(remoteId: string): Promise<boolean> {
+	// Read before the probe: an SSH recovery re-arms a held host outage (`recheckHostAfterSshRecovery`),
+	// and the host still has to answer before the remote counts as reachable.
+	const hostHeld = hostDown.has(remoteId);
 	const sshUp = await checkSshRemote(remoteId);
-	if (!sshUp || !hostDown.has(remoteId) || !deps?.reconnectHost) return sshUp;
+	const hostNeedsCheck = hostHeld || hostDown.has(remoteId) || hostPending.has(remoteId);
+	if (!sshUp || !hostNeedsCheck || !deps?.reconnectHost) return sshUp;
 	try {
 		// The reconnect pushes `peer.state`, which clears the outage through `noteHostConnection`.
 		return await deps.reconnectHost(remoteId);

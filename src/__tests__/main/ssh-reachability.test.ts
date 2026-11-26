@@ -218,7 +218,9 @@ describe('ssh-reachability', () => {
 
 		await expect(checkSshRemote('r1')).resolves.toBe(false);
 		expect(getUnreachableSshRemotes()).toEqual([]);
-		expect(emitted).toHaveLength(1);
+		// Windows drop the outage through a `cleared` event, which raises no "restored" toast.
+		expect(emitted).toHaveLength(2);
+		expect(emitted[1]).toMatchObject({ remoteId: 'r1', reachable: true, cleared: true });
 	});
 
 	describe("a hosted agent's host (the same outage, cause host)", () => {
@@ -341,12 +343,25 @@ describe('ssh-reachability', () => {
 			expect(emitted[2]).toMatchObject({ reachable: false, cause: 'host' });
 		});
 
-		it('forgets the host of a peer that is no longer mirrored, without a recovery toast', async () => {
+		it('forgets the host of a peer that is no longer mirrored, clearing its dialog without a recovery toast', async () => {
 			noteHostConnection(report('lost'));
 			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
 			forgetHostPeer('pedtome');
 			expect(getUnreachableSshRemotes()).toEqual([]);
+			expect(emitted).toHaveLength(2);
+			expect(emitted[1]).toMatchObject({ reachable: true, cause: 'host', cleared: true });
+		});
+
+		it('Check Now after an SSH outage still waits for the host before it reports the remote reachable', async () => {
+			probe.mockResolvedValue(DOWN);
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
 			expect(emitted).toHaveLength(1);
+
+			probe.mockResolvedValue(UP);
+			// ssh answers, the host does not: the check is not a success.
+			await expect(checkRemoteLink('r1')).resolves.toBe(false);
+			expect(reconnectHost).toHaveBeenCalledWith('r1');
 		});
 	});
 });

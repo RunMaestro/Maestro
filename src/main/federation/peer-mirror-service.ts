@@ -137,6 +137,12 @@ export type PeerActionAnswer =
 			error: string;
 			unknown?: boolean;
 			code?: ClientErrorCode;
+			/**
+			 * The service refused before handing anything to the client: the peer was not connected.
+			 * The one refusal a caller may retry without any risk of the host running it twice. A
+			 * client-level `host-unavailable` (a client closed while a send was pending) never sets it.
+			 */
+			notSent?: true;
 			/** `update-agent` only: the fields the host applied before it refused the rest. */
 			appliedFields?: AgentPatchField[];
 	  };
@@ -404,6 +410,7 @@ export class PeerMirrorService {
 			return {
 				ok: false,
 				code: 'host-unavailable',
+				notSent: true,
 				error: `Not connected to peer "${peerId}" (${entry.state.connection}). Nothing was sent.${reason}`,
 			};
 		}

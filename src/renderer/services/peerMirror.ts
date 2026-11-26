@@ -151,11 +151,18 @@ function settleMirroredAnswer(
 
 /**
  * Whether an answer says the peer was not connected, so nothing reached the host: the one refusal
- * a caller may send again without any risk of the host running it twice. A send whose receipt was
- * lost (`unknown`) never counts.
+ * a caller may send again without any risk of the host running it twice. Only the service's own
+ * refusal before it handed the action to the client counts (`notSent`); a send whose receipt was
+ * lost (`unknown`), or a client closed while a send was pending, never does.
  */
 export function isHostUnavailableAnswer(answer: MirroredActionAnswer | null): boolean {
-	return !!answer && !answer.ok && answer.code === 'host-unavailable' && !answer.unknown;
+	return (
+		!!answer &&
+		!answer.ok &&
+		answer.notSent === true &&
+		answer.code === 'host-unavailable' &&
+		!answer.unknown
+	);
 }
 
 /**

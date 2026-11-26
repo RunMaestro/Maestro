@@ -370,8 +370,11 @@ export async function sendHostedTurn(
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
-	if (!target.agent) {
-		const message = `${session.name} runs on peer "${target.peerId}", which is not connected. Nothing was sent.`;
+	const connection = usePeerMirrorStore.getState().peers[target.peerId]?.connection;
+	if (!target.agent || (opts.onHostUnavailable && connection !== 'connected')) {
+		// Nothing is sent to a host that is not connected, including the steps ahead of the send
+		// (a new host tab, merged context): the caller keeps the message for a retry, or it is told.
+		const message = `${session.name} runs on peer "${target.peerId}", which is not connected${connection ? ` (${connection})` : ''}. Nothing was sent.`;
 		if (opts.onHostUnavailable) {
 			opts.onHostUnavailable(message);
 			return null;
