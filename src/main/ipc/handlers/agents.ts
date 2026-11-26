@@ -590,6 +590,46 @@ function stripAgentFunctions(agent: any, sshRemoteId?: string) {
 }
 
 /**
+ * Every installation of `binaryName` on an SSH remote, for the Edit Agent
+ * "Detected installations" chooser a local agent gets from
+ * `findAllBinaryPaths()`. Runs bash's `type -a -p` (every match in the remote's
+ * PATH) over SSH. `activePath` (what `command -v` resolved) comes first and is
+ * never listed twice. Returns undefined when there is only one installation or
+ * the probe fails: the chooser is a nice-to-have, the single path still works.
+ */
+async function detectAllBinaryPathsRemote(
+	sshRemote: SshRemoteConfig,
+	binaryName: string,
+	activePath: string | undefined
+): Promise<string[] | undefined> {
+	if (binaryName === 'bash') return undefined;
+	const TIMEOUT_MS = 10000;
+	try {
+		const sshCommand = await buildSshCommand(sshRemote, {
+			command: 'type',
+			args: ['-a', '-p', binaryName],
+		});
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new Error('timed out')), TIMEOUT_MS);
+		});
+		const result = await Promise.race([execSshCommand(sshRemote, sshCommand), timeout]).finally(
+			() => clearTimeout(timer)
+		);
+		if (result.exitCode !== 0) return undefined;
+		const found = stripAnsi(result.stdout)
+			.split('\n')
+			.map((line) => line.trim())
+			.filter((line) => line.startsWith('/'));
+		const merged = Array.from(new Set(activePath ? [activePath, ...found] : found));
+		return merged.length > 1 ? merged : undefined;
+	} catch (err) {
+		logger.debug(`Remote installation list failed for ${binaryName}`, LOG_CONTEXT, { err });
+		return undefined;
+	}
+}
+
+/**
  * Detect agents on a remote SSH host.
  * Uses POSIX 'command -v' over SSH to check for agent binaries.
  * Includes a timeout to handle unreachable hosts gracefully.
@@ -1090,6 +1130,12 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						logger.debug(`Agent "${agentDef.name}" not found on remote`, LOG_CONTEXT);
 					}
 
+					// Every installation on the remote, so the Edit Agent chooser shows
+					// for a remote agent exactly when it shows for a local one.
+					const allPaths = available
+						? await detectAllBinaryPathsRemote(sshConfig, agentDef.binaryName, path)
+						: undefined;
+
 					if (agentDef.id !== 'terminal') {
 						if (available) {
 							const existing = capabilitySnapshots.get(agentDef.id, sshConfig.id);
@@ -1107,6 +1153,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 							...agentDef,
 							available,
 							path,
+							allPaths,
 							capabilities: getAgentCapabilities(agentDef.id),
 							error: connectionError,
 						},

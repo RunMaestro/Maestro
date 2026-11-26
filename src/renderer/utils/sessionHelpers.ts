@@ -12,6 +12,7 @@ import type { AdditionalDirectory, Session, ToolType, ProcessConfig } from '../t
 import { createMergedSession } from './tabHelpers';
 import { prepareMaestroSystemPrompt } from './spawnHelpers';
 import { logger } from './logger';
+import type { AgentSshRemoteConfig } from '../../shared/types';
 
 /**
  * Options for creating a session for a specific agent type.
@@ -326,6 +327,7 @@ export interface SessionSshInfo {
 		remoteId: string | null;
 		workingDirOverride?: string;
 		syncHistory?: boolean;
+		shareHistoryToProjectDir?: boolean;
 	};
 }
 
@@ -382,11 +384,41 @@ export function isSessionRemote(session: SessionSshInfo | null | undefined): boo
 }
 
 /**
+ * Whether an agent shares its History in its project's `.maestro/history/`
+ * folder, so the other Maestros working on that project see its entries.
+ *
+ * One setting for the user, stored in the two fields its two transports read:
+ * `syncHistory` (an SSH agent's entries are written to the folder on the
+ * remote) and `shareHistoryToProjectDir` (a local agent's, and a hosted
+ * agent's on its host, are written to the folder where it runs). The Edit Agent
+ * toggle reads and writes both, so it means the same in every mode.
+ */
+export function sharesHistoryInProject(
+	config: Pick<AgentSshRemoteConfig, 'syncHistory' | 'shareHistoryToProjectDir'> | undefined
+): boolean {
+	return config?.syncHistory === true || config?.shareHistoryToProjectDir === true;
+}
+
+/** `config` with History sharing turned on or off (see {@link sharesHistoryInProject}). */
+export function withHistorySharedInProject(
+	config: AgentSshRemoteConfig | undefined,
+	share: boolean
+): AgentSshRemoteConfig {
+	return {
+		enabled: config?.enabled ?? false,
+		remoteId: config?.remoteId ?? null,
+		workingDirOverride: config?.workingDirOverride,
+		syncHistory: share,
+		shareHistoryToProjectDir: share,
+	};
+}
+
+/**
  * Build shared history context for a session, if applicable.
  *
  * Returns the context needed for cross-host history sync when:
  * - The session uses an SSH remote
- * - The syncHistory setting is explicitly enabled
+ * - History sharing is explicitly enabled ({@link sharesHistoryInProject})
  *
  * @param session - Session with SSH remote fields and cwd
  * @returns Shared context object, or undefined if not applicable
@@ -399,8 +431,8 @@ export function buildSharedHistoryContext(
 	const config = session.sessionSshRemoteConfig;
 	if (!config?.enabled || !config.remoteId) return undefined;
 
-	// Respect the syncHistory toggle (opt-in, defaults to false)
-	if (!config.syncHistory) return undefined;
+	// Respect the History sharing toggle (opt-in, defaults to false)
+	if (!sharesHistoryInProject(config)) return undefined;
 
 	const remoteCwd = session.cwd;
 	if (!remoteCwd) return undefined;

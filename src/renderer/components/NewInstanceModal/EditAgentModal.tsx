@@ -30,6 +30,7 @@ import type {
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { pickDirectory, usePathPickerStore } from '../../services/pathPicker';
 import { validateEditSession } from '../../utils/sessionValidation';
+import { sharesHistoryInProject } from '../../utils/sessionHelpers';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
@@ -407,7 +408,7 @@ export function EditAgentModal({
 				syncHistory: persisted.syncHistory,
 				shareHistoryToProjectDir: persisted.shareHistoryToProjectDir,
 			});
-		} else if (persisted?.shareHistoryToProjectDir) {
+		} else if (sharesHistoryInProject(persisted)) {
 			setSshRemoteConfig({
 				enabled: false,
 				remoteId: null,

@@ -772,6 +772,68 @@ describe('agents IPC handlers', () => {
 			expect(result).toBeNull();
 		});
 
+		describe('on an SSH remote', () => {
+			beforeEach(() => {
+				handlers.clear();
+				registerAgentsHandlers({
+					...deps,
+					settingsStore: {
+						get: vi.fn().mockReturnValue([
+							{
+								id: 'remote-1',
+								host: 'dev.example.com',
+								username: 'dev',
+								port: 22,
+								enabled: true,
+							},
+						]),
+						set: vi.fn(),
+					} as any,
+				});
+				vi.mocked(buildSshCommand).mockImplementation(async (_remote, options) => ({
+					command: 'ssh',
+					args: [options.command, ...(options.args ?? [])],
+				}));
+			});
+
+			function remoteAnswers(lookup: string, list: { exitCode: number; stdout: string }) {
+				vi.mocked(execFileNoThrow).mockImplementation(async (_cmd, args) => {
+					const remote = (args as string[]) ?? [];
+					if (remote[0] === 'type') return { ...list, stderr: '' };
+					return { exitCode: 0, stdout: lookup, stderr: '' };
+				});
+			}
+
+			it('lists every installation on the remote, the resolved one first', async () => {
+				remoteAnswers('/home/dev/.local/bin/codex\n', {
+					exitCode: 0,
+					stdout: '/home/dev/.nvm/bin/codex\n/home/dev/.local/bin/codex\n',
+				});
+				const result = await handlers.get('agents:get')!({} as any, 'codex', 'remote-1');
+
+				expect(result.path).toBe('/home/dev/.local/bin/codex');
+				expect(result.allPaths).toEqual(['/home/dev/.local/bin/codex', '/home/dev/.nvm/bin/codex']);
+				expect(buildSshCommand).toHaveBeenCalledWith(expect.objectContaining({ id: 'remote-1' }), {
+					command: 'type',
+					args: ['-a', '-p', 'codex'],
+				});
+			});
+
+			it('offers no list when the remote has one installation or the list fails', async () => {
+				remoteAnswers('/home/dev/.local/bin/codex\n', {
+					exitCode: 0,
+					stdout: '/home/dev/.local/bin/codex\n',
+				});
+				const single = await handlers.get('agents:get')!({} as any, 'codex', 'remote-1');
+				expect(single.allPaths).toBeUndefined();
+
+				remoteAnswers('/home/dev/.local/bin/codex\n', { exitCode: 1, stdout: '' });
+				const failed = await handlers.get('agents:get')!({} as any, 'codex', 'remote-1');
+				expect(failed.available).toBe(true);
+				expect(failed.allPaths).toBeUndefined();
+			});
+		});
+
 		it('should strip function properties from returned agent', async () => {
 			const mockAgent = {
 				id: 'claude-code',
