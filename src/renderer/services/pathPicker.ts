@@ -86,6 +86,31 @@ export function pathPickerRemoteId(
 	return getSessionSshRemoteId(session) ?? null;
 }
 
+/** What a file operation says when the agent runs on an SSH remote that is not resolved yet. */
+export const UNRESOLVED_REMOTE_MESSAGE =
+	'This agent runs on an SSH remote that is not set yet. Choose where it runs, then try again.';
+
+/** Thrown by `fileOpRemoteId()` for an agent whose SSH remote is not resolved yet. */
+export class UnresolvedRemoteError extends Error {
+	constructor() {
+		super(UNRESOLVED_REMOTE_MESSAGE);
+		this.name = 'UnresolvedRemoteError';
+	}
+}
+
+/**
+ * The remote a file operation (a read, a write, a listing, an import) sends, from the value
+ * `pathPickerRemoteId()` returned. `undefined` stays this machine and a string stays that remote.
+ * `null` throws `UnresolvedRemoteError`: the agent runs on a remote nobody resolved yet, so the
+ * operation fails loudly with words the caller shows, and never runs against this machine's disk.
+ * A surface whose Browse and transport share one prop keeps the prop as the picker value and
+ * calls this at the transport, inside the code that already shows the operation's failure.
+ */
+export function fileOpRemoteId(sshRemoteId: string | null | undefined): string | undefined {
+	if (sshRemoteId === null) throw new UnresolvedRemoteError();
+	return sshRemoteId;
+}
+
 /** The folder the remote picker opens in when the caller has none: the remote user's home. */
 export const REMOTE_PICKER_HOME = '~';
 

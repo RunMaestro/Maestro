@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import type { MarketplacePlaybook } from '../../../../shared/marketplace-types';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
-import { pickDirectory } from '../../../services/pathPicker';
+import { fileOpRemoteId, pickDirectory } from '../../../services/pathPicker';
 import { normalizeWorktreePath } from '../../../../shared/worktreePaths';
 
 export interface UsePlaybookImportActionsParams {
@@ -10,8 +10,11 @@ export interface UsePlaybookImportActionsParams {
 	targetFolderName: string;
 	autoRunFolderPath: string;
 	sessionId: string;
-	/** The agent's SSH remote (SSH and hosted alike): where the import writes and Browse lists. */
-	sshRemoteId?: string;
+	/**
+	 * The agent's SSH remote (SSH and hosted alike, `pathPickerRemoteId()`): where the import
+	 * writes and Browse lists. `null` (remote not resolved yet) fails the import loudly.
+	 */
+	sshRemoteId?: string | null;
 	importPlaybook: (
 		playbook: MarketplacePlaybook,
 		targetFolderName: string,
@@ -38,13 +41,18 @@ export function usePlaybookImportActions({
 	const handleImport = useCallback(async () => {
 		if (!selectedPlaybook || !targetFolderName.trim()) return;
 
-		const result = await importPlaybook(
-			selectedPlaybook,
-			targetFolderName,
-			autoRunFolderPath,
-			sessionId,
-			sshRemoteId
-		);
+		let result: { success: boolean; error?: string };
+		try {
+			result = await importPlaybook(
+				selectedPlaybook,
+				targetFolderName,
+				autoRunFolderPath,
+				sessionId,
+				fileOpRemoteId(sshRemoteId)
+			);
+		} catch (err) {
+			result = { success: false, error: err instanceof Error ? err.message : String(err) };
+		}
 
 		if (result.success) {
 			onImportComplete(targetFolderName);
@@ -81,7 +89,7 @@ export function usePlaybookImportActions({
 		});
 		if (!folder) return;
 		// A remote path is always POSIX; a local one may use either separator.
-		const posix = !!sshRemoteId;
+		const posix = sshRemoteId !== undefined;
 		const picked = normalizeWorktreePath(folder, posix);
 		const root = normalizeWorktreePath(autoRunFolderPath, posix);
 		const prefix = root.endsWith('/') ? root : `${root}/`;

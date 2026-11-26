@@ -16,7 +16,12 @@ import type { Session } from '../types';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { resolveCodexTransport } from '../../shared/codexTransport';
-import { describeSteerBlocked, getSteerEligibility } from './executionQueue';
+import { supportsNativeSteering } from '../../shared/maestro-lib/providers/native-control';
+import {
+	describeSteerBlocked,
+	getSteerEligibility,
+	remoteMaestroPCannotSteer,
+} from './executionQueue';
 import { isSessionRemote } from './sessionHelpers';
 import { hostRunView } from './hostedSession';
 
@@ -37,17 +42,26 @@ export const CODEX_TRANSPORT_DOCS_URL = 'https://docs.runmaestro.ai/provider-not
  */
 export type SteerSupport =
 	| { kind: 'supported' }
-	| { kind: 'fixable'; reason: 'api-token-source' | 'codex-exec'; detail: string }
+	| {
+			kind: 'fixable';
+			reason: 'api-token-source' | 'codex-exec' | 'native-local-only';
+			detail: string;
+	  }
 	| {
 			kind: 'unsupported';
-			reason: 'ssh-remote' | 'not-claude' | 'grok-no-input-op';
+			reason: 'not-claude' | 'grok-no-input-op' | 'maestro-p-outdated';
 			detail: string;
 	  };
 
 /**
  * Classify the harness. Same order of checks as {@link getSteerEligibility} (Grok,
- * then Codex, then SSH, then Claude's token source), so
- * the help can never name a different cause than the row's reason line.
+ * then native control, then Codex, then Claude's token source), so the help can
+ * never name a different cause than the row's reason line.
+ *
+ * Where the agent runs is not one of the checks: a Claude TUI on an SSH remote
+ * steers through that remote's maestro-p, exactly as a local one does. The remote
+ * facts that can stop it are the transport's (`native-local-only`) or the remote
+ * install's (`maestro-p-outdated`), each with its own remedy.
  */
 export function getSteerSupport(
 	session: Pick<
@@ -57,6 +71,7 @@ export function getSteerSupport(
 		| 'claudeInteractive'
 		| 'enableMaestroP'
 		| 'maestroPMode'
+		| 'harnessControlMode'
 		| 'sshRemoteId'
 		| 'sessionSshRemoteConfig'
 	>
@@ -73,8 +88,28 @@ export function getSteerSupport(
 				'Grok cannot take a message while a turn runs: its headless route has no input channel, and its ACP route advertises no operation for it. Queue the message and it sends when the turn ends.',
 		};
 	}
-	// Codex first: app-server steers over SSH too, so a remote Codex agent's gap is
-	// its transport, which has a fix.
+	// Native control, as getSteerEligibility reads it: a TUI turn already resolved
+	// keeps the maestro-p channel, so only a provider whose native adapter takes
+	// input mid-turn lands here.
+	const claudeTuiActive =
+		session.toolType === 'claude-code' && session.claudeInteractive?.mode === 'interactive';
+	if (
+		!claudeTuiActive &&
+		session.harnessControlMode === 'native' &&
+		supportsNativeSteering(session.toolType)
+	) {
+		if (!isSessionRemote(session)) return { kind: 'supported' };
+		// LOCKED (parity F2): handle-spawn refuses a native-control spawn over SSH, so
+		// no turn runs there for the adapter's channel to reach.
+		return {
+			kind: 'fixable',
+			reason: 'native-local-only',
+			detail:
+				'Native control runs only on this machine, so it cannot run this agent over SSH. Select the current transport in the agent settings to run and steer it.',
+		};
+	}
+	// Codex: app-server steers wherever the agent runs, so its gap is its
+	// transport, which has a fix.
 	if (session.toolType === 'codex') {
 		if (resolveCodexTransport(session) === 'app-server') return { kind: 'supported' };
 		return {
@@ -84,21 +119,18 @@ export function getSteerSupport(
 				'This Codex agent runs on the exec transport, which takes no input while a turn runs. Set Codex Transport to app server in the agent settings to steer it.',
 		};
 	}
-	if (isSessionRemote(session)) {
-		return {
-			kind: 'unsupported',
-			reason: 'ssh-remote',
-			// LOCKED (parity B1.15): maestro-p opens its steering socket on the remote, and
-			// Maestro's steering client dials a local Unix socket; nothing forwards it. The
-			// row stays in the menu with this reason, in every mode.
-			detail:
-				"This agent runs on an SSH remote, where a running turn's input channel cannot be reached from here. Queue the message and it sends when the turn ends.",
-		};
-	}
 	if (session.toolType === 'claude-code') {
 		const resolved = session.claudeInteractive?.mode;
 		const configured = getClaudeTokenMode(session);
 		if (resolved === 'interactive' || (!resolved && configured === 'interactive')) {
+			if (remoteMaestroPCannotSteer(session)) {
+				return {
+					kind: 'unsupported',
+					reason: 'maestro-p-outdated',
+					detail:
+						'Update maestro-p on this remote to steer. The maestro-p installed there is too old to take a message while a turn runs. Queue the message and it sends when the turn ends.',
+				};
+			}
 			return { kind: 'supported' };
 		}
 		return {

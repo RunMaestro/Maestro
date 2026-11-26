@@ -162,6 +162,37 @@ describe.each(AGENT_MODES)('file actions in %s mode', (mode) => {
 		expect(downloadRemoteFile).not.toHaveBeenCalled();
 	});
 
+	// Two drags (or a drag and an open) of one uncached file or folder share one fetch: two
+	// downloads never rebuild the same copy at once.
+	it('overlapping fetches of one folder share one download', async () => {
+		const folder = { path: '/work/src', sshRemoteId };
+		const [a, b] = await Promise.all([
+			fetchLocalFolderCopy(folder, { quiet: true }),
+			fetchLocalFolderCopy(folder, { quiet: true }),
+		]);
+		expect(a).toBe(b);
+		expect(downloadRemoteFolder).toHaveBeenCalledTimes(mode === 'local' ? 0 : 1);
+	});
+
+	it('a failed fetch forgets the copy, and the next action fetches again', async () => {
+		const folder = { path: '/work/src', sshRemoteId };
+		await fetchLocalFolderCopy(folder, { quiet: true });
+		downloadRemoteFolder.mockRejectedValueOnce(new Error('Cannot read "private"'));
+		if (mode === 'local') {
+			await expect(fetchLocalFolderCopy(folder, { quiet: true })).resolves.toBe('/work/src');
+			expect(cachedLocalCopy(folder)).toBe('/work/src');
+			return;
+		}
+		await expect(fetchLocalFolderCopy(folder, { quiet: true })).rejects.toThrow(
+			'Cannot read "private"'
+		);
+		expect(cachedLocalCopy(folder)).toBeUndefined();
+		await expect(fetchLocalFolderCopy(folder, { quiet: true })).resolves.toBe(
+			'/tmp/maestro-remote-downloads/abc/src'
+		);
+		expect(downloadRemoteFolder).toHaveBeenCalledTimes(3);
+	});
+
 	it('opens a folder: in the file manager locally, in the Files panel when remote', async () => {
 		const session = createModeSession(mode, { id: 'a1', fullPath: '/work', projectRoot: '/work' });
 		useSessionStore.setState({ sessions: [session], activeSessionId: 'a1' });
@@ -256,6 +287,38 @@ describe('fetch progress and failure', () => {
 		expect(useCenterFlashStore.getState().active?.message).toBe('Downloading…');
 		finish({ success: true, path: LOCAL_COPY });
 		await pending;
+		expect(useCenterFlashStore.getState().active).toBeNull();
+	});
+
+	it('a drag during a refetch gets no cached path: the copy is being rebuilt', async () => {
+		const folder = { path: '/work/src', sshRemoteId: 'r1' };
+		await fetchLocalFolderCopy(folder, { quiet: true });
+		expect(cachedLocalCopy(folder)).toBe('/tmp/maestro-remote-downloads/abc/src');
+		let finish!: (value: { success: boolean; path: string; fileCount: number }) => void;
+		downloadRemoteFolder.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+		const refetch = fetchLocalFolderCopy(folder, { quiet: true });
+		expect(cachedLocalCopy(folder)).toBeUndefined();
+		// A second action joins the running fetch instead of starting its own.
+		const joined = fetchLocalFolderCopy(folder, { quiet: true });
+		finish({ success: true, path: '/tmp/maestro-remote-downloads/abc/src', fileCount: 3 });
+		await expect(Promise.all([refetch, joined])).resolves.toEqual([
+			'/tmp/maestro-remote-downloads/abc/src',
+			'/tmp/maestro-remote-downloads/abc/src',
+		]);
+		expect(downloadRemoteFolder).toHaveBeenCalledTimes(2);
+		expect(cachedLocalCopy(folder)).toBe('/tmp/maestro-remote-downloads/abc/src');
+	});
+
+	it('a joined fetch still shows, and clears, its own Downloading flash', async () => {
+		let finish!: (value: { success: boolean; path: string }) => void;
+		downloadRemoteFile.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+		const target = { path: '/work/report.pdf', sshRemoteId: 'r1' };
+		const quiet = fetchLocalCopy(target, { quiet: true });
+		const shown = fetchLocalCopy(target);
+		expect(useCenterFlashStore.getState().active?.message).toBe('Downloading…');
+		finish({ success: true, path: LOCAL_COPY });
+		await Promise.all([quiet, shown]);
+		expect(downloadRemoteFile).toHaveBeenCalledTimes(1);
 		expect(useCenterFlashStore.getState().active).toBeNull();
 	});
 

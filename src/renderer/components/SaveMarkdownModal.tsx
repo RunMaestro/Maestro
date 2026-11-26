@@ -14,7 +14,7 @@ import type { Theme } from '../types';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { isImeComposing } from '../utils/ime';
-import { pickDirectory } from '../services/pathPicker';
+import { fileOpRemoteId, pickDirectory } from '../services/pathPicker';
 
 export interface SaveMarkdownModalProps {
 	theme: Theme;
@@ -22,8 +22,12 @@ export interface SaveMarkdownModalProps {
 	onClose: () => void;
 	/** Default folder path to show initially */
 	defaultFolder?: string;
-	/** SSH remote ID for saving to (and browsing) a remote filesystem; omit for a local agent */
-	sshRemoteId?: string;
+	/**
+	 * Where the file is saved and browsed: the agent's `pathPickerRemoteId()`. Omit for a local
+	 * agent. `null` is an SSH agent whose remote is not resolved yet: Browse says so and Save fails
+	 * with that reason, so the file is never written to this machine's disk instead.
+	 */
+	sshRemoteId?: string | null;
 	/** Callback when file is successfully saved (e.g., to refresh file list) */
 	onFileSaved?: () => void;
 	/** Callback to open the saved file in a tab. When provided, shows an "Open in Tab" checkbox. */
@@ -92,11 +96,17 @@ export function SaveMarkdownModal({
 			const fullPath = `${folder}${folder.endsWith(separator) ? '' : separator}${finalFilename}`;
 
 			// Write the file (local or remote via SSH)
-			const result = await window.maestro.fs.writeFile(fullPath, content, sshRemoteId);
+			const transportRemoteId = fileOpRemoteId(sshRemoteId);
+			const result = await window.maestro.fs.writeFile(fullPath, content, transportRemoteId);
 			if (result.success) {
 				onFileSaved?.();
 				if (openInTab && onOpenInTab) {
-					onOpenInTab({ path: fullPath, name: finalFilename, content, sshRemoteId });
+					onOpenInTab({
+						path: fullPath,
+						name: finalFilename,
+						content,
+						sshRemoteId: transportRemoteId,
+					});
 				}
 				onClose();
 			} else {

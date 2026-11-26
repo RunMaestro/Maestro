@@ -64,6 +64,96 @@
  */
 export const STEERING_SOCKET_ENV_VAR = 'MAESTRO_P_STEERING_SOCKET';
 
+// Steering a turn on an SSH remote
+// --------------------------------
+// maestro-p runs on the remote and opens its socket THERE, where no local client
+// can dial it. So the desktop names a socket on the remote (home-relative, see
+// `remoteSteeringSocketSpec`) and delivers each steer with one short ssh command
+// that runs `maestro-p --steer-relay <socket>` on the same host. The relay reads
+// the request frame from its stdin, hands it to the socket, and prints the
+// verdict on stdout. The user's text only ever travels on stdin: it is never
+// part of a command line, on either machine.
+
+/**
+ * maestro-p flag that turns one invocation into a steering client: read a
+ * {@link SteeringRequestFrame} line on stdin, deliver it to the socket named by
+ * the flag's value, print {@link STEERING_RELAY_STARTED_LINE} and then the
+ * {@link SteeringResultFrame} on stdout, and exit.
+ *
+ * Only ever sent to a maestro-p that advertised {@link STEERING_RELAY_CAPABILITY}:
+ * an older one does not know the flag, forwards it to claude, and would run the
+ * frame on its stdin as a PROMPT.
+ */
+export const STEERING_RELAY_FLAG = '--steer-relay';
+
+/**
+ * maestro-p flag that adds a capabilities line after the version. Sent as
+ * `maestro-p --version --capabilities`, so a maestro-p that predates it prints
+ * its version (commander handles `--version` first and exits) and nothing else,
+ * which reads as "no capabilities". Never sent alone, for the reason on
+ * {@link STEERING_RELAY_FLAG}.
+ */
+export const MAESTRO_P_CAPABILITIES_FLAG = '--capabilities';
+
+/** Prefix of the capabilities line, followed by space-separated capability names. */
+export const MAESTRO_P_CAPABILITIES_PREFIX = 'capabilities:';
+
+/** The capability a maestro-p advertises when it serves {@link STEERING_RELAY_FLAG}. */
+export const STEERING_RELAY_CAPABILITY = 'steer-relay';
+
+/** Every capability this build of maestro-p advertises. */
+export const MAESTRO_P_CAPABILITIES: readonly string[] = [STEERING_RELAY_CAPABILITY];
+
+/** The line `maestro-p --version --capabilities` prints after the version. */
+export function formatMaestroPCapabilities(capabilities: readonly string[]): string {
+	return `${MAESTRO_P_CAPABILITIES_PREFIX} ${capabilities.join(' ')}`;
+}
+
+/** The capability names in `--version --capabilities` output; empty when it has no such line. */
+export function parseMaestroPCapabilities(output: string): string[] {
+	for (const line of output.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (!trimmed.startsWith(MAESTRO_P_CAPABILITIES_PREFIX)) continue;
+		return trimmed.slice(MAESTRO_P_CAPABILITIES_PREFIX.length).trim().split(/\s+/).filter(Boolean);
+	}
+	return [];
+}
+
+/**
+ * First stdout line of a relay, printed BEFORE it dials the socket. It draws the
+ * same line the local client draws on `connected`: no started line means the relay
+ * never ran (ssh could not connect, maestro-p is missing), so nothing was typed
+ * and the steer is a clean refusal. A started line with no verdict after it means
+ * the text may have been typed, so the answer is `unknown`.
+ */
+export const STEERING_RELAY_STARTED_LINE = 'maestro-p steer-relay started';
+
+/**
+ * Folder, relative to the remote user's home, that holds the steering sockets of
+ * turns running there. A home folder, not `/tmp`: `/tmp` is shared by every user
+ * on the host, and a socket path someone else can bind first would hand them the
+ * user's text. maestro-p creates it owner-only on first use.
+ */
+export const REMOTE_STEERING_SOCKET_DIR = '~/.maestro/steer';
+
+/**
+ * The socket a turn on an SSH remote listens on, for the digest of its process key.
+ * Home-relative (`~/`) because the desktop does not know the remote's home path;
+ * maestro-p expands it on the remote, as server and as relay, so both sides agree.
+ */
+export function remoteSteeringSocketSpec(digest: string): string {
+	return `${REMOTE_STEERING_SOCKET_DIR}/maestro-steer-${digest}.sock`;
+}
+
+/**
+ * Why a turn has no steering channel when the agent's settings say it should.
+ * Recorded on `claudeInteractive.steeringUnavailable` by the spawn that started
+ * the turn, so the Steer controls name the cause before anyone clicks.
+ *
+ * - `maestro-p-outdated` the SSH remote's maestro-p predates the steering relay.
+ */
+export type SteeringUnavailableReason = 'maestro-p-outdated';
+
 /**
  * What became of one steering attempt.
  *
@@ -168,6 +258,13 @@ export interface SteeringResultFrame {
  * so a full 8 KB frame can take a few seconds on a busy machine.
  */
 export const STEERING_REPLY_TIMEOUT_MS = 20_000;
+
+/**
+ * How long the relay waits on the remote socket. Shorter than the desktop's own
+ * {@link STEERING_REPLY_TIMEOUT_MS} by the ssh round trip, so the relay answers
+ * `unknown` itself before the desktop gives up on the ssh command.
+ */
+export const STEERING_RELAY_SOCKET_TIMEOUT_MS = STEERING_REPLY_TIMEOUT_MS - 4_000;
 
 /**
  * Waits for a `maestro-cli queue steer` round trip. Each hop outward must outlast
