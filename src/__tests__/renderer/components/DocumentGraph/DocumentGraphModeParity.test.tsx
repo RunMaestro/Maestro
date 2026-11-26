@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 	useLayerStack: () => ({
@@ -18,9 +18,22 @@ vi.mock('../../../../renderer/contexts/LayerStackContext', () => ({
 	LayerStackProvider: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
 }));
 
+const mindMapNodes = vi.hoisted(() => ({ current: [] as unknown[] }));
 vi.mock('../../../../renderer/components/DocumentGraph/MindMap', () => ({
-	MindMap: () => <div data-testid="mind-map-mock" />,
-	convertToMindMapData: () => ({ nodes: [], links: [] }),
+	MindMap: ({ onNodePreview }: { onNodePreview: (node: unknown) => void }) => (
+		<button
+			data-testid="mind-map-mock"
+			onClick={() => onNodePreview({ nodeType: 'document', filePath: 'a.md' })}
+		/>
+	),
+	convertToMindMapData: () => ({ nodes: mindMapNodes.current, links: [] }),
+}));
+
+// The preview's markdown: a link inside it, which reads the linked document.
+vi.mock('../../../../renderer/components/MarkdownRenderer', () => ({
+	MarkdownRenderer: ({ onFileClick }: { onFileClick: (path: string) => void }) => (
+		<button data-testid="preview-link" onClick={() => onFileClick('b.md')} />
+	),
 }));
 
 const buildGraphData = vi.fn();
@@ -89,6 +102,7 @@ function renderGraph(sshRemoteId: string | null | undefined) {
 
 describe('Document Graph across agent modes', () => {
 	beforeEach(() => {
+		mindMapNodes.current = [];
 		buildGraphData.mockReset();
 		buildGraphData.mockResolvedValue(EMPTY_GRAPH);
 		(window as any).maestro.documentGraph = {
@@ -138,5 +152,31 @@ describe('Document Graph across agent modes', () => {
 
 		expect(await screen.findByText(UNRESOLVED_REMOTE_MESSAGE)).toBeInTheDocument();
 		expect(buildGraphData).not.toHaveBeenCalled();
+	});
+
+	it('reads a link inside a preview from the remote that preview came from', async () => {
+		mindMapNodes.current = [{ id: 'a.md', nodeType: 'document', filePath: 'a.md' }];
+		const readFile = vi.fn().mockResolvedValue('# Doc');
+		(window as any).maestro.fs = { ...(window as any).maestro.fs, readFile };
+		const view = (sshRemoteId: string) => (
+			<DocumentGraphView
+				isOpen
+				onClose={vi.fn()}
+				theme={theme}
+				rootPath="/test"
+				focusFilePath="/test/index.md"
+				sshRemoteId={sshRemoteId}
+			/>
+		);
+		const { rerender } = render(view('r1'));
+		fireEvent.click(await screen.findByTestId('mind-map-mock'));
+		await waitFor(() => expect(readFile).toHaveBeenCalledWith('/test/a.md', 'r1'));
+
+		// The agent's remote changes while the preview of r1's document stays open.
+		rerender(view('r2'));
+		fireEvent.click(await screen.findByTestId('preview-link'));
+
+		await waitFor(() => expect(readFile).toHaveBeenCalledTimes(2));
+		expect(readFile).toHaveBeenLastCalledWith('/test/b.md', 'r1');
 	});
 });

@@ -1355,7 +1355,12 @@ export function DocumentGraphView({
 	 * Pushes to navigation history for back/forward support.
 	 */
 	const handlePreviewFile = useCallback(
-		async (filePath: string) => {
+		/**
+		 * `from` is the preview a link was clicked in: its target is read from the remote that
+		 * preview came from, so linked text never mixes two disks. A node click passes none and
+		 * reads the graph's own remote.
+		 */
+		async (filePath: string, from?: PreviewEntry) => {
 			const isAbsolutePath = filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath);
 			const fullPath = isAbsolutePath ? filePath : `${rootPath}/${filePath}`;
 			const relativePath =
@@ -1367,7 +1372,7 @@ export function DocumentGraphView({
 			setPreviewError(null);
 
 			try {
-				const remoteId = fileOpRemoteId(sshRemoteId);
+				const remoteId = from ? from.remoteId : fileOpRemoteId(sshRemoteId);
 				const content = await window.maestro.fs.readFile(fullPath, remoteId);
 
 				if (content === null) {
@@ -2498,7 +2503,7 @@ export function DocumentGraphView({
 										fileTree={previewFileTree}
 										projectRoot={rootPath}
 										cwd={previewFile.relativePath.split('/').slice(0, -1).join('/')}
-										onFileClick={handlePreviewFile}
+										onFileClick={(path) => handlePreviewFile(path, previewFile)}
 										sshRemoteId={previewFile.remoteId}
 										enableBionifyReadingMode={bionifyReadingMode}
 									/>
