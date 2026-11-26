@@ -56,7 +56,11 @@ import { probeSessionAiProcesses } from '../services/process';
 // with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
 import { noteDispatch } from './retryStore';
-import { expandCommandArguments } from '../../shared/maestro-lib/turns/prompt';
+import {
+	appendAgentNotes,
+	expandCommandArguments,
+	withTurnAgentText,
+} from '../../shared/maestro-lib/turns/prompt';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
@@ -728,7 +732,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// Process a message - spawn agent with the message text
 				const messagePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 				// `agentContext` is agent-only text the transcript never shows (a
-				// released consult hold carries the replies verbatim in it).
+				// released consult hold carries the replies verbatim in it), and
+				// `agentNotes` (a Federation sender's `@mention` notes) goes behind.
+				// Both are laid out as a host lays them (`withTurnAgentText()`).
 				// A queued message that is the tab's FIRST turn opens a new provider
 				// session, so it carries the New Session Message like a typed one does.
 				// A message queued behind a running turn resumes, and gets nothing.
@@ -738,19 +744,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							session.newSessionMessage,
 							tabAgentSessionId
 						)
-					: withMentionTurnNotes(
-							takePendingMergedContext(
-								sessionId,
-								targetTab.id,
-								prependNewSessionMessageOnFirstTurn(
-									item.agentContext
-										? `${item.agentContext}\n\n---\n\n${messagePrompt}`
-										: messagePrompt,
-									session.newSessionMessage,
-									tabAgentSessionId
-								)
+					: appendAgentNotes(
+							withMentionTurnNotes(
+								takePendingMergedContext(
+									sessionId,
+									targetTab.id,
+									prependNewSessionMessageOnFirstTurn(
+										withTurnAgentText(messagePrompt, { agentContext: item.agentContext }),
+										session.newSessionMessage,
+										tabAgentSessionId
+									)
+								),
+								mentionDispatch
 							),
-							mentionDispatch
+							item.agentNotes
 						);
 
 				// NOTE: The user-visible log entry for this message is appended by the

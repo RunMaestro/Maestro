@@ -9,13 +9,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { webcrypto } from 'node:crypto';
 import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act } from '@testing-library/react';
+import { withTurnAgentText } from '../../../shared/maestro-lib/turns/prompt';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
-import { resetStores } from '../../helpers';
+import { agentModeFields, resetStores } from '../../helpers';
 import { useSessionTranscriptSync } from '../../../renderer/hooks/session/useSessionTranscriptSync';
 import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -1687,6 +1688,59 @@ describe('agentStore', () => {
 				expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
 			});
 		});
+
+		// A Federation sender's agent-only text (a desktop host running a hosted agent's turn) lays
+		// out as the headless host lays it: one `withTurnAgentText()` for both (M16).
+		// A hosted agent's turn carries the same two fields to its host (hostedQueuedTurn.test.ts),
+		// and a host too old for them gets this same text as its message (ws-client.test.ts).
+		it.each(['local', 'ssh'] as const)(
+			"%s: lays a received turn's agent-only text around the prompt as a headless host does",
+			async (mode) => {
+				const session = createMockSession({
+					...agentModeFields(mode),
+					id: 'session-1',
+					toolType: 'claude-code',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: 'existing-conv-id',
+							name: null,
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'tab-1',
+				});
+				useSessionStore.getState().setSessions([session]);
+
+				await useAgentStore.getState().processQueuedItem(
+					'session-1',
+					createQueuedItem({
+						tabId: 'tab-1',
+						text: 'Finish your answer.',
+						agentContext: 'Replies:\nBackend: fine.',
+						agentNotes: 'Your answer goes to Backend.',
+					}),
+					defaultDeps
+				);
+
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				const prompt = mockSpawn.mock.calls[0][0].prompt;
+				expect(prompt).toBe(
+					withTurnAgentText('Finish your answer.', {
+						agentContext: 'Replies:\nBackend: fine.',
+						agentNotes: 'Your answer goes to Backend.',
+					})
+				);
+				expect(prompt).toBe(
+					'Replies:\nBackend: fine.\n\n---\n\nFinish your answer.\n\n---\n\nYour answer goes to Backend.'
+				);
+			}
+		);
 
 		// A queued message that @mentions another agent must consult that agent HERE,
 		// as the message becomes this agent's turn - not when the user typed it into

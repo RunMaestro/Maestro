@@ -1,6 +1,10 @@
 import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
-import type { QueuedTurnEdit, TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import type {
+	QueuedTurnEdit,
+	TurnAgentText,
+	TurnOverrides,
+} from '../../../shared/maestro-lib/client/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
  *
@@ -808,7 +812,8 @@ export class CallbackRegistry {
 		mentionRouting?: MentionRouting,
 		dispatchCallback?: boolean,
 		control?: PianolaQueueControl,
-		turnOverrides?: TurnOverrides
+		turnOverrides?: TurnOverrides,
+		agentText?: TurnAgentText
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		const args: Parameters<EnqueueCommandCallback> = [
@@ -823,7 +828,8 @@ export class CallbackRegistry {
 			dispatchCallback,
 			control,
 		];
-		if (turnOverrides) args.push(turnOverrides);
+		if (turnOverrides || agentText) args.push(turnOverrides);
+		if (agentText) args.push(agentText);
 		return this.callbacks.enqueueCommand(...args);
 	}
 

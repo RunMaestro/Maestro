@@ -30,6 +30,8 @@ import * as pianolaStore from '../../../pianola/pianola-store-main';
 import {
 	normalizeTurnOverrides,
 	parseQueuedTurnEdit,
+	readTurnAgentText,
+	type TurnAgentText,
 } from '../../../../shared/maestro-lib/client/types';
 import { resolveToDataUrl } from '../../../storage/session-image-store';
 import type { QueueSessionSnapshot } from '../../types';
@@ -81,11 +83,32 @@ export function handleEnqueueCommand(
 		return;
 	}
 
+	// A Federation client's agent-only text for this turn (a consult's replies ahead, the
+	// `@mention` notes behind), read as the headless host reads it: one this host cannot take
+	// refuses the send, never a turn that answers without it.
+	const agentContext = readTurnAgentText(message.agentContext, 'agentContext');
+	if (!agentContext.ok) {
+		sendErrorResult(agentContext.error);
+		return;
+	}
+	const agentNotes = readTurnAgentText(message.agentNotes, 'agentNotes');
+	if (!agentNotes.ok) {
+		sendErrorResult(agentNotes.error);
+		return;
+	}
+	const agentText: TurnAgentText | undefined =
+		agentContext.value || agentNotes.value
+			? {
+					...(agentContext.value ? { agentContext: agentContext.value } : {}),
+					...(agentNotes.value ? { agentNotes: agentNotes.value } : {}),
+				}
+			: undefined;
+
 	const dispatchId = typeof message.dispatchId === 'string' ? message.dispatchId : generateUUID();
 	const coverage = dispatchSupervision(ctx, client, sessionId, dispatchId, requestedTabId);
 	if (coverage.managed) {
 		const routing = parseMentionRoutingField(message.mentionRouting);
-		if (coverage.error || !routing.ok || clientInputMode === 'terminal') {
+		if (coverage.error || !routing.ok || clientInputMode === 'terminal' || agentText) {
 			ctx.send(client, {
 				type: 'enqueue_command_result',
 				success: false,
@@ -94,7 +117,11 @@ export function handleEnqueueCommand(
 				admission: coverage.receipt ? { ...coverage.receipt, outcome: 'rejected' } : undefined,
 				error:
 					coverage.error ??
-					(!routing.ok ? routing.error : 'Managed queue requires a local AI turn'),
+					(!routing.ok
+						? routing.error
+						: agentText
+							? 'A supervised dispatch cannot carry agent-only text.'
+							: 'Managed queue requires a local AI turn'),
 				requestId: message.requestId,
 			});
 			return;
@@ -250,8 +277,10 @@ export function handleEnqueueCommand(
 		held,
 		routingField.routing,
 	];
-	// The overrides ride after the dispatch-callback and admission slots, which this path leaves empty.
-	if (turnOverrides) enqueueArgs.push(undefined, undefined, turnOverrides);
+	// The overrides ride after the dispatch-callback and admission slots, which this path leaves
+	// empty; the agent-only text rides after the overrides.
+	if (turnOverrides || agentText) enqueueArgs.push(undefined, undefined, turnOverrides);
+	if (agentText) enqueueArgs.push(agentText);
 
 	ctx.callbacks
 		.enqueueCommand(...enqueueArgs)

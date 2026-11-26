@@ -498,6 +498,25 @@ export function readTurnAgentText(
 	return value.trim() ? { ok: true, value } : { ok: true };
 }
 
+/** A turn's agent-only text (`TurnInput.agentContext`, `agentNotes`), as one value. */
+export type TurnAgentText = Pick<TurnInput, 'agentContext' | 'agentNotes'>;
+
+/**
+ * What a host does beyond the base protocol, as its reply to `host_capabilities` names it. A host
+ * that echoes the request (an older build) has none of them.
+ * - `turn-agent-text`: it puts a turn's `agentContext` and `agentNotes` into the prompt.
+ */
+export type HostCapability = 'turn-agent-text';
+
+/** Every capability a host of this build has: both host kinds answer `host_capabilities` with it. */
+export const HOST_CAPABILITIES: readonly HostCapability[] = ['turn-agent-text'];
+
+/** The capabilities a host's `host_capabilities_result` names; anything this build does not know goes. */
+export function parseHostCapabilities(raw: unknown): HostCapability[] {
+	if (!Array.isArray(raw)) return [];
+	return HOST_CAPABILITIES.filter((capability) => raw.includes(capability));
+}
+
 /** One sender's own tab choices, applied to this one turn only; never stored on the host tab. */
 export interface TurnOverrides {
 	model?: string;

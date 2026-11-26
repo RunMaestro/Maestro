@@ -1091,7 +1091,9 @@ interface MaestroAPI {
 				held?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
 				dispatchCallback?: boolean,
-				control?: PianolaQueueControl
+				control?: PianolaQueueControl,
+				turnOverrides?: import('../shared/maestro-lib/client/types').TurnOverrides,
+				agentText?: import('../shared/maestro-lib/client/types').TurnAgentText
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (

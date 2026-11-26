@@ -141,9 +141,11 @@ import type {
 import {
 	normalizeOriginHost,
 	normalizeTurnOverrides,
+	parseHostCapabilities,
 	parseQueuedTurnImages,
 	parseQueuedTurnSettings,
 } from './types';
+import { withTurnAgentText } from '../turns/prompt';
 
 const LOG_CONTEXT = '[WsMaestroClient]';
 
@@ -327,6 +329,11 @@ class WsMaestroClient implements MaestroClient {
 
 	private state: ConnectionState = 'idle';
 	private hostInfo: HostInfo | undefined;
+	/**
+	 * Whether the attached host puts a turn's agent-only text into its prompt (`host_capabilities`),
+	 * asked once per connection: a reconnect may reach an upgraded host.
+	 */
+	private agentTextSupport: Promise<ClientResult<boolean>> | undefined;
 	private conn: BridgeConnection | undefined;
 	private attempt: Attempt | undefined;
 	private connecting: Promise<ClientResult<HostInfo>> | undefined;
@@ -923,6 +930,7 @@ class WsMaestroClient implements MaestroClient {
 		this.conn = conn;
 		this.attempt = undefined;
 		this.hostInfo = host;
+		this.agentTextSupport = undefined;
 		this.state = 'connected';
 		if (snapshot) this.mirror.replace(snapshot.agents, snapshot.groups);
 		this.startTimers();
@@ -1928,8 +1936,19 @@ class WsMaestroClient implements MaestroClient {
 		const turnOverrides = normalizeTurnOverrides(input.overrides);
 		if (turnOverrides) message.turnOverrides = turnOverrides;
 		if (input.held === true) message.held = true;
-		if (input.agentContext) message.agentContext = input.agentContext;
-		if (input.agentNotes) message.agentNotes = input.agentNotes;
+		if (input.agentContext || input.agentNotes) {
+			// A host too old to take the two fields would drop them, and the turn would answer
+			// without a consult's replies. It gets them in the message instead, as an SSH turn's
+			// prompt is built on this side (its transcript then shows them in the bubble).
+			const applies = await this.hostAppliesAgentText();
+			if (!applies.ok) return applies;
+			if (applies.value) {
+				if (input.agentContext) message.agentContext = input.agentContext;
+				if (input.agentNotes) message.agentNotes = input.agentNotes;
+			} else {
+				message.command = withTurnAgentText(input.text, input);
+			}
+		}
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)
@@ -2015,6 +2034,29 @@ class WsMaestroClient implements MaestroClient {
 		}
 		if (!stopped && state) state.interruptRequested = previous;
 		return ok({ stopped });
+	}
+
+	/**
+	 * Whether the host puts a turn's `agentContext` and `agentNotes` into the prompt. A host that
+	 * echoes `host_capabilities` (an older build) does not; a failed ask is not remembered.
+	 */
+	private hostAppliesAgentText(): Promise<ClientResult<boolean>> {
+		if (!this.agentTextSupport) {
+			const asked = this.send<Reply>(
+				'turns.send',
+				{ type: 'host_capabilities' },
+				'host_capabilities_result'
+			).then((reply): ClientResult<boolean> => {
+				if (reply.ok) {
+					return ok(parseHostCapabilities(reply.value.capabilities).includes('turn-agent-text'));
+				}
+				if (reply.error.code === 'unsupported') return ok(false);
+				if (this.agentTextSupport === asked) this.agentTextSupport = undefined;
+				return reply;
+			});
+			this.agentTextSupport = asked;
+		}
+		return this.agentTextSupport;
 	}
 
 	private async queueList(agentId: string): Promise<ClientResult<QueuedTurn[]>> {

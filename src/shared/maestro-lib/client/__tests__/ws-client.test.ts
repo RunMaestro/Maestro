@@ -939,6 +939,51 @@ describe('createWsMaestroClient', () => {
 			for (const message of sent.slice(1)) expect(message).not.toHaveProperty('turnOverrides');
 		});
 
+		it('gives a host that applies agent-only text the two fields, asking once per connection (M16)', async () => {
+			bridge.typed.set(
+				'host_capabilities',
+				reply('host_capabilities_result', { capabilities: ['turn-agent-text', 'later-thing'] })
+			);
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: false })
+			);
+			await client.turns.send(A1, A1_TAB, { text: 'plain' });
+			expect(bridge.sent('host_capabilities')).toHaveLength(0);
+			await client.turns.send(A1, A1_TAB, {
+				text: 'Finish your answer.',
+				agentContext: 'Replies:\nBackend: fine.',
+			});
+			await client.turns.send(A1, A1_TAB, { text: 'look', agentNotes: 'Consulting Backend.' });
+			expect(bridge.sent('host_capabilities')).toHaveLength(1);
+			const sent = bridge.sent('enqueue_command');
+			expect(sent[1]).toMatchObject({
+				command: 'Finish your answer.',
+				agentContext: 'Replies:\nBackend: fine.',
+			});
+			expect(sent[2]).toMatchObject({ command: 'look', agentNotes: 'Consulting Backend.' });
+		});
+
+		it('gives a host too old to know the fields the text in the message, never a turn without it (M16)', async () => {
+			// No responder: the host echoes `host_capabilities`, as a build before it does.
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: false })
+			);
+			const result = await client.turns.send(A1, A1_TAB, {
+				text: 'Finish your answer.',
+				agentContext: 'Replies:\nBackend: fine.',
+				agentNotes: 'Your answer goes to Backend.',
+			});
+			expect(result).toEqual({ ok: true, value: { status: 'started' } });
+			const [message] = bridge.sent('enqueue_command');
+			expect(message.command).toBe(
+				'Replies:\nBackend: fine.\n\n---\n\nFinish your answer.\n\n---\n\nYour answer goes to Backend.'
+			);
+			expect(message).not.toHaveProperty('agentContext');
+			expect(message).not.toHaveProperty('agentNotes');
+		});
+
 		it('sends Queue Held as held: true, and leaves the field off a plain send', async () => {
 			bridge.typed.set(
 				'enqueue_command',
