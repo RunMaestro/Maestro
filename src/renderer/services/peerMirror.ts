@@ -13,6 +13,7 @@
 import {
 	normalizeTurnOverrides,
 	type QueuedTurnEdit,
+	type TurnInput,
 	type TurnOverrides,
 	type TurnSendReceipt,
 } from '../../shared/maestro-lib/client/types';
@@ -178,6 +179,7 @@ function mirroredActionError(answer: Extract<MirroredActionAnswer, { ok: false }
  * Send what the person typed to one mirrored tab, with this conductor's own tab choices for that
  * one turn. The host's receipt when it took it (ran, queued, or held), null when it did not.
  * `held` is Queue Held: the host queues it paused, even on an idle tab, as a local Queue Held does.
+ * `agentText` is the agent-only context and notes an `@mention` adds to this one turn.
  */
 export async function sendToMirroredTab(
 	peerId: string,
@@ -186,7 +188,8 @@ export async function sendToMirroredTab(
 	text: string,
 	overrides?: TurnOverrides,
 	images?: readonly string[],
-	held?: boolean
+	held?: boolean,
+	agentText: Pick<TurnInput, 'agentContext' | 'agentNotes'> = {}
 ): Promise<TurnSendReceipt | null> {
 	const clean = normalizeTurnOverrides(overrides);
 	const result = await actOnMirroredAgent(peerId, agentId, {
@@ -196,6 +199,8 @@ export async function sendToMirroredTab(
 		...(images && images.length > 0 ? { images: [...images] } : {}),
 		...(clean ? { overrides: clean } : {}),
 		...(held === true ? { held: true } : {}),
+		...(agentText.agentContext ? { agentContext: agentText.agentContext } : {}),
+		...(agentText.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
 	});
 	return result?.kind === 'send' ? result.receipt : null;
 }

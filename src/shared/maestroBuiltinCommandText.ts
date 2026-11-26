@@ -20,6 +20,31 @@ export const HISTORY_COMMAND_TEXT = {
 	error: (message: string) => `Error generating synopsis: ${message}`,
 } as const;
 
+const HISTORY_SAVED_PREFIX = HISTORY_COMMAND_TEXT.saved('');
+
+/**
+ * How a `/history` run that wrote `text` as its last line ended: `saved` with the entry's summary,
+ * `ended` for every other last line (nothing to report, failed, error), or null while it is still
+ * pending or the line is not one of its own. A window that typed `/history` for a hosted agent reads
+ * the host's lines with it, to raise the toast a local `/history` raises.
+ */
+export function readHistoryCommandOutcome(
+	text: string
+): { kind: 'saved'; summary: string } | { kind: 'ended' } | null {
+	if (text.startsWith(HISTORY_SAVED_PREFIX)) {
+		return { kind: 'saved', summary: text.slice(HISTORY_SAVED_PREFIX.length) };
+	}
+	if (
+		text === HISTORY_COMMAND_TEXT.nothingToReport ||
+		text === HISTORY_COMMAND_TEXT.failed ||
+		text === HISTORY_COMMAND_TEXT.noSession ||
+		text.startsWith(HISTORY_COMMAND_TEXT.error(''))
+	) {
+		return { kind: 'ended' };
+	}
+	return null;
+}
+
 /**
  * The prompt a `/history` synopsis turn is sent: the Auto Run synopsis prompt, told to cover only
  * the work since the tab's last synopsis when it had one.

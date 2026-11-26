@@ -95,8 +95,10 @@ import {
 	isUnsupportedInvokeError,
 	parseBatchFrame,
 	parseProcessFrame,
+	parseTranscriptChangedFrame,
 	parseUserInputFrame,
 	resolveBridgeOutcome,
+	TRANSCRIPT_CHANGED_CHANNEL,
 	type ProcessFrame,
 	type ProcessTarget,
 } from './bridge-frames';
@@ -1142,6 +1144,20 @@ class WsMaestroClient implements MaestroClient {
 				});
 				return;
 			}
+			case TRANSCRIPT_CHANGED_CHANNEL: {
+				// A host wrote to an idle tab outside a turn (`/skills`, `/history`): read it again.
+				const target = parseTranscriptChangedFrame(args);
+				const resolved = target ? this.resolveTarget(target) : undefined;
+				if (
+					!resolved ||
+					this.turnStates.get(this.turnKey(resolved.agentId, resolved.tabId))?.running
+				) {
+					// A running turn's own end reads the tab again, so its live text is never dropped.
+					return;
+				}
+				this.emitTurn(resolved.agentId, resolved.tabId, { kind: 'gap', at: this.now() });
+				return;
+			}
 			default: {
 				if (channel.startsWith('groupChat:')) {
 					const parsed = parseGroupChatFrame(channel, args, this.now());
@@ -1901,6 +1917,8 @@ class WsMaestroClient implements MaestroClient {
 		const turnOverrides = normalizeTurnOverrides(input.overrides);
 		if (turnOverrides) message.turnOverrides = turnOverrides;
 		if (input.held === true) message.held = true;
+		if (input.agentContext) message.agentContext = input.agentContext;
+		if (input.agentNotes) message.agentNotes = input.agentNotes;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)

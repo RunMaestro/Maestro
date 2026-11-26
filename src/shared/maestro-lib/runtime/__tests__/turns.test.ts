@@ -25,6 +25,7 @@ import { nativeAccountRef } from '../../../agentAccountDir';
 import * as repositories from '../../agents/repository';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
 import type { ClientResult, QueuedTurn, TurnEvent } from '../../client/types';
+import { MAX_TURN_AGENT_TEXT_CHARS } from '../../client/types';
 import type { HistoryEntry } from '../../../types';
 import { parseSynopsis } from '../../../synopsis';
 import { readHistory } from '../../store/read-history';
@@ -807,6 +808,31 @@ describe('runtime turns', () => {
 				expect(turn.kinds()).toEqual(['gap', 'gap']);
 			});
 
+			it('hands a busy tab its /skills rows as live entries of the running turn, not a re-read (M13)', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+
+				expect(value(await runtime.turns.send('a1', 't1', { text: '/skills' }))).toEqual({
+					status: 'ran',
+				});
+				await vi.waitFor(
+					() => expect(turn.kinds().filter((kind) => kind === 'user')).toHaveLength(3),
+					{ timeout: 8_000 }
+				);
+				const live = turn.events.flatMap((event) => (event.kind === 'user' ? [event.entry] : []));
+				expect(live.slice(1).map((entry) => [entry.source, entry.text.split('\n')[0]])).toEqual([
+					['user', '/skills'],
+					['system', expect.stringContaining('Skills')],
+				]);
+				// A `gap` mid-turn would make a client drop the turn's live text.
+				expect(turn.kinds()).not.toContain('gap');
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
+
 			it('says there is no session yet, and writes no History', async () => {
 				const runtime = await start();
 				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
@@ -1401,6 +1427,94 @@ describe('runtime turns', () => {
 			value(await runtime.turns.queue.remove('a1', queued.itemId));
 			value(await runtime.turns.interrupt('a1', 't1'));
 			await turn.outcome();
+		});
+
+		// Parity M7: a hosted agent's `@mention` runs on the desktop that sent it, and the turn
+		// carries the mention's agent-only text here, as a local turn carries it.
+		describe('agent-only text from an @mention (M7)', () => {
+			const sentPrompt = (index: number): string => {
+				const argv = (JSON.parse(fs.readFileSync(argvFiles[index], 'utf-8')) as string[]).join(
+					'\n'
+				);
+				const stdin = argvFiles[index].replace(/argv-(\d+)\.json$/, 'stdin-$1.txt');
+				return fs.existsSync(stdin) ? `${argv}\n${fs.readFileSync(stdin, 'utf-8')}` : argv;
+			};
+
+			it('puts the context ahead of the message and the notes after it, and records the message alone', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'hello',
+						agentContext: 'REPLIES FROM BACKEND',
+						agentNotes: 'BACKEND IS CONSULTING',
+					})
+				);
+				await turn.outcome();
+
+				const prompt = sentPrompt(0);
+				expect(prompt).toContain('REPLIES FROM BACKEND\n\n---\n\nhello');
+				expect(prompt).toContain('\n\n---\n\nBACKEND IS CONSULTING');
+				const entries = await transcript(runtime);
+				expect(entries[0]).toMatchObject({ source: 'user', text: 'hello' });
+				expect(JSON.stringify(entries)).not.toContain('BACKEND IS CONSULTING');
+				expect(JSON.stringify(entries)).not.toContain('REPLIES FROM BACKEND');
+			});
+
+			it('keeps it on a message that waits, until the message runs', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				const held = value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'later',
+						held: true,
+						agentNotes: 'BACKEND IS CONSULTING',
+					})
+				);
+				if (held.status !== 'queued') throw new Error('expected queued');
+				value(await runtime.turns.queue.setPaused('a1', held.itemId, false));
+				await turn.outcome();
+				expect(sentPrompt(0)).toContain('BACKEND IS CONSULTING');
+			});
+
+			it('refuses text it cannot take instead of running the turn without it', async () => {
+				const runtime = await start();
+				const long = 'x'.repeat(MAX_TURN_AGENT_TEXT_CHARS + 1);
+				const refused = errorOf(
+					await runtime.turns.send('a1', 't1', { text: 'hello', agentContext: long })
+				);
+				expect(refused).toMatchObject({ code: 'invalid' });
+				expect(refused.message).toContain('agentContext');
+				const notText = errorOf(
+					await runtime.turns.send('a1', 't1', {
+						text: 'hello',
+						agentNotes: 42 as unknown as string,
+					})
+				);
+				expect(notText.message).toContain('agentNotes must be text');
+				expect(argvFiles).toEqual([]);
+			});
+
+			it('refuses a /skills sent with text it cannot take, and runs nothing', async () => {
+				const runtime = await start();
+				const before = (await transcript(runtime)).length;
+				const refused = errorOf(
+					await runtime.turns.send('a1', 't1', {
+						text: '/skills',
+						agentNotes: 17 as unknown as string,
+					})
+				);
+				expect(refused).toMatchObject({ code: 'invalid' });
+				const tooLong = errorOf(
+					await runtime.turns.send('a1', 't1', {
+						text: '/skills',
+						agentContext: 'x'.repeat(MAX_TURN_AGENT_TEXT_CHARS + 1),
+					})
+				);
+				expect(tooLong).toMatchObject({ code: 'invalid' });
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				expect((await transcript(runtime)).length).toBe(before);
+			});
 		});
 
 		it('queues a held message paused on an idle tab, and runs it once resumed (M3)', async () => {

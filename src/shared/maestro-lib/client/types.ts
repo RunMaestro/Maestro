@@ -461,6 +461,41 @@ export interface TurnInput {
 	 * field refuses it; a newer one queues it paused, as a desktop host does.
 	 */
 	held?: boolean;
+	/**
+	 * Agent-only text this one turn's prompt carries AHEAD of `text`, joined by a `---` rule, as a
+	 * local turn carries a queued item's `agentContext` (a released consult's replies). Never drawn
+	 * in the transcript, which shows `text` alone. A host that does not know the field ignores it.
+	 */
+	agentContext?: string;
+	/**
+	 * Agent-only notes this one turn's prompt carries AFTER `text`, joined by a `---` rule, as a
+	 * local turn carries its `@mention` notes (`withMentionTurnNotes()`: a consult is running, the
+	 * answer is handed off). Never drawn in the transcript. A host that does not know it ignores it.
+	 */
+	agentNotes?: string;
+}
+
+/** The most characters `TurnInput.agentContext` or `agentNotes` may hold, each. */
+export const MAX_TURN_AGENT_TEXT_CHARS = 1_000_000;
+
+/**
+ * The agent-only text (`agentContext`, `agentNotes`) a client sent: `{ ok, value }` with a blank
+ * or absent field as no value, or the reason a present field cannot be taken (not text, too long).
+ * Never dropped silently: a turn without the context it was sent with answers the wrong question.
+ */
+export function readTurnAgentText(
+	value: unknown,
+	field: 'agentContext' | 'agentNotes'
+): { ok: true; value?: string } | { ok: false; error: string } {
+	if (value === undefined || value === null) return { ok: true };
+	if (typeof value !== 'string') return { ok: false, error: `${field} must be text.` };
+	if (value.length > MAX_TURN_AGENT_TEXT_CHARS) {
+		return {
+			ok: false,
+			error: `${field} is longer than ${MAX_TURN_AGENT_TEXT_CHARS} characters.`,
+		};
+	}
+	return value.trim() ? { ok: true, value } : { ok: true };
 }
 
 /** One sender's own tab choices, applied to this one turn only; never stored on the host tab. */

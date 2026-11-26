@@ -78,8 +78,8 @@ export interface RuntimeBuiltinCommandsOptions {
 	 * another synopsis, wait until the answer is called. Rejects when the host is closing.
 	 */
 	reserveTabSession(agentId: string, tabId: string): Promise<() => void>;
-	/** The tab's transcript grew outside a turn: tell the clients to read it again. */
-	transcriptChanged(agentId: string, tabId: string): void;
+	/** The command wrote `entry` to the tab's transcript, outside any turn: tell the clients. */
+	transcriptChanged(agentId: string, tabId: string, entry: LogEntryRecord): void;
 	/** The home directory the user's own skills live under. Default: this process's. */
 	homeDir?(): string;
 }
@@ -158,7 +158,7 @@ export function createRuntimeBuiltinCommands(
 			);
 			return;
 		}
-		options.transcriptChanged(agentId, tabId);
+		options.transcriptChanged(agentId, tabId, entry);
 	}
 
 	/**
