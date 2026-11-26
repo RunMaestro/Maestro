@@ -539,8 +539,13 @@ export interface MentionHandoff {
 		afterEntryId?: string;
 		/** The host's queue frame showed `queueItemId` waiting. */
 		seenQueued?: boolean;
-		/** The start time of the turn it was queued behind (the tab's `thinkingStartTime`). */
+		/**
+		 * The start time of the turn it was queued behind (the tab's `thinkingStartTime` when it was
+		 * first seen waiting; never overwritten).
+		 */
 		turnStartedAt?: number;
+		/** It left the host queue with no start seen: one more sync before it counts as removed. */
+		goneOnce?: boolean;
 	};
 }
 

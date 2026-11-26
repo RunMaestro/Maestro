@@ -238,20 +238,38 @@ const mentionsAwaitingHostStart = new Map<
 		item: QueuedItem;
 		mention: CrossAgentMentionPlan;
 		seenQueued: boolean;
+		/**
+		 * `turnStartedAt` is recorded: the first sync that saw the item waiting set it, and no later
+		 * sync overwrites it (that sync may already show the item's own turn, when its tab state
+		 * came before its queue change).
+		 */
+		aheadKnown?: boolean;
 		/** When the turn the host queued it behind started (the tab's `thinkingStartTime` then). */
 		turnStartedAt?: number;
+		/**
+		 * It left the host queue with no start seen, from a host that does not name its starts: the
+		 * next sync tells a start whose tab state comes later from a removal.
+		 */
+		goneOnce?: boolean;
 		/** When the host's receipt said it was queued. */
 		queuedAt: number;
 	}
 >();
 
 /**
- * Fire the consults of turns the host queued once they start: the item is not in the host's queue
- * and its tab reads busy with a turn that is not the one it was queued behind (it was seen queued,
- * or the tab's turn started at another time). One seen queued that left while the tab is idle was
- * taken out of the host's queue, so nobody is consulted for it.
+ * Fire the consults of turns the host queued once they start.
+ *
+ * A host that names its starts (`hostStarts`, the mirror's `queueStarts`) says which item a start
+ * took, in the same message that takes it out of the queue: that item fires, and one that left the
+ * queue unnamed was removed, so nobody is consulted for it. Nothing is read from the tab's state.
+ *
+ * An older headless host, and a desktop host, name none. Then the item started when it is not in
+ * the host's queue and its tab reads busy with a turn that is not the one it was queued behind (the
+ * turn the tab ran when it was first seen waiting, never overwritten after). The queue change and
+ * the tab's busy state arrive as separate messages, so one that left the queue while the tab is
+ * idle, or still busy with the turn ahead, waits one more sync before it counts as removed.
  */
-export function fireHostStartedMentions(session: Session): void {
+export function fireHostStartedMentions(session: Session, hostStarts?: readonly string[]): void {
 	if (mentionsAwaitingHostStart.size === 0) return;
 	const hostQueued = new Set(
 		(session.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
@@ -260,23 +278,33 @@ export function fireHostStartedMentions(session: Session): void {
 		if (waiting.sessionId !== session.id) continue;
 		const tabId = waiting.item.tabId || session.activeTabId;
 		const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
-		if (hostQueued.has(hostItemId)) {
-			// While it waits, the turn ahead is whatever the host's tab runs now.
-			waiting.seenQueued = true;
-			waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
-			continue;
-		}
-		// Its turn, not the one it waited behind: a removal while that turn runs consults nobody.
-		// Never seen waiting (its queue frame had not come): only a turn that started after the
-		// receipt can be it, not the one running when the host queued it.
-		const started =
-			tab?.state === 'busy' &&
-			(waiting.seenQueued
-				? tab.thinkingStartTime !== waiting.turnStartedAt
-				: (tab.thinkingStartTime ?? 0) >= waiting.queuedAt);
-		if (!started) {
-			if (waiting.seenQueued) mentionsAwaitingHostStart.delete(hostItemId);
-			continue;
+		if (!hostStarts?.includes(hostItemId)) {
+			if (hostQueued.has(hostItemId)) {
+				waiting.seenQueued = true;
+				if (!waiting.aheadKnown) {
+					waiting.aheadKnown = true;
+					waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
+				}
+				continue;
+			}
+			// Named starts: unnamed and gone after it was seen waiting is a removal.
+			if (hostStarts) {
+				if (waiting.seenQueued) mentionsAwaitingHostStart.delete(hostItemId);
+				continue;
+			}
+			// Never seen waiting (its queue frame had not come): only a turn that started after the
+			// receipt can be it, not the one running when the host queued it.
+			const started =
+				tab?.state === 'busy' &&
+				(waiting.seenQueued
+					? tab.thinkingStartTime !== waiting.turnStartedAt
+					: (tab.thinkingStartTime ?? 0) >= waiting.queuedAt);
+			if (!started) {
+				if (!waiting.seenQueued) continue;
+				if (waiting.goneOnce) mentionsAwaitingHostStart.delete(hostItemId);
+				else waiting.goneOnce = true;
+				continue;
+			}
 		}
 		mentionsAwaitingHostStart.delete(hostItemId);
 		dispatchCrossAgentMentions(

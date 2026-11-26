@@ -167,6 +167,9 @@ const POST_OUTCOME_REFRESH_MS = 2_500;
 /** The longest group chat name. Agent names have their own limit (`MAX_AGENT_NAME_LENGTH`). */
 const MAX_CHAT_NAME_LENGTH = 100;
 
+/** The longest queue item id read off a host's `queue_changed` frame (the host's ids are UUIDs). */
+const MAX_QUEUE_ITEM_ID_CHARS = 200;
+
 const TOO_OLD_MESSAGE = 'The running Maestro is too old for this request; update the desktop app.';
 
 /** The least time an `import_agent` gets: it carries every transcript the agent has. */
@@ -1072,7 +1075,15 @@ class WsMaestroClient implements MaestroClient {
 				// A headless host's own frame: the desktop sends none (see `queue.changed`).
 				const agentId = asString(frame.sessionId);
 				if (!agentId || !Array.isArray(frame.items)) break;
-				this.emit({ type: 'queue.changed', agentId, items: parseQueuedTurns(frame.items) });
+				// The item a start took, from a host that names its starts (an older one sends neither).
+				const started = asString(frame.started);
+				this.emit({
+					type: 'queue.changed',
+					agentId,
+					items: parseQueuedTurns(frame.items),
+					...(frame.namesStarts === true ? { namesStarts: true as const } : {}),
+					...(started && started.length <= MAX_QUEUE_ITEM_ID_CHARS ? { started } : {}),
+				});
 				break;
 			}
 			case 'autorun_ended': {

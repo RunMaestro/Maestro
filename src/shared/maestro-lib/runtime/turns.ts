@@ -875,16 +875,25 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	// Queues
 	// -----------------------------------------------------------------------
 
-	/** Tell every listener what now waits for the agent: the whole list, in order. */
-	function emitQueue(agentId: string): void {
+	/**
+	 * Tell every listener what now waits for the agent: the whole list, in order. A change made by
+	 * a start names the item that started, so a client never has to infer it from the tab's state.
+	 */
+	function emitQueue(agentId: string, started?: string): void {
 		const items = queues.get(agentId)?.items() ?? [];
-		bus.emit({ type: 'queue.changed', agentId, items: items.map(toQueuedTurn) });
+		bus.emit({
+			type: 'queue.changed',
+			agentId,
+			items: items.map(toQueuedTurn),
+			namesStarts: true,
+			...(started ? { started } : {}),
+		});
 	}
 
 	function onQueueEvent(agentId: string, event: QueueEvent<TurnItem>): void {
 		// Every event but a turn's end, and a start that never waited, changes what waits.
 		if (event.type !== 'ended' && !(event.type === 'started' && event.direct)) {
-			emitQueue(agentId);
+			emitQueue(agentId, event.type === 'started' ? event.item.id : undefined);
 		}
 		switch (event.type) {
 			case 'started':

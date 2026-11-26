@@ -467,13 +467,22 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		expect(hostedHandoffStep(busyWith(100, queued), new Set(['h9']))).toBe('seen-queued');
 		const seen = { ...queued, seenQueued: true };
 		expect(hostedHandoffStep(busyWith(100, seen), new Set(['h9']))).toBe('wait');
-		// A new turn ahead of it while it still waits is recorded, not taken for its own.
-		expect(hostedHandoffStep(busyWith(150, seen), new Set(['h9']))).toBe('seen-queued');
+		// The turn ahead is recorded once: a busy state that lands before the queue change is this
+		// item's own turn, never a new turn ahead (M14).
+		expect(hostedHandoffStep(busyWith(150, seen), new Set(['h9']))).toBe('wait');
 		// Its own turn started: a new start time on the tab.
 		expect(hostedHandoffStep(busyWith(200, seen), new Set())).toBe('running');
-		// Gone from the queue while the turn ahead still runs: it was removed, nothing goes out.
-		expect(hostedHandoffStep(busyWith(100, seen), new Set())).toBe('drop');
-		expect(hostedHandoffStep({ ...busyWith(100, seen), state: 'idle' }, new Set())).toBe('drop');
+		// Gone from the queue while the turn ahead still runs, or with the tab idle: the tab's state
+		// may still come, so one more sync before it counts as removed and nothing goes out.
+		expect(hostedHandoffStep(busyWith(100, seen), new Set())).toBe('gone-once');
+		expect(hostedHandoffStep({ ...busyWith(100, seen), state: 'idle' }, new Set())).toBe(
+			'gone-once'
+		);
+		const goneOnce = { ...seen, goneOnce: true };
+		expect(hostedHandoffStep(busyWith(100, goneOnce), new Set())).toBe('drop');
+		expect(hostedHandoffStep({ ...busyWith(100, goneOnce), state: 'idle' }, new Set())).toBe(
+			'drop'
+		);
 		// The turn ended but the tab still draws what it streamed: read the saved transcript first.
 		expect(
 			hostedHandoffStep(
@@ -663,6 +672,10 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		await flush();
 		withHost(true, 100);
 		fireHostStartedMentions(row());
+		// Gone while the turn ahead runs: one more sync, in case the tab's state comes later...
+		withHost(false, 100);
+		fireHostStartedMentions(row());
+		// ...and still on the turn ahead: it was removed.
 		withHost(false, 100);
 		fireHostStartedMentions(row());
 		// A later turn on the tab is not this message either.
@@ -846,6 +859,197 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		expect(dispatched).toBe(true);
 		expect(sends()).toEqual([]);
 		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+	});
+
+	describe('a turn the host queued, whose queue change and tab state arrive apart (M14)', () => {
+		type HostView = { queued: boolean; busy?: number; logs?: boolean };
+		/** One host message: the queue change, or the tab's state, as its own store update. */
+		const hostSays = (itemId: string, text: string, view: HostView) =>
+			useSessionStore.setState((current) => ({
+				sessions: current.sessions.map((s) =>
+					s.id === 'row'
+						? {
+								...s,
+								aiTabs: s.aiTabs.map((t) => ({
+									...t,
+									state: view.busy === undefined ? 'idle' : 'busy',
+									thinkingStartTime: view.busy,
+									...(view.logs
+										? {
+												logs: [
+													{ id: 'u', timestamp: 1, source: 'user' as const, text },
+													{
+														id: 'a',
+														timestamp: 2,
+														source: 'ai' as const,
+														text: 'The cache is stale.',
+													},
+												],
+											}
+										: {}),
+								})),
+								executionQueue: view.queued
+									? [queuedMessage({ id: itemId, hostQueued: true, text })]
+									: s.executionQueue.filter((q) => !q.hostQueued),
+							}
+						: s
+				),
+			}));
+		/** Drain a mention message the host answers `queued`, behind a turn that started at 100. */
+		const drainQueued = async (itemId: string, mentionRouting: QueuedItem['mentionRouting']) => {
+			act$.mockResolvedValue({
+				ok: true,
+				result: {
+					kind: 'send',
+					receipt: { status: 'queued', itemId, position: 1, queueLength: 1 },
+				},
+			});
+			seedWithBackend('hosted');
+			const text = 'look into the cache with @Backend';
+			hostSays(itemId, text, { queued: false, busy: 100 });
+			await useAgentStore
+				.getState()
+				.processQueuedItem(
+					'row',
+					queuedMessage({ text, crossAgentMention: true, mentionRouting }),
+					drainDeps
+				);
+			await flush();
+			return text;
+		};
+
+		describe.each(['parallel', 'consult-first'] as const)('a %s consult', (routing) => {
+			it('busy state first: the new turn is not taken for the turn ahead, and it consults', async () => {
+				const id = `a-${routing}`;
+				const text = await drainQueued(id, routing);
+				hostSays(id, text, { queued: true, busy: 100 });
+				fireHostStartedMentions(row());
+				// The tab reads its own turn while the queue change has not come yet.
+				hostSays(id, text, { queued: true, busy: 200 });
+				fireHostStartedMentions(row());
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				hostSays(id, text, { queued: false, busy: 200 });
+				fireHostStartedMentions(row());
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
+					targetSessionId: 'backend',
+				});
+			});
+
+			it('queue change first, tab idle: it waits a sync for the start, then consults', async () => {
+				const id = `b-${routing}`;
+				const text = await drainQueued(id, routing);
+				hostSays(id, text, { queued: true, busy: 100 });
+				fireHostStartedMentions(row());
+				hostSays(id, text, { queued: false });
+				fireHostStartedMentions(row());
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				hostSays(id, text, { queued: false, busy: 200 });
+				fireHostStartedMentions(row());
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+			});
+
+			it('queue change first, tab still on the turn ahead: it waits a sync, then consults', async () => {
+				const id = `c-${routing}`;
+				const text = await drainQueued(id, routing);
+				hostSays(id, text, { queued: true, busy: 100 });
+				fireHostStartedMentions(row());
+				hostSays(id, text, { queued: false, busy: 100 });
+				fireHostStartedMentions(row());
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				hostSays(id, text, { queued: false, busy: 200 });
+				fireHostStartedMentions(row());
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+			});
+
+			it('a host that names its starts: the named item consults in either order, a removal never', async () => {
+				const id = `d-${routing}`;
+				const text = await drainQueued(id, routing);
+				hostSays(id, text, { queued: true, busy: 100 });
+				fireHostStartedMentions(row(), []);
+				// Busy state first: nothing is inferred from it.
+				hostSays(id, text, { queued: true, busy: 200 });
+				fireHostStartedMentions(row(), []);
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				// The queue change that names it, with the tab still idle between turns.
+				hostSays(id, text, { queued: false });
+				fireHostStartedMentions(row(), [id]);
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+
+				sendCrossAgentRequest.mockReset();
+				const removed = `e-${routing}`;
+				const again = await drainQueued(removed, routing);
+				hostSays(removed, again, { queued: true, busy: 100 });
+				fireHostStartedMentions(row(), [id]);
+				hostSays(removed, again, { queued: false, busy: 100 });
+				fireHostStartedMentions(row(), [id]);
+				// Its tab runs a later turn: the host never named this item, so it was removed.
+				hostSays(removed, again, { queued: false, busy: 300 });
+				fireHostStartedMentions(row(), [id]);
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('a hand-off', () => {
+			const releasesWithItsAnswer = (text: string, hostStarts?: string[]) => {
+				hostSays('', text, { queued: false, logs: true });
+				followHostedHandoffs(row(), undefined, hostStarts);
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
+					targetSessionId: 'backend',
+					handoffAnswer: 'The cache is stale.',
+				});
+				expect(row().aiTabs[0].pendingMentionHandoff).toBeUndefined();
+			};
+
+			it('busy state first: it runs, then hands off its answer', async () => {
+				const text = await drainQueued('h-a', 'handoff');
+				hostSays('h-a', text, { queued: true, busy: 100 });
+				followHostedHandoffs(row());
+				hostSays('h-a', text, { queued: true, busy: 200 });
+				followHostedHandoffs(row());
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn).toMatchObject({
+					turnStartedAt: 100,
+				});
+				hostSays('h-a', text, { queued: false, busy: 200 });
+				followHostedHandoffs(row());
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
+				releasesWithItsAnswer(text);
+			});
+
+			it('queue change first, tab idle: it is not dropped, it runs, then hands off', async () => {
+				const text = await drainQueued('h-b', 'handoff');
+				hostSays('h-b', text, { queued: true, busy: 100 });
+				followHostedHandoffs(row());
+				hostSays('h-b', text, { queued: false });
+				followHostedHandoffs(row());
+				expect(row().aiTabs[0].pendingMentionHandoff).toBeDefined();
+				hostSays('h-b', text, { queued: false, busy: 200 });
+				followHostedHandoffs(row());
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
+				releasesWithItsAnswer(text);
+			});
+
+			it('a host that names its starts: the named item runs and hands off, with no tab inference', async () => {
+				const text = await drainQueued('h-c', 'handoff');
+				hostSays('h-c', text, { queued: true, busy: 100 });
+				followHostedHandoffs(row(), undefined, []);
+				hostSays('h-c', text, { queued: false });
+				followHostedHandoffs(row(), undefined, ['h-c']);
+				expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn?.stage).toBe('running');
+				releasesWithItsAnswer(text, ['h-c']);
+			});
+
+			it('a host that names its starts: an unnamed item gone from its queue was removed', async () => {
+				const text = await drainQueued('h-d', 'handoff');
+				hostSays('h-d', text, { queued: true, busy: 100 });
+				followHostedHandoffs(row(), undefined, []);
+				hostSays('h-d', text, { queued: false, busy: 300 });
+				followHostedHandoffs(row(), undefined, []);
+				expect(row().aiTabs[0].pendingMentionHandoff).toBeUndefined();
+				expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+			});
+		});
 	});
 
 	it('hosted: a queued message that mentions an agent waits for the drain instead of going at once', () => {

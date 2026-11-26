@@ -1385,6 +1385,45 @@ describe('runtime turns', () => {
 			expect(changes[1]).toEqual([]);
 		});
 
+		it('names the item a start took out of the queue, and only on that change (M14)', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			const changes: Array<{ items: QueuedTurn[]; started?: string; namesStarts?: true }> = [];
+			runtime.events.subscribe(
+				(event) => {
+					if (event.type === 'queue.changed') {
+						changes.push({
+							items: event.items,
+							...(event.started ? { started: event.started } : {}),
+							...(event.namesStarts ? { namesStarts: event.namesStarts } : {}),
+						});
+					}
+				},
+				{ types: ['queue.changed'], agentId: 'a1' }
+			);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			hold = false;
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'second' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+			const removed = value(await runtime.turns.send('a1', 't1', { text: 'third' }));
+			if (removed.status !== 'queued') throw new Error('expected queued');
+			value(await runtime.turns.queue.remove('a1', removed.itemId));
+
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome(2);
+			// Added, added, removed (no start named), then the start of `second`, in one message.
+			expect(changes.map((change) => change.started)).toEqual([
+				undefined,
+				undefined,
+				undefined,
+				queued.itemId,
+			]);
+			expect(changes.every((change) => change.namesStarts === true)).toBe(true);
+			expect(changes[3].items).toEqual([]);
+		});
+
 		it('holds and releases a waiting message, and says when none has that id', async () => {
 			hold = true;
 			const runtime = await start();

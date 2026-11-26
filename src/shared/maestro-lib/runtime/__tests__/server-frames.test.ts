@@ -379,10 +379,22 @@ describe('queue frames', () => {
 			type: 'queue_changed',
 			sessionId: 'a1',
 			items: wire,
+			namesStarts: true,
 		});
 		expect(
 			framesForEvent({ type: 'queue.changed', agentId: 'a1', items: [] }, createFrameState())
-		).toEqual([{ type: 'queue_changed', sessionId: 'a1', items: [] }]);
+		).toEqual([{ type: 'queue_changed', sessionId: 'a1', items: [], namesStarts: true }]);
+	});
+
+	it('names the item a start took out of the queue (M14)', () => {
+		expect(
+			framesForEvent(
+				{ type: 'queue.changed', agentId: 'a1', items: [], namesStarts: true, started: 'q1' },
+				createFrameState()
+			)
+		).toEqual([
+			{ type: 'queue_changed', sessionId: 'a1', items: [], namesStarts: true, started: 'q1' },
+		]);
 	});
 });
 

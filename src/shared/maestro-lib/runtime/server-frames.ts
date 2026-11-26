@@ -95,10 +95,21 @@ export function queuedTurnsToWire(items: readonly QueuedTurn[]): QueuedTurnWire[
 /**
  * An agent's execution queue changed. The desktop's bridge has no frame for this, so it is a
  * headless host's own: `createWsMaestroClient` reads it back into `queue.changed`, and a client
- * that does not know the type ignores it.
+ * that does not know the type ignores it. `namesStarts` says this host names the item a start took
+ * (`started`); an older client ignores both fields.
  */
-export function queueChangedFrame(agentId: string, items: readonly QueuedTurn[]): Frame {
-	return { type: 'queue_changed', sessionId: agentId, items: queuedTurnsToWire(items) };
+export function queueChangedFrame(
+	agentId: string,
+	items: readonly QueuedTurn[],
+	started?: string
+): Frame {
+	return {
+		type: 'queue_changed',
+		sessionId: agentId,
+		items: queuedTurnsToWire(items),
+		namesStarts: true,
+		...(started ? { started } : {}),
+	};
 }
 
 /** The desktop's process id for an agent's AI tab, which is what the client parses back. */
@@ -370,7 +381,7 @@ export function framesForEvent(event: MaestroEvent, state: FrameState): Frame[] 
 		case 'turn':
 			return turnFrames(event.agentId, event.tabId, event.event, state);
 		case 'queue.changed':
-			return [queueChangedFrame(event.agentId, event.items)];
+			return [queueChangedFrame(event.agentId, event.items, event.started)];
 		case 'autorun':
 			return autoRunFrames(event.agentId, event.event);
 		case 'autorun.ended':

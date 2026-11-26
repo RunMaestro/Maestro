@@ -1038,7 +1038,18 @@ export type MaestroEvent =
 	 * runtime owns the queue says this: the desktop's bridge does not, so a client attached to a
 	 * desktop reads the queue with `turns.queue.list` instead.
 	 */
-	| { type: 'queue.changed'; agentId: string; items: QueuedTurn[] }
+	| {
+			type: 'queue.changed';
+			agentId: string;
+			items: QueuedTurn[];
+			/** The host's id of the item whose start made this change: it left the queue to run. */
+			started?: string;
+			/**
+			 * This host names every start (`started`), so an item that left the queue without one
+			 * was removed. An older headless host, and a desktop host, do not say it.
+			 */
+			namesStarts?: true;
+	  }
 	/**
 	 * A run's progress, from the host's `autorun_state` and the run's own
 	 * process stream (its output and usage). Fold them with `reduceAutoRun`.

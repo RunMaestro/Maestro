@@ -1488,6 +1488,34 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
+		it('reads the item a start took, and that the host names its starts (M14)', async () => {
+			await connect();
+			bridge.push({
+				type: 'queue_changed',
+				sessionId: A1,
+				items: [],
+				namesStarts: true,
+				started: 'q1',
+			});
+			// A malformed or oversized id is not passed on as one; an older host sends neither field.
+			bridge.push({ type: 'queue_changed', sessionId: A1, items: [], started: 42 });
+			bridge.push({
+				type: 'queue_changed',
+				sessionId: A1,
+				items: [],
+				namesStarts: 'yes',
+				started: 'x'.repeat(201),
+			});
+			await vi.waitFor(() =>
+				expect(events.filter((event) => event.type === 'queue.changed')).toHaveLength(3)
+			);
+			expect(events.filter((event) => event.type === 'queue.changed')).toEqual([
+				{ type: 'queue.changed', agentId: A1, items: [], namesStarts: true, started: 'q1' },
+				{ type: 'queue.changed', agentId: A1, items: [] },
+				{ type: 'queue.changed', agentId: A1, items: [] },
+			]);
+		});
+
 		describe('event stream', () => {
 			it('streams a whole turn: started, thinking, text, tool, usage, outcome', async () => {
 				const seen: TurnEvent[] = [];
