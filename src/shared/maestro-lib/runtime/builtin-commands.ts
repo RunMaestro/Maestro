@@ -67,8 +67,11 @@ export interface RuntimeBuiltinCommandsOptions {
 	host: RuntimeTurnOptions;
 	deps: Pick<RuntimeTurnDeps, 'runAgentTurn' | 'probeBinary' | 'readGitBranch' | 'now'>;
 	rules: Pick<RuleContext, 'newId'>;
-	/** Resolves once no turn runs on the tab. */
-	whenTabIdle(agentId: string, tabId: string): Promise<void>;
+	/**
+	 * Hold the tab's provider session for a synopsis once no turn runs on it: a send to the tab, and
+	 * another synopsis, wait until the answer is called. Rejects when the host is closing.
+	 */
+	reserveTabSession(agentId: string, tabId: string): Promise<() => void>;
 	/** The tab's transcript grew outside a turn: tell the clients to read it again. */
 	transcriptChanged(agentId: string, tabId: string): void;
 	/** The home directory the user's own skills live under. Default: this process's. */
@@ -139,16 +142,31 @@ export function createRuntimeBuiltinCommands(
 			return;
 		}
 		await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.pending);
+		let release: (() => void) | undefined;
 		try {
-			// One writer per provider session: the synopsis resumes it after the tab's turn ends.
-			await options.whenTabIdle(agentId, tabId);
+			// One writer per provider session: the synopsis holds it once the tab's turn has ended,
+			// and a send waits for the hold.
+			release = await options.reserveTabSession(agentId, tabId);
+			// What the wait may have changed: the turn that ran can have moved the tab to a new
+			// session, which is the conversation to summarize.
+			const current = repository.getTab(agentId, tabId);
+			const record = repository.getAgent(agentId);
+			const sessionNow =
+				current && typeof current.agentSessionId === 'string' && current.agentSessionId
+					? current.agentSessionId
+					: undefined;
+			if (!record || !current) return;
+			if (!sessionNow) {
+				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.noSession);
+				return;
+			}
 			const lastSynopsisTime =
 				lastSynopsisAt.get(slotKey(agentId, tabId)) ??
-				(typeof tab.lastSynopsisTime === 'number' ? tab.lastSynopsisTime : undefined);
+				(typeof current.lastSynopsisTime === 'number' ? current.lastSynopsisTime : undefined);
 			const toolType = record.toolType as ToolType;
 			const cheap = cheapResumeTurnSettings(toolType, {
-				model: str(tab.customModel) ?? str(record.customModel),
-				effort: str(tab.customEffort) ?? str(record.customEffort),
+				model: str(current.customModel) ?? str(record.customModel),
+				effort: str(current.customEffort) ?? str(record.customEffort),
 			});
 			const synopsisTime = deps.now();
 			const runner = createAutoRunTurnRunner({
@@ -165,7 +183,7 @@ export function createRuntimeBuiltinCommands(
 			const result = await runner.run({
 				purpose: 'synopsis',
 				prompt: historySynopsisPrompt(synopsisBasePrompt(), lastSynopsisTime),
-				resumeSessionId: agentSessionId,
+				resumeSessionId: sessionNow,
 				model: cheap.model,
 				effort: cheap.effort,
 			});
@@ -185,16 +203,16 @@ export function createRuntimeBuiltinCommands(
 				timestamp: synopsisTime,
 				summary: parsed.shortSummary,
 				fullResponse: parsed.fullSynopsis,
-				agentSessionId,
+				agentSessionId: sessionNow,
 				sessionId: agentId,
 				projectPath: typeof record.cwd === 'string' ? record.cwd : '',
-				...(str(tab.name) ? { sessionName: str(tab.name) } : {}),
+				...(str(current.name) ? { sessionName: str(current.name) } : {}),
 				...(result.usageStats ? { usageStats: result.usageStats } : {}),
 				...(context !== null ? { contextUsage: context } : {}),
 				elapsedTimeMs: historySynopsisElapsedMs(
 					{
 						lastSynopsisTime,
-						createdAt: typeof tab.createdAt === 'number' ? tab.createdAt : undefined,
+						createdAt: typeof current.createdAt === 'number' ? current.createdAt : undefined,
 					},
 					synopsisTime
 				),
@@ -209,6 +227,8 @@ export function createRuntimeBuiltinCommands(
 				'system',
 				HISTORY_COMMAND_TEXT.error(error instanceof Error ? error.message : String(error))
 			);
+		} finally {
+			release?.();
 		}
 	}
 

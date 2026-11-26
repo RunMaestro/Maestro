@@ -101,7 +101,8 @@ export function admitTurnImages(
 export function writeImageTempFile(
 	dataUrl: string,
 	index: number,
-	tempDir: string = os.tmpdir()
+	tempDir: string = os.tmpdir(),
+	io: ImageFileIo = fs
 ): string | null {
 	const parsed = parseDataUrl(dataUrl);
 	if (!parsed) return null;
@@ -110,13 +111,43 @@ export function writeImageTempFile(
 	for (;;) {
 		const filename = `maestro-image-${Date.now()}-${process.pid}-${randomUUID()}-${index}.${ext}`;
 		const tempPath = path.join(tempDir, filename);
+		let fd: number;
 		try {
-			fs.writeFileSync(tempPath, buffer, { mode: 0o600, flag: 'wx' });
-			return tempPath;
+			fd = io.openSync(tempPath, 'wx', 0o600);
 		} catch (error) {
+			// Someone else's file: pick another name, and never touch theirs.
 			if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
 			throw error;
 		}
+		// The file is ours from here: a write that fails removes it, so no partial image is left
+		// behind for a caller that never learns its name.
+		try {
+			io.writeFileSync(fd, buffer);
+		} catch (error) {
+			closeQuietly(io, fd);
+			try {
+				io.unlinkSync(tempPath);
+			} catch {
+				// Already gone.
+			}
+			throw error;
+		}
+		io.closeSync(fd);
+		return tempPath;
+	}
+}
+
+/** The file calls `writeImageTempFile` makes. A test seam; the default is `fs`. */
+export type ImageFileIo = Pick<
+	typeof fs,
+	'openSync' | 'writeFileSync' | 'closeSync' | 'unlinkSync'
+>;
+
+function closeQuietly(io: ImageFileIo, fd: number): void {
+	try {
+		io.closeSync(fd);
+	} catch {
+		// The descriptor is already closed.
 	}
 }
 

@@ -1915,7 +1915,7 @@ describe('useWizardHandlers', () => {
 				host: {},
 				deps: { runAgentTurn: vi.fn(), now: () => 1 },
 				rules: { newId: () => `e${++id}` },
-				whenTabIdle: async () => undefined,
+				reserveTabSession: async () => () => undefined,
 				transcriptChanged: () => undefined,
 				homeDir: () => path.join(root, 'home'),
 			});

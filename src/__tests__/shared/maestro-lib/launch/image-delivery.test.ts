@@ -75,6 +75,44 @@ describe('writeImageTempFile', () => {
 		if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600);
 		expect(writeImageTempFile('not an image', 1, dir)).toBeNull();
 	});
+
+	it('removes the file it created when the write fails, and throws', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'image-delivery-'));
+		dirs.push(dir);
+		const io = {
+			openSync: fs.openSync,
+			closeSync: fs.closeSync,
+			unlinkSync: fs.unlinkSync,
+			writeFileSync: () => {
+				throw Object.assign(new Error('no space'), { code: 'ENOSPC' });
+			},
+		} as never;
+		expect(() => writeImageTempFile(PNG, 0, dir, io)).toThrow('no space');
+		expect(fs.readdirSync(dir)).toEqual([]);
+	});
+
+	it("never removes a file it did not create (a name that is someone else's)", () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'image-delivery-'));
+		dirs.push(dir);
+		const theirs = path.join(dir, 'theirs.png');
+		fs.writeFileSync(theirs, 'keep');
+		let first = true;
+		const io = {
+			openSync: (file: string, flags: string, mode: number) => {
+				if (first) {
+					first = false;
+					throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+				}
+				return fs.openSync(file, flags, mode);
+			},
+			closeSync: fs.closeSync,
+			unlinkSync: fs.unlinkSync,
+			writeFileSync: fs.writeFileSync,
+		} as never;
+		const file = writeImageTempFile(PNG, 0, dir, io)!;
+		expect(fs.readFileSync(theirs, 'utf8')).toBe('keep');
+		expect(fs.existsSync(file)).toBe(true);
+	});
 });
 
 describe('planImageDelivery', () => {

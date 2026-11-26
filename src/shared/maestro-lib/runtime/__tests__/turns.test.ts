@@ -70,12 +70,14 @@ describe('runtime turns', () => {
 
 	const watchDirectory: WatchDirectory = () => ({ close: () => undefined });
 
-	const fakeProvider: RuntimeDeps['turns']['runAgentTurn'] = (turn, options) => {
+	const fakeProvider: RuntimeDeps['turns']['runAgentTurn'] = async (turn, options) => {
 		const argvOut = path.join(work, `argv-${argvFiles.length + 1}.json`);
 		argvFiles.push(argvOut);
 		turnOptions.push(options);
 		launched.push(turn);
-		return runAgentTurn(
+		live.now += 1;
+		live.max = Math.max(live.max, live.now);
+		const started = await runAgentTurn(
 			{
 				...turn,
 				launch: {
@@ -93,7 +95,15 @@ describe('runtime turns', () => {
 			},
 			{ ...options, stopGraceMs: 200 }
 		);
+		if (!started.ok) live.now -= 1;
+		else
+			void started.run.result.finally(() => {
+				live.now -= 1;
+			});
+		return started;
 	};
+	/** How many provider processes run at once, and the most there ever were. */
+	const live = { now: 0, max: 0 };
 
 	function deps(): Partial<RuntimeDeps> {
 		let id = 0;
@@ -210,6 +220,8 @@ describe('runtime turns', () => {
 		open = [];
 		hold = false;
 		argvFiles = [];
+		live.now = 0;
+		live.max = 0;
 		turnOptions = [];
 		launched = [];
 		binaryExists = true;
@@ -602,6 +614,82 @@ describe('runtime turns', () => {
 				);
 				expect(auto).toHaveLength(1);
 				expect(lines[3][1]).toBe(HISTORY_COMMAND_TEXT.saved(auto[0].summary));
+			});
+
+			it('never runs two writers on one provider session: /history twice and a send take turns', async () => {
+				const runtime = await start([
+					seedAgent({
+						aiTabs: [
+							{ id: 't1', agentSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID, name: null, logs: [] },
+						],
+						unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+					}),
+				]);
+				const turn = watch(runtime);
+				await Promise.all([
+					runtime.turns.send('a1', 't1', { text: '/history' }),
+					runtime.turns.send('a1', 't1', { text: '/history' }),
+				]);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				await turn.outcome();
+				await vi.waitFor(
+					async () =>
+						expect(
+							(await transcript(runtime)).filter((entry) =>
+								entry.text.startsWith('Synopsis saved to history: ')
+							)
+						).toHaveLength(2),
+					{ timeout: 8_000 }
+				);
+				expect(argvFiles).toHaveLength(3);
+				expect(live.max).toBe(1);
+			});
+
+			it('summarizes the session the tab holds once its turn ends, not the one it had before', async () => {
+				hold = true;
+				const runtime = await start([
+					seedAgent({
+						aiTabs: [{ id: 't1', agentSessionId: 'session-before', name: null, logs: [] }],
+						unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+					}),
+				]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+				// The turn has moved the tab to the provider's new session before /history is typed.
+				await vi.waitFor(() => expect(turn.kinds()).toContain('session'), { timeout: 8_000 });
+				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+				await vi.waitFor(() => expect(argvFiles).toHaveLength(2), { timeout: 8_000 });
+				await vi.waitFor(
+					async () => expect((await transcript(runtime)).at(-1)?.text).toMatch(/^Synopsis saved/),
+					{ timeout: 8_000 }
+				);
+				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
+				expect(argv).toContain(CAPTURED_CLAUDE_CODE_SESSION_ID);
+				expect(argv).not.toContain('session-before');
+			});
+
+			it('goes ahead when the turn it waited for could not start, instead of waiting forever', async () => {
+				const runtime = await start([
+					seedAgent({
+						aiTabs: [{ id: 't1', agentSessionId: 'session-1', name: null, logs: [] }],
+						unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+					}),
+				]);
+				binaryExists = false;
+				const sent = runtime.turns.send('a1', 't1', { text: 'hello' });
+				value(await runtime.turns.send('a1', 't1', { text: '/history' }));
+				expect(errorOf(await sent).code).toBe('failed');
+				await vi.waitFor(
+					async () =>
+						expect((await transcript(runtime)).map((entry) => entry.text)).toEqual([
+							HISTORY_COMMAND_TEXT.pending,
+							HISTORY_COMMAND_TEXT.failed,
+						]),
+					{ timeout: 8_000 }
+				);
 			});
 
 			it('queues a held /history as a message, as Queue Held does on a desktop', async () => {

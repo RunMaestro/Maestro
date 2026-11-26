@@ -107,7 +107,7 @@ import {
 	readStatsCollectionEnabled,
 	type StatsConnectionConstructor,
 } from '../turns/stats';
-import { createRuntimeBuiltinCommands, synopsisProcessSlot } from './builtin-commands';
+import { createRuntimeBuiltinCommands } from './builtin-commands';
 import type { DataDirVerdict } from './data-dir-lock';
 import type { ProcessRegistry } from './processes';
 import { createSshRemoteStore } from './ssh-store';
@@ -262,15 +262,35 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 
 	const sshStore = createSshRemoteStore(paths);
 
-	/** Resolved when a turn on the tab ends (`whenTabIdle`), by `agentId` then `tabId`. */
+	/** Woken when a tab may have become free (`reserveTabSession`), by `agentId` then `tabId`. */
 	const idleWaiters = new Map<string, Array<() => void>>();
 	const waiterKey = (agentId: string, tabId: string) => `${agentId}\u0000${tabId}`;
-	function whenTabIdle(agentId: string, tabId: string): Promise<void> {
-		if (!queues.get(agentId)?.isTabBusy(tabId)) return Promise.resolve();
-		return new Promise<void>((resolve) => {
-			const key = waiterKey(agentId, tabId);
-			idleWaiters.set(key, [...(idleWaiters.get(key) ?? []), () => resolve()]);
-		}).then(() => whenTabIdle(agentId, tabId));
+	/** Tabs whose provider session a `/history` synopsis holds: a send to one waits (`startItem`). */
+	const synopsisHolds = new Set<string>();
+	let disposed = false;
+	/**
+	 * Hold the tab's provider session for a synopsis: once no turn starts or runs on the tab and no
+	 * other synopsis holds it. The check and the hold happen in one tick, so two `/history` commands
+	 * and a send can never both resume the session. The answer releases it.
+	 */
+	function reserveTabSession(agentId: string, tabId: string): Promise<() => void> {
+		const key = waiterKey(agentId, tabId);
+		if (disposed) return Promise.reject(new Error('The host is shutting down.'));
+		if (queues.get(agentId)?.isTabBusy(tabId) || synopsisHolds.has(key)) {
+			return new Promise<void>((resolve) => {
+				idleWaiters.set(key, [...(idleWaiters.get(key) ?? []), () => resolve()]);
+			}).then(() => reserveTabSession(agentId, tabId));
+		}
+		synopsisHolds.add(key);
+		let released = false;
+		return Promise.resolve(() => {
+			if (released) return;
+			released = true;
+			synopsisHolds.delete(key);
+			wakeIdleWaiters(agentId, tabId);
+			// A send that collided with the hold may start now.
+			queues.get(agentId)?.drain();
+		});
 	}
 	function wakeIdleWaiters(agentId: string, tabId: string): void {
 		const key = waiterKey(agentId, tabId);
@@ -294,7 +314,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		host,
 		deps,
 		rules: ctx,
-		whenTabIdle,
+		reserveTabSession,
 		...(deps.homeDir ? { homeDir: deps.homeDir } : {}),
 		// A transcript that grew outside a turn: `gap` is the event that tells a client to read
 		// the tab again, which an older client already honors.
@@ -325,12 +345,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (lifted) throw new Error(lifted);
 		const tabRecord = repository.getTab(agentId, item.tabId);
 		if (!tabRecord) throw new Error(`The tab ${item.tabId} no longer exists.`);
-		// The tab's previous process has not gone yet, or its `/history` synopsis still resumes its
-		// provider session: a timing collision, not a verdict on the item.
-		if (
-			registry.isBusy(agentId, item.tabId) ||
-			registry.isBusy(agentId, synopsisProcessSlot(item.tabId))
-		) {
+		// The tab's previous process has not gone yet, or a `/history` synopsis holds its provider
+		// session: a timing collision, not a verdict on the item.
+		if (registry.isBusy(agentId, item.tabId) || synopsisHolds.has(waiterKey(agentId, item.tabId))) {
 			throw new TurnCollisionError();
 		}
 
@@ -762,6 +779,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 							timestamp: deps.now(),
 						},
 					});
+					// The tab is free again (the item is held, not running): a synopsis waiting on it
+					// goes ahead. A collision (`held: false`) retries, so the tab may still be taken.
+					wakeIdleWaiters(agentId, event.item.tabId);
 				}
 				verdicts.get(event.item.id)?.({ ok: false, message: event.error.message });
 				verdicts.delete(event.item.id);
@@ -1042,6 +1062,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		api,
 		drain: (agentId) => queues.get(agentId)?.drain(),
 		dispose() {
+			disposed = true;
 			unsubscribeLifecycle();
 			for (const queue of queues.values()) queue.dispose();
 			queues.clear();
