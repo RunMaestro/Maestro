@@ -10,6 +10,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { QueuedItemEditModal } from '../../../renderer/components/QueuedItemEditModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { saveQueuedItemEdit } from '../../../renderer/services/queuedPrompt';
+import { MODAL_SAVE_CHANGED_REASON } from '../../../renderer/hooks/ui/useModalSave';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -150,6 +151,29 @@ describe('Edit Queued Message: a save that did not land (P6)', () => {
 			kind: 'edit-queued',
 			itemId: 'q1',
 			edit: { text: 'new text', images: [], turnSettings: {} },
+		});
+	});
+});
+
+describe('Edit Queued Message: text typed while the save waits on the host', () => {
+	it('keeps the modal open with the later text, then saves it', async () => {
+		let answer!: (value: unknown) => void;
+		act.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)) as never);
+		const { onClose, textarea } = open('hosted', true);
+		fireEvent.change(textarea, { target: { value: 'later text' } });
+		answer({ ok: true, result: { kind: 'edit-queued', found: true } });
+		expect(await settledView(onClose, textarea)).toEqual({
+			closed: false,
+			text: 'later text',
+			reason: `Not saved: ${MODAL_SAVE_CHANGED_REASON}`,
+			toasts: 0,
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		expect(act).toHaveBeenLastCalledWith('box', 'h1', {
+			kind: 'edit-queued',
+			itemId: 'q1',
+			edit: { text: 'later text', images: [], turnSettings: {} },
 		});
 	});
 });

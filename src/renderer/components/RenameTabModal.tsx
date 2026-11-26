@@ -48,7 +48,8 @@ export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModal
 	const { save, saving, saveError } = useModalSave(
 		() => onRename(value.trim()),
 		onClose,
-		'RenameTabModal'
+		'RenameTabModal',
+		[value]
 	);
 	const handleRename = () => void save();
 

@@ -87,7 +87,8 @@ export function QueuedItemEditModal({
 	const { save, saving, saveError, clearSaveError } = useModalSave(
 		() => onSave({ text, images, turnSettings }),
 		onClose,
-		'QueuedItemEditModal'
+		'QueuedItemEditModal',
+		[text, images, turnSettings]
 	);
 	const [draftOwner, setDraftOwner] = useState({ sessionId: session?.id, itemId: item.id });
 	if (draftOwner.sessionId !== session?.id || draftOwner.itemId !== item.id) {

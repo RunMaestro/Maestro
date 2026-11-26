@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import React from 'react';
 import { RenameTabModal } from '../../../renderer/components/RenameTabModal';
+import { MODAL_SAVE_CHANGED_REASON } from '../../../renderer/hooks/ui/useModalSave';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
 
@@ -223,6 +224,39 @@ describe('RenameTabModal', () => {
 			expect(mockOnClose).not.toHaveBeenCalled();
 			expect(screen.getByRole('textbox')).toHaveValue('Typed name');
 			expect(screen.getByRole('button', { name: 'Rename' })).not.toBeDisabled();
+		});
+
+		it('stays open with a name typed while the rename was saving', async () => {
+			let answer!: (outcome: { saved: true }) => void;
+			mockOnRename.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'First' } });
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Second' } });
+			answer({ saved: true });
+
+			await waitFor(() =>
+				expect(screen.getByRole('alert')).toHaveTextContent(
+					`Not saved: ${MODAL_SAVE_CHANGED_REASON}`
+				)
+			);
+			expect(mockOnClose).not.toHaveBeenCalled();
+			expect(screen.getByRole('textbox')).toHaveValue('Second');
+
+			mockOnRename.mockResolvedValueOnce({ saved: true });
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+			await waitFor(() => expect(mockOnClose).toHaveBeenCalled());
+			expect(mockOnRename).toHaveBeenLastCalledWith('Second');
 		});
 
 		it('stays open and shows the error when the rename throws', async () => {
