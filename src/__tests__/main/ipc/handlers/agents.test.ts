@@ -3387,6 +3387,30 @@ describe('agents IPC handlers', () => {
 				expect(vi.mocked(execFileNoThrow).mock.calls.length).toBeGreaterThan(0);
 			});
 
+			it.each(['claude-code', 'codex'])(
+				'gives %s no list, and connects nowhere, when its remote is switched off',
+				async (agentId) => {
+					handlers.clear();
+					registerAgentsHandlers({
+						...deps,
+						settingsStore: {
+							get: vi.fn().mockReturnValue([{ ...remote, enabled: false }]),
+							set: vi.fn(),
+						} as any,
+					});
+					const result = await handlers.get('agents:discoverSlashCommands')!(
+						{} as any,
+						agentId,
+						'/srv/off',
+						undefined,
+						'remote-1'
+					);
+					expect(result).toBeNull();
+					expect(execFileNoThrow).not.toHaveBeenCalled();
+					expect(discoverCodexSkills).not.toHaveBeenCalled();
+				}
+			);
+
 			it('gives no list, and runs nothing here, when the remote is unknown', async () => {
 				const handler = handlers.get('agents:discoverSlashCommands');
 				const result = await handler!({} as any, 'claude-code', '/srv/test', undefined, 'gone');

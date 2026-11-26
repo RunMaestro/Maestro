@@ -2153,6 +2153,14 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				// machine: a command the remote has never heard of is worse than none.
 				if (sshRemoteId && (agentId === 'claude-code' || agentId === 'codex')) {
 					const sshRemote = getSshRemoteById(settingsStore, sshRemoteId);
+					// A remote the user switched off is not asked: no SSH connection starts.
+					if (sshRemote?.enabled === false) {
+						logger.info(
+							`SSH remote ${sshRemoteId} is disabled; no slash command discovery`,
+							LOG_CONTEXT
+						);
+						return null;
+					}
 					if (!sshRemote) {
 						logger.warn(
 							`SSH remote ${sshRemoteId} not found for slash command discovery`,

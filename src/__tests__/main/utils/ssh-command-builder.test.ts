@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
+	agentEnvOverRemote,
 	buildSshCommand,
 	buildRemoteCommand,
 	buildSshCommandWithStdin,
@@ -440,6 +441,33 @@ describe('ssh-command-builder', () => {
 				env: undefined,
 			});
 			expect(result).toBe('claude');
+		});
+	});
+
+	describe('agentEnvOverRemote', () => {
+		// The real builder: a value the agent blanked is never exported, and one it
+		// set wins over the remote's.
+		it("lets the agent's vars win over the remote's in the command the builder makes", async () => {
+			const remote = {
+				...baseConfig,
+				remoteEnv: { CLAUDE_CONFIG_DIR: '/cfg/work', CODEX_HOME: '/srv/codex', KEEP: 'yes' },
+			};
+			const target = agentEnvOverRemote(remote, { CLAUDE_CONFIG_DIR: '', CODEX_HOME: '/mine' });
+			const result = await buildSshCommand(target.config, {
+				command: 'claude',
+				args: ['--print'],
+				env: target.env,
+			});
+			const remoteCommand = result.args.at(-1)!;
+
+			expect(remoteCommand).not.toContain('/cfg/work');
+			expect(remoteCommand).not.toContain('CLAUDE_CONFIG_DIR');
+			expect(remoteCommand).toContain('CODEX_HOME=');
+			expect(remoteCommand).toContain('/mine');
+			expect(remoteCommand).not.toContain('/srv/codex');
+			expect(remoteCommand).toContain('KEEP=');
+			// The remote record itself is untouched.
+			expect(remote.remoteEnv.CLAUDE_CONFIG_DIR).toBe('/cfg/work');
 		});
 	});
 
