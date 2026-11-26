@@ -20,6 +20,7 @@
  */
 
 import { truncateCommand, truncatePath } from './formatters';
+import { compactToolInput } from './toolOutput';
 
 /** A tool call rendered as one short, human-readable line. */
 export interface ToolActivityLabel {
@@ -341,4 +342,31 @@ export function describeToolActivityStatus(state: unknown): ToolActivityStatus {
 	if (COMPLETED_STATUSES.has(status)) return 'completed';
 	if (exitCode === 0) return 'completed';
 	return 'running';
+}
+
+/** The longest status word a tool state keeps (`toolActivityState()`). */
+const MAX_TOOL_STATUS_CHARS = 64;
+
+/**
+ * The part of a provider's tool state the Thought Stream reads, and nothing else: `input` (capped
+ * by `compactToolInput()`) for the line, and the outcome fields `describeToolActivityStatus()`
+ * reads for the glyph. A tool's output (a whole file read, a shell's output) is dropped, so a
+ * tool event that crosses a process or a machine carries a few hundred bytes, not the result.
+ * Undefined for a state that is not an object.
+ */
+export function toolActivityState(state: unknown): Record<string, unknown> | undefined {
+	if (!state || typeof state !== 'object' || Array.isArray(state)) return undefined;
+	const record = state as Record<string, unknown>;
+	const kept: Record<string, unknown> = {};
+	if (record.input !== undefined) kept.input = compactToolInput(record.input).input;
+	if (typeof record.status === 'string')
+		kept.status = record.status.slice(0, MAX_TOOL_STATUS_CHARS);
+	for (const key of ['exitCode', 'exit_code'] as const) {
+		const value = record[key];
+		if (typeof value === 'number' && Number.isFinite(value)) kept[key] = value;
+	}
+	for (const key of ['isError', 'is_error'] as const) {
+		if (typeof record[key] === 'boolean') kept[key] = record[key];
+	}
+	return kept;
 }
