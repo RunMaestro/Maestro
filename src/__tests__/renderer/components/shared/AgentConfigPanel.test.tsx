@@ -1142,9 +1142,37 @@ describe('AgentConfigPanel - detected installation chooser', () => {
 		expect(select.value).not.toBe(CODEX_PATHS[0]);
 	});
 
-	it('hides the chooser when the agent runs over SSH', () => {
-		renderWithPaths({ isSshEnabled: true });
+	// The chooser lists the installations found where the agent runs: this
+	// computer for a local agent, the SSH remote for a remote or hosted one.
+	it.each(AGENT_MODES)(
+		'lists the installations found where a %s agent runs, with the same label',
+		async (mode) => {
+			const fields = agentModeFields(mode);
+			const isSshEnabled = Boolean(fields.sessionSshRemoteConfig?.enabled);
+			const agentsGet = (
+				window as unknown as { maestro: { agents: { get: ReturnType<typeof vi.fn> } } }
+			).maestro.agents.get;
+			agentsGet.mockResolvedValue({ available: true, path: CODEX_PATHS[0], allPaths: CODEX_PATHS });
+			try {
+				// A remote agent's own computer found nothing: only the remote's list may show.
+				renderWithPaths(
+					{ isSshEnabled, sshRemoteId: fields.sshRemoteId ?? undefined },
+					isSshEnabled ? { allPaths: undefined } : {}
+				);
+				expect(await screen.findByText('Detected installations (3)')).toBeInTheDocument();
+				for (const p of CODEX_PATHS) {
+					expect(screen.getByRole('option', { name: p })).toBeInTheDocument();
+				}
+				if (isSshEnabled) expect(agentsGet).toHaveBeenCalledWith('codex', 'r1');
+			} finally {
+				agentsGet.mockResolvedValue(null);
+			}
+		}
+	);
 
+	it("never lists this computer's installations for an agent that runs over SSH", async () => {
+		renderWithPaths({ isSshEnabled: true, sshRemoteId: 'r1' });
+		await act(async () => {});
 		expect(screen.queryByText(/Detected installations/)).not.toBeInTheDocument();
 	});
 

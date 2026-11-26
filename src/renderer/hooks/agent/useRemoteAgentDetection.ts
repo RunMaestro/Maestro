@@ -10,6 +10,8 @@
  *
  *   - `path`       the binary the remote resolves, or undefined (not found,
  *                  unreachable, still detecting, or no remote)
+ *   - `allPaths`   every installation on the remote when there is more than
+ *                  one (the "Detected installations" chooser), else empty
  *   - `detecting`  a detection is in flight
  *   - `redetect()` run the detection again; no-op without a remote
  */
@@ -17,8 +19,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { logger } from '../../utils/logger';
 
+const NO_PATHS: string[] = [];
+
 export interface RemoteAgentDetection {
 	path: string | undefined;
+	allPaths: string[];
 	detecting: boolean;
 	redetect: () => void;
 }
@@ -33,6 +38,7 @@ export function useRemoteAgentDetection(
 	sshRemoteId: string | null | undefined
 ): RemoteAgentDetection {
 	const [path, setPath] = useState<string | undefined>(undefined);
+	const [allPaths, setAllPaths] = useState<string[]>(NO_PATHS);
 	const [detecting, setDetecting] = useState(false);
 	const [nonce, setNonce] = useState(0);
 
@@ -44,6 +50,7 @@ export function useRemoteAgentDetection(
 	// shows; a redetect keeps the current path on screen until the new one lands.
 	useEffect(() => {
 		setPath(undefined);
+		setAllPaths(NO_PATHS);
 	}, [agentId, sshRemoteId]);
 
 	useEffect(() => {
@@ -56,11 +63,15 @@ export function useRemoteAgentDetection(
 		void window.maestro.agents
 			.get(agentId, sshRemoteId)
 			.then((agent) => {
-				if (!stale) setPath(agent?.available ? agent.path || undefined : undefined);
+				if (stale) return;
+				setPath(agent?.available ? agent.path || undefined : undefined);
+				setAllPaths(agent?.available && agent.allPaths?.length ? agent.allPaths : NO_PATHS);
 			})
 			.catch((error: unknown) => {
 				logger.error('Failed to detect the agent on its remote', undefined, error);
-				if (!stale) setPath(undefined);
+				if (stale) return;
+				setPath(undefined);
+				setAllPaths(NO_PATHS);
 			})
 			.finally(() => {
 				if (!stale) setDetecting(false);
@@ -70,5 +81,5 @@ export function useRemoteAgentDetection(
 		};
 	}, [agentId, sshRemoteId, nonce]);
 
-	return { path, detecting, redetect };
+	return { path, allPaths, detecting, redetect };
 }
