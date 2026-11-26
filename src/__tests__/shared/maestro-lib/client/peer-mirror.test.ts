@@ -345,6 +345,25 @@ describe('Auto Run the host drives', () => {
 		expect(again.push).toEqual([]);
 	});
 
+	it("passes a run's reasoning and tool calls on to the window, holding none of it", () => {
+		const peer = peerWith([agent('a1')]);
+		const thinking = { kind: 'thinking' as const, at: 1, processId: 'a1-batch-1', text: 'hmm' };
+		const tool = {
+			kind: 'tool' as const,
+			at: 2,
+			processId: 'a1-batch-1',
+			toolName: 'Read',
+			state: { status: 'running' },
+		};
+		for (const activity of [thinking, tool]) {
+			const step = applyPeerEvent(peer, { type: 'autorun', agentId: 'a1', event: activity }, ctx());
+			expect(step.peer).toBe(peer);
+			expect(step.push).toEqual([{ type: 'agent.autorunActivity', agentId: 'a1', activity }]);
+		}
+		const ghost = applyPeerEvent(peer, { type: 'autorun', agentId: 'ghost', event: tool }, ctx());
+		expect(ghost.push).toEqual([]);
+	});
+
 	it('ignores output, usage, a frameless running state, and an agent the peer does not have', () => {
 		const peer = peerWith([agent('a1')]);
 		for (const event of [

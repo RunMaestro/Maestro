@@ -5,11 +5,13 @@
  * Functions:
  * - parseSynopsis: Parse AI-generated synopsis responses into structured format
  * - isFailedSynopsisResponse: Tell a provider error apart from a real synopsis
+ * - turnDidMeaningfulWork, thinkingLogsRecorded: whether a finished turn is worth a per-turn
+ *   synopsis (the desktop's exit listener and a headless host's turn recorder)
  */
 
 import { stripAnsiCodes } from './stringUtils';
 import { getErrorPatterns, matchErrorPattern } from './agentErrorPatterns';
-import type { ToolType } from './types';
+import type { ThinkingMode, ToolType } from './types';
 
 /**
  * Sentinel token that AI agents should return when there's nothing meaningful to report.
@@ -259,4 +261,66 @@ export function isFailedSynopsisResponse(
 	if (!clean) return true;
 	if (clean.length > SYNOPSIS_ERROR_MAX_LENGTH) return false;
 	return matchErrorPattern(getErrorPatterns(agentId), clean) !== null;
+}
+
+/**
+ * Whether a tab's per-turn thinking and tool log entries are actually recorded.
+ *
+ * `useAgentToolExecutionListener` and `useAgentThinkingListener` drop tool and
+ * thinking logs when a tab's thinking display is off, to keep memory bounded on
+ * tabs the user isn't watching. The synopsis activity gate
+ * (`turnDidMeaningfulWork`) keys off those same tool logs, so it MUST consult
+ * this predicate: an absent tool log means "no work happened" only when thinking
+ * is visible. When thinking is off the log was never written, so absence proves
+ * nothing and the gate must not suppress the synopsis (and its History entry).
+ *
+ * Keep all three call sites in lockstep by routing them through this one
+ * predicate. Tolerates the legacy persisted shapes (`boolean` / `undefined`)
+ * that predate the `ThinkingMode` string union.
+ */
+export function thinkingLogsRecorded(showThinking: ThinkingMode | boolean | undefined): boolean {
+	return !!showThinking && showThinking !== 'off';
+}
+
+/**
+ * Activity gate: did the just-completed turn do work worth synopsizing?
+ *
+ * A synopsis is a full session-resume spawn (a second agent round-trip), so a
+ * turn that only exchanged text - a plain question answered with prose, no tool
+ * use - isn't worth the cost or a History entry. We treat "ran at least one
+ * tool" as the bar for meaningful work: edits, writes, file reads, searches, and
+ * shell commands all surface as `source: 'tool'` log entries (including in
+ * maestro-p text-stream turns), so research-only turns still qualify.
+ *
+ * The "turn" is everything after the last user message in the tab's logs. A
+ * custom AI command (`/commit` and friends) always counts as work - it was an
+ * explicit action, and its `pendingAICommandForSynopsis` path may not leave a
+ * tool log of its own.
+ *
+ * @param logs The completed tab's full log history.
+ * @param isCustomCommand True when this exit was driven by a pending custom AI command.
+ * @param toolLogsObservable Whether this tab actually records tool logs. Tabs with
+ *   thinking display off never emit `source: 'tool'` entries (see
+ *   `thinkingLogsRecorded`), so the scan below cannot distinguish a genuine no-op
+ *   turn from a tool-heavy one. When false we record the turn rather than risk
+ *   silently dropping its History entry - the pre-activity-gate behavior.
+ */
+export function turnDidMeaningfulWork(
+	logs: ReadonlyArray<{ source: string }>,
+	isCustomCommand = false,
+	toolLogsObservable = true
+): boolean {
+	if (isCustomCommand) return true;
+	if (!toolLogsObservable) return true;
+	let lastUserIdx = -1;
+	for (let i = logs.length - 1; i >= 0; i--) {
+		if (logs[i].source === 'user') {
+			lastUserIdx = i;
+			break;
+		}
+	}
+	for (let i = lastUserIdx + 1; i < logs.length; i++) {
+		if (logs[i].source === 'tool') return true;
+	}
+	return false;
 }

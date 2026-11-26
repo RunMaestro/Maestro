@@ -37,16 +37,10 @@
  */
 
 import { useEffect } from 'react';
-import { useThoughtStreamStore } from '../../../stores/thoughtStreamStore';
+import { captureToolActivity } from '../../../stores/thoughtStreamStore';
 import { parseSessionId } from '../../../utils/sessionIdParser';
-import { describeToolActivity, describeToolActivityStatus } from '../../../utils/toolActivityLabel';
 import { AUTO_RUN_SESSION_TYPES } from './useThoughtStreamCaptureListener';
 import { useOwnedSessionGate } from './useOwnedSessionGate';
-
-/** The tool lifecycle payload, as providers deliver it over IPC. */
-interface ToolEventState {
-	input?: unknown;
-}
 
 export function useThoughtStreamToolListener(): void {
 	const ownedGate = useOwnedSessionGate();
@@ -77,20 +71,8 @@ export function useThoughtStreamToolListener(): void {
 				// - which is what lets the feed interleave them.
 				const tabId = parsed.tabId ?? parsed.actualSessionId;
 
-				const state = (toolEvent.state ?? undefined) as ToolEventState | undefined;
-				useThoughtStreamStore.getState().appendToolActivity(parsed.baseSessionId, tabId, {
-					toolName: toolEvent.toolName,
-					label: describeToolActivity(toolEvent.toolName, state?.input),
-					// The whole payload, not just its `status` word: Codex reports a
-					// failed shell command as `completed` and hides the failure in
-					// `exit_code`, and a check mark beside a broken build is the one
-					// thing this feed exists to not do.
-					status: describeToolActivityStatus(state),
-					toolCallId: toolEvent.toolCallId,
-					// Use the provider's own timestamp so a call's position on the
-					// timeline reflects when it happened, not when we processed it.
-					timestamp: toolEvent.timestamp,
-				});
+				// One line per call, from the same function a hosted run's feed uses.
+				captureToolActivity(parsed.baseSessionId, tabId, toolEvent);
 			}
 		);
 

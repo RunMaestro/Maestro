@@ -235,7 +235,7 @@ import type {
 } from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { editQueuedItem } from './services/queuedPrompt';
+import { saveQueuedItemEdit } from './services/queuedPrompt';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -1842,10 +1842,13 @@ function MaestroConsoleInner() {
 	}, []);
 
 	// Edit a queued message's prompt text and attached images in place. Same
-	// service `maestro-cli queue edit` reaches; a hosted card's edit goes to its host.
-	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
-		editQueuedItem(activeSessionIdRef.current, itemId, patch);
-	}, []);
+	// rules `maestro-cli queue edit` reaches; a hosted card's edit goes to its host,
+	// and the answer comes back so a refused save keeps the modal open.
+	const handleEditQueuedItem = useCallback(
+		(itemId: string, patch: QueuedItemEditPatch) =>
+			saveQueuedItemEdit(activeSessionIdRef.current, itemId, patch),
+		[]
+	);
 
 	// Reorder a queued item within the active session's inline chat list. The
 	// inline list is filtered to a single tab, so fromIndex/toIndex address that

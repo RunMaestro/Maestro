@@ -254,7 +254,7 @@ function turnFrames(agentId: string, tabId: string, event: TurnEvent, state: Fra
 	}
 }
 
-/** A run's progress, output, and usage: the flat state frame and the run's own batch process. */
+/** A run's progress, output, usage, reasoning, and tool calls: the flat state frame and the run's own batch process. */
 function autoRunFrames(agentId: string, run: AutoRunRunEvent): Frame[] {
 	switch (run.kind) {
 		case 'state':
@@ -263,6 +263,18 @@ function autoRunFrames(agentId: string, run: AutoRunRunEvent): Frame[] {
 			return [bridgeEvent('process:data', run.processId, run.text)];
 		case 'usage':
 			return [bridgeEvent('process:usage', run.processId, run.usage)];
+		case 'thinking':
+			return [bridgeEvent('process:thinking-chunk', run.processId, run.text)];
+		case 'tool':
+			// The desktop's own `process:tool-execution` payload, which `parseBatchFrame()` reads.
+			return [
+				bridgeEvent('process:tool-execution', run.processId, {
+					toolName: run.toolName,
+					...(run.state !== undefined ? { state: run.state } : {}),
+					...(run.toolCallId ? { toolCallId: run.toolCallId } : {}),
+					timestamp: run.at,
+				}),
+			];
 	}
 }
 

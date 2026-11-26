@@ -2056,6 +2056,35 @@ describe('createWsMaestroClient', () => {
 			});
 		});
 
+		it("steers the host's run with the desktop's own message, and reads a refusal as its answer", async () => {
+			await connect();
+			const type = 'auto_run_steering_command';
+			bridge.typed.set(type, () => ({
+				type: `${type}_result`,
+				success: true,
+				note: { id: 'n1', text: 'Prefer the fixtures', timestamp: 5 },
+			}));
+			expect(
+				await client.autoRun.steer(A1, { action: 'send', text: 'Prefer the fixtures' })
+			).toEqual({
+				ok: true,
+				value: { success: true, note: { id: 'n1', text: 'Prefer the fixtures', timestamp: 5 } },
+			});
+			expect(bridge.sent(type)).toEqual([
+				expect.objectContaining({ sessionId: A1, action: 'send', text: 'Prefer the fixtures' }),
+			]);
+
+			bridge.typed.set(type, () => ({
+				type: `${type}_result`,
+				success: false,
+				error: 'No Auto Run is active on this agent',
+			}));
+			expect(await client.autoRun.steer(A1, { action: 'list' })).toEqual({
+				ok: true,
+				value: { success: false, error: 'No Auto Run is active on this agent' },
+			});
+		});
+
 		it('turns the host state frames into autorun events, with the null that clears them', async () => {
 			await connect();
 			bridge.push({
@@ -2123,7 +2152,7 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
-		it('turns the run process stream into output and usage, and none of it into a turn', async () => {
+		it('turns the run process stream into output, tool calls, usage, and reasoning, and none of it into a turn', async () => {
 			await connect();
 			bridge.pushBridgeEvent('process:data', batchId, '\u001b[1mTask one done\u001b[0m');
 			bridge.pushBridgeEvent('process:tool-execution', batchId, {
@@ -2143,12 +2172,18 @@ describe('createWsMaestroClient', () => {
 				contextWindow: 200000,
 			});
 			bridge.pushBridgeEvent('process:thinking-chunk', batchId, 'hmm');
-			await vi.waitFor(() => expect(autoRunEvents()).toHaveLength(3));
-			const [data, tool, used] = autoRunEvents();
+			await vi.waitFor(() => expect(autoRunEvents()).toHaveLength(5));
+			const [data, started, finished, used, thought] = autoRunEvents();
 			expect(data).toMatchObject({ kind: 'output', processId: batchId });
-			expect(tool).toMatchObject({ kind: 'output', processId: batchId });
-			expect(tool.kind === 'output' && tool.text).toMatch(/^Read .*index\.ts$/);
+			expect(started).toMatchObject({
+				kind: 'tool',
+				processId: batchId,
+				toolName: 'Read',
+				state: { status: 'running' },
+			});
+			expect(finished).toMatchObject({ kind: 'tool', state: { status: 'completed' } });
 			expect(used).toMatchObject({ kind: 'usage', processId: batchId });
+			expect(thought).toMatchObject({ kind: 'thinking', processId: batchId, text: 'hmm' });
 			expect(types()).not.toContain('turn');
 			// The batch process is not a tab's turn, so no tab was marked busy.
 			expect(events.filter((event) => event.type === 'tab.updated')).toEqual([]);
