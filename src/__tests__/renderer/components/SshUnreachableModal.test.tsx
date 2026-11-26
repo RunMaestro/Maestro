@@ -9,7 +9,7 @@ import {
 import { useSshOutageStore } from '../../../renderer/stores/sshOutageStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
-import { createMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, createMockSession, createModeSession } from '../../helpers/mockSession';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { Session } from '../../../renderer/types';
 
@@ -172,6 +172,46 @@ describe('SshUnreachableModal', () => {
 			useSshOutageStore.getState().surface('remote-1');
 			render(<SshUnreachableModal theme={mockTheme} sessions={[]} />);
 			expect(screen.getByTestId('ssh-unreachable-modal')).toBeTruthy();
+		});
+	});
+
+	describe('mode parity', () => {
+		/** The dialog's markup with the user on `active`, for an outage on the mode helper's remote. */
+		function dialogFor(active: Session, sessions: Session[], surfaced = false): string | null {
+			useSshOutageStore.setState({ outages: {} });
+			useSessionStore.setState({ sessions: [active], activeSessionId: active.id } as any);
+			recordOutage('r1');
+			if (surfaced) useSshOutageStore.getState().surface('r1');
+			const { unmount } = render(<SshUnreachableModal theme={mockTheme} sessions={sessions} />);
+			const html = screen.queryByTestId('ssh-unreachable-modal')?.outerHTML ?? null;
+			unmount();
+			return html;
+		}
+
+		const agents = () =>
+			AGENT_MODES.map((mode) => createModeSession(mode, { id: mode, name: `Agent ${mode}` }));
+
+		it('an SSH and a hosted agent on the down remote open the same dialog and both surface it', () => {
+			const ssh = dialogFor(createModeSession('ssh', { id: 'active' }), agents());
+			expect(ssh).not.toBeNull();
+			expect(useSshOutageStore.getState().outages['r1'].surfaced).toBe(true);
+
+			const hosted = dialogFor(createModeSession('hosted', { id: 'active' }), agents());
+			expect(useSshOutageStore.getState().outages['r1'].surfaced).toBe(true);
+			expect(hosted).toBe(ssh);
+		});
+
+		it('lists an SSH and a hosted agent of the remote alike, and a local agent never', () => {
+			expect(agentsOnRemote(agents(), 'r1').map((s) => s.id)).toEqual(['ssh', 'hosted']);
+		});
+
+		it('a surfaced outage draws the same dialog whichever mode the user is looking at', () => {
+			const html = AGENT_MODES.map((mode) =>
+				dialogFor(createModeSession(mode, { id: 'active' }), agents(), true)
+			);
+			expect(html[0]).not.toBeNull();
+			expect(html[1]).toBe(html[0]);
+			expect(html[2]).toBe(html[0]);
 		});
 	});
 });
