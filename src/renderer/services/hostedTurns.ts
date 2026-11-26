@@ -261,13 +261,15 @@ export async function startHostedConversation(
  * when it took the message (ran, queued, or held), null when it did not; the caller clears the
  * composer on a receipt. A `queued` receipt names the host's queue item (what a steer acts on).
  * `opts.held` is Queue Held: the host queues the message paused, even on an idle tab.
+ * `opts.overrides` are a sender's own chips for this one message (a Federation client's
+ * `TurnInput.overrides`); they win over the tab's settings, as they do on a local queued item.
  */
 export async function sendHostedTurn(
 	session: Session,
 	tabId: string | undefined,
 	text: string,
 	images: readonly string[],
-	opts: { held?: boolean } = {}
+	opts: { held?: boolean; overrides?: TurnOverrides } = {}
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
@@ -307,7 +309,7 @@ export async function sendHostedTurn(
 		target.agentId,
 		hostTabId as string,
 		text,
-		hostedTurnOverrides(tab),
+		opts.overrides ? { ...hostedTurnOverrides(tab), ...opts.overrides } : hostedTurnOverrides(tab),
 		images,
 		opts.held
 	);
