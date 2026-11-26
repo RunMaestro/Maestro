@@ -242,9 +242,14 @@ async function readStaleHostCopy(
 		if (!transcript.ok) throw hostError(connection.peer, transcript.error);
 		withLogs.push({ ...tab, logs: transcript.value });
 	}
+	const hostTabs = keepDivergentHostTabs(agent.aiTabs ?? [], withLogs);
+	// The host's selection follows its tab when that tab comes in under a new id.
+	const hostActive = hostCopy.value.activeTabId;
+	const activeIndex = hostActive ? withLogs.findIndex((tab) => tab.id === hostActive) : -1;
+	const activeTabId = activeIndex >= 0 ? hostTabs[activeIndex].id : hostActive;
 	const merged = withReturnedFromHost(agent as unknown as Record<string, unknown>, {
-		tabs: keepDivergentHostTabs(agent.aiTabs ?? [], withLogs),
-		...(hostCopy.value.activeTabId ? { activeTabId: hostCopy.value.activeTabId } : {}),
+		tabs: hostTabs,
+		...(activeTabId ? { activeTabId } : {}),
 	}) as unknown as AgentRecord;
 	return { pointer, ref, merged };
 }
@@ -395,8 +400,9 @@ export async function runLift(
 			const message = error instanceof Error ? error.message : String(error);
 			// A lift that replaced the earlier copy holds tabs only the host had, and that copy is
 			// gone: removing the new one would lose them. It stays, and the error says where.
+			const kept = peerAgentRef(connection.peer, hostAgentId);
 			const undo = stale
-				? `The host's copy (${peerAgentRef(connection.peer, hostAgentId)}) is kept: it holds tabs from its earlier copy that this machine does not have. Remove it only once they are not needed: maestro-cli remove-agent ${peerAgentRef(connection.peer, hostAgentId)}`
+				? `The host's copy (${kept}) is kept: it holds tabs from its earlier copy that this machine does not have. To get the agent back with them, add it to the Left Bar (maestro-cli federation add ${kept}) and move it back from there; to drop them instead: maestro-cli remove-agent ${kept}`
 				: await rollBack(connection, hostAgentId);
 			throw new LiftRunError(
 				'LIFT_POINTER_FAILED',

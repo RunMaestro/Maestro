@@ -192,6 +192,8 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 		]);
 		const there = value(await host.tabs.transcript(agent.id, 'tab-1-host'));
 		expect(there.map((entry) => entry.text)).toEqual(['hi']);
+		// The host had tab-1 selected: the selection follows it to its new id.
+		expect(value(await host.agents.get(agent.id)).activeTabId).toBe('tab-1-host');
 	});
 
 	it('keeps the new host copy when this machine cannot record the move (T5 review)', async () => {
@@ -199,9 +201,13 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 		failing.setPointer = async () => {
 			throw new Error('disk full');
 		};
-		await expect(runLift('agent-1', {}, failing)).rejects.toThrow(
-			/is kept: it holds tabs from its earlier copy/
+		const error = await runLift('agent-1', {}, failing).then(
+			() => undefined,
+			(caught: Error) => caught
 		);
+		expect(error?.message).toMatch(/is kept: it holds tabs from its earlier copy/);
+		// The way back to that copy, with its tabs, is named.
+		expect(error?.message).toMatch(/maestro-cli federation add build-box:/);
 		const agents = value(await host.agents.list());
 		expect(agents).toHaveLength(1);
 		const tabs = value(await host.tabs.list(agents[0].id));
