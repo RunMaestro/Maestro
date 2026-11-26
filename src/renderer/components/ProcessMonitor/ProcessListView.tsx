@@ -14,6 +14,7 @@ import type { ProcessNode, ProcessMonitorProps } from './types';
 import { formatRuntime } from './runtime';
 import { isCoarsePointer } from '../../utils/touch';
 import { cueSourceBadgeLabel } from './processTree';
+import { AgentModePill } from '../SessionList/AgentModePill';
 
 export interface ProcessListViewProps {
 	theme: Theme;
@@ -186,18 +187,7 @@ export function ProcessListView(props: ProcessListViewProps) {
 									{activeCount} running
 								</span>
 							)}
-							{node.sshRemote && (
-								<span
-									className="px-1.5 py-0.5 rounded text-xs"
-									style={{
-										backgroundColor: `${theme.colors.accent}20`,
-										color: theme.colors.accent,
-									}}
-									title={`SSH: ${node.sshRemote.name} (${node.sshRemote.host})`}
-								>
-									SSH: {node.sshRemote.name}
-								</span>
-							)}
+							{node.modeAgent && <AgentModePill theme={theme} session={node.modeAgent} />}
 							<span className="font-mono">{node.sessionId?.substring(0, 8)}</span>
 						</span>
 						{node.sessionId && onNavigateToSession && (
@@ -327,18 +317,6 @@ export function ProcessListView(props: ProcessListViewProps) {
 								)}
 								<span>PID {node.pid}</span>
 								{node.startTime && <span>{formatRuntime(node.startTime)}</span>}
-								{node.sshRemote && (
-									<span
-										className="px-1.5 py-0.5 rounded"
-										style={{
-											backgroundColor: `${theme.colors.accent}20`,
-											color: theme.colors.accent,
-										}}
-										title={`SSH: ${node.sshRemote.name} (${node.sshRemote.host})`}
-									>
-										SSH
-									</span>
-								)}
 							</div>
 							{/* Action cluster */}
 							<div className="flex items-center gap-2 flex-shrink-0">
