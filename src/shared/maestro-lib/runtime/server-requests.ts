@@ -16,10 +16,12 @@
 import type { AgentRecord } from '../store/records';
 import {
 	parseWireAgentName,
+	parseWireAskerKey,
 	parseWireHandoffAnswer,
 	parseWireTranscript,
 } from '../../crossAgentTypes';
 import { parseProcessId } from '../client/bridge-frames';
+import { parseClosedTabCommandRequest } from '../../closedTabCommands';
 import type { ThinkingMode, UsageStats } from '../../types';
 import type {
 	AgentCreateInput,
@@ -988,6 +990,7 @@ export function createRequestHandler(
 				const transcript = parseWireTranscript(message.transcript);
 				const fromAgentName = parseWireAgentName(message.fromAgentName);
 				const handoffAnswer = parseWireHandoffAnswer(message.handoffAnswer);
+				const askerKey = parseWireAskerKey(message.askerKey);
 				const result = await client.consults.ask({
 					targetAgentId: sessionId(message),
 					question: typeof message.question === 'string' ? message.question : '',
@@ -996,6 +999,7 @@ export function createRequestHandler(
 					withContext: message.withContext === true,
 					...(transcript ? { transcript } : {}),
 					...(fromAgentName ? { fromAgentName } : {}),
+					...(askerKey ? { askerKey } : {}),
 					...(num(message.timeoutMs) !== undefined ? { timeoutMs: num(message.timeoutMs) } : {}),
 					...(handoffAnswer !== undefined ? { handoffAnswer } : {}),
 					...(message.sideQuestion === true ? { sideQuestion: true } : {}),
@@ -1018,6 +1022,50 @@ export function createRequestHandler(
 					error: errorText(result),
 					...(stopped ? { canceled: true } : {}),
 				};
+			}
+
+			// Cmd+Shift+T and Quick Chat on an agent this host runs, from another machine.
+			case 'closed_tab_command': {
+				const parsed = parseClosedTabCommandRequest(message);
+				if (!parsed.ok) return refusal('closed_tab_command_result', parsed.error);
+				const { request } = parsed;
+				if (request.action === 'list') {
+					if (!client.tabs.closed) {
+						return refusal('closed_tab_command_result', 'This host keeps no closed tabs.');
+					}
+					return outcome(
+						'closed_tab_command_result',
+						await client.tabs.closed(request.sessionId),
+						(closedTabs) => ({ closedTabs })
+					);
+				}
+				if (!client.tabs.reopen) {
+					return refusal('closed_tab_command_result', 'This host cannot reopen a closed tab.');
+				}
+				return outcome(
+					'closed_tab_command_result',
+					await client.tabs.reopen(request.sessionId, {
+						...(request.tabId ? { tabId: request.tabId } : { index: request.index ?? 0 }),
+					}),
+					(reopened) => ({
+						tabId: reopened.tabId,
+						tabType: 'ai',
+						...(reopened.wasDuplicate ? { wasDuplicate: true } : {}),
+					})
+				);
+			}
+
+			// Stop on an asker on another machine: its consults here end as stopped ones.
+			case 'cross_agent_cancel': {
+				const cancel = client.consults.cancel;
+				if (!cancel) {
+					return refusal('cross_agent_cancel_result', 'This host cannot stop a consult.');
+				}
+				return outcome(
+					'cross_agent_cancel_result',
+					await cancel({ askerKey: str(message.askerKey) ?? '' }),
+					(value) => ({ canceled: value.canceled })
+				);
 			}
 
 			default:

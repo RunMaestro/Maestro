@@ -26,6 +26,8 @@ import { getParkedTabLabel } from '../utils/snoozeHelpers';
 import { noteDesktopAiTabSelection } from '../utils/desktopTabSelectionSync';
 import { loadReopenedTabContent } from './reopenedTabContent';
 import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
+import { hostedTargetOf, reopenHostedClosedTab, type HostedTarget } from './hostedTurns';
+import { readMirrorClosedTabs } from './peerMirror';
 
 /**
  * How long a reopen waits for the tab's transcript or file before it answers
@@ -134,6 +136,112 @@ async function awaitContent(read: Promise<ReopenedContentState>): Promise<Reopen
 	}
 }
 
+/** Hosted agents with a reopen on the way to their host: a second press waits for the first. */
+const pendingHostedReopens = new Set<string>();
+
+/**
+ * Reopen a hosted agent's closed AI tab on its host, so its conversation continues there, as a
+ * local agent's reopened tab continues here. The tab closed here as `entry` was the host's tab of
+ * the same id (a close goes to the host too), and the entry leaves this stack once the host has
+ * the tab back. A host that cannot reopen it says so in a red toast and the entry stays.
+ */
+export async function reopenHostedClosedEntry(
+	session: Pick<Session, 'id' | 'liftedTo'>,
+	entry: ClosedTabEntry,
+	options: { background?: boolean } = {}
+): Promise<{ tabId: string; wasDuplicate?: boolean } | null> {
+	if (entry.type !== 'ai' || pendingHostedReopens.has(session.id)) return null;
+	pendingHostedReopens.add(session.id);
+	try {
+		const reopened = await reopenHostedClosedTab(
+			session,
+			{ tabId: entry.tab.id },
+			options.background ? { background: true } : {}
+		);
+		if (reopened) {
+			// The draft and staged images were this machine's, as a local tab's are: they come back
+			// with the tab, unless something was typed into it while the host answered.
+			const archived = entry.tab;
+			updateSessionWith(session.id, (current) => ({
+				...current,
+				aiTabs: current.aiTabs.map((tab) =>
+					tab.id === reopened.tabId
+						? {
+								...tab,
+								inputValue: tab.inputValue || archived.inputValue || '',
+								stagedImages: tab.stagedImages?.length
+									? tab.stagedImages
+									: (archived.stagedImages ?? []),
+							}
+						: tab
+				),
+				unifiedClosedTabHistory: (current.unifiedClosedTabHistory ?? []).filter(
+					(candidate) => candidate !== entry
+				),
+			}));
+		}
+		return reopened;
+	} finally {
+		pendingHostedReopens.delete(session.id);
+	}
+}
+
+/**
+ * Cmd+Shift+T on a hosted agent: when the newest closed tab is an AI tab, it reopens on the host
+ * (`reopenHostedClosedEntry`) and this answers true. A file, terminal, or browser tab is this
+ * machine's, and false leaves it to the local reopen, as for any agent.
+ */
+export function reopenHostedTabIfNeeded(session: Session): boolean {
+	if (!hostedTargetOf(session)) return false;
+	const entry = session.unifiedClosedTabHistory?.[0];
+	if (entry?.type === 'ai') {
+		void reopenHostedClosedEntry(session, entry);
+		return true;
+	}
+	if (entry) return false;
+	// Nothing closed from this machine: the host's stack holds what was closed there (or from
+	// another machine), and its newest AI tab comes back as it would here. Nothing there: nothing
+	// happens, as for a local agent with an empty stack.
+	void reopenNewestHostClosedTab(session);
+	return true;
+}
+
+/** Reopen the newest AI tab of a hosted agent's own closed-tab stack, if it has one. */
+async function reopenNewestHostClosedTab(
+	session: Pick<Session, 'id' | 'liftedTo'>,
+	options: { background?: boolean; tabId?: string } = {}
+): Promise<{ tabId: string; wasDuplicate?: boolean } | null> {
+	const host = hostedTargetOf(session);
+	if (!host || pendingHostedReopens.has(session.id)) return null;
+	pendingHostedReopens.add(session.id);
+	try {
+		return await reopenNewestOnHost(session, host, options);
+	} finally {
+		pendingHostedReopens.delete(session.id);
+	}
+}
+
+async function reopenNewestOnHost(
+	session: Pick<Session, 'id' | 'liftedTo'>,
+	host: HostedTarget,
+	options: { background?: boolean; tabId?: string }
+): Promise<{ tabId: string; wasDuplicate?: boolean } | null> {
+	const stack = await readMirrorClosedTabs(host.peerId, host.agentId);
+	const entry = stack.find(
+		(candidate) =>
+			candidate.type === 'ai' &&
+			(!options.tabId ||
+				candidate.tabId === options.tabId ||
+				candidate.tabId.startsWith(options.tabId))
+	);
+	if (!entry) return null;
+	return reopenHostedClosedTab(
+		session,
+		{ tabId: entry.tabId },
+		options.background ? { background: true } : {}
+	);
+}
+
 /**
  * Run one closed-tab verb. Answers rather than throws for every expected
  * outcome (unknown agent, empty stack, bad index): the caller is a CLI process
@@ -153,10 +261,42 @@ export async function runRemoteClosedTabCommand(
 
 	const history = session.unifiedClosedTabHistory ?? [];
 	const picked = resolveEntryIndex(history, request);
+	// A hosted agent's tab closed on its host (or from another machine) is only in the host's stack.
+	if (!picked.ok && hostedTargetOf(session) && request.index === undefined) {
+		const hosted = await reopenNewestHostClosedTab(session, {
+			background: readBackgroundField(request),
+			...(request.tabId ? { tabId: request.tabId } : {}),
+		});
+		if (hosted) {
+			if (!readBackgroundField(request)) deps.selectAgent?.(sessionId);
+			return {
+				success: true,
+				tabId: hosted.tabId,
+				tabType: 'ai',
+				...(hosted.wasDuplicate ? { wasDuplicate: true } : {}),
+				content: 'loaded',
+			};
+		}
+	}
 	if (!picked.ok) return { success: false, error: picked.error };
 	const entry = history[picked.index];
 	const summary = toClosedTabSummary(entry, picked.index);
 	const background = readBackgroundField(request);
+
+	// A hosted agent's AI tab reopens on its host, where its conversation runs.
+	if (entry.type === 'ai' && hostedTargetOf(session)) {
+		const hosted = await reopenHostedClosedEntry(session, entry, { background });
+		if (!hosted) return { success: false, error: `The host did not reopen ${entry.tab.id}` };
+		if (!background) deps.selectAgent?.(sessionId);
+		return {
+			success: true,
+			reopened: summary,
+			tabId: hosted.tabId,
+			tabType: 'ai',
+			...(hosted.wasDuplicate ? { wasDuplicate: true } : {}),
+			content: 'loaded',
+		};
+	}
 
 	let reopened = null as ReopenUnifiedClosedTabResult | null;
 	updateSessionWith(sessionId, (current) => {

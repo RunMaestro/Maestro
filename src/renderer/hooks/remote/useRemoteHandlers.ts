@@ -358,8 +358,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// admission stays with its native owner. The receipt is the host's: it took the
 			// message, or it said why not in a toast.
 			const hostedTarget = pianolaDispatchId ? undefined : hostedTargetOf(session);
-			const sendToHost = async () => {
-				const receipt = await sendHostedTurn(session, writeTabId, command, images ?? []);
+			const sendToHost = async (namesTab = false) => {
+				const receipt = await sendHostedTurn(
+					session,
+					writeTabId,
+					command,
+					images ?? [],
+					namesTab ? { nameFrom: { text: command, label: 'remote' } } : {}
+				);
 				reportDelivery(!!receipt, receipt ? undefined : 'host-refused');
 			};
 
@@ -432,15 +438,22 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
+			// Slash text a local dispatch resolves as a command (queued, refused, or unknown) names
+			// nothing; anything else names the tab it lands in.
+			const commandText = command.trim();
+			const resolvesAsCommand =
+				commandText.startsWith('/') && (!literalPrompt || session.toolType === 'grok');
+
 			if (hostedTarget) {
-				await sendToHost();
+				// Named from the dispatched text as a local dispatch names it, so the tab and its
+				// History entries carry the same name in every mode.
+				await sendToHost(!resolvesAsCommand);
 				return;
 			}
 
 			// Maestro prompt commands share the ordinary queue's argument/template
 			// expansion and admitted spawn. A native advertisement is never a prompt.
-			const commandText = command.trim();
-			if (commandText.startsWith('/') && (!literalPrompt || session.toolType === 'grok')) {
+			if (resolvesAsCommand) {
 				const baseCommand = commandText.split(/\s/, 1)[0];
 				const matchingCommand =
 					!literalPrompt &&

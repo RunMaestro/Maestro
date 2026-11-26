@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	withOwnHostAsLocal,
 	HISTORY_VERSION,
 	MAX_ENTRIES_PER_SESSION,
 	ORPHANED_SESSION_ID,
@@ -607,6 +608,29 @@ describe('History list helpers', () => {
 	const entry = (id: string, timestamp: number, overrides: Partial<HistoryEntry> = {}) =>
 		createMockEntry({ id, timestamp, ...overrides });
 	const ids = (list: HistoryEntry[]) => list.map((e) => e.id);
+
+	describe('withOwnHostAsLocal', () => {
+		it("drops this machine's own name and keeps another machine's", () => {
+			const list = [
+				entry('mine', 2, { hostname: 'laptop' }),
+				entry('theirs', 1, { hostname: 'desk' }),
+				entry('plain', 0),
+			];
+			const seen = withOwnHostAsLocal(list, 'laptop');
+			expect(seen.map((e) => [e.id, e.hostname])).toEqual([
+				['mine', undefined],
+				['theirs', 'desk'],
+				['plain', undefined],
+			]);
+			expect(seen[1]).toBe(list[1]);
+		});
+
+		it('returns the same array when no entry carries the name, or no name is known', () => {
+			const list = [entry('a', 1, { hostname: 'desk' })];
+			expect(withOwnHostAsLocal(list, 'laptop')).toBe(list);
+			expect(withOwnHostAsLocal(list, undefined)).toBe(list);
+		});
+	});
 
 	describe('mergeEntriesById', () => {
 		it('returns the base untouched when nothing comes in', () => {

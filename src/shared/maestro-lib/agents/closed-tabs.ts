@@ -104,3 +104,29 @@ export async function archiveClosedTab(
 export async function removeClosedTabArchive(syncDir: string, agentId: string): Promise<void> {
 	await fs.rm(closedTabsFile(syncDir, agentId), { force: true });
 }
+
+/**
+ * Take one entry off an agent's archive for a reopen: the entry the caller picks from the newest
+ * first list, and a function that writes the archive without it. Null when nothing matches.
+ */
+export async function takeClosedTab(
+	syncDir: string,
+	agentId: string,
+	pick: (archive: readonly ClosedTabRecord[]) => number
+): Promise<{ closed: ClosedTabRecord; commit: () => Promise<void> } | null> {
+	const file = closedTabsFile(syncDir, agentId);
+	const archive = await readClosedTabs(file);
+	const at = pick(archive);
+	if (at < 0 || at >= archive.length) return null;
+	const closed = archive[at];
+	return {
+		closed,
+		commit: async () => {
+			// Read again: another close may have landed while the reopen was planned.
+			const current = await readClosedTabs(file);
+			await writeStoreDocument(file, {
+				closedTabs: current.filter((entry) => entry.tab.id !== closed.tab.id),
+			});
+		},
+	};
+}

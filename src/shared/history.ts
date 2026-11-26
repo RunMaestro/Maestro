@@ -350,6 +350,24 @@ export function mergeEntriesById(base: HistoryEntry[], incoming: HistoryEntry[])
 /** The host key of an entry with no `hostname` (one written on this machine). */
 export const LOCAL_HOST_AGG_KEY = '__local__';
 
+/**
+ * Entries as this machine reads them: one stamped with this machine's own `hostname` (a hosted
+ * agent's turn sent from here, which its host records with the sender's name) reads as written
+ * here, with no `hostname`, as a local or SSH agent's own entry does. An entry another machine
+ * sent keeps its name, as a shared History entry does. Same array back when nothing changed.
+ */
+export function withOwnHostAsLocal<T extends Pick<HistoryEntry, 'hostname'>>(
+	entries: T[],
+	ownHostname: string | undefined
+): T[] {
+	if (!ownHostname || !entries.some((entry) => entry.hostname === ownHostname)) return entries;
+	return entries.map((entry) => {
+		if (entry.hostname !== ownHostname) return entry;
+		const { hostname: _own, ...rest } = entry;
+		return rest as T;
+	});
+}
+
 /** The oldest timestamp a lookback of `lookbackHours` keeps, or 0 for no lookback. */
 export function historyLookbackCutoff(
 	lookbackHours: number | null | undefined,

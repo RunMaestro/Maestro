@@ -586,12 +586,18 @@ describe('useForkConversation', () => {
 					expect(spawn).not.toHaveBeenCalled();
 					expect(federationAct.mock.calls.map((call) => call[2])).toEqual([
 						{ kind: 'new-tab' },
+						// The fork starts with Save to History and thinking as a local fork does.
+						{
+							kind: 'update-tab',
+							tabId: 'host-fork',
+							patch: { saveToHistory: true, thinking: 'off' },
+						},
 						{ kind: 'rename-tab', tabId: 'host-fork', name: 'Forked: Source' },
 						{
 							kind: 'send',
 							tabId: 'host-fork',
 							text: expect.stringContaining('# Forked Conversation'),
-							overrides: { readOnly: true },
+							overrides: { readOnly: true, saveToHistory: true },
 						},
 					]);
 				} else {

@@ -48,7 +48,7 @@ describe('checkHostedAgentLaunch', () => {
 	});
 
 	it.each(AGENT_MODES)(
-		'lets a Cue run and a group chat turn of a %s agent through unreported: they run over SSH by decision',
+		'lets a Cue run, a group chat turn, and a managed consult of a %s agent through unreported: they run over SSH by decision',
 		(mode) => {
 			install(mode);
 			for (const run of Object.keys(HOSTED_SSH_RUNS) as HostedLaunchFeature[]) {
@@ -59,6 +59,10 @@ describe('checkHostedAgentLaunch', () => {
 			expect(captureMessage).not.toHaveBeenCalled();
 		}
 	);
+
+	it('lists the managed consult as an SSH run with its reason (G3)', () => {
+		expect(HOSTED_SSH_RUNS['managed-consult']).toContain('admission stays here');
+	});
 
 	it.each(AGENT_MODES)(
 		'reports an unlisted launch of a %s agent only when it is hosted, by feature name',

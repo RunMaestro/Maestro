@@ -175,6 +175,59 @@ export function hostedSendRunsHere(
 }
 
 /**
+ * The prompt command a slash message names: one of the user's custom AI commands, or one the
+ * agent advertised with a prompt (never for Grok, whose slash text is its own native command).
+ */
+function findPromptCommand(
+	baseCommand: string,
+	customAICommands: readonly CustomAICommand[],
+	session: Pick<Session, 'toolType' | 'agentCommands'>
+): Pick<CustomAICommand, 'command' | 'description' | 'prompt'> | undefined {
+	const custom = customAICommands.find((cmd) => cmd.command === baseCommand);
+	if (custom) return custom;
+	if (session.toolType === 'grok') return undefined;
+	const advertised = session.agentCommands?.find(
+		(cmd) => cmd.command === baseCommand && cmd.prompt
+	);
+	return advertised
+		? {
+				command: advertised.command,
+				description: advertised.description,
+				prompt: advertised.prompt!,
+			}
+		: undefined;
+}
+
+/**
+ * Whether a composer send names its tab from `text`, in every mode. A local send returns before
+ * the namer for Maestro's own commands, a matched prompt command, and any Grok slash command; the
+ * rest (a message, or slash text the agent takes as typed) is named. A hosted send asks the same.
+ */
+export function composerSendNamesTab(
+	text: string,
+	customAICommands: readonly CustomAICommand[],
+	session: Pick<Session, 'toolType' | 'agentCommands'>
+): boolean {
+	const command = text.trim();
+	if (!command.startsWith('/')) return true;
+	if (parseMaestroBuiltinCommand(command, session.toolType)) return false;
+	if (session.toolType === 'grok') return false;
+	const baseCommand = command.split(/\s/, 1)[0];
+	return !findPromptCommand(baseCommand, customAICommands, session);
+}
+
+/**
+ * The recall history (Up arrow in the composer) with `typed` added, as every send adds what the
+ * user typed: trimmed, skipped when empty or the same as the newest entry. Same array back then.
+ */
+function withRecallEntry(history: readonly string[] | undefined, typed: string): string[] {
+	const current = history ? [...history] : [];
+	const text = typed.trim();
+	if (!text || current[current.length - 1] === text) return current;
+	return [...current, text];
+}
+
+/**
  * Dependencies for the useInputProcessing hook.
  */
 export interface UseInputProcessingDeps {
@@ -632,6 +685,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				try {
 					receipt = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
 						held: options?.hold === true,
+						// Named from what the user typed, as a local send is (chips only: their blocks).
+						...(composerSendNamesTab(text, customAICommands, activeSession)
+							? { nameFrom: { text: text.trim() ? text : hostedText } }
+							: {}),
 					});
 				} finally {
 					releaseSubmit?.();
@@ -647,6 +704,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					clearSentDesignPicks();
 					syncAiInputToSession('', syncTarget);
 					if (inputRef.current) inputRef.current.style.height = 'auto';
+				}
+				// Up arrow recalls it, as it recalls a message a local send took.
+				if (receipt) {
+					updateSessionWith(activeSession.id, (s) => {
+						const aiCommandHistory = withRecallEntry(s.aiCommandHistory, text);
+						return aiCommandHistory.length === (s.aiCommandHistory?.length ?? 0)
+							? s
+							: { ...s, aiCommandHistory };
+					});
 				}
 				return;
 			}
@@ -720,21 +786,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							: commandText.substring(0, firstWhitespaceIndex);
 
 					// Check custom AI commands first, then agent-discovered commands with prompts
-					const matchingAgentCommand =
-						activeSession.toolType === 'grok'
-							? undefined
-							: activeSession.agentCommands?.find(
-									(cmd) => cmd.command === baseCommand && cmd.prompt
-								);
-					const matchingCustomCommand =
-						customAICommands.find((cmd) => cmd.command === baseCommand) ||
-						(matchingAgentCommand
-							? {
-									command: matchingAgentCommand.command,
-									description: matchingAgentCommand.description,
-									prompt: matchingAgentCommand.prompt!,
-								}
-							: undefined);
+					const matchingCustomCommand = findPromptCommand(
+						baseCommand,
+						customAICommands,
+						activeSession
+					);
 					// Any other Grok slash text is a native command: admitted against this
 					// tab's live catalog, or refused here keeping the draft, images and target.
 					// No naming, mention consult, Claude skill scan or ordinary prompt follows.
@@ -1612,16 +1668,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// Add command to history (separate histories for AI and terminal modes).
 				// What the user typed, not the chips expanded around it.
 				const historyKey = currentMode === 'ai' ? 'aiCommandHistory' : 'shellCommandHistory';
-				const currentHistory =
-					currentMode === 'ai' ? s.aiCommandHistory || [] : s.shellCommandHistory || [];
-				const newHistory = [...currentHistory];
-				const historyText = typedText.trim();
-				if (
-					historyText &&
-					(newHistory.length === 0 || newHistory[newHistory.length - 1] !== historyText)
-				) {
-					newHistory.push(historyText);
-				}
+				const newHistory = withRecallEntry(
+					currentMode === 'ai' ? s.aiCommandHistory : s.shellCommandHistory,
+					typedText
+				);
 
 				// For terminal mode (legacy), add to shellLogs
 				if (currentMode !== 'ai') {

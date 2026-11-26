@@ -67,6 +67,10 @@ vi.mock('../../../../main/feedback', () => ({
 	}),
 	subscribeFeedbackIssue: vi.fn().mockResolvedValue({ success: true }),
 }));
+const cancelCrossAgentRequestsForSource = vi.hoisted(() => vi.fn(() => 2));
+vi.mock('../../../../main/cross-agent/cross-agent-router', () => ({
+	cancelCrossAgentRequestsForSource,
+}));
 vi.mock('../../../../main/debug-package', () => ({
 	generateDebugPackage: vi.fn().mockResolvedValue({
 		success: true,
@@ -606,6 +610,7 @@ describe('WebSocketMessageHandler', () => {
 				question: 'q',
 				transcript: [{ source: 'user', text: 'hi', timestamp: 1 }, 'junk'],
 				fromAgentName: ' Laptop Agent ',
+				askerKey: 'laptop/agent-a/tab-1',
 				handoffAnswer: 'the plan',
 			});
 
@@ -614,10 +619,25 @@ describe('WebSocketMessageHandler', () => {
 					expect.objectContaining({
 						transcript: [{ source: 'user', text: 'hi', timestamp: 1 }],
 						fromAgentName: 'Laptop Agent',
+						askerKey: 'laptop/agent-a/tab-1',
 						handoffAnswer: 'the plan',
 					})
 				);
 			});
+		});
+
+		it('drops an asker key it cannot read, so the consult shares the stand-in tab (G2)', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				askerKey: 'session-2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalled();
+			});
+			expect((callbacks.consultAgent as any).mock.calls[0][0]).not.toHaveProperty('askerKey');
 		});
 
 		it('consults the target and returns the answer without touching its open tab', async () => {
@@ -689,6 +709,79 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('not found');
+		});
+
+		// G4: a wire hand-off may run writable (`crossAgentHandoffsWritable`, default on), so it must
+		// never be open to a client that may not send a turn. Today no client kind is refused a send
+		// (Web Login accounts are equal operators, the CLI and a Federation peer present the CLI
+		// secret), so every kind may do both. Pinned per kind: a gate added to `send_command` for one
+		// kind fails here until the wire hand-off carries the same gate.
+		describe.each([
+			['a web-desktop or phone client (URL token only)', {}],
+			[
+				'a Web Login account',
+				{ user: { id: 'u1', username: 'ann', displayName: 'Ann' }, sessionId: 's1' },
+			],
+			['maestro-cli or a Federation peer (CLI secret)', { cli: true, cliAuthenticated: true }],
+		] as Array<[string, Partial<WebClient>]>)('as %s', (_kind, fields) => {
+			it('may hand off on the wire only as far as it may send a turn', async () => {
+				const kindClient = { ...createMockClient('kind-client'), ...fields };
+				handler.handleMessage(kindClient, {
+					type: 'send_command',
+					sessionId: 'session-1',
+					command: 'do it',
+					inputMode: 'ai',
+				});
+				handler.handleMessage(kindClient, {
+					type: 'cross_agent_ask',
+					sessionId: 'session-1',
+					question: 'then pass it on',
+					handoffAnswer: 'the plan',
+				});
+
+				await vi.waitFor(() => {
+					expect(callbacks.consultAgent).toHaveBeenCalled();
+				});
+				const handedOff = (callbacks.consultAgent as any).mock.calls.some(
+					([params]: [{ handoffAnswer?: string }]) => params.handoffAnswer === 'the plan'
+				);
+				const sent = (callbacks.executeCommand as any).mock.calls.length > 0;
+				expect(handedOff).toBe(true);
+				expect(sent).toBe(handedOff);
+			});
+		});
+
+		// G1: Stop on an asker on another machine ends its consults here, and only its own.
+		it('stops the consults one remote asker has running, keyed on its asker key', async () => {
+			cancelCrossAgentRequestsForSource.mockClear();
+			handler.handleMessage(client, {
+				type: 'cross_agent_cancel',
+				askerKey: 'laptop/agent-a/tab-1',
+				requestId: 'r-stop',
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(cancelCrossAgentRequestsForSource).toHaveBeenCalledWith(
+				'remote-asker:laptop/agent-a/tab-1'
+			);
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'cross_agent_cancel_result',
+				requestId: 'r-stop',
+				success: true,
+				canceled: 2,
+			});
+		});
+
+		it('stops nothing for a key it cannot read, never the shared stand-in tab', async () => {
+			cancelCrossAgentRequestsForSource.mockClear();
+			handler.handleMessage(client, { type: 'cross_agent_cancel', askerKey: 'cli-ask' });
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(cancelCrossAgentRequestsForSource).not.toHaveBeenCalled();
+			expect(JSON.parse((client.socket.send as any).mock.calls[0][0]).success).toBe(false);
 		});
 
 		it('clamps an absurd timeout instead of holding a process for a day', async () => {

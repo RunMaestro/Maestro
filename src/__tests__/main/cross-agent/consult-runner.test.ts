@@ -17,6 +17,28 @@ vi.mock('../../../main/group-chat/spawn-config', () => ({
 
 const spawn = { processId: 'cross-agent-auth', providerId: 'codex' } as GroupChatSpawn;
 
+describe('the launch feature a consult reports (G3)', () => {
+	beforeEach(() =>
+		vi.mocked(spawnGroupChatAgent).mockReset().mockResolvedValue({ success: true, pid: 1 })
+	);
+
+	it('names a managed consult, whose admission stays on this machine, apart from a plain one', async () => {
+		const observer = { onActivity: vi.fn(), onSessionId: vi.fn(), onEnd: vi.fn() };
+		await createDesktopConsultRunner(new EventEmitter() as ProcessManager, null).start(
+			spawn,
+			observer
+		);
+		await createDesktopConsultRunner(new EventEmitter() as ProcessManager, null, {
+			beforeSpawn: vi.fn(),
+			started: vi.fn(),
+		}).start(spawn, observer);
+		const features = vi
+			.mocked(spawnGroupChatAgent)
+			.mock.calls.map(([config]) => config.launchFeature);
+		expect(features).toEqual([undefined, 'managed-consult']);
+	});
+});
+
 describe('desktop consult listener lifecycle', () => {
 	beforeEach(() =>
 		vi.mocked(spawnGroupChatAgent).mockReset().mockResolvedValue({ success: true, pid: 123 })
@@ -195,6 +217,53 @@ describe('desktop consult listener lifecycle', () => {
 			expect(await runner.start(spawn, observer)).toMatchObject({ success: false });
 		else await expect(runner.start(spawn, observer)).rejects.toThrow('spawn failed');
 		expect(emitter.eventNames()).toEqual([]);
+	});
+});
+
+// G1: a consult hands its answer over whole when the target exits, however much output it printed
+// on the way, so a local or SSH consult lands in its bubble at once, as a hosted one does.
+describe('a consult answer lands whole in every mode (G1)', () => {
+	beforeEach(() =>
+		vi.mocked(spawnGroupChatAgent).mockReset().mockResolvedValue({ success: true, pid: 7 })
+	);
+
+	it('emits one terminal chunk, never a partial one', async () => {
+		const emitter = new EventEmitter();
+		const chunks: import('../../../shared/crossAgentTypes').CrossAgentResponseChunk[] = [];
+		await createConsultService().start(
+			{
+				requestId: 'g1',
+				sourceSessionId: 'src',
+				sourceTabId: 'tab',
+				targetSessionId: 'tgt',
+				userPrompt: 'Question?',
+				transcript: [],
+				strategy: { kind: 'full' },
+				createdAt: 0,
+			},
+			{
+				runner: createDesktopConsultRunner(emitter as ProcessManager, null),
+				resolveAgent: async () =>
+					({
+						id: 'claude-code',
+						name: 'Claude',
+						command: 'claude',
+						path: 'claude',
+						args: [],
+						available: true,
+						readOnlyArgs: [],
+					}) as unknown as AgentConfig,
+				sshStore: null,
+				getTargetSession: () => ({ id: 'tgt', name: 'Claude', toolType: 'claude-code', cwd: '/p' }),
+				onChunk: (chunk) => chunks.push(chunk),
+			}
+		);
+		for (const part of ['First ', 'second ', 'third.'])
+			emitter.emit('data', 'cross-agent-g1', part);
+		expect(chunks).toEqual([]);
+		emitter.emit('exit', 'cross-agent-g1', 0);
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0]).toMatchObject({ done: true, chunk: 'First second third.' });
 	});
 });
 

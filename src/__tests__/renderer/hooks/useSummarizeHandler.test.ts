@@ -265,6 +265,11 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 					expect(createTabAtPosition).not.toHaveBeenCalled();
 					expect(federationAct.mock.calls.map((call) => call[2])).toEqual([
 						{ kind: 'new-tab' },
+						{
+							kind: 'update-tab',
+							tabId: 'new-tab-1',
+							patch: { saveToHistory: true, thinking: 'off' },
+						},
 						{ kind: 'rename-tab', tabId: 'new-tab-1', name: 'Tab 1 Compacted' },
 					]);
 				} else {
