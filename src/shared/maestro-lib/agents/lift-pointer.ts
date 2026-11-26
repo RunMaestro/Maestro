@@ -62,8 +62,25 @@ export function liftedAgentRef(agent: { liftedTo?: unknown }): string | undefine
 }
 
 /**
+ * Where a hosted agent's turns run: its pointer while hosted agents are on, undefined for an
+ * agent that is not lifted or while they are off (it then works as its SSH agent, from here).
+ * The CLI sends to this peer agent what a local id names (`liftedPeerTarget()`).
+ */
+export function hostedPointer(
+	agent: { liftedTo?: unknown },
+	/** `HOSTED_AGENTS_SETTING`, or a reader for it: read only for a lifted agent. */
+	hostedEnabled: boolean | (() => boolean) = true
+): LiftedToPointer | undefined {
+	const pointer = readLiftedTo(agent.liftedTo);
+	if (!pointer) return undefined;
+	if (!(typeof hostedEnabled === 'function' ? hostedEnabled() : hostedEnabled)) return undefined;
+	return pointer;
+}
+
+/**
  * The message a send to a lifted agent is refused with, or undefined when the agent was not
- * lifted and the send may go ahead.
+ * lifted and the send may go ahead. For a place that cannot reach the host (a host's own
+ * runtime holding a stale pointer); the CLI routes such a send to the host instead.
  */
 export function liftedSendRefusal(
 	agent: {
@@ -73,9 +90,8 @@ export function liftedSendRefusal(
 	/** `HOSTED_AGENTS_SETTING`, or a reader for it: read only for a lifted agent. */
 	hostedEnabled: boolean | (() => boolean) = true
 ): string | undefined {
-	const pointer = readLiftedTo(agent.liftedTo);
+	const pointer = hostedPointer(agent, hostedEnabled);
 	if (!pointer) return undefined;
-	if (!(typeof hostedEnabled === 'function' ? hostedEnabled() : hostedEnabled)) return undefined;
 	const ref = peerAgentRef(pointer.peer, pointer.agentId);
 	const who = agent.name ? `"${agent.name}"` : 'This agent';
 	return `${who} was moved to peer "${pointer.peer}" and runs there now. Send to ${ref} instead.`;
