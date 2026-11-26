@@ -182,11 +182,9 @@ export function handleImportAgent(
 			? ctx.callbacks.enqueueCommand(agentId, text, 'ai', tabId, images, true)
 			: Promise.resolve({ success: false, error: 'Enqueue not configured' });
 
-	// The bridge's agent list reads each agent's live processes (`isAgentBusy()`).
-	const isBusy = (agentId: string) =>
-		ctx.callbacks.getSessions?.().some((agent) => agent.id === agentId && agent.state === 'busy') ??
-		false;
-	importAgentIntoDesktop(parsed.input, buildDesktopAgentImportDeps(enqueue, isBusy))
+	// The live process table: a replaced copy is read busy from it and stopped on it.
+	const processTable = ctx.callbacks.getDebugPackageDeps?.()?.getProcessManager() ?? null;
+	importAgentIntoDesktop(parsed.input, buildDesktopAgentImportDeps(enqueue, processTable))
 		.then((result) => {
 			if (!result.ok) {
 				reply({
