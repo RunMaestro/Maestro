@@ -4,6 +4,7 @@ import { logger } from '../../../utils/logger';
 import { isWebContentsAvailable } from '../../../utils/safe-send';
 import type { ClaudeSpawnContext } from './resolve-claude-spawn-context';
 import type { SpawnProcessConfig } from './spawn-types';
+import type { SteeringUnavailableReason } from '../../../../shared/chatSteering';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -26,7 +27,15 @@ export function persistClaudeInteractiveMode(
 		claudeResolvedMode,
 		claudeResolvedReason,
 		resolvedConfigDirKey,
+		remoteMaestroPCanSteer,
 	} = claudeContext;
+	// A TUI turn on an SSH remote whose maestro-p predates the steering relay has no
+	// steering channel. Recorded with the mode so the Steer controls say why before
+	// anyone clicks; any other spawn clears it.
+	const steeringUnavailable: SteeringUnavailableReason | undefined =
+		claudeResolvedMode === 'interactive' && remoteMaestroPCanSteer === false
+			? 'maestro-p-outdated'
+			: undefined;
 
 	// Persist the resolved Claude headless-mode state back to the session
 	// record and notify the renderer. Fires when:
@@ -50,12 +59,14 @@ export function persistClaudeInteractiveMode(
 						mode?: string;
 						modeReason?: string;
 						lastUsageSnapshotKey?: string;
+						steeringUnavailable?: string;
 				  }
 				| undefined;
 			if (
 				current?.mode === claudeResolvedMode &&
 				current?.modeReason === claudeResolvedReason &&
-				current?.lastUsageSnapshotKey === resolvedConfigDirKey
+				current?.lastUsageSnapshotKey === resolvedConfigDirKey &&
+				current?.steeringUnavailable === steeringUnavailable
 			) {
 				return s;
 			}
@@ -66,6 +77,7 @@ export function persistClaudeInteractiveMode(
 					mode: claudeResolvedMode,
 					modeReason: claudeResolvedReason,
 					lastUsageSnapshotKey: resolvedConfigDirKey,
+					...(steeringUnavailable ? { steeringUnavailable } : {}),
 				},
 			};
 		});
@@ -84,6 +96,7 @@ export function persistClaudeInteractiveMode(
 		mode: claudeResolvedMode,
 		reason: claudeResolvedReason,
 		configDirKey: resolvedConfigDirKey,
+		...(steeringUnavailable ? { steeringUnavailable } : {}),
 	};
 	if (deps.safeSend) {
 		deps.safeSend('process:claude-mode-resolved', config.sessionId, claudeModePayload);

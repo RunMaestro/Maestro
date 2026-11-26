@@ -8,6 +8,7 @@ import {
 	describeSshConnectionError,
 	describeSshUnreachable,
 	isSshConnectionFailure,
+	sshFailedBeforeSession,
 	readSshProbeOutput,
 } from '../../shared/sshConnection';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -190,5 +191,38 @@ describe('describeSshUnreachable', () => {
 		expect(describeSshUnreachable({ name: ' ', host: 'box.lan' }, '')).toBe(
 			'Unable to connect to "box.lan" over SSH.'
 		);
+	});
+});
+
+describe('sshFailedBeforeSession', () => {
+	it('is true only for stderr that proves no session opened', () => {
+		for (const stderr of [
+			'ssh: connect to host box port 22: Connection refused',
+			'ssh: Could not resolve hostname box: nodename nor servname provided',
+			'me@box: Permission denied (publickey).',
+			'ssh: connect to host box port 22: No route to host',
+			'Host key verification failed.',
+		]) {
+			expect(sshFailedBeforeSession(stderr), stderr).toBe(true);
+		}
+	});
+
+	it('is false for a connection that dropped after it opened, and for silence', () => {
+		expect(sshFailedBeforeSession('Connection to box closed by remote host.')).toBe(false);
+		expect(sshFailedBeforeSession('client_loop: send disconnect: Broken pipe')).toBe(false);
+		expect(sshFailedBeforeSession('')).toBe(false);
+	});
+
+	it('is false for the same words written by the remote side, not by ssh', () => {
+		// The remote shell and the relay share ssh's stderr; their text proves nothing.
+		expect(sshFailedBeforeSession('bash: /home/me/.maestro/bin/x: Permission denied')).toBe(false);
+		expect(sshFailedBeforeSession('maestro-p: connection refused by the steering socket')).toBe(
+			false
+		);
+		expect(
+			sshFailedBeforeSession(
+				'warning: remote said Host key verification failed. in a log line\nConnection to box closed.'
+			)
+		).toBe(false);
 	});
 });
