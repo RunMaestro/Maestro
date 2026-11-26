@@ -43,7 +43,8 @@ import type { SessionListObserver, SkippedSessionFile } from '../agents/session-
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
-import { forEachJsonlLine, readFirstJsonlLine } from '../utils/jsonl-stream';
+import { readFirstJsonlLine } from '../utils/jsonl-stream';
+import { forEachLocalTranscriptLine, readRemoteTranscript } from './transcript-read';
 import { CodexTokenCounts } from '../../shared/codexTokenUsage';
 import { runTranscriptParse } from '../transcript-parse/transcript-parse-pool';
 import {
@@ -1082,15 +1083,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				logger.warn(`Codex session file not found on remote: ${sessionId}`, LOG_CONTEXT);
 				return { messages: [], total: 0, hasMore: false };
 			}
-			const result = await readFileRemote(sessionFilePath, sshConfig);
-			if (!result.success || !result.data) {
-				logger.error(
-					`Failed to read remote Codex session: ${sessionId} - ${result.error}`,
-					LOG_CONTEXT
-				);
-				return { messages: [], total: 0, hasMore: false };
-			}
-			for (const line of result.data.split('\n')) {
+			// A transcript that does not exist is an empty conversation; one that exists and cannot be
+			// read rejects, in every mode (see transcript-read.ts).
+			const content = await readRemoteTranscript(sessionFilePath, sshConfig);
+			for (const line of (content ?? '').split('\n')) {
 				if (line.trim()) collect(line);
 			}
 			return page.result();
@@ -1110,7 +1106,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			}
 		} else {
 			// Streamed, never read whole: a rollout can be hundreds of MB (#1862).
-			await forEachJsonlLine(sessionFilePath, collect);
+			await forEachLocalTranscriptLine(sessionFilePath, collect);
 		}
 		return page.result();
 	}

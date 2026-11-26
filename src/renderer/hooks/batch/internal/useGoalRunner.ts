@@ -48,6 +48,7 @@ import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import { getClientInstanceId } from '../../../utils/clientInstance';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
 import type { AutoRunSpawnAgentFn } from '../useDocumentProcessor';
+import { AUTO_RUN_TURN_ABORTED, untilAutoRunTurnAborted } from './autoRunTurnAbort';
 import {
 	awaitDelegationsBeforeTurn,
 	beginAutoRunDelegations,
@@ -606,6 +607,20 @@ export function useGoalRunner({
 				}
 				const elapsedTimeMs = Date.now() - iterationStart;
 
+				// A turn that ended because the run was force-ended (Force Kill, or a second stop
+				// or abort on a stopping run) finished nothing: the run ends here, without
+				// recording the iteration or waiting on anything else.
+				if (result.error === AUTO_RUN_TURN_ABORTED) {
+					exitReason = 'stopped-by-user';
+					exitDetail = 'Stopped by user.';
+					recordSteeringResponse(sessionId, steeringNotes, {
+						summary: `Iteration ${iteration} stopped before it finished`,
+						text: result.error ?? 'Stopped by user.',
+						success: false,
+					});
+					break;
+				}
+
 				// Limit pause: if this iteration's spawn hit a token/API/credit or rate
 				// limit, do NOT consume the iteration. The agent-error listener has
 				// already parked the batch on the error (`batchRunStates[id].error`; a
@@ -847,35 +862,45 @@ export function useGoalRunner({
 				// resume - without it the resumed "session" has no context and the note
 				// would be worthless, so we'd rather carry nothing forward. Mirrors the
 				// CLI runner (src/cli/services/goal-runner.ts) exactly.
+				// A run asked to stop ends at the top of the loop, so no next iteration reads a
+				// handoff: skip it rather than make the stop wait on one more turn.
 				if (
 					result.success &&
 					result.agentSessionId &&
+					!stopRequestedRefs.current[sessionId] &&
 					hasCapabilityCached(session.toolType, 'supportsResume')
 				) {
+					const handoffSessionId = result.agentSessionId;
 					try {
-						const handoff = await spawnBackgroundSynopsis(
+						// In the run's abort scope, so a force-end does not wait on the synopsis.
+						const handoff = await untilAutoRunTurnAborted(
 							sessionId,
-							effectiveCwd,
-							result.agentSessionId,
-							GOAL_SYNOPSIS_REQUEST_PROMPT,
-							session.toolType,
-							{
-								customPath: session.customPath,
-								customArgs: session.customArgs,
-								customEnvVars: session.customEnvVars,
-								// Mirror the primary iteration's effective config: the run-scoped
-								// model/effort override wins over the session default so the handoff
-								// synopsis spawns under the same configuration as the goal run itself.
-								// Same truthiness test as `runOverrides`, so an empty run value falls
-								// back to the session's model exactly as the iteration's spawn did.
-								customModel: config.model || session.customModel,
-								customEffort: config.effort || session.customEffort,
-								customContextWindow: session.customContextWindow,
-								enableMaestroP: session.enableMaestroP,
-								maestroPMode: session.maestroPMode,
-								maestroPPath: session.maestroPPath,
-								sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-							}
+							() =>
+								spawnBackgroundSynopsis(
+									sessionId,
+									effectiveCwd,
+									handoffSessionId,
+									GOAL_SYNOPSIS_REQUEST_PROMPT,
+									session.toolType,
+									{
+										customPath: session.customPath,
+										customArgs: session.customArgs,
+										customEnvVars: session.customEnvVars,
+										// Mirror the primary iteration's effective config: the run-scoped
+										// model/effort override wins over the session default so the handoff
+										// synopsis spawns under the same configuration as the goal run itself.
+										// Same truthiness test as `runOverrides`, so an empty run value falls
+										// back to the session's model exactly as the iteration's spawn did.
+										customModel: config.model || session.customModel,
+										customEffort: config.effort || session.customEffort,
+										customContextWindow: session.customContextWindow,
+										enableMaestroP: session.enableMaestroP,
+										maestroPMode: session.maestroPMode,
+										maestroPPath: session.maestroPPath,
+										sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+									}
+								),
+							() => ({ success: false, response: '' })
 						);
 						if (handoff.usageStats) {
 							totalInputTokens += handoff.usageStats.inputTokens || 0;

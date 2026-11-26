@@ -755,6 +755,149 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		expect(mockOnComplete).toHaveBeenCalledWith(expect.objectContaining({ wasStopped: true }));
 	});
 
+	it('skips the handoff synopsis once a stop is requested, so the stop waits on no extra turn', async () => {
+		let resolveAgent: (value: {
+			success: boolean;
+			response: string;
+			agentSessionId: string;
+		}) => void;
+		mockOnSpawnAgent.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveAgent = resolve;
+			})
+		);
+		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+
+		let finished = false;
+		act(() => {
+			void result.current
+				.startBatchRun(SESSION_ID, goalConfig('Goal', 'Done', null), '/test/folder')
+				.then(() => {
+					finished = true;
+				});
+		});
+		await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1));
+		act(() => result.current.stopBatchRun(SESSION_ID));
+		await act(async () => {
+			resolveAgent!({
+				success: true,
+				response: progressResponse(30, 'partial'),
+				agentSessionId: 'a',
+			});
+		});
+		await waitFor(() => expect(finished).toBe(true));
+
+		expect(mockSpawnBackgroundSynopsis).not.toHaveBeenCalled();
+	});
+
+	describe('a stopping run whose turn never settles', () => {
+		const neverSettles = () => new Promise(() => {});
+
+		beforeEach(() => {
+			window.maestro = {
+				...window.maestro,
+				process: {
+					...window.maestro.process,
+					getActiveProcesses: vi.fn().mockResolvedValue([]),
+					kill: vi.fn().mockResolvedValue(true),
+				},
+			};
+		});
+
+		const startStuckRun = async () => {
+			mockOnSpawnAgent.mockImplementationOnce(neverSettles);
+			const rendered = renderProcessor([createMockSession()], [createMockGroup()]);
+			const run = { finished: false };
+			act(() => {
+				void rendered.result.current
+					.startBatchRun(SESSION_ID, goalConfig('Goal', 'Done', null), '/test/folder')
+					.then(() => {
+						run.finished = true;
+					});
+			});
+			await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1));
+			// The first stop waits for the turn to finish, which it never does.
+			act(() => rendered.result.current.stopBatchRun(SESSION_ID));
+			await waitFor(() =>
+				expect(rendered.result.current.getBatchState(SESSION_ID).isStopping).toBe(true)
+			);
+			expect(run.finished).toBe(false);
+			return { ...rendered, run };
+		};
+
+		it('ends on a second stop-auto-run, the same as the Force Kill button', async () => {
+			const { result, run } = await startStuckRun();
+
+			await act(async () => {
+				result.current.stopBatchRun(SESSION_ID);
+			});
+
+			await waitFor(() => expect(run.finished).toBe(true));
+			expect(result.current.getBatchState(SESSION_ID).isRunning).toBe(false);
+			// The spawn was told to let go of the turn it was waiting on.
+			const turnSettings = mockOnSpawnAgent.mock.calls[0][3];
+			expect(turnSettings.abortSignal.aborted).toBe(true);
+			expect(window.maestro.process.kill).toHaveBeenCalled();
+			// No second iteration, and no handoff for a run that is ending.
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+			expect(mockSpawnBackgroundSynopsis).not.toHaveBeenCalled();
+		});
+
+		it("kills the run's process before it releases the turn, so cleanup never races a live process", async () => {
+			const { result, run } = await startStuckRun();
+			const signal: AbortSignal = mockOnSpawnAgent.mock.calls[0][3].abortSignal;
+			const abortedAtKill: boolean[] = [];
+			window.maestro.process.kill = vi.fn(async () => {
+				abortedAtKill.push(signal.aborted);
+				return true;
+			});
+
+			await act(async () => {
+				result.current.stopBatchRun(SESSION_ID);
+			});
+
+			await waitFor(() => expect(run.finished).toBe(true));
+			expect(abortedAtKill.length).toBeGreaterThan(0);
+			expect(abortedAtKill.every((aborted) => aborted === false)).toBe(true);
+			expect(signal.aborted).toBe(true);
+		});
+
+		it('ends on abort-auto-run, paused on an error or not', async () => {
+			const { result, run } = await startStuckRun();
+
+			await act(async () => {
+				result.current.abortBatchOnError(SESSION_ID);
+			});
+
+			await waitFor(() => expect(run.finished).toBe(true));
+			expect(result.current.getBatchState(SESSION_ID).isRunning).toBe(false);
+		});
+
+		it('frees the agent for a new goal run once it has ended', async () => {
+			const { result, run } = await startStuckRun();
+			await act(async () => {
+				result.current.stopBatchRun(SESSION_ID);
+			});
+			await waitFor(() => expect(run.finished).toBe(true));
+
+			mockOnSpawnAgent.mockResolvedValueOnce({
+				success: true,
+				agentSessionId: 'next',
+				response: progressResponse(100, 'done'),
+			});
+			let second = false;
+			act(() => {
+				void result.current
+					.startBatchRun(SESSION_ID, goalConfig('Next goal', 'Done', null), '/test/folder')
+					.then(() => {
+						second = true;
+					});
+			});
+			await waitFor(() => expect(second).toBe(true));
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+		});
+	});
+
 	it('substitutes goal template variables into the per-iteration prompt', async () => {
 		mockOnSpawnAgent.mockResolvedValue({
 			success: true,

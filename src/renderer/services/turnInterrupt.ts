@@ -22,6 +22,7 @@ import { hostedTargetOf, interruptHostedTurn } from './hostedTurns';
 import { TURN_CANCELED_NOTE } from '../../shared/maestro-lib/store/transcript';
 import type { AITab, LogEntry, QueuedItem, Session, SessionState } from '../types';
 import { useSessionStore, selectSessionById, updateSessionWith } from '../stores/sessionStore';
+import { useBatchStore } from '../stores/batchStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../stores/retryStore';
 import { dropMentionHandoffs } from './crossAgentHandoff';
 import { cancelHostedConsults } from '../hooks/agent/useCrossAgentDispatch';
@@ -139,13 +140,18 @@ export async function interruptTurn(
 				? [scopedTab.id]
 				: []
 			: getBusyTabs(session).map((t) => t.id);
-		if (hostBusy.length > 0) await interruptHostedTurn(session, scopeTabId);
+		// An Auto Run task's turn runs on no tab, on the host as it would here: its run is the
+		// sign that the agent has a turn to stop.
+		const hostRunsAutoRun =
+			!scopedTab && useBatchStore.getState().batchRunStates[sessionId]?.isRunning === true;
+		const forward = hostBusy.length > 0 || hostRunsAutoRun;
+		if (forward) await interruptHostedTurn(session, scopeTabId);
 		return {
 			success: true,
 			sessionId,
 			tabId,
-			wasBusy: hostBusy.length > 0,
-			interrupted: hostBusy.length > 0,
+			wasBusy: forward,
+			interrupted: forward,
 			stoppedTabIds: hostBusy,
 			exited: false,
 		};
@@ -181,7 +187,7 @@ export async function interruptTurn(
 			: []
 		: getBusyTabs(session, { includeOrphans: true }).map((t) => t.id);
 	const primaryTabId = scopedTab?.id ?? getActiveTab(session)?.id ?? 'default';
-	const { targets, liveTabIds } = await collectInterruptTargets(
+	const { targets, liveTabIds, liveTurns } = await collectInterruptTargets(
 		sessionId,
 		tabId,
 		primaryTabId,
@@ -193,6 +199,8 @@ export async function interruptTurn(
 	const wasBusy =
 		busyTabIds.length > 0 ||
 		liveTabIds.length > 0 ||
+		// A live turn on no tab: an Auto Run task's `-batch-` process.
+		liveTurns > 0 ||
 		recoveriesEnded > 0 ||
 		consultsCanceled > 0 ||
 		runningTerminalCommand;
@@ -305,7 +313,7 @@ async function collectInterruptTargets(
 	tabId: string | null,
 	primaryTabId: string,
 	busyTabIds: string[]
-): Promise<{ targets: string[]; liveTabIds: string[] }> {
+): Promise<{ targets: string[]; liveTabIds: string[]; liveTurns: number }> {
 	const targets = [`${sessionId}-ai-${primaryTabId}`];
 	for (const busyTabId of busyTabIds) {
 		const id = `${sessionId}-ai-${busyTabId}`;
@@ -313,12 +321,14 @@ async function collectInterruptTargets(
 	}
 
 	const liveTabIds = new Set<string>();
+	let liveTurns = 0;
 	try {
 		const active = await window.maestro.process.getActiveProcesses({
 			includeChildProcesses: false,
 		});
 		for (const proc of active) {
 			if (proc.isTerminal || !isTurnProcessInScope(proc.sessionId, sessionId, tabId)) continue;
+			liveTurns++;
 			if (!targets.includes(proc.sessionId)) targets.push(proc.sessionId);
 			const parsed = parseSessionId(proc.sessionId);
 			if (parsed.tabId) liveTabIds.add(parsed.tabId);
@@ -327,7 +337,7 @@ async function collectInterruptTargets(
 		logger.warn('[turnInterrupt] Could not list live turn processes:', undefined, lookupErr);
 	}
 
-	return { targets, liveTabIds: [...liveTabIds] };
+	return { targets, liveTabIds: [...liveTabIds], liveTurns };
 }
 
 // ============================================================================
