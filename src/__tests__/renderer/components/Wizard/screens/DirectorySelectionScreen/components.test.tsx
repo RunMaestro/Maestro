@@ -28,7 +28,7 @@ describe('DirectorySelectionScreen components', () => {
 		expect(screen.getByText('Navigate')).toBeInTheDocument();
 	});
 
-	it('renders local path field with browse and error states', () => {
+	it("renders the path field with Browse and error states, with no prop for the agent's mode", () => {
 		const onPathChange = vi.fn();
 		const onBrowse = vi.fn();
 		const inputRef = React.createRef<HTMLInputElement>();
@@ -39,8 +39,6 @@ describe('DirectorySelectionScreen components', () => {
 				theme={mockTheme}
 				directoryPath="/bad"
 				directoryError="Directory not found. Please check the path exists."
-				isRemoteSession={false}
-				sshRemoteHost={null}
 				isBrowsing={false}
 				inputRef={inputRef}
 				browseButtonRef={browseButtonRef}
@@ -59,26 +57,6 @@ describe('DirectorySelectionScreen components', () => {
 		expect(
 			screen.getByText('Directory not found. Please check the path exists.')
 		).toBeInTheDocument();
-	});
-
-	it('renders remote path hint without browse button', () => {
-		render(
-			<DirectoryPathField
-				theme={mockTheme}
-				directoryPath="/srv/project"
-				directoryError={null}
-				isRemoteSession={true}
-				sshRemoteHost="Build Box"
-				isBrowsing={false}
-				inputRef={React.createRef<HTMLInputElement>()}
-				browseButtonRef={React.createRef<HTMLButtonElement>()}
-				onPathChange={vi.fn()}
-				onBrowse={vi.fn()}
-			/>
-		);
-
-		expect(screen.queryByRole('button', { name: /browse/i })).not.toBeInTheDocument();
-		expect(screen.getByText(/Build Box/)).toBeInTheDocument();
 	});
 
 	it('renders git, regular, and validating status states', () => {

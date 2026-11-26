@@ -18,7 +18,6 @@ import {
 	useDirectoryAgentConfig,
 	useDirectoryAnnouncements,
 	useDirectoryKeyboard,
-	useDirectorySshRemoteHost,
 	useDirectoryValidation,
 	useSkipPlaybookLaunch,
 } from './hooks';
@@ -54,7 +53,11 @@ export function DirectorySelectionScreen({
 
 	const { announcement, announcementKey, announce } = useDirectoryAnnouncements();
 	const agentConfig = useDirectoryAgentConfig(state.selectedAgent);
-	const sshRemoteHost = useDirectorySshRemoteHost(state.sessionSshRemoteConfig);
+	// Where Browse looks, for both path rows: this machine, the chosen SSH remote, or `null` while
+	// SSH is chosen and no remote is picked yet (`pickDirectory()`).
+	const pickerRemoteId = state.sessionSshRemoteConfig?.enabled
+		? (state.sessionSshRemoteConfig.remoteId ?? null)
+		: undefined;
 
 	const focusInput = useCallback(() => {
 		inputRef.current?.focus();
@@ -88,6 +91,7 @@ export function DirectorySelectionScreen({
 		setExistingDocsChoice,
 		setInitRepoError,
 		getSshRemoteId: validation.getSshRemoteId,
+		pickerRemoteId,
 		validateDirectory: validation.validateDirectory,
 		focusInput,
 		focusContinue,
@@ -134,7 +138,6 @@ export function DirectorySelectionScreen({
 
 	const isValid = canProceedToNext();
 	const showContinue = state.directoryPath.trim() !== '';
-	const isRemoteSession = !!state.sessionSshRemoteConfig?.enabled;
 
 	return (
 		<div
@@ -163,8 +166,6 @@ export function DirectorySelectionScreen({
 						theme={theme}
 						directoryPath={state.directoryPath}
 						directoryError={state.directoryError}
-						isRemoteSession={isRemoteSession}
-						sshRemoteHost={sshRemoteHost}
 						isBrowsing={actions.isBrowsing}
 						inputRef={inputRef}
 						browseButtonRef={browseButtonRef}
@@ -189,9 +190,7 @@ export function DirectorySelectionScreen({
 							theme={theme}
 							directories={state.additionalDirectories}
 							onChange={setAdditionalDirectories}
-							sshRemoteId={
-								isRemoteSession ? (state.sessionSshRemoteConfig?.remoteId ?? null) : undefined
-							}
+							sshRemoteId={pickerRemoteId}
 							nativelyEnforced={!!agentConfig?.capabilities?.supportsAdditionalDirectories}
 						/>
 					</div>
