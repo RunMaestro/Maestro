@@ -202,6 +202,28 @@ describe('collectRemoteBreakdowns', () => {
 	});
 });
 
+describe('one conversation under two folders asked', () => {
+	it('counts a rollout once when agents at a parent and a child folder both hold it, in either order', async () => {
+		const agents = [
+			agent({ id: 'parent', name: 'Parent', provider: 'codex', projectPath: '/srv/app' }),
+			agent({ id: 'child', name: 'Child', provider: 'codex', projectPath: '/srv/app/pkg' }),
+		];
+		for (const order of [agents, [...agents].reverse()]) {
+			const merged = await collectRemoteBreakdowns(order, async (_remoteId, projects) => ({
+				projects: projects.map((project) => ({
+					status: 'read' as const,
+					complete: true,
+					breakdowns: [{ ...breakdown('rollout-1', project.projectPath), agentType: 'codex' }],
+				})),
+			}));
+			expect(merged.breakdowns.map((b) => [b.sessionId, b.projectPath])).toEqual([
+				['rollout-1', '/srv/app/pkg'],
+			]);
+			expect(merged.notCounted).toEqual([]);
+		}
+	});
+});
+
 describe('projectTokenUsage (the host side)', () => {
 	it('answers per project in the order asked, and a project a storage failed to list as failed', async () => {
 		const listSessions = vi.fn(async (projectPath: string, _ssh: unknown, account?: string) => {

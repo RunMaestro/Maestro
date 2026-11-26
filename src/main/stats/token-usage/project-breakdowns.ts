@@ -13,6 +13,8 @@
  * optional `cache` adds the dashboard's per-session breakdown cache on top.
  */
 
+import os from 'os';
+import path from 'path';
 import type {
 	AgentSessionInfo,
 	AgentSessionStorage,
@@ -414,7 +416,19 @@ export async function collectProjectBreakdowns(
 		// would undercount them, so fan out across every discovered account dir.
 		// A provider with no account-selecting env var yields no dirs and gets a
 		// single default pass, filed under DEFAULT_ACCOUNT_KEY.
-		const accountDirs = await deps.accountDirsFor(agentType);
+		let accountDirs: string[];
+		try {
+			accountDirs = await deps.accountDirsFor(agentType);
+		} catch (error) {
+			// Without its accounts this provider cannot be read whole: its projects fail, and the
+			// other providers of the request are still read.
+			deps.onError?.(error);
+			for (const projectPath of projects) {
+				failedProjects.add(projectKey(agentType, projectPath));
+				byProject.set(projectKey(agentType, projectPath), []);
+			}
+			continue;
+		}
 		const accounts: Array<string | undefined> = accountDirs.length ? accountDirs : [undefined];
 		// Each account is listed once for all its projects (one walk where the storage can).
 		const listings: Array<Map<string, ProjectListing | Error>> = [];
@@ -479,6 +493,19 @@ export async function collectProjectBreakdowns(
 }
 
 /**
+ * A folder a peer asked about, as this machine reads it. An SSH agent's working directory can be
+ * `~/work/app` (its launch expands `~` on this machine), and the peer cannot know this home, so it
+ * is expanded here; matched literally it would find no conversation and read as zero.
+ */
+function hostPath(projectPath: string, homeDir: string): string {
+	if (projectPath === '~') return homeDir;
+	if (projectPath.startsWith('~/') || projectPath.startsWith('~\\')) {
+		return path.join(homeDir, projectPath.slice(2));
+	}
+	return projectPath;
+}
+
+/**
  * The answer to a peer's `get_project_token_usage`: per project, in the order asked, whether this
  * machine read it and the breakdowns of its conversations. A project a storage could not list (for
  * any account) answers `failed`, so the peer names its agent instead of counting it short. No
@@ -488,17 +515,21 @@ export async function collectProjectBreakdowns(
  */
 export async function projectTokenUsage(
 	projects: readonly ProjectTokenUsageProject[],
-	deps: Omit<ProjectBreakdownDeps, 'cache'>
+	deps: Omit<ProjectBreakdownDeps, 'cache'> & {
+		/** This machine's home, for a folder asked as `~/...`. Defaults to `os.homedir()`. */
+		homeDir?: string;
+	}
 ): Promise<ProjectTokenUsage> {
+	const homeDir = deps.homeDir ?? os.homedir();
 	const byAgent = new Map<string, Set<string>>();
 	for (const { provider, projectPath } of projects) {
 		const set = byAgent.get(provider) ?? new Set<string>();
-		set.add(projectPath);
+		set.add(hostPath(projectPath, homeDir));
 		byAgent.set(provider, set);
 	}
 	const read = await collectProjectBreakdowns(byAgent, deps);
 	const results: ProjectTokenUsageResult[] = projects.map(({ provider, projectPath }) => {
-		const key = projectKey(provider, projectPath);
+		const key = projectKey(provider, hostPath(projectPath, homeDir));
 		const status: ProjectTokenUsageStatus = read.unsupportedProviders.includes(provider)
 			? 'unsupported'
 			: read.failedProjects.has(key)

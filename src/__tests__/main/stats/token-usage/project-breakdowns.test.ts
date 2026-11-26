@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import * as path from 'path';
 import {
 	createSessionListGate,
 	projectTokenUsage,
@@ -148,5 +149,44 @@ describe('projectTokenUsage under load', () => {
 		);
 		expect(usage.projects.map((p) => p.status)).toEqual(['failed', 'failed']);
 		expect(onError).toHaveBeenCalledTimes(1);
+	});
+
+	it('fails only the provider whose accounts could not be found, and reads the rest', async () => {
+		const onError = vi.fn();
+		const usage = await projectTokenUsage(
+			[
+				{ provider: 'codex', projectPath: '/a' },
+				{ provider: 'claude-code', projectPath: '/a' },
+			],
+			{
+				storageFor: () => ({ listSessions: async () => [info('s1', '/a')] }),
+				accountDirsFor: async (agentType) => {
+					if (agentType === 'codex') throw Object.assign(new Error('EIO'), { code: 'EIO' });
+					return [];
+				},
+				onError,
+			}
+		);
+		expect(usage.projects.map((p) => [p.status, p.breakdowns.length])).toEqual([
+			['failed', 0],
+			['read', 1],
+		]);
+		expect(onError).toHaveBeenCalledTimes(1);
+	});
+
+	it('reads a folder asked as ~/... under this machine home, and answers it as asked', async () => {
+		const listSessions = vi.fn(async (projectPath: string) => [info('s1', projectPath)]);
+		const usage = await projectTokenUsage([{ provider: 'codex', projectPath: '~/work/app' }], {
+			storageFor: () => ({ listSessions }),
+			accountDirsFor: async () => [],
+			homeDir: '/home/dev',
+		});
+		expect(listSessions).toHaveBeenCalledWith(
+			path.join('/home/dev', 'work/app'),
+			undefined,
+			undefined,
+			expect.anything()
+		);
+		expect(usage.projects[0].breakdowns.map((b) => b.projectPath)).toEqual(['~/work/app']);
 	});
 });

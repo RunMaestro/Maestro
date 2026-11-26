@@ -83,6 +83,11 @@ export function remoteTokenAgentsOf(records: readonly AgentRecord[]): RemoteToke
 	return agents;
 }
 
+/** Whether folder `a` should keep a shared conversation over folder `b`: deeper, then by name. */
+function deeperFolder(a: string, b: string): boolean {
+	return a.length !== b.length ? a.length > b.length : a > b;
+}
+
 /** Resolve `promise`, or undefined once `ms` passes. */
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -160,7 +165,13 @@ export async function collectRemoteBreakdowns(
 	const countedProjects = new Set<string>();
 	/** Skipped transcripts per counted project, under the same key. */
 	const skippedByProject = new Map<string, number>();
-	const seen = new Set<string>();
+	/**
+	 * One conversation per host identity. A host answers a conversation under every folder asked
+	 * that holds it (a parent and a child folder both hold a rollout of the child), each copy under
+	 * the folder asked, so the copies differ only in `projectPath`. The copy kept is the one under
+	 * the deepest folder, whatever order the folders were asked in.
+	 */
+	const kept = new Map<string, SessionTokenBreakdown>();
 	for (const { remoteId, chunk, usage } of answers) {
 		if (!usage) continue;
 		chunk.forEach((project, index) => {
@@ -170,13 +181,15 @@ export async function collectRemoteBreakdowns(
 			countedProjects.add(projectId);
 			if (result.skippedFiles) skippedByProject.set(projectId, result.skippedFiles);
 			for (const breakdown of result.breakdowns) {
-				const key = `${remoteId}\u0000${breakdown.agentType}\u0000${breakdown.accountKey}\u0000${breakdown.projectPath}\u0000${breakdown.sessionId}`;
-				if (seen.has(key)) continue;
-				seen.add(key);
-				breakdowns.push(breakdown);
+				const key = `${remoteId}\u0000${breakdown.agentType}\u0000${breakdown.accountKey}\u0000${breakdown.sessionId}`;
+				const previous = kept.get(key);
+				if (!previous || deeperFolder(breakdown.projectPath, previous.projectPath)) {
+					kept.set(key, breakdown);
+				}
 			}
 		});
 	}
+	breakdowns.push(...kept.values());
 	const projectIdOf = (agent: RemoteTokenAgent): string =>
 		`${agent.remoteId}\u0000${agent.provider}\u0000${agent.projectPath}`;
 	const counted = new Set(
