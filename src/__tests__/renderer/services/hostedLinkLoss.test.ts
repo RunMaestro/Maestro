@@ -363,6 +363,37 @@ describe('a turn cut by a lost link', () => {
 		expect(act$).toHaveBeenCalledWith('box', 'h1', { kind: 'interrupt', tabId: 't1' });
 		expect(toastMock).not.toHaveBeenCalled();
 	});
+
+	it('draws a running turn running once the mirror is connected, while the SSH outage is still on record (R11)', async () => {
+		// The SSH link drops: the SSH outage is confirmed, and the tab is drawn ended.
+		const sshOutage: SshReachabilityEvent = { ...hostOutage, cause: 'ssh', message: 'ssh died' };
+		hostReports('busy', 'reconnecting');
+		useSshOutageStore.getState().applyReachability(sshOutage);
+		syncHostedAgents();
+		expect(tab().state).toBe('idle');
+
+		// The mirror reconnects and the host still runs the turn. The SSH outage clears only on its
+		// own 30 s re-probe, so it is still on record here.
+		transcript.mockResolvedValue([QUESTION]);
+		hostReports('busy', 'connected');
+		syncHostedAgents();
+		expect(useSshOutageStore.getState().outages.r1).toBeDefined();
+		expect(tab().state).toBe('busy');
+		expect(tab().agentError).toBeUndefined();
+		expect(record().state).toBe('busy');
+
+		// Stop goes to the host, as for any running hosted turn: nothing ends here.
+		act$.mockResolvedValue({ ok: true, result: { kind: 'interrupt' } });
+		await interruptTurn('row', { tabId: 't1' });
+		expect(act$).toHaveBeenCalledWith('box', 'h1', { kind: 'interrupt', tabId: 't1' });
+		expect(toastMock).not.toHaveBeenCalled();
+
+		// The cut is settled by the host's report: nothing is kept or sent again.
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(raised).toEqual([]);
+	});
 });
 
 describe('projectHostedSession with the link lost', () => {

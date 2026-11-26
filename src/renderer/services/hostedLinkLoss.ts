@@ -51,11 +51,13 @@ const linkErrors = new Map<string, { since: number; error: AgentError }>();
  * The error a hosted record's running turns end with while the link to its host is down, or
  * undefined while it is up. Down: an outage of the agent's remote is confirmed (ssh itself, or the
  * host behind it), or the mirror gave the connection up (`lost`). A reconnect in progress is not
- * down yet: the client may resume and the turn with it.
+ * down yet: the client may resume and the turn with it. Connected is up, whatever outage is still
+ * on record: an SSH-cause outage clears only on its own re-probe, and the host's report while
+ * connected is the real state of its turns.
  */
 export function hostLinkLostError(session: Session, link: HostLink): AgentError | undefined {
 	const outage = useSshOutageStore.getState().outages[link.remoteId]?.event;
-	if (!outage && link.connection !== 'lost') {
+	if (link.connection === 'connected' || (!outage && link.connection !== 'lost')) {
 		linkErrors.delete(session.id);
 		return undefined;
 	}
@@ -126,6 +128,8 @@ function lastUserMessage(logs: readonly LogEntry[] | undefined): LogEntry | unde
  * outage: a live turn died on that remote, so its dialog shows even for an agent not on screen.
  */
 export function noteHostedTurnsCut(session: Session, link: HostLink): void {
+	// Connected: the host's report is the real state, nothing is cut (`hostLinkLostError()`).
+	if (link.connection === 'connected') return;
 	let cut = false;
 	for (const hostTab of link.agent.aiTabs ?? []) {
 		if (hostTab.state !== 'busy' || hostTab.hidden) continue;
