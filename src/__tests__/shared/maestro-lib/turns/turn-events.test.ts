@@ -30,8 +30,10 @@ describe('createTurnEventMapper', () => {
 			],
 			{ agentId: 'claude-code' }
 		);
+		// A Claude partial is also a thinking chunk (`partialTextRoute()`), as on the desktop.
 		expect(out).toEqual([
 			{ kind: 'session', providerSessionId: 'S1' },
+			{ kind: 'thinking', text: 'Paris' },
 			{ kind: 'text', text: 'Paris' },
 		]);
 	});
@@ -48,11 +50,33 @@ describe('createTurnEventMapper', () => {
 				{ type: 'text', text: 'done', isPartial: true },
 				{ type: 'result', text: 'done' },
 			],
-			{ agentId: 'copilot-cli' }
+			{ agentId: 'codex' }
 		);
 		expect(out).toEqual([
 			{ kind: 'thinking', text: 'hmm' },
 			{ kind: 'text', text: 'done' },
+		]);
+	});
+
+	it('says no thinking for Copilot, whose deltas the desktop never shows as thinking', () => {
+		const { out } = run(
+			[
+				{ type: 'text', text: 'hmm', isPartial: true, isReasoning: true },
+				{ type: 'text', text: 'done', isPartial: true },
+			],
+			{ agentId: 'copilot-cli' }
+		);
+		expect(out).toEqual([{ kind: 'text', text: 'done' }]);
+	});
+
+	it('says reasoning that rode in on another event as thinking, ahead of its text', () => {
+		const { out } = run(
+			[{ type: 'text', text: 'Answer.', isPartial: true, reasoningText: 'Thought.' }],
+			{ agentId: 'antigravity' }
+		);
+		expect(out).toEqual([
+			{ kind: 'thinking', text: 'Thought.' },
+			{ kind: 'text', text: 'Answer.' },
 		]);
 	});
 
