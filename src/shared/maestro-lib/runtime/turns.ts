@@ -65,7 +65,9 @@ import {
 	parseQueuedTurnSettings,
 } from '../client/types';
 import { logger } from '../host';
-import { admitTurnImages } from '../launch/image-delivery';
+import { admitTurnImages, turnImageBoundsError } from '../launch/image-delivery';
+import { inlineImageList, withInlineEntryImages } from '../launch/image-refs';
+import type { SessionImageStore } from '../store/session-images';
 import { agentIdCanReadImages } from '../providers/capabilities';
 import { getAgentDisplayName } from '../../agentMetadata';
 import { steeringSocketPathFor } from '../../chatSteeringSocket';
@@ -163,7 +165,19 @@ export interface RuntimeTurnsOptions {
 	historyWriter?: HistoryWriter;
 	options?: RuntimeTurnOptions;
 	deps?: Partial<RuntimeTurnDeps>;
+	/**
+	 * The data directory's session image store. An admitted image is kept there and a waiting
+	 * message and its transcript entry hold the `maestro-image://` ref, as on the desktop; the ref is
+	 * read back for the provider and for a client's queue read. Without one, images stay inline.
+	 */
+	images?: Pick<SessionImageStore, 'storeInlineImage'>;
 }
+
+/**
+ * The most messages one agent may have waiting on a headless host. Past it a send is refused with
+ * the reason, so a sender that never stops cannot grow the host's memory without bound.
+ */
+export const MAX_WAITING_TURNS_PER_AGENT = 100;
 
 export interface RuntimeTurns {
 	readonly api: TurnsApi;
@@ -178,8 +192,13 @@ export interface RuntimeTurns {
 /** One queued message, as the runtime holds it. */
 interface TurnItem extends QueueItem {
 	text: string;
-	/** The images it carries, as admitted data URLs (`admitTurnImages`), in attachment order. */
+	/**
+	 * The images it carries, in attachment order: refs into the host's image store once admitted
+	 * (`admitTurnImages`) and kept (`RuntimeTurnsOptions.images`), never the bytes.
+	 */
 	images?: string[];
+	/** The decoded bytes of `images` together, recorded at admission, for a merge's bounds. */
+	imageBytes?: number;
 	queuedAt: number;
 	/** Model and effort at the moment it was queued (a model change before it runs must not relabel it). */
 	turnSettings: { model?: string; effort?: string };
@@ -222,9 +241,16 @@ function toQueuedTurn(item: TurnItem): QueuedTurn {
 		text: item.text,
 		paused: item.paused === true,
 		turnSettings: parseQueuedTurnSettings(item.turnSettings) ?? {},
-		// The images ride along, so a hosted card draws them as a local card does.
-		...(item.images?.length ? { images: [...item.images] } : {}),
+		// The images ride along, so a hosted card draws them as a local card does. The item holds
+		// store refs, which name this machine's disk: the client gets the bytes (M10).
+		...(item.images?.length ? inlineQueuedImages(item.images) : {}),
 	};
+}
+
+/** A waiting message's images as data URLs for a client. A ref whose file is gone is dropped. */
+function inlineQueuedImages(images: readonly string[]): { images?: string[] } {
+	const { inline } = inlineImageList(images);
+	return inline.length > 0 ? { images: inline } : {};
 }
 
 const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
@@ -266,6 +292,30 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	});
 
 	const sshStore = createSshRemoteStore(paths);
+
+	/**
+	 * Admitted images kept in the image store: their refs, in order. Inline as given when this
+	 * runtime has no store. A disk that refuses the write refuses the message, with the reason.
+	 */
+	async function keepImages(
+		images: string[]
+	): Promise<{ ok: true; images: string[] } | { ok: false; error: string }> {
+		const store = options.images;
+		if (!store || images.length === 0) return { ok: true, images };
+		try {
+			return {
+				ok: true,
+				images: await Promise.all(images.map((image) => store.storeInlineImage(image))),
+			};
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			logger.warn(`Could not keep a message's images: ${reason}`, LOG_CONTEXT);
+			return {
+				ok: false,
+				error: `The attached images could not be saved on this host (${reason}). Nothing was sent.`,
+			};
+		}
+	}
 
 	/** Woken when a tab may have become free (`reserveTabSession`), by `agentId` then `tabId`. */
 	const idleWaiters = new Map<string, Array<() => void>>();
@@ -560,7 +610,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			if (!begun.ok) throw new Error(begun.error.message);
 			ownedTurnId = item.id;
 
-			emitTurn(agentId, item.tabId, { kind: 'user', entry: userEntry });
+			// The stored entry keeps store refs; a watching client gets the bytes (M10).
+			emitTurn(agentId, item.tabId, { kind: 'user', entry: withInlineEntryImages(userEntry) });
 			emitTurn(agentId, item.tabId, { kind: 'started' });
 
 			done = streamTurn({
@@ -905,9 +956,8 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// Images come from another machine: inline data URLs only, bounded in count and bytes.
 		const admitted = admitTurnImages(input.images);
 		if (!admitted.ok) return fail(method, 'invalid', admitted.error);
-		const images = admitted.images;
 		const text = typeof input.text === 'string' ? input.text : '';
-		if (!text.trim() && images.length === 0) {
+		if (!text.trim() && admitted.images.length === 0) {
 			return fail(method, 'invalid', 'There is nothing to send.');
 		}
 		// A lifted agent runs on its host now: a turn here would resume the session the host owns.
@@ -937,12 +987,22 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const tab = toTurnTab(tabRecord);
 		// The sender's own chips stand in for the tab's, for this message only (`TurnOverrides`).
 		const overrides = normalizeTurnOverrides(input.overrides);
+		if ((queues.get(agentId)?.items().length ?? 0) >= MAX_WAITING_TURNS_PER_AGENT) {
+			return fail(
+				method,
+				'rejected',
+				`This agent already has ${MAX_WAITING_TURNS_PER_AGENT} messages waiting. Wait for some to run, or remove some, and send again.`
+			);
+		}
+		const kept = await keepImages(admitted.images);
+		if (!kept.ok) return fail(method, 'failed', kept.error);
+		const images = kept.images;
 
 		const item: TurnItem = {
 			id: ctx.newId(),
 			tabId,
 			text,
-			...(images.length > 0 ? { images } : {}),
+			...(images.length > 0 ? { images, imageBytes: admitted.bytes } : {}),
 			queuedAt: deps.now(),
 			readOnly:
 				(overrides?.readOnly ?? tab.readOnlyMode === true) || tab.permissionMode === 'readonly',
@@ -1020,18 +1080,25 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				const lower = queue?.items().find((item) => item.id === itemId);
 				const upper = queue && lower ? findQueueMergeTarget(queue.items(), itemId) : null;
 				if (upper && lower) {
-					const admitted = admitTurnImages(joinMergedQueueImages(upper.images, lower.images));
-					if (!admitted.ok) return fail('turns.queue.merge', 'invalid', admitted.error);
+					// Both were admitted when they were queued, so their count and recorded size say
+					// whether the merged message fits.
+					const tooLarge = turnImageBoundsError(
+						(upper.images?.length ?? 0) + (lower.images?.length ?? 0),
+						(upper.imageBytes ?? 0) + (lower.imageBytes ?? 0)
+					);
+					if (tooLarge) return fail('turns.queue.merge', 'invalid', tooLarge);
 				}
 				// The upper message is the turn that runs first: it keeps its own settings and hold.
 				const mergedIntoId =
 					queues.get(agentId)?.merge(itemId, (upper, lower) => {
 						const images = joinMergedQueueImages(upper.images, lower.images);
-						const { images: _upperImages, ...rest } = upper;
+						const { images: _upperImages, imageBytes: _upperBytes, ...rest } = upper;
 						return {
 							...rest,
 							text: joinMergedQueueText(upper.text, lower.text),
-							...(images ? { images } : {}),
+							...(images
+								? { images, imageBytes: (upper.imageBytes ?? 0) + (lower.imageBytes ?? 0) }
+								: {}),
 						};
 					}) ?? null;
 				return ok(mergedIntoId ? { merged: true, mergedIntoId } : { merged: false });
@@ -1054,6 +1121,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				// and keeps them when absent, as the desktop's Edit does. They are admitted as a send's
 				// are, so an edit is never a way past the bounds.
 				let images: string[] | undefined;
+				let imageBytes = 0;
 				if (edit.images !== undefined) {
 					if (edit.images.length > 0 && !agentIdCanReadImages(record.toolType)) {
 						return fail(
@@ -1064,7 +1132,10 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 					}
 					const admitted = admitTurnImages(edit.images);
 					if (!admitted.ok) return fail('turns.queue.edit', 'invalid', admitted.error);
-					images = admitted.images;
+					const kept = await keepImages(admitted.images);
+					if (!kept.ok) return fail('turns.queue.edit', 'failed', kept.error);
+					images = kept.images;
+					imageBytes = admitted.bytes;
 				}
 				// An image-only message may keep its text empty; a message with neither is nothing.
 				const current = queues
@@ -1082,8 +1153,13 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 							...(edit.turnSettings ? { turnSettings: { ...edit.turnSettings } } : {}),
 						};
 						if (images !== undefined) {
-							if (images.length > 0) next.images = images;
-							else delete next.images;
+							if (images.length > 0) {
+								next.images = images;
+								next.imageBytes = imageBytes;
+							} else {
+								delete next.images;
+								delete next.imageBytes;
+							}
 						}
 						return next;
 					}) ?? false;

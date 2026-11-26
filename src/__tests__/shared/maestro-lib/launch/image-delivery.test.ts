@@ -37,7 +37,11 @@ describe('admitTurnImages on multi-megabyte images with regexp optimization off'
 
 	it('admits a 4 MB screenshot without scanning it with a regexp', () => {
 		const screenshot = imageOfBytes(4 * 1024 * 1024);
-		expect(admitTurnImages([screenshot])).toEqual({ ok: true, images: [screenshot] });
+		expect(admitTurnImages([screenshot])).toEqual({
+			ok: true,
+			images: [screenshot],
+			bytes: 4 * 1024 * 1024,
+		});
 	});
 
 	it('still refuses a multi-megabyte payload with a character outside base64', () => {
@@ -50,11 +54,13 @@ describe('admitTurnImages on multi-megabyte images with regexp optimization off'
 
 describe('admitTurnImages', () => {
 	it('admits none, and inline image data URLs in order', () => {
-		expect(admitTurnImages(undefined)).toEqual({ ok: true, images: [] });
-		expect(admitTurnImages([])).toEqual({ ok: true, images: [] });
+		expect(admitTurnImages(undefined)).toEqual({ ok: true, images: [], bytes: 0 });
+		expect(admitTurnImages([])).toEqual({ ok: true, images: [], bytes: 0 });
+		// The decoded bytes together: 8 for the PNG, 6 for the JPEG (a merge's bounds read them).
 		expect(admitTurnImages([PNG, 'data:image/jpeg;base64,/9j/4AAQ'])).toEqual({
 			ok: true,
 			images: [PNG, 'data:image/jpeg;base64,/9j/4AAQ'],
+			bytes: 14,
 		});
 	});
 

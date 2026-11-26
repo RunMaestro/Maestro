@@ -73,15 +73,11 @@ function base64ByteLength(base64: string): number | null {
  */
 export function admitTurnImages(
 	raw: unknown
-): { ok: true; images: string[] } | { ok: false; error: string } {
-	if (raw === undefined || raw === null) return { ok: true, images: [] };
+): { ok: true; images: string[]; bytes: number } | { ok: false; error: string } {
+	if (raw === undefined || raw === null) return { ok: true, images: [], bytes: 0 };
 	if (!Array.isArray(raw)) return { ok: false, error: 'Images must be a list.' };
-	if (raw.length > MAX_TURN_IMAGES) {
-		return {
-			ok: false,
-			error: `A message can carry at most ${MAX_TURN_IMAGES} images. Nothing was sent.`,
-		};
-	}
+	const tooMany = turnImageBoundsError(raw.length, 0);
+	if (tooMany) return { ok: false, error: tooMany };
 	let total = 0;
 	const images: string[] = [];
 	for (const image of raw) {
@@ -100,15 +96,26 @@ export function admitTurnImages(
 			};
 		}
 		total += bytes;
-		if (total > MAX_TURN_IMAGE_TOTAL_BYTES) {
-			return {
-				ok: false,
-				error: `The attached images are larger than ${MAX_TURN_IMAGE_TOTAL_BYTES / (1024 * 1024)} MB together. Nothing was sent.`,
-			};
-		}
+		const tooLarge = turnImageBoundsError(images.length + 1, total);
+		if (tooLarge) return { ok: false, error: tooLarge };
 		images.push(image as string);
 	}
-	return { ok: true, images };
+	return { ok: true, images, bytes: total };
+}
+
+/**
+ * Why a message with `count` images of `totalBytes` decoded bytes is over a send's bounds, or null.
+ * The one wording for a send, an edit, and a merge (whose images are already stored, so only their
+ * count and recorded size are checked).
+ */
+export function turnImageBoundsError(count: number, totalBytes: number): string | null {
+	if (count > MAX_TURN_IMAGES) {
+		return `A message can carry at most ${MAX_TURN_IMAGES} images. Nothing was sent.`;
+	}
+	if (totalBytes > MAX_TURN_IMAGE_TOTAL_BYTES) {
+		return `The attached images are larger than ${MAX_TURN_IMAGE_TOTAL_BYTES / (1024 * 1024)} MB together. Nothing was sent.`;
+	}
+	return null;
 }
 
 /**

@@ -41,6 +41,7 @@ import {
 	type RuntimeDeps,
 } from '../index';
 import { RUNTIME_LOCK_FILE_NAME } from '../data-dir-lock';
+import { MAX_WAITING_TURNS_PER_AGENT } from '../turns';
 import type { WatchDirectory } from '../settings-watch';
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
@@ -518,6 +519,105 @@ describe('runtime turns', () => {
 				expect(error.message).toMatch(/image/i);
 				expect(argvFiles).toEqual([]);
 				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+			});
+		});
+
+		describe("images in the host's image store (M10: refs in the store, bytes only on the wire)", () => {
+			const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+			const imagesDir = () => path.join(dir, 'session-images');
+			const sessionsText = () => fs.readFileSync(path.join(dir, 'maestro-sessions.json'), 'utf-8');
+			const storedUserEntry = () =>
+				(
+					sessions().sessions[0].aiTabs[0].logs as Array<{ source: string; images?: string[] }>
+				).find((entry) => entry.source === 'user');
+
+			it('keeps a pasted image as a file and its ref on the stored entry, and hands out the bytes', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'what is this?', images: [PNG] }));
+				await turn.outcome();
+
+				// The sessions file holds the ref, never the bytes.
+				expect(sessionsText()).not.toContain('base64,');
+				const [ref] = storedUserEntry()!.images!;
+				expect(ref).toMatch(/^maestro-image:\/\/store\/[0-9a-f]{64}\.png$/);
+				const file = path.join(imagesDir(), ref.slice('maestro-image://store/'.length));
+				expect(fs.readFileSync(file).toString('base64')).toBe('iVBORw0KGgo=');
+
+				// The provider still gets the bytes, and so do a transcript read and the live event.
+				const stdin = fs.readFileSync(
+					argvFiles[0].replace(/argv-(\d+)\.json$/, 'stdin-$1.txt'),
+					'utf-8'
+				);
+				expect(JSON.parse(stdin.trim()).message.content[0].source.data).toBe('iVBORw0KGgo=');
+				expect((await transcript(runtime))[0]).toMatchObject({ images: [PNG] });
+				expect(turn.events.find((event) => event.kind === 'user')).toMatchObject({
+					entry: { images: [PNG] },
+				});
+			});
+
+			it('moves an inline image the store already held (an older host, an import) out on the next write', async () => {
+				const runtime = await start([
+					seedAgent({
+						aiTabs: [
+							{
+								id: 't1',
+								agentSessionId: null,
+								name: null,
+								logs: [{ id: 'old', timestamp: 1, source: 'user', text: 'old', images: [PNG] }],
+							},
+						],
+					}),
+				]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'next' }));
+				await turn.outcome();
+
+				expect(sessionsText()).not.toContain('base64,');
+				expect(storedUserEntry()!.images![0]).toMatch(/^maestro-image:\/\/store\//);
+				expect((await transcript(runtime))[0]).toMatchObject({ text: 'old', images: [PNG] });
+			});
+
+			it('keeps a waiting message on its refs, and lists the bytes on the card', async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				const queued = value(await runtime.turns.send('a1', 't1', { text: 'look', images: [PNG] }));
+				if (queued.status !== 'queued') throw new Error('expected queued');
+
+				expect(fs.readdirSync(imagesDir())).toHaveLength(1);
+				expect(value(await runtime.turns.queue.list('a1'))[0]).toMatchObject({ images: [PNG] });
+
+				value(await runtime.turns.queue.remove('a1', queued.itemId));
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+			});
+
+			it(`refuses a send past ${MAX_WAITING_TURNS_PER_AGENT} waiting messages, with the reason`, async () => {
+				hold = true;
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+				await turn.started();
+				for (let index = 0; index < MAX_WAITING_TURNS_PER_AGENT; index += 1) {
+					expect(value(await runtime.turns.send('a1', 't1', { text: `m${index}` })).status).toBe(
+						'queued'
+					);
+				}
+				const refused = errorOf(await runtime.turns.send('a1', 't1', { text: 'one too many' }));
+				expect(refused).toMatchObject({ code: 'rejected' });
+				expect(refused.message).toContain(`${MAX_WAITING_TURNS_PER_AGENT} messages waiting`);
+				expect(value(await runtime.turns.queue.list('a1'))).toHaveLength(
+					MAX_WAITING_TURNS_PER_AGENT
+				);
+
+				for (const item of value(await runtime.turns.queue.list('a1'))) {
+					value(await runtime.turns.queue.remove('a1', item.itemId));
+				}
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
 			});
 		});
 
