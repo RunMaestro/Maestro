@@ -243,6 +243,49 @@ export const REMOTE_FOLDER_DOWNLOAD_MAX_DEPTH = 64;
 /** Parallel SSH reads while downloading a folder. */
 const REMOTE_FOLDER_DOWNLOAD_CONCURRENCY = 4;
 
+/**
+ * Put a finished folder at `dest`, replacing the copy there. Two renames, not a recursive delete
+ * and a rename: the earlier copy moves aside whole and the new one takes its name, so a reader of
+ * `dest` (a drag from another window) never meets a half-deleted folder, and a failed second
+ * rename puts the earlier copy back. The earlier copy is deleted only once the new one is in place.
+ */
+export async function swapInFolder(staged: string, dest: string): Promise<void> {
+	const retired = stagingPathFor(dest);
+	let hadEarlier = false;
+	try {
+		await fs.rename(dest, retired);
+		hadEarlier = true;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+	}
+	try {
+		await fs.rename(staged, dest);
+	} catch (error) {
+		if (hadEarlier) {
+			try {
+				await fs.rename(retired, dest);
+			} catch (restoreError) {
+				void captureException(restoreError, { action: 'remote-folder-copy.restore', dest });
+			}
+		}
+		throw error;
+	}
+	if (hadEarlier) {
+		try {
+			await fs.rm(retired, { recursive: true, force: true });
+		} catch (error) {
+			// The new copy is in place; a leftover in the temp folder is only clutter.
+			logger.warn(
+				`Could not remove an earlier folder copy: ${retired}`,
+				'fs:downloadRemoteFolder',
+				{
+					error: error instanceof Error ? error.message : String(error),
+				}
+			);
+		}
+	}
+}
+
 /** One folder download per local folder at a time: two never build the same copy at once. */
 const remoteFolderDownloads = createKeyedWriteQueue();
 
@@ -326,8 +369,7 @@ async function downloadRemoteDirToLocal(
 			}
 		});
 		if (failures.length > 0) throw failures[0];
-		await fs.rm(localDir, { recursive: true, force: true });
-		await fs.rename(staging, localDir);
+		await swapInFolder(staging, localDir);
 	} catch (error) {
 		try {
 			await fs.rm(staging, { recursive: true, force: true });
