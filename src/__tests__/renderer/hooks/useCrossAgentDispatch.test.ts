@@ -5,6 +5,7 @@ import {
 	buildConsultHistoryEntry,
 	buildConsultTabName,
 	ensureConsultTab,
+	releaseConsultTab,
 	sendCrossAgentRequest,
 } from '../../../renderer/hooks/agent/useCrossAgentDispatch';
 import { useCrossAgentInFlightStore } from '../../../renderer/stores/crossAgentInFlightStore';
@@ -355,15 +356,16 @@ describe('ensureConsultTab', () => {
 			seedTarget();
 			const ids: string[] = [];
 			for (let i = 0; i <= MAX_CONSULT_TABS_PER_AGENT; i++) {
-				ids.push(
-					ensureConsultTab({
-						targetSessionId: 'target',
-						sourceSessionId,
-						sourceTabId: `asker-${i}`,
-						sourceAgentName: 'Asker',
-						question: `q-${i}`,
-					})!.targetTabId
-				);
+				const id = ensureConsultTab({
+					targetSessionId: 'target',
+					sourceSessionId,
+					sourceTabId: `asker-${i}`,
+					sourceAgentName: 'Asker',
+					question: `q-${i}`,
+				})!.targetTabId;
+				ids.push(id);
+				// The consult finished, as its terminal chunk would release it.
+				releaseConsultTab('target', id);
 			}
 
 			const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
@@ -378,6 +380,39 @@ describe('ensureConsultTab', () => {
 			expect(target.activeTabId).toBe('main-tab');
 		}
 	);
+
+	it("never hands a running consult's tab to a new pairing at the cap", () => {
+		seedTarget();
+		const ids: string[] = [];
+		for (let i = 0; i < MAX_CONSULT_TABS_PER_AGENT; i++) {
+			ids.push(
+				ensureConsultTab({
+					targetSessionId: 'target',
+					sourceSessionId: `${REMOTE_ASKER_SESSION_PREFIX}peer`,
+					sourceTabId: `asker-${i}`,
+					sourceAgentName: 'Asker',
+					question: `q-${i}`,
+				})!.targetTabId
+			);
+		}
+		// The oldest consult is still running; every other one finished.
+		ids.slice(1).forEach((id) => releaseConsultTab('target', id));
+
+		ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: `${REMOTE_ASKER_SESSION_PREFIX}peer`,
+			sourceTabId: 'asker-new',
+			sourceAgentName: 'Asker',
+			question: 'q-new',
+		});
+
+		const target = useSessionStore.getState().sessions.find((s) => s.id === 'target')!;
+		const consults = target.aiTabs.filter((t) => t.consultOrigin);
+		expect(consults).toHaveLength(MAX_CONSULT_TABS_PER_AGENT);
+		expect(consults.some((t) => t.id === ids[0])).toBe(true);
+		expect(consults.some((t) => t.id === ids[1])).toBe(false);
+		releaseConsultTab('target', ids[0]);
+	});
 
 	it('returns null when the target session no longer exists', () => {
 		const result = ensureConsultTab({

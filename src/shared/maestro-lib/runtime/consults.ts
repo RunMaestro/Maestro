@@ -198,6 +198,11 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 	 */
 	const waiting = new Set<{ sourceSessionId: string; sourceTabId: string; stopped: boolean }>();
 	let inFlight = 0;
+	/**
+	 * Consult tabs a consult is running in now, by consulted agent. A consult tab is never stored
+	 * busy, so this is how the consult tab cap (`consultTabToReplace`) leaves a running one alone.
+	 */
+	const consultTabsInUse = new Map<string, Set<string>>();
 	let disposed = false;
 	/** Every ask not yet finished, so shutdown can wait for what each one writes down. */
 	const pending = new Set<Promise<unknown>>();
@@ -324,6 +329,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 		const pendingStart = { ...key, stopped: false };
 		waiting.add(pendingStart);
 		inFlight += 1;
+		let heldTabId: string | undefined;
 		try {
 			return await order.enqueue(`${target.id}\u0000${key.sourceSessionId}`, async () => {
 				// A runtime that closed while this waited its turn starts nothing it cannot record.
@@ -349,9 +355,17 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 					key,
 					name: buildConsultTabName(sourceName),
 					question: questionEntry,
+					inUseTabIds: consultTabsInUse.get(target.id),
 				});
 				if (!opened.ok) return opened;
 				const tabId = opened.value.tabId;
+				heldTabId = tabId;
+				let inUse = consultTabsInUse.get(target.id);
+				if (!inUse) {
+					inUse = new Set();
+					consultTabsInUse.set(target.id, inUse);
+				}
+				inUse.add(tabId);
 				// The wait ran out while the question was being written: nothing is started for it.
 				if (timer.expired) {
 					return fail<AnswerValue>(
@@ -482,6 +496,11 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 			waiting.delete(pendingStart);
 			inFlight -= 1;
 			clearTimeout(timer.handle);
+			if (heldTabId) {
+				const inUse = consultTabsInUse.get(target.id);
+				inUse?.delete(heldTabId);
+				if (inUse?.size === 0) consultTabsInUse.delete(target.id);
+			}
 		}
 	}
 

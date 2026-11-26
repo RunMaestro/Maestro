@@ -92,6 +92,12 @@ describe('the consult tab cap', () => {
 		expect(consultTabToReplace(tabs)?.id).toBe('consult-1');
 	});
 
+	it('never replaces a consult tab the caller names as in use, the oldest included', () => {
+		expect(consultTabToReplace(fullTabs(), { inUseTabIds: new Set(['consult-0']) })?.id).toBe(
+			'consult-1'
+		);
+	});
+
 	it('adds past the cap when every consult tab is busy, rather than refusing the consult', () => {
 		const tabs = fullTabs().map((tab) => ({ ...tab, state: 'busy' as const }));
 		expect(consultTabToReplace(tabs)).toBeUndefined();

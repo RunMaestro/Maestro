@@ -418,22 +418,35 @@ export function consultTabLastUsedAt(tab: ConsultCapTab): number {
 	return latest;
 }
 
+/** What the consult cap must leave alone, and the cap itself. */
+export interface ConsultCapOptions {
+	/**
+	 * Consult tabs a consult is running in now. Neither host stores a consult tab as busy while
+	 * its consult runs (the consult is a background process, not a turn of the tab), so the
+	 * caller names them: the desktop from its in-flight consults, a headless host from its own.
+	 */
+	inUseTabIds?: ReadonlySet<string>;
+	cap?: number;
+}
+
 /**
  * The hidden consult tab a NEW pairing replaces, or `undefined` when the agent is under the cap
  * and the new tab is simply added. Only hidden consult tabs count: a consult tab the person
- * revealed is theirs now. A busy one is never chosen, so a consult in flight keeps its tab; when
- * every one is busy the new tab is added past the cap rather than refused. Both host kinds (the
- * desktop's `ensureConsultTab` and the headless `openConsultTabRecord`) call this one rule.
+ * revealed is theirs now. A consult tab in use (named in `inUseTabIds`, or stored busy) is never
+ * chosen, so a consult in flight keeps its tab and its answer lands; when every one is in use the
+ * new tab is added past the cap rather than refused. Both host kinds (the desktop's
+ * `ensureConsultTab` and the headless `openConsultTabRecord`) call this one rule.
  */
 export function consultTabToReplace<T extends ConsultCapTab>(
 	tabs: readonly T[] | undefined,
-	cap: number = MAX_CONSULT_TABS_PER_AGENT
+	options: ConsultCapOptions = {}
 ): T | undefined {
+	const cap = options.cap ?? MAX_CONSULT_TABS_PER_AGENT;
 	const consultTabs = (tabs ?? []).filter((tab) => tab.consultOrigin && tab.hidden === true);
 	if (consultTabs.length < cap) return undefined;
 	let oldest: T | undefined;
 	for (const tab of consultTabs) {
-		if (tab.state === 'busy') continue;
+		if (tab.state === 'busy' || options.inUseTabIds?.has(tab.id)) continue;
 		if (!oldest || consultTabLastUsedAt(tab) < consultTabLastUsedAt(oldest)) oldest = tab;
 	}
 	return oldest;
@@ -446,6 +459,8 @@ export interface ConsultTabOpen {
 	name: string;
 	/** The question, as the first (or next) user entry of the consult tab. */
 	question: LogEntryRecord;
+	/** Consult tabs of this agent a consult is running in now: the cap never replaces them. */
+	inUseTabIds?: ReadonlySet<string>;
 }
 
 /**
@@ -489,7 +504,7 @@ export function openConsultTabRecord(
 	};
 	// At the cap, the least recently used hidden consult tab gives up its slot. The new pairing
 	// gets a fresh tab (never the old one's provider session), so no asker resumes another's.
-	const replaced = consultTabToReplace(agent.aiTabs);
+	const replaced = consultTabToReplace(agent.aiTabs, { inUseTabIds: open.inUseTabIds });
 	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
 	const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
 	return {
