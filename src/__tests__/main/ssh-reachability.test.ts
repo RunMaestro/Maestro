@@ -9,6 +9,7 @@ import {
 	checkRemoteLink,
 	checkSshRemote,
 	configureSshReachability,
+	forgetAllHostConnections,
 	forgetHostPeer,
 	HOST_OUTAGE_CONFIRM_MS,
 	noteHostConnection,
@@ -383,6 +384,58 @@ describe('ssh-reachability', () => {
 			// ssh answers, the host does not: the check is not a success.
 			await expect(checkRemoteLink('r1')).resolves.toBe(false);
 			expect(reconnectHost).toHaveBeenCalledWith('r1');
+		});
+
+		it('drops every host outage when Federation stops, and never re-checks it again', async () => {
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(emitted).toHaveLength(1);
+			probe.mockClear();
+
+			forgetAllHostConnections();
+			expect(getUnreachableSshRemotes()).toEqual([]);
+			expect(emitted[1]).toMatchObject({ reachable: true, cause: 'host', cleared: true });
+
+			await vi.advanceTimersByTimeAsync(SSH_RECOVERY_PROBE_INTERVAL_MS * 3);
+			expect(probe).not.toHaveBeenCalled();
+			expect(reconnectHost).not.toHaveBeenCalled();
+			expect(emitted).toHaveLength(2);
+		});
+
+		it('drops a pending host drop when Federation stops, so it is never raised', async () => {
+			noteHostConnection(report('lost'));
+			forgetAllHostConnections();
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS * 2);
+			expect(probe).not.toHaveBeenCalled();
+			expect(emitted).toEqual([]);
+		});
+
+		it('drops the outage on the next re-check once the host runs no agent of this machine, with no probe', async () => {
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(emitted).toHaveLength(1);
+			probe.mockClear();
+
+			// The last hosted agent was moved back (or hosted agents were switched off).
+			hosts = false;
+			await vi.advanceTimersByTimeAsync(SSH_RECOVERY_PROBE_INTERVAL_MS);
+			expect(probe).not.toHaveBeenCalled();
+			expect(reconnectHost).not.toHaveBeenCalled();
+			expect(getUnreachableSshRemotes()).toEqual([]);
+			expect(emitted[1]).toMatchObject({ reachable: true, cause: 'host', cleared: true });
+
+			await vi.advanceTimersByTimeAsync(SSH_RECOVERY_PROBE_INTERVAL_MS * 2);
+			expect(probe).not.toHaveBeenCalled();
+			expect(emitted).toHaveLength(2);
+		});
+
+		it('Check Now on a host that runs no agent of this machine drops the outage and reconnects nothing', async () => {
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			hosts = false;
+			await expect(checkRemoteLink('r1')).resolves.toBe(true);
+			expect(reconnectHost).not.toHaveBeenCalled();
+			expect(getUnreachableSshRemotes()).toEqual([]);
 		});
 	});
 });

@@ -29,6 +29,7 @@ const up: SshReachabilityEvent = {
 };
 
 let push: (event: SshReachabilityEvent) => void;
+let federationReset: (() => void) | undefined;
 
 beforeEach(() => {
 	notifyToast.mockReset();
@@ -40,6 +41,14 @@ beforeEach(() => {
 			onReachability: (cb: (event: SshReachabilityEvent) => void) => {
 				push = cb;
 				return () => {};
+			},
+		},
+		federation: {
+			onReset: (cb: () => void) => {
+				federationReset = cb;
+				return () => {
+					federationReset = undefined;
+				};
 			},
 		},
 	};
@@ -110,5 +119,19 @@ describe('useSshReachability', () => {
 				'type',
 			]);
 		}
+	});
+
+	it('drops every host outage, with no toast, when the Federation mirror resets; an SSH outage stays', () => {
+		const { unmount } = renderHook(() => useSshReachability());
+		push({ ...down, cause: 'host', message: 'The Maestro host on "pedtome" stopped answering.' });
+		push({ ...down, remoteId: 'r2', remoteName: 'other' });
+		useSshOutageStore.getState().surface('r1');
+
+		federationReset?.();
+		expect(notifyToast).not.toHaveBeenCalled();
+		expect(Object.keys(useSshOutageStore.getState().outages)).toEqual(['r2']);
+
+		unmount();
+		expect(federationReset).toBeUndefined();
 	});
 });

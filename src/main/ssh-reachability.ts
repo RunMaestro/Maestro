@@ -337,6 +337,27 @@ export function forgetHostPeer(peerId: string): void {
 	}
 }
 
+/**
+ * Stop following every host: the Federation mirror stopped and pushes nothing more. Each host
+ * outage is dropped in every window (`cleared`, no toast), and no re-check runs again for it.
+ */
+export function forgetAllHostConnections(): void {
+	const remoteIds = new Set([...lastHostReport.keys(), ...hostDown.keys(), ...hostPending.keys()]);
+	for (const remoteId of remoteIds) forgetHostConnection(remoteId);
+}
+
+/**
+ * Drop a host outage whose host no longer runs an agent of this machine (the last one moved back,
+ * or hosted agents were switched off). Returns true when it was dropped: nothing may re-check a
+ * host that hosts nothing.
+ */
+function dropHostOutageIfUnused(remoteId: string): boolean {
+	const held = hostDown.get(remoteId);
+	if (!held || deps?.hostsAgents?.(held.peerId)) return false;
+	clearHostDown(remoteId, false);
+	return true;
+}
+
 function forgetHostConnection(remoteId: string): void {
 	lastHostReport.delete(remoteId);
 	clearHostPending(remoteId);
@@ -403,6 +424,7 @@ function markHostDown(report: HostConnectionReport): void {
 		cause: 'host',
 	};
 	const timer = setInterval(() => {
+		if (dropHostOutageIfUnused(report.remoteId)) return;
 		// While ssh itself is down its own re-probe runs; the host waits for it.
 		if (!unreachable.has(report.remoteId)) void checkRemoteLink(report.remoteId);
 	}, SSH_RECOVERY_PROBE_INTERVAL_MS);
@@ -451,6 +473,7 @@ function clearHostDown(remoteId: string, announce: boolean): void {
  * --check`. Resolves true when the remote and its host both answer.
  */
 export async function checkRemoteLink(remoteId: string): Promise<boolean> {
+	dropHostOutageIfUnused(remoteId);
 	// Read before the probe: an SSH recovery re-arms a held host outage (`recheckHostAfterSshRecovery`),
 	// and the host still has to answer before the remote counts as reachable.
 	const hostHeld = hostDown.has(remoteId);

@@ -13,6 +13,7 @@ import { createWsMaestroClient } from '../../shared/maestro-lib/client/ws-client
 import type { MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
 import type { SshRemoteConfig } from '../../shared/types';
 import { captureException } from '../utils/sentry';
+import { forgetAllHostConnections } from '../ssh-reachability';
 import type { SafeSendFn } from '../utils/safe-send';
 import { PeerMirrorService, type PeerMirrorServiceDeps } from './peer-mirror-service';
 import type { AutoFederationCoordinator } from './auto-federation';
@@ -100,6 +101,8 @@ export function createFederationRuntime(deps: FederationRuntimeDeps): Federation
 		stop: () => {
 			const running = service;
 			service = null;
+			// The mirror reports no host from here on: an outage it raised must not outlive it.
+			if (running) forgetAllHostConnections();
 			void running
 				?.stop()
 				.catch((error) => void captureException(error, { operation: 'federation:stop' }));

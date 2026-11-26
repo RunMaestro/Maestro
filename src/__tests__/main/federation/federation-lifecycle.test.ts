@@ -15,6 +15,9 @@ vi.mock('../../../main/utils/sentry', () => ({
 	captureException: vi.fn(),
 }));
 
+const forgetAllHostConnections = vi.hoisted(() => vi.fn());
+vi.mock('../../../main/ssh-reachability', () => ({ forgetAllHostConnections }));
+
 import {
 	buildPeerMirrorServiceDeps,
 	createFederationRuntime,
@@ -114,6 +117,7 @@ function runtime(remotes: SshRemoteConfig[]) {
 
 afterEach(() => {
 	setPeerMirrorServiceForTests(null);
+	forgetAllHostConnections.mockClear();
 });
 
 describe('Federation runtime', () => {
@@ -133,6 +137,7 @@ describe('Federation runtime', () => {
 		expect(getPeerMirrorService()).toBeNull();
 		expect(deps.safeSend).not.toHaveBeenCalled();
 		expect(transport.acquireForward).not.toHaveBeenCalled();
+		expect(forgetAllHostConnections).not.toHaveBeenCalled();
 	});
 
 	it('start() builds one service that probes every remote except one that opted out', async () => {
@@ -191,6 +196,8 @@ describe('Federation runtime', () => {
 		expect(transport.release).toHaveBeenCalled();
 		expect(deps.safeSend).toHaveBeenLastCalledWith(FEDERATION_RESET_CHANNEL);
 		expect(stopped?.peers()).toEqual([]);
+		// A host outage the mirror raised does not outlive it.
+		expect(forgetAllHostConnections).toHaveBeenCalledTimes(1);
 
 		// Started again: a fresh instance, not the stopped one.
 		federation.start();

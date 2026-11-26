@@ -47,6 +47,11 @@ interface SshOutageState {
 	dismiss: (remoteId: string) => void;
 	/** Mark an outage as one the user must see, regardless of the active agent. */
 	surface: (remoteId: string) => void;
+	/**
+	 * Drop every host outage, with no recovery toast: the Federation mirror reset, so nothing
+	 * reports a host any more. An SSH outage stays.
+	 */
+	dropHostOutages: () => void;
 }
 
 export const useSshOutageStore = create<SshOutageState>((set, get) => ({
@@ -105,6 +110,16 @@ export const useSshOutageStore = create<SshOutageState>((set, get) => ({
 			const outage = state.outages[remoteId];
 			if (!outage || outage.surfaced) return state;
 			return { outages: { ...state.outages, [remoteId]: { ...outage, surfaced: true } } };
+		});
+	},
+
+	dropHostOutages: () => {
+		set((state) => {
+			const kept = Object.entries(state.outages).filter(
+				([, outage]) => outageCause(outage.event) !== 'host'
+			);
+			if (kept.length === Object.keys(state.outages).length) return state;
+			return { outages: Object.fromEntries(kept) };
 		});
 	},
 }));

@@ -15,7 +15,7 @@ import { logger } from '../../utils/logger';
  * mid-outage missed the push), then applies every transition. A recovery is
  * announced with a toast so the user who dismissed the dialog still learns the
  * host is back; only the primary window raises it, so two windows do not each
- * play the toast's sound.
+ * play the toast's sound. A Federation reset drops every host outage without a toast.
  */
 export function useSshReachability(): void {
 	const isLifecycleOwner = useIsLifecycleOwner();
@@ -46,9 +46,15 @@ export function useSshReachability(): void {
 			}
 		});
 
+		// The Federation mirror stopped: no host reports from here on, so no host outage stays open.
+		const offFederationReset = window.maestro?.federation?.onReset?.(() => {
+			useSshOutageStore.getState().dropHostOutages();
+		});
+
 		return () => {
 			mounted = false;
 			unsubscribe();
+			offFederationReset?.();
 		};
 	}, [isLifecycleOwner]);
 }
