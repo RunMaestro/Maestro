@@ -4,7 +4,7 @@ import type { StoredSession } from '../../stores/types';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
-import type { ConsultAgentResult } from '../types';
+import type { ConsultAgentResult, ExecuteCommandQueued } from '../types';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { snapshotAiTurnProcesses, waitForAiTurnsToExit } from '../../utils/agent-busy';
 import {
@@ -24,6 +24,24 @@ interface RemoteCommandReceipt {
 	accepted: boolean;
 	reason?: string;
 	timedOut?: boolean;
+	/** Accepted, and a hosted agent's host queued it behind the running turn. */
+	queued?: { itemId: string; position: number };
+}
+
+/** The longest host queue item id a receipt may carry (ids are UUIDs; this bounds a bad one). */
+const MAX_RECEIPT_ITEM_ID_CHARS = 200;
+
+/** A receipt's `queued` field, checked: an item id and a 1-based position, or nothing. */
+function parseReceiptQueued(raw: unknown): RemoteCommandReceipt['queued'] {
+	if (typeof raw !== 'object' || raw === null) return undefined;
+	const { itemId, position } = raw as { itemId?: unknown; position?: unknown };
+	if (typeof itemId !== 'string' || !itemId || itemId.length > MAX_RECEIPT_ITEM_ID_CHARS) {
+		return undefined;
+	}
+	if (typeof position !== 'number' || !Number.isSafeInteger(position) || position < 1) {
+		return undefined;
+	}
+	return { itemId, position };
 }
 
 /** How long to wait for the renderer's delivery receipt before giving up.
@@ -49,11 +67,13 @@ function receiptReasonCode(reason: string | undefined): string {
 
 function parseRemoteCommandReceipt(raw: unknown): RemoteCommandReceipt {
 	if (typeof raw === 'object' && raw !== null && 'accepted' in raw) {
-		const receipt = raw as { accepted: unknown; reason?: unknown };
+		const receipt = raw as { accepted: unknown; reason?: unknown; queued?: unknown };
 		if (typeof receipt.accepted === 'boolean') {
+			const queued = receipt.accepted ? parseReceiptQueued(receipt.queued) : undefined;
 			return {
 				accepted: receipt.accepted,
 				reason: typeof receipt.reason === 'string' ? receipt.reason : undefined,
+				...(queued ? { queued } : {}),
 			};
 		}
 	}
@@ -176,6 +196,13 @@ export function registerCommandCallbacks(
 			// callers preserve the durable intent when this throws.
 			if (requireDeliveryReceipt && (receipt.timedOut || receipt.reason === 'malformed-receipt')) {
 				throw new Error('Renderer delivery outcome unknown');
+			}
+			if (receipt.accepted && receipt.queued) {
+				return {
+					queued: true,
+					itemId: receipt.queued.itemId,
+					queuePosition: receipt.queued.position,
+				} satisfies ExecuteCommandQueued;
 			}
 			return receipt.accepted;
 		}

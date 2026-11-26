@@ -880,6 +880,7 @@ export function getSteerEligibility(
 		| 'awaitingConsult'
 		| 'crossAgentMention'
 		| 'agentContext'
+		| 'agentNotes'
 		| 'paused'
 		| 'waitingForConnection'
 		| 'pendingAdmissionId'
@@ -997,7 +998,9 @@ export function getSteerEligibility(
 	if (item.crossAgentMention) return { canSteer: false, blockedReason: 'cross-agent-mention' };
 	// A released hold carries the consult's replies in agentContext, which only the
 	// spawn prepends. Typing the visible text alone would lose the replies.
-	if (item.agentContext) return { canSteer: false, blockedReason: 'has-agent-context' };
+	if (item.agentContext || item.agentNotes) {
+		return { canSteer: false, blockedReason: 'has-agent-context' };
+	}
 	// Over the per-frame cap maestro-p accepts; it would be refused, so it waits and
 	// sends normally instead. Same predicate as the client and server.
 	if (steeringTextTooLong(item.text)) return { canSteer: false, blockedReason: 'too-long' };

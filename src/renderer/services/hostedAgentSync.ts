@@ -22,6 +22,7 @@
  */
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
+import type { QueueExit } from '../../shared/maestro-lib/client/types';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
@@ -42,8 +43,16 @@ import {
 import { applyAutoRunMirrorFrame } from '../hooks/batch/useAutoRunStateMirror';
 import { useBatchStore } from '../stores/batchStore';
 import { mirroredRunCompleteInfo, notifyAutoRunComplete } from './autoRunCompletion';
-import { followHostedHandoffs } from './crossAgentHandoff';
-import { fireHostStartedMentions } from './hostedQueuedTurn';
+import {
+	followHostedHandoffs,
+	nextHostedHandoffDeadline,
+	type HostedTranscriptAccess,
+} from './crossAgentHandoff';
+import {
+	fireHostStartedMentions,
+	nextHostStartDeadline,
+	pruneHostStartedMentions,
+} from './hostedQueuedTurn';
 import { closingHostTabIds, hostingEnabled } from './hostedTurns';
 import {
 	clearPendingSteeringNotes,
@@ -69,6 +78,10 @@ function hostedInput(session: { liftedTo?: unknown }):
 			connected: boolean;
 			link: HostLink;
 			autoRun: AutoRunBroadcastState | null;
+			/** How the host queue items that last left it left, when the host names that. */
+			queueExits: readonly QueueExit[] | undefined;
+			/** How many whole reads of the host queue the mirror took since its host named exits. */
+			queueReads: number;
 	  }
 	| undefined {
 	const pointer = readLiftedTo(session.liftedTo);
@@ -90,6 +103,8 @@ function hostedInput(session: { liftedTo?: unknown }):
 			agent,
 		},
 		autoRun: peer.autoRuns?.[agent.id] ?? null,
+		queueExits: peer.queueExits?.[agent.id],
+		queueReads: peer.queueReads?.[agent.id] ?? 0,
 		input: {
 			agent,
 			transcripts: mirror.transcripts[pointer.peer],
@@ -208,12 +223,18 @@ function releaseHostedAgents(): void {
 export function syncHostedAgents(): void {
 	if (!hostingEnabled()) {
 		dropStaleAutoRuns(new Set());
+		pruneHostStartedMentions(new Set());
 		releaseHostedAgents();
 		return;
 	}
 	released.clear();
-	if (!usePeerMirrorStore.getState().enabled) return;
 	const { sessions, activeSessionId } = useSessionStore.getState();
+	// A record still points at a host while the mirror reconnects: only a deleted or moved-back
+	// agent lets go of the consults it waits to fire.
+	pruneHostStartedMentions(
+		new Set(sessions.filter((s) => readLiftedTo(s.liftedTo)).map((s) => s.id))
+	);
+	if (!usePeerMirrorStore.getState().enabled) return;
 	const hostedIds = new Set<string>();
 	for (const session of sessions) {
 		const hosted = hostedInput(session);
@@ -244,15 +265,12 @@ export function syncHostedAgents(): void {
 				current === session ? next : projectHostedSession(current, input)
 			);
 		}
-		// A consult of a turn the host queued fires as that turn starts.
-		fireHostStartedMentions(next);
-		// A hand-off armed on a turn the host runs releases when the host's turn ends, with the
-		// answer the host saved: a background tab's transcript is read for it.
+		// A background tab's saved transcript, read when a turn's own entries are not here yet.
 		const slotOf = (tabId: string) =>
 			usePeerMirrorStore.getState().transcripts[hosted.peerId]?.[
 				liveTurnKey(hosted.agentId, tabId)
 			];
-		followHostedHandoffs(next, {
+		const transcript: HostedTranscriptAccess = {
 			// The rule the shown tab's read follows: never while one is out, never again after one
 			// failed (the next stale mark or reconnect asks again), so a failing host is not polled.
 			read: (tabId) => {
@@ -266,7 +284,12 @@ export function syncHostedAgents(): void {
 				const slot = slotOf(tabId);
 				return !!slot?.loaded && !slot.stale && !slot.loading && !slot.error;
 			},
-		});
+		};
+		// A consult of a turn the host queued fires as that turn starts.
+		fireHostStartedMentions(next, hosted.queueExits, Date.now(), hosted.queueReads, transcript);
+		// A hand-off armed on a turn the host runs releases when the host's turn ends, with the
+		// answer the host saved.
+		followHostedHandoffs(next, transcript, hosted.queueExits, Date.now(), hosted.queueReads);
 		if (session.id !== activeSessionId || !hosted.connected) continue;
 		const tabId = next.activeTabId;
 		if (!hosted.input.agent.aiTabs?.some((tab) => tab.id === tabId)) continue;
@@ -287,12 +310,30 @@ export function syncHostedAgents(): void {
 export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {}): () => void {
 	announcesRunEnds = options.announcesRunEnds === true;
 	let scheduled = false;
+	// A consult or hand-off waiting on a host start runs out of time with no change from the host
+	// to run the sync (a quiet host, an idle user): one timer runs it again at the soonest limit.
+	let recheck: ReturnType<typeof setTimeout> | undefined;
+	const armRecheck = () => {
+		if (recheck !== undefined) clearTimeout(recheck);
+		recheck = undefined;
+		const deadlines = [
+			nextHostStartDeadline(),
+			nextHostedHandoffDeadline(useSessionStore.getState().sessions),
+		].filter((at): at is number => at !== undefined);
+		if (deadlines.length === 0) return;
+		const delay = Math.max(0, Math.min(...deadlines) - Date.now()) + 1;
+		recheck = setTimeout(() => {
+			recheck = undefined;
+			schedule();
+		}, delay);
+	};
 	const schedule = () => {
 		if (scheduled) return;
 		scheduled = true;
 		queueMicrotask(() => {
 			scheduled = false;
 			syncHostedAgents();
+			armRecheck();
 		});
 	};
 	const offMirror = usePeerMirrorStore.subscribe(schedule);
@@ -311,6 +352,8 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 	schedule();
 	return () => {
 		announcesRunEnds = false;
+		if (recheck !== undefined) clearTimeout(recheck);
+		recheck = undefined;
 		offMirror();
 		offOutages();
 		offSettings();

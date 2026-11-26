@@ -733,8 +733,20 @@ export class PeerMirrorService {
 		});
 		for (const { agentId, version, read } of await Promise.all(reads)) {
 			if (entry.dropped || this.stopped) return;
-			// A `queue.changed` landed while the read was out: it is newer than this answer.
-			if (!read.ok || (entry.queueVersions.get(agentId) ?? 0) !== version) continue;
+			if (!read.ok) continue;
+			if ((entry.queueVersions.get(agentId) ?? 0) !== version) {
+				// A `queue.changed` landed while the read was out: its list is newer than this answer,
+				// so keep it. The read still covered a stretch whose named exits this mirror may have
+				// missed (a start while the link was down), and that change names only its own exit:
+				// commit the kept list as a whole read, so the gap is counted (`queueReads`) here and in
+				// every window, and an item last seen waiting is judged by the tab's state (M19). A host
+				// that names no exits has no gap to count.
+				if (entry.state.queueExits?.[agentId]) {
+					const kept = entry.state.queues[agentId] ?? [];
+					this.commit(entry, setAgentQueue(entry.state, agentId, kept));
+				}
+				continue;
+			}
 			this.commit(entry, setAgentQueue(entry.state, agentId, read.value));
 		}
 	}

@@ -539,8 +539,21 @@ export interface MentionHandoff {
 		afterEntryId?: string;
 		/** The host's queue frame showed `queueItemId` waiting. */
 		seenQueued?: boolean;
-		/** The start time of the turn it was queued behind (the tab's `thinkingStartTime`). */
+		/**
+		 * The start time of the turn it was queued behind (the tab's `thinkingStartTime` when it was
+		 * first seen waiting; never overwritten).
+		 */
 		turnStartedAt?: number;
+		/**
+		 * When it left the host queue with no start seen (this machine's clock, compared only with
+		 * it): past `HOST_QUEUE_START_GRACE_MS` it counts as removed.
+		 */
+		goneAt?: number;
+		/**
+		 * The mirror's count of whole host-queue reads when it was last seen waiting (or sent). A
+		 * read since then (a reconnect) may have missed its named exit: the tab's state decides.
+		 */
+		readsAtSeen?: number;
 	};
 }
 
@@ -631,6 +644,10 @@ export interface QueuedItem {
 	// transcript. Carries a consult's replies verbatim without repeating them in
 	// the user bubble, where they are already shown as the consult's own reply.
 	agentContext?: string;
+	// Agent-only notes appended BEHIND the prompt at spawn and never rendered (a Federation
+	// sender's `@mention` notes: a consult is running, the answer is handed off), as the drain
+	// appends a mention's own notes (`TurnInput.agentNotes`).
+	agentNotes?: string;
 	// A `dispatch --notify-on-complete` wake that main queued because this tab was
 	// mid-turn: another agent reporting back, not the user's message. It runs as
 	// its own turn when the tab goes idle and is never steered into the running

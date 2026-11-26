@@ -128,6 +128,7 @@ import type {
 	MaestroEvent,
 	ProviderInfo,
 	QueuedTurn,
+	QueueExit,
 	QueuedTurnEdit,
 	SettingsChange,
 	TabPatch,
@@ -141,9 +142,11 @@ import type {
 import {
 	normalizeOriginHost,
 	normalizeTurnOverrides,
+	parseHostCapabilities,
 	parseQueuedTurnImages,
 	parseQueuedTurnSettings,
 } from './types';
+import { withTurnAgentText } from '../turns/prompt';
 
 const LOG_CONTEXT = '[WsMaestroClient]';
 
@@ -167,6 +170,9 @@ const POST_OUTCOME_REFRESH_MS = 2_500;
 /** The longest group chat name. Agent names have their own limit (`MAX_AGENT_NAME_LENGTH`). */
 const MAX_CHAT_NAME_LENGTH = 100;
 
+/** The longest queue item id read off a host's `queue_changed` frame (the host's ids are UUIDs). */
+const MAX_QUEUE_ITEM_ID_CHARS = 200;
+
 const TOO_OLD_MESSAGE = 'The running Maestro is too old for this request; update the desktop app.';
 
 /** The least time an `import_agent` gets: it carries every transcript the agent has. */
@@ -186,6 +192,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
 	return typeof value === 'string' ? value : undefined;
+}
+
+/** A `queue_changed` frame's `exit`, or undefined when it is not one this client can read. */
+function parseQueueExit(raw: unknown): QueueExit | undefined {
+	if (!isObject(raw)) return undefined;
+	const itemId = asString(raw.itemId);
+	if (!itemId || itemId.length > MAX_QUEUE_ITEM_ID_CHARS) return undefined;
+	return raw.exit === 'started' || raw.exit === 'removed' ? { itemId, exit: raw.exit } : undefined;
 }
 
 /**
@@ -328,6 +342,11 @@ class WsMaestroClient implements MaestroClient {
 
 	private state: ConnectionState = 'idle';
 	private hostInfo: HostInfo | undefined;
+	/**
+	 * Whether the attached host puts a turn's agent-only text into its prompt (`host_capabilities`),
+	 * asked once per connection: a reconnect may reach an upgraded host.
+	 */
+	private agentTextSupport: Promise<ClientResult<boolean>> | undefined;
 	private conn: BridgeConnection | undefined;
 	private attempt: Attempt | undefined;
 	private connecting: Promise<ClientResult<HostInfo>> | undefined;
@@ -924,6 +943,7 @@ class WsMaestroClient implements MaestroClient {
 		this.conn = conn;
 		this.attempt = undefined;
 		this.hostInfo = host;
+		this.agentTextSupport = undefined;
 		this.state = 'connected';
 		if (snapshot) this.mirror.replace(snapshot.agents, snapshot.groups);
 		this.startTimers();
@@ -1076,7 +1096,15 @@ class WsMaestroClient implements MaestroClient {
 				// A headless host's own frame: the desktop sends none (see `queue.changed`).
 				const agentId = asString(frame.sessionId);
 				if (!agentId || !Array.isArray(frame.items)) break;
-				this.emit({ type: 'queue.changed', agentId, items: parseQueuedTurns(frame.items) });
+				// How an item left, from a host that names it (an older one sends neither field).
+				const exit = parseQueueExit(frame.exit);
+				this.emit({
+					type: 'queue.changed',
+					agentId,
+					items: parseQueuedTurns(frame.items),
+					...(frame.namesExits === true ? { namesExits: true as const } : {}),
+					...(exit ? { exit } : {}),
+				});
 				break;
 			}
 			case 'autorun_ended': {
@@ -1936,8 +1964,19 @@ class WsMaestroClient implements MaestroClient {
 		const turnOverrides = normalizeTurnOverrides(input.overrides);
 		if (turnOverrides) message.turnOverrides = turnOverrides;
 		if (input.held === true) message.held = true;
-		if (input.agentContext) message.agentContext = input.agentContext;
-		if (input.agentNotes) message.agentNotes = input.agentNotes;
+		if (input.agentContext || input.agentNotes) {
+			// A host too old to take the two fields would drop them, and the turn would answer
+			// without a consult's replies. It gets them in the message instead, as an SSH turn's
+			// prompt is built on this side (its transcript then shows them in the bubble).
+			const applies = await this.hostAppliesAgentText();
+			if (!applies.ok) return applies;
+			if (applies.value) {
+				if (input.agentContext) message.agentContext = input.agentContext;
+				if (input.agentNotes) message.agentNotes = input.agentNotes;
+			} else {
+				message.command = withTurnAgentText(input.text, input);
+			}
+		}
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)
@@ -2023,6 +2062,29 @@ class WsMaestroClient implements MaestroClient {
 		}
 		if (!stopped && state) state.interruptRequested = previous;
 		return ok({ stopped });
+	}
+
+	/**
+	 * Whether the host puts a turn's `agentContext` and `agentNotes` into the prompt. A host that
+	 * echoes `host_capabilities` (an older build) does not; a failed ask is not remembered.
+	 */
+	private hostAppliesAgentText(): Promise<ClientResult<boolean>> {
+		if (!this.agentTextSupport) {
+			const asked = this.send<Reply>(
+				'turns.send',
+				{ type: 'host_capabilities' },
+				'host_capabilities_result'
+			).then((reply): ClientResult<boolean> => {
+				if (reply.ok) {
+					return ok(parseHostCapabilities(reply.value.capabilities).includes('turn-agent-text'));
+				}
+				if (reply.error.code === 'unsupported') return ok(false);
+				if (this.agentTextSupport === asked) this.agentTextSupport = undefined;
+				return reply;
+			});
+			this.agentTextSupport = asked;
+		}
+		return this.agentTextSupport;
 	}
 
 	private async queueList(agentId: string): Promise<ClientResult<QueuedTurn[]>> {
