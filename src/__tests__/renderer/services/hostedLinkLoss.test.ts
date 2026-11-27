@@ -46,6 +46,7 @@ import {
 	scheduleRetryForError,
 	stopRetriesForAgent,
 	useRetryStore,
+	type RaisedErrorRetry,
 } from '../../../renderer/stores/retryStore';
 import { parseSessionId } from '../../../renderer/utils/sessionIdParser';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -559,10 +560,11 @@ describe('projectHostedSession with the link lost', () => {
 });
 
 /** What the agent-error listener does with a retryable error: hand it to Agent Resilience. */
-function listenerStandIn(processSessionId: string, error: AgentError) {
+/** The error listener's retry part, as `useAgentErrorListener` runs it (with the raised options). */
+function listenerStandIn(processSessionId: string, error: AgentError, retry?: RaisedErrorRetry) {
 	raised.push({ processSessionId, error });
 	const parsed = parseSessionId(processSessionId);
-	scheduleRetryForError(parsed.baseSessionId, parsed.tabId as string, error);
+	scheduleRetryForError(parsed.baseSessionId, parsed.tabId as string, error, retry);
 }
 
 describe('a turn cut by a lost link is kept under the retry card, drawn once (R13)', () => {
@@ -884,6 +886,21 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		await flush();
 		expect(sends()).toHaveLength(1);
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	// Parity R44: the error's retry is raised through the error listener, as a local turn's error
+	// is, so the listener writes the anchor its card is drawn from (countdown, Try now, Stop).
+	it("raises a cut turn's provider error through the error listener, which draws its card (R44)", async () => {
+		cut();
+		raised.length = 0;
+		await hostBack('idle', [QUESTION, OVERLOADED]);
+		expect(raised).toEqual([
+			{
+				processSessionId: 'row-ai-t1',
+				error: expect.objectContaining({ message: OVERLOADED.text }),
+			},
+		]);
+		expect(getRetryEntry('row', 't1')).toMatchObject({ status: 'scheduled', attempt: 0 });
 	});
 
 	// Parity R41: one side owns a retry. A desktop host whose own Agent Resilience took the error
@@ -1405,11 +1422,15 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
 		maestro.federation = { transcript, act: act$ };
 		registerDispatchDepsProvider(() => ({}) as never);
+		// The error listener, as the relaunched app has it: an errored turn's retry is raised there.
+		raised.length = 0;
+		registerAgentErrorSurfacer(listenerStandIn);
 	});
 
 	afterEach(() => {
 		delete maestro.federation;
 		registerDispatchDepsProvider(null);
+		registerAgentErrorSurfacer(null);
 	});
 
 	/** The relaunched state: the host connected with its tab `state`, the kept copy in the queue. */

@@ -51,6 +51,7 @@ import {
 	failInFlightRetry,
 	persistDispatchSnapshotForAuth,
 	registerAgentErrorSurfacer,
+	type RaisedErrorRetry,
 } from '../../../stores/retryStore';
 import { scheduleAutoResume } from '../../../stores/autoRunResumeStore';
 import { reportAuthFailure } from '../../../stores/authOutageStore';
@@ -81,9 +82,12 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 		const getSessions = () => useSessionStore.getState().sessions;
 		const { openModal } = useModalStore.getState();
 
-		const handleAgentError: Parameters<typeof window.maestro.process.onAgentError>[0] = (
-			sessionId,
-			error
+		// `retry` comes only from `raiseAgentError()` (a hosted turn's error raised here): how the
+		// retry it schedules goes on. A process's own error never carries it.
+		const handleAgentError = (
+			sessionId: string,
+			error: Parameters<Parameters<typeof window.maestro.process.onAgentError>[0]>[1],
+			retry?: RaisedErrorRetry
 		) => {
 			// Window scoping: only the owning window handles the error (and pauses
 			// its batch). Events are broadcast to all windows.
@@ -278,7 +282,12 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			const willAutoRetryInteractive =
 				canAutoRetry &&
 				!batchOwnsError &&
-				scheduleRetryForError(actualSessionId, tabIdFromSession!, agentError);
+				scheduleRetryForError(
+					actualSessionId,
+					tabIdFromSession!,
+					agentError,
+					retry?.freshOutage ? { freshOutage: retry.freshOutage } : undefined
+				);
 			const willAutoRetryBatch =
 				canAutoRetry &&
 				batchOwnsError &&
@@ -639,7 +648,9 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			}
 		};
 
-		const unsubscribe = window.maestro.process.onAgentError(handleAgentError);
+		const unsubscribe = window.maestro.process.onAgentError((sessionId, error) =>
+			handleAgentError(sessionId, error)
+		);
 		registerAgentErrorSurfacer(handleAgentError);
 
 		return () => {

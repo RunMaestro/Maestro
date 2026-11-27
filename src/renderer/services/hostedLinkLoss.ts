@@ -45,9 +45,10 @@ import {
 	getRetryEntry,
 	noteDirectDispatch,
 	notOnHostText,
+	raiseAgentError,
 	retryNow,
-	scheduleRetryForError,
 	settleRetryOnHost,
+	wouldRecoverError,
 	type HeldOnHost,
 } from '../stores/retryStore';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
@@ -205,8 +206,9 @@ function turnErrorAfter(
 
 /**
  * A kept message whose turn ended on its own error on the host goes on as a local turn that ends
- * on that error does: `scheduleRetryForError()` decides by the error's own rule, holding the
- * message under its retry, and the retry sends it into the same entry. Answers whether a retry
+ * on that error does: raised through the error listener (`raiseAgentError()`), whose
+ * `scheduleRetryForError()` decides by the error's own rule, holding the message under its retry
+ * with its card, and the retry sends it into the same entry. Answers whether a retry
  * took it; one that did not (not retryable, Agent Resilience off) leaves the error standing, drawn
  * from the host's transcript, nothing is sent, and the caller parks the message held with it.
  *
@@ -236,7 +238,13 @@ function routeErroredTurn(
 	const handover = waiting
 		? { freshOutage: { settledByHost: true, hostRetry: 'here' as const } }
 		: undefined;
-	if (!scheduleRetryForError(sessionId, tabId, error, handover)) return 'not-retried';
+	if (!wouldRecoverError(sessionId, tabId, error, handover)) return 'not-retried';
+	// Raised through the error listener, as a local turn's error is (and as `keepTurnForHost()`
+	// raises a refused send): it schedules the retry and writes the transcript anchor its card is
+	// drawn from (countdown, Try now, Stop), never a retry with no card (R44).
+	raiseAgentError(`${sessionId}-ai-${tabId}`, error, handover);
+	const taken = getRetryEntry(sessionId, tabId);
+	if (!taken || taken.outageId === waiting?.outageId) return 'not-retried';
 	erroredResends.set(cutKey(sessionId, tabId), entryId);
 	return 'retried';
 }
