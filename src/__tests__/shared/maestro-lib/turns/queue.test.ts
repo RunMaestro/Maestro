@@ -850,6 +850,32 @@ describe('createExecutionQueue interrupt', () => {
 			expect(h.turnFor('next').interrupted).toBe(false);
 		});
 
+		it('a Stop armed in the hand-over is let go by a short Auto Run, when its start looks again (U9)', async () => {
+			const held = new Set(['t1']);
+			const tree = { on: false };
+			const h = harness({ retryHeld: held, holdsTree: tree });
+			h.queue.submit(item('next', 't1'));
+			await h.flush();
+			expect(h.queue.interruptNext('t1')).toBe('next');
+			// The run starts holding the tree, and the host looks again (`onRunStarted`): the client
+			// is told the message is no hand-over any more.
+			const before = h.events.length;
+			tree.on = true;
+			h.queue.drain();
+			expect(h.queue.handOver()).toBeUndefined();
+			expect(h.events.slice(before)).toEqual([
+				expect.objectContaining({ type: 'updated', item: expect.objectContaining({ id: 'next' }) }),
+			]);
+			// A run so short the synopsis still holds the tab when it ends.
+			tree.on = false;
+			h.queue.drain();
+			held.delete('t1');
+			h.queue.drain();
+			await h.flush();
+			expect(h.startOrder).toEqual(['next']);
+			expect(h.turnFor('next').interrupted).toBe(false);
+		});
+
 		it('a Stop armed in the hand-over is let go when the message is held, then resumed', async () => {
 			const held = new Set(['t1']);
 			const h = harness({ retryHeld: held });

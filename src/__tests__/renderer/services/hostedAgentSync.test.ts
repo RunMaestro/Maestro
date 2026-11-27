@@ -94,6 +94,8 @@ describe('hostedAgentSync', () => {
 	});
 
 	it('forgets a hand-over of an agent it no longer draws, so its limit never re-arms the recheck (CodeRabbit on #2166)', () => {
+		// The host's own time for the hand-over: now, so its limit is still running (U9).
+		const since = Date.now();
 		const withHandOver = () =>
 			usePeerMirrorStore.setState((state) => ({
 				peers: {
@@ -105,12 +107,12 @@ describe('hostedAgentSync', () => {
 								{
 									itemId: 'next',
 									tabId: 't1',
-									queuedAt: 1,
+									queuedAt: since,
 									kind: 'message' as const,
 									text: 'next',
 									paused: false,
 									handOver: true,
-									handOverSince: 1,
+									handOverSince: since,
 								},
 							],
 						},

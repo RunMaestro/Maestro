@@ -189,7 +189,7 @@ export const MAX_WAITING_TURNS_PER_AGENT = 100;
 
 export interface RuntimeTurns {
 	readonly api: TurnsApi;
-	/** Look at an agent's queue again, for a hold that cleared (an Auto Run ended). */
+	/** Look at an agent's queue again, for a hold that cleared or began (an Auto Run ended or started). */
 	drain(agentId: string): void;
 	/** `/btw` side questions about this host's tabs, which `consults.ask` hands over (M6). */
 	readonly sideQuestions: Pick<RuntimeSideQuestions, 'ask'>;

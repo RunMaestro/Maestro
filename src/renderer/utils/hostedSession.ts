@@ -74,8 +74,9 @@ export interface HostedProjectionInput {
 	/** This machine's clock now, for a host-queue hand-over's time limit. Default `Date.now()`. */
 	now?: number;
 	/**
-	 * When each host-queue hand-over was first seen here (`hostHandOverClock()`). Without it the
-	 * limit counts from the host's own time for it (`handOverSince`, else `queuedAt`).
+	 * When each host-queue hand-over's limit started (`hostHandOverClock()`): the host's own time for
+	 * it, never later than when it was first seen here. Without it the limit counts from the host's
+	 * own time for it (`handOverSince`, else `queuedAt`).
 	 */
 	handOverClock?: HandOverClock;
 	/** Tabs whose turn was stopped here while the host could not be told: drawn idle until it can. */
@@ -637,7 +638,11 @@ export function hostQueueHandOver(
 	}
 	const since = next.handOverSince ?? next.queuedAt;
 	const limitMs = says ? HAND_OVER_MAX_MS : UNNAMED_HAND_OVER_MS;
-	const seen = clock ? clock.seenAt(next.itemId, limitMs) : since;
+	// A host that names the hand-over times it (`handOverSince`); the clock bounds that by when
+	// this machine first saw it. An older host's time says nothing about the hand-over.
+	const seen = clock
+		? clock.seenAt(next.itemId, limitMs, says ? next.handOverSince : undefined)
+		: since;
 	return now - seen < limitMs ? { tabId: next.tabId, since: says ? since : seen } : undefined;
 }
 

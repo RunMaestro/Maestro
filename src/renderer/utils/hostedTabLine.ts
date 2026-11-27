@@ -107,8 +107,13 @@ const handOversSeen = new Map<
 
 /** The clock `projectHostedSession()` reads a host-queue hand-over's time limit from. */
 export interface HandOverClock {
-	/** When the hand-over of `itemId` was first seen here; the first call starts its limit. */
-	seenAt(itemId: string, limitMs: number): number;
+	/**
+	 * When the limit of `itemId`'s hand-over started: the host's own time for it (`hostSince`, the
+	 * item's `handOverSince`) when it sends one, never later than when this machine first saw it, so
+	 * a client that connects late in the gap runs out with the host, and a host clock ahead of this
+	 * one never makes it last longer (U9). The first call starts the limit.
+	 */
+	seenAt(itemId: string, limitMs: number, hostSince?: number): number;
 	/** No hand-over now: the next one starts its own limit. */
 	clear(): void;
 }
@@ -116,14 +121,18 @@ export interface HandOverClock {
 /** `sessionId`'s hand-over clock, read at `now`. */
 export function hostHandOverClock(sessionId: string, now: number): HandOverClock {
 	return {
-		seenAt(itemId, limitMs) {
+		seenAt(itemId, limitMs, hostSince) {
 			const seen = handOversSeen.get(sessionId);
 			if (seen?.itemId === itemId) {
 				seen.checkedAt = Math.max(seen.checkedAt, now);
 				return seen.at;
 			}
-			handOversSeen.set(sessionId, { itemId, at: now, until: now + limitMs, checkedAt: now });
-			return now;
+			const at =
+				typeof hostSince === 'number' && Number.isFinite(hostSince)
+					? Math.min(hostSince, now)
+					: now;
+			handOversSeen.set(sessionId, { itemId, at, until: at + limitMs, checkedAt: now });
+			return at;
 		},
 		clear() {
 			handOversSeen.delete(sessionId);

@@ -237,12 +237,12 @@ describe('U6: a tab reads busy only while its message waits for that tab alone',
 		expect(row.aiTabs.map((tab) => tab.state)).toEqual(['idle', 'idle']);
 	});
 
-	it('hosted: the host-said hand-over reads busy until HAND_OVER_MAX_MS from when it was seen here, then queued', () => {
+	it('hosted: the host-said hand-over reads busy until HAND_OVER_MAX_MS from its start, then queued', () => {
 		const clock = (now: number) => hostHandOverClock('row', now);
 		const at = (now: number) =>
 			project(idleRow('hosted'), {
 				agent: host(),
-				queue: [waiting()],
+				queue: [waiting({ handOverSince: 10_000 })],
 				now,
 				handOverClock: clock(now),
 			});
@@ -284,8 +284,49 @@ describe('U6: a tab reads busy only while its message waits for that tab alone',
 				handOverClock: hostHandOverClock('row', now),
 			});
 		expect(at(1_000, false).aiTabs[0].state).toBe('busy');
-		// The tab ran a turn meanwhile; the same message waits for it alone again much later.
+		// The tab ran a turn meanwhile; the same message waits for it alone again much later, and
+		// the host times that hand-over anew.
 		at(2_000, true);
-		expect(at(1_000 + HAND_OVER_MAX_MS + 5, false).aiTabs[0].state).toBe('busy');
+		const later = 1_000 + HAND_OVER_MAX_MS + 5;
+		const again = project(idleRow('hosted'), {
+			agent: host(),
+			queue: [waiting({ handOverSince: later })],
+			now: later,
+			handOverClock: hostHandOverClock('row', later),
+		});
+		expect(again.aiTabs[0].state).toBe('busy');
+	});
+
+	it("hosted: a client that connects late in the gap runs out with the host's own limit, not 30 s after it first looked (U9)", () => {
+		// The host has said since 1 000 that the message waits for its tab alone; this client first
+		// sees it 25 s later, so 5 s are left, as the host's own Stop has.
+		const since = 1_000;
+		const at = (now: number) =>
+			project(idleRow('hosted'), {
+				agent: host(),
+				queue: [waiting({ handOverSince: since })],
+				now,
+				handOverClock: hostHandOverClock('row', now),
+			});
+		const firstSeen = since + 25_000;
+		expect(at(firstSeen).aiTabs[0].state).toBe('busy');
+		expect(nextHostHandOverDeadline()).toBe(since + HAND_OVER_MAX_MS);
+		expect(at(since + HAND_OVER_MAX_MS - 1).aiTabs[0].state).toBe('busy');
+		expect(at(since + HAND_OVER_MAX_MS).aiTabs[0].state).toBe('idle');
+	});
+
+	it('hosted: a host clock ahead of this one never makes the hand-over last longer than from when it was seen here (U9)', () => {
+		const firstSeen = 50_000;
+		const at = (now: number) =>
+			project(idleRow('hosted'), {
+				agent: host(),
+				// The host's clock reads an hour ahead.
+				queue: [waiting({ handOverSince: firstSeen + 3_600_000 })],
+				now,
+				handOverClock: hostHandOverClock('row', now),
+			});
+		expect(at(firstSeen).aiTabs[0].state).toBe('busy');
+		expect(nextHostHandOverDeadline()).toBe(firstSeen + HAND_OVER_MAX_MS);
+		expect(at(firstSeen + HAND_OVER_MAX_MS).aiTabs[0].state).toBe('idle');
 	});
 });
