@@ -4447,6 +4447,71 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByTestId('turn-effort-pill')).not.toBeInTheDocument();
 		});
 
+		describe('pill row yields to the footer controls only when they overlap', () => {
+			const renderPillRow = () => {
+				const logs: LogEntry[] = [
+					createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+					createLogEntry({
+						id: 'resp-1',
+						text: 'response',
+						source: 'stdout',
+						turnModel: 'opus',
+						turnEffort: 'medium',
+					}),
+				];
+				const session = createDefaultSession({
+					tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+					activeTabId: 'tab-1',
+				});
+				render(<TerminalOutput {...createDefaultProps({ session })} />);
+				const row = screen.getByTestId('turn-attribution-pills');
+				const hoverRow = row.closest('[data-log-index]') as HTMLElement;
+				return { row, hoverRow };
+			};
+
+			// Pills span x 100-300; the action cluster sits at x 400-500 (wide
+			// bubble) or x 250-350 (narrow bubble, overlapping the pills).
+			const mockFooterRects = (controlLeft: number) =>
+				vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+					this: HTMLElement
+				) {
+					const rect = (left: number, right: number) =>
+						({
+							left,
+							right,
+							top: 0,
+							bottom: 20,
+							x: left,
+							y: 0,
+							width: right - left,
+							height: 20,
+						}) as DOMRect;
+					if (this.dataset.testid === 'turn-attribution-pills') return rect(100, 300);
+					if (this.hasAttribute('data-message-footer-control') && this.tagName === 'DIV')
+						return rect(controlLeft, controlLeft + 100);
+					return rect(0, 0);
+				});
+
+			afterEach(() => vi.restoreAllMocks());
+
+			it('keeps the pills visible on hover when the bubble is wide enough', () => {
+				mockFooterRects(400);
+				const { row, hoverRow } = renderPillRow();
+				fireEvent.mouseEnter(hoverRow);
+				expect(row).not.toHaveAttribute('data-collides');
+				expect(row).toHaveClass('group-hover:data-[collides]:opacity-0');
+				expect(row).toContainElement(screen.getByTestId('turn-model-pill'));
+				expect(row).toContainElement(screen.getByTestId('turn-effort-pill'));
+			});
+
+			it('marks the pills to fade on hover when they sit under the action buttons', () => {
+				mockFooterRects(250);
+				const { row, hoverRow } = renderPillRow();
+				fireEvent.mouseEnter(hoverRow);
+				expect(row).toHaveAttribute('data-collides');
+			});
+		});
+
 		it('does not render the pills on user messages', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
