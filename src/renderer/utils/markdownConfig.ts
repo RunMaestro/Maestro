@@ -21,6 +21,7 @@ import React from 'react';
 import type { Theme } from '../types';
 import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 import { extractHexColor } from '../../shared/hexColor';
+import { strictCssColors } from '../../shared/cssColor';
 import { openUrl } from './openUrl';
 import { BionifyText, getBionifyReadingModeStyles } from './bionifyReadingMode';
 import { AlertCallout } from '../components/Markdown/components/AlertCallout';
@@ -139,7 +140,10 @@ export function generateProseStyles(options: ProseStylesOptions): string {
 		includeCheckboxStyles = true,
 		scopeSelector = '',
 	} = options;
-	const colors = theme.colors;
+	// The colors are spliced into CSS text, so a value that is not a plain color
+	// (a plugin theme's `red;} * { ... }`) is written as nothing, never as CSS.
+	// Every CSS generator in this file does the same.
+	const colors = strictCssColors(theme.colors);
 
 	// Build selector prefix - if scopeSelector provided, prefix .prose with it
 	const s = scopeSelector ? `${scopeSelector} .prose` : '.prose';
@@ -596,7 +600,7 @@ export function generateInlineWizardPreviewProseStyles(
 	scopeSelector: string,
 	variant: InlineWizardPreviewVariant
 ): string {
-	const c = theme.colors;
+	const c = strictCssColors(theme.colors);
 	const s = scopeSelector ? `${scopeSelector}.prose, ${scopeSelector} .prose` : '.prose';
 	const bionifySelector = scopeSelector ? `${scopeSelector} .prose` : '.prose';
 	const isStreaming = variant === 'streaming';
@@ -811,7 +815,7 @@ export function generateAutoRunProseStyles(theme: Theme): string {
  * @param scopeSelector CSS selector to scope styles (e.g., '.terminal-output' or '.group-chat-messages')
  */
 export function generateTerminalProseStyles(theme: Theme, scopeSelector: string): string {
-	const c = theme.colors;
+	const c = strictCssColors(theme.colors);
 	const s = `${scopeSelector} .prose`;
 
 	return `
@@ -861,7 +865,7 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
  * @returns CSS string to be injected via <style> tag
  */
 export function generateDiffViewStyles(theme: Theme, colorBlindMode: boolean = false): string {
-	const c = theme.colors;
+	const c = strictCssColors(theme.colors);
 
 	const insertGutter = colorBlindMode
 		? COLORBLIND_DIFF_COLORS.insertGutter

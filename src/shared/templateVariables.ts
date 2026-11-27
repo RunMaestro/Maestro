@@ -704,10 +704,26 @@ export function availableTemplateVariables<T extends { encoreFlag?: string; cueO
 	});
 }
 
+/** How {@link substituteTemplateVariables} writes each value into the template. */
+export interface TemplateSubstitutionOptions {
+	/**
+	 * Returns the text that replaces one placeholder. Called once per
+	 * placeholder that resolves, left to right, with the value, the upper-case
+	 * variable name, and where the placeholder sits in the template (`end` is
+	 * exclusive). Absent: the value itself. Unknown placeholders never reach
+	 * it; they stay literal.
+	 */
+	renderValue?: (value: string, name: string, span: { start: number; end: number }) => string;
+}
+
 /**
  * Substitute template variables in a string with actual values
  */
-export function substituteTemplateVariables(template: string, context: TemplateContext): string {
+export function substituteTemplateVariables(
+	template: string,
+	context: TemplateContext,
+	options: TemplateSubstitutionOptions = {}
+): string {
 	const {
 		session,
 		gitBranch,
@@ -902,8 +918,13 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 	// when it contains another placeholder or a replacement pattern like `$&`.
 	// Looking up the whole name also keeps dynamic Cue names literal instead
 	// of interpreting punctuation in those names as regular expressions.
-	return template.replace(/\{\{([^{}]+)\}\}/g, (match, name: string) => {
+	const { renderValue } = options;
+	return template.replace(/\{\{([^{}]+)\}\}/g, (match, name: string, offset: number) => {
 		const key = name.toUpperCase();
-		return Object.prototype.hasOwnProperty.call(replacements, key) ? replacements[key] : match;
+		if (!Object.prototype.hasOwnProperty.call(replacements, key)) return match;
+		const value = replacements[key];
+		return renderValue
+			? renderValue(value, key, { start: offset, end: offset + match.length })
+			: value;
 	});
 }

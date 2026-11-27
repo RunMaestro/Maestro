@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { THEMES } from '../../../renderer/constants/themes';
 import type { ThemeColors } from '../../../shared/theme-types';
 import { isValidThemeId } from '../../../shared/theme-types';
+import { isStrictCssColor } from '../../../shared/cssColor';
 
 /**
  * Tests for the THEMES constant
@@ -93,6 +94,19 @@ describe('THEMES constant', () => {
 					expect(
 						isValidCssColor(colorValue),
 						`${theme.id}.${colorName}: "${colorValue}" is not a valid CSS color`
+					).toBe(true);
+				}
+			}
+		});
+
+		it('should only use colors the CSS text writers keep (isStrictCssColor)', () => {
+			// The `<style>` generators blank any color that fails the strict check,
+			// so a built-in color outside it would silently vanish from prose styles.
+			for (const theme of themes) {
+				for (const [colorName, colorValue] of Object.entries(theme.colors)) {
+					expect(
+						isStrictCssColor(colorValue),
+						`${theme.id}.${colorName}: "${colorValue}" fails isStrictCssColor`
 					).toBe(true);
 				}
 			}

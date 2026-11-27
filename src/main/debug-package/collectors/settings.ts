@@ -4,11 +4,14 @@
  * Collects application settings with sensitive and identifying data removed.
  * - API keys and tokens are replaced with [REDACTED]
  * - Usernames, hostnames, and SSH remote identities are replaced with [REDACTED]
+ * - Env var records (`shellEnvVars`, an SSH remote's `remoteEnv`, ...) keep their
+ *   names and lose EVERY value, whatever the name: `NPM_TOKEN` and `EDITOR` alike
  * - Paths are replaced with opaque descriptors (no folder or project names)
  * - Every remaining string is swept for embedded paths, URLs, and identity
  */
 
 import Store from 'electron-store';
+import { isEnvRecord, maskEnvVarValues } from '../../../shared/agentEnvironment';
 import { redactAndTruncate, redactPath } from './sanitize';
 
 // Keys that contain sensitive data (case-insensitive substring matching)
@@ -128,6 +131,11 @@ function sanitizeObject(obj: unknown, sanitizedFields: string[], prefix: string 
 			if (isSensitiveKey(key)) {
 				result[key] = '[REDACTED]';
 				sanitizedFields.push(fullKey);
+			} else if (isEnvRecord(key, value)) {
+				result[key] = maskEnvVarValues(value);
+				if (Object.keys(value).length > 0) {
+					sanitizedFields.push(fullKey);
+				}
 			} else if (typeof value === 'string' && isPathKey(key)) {
 				result[key] = redactPath(value);
 				if (result[key] !== value) {

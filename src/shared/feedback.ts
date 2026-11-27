@@ -147,7 +147,8 @@ export interface FeedbackConversationSubmitPayload {
 	/**
 	 * Absolute path to a temp performance-trace .zip captured via
 	 * debug:stopProfilingToFile. When present, it is uploaded and linked in the
-	 * issue body, then deleted.
+	 * issue body, then deleted. Any path that fails `checkFeedbackTraceBundle()`
+	 * (src/main/profiling/feedback-trace.ts) refuses the whole submit.
 	 */
 	performanceTracePath?: string;
 	/**

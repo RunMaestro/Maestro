@@ -2299,6 +2299,21 @@ describe('createWsMaestroClient', () => {
 			// A subscriber to other keys hears only the 'unknown' ones.
 			expect(only).toEqual(['unknown', 'unknown']);
 		});
+
+		// L31: a desktop host says its History changed with the frames its own windows hear; a
+		// headless host sends the same `history:externalChange` (server-frames).
+		it('reports a History write a desktop host announces as history.changed for the agent', async () => {
+			bridge.pushBridgeEvent('history:entryAdded', { id: 'h1', type: 'USER', timestamp: 1 }, A1);
+			bridge.pushBridgeEvent('history:externalChange', A1);
+			// No agent named: nothing to say.
+			bridge.pushBridgeEvent('history:externalChange');
+			bridge.pushBridgeEvent('settings:externalChange', 'fontSize');
+			await vi.waitFor(() => expect(types()).toContain('settings.changed'));
+			expect(events.filter((event) => event.type === 'history.changed')).toEqual([
+				{ type: 'history.changed', agentId: A1 },
+				{ type: 'history.changed', agentId: A1 },
+			]);
+		});
 	});
 
 	// -----------------------------------------------------------------------

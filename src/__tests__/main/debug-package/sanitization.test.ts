@@ -914,6 +914,132 @@ describe('Debug Package Sanitization', () => {
 			});
 		});
 
+		describe('env var records in settings', () => {
+			const collect = async (store: Record<string, unknown>) => {
+				const { collectSettings } = await import('../../../main/debug-package/collectors/settings');
+				return collectSettings({ get: vi.fn(), set: vi.fn(), store } as any);
+			};
+
+			/** What a record should come out as: every name kept, every value a length-only mask. */
+			const masked = (vars: Record<string, string>) =>
+				Object.fromEntries(
+					Object.entries(vars).map(([name, value]) => [name, `[redacted, ${value.length} chars]`])
+				);
+
+			it('masks every shellEnvVars value whatever its name, and keeps the names', async () => {
+				// None of these names is in the settings keyword list, so before the fix every value shipped.
+				const shellEnvVars = {
+					NPM_TOKEN: 'npm_canary0123456789abcdefghij',
+					HF_TOKEN: 'hf_canary0123456789abcdefghij',
+					MY_API: 'api-canary-value',
+					EDITOR: 'vim-canary',
+				};
+
+				const result = await collect({ shellEnvVars });
+
+				expect(result.raw.shellEnvVars).toEqual(masked(shellEnvVars));
+				expect(JSON.stringify(result.raw)).not.toContain('canary');
+				expect(result.sanitizedFields).toContain('shellEnvVars');
+			});
+
+			it('masks parked (switched-off) variables in shellEnvVarsDisabled too', async () => {
+				const shellEnvVarsDisabled = {
+					GITHUB_PAT: 'ghp_canary0123456789abcdef',
+					OLD_SETTING: 'old-canary',
+				};
+
+				const result = await collect({ shellEnvVarsDisabled });
+
+				expect(result.raw.shellEnvVarsDisabled).toEqual(masked(shellEnvVarsDisabled));
+				expect(JSON.stringify(result.raw)).not.toContain('canary');
+				expect(result.sanitizedFields).toContain('shellEnvVarsDisabled');
+			});
+
+			it('masks an SSH remote remoteEnv and remoteEnvDisabled, and still redacts its identity', async () => {
+				const remoteEnv = { NPM_TOKEN: 'npm_canary0123456789', AWS_PROFILE: 'prod-canary' };
+				const remoteEnvDisabled = { OLD_TOKEN: 'old_canary0123456789' };
+
+				const result = await collect({
+					sshRemotes: [
+						{
+							id: 'remote-1',
+							name: 'Acme Prod Box',
+							host: 'build.acme-internal.com',
+							username: 'jdoe',
+							port: 22,
+							enabled: true,
+							remoteEnv,
+							remoteEnvDisabled,
+						},
+					],
+				});
+				const remote = (result.raw.sshRemotes as any)[0];
+				const serialized = JSON.stringify(result.raw);
+
+				expect(remote.remoteEnv).toEqual(masked(remoteEnv));
+				expect(remote.remoteEnvDisabled).toEqual(masked(remoteEnvDisabled));
+				expect(remote.port).toBe(22);
+				expect(remote.host).toBe('[REDACTED]');
+				for (const leaked of ['canary', 'jdoe', 'acme-internal.com', 'Acme Prod Box']) {
+					expect(serialized, leaked).not.toContain(leaked);
+				}
+				expect(result.sanitizedFields).toContain('sshRemotes[0].remoteEnv');
+				expect(result.sanitizedFields).toContain('sshRemotes[0].remoteEnvDisabled');
+			});
+
+			it('masks env records nested under any container', async () => {
+				const customEnvVars = {
+					ANTHROPIC_BASE_URL: 'https://gateway-canary.example.com/v1',
+					HOME_OVERRIDE: '/Users/jdoe/canary-home',
+				};
+				const pluginEnv = { SERVICE_TOKEN: 'svc-canary-0123' };
+
+				const result = await collect({
+					providers: { 'claude-code': { customEnvVars } },
+					plugin: { env: pluginEnv },
+				});
+
+				expect((result.raw.providers as any)['claude-code'].customEnvVars).toEqual(
+					masked(customEnvVars)
+				);
+				expect((result.raw.plugin as any).env).toEqual(masked(pluginEnv));
+				expect(JSON.stringify(result.raw)).not.toContain('canary');
+			});
+
+			it('masks a path-like or URL-like value whole, not just its sensitive part', async () => {
+				const shellEnvVars = {
+					PATH: '/Users/jdoe/bin:/usr/local/bin:/usr/bin',
+					HTTPS_PROXY: 'http://proxyuser:proxypass-canary@proxy.example.com:3128',
+				};
+
+				const result = await collect({ shellEnvVars });
+
+				expect(result.raw.shellEnvVars).toEqual(masked(shellEnvVars));
+				expect(JSON.stringify(result.raw)).not.toMatch(/jdoe|proxypass|usr\/local/);
+			});
+
+			it('shows no tail of a short secret that maskEnvValue would partly reveal', async () => {
+				const result = await collect({ shellEnvVars: { DB_PASSWORD: 'hunter123' } });
+
+				expect(result.raw.shellEnvVars).toEqual({ DB_PASSWORD: '[redacted, 9 chars]' });
+				expect(JSON.stringify(result.raw)).not.toContain('r123');
+			});
+
+			it('leaves a key that is named like a record but is not one to the ordinary sweep', async () => {
+				const result = await collect({
+					env: 'production',
+					customEnvVars: null,
+					shellEnvVars: {},
+				});
+
+				expect(result.raw.env).toBe('production');
+				expect(result.raw.customEnvVars).toBeNull();
+				// An empty record has nothing to mask, so it is not reported as sanitized.
+				expect(result.raw.shellEnvVars).toEqual({});
+				expect(result.sanitizedFields).not.toContain('shellEnvVars');
+			});
+		});
+
 		describe('custom args masking', () => {
 			it('should not expose custom args values containing secrets', async () => {
 				const { collectAgents } = await import('../../../main/debug-package/collectors/agents');

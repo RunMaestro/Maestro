@@ -227,7 +227,9 @@ describe('host Pianola dispatch admission', () => {
 			// Durable historical records are fixture setup; keep the default test
 			// timeout focused on real cleanup, restart readback and no-resend checks.
 			prepared = await completedFixture(task.name.startsWith('bounds completed') ? 40 : 34);
-		});
+			// Up to 40 durable records, each several synced writes: a slow Windows runner needs
+			// more than the 10 s default hook timeout for the setup alone.
+		}, 60_000);
 
 		it('bounds completed dispatch payloads across restart, preserves receipts and rejects stale resurrection', async () => {
 			const f = prepared;

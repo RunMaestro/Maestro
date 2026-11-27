@@ -10,7 +10,7 @@ import { foldLiveTurn, type LiveTurn } from '../../../../shared/maestro-lib/clie
 import type { TurnEvent } from '../../../../shared/maestro-lib/client/types';
 import { buildTurnTranscript } from '../../../../shared/maestro-lib/turns/record-turn';
 import type { LogEntry } from '../../../../renderer/types';
-import { THINKING_MODES, type ThinkingMode } from '../../../../shared/types';
+import { logsShownMidTurn, THINKING_MODES, type ThinkingMode } from '../../../../shared/types';
 import { AGENT_MODES, type AgentMode } from '../../../helpers/mockSession';
 
 const ANSWER = 'Done.';
@@ -91,5 +91,43 @@ describe('sticky Thinking after the turn (P7)', () => {
 						['stdout', ANSWER],
 					]
 		);
+	});
+});
+
+// L30: while the turn runs, a hosted tab's live tail shows what a local tab's listeners keep under
+// the tab's Thinking mode (`useAgentThinkingListener` drops a chunk when it is off; the inline clear
+// point of `useBatchedSessionUpdates` drops the reasoning once answer text arrives, unless sticky).
+describe('Thinking while the turn runs (L30)', () => {
+	const shownAfter = (count: number, mode: ThinkingMode): Array<[string, string]> => {
+		let id = 0;
+		let live: LiveTurn | undefined;
+		for (const event of EVENTS.slice(0, count)) {
+			live = foldLiveTurn(live, event, { newId: () => `e${++id}` }) ?? live;
+		}
+		return logsShownMidTurn(live!.entries, mode).map((entry) => [entry.source, entry.text]);
+	};
+
+	it("'off' shows no thinking entry, and the tool card only until the answer arrives", () => {
+		expect(shownAfter(5, 'off')).toEqual([['tool', 'Read']]);
+		expect(shownAfter(6, 'off')).toEqual([['stdout', ANSWER]]);
+	});
+
+	it("'on' shows the reasoning until the answer arrives, then the answer alone", () => {
+		expect(shownAfter(5, 'on')).toEqual([
+			['thinking', 'Plan it.'],
+			['tool', 'Read'],
+			['thinking', 'Now answer.'],
+		]);
+		expect(shownAfter(6, 'on')).toEqual([['stdout', ANSWER]]);
+	});
+
+	it("'sticky' shows everything, and nothing dropped is the same array", () => {
+		let id = 0;
+		let live: LiveTurn | undefined;
+		for (const event of EVENTS)
+			live = foldLiveTurn(live, event, { newId: () => `e${++id}` }) ?? live;
+		expect(logsShownMidTurn(live!.entries, 'sticky')).toBe(live!.entries);
+		const answerOnly = live!.entries.filter((entry) => entry.source === 'stdout');
+		expect(logsShownMidTurn(answerOnly, 'off')).toBe(answerOnly);
 	});
 });

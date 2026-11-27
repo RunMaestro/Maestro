@@ -5,7 +5,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { safeDecodeURIComponent, stripAnsiCodes } from '../../shared/stringUtils';
+import {
+	revealHiddenCharacters,
+	safeDecodeURIComponent,
+	stripAnsiCodes,
+} from '../../shared/stringUtils';
 
 describe('stripAnsiCodes', () => {
 	it('should return empty string for empty input', () => {
@@ -279,5 +283,86 @@ describe('safeDecodeURIComponent', () => {
 		} finally {
 			spy.mockRestore();
 		}
+	});
+});
+
+describe('revealHiddenCharacters', () => {
+	// Built from code points: a typed escape of a printable character can reach
+	// disk as the character itself, and the point here is which bytes are in.
+	const ch = (codePoint: number) => String.fromCodePoint(codePoint);
+	const mark = (hex: string) => `${ch(0x27e8)}U+${hex}${ch(0x27e9)}`;
+	/** Anything the helper must never leave in its output, besides tab and LF. */
+	const HIDDEN = /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
+	const leftovers = (text: string) => text.replace(/[\t\n]/g, '').match(HIDDEN);
+
+	it('leaves ordinary code alone, tabs and line breaks included', () => {
+		const code = 'function f() {\n\treturn document.title;\n}\n';
+		expect(revealHiddenCharacters(code)).toEqual({ text: code, hiddenCount: 0 });
+		expect(revealHiddenCharacters('')).toEqual({ text: '', hiddenCount: 0 });
+	});
+
+	it('shows a Windows line ending as one plain line break', () => {
+		expect(revealHiddenCharacters('a();\r\nb();')).toEqual({ text: 'a();\nb();', hiddenCount: 0 });
+	});
+
+	it('marks a lone CR and breaks the line there, as JavaScript does', () => {
+		// A `//` comment ends at the CR, so `steal()` runs. In a text block the CR
+		// reads as a space and the call looks like part of the comment.
+		const { text, hiddenCount } = revealHiddenCharacters('// read the title\rsteal();');
+		expect(text).toBe(`// read the title${mark('000D')}\nsteal();`);
+		expect(hiddenCount).toBe(1);
+	});
+
+	it('marks the line and paragraph separators and breaks the line after each', () => {
+		const { text, hiddenCount } = revealHiddenCharacters(`a${ch(0x2028)}b${ch(0x2029)}c`);
+		expect(text).toBe(`a${mark('2028')}\nb${mark('2029')}\nc`);
+		expect(hiddenCount).toBe(2);
+	});
+
+	it('marks bidi controls so they cannot reorder what the reader sees', () => {
+		const embeddingsAndIsolates = [
+			0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
+		];
+		const directionMarks = [0x200e, 0x200f, 0x061c];
+		const all = [...embeddingsAndIsolates, ...directionMarks];
+		const source = `/* ok ${all.map(ch).join('')} */ run();`;
+		const { text, hiddenCount } = revealHiddenCharacters(source);
+		expect(hiddenCount).toBe(all.length);
+		expect(text).toBe(
+			`/* ok ${all.map((cp) => mark(cp.toString(16).toUpperCase().padStart(4, '0'))).join('')} */ run();`
+		);
+		expect(leftovers(text)).toBeNull();
+	});
+
+	it('marks zero-width characters, the byte order mark, and the soft hyphen', () => {
+		const { text, hiddenCount } = revealHiddenCharacters(
+			`${ch(0xfeff)}a${ch(0x200b)}b${ch(0x200c)}c${ch(0x200d)}d${ch(0x2060)}e${ch(0x00ad)}f`
+		);
+		expect(text).toBe(
+			`${mark('FEFF')}a${mark('200B')}b${mark('200C')}c${mark('200D')}d${mark('2060')}e${mark('00AD')}f`
+		);
+		expect(hiddenCount).toBe(6);
+	});
+
+	it('marks a Hangul filler, a blank-looking but legal JavaScript identifier', () => {
+		const { text, hiddenCount } = revealHiddenCharacters(
+			`const { a,${ch(0x3164)} } = q; run(${ch(0x3164)});`
+		);
+		expect(text).toBe(`const { a,${mark('3164')} } = q; run(${mark('3164')});`);
+		expect(hiddenCount).toBe(2);
+	});
+
+	it('marks controls, a tag character as one code point, and a lone surrogate', () => {
+		const source = `${ch(0x00)}${ch(0x1b)}${ch(0x7f)}${ch(0x85)}${ch(0xe0041)}${String.fromCharCode(0xd800)}`;
+		const { text, hiddenCount } = revealHiddenCharacters(source);
+		expect(text).toBe(
+			`${mark('0000')}${mark('001B')}${mark('007F')}${mark('0085')}${mark('E0041')}${mark('D800')}`
+		);
+		expect(hiddenCount).toBe(6);
+	});
+
+	it('keeps visible characters, including non-ASCII ones and plain spaces', () => {
+		const visible = `caf${ch(0xe9)} ${ch(0x65e5)}${ch(0x672c)} ${ch(0x1f600)}${ch(0xa0)}x`;
+		expect(revealHiddenCharacters(visible)).toEqual({ text: visible, hiddenCount: 0 });
 	});
 });

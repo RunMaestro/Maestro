@@ -245,6 +245,13 @@ export interface LogEntry {
 	 */
 	hostLive?: boolean;
 	/**
+	 * The key the transcript draws this entry's row under, when it is not `id`: a hosted turn's
+	 * answer the host saved under its own id keeps the key of the live row that showed it while it
+	 * streamed, so the row is updated in place instead of drawn a second time (`mergeHostedLogs()`).
+	 * Display only, never an id: pins, deletes, and lookups use `id`.
+	 */
+	rowKey?: string;
+	/**
 	 * A hosted agent's message kept on this machine for its host while the link is down
 	 * (`keepTurnForHost()`), drawn here as an SSH agent's send draws its message. The host's own
 	 * entry for it replaces it once the host has it (`mergeHostedLogs()`).
@@ -1174,6 +1181,10 @@ export interface FilePreviewTab {
 	searchQuery: string; // Preserved search query
 	editMode: boolean; // Whether tab was in edit mode
 	editContent: string | undefined; // Unsaved edit content (undefined if no pending changes)
+	// The file `editContent` was typed for. Written with the draft by `nextEditContentPath()` and
+	// read only while a draft exists: Save refuses to write a draft anywhere else. A draft saved
+	// before this field existed has none and is taken to belong to `path`.
+	editContentPath?: string;
 	createdAt: number; // Timestamp for ordering
 	// When the tab started showing its current path (ms). Differs from createdAt
 	// once an open replaces the file in this tab. The User Journey dwell time on

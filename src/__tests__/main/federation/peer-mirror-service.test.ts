@@ -12,6 +12,7 @@ import {
 	MIRROR_ACT_RECONNECT_WAIT_MS,
 	MIRROR_IDLE_REDIAL_MAX_MS,
 	MIRROR_TURN_COALESCE_MS,
+	MIRROR_UNANNOUNCED_HISTORY_TTL_MS,
 	PeerMirrorService,
 	type PeerMirrorServiceDeps,
 } from '../../../main/federation/peer-mirror-service';
@@ -787,6 +788,69 @@ describe('PeerMirrorService', () => {
 			await h.service.history('a', 'a-a2');
 			expect(a.historyList).toHaveBeenCalledTimes(3);
 			expect(a.historyList).toHaveBeenLastCalledWith('a-a1');
+		});
+
+		// L31: the host writes a turn's synopsis entry AFTER the turn's end, so the read the turn's
+		// end let through fills the cache without it. The host says it wrote (`history.changed`).
+		it("serves an entry the host writes after the turn's end on the next read, and tells the windows", async () => {
+			const a = fakeHost('a');
+			a.setAgents([agent('a-a1'), agent('a-a2')]);
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			await h.service.history('a', 'a-a1');
+			await h.service.history('a', 'a-a2');
+			ended(a, 'a-a1');
+			// The watch's first read after the end: the host has not written the synopsis yet.
+			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h3']);
+			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h3']);
+			a.emit({ type: 'history.changed', agentId: 'a-a1' });
+			expect(h.pushes.at(-1)).toEqual({
+				peerId: 'a',
+				event: { type: 'agent.history', agentId: 'a-a1' },
+			});
+			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h4']);
+			// Only that agent's list was dropped.
+			expect((await h.service.history('a', 'a-a2')).map((e) => e.id)).toEqual(['h2']);
+			expect(a.historyList).toHaveBeenCalledTimes(4);
+			// An agent the peer does not have is no push.
+			a.emit({ type: 'history.changed', agentId: 'nope' });
+			expect(h.pushes.at(-1)?.event.type).toBe('agent.history');
+			expect(h.pushes.filter((p) => p.event.type === 'agent.history')).toHaveLength(1);
+		});
+
+		it('keeps a read from an older host that never says it wrote only briefly', async () => {
+			let now = 1000;
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a }, { now: () => now });
+			h.service.start();
+			await settle();
+			await h.service.history('a', 'a-a1');
+			now += MIRROR_UNANNOUNCED_HISTORY_TTL_MS - 1;
+			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h1']);
+			now += 1;
+			// The synopsis this host wrote after the turn's end, and never announced.
+			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h2']);
+			expect(a.historyList).toHaveBeenCalledTimes(2);
+		});
+
+		it('keeps a read from a host that says it wrote until it says so again, and forgets that on a resync', async () => {
+			let now = 1000;
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a }, { now: () => now });
+			h.service.start();
+			await settle();
+			a.emit({ type: 'history.changed', agentId: 'a-a1' });
+			await h.service.history('a', 'a-a1');
+			now += MIRROR_UNANNOUNCED_HISTORY_TTL_MS * 10;
+			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h1']);
+			expect(a.historyList).toHaveBeenCalledTimes(1);
+			// A connection that could not resume may have reached an older build: brief again.
+			a.emit({ type: 'host.connected', host: { kind: 'headless', label: 'h' }, resumed: false });
+			await h.service.history('a', 'a-a1');
+			now += MIRROR_UNANNOUNCED_HISTORY_TTL_MS;
+			await h.service.history('a', 'a-a1');
+			expect(a.historyList).toHaveBeenCalledTimes(3);
 		});
 
 		it('drops an agent cache when the agent is removed', async () => {

@@ -435,6 +435,32 @@ export function sanitizeGitBranchName(
 }
 
 /**
+ * Why a ref, branch name or revision that a caller handed in cannot go into
+ * git's argv, or `null` when it can.
+ *
+ * `execFile` stops shell injection, not option injection. git reads an
+ * argument that starts with `-` as an option, so a "revision" of
+ * `--output=/tmp/x` makes `git show` write its output to that file, and a
+ * "branch" of `-f` makes `git checkout` throw away local changes. `git branch`
+ * and `git tag` refuse a name that starts with `-`, and no revision expression
+ * starts with one (`HEAD~1`, `^main`, `@{-1}`, `:/fix`), so a real caller
+ * loses nothing. A bare `-` (git's "previous branch") is refused too; `@{-1}`
+ * names the same branch.
+ *
+ * Paths are different: a file can be named `-notes.txt`. Put a path after
+ * `--` instead of passing it through this check.
+ */
+export function gitRefArgProblem(value: unknown, label = 'ref'): string | null {
+	if (typeof value !== 'string' || value.length === 0) {
+		return `Invalid ${label}: expected a non-empty string`;
+	}
+	if (value.startsWith('-')) {
+		return `Invalid ${label}: ${value} (it starts with "-", so git would read it as an option)`;
+	}
+	return null;
+}
+
+/**
  * Uncommitted-change totals for one repo, as the renderer's git status polling
  * reports them. Line-level counts are only collected for the active agent, so
  * `additions`/`deletions`/`modified` are all 0 for every other agent even when

@@ -146,6 +146,7 @@ interface FilePreviewTab {
 	searchQuery: string; // Preserved search query
 	editMode: boolean; // Whether tab was in edit mode
 	editContent: string | undefined; // Unsaved edit content (undefined = none pending)
+	editContentPath?: string; // The file editContent was typed for; Save refuses any other (see CANONICAL-UTILITIES)
 	createdAt: number; // Timestamp for ordering
 	lastModified: number; // File modification time
 	sshRemoteId?: string; // SSH remote ID for remote files

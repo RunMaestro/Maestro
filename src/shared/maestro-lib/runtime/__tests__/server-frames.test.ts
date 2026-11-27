@@ -291,6 +291,13 @@ describe('framesForEvent', () => {
 			framesForEvent({ type: 'autorun.ended', agentId: 'a1', at: 4, outcome }, createFrameState())
 		).toEqual([{ type: 'autorun_ended', sessionId: 'a1', outcome }]);
 	});
+
+	// L31: the frame a desktop's History watcher sends, so a client reads both host kinds alike.
+	it('pushes a History write as the history:externalChange a desktop host sends', () => {
+		expect(framesForEvent({ type: 'history.changed', agentId: 'a1' }, createFrameState())).toEqual([
+			{ type: 'bridge.event', channel: 'history:externalChange', args: ['a1'] },
+		]);
+	});
 });
 
 describe('withLiveTabState', () => {

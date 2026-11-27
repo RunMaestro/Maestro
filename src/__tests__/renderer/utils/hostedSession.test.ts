@@ -877,3 +877,89 @@ describe('releaseHostedSession', () => {
 		expect(releaseHostedSession(session).state).toBe('busy');
 	});
 });
+
+// L30: a hosted long reply is drawn once, as a local one is.
+describe('a hosted reply drawn once (L30)', () => {
+	const key = liveTurnKey('h1', 't1');
+	const answer = (id: string, text = 'the answer'): LogEntryRecord => ({
+		id,
+		timestamp: 2,
+		source: 'stdout',
+		text,
+	});
+
+	it("draws the live tail under the tab's Thinking mode: off shows no thinking copy of the reply", () => {
+		const thinking: LogEntryRecord = {
+			id: 'th',
+			timestamp: 2,
+			source: 'thinking',
+			text: 'the answer',
+		};
+		const project = (showThinking: 'off' | 'on' | 'sticky') =>
+			projectHostedSession(hostedRow([createMockAITab({ id: 't1', logs: [], showThinking })]), {
+				agent: host(),
+				transcripts: { [key]: { entries: [record('u1')], loaded: true } },
+				liveTurns: { [key]: { startedAt: 1, busy: true, entries: [thinking] } },
+			}).aiTabs[0].logs.map((entry) => entry.source);
+		expect(project('off')).toEqual(['user']);
+		expect(project('on')).toEqual(['user', 'thinking']);
+		expect(project('sticky')).toEqual(['user', 'thinking']);
+	});
+
+	it('gives the saved answer the row key of the live row it replaces, and keeps it after', () => {
+		const streaming = mergeHostedLogs([], [record('u1')], [answer('live-1')]);
+		expect(streaming.map((entry) => [entry.id, entry.rowKey])).toEqual([
+			['u1', undefined],
+			['live-1', undefined],
+		]);
+		// The turn ended and the host's transcript holds the answer under its own id.
+		const saved = mergeHostedLogs(streaming, [record('u1'), answer('saved')], undefined);
+		expect(saved.map((entry) => [entry.id, entry.rowKey, entry.hostLive])).toEqual([
+			['u1', undefined, undefined],
+			['saved', 'live-1', undefined],
+		]);
+		// A later pass (a new read, a new turn) keeps the key and the object.
+		const later = mergeHostedLogs(saved, [record('u1'), answer('saved')], undefined);
+		expect(later).toBe(saved);
+		const next = mergeHostedLogs(saved, [record('u1'), answer('saved'), record('u2')], undefined);
+		expect(next[1]).toBe(saved[1]);
+	});
+
+	it('takes no key from a live row whose words the saved answer does not have', () => {
+		const streaming = mergeHostedLogs([], [record('u1')], [answer('live-1', 'half an ans')]);
+		const saved = mergeHostedLogs(streaming, [record('u1'), answer('saved')], undefined);
+		expect(saved[1]).toMatchObject({ id: 'saved' });
+		expect(saved[1].rowKey).toBeUndefined();
+	});
+});
+
+// CodeRabbit on #2173: a wider read that brings in an older answer with the same words.
+describe('a hosted reply drawn once, with an older answer in the read (L30)', () => {
+	const answer = (id: string, text = 'Done'): LogEntryRecord => ({
+		id,
+		timestamp: 3,
+		source: 'stdout',
+		text,
+	});
+
+	it("gives the key to the saved copy in the live row's own turn, not to an older answer", () => {
+		const asked = { ...record('u2'), timestamp: 2 };
+		const streaming = mergeHostedLogs([], [asked], [answer('live-1')]);
+		const saved = mergeHostedLogs(
+			streaming,
+			[
+				{ ...record('u1'), timestamp: 0 },
+				{ ...answer('older'), timestamp: 1 },
+				asked,
+				answer('saved'),
+			],
+			undefined
+		);
+		expect(saved.map((entry) => [entry.id, entry.rowKey])).toEqual([
+			['u1', undefined],
+			['older', undefined],
+			['u2', undefined],
+			['saved', 'live-1'],
+		]);
+	});
+});

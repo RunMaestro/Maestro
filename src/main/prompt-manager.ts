@@ -10,6 +10,10 @@
  * - On load: User customization wins if isModified=true, else bundled
  * - On save: Writes to customizations JSON AND updates in-memory cache immediately
  * - On reset: Removes from customizations JSON AND updates in-memory cache immediately
+ * - A customizations file that is not valid JSON (a write torn by a crash or a sync client, an
+ *   empty file) never blocks startup. It is moved aside to a `.corrupt-<stamp>.json` sidecar and
+ *   the app runs on the bundled prompts. Only a missing or unreadable BUNDLED prompt is a broken
+ *   install (`initializePrompts()` throws for it).
  *
  * Directives:
  * - {{INCLUDE:name}} - full inlining. Resolves recursively (max depth 3) with cycle detection.
@@ -29,7 +33,10 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import { logger } from './utils/logger';
+import { captureMessage } from './utils/sentry';
+import { quarantineCorruptStore } from './stores/corrupt-store-recovery';
 import { CORE_PROMPTS } from '../shared/promptDefinitions';
+import { parseStoreJson } from '../shared/maestro-lib/store/corrupt-store';
 import { resolvePromptDirectives } from '../shared/maestro-lib/prompts/load';
 
 const LOG_CONTEXT = '[PromptManager]';
@@ -118,25 +125,66 @@ function getCustomizationsPath(): string {
 // Customizations Storage
 // ============================================================================
 
+/**
+ * The customizations file is not JSON: a write torn by a crash or a sync client, or an empty file.
+ *
+ * Customizations are an overlay on the bundled prompts, so "none" is a safe answer; throwing is
+ * not. Nothing on the restart path repairs the file, so a throw here stopped the app on every
+ * start. The bytes are moved aside (never deleted, never overwritten) so the user can copy their
+ * edits back, and the app runs on the bundled prompts.
+ */
+function recoverUnreadableCustomizations(
+	filePath: string,
+	content: string,
+	error: SyntaxError
+): null {
+	const sidecarPath = quarantineCorruptStore(filePath, content);
+	logger.warn(
+		`Prompt customizations file ${path.basename(filePath)} is not valid JSON (${error.message}). ` +
+			(sidecarPath
+				? `Moved to ${path.basename(sidecarPath)}; using the bundled prompts.`
+				: 'Could not move it aside; using the bundled prompts.'),
+		LOG_CONTEXT
+	);
+	// File names and a size only. A parse error quotes the text around the failure, and that text
+	// is the user's own prompt, so the error itself stays out of the report.
+	void captureMessage(
+		'Prompt customizations file is not valid JSON; started from the bundled prompts',
+		'warning',
+		{
+			operation: 'prompts:loadCustomizations',
+			file: path.basename(filePath),
+			byteLength: Buffer.byteLength(content, 'utf-8'),
+			quarantined: sidecarPath !== null,
+		}
+	);
+	return null;
+}
+
 async function loadUserCustomizations(): Promise<StoredData | null> {
 	const filePath = getCustomizationsPath();
+	let content: string;
 	try {
-		const content = await fs.readFile(filePath, 'utf-8');
-		return JSON.parse(content) as StoredData;
+		content = await fs.readFile(filePath, 'utf-8');
 	} catch (error: unknown) {
 		// File not existing is expected (no customizations yet)
 		const err = error as NodeJS.ErrnoException | undefined;
 		if (err?.code === 'ENOENT') {
 			return null;
 		}
-		// Any other error (malformed JSON, permission denied, disk corruption)
-		// is a real problem - log it so users know their customizations failed to load
+		// Any other read error (permission denied, disk corruption) is a real problem -
+		// log it so users know their customizations failed to load
 		logger.error(
 			`Failed to load prompt customizations from ${filePath}: ${String(error)}`,
 			LOG_CONTEXT
 		);
 		throw error;
 	}
+
+	const parsed = parseStoreJson<StoredData>(content);
+	return parsed.ok
+		? parsed.value
+		: recoverUnreadableCustomizations(filePath, content, parsed.error);
 }
 
 async function saveUserCustomizations(data: StoredData): Promise<void> {
@@ -150,6 +198,10 @@ async function saveUserCustomizations(data: StoredData): Promise<void> {
 /**
  * Initialize all prompts from disk. Called once at app startup.
  * Loads bundled prompts, then overlays user customizations.
+ *
+ * Throws only when a BUNDLED prompt cannot be read (a broken install) or the customizations file
+ * cannot be read at all (permissions, disk). A customizations file that is not valid JSON does
+ * not throw: see `recoverUnreadableCustomizations()`.
  */
 export async function initializePrompts(): Promise<void> {
 	if (initialized) {

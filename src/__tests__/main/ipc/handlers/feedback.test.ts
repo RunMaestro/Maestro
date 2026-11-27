@@ -78,6 +78,13 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 	cleanupTempFiles: vi.fn(),
 }));
 
+// The trace check runs against the real file system in profiling/feedback-trace.test.ts.
+// Here it is a switch, so these tests pin what submit does with each answer.
+vi.mock('../../../../main/profiling/feedback-trace', () => ({
+	checkFeedbackTraceBundle: vi.fn(),
+	forgetFeedbackTraceBundle: vi.fn(),
+}));
+
 import fs from 'fs/promises';
 import os from 'os';
 import {
@@ -94,6 +101,10 @@ import {
 	saveImageToTempFile,
 } from '../../../../main/process-manager/utils/imageUtils';
 import { registerFeedbackHandlers } from '../../../../main/ipc/handlers/feedback';
+import {
+	checkFeedbackTraceBundle,
+	forgetFeedbackTraceBundle,
+} from '../../../../main/profiling/feedback-trace';
 import { clearFeedbackRepoVerdicts, resetFeedbackSubmissionGuard } from '../../../../main/feedback';
 import { feedbackReportFingerprint } from '../../../../shared/feedback';
 
@@ -1121,7 +1132,11 @@ describe('feedback handlers', () => {
 		});
 
 		it('keeps the performance trace when issue creation fails, then deletes it on success', async () => {
-			const tracePath = '/tmp/held-trace.zip';
+			// The caller names the trace through a link; the check answers with the real
+			// file, and that file is what is read and deleted.
+			const tracePath = '/mock/temp-link/maestro-profile-2026-11-24T12-34-56.zip';
+			const realTracePath = '/mock/temp/maestro-profile-2026-11-24T12-34-56.zip';
+			vi.mocked(checkFeedbackTraceBundle).mockResolvedValue({ ok: true, realPath: realTracePath });
 			vi.mocked(fs.readFile).mockResolvedValue(Buffer.from('zip-data'));
 			let createCalls = 0;
 			vi.mocked(execFileNoThrow).mockImplementation(async (_command, args) => {
@@ -1159,11 +1174,71 @@ describe('feedback handlers', () => {
 
 			const first = await submit(payload);
 			expect(first.success).toBe(false);
-			expect(unlinked()).not.toContain(tracePath);
+			expect(checkFeedbackTraceBundle).toHaveBeenCalledWith(tracePath);
+			expect(fs.readFile).toHaveBeenCalledWith(realTracePath);
+			expect(unlinked()).not.toContain(realTracePath);
+			expect(forgetFeedbackTraceBundle).not.toHaveBeenCalled();
 
 			const second = await submit(payload);
 			expect(second.success).toBe(true);
-			expect(unlinked()).toContain(tracePath);
+			expect(unlinked()).toContain(realTracePath);
+			expect(unlinked()).not.toContain(tracePath);
+			expect(forgetFeedbackTraceBundle).toHaveBeenCalledWith(realTracePath);
+		});
+
+		it('refuses the whole submit when the trace path fails the check, and deletes nothing', async () => {
+			mockConversationGh();
+			vi.mocked(checkFeedbackTraceBundle).mockResolvedValue({
+				ok: false,
+				reason: 'not in the folder Maestro writes traces to',
+			});
+			const stolen = '/Users/me/.ssh/id_rsa';
+			const report = {
+				category: 'bug_report',
+				summary: 'Trace from elsewhere',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+				attachments: [{ name: 'shot.png', dataUrl: 'data:image/png;base64,AAAA' }],
+			};
+
+			const result = await submit({ ...report, performanceTracePath: stolen });
+
+			expect(result).toMatchObject({ success: false });
+			expect(result.error).toContain('performanceTracePath');
+			expect(result.error).toContain('not in the folder Maestro writes traces to');
+			expect(checkFeedbackTraceBundle).toHaveBeenCalledWith(stolen);
+			// Nothing was read, uploaded, filed, or deleted.
+			expect(fs.readFile).not.toHaveBeenCalledWith(stolen);
+			expect(vi.mocked(fs.unlink).mock.calls.map(([target]) => String(target))).not.toContain(
+				stolen
+			);
+			const ghCalls = vi
+				.mocked(execFileNoThrow)
+				.mock.calls.map(([, args]) => ((args ?? []) as string[]).join(' '));
+			expect(ghCalls.some((call) => call.includes('contents/feedback/'))).toBe(false);
+			expect(issueCreateArgs()).toHaveLength(0);
+
+			// The refusal released the report, so the same report without the trace still files.
+			const retry = await submit(report);
+			expect(retry).toMatchObject({ success: true });
+		});
+
+		it('treats an empty or null trace path as no trace', async () => {
+			mockConversationGh();
+			const report = {
+				category: 'bug_report',
+				summary: 'No trace',
+				expectedBehavior: 'e',
+				actualBehavior: 'a',
+			};
+
+			const empty = await submit({ ...report, performanceTracePath: '' });
+			resetFeedbackSubmissionGuard();
+			const none = await submit({ ...report, performanceTracePath: null });
+
+			expect(empty).toMatchObject({ success: true });
+			expect(none).toMatchObject({ success: true });
+			expect(checkFeedbackTraceBundle).not.toHaveBeenCalled();
 		});
 
 		it('files a report longer than the Windows command line limit whole, via --body-file', async () => {

@@ -17,6 +17,7 @@ import { createGroupChatEngine } from '../router';
 import { createGroupChatStore, type GroupChatStore } from '../storage';
 import { createGroupChatTurnMetrics } from '../turn-metrics';
 import { readLog } from '../log';
+import { setMaestroLibLogger } from '../../host';
 import { createSleepTracker } from '../../../sleepTracking';
 import type { SteeringResultFrame } from '../../../chatSteering';
 import type {
@@ -222,6 +223,69 @@ describe('group chat engine', () => {
 			expect(synthesis).toHaveLength(1);
 			expect(synthesis[0].appendSystemPrompt).toBe('MODERATOR SECTIONS');
 			expect(forModerator).toHaveBeenCalledWith({ isSsh: false });
+		});
+	});
+
+	// The host forwards this line to the System Log Viewer, and to disk with file logging on, so it
+	// may say WHICH env vars a participant runs with and never their values (RC-F07).
+	describe('the participant spawn debug log', () => {
+		const noop = () => {};
+		const debugLines: string[] = [];
+
+		beforeEach(() => {
+			debugLines.length = 0;
+			setMaestroLibLogger({
+				debug: (message) => void debugLines.push(message),
+				info: noop,
+				warn: noop,
+				error: noop,
+			});
+		});
+
+		afterEach(() => {
+			setMaestroLibLogger({ debug: noop, info: noop, warn: noop, error: noop });
+		});
+
+		it('names the custom env vars of a participant and shows none of their values', async () => {
+			const customEnvVars = {
+				NPM_TOKEN: 'npm_synthetic0123456789abcdefghijklmnopqrst',
+				MY_API: 'https://internal.synthetic.invalid/v2?key=synthetic-query-secret',
+				EDITOR: 'vim',
+			};
+			h.sessions.push({
+				id: 'agent-alice',
+				name: 'Alice',
+				toolType: 'claude-code',
+				cwd: dir,
+				customEnvVars,
+			});
+			const chat = await chatWith('Alice');
+
+			const [alice] = await delegateTo(chat.id, 'Alice');
+
+			expect(
+				debugLines.filter((line) => line.startsWith('[GroupChat:Debug] CustomEnvVars:'))
+			).toEqual([
+				`[GroupChat:Debug] CustomEnvVars: ${JSON.stringify({
+					NPM_TOKEN: `[redacted, ${customEnvVars.NPM_TOKEN.length} chars]`,
+					MY_API: `[redacted, ${customEnvVars.MY_API.length} chars]`,
+					EDITOR: '[redacted, 3 chars]',
+				})}`,
+			]);
+			const logged = debugLines.join('\n');
+			for (const value of Object.values(customEnvVars)) expect(logged).not.toContain(value);
+			// Only the log is masked: the process still starts with the real values.
+			expect(h.spawns.find((spawn) => spawn.processId === alice)?.customEnvVars).toEqual(
+				customEnvVars
+			);
+		});
+
+		it('logs an empty record for a participant with no env vars', async () => {
+			const chat = await chatWith('Alice');
+
+			await delegateTo(chat.id, 'Alice');
+
+			expect(debugLines).toContain('[GroupChat:Debug] CustomEnvVars: {}');
 		});
 	});
 

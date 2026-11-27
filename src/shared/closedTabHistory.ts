@@ -61,6 +61,7 @@ const AI_RUNTIME_KEYS = [
 ];
 const FILE_RUNTIME_KEYS = [
 	'editContent',
+	'editContentPath',
 	'isLoading',
 	'loadRequestId',
 	'navigationHistory',
