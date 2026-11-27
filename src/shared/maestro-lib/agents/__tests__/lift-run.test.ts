@@ -2,10 +2,20 @@
  * The shared lift runner (`runLift()`): the order of its refusals, the dry run, the import and
  * pointer, the roll back, and the plan text both `maestro-cli lift` and the desktop show.
  */
-import { describe, expect, it, vi } from 'vitest';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SshRemoteConfig } from '../../../types';
-import type { AgentRecord } from '../../store/records';
+import { MAX_PERSISTED_TOOL_OUTPUT_CHARS, compactLogToolOutputs } from '../../../toolOutput';
+import { setMaestroLibImageRefResolver } from '../../host';
+import { withInlineEntryImages } from '../../launch/image-refs';
+import type { AITabRecord, AgentRecord } from '../../store/records';
+import { createSessionImageStore, sessionImageContentSha256 } from '../../store/session-images';
+import { planAgentImport } from '../import-plan';
+import { DEFAULT_TAB_DEFAULTS } from '../rules';
 import { LIFT_HOST_TOO_OLD } from '../../../federationCommands';
 import {
 	LiftRunError,
@@ -743,5 +753,204 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 			"The host copy's tabs: 1 tab merges into the tab of the same conversation."
 		);
 		expect(formatHostTabMerge({ merged: 0, copies: 0, added: 0 })).toBeUndefined();
+	});
+});
+
+describe('Move to Host again: a pasted image, a capped tool card, an entry with no time (U16)', () => {
+	type Log = Record<string, unknown>;
+	const PASTE = `data:image/png;base64,${Buffer.from('the bytes of one pasted image').toString('base64')}`;
+	const dirs: string[] = [];
+	afterEach(() => {
+		setMaestroLibImageRefResolver(() => null);
+		for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+	});
+	/** One machine's content-addressed image store, in a folder of its own. */
+	const imageStore = () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'u16-images-'));
+		dirs.push(dir);
+		return createSessionImageStore(() => dir);
+	};
+
+	/** This machine's agent: one tab whose first message carries the pasted image (stored here as a ref). */
+	async function agentWithPastedImage() {
+		const here = imageStore();
+		const ref = await here.storeInlineImage(PASTE);
+		expect(ref.startsWith('maestro-image://store/')).toBe(true);
+		const agent = sshAgent({
+			aiTabs: [
+				{
+					id: 'tab-1',
+					name: 'Main',
+					agentSessionId: 'sess-1',
+					logs: [
+						{ id: 'l1', timestamp: 1, source: 'user', text: 'what is this?', images: [ref] },
+						{ id: 'l2', timestamp: 2, source: 'ai', text: 'A screenshot.' },
+					],
+				},
+			],
+			executionQueue: [],
+		});
+		return { here, agent, ref };
+	}
+
+	/**
+	 * The host copy's tabs as the real lift and import leave them, read back the way each host
+	 * kind answers `tabs.transcript`: a headless host stores the image in its own store and sends
+	 * it inline (M10); a desktop host writes the record as imported, and its window stores the image
+	 * as a ref into the desktop's own store on its next save.
+	 */
+	async function hostCopyTabs(
+		agent: AgentRecord,
+		here: ReturnType<typeof imageStore>,
+		host: 'headless' | 'desktop as imported' | 'desktop after its save'
+	): Promise<AITabRecord[]> {
+		setMaestroLibImageRefResolver(here.resolveToBytesSync);
+		const plan = planAgentLift({ agent, remote, peer: 'build-box', withEnv: false });
+		const imported = planAgentImport(plan.input, {
+			agents: [],
+			groupIds: [],
+			defaults: DEFAULT_TAB_DEFAULTS,
+			checkCwd: () => null,
+		});
+		if (!imported.ok) throw new Error(imported.message);
+		if (host === 'desktop as imported') return imported.agent.aiTabs ?? [];
+		const there = imageStore();
+		const {
+			sessions: [stored],
+		} = await there.relocateSessionImages([imported.agent]);
+		if (host === 'desktop after its save') return stored.aiTabs ?? [];
+		setMaestroLibImageRefResolver(there.resolveToBytesSync);
+		return (stored.aiTabs ?? []).map((tab) => ({
+			...tab,
+			logs: (tab.logs ?? []).map((entry) => withInlineEntryImages(entry as Log)),
+		}));
+	}
+
+	it.each(['headless', 'desktop as imported', 'desktop after its save'] as const)(
+		'%s host: a tab with a pasted image merges back into its tab, not an "(on the host)" copy',
+		async (host) => {
+			const { here, agent, ref } = await agentWithPastedImage();
+			const hostTabs = await hostCopyTabs(agent, here, host);
+			const hostImage = (hostTabs[0].logs?.[0] as Log).images as string[];
+			expect(hostImage).toHaveLength(1);
+			// The offline Move Back left this machine's tab as it was, with a note of its own.
+			const local = (agent.aiTabs ?? []).map((tab) => ({
+				...tab,
+				logs: [
+					...(tab.logs ?? []),
+					{ id: 'note', timestamp: 3, source: 'system', text: 'Moved back from the host.' },
+				],
+			}));
+			const merge = keepDivergentHostTabs(local, hostTabs);
+			expect(merge).toMatchObject({ merged: 1, copies: 0, added: 0 });
+			expect(merge.transcriptSides).toEqual({ 'tab-1': 'local' });
+			const [only] = withReturnedFromHost({ aiTabs: local }, merge).aiTabs as AITabRecord[];
+			expect((only.logs?.[0] as Log).images).toEqual([ref]);
+		}
+	);
+
+	it('another image under the same words is not the same entry: the tab stays two tabs', async () => {
+		const { here, agent } = await agentWithPastedImage();
+		const hostTabs = await hostCopyTabs(agent, here, 'headless');
+		const other = `data:image/png;base64,${Buffer.from('another image').toString('base64')}`;
+		const changed = hostTabs.map((tab) => ({
+			...tab,
+			logs: (tab.logs ?? []).map((entry, index) =>
+				index === 0 ? { ...(entry as Log), images: [other] } : entry
+			),
+		}));
+		expect(keepDivergentHostTabs(agent.aiTabs ?? [], changed)).toMatchObject({
+			merged: 0,
+			copies: 1,
+		});
+	});
+
+	it("a pin on the image entry follows the host's entry id when the host's transcript wins", () => {
+		const bytes = Buffer.from('pin image');
+		const sha = crypto.createHash('sha256').update(bytes).digest('hex');
+		const ref = `maestro-image://store/${sha}.png`;
+		const inline = `data:image/png;base64,${bytes.toString('base64')}`;
+		const pin = { id: 'p1', logId: 'l-u0' };
+		const local = [
+			{
+				id: 't1',
+				agentSessionId: 's1',
+				logs: [
+					{ id: 'l-u0', timestamp: 0, source: 'user', text: 'look', images: [ref] },
+					{ id: 'l-a0', timestamp: 1, source: 'ai', text: 'seen' },
+				],
+				pinnedMessages: [pin],
+			},
+		] as AITabRecord[];
+		const host = [
+			{
+				id: 't1',
+				agentSessionId: 's1',
+				logs: [
+					{ id: 'h-u0', timestamp: 0, source: 'user', text: 'look', images: [inline] },
+					{ id: 'h-a0', timestamp: 1, source: 'ai', text: 'seen' },
+					{ id: 'h-u1', timestamp: 2, source: 'user', text: 'and now?' },
+					{ id: 'h-a1', timestamp: 3, source: 'ai', text: 'still seen' },
+				],
+			},
+		] as AITabRecord[];
+		const merge = keepDivergentHostTabs(local, host);
+		expect(merge.transcriptSides).toEqual({ t1: 'host' });
+		const [only] = withReturnedFromHost(
+			{ aiTabs: local },
+			{ tabs: merge.tabs, transcriptSides: merge.transcriptSides },
+			{ imageKey: sessionImageContentSha256 }
+		).aiTabs as unknown as Array<{ pinnedMessages: unknown[] }>;
+		expect(only.pinnedMessages).toEqual([{ ...pin, logId: 'h-u0' }]);
+	});
+
+	it.each(['host', 'local'] as const)(
+		'a tool card whose output was capped on the %s side only still merges',
+		(capped) => {
+			const output = 'x'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS * 3);
+			const logs: Log[] = [
+				{ id: 'u', timestamp: 0, source: 'user', text: 'run the tests' },
+				{
+					id: 'tool',
+					timestamp: 1,
+					source: 'tool',
+					text: 'Bash',
+					metadata: { toolState: { status: 'completed', input: { command: 'npm test' }, output } },
+				},
+				{ id: 'a', timestamp: 2, source: 'ai', text: 'All green.' },
+			];
+			const cut = compactLogToolOutputs(logs);
+			expect(cut).not.toEqual(logs);
+			const local = [{ id: 't1', agentSessionId: 's1', logs: capped === 'local' ? cut : logs }];
+			const host = [{ id: 't1', agentSessionId: 's1', logs: capped === 'host' ? cut : logs }];
+			expect(keepDivergentHostTabs(local as AITabRecord[], host as AITabRecord[])).toMatchObject({
+				merged: 1,
+				copies: 0,
+				added: 0,
+			});
+		}
+	);
+
+	it('two "yes" entries with no id and no time are not one entry: the tabs stay two', () => {
+		const yes = (text: string) => [
+			{ source: 'user', text: 'yes' },
+			{ source: 'ai', text },
+		];
+		// This machine went on after the host's "yes"; with no id and no time nothing says the two
+		// "yes" turns are one, so the host's tab is kept as a copy rather than merged away.
+		const local = [{ id: 't1', agentSessionId: 's1', logs: [...yes('done'), ...yes('more')] }];
+		const host = [{ id: 't1', agentSessionId: 's1', logs: yes('done') }];
+		expect(keepDivergentHostTabs(local as AITabRecord[], host as AITabRecord[])).toMatchObject({
+			merged: 0,
+			copies: 1,
+		});
+		// With a time each, the same entries are one conversation.
+		const timed = (logs: Log[]) => logs.map((entry, index) => ({ ...entry, timestamp: index }));
+		expect(
+			keepDivergentHostTabs(
+				[{ ...local[0], logs: timed(local[0].logs) }] as AITabRecord[],
+				[{ ...host[0], logs: timed(host[0].logs) }] as AITabRecord[]
+			)
+		).toMatchObject({ merged: 1, copies: 0 });
 	});
 });

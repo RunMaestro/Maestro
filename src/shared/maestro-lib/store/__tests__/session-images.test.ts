@@ -7,10 +7,39 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createSessionImageStore, hasInlineSessionImages } from '../session-images';
+import {
+	createSessionImageStore,
+	hasInlineSessionImages,
+	sessionImageContentSha256,
+} from '../session-images';
 
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
 const REF = `maestro-image://store/${'a'.repeat(64)}.png`;
+
+describe('sessionImageContentSha256', () => {
+	let dir: string;
+	beforeEach(() => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-session-images-'));
+	});
+	afterEach(() => {
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('answers one hash for a pasted image as a ref and as a data URL (U16)', async () => {
+		const ref = await createSessionImageStore(() => dir).storeInlineImage(PNG);
+		const hash = sessionImageContentSha256(PNG);
+		expect(hash).toMatch(/^[0-9a-f]{64}$/);
+		expect(sessionImageContentSha256(ref)).toBe(hash);
+		expect(sessionImageContentSha256(`${ref}?tw=64&th=64`)).toBe(hash);
+		expect(sessionImageContentSha256('data:image/png;base64,AAAA')).not.toBe(hash);
+	});
+
+	it('answers null for anything that is not an image', () => {
+		expect(sessionImageContentSha256('maestro-image://store/../etc/passwd')).toBeNull();
+		expect(sessionImageContentSha256('data:text/plain;base64,AAAA')).toBeNull();
+		expect(sessionImageContentSha256(42)).toBeNull();
+	});
+});
 
 describe('createSessionImageStore', () => {
 	let dir: string;
