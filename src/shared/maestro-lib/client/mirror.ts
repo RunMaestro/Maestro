@@ -24,6 +24,8 @@ export interface ProjectedTab {
 	state?: 'idle' | 'busy';
 	/** A headless host's live turn start (`withLiveTabState`). */
 	thinkingStartTime?: number;
+	/** A desktop host's own retry holds the tab's failed turn (`AITabRecord.retryPending`). */
+	retryPending?: boolean;
 	hasUnread?: boolean;
 	usageStats?: unknown;
 	createdAt?: number;
@@ -76,6 +78,7 @@ const TAB_FIELDS: ReadonlyArray<keyof ProjectedTab> = [
 	'starred',
 	'state',
 	'thinkingStartTime',
+	'retryPending',
 	'hasUnread',
 	'usageStats',
 	'createdAt',

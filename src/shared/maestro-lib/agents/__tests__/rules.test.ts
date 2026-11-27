@@ -1585,6 +1585,10 @@ describe('hostRetriesTurn', () => {
 		['the host retry card stopped on the host', [u1, { ...card, retryStopped: true }], false],
 	])('%s', (_what, logs, retries) => {
 		expect(hostRetriesTurn(logs, 0)).toBe(retries);
+		// Parity R56: a host that reports a pending retry reads the same; one that reports none
+		// holds nothing, whatever its card says (the retry went with a restart of the host).
+		expect(hostRetriesTurn(logs, 0, true)).toBe(retries);
+		expect(hostRetriesTurn(logs, 0, false)).toBe(false);
 		// The shared reader of the turn's end reads the stamped card as ended, never errored.
 		if (retries) expect(turnFateAfter(logs, 0, 'desktop')).not.toBe('errored');
 	});

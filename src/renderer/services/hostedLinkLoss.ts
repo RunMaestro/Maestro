@@ -606,7 +606,7 @@ async function readKeptEntryFate(
 	// of its own, since it no longer matches the one it names).
 	if (!isSameUserEntry(slot.entries[at], entry)) return 'send';
 	// The host's own retry holds it (a desktop host's Agent Resilience): the host sends it.
-	if (hostRetriesTurn(slot.entries, at)) return 'host-retries';
+	if (hostRetriesTurn(slot.entries, at, hostTab.retryPending)) return 'host-retries';
 	const fate = userEntryFate(slot.entries, entry, transcriptHostKind(host.peerId));
 	if (fate === 'answered' || fate === 'stopped') return 'answered';
 	const newestUser = lastUserMessage(slot.entries as LogEntry[]);
@@ -778,7 +778,7 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 	// desktop host's streamed text with no end stamp is a turn it lost.
 	// The host's own retry holds it (a desktop host's Agent Resilience): one side owns the retry,
 	// and it is the host, so nothing is sent or retried from here.
-	if (hostRetriesTurn(slot.entries, at)) {
+	if (hostRetriesTurn(slot.entries, at, hostTab.retryPending)) {
 		settleKeptCut(cut, 'host-retries');
 		return;
 	}

@@ -989,6 +989,53 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(hostSettledText(outage)).not.toBe(HOST_RETRIES_TEXT);
 	});
 
+	// Parity R56: the host's agent list says whether its own retry holds the tab's failed turn. A
+	// desktop host that restarted lost its retry (it lives in memory) but kept the card in the
+	// transcript and the failed message at the head of its queue: this machine no longer says the
+	// host retries it, and sends nothing (the host's queue has the message), as after a Stop there
+	// (R45). One whose retry still runs is left to it (R41).
+	function hostBackReporting(retryPending: boolean) {
+		transcript.mockResolvedValue([QUESTION, HOST_RETRY_CARD]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		const peer = peerWith('idle', 'connected');
+		usePeerMirrorStore.setState((current) => ({
+			peers: {
+				...current.peers,
+				box: {
+					...peer,
+					hostKind: 'desktop',
+					agents: peer.agents.map((agent) => ({
+						...agent,
+						aiTabs: agent.aiTabs?.map((hostTab) => ({ ...hostTab, retryPending })),
+					})),
+				},
+			},
+		}));
+	}
+
+	it.each([
+		['still runs', true, true],
+		['was lost to a restart of the host', false, false],
+	] as const)(
+		'says the host retries the cut turn only while the host reports its retry %s (R56)',
+		async (_how, retryPending, hostRetries) => {
+			cut();
+			const outageId = getRetryEntry('row', 't1')!.outageId;
+			hostBackReporting(retryPending);
+			syncHostedAgents();
+			await flush();
+			syncHostedAgents();
+			await flush();
+			retryNow('row', 't1');
+			await flush();
+			await flush();
+			expect(sends()).toHaveLength(0);
+			const outage = useRetryStore.getState().outages[outageId];
+			expect(outage?.hostRetry === 'host').toBe(hostRetries);
+			expect(hostSettledText(outage) === HOST_RETRIES_TEXT).toBe(hostRetries);
+		}
+	);
+
 	it("starts a provider error's backoff at its first attempt after a long outage (R41)", async () => {
 		cut();
 		const linkRetry = getRetryEntry('row', 't1')!;

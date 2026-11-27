@@ -1019,8 +1019,14 @@ export function turnEndedAfter(
  * Such a turn's message is the host's to send again; a client that kept a copy sends nothing. A
  * card the user stopped on the host (`retryStopped`) holds nothing: the message waits paused in
  * the host's queue, and is the user's to send (R45).
+ *
+ * `reported` is the host tab's own word on whether its retry holds a failed turn right now
+ * (`AITabRecord.retryPending`): when the host says, a card with no retry behind it (one lost to a
+ * restart of the host) holds nothing. Undefined for a host that does not report it: the card
+ * alone decides (R56).
  */
-export function hostRetriesTurn(logs: readonly unknown[], at: number): boolean {
+export function hostRetriesTurn(logs: readonly unknown[], at: number, reported?: boolean): boolean {
+	if (reported === false) return false;
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
 	let retrying = false;
 	const span = userTurnSpan(entries, at);

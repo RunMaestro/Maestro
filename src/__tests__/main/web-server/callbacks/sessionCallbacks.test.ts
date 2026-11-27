@@ -5,6 +5,10 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 
 import { registerSessionCallbacks } from '../../../../main/web-server/callbacks/sessionCallbacks';
+import {
+	noteAiTabRetryPending,
+	resetAiTabRetryStateForTests,
+} from '../../../../main/utils/ai-tab-retry-state';
 
 type HistoryCallback = (
 	tabId: string,
@@ -194,5 +198,55 @@ describe('Grok agents through the session callbacks', () => {
 		expect(missing.agentSessionId).toBeUndefined();
 		expect(missing.aiLogs).toEqual([]);
 		expect(detail('not-an-agent')).toBeNull();
+	});
+});
+
+// Parity R56: a Federation client reads whether this desktop's own retry holds a tab's failed turn
+// from the agent list, not from the transcript's retry card alone.
+describe('sessions list callback', () => {
+	function sessionsOf(sessions: unknown[]) {
+		let getSessions:
+			| (() => Array<{ aiTabs: Array<{ id: string; retryPending?: boolean }> }>)
+			| undefined;
+		const server = new Proxy(
+			{},
+			{
+				get: (_target, prop: string) =>
+					prop === 'setGetSessionsCallback'
+						? (callback: typeof getSessions) => {
+								getSessions = callback;
+							}
+						: () => {},
+			}
+		);
+		const store = (value: unknown) => ({ get: vi.fn(() => value) });
+		registerSessionCallbacks(
+			server as never,
+			{
+				sessionsStore: store(sessions),
+				groupsStore: store([]),
+				getProcessManager: () => null,
+			} as never
+		);
+		return getSessions!();
+	}
+
+	it("reports each tab's pending retry (R56)", () => {
+		resetAiTabRetryStateForTests();
+		noteAiTabRetryPending('agent-1', 'tab-1', true);
+		const [agent] = sessionsOf([
+			{
+				id: 'agent-1',
+				aiTabs: [
+					{ id: 'tab-1', logs: [] },
+					{ id: 'tab-2', logs: [] },
+				],
+			},
+		]);
+		expect(agent.aiTabs.map((tab) => [tab.id, tab.retryPending])).toEqual([
+			['tab-1', true],
+			['tab-2', false],
+		]);
+		resetAiTabRetryStateForTests();
 	});
 });
