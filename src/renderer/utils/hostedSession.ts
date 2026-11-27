@@ -324,12 +324,19 @@ function atKeptPlaces(
 	if (drawnAt.size === 0 && placed.size === 0) return entries;
 	const stay: LogEntry[] = [];
 	const moved: LogEntry[] = [];
+	// The time of the next host entry after each entry, in one reverse pass.
+	const nextHostAt: (number | undefined)[] = new Array(entries.length);
+	let following: number | undefined;
+	for (let i = entries.length - 1; i >= 0; i -= 1) {
+		nextHostAt[i] = following;
+		if (fromHost.has(entries[i].id)) following = entries[i].timestamp;
+	}
 	entries.forEach((entry, index) => {
 		const kept =
 			entry.source === 'user' ? (placed.get(entry.id) ?? drawnAt.get(entry.id)) : undefined;
 		// A place later than the host's time (a host clock behind this one) is kept too, but never
 		// past what the host wrote after the message: its answer stays below it (CodeRabbit on #2167).
-		const after = entries.slice(index + 1).find((next) => fromHost.has(next.id))?.timestamp;
+		const after = nextHostAt[index];
 		const at =
 			kept !== undefined && kept > entry.timestamp && after !== undefined
 				? Math.min(kept, after)

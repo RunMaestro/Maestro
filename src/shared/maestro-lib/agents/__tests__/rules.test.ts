@@ -1367,6 +1367,17 @@ describe('turnFateAfter', () => {
 			'desktop',
 			'answered',
 		],
+		// CodeRabbit on #2167: a note written after a turn (a steering note) is not a later attempt.
+		[
+			'an answer stamped, then a note about the turn',
+			[
+				u1,
+				{ ...stamped(partial), turnEndedAt: 3 },
+				{ id: 'n1', timestamp: 4, source: 'system', text: 'Auto Run paused' },
+			],
+			'desktop',
+			'answered',
+		],
 		['nothing after it', [u1], 'headless', 'unended'],
 		['only a later message answered', [u1, u2, a2], 'headless', 'unended'],
 		['a host too old to stamp: headless text is its answer', [u1, partial], 'headless', 'answered'],

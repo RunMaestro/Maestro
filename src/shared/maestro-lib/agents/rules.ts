@@ -875,10 +875,14 @@ export function turnFateAfter(
 		const entry = entries[next];
 		if (isUserTurnStart(entry)) break;
 		if (typeof entry?.timestamp === 'number') latestAt = Math.max(latestAt, entry.timestamp);
+		// Only what a provider writes starts a later attempt: a thinking or tool card here (text and
+		// errors set their own flags). A note this machine or the host writes after a turn (a
+		// steering note, a retry card) is about a turn, never an attempt (CodeRabbit on #2167).
 		if (
 			ended !== undefined &&
 			entry?.turnEnded !== true &&
-			!(typeof entry?.timestamp === 'number' && entry.timestamp <= lastEndAt)
+			(entry?.source === 'thinking' || entry?.source === 'tool') &&
+			!(typeof entry.timestamp === 'number' && entry.timestamp <= lastEndAt)
 		) {
 			pending = true;
 		}
