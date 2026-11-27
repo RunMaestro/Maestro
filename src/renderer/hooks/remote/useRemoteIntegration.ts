@@ -45,6 +45,7 @@ import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSideQuestion } from '../../services/sideQuestion';
 import { runMaestroBuiltinCommand } from '../../services/maestroBuiltinCommands';
 import { hostedTargetOf, openHostedTab, sendHostedTurn } from '../../services/hostedTurns';
+import { hostedTabHoldsLine } from '../../utils/hostedTabLine';
 import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
@@ -1541,9 +1542,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// (`sendTakenItemToHost()`). Never the text alone with the mention dropped.
 					// This machine holds a line for the tab (a consult's hold, a mention waiting its turn):
 					// a plain follow-up waits behind it too, as it does for a local agent.
-					const hostedLocalLine = (session.executionQueue ?? []).some(
-						(queued) => queued.tabId === resolvedTabId && !queued.hostQueued
-					);
+					// A turn of the tab on its way to the host, or a consult waiting for its turn there,
+					// holds the line too (`hostedTabHoldsLine()`).
+					const hostedLocalLine =
+						hostedTabHoldsLine(sessionId, resolvedTabId) ||
+						(session.executionQueue ?? []).some(
+							(queued) => queued.tabId === resolvedTabId && !queued.hostQueued
+						);
 					if (
 						hostedTargetOf(session) &&
 						(hostedLocalLine || planCrossAgentMentions(command, sessionId, mentionRouting))

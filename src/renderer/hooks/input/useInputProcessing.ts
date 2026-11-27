@@ -960,9 +960,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							activeSession.id,
 							activeTab?.id || activeSession.activeTabId
 						);
+						// A hosted tab whose turn is on its way to the host, or whose consult waits for
+						// its turn there, holds its line here: the command waits behind it, as a
+						// message does (`hostedTabHoldsLine()`).
+						const hostedLineHoldsTab = hostedTabHoldsLine(
+							activeSession.id,
+							activeTab?.id || activeSession.activeTabId
+						);
 						const sessionIsIdle =
 							!options?.hold &&
 							!retryHoldsTab &&
+							!hostedLineHoldsTab &&
 							(forceParallel
 								? activeTab?.state !== 'busy'
 								: activeSession.state !== 'busy' && !isAutoRunActive);
