@@ -67,6 +67,18 @@ export interface QueueDiffAgent {
 	orphanedThinkingTabs?: ReadonlyArray<{
 		logs?: ReadonlyArray<{ source?: string; queuedItemId?: string }>;
 	}>;
+	/**
+	 * Tabs held out of the tab bar by a snooze: an AI tab (`type: 'ai'`), or each AI pane of a
+	 * snoozed group. A message that started on a tab snoozed since still has its card there.
+	 */
+	snoozedTabs?: ReadonlyArray<{
+		type?: string;
+		tab?: { logs?: ReadonlyArray<{ source?: string; queuedItemId?: string }> };
+		members?: ReadonlyArray<{
+			type?: string;
+			tab?: { logs?: ReadonlyArray<{ source?: string; queuedItemId?: string }> };
+		}>;
+	}>;
 }
 
 /** One agent's queue after a write, and how each item the write took out of it left. */
@@ -84,7 +96,15 @@ export interface DesktopQueueChange {
 function wroteCardFor(agent: QueueDiffAgent, itemId: string): boolean {
 	const holds = (tab: { logs?: ReadonlyArray<{ source?: string; queuedItemId?: string }> }) =>
 		tab.logs?.some((log) => log.source === 'user' && log.queuedItemId === itemId) ?? false;
-	return (agent.aiTabs ?? []).some(holds) || (agent.orphanedThinkingTabs ?? []).some(holds);
+	// A snoozed AI tab, or an AI pane of a snoozed group, the same tab the drain wrote the card on.
+	const snoozed = (agent.snoozedTabs ?? []).flatMap((entry) =>
+		entry.type === 'group' ? (entry.members ?? []) : [entry]
+	);
+	return (
+		(agent.aiTabs ?? []).some(holds) ||
+		(agent.orphanedThinkingTabs ?? []).some(holds) ||
+		snoozed.some((entry) => entry.type === 'ai' && !!entry.tab && holds(entry.tab))
+	);
 }
 
 /**
@@ -127,4 +147,27 @@ export function desktopQueueChanges(
 		changes.push({ agentId: agent.id, items, exits, unnamedExit });
 	}
 	return changes;
+}
+
+/**
+ * The upgrade-URL query parameter (`?queueChanges=1`) a Federation client sends when it reads a
+ * desktop host's queue CHANGES (M28): each `queue_changed` frame then carries only the waiting
+ * ids in order and the items new or changed since the agent's last frame, with their images
+ * (`QueueChangesFrame`). A client that does not send it (an older build) gets every frame whole,
+ * images and all, as before M26, so it never meets a field it does not know.
+ */
+export const QUEUE_CHANGES_QUERY_PARAM = 'queueChanges';
+
+/**
+ * The change part of a desktop host's `queue_changed` frame for a client that reads changes. `seq`
+ * numbers the agent's frames; `base` is the `seq` of the frame (or the `list_queue` answer, its
+ * `queueSeq`) this one changes. A client holding that list applies `order` (every waiting item id,
+ * in order) over it with `changed` (the items new or changed since `base`, images inlined); any
+ * other client reads the queue whole instead.
+ */
+export interface QueueChangesFrame {
+	seq: number;
+	base: number;
+	order: string[];
+	changed: QueuedItemSnapshot[];
 }

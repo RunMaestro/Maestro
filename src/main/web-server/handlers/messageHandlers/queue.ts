@@ -38,6 +38,7 @@ import { userEntryAnswered, type SentUserEntry } from '../../../../shared/maestr
 import { invokeAsBridge } from '../bridgeHandlers';
 import { resolveToDataUrl } from '../../../storage/session-image-store';
 import type { QueuedItemSnapshot, QueueSessionSnapshot } from '../../types';
+import { queueChangesSeq } from '../../queue-change-frames';
 
 /**
  * Handle enqueue_command message - hand a CLI prompt to the renderer's
@@ -423,7 +424,11 @@ export function handleListQueue(
 	ctx.callbacks
 		.listQueue(sessionId)
 		.then(async (result) => {
-			const queues = await withQueueImages(result.queues, message.inlineImages === true);
+			// Each queue says the seq of the last changes frame sent for it (M28), so a client that
+			// reads changes applies the next one over this answer.
+			const queues = (await withQueueImages(result.queues, message.inlineImages === true)).map(
+				(queue) => ({ ...queue, queueSeq: queueChangesSeq(queue.sessionId) })
+			);
 			ctx.send(client, {
 				type: 'list_queue_result',
 				success: result.success,

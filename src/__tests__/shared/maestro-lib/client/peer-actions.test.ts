@@ -9,6 +9,7 @@ import {
 	parsePeerAgentAction,
 	peerActionErrorMessage,
 	runPeerAgentAction,
+	STOP_QUEUE_READ_MS,
 } from '../../../../shared/maestro-lib/client/peer-actions';
 import type { ClientResult, MaestroClient } from '../../../../shared/maestro-lib/client/types';
 import { buildRemoteAskerKey } from '../../../../shared/crossAgentTypes';
@@ -148,6 +149,89 @@ describe('runPeerAgentAction', () => {
 			ok({ kind: 'interrupt', targetTabIds: ['t1', 't3'], stoppedTabIds: ['t1'] })
 		);
 		expect(client.turns.interrupt.mock.calls.map((call) => call[1])).toEqual(['t1', 't3']);
+	});
+
+	// Parity M25 (Greptile on #2160): a desktop host's queue frames trail its writes by seconds, so
+	// the Stop reads the host's own queue first, and says what still waited when it stopped.
+	it('reads the host queue just before it stops, and answers with what still waited (M25)', async () => {
+		const { client, asClient } = fakeClient();
+		const order: string[] = [];
+		const list = vi.fn(async () => {
+			order.push('list');
+			return ok([{ itemId: 'w1' }, { itemId: 'w2' }]);
+		});
+		(client.turns.queue as Record<string, unknown>).list = list;
+		client.turns.interrupt.mockImplementation(async (_agentId: string, tabId: string) => {
+			order.push(`interrupt ${tabId}`);
+			return ok({ stopped: true });
+		});
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'interrupt', tabId: 't1' })).toEqual(
+			ok({
+				kind: 'interrupt',
+				targetTabIds: ['t1'],
+				stoppedTabIds: ['t1'],
+				waitingAtStop: ['w1', 'w2'],
+			})
+		);
+		expect(order).toEqual(['list', 'interrupt t1']);
+	});
+
+	it('stops without the list when the read fails or does not answer in time (M25)', async () => {
+		vi.useFakeTimers();
+		try {
+			const { client, asClient } = fakeClient();
+			const queue = client.turns.queue as Record<string, unknown>;
+			queue.list = vi.fn(() => new Promise(() => undefined));
+			const slow = runPeerAgentAction(asClient, agent, { kind: 'interrupt', tabId: 't1' });
+			await vi.advanceTimersByTimeAsync(STOP_QUEUE_READ_MS);
+			expect(await slow).toEqual(
+				ok({ kind: 'interrupt', targetTabIds: ['t1'], stoppedTabIds: ['t1'] })
+			);
+			queue.list = vi.fn(async () => {
+				throw new Error('link down');
+			});
+			expect(await runPeerAgentAction(asClient, agent, { kind: 'interrupt', tabId: 't1' })).toEqual(
+				ok({ kind: 'interrupt', targetTabIds: ['t1'], stoppedTabIds: ['t1'] })
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	// Parity M27: a desktop host's Stop names the queue items whose turns it ended; one that names
+	// nothing has queue frames that can trail its answer, and the answer says so.
+	it("answers the queue items every tab's Stop named, or that a desktop host named nothing (M27)", async () => {
+		const { client, asClient } = fakeClient();
+		const host = vi.fn(() => ({ kind: 'desktop' as const, label: 'desktop' }));
+		(client as Record<string, unknown>).connection = { host };
+		client.turns.interrupt.mockImplementation(async (_agentId: string, tabId: string) =>
+			ok({ stopped: true, stoppedItemIds: tabId === 't1' ? ['q-1'] : [] })
+		);
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'interrupt' })).toEqual(
+			ok({
+				kind: 'interrupt',
+				targetTabIds: ['t1', 't3'],
+				stoppedTabIds: ['t1', 't3'],
+				stoppedItemIds: ['q-1'],
+			})
+		);
+		// One tab's answer names nothing: the Stop is unnamed, never half named.
+		client.turns.interrupt.mockImplementation(async (_agentId: string, tabId: string) =>
+			ok(tabId === 't1' ? { stopped: true, stoppedItemIds: ['q-1'] } : { stopped: true })
+		);
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'interrupt' })).toEqual(
+			ok({
+				kind: 'interrupt',
+				targetTabIds: ['t1', 't3'],
+				stoppedTabIds: ['t1', 't3'],
+				queueFramesTrail: true,
+			})
+		);
+		// A headless host's frames reach the client before its answer: nothing to say.
+		host.mockReturnValue({ kind: 'headless' as never, label: 'headless' });
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'interrupt' })).toEqual(
+			ok({ kind: 'interrupt', targetTabIds: ['t1', 't3'], stoppedTabIds: ['t1', 't3'] })
+		);
 	});
 
 	it('stops only the named tab, busy or not', async () => {

@@ -943,6 +943,21 @@ export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: 
 }
 
 /**
+ * The queue item a busy tab's running turn came from: the `queuedItemId`
+ * {@link markTabRunningQueuedItem} stamped on its user entry, read from the tab's
+ * latest user entry. Undefined for an idle tab and for a turn sent straight from
+ * the composer (its entry carries no id).
+ */
+export function runningQueuedItemId(tab: Pick<AITab, 'state' | 'logs'>): string | undefined {
+	if (tab.state !== 'busy') return undefined;
+	for (let index = tab.logs.length - 1; index >= 0; index--) {
+		const entry = tab.logs[index];
+		if (entry.source === 'user') return entry.queuedItemId;
+	}
+	return undefined;
+}
+
+/**
  * The busy-state half of {@link markTabRunningQueuedItem}, without the user log
  * entry.
  *

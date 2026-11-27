@@ -23,9 +23,19 @@ vi.mock('../../../renderer/services/crossAgentHandoff', async (importOriginal) =
 	...(await importOriginal<typeof import('../../../renderer/services/crossAgentHandoff')>()),
 	dropMentionHandoffs: vi.fn(),
 }));
+vi.mock('../../../renderer/services/hostedQueuedTurn', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../renderer/services/hostedQueuedTurn')>();
+	return {
+		...actual,
+		dropStoppedHostStartMentions: vi.fn(actual.dropStoppedHostStartMentions),
+		settleStoppedHostStartMentions: vi.fn(actual.settleStoppedHostStartMentions),
+	};
+});
 vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/services/peerMirror')>()),
-	interruptMirroredAgent: vi.fn(async () => undefined),
+	// A desktop host of this build: it names the queue items its Stop ended (none here).
+	interruptMirroredAgent: vi.fn(async () => ({ stoppedItemIds: [] as string[] })),
 }));
 
 import { interruptTurn, registerTurnInterruptDeps } from '../../../renderer/services/turnInterrupt';
@@ -33,6 +43,10 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../../../renderer/stores/retryStore';
 import { dropMentionHandoffs } from '../../../renderer/services/crossAgentHandoff';
 import { interruptMirroredAgent } from '../../../renderer/services/peerMirror';
+import {
+	dropStoppedHostStartMentions,
+	settleStoppedHostStartMentions,
+} from '../../../renderer/services/hostedQueuedTurn';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useCrossAgentInFlightStore } from '../../../renderer/stores/crossAgentInFlightStore';
@@ -174,6 +188,7 @@ describe('interruptTurn: one tab', () => {
 			wasBusy: true,
 			interrupted: true,
 			stoppedTabIds: ['tab-b'],
+			stoppedItemIds: [],
 			exited: false,
 		});
 		expect(tab('tab-b').state).toBe('idle');
@@ -218,6 +233,56 @@ describe('interruptTurn: one tab', () => {
 		expect(agent().executionQueue).toEqual([queued]);
 		expect(processQueuedItem).not.toHaveBeenCalled();
 	});
+});
+
+// Parity M27: a Stop names the queue items whose turns it ended, read in the same tick as the
+// signal, so a Federation client of a desktop host knows which waiting message was the stopped
+// turn while the host's queue frames still trail.
+describe('interruptTurn: the queue items a Stop ended (M27)', () => {
+	it.each(AGENT_MODES)(
+		'%s: names the queue item the stopped tab ran, and no item for a turn sent from the composer',
+		async (mode) => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			processApi.interrupt.mockResolvedValue(true);
+			processApi.getActiveProcesses.mockResolvedValue([]);
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 0 });
+			if (mode === 'hosted') {
+				// The host's own Stop names it (this build's desktop host, `interrupt_turn`).
+				vi.mocked(interruptMirroredAgent).mockResolvedValueOnce({ stoppedItemIds: ['q-9'] });
+			}
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+			seedAgent({
+				sshRemoteId,
+				sessionSshRemoteConfig,
+				liftedTo,
+				aiTabs: [
+					createMockAITab({
+						id: 'tab-a',
+						state: 'busy',
+						logs: [{ id: 'l1', timestamp: 1, source: 'user', text: 'go' }],
+					}),
+					createMockAITab({
+						id: 'tab-b',
+						state: 'busy',
+						logs: [
+							{ id: 'l0', timestamp: 1, source: 'user', text: 'first', queuedItemId: 'q-1' },
+							{ id: 'l2', timestamp: 2, source: 'user', text: 'second', queuedItemId: 'q-9' },
+						],
+					}),
+				],
+			});
+
+			const named = await interruptTurn('agent-1', { tabId: 'tab-b' });
+			expect(named).toMatchObject({ success: true, stoppedTabIds: ['tab-b'] });
+			expect(named.stoppedItemIds).toEqual(['q-9']);
+
+			if (mode === 'hosted') {
+				vi.mocked(interruptMirroredAgent).mockResolvedValueOnce({ stoppedItemIds: [] });
+			}
+			const composed = await interruptTurn('agent-1', { tabId: 'tab-a' });
+			expect(composed.stoppedItemIds).toEqual([]);
+		}
+	);
 });
 
 describe('interruptTurn: queued work after a whole-agent stop', () => {
@@ -440,6 +505,7 @@ describe('interruptTurn: an Auto Run task turn, which runs on no tab', () => {
 			wasBusy: true,
 			interrupted: true,
 			stoppedTabIds: [],
+			stoppedItemIds: [],
 			exited: false,
 		});
 		expect(ssh).toEqual(local);
@@ -499,6 +565,7 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 			wasBusy: true,
 			interrupted: true,
 			stoppedTabIds: ['tab-a', 'tab-b'],
+			stoppedItemIds: [],
 			exited: false,
 		});
 		expect(ssh).toEqual(local);
@@ -528,6 +595,48 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 		}
 		expect(result).toMatchObject({ success: true, wasBusy: true, interrupted: true });
 	});
+
+	// Parity M25: a consult Stop may have ended waits for the host's answer to the Stop, because a
+	// start the host reported before it ran before the host stopped anything.
+	it.each([
+		['answers', async () => ({ waitingAtStop: ['w1'] })],
+		['fails', async () => Promise.reject(new Error('link down'))],
+	] as const)(
+		'hosted: Stop settles the consults it left waiting only once the host %s (M25)',
+		async (outcome, answer) => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			vi.clearAllMocks();
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 0 });
+			let settledBeforeAnswer = true;
+			vi.mocked(interruptMirroredAgent).mockImplementationOnce(async () => {
+				settledBeforeAnswer = vi.mocked(settleStoppedHostStartMentions).mock.calls.length > 0;
+				return answer();
+			});
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession('hosted');
+			seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
+
+			const stopped = interruptTurn('agent-1', { tabId: 'tab-a' });
+			if (outcome === 'answers') {
+				await expect(stopped).resolves.toMatchObject({ success: true });
+			} else {
+				await expect(stopped).rejects.toThrow('link down');
+			}
+
+			expect(dropStoppedHostStartMentions).toHaveBeenCalledWith('agent-1', ['tab-a']);
+			expect(vi.mocked(dropStoppedHostStartMentions).mock.invocationCallOrder[0]).toBeLessThan(
+				vi.mocked(interruptMirroredAgent).mock.invocationCallOrder[0]
+			);
+			expect(settledBeforeAnswer).toBe(false);
+			// The settle is this Stop's own: the token its drop handed back.
+			expect(vi.mocked(settleStoppedHostStartMentions).mock.calls[0][0]).toBe(
+				vi.mocked(dropStoppedHostStartMentions).mock.results[0].value
+			);
+			// With the host's own list at the Stop, when the host gave it.
+			expect(vi.mocked(settleStoppedHostStartMentions).mock.calls[0][1]).toEqual(
+				outcome === 'answers' ? { waitingAtStop: ['w1'] } : undefined
+			);
+		}
+	);
 
 	// Parity M21: Stop during a consult whose tab runs no turn (a mention consulting before its
 	// turn, or a tab held for the reply) ends on the same "Canceled by user" line in every mode.

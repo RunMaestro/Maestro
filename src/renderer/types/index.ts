@@ -612,6 +612,12 @@ export interface QueuedItem {
 	 */
 	hostQueued?: boolean;
 	/**
+	 * A host queue item whose images this window does not hold yet: an older desktop host said they
+	 * were unchanged (`imagesKept`) before this window read them (M28). Its card draws none, so an
+	 * Edit must not save it without them.
+	 */
+	hostImagesPending?: boolean;
+	/**
 	 * A hosted agent's message that is already an entry in its host's transcript (or drawn here):
 	 * the send names it (`TurnInput.entryId`), so the message is drawn once. Set on the message of a
 	 * turn a lost link cut, kept for a resend (`noteHostedTurnsCut()`).

@@ -634,6 +634,82 @@ describe('BroadcastService bridge resume (seq stamping + replay)', () => {
 		]);
 	});
 
+	// Parity M26: `queue_changed` (images inlined) went to every web client, a phone over the
+	// tunnel included, and into every browser's replay, though only a CLI-secret client reads it.
+	it('sends a CLI-only frame to the clients the CLI secret admitted, live and on replay (M26)', () => {
+		const browser = createMockClient('browser');
+		const cli = { ...createMockClient('cli'), cliAuthenticated: true };
+		clients.set('browser', browser);
+		clients.set('cli', cli);
+		service.broadcastToAll({ type: 'everyone' });
+		service.broadcastToCliClients({ type: 'queue_changed' });
+
+		const sent = (client: WebClientInfo) =>
+			(client.socket.send as any).mock.calls.map((call: any[]) => JSON.parse(call[0]).type);
+		expect(sent(browser)).toEqual(['everyone']);
+		expect(sent(cli)).toEqual(['everyone', 'queue_changed']);
+		const types = (frames: string[] | null) => frames?.map((f) => JSON.parse(f).type);
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 0))).toEqual(['everyone']);
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 0, undefined, true))).toEqual([
+			'everyone',
+			'queue_changed',
+		]);
+	});
+
+	// Parity M28: a client that reads queue changes gets the change frame, any other CLI client the
+	// whole one, live and on replay; a browser gets neither.
+	it('sends each queue frame to its audience of CLI clients only, live and on replay, and counts them (M28)', () => {
+		const browser = { ...createMockClient('browser'), readsQueueChanges: true };
+		const whole = { ...createMockClient('whole'), cliAuthenticated: true };
+		const changes = {
+			...createMockClient('changes'),
+			cliAuthenticated: true,
+			readsQueueChanges: true,
+		};
+		clients.set('browser', browser);
+		clients.set('whole', whole);
+		clients.set('changes', changes);
+		service.broadcastToCliClients({ type: 'whole_frame' }, 'whole-queue');
+		service.broadcastToCliClients({ type: 'changes_frame' }, 'queue-changes');
+
+		const sent = (client: WebClientInfo) =>
+			(client.socket.send as any).mock.calls.map((call: any[]) => JSON.parse(call[0]).type);
+		expect(sent(browser)).toEqual([]);
+		expect(sent(whole)).toEqual(['whole_frame']);
+		expect(sent(changes)).toEqual(['changes_frame']);
+		expect(service.getCliClientCounts()).toEqual({ 'queue-changes': 1, 'whole-queue': 1 });
+		const types = (frames: string[] | null) => frames?.map((f) => JSON.parse(f).type);
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 0, undefined, true))).toEqual([
+			'whole_frame',
+		]);
+		expect(
+			types(service.resumeBridgeClient(service.bridgeEpoch, 0, undefined, true, true))
+		).toEqual(['changes_frame']);
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 0))).toEqual([]);
+	});
+
+	it('keeps CLI-only frames out of a browser replay budget, so queue traffic never forces a browser reload (Greptile on #2160)', () => {
+		service.broadcastToAll({ type: 'before' });
+		// Far more CLI-only traffic than the browser replay could hold.
+		const big = 'x'.repeat(64 * 1024);
+		for (let index = 0; index < 2100; index++) {
+			service.broadcastToCliClients({ type: 'queue_changed', big });
+		}
+		service.broadcastToAll({ type: 'after' });
+
+		const types = (frames: string[] | null) => frames?.map((f) => JSON.parse(f).type);
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 1))).toEqual(['after']);
+		// A CLI client that missed CLI-only frames its replay let go resyncs instead.
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 1, undefined, true)).toBeNull();
+		const tail = service.resumeBridgeClient(
+			service.bridgeEpoch,
+			service.getBridgeSeq() - 2,
+			undefined,
+			true
+		);
+		expect(types(tail)).toEqual(['queue_changed', 'after']);
+	});
+
 	it('stamps tool events too, so one lost to a dropped socket is replayed rather than gone', () => {
 		const subscriber = createMockClient('sub', { subscribedSessionId: 'session-a' });
 		clients.set('sub', subscriber);

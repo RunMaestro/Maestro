@@ -633,6 +633,12 @@ export interface QueuedTurn {
 	 * leave), so the card draws the thumbnails and its editor opens with them. Absent: none.
 	 */
 	images?: string[];
+	/**
+	 * A desktop host's `queue_changed` sent no images for this item because they are the ones it
+	 * sent before for it (M26): the reader keeps the images it holds for the item id
+	 * (`setAgentQueue()`). Never set together with `images`.
+	 */
+	imagesKept?: true;
 }
 
 /**
@@ -754,8 +760,16 @@ export type TurnEvent =
 export interface TurnsApi {
 	/** CH-2, CH-4. Runs now when the agent is idle; otherwise queues behind its current turn. */
 	send(agentId: string, tabId: string, input: TurnInput): Promise<ClientResult<TurnSendReceipt>>;
-	/** CH-4. Stop the tab's running turn. `stopped: false` when nothing was running. */
-	interrupt(agentId: string, tabId: string): Promise<ClientResult<{ stopped: boolean }>>;
+	/**
+	 * CH-4. Stop the tab's running turn. `stopped: false` when nothing was running.
+	 * `stoppedItemIds`: the host's queue items whose turn the stop ended, when the host names
+	 * them (a desktop host of this build, whose queue frames can trail its answer); absent when
+	 * it does not.
+	 */
+	interrupt(
+		agentId: string,
+		tabId: string
+	): Promise<ClientResult<{ stopped: boolean; stoppedItemIds?: string[] }>>;
 	readonly queue: {
 		list(agentId: string): Promise<ClientResult<QueuedTurn[]>>;
 		remove(agentId: string, itemId: string): Promise<ClientResult<{ removed: boolean }>>;

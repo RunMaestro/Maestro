@@ -76,10 +76,12 @@ import {
 	handoffSendBoundary,
 	hasDeferredHostedHandoff,
 	HOST_QUEUE_START_GRACE_MS,
+	hostRanMessage,
 	judgeUnnamedHostStart,
 	markHandoffSentToHost,
 	noteLateMention,
 	noteSkippedMention,
+	type HostedMessageRef,
 	type HostedTranscriptAccess,
 } from './crossAgentHandoff';
 import { resolveConsultTargets } from './crossAgentConsultHold';
@@ -90,6 +92,7 @@ import { hostTabTurnStartedAt } from '../utils/hostedSession';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import { appendAgentNotes } from '../../shared/maestro-lib/turns/prompt';
 import { queueExitOf } from '../../shared/maestro-lib/client/peer-mirror';
+import type { HostStopAnswer } from '../../shared/maestro-lib/client/peer-actions';
 import { queuedItemNamingText } from './tabAutoNaming';
 
 /**
@@ -617,10 +620,70 @@ const mentionsAwaitingHostStart = new Map<
 		 * when the host wrote its message's user entry after it (`judgeUnnamedHostStart()`).
 		 */
 		afterEntryId?: string;
+		/**
+		 * Stop ended a turn of its tab while it waited (M25). `pending`: the host has not answered
+		 * the Stop yet, so a start seen now ran before the host stopped anything, and was the turn
+		 * Stop ended. After the answer it stays only for one the host's queue never listed (an older
+		 * desktop host lists none): then `turnStartedAt`, the turn Stop ended (the host's clock),
+		 * tells its own later turn from the stopped one. `by`: the Stops still to answer that marked
+		 * it (it stays pending until each has), so a later Stop never settles what an earlier one's
+		 * answer would name (CodeRabbit on #2160). `untilNamed`: the host named nothing and its queue
+		 * frames may trail its answer (an older desktop host, or no answer came), so a frame that
+		 * still lists it may predate the Stop: only a frame that names its exit settles it (M27).
+		 */
+		stop?: {
+			pending: boolean;
+			turnStartedAt?: number;
+			by: HostStopToken[];
+			untilNamed?: boolean;
+		};
 	}
 >();
 
+/**
+ * One Stop of a hosted agent (`dropStoppedHostStartMentions()`): its settle settles only the
+ * consults it left waiting, never those of another Stop still waiting for its own answer.
+ */
+export type HostStopToken = { readonly sessionId: string };
+
 type AwaitingHostStart = typeof mentionsAwaitingHostStart extends Map<string, infer V> ? V : never;
+
+/** The entries of a tab's latest turn: from its last user entry on (none when it has none). */
+function latestUserTurn(logs: readonly LogEntry[]): LogEntry[] {
+	for (let index = logs.length - 1; index >= 0; index--) {
+		if (logs[index].source === 'user') return logs.slice(index);
+	}
+	return [];
+}
+
+/**
+ * Whether `tab` runs the waiting message's own turn, later than the one a Stop ended: the host
+ * answered that Stop, the tab is busy with a turn that started at another time, and that turn is
+ * the message's own (its entry is the tab's latest user entry). A stopped message's entry read back
+ * while another message's turn runs is no start of its own (CodeRabbit on #2160).
+ */
+function isOwnLaterTurn(
+	tab: Pick<Session['aiTabs'][number], 'state' | 'thinkingStartTime' | 'logs'>,
+	hostItemId: string,
+	waiting: AwaitingHostStart,
+	stop: NonNullable<AwaitingHostStart['stop']>
+): boolean {
+	return (
+		!stop.pending &&
+		tab.state === 'busy' &&
+		tab.thinkingStartTime !== stop.turnStartedAt &&
+		hostRanMessage(latestUserTurn(tab.logs), undefined, waitingMessage(hostItemId, waiting))
+	);
+}
+
+/** A waiting consult's message, as the host's user entry for it is matched. */
+function waitingMessage(hostItemId: string, waiting: AwaitingHostStart): HostedMessageRef {
+	return {
+		itemId: hostItemId,
+		text: waiting.item.text,
+		imageCount: waiting.item.images?.length ?? 0,
+	};
+}
 
 /**
  * Whether the host's own record of `tabId` reads busy now, and when that turn started; and how
@@ -677,39 +740,137 @@ export function pruneHostStartedMentions(hostedSessionIds: ReadonlySet<string>):
 }
 
 /**
- * Stop ended the turns of `stoppedTabIds` (those it told the host to stop, or ended here): a
- * consult of one of those tabs whose message may be the turn Stop ended goes, with a note, so
- * nothing consults after Stop (M24). That is every one the host's queue does not list waiting,
- * also one it never listed (a turn that joined and left between two frames, or an older desktop
- * host) or whose start's name is still on its way, unless the tab still runs the very turn the
- * message was queued behind (`turnStartedAt`, the host's clock): then Stop ended that turn, and
- * the message still waits, listed or not yet listed (CodeRabbit on #2154). One the host's queue
- * lists stays, and one on a tab Stop did not end: those messages run later, and consult when they
- * start, as a local queued message does after Stop.
+ * Stop ended the turns of `stoppedTabIds` (those it told the host to stop, or ended here). A
+ * consult of one of those tabs whose message is the turn Stop ended goes, with a note, so nothing
+ * consults after Stop (M24): one whose own user entry is on the tab, and one the host's queue
+ * listed and no longer lists (it left the queue before Stop: it started, or went).
+ *
+ * Every other consult of those tabs waits for the host's answer to the Stop (`stop.pending`,
+ * settled by `settleStoppedHostStartMentions()`), because the host's frames may still be on their
+ * way: a start the host reports before its answer ran before it stopped anything, so that message
+ * was the turn Stop ended, and its consult goes then (M25). That covers a message still listed
+ * when Stop lands, whose "started" frame comes after it, and one queued behind the turn Stop ends.
+ * A consult of a tab Stop did not end is not touched: its message runs later and consults when it
+ * starts, as a local queued message does after Stop.
  */
 export function dropStoppedHostStartMentions(
 	sessionId: string,
 	stoppedTabIds: readonly string[]
-): void {
-	if (stoppedTabIds.length === 0) return;
+): HostStopToken {
+	const token: HostStopToken = { sessionId };
+	if (stoppedTabIds.length === 0) return token;
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const stillWaiting = new Set(
 		(session?.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
 	);
 	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
-		if (waiting.sessionId !== sessionId || stillWaiting.has(hostItemId)) continue;
+		if (waiting.sessionId !== sessionId) continue;
 		const tabId = waiting.item.tabId || session?.activeTabId;
 		if (!tabId || !stoppedTabIds.includes(tabId)) continue;
-		// The host's own record, as the receipt read it: the local tab may read idle between the
-		// drain's release and the next sync while the host runs the turn ahead.
+		const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
+		const ran =
+			!!tab && hostRanMessage(tab.logs, waiting.afterEntryId, waitingMessage(hostItemId, waiting));
+		if (ran || (waiting.seenQueued && !stillWaiting.has(hostItemId))) {
+			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+			continue;
+		}
+		// The host's own record: the local tab may read idle between the drain's release and the
+		// next sync while the host runs the turn Stop ends.
 		const running = hostTurnAhead(sessionId, tabId);
-		const behindStoppedTurn =
-			!!waiting.aheadKnown &&
-			waiting.turnStartedAt !== undefined &&
-			running.busy &&
-			running.startedAt === waiting.turnStartedAt;
-		if (behindStoppedTurn) continue;
-		letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+		const earlier = waiting.stop;
+		waiting.stop = {
+			pending: true,
+			// An earlier Stop still to answer keeps its say: this one joins it.
+			by: earlier?.pending ? [...earlier.by, token] : [token],
+			...(running.busy && running.startedAt !== undefined
+				? { turnStartedAt: running.startedAt }
+				: earlier?.turnStartedAt !== undefined
+					? { turnStartedAt: earlier.turnStartedAt }
+					: {}),
+			...(earlier?.untilNamed ? { untilNamed: true } : {}),
+		};
+	}
+	return token;
+}
+
+/**
+ * The host answered the Stop `stop` (or could not be told it): settle each consult that Stop left
+ * waiting for that answer (`stop.pending`), and no other. One the host named as a turn its Stop
+ * ended (`stoppedItemIds`), whose start the host named, or whose own user entry is on the tab, was
+ * the turn Stop ended: it goes, with the note. One the host's list read at the Stop no longer
+ * holds left the queue before the host stopped anything: it goes. One the host did not name, when
+ * the host names the turns it stops, waited through the Stop: it consults when it starts. So does
+ * one the host's list holds, when the host's frames reach this window before its answer (a
+ * headless host). A desktop host that names nothing has frames that trail its answer, so a listed
+ * message may still have been the stopped turn: it keeps its Stop mark until a frame names its exit
+ * (M27). One the queue never listed (an older desktop host sends no queue frames) stays marked,
+ * and consults only when its own turn is seen running after Stop (`fireHostStartedMentions()`):
+ * Stop never loses it.
+ */
+export function settleStoppedHostStartMentions(
+	stop: HostStopToken,
+	/**
+	 * What the host's answer said of its queue at the Stop. `waitingAtStop` rules over the mirror
+	 * where given: a desktop host's queue frames trail its writes by seconds (Greptile on #2160),
+	 * so the mirror may still list a message that had started, or not yet list one that waits.
+	 * Undefined when no answer came (the host could not be told, or the Stop failed): its frames
+	 * may still trail, as a host's that names nothing (CodeRabbit on #2160).
+	 */
+	answer?: HostStopAnswer
+): void {
+	const { waitingAtStop, stoppedItemIds } = answer ?? {};
+	const queueFramesTrail = !answer || answer.queueFramesTrail === true;
+	const namedStops = stoppedItemIds ? new Set(stoppedItemIds) : undefined;
+	const { sessionId } = stop;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const target = session ? hostedTargetOf(session) : undefined;
+	const peer = target ? usePeerMirrorStore.getState().peers[target.peerId] : undefined;
+	const listed = new Set(
+		waitingAtStop ?? ((target && peer?.queues[target.agentId]) || []).map((queued) => queued.itemId)
+	);
+	const exits = target ? peer?.queueExits?.[target.agentId] : undefined;
+	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
+		if (waiting.sessionId !== sessionId) continue;
+		// The host says this Stop ended its turn: it goes, whichever Stop marked it last.
+		if (namedStops?.has(hostItemId)) {
+			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+			continue;
+		}
+		// Only the consults this Stop left waiting: another Stop's wait for its own answer stays.
+		if (!waiting.stop?.pending || !waiting.stop.by.includes(stop)) continue;
+		const stillToAnswer = waiting.stop.by.filter((token) => token !== stop);
+		if (stillToAnswer.length > 0) {
+			waiting.stop = { ...waiting.stop, by: stillToAnswer };
+			continue;
+		}
+		const tabId = waiting.item.tabId || session?.activeTabId;
+		const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
+		const ran =
+			queueExitOf(exits, hostItemId) === 'started' ||
+			(!!tab &&
+				hostRanMessage(tab.logs, waiting.afterEntryId, waitingMessage(hostItemId, waiting)));
+		// Gone from the host's own list read at the Stop: it started or went before the host stopped.
+		const leftBeforeStop = !listed.has(hostItemId) && (waiting.seenQueued || !!waitingAtStop);
+		if (ran || leftBeforeStop) {
+			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+			continue;
+		}
+		// The host named the turns its Stop ended, and not this one; or the host's own list holds it
+		// and no frame of the host can arrive after its answer: it waited through the Stop.
+		if (namedStops || (listed.has(hostItemId) && waitingAtStop && !queueFramesTrail)) {
+			waiting.stop = undefined;
+			continue;
+		}
+		// Listed only by the mirror (the read failed or was late), or by a host whose frames trail
+		// its answer: it may still be the stopped turn, whose start frame is on its way. It stays
+		// marked, and consults only once its own turn is seen running after Stop (CodeRabbit on
+		// #2160); a frame that merely lists it again does not clear the mark (M27).
+		waiting.stop = {
+			...waiting.stop,
+			pending: false,
+			by: [],
+			...(queueFramesTrail ? { untilNamed: true } : {}),
+		};
 	}
 }
 
@@ -755,6 +916,31 @@ export function fireHostStartedMentions(
 		const tabId = waiting.item.tabId || session.activeTabId;
 		const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
 		const exit = queueExitOf(hostExits, hostItemId);
+		// A start the host reported before it answered a Stop of this tab ran before the host stopped
+		// anything: it was the turn Stop ended, so nothing is asked (M25).
+		if (exit === 'started' && waiting.stop?.pending) {
+			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+			continue;
+		}
+		// A named start of one a Stop left marked (no list from the host said it waited): it is its
+		// own later turn once the tab runs it; ran and ended unseen (or never ran again) is the
+		// stopped turn; until either shows, it waits for the next sync.
+		if (exit === 'started' && waiting.stop && tab) {
+			if (!isOwnLaterTurn(tab, hostItemId, waiting, waiting.stop)) {
+				const ranHere = hostRanMessage(
+					tab.logs,
+					waiting.afterEntryId,
+					waitingMessage(hostItemId, waiting)
+				);
+				if (ranHere && tab.state !== 'busy') {
+					letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+				} else if (!ranHere && tab.state !== 'busy' && tabId && !transcript.isCurrent(tabId)) {
+					// Idle with no entry of its own drawn: its saved transcript says whether it ran.
+					transcript.read(tabId);
+				}
+				continue;
+			}
+		}
 		if (exit !== 'started') {
 			if (exit === 'removed') {
 				letGoOfHostStart(hostItemId, waiting, 'the message was removed before it ran.');
@@ -764,8 +950,14 @@ export function fireHostStartedMentions(
 				waiting.seenQueued = true;
 				waiting.lastSeenQueuedAt = now;
 				waiting.readsAtSeen = hostReads;
-				// Listed again (its first frame came late): its gone time starts over.
+				// Listed again (its first frame came late): its gone time starts over, and a Stop it
+				// waited through no longer stands between it and its start.
 				waiting.goneAt = undefined;
+				// A host whose frames trail its answer may list it in a frame written before the Stop,
+				// so only a named exit settles that mark (M27).
+				if (waiting.stop && !waiting.stop.pending && !waiting.stop.untilNamed) {
+					waiting.stop = undefined;
+				}
 				if (!waiting.aheadKnown) {
 					waiting.aheadKnown = true;
 					waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
@@ -790,11 +982,7 @@ export function fireHostStartedMentions(
 				tab,
 				{
 					afterEntryId: waiting.afterEntryId,
-					message: {
-						itemId: hostItemId,
-						text: waiting.item.text,
-						imageCount: waiting.item.images?.length ?? 0,
-					},
+					message: waitingMessage(hostItemId, waiting),
 					seenQueued: waiting.seenQueued,
 					aheadKnown: !!waiting.aheadKnown,
 					turnStartedAt: waiting.turnStartedAt,
@@ -813,6 +1001,18 @@ export function fireHostStartedMentions(
 				if (verdict === 'left') waiting.goneAt = now;
 				if (verdict === 'read' && tabId) transcript.read(tabId);
 				continue;
+			}
+			// Its own entry, with a Stop of its tab in between. Before the host answered the Stop, or
+			// after it for one no queue listed: it is its own later turn only while the tab runs a
+			// turn that is not the one Stop ended, and that running turn is its own (its entry is the
+			// tab's latest user entry): a stopped message's entry read back while another message's
+			// turn runs is no start of its own (CodeRabbit on #2160). Otherwise it was the stopped
+			// turn (M25).
+			if (waiting.stop) {
+				if (!tab || !isOwnLaterTurn(tab, hostItemId, waiting, waiting.stop)) {
+					letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+					continue;
+				}
 			}
 			// Its own entry is in the saved transcript and the tab no longer runs it: the turn ran
 			// without the consult beside it. Late is better than never: consult now, and say so.

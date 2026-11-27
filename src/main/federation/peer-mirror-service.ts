@@ -47,6 +47,7 @@ import {
 	markAllTabsStale,
 	replacePeerAgents,
 	setAgentQueue,
+	withReadQueueImages,
 	setPeerConnection,
 	summarizePeer,
 	type MirrorContext,
@@ -741,9 +742,12 @@ export class PeerMirrorService {
 				// commit the kept list as a whole read, so the gap is counted (`queueReads`) here and in
 				// every window, and an item last seen waiting is judged by the tab's state (M19). A host
 				// that names no exits has no gap to count.
-				if (entry.state.queueExits?.[agentId]) {
-					const kept = entry.state.queues[agentId] ?? [];
-					this.commit(entry, setAgentQueue(entry.state, agentId, kept));
+				// The kept list also takes the read's images for an item the change said were unchanged
+				// while this mirror held none (M26).
+				const held = entry.state.queues[agentId] ?? [];
+				const kept = withReadQueueImages(held, read.value);
+				if (entry.state.queueExits?.[agentId] || kept !== held) {
+					this.commit(entry, setAgentQueue(entry.state, agentId, [...kept]));
 				}
 				continue;
 			}

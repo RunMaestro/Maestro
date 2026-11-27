@@ -11,6 +11,10 @@ vi.mock(
 	'../../../../main/plugins/plugin-scan',
 	async () => await import('../../../helpers/pluginScan')
 );
+import {
+	recordFramedQueue,
+	resetQueueChangeFrames,
+} from '../../../../main/web-server/queue-change-frames';
 import { MAESTRO_PUBLISHER_KEYS } from '../../../../shared/plugins/publisher-keys';
 import { RELAY_PUBLISHER_KEY } from '../../../../shared/plugins/relay-identity';
 /**
@@ -4335,6 +4339,29 @@ describe('WebSocketMessageHandler', () => {
 				expect(response.success).toBe(true);
 				expect(Array.isArray(response.queues)).toBe(true);
 			});
+		});
+
+		// Parity M28: a client that reads queue changes applies the next one over this answer.
+		it('answers each queue with the seq of the last changes frame sent for it (M28)', async () => {
+			resetQueueChangeFrames();
+			recordFramedQueue('session-1', { seq: 4, items: new Map() });
+			vi.mocked(callbacks.listQueue).mockResolvedValue({
+				success: true,
+				queues: [
+					{ sessionId: 'session-1', name: 'A', state: 'idle', items: [] },
+					{ sessionId: 'session-2', name: 'B', state: 'idle', items: [] },
+				],
+			});
+			handler.handleMessage(client, { type: 'list_queue' });
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.queues).toMatchObject([
+					{ sessionId: 'session-1', queueSeq: 4 },
+					{ sessionId: 'session-2', queueSeq: 0 },
+				]);
+			});
+			resetQueueChangeFrames();
 		});
 
 		it('passes undefined when no sessionId is provided (all agents)', async () => {

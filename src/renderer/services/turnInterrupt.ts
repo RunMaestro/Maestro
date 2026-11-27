@@ -22,12 +22,13 @@ import { hostedTargetOf, interruptHostedTurn } from './hostedTurns';
 import { cutHostedTurnTabs, endHostedTurnsHere, markHostedTurnsStopped } from './hostedLinkLoss';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { TURN_CANCELED_NOTE } from '../../shared/maestro-lib/store/transcript';
+import type { HostStopAnswer } from '../../shared/maestro-lib/client/peer-actions';
 import type { AITab, LogEntry, QueuedItem, Session, SessionState } from '../types';
 import { useSessionStore, selectSessionById, updateSessionWith } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../stores/retryStore';
 import { dropMentionHandoffs } from './crossAgentHandoff';
-import { dropStoppedHostStartMentions } from './hostedQueuedTurn';
+import { dropStoppedHostStartMentions, settleStoppedHostStartMentions } from './hostedQueuedTurn';
 import { cancelHostedConsults } from '../hooks/agent/useCrossAgentDispatch';
 import { useCrossAgentInFlightStore } from '../stores/crossAgentInFlightStore';
 import { generateId } from '../utils/ids';
@@ -36,6 +37,7 @@ import {
 	getBusyTabs,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
+	runningQueuedItemId,
 	syncAgentStateToTabs,
 } from '../utils/tabHelpers';
 import { takeNextRunnableQueueItem } from '../utils/executionQueue';
@@ -98,6 +100,19 @@ export interface InterruptTurnOptions {
 export const FORCE_KILL_PROMPT =
 	'Failed to interrupt the process gracefully. Would you like to force kill it?\n\n' +
 	'Warning: This may cause data loss or leave the process in an inconsistent state.';
+
+/** The queue item ids of the turns `tabIds` of the agent run now (`runningQueuedItemId()`). */
+function queuedItemsOfRunningTurns(sessionId: string, tabIds: readonly string[]): string[] {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tabs = [...(session?.aiTabs ?? []), ...(session?.orphanedThinkingTabs ?? [])];
+	const ids = new Set<string>();
+	for (const tab of tabs) {
+		if (!tabIds.includes(tab.id)) continue;
+		const itemId = runningQueuedItemId(tab);
+		if (itemId) ids.add(itemId);
+	}
+	return [...ids];
+}
 
 /**
  * Stop a running turn on an agent, or on one of its tabs.
@@ -168,14 +183,20 @@ export async function interruptTurn(
 		const cutTabs = cutHostedTurnTabs(sessionId, scopeTabId);
 		const stopHere = [...new Set([...hostBusy, ...cutTabs])];
 		// A consult whose message may be a turn Stop ends goes with it, also before any await.
-		dropStoppedHostStartMentions(sessionId, stopHere);
+		const hostStop = dropStoppedHostStartMentions(sessionId, stopHere);
 		const hostNotTold = !!peer && peer.connection !== 'connected' && stopHere.length > 0;
-		if (hostNotTold) {
-			// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
-			endHostedTurnsHere(sessionId, stopHere, peer.name);
-		} else {
-			markHostedTurnsStopped(sessionId, cutTabs, peer?.name ?? '');
-			if (forward) await interruptHostedTurn(session, scopeTabId);
+		let hostAnswer: HostStopAnswer | undefined;
+		try {
+			if (hostNotTold) {
+				// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
+				endHostedTurnsHere(sessionId, stopHere, peer.name);
+			} else {
+				markHostedTurnsStopped(sessionId, cutTabs, peer?.name ?? '');
+				if (forward) hostAnswer = await interruptHostedTurn(session, scopeTabId);
+			}
+		} finally {
+			// The host answered (or was not told): what it reported before then ran before the stop.
+			settleStoppedHostStartMentions(hostStop, hostAnswer);
 		}
 		const consults = await cancelConsults(sessionId, scopeTabId);
 		const consultsCanceled = consults.canceled;
@@ -202,6 +223,8 @@ export async function interruptTurn(
 			wasBusy,
 			interrupted: wasBusy,
 			stoppedTabIds: stopHere,
+			// The host's own word on the queue items its Stop ended, as a local Stop names them.
+			...(hostAnswer?.stoppedItemIds ? { stoppedItemIds: hostAnswer.stoppedItemIds } : {}),
 			exited: false,
 		};
 	}
@@ -250,6 +273,7 @@ export async function interruptTurn(
 		};
 	}
 	const stoppedTabIds = [...new Set([...busyTabIds, ...liveTabIds])];
+	let stoppedItemIds: string[] = [];
 	const done = (interrupted: boolean): InterruptTurnResult => ({
 		success: true,
 		sessionId,
@@ -257,6 +281,7 @@ export async function interruptTurn(
 		wasBusy: true,
 		interrupted,
 		stoppedTabIds,
+		stoppedItemIds,
 		exited: false,
 	});
 
@@ -288,6 +313,10 @@ export async function interruptTurn(
 		else settleStoppedAgent(sessionId, note, startQueued, consults.tabIds, endedTurn);
 	};
 
+	// The queue items whose turns this Stop ends, read in the same tick as the signal goes out, so
+	// no drain can start another one in between: a Federation client of this desktop learns which
+	// of its waiting messages was the stopped turn, where this host's queue frames trail (M27).
+	stoppedItemIds = queuedItemsOfRunningTurns(sessionId, stoppedTabIds);
 	const results = await Promise.allSettled(
 		targets.map((id) => window.maestro.process.interrupt(id))
 	);

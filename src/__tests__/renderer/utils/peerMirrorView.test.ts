@@ -187,6 +187,16 @@ describe('mirrorQueuedItem', () => {
 		expect(mirrorQueuedItem(queued('q7'))).not.toHaveProperty('images');
 	});
 
+	// Parity M28: an older desktop host's `imagesKept` before this window held the images.
+	it('marks an item whose host images are not here yet, so an edit keeps them', () => {
+		expect(mirrorQueuedItem(queued('q8', { imagesKept: true })).hostImagesPending).toBe(true);
+		const images = ['data:image/png;base64,AAAA'];
+		expect(mirrorQueuedItem(queued('q9', { imagesKept: true, images }))).not.toHaveProperty(
+			'hostImagesPending'
+		);
+		expect(mirrorQueuedItem(queued('q10'))).not.toHaveProperty('hostImagesPending');
+	});
+
 	it('carries the model and effort the host will run it with', () => {
 		expect(
 			mirrorQueuedItem(queued('q4', { turnSettings: { model: 'm', effort: 'high' } })).turnSettings

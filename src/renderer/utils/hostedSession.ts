@@ -323,6 +323,7 @@ function sameQueue(a: readonly QueuedItem[], b: readonly QueuedItem[]): boolean 
 				item.command === other.command &&
 				item.commandArgs === other.commandArgs &&
 				item.tabId === other.tabId &&
+				item.hostImagesPending === other.hostImagesPending &&
 				sameImages(item.images, other.images) &&
 				canonicalJson(item.turnSettings ?? null) === canonicalJson(other.turnSettings ?? null)
 			);
