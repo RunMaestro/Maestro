@@ -1747,6 +1747,42 @@ describe('queue durability across an outage', () => {
 		expect(session.agentErrorTabId).toBe('t1');
 		expect(sessionQueue()).toEqual(['item-2']);
 	});
+
+	// Parity R62: Stop on a message kept for a lost link leaves the agent Ready, as a local agent
+	// and a hosted one read: the outage dialog says what is down, nothing in the agent is the
+	// user's to fix. The stopped card stays; the tab's copy of the link error goes with it.
+	it.each(['ssh', 'hosted'] as const)(
+		'leaves a %s agent Ready after Stop on a message kept for a lost link (R62)',
+		(mode) => {
+			const linkDown = err({
+				type: 'network_error',
+				message: 'SSH connection failed: Connection refused',
+				sshRemoteId: 'r1',
+			});
+			useSessionStore.setState({
+				sessions: [
+					createModeSession(mode, {
+						id: 'q7',
+						state: 'idle',
+						activeTabId: 't1',
+						aiTabs: [createMockAITab({ id: 't1', agentError: linkDown })],
+					}),
+				],
+			} as any);
+			seedSnapshot('q7', 't1');
+			expect(scheduleRetryForError('q7', 't1', linkDown)).toBe(true);
+			const outageId = getRetryEntry('q7', 't1')!.outageId;
+
+			cancelRetry('q7', 't1');
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.state).not.toBe('error');
+			expect(session.agentError).toBeUndefined();
+			expect(session.agentErrorTabId).toBeUndefined();
+			expect(session.aiTabs[0].agentError).toBeUndefined();
+			expect(useRetryStore.getState().outages[outageId]?.status).toBe('stopped');
+		}
+	);
 });
 
 /**
