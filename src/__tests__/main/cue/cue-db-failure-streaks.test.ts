@@ -176,6 +176,16 @@ describe.skipIf(!canLoadNodeSqlite())('getCueFailureStreakRecords (real SQLite)'
 		expect(byKey).toEqual({ 'agent-1/poll': 2, 'agent-2/poll': 1, 'agent-1/other': 1 });
 	});
 
+	it('keeps a failure that ends in the same millisecond as the last success', () => {
+		start('success', BASE_MS + 1_000);
+		start('failure', BASE_MS + 2_000);
+		finish('success', 'completed', BASE_MS + 3_000);
+		finish('failure', 'failed', BASE_MS + 3_000);
+		expect(getCueFailureStreakRecords(ORPHAN)).toEqual([
+			expect.objectContaining({ consecutiveFailures: 1 }),
+		]);
+	});
+
 	it('survives a malformed payload on an :output-named row', () => {
 		start('bad', BASE_MS + 1_000, { subscriptionName: 'poll:output', payload: '{not json' });
 		finish('bad', 'failed', BASE_MS + 2_000);

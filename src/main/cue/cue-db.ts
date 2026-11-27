@@ -1278,7 +1278,9 @@ export interface CueFailureStreakRecord {
  * `cue-failure-streak.ts`:
  * - Runs are ordered by when they ENDED, the order the live tracker sees
  *   them in: a failure that started before a success but finished after it
- *   still counts.
+ *   still counts. A failure that ends in the same millisecond as the last
+ *   success cannot be ordered from the row (completed_at is all we have), so
+ *   it is kept: hiding a real failure is the bug this alert exists to stop.
  * - `stopped` rows neither count nor reset (they are simply not selected).
  * - Generated output-phase rows (`<name>:output` with `outputPromptPhase` in
  *   the payload) are skipped: live tracking sees only the parent run, which
@@ -1326,7 +1328,7 @@ export function getCueFailureStreakRecords(orphanedMessage: string): CueFailureS
 			     ON l.session_id = r.session_id AND l.subscription_name = r.subscription_name
 			   WHERE r.status IN ('failed', 'timeout')
 			     AND (r.error_message IS NULL OR r.error_message <> ?)
-			     AND (l.ok_at IS NULL OR r.ended_at > l.ok_at)
+			     AND (l.ok_at IS NULL OR r.ended_at >= l.ok_at)
 			 )
 			 SELECT session_id, subscription_name, status, error_message, ended_at, failures, first_at
 			 FROM streak
