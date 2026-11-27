@@ -946,7 +946,6 @@ describe('importCueBundle against a fixture bundle', () => {
 		it.each([
 			['an ordinary file', 'workspaces/proj/sub/notes.md', 'workspaces/other/notes.md'],
 			['.mcp.json', 'workspaces/proj/sub/.mcp.json', 'workspaces/other/.mcp.json'],
-			['cue.yaml', 'workspaces/proj/sub/.maestro/cue.yaml', undefined],
 		])(
 			'refuses two entries that resolve to one target in nested folders (%s)',
 			async (_label, first, second) => {
@@ -955,7 +954,7 @@ describe('importCueBundle against a fixture bundle', () => {
 				const extra: Record<string, string> = {
 					[first]: first.endsWith('.mcp.json') ? mcp : 'x',
 				};
-				if (second) extra[second] = second.endsWith('.mcp.json') ? mcp : 'y';
+				extra[second] = second.endsWith('.mcp.json') ? mcp : 'y';
 				const error = await refusedAll(
 					options(withOther(extra), {
 						workspaces: { proj: projRoot, other: path.join(projRoot, 'sub') },
@@ -963,10 +962,21 @@ describe('importCueBundle against a fixture bundle', () => {
 				);
 				expect(error.code).toBe('INVALID_OPTIONS');
 				expect(error.message).toContain(first);
-				expect(error.message).toContain(second ?? OTHER_CUE);
+				expect(error.message).toContain(second);
 				expect([...(error.details.workspaces as string[])].sort()).toEqual(['other', 'proj']);
 			}
 		);
+
+		it('refuses a cue.yaml entry that the manifest does not declare, even one that would land on another workspace cue.yaml', async () => {
+			fs.mkdirSync(path.join(projRoot, 'sub'));
+			const error = await refusedAll(
+				options(withOther({ 'workspaces/proj/sub/.maestro/cue.yaml': 'x' }), {
+					workspaces: { proj: projRoot, other: path.join(projRoot, 'sub') },
+				})
+			);
+			expect(error.code).toBe('BUNDLE_INVALID');
+			expect(error.message).toContain('workspaces/proj/sub/.maestro/cue.yaml');
+		});
 
 		it('refuses two workspaces whose Claude memory lands in the same folder', async () => {
 			// Claude encodes every non-alphanumeric character as "-", so these share a memory folder.
@@ -1003,6 +1013,82 @@ describe('importCueBundle against a fixture bundle', () => {
 			expect(error.code).toBe('BUNDLE_INVALID');
 			expect(error.message).toContain('workspaces/proj/maestro-cue.yaml');
 		});
+	});
+
+	describe('paths a bundle may not write', () => {
+		it('refuses a bundle that plants a git hook, even one it marks executable, and writes nothing', async () => {
+			const error = await refused(
+				options({
+					files: (files) =>
+						files.set('workspaces/proj/.git/hooks/pre-commit', '#!/bin/sh\ntouch pwned\n'),
+					manifest: (m) => {
+						for (const file of m.files) {
+							if (file.path.includes('/.git/')) file.executable = true;
+						}
+					},
+				})
+			);
+			expect(error.code).toBe('BUNDLE_INVALID');
+			expect(error.message).toContain('git-metadata-path');
+			expect(error.message).toContain('workspaces/proj/.git/hooks/pre-commit');
+			expect(fs.existsSync(path.join(projRoot, '.git'))).toBe(false);
+		});
+
+		it('refuses a cue.yaml that is not the declared one, so it cannot skip the shell-command review', async () => {
+			const error = await refused(
+				options({
+					manifest: (m) => {
+						delete m.workspaces[0].cueConfig;
+					},
+				})
+			);
+			expect(error.code).toBe('BUNDLE_INVALID');
+			expect(error.message).toContain('maestro-path-not-owned');
+			expect(error.message).toContain(FIXTURE_CUE_PATH);
+			expect(fs.existsSync(path.join(projRoot, '.maestro'))).toBe(false);
+		});
+
+		/** Marks every `.sh` entry and the `pre-commit` hook-like file executable in the manifest. */
+		const markScriptsExecutable = {
+			files: (files: Map<string, string>) => {
+				files.set('workspaces/proj/.claude/skills/review/check.sh', '#!/bin/sh\necho ok\n');
+				files.set('workspaces/proj/.grok/skills/triage/run.sh', '#!/bin/sh\necho ok\n');
+				files.set('workspaces/proj/.agents/skills/lint/run.sh', '#!/bin/sh\necho ok\n');
+				files.set('workspaces/proj/scripts/deploy.sh', '#!/bin/sh\necho hi\n');
+				files.set('workspaces/proj/.githooks/pre-commit', '#!/bin/sh\necho hi\n');
+			},
+			manifest: (m: CueBundleManifest) => {
+				for (const file of m.files) {
+					if (file.path.endsWith('.sh') || file.path.endsWith('/pre-commit'))
+						file.executable = true;
+				}
+			},
+		};
+
+		it('says which executable marks it ignored, and none for a skill script', async () => {
+			const plan = await planCueBundleImport(options(markScriptsExecutable));
+			expect(plan.warnings).toEqual(
+				expect.arrayContaining([
+					expect.stringContaining('workspaces/proj/scripts/deploy.sh is marked executable'),
+					expect.stringContaining('workspaces/proj/.githooks/pre-commit is marked executable'),
+				])
+			);
+			expect(plan.warnings.filter((w) => w.includes('is marked executable'))).toHaveLength(2);
+		});
+
+		// Windows reports no executable bits on any file.
+		it.skipIf(process.platform === 'win32')(
+			'sets the executable bit on a skill script and on nothing else',
+			async () => {
+				await importCueBundle(options(markScriptsExecutable));
+				const bits = (rel: string) => fs.statSync(path.join(projRoot, rel)).mode & 0o111;
+				expect(bits('.claude/skills/review/check.sh')).not.toBe(0);
+				expect(bits('.grok/skills/triage/run.sh')).not.toBe(0);
+				expect(bits('.agents/skills/lint/run.sh')).not.toBe(0);
+				expect(bits('scripts/deploy.sh')).toBe(0);
+				expect(bits('.githooks/pre-commit')).toBe(0);
+			}
+		);
 	});
 
 	describe('provider binary paths', () => {

@@ -52,31 +52,89 @@ export { corruptStorePath };
  * memory. Only if BOTH fail is the document actually at risk, and that is
  * logged as an error rather than swallowed.
  *
+ * Exported for a plain JSON file that is not an `electron-store` (the prompt
+ * manager's `core-prompts-customizations.json`) and so has no `deserialize` hook.
+ *
  * @returns the sidecar path when the document was preserved, otherwise null
  */
-function quarantineCorruptStore(storePath: string, contents: string): string | null {
-	const sidecarPath = corruptStorePath(storePath);
+/** Append a numeric suffix (`-2`, `-3`, ...) before the extension when `basePath` already exists. */
+function sidecarCandidate(basePath: string, attempt: number): string {
+	if (attempt === 1) return basePath;
+	const ext = path.extname(basePath);
+	return `${basePath.slice(0, basePath.length - ext.length)}-${attempt}${ext}`;
+}
 
-	try {
-		fs.renameSync(storePath, sidecarPath);
-		return sidecarPath;
-	} catch (renameErr) {
+export function quarantineCorruptStore(storePath: string, contents: string): string | null {
+	const baseSidecarPath = corruptStorePath(storePath);
+	const MAX_ATTEMPTS = 100;
+
+	// Prefer moving the original file without clobbering an existing sidecar
+	// created in the same second: `linkSync` fails with EEXIST if the destination
+	// already exists, so two corruptions in one second each keep their own copy.
+	let renameErr: unknown;
+	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+		const candidate = sidecarCandidate(baseSidecarPath, attempt);
+		try {
+			fs.linkSync(storePath, candidate);
+			try {
+				fs.unlinkSync(storePath);
+				return candidate;
+			} catch (unlinkErr) {
+				// A hard link shares the same inode as `storePath`; if removing the
+				// original fails, a later write to `storePath` would overwrite the
+				// sidecar too. Remove the link and fall through to an independent copy.
+				try {
+					fs.unlinkSync(candidate);
+				} catch {
+					// Best-effort cleanup of the unused hard link.
+				}
+				renameErr = unlinkErr;
+				break;
+			}
+		} catch (err) {
+			const code = (err as NodeJS.ErrnoException).code;
+			if (code === 'EEXIST') continue;
+			// Volumes that disallow hard links (FAT/exFAT/network mounts) fall back
+			// to rename only when the destination does not already exist.
+			if (!fs.existsSync(candidate)) {
+				try {
+					fs.renameSync(storePath, candidate);
+					return candidate;
+				} catch (rErr) {
+					renameErr = rErr;
+					break;
+				}
+			}
+			renameErr = err;
+			break;
+		}
+	}
+
+	if (renameErr) {
 		logger.warn(
 			`Could not rename unreadable store ${storePath}: ${(renameErr as Error).message}. Writing a copy instead.`,
 			LOG_CONTEXT
 		);
 	}
 
-	try {
-		fs.writeFileSync(sidecarPath, contents, 'utf-8');
-		return sidecarPath;
-	} catch (writeErr) {
-		logger.error(
-			`Could not preserve unreadable store ${storePath}: ${(writeErr as Error).message}. The file is left in place.`,
-			LOG_CONTEXT
-		);
-		return null;
+	let lastWriteErr: unknown;
+	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+		const candidate = sidecarCandidate(baseSidecarPath, attempt);
+		try {
+			fs.writeFileSync(candidate, contents, { encoding: 'utf-8', flag: 'wx' });
+			return candidate;
+		} catch (writeErr) {
+			if ((writeErr as NodeJS.ErrnoException).code === 'EEXIST') continue;
+			lastWriteErr = writeErr;
+			break;
+		}
 	}
+
+	logger.error(
+		`Could not preserve unreadable store ${storePath}: ${((lastWriteErr ?? renameErr) as Error)?.message ?? 'sidecar destination exhausted'}. The file is left in place.`,
+		LOG_CONTEXT
+	);
+	return null;
 }
 
 /**

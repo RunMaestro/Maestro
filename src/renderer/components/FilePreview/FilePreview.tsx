@@ -269,6 +269,19 @@ export const FilePreview = React.memo(
 		// Initialize from file.content so hasChanges isn't a false positive on first render
 		// (effect below keeps it in sync when the file changes).
 		const [internalEditContent, setInternalEditContent] = useState(file?.content ?? '');
+		// The file + session + SSH host that text was typed for. `file` changes under
+		// a mounted preview (Back, Forward, another tab, or switching sessions that
+		// happen to open the same path), and a draft typed for one file must never be
+		// read as the text of the next: Save would write it over that file. Reset
+		// during render, before paint, so no frame shows the old file's text as this
+		// one's. The content effect below cannot do this alone: it skips an EMPTY file,
+		// which left the previous file's text in place as unsaved changes.
+		const editOwnerKey = `${sessionId ?? ''}\0${sshRemoteId ?? ''}\0${file?.path ?? ''}`;
+		const [internalEditOwner, setInternalEditOwner] = useState(editOwnerKey);
+		if (editOwnerKey !== internalEditOwner) {
+			setInternalEditOwner(editOwnerKey);
+			setInternalEditContent(file?.content ?? '');
+		}
 		// Computed edit content - prefer external if provided
 		const editContent = externalEditContent ?? internalEditContent;
 		// Wrapper to update both internal state and notify parent
@@ -2754,12 +2767,10 @@ export const FilePreview = React.memo(
 						</div>
 					) : isEditableText && markdownEditMode ? (
 						// Edit mode - CodeMirror 6 editor for any text file.
-						// Key on file path so switching files remounts the editor -
-						// keeps each file's undo history isolated (the previous
-						// textarea-based implementation got that "for free" since
-						// changing value reset the input).
+						// Key on editOwnerKey (session + SSH remote + file path) so switching
+						// files or sessions remounts the editor and isolates undo history.
 						<MarkdownEditor
-							key={file.path}
+							key={editOwnerKey}
 							ref={editorRef}
 							value={editContent}
 							onChange={setEditContent}

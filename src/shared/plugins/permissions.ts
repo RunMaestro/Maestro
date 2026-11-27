@@ -279,11 +279,14 @@ export interface PermissionRequest {
 	capability: PluginCapability;
 	/**
 	 * Optional narrowing scope. For path capabilities this is a directory the
-	 * plugin may touch; for net it is a host (or host suffix). Absent means the
-	 * plugin asks for the unscoped (broadest) form, which the consent UI must
-	 * present as such. For allowlist capabilities the scope is a comma-separated
-	 * list of EXACT names (agent ids / host-blessed binary names) and is
-	 * REQUIRED - an unscoped act-verb request is a wildcard and is rejected.
+	 * plugin may touch; for net it is a host (or host suffix). For
+	 * `shell:openExternal` it is a host, or a `file:` URL (`file:///abs/dir`,
+	 * `file:` for every local file), the only scope that lets it open a local
+	 * file. Absent means the plugin asks for the unscoped (broadest) form, which
+	 * the consent UI must present as such. For allowlist capabilities the scope
+	 * is a comma-separated list of EXACT names (agent ids / host-blessed binary
+	 * names) and is REQUIRED - an unscoped act-verb request is a wildcard and is
+	 * rejected.
 	 */
 	scope?: string;
 	/** Optional human-readable justification shown at the consent prompt. */
@@ -430,6 +433,46 @@ function hostScopeCovers(scope: string, target: string): boolean {
 	return t === s || t.endsWith(`.${s}`);
 }
 
+/** Is a host-kind target a `file:` URL (`shell.openExternal` on a local file)?
+ * A hostname never starts with `file:`, so the two cannot be confused. */
+function isFileUrlTarget(target: string): boolean {
+	return /^file:/i.test(target);
+}
+
+/** The decoded path of a local `file:` URL (no host), or null for anything
+ * else: another scheme, a host, an encoded separator (`%2F`, `%5C`), a
+ * malformed escape, or not a URL at all. */
+function localFileUrlPath(value: string): string | null {
+	let parsed: URL;
+	try {
+		parsed = new URL(value);
+	} catch {
+		return null;
+	}
+	if (parsed.protocol !== 'file:' || parsed.hostname !== '') return null;
+	// Encoded separators never belong in a local file URL: `%2F` is refused by
+	// `fileURLToPath`, and `%5C` stays a literal backslash on POSIX while
+	// `normalizePath` would otherwise fold it to `/`, confusing a sibling file
+	// `allowed\secret.pdf` with a child `allowed/secret.pdf`.
+	if (/%2f|%5c/i.test(parsed.pathname)) return null;
+	try {
+		return decodeURIComponent(parsed.pathname);
+	} catch {
+		return null;
+	}
+}
+
+/** Does a `file:` scope cover a `file:` target? Both must be local `file:`
+ * URLs; the target's path must be inside the scope's, on a separator boundary.
+ * `file:` alone (`file:///`) covers every local file. A host scope is not a
+ * `file:` URL, so it covers no file. */
+function fileScopeCovers(scope: string, target: string): boolean {
+	const scopePath = localFileUrlPath(scope);
+	const targetPath = localFileUrlPath(target);
+	if (scopePath === null || targetPath === null) return false;
+	return pathScopeCovers(scopePath, targetPath);
+}
+
 /**
  * Characters that could smuggle pattern semantics, confuse audit logs, or split
  * the comma-joined scope string out of an allowlist member name. Allowlist
@@ -513,6 +556,9 @@ function allowlistScopeCovers(scope: string | undefined, target: string): boolea
  * - For path/host capabilities, an unscoped grant permits anything; a scoped
  *   grant permits only matching targets. A request WITHOUT a target against a
  *   scoped grant is denied (the broker must always pass the concrete target).
+ *   One exception: a host capability's `file:` target (`shell.openExternal`
+ *   on a local file) is permitted only by a grant whose scope is a `file:` URL
+ *   that contains it, never by the unscoped form or a host scope.
  * - For allowlist capabilities (the Phase-4 act verbs) an unscoped grant is
  *   DENIED (never wildcard), a request without a concrete target is DENIED,
  *   and a scoped grant permits only exact set-membership matches.
@@ -545,6 +591,12 @@ export function isPermitted(
 			// Never wildcard: an unscoped act-verb grant and a target-less call
 			// are both denied; only an exact named member matches.
 			if (target !== undefined && allowlistScopeCovers(grant.scope, target)) return true;
+			continue;
+		}
+		if (scopeKind === 'host' && target !== undefined && isFileUrlTarget(target)) {
+			// A local file is not a host. Neither the broad (unscoped) form nor a
+			// host scope covers one: only a grant that names a `file:` scope does.
+			if (grant.scope && fileScopeCovers(grant.scope, target)) return true;
 			continue;
 		}
 		if (!grant.scope) return true; // unscoped grant = broadest

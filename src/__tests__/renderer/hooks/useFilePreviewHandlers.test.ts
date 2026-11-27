@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useFilePreviewHandlers } from '../../../renderer/hooks/mainPanel/useFilePreviewHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -641,6 +641,127 @@ describe('useFilePreviewHandlers', () => {
 
 			expect(mockSaveFile).not.toHaveBeenCalled();
 			expect(mockWriteFile).not.toHaveBeenCalled();
+		});
+	});
+
+	// Unsaved edits are typed for ONE file. The draft once rode along when the tab
+	// went Back to another file, and Cmd+S then wrote it over that file. The tab now
+	// remembers which file the draft is for, and a save over any other file is refused.
+	describe('a draft typed for another file', () => {
+		const A = '/test/project/src/a.ts';
+		const B = '/test/project/src/b.ts';
+
+		afterEach(() => {
+			// The store is shared across this file: leave no draft for the next test.
+			useSessionStore.setState({ sessions: [] } as never);
+		});
+
+		/** The hook over a tab on `path` whose draft was typed for `draftFor`. */
+		const renderSave = (path: string, draftFor: string | undefined) => {
+			const tab = makeFileTab({
+				id: 'file-1',
+				path,
+				name: 'b',
+				content: 'b on disk',
+				editContent: 'text typed in a',
+				editContentPath: draftFor,
+			});
+			useSessionStore.setState({
+				sessions: [makeSession({ filePreviewTabs: [tab] } as Partial<Session>)],
+			} as never);
+			const onEditContent = vi.fn();
+			const hook = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: makeSession(),
+					activeFileTabId: 'file-1',
+					activeFileTab: tab,
+					onFileTabEditContentChange: onEditContent,
+				})
+			);
+			return { ...hook, onEditContent };
+		};
+
+		it('refuses to write it over the file now on screen', async () => {
+			// What Back used to leave behind: the tab shows b.ts, the draft is a.ts's.
+			const { result, onEditContent } = renderSave(B, A);
+
+			await act(async () => {
+				await expect(result.current.handleFilePreviewSave(B, 'text typed in a')).rejects.toThrow(
+					'These edits were made in "a.ts", not in "b.ts". Nothing was saved.'
+				);
+			});
+
+			// Refused before anything else: no existence check, no dialog, no write,
+			// and the tab keeps what it had.
+			expect(mockStat).not.toHaveBeenCalled();
+			expect(mockSaveFile).not.toHaveBeenCalled();
+			expect(mockWriteFile).not.toHaveBeenCalled();
+			expect(onEditContent).not.toHaveBeenCalled();
+			expect(recordJourney).not.toHaveBeenCalled();
+		});
+
+		it('writes it over the file it was typed for', async () => {
+			const { result, onEditContent } = renderSave(A, A);
+
+			await act(async () => {
+				await result.current.handleFilePreviewSave(A, 'text typed in a');
+			});
+
+			expect(mockWriteFile).toHaveBeenCalledWith(A, 'text typed in a', undefined);
+			expect(onEditContent).toHaveBeenCalledWith(
+				'file-1',
+				undefined,
+				'text typed in a',
+				expect.any(Number)
+			);
+		});
+
+		it('trusts a draft that predates the record of its file', async () => {
+			const { result } = renderSave(B, undefined);
+
+			await act(async () => {
+				await result.current.handleFilePreviewSave(B, 'text typed in a');
+			});
+
+			expect(mockWriteFile).toHaveBeenCalledWith(B, 'text typed in a', undefined);
+		});
+
+		it('names an untitled tab in the refusal', async () => {
+			const { result } = renderSave(A, '');
+
+			await act(async () => {
+				await expect(result.current.handleFilePreviewSave(A, 'text typed in a')).rejects.toThrow(
+					'These edits were made in an untitled file, not in "a.ts". Nothing was saved.'
+				);
+			});
+
+			expect(mockWriteFile).not.toHaveBeenCalled();
+		});
+
+		it('does not hold back a save when the tab holds no draft', async () => {
+			// A name left behind by a draft that is gone must not block the next save.
+			const tab = makeFileTab({
+				id: 'file-1',
+				path: B,
+				editContent: undefined,
+				editContentPath: A,
+			});
+			useSessionStore.setState({
+				sessions: [makeSession({ filePreviewTabs: [tab] } as Partial<Session>)],
+			} as never);
+			const { result } = renderHook(() =>
+				useFilePreviewHandlers({
+					activeSession: makeSession(),
+					activeFileTabId: 'file-1',
+					activeFileTab: tab,
+				})
+			);
+
+			await act(async () => {
+				await result.current.handleFilePreviewSave(B, 'a task ticked in the preview');
+			});
+
+			expect(mockWriteFile).toHaveBeenCalledWith(B, 'a task ticked in the preview', undefined);
 		});
 	});
 });

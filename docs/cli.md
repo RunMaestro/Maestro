@@ -1144,7 +1144,17 @@ maestro-cli playbook <playbook-id> --model opus --effort high
 # Clean orphaned playbooks (for deleted sessions)
 maestro-cli clean playbooks
 maestro-cli clean playbooks --dry-run
+
+# Clean when you deleted every agent on purpose (the agent list is empty)
+maestro-cli clean playbooks --force
 ```
+
+`clean playbooks` removes nothing when it cannot trust the agent list, because a wrong list makes every playbook look orphaned and a removed file does not come back. It stops, prints why, and exits 1 in two cases:
+
+- **No agents found.** Every playbook would look orphaned. This is also what a wrong data folder looks like (check `MAESTRO_USER_DATA`). `--force` overrides this check when you really deleted every agent.
+- **The Storage Location is not in use.** Settings > General names a custom Storage Location whose folder is missing (an unmounted drive, a renamed folder) or refused. `maestro-cli` then reads the agent list from the default data folder, which is empty or out of date, so playbooks of live agents would look orphaned. `--force` does not override this check. Restore the folder, or choose **Use Default** in Settings > General > Storage Location, then run the command again.
+
+`--dry-run` runs the same checks, so a preview never lists playbooks the real run would refuse to remove.
 
 ### Goal-Driven Auto Run
 

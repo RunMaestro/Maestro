@@ -20,6 +20,7 @@ vi.mock('../../main/utils/remote-git', () => ({
 }));
 
 import { resolveMemoryLayout } from '../../main/memory-location';
+import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 
 let tempDir: string;
 
@@ -113,5 +114,53 @@ describe('resolveMemoryLayout', () => {
 			agentId: 'a1',
 		});
 		expect(layout.directoryPath).toBe(path.join(projectPath, 'notes', 'memory'));
+	});
+
+	describe("a repository's autoMemoryDirectory (project .claude/settings.json)", () => {
+		const claudeSession = (projectPath: string, claudeDir: string) => [
+			{
+				id: 'a1',
+				toolType: 'claude-code',
+				projectRoot: projectPath,
+				customEnvVars: { CLAUDE_CONFIG_DIR: claudeDir },
+			},
+		];
+		const writeProjectSetting = (projectPath: string, directory: string) => {
+			fs.mkdirSync(path.join(projectPath, '.claude'), { recursive: true });
+			fs.writeFileSync(
+				path.join(projectPath, '.claude', 'settings.json'),
+				JSON.stringify({ autoMemoryDirectory: directory })
+			);
+		};
+
+		it('is ignored when it points outside the project and the account folder', async () => {
+			const projectPath = path.join(tempDir, 'project');
+			const claudeDir = path.join(tempDir, 'claude-b');
+			fs.mkdirSync(claudeDir, { recursive: true });
+			writeProjectSetting(projectPath, path.join(tempDir, 'elsewhere'));
+			sessions = claudeSession(projectPath, claudeDir);
+			const layout = await resolveMemoryLayout({
+				projectPath,
+				toolType: 'claude-code',
+				agentId: 'a1',
+			});
+			expect(layout.directoryPath).toBe(
+				path.join(claudeDir, 'projects', encodeClaudeProjectPath(projectPath), 'memory')
+			);
+		});
+
+		it('is honored when it stays inside the project', async () => {
+			const projectPath = path.join(tempDir, 'project');
+			const claudeDir = path.join(tempDir, 'claude-b');
+			fs.mkdirSync(claudeDir, { recursive: true });
+			writeProjectSetting(projectPath, 'docs/memory');
+			sessions = claudeSession(projectPath, claudeDir);
+			const layout = await resolveMemoryLayout({
+				projectPath,
+				toolType: 'claude-code',
+				agentId: 'a1',
+			});
+			expect(layout.directoryPath).toBe(path.join(projectPath, 'docs', 'memory'));
+		});
 	});
 });

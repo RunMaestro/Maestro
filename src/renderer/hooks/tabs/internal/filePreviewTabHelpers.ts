@@ -142,6 +142,38 @@ export function createUntitledFileTab(): FilePreviewTab {
 	};
 }
 
+/**
+ * The file a tab's unsaved edits are typed for once its draft becomes `next`.
+ *
+ * A draft belongs to ONE file, but `tab.path` can move under it (Back, Forward, a
+ * breadcrumb jump), and Save then writes the draft over whichever file is on
+ * screen. So the draft carries its file's name: the first edit sets it, later
+ * edits keep it, and a cleared draft has none. Read it back with
+ * `draftWrittenElsewhere()`.
+ */
+export function nextEditContentPath(
+	tab: Pick<FilePreviewTab, 'path' | 'editContent' | 'editContentPath'>,
+	next: string | undefined
+): string | undefined {
+	if (next === undefined) return undefined;
+	return tab.editContent === undefined ? tab.path : (tab.editContentPath ?? tab.path);
+}
+
+/**
+ * The file a tab's unsaved edits were typed for, when that is NOT `path`, the file
+ * a save is about to write. `undefined` means the write is fine: the edits belong
+ * to `path`, the tab holds none, or they predate `editContentPath` and so are
+ * taken to belong to the tab's own file.
+ */
+export function draftWrittenElsewhere(
+	tab: Pick<FilePreviewTab, 'editContent' | 'editContentPath'> | undefined,
+	path: string
+): string | undefined {
+	if (tab?.editContent === undefined) return undefined;
+	const owner = tab.editContentPath;
+	return owner !== undefined && owner !== path ? owner : undefined;
+}
+
 /** A file's current bytes and modification time, as a preview tab stores them. */
 export interface FilePreviewDiskContent {
 	content: string;

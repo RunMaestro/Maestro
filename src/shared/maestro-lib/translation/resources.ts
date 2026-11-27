@@ -151,6 +151,12 @@ export async function collectTranslationResources(
 			identity.accountRoot,
 			identity.memoryProjectRoot
 		);
+		for (const ignored of memory.ignored)
+			limitations.push({
+				code: 'project-memory-directory-ignored',
+				severity: 'warning',
+				message: `${path.relative(identity.projectRoot, ignored.settingsPath).replace(/\\/g, '/')} sets autoMemoryDirectory to ${ignored.directory}, which resolves to ${ignored.resolvedPath}, outside the project and the Claude account folder. A repository setting may only name a folder inside one of them, so Maestro ignored it.`,
+			});
 		if (memory.source === 'account')
 			limitations.push({
 				code: 'account-memory-scope',
@@ -257,6 +263,26 @@ export async function collectTranslationResources(
 				severity: 'block',
 				message:
 					'A selected resource directory resolves to an account home or its parent. Account-wide import is prohibited.',
+			});
+			continue;
+		}
+		if (
+			!managedDirectory &&
+			root.scope === 'project' &&
+			root.kind === 'memory' &&
+			!isPathAtOrUnderRoot(
+				process.platform === 'win32' ? realRoot.replace(/\\/g, '/') : realRoot,
+				process.platform === 'win32' ? realProjectRoot.replace(/\\/g, '/') : realProjectRoot
+			) &&
+			!isPathAtOrUnderRoot(
+				process.platform === 'win32' ? realRoot.replace(/\\/g, '/') : realRoot,
+				process.platform === 'win32' ? realAccountRoot.replace(/\\/g, '/') : realAccountRoot
+			)
+		) {
+			limitations.push({
+				code: 'unsafe-resource-scope',
+				severity: 'block',
+				message: `Project memory directory ${root.prefix} resolves outside both the project and account config roots.`,
 			});
 			continue;
 		}

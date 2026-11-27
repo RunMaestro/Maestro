@@ -78,7 +78,10 @@ export interface CueBundleFileEntry {
 	sha256: string;
 	/** Size of the stored bytes. */
 	size: number;
-	/** The source file was executable (a skill's script); import sets the bit again. */
+	/**
+	 * The source file was executable (a skill's script); import sets the bit again, on a file under a
+	 * skill folder only. The manifest is the bundle's own word, so the mark is ignored anywhere else.
+	 */
 	executable?: boolean;
 }
 

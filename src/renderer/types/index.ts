@@ -1178,6 +1178,10 @@ export interface FilePreviewTab {
 	searchQuery: string; // Preserved search query
 	editMode: boolean; // Whether tab was in edit mode
 	editContent: string | undefined; // Unsaved edit content (undefined if no pending changes)
+	// The file `editContent` was typed for. Written with the draft by `nextEditContentPath()` and
+	// read only while a draft exists: Save refuses to write a draft anywhere else. A draft saved
+	// before this field existed has none and is taken to belong to `path`.
+	editContentPath?: string;
 	createdAt: number; // Timestamp for ordering
 	// When the tab started showing its current path (ms). Differs from createdAt
 	// once an open replaces the file in this tab. The User Journey dwell time on

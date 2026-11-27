@@ -313,6 +313,19 @@ describe('collectClaudeAssets', () => {
 		);
 	});
 
+	it("leaves a skill's own .git out, since git metadata never travels", () => {
+		write('.claude/skills/a/SKILL.md', 'a');
+		write('.claude/skills/a/.git/config', '[core]\n');
+		write('.claude/skills/a/.git/hooks/pre-commit', '#!/bin/sh\necho hi\n');
+		write('.claude/skills/a/scripts/check.sh', '#!/bin/sh\necho ok\n');
+		const result = collect();
+		expect(result.files.map((f) => f.archivePath)).toEqual([
+			'workspaces/proj/.claude/skills/a/SKILL.md',
+			'workspaces/proj/.claude/skills/a/scripts/check.sh',
+		]);
+		expect(result.assets?.skills).toEqual(['a']);
+	});
+
 	it('leaves out an unreadable .mcp.json, with a warning', () => {
 		write('.claude/skills/a/SKILL.md', 'a');
 		write('.mcp.json', '{ not json');

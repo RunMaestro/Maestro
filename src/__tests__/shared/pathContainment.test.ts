@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isPathInsideRoot, normalizeRootRelativePath } from '../../shared/pathContainment';
+import {
+	foldPathSegment,
+	hasGitMetadataSegment,
+	isPathInsideRoot,
+	normalizeRootRelativePath,
+} from '../../shared/pathContainment';
 
 describe('normalizeRootRelativePath', () => {
 	it.each([
@@ -75,5 +80,74 @@ describe('isPathInsideRoot', () => {
 		expect(isPathInsideRoot('../a.md')).toBe(false);
 		expect(isPathInsideRoot('/etc/passwd')).toBe(false);
 		expect(isPathInsideRoot('C:\\Windows')).toBe(false);
+	});
+});
+
+describe('foldPathSegment', () => {
+	it.each([
+		['.git', '.git'],
+		['.GIT', '.git'],
+		['.Git', '.git'],
+		['.git.', '.git'],
+		['.git ', '.git'],
+		['.git. .', '.git'],
+		['.git::$INDEX_ALLOCATION', '.git'],
+		['.git:stream', '.git'],
+		['Prompts', 'prompts'],
+		['prompts', 'prompts'],
+		['notes.md', 'notes.md'],
+		['a.b', 'a.b'],
+		['', ''],
+	])('folds %j to %j', (input, expected) => {
+		expect(foldPathSegment(input)).toBe(expected);
+	});
+
+	// The special characters are built from code points so this file stays ASCII.
+	it.each([
+		['a zero-width non-joiner', `.g${String.fromCodePoint(0x200c)}it`, '.git'],
+		['a left-to-right mark', `.${String.fromCodePoint(0x200e)}git`, '.git'],
+		['a right-to-left override', `.git${String.fromCodePoint(0x202e)}`, '.git'],
+		['a byte order mark', `${String.fromCodePoint(0xfeff)}.git`, '.git'],
+		['a long s, which APFS folds to s', `.mae${String.fromCodePoint(0x17f)}tro`, '.maestro'],
+	])('folds %s away', (_label, input, expected) => {
+		expect(foldPathSegment(input)).toBe(expected);
+	});
+});
+
+describe('hasGitMetadataSegment', () => {
+	it.each([
+		'.git',
+		'.git/hooks/pre-commit',
+		'workspaces/proj/.git/config',
+		'sub/.GIT/config',
+		'a/.Git/hooks/x',
+		'a\\.git\\hooks\\x',
+		'a/.git./config',
+		'a/.git /config',
+		'.git::$INDEX_ALLOCATION/hooks/x',
+		'GIT~1/hooks/x',
+		'a/git~1/config',
+	])('finds git metadata in %j', (input) => {
+		expect(hasGitMetadataSegment(input)).toBe(true);
+	});
+
+	it('finds a name with a zero-width character hidden in it', () => {
+		expect(
+			hasGitMetadataSegment(`workspaces/proj/.g${String.fromCodePoint(0x200d)}it/hooks/x`)
+		).toBe(true);
+	});
+
+	it.each([
+		'',
+		'README.md',
+		'.github/workflows/ci.yml',
+		'.gitignore',
+		'.gitattributes',
+		'src/git.ts',
+		'a/.git-hooks/x',
+		'sub.git/x',
+		'workspaces/proj/.maestro/prompts/tick.md',
+	])('does not flag %j', (input) => {
+		expect(hasGitMetadataSegment(input)).toBe(false);
 	});
 });

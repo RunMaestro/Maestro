@@ -249,6 +249,8 @@ Click **Reset to Default** on any prompt to restore the bundled version. This re
 
 Customizations are stored in a separate file (`core-prompts-customizations.json` in your Maestro data directory) and survive app updates. Only prompts you've explicitly edited are stored - everything else uses the bundled defaults.
 
+If that file is damaged (for example, a crash cut a write short), Maestro still starts. It moves the file aside as `core-prompts-customizations.corrupt-<date>-<time>.json` in the same folder, writes a warning to the System Log Viewer, and uses the bundled defaults. Your edits are in the moved file: copy the prompt text back into **Settings → Maestro Prompts**.
+
 ## Tips
 
 - **Start small**: Try editing the `maestro-system-prompt` first - it's the system context injected into every agent session and has the highest impact.

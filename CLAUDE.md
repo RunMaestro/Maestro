@@ -96,11 +96,14 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
 - **Empty transcript creation evidence:** `newEmptyTranscript()`, `consumeEmptyTranscriptCreation()` in `src/shared/sessionTranscript.ts`
 - **An untrusted relative path that must stay inside a root:** `normalizeRootRelativePath()`, `isPathInsideRoot()` in `src/shared/pathContainment.ts`
-- **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
+- **A path from outside that must not reach `.git` (or any name a file system folds):** `hasGitMetadataSegment()`, `foldPathSegment()` in `src/shared/pathContainment.ts`
+- **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()` in `src/main/utils/real-path-containment.ts`; `realpathThroughAncestor()` in `src/shared/pathUtils.ts`
+- **A performance trace path a caller hands in (Feedback attach, discard):** `checkFeedbackTraceBundle()`, `feedbackTraceBundlePath()`, `recordFeedbackTraceBundle()`, `forgetFeedbackTraceBundle()` in `src/main/profiling/feedback-trace.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
+- **Opening a caller's local path or `file:` URL with the OS (never launching it):** `openLocalPath()`, `isLaunchableLocalPath()`, `openExternalUrl()` in `src/main/utils/open-local-path.ts`, over `isLaunchableFile()` in `src/shared/fileCategories.ts`
 - **A `file://` URL to a path and back (incl. Windows drives):** `fileUrlToPath(href)`, `pathToFileUrl(path)`, `windowsDrivePathToFileUrl(path)` in `src/renderer/utils/openFileUrl.ts`.
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
 - **A file handed back as a marker instead of its bytes (parquet, SQLite):** `createPreviewMarkerCodec()`, `utf8ToHex()`, `hexToUtf8()` in `src/shared/previewMarker.ts`
@@ -114,6 +117,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **An ssh run that never reached the host (exit 255):** `isSshConnectionFailure()`, `describeSshUnreachable()` in `src/shared/sshConnection.ts`
 - **Telling the user an SSH remote went down:** `noteSshExit()`, `checkSshRemote()`, `noteHostConnection()`, `checkRemoteLink()`, `noteHostedAgentsChanged()` in `src/main/ssh-reachability.ts`; run one-shot remote commands with `execSshCommand()` in `src/main/utils/ssh-command-builder.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
+- **Showing untrusted text a person must approve (hidden characters marked):** `revealHiddenCharacters()` in `src/shared/stringUtils.ts`
 - **Collapsing runs of whitespace to compare two texts:** `collapseWhitespace()` in `src/shared/stringUtils.ts`
 - **Lines added and removed by a save:** `countLineChanges(before, after)` in `src/shared/lineChanges.ts`
 - **Matching error patterns against an agent's exit output:** `stripJsonEventLines()` in `src/shared/agentErrorPatterns.ts`
@@ -134,6 +138,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Main process: stores, persistence, platform
 
 - **Hosting untrusted content in an isolated `<webview>` guest:** `hardenIsolatedGuestSession()`, `hardenIsolatedGuestWebPreferences()`, `attachIsolatedGuestSecurity()`, `isolatedGuestDocument()` in `src/main/utils/isolated-guest.ts`; `isDetachedWebviewError()` in `src/renderer/utils/webviewErrors.ts`
+- **Web permissions on a browser-tab session:** `hardenBrowserTabSession()`, `isBrowserTabPermissionGranted()` in `src/main/app-lifecycle/guest-webview-security.ts`
 - **Whether a Coworking browser op skips the interaction gate and per-call approval:** `isUngatedBrowserOp(kind)`, `UNGATED_BROWSER_OP_KINDS` in `src/shared/coworkingBrowser.ts`
 - **One log entry as one JSON line (`--log-format json`):** `formatJsonLogLine()`, `buildJsonLogLine()`, `JSON_LOG_ID_FIELDS` in `src/shared/jsonLogLine.ts`
 - **A CLI verb that needs the desktop app, when the app is absent:** `exitIfMaestroNotRunning(error, options)` / `failFromError()` in `src/cli/services/session-command.ts`, over `MaestroNotRunningError`
@@ -142,12 +147,12 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Reading or writing `maestro-sessions.json` without Electron:** `readSessionsStoreFile(dataDir)`, `writeSessionsStoreFile()` in `src/main/stores/sessions-store-file.ts`
 - **Maestro's data directory, without Electron:** `resolveUserDataDir(options?)`, `assertUserDataDirExists(dir)` in `src/shared/userDataDir.ts`
 - **Electron's userData directory from main code a worker thread also loads:** `getAppUserDataDir()` in `src/main/utils/app-user-data.ts`
-- **Where the synced stores live (custom Storage Location):** `resolveSyncDir(userDataDir)`, `isValidSyncPath()`, `BOOTSTRAP_STORE_FILE` in `src/shared/syncPath.ts`; the CLI's `getSyncDir()` in `src/cli/services/storage.ts`
+- **Where the synced stores live (custom Storage Location):** `resolveSyncDir(userDataDir)`, `isValidSyncPath()`, `BOOTSTRAP_STORE_FILE` in `src/shared/syncPath.ts`; the CLI's `getSyncDir()`, `getSyncDirFallbackReason()` in `src/cli/services/storage.ts`
 - **Deferred main-process store persistence:** `deferStoreWrites()` in `src/main/stores/deferred-writes.ts`, `flushPendingSessionWrites()` in `src/main/stores/instances.ts`
 - **Serving conf `get()` without re-reading the file:** `cacheStoreReads()`, `readDotPath()` in `src/main/stores/cached-reads.ts`
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`
 - **Keeping an agent's file-tree scan out of storage and off the wire:** `withoutFileTreeCache()`, `holdsFileTreeCache()`, `unloadedFileTreeState()` in `src/shared/fileTreeCache.ts`
-- **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
+- **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()`, `quarantineCorruptStore()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
 - **A JSON store file only the main process writes (read once, one queue, atomic replace):** `createJsonStoreFile()` in `src/main/utils/json-store-file.ts`
 - **Whether a SQLite error means the database file is damaged:** `isSqliteCorruptionError()` in `src/shared/sqliteErrors.ts`
 - **Telling a person SQLite found the database busy:** `isSqliteBusyError()` in `src/shared/sqliteErrors.ts`; `reportSqliteBusy()`, `describeSqliteBusy()`, `sqliteBusyMessage()` in `src/main/sqlite/sqlite-connection.ts`
@@ -201,6 +206,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **HTTP request from the main process:** `fetchWithTimeout()`, `isFetchTimeoutError()` in `src/main/utils/fetchWithTimeout.ts` (never a bare `fetch()`)
 - **Async results cached by key for a window (in-flight shared, failures dropped):** `createTtlPromiseCache(ttlMs, keep?, { failureTtlMs }?)` in `src/main/utils/ttl-promise-cache.ts`
 - **A git query the UI polls in the background:** `execGitReadOnly()`, `isGitTimeout()`, `READ_ONLY_GIT_TIMEOUT_MS` in `src/main/utils/remote-git.ts`
+- **A ref or branch a caller hands to git:** `gitRefArgProblem()` in `src/shared/gitUtils.ts` (a caller's path goes after `--`)
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
 - **Yielding to the event loop during long main-process work:** `yieldToEventLoop()` in `src/main/utils/concurrency.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`; renderer-only `isWindowsPlatform()` and siblings in `src/renderer/utils/platformUtils.ts` (never `process.platform` in the renderer)
@@ -210,6 +216,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A maestro-cli verb that belongs to an Encore Feature:** `encoreCommand()`, `requireEncore()`, `requireEncoreForOptions()` in `src/cli/utils/encore-gate.ts`
 - **Filing GitHub feedback (check gh, search, +1, submit):** `submitFeedbackConversation()`, `searchFeedbackIssues()` in `src/main/feedback/index.ts`
 - **Writing lifetime counters that must never go down:** `mergeUsagePeaks()` in `src/shared/usagePeaks.ts`, `mergeAutoRunStats()` in `src/shared/autoRunStatsMerge.ts`, enforced by `settings:set` in `src/main/ipc/handlers/persistence.ts`
+- **Launching Maestro from a Playwright spec on a throwaway data directory:** `isolatedLaunchEnv(dataDir)`, `FIRST_RUN_SEEN_SETTINGS` in `e2e/fixtures/isolation.ts` (also exported by `e2e/fixtures/electron-app.ts`; never redirect only `HOME`)
 
 #### Spawning and stopping agents (process, SSH, env, prompts)
 
@@ -236,6 +243,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
 - **Resuming a provider session a background synopsis may still hold:** `awaitSynopsisWriters()` in `src/main/process-manager/utils/synopsisWriterGate.ts` (already called by `process:spawn`; no per-send-path busy check)
 - **A path handed to a REMOTE shell (`cd`, `ls`, `stat` over SSH):** `shellEscapeRemotePath()` in `src/main/utils/shell-escape.ts` (`shellEscape()` stops `~` from expanding)
+- **Template variables in a shell command:** `substituteShellTemplateVariables()`, `ShellTemplateError` in `src/shared/shellTemplateVariables.ts`
 - **SSH connection options (`ssh -o`):** `resolveSshOptions()`, `buildSshOptionArgs()`, `validateSshOption()` in `src/shared/sshOptions.ts`
 - **A one-shot SSH command that must find a binary the user installed:** `wrapRemoteCommandWithPath()` in `src/shared/maestro-lib/launch/ssh-command-builder.ts`
 - **Finding the `maestro-cli host` on an SSH remote (Federation):** `discoverRemoteHost()`, `startRemoteHost()`, `remoteVersionSkew()`, `buildRemoteMaestroCliScript()`, `buildRemoteScriptArgs()` in `src/shared/maestro-lib/client/remote-discovery.ts`
@@ -291,6 +299,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Who SENT this turn (Web Login attribution):** `getActingUser()` in `src/main/web-server/auth/acting-user.ts`; `noteTurnActor()`, `resolveTurnActor()`, `forgetAgentActors()` in `src/main/web-server/auth/turn-attribution.ts`
 - **An agent's effective environment:** `resolveAgentEnvironment()`, `isSecretEnvKey()`, `maskEnvValue()` in `src/shared/agentEnvironment.ts`, rendered by `<EnvVarList>` in `src/renderer/components/ui/EnvVarList.tsx`
 - **Whether a configured env value means "unset":** `isBlankEnvValue(value)`, `isBlankEnvKey(key)` and `stripBlankEnvVars(vars)` in `src/shared/agentEnvironment.ts`
+- **Masking every value of an env record (a support package, a log line):** `maskEnvVarValues(vars)`, `maskEnvRecords(value, key?)`, `isEnvRecord(key, value)` in `src/shared/agentEnvironment.ts`, used by `src/main/debug-package/collectors/settings.ts` and `src/main/ipc/handlers/agents.ts`
 - **Suggesting an env-var NAME:** `suggestEnvVarKeys()`, `PROVIDER_ENV_VAR_SUGGESTIONS`, `withBlankEnvVarRow()` in `src/shared/envVarCatalog.ts`, rendered by `<EnvVarKeyInput>` in `src/renderer/components/shared/EnvVarKeyInput.tsx`
 - **`.env` text for an env-var editor (Advanced mode):** `parseDotEnv()`, `serializeDotEnv()`, `envVarRecordsFingerprint()`, `validateEnvVarEntry()` in `src/shared/dotEnv.ts`, drawn by `<EnvVarsDotEnvInput>` / `<EnvVarsModeToggle>` in `src/renderer/components/shared/EnvVarsDotEnvInput.tsx`
 - **Assembling the prompt, arguments and launch request of a chat turn:** `assembleTurn()` in `src/shared/maestro-lib/turns/assemble.ts`
@@ -305,7 +314,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Native Pianola question cores:** `extractQuestionCores()` in `src/shared/pianola/pianola-awaiting-detector.ts`
 
-- **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
+- **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()`, `discoverClaudeMemoryRoot()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
 - **Discovering a project's Claude Code skills:** `discoverClaudeSkills()` in `src/shared/maestro-lib/agents/claude-skills.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
@@ -384,6 +393,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Closing a tab while the unread filter is on:** `closeTab()`'s third argument is an OVERRIDE; omit it and `src/renderer/utils/tabHelpers/index.ts` reads `uiStore.showUnreadOnly`
 - **Ending a turn with no process exit:** `settleTabThinkingState(session, tabId)` in `src/renderer/utils/tabHelpers/index.ts`
 - **Never leaving an agent with an empty tab strip:** `ensureAgentHasVisibleTab()`, `agentHasVisibleTab()`, `createBlankAiTab()` in `src/renderer/utils/unifiedTabOrderUtils.ts`
+- **Which file a file tab's unsaved edits belong to:** `nextEditContentPath()`, `draftWrittenElsewhere()` in `src/renderer/hooks/tabs/internal/filePreviewTabHelpers.ts`, over `FilePreviewTab.editContentPath`
 - **Handing the agent back when a shell command or a CLI playbook ends:** `settleAgentStateFromTabs(session)` in `src/renderer/utils/tabHelpers` (never gate on `aiPid`, which per-tab agents leave at 0 or -1)
 - **Agent state from tab states another client reported:** `syncAgentStateToTabs(session)` in `src/renderer/utils/tabHelpers` (the web-desktop inventory sync)
 - **A tab's own process produced output:** `markTabBusyFromOutput(session, tabId)` in `src/renderer/utils/tabHelpers`, via `noteLiveTabOutput()` in `src/renderer/hooks/agent/internal/helpers/liveTabOutput.ts` (check the tab first; write only when it is not already busy)
@@ -592,6 +602,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Adding a control to the Left Bar header:** three zones (identity, indicators, menu); a status control goes in the CENTER band and the wordmark never truncates (`showWordmark` in `SessionList.tsx`)
 - **Color math and contrast:** `readableTextOn()`, `isReadableOn()`, `contrastRatio()`, `blendColors()`, `transparentize()`, `adjustBrightness()`, `hexToRgb()` in `src/shared/colorContrast.ts`
 - **Diagram labels on fills the AUTHOR chose:** `repairDiagramLabelContrast(svg)` in `src/renderer/utils/diagramLabelContrast.ts`, over `cssColorToHex()` in `src/shared/colorContrast.ts`
+- **Whether a string is a CSS color (lenient, or safe to write raw into CSS text):** `isValidCssColor()`, `isStrictCssColor()`, `strictCssColors()` in `src/shared/cssColor.ts`
 - **Naming the OS file manager in copy:** `getFileManagerName()`, `fileManagerName()`, `getRevealLabel()`, `getOpenInLabel()` in `src/renderer/utils/platformUtils.ts`
 - **Rendering raw terminal output (ANSI):** `useAnsiConverter(theme)` in `src/renderer/hooks/ui/useAnsiConverter.ts`, then `getCachedAnsiHtml()` in `src/renderer/utils/textProcessing.ts`
 - **A SQL editor with completion from a SQLite database:** `buildSqliteSqlLanguage()` in `src/renderer/components/SqliteViewer/sqliteSqlLanguage.ts`, via `<MarkdownEditor languageExtension>`

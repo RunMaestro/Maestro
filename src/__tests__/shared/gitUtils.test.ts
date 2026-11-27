@@ -18,6 +18,7 @@ import {
 	parseWorktreePathForBranch,
 	sanitizeGitBranchName,
 	formatGitChangeSummary,
+	gitRefArgProblem,
 } from '../../shared/gitUtils';
 
 describe('gitUtils', () => {
@@ -494,6 +495,49 @@ describe('gitUtils', () => {
 			expect(
 				formatGitChangeSummary({ fileCount: 0, additions: 0, deletions: 0, modified: 0 })
 			).toBe('No uncommitted changes');
+		});
+	});
+
+	describe('gitRefArgProblem', () => {
+		it.each([
+			'main',
+			'feature/new-feature',
+			'v1.0.0',
+			'abc1234',
+			'HEAD',
+			'HEAD~1',
+			'^main',
+			'@{-1}',
+			':/fix',
+			'origin/main...HEAD',
+			// A dash later in the name is ordinary.
+			'fix-the-bug',
+		])('accepts %s', (ref) => {
+			expect(gitRefArgProblem(ref)).toBeNull();
+		});
+
+		it.each(['--output=/tmp/x', '-f', '-c', '-', '--orphan=x', '-1'])(
+			'refuses %s, which git would read as an option',
+			(ref) => {
+				expect(gitRefArgProblem(ref)).toBe(
+					`Invalid ref: ${ref} (it starts with "-", so git would read it as an option)`
+				);
+			}
+		);
+
+		it('refuses a value that is not a non-empty string', () => {
+			for (const value of ['', undefined, null, 42, ['main'], { ref: 'main' }]) {
+				expect(gitRefArgProblem(value)).toBe('Invalid ref: expected a non-empty string');
+			}
+		});
+
+		it('names the argument with the label the caller gives', () => {
+			expect(gitRefArgProblem('--output=/tmp/x', 'revision')).toBe(
+				'Invalid revision: --output=/tmp/x (it starts with "-", so git would read it as an option)'
+			);
+			expect(gitRefArgProblem('', 'branch name')).toBe(
+				'Invalid branch name: expected a non-empty string'
+			);
 		});
 	});
 });

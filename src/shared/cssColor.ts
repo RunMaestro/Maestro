@@ -10,6 +10,12 @@
  *
  * Supported forms: hex (#RGB, #RGBA, #RRGGBB, #RRGGBBAA), rgb()/rgba(),
  * hsl()/hsla(), and CSS named colors (CSS Color Module Level 4).
+ *
+ * Two checks with two jobs. `isValidCssColor()` asks "does this look like a
+ * color" for input a person typed (it trims, and it is loose inside a color
+ * function). `isStrictCssColor()` asks "can this be written RAW into CSS text"
+ * for a value someone else supplied, such as a plugin theme color that ends up
+ * in a `<style>` block: an exact grammar with nothing around it.
  */
 
 const HEX_COLOR = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
@@ -188,4 +194,85 @@ export function isValidCssColor(color: unknown): boolean {
 	if (RGB_COLOR.test(value)) return true;
 	if (HSL_COLOR.test(value)) return true;
 	return CSS_NAMED_COLORS.has(value.toLowerCase());
+}
+
+// Pieces of the strict grammar. A number is an optional sign and digits with an
+// optional fraction, or a bare fraction (`255`, `-0.5`, `.25`): no exponent, no
+// unit. A hue may also carry `deg`. Arguments are separated by spaces and tabs
+// only, so a line break never passes.
+const STRICT_NUMBER = String.raw`[+-]?(?:\d+(?:\.\d+)?|\.\d+)`;
+const STRICT_PERCENT = `${STRICT_NUMBER}%`;
+const STRICT_ARG = `${STRICT_NUMBER}%?`;
+const STRICT_HUE = `${STRICT_NUMBER}(?:deg)?`;
+const STRICT_GAP = '[ \\t]';
+const ASCII_LETTERS = /^[A-Za-z]+$/;
+
+/**
+ * `name(a, b, c)` and `name(a, b, c, alpha)` (legacy comma syntax), or
+ * `name(a b c)` and `name(a b c / alpha)` (CSS Color 4 space syntax). Legacy
+ * comma syntax enforces strict CSS Color rules (RGB cannot mix numbers and
+ * percentages; HSL requires percentage saturation and lightness) while modern
+ * space syntax accepts numeric or percentage channels. Anchored, with no nested
+ * repetition, so a test cannot backtrack catastrophically.
+ */
+function strictColorFunction(names: string, commaArgs: string, firstSpace: string): RegExp {
+	const spaceArgs =
+		`${firstSpace}${STRICT_GAP}+${STRICT_ARG}${STRICT_GAP}+${STRICT_ARG}` +
+		`(?:${STRICT_GAP}*/${STRICT_GAP}*${STRICT_ARG})?`;
+	return new RegExp(
+		`^(?:${names})\\(${STRICT_GAP}*(?:${commaArgs}|${spaceArgs})${STRICT_GAP}*\\)$`,
+		'i'
+	);
+}
+
+const STRICT_COMMA = `${STRICT_GAP}*,${STRICT_GAP}*`;
+const STRICT_RGB_COMMA_NUM = `${STRICT_NUMBER}${STRICT_COMMA}${STRICT_NUMBER}${STRICT_COMMA}${STRICT_NUMBER}(?:${STRICT_COMMA}${STRICT_ARG})?`;
+const STRICT_RGB_COMMA_PCT = `${STRICT_PERCENT}${STRICT_COMMA}${STRICT_PERCENT}${STRICT_COMMA}${STRICT_PERCENT}(?:${STRICT_COMMA}${STRICT_ARG})?`;
+const STRICT_HSL_COMMA = `${STRICT_HUE}${STRICT_COMMA}${STRICT_PERCENT}${STRICT_COMMA}${STRICT_PERCENT}(?:${STRICT_COMMA}${STRICT_ARG})?`;
+
+const STRICT_RGB_COLOR = strictColorFunction(
+	'rgba?',
+	`${STRICT_RGB_COMMA_NUM}|${STRICT_RGB_COMMA_PCT}`,
+	STRICT_ARG
+);
+const STRICT_HSL_COLOR = strictColorFunction('hsla?', STRICT_HSL_COMMA, STRICT_HUE);
+
+/**
+ * True only for a color that is safe to write RAW into CSS text (a `<style>`
+ * block, `insertCSS()`), where a looser check lets a value end its declaration
+ * and start rules of its own: `red;} * { background: url(https://...) }`.
+ *
+ * Accepts exactly: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`; `rgb()`, `rgba()`,
+ * `hsl()` or `hsla()` with three numbers or percentages (the hue may carry
+ * `deg`) and an optional alpha, in the comma or the space-and-slash syntax; a
+ * CSS named color, `transparent` or `currentColor`, in ASCII letters of any
+ * case. Anything else is refused: whitespace or a line break around the value,
+ * `;`, `{`, `}`, quotes, backslash escapes, comments, and every other function
+ * (`url()`, `var()`, `expression()`, `color-mix()`, `oklch()`).
+ */
+export function isStrictCssColor(value: unknown): value is string {
+	if (typeof value !== 'string') return false;
+	if (HEX_COLOR.test(value)) return true;
+	// ASCII first: `toLowerCase()` folds some non-ASCII letters to ASCII ones
+	// (the Kelvin sign becomes `k`), which CSS would not.
+	if (ASCII_LETTERS.test(value)) return CSS_NAMED_COLORS.has(value.toLowerCase());
+	return STRICT_RGB_COLOR.test(value) || STRICT_HSL_COLOR.test(value);
+}
+
+/**
+ * A copy of a palette for a writer that splices its colors into CSS text: each
+ * string value that fails `isStrictCssColor()` becomes `''`, so none of it
+ * reaches the CSS. The declaration it sat in is then dropped as invalid, or a
+ * shorthand such as `border` falls back to its default color. Other values (an
+ * optional color left out) are copied as they are. A value set through the
+ * CSSOM (`element.style.color = value`, `setProperty()`) is parsed as a single
+ * value and needs no such guard.
+ */
+export function strictCssColors<T extends object>(colors: T): T {
+	const out = { ...colors };
+	const writable = out as Record<string, unknown>;
+	for (const [key, value] of Object.entries(writable)) {
+		if (typeof value === 'string' && !isStrictCssColor(value)) writable[key] = '';
+	}
+	return out;
 }

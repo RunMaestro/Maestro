@@ -110,6 +110,7 @@ import {
 import type { CodexResetCreditConsumeResult } from '../../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../../shared/authPaths';
 import { rememberableEnvVarKeys, type KnownEnvVarKeys } from '../../../shared/envVarCatalog';
+import { maskEnvRecords } from '../../../shared/agentEnvironment';
 import { customPathsFromAgentConfigs } from '../../agents/agent-config-lookup';
 
 const LOG_CONTEXT = '[AgentDetector]';
@@ -1277,9 +1278,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 				try {
 					const sshCommand = await buildSshCommand(sshConfig, remoteOptions);
+					// The last argument is the remote command line, and `buildSshCommand()` merges this
+					// remote's `remoteEnv` into it as `NAME='value'`. Log the connection arguments and the
+					// bare invocation instead (`remoteCommandLine` carries no env).
 					logger.info(`Executing SSH detection command for '${agentDef.binaryName}'`, LOG_CONTEXT, {
 						command: sshCommand.command,
-						args: sshCommand.args,
+						args: sshCommand.args.slice(0, -1),
+						remoteCommandLine: sshCommand.remoteCommandLine,
 					});
 
 					// Execute with timeout
@@ -1296,23 +1301,30 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 					const result = await Promise.race([resultPromise, timeoutPromise]);
 
+					// When `command -v` exits non-zero with empty stderr, Node's `execFile`
+					// fallback message echoes the full SSH argv (including `remoteEnv`).
+					// Never log that argv echo.
+					const safeStderr = /^Command failed:/i.test(result.stderr)
+						? `SSH detection exited with code ${result.exitCode}`
+						: result.stderr;
 					logger.info(`SSH command result for '${agentDef.binaryName}'`, LOG_CONTEXT, {
 						exitCode: result.exitCode,
 						stdout: result.stdout,
-						stderr: result.stderr,
+						stderr: safeStderr,
 					});
 
-					// Check for SSH connection errors
+					// Check for SSH connection errors using sanitized stderr so Node's
+					// `Command failed: <argv>` fallback cannot leak remoteEnv secrets.
 					let connectionError: string | undefined;
 					if (
-						result.stderr &&
-						(result.stderr.includes('Connection refused') ||
-							result.stderr.includes('Connection timed out') ||
-							result.stderr.includes('No route to host') ||
-							result.stderr.includes('Could not resolve hostname') ||
-							result.stderr.includes('Permission denied'))
+						safeStderr &&
+						(safeStderr.includes('Connection refused') ||
+							safeStderr.includes('Connection timed out') ||
+							safeStderr.includes('No route to host') ||
+							safeStderr.includes('Could not resolve hostname') ||
+							safeStderr.includes('Permission denied'))
 					) {
-						connectionError = result.stderr.trim().split('\n')[0];
+						connectionError = safeStderr.trim().split('\n')[0];
 						logger.warn(
 							`SSH connection error for ${sshConfig.host}: ${connectionError}`,
 							LOG_CONTEXT
@@ -1462,7 +1474,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				const allConfigs = agentConfigsStore.get('configs', {});
 				allConfigs[agentId] = config;
 				agentConfigsStore.set('configs', allConfigs);
-				logger.info(`Updated config for agent: ${agentId}`, CONFIG_LOG_CONTEXT, config);
+				// The log shows in the System Log Viewer and goes to disk with file logging on, so
+				// log a masked copy: `config` itself is what the store holds.
+				logger.info(
+					`Updated config for agent: ${agentId}`,
+					CONFIG_LOG_CONTEXT,
+					maskEnvRecords(config)
+				);
 				return true;
 			}
 		)
@@ -1503,7 +1521,10 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 				allConfigs[agentId][key] = value;
 				agentConfigsStore.set('configs', allConfigs);
-				logger.debug(`Updated config ${key} for agent ${agentId}`, CONFIG_LOG_CONTEXT, { value });
+				// `key` may be `customEnvVars`: mask by the key the value was stored under.
+				logger.debug(`Updated config ${key} for agent ${agentId}`, CONFIG_LOG_CONTEXT, {
+					value: maskEnvRecords(value, key),
+				});
 				return true;
 			}
 		)

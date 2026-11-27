@@ -406,6 +406,7 @@ Remove playbooks for deleted sessions
 | Option      | Description                                          | Default |
 | ----------- | ---------------------------------------------------- | ------- |
 | `--dry-run` | Show what would be removed without actually removing | -       |
+| `--force`   | Remove even when the agent list is empty             | -       |
 | `--json`    | Output as JSON (for scripting)                       | -       |
 
 ## `maestro-cli send <agent-id> <message>`

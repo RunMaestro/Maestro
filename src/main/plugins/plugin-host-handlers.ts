@@ -18,6 +18,7 @@ import { PluginAuthorityError } from './plugin-authority';
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
@@ -1295,8 +1296,27 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			const p = asObject(params);
 			if (typeof p.url !== 'string') throw new Error('url is required');
 			assertBrokerAllowed(deps, pluginId, 'shell.openExternal', p);
+			let targetUrl = p.url;
+			if (/^file:/i.test(targetUrl)) {
+				// Re-authorize the symlink-resolved target: a symlink inside a granted
+				// `file:` scope can point outside it, so resolve to the real path and
+				// check the grant again before handing the resolved URL to the opener.
+				let parsed: URL;
+				try {
+					parsed = new URL(targetUrl);
+				} catch {
+					throw new Error(`Invalid file URL: ${targetUrl}`);
+				}
+				if (parsed.hostname !== '') {
+					throw new Error(`Refused to open a file on another host: ${parsed.hostname}`);
+				}
+				const localPath = fileURLToPath(parsed);
+				const resolvedPath = resolveRealPath(localPath);
+				targetUrl = pathToFileURL(resolvedPath).href;
+				assertBrokerAllowed(deps, pluginId, 'shell.openExternal', { ...p, url: targetUrl });
+			}
 			if (!deps.openExternal) throw new Error('shell.openExternal is unavailable');
-			await deps.openExternal(p.url, p.opts);
+			await deps.openExternal(targetUrl, p.opts);
 			return { ok: true };
 		},
 
