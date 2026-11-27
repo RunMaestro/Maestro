@@ -49,6 +49,12 @@ export interface MirrorTranscriptSlot {
 	 * lands. Display only, like the live turn they came from.
 	 */
 	carryover?: LogEntryRecord[];
+	/**
+	 * The `staleVersion` the turn's end left (`carryover` was set then). A read that started at or
+	 * after it holds the turn's answer, so it ends the carryover even when the slot was marked stale
+	 * again while it ran: otherwise the reply is drawn twice, the live copy and the host's (R8).
+	 */
+	carryoverVersion?: number;
 }
 
 export interface PeerMirrorData {
@@ -265,10 +271,12 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 				settled = bumpHistory(settled, peerId, [event.agentId]);
 				// The turn ended (or events were missed). Keep what it showed on screen until the
 				// re-read lands, so the answer does not blink out and back in.
-				settled = updateSlot(settled, peerId, key, (slot) => ({
-					...markStale(slot),
-					...(before?.entries.length ? { carryover: before.entries } : {}),
-				}));
+				settled = updateSlot(settled, peerId, key, (slot) => {
+					const stale = markStale(slot);
+					return before?.entries.length
+						? { ...stale, carryover: before.entries, carryoverVersion: stale.staleVersion }
+						: stale;
+				});
 			}
 			return settled;
 		}
@@ -364,7 +372,11 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 					loading: false,
 					stale: stillStale,
 				};
-				if (!stillStale) delete next.carryover;
+				// A read that began after the turn ended holds its answer: the live copy goes now.
+				if (!stillStale || staleVersion >= (slot.carryoverVersion ?? Number.POSITIVE_INFINITY)) {
+					delete next.carryover;
+					delete next.carryoverVersion;
+				}
 				return next;
 			});
 		}),

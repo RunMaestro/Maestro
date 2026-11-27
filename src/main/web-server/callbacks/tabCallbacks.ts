@@ -79,7 +79,7 @@ export function registerTabCallbacks(
 		return true;
 	});
 
-	server.setNewTabCallback(async (sessionId: string, background?: boolean) => {
+	server.setNewTabCallback(async (sessionId: string, background?: boolean, tabId?: string) => {
 		logger.info(
 			`[Web→Desktop] New tab callback invoked: session=${sessionId}, background=${background === true}`,
 			'WebServer'
@@ -107,7 +107,8 @@ export function registerTabCallbacks(
 				'remote:newTab',
 				sessionId,
 				responseChannel,
-				background === true
+				background === true,
+				...(tabId ? [tabId] : [])
 			);
 
 			// Timeout after 5 seconds - clean up the listener to prevent memory leak

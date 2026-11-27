@@ -14,6 +14,7 @@ import {
 	handQueuedItemToHost,
 	inHostTabOrder,
 	keepTurnForHost,
+	keptForHostText,
 	sendTakenItemToHost,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { interruptTurn } from '../../../renderer/services/turnInterrupt';
@@ -23,9 +24,11 @@ import {
 	noteDirectDispatch,
 	registerAgentErrorSurfacer,
 	registerDispatchDepsProvider,
+	retryConnectionOutagesNow,
 	scheduleRetryForError,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
+import { syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
 import { isSshTransportError } from '../../../renderer/stores/sshOutageStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -172,6 +175,141 @@ describe('a message sent while the link is down is kept for a retry', () => {
 		expect(useNotificationStore.getState().toasts).toHaveLength(0);
 	});
 
+	it('draws the kept message as one bubble above the retry card, as an SSH send does (R14)', () => {
+		const outcomes: Record<string, unknown> = {};
+		for (const mode of ['ssh', 'hosted'] as const) {
+			useRetryStore.setState({ retries: {}, outages: {} });
+			const session = seed(mode);
+			const item = message('m1', 'hello');
+			if (mode === 'ssh') {
+				// The SSH send drew its bubble, then ssh failed and main reported it.
+				useSessionStore.setState({
+					sessions: [
+						{
+							...session,
+							aiTabs: [
+								{
+									...session.aiTabs[0],
+									logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'hello' }],
+								},
+							],
+						},
+					],
+				});
+				noteDirectDispatch(session.id, item);
+				listenerStandIn('row-ai-t1', sshTurnError);
+			} else {
+				keepTurnForHost(session.id, item, UNAVAILABLE.error);
+			}
+			const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+			outcomes[mode] = logs.filter((entry) => entry.source === 'user').map((entry) => entry.text);
+		}
+		expect(outcomes.hosted).toEqual(outcomes.ssh);
+		expect(outcomes.hosted).toEqual(['hello']);
+
+		// The bubble is the kept item's: its resend names it, so the host draws the same entry.
+		const [bubble] = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(bubble).toMatchObject({ source: 'user', text: 'hello', keptForHost: true });
+		expect(queue()[0]).toMatchObject({ id: 'm1', keptEntryId: bubble.id });
+		expect(queue()[0].hostEntryId).toBeUndefined();
+	});
+
+	it('says the kept message is kept, never "Nothing was sent.", on its error strip (R14)', () => {
+		const session = seed('hosted');
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		const [{ error }] = raised;
+		expect(error.message).not.toContain('Nothing was sent');
+		expect(error.message).toBe(
+			'Not connected to peer "box" (lost). Your message is kept and sent when the host answers.'
+		);
+		expect(keptForHostText('Could not say yet. Your message is kept and sent once it can.')).toBe(
+			'Could not say yet. Your message is kept and sent once it can.'
+		);
+	});
+
+	it('a resend of the kept message names its bubble and draws no second one (R14)', async () => {
+		const session = seed('hosted');
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		const entry = getRetryEntry(session.id, 't1')!;
+		useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+		const held = queue()[0];
+		act$.mockResolvedValue(UNAVAILABLE);
+
+		await sendTakenItemToHost(session.id, held);
+		await flush();
+
+		const sends = act$.mock.calls.filter(([, , action]) => action?.kind === 'send');
+		expect(sends[0]?.[2]).toMatchObject({ entryId: held.keptEntryId });
+		const users = useSessionStore
+			.getState()
+			.sessions[0].aiTabs[0].logs.filter((logged) => logged.source === 'user');
+		expect(users.map((logged) => logged.id)).toEqual([held.keptEntryId]);
+	});
+
+	it('keeps the refusal words, never "kept", when Agent Resilience is off (Greptile on #2161)', () => {
+		const session = seed('hosted');
+		useSessionStore.setState({
+			sessions: [{ ...session, retryOnAvailabilityErrors: false }],
+		});
+		expect(keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error)).toBe(false);
+		expect(raised[0]?.error.message).toBe(UNAVAILABLE.error);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual([]);
+	});
+
+	it('draws an edited kept message as it is sent, and marks it handed over (Greptile on #2161)', async () => {
+		const session = seed('hosted');
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		const entry = getRetryEntry(session.id, 't1')!;
+		useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+		const edited = { ...queue()[0], text: 'hello, edited' };
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
+
+		await sendTakenItemToHost(session.id, edited);
+		await flush();
+
+		const [bubble] = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(bubble).toMatchObject({ id: edited.keptEntryId, text: 'hello, edited' });
+		expect(bubble.keptSentAt).toEqual(expect.any(Number));
+	});
+
+	it('takes the handed-over mark off when the host refuses the resend again (Greptile on #2161)', async () => {
+		const session = seed('hosted');
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		const entry = getRetryEntry(session.id, 't1')!;
+		useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+		act$.mockResolvedValue(UNAVAILABLE);
+
+		await sendTakenItemToHost(session.id, queue()[0]);
+		await flush();
+
+		const [bubble] = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(bubble.keptForHost).toBe(true);
+		expect(bubble.keptSentAt).toBeUndefined();
+	});
+
+	it('takes the handed-over mark off when the host refuses the resend for another reason (CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		const entry = getRetryEntry(session.id, 't1')!;
+		useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+		// Not a not-connected refusal: nothing reached the host, and nothing keeps it for a retry.
+		act$.mockResolvedValue({ ok: false, error: 'The host refused the turn.' });
+
+		await sendTakenItemToHost(session.id, queue()[0]);
+		await flush();
+
+		const [bubble] = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(bubble.keptForHost).toBe(true);
+		expect(bubble.keptSentAt).toBeUndefined();
+	});
+
+	it('draws no bubble for a message that is not kept (Agent Resilience off) (R14)', () => {
+		const session = seed('hosted');
+		registerAgentErrorSurfacer(() => undefined);
+		expect(keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error)).toBe(false);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual([]);
+	});
+
 	it('Stop on a tab whose message waits for its retry ends the retry, for SSH and hosted alike', async () => {
 		// The SSH Stop signals this machine's ssh process for the tab.
 		const processApi = window.maestro.process as unknown as Record<string, unknown>;
@@ -198,6 +336,80 @@ describe('a message sent while the link is down is kept for a retry', () => {
 		expect(outcomes.hosted).toEqual({ wasBusy: true, retry: undefined });
 		// Nothing was forwarded to the host for an idle tab.
 		expect(act$).not.toHaveBeenCalled();
+	});
+
+	// Parity R18: the link coming back fires the kept message's retry at once, never at the end of
+	// its backoff, for an SSH agent (its remote reachable again) and a hosted one (its host back).
+	it('fires the kept retry at once when the link is back, for SSH and hosted alike (R18)', () => {
+		const outcomes: Record<string, unknown> = {};
+		for (const mode of ['ssh', 'hosted'] as const) {
+			useRetryStore.setState({ retries: {}, outages: {} });
+			const session = seed(mode);
+			const item = message('m1', 'hello');
+			if (mode === 'ssh') {
+				noteDirectDispatch(session.id, item);
+				listenerStandIn('row-ai-t1', sshTurnError);
+			} else {
+				keepTurnForHost(session.id, item, UNAVAILABLE.error);
+			}
+			const before = getRetryEntry(session.id, 't1')?.status;
+			const fired = retryConnectionOutagesNow(new Set([session.id]));
+			outcomes[mode] = { before, fired, after: getRetryEntry(session.id, 't1')?.status };
+		}
+		expect(outcomes.hosted).toEqual(outcomes.ssh);
+		expect(outcomes.hosted).toEqual({ before: 'scheduled', fired: 1, after: 'in-flight' });
+	});
+
+	it("leaves a tab's retry on its countdown when the caller excepts it (a cut the host has yet to settle) (R18)", () => {
+		const session = seed('hosted');
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		expect(retryConnectionOutagesNow(new Set([session.id]), () => true)).toBe(0);
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+	});
+
+	it('leaves a provider outage on its countdown when a link comes back (R18)', () => {
+		const session = seed('ssh');
+		const item = message('m1', 'hello');
+		noteDirectDispatch(session.id, item);
+		listenerStandIn('row-ai-t1', {
+			...sshTurnError,
+			sshRemoteId: undefined,
+			type: 'rate_limited',
+			message: 'Service overloaded (529).',
+		});
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+		expect(retryConnectionOutagesNow(new Set([session.id]))).toBe(0);
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+	});
+
+	it('fires the kept retry when the sync first sees the host connected, with no earlier state (CodeRabbit on #2161)', () => {
+		const session = createModeSession('hosted', {
+			id: 'row-fresh',
+			name: 'Docs',
+			state: 'idle',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1' })],
+			executionQueue: [],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+		syncHostedAgents();
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('in-flight');
+	});
+
+	it("fires the kept retry when the sync sees the agent's host connect again (R18)", () => {
+		const session = seed('hosted');
+		const lost = usePeerMirrorStore.getState().peers.box;
+		usePeerMirrorStore.getState().hydrate([{ ...lost, connection: 'lost' }]);
+		syncHostedAgents();
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		syncHostedAgents();
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+
+		usePeerMirrorStore.getState().hydrate([{ ...lost, connection: 'connected' }]);
+		syncHostedAgents();
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('in-flight');
 	});
 
 	it('a queued item the host refuses as not connected is kept for a retry, not held paused', async () => {

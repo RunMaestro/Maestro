@@ -95,7 +95,8 @@ export function hostLinkNoteId(
 	);
 	if (drawn) return drawn.id;
 	for (let i = logs.length - 1; i >= 0; i -= 1) {
-		if (logs[i].source === 'user') return `${prefix}${logs[i].id}`;
+		// A kept message's bubble never reached the host: the cut turn answers the one before it.
+		if (logs[i].source === 'user' && !logs[i].keptForHost) return `${prefix}${logs[i].id}`;
 	}
 	return `${prefix}${error.timestamp}`;
 }
@@ -208,6 +209,43 @@ function sameMetadata(a: LogEntry['metadata'], b: LogEntry['metadata']): boolean
 }
 
 /**
+ * `older` without the bubbles of kept messages (`LogEntry.keptForHost`) the host now has. A host
+ * that takes the sent `entryId` writes the same id, and the bubble is replaced by id above. One
+ * that does not (a desktop host) writes the message under its own id: once this machine handed the
+ * message over (`keptSentAt`), the first user entry new to this tab with the same text and the
+ * same number of images replaces one bubble. Each host entry replaces at most one. Never an entry
+ * this tab already drew before (an earlier message with the same words), and never before the send
+ * (a message another client sent with the same words), so a kept bubble waits for its own copy.
+ */
+/** How far the host's clock may run behind this one when its copy of a kept message is matched. */
+const KEPT_COPY_CLOCK_SKEW_MS = 60_000;
+
+function withoutKeptCopies(
+	older: LogEntry[],
+	host: readonly LogEntry[],
+	local: readonly LogEntry[]
+): LogEntry[] {
+	if (!older.some((entry) => entry.keptForHost)) return older;
+	const drawn = new Set(local.map((entry) => entry.id));
+	const copies = host.filter((entry) => entry.source === 'user' && !drawn.has(entry.id));
+	if (copies.length === 0) return older;
+	return older.filter((entry) => {
+		if (!entry.keptForHost || entry.keptSentAt === undefined) return true;
+		const at = copies.findIndex(
+			(copy) =>
+				copy.text === entry.text &&
+				(copy.images?.length ?? 0) === (entry.images?.length ?? 0) &&
+				// Written after the bubble (allowing for the two clocks): an older message the host
+				// read in now, with the same words, is not this one.
+				copy.timestamp >= entry.timestamp - KEPT_COPY_CLOCK_SKEW_MS
+		);
+		if (at === -1) return true;
+		copies.splice(at, 1);
+		return false;
+	});
+}
+
+/**
  * A tab's transcript with the host's folded in. `persisted` undefined (never read) keeps the local
  * entries; the live tail still shows. Returns `local` itself when nothing changed. A host user
  * entry shows "Message delivered" when the agent's answer to it arrived (`withAnswerDelivery()`).
@@ -224,7 +262,17 @@ export function mergeHostedLogs(
 		const text = rewrites.get(entry.id);
 		return text === undefined || text === entry.text ? entry : { ...entry, text };
 	};
-	const kept = local.filter((entry) => !entry.hostLive).map(rewritten);
+	// A kept message the host now runs under its own id (its live entry has that id) is the
+	// host's from here on: no longer kept, so a later cut finds it as the turn's message.
+	const hostHolds = (entry: LogEntry) => rewrites.has(entry.id);
+	const kept = local
+		.filter((entry) => !entry.hostLive)
+		.map(rewritten)
+		.map((entry) =>
+			entry.keptForHost && hostHolds(entry)
+				? { ...entry, keptForHost: undefined, keptSentAt: undefined }
+				: entry
+		);
 	const hostEntries = persisted ? persistedView(persisted).map(rewritten) : [];
 	const hostIds = new Set(hostEntries.map((entry) => entry.id));
 	const older = persisted ? kept.filter((entry) => !hostIds.has(entry.id)) : kept;
@@ -236,7 +284,8 @@ export function mergeHostedLogs(
 		live.push({ ...mirrorLogEntry(record), hostLive: true });
 	}
 	const fromHost = new Set([...hostIds, ...live.map((entry) => entry.id)]);
-	const next = withAnswerDelivery([...byTime(older, hostEntries), ...live], fromHost);
+	const shown = withoutKeptCopies(older, [...hostEntries, ...live], local);
+	const next = withAnswerDelivery([...byTime(shown, hostEntries), ...live], fromHost);
 	if (sameIds(next, local)) {
 		// Same entries in the same order: keep the old array unless a live entry's text moved on,
 		// its tool card did, or a message's delivered tick did. `mirrorLogEntry()` builds a new
@@ -250,9 +299,49 @@ export function mergeHostedLogs(
 		// A saved entry the host rewrote in place (a command's progress line settled to its
 		// outcome, M22) keeps its id: its text is what changed.
 		const savedChanged = next.some((entry, i) => !entry.hostLive && entry.text !== local[i].text);
-		if (!liveChanged && !tickChanged && !savedChanged) return local;
+		const keptChanged = next.some((entry, i) => !!entry.keptForHost !== !!local[i].keptForHost);
+		if (!liveChanged && !tickChanged && !savedChanged && !keptChanged) return local;
 	}
-	return next;
+	return withDrawnEntriesKept(next, local);
+}
+
+/**
+ * `next` with each entry that draws the same as the one `local` holds under its id replaced by
+ * that one, so only the rows that changed render again. Every pass builds new entry objects (the
+ * host's saved entries, the live tail, the delivered tick); a local turn appends to one entry and
+ * leaves the others' identity alone, and a hosted turn must cost the same (R8).
+ */
+function withDrawnEntriesKept(next: LogEntry[], local: readonly LogEntry[]): LogEntry[] {
+	if (local.length === 0) return next;
+	const prior = new Map(local.map((entry) => [entry.id, entry]));
+	let kept = 0;
+	const out = next.map((entry) => {
+		const before = prior.get(entry.id);
+		if (!before || before === entry || !drawsTheSame(before, entry)) return entry;
+		kept += 1;
+		return before;
+	});
+	return kept === 0 ? next : out;
+}
+
+/** Whether two entries under one id draw the same: every field equal, nested ones by value. */
+function drawsTheSame(a: LogEntry, b: LogEntry): boolean {
+	const fields = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof LogEntry>;
+	for (const field of fields) {
+		const x = a[field];
+		const y = b[field];
+		if (x === y) continue;
+		if (Array.isArray(x) && Array.isArray(y)) {
+			if (x.length !== y.length || x.some((value, i) => value !== y[i])) return false;
+			continue;
+		}
+		if (x && y && typeof x === 'object' && typeof y === 'object') {
+			if (canonicalJson(x) !== canonicalJson(y)) return false;
+			continue;
+		}
+		return false;
+	}
+	return true;
 }
 
 /**
@@ -487,7 +576,9 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 	const localIds = new Set(session.aiTabs.map((tab) => tab.id));
 	// An added agent starts with one blank local tab; once the host has a tab to show it is only
 	// noise. A tab the host lists (a hidden one too) is the host's, never this placeholder.
+	// A tab opened here while the host was down waits to be made there (`pendingHostTab`): kept.
 	const isBlankLocalOnly = (tab: AITab) =>
+		!tab.pendingHostTab &&
 		!hostListed.has(tab.id) &&
 		!tab.agentSessionId &&
 		(tab.logs?.length ?? 0) === 0 &&
@@ -523,8 +614,10 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 			} else aiTabs.push(local);
 			continue;
 		}
-		const next = projectTab(
-			local,
+		// The host made a tab opened here while it was down: from now on it is the host's.
+		const reported = local.pendingHostTab ? { ...local, pendingHostTab: undefined } : local;
+		const projected = projectTab(
+			reported,
 			host,
 			logsFor(local.id, local.logs ?? []),
 			input.liveTurns?.[liveTurnKey(agent.id, local.id)],
@@ -536,6 +629,16 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 				kept: input.keptCuts?.has(local.id) === true,
 			}
 		);
+		// Its first report is the host's blank tab: the name and pills given here stay, and go to
+		// the host with the answer to its creation (`createPendingHostTab()`).
+		const next = local.pendingHostTab
+			? {
+					...projected,
+					name: local.name ?? projected.name,
+					saveToHistory: local.saveToHistory,
+					showThinking: local.showThinking,
+				}
+			: projected;
 		if (next !== local) changed = true;
 		aiTabs.push(next);
 	}

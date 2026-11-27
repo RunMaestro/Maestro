@@ -35,7 +35,13 @@ import type {
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../../shared/maestro-lib/client/types';
-import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
+import {
+	selectSessionById,
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../stores/sessionStore';
+import { generateId } from '../utils/ids';
 import { notifyToast } from '../stores/notificationStore';
 import {
 	clearRetryIfSettled,
@@ -215,21 +221,101 @@ export function keepTurnForHost(
 ): boolean {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	if (!session) return false;
-	const error = hostUnavailableError(session, message);
-	if (opts.onlyIfRetried && !wouldAutoRetry(sessionId, error)) return false;
+	// Worded as kept only when a retry will hold it: with Agent Resilience off nothing resends it.
+	const refusal = hostUnavailableError(session, message);
+	const retried = wouldAutoRetry(sessionId, refusal);
+	if (opts.onlyIfRetried && !retried) return false;
+	const error = retried ? { ...refusal, message: keptForHostText(message) } : refusal;
 	const waiting = getRetryEntry(sessionId, item.tabId);
 	if (waiting && waiting.heldItemId !== item.id) {
 		queueBehind(sessionId, item);
 		return true;
 	}
+	// The message's bubble, above the retry card, as an SSH agent's send draws it before its link
+	// fails: once, for a message the host never had (a cut turn's is the host's own entry).
+	const resend = waiting?.heldItemId === item.id;
+	const bubble = resend ? null : keptBubbleFor(item);
+	const kept = bubble ? { ...item, keptEntryId: bubble.id } : item;
+	// Refused again: the host did not get it, so no host message may stand in for its bubble.
+	if (resend) markKeptBubble(sessionId, item, false);
+	if (bubble) {
+		updateAiTab(sessionId, item.tabId, (tab) => ({ ...tab, logs: [...tab.logs, bubble] }));
+	}
 	// The prompt the retry resends. A resend of this same item keeps its snapshot.
-	noteDirectDispatch(sessionId, item);
-	if (!raiseAgentError(`${sessionId}-ai-${item.tabId}`, error)) {
+	noteDirectDispatch(sessionId, kept);
+	const raised = raiseAgentError(`${sessionId}-ai-${item.tabId}`, error);
+	const held = raised && getRetryEntry(sessionId, item.tabId)?.heldItemId === item.id;
+	if (bubble && !held) {
+		// Not kept: the caller keeps the draft or says it was not sent, so no bubble stays behind.
+		updateAiTab(sessionId, item.tabId, (tab) => ({
+			...tab,
+			logs: tab.logs.filter((entry) => entry.id !== bubble.id),
+		}));
+	}
+	if (!raised) {
 		// No listener to report it: say so here, as the refusal's own toast would have.
 		notifyToast({ color: 'red', title: 'Message not sent', message });
 		return false;
 	}
-	return getRetryEntry(sessionId, item.tabId)?.heldItemId === item.id;
+	return held;
+}
+
+/**
+ * Mark a kept message's bubble as handed to the host now (`sending`), or not: only a bubble this
+ * machine sent may be replaced by the host's copy of it (`mergeHostedLogs()`), so a message another
+ * client sent with the same words never takes its place. A send also brings the bubble to the
+ * words and images it carries, so a message edited while it waited is drawn as it was sent.
+ */
+function markKeptBubble(sessionId: string, item: QueuedItem, sending: boolean): void {
+	const bubbleId = item.keptEntryId;
+	if (!bubbleId) return;
+	updateAiTab(sessionId, item.tabId, (tab) => {
+		const at = tab.logs.findIndex((entry) => entry.id === bubbleId && entry.keptForHost);
+		if (at === -1) return tab;
+		const bubble = tab.logs[at];
+		const next: LogEntry = sending
+			? {
+					...bubble,
+					keptSentAt: Date.now(),
+					text: item.text ?? '',
+					images: item.images?.length ? item.images : undefined,
+				}
+			: { ...bubble, keptSentAt: undefined };
+		if (!sending && bubble.keptSentAt === undefined) return tab;
+		const logs = [...tab.logs];
+		logs[at] = next;
+		return { ...tab, logs };
+	});
+}
+
+/** The bubble a kept message draws, or null when it has one already or is not a message. */
+function keptBubbleFor(item: QueuedItem): LogEntry | null {
+	if (item.type !== 'message' || item.hostEntryId || item.keptEntryId) return null;
+	if (!item.text && !item.images?.length) return null;
+	return {
+		id: generateId(),
+		timestamp: Date.now(),
+		source: 'user',
+		text: item.text ?? '',
+		...(item.images?.length ? { images: item.images } : {}),
+		...(item.readOnlyMode ? { readOnly: true } : {}),
+		keptForHost: true,
+	};
+}
+
+const NOTHING_SENT = /\s*Nothing was sent\.\s*/g;
+const KEPT_FOR_HOST = 'Your message is kept and sent when the host answers.';
+
+/**
+ * The words of the error a kept message raises: the cause, then that the message is kept, as an
+ * SSH agent's strip names its cause while its message waits under the retry card. A refusal's
+ * "Nothing was sent." is true but reads as a lost message, so it is replaced. A reason that
+ * already says the message is kept is used as it is.
+ */
+export function keptForHostText(reason: string): string {
+	if (/\bkept\b/.test(reason)) return reason;
+	const cause = reason.replace(NOTHING_SENT, ' ').trim();
+	return cause ? `${cause} ${KEPT_FOR_HOST}` : KEPT_FOR_HOST;
 }
 
 /**
@@ -323,15 +409,19 @@ function forwardToHost(
 	// The retry this resend belongs to: a Stop while it waits ends that retry, and then nothing goes.
 	const retry = getRetryEntry(sessionId, item.tabId);
 	const retryOutage = retry?.heldItemId === item.id ? retry.outageId : undefined;
-	const sendToHost = () =>
-		sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
+	const sendToHost = () => {
+		markKeptBubble(sessionId, item, true);
+		return sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
 			held: item.paused === true,
 			...(overrides ? { overrides } : {}),
 			...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
 			...(item.agentContext ? { agentContext: item.agentContext } : {}),
 			...(agentNotes ? { agentNotes } : {}),
-			// The entry the message already is: the host writes no second one.
-			...(item.hostEntryId ? { entryId: item.hostEntryId } : {}),
+			// The entry the message already is: the host writes no second one. On a host of its own
+			// (`entryId`), the id its sender named rides on to the next host.
+			...(item.hostEntryId || item.keptEntryId || item.entryId
+				? { entryId: item.hostEntryId ?? item.keptEntryId ?? item.entryId }
+				: {}),
 			// A held item is the user's to send; only one on its way now is kept for a retry.
 			...(item.paused === true
 				? {}
@@ -352,7 +442,9 @@ function forwardToHost(
 					clearRetryIfSettled(sessionId, item.tabId);
 					if (mention) fireMentionsForHostTurn(sessionId, item, mention, receipt);
 				} else if (!kept) {
-					// Refused for another reason (already toasted): a resend ends its outage here.
+					// Refused for another reason (already toasted): nothing reached the host, so the bubble
+					// is not handed over (CodeRabbit on #2161), and a resend ends its outage here.
+					markKeptBubble(sessionId, item, false);
 					failInFlightRetry(sessionId, item.tabId, 'The host did not take the message.');
 					holdRefusedItem(sessionId, item, index);
 				}
@@ -364,6 +456,7 @@ function forwardToHost(
 				throw error;
 			}
 		);
+	};
 	// The message of a turn a lost link cut goes again only once the host says that turn died: it
 	// may have run on, or finished (`cutTurnFate()`). Never sent twice.
 	const connected = usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';

@@ -1374,6 +1374,32 @@ export function retryNow(sessionId: string, tabId: string): void {
 }
 
 /**
+ * The link came back (an SSH remote reachable again, a hosted agent's host connected again): every
+ * retry waiting out a connection outage (`OutageRecord.cause`) on one of `sessionIds` fires now,
+ * not at the end of its backoff, as Try Now would. A provider outage keeps its countdown, and only
+ * a `'scheduled'` entry fires (`retryNow()`). `except` keeps a tab's retry on its countdown (a
+ * hosted tab whose cut turn the host has yet to settle fires from that decision). Returns how many
+ * fired.
+ */
+export function retryConnectionOutagesNow(
+	sessionIds: ReadonlySet<string>,
+	except?: (sessionId: string, tabId: string) => boolean
+): number {
+	if (sessionIds.size === 0) return 0;
+	const { retries, outages } = useRetryStore.getState();
+	let fired = 0;
+	for (const entry of Object.values(retries)) {
+		if (!sessionIds.has(entry.sessionId) || entry.status !== 'scheduled') continue;
+		if (outages[entry.outageId]?.cause !== 'connection') continue;
+		if (except?.(entry.sessionId, entry.tabId)) continue;
+		retryNow(entry.sessionId, entry.tabId);
+		fired += 1;
+	}
+	if (fired > 0) logger.info('[retry] Link is back; retrying now', undefined, { fired });
+	return fired;
+}
+
+/**
  * Replay the turns an agent lost to expired credentials, after the user has
  * re-authenticated the provider.
  *

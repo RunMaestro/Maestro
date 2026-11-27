@@ -54,7 +54,12 @@ import type {
 	TurnOverrides,
 	TurnSendReceipt,
 } from './types';
-import { parseQueuedTurnEdit, readTurnAgentText, readTurnEntryId } from './types';
+import {
+	parseQueuedTurnEdit,
+	readRequestedTabId,
+	readTurnAgentText,
+	readTurnEntryId,
+} from './types';
 
 /** One thing to do to a peer's agent. */
 export type PeerAgentAction =
@@ -81,7 +86,11 @@ export type PeerAgentAction =
 	  }
 	/** Stop a tab's turn; without `tabId`, every busy tab of the agent (the Stop pill). */
 	| { kind: 'interrupt'; tabId?: string }
-	| { kind: 'new-tab' }
+	/**
+	 * `tabId`: the id this client already drew the tab under (R15); the host takes it when no tab
+	 * of the agent has it, else answers its own id. An older host ignores it.
+	 */
+	| { kind: 'new-tab'; tabId?: string }
 	/** An empty name clears it, so the tab shows its session id label again. */
 	| { kind: 'rename-tab'; tabId: string; name: string }
 	| { kind: 'star-tab'; tabId: string; starred: boolean }
@@ -363,7 +372,9 @@ export async function runPeerAgentAction(
 			};
 		}
 		case 'new-tab': {
-			const created = await client.tabs.create(agent.id);
+			const created = action.tabId
+				? await client.tabs.create(agent.id, { tabId: action.tabId })
+				: await client.tabs.create(agent.id);
 			return created.ok
 				? { ok: true, value: { kind: 'new-tab', tabId: created.value.tabId } }
 				: created;
@@ -630,8 +641,10 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 		}
 		case 'interrupt':
 			return value.tabId === undefined ? { kind } : { kind, tabId: tabId() };
-		case 'new-tab':
-			return { kind };
+		case 'new-tab': {
+			const requested = readRequestedTabId(value.tabId);
+			return requested ? { kind, tabId: requested } : { kind };
+		}
 		case 'rename-tab':
 			if (typeof value.name !== 'string') throw new Error('Missing tab name');
 			return { kind, tabId: tabId(), name: value.name.trim() };

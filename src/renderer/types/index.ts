@@ -244,6 +244,17 @@ export interface LogEntry {
 	 * only: every host sync drops these and rebuilds them (`projectHostedSession()`).
 	 */
 	hostLive?: boolean;
+	/**
+	 * A hosted agent's message kept on this machine for its host while the link is down
+	 * (`keepTurnForHost()`), drawn here as an SSH agent's send draws its message. The host's own
+	 * entry for it replaces it once the host has it (`mergeHostedLogs()`).
+	 */
+	keptForHost?: boolean;
+	/**
+	 * When this machine handed a kept message (`keptForHost`) to its host. Only then may a host
+	 * message with the same words be taken as its copy; cleared when the host refused it again.
+	 */
+	keptSentAt?: number;
 	// One union shared with the on-disk record (`LogEntryRecord`) every client reads.
 	source: LogEntrySource;
 	text: string;
@@ -612,6 +623,18 @@ export interface QueuedItem {
 	 * turn a lost link cut, kept for a resend (`noteHostedTurnsCut()`).
 	 */
 	hostEntryId?: string;
+	/**
+	 * The bubble this machine drew for a hosted agent's message it kept while the host was not
+	 * connected (`LogEntry.keptForHost`). Unlike `hostEntryId`, the host never had it: the send names
+	 * it (`TurnInput.entryId`) so a host that takes the id writes the same entry, drawn once.
+	 */
+	keptEntryId?: string;
+	/**
+	 * On a desktop HOST: the id a Federation client named for this message (`TurnInput.entryId`).
+	 * Its user entry takes that id when it runs (`markTabRunningQueuedItem()`), or is the entry
+	 * the tab already holds under it, as a headless host writes it, so the client draws it once.
+	 */
+	entryId?: string;
 	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
 	pendingAdmissionId?: string;
 	/** Host-journaled release revision. Pending ID remains provenance and a
@@ -1019,6 +1042,13 @@ export interface AITab {
 	 * hosting) is a conversation kept from before the move, and stays.
 	 */
 	hostSeenAt?: number;
+	/**
+	 * On a hosted agent's tab: opened here while its host was not connected
+	 * (`openHostedTabOrHere()`), and not yet made on the host. It is made there under this id when
+	 * the link is back or at its first send (`createPendingHostTab()`); the host's first report of
+	 * it clears the flag.
+	 */
+	pendingHostTab?: boolean;
 	/**
 	 * Set on a tab Quick Chat created (the hotkey-summoned floating chat window,
 	 * see src/shared/quickChat.ts). An ephemeral Quick Chat tab is also `hidden`

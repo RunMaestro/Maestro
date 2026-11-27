@@ -43,6 +43,7 @@ import {
 	normalizeOriginHost,
 	normalizeTurnOverrides,
 	parseQueuedTurnEdit,
+	readRequestedTabId,
 	readTurnEntryId,
 } from '../client/types';
 import {
@@ -683,9 +684,13 @@ export function createRequestHandler(
 
 			// -- tabs -------------------------------------------------------
 			case 'new_tab':
-				return outcome('new_tab_result', await client.tabs.create(sessionId(message)), (value) => ({
-					tabId: value.tabId,
-				}));
+				return outcome(
+					'new_tab_result',
+					await client.tabs.create(sessionId(message), {
+						tabId: readRequestedTabId(message.tabId),
+					}),
+					(value) => ({ tabId: value.tabId })
+				);
 			case 'rename_tab':
 				return outcome(
 					'rename_tab_result',

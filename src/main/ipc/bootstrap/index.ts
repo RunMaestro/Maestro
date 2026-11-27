@@ -107,7 +107,8 @@ import {
 	setGetCustomShellPathCallback,
 } from '../../group-chat/group-chat-router';
 import { mapSessionsForMentions } from './session-mention-mapper';
-import { getPeerMirrorService } from '../../federation';
+import { getPeerMirrorService, noteHostedAgentsChanged } from '../../federation';
+import { withHostedAgentsNote } from './sessions-persisted';
 import { resolveSessionWindow } from './session-window';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { IpcBootstrapDependencies } from './types';
@@ -325,7 +326,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// block the UI thread. Await it here so the handlers' boolean
 		// acknowledgement keeps meaning "this revision reached disk".
 		flushSessionWrites: flushPendingSessionWrites,
-		onSessionsPersisted: pianolaPersistenceConsumer(deps.getPianolaSupervisor),
+		onSessionsPersisted: withHostedAgentsNote(
+			pianolaPersistenceConsumer(deps.getPianolaSupervisor),
+			noteHostedAgentsChanged
+		),
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated
 	// dedupe so the two emit paths share one last-emitted id.

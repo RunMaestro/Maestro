@@ -1496,8 +1496,8 @@ export class WebServer {
 				this.callbackRegistry.selectSession(sessionId, tabId, focus),
 			selectTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.selectTab(sessionId, tabId),
-			newTab: async (sessionId: string, background?: boolean) =>
-				this.callbackRegistry.newTab(sessionId, background),
+			newTab: async (sessionId: string, background?: boolean, tabId?: string) =>
+				this.callbackRegistry.newTab(sessionId, background, tabId),
 			closeTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.closeTab(sessionId, tabId),
 			renameTab: async (sessionId: string, tabId: string, newName: string) =>
@@ -1581,7 +1581,8 @@ export class WebServer {
 				dispatchCallback?: boolean,
 				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl,
 				turnOverrides?: import('../../shared/maestro-lib/client/types').TurnOverrides,
-				agentText?: import('../../shared/maestro-lib/client/types').TurnAgentText
+				agentText?: import('../../shared/maestro-lib/client/types').TurnAgentText,
+				entryId?: string
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1595,7 +1596,8 @@ export class WebServer {
 					dispatchCallback,
 					control,
 					turnOverrides,
-					agentText
+					agentText,
+					entryId
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>

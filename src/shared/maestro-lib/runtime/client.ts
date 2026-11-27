@@ -213,7 +213,8 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 					const tabs = repository.listTabs(agentId);
 					return tabs ? ok(tabs) : fail('tabs.list', 'not-found', `No agent ${agentId}.`);
 				}),
-			create: (agentId) => guarded('tabs.create', () => repository.createTab(agentId)),
+			create: (agentId, opts) =>
+				guarded('tabs.create', () => repository.createTab(agentId, opts?.tabId)),
 			rename: (agentId, tabId, name) =>
 				guarded('tabs.rename', () => repository.renameTab(agentId, tabId, name)),
 			close: (agentId, tabId) => guarded('tabs.close', () => repository.closeTab(agentId, tabId)),

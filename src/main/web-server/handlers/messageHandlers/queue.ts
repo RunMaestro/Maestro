@@ -246,6 +246,9 @@ export function handleEnqueueCommand(
 	}
 	const routing = routingField.routing;
 
+	// The id a Federation client named for the message's entry (`TurnInput.entryId`).
+	const entryId = readTurnEntryId(message.entryId);
+
 	const enqueue = (): void => {
 		// Same pre-arm rationale as send_command. A queued prompt can sit behind a
 		// predecessor turn for minutes; the entry stays `pending` until OUR
@@ -289,8 +292,12 @@ export function handleEnqueueCommand(
 		];
 		// The overrides ride after the dispatch-callback and admission slots, which this path leaves
 		// empty; the agent-only text rides after the overrides.
-		if (turnOverrides || agentText) enqueueArgs.push(undefined, undefined, turnOverrides);
-		if (agentText) enqueueArgs.push(agentText);
+		if (turnOverrides || agentText || entryId)
+			enqueueArgs.push(undefined, undefined, turnOverrides);
+		if (agentText || entryId) enqueueArgs.push(agentText);
+		// The id the client named for the message's entry: the host writes the message under it, as a
+		// headless host does, so the client's kept bubble and the host's copy are one entry.
+		if (entryId) enqueueArgs.push(entryId);
 
 		enqueueCommand(...enqueueArgs)
 			.then((result) => {
@@ -341,7 +348,6 @@ export function handleEnqueueCommand(
 	// The resend of a message this tab already answered (a Federation client lost track of the turn:
 	// a cut link, a restart): it ran once and never runs again, and the client is told it already
 	// ran (`TurnSendReceipt` `answered`), as a headless host answers it.
-	const entryId = readTurnEntryId(message.entryId);
 	if (entryId && requestedTabId) {
 		void desktopTabAnswered(sessionId, requestedTabId, {
 			id: entryId,

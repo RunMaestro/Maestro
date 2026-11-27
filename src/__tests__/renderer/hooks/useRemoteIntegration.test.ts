@@ -131,7 +131,7 @@ describe('useRemoteIntegration', () => {
 		  ) => void)
 		| undefined;
 	let onRemoteNewTabHandler:
-		| ((sessionId: string, responseChannel: string, background?: boolean) => void)
+		| ((sessionId: string, responseChannel: string, background?: boolean, tabId?: string) => void)
 		| undefined;
 	let onRemoteCloseTabHandler:
 		| ((sessionId: string, tabId: string, responseChannel: string) => void)
@@ -209,7 +209,8 @@ describe('useRemoteIntegration', () => {
 				dispatchCallback?: boolean,
 				control?: import('../../../shared/pianola/pianola-dispatch').PianolaQueueControl,
 				turnOverrides?: import('../../../shared/maestro-lib/client/types').TurnOverrides,
-				agentText?: import('../../../shared/maestro-lib/client/types').TurnAgentText
+				agentText?: import('../../../shared/maestro-lib/client/types').TurnAgentText,
+				entryId?: string
 		  ) => void)
 		| undefined;
 	let onRemoteSetQueueItemPausedHandler:
@@ -1613,6 +1614,39 @@ describe('useRemoteIntegration', () => {
 			expect(createdTab).toBeDefined();
 			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('response-channel-1', {
 				tabId: createdTab?.id,
+			});
+		});
+	});
+
+	describe('remote new tab under a requested id (R15)', () => {
+		it('takes the id a Federation client drew the tab under, and makes no second tab when that id is taken (R25)', () => {
+			const session = createMockSession({ id: 'session-1' });
+			const takenId = session.aiTabs[0].id;
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteNewTabHandler?.('session-1', 'chan-1', true, 'drawn-here-1');
+			});
+			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('chan-1', {
+				tabId: 'drawn-here-1',
+			});
+
+			const count = useSessionStore.getState().sessions[0].aiTabs.length;
+			// The same request again (its answer was lost), and an id a tab already has: the tab
+			// under that id is answered, and no second tab is made.
+			act(() => {
+				onRemoteNewTabHandler?.('session-1', 'chan-2', true, 'drawn-here-1');
+				onRemoteNewTabHandler?.('session-1', 'chan-3', true, takenId);
+			});
+			const tabs = useSessionStore.getState().sessions[0].aiTabs;
+			expect(tabs).toHaveLength(count);
+			expect(tabs.filter((tab) => tab.id === takenId)).toHaveLength(1);
+			expect(tabs.filter((tab) => tab.id === 'drawn-here-1')).toHaveLength(1);
+			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('chan-2', {
+				tabId: 'drawn-here-1',
+			});
+			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('chan-3', {
+				tabId: takenId,
 			});
 		});
 	});
@@ -3184,6 +3218,79 @@ describe('useRemoteIntegration', () => {
 					'chan-agent-text-busy',
 					expect.objectContaining({ success: true, queued: true })
 				);
+			});
+		});
+
+		// Parity R26: a desktop host writes a Federation client's message under the id the client
+		// named (`TurnInput.entryId`), as a headless host does, so the client's kept bubble and the
+		// host's copy are one entry. The agent on the host may itself be local or SSH.
+		describe("a Federation sender's entry id (R26)", () => {
+			const enqueue = (channel: string) =>
+				act(() => {
+					onRemoteEnqueueCommandHandler?.(
+						'session-1',
+						'continue',
+						channel,
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						'kept-1'
+					);
+				});
+			const queuedItem = () =>
+				useSessionStore
+					.getState()
+					.sessions.find((s) => s.id === 'session-1')
+					?.executionQueue.find((item) => item.text === 'continue');
+
+			it.each(['local', 'ssh'] as const)(
+				'rides on the queued item an idle %s tab sends at once, never the plain remote command',
+				(mode) => {
+					vi.mocked(sendQueuedItemNow).mockReturnValueOnce(true);
+					const session = createMockSession({
+						...agentModeFields(mode),
+						id: 'session-1',
+						state: 'idle',
+						aiTabs: [createMockTab({ id: 'tab-1' })],
+						activeTabId: 'tab-1',
+						executionQueue: [],
+					});
+					useSessionStore.setState({ sessions: [session] });
+					const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+					renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+					enqueue(`chan-entry-id-${mode}`);
+
+					expect(dispatchEventSpy).not.toHaveBeenCalledWith(
+						expect.objectContaining({ type: 'maestro:remoteCommand' })
+					);
+					expect(queuedItem()).toMatchObject({ entryId: 'kept-1' });
+					expect(sendQueuedItemNow).toHaveBeenCalledWith('session-1', queuedItem()?.id);
+					dispatchEventSpy.mockRestore();
+				}
+			);
+
+			it('rides on the item a busy tab queues', () => {
+				const session = createMockSession({
+					id: 'session-1',
+					state: 'busy',
+					aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' })],
+					activeTabId: 'tab-1',
+					executionQueue: [],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				enqueue('chan-entry-id-busy');
+
+				expect(queuedItem()).toMatchObject({ entryId: 'kept-1' });
 			});
 		});
 
