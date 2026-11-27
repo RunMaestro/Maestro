@@ -584,17 +584,20 @@ export async function runLift(
 	const connection = await deps.connect(remote, peer);
 	try {
 		const hostError = deps.hostCallError ?? defaultHostCallError;
+		const stale = await readStaleHostCopy(agent, connection, hostError, deps.history);
+		// The record the plan is built from: a stale host copy's tabs merged in can carry a held
+		// message this machine's record does not (R63 c).
+		const planned = stale ? stale.merged : agent;
 		// A held message moves held only to a host that keeps it held; an older one would run it at
 		// once, so it stays here, held, and the plan says so (R57).
-		if (hasHeldQueuedMessage(agent)) hostKeepsHeld = await hostKeepsHeldMessages(connection);
-		const stale = await readStaleHostCopy(agent, connection, hostError, deps.history);
-		const planned = stale
-			? withReplacement(planFor(stale.merged), stale.ref, stale.pointer.agentId, stale.tabMerge)
-			: planFor(agent);
+		if (hasHeldQueuedMessage(planned)) hostKeepsHeld = await hostKeepsHeldMessages(connection);
+		const lifted = stale
+			? withReplacement(planFor(planned), stale.ref, stale.pointer.agentId, stale.tabMerge)
+			: planFor(planned);
 		const plan: LiftPlan = {
-			...planned,
+			...lifted,
 			summary: {
-				...planned.summary,
+				...lifted.summary,
 				history: {
 					here: (await deps.history.read(agent.id)).length,
 					comesHome: stale?.history.length ?? 0,
@@ -607,11 +610,7 @@ export async function runLift(
 		// The queue moves as it was planned: a message held, resumed, or removed since the plan was
 		// read would move in its old state (a held one running on the host). Read it again just
 		// before the import; any change refuses with nothing changed (CodeRabbit on #2171).
-		const queueChanged = movedQueueChange(
-			stale ? stale.merged : agent,
-			deps.readAgents(),
-			plan.movedQueueItemIds
-		);
+		const queueChanged = movedQueueChange(planned, deps.readAgents(), plan.movedQueueItemIds);
 		if (queueChanged) throw new LiftRunError('LIFT_QUEUE_CHANGED', queueChanged);
 
 		// The replaced copy's History comes home before the import replaces the copy on the host.

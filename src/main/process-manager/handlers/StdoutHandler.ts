@@ -988,7 +988,10 @@ export class StdoutHandler {
 			// in the final response text: only message content goes into streamedText.
 			const route = partialTextRoute(managedProcess.toolType, event.isReasoning);
 			if (route.thinking) {
-				this.emitter.emit('thinking-chunk', sessionId, event.text);
+				// Flagged when it is also answer text, so a Federation client draws a cut turn's
+				// streamed answer as its reply, as this desktop does (R58).
+				if (route.answer) this.emitter.emit('thinking-chunk', sessionId, event.text, true);
+				else this.emitter.emit('thinking-chunk', sessionId, event.text);
 			}
 			if (route.answer) {
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;

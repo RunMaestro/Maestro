@@ -768,8 +768,14 @@ export type TurnEvent =
 	| { kind: 'started'; at: number }
 	/** The provider assigned or confirmed its session id (CH-5 resume). */
 	| { kind: 'session'; at: number; providerSessionId: string }
-	/** The live stream the desktop shows as thinking. Show it per the tab's thinking mode. */
-	| { kind: 'thinking'; at: number; text: string }
+	/**
+	 * The live stream the desktop shows as thinking. Show it per the tab's thinking mode.
+	 * `answer`: this chunk is also answer text (a provider that streams its reply as thinking:
+	 * Claude), what a desktop holds as the turn's streamed answer and draws as a reply row when the
+	 * turn ends with no result (a cut). Absent from an older host: reasoning only, as far as a
+	 * client can tell.
+	 */
+	| { kind: 'thinking'; at: number; text: string; answer?: boolean }
 	/** Answer text, in order. Append it. */
 	| { kind: 'text'; at: number; text: string }
 	| { kind: 'tool'; at: number; tool: TurnToolCall }

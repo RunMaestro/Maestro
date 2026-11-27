@@ -50,7 +50,11 @@ import {
 	type RaisedErrorRetry,
 } from '../../../renderer/stores/retryStore';
 import { parseSessionId } from '../../../renderer/utils/sessionIdParser';
-import { updateSessionWith, useSessionStore } from '../../../renderer/stores/sessionStore';
+import {
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { isSshTransportError, useSshOutageStore } from '../../../renderer/stores/sshOutageStore';
 import type { AgentError, LogEntry, Session } from '../../../renderer/types';
@@ -80,6 +84,14 @@ const act$ = vi.fn();
 const flush = () => act(async () => undefined);
 
 const QUESTION: LogEntry = { id: 'u1', timestamp: 10, source: 'user', text: 'Summarize the docs' };
+/** This machine's copy of the reply text a cut turn streamed (R58). */
+const PARTIAL_REPLY: LogEntry = {
+	id: 'host-cut-reply-t1-11',
+	timestamp: 12,
+	source: 'stdout',
+	text: 'Partial reply',
+	cutReply: true,
+};
 /** A message the user sent on the same tab after QUESTION, and its answer. */
 const LATER_MESSAGE: LogEntry = { id: 'u2', timestamp: 30, source: 'user', text: 'And the tests?' };
 const LATER_ANSWER: LogEntry = { id: 'a2', timestamp: 40, source: 'ai', text: 'The tests...' };
@@ -583,6 +595,242 @@ describe('projectHostedSession with the link lost', () => {
 		expect(twice.aiTabs[0].logs.at(-1)?.id).toBe('host-link-t1-u1');
 	});
 
+	// Parity R58: the reply text a turn streamed before the cut is drawn as an SSH turn's is: a
+	// reply row (an SSH desktop flushes the streamed answer as data when the process ends), never a
+	// thinking row, and it stays above the resend's answer.
+	it('draws the reply text streamed before the cut as a reply row that stays, as SSH does (R58)', () => {
+		const partial = 'Partial reply before the cut.';
+		// What an SSH tab holds after its link is cut mid-reply: the message, then the reply text.
+		const sshKinds = ['user', 'stdout'];
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'on', logs: [QUESTION] })],
+		});
+		const liveTurns = {
+			[liveTurnKey('h1', 't1')]: {
+				startedAt: 11,
+				busy: true,
+				entries: [{ id: 'live1', timestamp: 12, source: 'thinking', text: partial }],
+				answerText: partial,
+				answerAt: 12,
+			},
+		} as never;
+		const during = projectHostedSession(local, { agent, liveTurns, linkLost });
+		const rows = during.aiTabs[0].logs.filter((entry) => entry.agentError?.source !== 'host-link');
+		expect(rows.map((entry) => entry.source)).toEqual(sshKinds);
+		expect(rows[1]).toMatchObject({ source: 'stdout', text: partial, cutReply: true });
+		expect(rows[1].hostLive).toBeUndefined();
+		// Settles: the next pass makes no second copy.
+		expect(projectHostedSession(during, { agent, liveTurns, linkLost })).toBe(during);
+
+		// The host is back: no live tail, its transcript holds the resend's answer.
+		const back = projectHostedSession(during, {
+			agent: peerWith('idle', 'connected').agents[0],
+			transcripts: {
+				[liveTurnKey('h1', 't1')]: {
+					loaded: true,
+					entries: [QUESTION, { id: 'a1', timestamp: 90, source: 'ai', text: 'The docs say...' }],
+				},
+			} as never,
+		});
+		expect(
+			back.aiTabs[0].logs
+				.filter((entry) => entry.agentError?.source !== 'host-link')
+				.map((entry) => entry.text)
+		).toEqual([QUESTION.text, partial, 'The docs say...']);
+	});
+
+	// Parity R59: while the link is down, the kept message's bubble is drawn above the retry card,
+	// as on SSH, also when the message reached this tab only as the turn's live tail (the host's
+	// transcript was read before the turn began).
+	it.each(['ssh', 'hosted'] as const)(
+		'%s: draws the kept message above the retry card while the link is down (R59)',
+		(mode) => {
+			const card: LogEntry = {
+				id: 'card',
+				timestamp: 50,
+				source: 'system',
+				text: 'Connection lost',
+				retryOutageId: 'o1',
+			};
+			const partial = 'Partial reply before the cut.';
+			if (mode === 'ssh') {
+				// SSH: the send drew the bubble, the exit flushed the streamed reply, the cut its card.
+				const logs: LogEntry[] = [
+					QUESTION,
+					{ id: 'p', timestamp: 12, source: 'stdout', text: partial },
+					card,
+				];
+				expect(logs.map((entry) => entry.source)).toEqual(['user', 'stdout', 'system']);
+				return;
+			}
+			const local = createModeSession('hosted', {
+				id: 'row',
+				activeTabId: 't1',
+				aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'on', logs: [card] })],
+			});
+			const liveTurns = {
+				[liveTurnKey('h1', 't1')]: {
+					startedAt: 10,
+					busy: true,
+					entries: [QUESTION, { id: 'live1', timestamp: 12, source: 'thinking', text: partial }],
+					answerText: partial,
+					answerAt: 12,
+				},
+			} as never;
+			const during = projectHostedSession(local, {
+				agent,
+				liveTurns,
+				linkLost,
+				keptCuts: new Set(['t1']),
+			});
+			expect(during.aiTabs[0].logs.map((entry) => entry.source)).toEqual([
+				'user',
+				'stdout',
+				'system',
+			]);
+			expect(during.aiTabs[0].logs[0]).toMatchObject({ id: 'u1', text: QUESTION.text });
+			expect(during.aiTabs[0].logs[0].hostLive).toBeUndefined();
+			expect(
+				projectHostedSession(during, { agent, liveTurns, linkLost, keptCuts: new Set(['t1']) })
+			).toBe(during);
+			// The host is back with the message saved under the same id: drawn once, in its place.
+			const back = projectHostedSession(during, {
+				agent: peerWith('idle', 'connected').agents[0],
+				transcripts: {
+					[liveTurnKey('h1', 't1')]: { loaded: true, entries: [QUESTION] },
+				} as never,
+			});
+			expect(back.aiTabs[0].logs.map((entry) => entry.id)).toEqual([
+				'u1',
+				'host-cut-reply-t1-10',
+				'card',
+			]);
+		}
+	);
+
+	// CodeRabbit on #2177: a sticky tab keeps its thinking and tool cards at the cut, in the order
+	// they streamed with the reply text, as at a local turn's end.
+	it("keeps a sticky tab's cut rows in the order they streamed (R58)", () => {
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [
+				createMockAITab({ id: 't1', state: 'busy', showThinking: 'sticky', logs: [QUESTION] }),
+			],
+		});
+		const liveTurns = {
+			[liveTurnKey('h1', 't1')]: {
+				startedAt: 11,
+				busy: true,
+				entries: [
+					{ id: 'k1', timestamp: 12, source: 'thinking', text: 'Looking' },
+					{ id: 'o1', timestamp: 13, source: 'stdout', text: 'First' },
+					{ id: 'tool-1', timestamp: 14, source: 'tool', text: 'Read' },
+					{ id: 'o2', timestamp: 15, source: 'stdout', text: 'Second' },
+				],
+			},
+		} as never;
+		const during = projectHostedSession(local, { agent, liveTurns, linkLost });
+		expect(
+			during.aiTabs[0].logs
+				.filter((entry) => entry.agentError?.source !== 'host-link')
+				.map((entry) => entry.id)
+		).toEqual(['u1', 'k1', 'o1', 'tool-1', 'o2']);
+	});
+
+	// CodeRabbit on #2177: a host clock a few seconds ahead of this one still draws the cut turn's
+	// message and reply above the retry card the cut raised here.
+	it('draws the cut rows above the retry card when the host clock runs ahead (R59)', () => {
+		const card: LogEntry = {
+			id: 'card',
+			timestamp: 50,
+			source: 'system',
+			text: 'Connection lost',
+			retryOutageId: 'o1',
+		};
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'on', logs: [card] })],
+		});
+		const liveTurns = {
+			[liveTurnKey('h1', 't1')]: {
+				startedAt: 100,
+				busy: true,
+				entries: [
+					{ ...QUESTION, timestamp: 100 },
+					{ id: 'o1', timestamp: 101, source: 'stdout', text: 'Partial' },
+				],
+			},
+		} as never;
+		const during = projectHostedSession(local, {
+			agent,
+			liveTurns,
+			linkLost,
+			keptCuts: new Set(['t1']),
+		});
+		expect(during.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'o1', 'card']);
+	});
+
+	it.each([
+		['5 s ahead, the bound itself', 5_050],
+		['under the bound', 4_000],
+	])(
+		'keeps the cut message above the card once the host saves it, with the host clock %s (R59)',
+		(_how, hostAt) => {
+			const card: LogEntry = {
+				id: 'card',
+				timestamp: 50,
+				source: 'system',
+				text: 'Connection lost',
+				retryOutageId: 'o1',
+			};
+			const local = createModeSession('hosted', {
+				id: 'row',
+				activeTabId: 't1',
+				aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'on', logs: [card] })],
+			});
+			const message = { ...QUESTION, timestamp: hostAt };
+			const liveTurns = {
+				[liveTurnKey('h1', 't1')]: { startedAt: hostAt, busy: true, entries: [message] },
+			} as never;
+			const during = projectHostedSession(local, {
+				agent,
+				liveTurns,
+				linkLost,
+				keptCuts: new Set(['t1']),
+			});
+			expect(during.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'card']);
+			// The host is back and its transcript holds the message, nothing after it.
+			const back = projectHostedSession(during, {
+				agent: peerWith('idle', 'connected').agents[0],
+				transcripts: {
+					[liveTurnKey('h1', 't1')]: { loaded: true, entries: [message] },
+				} as never,
+			});
+			expect(back.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'card']);
+		}
+	);
+
+	it('never draws reasoning as a reply row at the cut (R58)', () => {
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'on', logs: [QUESTION] })],
+		});
+		const liveTurns = {
+			[liveTurnKey('h1', 't1')]: {
+				startedAt: 11,
+				busy: true,
+				entries: [{ id: 'live1', timestamp: 12, source: 'thinking', text: 'Let me think' }],
+			},
+		} as never;
+		const during = projectHostedSession(local, { agent, liveTurns, linkLost });
+		expect(during.aiTabs[0].logs.map((entry) => entry.source)).toEqual(['user', 'error']);
+	});
+
 	it('keeps one note when the turn message lands after the cut was drawn (a late transcript read)', () => {
 		const local = createModeSession('hosted', {
 			id: 'row',
@@ -717,6 +965,55 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(getRetryEntry('row', 't1')).toBeUndefined();
 		// The cut draws its note instead, as when no message can be kept.
 		expect(linkNotes()).toHaveLength(1);
+	});
+
+	// Parity R60: a reload while the host is down keeps the queue (the kept copy) and loses the cut
+	// and the retry. The cut the reloaded window notes again keeps that same copy, never a second
+	// one, and the card ends on "Connection restored" once it is sent.
+	it('keeps one item after a reload while the host is down, and ends its card on Connection restored (R60)', async () => {
+		updateSessionWith('row', (session) => ({
+			...session,
+			executionQueue: [
+				{
+					id: 'k1',
+					timestamp: 1,
+					tabId: 't1',
+					type: 'message',
+					text: QUESTION.text,
+					hostEntryId: 'u1',
+				},
+			],
+		}));
+		cut();
+		expect(queue().map((item) => item.id)).toEqual(['k1']);
+		const entry = getRetryEntry('row', 't1')!;
+		expect(entry.heldItemId).toBe('k1');
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		await hostBack('idle', [QUESTION]);
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(queue()).toHaveLength(0);
+		expect(useRetryStore.getState().outages[entry.outageId]?.status).toBe('recovered');
+	});
+
+	it('leaves a copy the user stopped before the reload held, and keeps no other (R60)', () => {
+		updateSessionWith('row', (session) => ({
+			...session,
+			executionQueue: [
+				{
+					id: 'k1',
+					timestamp: 1,
+					tabId: 't1',
+					type: 'message',
+					text: QUESTION.text,
+					hostEntryId: 'u1',
+					paused: true,
+				},
+			],
+		}));
+		cut();
+		expect(queue().map((item) => [item.id, item.paused])).toEqual([['k1', true]]);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
 	});
 
 	it('keeps the message the running turn answers (not older than the turn)', () => {
@@ -1443,11 +1740,17 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 
 	it('sends the kept message when only a LATER message of the tab was answered: its own turn died (R23)', async () => {
 		cut();
+		// Died with the host: what streamed before the cut stays, as an SSH turn's does (R58).
+		updateAiTab('row', 't1', (current) => ({
+			...current,
+			logs: [...current.logs, { ...PARTIAL_REPLY }],
+		}));
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
 		// The answer a2 is u2's: u1's turn died with the host, so u1 never ran.
 		await hostBack('idle', [QUESTION, LATER_MESSAGE, LATER_ANSWER]);
 		expect(sends()).toHaveLength(1);
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+		expect(tab().logs.filter((entry) => entry.cutReply)).toEqual([PARTIAL_REPLY]);
 	});
 
 	it('holds the kept message, unsent, and says the message is gone when the host tab was cleared (R23)', async () => {
@@ -1476,8 +1779,14 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		['is still running on the host', 'busy' as const, [QUESTION]],
 	])('never sends the kept message again when the turn %s', async (_how, state, entries) => {
 		cut();
+		// This machine's copy of what streamed before the cut (R58): the host's own answer draws it.
+		updateAiTab('row', 't1', (current) => ({
+			...current,
+			logs: [...current.logs, { ...PARTIAL_REPLY }],
+		}));
 		const outageId = getRetryEntry('row', 't1')!.outageId;
 		await hostBack(state, entries);
+		expect(tab().logs.some((entry) => entry.cutReply)).toBe(false);
 		expect(sends()).toHaveLength(0);
 		expect(getRetryEntry('row', 't1')).toBeUndefined();
 		expect(queue()).toHaveLength(0);

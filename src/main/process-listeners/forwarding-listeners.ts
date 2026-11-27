@@ -50,9 +50,11 @@ export function setupForwardingListeners(
 	// per-character granularity; coalescing them into ~50ms windows cuts IPC
 	// volume dramatically without changing observable behavior - the renderer
 	// already appends each chunk to a running buffer.
+	// Answer text and reasoning are buffered apart: a chunk of the other kind flushes the buffer
+	// first, so the flag sent with each batch is true for all of it (R58).
 	const thinkingBuffers = new Map<
 		string,
-		{ content: string; timer: ReturnType<typeof setTimeout> | null }
+		{ content: string; answer: boolean; timer: ReturnType<typeof setTimeout> | null }
 	>();
 
 	const flushThinking = (sessionId: string) => {
@@ -65,18 +67,24 @@ export function setupForwardingListeners(
 		const content = entry.content;
 		thinkingBuffers.delete(sessionId);
 		if (content) {
-			safeSend('process:thinking-chunk', sessionId, content);
+			if (entry.answer) safeSend('process:thinking-chunk', sessionId, content, true);
+			else safeSend('process:thinking-chunk', sessionId, content);
 		}
 	};
 
 	// Handle thinking/streaming content chunks from AI agents
 	// Emitted when agents produce partial text events (isPartial: true)
 	// Renderer decides whether to display based on tab's showThinking setting
-	processManager.on('thinking-chunk', (sessionId: string, content: string) => {
+	processManager.on('thinking-chunk', (sessionId: string, content: string, answer?: boolean) => {
 		if (!content) return;
+		const isAnswer = answer === true;
 		let entry = thinkingBuffers.get(sessionId);
+		if (entry && entry.answer !== isAnswer) {
+			flushThinking(sessionId);
+			entry = undefined;
+		}
 		if (!entry) {
-			entry = { content: '', timer: null };
+			entry = { content: '', answer: isAnswer, timer: null };
 			thinkingBuffers.set(sessionId, entry);
 		}
 		entry.content += content;

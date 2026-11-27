@@ -1837,9 +1837,20 @@ export function cancelRetry(sessionId: string, tabId: string): void {
 	// the existing "a human owns this now" signal, and every dispatch path
 	// already refuses to run while a session is in it. The tab's `agentError` is
 	// kept through an outage precisely so it is available here.
+	//
+	// Except for a lost link (R62): nothing in the agent is the user's to fix, the outage dialog
+	// says what is down, and a message sent next is kept under its own retry card, as one sent
+	// during the outage is. The agent reads Ready, as a local one does and a hosted one does; the
+	// tab's copy of the link error goes with the retry it stood for.
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const failedTabError = session?.aiTabs?.find((t) => t.id === tabId)?.agentError;
-	if (failedTabError) {
+	const linkLost = useRetryStore.getState().outages[entry.outageId]?.cause === 'connection';
+	if (failedTabError && linkLost) {
+		updateSessionWith(sessionId, (s) => ({
+			...s,
+			aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, agentError: undefined } : t)),
+		}));
+	} else if (failedTabError) {
 		updateSessionWith(sessionId, (s) => ({
 			...s,
 			agentError: failedTabError,

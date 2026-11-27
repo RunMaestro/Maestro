@@ -132,7 +132,15 @@ export function parseProcessFrame(channel: string, args: unknown[]): ParsedProce
 			break;
 		case 'process:thinking-chunk':
 			if (typeof args[1] === 'string') {
-				build = { kind: 'stream', event: { kind: 'thinking', text: args[1] } };
+				build = {
+					kind: 'stream',
+					event: {
+						kind: 'thinking',
+						text: args[1],
+						// The chunk is also answer text (R58): either host kind says so with `true`.
+						...(args[2] === true ? { answer: true } : {}),
+					},
+				};
 			}
 			break;
 		case 'process:data':
