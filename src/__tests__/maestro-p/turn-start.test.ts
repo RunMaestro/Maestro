@@ -1,6 +1,55 @@
 import { describe, expect, it } from 'vitest';
 
-import { isPreTurnRow, isRowFromBeforeRun, rowTimestampMs } from '../../maestro-p/turn-start';
+import {
+	isPreTurnRow,
+	isRowFromBeforeRun,
+	provesTurnStarted,
+	rowTimestampMs,
+} from '../../maestro-p/turn-start';
+
+describe('provesTurnStarted', () => {
+	const at = '2026-11-27T17:15:50.945Z';
+
+	it('counts the timestamped prompt echo, reply and tool rows', () => {
+		expect(provesTurnStarted({ type: 'user', timestamp: at, message: { content: 'hi' } })).toBe(
+			true
+		);
+		expect(provesTurnStarted({ type: 'assistant', timestamp: at, message: { content: [] } })).toBe(
+			true
+		);
+		expect(
+			provesTurnStarted({
+				type: 'attachment',
+				timestamp: at,
+				attachment: { type: 'hook_success', hookEvent: 'PreToolUse' },
+			})
+		).toBe(true);
+	});
+
+	// The rows a resumed Pedsidian turn tailed while claude was still booting,
+	// before its SessionStart hook ran or its prompt was read (2026-11-27).
+	it('never counts untimestamped bookkeeping rows', () => {
+		for (const row of [
+			{ type: 'last-prompt', lastPrompt: 'earlier', sessionId: 's' },
+			{ type: 'tools-used', tools: ['Bash'], sessionId: 's' },
+			{ type: 'file-history-snapshot', messageId: 'm', snapshot: {} },
+			{ type: 'mode', mode: 'normal', sessionId: 's' },
+			{ type: 'permission-mode', permissionMode: 'default', sessionId: 's' },
+		]) {
+			expect(provesTurnStarted(row)).toBe(false);
+		}
+	});
+
+	it('never counts a SessionStart hook row, even timestamped', () => {
+		expect(
+			provesTurnStarted({
+				type: 'attachment',
+				timestamp: at,
+				attachment: { type: 'hook_success', hookEvent: 'SessionStart' },
+			})
+		).toBe(false);
+	});
+});
 
 describe('isPreTurnRow', () => {
 	it('treats the SessionStart hook result claude logs at resume as pre-turn', () => {

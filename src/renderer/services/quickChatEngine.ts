@@ -85,6 +85,7 @@ import type { NativeSessionBinding } from '../../shared/maestro-lib/agents/provi
 import { collectNamingPrompt, requestTabAutoName } from './tabAutoNaming';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { isAgentDormant } from '../../shared/agentVisibility';
+import { steerRefusalSentence } from '../../shared/chatSteering';
 
 /**
  * The name a tab Quick Chat creates carries when automatic tab naming is off.
@@ -1321,7 +1322,7 @@ async function steer(messageId: string | undefined): Promise<string | null> {
 		case 'not-found':
 			return 'That message is no longer in the queue';
 		case 'refused':
-			return `${result.detail ?? 'The agent could not take the message right now.'} It stays queued.`;
+			return `${steerRefusalSentence(result, 'The agent could not take the message right now.')} It stays queued.`;
 		case 'unconfirmed':
 			return 'The agent may or may not have the message, so it is paused rather than sent twice.';
 		case 'unavailable':

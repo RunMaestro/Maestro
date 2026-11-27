@@ -387,6 +387,30 @@ export const STEERING_TURN_FINISHED_DETAIL =
 	'that turn has already finished, so there is nothing to steer';
 
 /**
+ * A refused steer as one sentence for a person, capitalized and ending in a period.
+ *
+ * A refusal's `detail` is a lowercase clause written to follow "refused: ", and a
+ * `blocking-dialog` detail is only the dialog's NAME ("a permission prompt", see
+ * `describeBlockingDialog` in src/maestro-p/steering-screen.ts). Pasted straight
+ * into a toast it read "a permission prompt It stays queued." Every surface that
+ * tells a person a steer was refused builds its sentence here; `fallback` is used
+ * when the refusal carries no detail.
+ */
+export function steerRefusalSentence(
+	result: Pick<QueueSteerResult, 'refusal' | 'detail'>,
+	fallback: string
+): string {
+	const detail = result.detail?.trim();
+	if (!detail) return fallback;
+	const clause =
+		result.refusal === 'blocking-dialog'
+			? `${detail} is waiting for an answer, so the message was not typed`
+			: detail;
+	const sentence = clause.charAt(0).toUpperCase() + clause.slice(1);
+	return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+}
+
+/**
  * The id of a well-formed steer frame whose ONLY fault is its size, else null.
  *
  * Exists so the server can answer an oversize frame with `refused` instead of

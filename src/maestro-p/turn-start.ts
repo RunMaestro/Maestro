@@ -44,6 +44,25 @@ export function rowTimestampMs(entry: unknown): number | null {
 	return Number.isFinite(madeAt) ? madeAt : null;
 }
 
+/**
+ * True for a row that proves claude read the prompt and started the turn: a
+ * TIMESTAMPED row that is not a SessionStart hook's.
+ *
+ * Untimestamped rows never count. They are bookkeeping (`last-prompt`,
+ * `tools-used`, `file-history-snapshot`, `mode`, `cost-state`), and on `--resume`
+ * they reach the tailer while claude is still booting: the previous turn's
+ * claude flushes them as it exits, with no stale timestamped row ahead of them
+ * for the stale-flush guard to key on. Counting one opened the steer gate before
+ * the TUI had drawn its editor, so a Quick Chat steer 10s into a Pedsidian turn
+ * was refused as "the input editor is not on screen" three seconds before claude
+ * received the prompt (2026-11-27). Every row that does mean the turn started
+ * (the prompt echo, a reply, a tool result, a non-SessionStart hook) carries a
+ * timestamp.
+ */
+export function provesTurnStarted(entry: unknown): boolean {
+	return rowTimestampMs(entry) !== null && !isPreTurnRow(entry);
+}
+
 /** True for a row timestamped before `runStartedAt` (epoch ms). */
 export function isRowFromBeforeRun(entry: unknown, runStartedAt: number): boolean {
 	const madeAt = rowTimestampMs(entry);

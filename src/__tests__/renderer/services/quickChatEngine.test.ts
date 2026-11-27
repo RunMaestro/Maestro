@@ -740,12 +740,17 @@ describe('steer a queued message into the running reply', () => {
 			type: 'steering',
 			id: '',
 			verdict: 'refused',
-			detail: 'The editor is busy.',
+			refusal: 'blocking-dialog',
+			detail: 'a permission prompt',
 		});
 		const { message } = await queueBehindBusyMain();
 		const result = await runQuickChatCommand({ type: 'steer', messageId: message.id });
 
-		expect(result).toMatchObject({ ok: false, error: 'The editor is busy. It stays queued.' });
+		expect(result).toMatchObject({
+			ok: false,
+			error:
+				'A permission prompt is waiting for an answer, so the message was not typed. It stays queued.',
+		});
 		expect(session('b').executionQueue).toHaveLength(1);
 		expect(sent(result.snapshot.messages)[0].route).toMatchObject({ status: 'queued' });
 	});

@@ -18,7 +18,41 @@ import {
 	QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS,
 	STEERING_REPLY_TIMEOUT_MS,
 	startsWithTuiCommandPrefix,
+	STEERING_TURN_FINISHED_DETAIL,
+	steerRefusalSentence,
 } from '../../shared/chatSteering';
+
+describe('steerRefusalSentence', () => {
+	const fallback = 'The agent could not take the message right now.';
+
+	it('turns a blocking-dialog name into a sentence, not a bare noun phrase', () => {
+		expect(
+			steerRefusalSentence({ refusal: 'blocking-dialog', detail: 'a permission prompt' }, fallback)
+		).toBe('A permission prompt is waiting for an answer, so the message was not typed.');
+	});
+
+	it('capitalizes a lowercase clause and closes it with a period', () => {
+		expect(
+			steerRefusalSentence(
+				{ refusal: 'not-running', detail: STEERING_TURN_FINISHED_DETAIL },
+				fallback
+			)
+		).toBe('That turn has already finished, so there is nothing to steer.');
+	});
+
+	it('leaves a detail that is already a sentence alone', () => {
+		expect(steerRefusalSentence({ detail: 'The editor is busy.' }, fallback)).toBe(
+			'The editor is busy.'
+		);
+	});
+
+	it('uses the fallback when there is no detail', () => {
+		expect(steerRefusalSentence({ refusal: 'tui-exited' }, fallback)).toBe(fallback);
+		expect(steerRefusalSentence({ refusal: 'blocking-dialog', detail: '  ' }, fallback)).toBe(
+			fallback
+		);
+	});
+});
 
 describe('startsWithTuiCommandPrefix', () => {
 	it('flags text a TUI reads as a slash command or bash mode, after leading whitespace', () => {

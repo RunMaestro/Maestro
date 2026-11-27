@@ -10,6 +10,7 @@
  */
 
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
+import { steerRefusalSentence } from '../../shared/chatSteering';
 import { notifyToast } from '../stores/notificationStore';
 
 /** Toast one steer result. Exported for tests. */
@@ -36,7 +37,7 @@ export function notifyGroupChatSteerResult(result: GroupChatSteerResult): void {
 			notifyToast({
 				color: 'yellow',
 				title: 'Could not steer this round',
-				message: `${result.detail ?? 'The running turn could not take the message right now.'} It stays queued.`,
+				message: `${steerRefusalSentence(result, 'The running turn could not take the message right now.')} It stays queued.`,
 			});
 			return;
 		default:

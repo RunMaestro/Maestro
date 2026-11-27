@@ -61,6 +61,18 @@ describe('notifyGroupChatSteerResult', () => {
 		});
 	});
 
+	it('words a lowercase wire detail as a sentence', () => {
+		notifyGroupChatSteerResult({
+			outcome: 'refused',
+			refusal: 'blocking-dialog',
+			detail: 'a permission prompt',
+		});
+
+		expect(lastToast().message).toBe(
+			'A permission prompt is waiting for an answer, so the message was not typed. It stays queued.'
+		);
+	});
+
 	it('words a refusal with no detail', () => {
 		notifyGroupChatSteerResult({ outcome: 'refused' });
 
