@@ -117,11 +117,19 @@ describe('steerQueuedItem', () => {
 			id: 'steer-1',
 			verdict: 'refused',
 			refusal: 'blocking-dialog',
+			detail: 'a permission prompt',
 		});
 
 		const result = await steerQueuedItem('sess-1', 'item-a');
 
 		expect(result).toMatchObject({ outcome: 'refused', refusal: 'blocking-dialog' });
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({
+				title: 'Could not steer this turn',
+				message:
+					'A permission prompt is waiting for an answer, so the message was not typed. It stays queued.',
+			})
+		);
 		expect(queue()).toEqual([{ ...item(), paused: undefined, dispatchRecoveryGeneration: 1 }]);
 		expect(pendingSteerCount()).toBe(0);
 		expect(tabLogs()).toEqual([]);

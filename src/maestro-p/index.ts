@@ -36,7 +36,7 @@ import {
 import { extractExitPlanText } from './plan-mode';
 import { extractAskUserQuestionText } from './ask-user-question';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
-import { isPreTurnRow, isRowFromBeforeRun, rowTimestampMs } from './turn-start';
+import { isRowFromBeforeRun, provesTurnStarted, rowTimestampMs } from './turn-start';
 import { collectAssistantText, ReplyText } from './reply-text';
 import {
 	discoverSessionId,
@@ -1069,11 +1069,14 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			costState = cost;
 			return;
 		}
-		// Any transcript line means claude started the turn - cancel the
-		// first-byte timer before the init-gating buffer logic so a pre-init
-		// entry still counts as "first byte". A SessionStart hook row does not:
-		// claude writes it at boot, before it reads the prompt (see turn-start.ts).
-		if (!isPreTurnRow(entry)) markFirstEntrySeen();
+		// A timestamped transcript line means claude started the turn - cancel
+		// the first-byte timer before the init-gating buffer logic so a pre-init
+		// entry still counts as "first byte". A SessionStart hook row does not
+		// (claude writes it at boot, before it reads the prompt), and neither does
+		// an untimestamped bookkeeping row: on --resume those arrive while the TUI
+		// is still booting, and counting one opened the steer gate before the
+		// editor was drawn (see provesTurnStarted in turn-start.ts).
+		if (provesTurnStarted(entry)) markFirstEntrySeen();
 		if (!initEmitted) {
 			if (entry && typeof entry === 'object') {
 				checkPromptEchoRow(entry as Record<string, unknown>);

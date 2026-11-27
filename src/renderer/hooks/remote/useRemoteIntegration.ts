@@ -3148,6 +3148,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// to be broadcast immediately for proper UI feedback on the web interface
 	const prevSessionStatesRef = useRef<Map<string, string>>(new Map());
 
+	// The agent object each tick last hashed. Agents are replaced, never mutated,
+	// so an agent that is the same object as last tick has the same tabs and the
+	// same hash, and the tick can skip it. A Nov 2026 field trace measured this
+	// loop as the window's single largest JS cost (~1.2s of every minute in Live
+	// mode) on a branch whose hash projects each tab's provider: every tab of
+	// every agent, twice a second, for agents that had not changed.
+	const prevHashedSessionsRef = useRef<Map<string, Session>>(new Map());
+
 	// Only set up the interval when live mode is active
 	useEffect(() => {
 		// Skip entirely if not in live mode - no web clients to broadcast to
@@ -3155,13 +3163,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const stopSelectionSync = startDesktopAiTabSelectionSync();
 		const previousTabs = prevTabsRef.current;
 		const previousStates = prevSessionStatesRef.current;
+		const previousHashed = prevHashedSessionsRef.current;
 
 		// Use an interval to periodically check for changes instead of running on every render
 		// This dramatically reduces CPU usage during normal typing
 		const intervalId = setInterval(() => {
 			const sessions = sessionsRef.current;
 			const sessionIds = new Set(sessions.map((session) => session.id));
-			for (const cache of [previousTabs, previousStates]) {
+			for (const cache of [previousTabs, previousStates, previousHashed]) {
 				for (const sessionId of cache.keys()) {
 					if (!sessionIds.has(sessionId)) cache.delete(sessionId);
 				}
@@ -3186,6 +3195,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					session.id,
 					session.activeTabId || session.aiTabs?.[0]?.id || ''
 				);
+
+				// Unchanged since the last tick: nothing the hash reads can differ.
+				if (!activeTabChanged && previousHashed.get(session.id) === session) return;
+				previousHashed.set(session.id, session);
 
 				// An empty aiTabs array is a valid state and still has to be broadcast,
 				// otherwise remote clients keep rendering tabs the user already closed.
@@ -3221,6 +3234,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			clearInterval(intervalId);
 			previousTabs.clear();
 			previousStates.clear();
+			previousHashed.clear();
 			stopSelectionSync();
 		};
 	}, [isLiveMode, sessionsRef]);

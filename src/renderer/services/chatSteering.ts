@@ -23,10 +23,11 @@
  */
 
 import type { LogEntry, PendingSteer, QueuedItem, Session } from '../types';
-import type {
-	QueueSteerResult,
-	SteerBubbleState,
-	SteeringResultFrame,
+import {
+	steerRefusalSentence,
+	type QueueSteerResult,
+	type SteerBubbleState,
+	type SteeringResultFrame,
 } from '../../shared/chatSteering';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
@@ -217,12 +218,12 @@ function notifyRefused(
 	sessionId: string,
 	tabId: string,
 	name: string,
-	detail: string | undefined
+	result: Pick<QueueSteerResult, 'refusal' | 'detail'>
 ): void {
 	notifyToast({
 		color: 'yellow',
 		title: 'Could not steer this turn',
-		message: `${detail ?? `${name} could not take the message right now.`} It stays queued.`,
+		message: `${steerRefusalSentence(result, `${name} could not take the message right now.`)} It stays queued.`,
 		sessionId,
 		tabId,
 	});
@@ -392,7 +393,7 @@ export async function steerQueuedItem(
 		// of the queue, live, and it sends normally when the turn ends.
 		if (result.verdict === 'refused') {
 			updateSessionWith(sessionId, (s) => returnPendingSteersToQueue(s, provisional, false));
-			notifyRefused(sessionId, target.tabId, name, result.detail);
+			notifyRefused(sessionId, target.tabId, name, result);
 			return {
 				outcome: 'refused',
 				verdict: result.verdict,
@@ -464,7 +465,7 @@ async function runHostSteer(
 			notifyDelivered(session.id, tabId, name);
 			break;
 		case 'refused':
-			notifyRefused(session.id, tabId, name, result.detail);
+			notifyRefused(session.id, tabId, name, result);
 			break;
 		case 'unconfirmed':
 			// The host paused it rather than send it twice, as a local steer does.

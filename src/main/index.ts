@@ -53,6 +53,7 @@ import { readFile } from 'fs/promises';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
 import { ProcessManager } from './process-manager';
+import { isRetiredOnRendererCrash } from './process-manager/utils/rendererCrashCleanup';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { createAgentConfigLookup, customPathsFromAgentConfigs } from './agents/agent-config-lookup';
@@ -1117,12 +1118,14 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		}
 	});
 
-	// Kill all managed processes before the renderer reloads after a crash.
-	// Without this, the new renderer restores sessions with pid:0 and spawns fresh
-	// PTYs, but only the *active* tab's old PTY gets killed (via spawn-before-kill).
-	// Non-active tabs' orphaned PTYs survive indefinitely, leaking PTY file descriptors.
+	// The main process owns AI tab turns across a renderer reload, and session
+	// restoration reattaches to them. Stop only what the crashed renderer owned:
+	// terminal PTYs, Auto Run tasks and synopses (see rendererCrashCleanup.ts).
 	mainWindow.webContents.on('render-process-gone', () => {
-		processManager?.killAll();
+		if (!processManager) return;
+		for (const proc of processManager.getAll()) {
+			if (isRetiredOnRendererCrash(proc)) processManager.kill(proc.sessionId, { sync: true });
+		}
 	});
 }
 
