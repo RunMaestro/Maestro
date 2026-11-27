@@ -18,6 +18,7 @@ import type {
 import { formatTokensCompact } from '../utils/formatters';
 import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
 import { formatElapsedTicker } from '../../shared/duration';
+import { autoRunTaskCounts } from '../../shared/autorunProgress';
 import { StopTurnButton } from './ui/StopTurnButton';
 import { useBackgroundAutoRuns } from '../hooks/batch/useBackgroundAutoRuns';
 import { useWindowContextOptional } from '../contexts/WindowContext';
@@ -177,19 +178,6 @@ const ThinkingItemRow = memo(
 
 ThinkingItemRow.displayName = 'ThinkingItemRow';
 
-// Resolve AutoRun task progress: prefer multi-doc aggregate counts when available,
-// fall back to single-doc legacy fields. Mirrors RightPanel.tsx so displays stay in sync.
-function getAutoRunTaskCounts(autoRunState: BatchRunState): { completed: number; total: number } {
-	const { totalTasksAcrossAllDocs } = autoRunState;
-	const useAggregate = !!totalTasksAcrossAllDocs && totalTasksAcrossAllDocs > 0;
-	return {
-		completed: useAggregate
-			? autoRunState.completedTasksAcrossAllDocs
-			: autoRunState.completedTasks,
-		total: useAggregate ? totalTasksAcrossAllDocs : autoRunState.totalTasks,
-	};
-}
-
 // AutoRun entry inside a "Running Processes" dropdown. When onStop is provided it renders a
 // per-row Stop button - used when AutoRun is demoted from the pill (because the focused tab is
 // busy) so the user can still stop AutoRun without losing it to a navigation-only list.
@@ -296,7 +284,7 @@ function BackgroundAutoRunRows({
 	return (
 		<>
 			{runs.map((run) => {
-				const { completed, total } = getAutoRunTaskCounts(run.state);
+				const { completed, total } = autoRunTaskCounts(run.state);
 				return (
 					<AutoRunRow
 						key={`autorun-${run.sessionId}`}
@@ -348,7 +336,7 @@ const AutoRunPill = memo(
 		const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const startTime = autoRunState.startTime || Date.now();
 		const { isStopping } = autoRunState;
-		const { completed: completedTasks, total: totalTasks } = getAutoRunTaskCounts(autoRunState);
+		const { completed: completedTasks, total: totalTasks } = autoRunTaskCounts(autoRunState);
 		const concurrentCount = (thinkingItems?.length || 0) + (backgroundAutoRuns?.length || 0);
 		// Steering notes the operator typed that no task has picked up yet. The
 		// selector hands back a stable empty array, so a run with no notes never
@@ -922,8 +910,8 @@ function ThinkingStatusPillInner({
 							{demotedAutoRun && (
 								<AutoRunRow
 									theme={theme}
-									completedTasks={getAutoRunTaskCounts(demotedAutoRun).completed}
-									totalTasks={getAutoRunTaskCounts(demotedAutoRun).total}
+									completedTasks={autoRunTaskCounts(demotedAutoRun).completed}
+									totalTasks={autoRunTaskCounts(demotedAutoRun).total}
 									isStopping={demotedAutoRun.isStopping}
 									onStop={demotedAutoRun.mirrored ? undefined : onStopAutoRun}
 								/>

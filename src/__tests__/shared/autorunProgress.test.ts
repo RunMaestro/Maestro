@@ -2,10 +2,35 @@ import { describe, it, expect } from 'vitest';
 import {
 	AUTO_RUN_ETA_MIN_TASKS,
 	autoRunProgressPercent,
+	autoRunTaskCounts,
 	estimateAutoRunEta,
 } from '../../shared/autorunProgress';
 
 const MIN = 60_000;
+
+describe('autoRunTaskCounts', () => {
+	it('prefers the cross-document totals', () => {
+		expect(
+			autoRunTaskCounts({
+				totalTasksAcrossAllDocs: 975,
+				completedTasksAcrossAllDocs: 635,
+				totalTasks: 975,
+				completedTasks: 32,
+			})
+		).toEqual({ completed: 635, total: 975 });
+	});
+
+	it('falls back to the single-document counters when the totals are empty', () => {
+		expect(
+			autoRunTaskCounts({
+				totalTasksAcrossAllDocs: 0,
+				completedTasksAcrossAllDocs: 0,
+				totalTasks: 5,
+				completedTasks: 2,
+			})
+		).toEqual({ completed: 2, total: 5 });
+	});
+});
 
 describe('autoRunProgressPercent', () => {
 	const base = {

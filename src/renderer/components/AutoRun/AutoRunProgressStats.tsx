@@ -10,7 +10,11 @@
 
 import { memo } from 'react';
 import type { BatchRunState, Theme } from '../../types';
-import { autoRunProgressPercent, estimateAutoRunEta } from '../../../shared/autorunProgress';
+import {
+	autoRunProgressPercent,
+	autoRunTaskCounts,
+	estimateAutoRunEta,
+} from '../../../shared/autorunProgress';
 import type { AutoRunEta } from '../../../shared/autorunProgress';
 import type { GoalLoopStats } from '../../../shared/goalDriven/types';
 import {
@@ -144,11 +148,7 @@ function taskColumns(
 		activeElapsedMs: elapsedMs ?? 0,
 	});
 
-	const useAllDocTotals = batchState.totalTasksAcrossAllDocs > 0;
-	const completed = useAllDocTotals
-		? batchState.completedTasksAcrossAllDocs
-		: batchState.completedTasks;
-	const total = useAllDocTotals ? batchState.totalTasksAcrossAllDocs : batchState.totalTasks;
+	const { completed, total } = autoRunTaskCounts(batchState);
 	return [
 		{
 			id: 'progress',
