@@ -1284,6 +1284,35 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(sends().map(([, , action]) => action.entryId)).toEqual(['b1']);
 	});
 
+	// CodeRabbit on #2171: a headless host starts the steer's follow-up as a turn of its own, so the
+	// turn's start is later than the steer's entry (written during the turn before). The cut still
+	// keeps the steer; a steer whose own turn ended is a previous turn's, and keeps nothing.
+	it.each([
+		['its follow-up runs', [QUESTION, R53_STEER, R53_ANSWER], ['b1']],
+		[
+			'its follow-up ended and a later turn runs',
+			[
+				QUESTION,
+				R53_STEER,
+				R53_ANSWER,
+				{ id: 'a2', timestamp: 16, source: 'stdout', text: 'The README...', turnEnded: true },
+			],
+			[],
+		],
+	] as const)(
+		'keeps a queued steer whose turn started after its entry only while %s',
+		(_how, entries, kept) => {
+			updateSessionWith('row', (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [...entries] })),
+			}));
+			hostReports('busy', 'reconnecting', 20);
+			confirmOutage();
+			syncHostedAgents();
+			expect(queue().map((item) => item.hostEntryId)).toEqual(kept);
+		}
+	);
+
 	// (a) The first turn finished with the steer inside it, and the steer's follow-up finished too,
 	// while the link was down: both read ended, and nothing is sent again.
 	it.each(['desktop', 'headless'] as const)(

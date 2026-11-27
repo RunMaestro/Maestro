@@ -303,6 +303,10 @@ const cutKey = (sessionId: string, tabId: string) => `${sessionId}:${tabId}`;
  * The message the turn a host tab runs answers: the tab's newest user message, when it is not
  * older than the turn (the host stamps both on its own clock, and writes the message after the
  * turn's process starts). An older one is the previous turn's, so the cut keeps nothing for it.
+ *
+ * A queued steer is the exception: it is written while the turn before it runs, so it is older than
+ * its own turn's start. It is the running turn's message while its own turn has no end stamp yet
+ * (`userTurnSpan()`); one whose turn ended is a previous turn's like any other (CodeRabbit on #2171).
  */
 function cutTurnMessage(
 	logs: readonly LogEntry[] | undefined,
@@ -310,7 +314,11 @@ function cutTurnMessage(
 ): LogEntry | undefined {
 	const message = lastUserMessage(logs);
 	if (!message || turnStartedAt === undefined) return message;
-	return message.timestamp >= turnStartedAt ? message : undefined;
+	if (message.timestamp >= turnStartedAt) return message;
+	if (message.steered !== true) return undefined;
+	const span = userTurnSpan(logs!, logs!.indexOf(message));
+	const ended = !!span && logs!.slice(span.from, span.to).some((entry) => entry.turnEnded === true);
+	return span && !ended ? message : undefined;
 }
 
 /**
