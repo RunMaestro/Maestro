@@ -26,11 +26,26 @@
  * through and logs at WARN. Fail-closed would let a 0DIN outage halt every
  * GitHub-triggered Cue subscription. The caller treats a null verdict as
  * "not suspicious".
+ *
+ * Fail-open must not also be SILENT. A token that is missing, or a 0DIN that
+ * keeps failing, turns the check off for every item, so each condition raises
+ * one status notice (see {@link setSusFactorStatusNotifier}) instead of a WARN
+ * line nobody reads. Production went five weeks unscored that way: the token
+ * lived only in `launchctl setenv`, which a reboot clears.
+ *
+ * ## Where the token comes from
+ *
+ * `ODIN_API_TOKEN` in the environment wins. When it is unset, and the host has
+ * opted in with {@link enableSusFactorKeyringFallback}, the OS credential store
+ * is read (service `ODIN_API_TOKEN`, account = the OS user), so the token
+ * survives a reboot without living in a plaintext file.
  */
 
 import * as crypto from 'crypto';
+import * as os from 'os';
 import { mapWithConcurrency } from '../utils/concurrency';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import { createKeyringEntry } from '../utils/keyring';
 
 const ACCESS_TOKEN_URL = 'https://0din.ai/api/v1/access_tokens';
 const SUS_URL = 'https://defense.0din.ai/api/v1/sus';
@@ -109,6 +124,56 @@ export function emitSusFactorBlockNotice(notice: SusFactorBlockNotice): void {
 	}
 }
 
+/**
+ * The check is enabled but is not actually running.
+ *
+ * - `unconfigured`: no token in the environment or the credential store.
+ * - `failing`: {@link FAIL_OPEN_STREAK_NOTICE} items in a row failed open
+ *   (timeout, 5xx, rejected token, no usable score).
+ *
+ * Each kind is raised once, then stays quiet until the check recovers: a token
+ * appears, or an item scores.
+ */
+export interface SusFactorStatusNotice {
+	kind: 'unconfigured' | 'failing';
+	/** The agent whose subscription hit the condition, for the click target. */
+	sessionId: string;
+	subscriptionName: string;
+	/** The last failure message, for `failing`. */
+	detail?: string;
+}
+
+/** Consecutive fail-open results before the `failing` notice is raised. */
+export const FAIL_OPEN_STREAK_NOTICE = 3;
+
+let statusNotifier: ((notice: SusFactorStatusNotice) => void) | null = null;
+let unconfiguredNoticeRaised = false;
+let failingNoticeRaised = false;
+let failOpenStreak = 0;
+let lastFailOpenDetail: string | null = null;
+
+export function setSusFactorStatusNotifier(
+	fn: ((notice: SusFactorStatusNotice) => void) | null
+): void {
+	statusNotifier = fn;
+}
+
+function emitStatusNotice(notice: SusFactorStatusNotice): void {
+	try {
+		statusNotifier?.(notice);
+	} catch {
+		/* notifier is best-effort */
+	}
+}
+
+/** Exposed for tests - forgets which status notices were already raised. */
+export function resetSusFactorStatus(): void {
+	unconfiguredNoticeRaised = false;
+	failingNoticeRaised = false;
+	failOpenStreak = 0;
+	lastFailOpenDetail = null;
+}
+
 // ─── Token cache ─────────────────────────────────────────────────────────────
 
 let cachedJwt: string | null = null;
@@ -118,11 +183,70 @@ let cachedJwtAt = 0;
 export function resetSusFactorTokenCache(): void {
 	cachedJwt = null;
 	cachedJwtAt = 0;
+	keyringToken = null;
+	keyringCheckedAt = Number.NEGATIVE_INFINITY;
+}
+
+/** Credential-store service the token is read from when the environment has none. */
+export const ODIN_TOKEN_KEYRING_SERVICE = 'ODIN_API_TOKEN';
+
+/**
+ * How long a credential-store MISS is trusted. A hit is kept for the process
+ * lifetime; a miss is re-read this often so a token added after launch is
+ * picked up without a restart, without a native call on every poll.
+ */
+const KEYRING_MISS_RECHECK_MS = 5 * 60_000;
+
+/** Null until the host opts in, so unit tests never touch the real store. */
+let keyringReader: (() => string | null) | null = null;
+let keyringToken: string | null = null;
+let keyringCheckedAt = Number.NEGATIVE_INFINITY;
+
+function readTokenFromKeyring(): string | null {
+	let account: string;
+	try {
+		account = os.userInfo().username;
+	} catch {
+		return null;
+	}
+	const entry = createKeyringEntry(ODIN_TOKEN_KEYRING_SERVICE, account);
+	if (!entry) return null;
+	try {
+		return entry.getPassword();
+	} catch {
+		// Locked keychain, no keyring daemon, or access denied: same as unset.
+		return null;
+	}
+}
+
+/**
+ * Let the token come from the OS credential store when `ODIN_API_TOKEN` is not
+ * in the environment. The desktop main process calls this once at startup.
+ * `reader` is injectable for tests; pass null to turn the fallback off.
+ */
+export function enableSusFactorKeyringFallback(
+	reader: (() => string | null) | null = readTokenFromKeyring
+): void {
+	keyringReader = reader;
+	keyringToken = null;
+	keyringCheckedAt = Number.NEGATIVE_INFINITY;
+}
+
+function readKeyringToken(): string | null {
+	if (!keyringReader) return null;
+	if (keyringToken) return keyringToken;
+	const now = Date.now();
+	if (now - keyringCheckedAt < KEYRING_MISS_RECHECK_MS) return null;
+	keyringCheckedAt = now;
+	const raw = keyringReader();
+	keyringToken = raw && raw.trim() !== '' ? raw.trim() : null;
+	return keyringToken;
 }
 
 function readApiToken(): string | null {
 	const raw = process.env.ODIN_API_TOKEN;
-	return raw && raw.trim() !== '' ? raw.trim() : null;
+	if (raw && raw.trim() !== '') return raw.trim();
+	return readKeyringToken();
 }
 
 export function isSusFactorConfigured(): boolean {
@@ -142,6 +266,12 @@ async function getJwt(now: number, force: boolean): Promise<string | null> {
 		TOKEN_TIMEOUT_MS
 	);
 	if (!res.ok) {
+		if (res.status === 401 || res.status === 403) {
+			// A rejected stored token must not be trusted for the process
+			// lifetime; re-read the store after the miss window instead.
+			keyringToken = null;
+			keyringCheckedAt = Date.now();
+		}
 		throw new Error(`0DIN token exchange failed: HTTP ${res.status}`);
 	}
 	const body = (await res.json()) as { token?: unknown };
@@ -261,9 +391,13 @@ export async function scoreSusFactor(
 				'warn',
 				`[CUE] SusFactor returned no usable score for ${context} - processing normally`
 			);
+			noteFailOpen('0DIN returned no usable score');
 			return null;
 		}
 
+		failOpenStreak = 0;
+		failingNoticeRaised = false;
+		lastFailOpenDetail = null;
 		const score = Math.max(...usable);
 		const verdict: SusFactorVerdict = {
 			score,
@@ -279,12 +413,19 @@ export async function scoreSusFactor(
 		return verdict;
 	} catch (err) {
 		// Fail open: 0DIN being slow or down must not halt Cue processing.
+		const detail = err instanceof Error ? err.message : String(err);
 		onLog(
 			'warn',
-			`[CUE] SusFactor check failed for ${context} - processing normally (fail-open): ${err instanceof Error ? err.message : String(err)}`
+			`[CUE] SusFactor check failed for ${context} - processing normally (fail-open): ${detail}`
 		);
+		noteFailOpen(detail);
 		return null;
 	}
+}
+
+function noteFailOpen(detail: string): void {
+	failOpenStreak += 1;
+	lastFailOpenDetail = detail;
 }
 
 // ─── GitHub event guard ──────────────────────────────────────────────────────
@@ -461,6 +602,29 @@ export function wouldScoreText(enabled: boolean, scorableText: string): boolean 
 }
 
 /**
+ * An enabled check met third-party text but has no token. Callers that emit
+ * synchronously when {@link wouldScoreText} is false call this too, so a
+ * missing token is never silent no matter which path skipped the guard.
+ */
+export function noteSusFactorUnconfigured(params: {
+	sessionId: string;
+	subscriptionName: string;
+	onLog: Logger;
+}): void {
+	if (unconfiguredNoticeRaised) return;
+	unconfiguredNoticeRaised = true;
+	params.onLog(
+		'warn',
+		'[CUE] SusFactor is enabled but ODIN_API_TOKEN is not set (environment or credential store) - third-party GitHub/webhook text is reaching agents UNSCORED'
+	);
+	emitStatusNotice({
+		kind: 'unconfigured',
+		sessionId: params.sessionId,
+		subscriptionName: params.subscriptionName,
+	});
+}
+
+/**
  * The one gate every scored Cue source goes through: hashing, the stored
  * verdict cache, scoring, fail-open, and the `cue_susfactor_blocks` record.
  * Each source only decides WHAT text is attacker-controllable and how to name
@@ -485,7 +649,11 @@ export async function guardScoredText(params: GuardScoredTextParams): Promise<bo
 
 async function guardScoredTextInner(params: GuardScoredTextParams): Promise<boolean> {
 	const { event, enabled, threshold, onLog, scorableText: text, itemRef } = params;
-	if (!wouldScoreText(enabled, text)) return true;
+	if (!wouldScoreText(enabled, text)) {
+		if (enabled && text.trim() !== '') noteSusFactorUnconfigured(params);
+		return true;
+	}
+	unconfiguredNoticeRaised = false;
 
 	const context = `${itemRef} (${event.type})`;
 
@@ -508,6 +676,15 @@ async function guardScoredTextInner(params: GuardScoredTextParams): Promise<bool
 	}
 
 	const verdict = await scoreSusFactor(text, threshold, onLog, context);
+	if (!verdict && failOpenStreak >= FAIL_OPEN_STREAK_NOTICE && !failingNoticeRaised) {
+		failingNoticeRaised = true;
+		emitStatusNotice({
+			kind: 'failing',
+			sessionId: params.sessionId,
+			subscriptionName: params.subscriptionName,
+			detail: lastFailOpenDetail ?? undefined,
+		});
+	}
 	// Fail open: null means the check could not run, not that the item is clean.
 	if (!verdict || !verdict.suspicious) return true;
 

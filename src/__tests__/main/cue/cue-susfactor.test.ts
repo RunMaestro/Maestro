@@ -26,8 +26,13 @@ import {
 	chunkForScoring,
 	extractGitHubScorableText,
 	guardGitHubEvent,
+	enableSusFactorKeyringFallback,
+	FAIL_OPEN_STREAK_NOTICE,
+	noteSusFactorUnconfigured,
+	resetSusFactorStatus,
 	resetSusFactorTokenCache,
 	setSusFactorNotifier,
+	setSusFactorStatusNotifier,
 	CHUNK_SIZE,
 	CHUNK_OVERLAP,
 } from '../../../main/cue/cue-susfactor';
@@ -68,7 +73,10 @@ function guardParams(payload: Record<string, unknown>, threshold = 0.95) {
 beforeEach(() => {
 	vi.clearAllMocks();
 	resetSusFactorTokenCache();
+	resetSusFactorStatus();
+	enableSusFactorKeyringFallback(null);
 	setSusFactorNotifier(null);
+	setSusFactorStatusNotifier(null);
 	getSusFactorBlock.mockReturnValue(null);
 	process.env.ODIN_API_TOKEN = 'test-api-token';
 });
@@ -241,5 +249,119 @@ describe('guardGitHubEvent', () => {
 		const allowed = await guardGitHubEvent(guardParams({ repo: 'o/r', number: 18 }));
 		expect(allowed).toBe(true);
 		expect(fetchWithTimeout).not.toHaveBeenCalled();
+	});
+});
+
+describe('token from the OS credential store', () => {
+	it('uses the credential store when ODIN_API_TOKEN is unset', async () => {
+		delete process.env.ODIN_API_TOKEN;
+		enableSusFactorKeyringFallback(() => 'keyring-token');
+		mockApi(() => 0.1);
+
+		await guardGitHubEvent(guardParams({ body: 'text', repo: 'o/r', number: 30 }));
+
+		const exchange = fetchWithTimeout.mock.calls.find((c) => c[0] === TOKEN_URL);
+		expect(exchange?.[1]).toMatchObject({ headers: { Authorization: 'keyring-token' } });
+	});
+
+	it('prefers the environment over the credential store', async () => {
+		const reader = vi.fn(() => 'keyring-token');
+		enableSusFactorKeyringFallback(reader);
+		mockApi(() => 0.1);
+
+		await guardGitHubEvent(guardParams({ body: 'text', repo: 'o/r', number: 31 }));
+
+		const exchange = fetchWithTimeout.mock.calls.find((c) => c[0] === TOKEN_URL);
+		expect(exchange?.[1]).toMatchObject({ headers: { Authorization: 'test-api-token' } });
+		expect(reader).not.toHaveBeenCalled();
+	});
+
+	it('does not re-read the store on every event after a miss', async () => {
+		delete process.env.ODIN_API_TOKEN;
+		const reader = vi.fn(() => null);
+		enableSusFactorKeyringFallback(reader);
+
+		await guardGitHubEvent(guardParams({ body: 'a', repo: 'o/r', number: 32 }));
+		await guardGitHubEvent(guardParams({ body: 'b', repo: 'o/r', number: 33 }));
+
+		expect(reader).toHaveBeenCalledTimes(1);
+		expect(fetchWithTimeout).not.toHaveBeenCalled();
+	});
+
+	it('is off until the host opts in', async () => {
+		delete process.env.ODIN_API_TOKEN;
+		const allowed = await guardGitHubEvent(guardParams({ body: 'evil', repo: 'o/r', number: 34 }));
+		expect(allowed).toBe(true);
+		expect(fetchWithTimeout).not.toHaveBeenCalled();
+	});
+});
+
+describe('status notices', () => {
+	it('raises one unconfigured notice when enabled with no token', async () => {
+		delete process.env.ODIN_API_TOKEN;
+		const status = vi.fn();
+		setSusFactorStatusNotifier(status);
+
+		await guardGitHubEvent(guardParams({ body: 'a', repo: 'o/r', number: 40 }));
+		await guardGitHubEvent(guardParams({ body: 'b', repo: 'o/r', number: 41 }));
+		noteSusFactorUnconfigured({ sessionId: 'session-1', subscriptionName: 'other', onLog });
+
+		expect(status).toHaveBeenCalledTimes(1);
+		expect(status).toHaveBeenCalledWith({
+			kind: 'unconfigured',
+			sessionId: 'session-1',
+			subscriptionName: 'watch-issues',
+		});
+	});
+
+	it('raises no unconfigured notice when the check is disabled', async () => {
+		delete process.env.ODIN_API_TOKEN;
+		const status = vi.fn();
+		setSusFactorStatusNotifier(status);
+
+		await guardGitHubEvent({
+			...guardParams({ body: 'a', repo: 'o/r', number: 42 }),
+			enabled: false,
+		});
+
+		expect(status).not.toHaveBeenCalled();
+	});
+
+	it('raises one failing notice after a fail-open streak, and re-arms on success', async () => {
+		const status = vi.fn();
+		setSusFactorStatusNotifier(status);
+		let healthy = false;
+		fetchWithTimeout.mockImplementation(async (url: string) => {
+			if (url === TOKEN_URL) return jsonResponse({ token: 'jwt-123', expires_in: 900 });
+			return healthy ? jsonResponse({ score: 0.1 }) : jsonResponse({ error: 'boom' }, 503);
+		});
+
+		for (let i = 0; i < FAIL_OPEN_STREAK_NOTICE + 2; i++) {
+			await guardGitHubEvent(guardParams({ body: `fail ${i}`, repo: 'o/r', number: 50 + i }));
+		}
+		expect(status).toHaveBeenCalledTimes(1);
+		expect(status.mock.calls[0][0]).toMatchObject({ kind: 'failing', sessionId: 'session-1' });
+
+		healthy = true;
+		await guardGitHubEvent(guardParams({ body: 'ok', repo: 'o/r', number: 60 }));
+		healthy = false;
+		for (let i = 0; i < FAIL_OPEN_STREAK_NOTICE; i++) {
+			await guardGitHubEvent(guardParams({ body: `again ${i}`, repo: 'o/r', number: 70 + i }));
+		}
+		expect(status).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not raise a failing notice for fewer failures than the streak', async () => {
+		const status = vi.fn();
+		setSusFactorStatusNotifier(status);
+		fetchWithTimeout.mockImplementation(async (url: string) => {
+			if (url === TOKEN_URL) return jsonResponse({ token: 'jwt-123', expires_in: 900 });
+			return jsonResponse({ error: 'boom' }, 503);
+		});
+
+		for (let i = 0; i < FAIL_OPEN_STREAK_NOTICE - 1; i++) {
+			await guardGitHubEvent(guardParams({ body: `fail ${i}`, repo: 'o/r', number: 80 + i }));
+		}
+		expect(status).not.toHaveBeenCalled();
 	});
 });

@@ -353,7 +353,7 @@ Hot-path callers (`recordTriggerFired`, `recordRunCompleted`) MUST be non-throwi
 ## Other subsystems (one line each)
 
 - `cue-webhook-server.ts` - one process-wide local HTTP listener serving every `webhook.received` subscription; no port is opened when none exist.
-- `cue-susfactor.ts` - 0DIN.ai SusFactor prompt-injection pre-check on attacker-controllable GitHub text; blocked runs land in `cue_susfactor_blocks`.
+- `cue-susfactor.ts` - 0DIN.ai SusFactor prompt-injection pre-check on attacker-controllable GitHub text; blocked runs land in `cue_susfactor_blocks`. Token: `ODIN_API_TOKEN` from the environment, else the OS credential store (service `ODIN_API_TOKEN`, account = OS user; desktop opts in via `enableSusFactorKeyringFallback()`). Fails open, but never silently: a missing token or a fail-open streak raises one sticky toast via `setSusFactorStatusNotifier`.
 - `cue-notify-executor.ts` + `cue-notify-bridge.ts` - `action: notify` toasts over `remote:notifyToast`.
 - `cue-self-destruct.ts` - removes a finished `time.once` subscription from `cue.yaml` (`removeSubscriptionFromYaml`, called from `onRunCompleted`).
 - `stats/cue-stats-query.ts`, `stats/cue-token-accessor.ts` - dashboard stats, agent-agnostic token attribution, and the History read path (`getCueHistoryEntries`).

@@ -190,7 +190,13 @@ import {
 	type CueRunActionDeps,
 	type CueRunSessionRecord,
 } from './cue/cue-run-router';
-import { setSusFactorNotifier } from './cue/cue-susfactor';
+import {
+	enableSusFactorKeyringFallback,
+	FAIL_OPEN_STREAK_NOTICE,
+	ODIN_TOKEN_KEYRING_SERVICE,
+	setSusFactorNotifier,
+	setSusFactorStatusNotifier,
+} from './cue/cue-susfactor';
 import { emitCueNotifyToast } from './cue/cue-notify-bridge';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
@@ -1632,6 +1638,9 @@ app
 		// BrowserWindow in scope. Register the emitter here (the one place that
 		// holds `mainWindow`) so the block notice reuses the existing Cue toast
 		// channel instead of inventing a second notification surface.
+		// The token may also live in the OS credential store, so it survives a
+		// reboot (a `launchctl setenv` value does not).
+		enableSusFactorKeyringFallback();
 		setSusFactorNotifier((notice) => {
 			emitCueNotifyToast(mainWindow, {
 				agentId: notice.sessionId,
@@ -1644,6 +1653,23 @@ app
 				clickAction: notice.url
 					? { kind: 'open-url', url: notice.url }
 					: { kind: 'jump-session', sessionId: notice.sessionId },
+			});
+		});
+		// A check that fails open must not fail SILENTLY: one sticky toast when
+		// it is enabled but has no token, or when 0DIN keeps failing.
+		setSusFactorStatusNotifier((notice) => {
+			emitCueNotifyToast(mainWindow, {
+				agentId: notice.sessionId,
+				title:
+					notice.kind === 'unconfigured'
+						? 'Cue prompt-injection check is OFF'
+						: 'Cue prompt-injection check is failing',
+				message:
+					notice.kind === 'unconfigured'
+						? `SusFactor is enabled but no ODIN_API_TOKEN was found in the environment or the OS credential store (service "${ODIN_TOKEN_KEYRING_SERVICE}"). GitHub and webhook text from "${notice.subscriptionName}" is reaching agents unscored.`
+						: `The last ${FAIL_OPEN_STREAK_NOTICE} 0DIN SusFactor checks failed, so items from "${notice.subscriptionName}" are reaching agents unscored.${notice.detail ? ` Last error: ${notice.detail}` : ''}`,
+				sticky: true,
+				color: 'orange',
 			});
 		});
 
