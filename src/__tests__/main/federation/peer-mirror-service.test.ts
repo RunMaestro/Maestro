@@ -13,6 +13,7 @@ import {
 	MIRROR_IDLE_REDIAL_MAX_MS,
 	MIRROR_TURN_COALESCE_MS,
 	MIRROR_UNANNOUNCED_HISTORY_TTL_MS,
+	MIRROR_HISTORY_PUSH_MERGE_MS,
 	PeerMirrorService,
 	type PeerMirrorServiceDeps,
 } from '../../../main/federation/peer-mirror-service';
@@ -805,6 +806,8 @@ describe('PeerMirrorService', () => {
 			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h3']);
 			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h3']);
 			a.emit({ type: 'history.changed', agentId: 'a-a1' });
+			// The windows hear of it once the merge wait is out (L34).
+			h.flushTimers();
 			expect(h.pushes.at(-1)).toEqual({
 				peerId: 'a',
 				event: { type: 'agent.history', agentId: 'a-a1' },
@@ -815,8 +818,74 @@ describe('PeerMirrorService', () => {
 			expect(a.historyList).toHaveBeenCalledTimes(4);
 			// An agent the peer does not have is no push.
 			a.emit({ type: 'history.changed', agentId: 'nope' });
+			h.flushTimers();
 			expect(h.pushes.at(-1)?.event.type).toBe('agent.history');
 			expect(h.pushes.filter((p) => p.event.type === 'agent.history')).toHaveLength(1);
+		});
+
+		// L34: a desktop host sends one write as `history:entryAdded` plus the 2 to 4 `fs.watch`
+		// events macOS fires for it; each push made an open History panel read the whole list again.
+		it('merges the History writes of one agent within the merge wait into one push', async () => {
+			const timers: Array<{ cb: () => void; ms: number }> = [];
+			const a = fakeHost('a');
+			a.setAgents([agent('a-a1'), agent('a-a2')]);
+			const h = harness(
+				[remoteOf('a')],
+				{ a },
+				{
+					setTimer: (cb, ms) => {
+						timers.push({ cb, ms });
+						return timers.length;
+					},
+				}
+			);
+			const fire = () => timers.splice(0).forEach(({ cb }) => cb());
+			const historyPushes = () => h.pushes.filter((p) => p.event.type === 'agent.history');
+			h.service.start();
+			await settle();
+			fire();
+			await h.service.history('a', 'a-a1');
+			for (let i = 0; i < 4; i++) a.emit({ type: 'history.changed', agentId: 'a-a1' });
+			a.emit({ type: 'history.changed', agentId: 'a-a2' });
+			expect(historyPushes()).toEqual([]);
+			// One wait per agent, of the merge length.
+			expect(timers.map((t) => t.ms)).toEqual([
+				MIRROR_HISTORY_PUSH_MERGE_MS,
+				MIRROR_HISTORY_PUSH_MERGE_MS,
+			]);
+			// Each write already dropped the list: a read inside the burst is fresh.
+			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h2']);
+			fire();
+			expect(historyPushes()).toEqual([
+				{ peerId: 'a', event: { type: 'agent.history', agentId: 'a-a1' } },
+				{ peerId: 'a', event: { type: 'agent.history', agentId: 'a-a2' } },
+			]);
+			// The list read inside the burst is dropped as the push leaves: the panel reads the end.
+			expect((await h.service.history('a', 'a-a1')).map((e) => e.id)).toEqual(['h3']);
+			expect(a.historyList).toHaveBeenCalledTimes(3);
+			// A write after the push is a push of its own.
+			a.emit({ type: 'history.changed', agentId: 'a-a1' });
+			fire();
+			expect(historyPushes()).toHaveLength(3);
+		});
+
+		it('sends no merged History push for a peer dropped or a service stopped during the wait', async () => {
+			const a = fakeHost('a');
+			const b = fakeHost('b');
+			const clearTimer = vi.fn();
+			const h = harness([remoteOf('a'), remoteOf('b')], { a, b }, { clearTimer });
+			h.service.start();
+			await settle();
+			h.flushTimers();
+			a.emit({ type: 'history.changed', agentId: 'a-a1' });
+			h.setRemotes([remoteOf('b')]);
+			await settle();
+			b.emit({ type: 'history.changed', agentId: 'b-a1' });
+			await h.service.stop();
+			h.flushTimers();
+			expect(h.pushes.filter((p) => p.event.type === 'agent.history')).toEqual([]);
+			// Both waits were cleared, not left to run.
+			expect(clearTimer).toHaveBeenCalledTimes(2);
 		});
 
 		it('keeps a read from an older host that never says it wrote only briefly', async () => {

@@ -366,6 +366,8 @@ export function watchHostedTurnSynopsis(
 			);
 			if (!entry) return;
 			toastedSynopsisEntries.add(entry.id);
+			// An older host never says it wrote this entry: an open History panel reads again now.
+			usePeerMirrorStore.getState().noteHostHistoryEntry(target.peerId, target.agentId);
 			const current = selectSessionById(sessionId)(useSessionStore.getState());
 			if (!current) return;
 			const localTab = current.aiTabs.find((candidate) => candidate.id === tabId);

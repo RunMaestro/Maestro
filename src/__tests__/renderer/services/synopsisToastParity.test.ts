@@ -194,6 +194,35 @@ describe('U3: the "Synopsis" toast after a plain turn', () => {
 		expect(toasts()).toHaveLength(1);
 	});
 
+	// L34 (b): an older host never says it wrote the synopsis, so an open History panel had no
+	// reason to read again until the next turn.
+	it.each([
+		{ label: 'never says it wrote History', announces: false, extraBumps: 1 },
+		{ label: 'says it wrote History', announces: true, extraBumps: 0 },
+	])(
+		'hosted: when the watch finds the entry from a host that $label, the History version moves $extraBumps more time(s)',
+		async ({ announces, extraBumps }) => {
+			seed('hosted');
+			hostTab('busy', 100);
+			watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1');
+			await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+			hostTab('idle');
+			await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+			hostEntries.push(entry('turn', 140));
+			if (announces) {
+				usePeerMirrorStore.getState().applyPush({
+					peerId: 'box',
+					event: { type: 'agent.history', agentId: 'h1' },
+				});
+			}
+			const version = () => usePeerMirrorStore.getState().historyVersions['box:h1'];
+			const before = version();
+			await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 5);
+			expect(toasts()).toHaveLength(1);
+			expect(version()).toBe(before + extraBumps);
+		}
+	);
+
 	it('hosted: an entry saved before the turn started is not taken for its own', async () => {
 		seed('hosted');
 		hostTab('busy', 100);

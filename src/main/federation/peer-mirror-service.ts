@@ -114,6 +114,12 @@ export const MIRROR_IDLE_REDIAL_MAX_MS = 5 * 60_000;
  * nothing, so its list is read again this soon. A host that says it keeps the list until it does.
  */
 export const MIRROR_UNANNOUNCED_HISTORY_TTL_MS = 5_000;
+/**
+ * How long the `agent.history` pushes of one agent are merged into one: a desktop host sends one
+ * History write as `history:entryAdded` plus the two to four `fs.watch` events macOS fires for it,
+ * and each push makes an open History panel read the host's whole list again (L34).
+ */
+export const MIRROR_HISTORY_PUSH_MERGE_MS = 150;
 
 export interface PeerMirrorServiceDeps {
 	/** The stored SSH remotes. Read on every reconcile; nothing is cached. */
@@ -202,6 +208,11 @@ interface PeerEntry {
 	 * it says every write: its History reads are kept until it does. Unset for an older host.
 	 */
 	announcesHistory?: true;
+	/**
+	 * The agents whose `agent.history` push waits out `MIRROR_HISTORY_PUSH_MERGE_MS`, with its
+	 * timer: more History writes meanwhile join that one push.
+	 */
+	historyPushes?: Map<string, unknown>;
 }
 
 export class PeerMirrorService {
@@ -869,6 +880,8 @@ export class PeerMirrorService {
 				// The host wrote it, often a synopsis after the turn's end: the next read is fresh.
 				entry.announcesHistory = true;
 				this.forgetHistory(entry, event.agentId);
+				this.mergeHistoryPush(entry, event.agentId);
+				continue;
 			} else if (event.type === 'agent.removed') {
 				this.forgetHistory(entry, event.agentId);
 			} else if (event.type === 'peer.stale' || event.type === 'peer.agents') {
@@ -901,6 +914,28 @@ export class PeerMirrorService {
 		// Anything else goes out after the turn events before it, so a window sees them in order.
 		this.flushTurns();
 		this.deps.push({ peerId, event });
+	}
+
+	/**
+	 * Tell the windows an agent's History moved, once per burst of host writes: the first write
+	 * starts the wait, and the ones within `MIRROR_HISTORY_PUSH_MERGE_MS` join its push. Each write
+	 * already dropped the cached list; it is dropped once more as the push leaves, so a read taken
+	 * inside the burst is not what the panel's read gets.
+	 */
+	private mergeHistoryPush(entry: PeerEntry, agentId: string): void {
+		const pushes = (entry.historyPushes ??= new Map());
+		if (pushes.has(agentId)) return;
+		const setTimer =
+			this.deps.setTimer ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
+		pushes.set(
+			agentId,
+			setTimer(() => {
+				pushes.delete(agentId);
+				if (entry.dropped || this.stopped) return;
+				this.forgetHistory(entry, agentId);
+				this.emit(entry, { type: 'agent.history', agentId });
+			}, MIRROR_HISTORY_PUSH_MERGE_MS)
+		);
 	}
 
 	private armTurnTimer(): void {
@@ -964,6 +999,10 @@ export class PeerMirrorService {
 
 	private async detach(entry: PeerEntry): Promise<void> {
 		entry.dropped = true;
+		for (const timer of entry.historyPushes?.values() ?? []) {
+			(this.deps.clearTimer ?? ((handle) => clearTimeout(handle as NodeJS.Timeout)))(timer);
+		}
+		entry.historyPushes?.clear();
 		for (const waiter of [...entry.linkWaiters]) waiter();
 		for (const unsubscribe of entry.unsubscribes) unsubscribe();
 		entry.unsubscribes = [];

@@ -256,6 +256,32 @@ describe('peerMirrorStore', () => {
 			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1 });
 		});
 
+		// L34 (b): an older host never says it wrote; the Synopsis watch's find stands in for it.
+		it('bumps one agent once when a History read found a host entry, only for a host that never says it wrote', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([
+				peerWith('buildbox', [agent('a1'), agent('a2')]),
+				peerWith('gpu', [agent('b1')]),
+			]);
+			usePeerMirrorStore.getState().noteHostHistoryEntry('buildbox', 'a1');
+			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1, 'gpu:b1': 1 });
+			// A host that says it wrote already bumped the version: the find adds nothing.
+			usePeerMirrorStore
+				.getState()
+				.applyPush(push('gpu', { type: 'agent.history', agentId: 'b1' }));
+			expect(versions()['gpu:b1']).toBe(2);
+			usePeerMirrorStore.getState().noteHostHistoryEntry('gpu', 'b1');
+			expect(versions()['gpu:b1']).toBe(2);
+			// A connection that could not resume may reach an older build: the find bumps again.
+			usePeerMirrorStore.getState().applyPush(push('gpu', { type: 'peer.stale' }));
+			expect(versions()['gpu:b1']).toBe(3);
+			usePeerMirrorStore.getState().noteHostHistoryEntry('gpu', 'b1');
+			expect(versions()['gpu:b1']).toBe(4);
+			// A peer this window does not hold: nothing to bump.
+			usePeerMirrorStore.getState().noteHostHistoryEntry('nope', 'x1');
+			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1, 'gpu:b1': 4 });
+		});
+
 		it('bumps every agent of the peer on peer.stale and on peer.agents', () => {
 			const store = usePeerMirrorStore.getState();
 			store.hydrate([
