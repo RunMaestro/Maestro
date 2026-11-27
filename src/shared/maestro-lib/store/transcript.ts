@@ -17,6 +17,7 @@
  * Pure: no file access. Safe to import from the renderer.
  */
 
+import type { SteerBubbleState } from '../../chatSteering';
 import type { AgentError } from '../../types';
 import type { AgentRecord, AITabRecord, SessionsDocument, UnknownFields } from './records';
 import { agentsOf, aiTabsOf } from './read-stores';
@@ -64,6 +65,13 @@ export interface LogEntryRecord extends UnknownFields {
 	readOnly?: boolean;
 	/** A user message steered into the turn already running (`SteeredMessageHeader`). */
 	steered?: boolean;
+	/**
+	 * A steered message: what the agent did with it. `queued`: it could not fold it in and ran it
+	 * as a turn of its own after the one it was steered into (`isUserTurnStart()`); `absorbed`: it
+	 * took it into that turn; `pending`: no verdict yet. Absent on a steer written before the state
+	 * was recorded, read as joining the turn.
+	 */
+	steerState?: SteerBubbleState;
 	/**
 	 * A user message: the id of the queue item it ran from, on the host that ran it. A client that
 	 * queued the message knows that id from the host's receipt, so it finds this entry by identity,

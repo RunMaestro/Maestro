@@ -27,6 +27,7 @@ import {
 	startsWithTuiCommandPrefix,
 	STEERING_REPLY_TIMEOUT_MS,
 	type QueueSteerResult,
+	type SteerBubbleState,
 	type SteeringResultFrame,
 } from '../../chatSteering';
 import { steerOverSocket } from '../../chatSteeringSocket';
@@ -70,6 +71,17 @@ export interface RuntimeSteeringOptions<T extends SteerableItem> {
 	toolTypeOf(agentId: string): string | undefined;
 	/** Add an entry to the end of a tab's transcript, and tell clients it changed. */
 	appendEntry(agentId: string, tabId: string, entry: LogEntryRecord): Promise<void>;
+	/**
+	 * Record what the agent did with a steer already written (`steerState`), once the turn says.
+	 * A `queued` steer is a turn of its own (`isUserTurnStart()`). Absent: the state stays as
+	 * written.
+	 */
+	stampSteerState?(
+		agentId: string,
+		tabId: string,
+		entryId: string,
+		state: SteerBubbleState
+	): Promise<void>;
 	newId(): string;
 	now(): number;
 	/** Seam for tests: type a steer into a socket. Default: `steerOverSocket()`. */
@@ -143,6 +155,13 @@ interface PendingSteer<T> {
 	 * say what became of it: taken, and it leaves the queue; dropped, and it sends next.
 	 */
 	parked?: boolean;
+	/** Its transcript entry, once written: the verdict that comes later is stamped on it. */
+	entryId?: string;
+}
+
+/** The bubble state a verdict settles a written steer in, or undefined when it settles none. */
+function steerStateOf(frame: SteeringResultFrame | undefined): SteerBubbleState | undefined {
+	return frame?.verdict === 'absorbed' || frame?.verdict === 'queued' ? frame.verdict : undefined;
 }
 
 export function createRuntimeSteering<T extends SteerableItem>(
@@ -231,7 +250,9 @@ export function createRuntimeSteering<T extends SteerableItem>(
 					pending.get(token)?.delete(frame.id);
 					// The agent took a message that waited paused: it leaves the queue, never runs twice.
 					if (steered.parked && options.queueOf(agentId)?.remove(steered.item.id)) {
-						void writeSteeredEntry(steered);
+						void writeSteeredEntry(steered, frame.verdict);
+					} else if (!steered.parked) {
+						stampSteerState(steered, frame.verdict);
 					}
 				} else if (frame.verdict === 'dropped') {
 					pending.get(token)?.delete(frame.id);
@@ -317,18 +338,30 @@ export function createRuntimeSteering<T extends SteerableItem>(
 		}
 	}
 
-	/** The steered entry joins the transcript, as the desktop's bubble. */
-	function writeSteeredEntry(steered: PendingSteer<T>): Promise<void> {
+	/** The steered entry joins the transcript, as the desktop's bubble, with what the agent did. */
+	function writeSteeredEntry(
+		steered: PendingSteer<T>,
+		steerState: SteerBubbleState
+	): Promise<void> {
 		const { item } = steered;
+		const id = options.newId();
+		steered.entryId = id;
 		return options.appendEntry(steered.agentId, item.tabId, {
-			id: options.newId(),
+			id,
 			timestamp: options.now(),
 			source: 'user',
 			text: item.text,
 			steered: true,
+			steerState,
 			queuedItemId: item.id,
 			...(item.readOnly ? { readOnly: true } : {}),
 		});
+	}
+
+	/** The verdict that came after the entry was written, as the desktop stamps its bubble. */
+	function stampSteerState(steered: PendingSteer<T>, state: SteerBubbleState): void {
+		if (!steered.entryId || !options.stampSteerState) return;
+		void options.stampSteerState(steered.agentId, steered.item.tabId, steered.entryId, state);
 	}
 
 	function registerPending(token: object, steerId: string, steered: PendingSteer<T>): void {
@@ -393,7 +426,9 @@ export function createRuntimeSteering<T extends SteerableItem>(
 
 		// The agent has the text: the entry is written before the answer goes back, so a client that
 		// reads the tab next finds it.
-		await writeSteeredEntry(steered);
+		// Written with what the agent did with it, as far as the turn has said (R51).
+		const written = steerStateOf(frame) ?? steerStateOf(heardOf('absorbed', 'queued')) ?? 'pending';
+		await writeSteeredEntry(steered, written);
 		if (frame.verdict !== 'delivered') return { outcome: 'settled', verdict: frame.verdict };
 
 		// What the turn said while the socket was still answering settles it now.
@@ -402,7 +437,11 @@ export function createRuntimeSteering<T extends SteerableItem>(
 			dropped(steered);
 			return { outcome: 'delivered', verdict: 'delivered' };
 		}
-		if (later) return { outcome: 'settled', verdict: later.verdict };
+		if (later) {
+			const state = steerStateOf(later);
+			if (state && state !== written) stampSteerState(steered, state);
+			return { outcome: 'settled', verdict: later.verdict };
+		}
 		if (heard.exited) {
 			unconfirmed(steered);
 			return { outcome: 'delivered', verdict: 'delivered' };

@@ -453,6 +453,15 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			}
 			announceEntry(agentId, tabId, entry);
 		},
+		stampSteerState: async (agentId, tabId, entryId, state) => {
+			const written = await repository.stampSteerState(agentId, tabId, entryId, state);
+			if (!written.ok) {
+				logger.warn(
+					`A steer's outcome was not written to its transcript entry: ${written.error.message}`,
+					LOG_CONTEXT
+				);
+			}
+		},
 		newId: () => ctx.newId(),
 		now: () => deps.now(),
 	});

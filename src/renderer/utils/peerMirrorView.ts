@@ -4,6 +4,7 @@
  * by the host sync (`projectHostedSession()`), plus how a local agent stands with Federation.
  */
 
+import { isSteerBubbleState } from '../../shared/chatSteering';
 import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
 import type { MirroredPeer } from '../../shared/maestro-lib/client/peer-mirror';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
@@ -52,6 +53,10 @@ export function mirrorLogEntry(record: LogEntryRecord): LogEntry {
 	if (record.readOnly !== undefined) entry.readOnly = record.readOnly;
 	// A message the host steered into its running turn wears the same header as a local one.
 	if (record.steered === true) entry.steered = true;
+	// What the agent did with it: a `queued` steer ran as a turn of its own, and is drawn so.
+	if (record.steered === true && isSteerBubbleState(record.steerState)) {
+		entry.steerState = record.steerState;
+	}
 	// The host's queue item this message ran from: a queued consult or hand-off finds its own turn
 	// by it (`crossAgentHandoff.ts`).
 	if (typeof record.queuedItemId === 'string' && record.queuedItemId) {

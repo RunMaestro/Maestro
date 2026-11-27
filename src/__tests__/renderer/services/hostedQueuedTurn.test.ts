@@ -17,6 +17,7 @@ vi.mock('../../../renderer/hooks/agent/useCrossAgentDispatch', async (importOrig
 import {
 	handQueuedItemToHost,
 	isQueuedItemForHost,
+	queuedItemHostOverrides,
 	queuedItemHostText,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { enqueuePromptForTab } from '../../../renderer/services/queuedPrompt';
@@ -336,6 +337,29 @@ describe('hostedQueuedTurn', () => {
 // Parity M7: a hosted agent's `@mention` consults from this machine, as a local agent's does (the
 // mentioned agent is in this machine's roster). The drain fires it as the turn goes to the host;
 // the turn carries the agent-only notes and a released consult's replies there.
+// Parity R51: a queued message's read-only choice reaches the host by the one rule every dispatch
+// path asks (`queuedItemRunsReadOnly()`): a sender's own `turnReadOnly` decides when present.
+describe('queuedItemHostOverrides (R51)', () => {
+	const item = (fields: Partial<QueuedItem>) => queuedMessage(fields);
+
+	it.each([
+		[
+			'the sender chose writable, the chip was read-only',
+			{ turnReadOnly: false, readOnlyMode: true },
+			false,
+		],
+		['the sender chose read-only', { turnReadOnly: true }, true],
+		['read-only when queued', { readOnlyMode: true }, true],
+		['writable when queued', { readOnlyMode: false }, false],
+	] as const)('%s', (_name, fields, readOnly) => {
+		expect(queuedItemHostOverrides(item(fields))?.readOnly).toBe(readOnly);
+	});
+
+	it('leaves read-only to the host tab when the message made no choice', () => {
+		expect(queuedItemHostOverrides(item({}))).toBeUndefined();
+	});
+});
+
 describe('hostedQueuedTurn: @mentions (M7)', () => {
 	const drainDeps = {
 		conductorProfile: '',

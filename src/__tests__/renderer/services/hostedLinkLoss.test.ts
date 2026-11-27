@@ -49,7 +49,7 @@ import {
 	type RaisedErrorRetry,
 } from '../../../renderer/stores/retryStore';
 import { parseSessionId } from '../../../renderer/utils/sessionIdParser';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { isSshTransportError, useSshOutageStore } from '../../../renderer/stores/sshOutageStore';
 import type { AgentError, LogEntry, Session } from '../../../renderer/types';
@@ -1002,6 +1002,50 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		await flush();
 		expect(sends()).toHaveLength(0);
 		expect(queue()).toHaveLength(0);
+	});
+
+	// Parity R51: a steer the agent could not fold in ran as a turn of its own after the first one
+	// ended (`steerState: 'queued'`). The link is cut during that follow-up: it is the cut turn, so
+	// its message is the one kept and sent again once it died with the host, never the first one.
+	it("keeps the queued steer's message when the link is cut during its follow-up (R51)", async () => {
+		const ANSWER: LogEntry = {
+			id: 'a1',
+			timestamp: 12,
+			source: 'ai',
+			text: 'The docs say...',
+			turnEnded: true,
+		};
+		const STEER: LogEntry = {
+			id: 'b1',
+			timestamp: 14,
+			source: 'user',
+			text: 'Also the README',
+			steered: true,
+			steerState: 'queued',
+		};
+		updateSessionWith('row', (s) => ({
+			...s,
+			aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [QUESTION, ANSWER, STEER] })),
+		}));
+		cut();
+		expect(queue().map((item) => item.hostEntryId)).toEqual(['b1']);
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		transcript.mockResolvedValue([
+			QUESTION,
+			ANSWER,
+			STEER,
+			{ id: 'o2', timestamp: 16, source: 'stdout', text: 'The READ' },
+		]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...peerWith('idle', 'connected'), hostKind: 'desktop' } },
+		}));
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(sends().map(([, , action]) => action.entryId)).toEqual(['b1']);
+		expect(sends()[0][2]).toMatchObject({ text: STEER.text });
 	});
 
 	// CodeRabbit on #2167: the retry of an errored turn was stopped. A later send of the same entry

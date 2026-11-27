@@ -6,6 +6,7 @@ import {
 	markTurnEnded,
 	tabRunsUserEntry,
 	turnFateAfter,
+	isUserTurnStart,
 	agentsMovingWithParent,
 	withAgentInGroup,
 	applyAgentConfigPatch,
@@ -1428,6 +1429,46 @@ describe('turnFateAfter', () => {
 
 // Parity R41: one side owns a retry. A desktop host's own Agent Resilience writes its retry card
 // (`retryOutageId`) in the turn; a client that kept a copy sends nothing while it stands.
+// Parity R51: a steer the agent ran as a turn of its own (`queued`) starts that turn; one it
+// folded in (`absorbed`), one with no verdict yet, or one from before the state was recorded does not.
+describe('isUserTurnStart', () => {
+	it.each([
+		['a message', { source: 'user' }, true],
+		[
+			'a steer run as its own follow-up turn',
+			{ source: 'user', steered: true, steerState: 'queued' },
+			true,
+		],
+		[
+			'a steer folded into the turn',
+			{ source: 'user', steered: true, steerState: 'absorbed' },
+			false,
+		],
+		[
+			'a steer with no verdict yet',
+			{ source: 'user', steered: true, steerState: 'pending' },
+			false,
+		],
+		['a steer from before the state was recorded', { source: 'user', steered: true }, false],
+		['an answer', { source: 'ai' }, false],
+	] as const)('%s', (_name, entry, starts) => {
+		expect(isUserTurnStart(entry)).toBe(starts);
+	});
+
+	it("ends the first turn at a queued steer: its output is the steer turn's, not the first one's", () => {
+		const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
+		const a1 = { id: 'a1', timestamp: 2, source: 'ai', text: 'Done', turnEnded: true };
+		const b = { id: 'b', timestamp: 3, source: 'user', text: 'And the README', steered: true };
+		const partial = { id: 'o2', timestamp: 4, source: 'stdout', text: 'The READ' };
+		expect(turnFateAfter([u1, a1, { ...b, steerState: 'queued' }, partial], 0, 'desktop')).toBe(
+			'answered'
+		);
+		expect(turnFateAfter([u1, a1, { ...b, steerState: 'queued' }, partial], 2, 'desktop')).toBe(
+			'unended'
+		);
+	});
+});
+
 describe('hostRetriesTurn', () => {
 	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
 	const card = {

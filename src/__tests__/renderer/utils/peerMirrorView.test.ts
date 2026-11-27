@@ -41,6 +41,22 @@ describe('mirrorLogEntry', () => {
 		).toBeUndefined();
 	});
 
+	// Parity R51: what the agent did with a steer crosses the wire, so a steer run as its own turn
+	// (`queued`) is told from one folded into the running turn.
+	it('keeps what the agent did with a steered message (R51)', () => {
+		for (const steerState of ['queued', 'absorbed', 'pending'] as const) {
+			expect(
+				mirrorLogEntry(entry('s1', 'go left', { source: 'user', steered: true, steerState }))
+					.steerState
+			).toBe(steerState);
+		}
+		expect(
+			mirrorLogEntry(
+				entry('s2', 'go', { source: 'user', steered: true, steerState: 'other' as never })
+			).steerState
+		).toBeUndefined();
+	});
+
 	it("keeps the host's queue item id on a user entry, so a queued consult finds its own turn (M23)", () => {
 		expect(
 			mirrorLogEntry(entry('u1', 'run it', { source: 'user', queuedItemId: 'q1' })).queuedItemId

@@ -829,11 +829,15 @@ export function markTurnEnded<T extends object>(
 	return entries as T[];
 }
 
-/** Whether `entry` starts a user turn of its own: a message steered into the running turn does not. */
+/**
+ * Whether `entry` starts a user turn of its own: a message steered into the running turn does
+ * not, unless the agent ran it as a turn of its own after that one (`steerState: 'queued'`, the
+ * steer it could not fold in: its follow-up is its own turn, with its own end).
+ */
 export function isUserTurnStart(
-	entry: Pick<Partial<LogEntryRecord>, 'source' | 'steered'> | null | undefined
+	entry: Pick<Partial<LogEntryRecord>, 'source' | 'steered' | 'steerState'> | null | undefined
 ): boolean {
-	return entry?.source === 'user' && entry.steered !== true;
+	return entry?.source === 'user' && (entry.steered !== true || entry.steerState === 'queued');
 }
 
 /**

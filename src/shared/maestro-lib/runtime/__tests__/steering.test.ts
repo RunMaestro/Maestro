@@ -35,6 +35,10 @@ function setup(
 		appendEntry: async (_agentId, _tabId, entry) => {
 			entries.push(entry);
 		},
+		stampSteerState: async (_agentId, _tabId, entryId, steerState) => {
+			const at = entries.findIndex((entry) => entry.id === entryId);
+			if (at !== -1) entries[at] = { ...entries[at], steerState };
+		},
 		newId: () => `id-${++id}`,
 		now: () => 5,
 		send: async (_socket, text, steerId) => {
@@ -69,6 +73,30 @@ describe('the host steer', () => {
 				steered: true,
 				queuedItemId: 'q1',
 			}),
+		]);
+	});
+
+	// Parity R51: the entry says what the agent did with the steer, as the desktop's bubble does,
+	// so a steer run as a turn of its own (`queued`) is read as that turn on every client.
+	it('records what the agent did with the steer on its entry (R51)', async () => {
+		const settled = setup({ verdict: 'queued' });
+		settled.steering.turnStarted('a1', 't1', settled.tui);
+		await settled.steering.steer('a1', 'q1');
+		expect(settled.entries).toEqual([
+			expect.objectContaining({ steered: true, steerState: 'queued' }),
+		]);
+
+		// Delivered first: no verdict yet; the turn's later verdict is stamped on the entry.
+		const later = setup();
+		const turn = later.steering.turnStarted('a1', 't1', later.tui);
+		await later.steering.steer('a1', 'q1');
+		expect(later.entries).toEqual([
+			expect.objectContaining({ steered: true, steerState: 'pending' }),
+		]);
+		turn.verdict({ type: 'steering', id: 'id-1', verdict: 'queued' });
+		await Promise.resolve();
+		expect(later.entries).toEqual([
+			expect.objectContaining({ steered: true, steerState: 'queued' }),
 		]);
 	});
 

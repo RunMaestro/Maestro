@@ -44,6 +44,7 @@ import {
 	useSessionStore,
 } from '../stores/sessionStore';
 import { generateId } from '../utils/ids';
+import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { notifyToast } from '../stores/notificationStore';
 import {
 	clearRetryIfSettled,
@@ -351,10 +352,14 @@ export function queuedItemMentionPlan(
  * when it froze none (the tab's live choices decide, as the local drain falls back).
  */
 export function queuedItemHostOverrides(item: QueuedItem): TurnOverrides | undefined {
+	// Read-only by the one rule every dispatch path asks (a sender's own `turnReadOnly` first),
+	// sent only when the item made a choice: none leaves the host tab's own chip to decide.
+	const choseReadOnly =
+		typeof item.turnReadOnly === 'boolean' || typeof item.readOnlyMode === 'boolean';
 	const overrides: TurnOverrides = {
 		...(item.turnSettings?.model ? { model: item.turnSettings.model } : {}),
 		...(item.turnSettings?.effort ? { effort: item.turnSettings.effort } : {}),
-		...(typeof item.readOnlyMode === 'boolean' ? { readOnly: item.readOnlyMode } : {}),
+		...(choseReadOnly ? { readOnly: queuedItemRunsReadOnly(item, undefined) } : {}),
 	};
 	return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
