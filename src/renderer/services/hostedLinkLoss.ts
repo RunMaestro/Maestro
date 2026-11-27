@@ -391,7 +391,19 @@ export function noteHostedTurnsCut(session: Session, link: HostLink, lost?: Agen
  */
 function keepCutMessage(cut: CutTurn, reason: string): void {
 	const message = cut.message!;
-	const item: QueuedItem = {
+	// Kept already, before a reload of this window (the queue is saved; the cut and the retry are
+	// not): that copy is the message, never a second one (R60). One the user stopped stays held.
+	const persisted = selectSessionById(cut.sessionId)(
+		useSessionStore.getState()
+	)?.executionQueue?.find(
+		(queued) => queued.tabId === cut.tabId && queued.hostEntryId === message.id
+	);
+	if (persisted?.paused) {
+		// Not this cut's to settle: the held copy is the user's to send.
+		cut.stopped = true;
+		return;
+	}
+	const item: QueuedItem = persisted ?? {
 		id: generateId(),
 		timestamp: Date.now(),
 		tabId: cut.tabId,

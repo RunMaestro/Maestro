@@ -863,6 +863,55 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(linkNotes()).toHaveLength(1);
 	});
 
+	// Parity R60: a reload while the host is down keeps the queue (the kept copy) and loses the cut
+	// and the retry. The cut the reloaded window notes again keeps that same copy, never a second
+	// one, and the card ends on "Connection restored" once it is sent.
+	it('keeps one item after a reload while the host is down, and ends its card on Connection restored (R60)', async () => {
+		updateSessionWith('row', (session) => ({
+			...session,
+			executionQueue: [
+				{
+					id: 'k1',
+					timestamp: 1,
+					tabId: 't1',
+					type: 'message',
+					text: QUESTION.text,
+					hostEntryId: 'u1',
+				},
+			],
+		}));
+		cut();
+		expect(queue().map((item) => item.id)).toEqual(['k1']);
+		const entry = getRetryEntry('row', 't1')!;
+		expect(entry.heldItemId).toBe('k1');
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		await hostBack('idle', [QUESTION]);
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(queue()).toHaveLength(0);
+		expect(useRetryStore.getState().outages[entry.outageId]?.status).toBe('recovered');
+	});
+
+	it('leaves a copy the user stopped before the reload held, and keeps no other (R60)', () => {
+		updateSessionWith('row', (session) => ({
+			...session,
+			executionQueue: [
+				{
+					id: 'k1',
+					timestamp: 1,
+					tabId: 't1',
+					type: 'message',
+					text: QUESTION.text,
+					hostEntryId: 'u1',
+					paused: true,
+				},
+			],
+		}));
+		cut();
+		expect(queue().map((item) => [item.id, item.paused])).toEqual([['k1', true]]);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+	});
+
 	it('keeps the message the running turn answers (not older than the turn)', () => {
 		hostReports('busy', 'reconnecting', QUESTION.timestamp);
 		confirmOutage();
