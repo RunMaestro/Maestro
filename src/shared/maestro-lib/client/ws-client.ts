@@ -234,8 +234,11 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 /** The most item ids a desktop host's queue changes frame may list (a host caps its queue at 100). */
 const MAX_QUEUE_CHANGES_ORDER = 1_000;
 
-/** The most changes of one agent kept while its whole read is out; past it the next one reads again. */
+/** The most changes of one agent kept while its whole read is out; past it the queue is read again. */
 const MAX_QUEUE_CHANGES_WHILE_READING = 100;
+
+/** The most whole reads in a row one gap may take when changes keep outrunning the kept ones. */
+const MAX_QUEUE_GAP_READS = 3;
 
 /** A desktop host's queue change (`QueueChangesFrame`, M28), read off the wire. */
 interface QueueChanges {
@@ -418,7 +421,11 @@ class WsMaestroClient implements MaestroClient {
 	 */
 	private readonly queueGapReads = new Map<
 		string,
-		Array<{ changes: QueueChanges; named: { namesExits?: true; exit?: QueueExit } }>
+		{
+			later: Array<{ changes: QueueChanges; named: { namesExits?: true; exit?: QueueExit } }>;
+			/** A change came past the bound: the replay ends short of it, so the queue is read again. */
+			overflowed: boolean;
+		}
 	>();
 	private conn: BridgeConnection | undefined;
 	private attempt: Attempt | undefined;
@@ -1127,7 +1134,7 @@ class WsMaestroClient implements MaestroClient {
 			}
 			case 'session_removed': {
 				const id = asString(frame.sessionId);
-				if (id) this.emitAll(this.mirror.remove(id));
+				if (id) this.removeAgent(id);
 				break;
 			}
 			case 'session_state_change': {
@@ -1246,7 +1253,7 @@ class WsMaestroClient implements MaestroClient {
 				}
 				if (Array.isArray(payload.removedIds)) {
 					for (const id of payload.removedIds) {
-						if (typeof id === 'string') this.emitAll(this.mirror.remove(id));
+						if (typeof id === 'string') this.removeAgent(id);
 					}
 				}
 				return;
@@ -2254,7 +2261,11 @@ class WsMaestroClient implements MaestroClient {
 	): void {
 		const waiting = this.queueGapReads.get(agentId);
 		if (waiting) {
-			if (waiting.length < MAX_QUEUE_CHANGES_WHILE_READING) waiting.push({ changes, named });
+			if (waiting.later.length < MAX_QUEUE_CHANGES_WHILE_READING) {
+				waiting.later.push({ changes, named });
+			} else {
+				waiting.overflowed = true;
+			}
 			return;
 		}
 		const held = this.heldQueues.get(agentId);
@@ -2266,26 +2277,47 @@ class WsMaestroClient implements MaestroClient {
 			this.emit({ type: 'queue.changed', agentId, items, ...named });
 			return;
 		}
-		this.heldQueues.delete(agentId);
-		this.queueGapReads.set(agentId, []);
-		void this.readQueueAfterGap(agentId);
+		this.readQueueAfterGap(agentId, 1);
 	}
 
 	/**
 	 * The whole read a change that did not fit asked for. A read sent after that change answers at
 	 * or past it (the host takes its `queueSeq` as it starts the read, M29); every change sent
-	 * while it was out chains from that `seq`, and is applied over the answer in order.
+	 * while it was out chains from that `seq`, and is applied over the answer in order. When more
+	 * changes came than are kept, the queue is read again once the replay is done (CodeRabbit on
+	 * #2162), at most `MAX_QUEUE_GAP_READS` times in a row; past that the list is not held as
+	 * current, so the next change reads it again.
 	 */
-	private async readQueueAfterGap(agentId: string): Promise<void> {
-		const read = await this.queueList(agentId);
-		const later = this.queueGapReads.get(agentId) ?? [];
-		this.queueGapReads.delete(agentId);
-		// A failed read leaves the mirror as it was; the next change tries again.
-		if (!read.ok) return;
-		this.emit({ type: 'queue.changed', agentId, items: read.value });
-		// An answer with no `seq` (a host before M28 sends no changes) has nothing to chain from.
-		if (!this.heldQueues.has(agentId)) return;
-		for (const { changes, named } of later) this.onQueueChanges(agentId, changes, named);
+	private readQueueAfterGap(agentId: string, attempt: number): void {
+		this.heldQueues.delete(agentId);
+		this.queueGapReads.set(agentId, { later: [], overflowed: false });
+		void this.queueList(agentId).then((read) => {
+			const { later, overflowed } = this.queueGapReads.get(agentId) ?? {
+				later: [],
+				overflowed: false,
+			};
+			this.queueGapReads.delete(agentId);
+			// A failed read leaves the mirror as it was; the next change tries again.
+			if (!read.ok) return;
+			// The newest list this client holds: a queue read meanwhile may have been newer.
+			this.emit({
+				type: 'queue.changed',
+				agentId,
+				items: this.heldQueues.get(agentId)?.items ?? read.value,
+			});
+			// An answer with no `seq` (a host before M28 sends no changes) has nothing to chain from.
+			if (!this.heldQueues.has(agentId)) return;
+			for (const { changes, named } of later) this.onQueueChanges(agentId, changes, named);
+			if (!overflowed || this.queueGapReads.has(agentId)) return;
+			if (attempt < MAX_QUEUE_GAP_READS) this.readQueueAfterGap(agentId, attempt + 1);
+			else this.heldQueues.delete(agentId);
+		});
+	}
+
+	/** An agent the host no longer has: its mirror record and its held queue go (M29). */
+	private removeAgent(agentId: string): void {
+		this.heldQueues.delete(agentId);
+		this.emitAll(this.mirror.remove(agentId));
 	}
 
 	private async queueList(agentId: string): Promise<ClientResult<QueuedTurn[]>> {

@@ -1780,6 +1780,93 @@ describe('createWsMaestroClient', () => {
 				expect(bridge.sent('list_queue')).toHaveLength(1);
 			});
 
+			it('reads the queue again when more changes came during its read than it keeps, so an edit past the bound is not lost (CodeRabbit on #2162)', async () => {
+				await connect();
+				let reads = 0;
+				bridge.typed.set('list_queue', () => {
+					reads += 1;
+					return reads === 1
+						? {
+								type: 'list_queue_result',
+								success: true,
+								queues: [{ sessionId: A1, items: [item], queueSeq: 4 }],
+							}
+						: {
+								type: 'list_queue_result',
+								success: true,
+								queues: [{ sessionId: A1, items: [{ ...item, text: 'edited' }], queueSeq: 105 }],
+							};
+				});
+				bridge.push({
+					type: 'queue_changed',
+					sessionId: A1,
+					changes: { seq: 4, base: 3, order: ['q1'], changed: [] },
+				});
+				// 101 changes while the read is out; the last one edits the item, and nothing follows.
+				for (let seq = 5; seq <= 105; seq++) {
+					bridge.push({
+						type: 'queue_changed',
+						sessionId: A1,
+						changes: {
+							seq,
+							base: seq - 1,
+							order: ['q1'],
+							changed: seq === 105 ? [{ ...item, text: 'edited' }] : [],
+						},
+					});
+				}
+				await vi.waitFor(() =>
+					expect(queueEvents().at(-1)).toMatchObject({ items: [{ itemId: 'q1', text: 'edited' }] })
+				);
+				expect(bridge.sent('list_queue')).toHaveLength(2);
+			});
+
+			it('emits the newest list it holds when a queue read while its own was out answered newer (CodeRabbit on #2162)', async () => {
+				await connect();
+				let recovery: unknown;
+				bridge.typed.set('list_queue', (message) => {
+					// The recovery read is held; the caller's read answers with the newer list.
+					if (recovery === undefined) {
+						recovery = message.requestId;
+						return 'silent';
+					}
+					return {
+						type: 'list_queue_result',
+						success: true,
+						queues: [{ sessionId: A1, items: [{ ...item, text: 'newer' }], queueSeq: 6 }],
+					};
+				});
+				bridge.push({
+					type: 'queue_changed',
+					sessionId: A1,
+					changes: { seq: 4, base: 3, order: ['q1'], changed: [] },
+				});
+				await vi.waitFor(() => expect(bridge.sent('list_queue')).toHaveLength(1));
+				await client.turns.queue.list(A1);
+				bridge.push({
+					type: 'list_queue_result',
+					success: true,
+					queues: [{ sessionId: A1, items: [item], queueSeq: 4 }],
+					requestId: recovery,
+				});
+				await vi.waitFor(() => expect(queueEvents()).toHaveLength(1));
+				expect(queueEvents()[0]).toMatchObject({ items: [{ itemId: 'q1', text: 'newer' }] });
+			});
+
+			it("drops the queue it held for an agent the host removed, so that agent's restarted changes read the queue whole (CodeRabbit on #2162)", async () => {
+				await connect();
+				bridge.typed.set('list_queue', listAt(3, [item]));
+				await client.turns.queue.list(A1);
+				bridge.push({ type: 'session_removed', sessionId: A1 });
+				// The agent comes back; its frames restart at seq 1.
+				bridge.push({
+					type: 'queue_changed',
+					sessionId: A1,
+					changes: { seq: 1, base: 0, order: ['q1'], changed: [] },
+				});
+				await vi.waitFor(() => expect(bridge.sent('list_queue')).toHaveLength(2));
+			});
+
 			it('never applies a change from a frame it cannot read, and keeps reading whole frames', async () => {
 				await connect();
 				bridge.push({
