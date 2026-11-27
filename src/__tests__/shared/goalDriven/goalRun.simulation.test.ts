@@ -43,7 +43,7 @@ function buildRecord(
 	iteration: number,
 	prevProgress: number
 ): GoalIterationRecord {
-	const progress = markers.progress ?? prevProgress;
+	const progress = markers.exactProgress ?? prevProgress;
 	return {
 		iteration,
 		progress,
@@ -137,6 +137,22 @@ describe('goal-driven run simulation', () => {
 		if (decision.action === 'stop') {
 			expect(decision.reason).toBe('stalled');
 		}
+	});
+
+	it('keeps running when a long goal gains less than 1% per iteration', () => {
+		const responses = [
+			'Sealed one trial.\n<!-- maestro:progress 48.27 | 2,573/5,330 -->',
+			'Sealed another.\n<!-- maestro:progress 48.29 | 2,574/5,330 -->',
+			'Validator confirms one more.\n<!-- maestro:progress 48.31 | 2,575/5,330 -->',
+			'And another.\n<!-- maestro:progress 48.33 | 2,576/5,330 -->',
+		];
+
+		const { history, decision, lastResponseIndex } = runScenario('sub-1% gains', responses);
+
+		// Every iteration rounds to 48%, but the exact series climbs, so no stall.
+		expect(lastResponseIndex).toBe(3);
+		expect(history.map((r) => r.progress)).toEqual([48.27, 48.29, 48.31, 48.33]);
+		expect(decision.action).toBe('continue');
 	});
 
 	it('stops with reason deadlock when the agent declares one', () => {

@@ -60,6 +60,7 @@ import {
 	WebHandlerDependencies,
 } from './web';
 import { registerWebLoginHandlers } from './webLogin';
+import { registerPromptLinkHandlers } from './promptLinks';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationHistoryHandlers } from './notification-history';
 import { registerNotificationsHandlers } from './notifications';
@@ -67,6 +68,7 @@ import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphon
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerAiCommandHandlers } from './aiCommand';
+import { registerSideQuestionHandlers } from './sideQuestion';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
@@ -141,6 +143,7 @@ export {
 };
 export type { WebHandlerDependencies };
 export { registerWebLoginHandlers };
+export { registerPromptLinkHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers, registerNotificationHistoryHandlers };
@@ -148,6 +151,7 @@ export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
 export { registerAiCommandHandlers };
+export { registerSideQuestionHandlers };
 export type { TabNamingHandlerDependencies };
 export { registerDirectorNotesHandlers };
 export type { DirectorNotesHandlerDependencies };
@@ -322,7 +326,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Register stats handlers for usage tracking
 	registerStatsHandlers({
-		getMainWindow: deps.getMainWindow,
 		settingsStore: deps.settingsStore,
 	});
 	// Register Cue Stats handlers for the Cue Dashboard aggregation query

@@ -11,8 +11,39 @@
  * No Electron, React, or IPC - just data in, decision out.
  */
 
-import type { GoalExitDecision, GoalIterationRecord, GoalRunConfig } from './types';
+import type {
+	GoalExitDecision,
+	GoalIterationRecord,
+	GoalLoopStats,
+	GoalMarkers,
+	GoalRunConfig,
+} from './types';
 import { STALL_THRESHOLD } from './types';
+
+/**
+ * Resolve one iteration's progress for both consumers of it.
+ *
+ * - `reported` is the raw self-report at full precision, stored on the history
+ *   record for the exit evaluator. A missing marker carries the previous raw
+ *   value forward (0 on the first iteration). It is NOT rounded: on a long goal
+ *   an honest iteration can gain 0.06%, and a rounded series reads that as flat
+ *   and stops a healthy run as stalled.
+ * - `display` is what the user sees: a whole-percent, monotonic high-water mark
+ *   (`previousDisplay` is the prior one), so a noisy self-assessment that dips
+ *   never slides the bar backward.
+ *
+ * Shared by the desktop runner (`useGoalRunner`) and the CLI runner
+ * (`goal-runner.ts`) so the two cannot drift.
+ */
+export function resolveGoalIterationProgress(
+	markers: Pick<GoalMarkers, 'exactProgress'>,
+	history: GoalIterationRecord[],
+	previousDisplay: number
+): { reported: number; display: number } {
+	const reported =
+		markers.exactProgress ?? (history.length > 0 ? history[history.length - 1].progress : 0);
+	return { reported, display: Math.max(previousDisplay, Math.round(reported)) };
+}
 
 /**
  * Build a progress series for the stall check, normalizing any missing report.
@@ -55,6 +86,39 @@ function detectStall(series: number[]): number | null {
 		}
 	}
 	return window[window.length - 1];
+}
+
+/**
+ * Flat loops in a row that stop the run: `detectStall` needs `STALL_THRESHOLD`
+ * records with no rise between them, which is `STALL_THRESHOLD - 1` non-rising
+ * steps after the loop that set the plateau.
+ */
+export const GOAL_STALL_FLAT_LIMIT = STALL_THRESHOLD - 1;
+
+/**
+ * Summarize the finished loops for the Auto Run card: the last loop's raw gain
+ * and how many trailing loops were flat. Reads the same normalized series as
+ * `detectStall`, so `flatStreak` reaching `flatLimit` is exactly when the
+ * evaluator stops the run as stalled.
+ */
+export function summarizeGoalLoops(
+	history: GoalIterationRecord[],
+	maxIterations: number | null,
+	completedActiveMs: number
+): GoalLoopStats {
+	const series = normalizeProgressSeries(history);
+	const n = series.length;
+	let flatStreak = 0;
+	for (let i = n - 1; i > 0 && series[i] <= series[i - 1]; i--) {
+		flatStreak++;
+	}
+	return {
+		maxIterations,
+		lastDelta: n === 0 ? null : series[n - 1] - (n > 1 ? series[n - 2] : 0),
+		flatStreak,
+		flatLimit: GOAL_STALL_FLAT_LIMIT,
+		completedActiveMs,
+	};
 }
 
 /**

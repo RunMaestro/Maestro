@@ -66,6 +66,7 @@ import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parse
 import { CodexOutputParser } from '../../../../main/parsers/codex-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
+import { PiOutputParser } from '../../../../main/parsers/pi-output-parser';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
 import { logger } from '../../../../main/utils/logger';
 import type { AgentOutputParser } from '../../../../main/parsers/agent-output-parser';
@@ -3346,5 +3347,77 @@ describe('StdoutHandler - single JSON parse per line', () => {
 
 			mockedMatchSsh.mockReset();
 		});
+	});
+});
+
+describe('token speed timed off the live stream', () => {
+	function collectSpeed(emitter: EventEmitter) {
+		const samples: Array<{ agentType: string; durationMs: number; outputTokens: number }> = [];
+		emitter.on('token-speed', (_sessionId: string, agentType: string, sample) => {
+			samples.push({ agentType, durationMs: sample.durationMs, outputTokens: sample.outputTokens });
+		});
+		return samples;
+	}
+
+	it('times a stream-measured provider (pi) call from turn start to message_end', () => {
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(new Date(2026, 10, 15, 10, 0, 0));
+			const { handler, emitter, sessionId } = createTestContext({
+				toolType: 'pi',
+				isStreamJsonMode: true,
+				outputParser: new PiOutputParser(),
+			});
+			const samples = collectSpeed(emitter);
+			sendJsonLine(handler, sessionId, { type: 'turn_start' });
+			vi.advanceTimersByTime(3_000);
+			sendJsonLine(handler, sessionId, {
+				type: 'message_end',
+				message: { role: 'assistant', usage: { input: 500, output: 90 } },
+			});
+			expect(samples).toEqual([{ agentType: 'pi', durationMs: 3_000, outputTokens: 90 }]);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('leaves a LOCAL Claude Code process to its transcript (no double count)', () => {
+		const { handler, emitter, sessionId } = createTestContext({
+			toolType: 'claude-code',
+			isStreamJsonMode: true,
+			outputParser: new ClaudeOutputParser(),
+		});
+		const samples = collectSpeed(emitter);
+		sendJsonLine(handler, sessionId, { type: 'system', subtype: 'init', session_id: 's' });
+		sendJsonLine(handler, sessionId, {
+			type: 'assistant',
+			message: { id: 'm1', model: 'claude', usage: { input_tokens: 5, output_tokens: 5 } },
+		});
+		expect(samples).toEqual([]);
+	});
+
+	it('times Claude Code from the stream when it runs on an SSH host', () => {
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(new Date(2026, 10, 15, 10, 0, 0));
+			const { handler, emitter, sessionId } = createTestContext({
+				toolType: 'claude-code',
+				isStreamJsonMode: true,
+				outputParser: new ClaudeOutputParser(),
+				sshRemoteId: 'remote-1',
+			});
+			const samples = collectSpeed(emitter);
+			sendJsonLine(handler, sessionId, { type: 'system', subtype: 'init', session_id: 's' });
+			vi.advanceTimersByTime(2_000);
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: { id: 'm1', model: 'claude', usage: { input_tokens: 5, output_tokens: 40 } },
+			});
+			// The keyed call closes at the next mark.
+			sendJsonLine(handler, sessionId, { type: 'user', message: { content: [] } });
+			expect(samples).toEqual([{ agentType: 'claude-code', durationMs: 2_000, outputTokens: 40 }]);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

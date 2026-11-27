@@ -17,6 +17,8 @@ import { captureException } from '../../utils/sentry';
 import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas, useCadenzaStore } from '../../stores/cadenzaStore';
 import { buildConcertoCommands } from './commands/concertoCommands';
+import { buildPromptLinksCommands } from './commands/promptLinksCommands';
+import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -270,6 +272,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
+	const promptLinksEnabled = useSettingsStore((s) =>
+		promptLinksAvailable(s.encoreFeatures.promptLinks)
+	);
 	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
 	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
@@ -567,6 +572,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			showScanProgress: showStatsIndexingProgress,
 			setQuickActionOpen,
 		}),
+		...buildPromptLinksCommands({
+			promptLinksEnabled,
+			activeAgent:
+				activeSession && activeSession.toolType !== 'terminal'
+					? { id: activeSession.id, name: activeSession.name }
+					: undefined,
+			activeDraft:
+				activeTabType === 'ai'
+					? activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId)?.inputValue
+					: undefined,
+			openPromptLinks,
+			setQuickActionOpen,
+			shortcuts: { openPromptLinks: shortcuts.openPromptLinks },
+		}),
 		...buildConcertoCommands({
 			concertoEnabled,
 			stageOpen: concertoStageOpen,
@@ -831,6 +850,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			mainPanelRef,
 			toggleTabStarShortcut: shortcuts.toggleTabStar,
 			toggleTabUnreadShortcut: tabShortcuts?.toggleTabUnread,
+			toggleDesignModeShortcut: tabShortcuts?.toggleBrowserDesignMode,
 		}),
 		...buildSupportCommands({
 			setQuickActionOpen,
@@ -926,6 +946,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			newGroupChatShortcut: shortcuts.newGroupChat,
 			killShortcut: shortcuts.killInstance,
 			moderatorOnlyShortcut: shortcuts.toggleGroupChatModeratorOnly,
+			toggleUnreadShortcut: tabShortcuts?.toggleTabUnread,
 		}),
 		...buildDebugCommands({
 			activeSession,

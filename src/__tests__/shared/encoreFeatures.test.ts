@@ -15,6 +15,10 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 			maestroCue: true,
 		});
 	});
+
+	it('ships Prompt Links off: a link that runs a prompt must be asked for', () => {
+		expect(ENCORE_FEATURE_DEFAULTS.promptLinks).toBe(false);
+	});
 });
 
 describe('resolveEncoreFeatures', () => {

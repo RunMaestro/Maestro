@@ -123,6 +123,15 @@ const CONSUMED_BOOLEAN_FLAGS = new Set(['-h', '--help', '-v', '--version']);
 const STRIPPED_VALUE_FLAGS = new Set(['--output-format']);
 const STRIPPED_BOOLEAN_FLAGS = new Set(['--verbose']);
 
+/**
+ * Whether an argv token is a flag rather than a value. `--` counts (it ends
+ * the options), as does any `--name` / `--name=value` token. A value that only
+ * starts with dashes (`--- frontmatter`, `-1`) does not.
+ */
+export function isFlagToken(token: string): boolean {
+	return token === '--' || /^--[A-Za-z][A-Za-z0-9-]*(=|$)/.test(token);
+}
+
 // Long flags that claude treats as booleans - the parser must NOT swallow the
 // next argv slot when one of these appears. Out-of-date entries here only cause
 // a UX glitch (a true positional after the unknown boolean gets misclassified

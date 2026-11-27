@@ -9,6 +9,8 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	effectiveQuotaPercent,
+	isQuotaWindowReset,
 	isSampleBehindLatest,
 	resolveLatestSampledAt,
 	STALE_ROW_LAG_MS,
@@ -57,5 +59,25 @@ describe('isSampleBehindLatest', () => {
 		expect(isSampleBehindLatest(undefined, NOW)).toBe(false);
 		expect(isSampleBehindLatest('not-a-date', NOW)).toBe(false);
 		expect(isSampleBehindLatest(at(NOW - 60 * 60_000), null)).toBe(false);
+	});
+});
+
+describe('isQuotaWindowReset / effectiveQuotaPercent', () => {
+	it('reads a window whose reset has passed as 0%', () => {
+		const window = { percent: 96, resetsAt: '2026-05-15T11:00:00.000Z' };
+		expect(isQuotaWindowReset(window.resetsAt, NOW)).toBe(true);
+		expect(effectiveQuotaPercent(window, NOW)).toBe(0);
+	});
+
+	it('keeps the sampled percent while the window is still open', () => {
+		const window = { percent: 96, resetsAt: '2026-05-15T13:00:00.000Z' };
+		expect(isQuotaWindowReset(window.resetsAt, NOW)).toBe(false);
+		expect(effectiveQuotaPercent(window, NOW)).toBe(96);
+	});
+
+	it('never treats a missing or unparseable reset time as passed', () => {
+		expect(isQuotaWindowReset(undefined, NOW)).toBe(false);
+		expect(isQuotaWindowReset('not a date', NOW)).toBe(false);
+		expect(effectiveQuotaPercent({ percent: 40 }, NOW)).toBe(40);
 	});
 });

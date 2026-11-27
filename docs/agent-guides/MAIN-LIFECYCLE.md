@@ -759,7 +759,7 @@ Use this checklist any time Electron jumps majors (it last did so for the 28 →
 
 - [ ] `npm run package:mac && npm run package:win && npm run package:linux` produce installers; the resulting `.dmg`, `.exe`, `.AppImage` each launch and reach the main window
 - [ ] macOS: notarization passes (or is skipped per `notarize: false` in `package.json`)
-- [ ] Windows: code signing passes (if configured) and SmartScreen does not block the installer
+- [ ] Windows: the "Verify Windows signatures" release step passes (Azure Artifact Signing, publisher "Pedram Amini") and SmartScreen does not block the installer
 
 **Post-merge observation window (24-48h)**
 

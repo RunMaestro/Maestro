@@ -77,6 +77,8 @@ export interface GroomingProcessManager {
 		sshRemoteHost?: string;
 		// Custom environment variables (resolved via applyAgentConfigOverrides)
 		customEnvVars?: Record<string, string>;
+		// Global Shell Configuration vars, the lowest env layer
+		shellEnvVars?: Record<string, string>;
 	}): { pid: number; success?: boolean } | null;
 	on(event: string, handler: (...args: unknown[]) => void): void;
 	off(event: string, handler: (...args: unknown[]) => void): void;
@@ -163,6 +165,12 @@ export interface GroomContextOptions {
 	prompt: string;
 	/** Optional session ID to resume (for context access) */
 	agentSessionId?: string;
+	/**
+	 * Resume `agentSessionId` as a throwaway fork (see `ephemeralForkArgs`): the
+	 * turn reads the conversation but never writes to it. Throws when the agent
+	 * cannot fork, rather than resume, and append to, the real session.
+	 */
+	ephemeralFork?: boolean;
 	/** Use read-only mode (default: false) */
 	readOnlyMode?: boolean;
 	/** Optional model ID override (e.g., when using a utility agent) */
@@ -183,6 +191,12 @@ export interface GroomContextOptions {
 	sessionCustomArgs?: string;
 	/** Custom environment variables for the agent */
 	sessionCustomEnvVars?: Record<string, string>;
+	/**
+	 * Global Shell Configuration vars (`settingsStore.get('shellEnvVars')`), the
+	 * lowest env layer, the same one a chat spawn applies. Left undefined the
+	 * turn gets only the agent and session vars.
+	 */
+	globalShellEnvVars?: Record<string, string>;
 	/**
 	 * Model the caller wants this one-shot turn to run under, resolved the same
 	 * way a chat spawn resolves it (tab override, then agent override). Left
@@ -287,6 +301,7 @@ async function groomContextOnce(
 		agentType,
 		prompt,
 		agentSessionId,
+		ephemeralFork = false,
 		readOnlyMode = false,
 		modelId,
 		timeoutMs = DEFAULT_GROOMING_TIMEOUT_MS,
@@ -295,6 +310,7 @@ async function groomContextOnce(
 		sessionCustomPath,
 		sessionCustomArgs,
 		sessionCustomEnvVars,
+		globalShellEnvVars,
 		sessionCustomModel,
 		sessionCustomEffort,
 		disableTools = false,
@@ -318,9 +334,20 @@ async function groomContextOnce(
 	});
 
 	// Get agent configuration
+	// Local detection says nothing about an SSH remote: an agent installed only
+	// on the remote host reads as unavailable here but runs fine there.
 	const agent = await agentDetector.getAgent(agentType);
-	if (!agent || !agent.available) {
+	if (!agent || (!agent.available && !sessionSshRemoteConfig?.enabled)) {
 		throw new Error(`Agent ${agentType} is not available`);
+	}
+
+	if (ephemeralFork && agentSessionId && !agent.ephemeralForkArgs?.length) {
+		throw new Error(`${agentType} cannot fork a session, so it cannot answer a side question`);
+	}
+	if (ephemeralFork && !agentSessionId && !agent.noPersistenceArgs?.length) {
+		throw new Error(
+			`${agentType} cannot run a turn without saving a session, so it cannot answer a side question`
+		);
 	}
 
 	// Build args using the unified buildAgentArgs utility
@@ -333,6 +360,7 @@ async function groomContextOnce(
 		yoloMode: false,
 		permissionMode: 'standard' as const,
 		agentSessionId,
+		ephemeralFork,
 	});
 
 	// Apply agent config overrides (model, custom args, custom env vars)
@@ -457,9 +485,13 @@ async function groomContextOnce(
 					: resolvedArgs,
 				cwd: remoteCwd,
 				prompt,
-				customEnvVars: remoteInteractive
-					? { ...(resolvedEnvVars ?? {}), ...remoteInteractive.env }
-					: resolvedEnvVars,
+				// The remote shell has no global layer of its own, so it rides in
+				// underneath the agent and session vars (as wrap-spawn-for-ssh does).
+				customEnvVars: {
+					...(globalShellEnvVars ?? {}),
+					...(resolvedEnvVars ?? {}),
+					...(remoteInteractive?.env ?? {}),
+				},
 				promptArgs: agent.promptArgs,
 				noPromptSeparator: agent.noPromptSeparator,
 				// Never send a locally-detected absolute path to the remote host -
@@ -662,6 +694,9 @@ async function groomContextOnce(
 			sshRemoteHost: sshRemoteUsed?.host,
 			// Pass resolved env vars (merged from agent defaults + agent config + session overrides)
 			customEnvVars: spawnEnvVars,
+			// Global Shell Configuration vars. Local only: an SSH spawn already
+			// carries them in the wrapped remote env above.
+			shellEnvVars: sshRemoteUsed ? undefined : globalShellEnvVars,
 		});
 
 		if (!spawnResult || spawnResult.pid <= 0) {

@@ -1,3 +1,5 @@
+import type { GoalLoopStats } from './goalDriven/types';
+
 /**
  * The Auto Run state that crosses a process boundary.
  *
@@ -57,8 +59,10 @@ export interface AutoRunBroadcastState {
 	goalProgress?: number;
 	/** One-line rationale accompanying the latest goal progress report */
 	goalRationale?: string;
-	/** 1-based iteration number the goal loop is on */
+	/** Goal loops finished so far (0 while the first loop runs) */
 	goalIteration?: number;
+	/** Per-loop momentum readout (last gain, flat streak, average loop time) */
+	goalLoops?: GoalLoopStats;
 
 	// --- Fields a full mirror of the desktop Auto Run card needs ---
 	// The mobile web app draws a progress bar and needs none of these. A

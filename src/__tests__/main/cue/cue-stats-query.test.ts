@@ -3,7 +3,7 @@
  *
  * The aggregation function reads from two upstream subsystems we'd rather
  * keep out of the test runtime:
- *   1. `getRecentCueEvents()` from `cue-db` - backed by `better-sqlite3`,
+ *   1. `getCueEventsForStats()` from `cue-db` - backed by `better-sqlite3`,
  *      whose native binding is built for Electron's NODE_MODULE_VERSION and
  *      fails to load under vitest (every other Cue test works around this
  *      the same way; see `cue-db.test.ts` and `cue-chain-lineage.test.ts`).
@@ -23,17 +23,23 @@
  * `mockSummaries` by that shared id.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import type { CueEventRecord } from '../../../main/cue/cue-db';
 import type { SessionTokenSummary } from '../../../main/cue/stats/cue-token-accessor';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
-let mockEvents: CueEventRecord[] = [];
+let mockEvents: Array<CueEventRecord & { orphaned?: boolean }> = [];
 let mockSummaries = new Map<string, SessionTokenSummary>();
 
 vi.mock('../../../main/cue/cue-db', () => ({
-	getRecentCueEvents: vi.fn((sinceMs: number) => mockEvents.filter((e) => e.createdAt >= sinceMs)),
+	getCueEventsForStats: vi.fn((sinceMs: number) =>
+		mockEvents.filter((e) => e.createdAt >= sinceMs)
+	),
+}));
+
+vi.mock('../../../main/cue/cue-recovery-service', () => ({
+	ORPHANED_RUN_MESSAGE: 'orphaned-run',
 }));
 
 vi.mock('../../../main/cue/stats/cue-token-accessor', () => ({
@@ -59,11 +65,16 @@ vi.mock('../../../main/cue/stats/cue-token-accessor', () => ({
 	}),
 }));
 
-import { getCueStatsAggregation } from '../../../main/cue/stats/cue-stats-query';
+import {
+	getCueStatsAggregation,
+	getCueStatsSourceTotals,
+} from '../../../main/cue/stats/cue-stats-query';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeEvent(overrides: Partial<CueEventRecord> = {}): CueEventRecord {
+function makeEvent(
+	overrides: Partial<CueEventRecord & { orphaned: boolean }> = {}
+): CueEventRecord & { orphaned?: boolean } {
 	const id = overrides.id ?? 'evt-1';
 	const sessionId = overrides.sessionId ?? 'session-1';
 	return {
@@ -109,6 +120,16 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 		vi.clearAllMocks();
 		mockEvents = [];
 		mockSummaries = new Map();
+		// 'day' starts at local midnight and most cases place events minutes before
+		// Date.now(). Pin the clock to local noon so a run just after midnight does
+		// not drop them into yesterday (seen on CI at 00:03 UTC).
+		const noon = new Date();
+		noon.setHours(12, 0, 0, 0);
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(noon);
+		onTestFinished(() => {
+			vi.useRealTimers();
+		});
 	});
 
 	describe('totals', () => {
@@ -176,8 +197,10 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 			expect(result.totals.occurrences).toBe(3);
 			expect(result.totals.successCount).toBe(1);
 			expect(result.totals.failureCount).toBe(1);
-			// e1: 30s, e2: 25s, e3: null → 55s = 55_000ms
-			expect(result.totals.totalDurationMs).toBe(55_000);
+			// Only COMPLETED runs count toward run time: e1 30s. e2 failed (its span
+			// is not run time) and e3 is still running.
+			expect(result.totals.totalDurationMs).toBe(30_000);
+			expect(result.totals.timedRunCount).toBe(1);
 			expect(result.totals.totalInputTokens).toBe(600);
 			expect(result.totals.totalOutputTokens).toBe(240);
 			expect(result.totals.totalCacheReadTokens).toBe(60);
@@ -554,6 +577,145 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 			// Hours with no events stay at zero.
 			expect(result.byHourOfDay[0].occurrences).toBe(0);
 			expect(result.byHourOfDay[23].occurrences).toBe(0);
+		});
+	});
+
+	describe('completed-only durations', () => {
+		it('leaves failed, timed-out, stopped and swept runs out of run time and percentiles', async () => {
+			// 'day' starts at local midnight and the swept run began 2.5 hours ago, so pin the
+			// clock to local noon or a run just after midnight drops it into yesterday.
+			const noon = new Date();
+			noon.setHours(12, 0, 0, 0);
+			vi.useFakeTimers({ toFake: ['Date'] });
+			vi.setSystemTime(noon);
+			onTestFinished(() => {
+				vi.useRealTimers();
+			});
+			const now = Date.now();
+			mockEvents = [
+				makeEvent({
+					id: 'ok',
+					status: 'completed',
+					createdAt: now - 10_000,
+					completedAt: now - 5_000,
+				}),
+				makeEvent({ id: 'f', status: 'failed', createdAt: now - 60_000, completedAt: now - 1_000 }),
+				makeEvent({
+					id: 't',
+					status: 'timeout',
+					createdAt: now - 60_000,
+					completedAt: now - 1_000,
+				}),
+				makeEvent({
+					id: 'swept',
+					status: 'failed',
+					orphaned: true,
+					createdAt: now - 9_000_000,
+					completedAt: now,
+				}),
+			];
+
+			const result = await getCueStatsAggregation('day');
+
+			expect(result.totals.occurrences).toBe(4);
+			expect(result.totals.totalDurationMs).toBe(5_000);
+			expect(result.totals.timedRunCount).toBe(1);
+			expect(result.durationPercentiles.count).toBe(1);
+			expect(result.durationPercentiles.max).toBe(5_000);
+		});
+	});
+
+	describe('slowestRuns', () => {
+		it('ranks finished runs of every status by span, skips running and swept runs', async () => {
+			const now = Date.now();
+			mockEvents = [
+				makeEvent({
+					id: 'ok',
+					status: 'completed',
+					createdAt: now - 10_000,
+					completedAt: now - 5_000,
+				}),
+				makeEvent({ id: 'slow-fail', status: 'failed', createdAt: now - 60_000, completedAt: now }),
+				makeEvent({ id: 'running', status: 'running', createdAt: now - 99_000, completedAt: null }),
+				makeEvent({
+					id: 'swept',
+					status: 'failed',
+					orphaned: true,
+					createdAt: now - 9_000_000,
+					completedAt: now,
+				}),
+			];
+			mockSummaries.set('session-1', makeSummary({ inputTokens: 7, outputTokens: 3 }));
+
+			const result = await getCueStatsAggregation('day');
+
+			expect(result.slowestRuns.map((r) => r.eventId)).toEqual(['slow-fail', 'ok']);
+			expect(result.slowestRuns[0]).toMatchObject({
+				status: 'failed',
+				durationMs: 60_000,
+				agentType: 'claude-code',
+				tokens: 10,
+			});
+		});
+	});
+
+	describe('zero-filled time series', () => {
+		it('has one bucket per hour of the day range even when only one hour saw runs', async () => {
+			const now = Date.now();
+			mockEvents = [makeEvent({ id: 'e1', createdAt: now - 1_000 })];
+
+			const result = await getCueStatsAggregation('day');
+
+			const startOfToday = new Date(now);
+			startOfToday.setHours(0, 0, 0, 0);
+			expect(result.timeSeries[0].bucketStartMs).toBe(startOfToday.getTime());
+			expect(result.timeSeries.length).toBe(new Date(now).getHours() + 1);
+			expect(result.timeSeries.reduce((sum, b) => sum + b.occurrences, 0)).toBe(1);
+			expect(result.timeSeries.filter((b) => b.occurrences === 0).length).toBe(
+				result.timeSeries.length - 1
+			);
+		});
+
+		it('starts an all-time series at the first run and is empty with no runs', async () => {
+			expect((await getCueStatsAggregation('all')).timeSeries).toEqual([]);
+
+			const now = Date.now();
+			mockEvents = [makeEvent({ id: 'old', createdAt: now - 3 * 86_400_000 })];
+			const result = await getCueStatsAggregation('all');
+			// Three days ago, two days ago, yesterday, today (a DST change cannot
+			// add or drop a calendar day).
+			expect(result.timeSeries.length).toBe(4);
+			expect(result.timeSeries[0].occurrences).toBe(1);
+		});
+	});
+
+	describe('getCueStatsSourceTotals', () => {
+		it('returns runs, completed run time and input+output tokens', async () => {
+			const now = Date.now();
+			mockEvents = [
+				makeEvent({
+					id: 'a',
+					sessionId: 's1',
+					status: 'completed',
+					createdAt: now - 4_000,
+					completedAt: now - 1_000,
+				}),
+				makeEvent({
+					id: 'b',
+					sessionId: 's2',
+					status: 'failed',
+					createdAt: now - 4_000,
+					completedAt: now,
+				}),
+			];
+			mockSummaries.set('s1', makeSummary({ sessionId: 's1', inputTokens: 10, outputTokens: 5 }));
+			mockSummaries.set('s2', makeSummary({ sessionId: 's2', inputTokens: 1, outputTokens: 1 }));
+
+			expect(await getCueStatsSourceTotals('day')).toEqual({
+				occurrences: 2,
+				totalDurationMs: 3_000,
+				tokens: 17,
+			});
 		});
 	});
 

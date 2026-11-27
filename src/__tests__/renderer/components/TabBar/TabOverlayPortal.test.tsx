@@ -12,6 +12,10 @@ import {
 	TAB_SHEET_SCRIM_ARM_MS,
 } from '../../../../renderer/components/TabBar/TabOverlayPortal';
 import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
+import {
+	OVERLAY_MIN_HEIGHT,
+	OVERLAY_VIEWPORT_PADDING,
+} from '../../../../renderer/hooks/tabs/useTabHoverOverlay';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
@@ -56,6 +60,31 @@ describe('TabOverlayPortal', () => {
 			expect(shell.style.opacity).toBe('0');
 			expect(setOverlayRef).toHaveBeenCalledWith(shell);
 			expect(screen.queryByTestId('tab-overlay-sheet')).not.toBeInTheDocument();
+		});
+
+		it('caps its height at the room below the chip and scrolls the rest', () => {
+			const innerHeight = window.innerHeight;
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 });
+			try {
+				renderPortal({ position: { top: 40, left: 120, tabWidth: 90 } });
+				const shell = screen.getByTestId('menu-content').parentElement as HTMLElement;
+				expect(shell.style.maxHeight).toBe(`${600 - 40 - OVERLAY_VIEWPORT_PADDING}px`);
+				expect(shell.className).toContain('overflow-y-auto');
+			} finally {
+				Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
+			}
+		});
+
+		it('never caps below the minimum height, leaving the clamp to slide it up', () => {
+			const innerHeight = window.innerHeight;
+			Object.defineProperty(window, 'innerHeight', { configurable: true, value: 200 });
+			try {
+				renderPortal({ position: { top: 150, left: 120, tabWidth: 90 } });
+				const shell = screen.getByTestId('menu-content').parentElement as HTMLElement;
+				expect(shell.style.maxHeight).toBe(`${OVERLAY_MIN_HEIGHT}px`);
+			} finally {
+				Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
+			}
 		});
 
 		it('waits for a position before drawing anything', () => {

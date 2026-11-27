@@ -4,6 +4,7 @@ import {
 	CUE_GITHUB_LABEL_TARGETS,
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
+	MAX_CUE_FAILURE_ALERT_THRESHOLD,
 	type CueGitHubLabelTarget,
 	type CueGitHubState,
 	type CueScheduleDay,
@@ -765,6 +766,18 @@ function validateSettings(rawSettings: unknown): string[] {
 			settings.susfactor_threshold > 1
 		) {
 			errors.push('"settings.susfactor_threshold" must be a number greater than 0 and at most 1');
+		}
+	}
+	if (settings.failure_alert_threshold !== undefined) {
+		if (
+			typeof settings.failure_alert_threshold !== 'number' ||
+			!Number.isInteger(settings.failure_alert_threshold) ||
+			settings.failure_alert_threshold < 0 ||
+			settings.failure_alert_threshold > MAX_CUE_FAILURE_ALERT_THRESHOLD
+		) {
+			errors.push(
+				`"settings.failure_alert_threshold" must be an integer between 0 and ${MAX_CUE_FAILURE_ALERT_THRESHOLD} (0 turns the alert off)`
+			);
 		}
 	}
 	if (settings.owner_agent_id !== undefined) {

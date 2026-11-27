@@ -19,8 +19,26 @@
  */
 
 import { useMemo, useCallback } from 'react';
-import { KeyRound, MessageSquarePlus, RefreshCw, RotateCcw, Wifi, Terminal } from 'lucide-react';
-import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/agentMetadata';
+import {
+	Download,
+	KeyRound,
+	MessageSquarePlus,
+	RefreshCw,
+	RotateCcw,
+	Wifi,
+	Terminal,
+} from 'lucide-react';
+import {
+	formatAgentLoginCommand,
+	getAgentDisplayName,
+	getAgentLoginCommand,
+} from '../../../shared/agentMetadata';
+import {
+	classifyAgentErrorMissingBinary,
+	getAgentInstallCommand,
+	missingRuntimeLabel,
+} from '../../../shared/agentInstall';
+import { getPlatform } from '../../utils/platformUtils';
 import type { AgentError, ToolType } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 
@@ -41,6 +59,10 @@ export interface UseAgentErrorRecoveryOptions {
 	onRestartAgent?: () => void;
 	/** Callback to open authentication flow */
 	onAuthenticate?: () => void;
+	/** Callback to open the provider CLI install dialog (local agents only) */
+	onInstall?: () => void;
+	/** Whether the agent runs on an SSH remote host (disables local install) */
+	isRemote?: boolean;
 }
 
 export interface UseAgentErrorRecoveryResult {
@@ -93,11 +115,47 @@ function getRecoveryActionsForError(
 			break;
 		}
 
-		case 'agent_not_installed':
-			// The CLI never started, so neither restarting the agent nor resending
-			// the same turn can work until it is fixed. The error message says
-			// what to fix; there is no in-app recovery to offer.
+		case 'agent_not_installed': {
+			// Defense in depth: ExitHandler does not emit agent_not_installed for SSH
+			// processes, and a local install dialog must never be offered for a remote host.
+			if (options.isRemote) break;
+
+			const missingBinary = classifyAgentErrorMissingBinary(error);
+			const isRuntimeMissing = missingBinary?.reason === 'runtime-missing';
+
+			// The CLI never started, so restarting the agent would fail the same
+			// way. When the binary itself is missing, offer the install for this
+			// platform; when its runtime (e.g. Node.js) is missing, running an
+			// npm-based install would hit the same missing runtime, so withhold
+			// Install and point the user to restoring that runtime instead.
+			const install = isRuntimeMissing ? null : getAgentInstallCommand(agentId, getPlatform());
+			if (options.onInstall && install) {
+				actions.push({
+					id: 'install',
+					label: `Install ${getAgentDisplayName(agentId)}`,
+					description: `Run "${install}" here`,
+					primary: true,
+					icon: <Download className="w-4 h-4" />,
+					onClick: options.onInstall,
+				});
+			}
+			if (options.onRetry) {
+				const runtimeLabel = isRuntimeMissing
+					? missingRuntimeLabel(missingBinary.runtime ?? 'node')
+					: null;
+				actions.push({
+					id: 'retry',
+					label: 'Try Again',
+					description: runtimeLabel
+						? `Restore ${runtimeLabel} to PATH, then send again`
+						: 'Installed it another way? Clear the error and send again',
+					primary: !(options.onInstall && install),
+					icon: <RefreshCw className="w-4 h-4" />,
+					onClick: options.onRetry,
+				});
+			}
 			break;
+		}
 
 		case 'token_exhaustion':
 			// Context exhausted - offer new session or retry with truncation
@@ -211,6 +269,8 @@ export function useAgentErrorRecovery(
 		error,
 		agentId,
 		options.onAuthenticate,
+		options.onInstall,
+		options.isRemote,
 		options.onNewSession,
 		options.onRestartAgent,
 		options.onRetry,

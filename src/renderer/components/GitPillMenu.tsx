@@ -155,7 +155,7 @@ export const GitPillMenu = memo(function GitPillMenu({
 	onClose,
 }: GitPillMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
-	const { left, top, ready } = useAnchoredMenuPosition(menuRef, anchorRef);
+	const { left, top, maxHeight, ready } = useAnchoredMenuPosition(menuRef, anchorRef);
 
 	// Escape closes the menu before any modal underneath it.
 	useModalLayer(MODAL_PRIORITIES.GIT_PILL_MENU, 'Git Pill Menu', onClose);
@@ -168,10 +168,11 @@ export const GitPillMenu = memo(function GitPillMenu({
 	return createPortal(
 		<div
 			ref={menuRef}
-			className="fixed z-[100] rounded overflow-hidden whitespace-nowrap select-none"
+			className="fixed z-[100] rounded overflow-y-auto overflow-x-hidden overscroll-contain scrollbar-thin whitespace-nowrap select-none"
 			style={{
 				left,
 				top,
+				maxHeight,
 				opacity: ready ? 1 : 0,
 				...elevatedSurfaceStyle(theme),
 				minWidth: '12rem',

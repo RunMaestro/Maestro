@@ -1,4 +1,4 @@
-import { buildMaestroUrl } from '../../../utils/buildMaestroUrl';
+import { buildMaestroUrl, MAESTRO_PRIVACY_URL } from '../../../utils/buildMaestroUrl';
 import type { NotifyToastInput } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
 import type { SettingsTab } from '../../../types';
@@ -185,6 +185,15 @@ export function buildSupportCommands({
 			},
 		},
 		{
+			id: 'privacy',
+			label: 'Privacy Policy',
+			subtext: 'What Maestro sends off your machine, and how to turn it off',
+			action: () => {
+				openUrl(buildMaestroUrl(MAESTRO_PRIVACY_URL));
+				setQuickActionOpen(false);
+			},
+		},
+		{
 			id: 'createDebugPackage',
 			label: 'Create Debug Package',
 			subtext: 'Generate a support bundle for bug reporting',
@@ -243,7 +252,8 @@ export function buildSupportCommands({
 	if (setUpdateCheckModalOpen) {
 		commands.push({
 			id: 'updateCheck',
-			label: 'Check for Updates',
+			label: 'Check for Updates or Rollback',
+			subtext: 'Install the latest version, or roll back to an earlier release',
 			action: () => {
 				setUpdateCheckModalOpen(true);
 				setQuickActionOpen(false);

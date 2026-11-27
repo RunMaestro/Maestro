@@ -3,8 +3,8 @@
  *
  * The cases that matter are the ones where a tile could quietly lie: cost
  * presented as complete when most turns predate token recording, agents lost
- * because they belong to no group, and Ungrouped outranking real groups in a
- * sort.
+ * because they belong to no group, deleted agents' queries dropped so the tiles
+ * no longer add up, and Ungrouped outranking real groups in a sort.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -76,17 +76,14 @@ function makeData(overrides: Partial<StatsAggregation> = {}): StatsAggregation {
 		byLocation: { local: 0, remote: 0 },
 		byHour: [],
 		totalSessions: 0,
-		sessionsByAgent: {},
-		sessionsByDay: [],
-		avgSessionDuration: 0,
 		byAgentByDay: {},
 		bySessionByDay: {},
 		bySessionSource: {},
 		bySessionTokens: {},
 		worktreeQueries: 0,
 		parentQueries: 0,
-		byWorktreeStatus: { worktree: { count: 0, duration: 0 }, parent: { count: 0, duration: 0 } },
 		imageAnnotations: 0,
+		window: { startYmd: '2026-07-20', endYmd: '2026-08-02' },
 		prompts: emptyPromptCadence(),
 		...overrides,
 	} as StatsAggregation;
@@ -153,7 +150,7 @@ describe('GroupOverviewCards', () => {
 		expect(within(acme as HTMLElement).getByTestId('group-card-queries')).toHaveTextContent('10');
 	});
 
-	it('renders an em-dash for cost when no member reported token usage', () => {
+	it('renders a hyphen placeholder for cost when no member reported token usage', () => {
 		// Not "$0.00" - a group whose turns predate token recording has not
 		// spent nothing, it has an unknown spend.
 		renderCards({
@@ -163,7 +160,7 @@ describe('GroupOverviewCards', () => {
 		});
 
 		const acme = screen.getByText(/Acme Corp/).closest('[data-testid="group-card"]')!;
-		expect(within(acme as HTMLElement).getByTestId('group-card-cost')).toHaveTextContent('—');
+		expect(within(acme as HTMLElement).getByTestId('group-card-cost')).toHaveTextContent('-');
 	});
 
 	it('renders the summed cost when members reported usage', () => {
@@ -312,6 +309,72 @@ describe('GroupOverviewCards', () => {
 		fireEvent.change(screen.getByLabelText('Filter groups'), { target: { value: 'zzzz' } });
 
 		expect(screen.getByTestId('group-overview-no-matches')).toBeInTheDocument();
+	});
+
+	describe('deleted agents', () => {
+		const withDeleted = () =>
+			makeData({
+				bySessionByDay: {
+					s1: [{ date: '2026-08-01', count: 4, duration: 4000 }],
+					gone: [{ date: '2026-08-01', count: 7, duration: 7000 }],
+				},
+			});
+
+		it('adds a Deleted agents tile so the tiles sum to the range total', () => {
+			renderCards({ data: withDeleted() });
+
+			const deleted = screen.getByText('Deleted agents').closest('[data-testid="group-card"]')!;
+			expect(within(deleted as HTMLElement).getByTestId('group-card-queries')).toHaveTextContent(
+				'7'
+			);
+			const total = screen
+				.getAllByTestId('group-card-queries')
+				.reduce((sum, el) => sum + Number(el.textContent), 0);
+			expect(total).toBe(11);
+		});
+
+		it('sinks the Deleted agents tile below Ungrouped and keeps it out of the group count', () => {
+			renderCards({ data: withDeleted() });
+
+			const cards = screen.getAllByTestId('group-card');
+			expect(cards[cards.length - 1]).toHaveTextContent('Deleted agents');
+			expect(cards[cards.length - 2]).toHaveTextContent('Ungrouped');
+		});
+
+		it('is not clickable, since it has no live agents to break down', () => {
+			const onSelectGroup = vi.fn();
+			renderCards({ data: withDeleted(), onSelectGroup });
+
+			const deleted = screen.getByText('Deleted agents').closest('[data-testid="group-card"]')!;
+			fireEvent.click(deleted);
+
+			expect(onSelectGroup).not.toHaveBeenCalled();
+			expect(deleted).not.toHaveAttribute('data-clickable');
+		});
+
+		it('is absent when every recorded query belongs to a live agent', () => {
+			renderCards({
+				data: makeData({
+					bySessionByDay: { s1: [{ date: '2026-08-01', count: 4, duration: 4000 }] },
+				}),
+			});
+
+			expect(screen.queryByText('Deleted agents')).not.toBeInTheDocument();
+		});
+	});
+
+	it('words the auto badge tooltip as Auto Run only', () => {
+		renderCards({
+			data: makeData({
+				bySessionByDay: { s1: [{ date: '2026-08-01', count: 4, duration: 4000 }] },
+				bySessionSource: { s1: { user: 1, auto: 3 } },
+			}),
+		});
+
+		expect(screen.getByTestId('group-card-auto-badge')).toHaveAttribute(
+			'title',
+			'75% auto (Auto Run)'
+		);
 	});
 
 	it('prompts the user to create a group when there is nothing to roll up', () => {

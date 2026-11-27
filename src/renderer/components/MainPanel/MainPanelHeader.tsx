@@ -44,6 +44,7 @@ import {
 } from '../../stores/claudeUsageStore';
 import { formatCost, formatFutureTime } from '../../../shared/formatters';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { autoRunTaskCounts } from '../../../shared/autorunProgress';
 import {
 	computeTabConversationStats,
 	formatConversationDuration,
@@ -317,11 +318,13 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 
 	// Goal-Driven runs have no task list, so they report a self-reported percent
 	// instead of an X/Y task count.
-	const autoRunProgressLabel = currentSessionBatchState
-		? currentSessionBatchState.goalMode
-			? `${currentSessionBatchState.goalProgress ?? 0}%`
-			: `${currentSessionBatchState.completedTasks}/${currentSessionBatchState.totalTasks}`
-		: null;
+	let autoRunProgressLabel: string | null = null;
+	if (currentSessionBatchState?.goalMode) {
+		autoRunProgressLabel = `${currentSessionBatchState.goalProgress ?? 0}%`;
+	} else if (currentSessionBatchState) {
+		const { completed, total } = autoRunTaskCounts(currentSessionBatchState);
+		autoRunProgressLabel = `${completed}/${total}`;
+	}
 	// The phone pill is a bare glyph, so everything it drops has to survive
 	// somewhere the user can still reach - the tooltip is that somewhere. On a
 	// desktop the count and the branch icon are ON the pill, so repeating them

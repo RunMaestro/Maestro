@@ -18,6 +18,8 @@ if (!(window.maestro as any).updates) {
 	(window.maestro as any).updates = {
 		check: vi.fn(),
 		download: vi.fn(),
+		listRollbackTargets: vi.fn(),
+		rollback: vi.fn(),
 		install: vi.fn(),
 		getStatus: vi.fn(),
 		onStatus: vi.fn(() => vi.fn()), // Returns an unsubscribe function
@@ -51,6 +53,12 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 import { UpdateCheckModal } from '../../../renderer/components/UpdateCheckModal';
 
 import { createMockTheme } from '../../helpers/mockTheme';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { DEFAULT_BATCH_STATE } from '../../../renderer/hooks/batch/batchReducer';
+import {
+	resetAutoRunRestartTrackingForTests,
+	trackAutoRunLaunch,
+} from '../../../renderer/services/autoRunRestartResume';
 
 // Helper to create mock theme
 
@@ -629,7 +637,7 @@ describe('UpdateCheckModal', () => {
 					blocksLowerLayers: true,
 					capturesFocus: true,
 					focusTrap: 'strict',
-					ariaLabel: 'Check for Updates',
+					ariaLabel: 'Check for Updates or Rollback',
 				})
 			);
 		});
@@ -678,7 +686,10 @@ describe('UpdateCheckModal', () => {
 		it('has aria-label', async () => {
 			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
 
-			expect(screen.getByRole('dialog')).toHaveAttribute('aria-label', 'Check for Updates');
+			expect(screen.getByRole('dialog')).toHaveAttribute(
+				'aria-label',
+				'Check for Updates or Rollback'
+			);
 		});
 	});
 
@@ -711,7 +722,7 @@ describe('UpdateCheckModal', () => {
 		it('shows title', async () => {
 			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
 
-			expect(screen.getByText('Check for Updates')).toBeInTheDocument();
+			expect(screen.getByText('Check for Updates or Rollback')).toBeInTheDocument();
 		});
 	});
 
@@ -1059,7 +1070,7 @@ describe('UpdateCheckModal', () => {
 			});
 
 			await waitFor(() => {
-				expect(screen.getByText('1 MB/s')).toBeInTheDocument();
+				expect(screen.getByText('1.0 MB/s')).toBeInTheDocument();
 			});
 		});
 
@@ -1082,7 +1093,7 @@ describe('UpdateCheckModal', () => {
 			});
 
 			await waitFor(() => {
-				expect(screen.getByText('5 MB / 10 MB')).toBeInTheDocument();
+				expect(screen.getByText('5.0 MB / 10.0 MB')).toBeInTheDocument();
 			});
 		});
 
@@ -1208,6 +1219,261 @@ describe('UpdateCheckModal', () => {
 			await waitFor(() => {
 				expect(screen.getByText('Or download manually from GitHub')).toBeInTheDocument();
 			});
+		});
+	});
+
+	// =============================================================================
+	// AUTO RUN RESUME ACROSS THE UPDATE RESTART
+	// =============================================================================
+
+	describe('Auto Run resume across the update restart', () => {
+		const startResumableRun = () => {
+			trackAutoRunLaunch(
+				'agent-a',
+				{ documents: [], prompt: '', loopEnabled: false },
+				'/project/playbooks'
+			);
+			useBatchStore.setState({
+				batchRunStates: { 'agent-a': { ...DEFAULT_BATCH_STATE, isRunning: true } },
+			});
+		};
+
+		const renderDownloaded = async () => {
+			let statusCallback: ((status: any) => void) | null = null;
+			(window.maestro.updates.onStatus as any).mockImplementation((cb: any) => {
+				statusCallback = cb;
+				return vi.fn();
+			});
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await waitFor(() => {
+				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			});
+			statusCallback!({ status: 'downloaded', info: { version: '1.1.0' } });
+			await waitFor(() => {
+				expect(screen.getByText('Restart to Update')).toBeInTheDocument();
+			});
+		};
+
+		beforeEach(() => {
+			(window.maestro.updates.install as any).mockReset();
+			vi.mocked(window.maestro.autorun.saveRestartResume).mockReset().mockResolvedValue(1);
+		});
+
+		afterEach(() => {
+			resetAutoRunRestartTrackingForTests();
+			useBatchStore.setState({ batchRunStates: {} });
+		});
+
+		it('tells the user a running Auto Run picks up after the update', async () => {
+			startResumableRun();
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('update-autorun-resume-note')).toHaveTextContent(
+					'your Auto Run will pick up where it left off after the update'
+				);
+			});
+		});
+
+		it('shows no resume note when nothing is running', async () => {
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await waitFor(() => {
+				expect(screen.getByText('Update Available!')).toBeInTheDocument();
+			});
+			expect(screen.queryByTestId('update-autorun-resume-note')).not.toBeInTheDocument();
+		});
+
+		it('saves the run, then restarts, when the user restarts and resumes', async () => {
+			startResumableRun();
+			await renderDownloaded();
+
+			fireEvent.click(screen.getByText('Restart to Update'));
+			expect(screen.getByText('Auto Run will resume')).toBeInTheDocument();
+			expect(window.maestro.updates.install).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Restart and Resume Auto Run'));
+
+			await waitFor(() => {
+				expect(window.maestro.updates.install).toHaveBeenCalled();
+			});
+			const [entries] = vi.mocked(window.maestro.autorun.saveRestartResume).mock.calls[0];
+			expect(entries.map((e) => e.sessionId)).toEqual(['agent-a']);
+		});
+
+		it('does not restart when the run could not be saved', async () => {
+			vi.mocked(window.maestro.autorun.saveRestartResume).mockRejectedValue(new Error('disk full'));
+			startResumableRun();
+			await renderDownloaded();
+
+			fireEvent.click(screen.getByText('Restart to Update'));
+			fireEvent.click(screen.getByText('Restart and Resume Auto Run'));
+
+			await waitFor(() => {
+				expect(window.maestro.autorun.saveRestartResume).toHaveBeenCalled();
+			});
+			await waitFor(() => {
+				expect(
+					screen.getByText('Restart and Resume Auto Run').closest('button')
+				).not.toBeDisabled();
+			});
+			expect(window.maestro.updates.install).not.toHaveBeenCalled();
+		});
+	});
+
+	// =============================================================================
+	// ROLLBACK
+	// =============================================================================
+
+	describe('rollback to an earlier version', () => {
+		const olderRelease = createMockRelease({
+			tag_name: 'v0.9.0',
+			name: 'v0.9.0 | Steady',
+			body: '## Notes for 0.9.0',
+			published_at: '2023-12-01T12:00:00Z',
+		});
+
+		let statusCallback: ((status: any) => void) | null = null;
+
+		beforeEach(() => {
+			statusCallback = null;
+			(window.maestro.updates.onStatus as any).mockImplementation((cb: any) => {
+				statusCallback = cb;
+				return vi.fn();
+			});
+			(window.maestro.updates as any).listRollbackTargets = vi.fn().mockResolvedValue({
+				currentVersion: '1.0.0',
+				releases: [{ ...olderRelease, prerelease: false }],
+				releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
+			});
+			(window.maestro.updates as any).rollback = vi.fn().mockResolvedValue({ success: true });
+			(window.maestro.updates.install as any).mockReset();
+		});
+
+		afterEach(() => {
+			resetAutoRunRestartTrackingForTests();
+			useBatchStore.setState({ batchRunStates: {} });
+		});
+
+		/** Render the window and unfold its rollback section. */
+		const renderWithRollbackOpen = async () => {
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await waitFor(() => {
+				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Roll back to an earlier version'));
+			await waitFor(() => {
+				expect(screen.getByText('v0.9.0')).toBeInTheDocument();
+			});
+		};
+
+		it('keeps the rollback section folded, and unfetched, until it is opened', async () => {
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			});
+			expect(screen.getByText('Roll back to an earlier version')).toBeInTheDocument();
+			expect(screen.queryByText('v0.9.0')).not.toBeInTheDocument();
+			expect(window.maestro.updates.listRollbackTargets).not.toHaveBeenCalled();
+		});
+
+		it('shows the update and the earlier releases in the same window', async () => {
+			await renderWithRollbackOpen();
+
+			expect(screen.getByText('- Steady')).toBeInTheDocument();
+			expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			expect(window.maestro.updates.listRollbackTargets).toHaveBeenCalledWith(false);
+
+			fireEvent.click(screen.getByText('Roll back to an earlier version'));
+			expect(screen.queryByText('v0.9.0')).not.toBeInTheDocument();
+		});
+
+		it('downloads the picked release, then restarts into it', async () => {
+			await renderWithRollbackOpen();
+
+			fireEvent.click(screen.getByText('Roll Back'));
+			expect(window.maestro.updates.rollback).toHaveBeenCalledWith('v0.9.0');
+
+			statusCallback!({ status: 'downloaded', info: { version: '0.9.0' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('Restart to Roll Back to v0.9.0')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Restart to Roll Back to v0.9.0'));
+			expect(window.maestro.updates.install).toHaveBeenCalled();
+		});
+
+		it('shows why a rollback download failed', async () => {
+			(window.maestro.updates as any).rollback = vi
+				.fn()
+				.mockResolvedValue({ success: false, error: 'ENOSPC: disk full' });
+			await renderWithRollbackOpen();
+
+			fireEvent.click(screen.getByText('Roll Back'));
+
+			await waitFor(() => {
+				expect(screen.getByText('ENOSPC: disk full')).toBeInTheDocument();
+			});
+		});
+
+		it('does not offer an Update restart for a downloaded older version', async () => {
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await waitFor(() => {
+				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			});
+
+			// e.g. `maestro-cli rollback 0.9.0` finished while this window was open
+			statusCallback!({ status: 'downloaded', info: { version: '0.9.0' } });
+
+			// The rollback section unfolds itself to offer the restart; the update keeps its button.
+			await waitFor(() => {
+				expect(screen.getByText('Restart to Roll Back to v0.9.0')).toBeInTheDocument();
+			});
+			expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			expect(screen.queryByText('Restart to Update')).not.toBeInTheDocument();
+		});
+
+		it('loads the earlier releases when a CLI rollback unfolds the section', async () => {
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await waitFor(() => {
+				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			});
+			expect(window.maestro.updates.listRollbackTargets).not.toHaveBeenCalled();
+
+			// The section opened without a click; it must still fetch its list
+			// rather than claim no earlier release can be installed.
+			statusCallback!({ status: 'downloaded', info: { version: '0.9.0' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('- Steady')).toBeInTheDocument();
+			});
+			expect(window.maestro.updates.listRollbackTargets).toHaveBeenCalledWith(false);
+			expect(
+				screen.queryByText('No earlier releases can be installed on this platform.')
+			).not.toBeInTheDocument();
+		});
+
+		it('never promises that a running Auto Run resumes after a rollback', async () => {
+			trackAutoRunLaunch(
+				'agent-a',
+				{ documents: [], prompt: '', loopEnabled: false },
+				'/project/playbooks'
+			);
+			useBatchStore.setState({
+				batchRunStates: { 'agent-a': { ...DEFAULT_BATCH_STATE, isRunning: true } },
+			});
+			await renderWithRollbackOpen();
+			fireEvent.click(screen.getByText('Roll Back'));
+			statusCallback!({ status: 'downloaded', info: { version: '0.9.0' } });
+			await waitFor(() => {
+				expect(screen.getByText('Restart to Roll Back to v0.9.0')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('Restart to Roll Back to v0.9.0'));
+
+			expect(screen.getByText('Maestro is busy')).toBeInTheDocument();
+			expect(screen.queryByText(/Restart and Resume/)).not.toBeInTheDocument();
+			expect(window.maestro.updates.install).not.toHaveBeenCalled();
 		});
 	});
 });

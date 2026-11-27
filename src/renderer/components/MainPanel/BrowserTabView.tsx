@@ -3,6 +3,8 @@ import React, {
 	useCallback,
 	useEffect,
 	useImperativeHandle,
+	useLayoutEffect,
+	useMemo,
 	useRef,
 	useState,
 } from 'react';
@@ -15,12 +17,19 @@ import {
 	Eye,
 	EyeOff,
 	Globe,
+	MousePointerClick,
 	RotateCw,
 	Trash2,
 	VenetianMask,
 	X,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
+import { BrowserDesignModeLayer } from './BrowserDesignModeLayer';
+import { BrowserViewportControl } from './BrowserViewportControl';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { useDesignModePanelCollapse } from '../../hooks/ui/useDesignModePanelCollapse';
+import { useElementSize } from '../../hooks/ui/useElementWidth';
+import { shortcutSuffix } from '../ui/ShortcutHint';
 import type { BrowserTab, Theme } from '../../types';
 import {
 	DEFAULT_BROWSER_TAB_TITLE,
@@ -31,6 +40,22 @@ import {
 	toWebviewSrc,
 } from '../../utils/browserTabPersistence';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { computeBrowserViewportBox, type BrowserViewportBox } from '../../utils/browserViewport';
+import {
+	DEFAULT_BROWSER_VIEWPORT_PRESET,
+	type BrowserViewportPreset,
+} from '../../../shared/browserViewport';
+import {
+	captureDesignPick,
+	captureDesignRegion,
+	designModeGuestCall,
+	type DesignModeCapture,
+	type DesignModeGuestAccess,
+	type DesignModeMiss,
+	type DesignModeRect,
+	type DesignModeRegionCapture,
+	type DesignPickCapture,
+} from '../../utils/designModePicker';
 
 type ElectronWebviewElement = HTMLElement & {
 	src: string;
@@ -44,6 +69,7 @@ type ElectronWebviewElement = HTMLElement & {
 	getTitle: () => string;
 	isLoading: () => boolean;
 	getWebContentsId?: () => number;
+	getZoomFactor?: () => number;
 	executeJavaScript: (code: string) => Promise<unknown>;
 	insertCSS?: (css: string) => Promise<string>;
 	findInPage: (
@@ -51,7 +77,7 @@ type ElectronWebviewElement = HTMLElement & {
 		options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }
 	) => number;
 	stopFindInPage: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => void;
-	capturePage?: () => Promise<{ toDataURL: () => string }>;
+	capturePage?: (rect?: DesignModeRect) => Promise<{ toDataURL: () => string }>;
 };
 
 interface BrowserTabViewProps {
@@ -68,6 +94,32 @@ interface BrowserTabViewProps {
 	 * which otherwise strands keystrokes in the webview.
 	 */
 	isActive?: boolean;
+	/**
+	 * Whether this is the tab the user is looking at, even while a dialog is open
+	 * over it. `isActive` is this AND no dialog. Design Mode's side-bar collapse
+	 * keys on it, so opening the command palette over the page does not bring the
+	 * bars back and take them away again. Defaults to `isActive`.
+	 */
+	isCurrent?: boolean;
+	/**
+	 * Hands a Design Mode pick to the agent: an element the user clicked or a
+	 * region they dragged out, with its cropped screenshot (null when there is
+	 * none). `reveal` false means the user keeps picking. Resolves false when it
+	 * could not be delivered. The Design Mode toggle is only offered when this is
+	 * provided.
+	 */
+	onDesignPick?: (
+		capture: DesignPickCapture & { note: string; reveal: boolean }
+	) => Promise<boolean>;
+	/**
+	 * Queues a pick (an element or a region) as its own message for the agent
+	 * instead of adding it to the draft, and the user keeps picking. Resolves the
+	 * name of the tab it was queued on, or null when it could not be queued. The
+	 * pick card offers Queue only when this is provided.
+	 */
+	onDesignQueue?: (
+		capture: DesignPickCapture & { note: string }
+	) => Promise<{ tabName: string } | null>;
 }
 
 export interface BrowserTabViewHandle {
@@ -104,9 +156,27 @@ export interface BrowserTabViewHandle {
 	/** Run JavaScript in the guest page and resolve its result. Used by the
 	 *  coworking browser_click / browser_type / browser_eval tools. */
 	executeJavaScript(code: string): Promise<unknown>;
-	/** Capture a PNG screenshot of the tab as a data URL. Throws when capture is
+	/** Capture a PNG screenshot of the tab as a data URL, or of `rect` (guest
+	 *  DIPs, see designPickCropRect) within it. Throws when capture is
 	 *  unavailable (e.g. webview not ready). */
-	capturePage(): Promise<string>;
+	capturePage(rect?: DesignModeRect): Promise<string>;
+	/** Turn Design Mode on or off (toolbar button, shortcut, palette). Turning it
+	 *  on is a no-op on a tab that cannot offer it (blank page, web build);
+	 *  turning it off always works. */
+	toggleDesignMode(): void;
+	/** The width this tab shows its page at ('fit' fills the tab). Reads the
+	 *  preset a `setViewportPreset` just chose, before the tab store hands it back. */
+	getViewportPreset(): BrowserViewportPreset;
+	/** Show the page at a preset's width (toolbar control, palette, CLI): laid
+	 *  out at that CSS width and scaled down to fit the tab. 'fit' fills the tab. */
+	setViewportPreset(preset: BrowserViewportPreset): void;
+	/** Describe the first element matching `selector` and crop its screenshot,
+	 *  the same payload a click in Design Mode builds (`maestro-cli browser-pick`). */
+	inspectElement(selector: string): Promise<DesignModeCapture | DesignModeMiss | null>;
+	/** List the elements in `rect` (guest CSS px from the viewport's top-left)
+	 *  and crop its screenshot, the same payload a drag in Design Mode builds
+	 *  (`maestro-cli browser-pick --rect`). Null when none of it is on screen. */
+	inspectRegion(rect: DesignModeRect): Promise<DesignModeRegionCapture | null>;
 }
 
 /** Promise-based delay (ES2024 Promise.withResolvers, ambient-typed for the
@@ -208,13 +278,43 @@ function applyBlankGuestBackground(webview: ElectronWebviewElement | null, color
 	void webview.insertCSS(css).catch(() => {});
 }
 
-function syncWebviewLayout(webview: ElectronWebviewElement | null) {
+/**
+ * Size the webview inside its stage. With no `box` the page fills the stage. With
+ * one, the webview is the preset's CSS size, which is the viewport the page lays
+ * itself out for, and a transform scales it down to the stage from its top-left
+ * corner (the stage is the scaled box, so nothing else needs to move).
+ *
+ * This is CSS rather than `webContents.enableDeviceEmulation()` on purpose: the
+ * emulation is a main-process call on the guest (a webContentsId round trip for
+ * every resize) with a second copy of the size, while the stage already holds
+ * the box the overlay needs. The guest still renders at the preset width, so
+ * screenshots stay sharp, and Chromium hit-tests pointer events through a
+ * transformed guest, so input needs no mapping of ours. If a platform ever maps
+ * input wrongly through the transform, switch to emulation.
+ */
+function syncWebviewLayout(webview: ElectronWebviewElement | null, box: BrowserViewportBox | null) {
 	if (!webview) return;
 
 	webview.style.display = 'flex';
-	webview.style.width = '100%';
-	webview.style.height = '100%';
-	webview.style.flex = '1 1 auto';
+	if (box) {
+		webview.style.position = 'absolute';
+		webview.style.top = '0';
+		webview.style.left = '0';
+		webview.style.width = `${box.width}px`;
+		webview.style.height = `${box.height}px`;
+		webview.style.flex = '0 0 auto';
+		webview.style.transformOrigin = '0 0';
+		webview.style.transform = box.scale === 1 ? '' : `scale(${box.scale})`;
+	} else {
+		webview.style.position = '';
+		webview.style.top = '';
+		webview.style.left = '';
+		webview.style.width = '100%';
+		webview.style.height = '100%';
+		webview.style.flex = '1 1 auto';
+		webview.style.transformOrigin = '';
+		webview.style.transform = '';
+	}
 
 	const shadowHost = (webview as HTMLElement & { shadowRoot?: ShadowRoot | null }).shadowRoot;
 	const guestElement = shadowHost?.querySelector<HTMLElement>('object, embed, iframe, webview');
@@ -227,7 +327,7 @@ function syncWebviewLayout(webview: ElectronWebviewElement | null) {
 
 export const BrowserTabView = React.memo(
 	forwardRef<BrowserTabViewHandle, BrowserTabViewProps>(function BrowserTabView(
-		{ tab, theme, onUpdateTab, isActive = true },
+		{ tab, theme, onUpdateTab, isActive = true, isCurrent = isActive, onDesignPick, onDesignQueue },
 		ref
 	) {
 		const webviewRef = useRef<ElectronWebviewElement | null>(null);
@@ -279,6 +379,100 @@ export const BrowserTabView = React.memo(
 		// instead. All the webview-driven effects below no-op because webviewRef
 		// stays null when the guest element is never mounted.
 		const webDesktop = isWebDesktop();
+		// Design Mode needs a live page to pick from: not the blank tab, and not
+		// the web build, whose <webview> is inert. This guard only hides the
+		// overlay; it never turns Design Mode off, so a load that passes through
+		// the blank URL (or a page the address bar cannot show) keeps it on.
+		// Read by the imperative toggle, whose handle is built once.
+		const designModeAvailableRef = useRef(false);
+		const designModeAvailable =
+			!!onDesignPick && !webDesktop && tab.url !== DEFAULT_BROWSER_TAB_URL;
+		designModeAvailableRef.current = designModeAvailable;
+		// Design Mode is per-tab state on the tab itself (`tab.designMode`), so it
+		// survives page loads, tab switches, keep-alive remounts and restarts.
+		// Read by the setter and the imperative toggle through a ref.
+		const designMode = tab.designMode === true;
+		const designModeRef = useRef(designMode);
+		designModeRef.current = designMode;
+		// Written through onUpdateTab, which lands in the store's single-tab
+		// browser updater (updateBrowserTab). The ref moves ahead of the store
+		// round trip, so a second toggle in the same tick flips the new value.
+		const setDesignMode = useCallback((on: boolean) => {
+			if (designModeRef.current === on) return;
+			designModeRef.current = on;
+			onUpdateTabRef.current(latestTabRef.current.id, { designMode: on });
+		}, []);
+		// Viewport preset: the width this tab shows its page at, so a page that
+		// picks its layout by width (a laptop with both side bars open can land on
+		// the phone layout) can be seen at the width the user cares about. 'fit', the
+		// default, fills the tab. Any other preset lays the page out at that CSS
+		// width and scales it down to the tab; the stage in the JSX below is the box
+		// that scaled page fills, and the Design Mode layer is sized to it. Per-tab
+		// state on the tab itself, like Design Mode, written through onUpdateTab.
+		const viewportPreset = tab.viewportPreset ?? DEFAULT_BROWSER_VIEWPORT_PRESET;
+		const viewportPresetRef = useRef(viewportPreset);
+		viewportPresetRef.current = viewportPreset;
+		const setViewportPreset = useCallback((preset: BrowserViewportPreset) => {
+			if (viewportPresetRef.current === preset) return;
+			// The ref moves ahead of the store round trip, so a read right after
+			// this write (the handle, the CLI) already sees the new preset.
+			viewportPresetRef.current = preset;
+			onUpdateTabRef.current(latestTabRef.current.id, { viewportPreset: preset });
+		}, []);
+		// The tab's size is watched only while a preset needs it.
+		const hostSize = useElementSize(
+			hostRef,
+			viewportPreset !== DEFAULT_BROWSER_VIEWPORT_PRESET && !webDesktop
+		);
+		const viewportBox = useMemo(
+			() => computeBrowserViewportBox(viewportPreset, hostSize),
+			[viewportPreset, hostSize]
+		);
+		// The webview listeners below are set up once per tab and read it from here.
+		const viewportBoxRef = useRef(viewportBox);
+		viewportBoxRef.current = viewportBox;
+		useLayoutEffect(() => {
+			syncWebviewLayout(webviewRef.current, viewportBox);
+		}, [viewportBox]);
+		// The overlay is up only while this tab is the active surface. A hidden or
+		// covered tab keeps the flag but draws no picker, so it swallows nothing,
+		// and showing the tab again re-arms it: a fresh layer that takes focus and
+		// probes from the center.
+		const designModeArmed = designMode && designModeAvailable && isActive;
+		// The side bars fold while Design Mode is up in a tab the user is looking at.
+		// Keyed on isCurrent, not isActive: a dialog un-arms the overlay, but the
+		// page must not reflow behind it (see useDesignModePanelCollapse).
+		useDesignModePanelCollapse(designMode && designModeAvailable && isCurrent);
+		const exitDesignMode = useCallback(() => setDesignMode(false), [setDesignMode]);
+		const onDesignPickRef = useRef(onDesignPick);
+		onDesignPickRef.current = onDesignPick;
+		// Design Mode stays on after a pick either way. Without keepPicking the
+		// pick reveals the chat, which takes this tab off screen; the picker
+		// re-arms when the tab is shown again.
+		const handleDesignDeliver = useCallback(
+			async (capture: DesignPickCapture, note: string, keepPicking: boolean) => {
+				const deliver = onDesignPickRef.current;
+				if (!deliver) return false;
+				return deliver({ ...capture, note, reveal: !keepPicking });
+			},
+			[]
+		);
+		// Queueing never leaves Design Mode: the user is lining up more picks.
+		const onDesignQueueRef = useRef(onDesignQueue);
+		onDesignQueueRef.current = onDesignQueue;
+		const handleDesignQueue = useCallback(
+			async (capture: DesignPickCapture, note: string) =>
+				(await onDesignQueueRef.current?.({ ...capture, note })) ?? null,
+			[]
+		);
+		// Design Mode: while armed, BrowserDesignModeLayer covers the webview and
+		// does the picking (see the trust model in utils/designModePicker.ts).
+		const designModeShortcut = useSettingsStore(
+			(s) => s.tabShortcuts.toggleBrowserDesignMode?.keys
+		);
+		// Bumped on every finished page load, so the Design Mode overlay re-probes
+		// the new document instead of keeping the old page's outline.
+		const [pageLoadCount, setPageLoadCount] = useState(0);
 
 		useEffect(() => {
 			latestTabRef.current = tab;
@@ -304,6 +498,73 @@ export const BrowserTabView = React.memo(
 		useEffect(() => {
 			onUpdateTabRef.current = onUpdateTab;
 		}, [onUpdateTab]);
+
+		// Capture the guest frame (or a rect of it). Shared by the Coworking
+		// screenshot tool and Design Mode crops; built once, reads only refs.
+		const captureGuestRef = useRef(async (rect?: DesignModeRect): Promise<string> => {
+			const webview = webviewRef.current;
+			if (!webview || !webview.capturePage) {
+				throw new Error('Screenshot is not available for this tab');
+			}
+			// Electron can only capture a PAINTING webview; a kept-alive-but-hidden
+			// tab (host visibility:hidden) throws UnknownVizError. If this tab is not
+			// on the visible compositor, momentarily force it to paint behind an
+			// opaque cover so the capture succeeds without the user ever seeing it -
+			// capturePage returns the guest's own frame, not the cover. We trigger
+			// only on visibility:hidden (the active-agent kept-alive mount); the
+			// off-screen background host paints already and needs no cover.
+			const host = hostRef.current;
+			const hidden = !!host && getComputedStyle(host).visibility === 'hidden';
+			const priorVisibility = host ? host.style.visibility : '';
+			let cover: HTMLDivElement | null = null;
+			if (host && hidden) {
+				cover = document.createElement('div');
+				cover.style.cssText = `position:absolute;inset:0;z-index:2147483647;background:${
+					blankBackgroundRef.current || '#000'
+				};`;
+				host.appendChild(cover);
+				host.style.visibility = 'visible';
+				// Give the compositor a beat to produce a frame for the now-visible guest.
+				await delay(180);
+			}
+			try {
+				let dataUrl = (
+					await (rect ? webview.capturePage(rect) : webview.capturePage())
+				).toDataURL();
+				if (dataUrl.length < 64 && hidden) {
+					await delay(160);
+					dataUrl = (await (rect ? webview.capturePage(rect) : webview.capturePage())).toDataURL();
+				}
+				return dataUrl;
+			} finally {
+				if (host && hidden) {
+					host.style.visibility = priorVisibility;
+					cover?.remove();
+				}
+			}
+		});
+
+		// What Design Mode needs from this webview. Throws when the guest is gone,
+		// which the layer reports as "nothing to pick there".
+		const designAccessRef = useRef<DesignModeGuestAccess>({
+			run: (request) => {
+				const webview = webviewRef.current;
+				if (!webview) return Promise.reject(new Error('Browser webview is not available'));
+				return webview.executeJavaScript(designModeGuestCall(request));
+			},
+			zoom: () => {
+				try {
+					return webviewRef.current?.getZoomFactor?.() ?? 1;
+				} catch {
+					return 1;
+				}
+			},
+			capture: (rect) => captureGuestRef.current(rect),
+			// Holding Space lets the user click into the page; picking takes the
+			// keys back. A focused guest shows up as the <webview> itself.
+			focused: () => !!webviewRef.current && document.activeElement === webviewRef.current,
+			blur: () => webviewRef.current?.blur(),
+		});
 
 		useImperativeHandle(
 			ref,
@@ -373,45 +634,41 @@ export const BrowserTabView = React.memo(
 					if (!webview) throw new Error('Browser webview is not available');
 					return webview.executeJavaScript(code);
 				},
-				async capturePage(): Promise<string> {
+				capturePage(rect?: DesignModeRect): Promise<string> {
+					return captureGuestRef.current(rect);
+				},
+				toggleDesignMode(): void {
+					if (designModeRef.current) setDesignMode(false);
+					else if (designModeAvailableRef.current) setDesignMode(true);
+				},
+				getViewportPreset(): BrowserViewportPreset {
+					return viewportPresetRef.current;
+				},
+				setViewportPreset(preset: BrowserViewportPreset): void {
+					setViewportPreset(preset);
+				},
+				async inspectElement(selector: string) {
 					const webview = webviewRef.current;
-					if (!webview || !webview.capturePage) {
-						throw new Error('Screenshot is not available for this tab');
-					}
-					// Electron can only capture a PAINTING webview; a kept-alive-but-hidden
-					// tab (host visibility:hidden) throws UnknownVizError. If this tab is not
-					// on the visible compositor, momentarily force it to paint behind an
-					// opaque cover so the capture succeeds without the user ever seeing it -
-					// capturePage returns the guest's own frame, not the cover. We trigger
-					// only on visibility:hidden (the active-agent kept-alive mount); the
-					// off-screen background host paints already and needs no cover.
-					const host = hostRef.current;
-					const hidden = !!host && getComputedStyle(host).visibility === 'hidden';
-					const priorVisibility = host ? host.style.visibility : '';
-					let cover: HTMLDivElement | null = null;
-					if (host && hidden) {
-						cover = document.createElement('div');
-						cover.style.cssText = `position:absolute;inset:0;z-index:2147483647;background:${
-							theme.colors.bgMain || '#000'
-						};`;
-						host.appendChild(cover);
-						host.style.visibility = 'visible';
-						// Give the compositor a beat to produce a frame for the now-visible guest.
-						await delay(180);
-					}
-					try {
-						let dataUrl = (await webview.capturePage()).toDataURL();
-						if (dataUrl.length < 64 && hidden) {
-							await delay(160);
-							dataUrl = (await webview.capturePage()).toDataURL();
-						}
-						return dataUrl;
-					} finally {
-						if (host && hidden) {
-							host.style.visibility = priorVisibility;
-							cover?.remove();
-						}
-					}
+					if (!webview) throw new Error('Browser webview is not available');
+					await waitForReadyToRead(webview, isDomReadyRef);
+					return captureDesignPick(designAccessRef.current, {
+						type: 'describeSelector',
+						selector,
+					});
+				},
+				async inspectRegion(rect: DesignModeRect) {
+					const webview = webviewRef.current;
+					if (!webview) throw new Error('Browser webview is not available');
+					await waitForReadyToRead(webview, isDomReadyRef);
+					// No frame: the box is already guest CSS px, not overlay px. Only
+					// the four numbers go to the page.
+					return captureDesignRegion(designAccessRef.current, {
+						type: 'region',
+						x: rect.x,
+						y: rect.y,
+						width: rect.width,
+						height: rect.height,
+					});
 				},
 			}),
 			[]
@@ -431,12 +688,13 @@ export const BrowserTabView = React.memo(
 			const onFocusIn = () => {
 				if (!userClickedRef.current) {
 					// Focus was not user-initiated - push it back out, but leave the
-					// find-bar input alone (Cmd+F intentionally focuses it
-					// programmatically, and that is exactly the case this guard
-					// would otherwise mistakenly reject).
+					// find-bar input and the Design Mode layer alone (Cmd+F and the
+					// Design Mode toggle focus them programmatically, and that is
+					// exactly the case this guard would otherwise mistakenly reject).
 					const active = document.activeElement;
 					const isFindInput = active === findInputRef.current;
-					if (active && host.contains(active) && !isFindInput) {
+					const isDesignLayer = !!active?.closest?.('[data-browser-design-mode]');
+					if (active && host.contains(active) && !isFindInput && !isDesignLayer) {
 						(active as HTMLElement).blur();
 					}
 				}
@@ -467,7 +725,16 @@ export const BrowserTabView = React.memo(
 			}
 			webviewRef.current?.blur();
 			userClickedRef.current = false;
+			// Design Mode is not turned off here. The overlay is gated on isActive
+			// (designModeArmed), so it unmounts and swallows nothing while the tab
+			// is hidden or covered, and the flag on the tab re-arms it on return.
 		}, [isActive]);
+
+		// The overlay takes keyboard focus while Design Mode is armed; the guest
+		// must not keep it, or Enter and the arrows would reach the page.
+		useEffect(() => {
+			if (designModeArmed) webviewRef.current?.blur();
+		}, [designModeArmed]);
 
 		useEffect(() => {
 			if (!isAddressFocusedRef.current) {
@@ -529,7 +796,7 @@ export const BrowserTabView = React.memo(
 				// every main-frame nav; if dom-ready does not fire again before
 				// stop-loading, readWebviewState would bail and leave the spinner stuck.
 				isDomReadyRef.current = true;
-				syncWebviewLayout(webview);
+				syncWebviewLayout(webview, viewportBoxRef.current);
 				updateNavigationState();
 			};
 			const handleNavigate = (event: Event) => {
@@ -695,7 +962,7 @@ export const BrowserTabView = React.memo(
 
 			const handleDomReady = () => {
 				isDomReadyRef.current = true;
-				syncWebviewLayout(webview);
+				syncWebviewLayout(webview, viewportBoxRef.current);
 				updateNavigationState();
 				setAddressBarHidden(false);
 				injectGuestListeners();
@@ -703,6 +970,8 @@ export const BrowserTabView = React.memo(
 			};
 			// Re-inject guest listeners on navigation (page JS state resets)
 			const handleDidNavigateForInjection = () => injectGuestListeners();
+			// A new document is loaded: Design Mode stays on and re-probes it.
+			const handleFinishLoadForDesignMode = () => setPageLoadCount((count) => count + 1);
 			// Find-in-page result reporting. Chromium fires `found-in-page` with
 			// `requestId`, `activeMatchOrdinal`, and `matches`. Stale results from a
 			// prior query can arrive after a newer findInPage() call; we ignore them
@@ -731,6 +1000,7 @@ export const BrowserTabView = React.memo(
 			webview.addEventListener('did-navigate-in-page', handleNavigate);
 			webview.addEventListener('did-fail-load', handleDidFailLoad);
 			webview.addEventListener('did-finish-load', updateNavigationState);
+			webview.addEventListener('did-finish-load', handleFinishLoadForDesignMode);
 			webview.addEventListener('page-title-updated', handleTitleUpdated);
 			webview.addEventListener('page-favicon-updated', handleFaviconUpdated);
 			webview.addEventListener('dom-ready', handleDomReady);
@@ -739,12 +1009,12 @@ export const BrowserTabView = React.memo(
 			const resizeObserver =
 				typeof ResizeObserver === 'undefined'
 					? null
-					: new ResizeObserver(() => syncWebviewLayout(webview));
+					: new ResizeObserver(() => syncWebviewLayout(webview, viewportBoxRef.current));
 			if (resizeObserver && hostRef.current) {
 				resizeObserver.observe(hostRef.current);
 			}
 
-			syncWebviewLayout(webview);
+			syncWebviewLayout(webview, viewportBoxRef.current);
 
 			return () => {
 				isDomReadyRef.current = false;
@@ -759,6 +1029,7 @@ export const BrowserTabView = React.memo(
 				webview.removeEventListener('did-navigate-in-page', handleNavigate);
 				webview.removeEventListener('did-fail-load', handleDidFailLoad);
 				webview.removeEventListener('did-finish-load', updateNavigationState);
+				webview.removeEventListener('did-finish-load', handleFinishLoadForDesignMode);
 				webview.removeEventListener('page-title-updated', handleTitleUpdated);
 				webview.removeEventListener('page-favicon-updated', handleFaviconUpdated);
 				webview.removeEventListener('dom-ready', handleDomReady);
@@ -1063,6 +1334,39 @@ export const BrowserTabView = React.memo(
 								) : null}
 							</div>
 						</form>
+						{!webDesktop ? (
+							<BrowserViewportControl
+								theme={theme}
+								value={viewportPreset}
+								onChange={setViewportPreset}
+							/>
+						) : null}
+						{onDesignPick && !webDesktop ? (
+							<button
+								type="button"
+								onClick={() => setDesignMode(!designMode)}
+								// Off is always allowed: a sticky flag must never be stuck on a
+								// tab that cannot show the picker (the blank page).
+								disabled={!designModeAvailable && !designMode}
+								aria-pressed={designMode}
+								aria-label="Design Mode"
+								className="flex items-center justify-center w-8 h-8 rounded transition-colors disabled:opacity-40"
+								style={{
+									color: designMode ? theme.colors.accent : theme.colors.textDim,
+									backgroundColor: designMode
+										? `color-mix(in srgb, ${theme.colors.accent} 16%, transparent)`
+										: undefined,
+								}}
+								title={
+									designMode
+										? 'Exit Design Mode (Esc)'
+										: `Design Mode: pick an element and send it to the agent${shortcutSuffix(designModeShortcut)}`
+								}
+								data-testid="browser-tab-design-mode-toggle"
+							>
+								<MousePointerClick className="w-4 h-4" />
+							</button>
+						) : null}
 						<button
 							type="button"
 							onClick={handleOpenExternal}
@@ -1141,18 +1445,50 @@ export const BrowserTabView = React.memo(
 							</p>
 						</div>
 					) : (
-						<webview
-							ref={(element) => {
-								webviewRef.current = element as unknown as ElectronWebviewElement | null;
-							}}
-							// The element paints this until the guest produces its first frame,
-							// so a loading or empty tab matches the theme instead of flashing
-							// Chromium's white.
-							style={{ backgroundColor: theme.colors.bgMain }}
-							className="w-full h-full border-0"
-							partition={tab.partition}
-							src={initialSrcRef.current}
-						/>
+						// The stage is the box the page is shown in. At Fit it is the whole
+						// tab; at a preset it is the scaled page, centered, with the tab's
+						// own background on both sides. The Design Mode layer lives in it,
+						// beside the scaled webview rather than inside any transform, so the
+						// layer is exactly as big as the page looks and its pointer math
+						// (overlay px over viewport px) comes out as the page's scale.
+						<div
+							className="absolute top-0 bottom-0 overflow-hidden"
+							style={
+								viewportBox
+									? {
+											left: viewportBox.frame.left,
+											width: viewportBox.frame.width,
+											boxShadow: `0 0 0 1px ${theme.colors.border}`,
+										}
+									: { left: 0, right: 0 }
+							}
+							data-testid="browser-tab-stage"
+							data-viewport-preset={viewportPreset}
+						>
+							<webview
+								ref={(element) => {
+									webviewRef.current = element as unknown as ElectronWebviewElement | null;
+								}}
+								// The element paints this until the guest produces its first frame,
+								// so a loading or empty tab matches the theme instead of flashing
+								// Chromium's white.
+								style={{ backgroundColor: theme.colors.bgMain }}
+								className="w-full h-full border-0"
+								partition={tab.partition}
+								src={initialSrcRef.current}
+							/>
+							{designModeArmed ? (
+								<BrowserDesignModeLayer
+									theme={theme}
+									access={designAccessRef.current}
+									pageLoadCount={pageLoadCount}
+									layoutKey={viewportPreset}
+									onExit={exitDesignMode}
+									onDeliver={handleDesignDeliver}
+									onQueue={onDesignQueue ? handleDesignQueue : undefined}
+								/>
+							) : null}
+						</div>
 					)}
 					{findOpen ? (
 						<div

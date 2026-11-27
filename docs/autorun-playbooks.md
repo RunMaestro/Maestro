@@ -197,6 +197,8 @@ A goal run ends on any of four conditions:
 
 The stop reason and final progress are recorded in the **History** panel.
 
+While a goal run is active, the Auto Run card shows momentum instead of an ETA, because a goal has no task count to project from. **Progress** names the loop in flight (`loop 4 of 10`), **Elapsed** shows the average active time per finished loop, and **Last loop** shows what the last finished loop gained (`+6%`). Below that, `stall 1 of 2` counts the finished loops in a row that gained nothing. When it reaches the limit, the run stops as **Stalled**.
+
 ## Progress Tracking
 
 The runner will:

@@ -1,42 +1,28 @@
 /**
- * CodexPlanUsage
+ * CodexPlanUsage - the OpenAI Usage tab: ChatGPT/Codex plan quota per account.
  *
- * Per-account Codex quota burndown for the Usage Dashboard. Mirrors
- * ClaudePlanUsage's account-tab + horizontal-bar pattern (shared via
- * `./quota/*`), but reads sanitized ChatGPT/Codex quota snapshots from
- * `codexUsageStore`. This file supplies only the Codex-specific account row
- * (session/weekly/additional windows + email/plan chips + auth CTA) and
- * provider wiring.
+ * One row per `CODEX_HOME` account, with a bar for the session window, the
+ * weekly window, and any extra named limit the endpoint reports. The panel is
+ * the shared `PlanUsagePanel`; this file supplies only the Codex wiring:
+ * - sanitized snapshots from `codexUsageStore`;
+ * - window labels classified by declared length, never by slot;
+ * - the login email and plan chips, and the reset-credit control under the bars.
  */
 
-import { memo, useCallback, useMemo, useState } from 'react';
-import type { Theme } from '../../types';
+import { memo } from 'react';
 import { DURATION_LADDER_DAYS, DURATION_MS, humanizeDuration } from '../../../shared/duration';
 import { useCodexUsageStore, type CodexUsageSnapshot } from '../../stores/codexUsageStore';
-import { useUIStore } from '../../stores/uiStore';
-import { makeAccountKeyHelpers, resolveLatestSampledAt } from './quota/quotaFormatting';
-import {
-	QuotaAccountEmail,
-	QuotaAccountPill,
-	QuotaAuthNotice,
-	QuotaAgentCountBadge,
-	QuotaAccountTabs,
-	QuotaBarRow,
-	QuotaPendingRow,
-	QuotaRefreshControls,
-	QuotaShowAllToggle,
-	QuotaStaleSampleBadge,
-	QuotaVisibilityToggle,
-	type QuotaTabStatus,
-} from './quota/quotaPrimitives';
+import { MiniBadge } from '../ui/MiniBadge';
+import { QuotaAccountEmail } from './quota/quotaPrimitives';
 import { CodexResetCredits } from './quota/CodexResetCredits';
-import { useQuotaAccounts } from './quota/useQuotaAccounts';
-import { useQuotaRefresh } from './quota/useQuotaRefresh';
-import { quotaAuthStateNeedsLogin, useQuotaAccountLogin } from './quota/useQuotaAccountLogin';
-import { buildQuotaSummary } from './footerSummary';
-import { usePublishFooterSummary } from './useFooterSummary';
+import { quotaAuthStateNeedsLogin } from './quota/useQuotaAccountLogin';
+import {
+	PlanUsagePanel,
+	type PlanUsageConfig,
+	type PlanUsagePanelProps,
+	type QuotaWindowRow,
+} from './quota/PlanUsagePanel';
 
-const TEST_ID_PREFIX = 'codex-plan';
 /**
  * Window length the session row claims when the quota endpoint did not declare
  * one. Every plan Codex ships today reports a 5h session window, so this is the
@@ -73,430 +59,96 @@ function weeklyRowLabel(windowSeconds: number | undefined): string {
 	return `Weekly (${label})`;
 }
 
-/** Provider id used to key this panel's hidden-account set in uiStore. */
-const PROVIDER_ID = 'codex';
-/** Human-readable provider name used in the agent-count badge tooltip. */
-const PROVIDER_LABEL = 'Codex';
-const { deriveShortName, deriveDisplayName, normalizeKey } = makeAccountKeyHelpers('.codex');
-
-interface CodexPlanUsageProps {
-	theme: Theme;
-	accountKeys?: string[];
-	showAllAccounts?: boolean;
-	autoRefresh?: boolean;
-	showRefreshButton?: boolean;
-	/** Claim Cmd/Ctrl+R for Refresh while this panel is the visible surface. */
-	refreshHotkey?: boolean;
-	/**
-	 * Show the agents backed by one account. Given, each row's "N agents" chip
-	 * becomes a button that hands the account's CODEX_HOME back so the dashboard
-	 * can open the Agents tab filtered to it. Omitted, the chip stays a label.
-	 */
-	onShowAccountAgents?: (codexHomeKey: string) => void;
-}
-
-interface AccountRowProps {
-	codexHomeKey: string;
-	snapshot: CodexUsageSnapshot;
-	/** Local agents pointed at this CODEX_HOME. */
-	agentCount: number;
-	/** Newest `sampledAt` across the panel, so a row the last refresh skipped can say so. */
-	latestSampledAtMs: number | null;
-	theme: Theme;
-	/** Show this account's agents in the Agents tab. Omit to keep the chip inert. */
-	onShowAgents?: () => void;
-	/** Run the provider login for this account. Offered only when a login fixes the row. */
-	onLogin?: () => void;
-}
-
-const AccountRow = memo(function AccountRow({
-	codexHomeKey,
-	snapshot,
-	agentCount,
-	latestSampledAtMs,
-	theme,
-	onShowAgents,
-	onLogin,
-}: AccountRowProps) {
-	const shortName = deriveShortName(codexHomeKey);
-	const hasBars =
-		snapshot.session || snapshot.weekly || (snapshot.additionalLimits?.length ?? 0) > 0;
-
-	return (
-		<div className="space-y-2" data-testid={`${TEST_ID_PREFIX}-row-${shortName}`}>
-			<div className="flex items-center gap-2">
-				<QuotaAccountPill
-					accountKey={codexHomeKey}
-					displayName={deriveDisplayName(codexHomeKey)}
-					theme={theme}
-				/>
-				<QuotaAgentCountBadge
-					count={agentCount}
-					providerLabel={PROVIDER_LABEL}
-					testId={`${TEST_ID_PREFIX}-agents-${shortName}`}
-					theme={theme}
-					onClick={agentCount > 0 ? onShowAgents : undefined}
-				/>
-				{snapshot.email && (
-					<QuotaAccountEmail
-						email={snapshot.email}
-						testId={`${TEST_ID_PREFIX}-email-${shortName}`}
-						theme={theme}
-					/>
-				)}
-				{snapshot.planType && (
-					<div
-						className="text-xs px-1.5 py-0.5 rounded"
-						style={{
-							color: theme.colors.accent,
-							backgroundColor: `${theme.colors.accent}15`,
-						}}
-					>
-						{snapshot.planType}
-					</div>
-				)}
-				<QuotaStaleSampleBadge
-					sampledAt={snapshot.sampledAt}
-					latestSampledAtMs={latestSampledAtMs}
-					testId={`${TEST_ID_PREFIX}-stale-${shortName}`}
-					theme={theme}
-				/>
-			</div>
-
-			{snapshot.authState !== 'authenticated' ? (
-				<QuotaAuthNotice
-					theme={theme}
-					message={snapshot.error ?? 'Codex quota is unavailable for this account.'}
-					testId={`${TEST_ID_PREFIX}-row-${shortName}-${snapshot.authState}`}
-					// A network or server error is not fixed by logging in.
-					onLogin={quotaAuthStateNeedsLogin(snapshot.authState) ? onLogin : undefined}
-				/>
-			) : hasBars ? (
-				<>
-					{snapshot.session && (
-						<QuotaBarRow
-							label={`Session (${windowLengthLabel(snapshot.session.windowSeconds) ?? FALLBACK_SESSION_WINDOW_LABEL})`}
-							percent={snapshot.session.percent}
-							resetsAt={snapshot.session.resetsAt}
-							theme={theme}
-						/>
-					)}
-					{snapshot.weekly && (
-						<QuotaBarRow
-							label={weeklyRowLabel(snapshot.weekly.windowSeconds)}
-							percent={snapshot.weekly.percent}
-							resetsAt={snapshot.weekly.resetsAt}
-							theme={theme}
-						/>
-					)}
-					{(snapshot.additionalLimits ?? []).map((limit) => (
-						<QuotaBarRow
-							key={limit.name}
-							label={limit.name}
-							percent={limit.percent}
-							resetsAt={limit.resetsAt}
-							theme={theme}
-						/>
-					))}
-				</>
-			) : (
-				<div
-					className="flex items-center gap-2 px-3 py-2 rounded text-xs"
-					style={{
-						backgroundColor: `${theme.colors.accent}10`,
-						color: theme.colors.textMain,
-						border: `1px solid ${theme.colors.accent}30`,
-					}}
-				>
-					<span style={{ color: theme.colors.accent }}>○</span>
-					<span>Quota endpoint returned no rate-limit windows for this account.</span>
-				</div>
-			)}
-
-			{/* Reset credits sit under the bars they act on, and only for an
-			    authenticated account: an account we cannot read quota for cannot
-			    redeem either, and offering the button there is a dead control. */}
-			{snapshot.authState === 'authenticated' && (
-				<CodexResetCredits
-					codexHomeKey={codexHomeKey}
-					accountLabel={deriveDisplayName(codexHomeKey)}
-					snapshotCounts={snapshot.resetCredits}
-					theme={theme}
-					testIdPrefix={`${TEST_ID_PREFIX}-${shortName}`}
-				/>
-			)}
-		</div>
-	);
-});
-
-export const CodexPlanUsage = memo(function CodexPlanUsage({
-	theme,
-	accountKeys = [],
-	showAllAccounts = false,
-	autoRefresh = true,
-	showRefreshButton = true,
-	refreshHotkey = false,
-	onShowAccountAgents,
-}: CodexPlanUsageProps) {
-	const snapshots = useCodexUsageStore((s) => s.snapshots);
-	// A sample in flight counts as busy even when this panel did not start it
-	// (it outlives a tab switch), so a remount shows the spinner, not an idle button.
-	const refreshing = useCodexUsageStore((s) => s.refreshing || s.sampling);
-
-	const { configuredAccountKeys, agentCountsByAccount, setSelectedKey, effectiveSelectedKey } =
-		useQuotaAccounts({
-			toolType: 'codex',
-			accountKeys,
-			snapshots,
-			normalizeKey,
-			deriveShortName,
-			fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('codex'),
-			fetchAccountKeys: () => {
-				const fn = window.maestro.agents.getCodexUsageAccountKeys;
-				return typeof fn === 'function' ? fn() : undefined;
-			},
+function codexWindows(snapshot: CodexUsageSnapshot): QuotaWindowRow[] {
+	const rows: QuotaWindowRow[] = [];
+	if (snapshot.session) {
+		rows.push({
+			key: 'session',
+			label: `Session (${windowLengthLabel(snapshot.session.windowSeconds) ?? FALLBACK_SESSION_WINDOW_LABEL})`,
+			percent: snapshot.session.percent,
+			resetsAt: snapshot.session.resetsAt,
 		});
+	}
+	if (snapshot.weekly) {
+		rows.push({
+			key: 'weekly',
+			label: weeklyRowLabel(snapshot.weekly.windowSeconds),
+			percent: snapshot.weekly.percent,
+			resetsAt: snapshot.weekly.resetsAt,
+		});
+	}
+	// A wall is a wall whatever the sampler calls it: extra named limits are
+	// drawn (and count toward the footer peak) like the two standard windows.
+	for (const limit of snapshot.additionalLimits ?? []) {
+		rows.push({
+			key: `limit-${limit.name}`,
+			label: limit.name,
+			percent: limit.percent,
+			resetsAt: limit.resetsAt,
+		});
+	}
+	return rows;
+}
 
-	const selectedSnapshot: CodexUsageSnapshot | null = effectiveSelectedKey
-		? (snapshots[effectiveSelectedKey] ?? null)
-		: null;
-	const snapshotCount = Object.keys(snapshots).length;
-	const lastSampledAtMs = useMemo(() => resolveLatestSampledAt(snapshots), [snapshots]);
-
-	// Footer readout, mirroring the Anthropic panel: account count, how many are
-	// locked out, and the tightest window across every account. Codex reports
-	// extra named limits alongside session/weekly, so those count toward the
-	// peak too - a wall is a wall whatever the sampler calls it.
-	const quotaFooter = useMemo(() => {
-		let peak: number | null = null;
-		let needsLogin = 0;
-		for (const key of configuredAccountKeys) {
-			const snap = snapshots[key];
-			if (!snap) continue;
-			if (snap.authState === 'unauthenticated' || snap.authState === 'missing_auth') {
-				needsLogin++;
-				continue;
-			}
-			const windows = [snap.session, snap.weekly, ...(snap.additionalLimits ?? [])];
-			for (const window of windows) {
-				if (typeof window?.percent === 'number' && (peak === null || window.percent > peak)) {
-					peak = window.percent;
-				}
-			}
-		}
-		return { peak, needsLogin };
-	}, [configuredAccountKeys, snapshots]);
-	usePublishFooterSummary(
-		'codex-usage',
-		buildQuotaSummary({
-			accounts: configuredAccountKeys.length,
-			needsLogin: quotaFooter.needsLogin,
-			peakPercent: quotaFooter.peak,
-			sampledAtMs: lastSampledAtMs,
-		})
-	);
-
-	// Hidden-account state (only meaningful in the showAllAccounts list view).
-	const hiddenKeys = useUIStore((s) => s.hiddenQuotaAccounts[PROVIDER_ID]);
-	const toggleHidden = useUIStore((s) => s.toggleHiddenQuotaAccount);
-	const hiddenSet = useMemo(() => new Set(hiddenKeys ?? []), [hiddenKeys]);
-	const [revealHidden, setRevealHidden] = useState(false);
-	// Count only hidden keys still present in the configured set so a stale key
-	// for a removed account never shows a phantom "Show all" badge.
-	const hiddenVisibleCount = configuredAccountKeys.filter((k) => hiddenSet.has(k)).length;
-	const accountsToRender =
-		revealHidden || hiddenVisibleCount === 0
-			? configuredAccountKeys
-			: configuredAccountKeys.filter((k) => !hiddenSet.has(k));
-
-	// The store owns the sample, not this panel: leaving the tab mid-sample
-	// does not abandon it, and the result lands in the store when it finishes.
-	const doRefresh = useCallback(() => useCodexUsageStore.getState().sample(), []);
-
-	const { isBusy, refreshIntervalMs, setRefreshIntervalMs, handleRefresh } = useQuotaRefresh({
-		providerId: PROVIDER_ID,
-		refreshing,
-		autoRefresh,
-		accountCount: configuredAccountKeys.length,
-		snapshotCount,
-		doRefresh,
-		refreshHotkey,
-	});
-
-	const startLogin = useQuotaAccountLogin('codex', () => void handleRefresh());
-
-	const renderAccount = useCallback(
-		(codexHomeKey: string) => {
-			const shortName = deriveShortName(codexHomeKey);
-			const snapshot = snapshots[codexHomeKey];
-			const isHidden = hiddenSet.has(codexHomeKey);
-			const agentCount = agentCountsByAccount[codexHomeKey] ?? 0;
-			const body = snapshot ? (
-				<AccountRow
-					codexHomeKey={codexHomeKey}
-					snapshot={snapshot}
-					agentCount={agentCount}
-					latestSampledAtMs={lastSampledAtMs}
+const CODEX_PLAN_CONFIG: PlanUsageConfig<CodexUsageSnapshot> = {
+	providerId: 'codex',
+	footerTab: 'codex-usage',
+	testIdPrefix: 'codex-plan',
+	providerLabel: 'Codex',
+	heading: 'Codex Plan Usage',
+	accountDirPrefix: '.codex',
+	useSnapshots: () => useCodexUsageStore((s) => s.snapshots),
+	useBusy: () => useCodexUsageStore((s) => s.refreshing || s.sampling),
+	sample: () => useCodexUsageStore.getState().sample(),
+	fetchAgentEnvVars: () => window.maestro.agents.getCustomEnvVars('codex'),
+	fetchAccountKeys: () => {
+		const fn = window.maestro.agents.getCodexUsageAccountKeys;
+		return typeof fn === 'function' ? fn() : undefined;
+	},
+	windows: codexWindows,
+	// Codex states its auth explicitly, so anything but 'authenticated' has no bars.
+	authNotice: (snapshot) =>
+		snapshot.authState === 'authenticated'
+			? null
+			: (snapshot.error ?? 'Codex quota is unavailable for this account.'),
+	authState: (snapshot) => snapshot.authState,
+	// A network or server error is not fixed by logging in.
+	loginFixes: (snapshot) => quotaAuthStateNeedsLogin(snapshot.authState),
+	renderIdentity: ({ snapshot, shortName, testIdPrefix, theme }) => (
+		<>
+			{snapshot.email && (
+				<QuotaAccountEmail
+					email={snapshot.email}
+					testId={`${testIdPrefix}-email-${shortName}`}
 					theme={theme}
-					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(codexHomeKey) : undefined}
-					onLogin={() => startLogin(codexHomeKey)}
-				/>
-			) : (
-				<QuotaPendingRow
-					accountKey={codexHomeKey}
-					shortName={shortName}
-					displayName={deriveDisplayName(codexHomeKey)}
-					testIdPrefix={TEST_ID_PREFIX}
-					agentCount={agentCount}
-					providerLabel={PROVIDER_LABEL}
-					theme={theme}
-					onShowAgents={onShowAccountAgents ? () => onShowAccountAgents(codexHomeKey) : undefined}
-				/>
-			);
-			// Toggle sits inline to the left of the account pill (items-start keeps
-			// it aligned with the header row, not centered against the full row).
-			// Only the body dims when hidden so the toggle stays clearly clickable.
-			return (
-				<div
-					key={codexHomeKey}
-					className="flex items-start gap-2"
-					data-testid={`${TEST_ID_PREFIX}-account-${shortName}${isHidden ? '-hidden' : ''}`}
-				>
-					<QuotaVisibilityToggle
-						theme={theme}
-						hidden={isHidden}
-						shortName={shortName}
-						testIdPrefix={TEST_ID_PREFIX}
-						onToggle={() => toggleHidden(PROVIDER_ID, codexHomeKey)}
-					/>
-					<div
-						className="flex-1 min-w-0"
-						style={{ opacity: isHidden ? 0.45 : 1, transition: 'opacity 0.2s' }}
-					>
-						{body}
-					</div>
-				</div>
-			);
-		},
-		[
-			snapshots,
-			theme,
-			hiddenSet,
-			toggleHidden,
-			agentCountsByAccount,
-			lastSampledAtMs,
-			onShowAccountAgents,
-			startLogin,
-		]
-	);
-
-	return (
-		<div
-			className="p-4 rounded-lg"
-			style={{ backgroundColor: theme.colors.bgMain }}
-			data-testid="codex-plan-usage"
-		>
-			<div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-				<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-					Codex Plan Usage
-				</h3>
-				<div className="flex flex-wrap items-center justify-end gap-2">
-					{showAllAccounts && hiddenVisibleCount > 0 && (
-						<QuotaShowAllToggle
-							theme={theme}
-							hiddenCount={hiddenVisibleCount}
-							revealing={revealHidden}
-							testIdPrefix={TEST_ID_PREFIX}
-							onToggle={() => setRevealHidden((v) => !v)}
-						/>
-					)}
-					{showRefreshButton && (
-						<QuotaRefreshControls
-							theme={theme}
-							refreshIntervalMs={refreshIntervalMs}
-							onChangeInterval={setRefreshIntervalMs}
-							onRefresh={handleRefresh}
-							isBusy={isBusy}
-							testIdPrefix={TEST_ID_PREFIX}
-							sweepClassName="codex-plan-refresh-sweep"
-							intervalAriaLabel="Codex usage auto refresh interval"
-							buttonAriaLabel="Refresh Codex usage snapshots"
-							showHotkeyHint={refreshHotkey}
-						/>
-					)}
-				</div>
-			</div>
-
-			{showAllAccounts && configuredAccountKeys.length > 0 && (
-				<div className="space-y-4">
-					{accountsToRender.length > 0 ? (
-						accountsToRender.map(renderAccount)
-					) : (
-						<div
-							className="flex items-center justify-center h-16 text-sm text-center px-4"
-							style={{ color: theme.colors.textDim }}
-							data-testid={`${TEST_ID_PREFIX}-all-hidden`}
-						>
-							All accounts hidden. Use <strong className="mx-1">Show all</strong> to bring them
-							back.
-						</div>
-					)}
-				</div>
-			)}
-
-			{!showAllAccounts && configuredAccountKeys.length >= 1 && (
-				<QuotaAccountTabs
-					theme={theme}
-					accountKeys={configuredAccountKeys}
-					effectiveSelectedKey={effectiveSelectedKey}
-					onSelect={setSelectedKey}
-					testIdPrefix={TEST_ID_PREFIX}
-					ariaLabel="Codex account selector"
-					warningTitle="Needs attention"
-					deriveShortName={deriveShortName}
-					deriveDisplayName={deriveDisplayName}
-					getTabStatus={(codexHomeKey): QuotaTabStatus => {
-						const snap = snapshots[codexHomeKey];
-						if (snap && snap.authState !== 'authenticated') return 'warning';
-						if (!snap) return 'pending';
-						return 'none';
-					}}
 				/>
 			)}
+			{snapshot.planType && (
+				<MiniBadge
+					label={snapshot.planType}
+					theme={theme}
+					title="ChatGPT plan"
+					testId={`${testIdPrefix}-plan-${shortName}`}
+				/>
+			)}
+		</>
+	),
+	// Reset credits sit under the bars they act on, and only for an
+	// authenticated account (the panel skips this for a row with a notice): an
+	// account we cannot read quota for cannot redeem either.
+	renderBelowBars: ({ snapshot, accountKey, displayName, testIdPrefix, shortName, theme }) => (
+		<CodexResetCredits
+			codexHomeKey={accountKey}
+			accountLabel={displayName}
+			snapshotCounts={snapshot.resetCredits}
+			theme={theme}
+			testIdPrefix={`${testIdPrefix}-${shortName}`}
+		/>
+	),
+};
 
-			{configuredAccountKeys.length === 0 ? (
-				<div
-					className="flex items-center justify-center h-24 text-sm text-center px-4"
-					style={{ color: theme.colors.textDim }}
-					data-testid="codex-plan-empty"
-				>
-					No Codex accounts configured. Set CODEX_HOME on a Codex session (or the agent), or run{' '}
-					<code style={{ color: theme.colors.accent }}>codex login</code> in a <code>~/.codex</code>{' '}
-					home - we sample only discoverable accounts so we never trigger a browser OAuth prompt.
-				</div>
-			) : showAllAccounts ? null : effectiveSelectedKey && selectedSnapshot ? (
-				<AccountRow
-					key={effectiveSelectedKey}
-					codexHomeKey={effectiveSelectedKey}
-					snapshot={selectedSnapshot}
-					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
-					latestSampledAtMs={lastSampledAtMs}
-					theme={theme}
-					onLogin={() => startLogin(effectiveSelectedKey)}
-				/>
-			) : effectiveSelectedKey ? (
-				<QuotaPendingRow
-					accountKey={effectiveSelectedKey}
-					shortName={deriveShortName(effectiveSelectedKey)}
-					displayName={deriveDisplayName(effectiveSelectedKey)}
-					testIdPrefix={TEST_ID_PREFIX}
-					agentCount={agentCountsByAccount[effectiveSelectedKey] ?? 0}
-					providerLabel={PROVIDER_LABEL}
-					theme={theme}
-				/>
-			) : null}
-		</div>
-	);
+export const CodexPlanUsage = memo(function CodexPlanUsage(props: PlanUsagePanelProps) {
+	return <PlanUsagePanel config={CODEX_PLAN_CONFIG} {...props} />;
 });
 
 export default CodexPlanUsage;

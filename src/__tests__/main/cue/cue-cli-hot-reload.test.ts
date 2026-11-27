@@ -55,7 +55,20 @@ import {
 } from '../../../main/cue/cue-session-runtime-service';
 import { createCueSessionRegistry } from '../../../main/cue/cue-session-registry';
 
-describe('CLI interval hot reload in a running desktop runtime', () => {
+/**
+ * How long a test waits for a real native file notification to land. These
+ * tests use the OS notifier, not a mocked one. Linux inotify delivers in well
+ * under a second, and macOS FSEvents usually does too (about 130 ms). On a busy
+ * Mac, though, fseventsd stalls: a plain chokidar probe measured 4.3 s for one
+ * change event and 4.6 s for a `ready`. The old 4 s budget failed there while
+ * CI passed. A passing wait returns the moment the event lands, so the wider
+ * budget slows only a run that would otherwise have failed.
+ */
+const NATIVE_EVENT_MS = 15_000;
+/** Room for a test that waits on up to three native events in a row. */
+const SUITE_OPTIONS = { timeout: 3 * NATIVE_EVENT_MS };
+
+describe('CLI interval hot reload in a running desktop runtime', SUITE_OPTIONS, () => {
 	let root: string;
 	let runtime: ReturnType<typeof createCueSessionRuntimeService>;
 	let registry: ReturnType<typeof createCueSessionRegistry>;
@@ -116,7 +129,9 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			name: 'completion',
 			json: true,
 		});
-		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), { timeout: 4000 });
+		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), {
+			timeout: NATIVE_EVENT_MS,
+		});
 		expect(dispatch.mock.calls[0][0]).toBe('target');
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 		expect(registry.get('other')?.triggerSources).toHaveLength(0);
@@ -137,12 +152,14 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			name: 'completion',
 			json: true,
 		});
-		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), { timeout: 4000 });
+		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), {
+			timeout: NATIVE_EVENT_MS,
+		});
 		// Wait for the real replacement watchers, without a timing assumption.
 		await Promise.all(watcherReady);
 		await cueSchedule({ agent: 'target', pause: 'completion', json: true });
 		await vi.waitFor(() => expect(registry.get('target')?.triggerSources).toHaveLength(0), {
-			timeout: 4000,
+			timeout: NATIVE_EVENT_MS,
 		});
 		expect(registry.get('target')?.config.subscriptions[0].enabled).toBe(false);
 		expect(dispatch).toHaveBeenCalledTimes(1);
@@ -157,7 +174,9 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			name: 'completion',
 			json: true,
 		});
-		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), { timeout: 4000 });
+		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), {
+			timeout: NATIVE_EVENT_MS,
+		});
 		expect(dispatch.mock.calls[0][0]).toBe('target');
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 		expect(registry.get('other')?.triggerSources).toHaveLength(0);
@@ -202,14 +221,16 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 					expect.stringContaining('Config reload failed'),
 					expect.objectContaining({ type: 'triggerHealthWarning' })
 				),
-			{ timeout: 4000 }
+			{ timeout: NATIVE_EVENT_MS }
 		);
 		expect(dispatch).not.toHaveBeenCalled();
 		// Drive the existing 30s health checks: refresh must not have closed them.
 		for (const [callback, delay] of intervals.mock.calls) {
 			if (delay === 30_000) (callback as () => void)();
 		}
-		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), { timeout: 4000 });
+		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), {
+			timeout: NATIVE_EVENT_MS,
+		});
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 		expect(watcherReady).toHaveLength(2); // Both original watchers survived refresh.
 	});
@@ -253,7 +274,9 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			'transient config read failure'
 		);
 		await Promise.all(watcherReady);
-		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), { timeout: 4000 });
+		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(1), {
+			timeout: NATIVE_EVENT_MS,
+		});
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 		expect(watcherReady).toHaveLength(1);
 	});
@@ -276,7 +299,9 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 		for (const [callback, delay] of intervals.mock.calls) {
 			if (delay === 30_000) (callback as () => void)();
 		}
-		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2), { timeout: 4000 });
+		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2), {
+			timeout: NATIVE_EVENT_MS,
+		});
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 		expect(watcherReady).toHaveLength(1);
 	});

@@ -2,10 +2,12 @@
  * Tests for WorktreeAnalytics component
  *
  * Verifies:
- * - Renders Parent / Worktree summary cards with correct counts
+ * - Parent / Worktree summary cards: a parent is an agent a live worktree was
+ *   spawned from, not every non-worktree agent
  * - Ratio badge formats correctly across edge cases (no parents, both zero)
- * - Activity split bar reflects parent / worktree query proportions and
+ * - Split bar reflects worktree vs other-agent query proportions and
  *   surfaces the dashed pattern on the worktree segment
+ * - A "Deleted worktree agents" row makes By Branch add up to the bar
  * - Empty-data state of the activity bar shows the placeholder row
  * - Per-branch breakdown sorts by query count descending and shows the
  *   branch name + sparkline; absent worktrees render the empty hint
@@ -32,24 +34,25 @@ const buildSession = (overrides: Partial<Session>): Session =>
 		...overrides,
 	}) as Session;
 
-const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation => ({
-	totalQueries: 0,
-	totalDuration: 0,
-	avgDuration: 0,
-	byAgent: {},
-	bySource: { user: 0, auto: 0 },
-	byLocation: { local: 0, remote: 0 },
-	byDay: [],
-	byHour: [],
-	totalSessions: 0,
-	sessionsByAgent: {},
-	sessionsByDay: [],
-	avgSessionDuration: 0,
-	byAgentByDay: {},
-	bySessionByDay: {},
-	bySessionSource: {},
-	...overrides,
-});
+const buildData = (overrides: Partial<StatsAggregation> = {}): StatsAggregation =>
+	({
+		totalQueries: 0,
+		totalDuration: 0,
+		avgDuration: 0,
+		byAgent: {},
+		bySource: { user: 0, auto: 0 },
+		byLocation: { local: 0, remote: 0 },
+		byDay: [],
+		byHour: [],
+		totalSessions: 0,
+		byAgentByDay: {},
+		bySessionByDay: {},
+		bySessionSource: {},
+		window: { startYmd: '2024-12-15', endYmd: '2024-12-21' },
+		...overrides,
+	}) as StatsAggregation;
+
+const cardsText = () => screen.getByTestId('worktree-stat-cards').textContent ?? '';
 
 describe('WorktreeAnalytics', () => {
 	it('renders the section with role + aria label', () => {
@@ -75,10 +78,22 @@ describe('WorktreeAnalytics', () => {
 
 		render(<WorktreeAnalytics sessions={sessions} data={buildData()} theme={theme} />);
 
-		const cards = screen.getAllByTestId('worktree-stat-card');
-		expect(cards).toHaveLength(2);
-		expect(cards[0]).toHaveAttribute('aria-label', 'Parent Agents: 2');
-		expect(cards[1]).toHaveAttribute('aria-label', 'Worktree Agents: 3');
+		expect(cardsText()).toMatch(/Parent Agents\s*2/);
+		expect(cardsText()).toMatch(/Worktree Agents\s*3/);
+	});
+
+	it('does not count standalone agents as parents', () => {
+		const sessions: Session[] = [
+			buildSession({ id: 'p1', name: 'Parent' }),
+			buildSession({ id: 's1', name: 'Standalone' }),
+			buildSession({ id: 's2', name: 'Standalone 2' }),
+			buildSession({ id: 'w1', name: 'WT', parentSessionId: 'p1' }),
+		];
+
+		render(<WorktreeAnalytics sessions={sessions} data={buildData()} theme={theme} />);
+
+		expect(cardsText()).toMatch(/Parent Agents\s*1/);
+		expect(screen.getByTestId('worktree-ratio-badge').textContent).toBe('1.00×');
 	});
 
 	it('excludes terminal sessions from the parent / worktree counts', () => {
@@ -91,9 +106,8 @@ describe('WorktreeAnalytics', () => {
 
 		render(<WorktreeAnalytics sessions={sessions} data={buildData()} theme={theme} />);
 
-		const cards = screen.getAllByTestId('worktree-stat-card');
-		expect(cards[0]).toHaveAttribute('aria-label', 'Parent Agents: 1');
-		expect(cards[1]).toHaveAttribute('aria-label', 'Worktree Agents: 1');
+		expect(cardsText()).toMatch(/Parent Agents\s*1/);
+		expect(cardsText()).toMatch(/Worktree Agents\s*1/);
 	});
 
 	describe('ratio badge', () => {
@@ -134,7 +148,7 @@ describe('WorktreeAnalytics', () => {
 			expect(screen.queryByTestId('worktree-split-bar')).not.toBeInTheDocument();
 		});
 
-		it('sizes parent and worktree segments by query proportion', () => {
+		it('sizes other-agent and worktree segments by query proportion', () => {
 			render(
 				<WorktreeAnalytics
 					sessions={[buildSession({ id: 'p1' })]}
@@ -142,7 +156,7 @@ describe('WorktreeAnalytics', () => {
 					theme={theme}
 				/>
 			);
-			const parent = screen.getByTestId('worktree-split-parent') as HTMLElement;
+			const parent = screen.getByTestId('worktree-split-other') as HTMLElement;
 			const worktree = screen.getByTestId('worktree-split-worktree') as HTMLElement;
 			expect(parent.style.width).toBe('75%');
 			expect(worktree.style.width).toBe('25%');
@@ -156,7 +170,7 @@ describe('WorktreeAnalytics', () => {
 					theme={theme}
 				/>
 			);
-			const parent = screen.getByTestId('worktree-split-parent') as HTMLElement;
+			const parent = screen.getByTestId('worktree-split-other') as HTMLElement;
 			const worktree = screen.getByTestId('worktree-split-worktree') as HTMLElement;
 			expect(parent.style.backgroundImage).toBe('');
 			expect(worktree.style.backgroundImage).toContain('repeating-linear-gradient');
@@ -172,7 +186,7 @@ describe('WorktreeAnalytics', () => {
 			);
 			expect(screen.getByTestId('worktree-split-bar')).toHaveAttribute(
 				'aria-label',
-				'Parent 30%, Worktree 70%'
+				'Other agents 30%, Worktree agents 70%'
 			);
 		});
 
@@ -284,7 +298,7 @@ describe('WorktreeAnalytics', () => {
 		});
 	});
 
-	it('staggers card-enter animation delays on stat cards (80ms) and branch rows (60ms)', () => {
+	it('staggers card-enter animation delays on branch rows (60ms)', () => {
 		const sessions: Session[] = [
 			buildSession({ id: 'p1', name: 'Parent' }),
 			buildSession({ id: 'wt1', parentSessionId: 'p1', worktreeBranch: 'feat/a' }),
@@ -292,15 +306,62 @@ describe('WorktreeAnalytics', () => {
 		];
 		render(<WorktreeAnalytics sessions={sessions} data={buildData()} theme={theme} />);
 
-		const statCards = screen.getAllByTestId('worktree-stat-card');
-		expect(statCards[0].style.animationDelay).toBe('0ms');
-		expect(statCards[1].style.animationDelay).toBe('80ms');
-		statCards.forEach((c) => expect(c.className).toContain('card-enter'));
-
 		const branchRows = screen.getAllByTestId('worktree-branch-row');
-		// Stagger starts at index+2 to chain visually behind the two stat cards.
 		expect(branchRows[0].style.animationDelay).toBe('120ms');
 		expect(branchRows[1].style.animationDelay).toBe('180ms');
 		branchRows.forEach((r) => expect(r.className).toContain('card-enter'));
+	});
+
+	describe('deleted worktree agents', () => {
+		it('adds a remainder row so the branch rows add up to the worktree total', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 'p1', name: 'Parent' }),
+				buildSession({ id: 'wt1', parentSessionId: 'p1', worktreeBranch: 'feat/a' }),
+			];
+			const data = buildData({
+				worktreeQueries: 12,
+				parentQueries: 8,
+				bySessionByDay: { wt1: [{ date: '2024-12-21', count: 5, duration: 0 }] },
+			});
+			render(<WorktreeAnalytics sessions={sessions} data={data} theme={theme} />);
+
+			expect(screen.getByTestId('worktree-branch-deleted-count').textContent).toBe('7');
+		});
+
+		it('omits the remainder row when live worktree agents account for every query', () => {
+			const sessions: Session[] = [
+				buildSession({ id: 'p1', name: 'Parent' }),
+				buildSession({ id: 'wt1', parentSessionId: 'p1', worktreeBranch: 'feat/a' }),
+			];
+			const data = buildData({
+				worktreeQueries: 5,
+				bySessionByDay: { wt1: [{ date: '2024-12-21', count: 5, duration: 0 }] },
+			});
+			render(<WorktreeAnalytics sessions={sessions} data={data} theme={theme} />);
+
+			expect(screen.queryByTestId('worktree-branch-deleted')).not.toBeInTheDocument();
+		});
+	});
+
+	it('draws the branch sparkline over calendar days, zero-filling idle ones', () => {
+		const sessions: Session[] = [
+			buildSession({ id: 'wt1', parentSessionId: 'p1', worktreeBranch: 'feat/x' }),
+		];
+		// Two active days far apart: the old "last 7 rows" sparkline drew them
+		// side by side. Only the in-window day survives a 7-day calendar window.
+		const data = buildData({
+			bySessionByDay: {
+				wt1: [
+					{ date: '2024-11-01', count: 9, duration: 0 },
+					{ date: '2024-12-21', count: 3, duration: 0 },
+				],
+			},
+			window: { startYmd: '2024-10-01', endYmd: '2024-12-21' },
+		});
+		render(<WorktreeAnalytics sessions={sessions} data={data} theme={theme} />);
+		const row = screen.getByTestId('worktree-branch-row');
+		expect(row.querySelector('[data-testid="sparkline"]')).not.toBeNull();
+		// The count still covers the whole range.
+		expect(within(row).getByTestId('worktree-branch-count').textContent).toBe('12');
 	});
 });

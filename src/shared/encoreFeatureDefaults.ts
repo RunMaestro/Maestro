@@ -23,6 +23,9 @@ export const ENCORE_FEATURE_DEFAULTS = {
 	concerto: false,
 	groupsPlus: false,
 	webLogin: false,
+	// Off by default on purpose: a link that runs a prompt is a code-execution
+	// path, so nobody gets one without asking for it.
+	promptLinks: false,
 } as const satisfies Readonly<Record<string, boolean>>;
 
 /** The flag shape these defaults describe, derived so the two cannot drift. */

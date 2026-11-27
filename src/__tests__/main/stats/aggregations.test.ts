@@ -1,5 +1,5 @@
 /**
- * Tests for time range filtering and aggregation calculations.
+ * Tests for time range filtering and the Usage Dashboard aggregation.
  *
  * Note: better-sqlite3 is a native module compiled for Electron's Node version.
  * Direct testing with the native module in vitest is not possible without
@@ -13,7 +13,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
-import { startOfLocalDay } from '../../../shared/localDay';
+import { addLocalDays, startOfLocalDay, toLocalYmd } from '../../../shared/localDay';
+import { getTimeRangeStart } from '../../../shared/statsTimeRange';
+import { computePercentiles, emptyPercentiles } from '../../../shared/percentiles';
 
 // Track Database constructor calls to verify file path
 let lastDbPath: string | null = null;
@@ -93,16 +95,8 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-// Import types only - we'll test the type definitions
-import type {
-	QueryEvent,
-	AutoRunSession,
-	AutoRunTask,
-	SessionLifecycleEvent,
-	StatsTimeRange,
-	StatsFilters,
-	StatsAggregation,
-} from '../../../shared/stats-types';
+import type Database from 'better-sqlite3';
+import type { StatsTimeRange } from '../../../shared/stats-types';
 
 describe('Time-range filtering works correctly for all ranges', () => {
 	beforeEach(() => {
@@ -142,7 +136,6 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 		it('should filter by "week" range (last 7 days)', async () => {
 			const now = Date.now();
-			const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -157,13 +150,12 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const startTimeParam = lastCall[0] as number;
 
 			// The start time should be approximately now - 7 days (within a few seconds tolerance)
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneWeekMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneWeekMs + 5000);
+			// Calendar-aligned: local midnight N-1 days back, today included
+			expect(startTimeParam).toBe(getTimeRangeStart('week', now));
 		});
 
 		it('should filter by "month" range (last 30 days)', async () => {
 			const now = Date.now();
-			const oneMonthMs = 30 * 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -178,13 +170,12 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const startTimeParam = lastCall[0] as number;
 
 			// The start time should be approximately now - 30 days (within a few seconds tolerance)
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneMonthMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneMonthMs + 5000);
+			// Calendar-aligned: local midnight N-1 days back, today included
+			expect(startTimeParam).toBe(getTimeRangeStart('month', now));
 		});
 
 		it('should filter by "year" range (last 365 days)', async () => {
 			const now = Date.now();
-			const oneYearMs = 365 * 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -199,8 +190,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const startTimeParam = lastCall[0] as number;
 
 			// The start time should be approximately now - 365 days (within a few seconds tolerance)
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneYearMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneYearMs + 5000);
+			// Calendar-aligned: local midnight N-1 days back, today included
+			expect(startTimeParam).toBe(getTimeRangeStart('year', now));
 		});
 
 		it('should filter by "all" range (from epoch/timestamp 0)', async () => {
@@ -243,7 +234,6 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 		it('should filter Auto Run sessions by "week" range', async () => {
 			const now = Date.now();
-			const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -257,13 +247,12 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const lastCall = allCalls[allCalls.length - 1];
 			const startTimeParam = lastCall[0] as number;
 
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneWeekMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneWeekMs + 5000);
+			// Calendar-aligned: local midnight N-1 days back, today included
+			expect(startTimeParam).toBe(getTimeRangeStart('week', now));
 		});
 
 		it('should filter Auto Run sessions by "month" range', async () => {
 			const now = Date.now();
-			const oneMonthMs = 30 * 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -277,13 +266,12 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const lastCall = allCalls[allCalls.length - 1];
 			const startTimeParam = lastCall[0] as number;
 
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneMonthMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneMonthMs + 5000);
+			// Calendar-aligned: local midnight N-1 days back, today included
+			expect(startTimeParam).toBe(getTimeRangeStart('month', now));
 		});
 
 		it('should filter Auto Run sessions by "year" range', async () => {
 			const now = Date.now();
-			const oneYearMs = 365 * 24 * 60 * 60 * 1000;
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
@@ -297,8 +285,8 @@ describe('Time-range filtering works correctly for all ranges', () => {
 			const lastCall = allCalls[allCalls.length - 1];
 			const startTimeParam = lastCall[0] as number;
 
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneYearMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneYearMs + 5000);
+			// Calendar-aligned: local midnight N-1 days back, today included
+			expect(startTimeParam).toBe(getTimeRangeStart('year', now));
 		});
 
 		it('should filter Auto Run sessions by "all" range', async () => {
@@ -313,109 +301,6 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			const lastCall = allCalls[allCalls.length - 1];
 			const startTimeParam = lastCall[0] as number;
-
-			expect(startTimeParam).toBe(0);
-		});
-	});
-
-	describe('getAggregatedStats time range calculations', () => {
-		it('should aggregate stats for "day" range', async () => {
-			const now = Date.now();
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-			mockStatement.get.mockClear();
-
-			db.getAggregatedStats('day');
-
-			// getAggregatedStats calls multiple queries, verify the totals query used correct time range
-			const getCalls = mockStatement.get.mock.calls;
-			expect(getCalls.length).toBeGreaterThan(0);
-
-			const firstCall = getCalls[0];
-			const startTimeParam = firstCall[0] as number;
-
-			// "Today" is the local calendar day, not a rolling 24 hours (#1960)
-			expect(startTimeParam).toBe(startOfLocalDay(now));
-		});
-
-		it('should aggregate stats for "week" range', async () => {
-			const now = Date.now();
-			const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-			mockStatement.get.mockClear();
-
-			db.getAggregatedStats('week');
-
-			const getCalls = mockStatement.get.mock.calls;
-			expect(getCalls.length).toBeGreaterThan(0);
-
-			const firstCall = getCalls[0];
-			const startTimeParam = firstCall[0] as number;
-
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneWeekMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneWeekMs + 5000);
-		});
-
-		it('should aggregate stats for "month" range', async () => {
-			const now = Date.now();
-			const oneMonthMs = 30 * 24 * 60 * 60 * 1000;
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-			mockStatement.get.mockClear();
-
-			db.getAggregatedStats('month');
-
-			const getCalls = mockStatement.get.mock.calls;
-			expect(getCalls.length).toBeGreaterThan(0);
-
-			const firstCall = getCalls[0];
-			const startTimeParam = firstCall[0] as number;
-
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneMonthMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneMonthMs + 5000);
-		});
-
-		it('should aggregate stats for "year" range', async () => {
-			const now = Date.now();
-			const oneYearMs = 365 * 24 * 60 * 60 * 1000;
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-			mockStatement.get.mockClear();
-
-			db.getAggregatedStats('year');
-
-			const getCalls = mockStatement.get.mock.calls;
-			expect(getCalls.length).toBeGreaterThan(0);
-
-			const firstCall = getCalls[0];
-			const startTimeParam = firstCall[0] as number;
-
-			expect(startTimeParam).toBeGreaterThanOrEqual(now - oneYearMs - 5000);
-			expect(startTimeParam).toBeLessThanOrEqual(now - oneYearMs + 5000);
-		});
-
-		it('should aggregate stats for "all" range', async () => {
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-			mockStatement.get.mockClear();
-
-			db.getAggregatedStats('all');
-
-			const getCalls = mockStatement.get.mock.calls;
-			expect(getCalls.length).toBeGreaterThan(0);
-
-			const firstCall = getCalls[0];
-			const startTimeParam = firstCall[0] as number;
 
 			expect(startTimeParam).toBe(0);
 		});
@@ -489,43 +374,6 @@ describe('Time-range filtering works correctly for all ranges', () => {
 
 			expect(selectCall).toBeDefined();
 			expect(selectCall![0]).toContain('start_time >= ?');
-		});
-
-		it('should include start_time >= ? in aggregation queries', async () => {
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			db.getAggregatedStats('year');
-
-			const prepareCalls = mockDb.prepare.mock.calls;
-
-			// Verify the totals query includes the filter
-			const totalsCall = prepareCalls.find(
-				(call) =>
-					(call[0] as string).includes('COUNT(*)') && (call[0] as string).includes('SUM(duration)')
-			);
-			expect(totalsCall).toBeDefined();
-			expect(totalsCall![0]).toContain('WHERE start_time >= ?');
-
-			// Verify the byAgent query includes the filter
-			const byAgentCall = prepareCalls.find((call) =>
-				(call[0] as string).includes('GROUP BY agent_type')
-			);
-			expect(byAgentCall).toBeDefined();
-			expect(byAgentCall![0]).toContain('WHERE start_time >= ?');
-
-			// Verify the bySource query includes the filter
-			const bySourceCall = prepareCalls.find((call) =>
-				(call[0] as string).includes('GROUP BY source')
-			);
-			expect(bySourceCall).toBeDefined();
-			expect(bySourceCall![0]).toContain('WHERE start_time >= ?');
-
-			// Verify the byDay query includes the filter
-			const byDayCall = prepareCalls.find((call) => (call[0] as string).includes('GROUP BY date('));
-			expect(byDayCall).toBeDefined();
-			expect(byDayCall![0]).toContain('WHERE start_time >= ?');
 		});
 	});
 
@@ -659,931 +507,682 @@ describe('Time-range filtering works correctly for all ranges', () => {
 });
 
 /**
- * Comprehensive tests for aggregation query calculations
+ * getAggregatedStats: the grouped passes, their JS rollups, and the memo.
  *
- * These tests verify that the getAggregatedStats method returns correct calculations:
- * - Total queries count
- * - Total duration sum
- * - Average duration calculation
- * - Breakdown by agent type (count and duration)
- * - Breakdown by source (user vs auto)
- * - Daily breakdown for charts
+ * The aggregation module is driven with a fake database whose `prepare`
+ * routes each statement by a fragment of its SQL, so a test states the rows a
+ * pass returns instead of relying on the order statements happen to run in.
+ * The SQL itself (window-function percentile ranks, the positional GROUP BY)
+ * was checked against a real SQLite; better-sqlite3 cannot load under vitest.
  */
-describe('Aggregation queries return correct calculations', () => {
-	beforeEach(() => {
-		vi.clearAllMocks();
-		mockDb.pragma.mockReturnValue([{ user_version: 1 }]);
-		mockDb.prepare.mockReturnValue(mockStatement);
-		mockStatement.run.mockReturnValue({ changes: 1 });
-		mockFsExistsSync.mockReturnValue(true);
-	});
+type Row = Record<string, unknown>;
 
+interface AggregationFixture {
+	totalChanges: number;
+	bounds: { first_query: number | null; first_prompt: number | null };
+	cube: Row[];
+	perAgent: Row[];
+	queryPercentiles: Row[];
+	taskPercentiles: Row[];
+	promptTimes: Row[];
+	activeDays: Row[];
+	imageAnnotations: number;
+}
+
+type Pass = keyof Omit<AggregationFixture, 'totalChanges' | 'bounds' | 'imageAnnotations'>;
+
+/** Which pass a prepared statement belongs to, by a fragment of its SQL. */
+function passFor(sql: string): Pass | 'changes' | 'bounds' | 'annotations' | null {
+	if (sql.includes('total_changes()')) return 'changes';
+	if (sql.includes('AS first_prompt')) return 'bounds';
+	if (sql.includes('GROUP BY 1, 2, 3, 4, 5, 6')) return 'cube';
+	if (sql.includes('AS priced_queries')) return 'perAgent';
+	if (sql.includes('agent_rank')) return 'queryPercentiles';
+	if (sql.includes('task_rank')) return 'taskPercentiles';
+	if (sql.includes("source != 'auto' AND start_time >= ?")) return 'promptTimes';
+	if (sql.includes('SELECT DISTINCT')) return 'activeDays';
+	if (sql.includes('FROM image_annotations')) return 'annotations';
+	return null;
+}
+
+function createAggregationDb(overrides: Partial<AggregationFixture> = {}) {
+	const fixture: AggregationFixture = {
+		totalChanges: 0,
+		bounds: { first_query: null, first_prompt: null },
+		cube: [],
+		perAgent: [],
+		queryPercentiles: [],
+		taskPercentiles: [],
+		promptTimes: [],
+		activeDays: [],
+		imageAnnotations: 0,
+		...overrides,
+	};
+	/** `all(...)` calls per pass, so a test can check the bound start time. */
+	const calls: Record<Pass, unknown[][]> = {
+		cube: [],
+		perAgent: [],
+		queryPercentiles: [],
+		taskPercentiles: [],
+		promptTimes: [],
+		activeDays: [],
+	};
+	const preparedSql: string[] = [];
+	const db = {
+		prepare: vi.fn((sql: string) => {
+			preparedSql.push(sql);
+			const pass = passFor(sql);
+			return {
+				run: vi.fn(),
+				// Read the fixture at call time so a test can change the data
+				// between two aggregations.
+				get: vi.fn(() => {
+					if (pass === 'changes') return { n: fixture.totalChanges };
+					if (pass === 'bounds') return fixture.bounds;
+					if (pass === 'annotations') return { count: fixture.imageAnnotations };
+					return undefined;
+				}),
+				all: vi.fn((...args: unknown[]) => {
+					if (!pass || pass === 'changes' || pass === 'bounds' || pass === 'annotations') {
+						return [];
+					}
+					calls[pass].push(args);
+					return fixture[pass];
+				}),
+			};
+		}),
+		pragma: vi.fn(() => 1),
+	};
+	return { db: db as unknown as Database.Database, fixture, calls, preparedSql };
+}
+
+/** Local epoch ms `daysAgo` days before `now`, at `hour`. */
+function atLocal(now: number, daysAgo: number, hour: number): number {
+	const d = new Date(now);
+	return new Date(d.getFullYear(), d.getMonth(), d.getDate() - daysAgo, hour).getTime();
+}
+
+function cubeRow(row: Partial<Row> & { date: string }): Row {
+	return {
+		hour: 9,
+		agent_type: 'claude-code',
+		source: 'user',
+		remote: 0,
+		worktree: 0,
+		count: 1,
+		duration: 1000,
+		...row,
+	};
+}
+
+function agentRow(row: Partial<Row> & { session_id: string; date: string }): Row {
+	return {
+		source: 'user',
+		count: 1,
+		duration: 1000,
+		last_query: 0,
+		input_tokens: 0,
+		output_tokens: 0,
+		cache_read_tokens: 0,
+		cache_creation_tokens: 0,
+		cost_usd: 0,
+		priced_queries: 0,
+		...row,
+	};
+}
+
+describe('getAggregatedStats', () => {
 	afterEach(() => {
 		vi.resetModules();
 	});
 
-	describe('totalQueries and totalDuration calculations', () => {
-		it('should return correct totalQueries count from database', async () => {
-			// Mock the totals query result
-			mockStatement.get.mockReturnValue({ count: 42, total_duration: 126000 });
-			mockStatement.all.mockReturnValue([]);
+	async function loadAggregations() {
+		return import('../../../main/stats/aggregations');
+	}
 
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
+	describe('calendar-aligned range', () => {
+		it.each<StatsTimeRange>(['day', 'week', 'month', 'quarter', 'year', 'all'])(
+			'binds every range-scoped pass to getTimeRangeStart(%s)',
+			async (range) => {
+				const now = Date.now();
+				const { getAggregatedStats } = await loadAggregations();
+				const { db, calls } = createAggregationDb();
 
-			const stats = db.getAggregatedStats('week');
+				getAggregatedStats(db, range, now);
 
-			expect(stats.totalQueries).toBe(42);
+				const start = getTimeRangeStart(range, now);
+				expect(calls.cube[0]).toEqual([start]);
+				expect(calls.perAgent[0]).toEqual([start]);
+				expect(calls.queryPercentiles[0]).toEqual([start]);
+				expect(calls.taskPercentiles[0]).toEqual([start]);
+			}
+		);
+
+		it('gap-fills byDay over the seven local days of a week, today last', async () => {
+			const now = Date.now();
+			const today = toLocalYmd(now);
+			const twoDaysAgo = addLocalDays(today, -2);
+			const { getAggregatedStats } = await loadAggregations();
+			const { db } = createAggregationDb({
+				cube: [
+					cubeRow({ date: twoDaysAgo, count: 3, duration: 300 }),
+					cubeRow({ date: today, hour: 14, count: 1, duration: 50 }),
+				],
+			});
+
+			const stats = getAggregatedStats(db, 'week', now);
+
+			expect(stats.window).toEqual({ startYmd: addLocalDays(today, -6), endYmd: today });
+			expect(stats.byDay).toHaveLength(7);
+			expect(stats.byDay[0]).toEqual({ date: addLocalDays(today, -6), count: 0, duration: 0 });
+			expect(stats.byDay[4]).toEqual({ date: twoDaysAgo, count: 3, duration: 300 });
+			expect(stats.byDay[6]).toEqual({ date: today, count: 1, duration: 50 });
+			expect(stats.byDay.filter((d) => d.count === 0)).toHaveLength(5);
 		});
 
-		it('should return correct totalDuration sum from database', async () => {
-			mockStatement.get.mockReturnValue({ count: 10, total_duration: 50000 });
-			mockStatement.all.mockReturnValue([]);
+		it('opens All Time on the day of the first recorded query', async () => {
+			const now = Date.now();
+			const first = atLocal(now, 3, 8);
+			const { getAggregatedStats } = await loadAggregations();
+			const { db } = createAggregationDb({ bounds: { first_query: first, first_prompt: first } });
 
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
+			const stats = getAggregatedStats(db, 'all', now);
 
-			const stats = db.getAggregatedStats('month');
-
-			expect(stats.totalDuration).toBe(50000);
+			expect(stats.earliestQueryAt).toBe(first);
+			expect(stats.window).toEqual({ startYmd: toLocalYmd(first), endYmd: toLocalYmd(now) });
+			expect(stats.byDay).toHaveLength(4);
 		});
 
-		it('should handle zero queries correctly', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
+		it('opens All Time on today when nothing was ever recorded', async () => {
+			const now = Date.now();
+			const { getAggregatedStats } = await loadAggregations();
+			const { db } = createAggregationDb();
 
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
+			const stats = getAggregatedStats(db, 'all', now);
 
-			const stats = db.getAggregatedStats('day');
+			expect(stats.earliestQueryAt).toBeNull();
+			expect(stats.window).toEqual({ startYmd: toLocalYmd(now), endYmd: toLocalYmd(now) });
+			expect(stats.byDay).toEqual([{ date: toLocalYmd(now), count: 0, duration: 0 }]);
+		});
+	});
+
+	describe('activity cube rollups', () => {
+		it('rolls one grouped pass up into totals, provider, source, location and worktree splits', async () => {
+			const now = Date.now();
+			const today = toLocalYmd(now);
+			const { getAggregatedStats } = await loadAggregations();
+			const { db } = createAggregationDb({
+				cube: [
+					cubeRow({ date: today, hour: 9, count: 4, duration: 4000 }),
+					cubeRow({ date: today, hour: 9, source: 'auto', worktree: 1, count: 2, duration: 6000 }),
+					cubeRow({
+						date: today,
+						hour: 22,
+						agent_type: 'codex',
+						remote: 1,
+						count: 1,
+						duration: 500,
+					}),
+				],
+			});
+
+			const stats = getAggregatedStats(db, 'day', now);
+
+			expect(stats.totalQueries).toBe(7);
+			expect(stats.totalDuration).toBe(10500);
+			expect(stats.avgDuration).toBe(1500);
+			expect(stats.byAgent).toEqual({
+				'claude-code': { count: 6, duration: 10000 },
+				codex: { count: 1, duration: 500 },
+			});
+			expect(stats.bySource).toEqual({ user: 5, auto: 2 });
+			expect(stats.byLocation).toEqual({ local: 6, remote: 1 });
+			expect(stats.worktreeQueries).toBe(2);
+			expect(stats.parentQueries).toBe(5);
+			expect(stats.byAgentWorktree).toEqual({
+				'claude-code': {
+					worktree: { count: 2, duration: 6000 },
+					parent: { count: 4, duration: 4000 },
+				},
+				codex: {
+					worktree: { count: 0, duration: 0 },
+					parent: { count: 1, duration: 500 },
+				},
+			});
+		});
+
+		it('merges providers into sparse, sorted hour and day-hour series', async () => {
+			const now = Date.now();
+			const today = toLocalYmd(now);
+			const yesterday = addLocalDays(today, -1);
+			const { getAggregatedStats } = await loadAggregations();
+			const { db } = createAggregationDb({
+				cube: [
+					cubeRow({ date: today, hour: 14, count: 1, duration: 100 }),
+					cubeRow({ date: yesterday, hour: 14, agent_type: 'codex', count: 2, duration: 200 }),
+					cubeRow({ date: yesterday, hour: 9, count: 3, duration: 300 }),
+					cubeRow({ date: yesterday, hour: 9, agent_type: 'codex', count: 1, duration: 10 }),
+				],
+			});
+
+			const stats = getAggregatedStats(db, 'week', now);
+
+			expect(stats.byHour).toEqual([
+				{ hour: 9, count: 4, duration: 310 },
+				{ hour: 14, count: 3, duration: 300 },
+			]);
+			expect(stats.byDayHour).toEqual([
+				{ date: yesterday, hour: 9, count: 4, duration: 310 },
+				{ date: yesterday, hour: 14, count: 2, duration: 200 },
+				{ date: today, hour: 14, count: 1, duration: 100 },
+			]);
+			expect(stats.byAgentByDay).toEqual({
+				'claude-code': [
+					{ date: yesterday, count: 3, duration: 300 },
+					{ date: today, count: 1, duration: 100 },
+				],
+				codex: [{ date: yesterday, count: 3, duration: 210 }],
+			});
+		});
+
+		it('reports zero averages for an empty range', async () => {
+			const { getAggregatedStats } = await loadAggregations();
+			const { db } = createAggregationDb();
+
+			const stats = getAggregatedStats(db, 'month', Date.now());
 
 			expect(stats.totalQueries).toBe(0);
-			expect(stats.totalDuration).toBe(0);
-		});
-
-		it('should handle large query counts correctly', async () => {
-			mockStatement.get.mockReturnValue({ count: 10000, total_duration: 5000000 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('year');
-
-			expect(stats.totalQueries).toBe(10000);
-			expect(stats.totalDuration).toBe(5000000);
-		});
-
-		it('should handle very large durations correctly', async () => {
-			// 1 day of continuous usage = 86400000ms
-			const largeDuration = 86400000;
-			mockStatement.get.mockReturnValue({ count: 100, total_duration: largeDuration });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('all');
-
-			expect(stats.totalDuration).toBe(largeDuration);
-		});
-	});
-
-	describe('avgDuration calculation', () => {
-		it('should calculate correct average duration', async () => {
-			// 100 queries, 500000ms total = 5000ms average
-			mockStatement.get.mockReturnValue({ count: 100, total_duration: 500000 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
-
-			expect(stats.avgDuration).toBe(5000);
-		});
-
-		it('should return 0 average duration when no queries', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('day');
-
-			// Avoid division by zero - should return 0
 			expect(stats.avgDuration).toBe(0);
-		});
-
-		it('should round average duration to nearest integer', async () => {
-			// 3 queries, 10000ms total = 3333.33... average, should round to 3333
-			mockStatement.get.mockReturnValue({ count: 3, total_duration: 10000 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('month');
-
-			// Math.round(10000 / 3) = 3333
-			expect(stats.avgDuration).toBe(3333);
-		});
-
-		it('should handle single query average correctly', async () => {
-			mockStatement.get.mockReturnValue({ count: 1, total_duration: 12345 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('day');
-
-			expect(stats.avgDuration).toBe(12345);
-		});
-
-		it('should handle edge case of tiny durations', async () => {
-			// 5 queries with 1ms each = 5ms total, 1ms average
-			mockStatement.get.mockReturnValue({ count: 5, total_duration: 5 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('day');
-
-			expect(stats.avgDuration).toBe(1);
-		});
-	});
-
-	describe('byAgent breakdown calculations', () => {
-		it('should return correct breakdown by single agent type', async () => {
-			mockStatement.get.mockReturnValue({ count: 50, total_duration: 250000 });
-			mockStatement.all
-				.mockReturnValueOnce([]) // First all() call (we handle this below)
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 50, duration: 250000 }])
-				.mockReturnValueOnce([{ source: 'user', count: 50 }])
-				.mockReturnValueOnce([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			// Reset to control exact mock responses for getAggregatedStats
-			mockStatement.all.mockReset();
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 50, duration: 250000 }])
-				.mockReturnValueOnce([{ source: 'user', count: 50 }])
-				.mockReturnValueOnce([]);
-
-			const stats = db.getAggregatedStats('week');
-
-			expect(stats.byAgent).toHaveProperty('claude-code');
-			expect(stats.byAgent['claude-code'].count).toBe(50);
-			expect(stats.byAgent['claude-code'].duration).toBe(250000);
-		});
-
-		it('should return correct breakdown for multiple agent types', async () => {
-			mockStatement.get.mockReturnValue({ count: 150, total_duration: 750000 });
-			mockStatement.all
-				.mockReturnValueOnce([
-					{ agent_type: 'claude-code', count: 100, duration: 500000 },
-					{ agent_type: 'opencode', count: 30, duration: 150000 },
-					{ agent_type: 'gemini-cli', count: 20, duration: 100000 },
-				])
-				.mockReturnValueOnce([
-					{ source: 'user', count: 120 },
-					{ source: 'auto', count: 30 },
-				])
-				.mockReturnValueOnce([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('month');
-
-			// Verify all agents are present
-			expect(Object.keys(stats.byAgent)).toHaveLength(3);
-
-			// Verify claude-code stats
-			expect(stats.byAgent['claude-code'].count).toBe(100);
-			expect(stats.byAgent['claude-code'].duration).toBe(500000);
-
-			// Verify opencode stats
-			expect(stats.byAgent['opencode'].count).toBe(30);
-			expect(stats.byAgent['opencode'].duration).toBe(150000);
-
-			// Verify gemini-cli stats
-			expect(stats.byAgent['gemini-cli'].count).toBe(20);
-			expect(stats.byAgent['gemini-cli'].duration).toBe(100000);
-		});
-
-		it('should return empty byAgent object when no queries exist', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('day');
-
 			expect(stats.byAgent).toEqual({});
-			expect(Object.keys(stats.byAgent)).toHaveLength(0);
-		});
-
-		it('should maintain correct duration per agent when durations vary', async () => {
-			mockStatement.get.mockReturnValue({ count: 4, total_duration: 35000 });
-			mockStatement.all
-				.mockReturnValueOnce([
-					{ agent_type: 'claude-code', count: 3, duration: 30000 }, // Avg 10000
-					{ agent_type: 'opencode', count: 1, duration: 5000 }, // Avg 5000
-				])
-				.mockReturnValueOnce([{ source: 'user', count: 4 }])
-				.mockReturnValueOnce([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
-
-			// Verify duration totals per agent are preserved
-			expect(stats.byAgent['claude-code'].duration).toBe(30000);
-			expect(stats.byAgent['opencode'].duration).toBe(5000);
-
-			// Total should match sum of all agents
-			const totalAgentDuration = Object.values(stats.byAgent).reduce(
-				(sum, agent) => sum + agent.duration,
-				0
-			);
-			expect(totalAgentDuration).toBe(35000);
+			expect(stats.byHour).toEqual([]);
+			expect(stats.byDayHour).toEqual([]);
+			expect(stats.byAgentWorktree).toEqual({});
 		});
 	});
 
-	describe('bySource breakdown calculations', () => {
-		it('should return correct user vs auto counts', async () => {
-			mockStatement.get.mockReturnValue({ count: 100, total_duration: 500000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 100, duration: 500000 }])
-				.mockReturnValueOnce([
-					{ source: 'user', count: 70 },
-					{ source: 'auto', count: 30 },
-				])
-				.mockReturnValueOnce([]);
+	describe('per-agent pass', () => {
+		it('counts distinct agents and rolls their rows up by day, source, last query and tokens', async () => {
+			const now = Date.now();
+			const today = toLocalYmd(now);
+			const yesterday = addLocalDays(today, -1);
+			const { getAggregatedStats } = await loadAggregations();
+			const { db } = createAggregationDb({
+				perAgent: [
+					agentRow({
+						session_id: 'agent-a',
+						date: yesterday,
+						count: 2,
+						duration: 200,
+						last_query: 1000,
+						input_tokens: 10,
+						cost_usd: 0.5,
+						priced_queries: 2,
+					}),
+					agentRow({
+						session_id: 'agent-a',
+						date: yesterday,
+						source: 'auto',
+						count: 3,
+						duration: 900,
+						last_query: 5000,
+						output_tokens: 7,
+						priced_queries: 1,
+					}),
+					agentRow({
+						session_id: 'agent-a',
+						date: today,
+						count: 1,
+						duration: 50,
+						last_query: 3000,
+					}),
+					agentRow({
+						session_id: 'agent-b',
+						date: today,
+						count: 4,
+						duration: 40,
+						last_query: 9000,
+					}),
+				],
+			});
 
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
+			const stats = getAggregatedStats(db, 'week', now);
 
-			const stats = db.getAggregatedStats('week');
-
-			expect(stats.bySource.user).toBe(70);
-			expect(stats.bySource.auto).toBe(30);
-		});
-
-		it('should handle all queries from user source', async () => {
-			mockStatement.get.mockReturnValue({ count: 50, total_duration: 250000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 50, duration: 250000 }])
-				.mockReturnValueOnce([{ source: 'user', count: 50 }])
-				.mockReturnValueOnce([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('month');
-
-			expect(stats.bySource.user).toBe(50);
-			expect(stats.bySource.auto).toBe(0);
-		});
-
-		it('should handle all queries from auto source', async () => {
-			mockStatement.get.mockReturnValue({ count: 200, total_duration: 1000000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 200, duration: 1000000 }])
-				.mockReturnValueOnce([{ source: 'auto', count: 200 }])
-				.mockReturnValueOnce([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('year');
-
-			expect(stats.bySource.user).toBe(0);
-			expect(stats.bySource.auto).toBe(200);
-		});
-
-		it('should initialize bySource with zeros when no data', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('day');
-
-			expect(stats.bySource).toEqual({ user: 0, auto: 0 });
-		});
-
-		it('should sum correctly across source types', async () => {
-			mockStatement.get.mockReturnValue({ count: 1000, total_duration: 5000000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 1000, duration: 5000000 }])
-				.mockReturnValueOnce([
-					{ source: 'user', count: 650 },
-					{ source: 'auto', count: 350 },
-				])
-				.mockReturnValueOnce([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('all');
-
-			// Verify sum equals totalQueries
-			expect(stats.bySource.user + stats.bySource.auto).toBe(stats.totalQueries);
+			expect(stats.totalSessions).toBe(2);
+			expect(stats.bySessionByDay).toEqual({
+				'agent-a': [
+					{ date: yesterday, count: 5, duration: 1100 },
+					{ date: today, count: 1, duration: 50 },
+				],
+				'agent-b': [{ date: today, count: 4, duration: 40 }],
+			});
+			expect(stats.bySessionSource).toEqual({
+				'agent-a': { user: 3, auto: 3 },
+				'agent-b': { user: 4, auto: 0 },
+			});
+			expect(stats.bySessionLastQuery).toEqual({ 'agent-a': 5000, 'agent-b': 9000 });
+			// agent-b reported no usage at all, so it has no token entry
+			expect(stats.bySessionTokens).toEqual({
+				'agent-a': {
+					inputTokens: 10,
+					outputTokens: 7,
+					cacheReadTokens: 0,
+					cacheCreationTokens: 0,
+					costUsd: 0.5,
+					pricedQueries: 3,
+				},
+			});
 		});
 	});
 
-	describe('byDay breakdown calculations', () => {
-		it('should return daily breakdown with correct structure', async () => {
-			mockStatement.get.mockReturnValue({ count: 30, total_duration: 150000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 30, duration: 150000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'user', count: 30 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 30 }]) // byLocation
-				.mockReturnValueOnce([
-					{ date: '2024-01-01', count: 10, duration: 50000 },
-					{ date: '2024-01-02', count: 12, duration: 60000 },
-					{ date: '2024-01-03', count: 8, duration: 40000 },
-				]); // byDay
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
-
-			expect(stats.byDay).toHaveLength(3);
-			expect(stats.byDay[0]).toEqual({ date: '2024-01-01', count: 10, duration: 50000 });
-			expect(stats.byDay[1]).toEqual({ date: '2024-01-02', count: 12, duration: 60000 });
-			expect(stats.byDay[2]).toEqual({ date: '2024-01-03', count: 8, duration: 40000 });
-		});
-
-		it('should return empty array when no daily data exists', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('day');
-
-			expect(stats.byDay).toEqual([]);
-			expect(stats.byDay).toHaveLength(0);
-		});
-
-		it('should handle single day of data', async () => {
-			mockStatement.get.mockReturnValue({ count: 5, total_duration: 25000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 5, duration: 25000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'user', count: 5 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 5 }]) // byLocation
-				.mockReturnValueOnce([{ date: '2024-06-15', count: 5, duration: 25000 }]); // byDay
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('day');
-
-			expect(stats.byDay).toHaveLength(1);
-			expect(stats.byDay[0].date).toBe('2024-06-15');
-			expect(stats.byDay[0].count).toBe(5);
-			expect(stats.byDay[0].duration).toBe(25000);
-		});
-
-		it('should order daily data chronologically (ASC)', async () => {
-			mockStatement.get.mockReturnValue({ count: 15, total_duration: 75000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 15, duration: 75000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'user', count: 15 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 15 }]) // byLocation
-				.mockReturnValueOnce([
-					{ date: '2024-03-01', count: 3, duration: 15000 },
-					{ date: '2024-03-02', count: 5, duration: 25000 },
-					{ date: '2024-03-03', count: 7, duration: 35000 },
-				]); // byDay
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
-
-			// Verify ASC order (earliest date first)
-			expect(stats.byDay[0].date).toBe('2024-03-01');
-			expect(stats.byDay[1].date).toBe('2024-03-02');
-			expect(stats.byDay[2].date).toBe('2024-03-03');
-		});
-
-		it('should sum daily counts equal to totalQueries', async () => {
-			mockStatement.get.mockReturnValue({ count: 25, total_duration: 125000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 25, duration: 125000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'user', count: 25 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 25 }]) // byLocation
-				.mockReturnValueOnce([
-					{ date: '2024-02-01', count: 8, duration: 40000 },
-					{ date: '2024-02-02', count: 10, duration: 50000 },
-					{ date: '2024-02-03', count: 7, duration: 35000 },
-				]); // byDay
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
-
-			// Sum of daily counts should equal totalQueries
-			const dailySum = stats.byDay.reduce((sum, day) => sum + day.count, 0);
-			expect(dailySum).toBe(stats.totalQueries);
-		});
-
-		it('should sum daily durations equal to totalDuration', async () => {
-			mockStatement.get.mockReturnValue({ count: 20, total_duration: 100000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'opencode', count: 20, duration: 100000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'auto', count: 20 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 20 }]) // byLocation
-				.mockReturnValueOnce([
-					{ date: '2024-04-10', count: 5, duration: 25000 },
-					{ date: '2024-04-11', count: 8, duration: 40000 },
-					{ date: '2024-04-12', count: 7, duration: 35000 },
-				]); // byDay
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
-
-			// Sum of daily durations should equal totalDuration
-			const dailyDurationSum = stats.byDay.reduce((sum, day) => sum + day.duration, 0);
-			expect(dailyDurationSum).toBe(stats.totalDuration);
-		});
-	});
-
-	describe('aggregation consistency across multiple queries', () => {
-		it('should return consistent results when called multiple times', async () => {
-			mockStatement.get.mockReturnValue({ count: 50, total_duration: 250000 });
-			mockStatement.all.mockReturnValue([
-				{ agent_type: 'claude-code', count: 50, duration: 250000 },
-			]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats1 = db.getAggregatedStats('week');
-			const stats2 = db.getAggregatedStats('week');
-
-			expect(stats1.totalQueries).toBe(stats2.totalQueries);
-			expect(stats1.totalDuration).toBe(stats2.totalDuration);
-			expect(stats1.avgDuration).toBe(stats2.avgDuration);
-		});
-
-		it('should handle concurrent access correctly', async () => {
-			mockStatement.get.mockReturnValue({ count: 100, total_duration: 500000 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			// Simulate concurrent calls
-			const [result1, result2, result3] = [
-				db.getAggregatedStats('day'),
-				db.getAggregatedStats('week'),
-				db.getAggregatedStats('month'),
+	describe('duration percentiles', () => {
+		it('rebuilds the nearest-rank distribution from the ranks SQL returned', async () => {
+			// What the window-function query returns for durations [10, 20, 30, 40]
+			// (one agent): ranks 0 (min), 2 (p50) and 3 (p75 and above, max).
+			const { getAggregatedStats } = await loadAggregations();
+			const ranked = [
+				{ duration: 10, rank: 0 },
+				{ duration: 30, rank: 2 },
+				{ duration: 40, rank: 3 },
 			];
+			const { db } = createAggregationDb({
+				queryPercentiles: ranked.map(({ duration, rank }) => ({
+					agent_type: 'claude-code',
+					duration,
+					overall_rank: rank,
+					overall_n: 4,
+					agent_rank: rank,
+					agent_n: 4,
+				})),
+				taskPercentiles: ranked.map(({ duration, rank }) => ({
+					duration,
+					task_rank: rank,
+					task_n: 4,
+				})),
+			});
 
-			expect(result1.totalQueries).toBe(100);
-			expect(result2.totalQueries).toBe(100);
-			expect(result3.totalQueries).toBe(100);
-		});
-	});
+			const stats = getAggregatedStats(db, 'week', Date.now());
 
-	describe('SQL query structure verification', () => {
-		it('should use COALESCE for totalDuration to handle NULL', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			db.getAggregatedStats('week');
-
-			// Verify the SQL query uses COALESCE
-			const prepareCalls = mockDb.prepare.mock.calls;
-			const totalsCall = prepareCalls.find((call) =>
-				(call[0] as string).includes('COALESCE(SUM(duration), 0)')
-			);
-
-			expect(totalsCall).toBeDefined();
+			const expected = computePercentiles([10, 20, 30, 40]);
+			expect(stats.queryDurationPercentiles).toEqual(expected);
+			expect(stats.queryDurationPercentilesByAgent).toEqual({ 'claude-code': expected });
+			expect(stats.autoRunTaskDurationPercentiles).toEqual(expected);
 		});
 
-		it('should GROUP BY agent_type for byAgent breakdown', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
+		it('keeps per-agent ranks separate from the overall ranks', async () => {
+			// Overall [5, 10, 50]; claude-code [10, 50]; codex [5].
+			const { getAggregatedStats } = await loadAggregations();
+			const { db } = createAggregationDb({
+				queryPercentiles: [
+					{
+						agent_type: 'codex',
+						duration: 5,
+						overall_rank: 0,
+						overall_n: 3,
+						agent_rank: 0,
+						agent_n: 1,
+					},
+					{
+						agent_type: 'claude-code',
+						duration: 10,
+						overall_rank: 1,
+						overall_n: 3,
+						agent_rank: 0,
+						agent_n: 2,
+					},
+					{
+						agent_type: 'claude-code',
+						duration: 50,
+						overall_rank: 2,
+						overall_n: 3,
+						agent_rank: 1,
+						agent_n: 2,
+					},
+				],
+			});
 
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
+			const stats = getAggregatedStats(db, 'week', Date.now());
 
-			db.getAggregatedStats('month');
-
-			const prepareCalls = mockDb.prepare.mock.calls;
-			const byAgentCall = prepareCalls.find(
-				(call) =>
-					(call[0] as string).includes('GROUP BY agent_type') &&
-					(call[0] as string).includes('FROM query_events')
-			);
-
-			expect(byAgentCall).toBeDefined();
-		});
-
-		it('should GROUP BY source for bySource breakdown', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			db.getAggregatedStats('year');
-
-			const prepareCalls = mockDb.prepare.mock.calls;
-			const bySourceCall = prepareCalls.find(
-				(call) =>
-					(call[0] as string).includes('GROUP BY source') &&
-					(call[0] as string).includes('FROM query_events')
-			);
-
-			expect(bySourceCall).toBeDefined();
-		});
-
-		it('should use date() function for daily grouping', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			db.getAggregatedStats('all');
-
-			const prepareCalls = mockDb.prepare.mock.calls;
-			const byDayCall = prepareCalls.find((call) =>
-				(call[0] as string).includes("date(start_time / 1000, 'unixepoch'")
-			);
-
-			expect(byDayCall).toBeDefined();
-		});
-
-		it('should ORDER BY date ASC in byDay query', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			db.getAggregatedStats('week');
-
-			const prepareCalls = mockDb.prepare.mock.calls;
-			const byDayCall = prepareCalls.find(
-				(call) =>
-					(call[0] as string).includes('ORDER BY date ASC') ||
-					((call[0] as string).includes('date(start_time') && (call[0] as string).includes('ASC'))
-			);
-
-			expect(byDayCall).toBeDefined();
-		});
-	});
-
-	describe('edge case calculations', () => {
-		it('should handle very small average (less than 1ms)', async () => {
-			// 10 queries, 5ms total = 0.5ms average, should round to 1 (or 0)
-			mockStatement.get.mockReturnValue({ count: 10, total_duration: 5 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('day');
-
-			// Math.round(5 / 10) = 1
-			expect(stats.avgDuration).toBe(1);
-		});
-
-		it('should handle maximum JavaScript safe integer values', async () => {
-			const maxSafe = Number.MAX_SAFE_INTEGER;
-			// Use a count that divides evenly to avoid rounding issues
-			mockStatement.get.mockReturnValue({ count: 1, total_duration: maxSafe });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('all');
-
-			expect(stats.totalDuration).toBe(maxSafe);
-			expect(stats.avgDuration).toBe(maxSafe);
-		});
-
-		it('should handle mixed zero and non-zero durations in agents', async () => {
-			mockStatement.get.mockReturnValue({ count: 3, total_duration: 5000 });
-			mockStatement.all
-				.mockReturnValueOnce([
-					{ agent_type: 'claude-code', count: 2, duration: 5000 },
-					{ agent_type: 'opencode', count: 1, duration: 0 }, // Zero duration
-				])
-				.mockReturnValueOnce([{ source: 'user', count: 3 }])
-				.mockReturnValueOnce([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
-
-			expect(stats.byAgent['claude-code'].duration).toBe(5000);
-			expect(stats.byAgent['opencode'].duration).toBe(0);
-		});
-
-		it('should handle dates spanning year boundaries', async () => {
-			mockStatement.get.mockReturnValue({ count: 2, total_duration: 10000 });
-			mockStatement.all
-				.mockReturnValueOnce([{ agent_type: 'claude-code', count: 2, duration: 10000 }]) // byAgent
-				.mockReturnValueOnce([{ source: 'user', count: 2 }]) // bySource
-				.mockReturnValueOnce([{ is_remote: 0, count: 2 }]) // byLocation
-				.mockReturnValueOnce([
-					{ date: '2023-12-31', count: 1, duration: 5000 },
-					{ date: '2024-01-01', count: 1, duration: 5000 },
-				]); // byDay
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
-
-			expect(stats.byDay).toHaveLength(2);
-			expect(stats.byDay[0].date).toBe('2023-12-31');
-			expect(stats.byDay[1].date).toBe('2024-01-01');
-		});
-	});
-
-	describe('bySessionLastQuery', () => {
-		it('should map each session to its most recent query timestamp', async () => {
-			mockStatement.get.mockReturnValue({ count: 3, total_duration: 300 });
-			// queryBySessionLastQuery is the 11th .all call in getAggregatedStats.
-			mockStatement.all
-				.mockReturnValueOnce([]) // 1: byAgent
-				.mockReturnValueOnce([]) // 2: bySource
-				.mockReturnValueOnce([]) // 3: byLocation
-				.mockReturnValueOnce([]) // 4: byDay
-				.mockReturnValueOnce([]) // 5: byAgentByDay
-				.mockReturnValueOnce([]) // 6: byHour
-				.mockReturnValueOnce([]) // 7: sessionsByAgent
-				.mockReturnValueOnce([]) // 8: sessionsByDay
-				.mockReturnValueOnce([]) // 9: bySessionByDay
-				.mockReturnValueOnce([]) // 10: bySessionSource
-				.mockReturnValueOnce([
-					{ session_id: 'a', last_query: 1700000000000 },
-					{ session_id: 'b', last_query: 1700000500000 },
-				]); // 11: bySessionLastQuery
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
-
-			expect(stats.bySessionLastQuery).toEqual({ a: 1700000000000, b: 1700000500000 });
-		});
-
-		it('should return an empty map when no queries exist in range', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			expect(db.getAggregatedStats('day').bySessionLastQuery).toEqual({});
-		});
-	});
-
-	describe('byWorktreeStatus breakdown calculations', () => {
-		it('should return correct worktree vs parent counts and durations', async () => {
-			mockStatement.get.mockReturnValue({ count: 100, total_duration: 500000 });
-			// queryByWorktreeStatus is the 12th .all call in getAggregatedStats; populate
-			// the prior 11 with empty arrays so we can isolate the worktree assertion.
-			mockStatement.all
-				.mockReturnValueOnce([]) // 1: byAgent
-				.mockReturnValueOnce([]) // 2: bySource
-				.mockReturnValueOnce([]) // 3: byLocation
-				.mockReturnValueOnce([]) // 4: byDay
-				.mockReturnValueOnce([]) // 5: byAgentByDay
-				.mockReturnValueOnce([]) // 6: byHour
-				.mockReturnValueOnce([]) // 7: sessionsByAgent (from querySessionStats)
-				.mockReturnValueOnce([]) // 8: sessionsByDay (from querySessionStats)
-				.mockReturnValueOnce([]) // 9: bySessionByDay
-				.mockReturnValueOnce([]) // 10: bySessionSource
-				.mockReturnValueOnce([]) // 11: bySessionLastQuery
-				.mockReturnValueOnce([]) // 12: bySessionTokens
-				.mockReturnValueOnce([
-					{ is_worktree: 0, count: 70, duration: 350000 },
-					{ is_worktree: 1, count: 30, duration: 150000 },
-				]); // 13: byWorktreeStatus
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
-
-			expect(stats.worktreeQueries).toBe(30);
-			expect(stats.parentQueries).toBe(70);
-			expect(stats.byWorktreeStatus).toEqual({
-				worktree: { count: 30, duration: 150000 },
-				parent: { count: 70, duration: 350000 },
+			expect(stats.queryDurationPercentiles).toEqual(computePercentiles([5, 10, 50]));
+			expect(stats.queryDurationPercentilesByAgent).toEqual({
+				'claude-code': computePercentiles([10, 50]),
+				codex: computePercentiles([5]),
 			});
 		});
 
-		it('should default to zeros when no rows exist', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
+		it('returns the empty distribution when the range has no rows', async () => {
+			const { getAggregatedStats } = await loadAggregations();
+			const { db } = createAggregationDb();
 
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
+			const stats = getAggregatedStats(db, 'day', Date.now());
 
-			const stats = db.getAggregatedStats('day');
+			expect(stats.queryDurationPercentiles).toEqual(emptyPercentiles());
+			expect(stats.queryDurationPercentilesByAgent).toEqual({});
+			expect(stats.autoRunTaskDurationPercentiles).toEqual(emptyPercentiles());
+		});
 
-			expect(stats.worktreeQueries).toBe(0);
-			expect(stats.parentQueries).toBe(0);
-			expect(stats.byWorktreeStatus).toEqual({
-				worktree: { count: 0, duration: 0 },
-				parent: { count: 0, duration: 0 },
+		it('selects only percentile ranks in SQL instead of every duration', async () => {
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, preparedSql } = createAggregationDb();
+
+			getAggregatedStats(db, 'week', Date.now());
+
+			const sql = preparedSql.find((s) => s.includes('agent_rank'))!;
+			expect(sql).toContain('ROW_NUMBER() OVER (PARTITION BY agent_type ORDER BY duration)');
+			for (const p of [0.5, 0.75, 0.9, 0.95, 0.99]) {
+				expect(sql).toContain(`CAST(${p} * agent_n AS INTEGER)`);
+				expect(sql).toContain(`CAST(${p} * overall_n AS INTEGER)`);
+			}
+		});
+	});
+
+	describe('streak over all history', () => {
+		it('reads every active day for a bounded range, so the range cannot cut a streak', async () => {
+			const now = Date.now();
+			const today = toLocalYmd(now);
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, calls } = createAggregationDb({
+				activeDays: [-12, -11, -10, -9, -8, -7, -6, -1, 0].map((d) => ({
+					date: addLocalDays(today, d),
+				})),
 			});
+
+			const stats = getAggregatedStats(db, 'day', now);
+
+			expect(calls.activeDays).toHaveLength(1);
+			expect(stats.streak).toEqual({ current: 2, longest: 7 });
 		});
 
-		it('should treat NULL is_worktree (legacy rows) as parent via COALESCE', async () => {
-			// SQL's COALESCE(is_worktree, 0) collapses NULL to 0 before grouping, so the
-			// driver only sees a single 0-bucket row even when legacy NULL rows are present.
-			mockStatement.get.mockReturnValue({ count: 50, total_duration: 250000 });
-			mockStatement.all
-				.mockReturnValueOnce([]) // 1: byAgent
-				.mockReturnValueOnce([]) // 2: bySource
-				.mockReturnValueOnce([]) // 3: byLocation
-				.mockReturnValueOnce([]) // 4: byDay
-				.mockReturnValueOnce([]) // 5: byAgentByDay
-				.mockReturnValueOnce([]) // 6: byHour
-				.mockReturnValueOnce([]) // 7: sessionsByAgent
-				.mockReturnValueOnce([]) // 8: sessionsByDay
-				.mockReturnValueOnce([]) // 9: bySessionByDay
-				.mockReturnValueOnce([]) // 10: bySessionSource
-				.mockReturnValueOnce([]) // 11: bySessionLastQuery
-				.mockReturnValueOnce([]) // 12: bySessionTokens
-				.mockReturnValueOnce([{ is_worktree: 0, count: 50, duration: 250000 }]); // 12
+		it('takes All Time active days from the cube instead of a second scan', async () => {
+			const now = Date.now();
+			const today = toLocalYmd(now);
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, calls } = createAggregationDb({
+				cube: [cubeRow({ date: addLocalDays(today, -1) }), cubeRow({ date: today })],
+			});
 
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
+			const stats = getAggregatedStats(db, 'all', now);
 
-			const stats = db.getAggregatedStats('all');
-
-			expect(stats.parentQueries).toBe(50);
-			expect(stats.worktreeQueries).toBe(0);
-			expect(stats.byWorktreeStatus.parent).toEqual({ count: 50, duration: 250000 });
-			expect(stats.byWorktreeStatus.worktree).toEqual({ count: 0, duration: 0 });
-		});
-
-		it('should use COALESCE(is_worktree, 0) in the SQL query', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			db.getAggregatedStats('week');
-
-			const prepareCalls = mockDb.prepare.mock.calls;
-			const worktreeCall = prepareCalls.find((call) =>
-				(call[0] as string).includes('COALESCE(is_worktree, 0)')
-			);
-
-			expect(worktreeCall).toBeDefined();
-			expect(worktreeCall![0]).toContain('GROUP BY COALESCE(is_worktree, 0)');
-			expect(worktreeCall![0]).toContain('FROM query_events');
-			// Ensures duration is summed alongside the count for the activity-split bar
-			expect(worktreeCall![0]).toContain('SUM(duration)');
+			expect(calls.activeDays).toHaveLength(0);
+			expect(stats.streak).toEqual({ current: 2, longest: 2 });
 		});
 	});
 
 	describe('prompt cadence', () => {
-		it('counts only non-auto turns and windows from local midnight', async () => {
-			const now = new Date();
-			const atHour = (daysAgo: number, hour: number) =>
-				new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo, hour).getTime();
-			const promptRows = [
-				{ start_time: atHour(2, 9) },
-				{ start_time: atHour(2, 10) },
-				{ start_time: atHour(1, 9) },
-			];
-			let windowBound: unknown;
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
-			mockDb.prepare.mockImplementation((sql: string) => {
-				if (sql.includes('MIN(start_time) as first')) {
-					return { ...mockStatement, get: vi.fn(() => ({ first: atHour(20, 8) })) };
-				}
-				if (sql.includes("source != 'auto' AND start_time >= ?")) {
-					return {
-						...mockStatement,
-						all: vi.fn((bound: unknown) => {
-							windowBound = bound;
-							return promptRows;
-						}),
-					};
-				}
-				return mockStatement;
+		it('counts interactive turns over the same calendar window', async () => {
+			const now = Date.now();
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, calls } = createAggregationDb({
+				bounds: { first_query: atLocal(now, 20, 8), first_prompt: atLocal(now, 20, 8) },
+				promptTimes: [
+					{ start_time: atLocal(now, 2, 9) },
+					{ start_time: atLocal(now, 2, 10) },
+					{ start_time: atLocal(now, 1, 9) },
+				],
 			});
 
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
-
-			const stats = db.getAggregatedStats('week');
+			const stats = getAggregatedStats(db, 'week', now);
 
 			expect(stats.prompts.total).toBe(3);
 			expect(stats.prompts.calendarDays).toBe(7);
 			expect(stats.prompts.busiestDay?.count).toBe(2);
-			// Window opens at local midnight six days back, not a rolling 7 * 24h.
-			const sixDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
-			expect(windowBound).toBe(sixDaysAgo.getTime());
+			expect(calls.promptTimes[0]).toEqual([getTimeRangeStart('week', now)]);
 		});
 
-		it('reports an empty cadence when nothing was ever prompted', async () => {
-			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
-			mockStatement.all.mockReturnValue([]);
+		it('skips the prompt scan when nothing was ever prompted', async () => {
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, calls } = createAggregationDb();
 
-			const { StatsDB } = await import('../../../main/stats');
-			const db = new StatsDB();
-			db.initialize();
+			const stats = getAggregatedStats(db, 'all', Date.now());
 
-			const stats = db.getAggregatedStats('all');
-
+			expect(calls.promptTimes).toHaveLength(0);
 			expect(stats.prompts.total).toBe(0);
 			expect(stats.prompts.days).toEqual([]);
 		});
 	});
+
+	describe('memo', () => {
+		it('serves a repeat call from the memo while the database is unchanged', async () => {
+			const now = Date.now();
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, calls } = createAggregationDb({
+				cube: [cubeRow({ date: toLocalYmd(now) })],
+			});
+
+			const first = getAggregatedStats(db, 'week', now);
+			const second = getAggregatedStats(db, 'week', now + 1000);
+
+			expect(second).toBe(first);
+			expect(calls.cube).toHaveLength(1);
+		});
+
+		it('recomputes after any write on the connection', async () => {
+			const now = Date.now();
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, fixture, calls } = createAggregationDb({
+				cube: [cubeRow({ date: toLocalYmd(now), count: 1 })],
+			});
+
+			expect(getAggregatedStats(db, 'week', now).totalQueries).toBe(1);
+			fixture.totalChanges = 5;
+			fixture.cube = [cubeRow({ date: toLocalYmd(now), count: 6 })];
+
+			expect(getAggregatedStats(db, 'week', now).totalQueries).toBe(6);
+			expect(calls.cube).toHaveLength(2);
+		});
+
+		it('recomputes when the local day rolls over', async () => {
+			const now = Date.now();
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, calls } = createAggregationDb();
+
+			const first = getAggregatedStats(db, 'week', now);
+			const nextDay = getAggregatedStats(db, 'week', now + 24 * 60 * 60 * 1000);
+
+			expect(nextDay).not.toBe(first);
+			expect(nextDay.window.endYmd).toBe(addLocalDays(first.window.endYmd, 1));
+			expect(calls.cube).toHaveLength(2);
+		});
+
+		it('memoizes each range separately but reads the all-history streak once', async () => {
+			const now = Date.now();
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, calls } = createAggregationDb();
+
+			getAggregatedStats(db, 'week', now);
+			getAggregatedStats(db, 'month', now);
+
+			expect(calls.cube).toHaveLength(2);
+			expect(calls.activeDays).toHaveLength(1);
+		});
+
+		it('prepares each statement once across recomputes', async () => {
+			const now = Date.now();
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, fixture, preparedSql } = createAggregationDb();
+
+			getAggregatedStats(db, 'week', now);
+			fixture.totalChanges = 1;
+			getAggregatedStats(db, 'week', now);
+
+			const cubePrepares = preparedSql.filter((s) => s.includes('GROUP BY 1, 2, 3, 4, 5, 6'));
+			expect(cubePrepares).toHaveLength(1);
+		});
+
+		it('starts over on a new connection', async () => {
+			const now = Date.now();
+			const { getAggregatedStats } = await loadAggregations();
+			const a = createAggregationDb({ cube: [cubeRow({ date: toLocalYmd(now), count: 1 })] });
+			const b = createAggregationDb({ cube: [cubeRow({ date: toLocalYmd(now), count: 9 })] });
+
+			expect(getAggregatedStats(a.db, 'week', now).totalQueries).toBe(1);
+			expect(getAggregatedStats(b.db, 'week', now).totalQueries).toBe(9);
+		});
+	});
+
+	describe('result shape', () => {
+		it('no longer carries the removed session-lifecycle fields or queries', async () => {
+			const { getAggregatedStats } = await loadAggregations();
+			const { db, preparedSql } = createAggregationDb({ imageAnnotations: 3 });
+
+			const stats = getAggregatedStats(db, 'week', Date.now());
+
+			for (const removed of [
+				'sessionsByAgent',
+				'sessionsByDay',
+				'avgSessionDuration',
+				'byWorktreeStatus',
+			]) {
+				expect(stats).not.toHaveProperty(removed);
+			}
+			expect(preparedSql.some((s) => s.includes('session_lifecycle'))).toBe(false);
+			expect(stats.imageAnnotations).toBe(3);
+		});
+	});
 });
 
-/**
- * Cross-platform database path resolution tests
- *
- * Tests verify that the stats database file is created at the correct
- * platform-appropriate path on macOS, Windows, and Linux. Electron's
- * app.getPath('userData') returns:
- *
- * - macOS: ~/Library/Application Support/Maestro/
- * - Windows: %APPDATA%\Maestro\ (e.g., C:\Users\<user>\AppData\Roaming\Maestro\)
- * - Linux: ~/.config/Maestro/
- *
- * The stats database is always created at {userData}/stats.db
- */
+describe('computeDayStreak', () => {
+	afterEach(() => {
+		vi.resetModules();
+	});
+
+	const today = '2026-03-02';
+
+	it('is zero with no activity', async () => {
+		const { computeDayStreak } = await import('../../../main/stats/aggregations');
+		expect(computeDayStreak([], today)).toEqual({ current: 0, longest: 0 });
+	});
+
+	it('counts back from today when today is active', async () => {
+		const { computeDayStreak } = await import('../../../main/stats/aggregations');
+		expect(computeDayStreak(['2026-02-28', '2026-03-01', '2026-03-02'], today)).toEqual({
+			current: 3,
+			longest: 3,
+		});
+	});
+
+	it('keeps a streak alive through a today with no activity yet', async () => {
+		const { computeDayStreak } = await import('../../../main/stats/aggregations');
+		expect(computeDayStreak(['2026-02-27', '2026-02-28', '2026-03-01'], today)).toEqual({
+			current: 3,
+			longest: 3,
+		});
+	});
+
+	it('breaks the current streak after a whole day without activity', async () => {
+		const { computeDayStreak } = await import('../../../main/stats/aggregations');
+		expect(computeDayStreak(['2026-02-26', '2026-02-27', '2026-02-28'], today)).toEqual({
+			current: 0,
+			longest: 3,
+		});
+	});
+
+	it('finds the longest run anywhere in history, across a month boundary', async () => {
+		const { computeDayStreak } = await import('../../../main/stats/aggregations');
+		expect(
+			computeDayStreak(
+				['2026-01-30', '2026-01-31', '2026-02-01', '2026-02-02', '2026-02-10', '2026-03-02'],
+				today
+			)
+		).toEqual({ current: 1, longest: 4 });
+	});
+});

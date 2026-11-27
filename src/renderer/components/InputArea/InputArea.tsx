@@ -25,6 +25,7 @@ import { InputTextarea } from './components/InputTextarea';
 import { NotificationSendControls } from './components/NotificationSendControls';
 import { PhoneComposerHandle } from './components/PhoneComposerHandle';
 import { StagedImagesStrip } from './components/StagedImagesStrip';
+import { DesignPickChips } from './components/DesignPickChips';
 import { ToolbarControls } from './components/ToolbarControls';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
@@ -42,6 +43,9 @@ import { CommandModeBar } from './components/CommandModeBar';
 import { MentionRoutingBar } from './components/MentionRoutingBar';
 import { useMentionRouting } from './hooks/useMentionRouting';
 import { AiCommandProposal } from './components/AiCommandProposal';
+import { SideQuestionCard } from './components/SideQuestionCard';
+import { selectSideQuestionEntry, useSideQuestionStore } from '../../stores/sideQuestionStore';
+import { dismissSideQuestion } from '../../services/sideQuestion';
 import { useAiCommandStore, selectAiCommandEntry, aiCommandKey } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { codifyTurnSettings } from '../../utils/providerTabSessions';
@@ -50,9 +54,14 @@ import {
 	moveStagedImage,
 	renumberScreenshotReferences,
 } from '../../utils/stagedImageOrder';
+import { removeStagedDesignPick, setStagedDesignPickNote } from '../../services/stagedDesignPicks';
+import type { StagedDesignPick } from '../../types';
 
 /** localStorage key for the phone composer fold (see PhoneComposerHandle). */
 export const PHONE_COMPOSER_COLLAPSED_KEY = 'phone.composer.collapsed';
+
+/** One shared "no chips", so a tab without any never hands the strip a fresh []. */
+const EMPTY_DESIGN_PICKS: StagedDesignPick[] = [];
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
@@ -253,6 +262,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// per tab, so switching away and back finds the same card waiting.
 	const aiCommandEntry = useAiCommandStore(selectAiCommandEntry(session.id, session.activeTabId));
 	const setAiCommandChoice = useAiCommandStore((s) => s.setAiCommandChoice);
+	const sideQuestionEntry = useSideQuestionStore(
+		selectSideQuestionEntry(session.id, session.activeTabId)
+	);
 	// What the bar advertises. While a request is in flight the entry's stamp
 	// wins: settings are codified at send time, so changing the model mid-request
 	// applies from the NEXT one, and the bar must not claim otherwise.
@@ -284,6 +296,26 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			if (renumbered !== draft) setInputValue(renumbered);
 		},
 		[stagedImages.length, setStagedImages, setInputValue]
+	);
+
+	// The Design Mode chips staged on the tab this composer drafts for. They live
+	// on the tab, so the strip edits them there, by id, and a tab switch shows
+	// the next tab's chips.
+	const activeTabId = activeTab?.id;
+	const tabDesignPicks = activeTab?.stagedDesignPicks;
+	const stagedDesignPicks =
+		tabDesignPicks && tabDesignPicks.length > 0 ? tabDesignPicks : EMPTY_DESIGN_PICKS;
+	const handleDesignPickNoteChange = useCallback(
+		(pickId: string, note: string) => {
+			if (activeTabId) setStagedDesignPickNote(session.id, activeTabId, pickId, note);
+		},
+		[session.id, activeTabId]
+	);
+	const handleRemoveDesignPick = useCallback(
+		(pickId: string) => {
+			if (activeTabId) removeStagedDesignPick(session.id, activeTabId, pickId);
+		},
+		[session.id, activeTabId]
 	);
 
 	// thinkingItems is now passed directly from App.tsx (pre-filtered) for better performance
@@ -410,7 +442,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const phone = usePhoneLayout();
 	const composerFold = usePersistedToggle(PHONE_COMPOSER_COLLAPSED_KEY, true);
 	const phoneHandleBusy = thinkingItems.length > 0 || !!autoRunState?.isRunning;
-	const phoneHandleHasDraft = inputValue.trim().length > 0 || stagedImages.length > 0;
+	// Chips are an AI draft, like staged images (which read empty in terminal mode).
+	const phoneHandleHasDraft =
+		inputValue.trim().length > 0 ||
+		stagedImages.length > 0 ||
+		(!isTerminalMode && stagedDesignPicks.length > 0);
 
 	// Show summarization progress overlay when active for this tab
 	if (isSummarizing && session.inputMode === 'ai' && onCancelSummarize) {
@@ -471,6 +507,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				setLightboxImage={setLightboxImage}
 				showThinking={wizardShowThinking}
 				onToggleShowThinking={onToggleWizardShowThinking}
+				designPicks={stagedDesignPicks}
+				onDesignPickNoteChange={handleDesignPickNoteChange}
+				onRemoveDesignPick={handleRemoveDesignPick}
 			/>
 		);
 	}
@@ -573,6 +612,14 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				onReorder={handleReorderStagedImages}
 			/>
 
+			<DesignPickChips
+				isVisible={session.inputMode === 'ai'}
+				picks={stagedDesignPicks}
+				theme={theme}
+				onNoteChange={handleDesignPickNoteChange}
+				onRemove={handleRemoveDesignPick}
+			/>
+
 			<SlashCommandPopover
 				isOpen={slashCommandOpen}
 				commands={filteredSlashCommands}
@@ -665,6 +712,14 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								theme={theme}
 								routing={mentionRouting.routing}
 								agentNames={mentionRouting.agentNames}
+							/>
+						)}
+
+						{sideQuestionEntry && (
+							<SideQuestionCard
+								theme={theme}
+								entry={sideQuestionEntry}
+								onDismiss={() => dismissSideQuestion(session.id, sideQuestionEntry.tabId)}
 							/>
 						)}
 

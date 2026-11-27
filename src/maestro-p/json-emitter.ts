@@ -42,6 +42,12 @@ export interface EmitResultOptions {
 	usage?: unknown;
 	modelUsage?: unknown;
 	totalCostUsd?: number;
+	/**
+	 * What the TUI last showed, on a failure the screen explains (claude quit, a
+	 * startup dialog, a timeout). Ships as `last_screen`, a maestro-p extension
+	 * to the result envelope; `claude -p` never sends it.
+	 */
+	lastScreen?: string;
 }
 
 // The /usage parser produces this shape and emitStatus() ships it to stdout
@@ -157,6 +163,7 @@ export class JsonEmitter {
 		if (options.usage !== undefined) envelope.usage = options.usage;
 		if (options.modelUsage !== undefined) envelope.modelUsage = options.modelUsage;
 		if (options.totalCostUsd !== undefined) envelope.total_cost_usd = options.totalCostUsd;
+		if (options.lastScreen) envelope.last_screen = options.lastScreen;
 		this.writeLine(envelope);
 	}
 

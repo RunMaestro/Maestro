@@ -20,6 +20,7 @@ import type { WakaTimeManager } from '../wakatime-manager';
 import type { getSettingsStore } from '../stores';
 import { setupProcessListeners } from '../process-listeners';
 import { setupWakaTimeListener } from '../process-listeners/wakatime-listener';
+import { setupTokenSpeedListener } from '../process-listeners/token-speed-listener';
 import { powerManager } from '../power-manager';
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
 import {
@@ -154,4 +155,5 @@ export function wireProcessListeners(deps: ProcessListenersWiringDependencies): 
 
 	// WakaTime heartbeat listener (query-complete -> heartbeat, exit -> cleanup)
 	setupWakaTimeListener(processManager, deps.wakatimeManager, deps.settingsStore);
+	setupTokenSpeedListener(processManager, deps.settingsStore);
 }

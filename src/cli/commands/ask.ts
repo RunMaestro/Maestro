@@ -27,6 +27,13 @@ export interface AskOptions {
 	from?: string;
 	/** Forward your current transcript as context (off by default). */
 	withContext?: boolean;
+	/**
+	 * Ask a side question (`/btw`) of the target's tab instead of consulting the
+	 * agent: answered from a throwaway fork of that tab's conversation.
+	 */
+	btw?: boolean;
+	/** With `btw`: the target's AI tab to fork. Defaults to its active tab. */
+	tab?: string;
 	/** Seconds to wait for the answer. */
 	timeout?: string;
 	json?: boolean;
@@ -96,7 +103,18 @@ export async function ask(agentId: string, question: string, options: AskOptions
 	} else {
 		fromSessionId = caller?.agentId;
 	}
-	if (fromSessionId && fromSessionId === targetSessionId) {
+	const sideQuestion = options.btw === true;
+	if (options.tab !== undefined && !sideQuestion) {
+		fail('--tab only applies to --btw');
+		return;
+	}
+	if (sideQuestion && options.withContext) {
+		fail('--with-context does not apply to --btw: a side question already reads the tab');
+		return;
+	}
+	// A side question forks a tab and never writes to it, so an agent asking
+	// about its own conversation is fine; a consult of itself would deadlock.
+	if (!sideQuestion && fromSessionId && fromSessionId === targetSessionId) {
 		fail('an agent cannot consult itself');
 		return;
 	}
@@ -128,6 +146,8 @@ export async function ask(agentId: string, question: string, options: AskOptions
 					fromSessionId,
 					...(fromTabId ? { fromTabId } : {}),
 					withContext: options.withContext === true,
+					...(sideQuestion ? { sideQuestion: true } : {}),
+					...(options.tab ? { targetTabId: options.tab } : {}),
 					timeoutMs,
 				},
 				'cross_agent_ask_result',

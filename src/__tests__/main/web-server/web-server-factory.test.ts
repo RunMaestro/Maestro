@@ -51,12 +51,16 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setStarTabCallback = vi.fn();
 			setSnoozeCommandCallback = vi.fn();
 			setAutoRunSteeringCommandCallback = vi.fn();
+			setDiffReviewCommandCallback = vi.fn();
 			setWindowCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();
 			setOpenFileTabCallback = vi.fn();
 			setOpenBrowserTabCallback = vi.fn();
 			setCloseBrowserTabCallback = vi.fn();
+			setPickBrowserElementCallback = vi.fn();
+			setBrowserViewportCallback = vi.fn();
+			setDesignPickCommandCallback = vi.fn();
 			setOpenTerminalTabCallback = vi.fn();
 			setWriteTerminalTabCallback = vi.fn();
 			setListTerminalTabsCallback = vi.fn();
@@ -120,6 +124,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetGroupChatStateCallback = vi.fn();
 			setStopGroupChatCallback = vi.fn();
 			setArchiveGroupChatCallback = vi.fn();
+			setSetGroupChatUnreadCallback = vi.fn();
 			setSendGroupChatMessageCallback = vi.fn();
 			setMergeContextCallback = vi.fn();
 			setTransferContextCallback = vi.fn();
@@ -1827,6 +1832,134 @@ describe('web-server/web-server-factory', () => {
 			expect(filtered[0].sessionId).toBe('agent-2');
 		});
 
+		// Issue #2046: every heartbeat showed "never triggered" because the
+		// callback hard-coded triggerCount 0 and never set lastTriggered.
+		it('fills lastTriggered and triggerCount from the event journal per session and name', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Ops',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'hourly-heartbeat',
+							event: 'time.heartbeat',
+							enabled: true,
+							prompt: '',
+							interval_minutes: 60,
+						},
+						{ name: 'idle', event: 'time.heartbeat', enabled: true, prompt: '' },
+					],
+				},
+				{
+					sessionId: 'agent-2',
+					sessionName: 'Other',
+					toolType: 'claude-code',
+					subscriptions: [
+						{ name: 'hourly-heartbeat', event: 'time.heartbeat', enabled: true, prompt: '' },
+					],
+				},
+			]);
+			const getCueSubscriptionTriggerStats = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					subscriptionName: 'hourly-heartbeat',
+					triggerCount: 312,
+					lastTriggered: 1_700_000_000_000,
+				},
+			]);
+
+			const createWebServer = createWebServerFactory({
+				...deps,
+				getCueGraphData,
+				getCueSubscriptionTriggerStats,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+
+			const all = await callback();
+			expect(all[0]).toMatchObject({
+				sessionId: 'agent-1',
+				name: 'hourly-heartbeat',
+				triggerCount: 312,
+				lastTriggered: 1_700_000_000_000,
+			});
+			// Same name on another agent must not borrow agent-1's runs.
+			expect(all[1]).toMatchObject({ name: 'idle', triggerCount: 0 });
+			expect(all[1].lastTriggered).toBeUndefined();
+			expect(all[2]).toMatchObject({ sessionId: 'agent-2', triggerCount: 0 });
+			expect(all[2].lastTriggered).toBeUndefined();
+		});
+
+		it('reports health and the failure streak per agent and subscription', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Pedsidian',
+					toolType: 'claude-code',
+					subscriptions: [
+						{ name: 'sms-poll', event: 'time.heartbeat', enabled: true, prompt: '' },
+						{ name: 'flaky', event: 'time.heartbeat', enabled: true, prompt: '' },
+						{ name: 'fine', event: 'time.heartbeat', enabled: true, prompt: '' },
+					],
+				},
+				{
+					sessionId: 'agent-2',
+					sessionName: 'Other',
+					toolType: 'claude-code',
+					subscriptions: [{ name: 'sms-poll', event: 'time.heartbeat', enabled: true, prompt: '' }],
+				},
+			]);
+			const streak = (subscriptionName: string, consecutiveFailures: number, failing: boolean) => ({
+				sessionId: 'agent-1',
+				sessionName: 'Pedsidian',
+				subscriptionName,
+				consecutiveFailures,
+				firstFailedAt: '2026-11-17T03:32:35.000Z',
+				lastFailedAt: '2026-11-17T23:59:15.000Z',
+				lastStatus: 'failed',
+				lastError: 'No, exit',
+				alertThreshold: 3,
+				failing,
+			});
+			const getCueFailureStreaks = vi
+				.fn()
+				.mockReturnValue([streak('sms-poll', 134, true), streak('flaky', 1, false)]);
+
+			const createWebServer = createWebServerFactory({
+				...deps,
+				getCueGraphData,
+				getCueFailureStreaks,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+
+			const all = await callback();
+			expect(all[0]).toMatchObject({
+				name: 'sms-poll',
+				health: 'failing',
+				failureStreak: {
+					consecutiveFailures: 134,
+					firstFailedAt: '2026-11-17T03:32:35.000Z',
+					lastFailedAt: '2026-11-17T23:59:15.000Z',
+					lastStatus: 'failed',
+					lastError: 'No, exit',
+					alertThreshold: 3,
+				},
+			});
+			// Below the threshold: the streak is visible, health stays ok.
+			expect(all[1]).toMatchObject({
+				name: 'flaky',
+				health: 'ok',
+				failureStreak: { consecutiveFailures: 1 },
+			});
+			expect(all[2]).toMatchObject({ name: 'fine', health: 'ok' });
+			expect(all[2].failureStreak).toBeUndefined();
+			// Same name on another agent does not inherit agent-1's streak.
+			expect(all[3]).toMatchObject({ sessionId: 'agent-2', health: 'ok' });
+			expect(all[3].failureStreak).toBeUndefined();
+		});
+
 		it('returns [] and warns when the engine dependency is missing', async () => {
 			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData: undefined });
 			const server = createWebServer() as any;
@@ -2127,18 +2260,11 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('usageAchievementsCallbacks smoke', () => {
-		it('setGetUsageDashboardCallback forwards to the renderer', () => {
+		it('registers no usage dashboard callback (no renderer answers it)', () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer() as any;
-			const callback = server.setGetUsageDashboardCallback.mock.calls[0][0];
 
-			void callback('week');
-
-			expect(mockWebContents.send).toHaveBeenCalledWith(
-				'remote:getUsageDashboard',
-				'week',
-				expect.any(String)
-			);
+			expect(server.setGetUsageDashboardCallback).not.toHaveBeenCalled();
 		});
 
 		it('setGetAchievementsCallback forwards to the renderer', () => {
@@ -2471,6 +2597,78 @@ describe('web-server/web-server-factory', () => {
 			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
 			const server = createWebServer() as any;
 			const callback = server.setAutoRunSteeringCommandCallback.mock.calls[0][0];
+
+			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
+				success: false,
+				error: 'Maestro window is not available',
+			});
+		});
+	});
+
+	describe('diffReview callback', () => {
+		it('forwards the request to the renderer and waits on a response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setDiffReviewCommandCallback.mock.calls[0][0];
+			const request = { action: 'list', sessionId: 'session-1' };
+
+			void callback(request);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:diffReviewCommand',
+				request,
+				expect.stringContaining('remote:diffReviewCommand:response:')
+			);
+		});
+
+		it('answers with a failure when no window is available', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setDiffReviewCommandCallback.mock.calls[0][0];
+
+			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
+				success: false,
+				error: 'Maestro window is not available',
+			});
+		});
+	});
+
+	describe('browserViewport callback', () => {
+		it('is registered, and resolves a Coworking id before it reaches the renderer', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			expect(server.setBrowserViewportCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setBrowserViewportCallback.mock.calls[0][0];
+
+			// No tab of this agent carries that Coworking id, so the op never goes out.
+			const result = await callback({ sessionId: 'session-1', tab: 'browser:42', preset: 'phone' });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('No browser tab browser:42 in this agent');
+			expect(mockWebContents.send).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('designPickCommand callback', () => {
+		it('forwards the request to the renderer and waits on a response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setDesignPickCommandCallback.mock.calls[0][0];
+			const request = { action: 'remove', sessionId: 'session-1', pickId: 'pick-1' };
+
+			void callback(request);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:designPickCommand',
+				request,
+				expect.stringContaining('remote:designPickCommand:response:')
+			);
+		});
+
+		it('answers with a failure when no window is available', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setDesignPickCommandCallback.mock.calls[0][0];
 
 			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
 				success: false,

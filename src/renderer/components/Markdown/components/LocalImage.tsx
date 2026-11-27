@@ -13,6 +13,7 @@ import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { ImageOff } from 'lucide-react';
 import { Spinner } from '../../ui/Spinner';
 import { safeDecodeURIComponent } from '../../../../shared/stringUtils';
+import { fileUrlToPath } from '../../../utils/openFileUrl';
 import type { Theme } from '../../../types';
 import { ExpandToViewerButton } from '../../ZoomViewer/ExpandToViewerButton';
 import { openZoomViewer } from '../../ZoomViewer/zoomViewerStore';
@@ -40,10 +41,12 @@ function cacheLocalImage(filePath: string, dataUrl: string): void {
  * reaches this component as `/a/Prop%20Firm/x.png`. Reading that literal string is
  * an ENOENT, which the loader reports as a broken image for a file that is right
  * there. Any path with a space, a `#`, or a non-ASCII character hits it.
+ *
+ * A `file://` URL goes through `fileUrlToPath`, which also drops the slash a
+ * Windows URL puts before its drive (`file:///D:/a.png` reads `D:/a.png`).
  */
 export function resolveLocalImagePath(src: string): string {
-	const withoutProtocol = src.startsWith('file://') ? src.slice('file://'.length) : src;
-	return safeDecodeURIComponent(withoutProtocol);
+	return fileUrlToPath(src) ?? safeDecodeURIComponent(src);
 }
 
 export interface LocalImageProps {

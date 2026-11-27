@@ -1,6 +1,13 @@
 import type React from 'react';
 import { buildSessionDeepLink } from '../../../../shared/deep-link-urls';
 import { requestFileDeletion } from '../../../services/fileDeletion';
+import {
+	BROWSER_VIEWPORT_PRESETS,
+	DEFAULT_BROWSER_VIEWPORT_PRESET,
+	browserViewportLabel,
+	browserViewportWidth,
+	describeBrowserViewport,
+} from '../../../../shared/browserViewport';
 import type { Session } from '../../../types';
 import type { MainPanelHandle } from '../../MainPanel/types';
 import type { ActiveTabInfo, QuickAction } from '../types';
@@ -25,6 +32,41 @@ interface BuildActiveTabContextCommandsArgs {
 	mainPanelRef?: React.RefObject<MainPanelHandle | null>;
 	toggleTabStarShortcut?: QuickAction['shortcut'];
 	toggleTabUnreadShortcut?: QuickAction['shortcut'];
+	/** Chord shown on the browser tab's Design Mode entry. */
+	toggleDesignModeShortcut?: QuickAction['shortcut'];
+}
+
+/**
+ * "Browser: Viewport ..." entries: show the active browser tab's page at a
+ * preset width. The tab's current preset says so in its subtext, and every
+ * entry closes the palette and runs through the MainPanel handle, which is
+ * what the toolbar control writes through too.
+ */
+function buildBrowserViewportCommands(
+	activeSession: Session,
+	mainPanelRef: React.RefObject<MainPanelHandle | null>,
+	setQuickActionOpen: (open: boolean) => void
+): QuickAction[] {
+	const activeTab = activeSession.browserTabs?.find(
+		(tab) => tab.id === activeSession.activeBrowserTabId
+	);
+	const current = activeTab?.viewportPreset ?? DEFAULT_BROWSER_VIEWPORT_PRESET;
+	return BROWSER_VIEWPORT_PRESETS.map((preset) => {
+		const width = browserViewportWidth(preset);
+		const doing =
+			width === null
+				? "Show the page at the tab's own width"
+				: `Show the page ${width} px wide, scaled to fit the tab`;
+		return {
+			id: `browserViewport-${preset}`,
+			label: `Browser: Viewport ${browserViewportLabel(preset)}${width === null ? '' : ` (${width})`}`,
+			subtext: preset === current ? `Current: ${describeBrowserViewport(preset)}` : doing,
+			action: () => {
+				setQuickActionOpen(false);
+				mainPanelRef.current?.setBrowserViewportPreset(preset);
+			},
+		};
+	});
 }
 
 export function buildActiveTabContextCommands({
@@ -42,6 +84,7 @@ export function buildActiveTabContextCommands({
 	mainPanelRef,
 	toggleTabStarShortcut,
 	toggleTabUnreadShortcut,
+	toggleDesignModeShortcut,
 }: BuildActiveTabContextCommandsArgs): QuickAction[] {
 	if (!activeSession) return [];
 	const commands: QuickAction[] = [];
@@ -97,6 +140,17 @@ export function buildActiveTabContextCommands({
 				setQuickActionOpen(false);
 			},
 		});
+		commands.push({
+			id: 'toggleBrowserDesignMode',
+			label: 'Design Mode: Pick an Element',
+			subtext: 'Click an element in the page to send it to the agent',
+			shortcut: toggleDesignModeShortcut,
+			action: () => {
+				setQuickActionOpen(false);
+				mainPanelRef.current?.toggleBrowserDesignMode();
+			},
+		});
+		commands.push(...buildBrowserViewportCommands(activeSession, mainPanelRef, setQuickActionOpen));
 		return commands;
 	}
 

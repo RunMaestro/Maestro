@@ -26,6 +26,7 @@ import {
 	groupChatStatus,
 	groupChatStop,
 	groupChatArchive,
+	groupChatUnread,
 	groupChatAdd,
 	resolveChatRef,
 } from '../../../cli/commands/group-chat';
@@ -255,6 +256,19 @@ describe('group-chat commands', () => {
 			await groupChatList({ json: true, all: true });
 			expect(JSON.parse(logSpy.mock.calls[1][0]).chats).toHaveLength(2);
 		});
+
+		it('tags an unread chat in the text listing', async () => {
+			mockBridge({
+				get_group_chats: {
+					type: 'group_chats_list',
+					chats: [chat('a', 'Live', { unread: true }), chat('b', 'Quiet')],
+				},
+			});
+
+			await groupChatList({});
+			expect(logSpy.mock.calls[0][0]).toContain('[unread]');
+			expect(logSpy.mock.calls[1][0]).not.toContain('[unread]');
+		});
 	});
 
 	describe('stop', () => {
@@ -311,6 +325,47 @@ describe('group-chat commands', () => {
 
 			await expect(groupChatArchive('Release', {})).rejects.toThrow('process.exit');
 			expect(errorSpy).toHaveBeenCalledWith('Error: Failed to archive group chat');
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
+	describe('unread / read', () => {
+		it('marks the resolved chat unread', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				set_group_chat_unread: { type: 'set_group_chat_unread_result', success: true },
+			});
+
+			await groupChatUnread('Release', true, {});
+
+			expect(sent[1]).toEqual({ type: 'set_group_chat_unread', chatId: 'abc123', unread: true });
+			expect(logSpy).toHaveBeenCalledWith('Marked group chat abc123 as unread');
+		});
+
+		it('marks a chat read with JSON output', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				set_group_chat_unread: { type: 'set_group_chat_unread_result', success: true },
+			});
+
+			await groupChatUnread('abc', false, { json: true });
+
+			expect(sent[1]).toEqual({ type: 'set_group_chat_unread', chatId: 'abc123', unread: false });
+			expect(JSON.parse(logSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				chatId: 'abc123',
+				unread: false,
+			});
+		});
+
+		it('exits 1 when the app could not find the chat', async () => {
+			mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				set_group_chat_unread: { type: 'set_group_chat_unread_result', success: false },
+			});
+
+			await expect(groupChatUnread('Release', true, {})).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith('Error: Failed to mark group chat unread');
 			expect(exitSpy).toHaveBeenCalledWith(1);
 		});
 	});

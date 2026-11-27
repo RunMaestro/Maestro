@@ -1,24 +1,25 @@
 /**
  * SessionStats
  *
- * Displays statistics about registered sessions in the Agents tab.
- * Shows breakdown by: total count, agent type, git vs folder, remote vs local.
+ * The "Agent Statistics" section of the Agent Overview tab: the shape of the
+ * live agent list. Total agents (with how many ran a query in the selected
+ * range), agents in Git repos versus plain folders, local versus remote, and a
+ * bar per provider.
  *
- * Features:
- * - Summary cards showing key session metrics
- * - Breakdown by agent type with color-coded indicators
- * - Repository vs plain folder breakdown
- * - Remote (SSH) vs local breakdown
+ * Everything here describes the agents that exist NOW, except the "active"
+ * footnote, which is the one number that moves with the range picker.
  */
 
-import React, { memo, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Monitor, GitBranch, Folder, Laptop } from 'lucide-react';
 import type { Theme, Session, ToolType } from '../../types';
 import type { StatsAggregation } from '../../../shared/stats-types';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { formatNumber } from '../../../shared/formatters';
+import { StatCardGrid, type StatCardDatum } from '../widgets';
 import {
-	isWorktreeAgent,
-	resolveAgentDisplayName,
+	isParentAgent,
 	BAR_CHART_GRID_CLASS,
 	BAR_CHART_GRID_STYLE,
 	BAR_CHART_ROW_STYLE,
@@ -35,42 +36,21 @@ interface SessionStatsProps {
 	/**
 	 * Aggregated stats for the dashboard's selected range. Only used to report
 	 * how many agents actually ran something in that range - omit it and the
-	 * Total Agents card simply drops the "N active" line.
+	 * Total Agents card simply drops the "N active" footnote.
 	 */
 	data?: StatsAggregation;
 }
 
-interface StatCardProps {
-	label: string;
-	value: number | string;
-	icon: React.ReactNode;
-	theme: Theme;
-	subValue?: string;
-}
-
-function StatCard({ label, value, icon, theme, subValue }: StatCardProps) {
+/**
+ * Whether an agent runs over SSH. `sshRemoteId` is set once the AI process has
+ * spawned on the remote; `sessionSshRemoteConfig.enabled` is set before that,
+ * so both are checked.
+ */
+function isRemoteAgent(session: Session): boolean {
 	return (
-		<div
-			className="flex items-center gap-3 p-3 rounded-lg"
-			style={{ backgroundColor: theme.colors.bgActivity }}
-		>
-			<div className="p-2 rounded-lg" style={{ backgroundColor: `${theme.colors.accent}20` }}>
-				{icon}
-			</div>
-			<div>
-				<div className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
-					{value}
-				</div>
-				<div className="text-xs" style={{ color: theme.colors.textDim }}>
-					{label}
-				</div>
-				{subValue && (
-					<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim, opacity: 0.7 }}>
-						{subValue}
-					</div>
-				)}
-			</div>
-		</div>
+		Boolean(session.cwd?.includes('://')) ||
+		Boolean(session.sshRemoteId) ||
+		Boolean(session.sessionSshRemoteConfig?.enabled)
 	);
 }
 
@@ -80,78 +60,40 @@ export const SessionStats = memo(function SessionStats({
 	colorBlindMode = false,
 	data,
 }: SessionStatsProps) {
-	// Filter out terminal-only sessions for meaningful stats
+	// Terminal sessions are not agents anywhere on the dashboard.
 	const agentSessions = useMemo(
 		() => sessions.filter((s) => s.toolType !== 'terminal'),
 		[sessions]
 	);
 
-	// Calculate stats
 	const stats = useMemo(() => {
-		const byAgent: Record<string, number> = {};
+		const byProvider: Record<string, number> = {};
 		let gitRepos = 0;
 		let plainFolders = 0;
-		let remoteSessions = 0;
-		let localSessions = 0;
+		let remote = 0;
+		let local = 0;
 		let bookmarked = 0;
-		let withWorktrees = 0;
-		let worktreeChildren = 0;
-		let regularSessions = 0;
+		let worktreeParents = 0;
 
 		for (const session of agentSessions) {
-			// Count by agent type
-			byAgent[session.toolType] = (byAgent[session.toolType] || 0) + 1;
-
-			// Git vs folder
-			if (session.isGitRepo) {
-				gitRepos++;
-			} else {
-				plainFolders++;
-			}
-
-			// Remote vs local - check both sshRemoteId (set after AI spawn) and sessionSshRemoteConfig.enabled
-			// (set before spawn). See CLAUDE.md "SSH Remote Sessions" for why both are needed.
-			const isRemote =
-				session.cwd?.includes('://') ||
-				!!(session as any).sshRemoteId ||
-				!!(session as any).sessionSshRemoteConfig?.enabled;
-			if (isRemote) {
-				remoteSessions++;
-			} else {
-				localSessions++;
-			}
-
-			// Bookmarked
-			if (session.bookmarked) {
-				bookmarked++;
-			}
-
-			// Worktrees
-			if (session.worktreeConfig || session.parentSessionId) {
-				withWorktrees++;
-			}
-
-			// Worktree children (sessions spawned from a parent) vs regular agents.
-			// A "regular" session here is anything that is NOT a worktree child -
-			// parent agents are counted as regular alongside standalone agents.
-			if (isWorktreeAgent(session)) {
-				worktreeChildren++;
-			} else {
-				regularSessions++;
-			}
+			byProvider[session.toolType] = (byProvider[session.toolType] || 0) + 1;
+			if (session.isGitRepo) gitRepos++;
+			else plainFolders++;
+			if (isRemoteAgent(session)) remote++;
+			else local++;
+			if (session.bookmarked) bookmarked++;
+			if (isParentAgent(session, agentSessions)) worktreeParents++;
 		}
 
 		return {
 			total: agentSessions.length,
-			byAgent,
+			byProvider,
 			gitRepos,
 			plainFolders,
-			remoteSessions,
-			localSessions,
+			remote,
+			local,
 			bookmarked,
-			withWorktrees,
-			worktreeChildren,
-			regularSessions,
+			worktreeParents,
 		};
 	}, [agentSessions]);
 
@@ -162,30 +104,52 @@ export const SessionStats = memo(function SessionStats({
 		[agentSessions, data]
 	);
 
-	// The Total Agents card carries at most two footnotes on one line, so they
-	// share it rather than each claiming a row the 4-card grid has no room for.
-	const totalAgentsSubValue = useMemo(() => {
-		const parts: string[] = [];
-		if (activeAgentCount !== null) parts.push(`${activeAgentCount} active`);
-		if (stats.bookmarked > 0) parts.push(`${stats.bookmarked} bookmarked`);
-		return parts.length > 0 ? parts.join(' \u00b7 ') : undefined;
-	}, [activeAgentCount, stats.bookmarked]);
+	const cards = useMemo((): StatCardDatum[] => {
+		const totalCaption = [
+			activeAgentCount !== null ? `${formatNumber(activeAgentCount)} active in range` : null,
+			stats.bookmarked > 0 ? `${formatNumber(stats.bookmarked)} bookmarked` : null,
+		]
+			.filter(Boolean)
+			.join(' · ');
+		return [
+			{
+				label: 'Total Agents',
+				value: stats.total,
+				icon: Monitor,
+				caption: totalCaption || undefined,
+			},
+			{
+				label: 'Agents in Git Repos',
+				value: stats.gitRepos,
+				icon: GitBranch,
+				caption:
+					stats.worktreeParents > 0
+						? `${formatNumber(stats.worktreeParents)} with worktrees`
+						: undefined,
+			},
+			{ label: 'Agents in Plain Folders', value: stats.plainFolders, icon: Folder },
+			{
+				label: 'Local Agents',
+				value: stats.local,
+				icon: Laptop,
+				caption: stats.remote > 0 ? `${formatNumber(stats.remote)} remote` : undefined,
+			},
+		];
+	}, [stats, activeAgentCount]);
 
-	// Sort agents by count (descending) and resolve display names from sessions
-	// so the breakdown surfaces user-assigned names (e.g. "Backend API") when a
-	// provider has a single registered session, falling back to the prettified
-	// agent type when multiple sessions share the type.
-	const sortedAgents = useMemo(
+	// Busiest provider first. Each row is a PROVIDER, so it is labeled with the
+	// provider's name - never one agent's name, even when only one agent uses it.
+	const sortedProviders = useMemo(
 		() =>
-			Object.entries(stats.byAgent)
-				.sort((a, b) => b[1] - a[1])
-				.map(([agent, count], index) => ({
-					agent: agent as ToolType,
+			Object.entries(stats.byProvider)
+				.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+				.map(([provider, count], index) => ({
+					provider: provider as ToolType,
 					count,
 					color: getSeriesColor(index, theme, colorBlindMode),
-					displayName: resolveAgentDisplayName(agent, agentSessions).name,
+					displayName: getAgentDisplayName(provider),
 				})),
-		[stats.byAgent, theme, colorBlindMode, agentSessions]
+		[stats.byProvider, theme, colorBlindMode]
 	);
 
 	if (agentSessions.length === 0) {
@@ -201,7 +165,7 @@ export const SessionStats = memo(function SessionStats({
 					className="flex items-center justify-center h-24"
 					style={{ color: theme.colors.textDim }}
 				>
-					<span className="text-sm">No agent sessions registered</span>
+					<span className="text-sm">No agents registered</span>
 				</div>
 			</div>
 		);
@@ -216,108 +180,58 @@ export const SessionStats = memo(function SessionStats({
 				Agent Statistics
 			</h3>
 
-			{/* Summary Cards */}
-			<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-				<StatCard
-					label="Total Agents"
-					value={stats.total}
-					icon={<Monitor className="w-4 h-4" style={{ color: theme.colors.accent }} />}
-					theme={theme}
-					subValue={totalAgentsSubValue}
-				/>
-				<StatCard
-					label="Git Repositories"
-					value={stats.gitRepos}
-					icon={<GitBranch className="w-4 h-4" style={{ color: theme.colors.accent }} />}
-					theme={theme}
-					subValue={stats.withWorktrees > 0 ? `${stats.withWorktrees} with worktrees` : undefined}
-				/>
-				<StatCard
-					label="Plain Folders"
-					value={stats.plainFolders}
-					icon={<Folder className="w-4 h-4" style={{ color: theme.colors.accent }} />}
-					theme={theme}
-				/>
-				<StatCard
-					label="Local Agents"
-					value={stats.localSessions}
-					icon={<Laptop className="w-4 h-4" style={{ color: theme.colors.accent }} />}
-					theme={theme}
-					subValue={stats.remoteSessions > 0 ? `${stats.remoteSessions} remote` : undefined}
-				/>
+			<div className="mb-6" data-testid="session-stats-cards">
+				<StatCardGrid theme={theme} cards={cards} minColumnWidth={180} />
 			</div>
 
-			{/* Worktree vs Regular Breakdown */}
-			<div
-				className="flex items-center gap-2 mb-4 text-xs"
-				style={{ color: theme.colors.textDim }}
-				data-testid="worktree-breakdown"
-				aria-label={`Regular: ${stats.regularSessions} | Worktree: ${stats.worktreeChildren}`}
-			>
-				<span>
-					Regular: <span style={{ color: theme.colors.textMain }}>{stats.regularSessions}</span>
-				</span>
-				<span style={{ opacity: 0.5 }}>|</span>
-				<span>
-					Worktree: <span style={{ color: theme.colors.textMain }}>{stats.worktreeChildren}</span>
-				</span>
-			</div>
-
-			{/* Agent Type Breakdown */}
 			<div className="space-y-3">
 				<h4
 					className="text-xs font-medium uppercase tracking-wider"
 					style={{ color: theme.colors.textDim }}
 				>
-					By Agent Type
+					Agents by Provider
 				</h4>
 				<div className={BAR_CHART_GRID_CLASS} style={BAR_CHART_GRID_STYLE}>
-					{sortedAgents.map((agent) => {
-						const percentage = stats.total > 0 ? (agent.count / stats.total) * 100 : 0;
+					{sortedProviders.map((row) => {
+						const percentage = stats.total > 0 ? (row.count / stats.total) * 100 : 0;
 						return (
-							<div key={agent.agent} style={BAR_CHART_ROW_STYLE}>
-								{/* Agent name */}
+							<div
+								key={row.provider}
+								style={BAR_CHART_ROW_STYLE}
+								title={`${row.displayName}: ${row.count} ${row.count === 1 ? 'agent' : 'agents'}`}
+							>
 								<div
 									className="text-sm min-w-0 flex items-center gap-2"
 									style={{ color: theme.colors.textDim }}
-									title={agent.displayName}
 									data-testid="bar-chart-label"
 								>
 									<div
 										className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
-										style={{ backgroundColor: agent.color }}
+										style={{ backgroundColor: row.color }}
 									/>
-									<span className="truncate">{agent.displayName}</span>
+									<span className="truncate">{row.displayName}</span>
 								</div>
 
-								{/* Bar */}
 								<div
 									className="h-6 rounded overflow-hidden"
 									style={{ backgroundColor: `${theme.colors.border}30` }}
 								>
 									<div
-										className="h-full rounded flex items-center"
+										className="h-full rounded"
 										style={{
 											width: `${Math.max(percentage, 2)}%`,
-											backgroundColor: agent.color,
+											backgroundColor: row.color,
 											opacity: 0.85,
 											transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
 										}}
-									>
-										{percentage > 20 && (
-											<span
-												className="text-xs font-medium px-2 text-white"
-												style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
-											>
-												{agent.count}
-											</span>
-										)}
-									</div>
+									/>
 								</div>
 
-								{/* Count */}
-								<div className="w-12 text-xs text-right" style={{ color: theme.colors.textDim }}>
-									{agent.count}
+								<div
+									className="w-12 text-xs text-right tabular-nums"
+									style={{ color: theme.colors.textDim }}
+								>
+									{formatNumber(row.count)}
 								</div>
 							</div>
 						);

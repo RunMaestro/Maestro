@@ -4,7 +4,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildWorktreeSession } from '../../../renderer/utils/worktreeSession';
+import {
+	buildWorktreeSession,
+	recordWorktreeAgentsCreated,
+} from '../../../renderer/utils/worktreeSession';
 import type { Session } from '../../../renderer/types';
 
 // Mock generateId for deterministic IDs
@@ -185,5 +188,42 @@ describe('buildWorktreeSession', () => {
 		expect(session.activeTerminalTabId).toBeNull();
 		expect(session.unifiedTabOrder).toHaveLength(1);
 		expect(session.unifiedTabOrder[0].type).toBe('ai');
+	});
+});
+
+describe('recordWorktreeAgentsCreated', () => {
+	beforeEach(() => {
+		vi.mocked(window.maestro.stats.recordSessionCreated).mockClear();
+	});
+
+	it('records one worktree lifecycle row per added agent', () => {
+		recordWorktreeAgentsCreated([
+			{
+				id: 'wt-1',
+				toolType: 'codex',
+				cwd: '/repo/wt-1',
+				createdAt: 1234,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			} as Session,
+			{ id: 'wt-2', toolType: 'claude-code', cwd: '/repo/wt-2', createdAt: 5678 } as Session,
+		]);
+
+		expect(window.maestro.stats.recordSessionCreated).toHaveBeenCalledTimes(2);
+		expect(window.maestro.stats.recordSessionCreated).toHaveBeenCalledWith({
+			sessionId: 'wt-1',
+			agentType: 'codex',
+			projectPath: '/repo/wt-1',
+			createdAt: 1234,
+			isRemote: true,
+			isWorktree: true,
+		});
+		expect(window.maestro.stats.recordSessionCreated).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'wt-2', isRemote: false, isWorktree: true })
+		);
+	});
+
+	it('records nothing for an empty list', () => {
+		recordWorktreeAgentsCreated([]);
+		expect(window.maestro.stats.recordSessionCreated).not.toHaveBeenCalled();
 	});
 });

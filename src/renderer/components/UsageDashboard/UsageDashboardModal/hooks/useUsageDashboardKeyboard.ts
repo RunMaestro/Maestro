@@ -5,7 +5,6 @@ import {
 	type RefObject,
 	type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
-import type { StatsAggregation } from '../../../../../shared/stats-types';
 import type { UsageDashboardViewMode as ViewMode } from '../../../../types';
 import type { SectionId } from '../sections';
 import type { UsageDashboardTab } from '../types';
@@ -17,7 +16,6 @@ interface UseUsageDashboardKeyboardOptions {
 	viewModeTabs: UsageDashboardTab[];
 	switchViewMode: (mode: ViewMode) => void;
 	currentSections: readonly SectionId[];
-	data: StatsAggregation | null;
 	tabsRef: RefObject<HTMLDivElement | null>;
 	sectionRefs: MutableRefObject<Map<SectionId, HTMLDivElement>>;
 	setFocusedSection: (sectionId: SectionId | null) => void;
@@ -30,7 +28,6 @@ export function useUsageDashboardKeyboard({
 	viewModeTabs,
 	switchViewMode,
 	currentSections,
-	data,
 	tabsRef,
 	sectionRefs,
 	setFocusedSection,
@@ -39,7 +36,9 @@ export function useUsageDashboardKeyboard({
 		if (!isOpen) return;
 
 		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.metaKey && e.shiftKey && (e.key === '[' || e.key === ']')) {
+			// Cmd on macOS, Ctrl elsewhere: the same either-modifier match the app's
+			// shortcut matcher (`shortcutMatch.ts`) and `useBracketTabCycle` use.
+			if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '[' || e.key === ']')) {
 				e.preventDefault();
 				e.stopPropagation();
 
@@ -58,6 +57,16 @@ export function useUsageDashboardKeyboard({
 		window.addEventListener('keydown', handleKeyDown, true);
 		return () => window.removeEventListener('keydown', handleKeyDown, true);
 	}, [isOpen, switchViewMode, viewModeTabs, viewModeRef]);
+
+	/**
+	 * The current tab's sections that are actually on screen, in order. A
+	 * section can be listed but not drawn (a panel that renders nothing for an
+	 * empty range), and focusing a missing element would strand the keyboard.
+	 */
+	const mountedSections = useCallback(
+		() => currentSections.filter((id) => sectionRefs.current.has(id)),
+		[currentSections, sectionRefs]
+	);
 
 	const navigateToSection = useCallback(
 		(sectionId: SectionId) => {
@@ -84,41 +93,53 @@ export function useUsageDashboardKeyboard({
 				const nextIndex = currentIndex < viewModeTabs.length - 1 ? currentIndex + 1 : 0;
 				switchViewMode(viewModeTabs[nextIndex].value);
 			} else if (event.key === 'Tab' && !event.shiftKey) {
-				if (currentSections.length > 0 && data) {
+				// Redirect into the content only when its first section is on
+				// screen (an empty state or skeleton has none); otherwise Tab moves
+				// on natively.
+				const first = mountedSections()[0];
+				if (first) {
 					event.preventDefault();
-					navigateToSection(currentSections[0]);
+					navigateToSection(first);
 				}
 			}
 		},
-		[viewMode, switchViewMode, currentSections, data, navigateToSection, viewModeTabs]
+		[viewMode, switchViewMode, mountedSections, navigateToSection, viewModeTabs]
 	);
 
 	const handleSectionKeyDown = useCallback(
 		(event: ReactKeyboardEvent<HTMLDivElement>, sectionId: SectionId) => {
-			const sectionIndex = currentSections.indexOf(sectionId);
+			// Section keys act only on the focused section itself. A keystroke from
+			// a control inside it (a toggle, a sortable header, a grid cell) is
+			// that control's: Tab moves through the section's own controls and
+			// arrows reach its widgets.
+			if (event.target !== event.currentTarget) return;
+
+			const sections = mountedSections();
+			const sectionIndex = sections.indexOf(sectionId);
+			if (sectionIndex === -1) return;
 
 			if (event.key === 'ArrowUp' || (event.key === 'Tab' && event.shiftKey)) {
 				event.preventDefault();
 				if (sectionIndex > 0) {
-					navigateToSection(currentSections[sectionIndex - 1]);
+					navigateToSection(sections[sectionIndex - 1]);
 				} else {
 					setFocusedSection(null);
 					tabsRef.current?.focus();
 				}
 			} else if (event.key === 'ArrowDown' || (event.key === 'Tab' && !event.shiftKey)) {
 				event.preventDefault();
-				if (sectionIndex < currentSections.length - 1) {
-					navigateToSection(currentSections[sectionIndex + 1]);
+				if (sectionIndex < sections.length - 1) {
+					navigateToSection(sections[sectionIndex + 1]);
 				}
 			} else if (event.key === 'Home') {
 				event.preventDefault();
-				navigateToSection(currentSections[0]);
+				navigateToSection(sections[0]);
 			} else if (event.key === 'End') {
 				event.preventDefault();
-				navigateToSection(currentSections[currentSections.length - 1]);
+				navigateToSection(sections[sections.length - 1]);
 			}
 		},
-		[currentSections, navigateToSection, setFocusedSection, tabsRef]
+		[mountedSections, navigateToSection, setFocusedSection, tabsRef]
 	);
 
 	const setSectionRef = useCallback(

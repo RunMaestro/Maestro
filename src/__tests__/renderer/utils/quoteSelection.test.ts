@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+	appendBlockToDraft,
 	appendQuoteToDraft,
 	formatFileLineReference,
 	formatFileSelection,
 	formatMarkdownQuote,
+	markdownFenceFor,
 } from '../../../renderer/utils/quoteSelection';
 
 describe('formatMarkdownQuote', () => {
@@ -19,6 +21,18 @@ describe('formatMarkdownQuote', () => {
 
 	it('returns an empty string for a whitespace-only selection', () => {
 		expect(formatMarkdownQuote(' \n\t\n')).toBe('');
+	});
+});
+
+describe('appendBlockToDraft', () => {
+	it('appends a formatted block as-is with one blank line before and after', () => {
+		expect(appendBlockToDraft('', '## Review\n\n- fix')).toBe('## Review\n\n- fix\n\n');
+		expect(appendBlockToDraft('my note  \n', '## Review')).toBe('my note\n\n## Review\n\n');
+	});
+
+	it('normalizes CRLF, trims blank edges, and leaves the draft alone for a blank block', () => {
+		expect(appendBlockToDraft('', '\r\n\r\nline\r\nnext\r\n')).toBe('line\nnext\n\n');
+		expect(appendBlockToDraft('keep', '  \n ')).toBe('keep');
 	});
 });
 
@@ -87,5 +101,23 @@ describe('formatFileSelection', () => {
 		expect(appendQuoteToDraft('', passage)).toBe(
 			'> `a.py:1-3`\n> ```python\n> def f():\n>\n>     return 1\n> ```\n\n'
 		);
+	});
+});
+
+describe('appendBlockToDraft', () => {
+	it('appends the block as-is, spaced like a quote', () => {
+		expect(appendBlockToDraft('', 'A\nB')).toBe('A\nB\n\n');
+		expect(appendBlockToDraft('Hi  \n', '\nA\r\nB\n\n')).toBe('Hi\n\nA\nB\n\n');
+	});
+
+	it('leaves the draft alone for a blank block', () => {
+		expect(appendBlockToDraft('keep', '  \n ')).toBe('keep');
+	});
+});
+
+describe('markdownFenceFor', () => {
+	it('is three backticks unless the body has a longer run', () => {
+		expect(markdownFenceFor('plain')).toBe('```');
+		expect(markdownFenceFor('a ```` b')).toBe('`````');
 	});
 });

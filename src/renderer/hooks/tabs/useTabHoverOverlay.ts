@@ -2,6 +2,16 @@ import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react
 import { useClickOutside } from '../ui/useClickOutside';
 import { installPointerTypeTracking, isTouchEmulatedMouseEvent } from '../../utils/touch';
 
+/** Gap kept between a tab's action menu and every edge of the viewport. */
+export const OVERLAY_VIEWPORT_PADDING = 8;
+
+/**
+ * Shortest a tab's action menu may get before it stops hanging off its chip
+ * and slides up instead. Below this the menu would be a scroll well a couple
+ * of rows tall, which is worse than covering the chip.
+ */
+export const OVERLAY_MIN_HEIGHT = 160;
+
 export interface OverlayPosition {
 	top: number;
 	left: number;
@@ -200,7 +210,7 @@ export function useTabHoverOverlay(options?: UseTabHoverOverlayOptions): UseTabH
 		if (!overlayOpen || !overlayPosition || !el) return;
 
 		const { width, height } = el.getBoundingClientRect();
-		const padding = 8;
+		const padding = OVERLAY_VIEWPORT_PADDING;
 		const maxLeft = window.innerWidth - width - padding;
 		const maxTop = window.innerHeight - height - padding;
 

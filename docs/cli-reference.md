@@ -257,12 +257,14 @@ no unread - and prints the answer on stdout. `dispatch` hands over WORK: the pro
 in a real tab, so it appears mid-conversation in whatever the user has open with that
 agent, and you get a tab id back instead of an answer.
 
-| Option                | Description                                                                                                                                                                            | Default |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `--from <agent-id>`   | Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult | -       |
-| `--with-context`      | Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context                                                                     | -       |
-| `--timeout <seconds>` | How long to wait for the answer (min 10, max 3600)                                                                                                                                     | 600     |
-| `--json`              | Output the answer as JSON                                                                                                                                                              | -       |
+| Option                | Description                                                                                                                                                                                                                                | Default |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--from <agent-id>`   | Your own agent id. Names the consult on the target, keeps continuity across repeat asks, forwards your working directory so it can read your project, and lets Stop cancel the consult                                                     | -       |
+| `--with-context`      | Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context                                                                                                                         | -       |
+| `--btw`               | Ask a side question (`/btw`) instead: answered from a throwaway fork of the agent's tab conversation, runs even while that tab is busy, and is never written to it. Claude Code agents only; the answer also shows on that tab's /btw card | -       |
+| `--tab <tab-id>`      | With --btw: the AI tab whose conversation to fork (default: its active tab)                                                                                                                                                                | -       |
+| `--timeout <seconds>` | How long to wait for the answer (min 10, max 3600)                                                                                                                                                                                         | 600     |
+| `--json`              | Output the answer as JSON                                                                                                                                                                                                                  | -       |
 
 ```bash
 # Ask another agent how it solved something, from inside your own turn
@@ -513,6 +515,22 @@ Archive a group chat (stops its moderator and participants); --restore brings it
 | `--restore` | Unarchive the chat instead     | -       |
 | `--json`    | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat unread <chat>`
+
+Mark a group chat unread (the red dot on its Left Bar row)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli group-chat read <chat>`
+
+Clear a group chat's unread dot
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli open-file <file-path>`
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
@@ -592,6 +610,42 @@ Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli browser-pick <tab>`
+
+Add an element or a region of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)
+
+| Option                 | Description                                           | Default |
+| ---------------------- | ----------------------------------------------------- | ------- |
+| `-s, --selector <css>` | CSS selector of the element (the first match is used) | -       |
+| `--rect <x,y,w,h>`     | Pick a region: x,y,width,height in viewport CSS px    | -       |
+| `--note <text>`        | Note added under the pick, as typed in the pick card  | -       |
+| `-a, --agent <id>`     | Agent that owns the tab (defaults to active)          | -       |
+| `--background`         | Add it without switching the view to the AI tab       | -       |
+| `--focus`              | Switch to the AI tab the pick lands in (default)      | -       |
+| `--queue`              | Queue it as its own message instead of a chip         | -       |
+| `--json`               | Output as JSON (for scripting)                        | -       |
+
+## `maestro-cli browser-picks`
+
+List the Design Mode chips waiting in an agent's composer, edit one's note, or remove one
+
+| Option              | Description                                               | Default |
+| ------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Agent whose composer holds the chips (defaults to active) | -       |
+| `--edit <pickId>`   | Replace this chip's note (with --note)                    | -       |
+| `--note <text>`     | The new note for --edit (an empty string clears it)       | -       |
+| `--remove <pickId>` | Remove this chip (id from the list, or from browser-pick) | -       |
+| `--json`            | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli browser-viewport <tab> [preset]`
+
+Set or read the width a browser tab shows its page at (preset: fit, desktop, laptop, tablet, phone; omit to read). tab: id from open-browser, or browser:N
+
+| Option             | Description                                  | Default |
+| ------------------ | -------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that owns the tab (defaults to active) | -       |
+| `--json`           | Output as JSON (for scripting)               | -       |
 
 ## `maestro-cli open-terminal`
 
@@ -773,6 +827,189 @@ Take back a note no task has read yet (accepts a unique id prefix)
 | `--background`     | Accepted and ignored: cancelling a note raises no notice | -       |
 | `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
 | `--json`           | Output the cancelled note as JSON                        | -       |
+
+## `maestro-cli diff-review`
+
+Pin review comments to lines of an agent's git diff and send them as one review
+
+## `maestro-cli diff-review list`
+
+Show the pending comments, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                               | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli diff-review add <path> <lines> <comment>`
+
+Pin a comment to path:lines of the current diff (lines: 12 or 12-14)
+
+| Option             | Description                                                 | Default |
+| ------------------ | ----------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                          | -       |
+| `--side <side>`    | Which version the line numbers are in: new (default) or old | `"new"` |
+| `--background`     | Accepted and ignored: adding a comment raises no notice     | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice     | -       |
+| `--json`           | Output the new comment as JSON                              | -       |
+
+## `maestro-cli diff-review edit <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                       | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli diff-review remove <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                        | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli diff-review clear`
+
+Discard every pending comment
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli diff-review send`
+
+Send every current comment to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
+
+## `maestro-cli file-review`
+
+Pin review comments to lines of a file and send them to an agent as one review
+
+## `maestro-cli file-review list <file>`
+
+Show the pending comments on a file, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                         | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli file-review add <file> <lines> <comment>`
+
+Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk
+
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                | -       |
+| `--background`     | Accepted and ignored: adding a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice | -       |
+| `--json`           | Output the new comment as JSON                          | -       |
+
+## `maestro-cli file-review edit <file> <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                 | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli file-review remove <file> <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                  | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli file-review clear <file>`
+
+Discard every pending comment on a file
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                          | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli file-review send <file>`
+
+Send every current comment on a file to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
+
+## `maestro-cli prompt-link`
+
+Create, list, and revoke one-shot maestro://run links (the window: `open prompt-links`)
+
+## `maestro-cli prompt-link create <agent> [prompt]`
+
+Create a link that runs PROMPT in a new tab of AGENT; prints the URL once
+
+| Option                 | Description                                                                 | Default |
+| ---------------------- | --------------------------------------------------------------------------- | ------- |
+| `--prompt-file <path>` | Read the prompt from a file instead of the argument                         | -       |
+| `--uses <n>`           | How many times the link may run: a number, or "unlimited" (default: 1)      | -       |
+| `--expires <duration>` | Expire after 12h, 7d, 30d, ... or "never" (default: never)                  | -       |
+| `--label <text>`       | A name to recognize the link by in lists and toasts                         | -       |
+| `--open <mode>`        | Where the tab opens when the link fires: background (default) or foreground | -       |
+| `--background`         | Accepted and ignored: creating a link changes nothing on screen             | -       |
+| `--focus`              | Accepted and ignored: creating a link changes nothing on screen             | -       |
+| `--json`               | Output the URL and link as JSON                                             | -       |
+
+## `maestro-cli prompt-link list`
+
+List active prompt links (never their URLs: only a hash is stored)
+
+| Option         | Description                                             | Default |
+| -------------- | ------------------------------------------------------- | ------- |
+| `--all`        | Include used, expired, and revoked links                | -       |
+| `--background` | Accepted and ignored: listing changes nothing on screen | -       |
+| `--focus`      | Accepted and ignored: listing changes nothing on screen | -       |
+| `--json`       | Output as JSON                                          | -       |
+
+## `maestro-cli prompt-link revoke <id>`
+
+Revoke a prompt link so it never runs again (accepts a unique id prefix)
+
+| Option         | Description                                              | Default |
+| -------------- | -------------------------------------------------------- | ------- |
+| `--background` | Accepted and ignored: revoking changes nothing on screen | -       |
+| `--focus`      | Accepted and ignored: revoking changes nothing on screen | -       |
+| `--json`       | Output the revoked link as JSON                          | -       |
 
 ## `maestro-cli marketplace`
 
@@ -977,13 +1214,14 @@ Director's Notes: unified history and AI synopsis
 
 Show unified history across all agents
 
-| Option                | Description                                          | Default |
-| --------------------- | ---------------------------------------------------- | ------- |
-| `-d, --days <n>`      | Lookback period in days (default: from app settings) | -       |
-| `-f, --format <type>` | Output format: json, markdown, text (default: text)  | -       |
-| `--filter <type>`     | Filter by entry type: auto, user, cue, agent         | -       |
-| `-l, --limit <n>`     | Maximum entries to show (default: 100)               | -       |
-| `--json`              | Output as JSON (shorthand for --format json)         | -       |
+| Option                | Description                                                                           | Default |
+| --------------------- | ------------------------------------------------------------------------------------- | ------- |
+| `-d, --days <n>`      | Lookback period in days (default: from app settings)                                  | -       |
+| `-f, --format <type>` | Output format: json, markdown, text (default: text)                                   | -       |
+| `--filter <type>`     | Filter by entry type: auto, user, cue, agent                                          | -       |
+| `-l, --limit <n>`     | Maximum entries to show (default: 100)                                                | -       |
+| `-s, --search <text>` | Only entries whose summary, response, tab name, agent name, or sender match &lt;text> | -       |
+| `--json`              | Output as JSON (shorthand for --format json)                                          | -       |
 
 ## `maestro-cli director-notes synopsis`
 
@@ -1014,6 +1252,24 @@ Diagnose CLI connectivity, version skew, and configuration
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli install-command <provider>`
+
+Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `--platform <platform>` | Target platform: darwin, linux, or win32 (default: this machine) | -       |
+| `--json`                | Output as JSON (for scripting)                                   | -       |
+
+## `maestro-cli rollback [version]`
+
+List earlier Maestro releases you can roll back to, or download one (e.g. 1.0.3) so the next restart installs it
+
+| Option         | Description                                                                       | Default |
+| -------------- | --------------------------------------------------------------------------------- | ------- |
+| `--prerelease` | Include beta and RC releases (default: the "Include pre-release updates" setting) | -       |
+| `--json`       | Output as JSON (for scripting)                                                    | -       |
 
 ## `maestro-cli completions <shell>`
 
@@ -1046,7 +1302,7 @@ Create a new agent in the Maestro desktop app
 | `--context-window <size>`         | Context window size in tokens                                                                               | -               |
 | `--provider-path <path>`          | Custom provider path                                                                                        | -               |
 | `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                          | -               |
-| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                    | -               |
+| `--ssh-cwd <path>`                | Working directory on the SSH remote (the agent runs there; defaults to --cwd)                               | -               |
 | `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)            | -               |
 | `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)           | -               |
 | `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                        | -               |
@@ -1493,6 +1749,17 @@ Get the active typography preset, or reset every font and size to one (default |
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli display heading [level]`
+
+Get or set the font and size of a markdown heading level (h1-h6). Omit the level to list all six. Pass "default" to --font or --size to clear one field, or --reset to clear the level (or every level when none is named).
+
+| Option            | Description                                                              | Default |
+| ----------------- | ------------------------------------------------------------------------ | ------- |
+| `--font <family>` | Font family for this level ("default" keeps the surrounding text font)   | -       |
+| `--size <px>`     | Size in px before zoom ("default" keeps the stylesheet size)             | -       |
+| `--reset`         | Restore the default style (one level, or all six when no level is named) | -       |
+| `--json`          | Output as JSON (for scripting)                                           | -       |
 
 ## `maestro-cli display fonts`
 
@@ -2367,6 +2634,63 @@ Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)
 | --------------------- | ----------------------------------------------------------------- | ------- |
 | `-p, --param <value>` | Bind a value to a positional ? placeholder (repeatable, in order) | `[]`    |
 | `--json`              | Output rows as JSON instead of a tab-separated table              | -       |
+
+## `maestro-cli stats-delegation`
+
+Show the delegation split (interactive turns vs Auto Run tasks vs Cue runs) for a range and per day
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output totals, delegated share, and the per-day split as JSON    | -       |
+
+## `maestro-cli stats-cue`
+
+Show the Usage Dashboard Cue tab: run totals, durations, and per-pipeline breakdowns
+
+| Option                     | Description                                                          | Default |
+| -------------------------- | -------------------------------------------------------------------- | ------- |
+| `-r, --range <range>`      | Time range: day, week, month, quarter, year, all (default: week)     | -       |
+| `--exclude-trigger <type>` | Leave out a trigger type, like the Cue tab filter chips (repeatable) | `[]`    |
+| `--json`                   | Output the full Cue statistics object as JSON                        | -       |
+
+## `maestro-cli stats-plan-usage`
+
+Show the last sampled plan usage per Anthropic (Claude) and OpenAI (Codex) account
+
+| Option                  | Description                        | Default |
+| ----------------------- | ---------------------------------- | ------- |
+| `--provider <provider>` | Only one provider: claude or codex | -       |
+| `--json`                | Output the accounts as JSON        | -       |
+
+## `maestro-cli stats-agents`
+
+Show Agents Over Time: agents that existed each day, plus created and deleted
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output the daily series as JSON                                  | -       |
+
+## `maestro-cli stats-activity`
+
+Show Auto Run runs, wizard runs, resilience outages, and shortcut presses for a range and per day
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output totals and the daily counts as JSON                       | -       |
+
+## `maestro-cli stats-export`
+
+Export everything the Usage Dashboard reads for a range (the Export button)
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `-o, --output <path>`   | File to write (a .zip of CSVs, or a .json file)                  | -       |
+| `-f, --format <format>` | csv (a zip of CSV files) or json (default: csv)                  | -       |
+| `-r, --range <range>`   | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`                | Output the result (path, row counts, notes) as JSON              | -       |
 
 ## `maestro-cli plugin`
 

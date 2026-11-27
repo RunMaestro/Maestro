@@ -64,6 +64,7 @@ import type {
 	UnifiedTabRef,
 } from '../../types';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { useAnchoredMenuPosition } from '../../hooks/ui/useAnchoredMenuPosition';
 
 /**
  * Action handlers a tiled pane's dropdown can invoke, bundled into one prop so a
@@ -390,6 +391,8 @@ function TiledFilePane({
 					onShortcutUsed={actions?.onShortcutUsed}
 					onSendSelectionToAgent={actions?.onSendTextToAgent}
 					onQuoteSelection={(text) => quoteIntoAgentComposer(session.id, text)}
+					// Line review comments go to the agent this file tab belongs to.
+					reviewSessionId={session.id}
 					// Scroll + find-query memory, so switching away and back lands where
 					// the user left off instead of jumping to the top with a cleared term.
 					initialScrollTop={fileTab.scrollTop}
@@ -585,6 +588,50 @@ function PaneOverlaySlot({ tab }: { tab: UnifiedTabRef }) {
 	return <div className="flex-1 min-w-0 min-h-0" ref={(el) => registry?.register(key, el)} />;
 }
 
+/**
+ * The floating shell of a pane's action menu: a click-away backdrop plus the
+ * menu itself, hung off the pane's chevron by `useAnchoredMenuPosition`. The
+ * menu carries the full tab action list, so in a short window it is capped at
+ * the room on screen and scrolls rather than running off the bottom edge.
+ */
+function PaneMenuShell({
+	anchorRef,
+	theme,
+	onClose,
+	children,
+}: {
+	anchorRef: React.RefObject<HTMLElement | null>;
+	theme: Theme;
+	onClose: () => void;
+	children: React.ReactNode;
+}) {
+	const menuRef = React.useRef<HTMLDivElement>(null);
+	const { left, top, maxHeight, ready } = useAnchoredMenuPosition(menuRef, anchorRef, 2);
+	return createPortal(
+		<>
+			{/* Click-away backdrop: any click outside the menu closes it. */}
+			<div className="fixed inset-0 z-[99]" onClick={onClose} onContextMenu={onClose} />
+			<div
+				ref={menuRef}
+				className="fixed z-[100] overflow-y-auto overflow-x-hidden overscroll-contain scrollbar-thin whitespace-nowrap"
+				style={{
+					top,
+					left,
+					maxHeight,
+					opacity: ready ? 1 : 0,
+					...elevatedSurfaceStyle(theme),
+					borderRadius: '8px',
+					minWidth: '12.5rem',
+				}}
+				onClick={(e) => e.stopPropagation()}
+			>
+				{children}
+			</div>
+		</>,
+		document.body
+	);
+}
+
 /** A single row in the pane actions menu. Mirrors the AITab overlay menu styling. */
 function PaneMenuItem({
 	icon: Icon,
@@ -645,14 +692,11 @@ function PaneActionsMenu({
 	actions?: PaneTabActions;
 }) {
 	const [open, setOpen] = React.useState(false);
-	const [pos, setPos] = React.useState<{ top: number; left: number } | null>(null);
 	const buttonRef = React.useRef<HTMLButtonElement>(null);
 
 	const toggle = React.useCallback((e: React.MouseEvent) => {
 		e.stopPropagation();
 		e.preventDefault();
-		const rect = buttonRef.current?.getBoundingClientRect();
-		if (rect) setPos({ top: rect.bottom + 2, left: rect.left });
 		setOpen((v) => !v);
 	}, []);
 
@@ -769,203 +813,186 @@ function PaneActionsMenu({
 			>
 				<ChevronDown className="w-3 h-3" style={{ color: 'currentColor' }} />
 			</button>
-			{open &&
-				pos &&
-				createPortal(
-					<>
-						{/* Click-away backdrop: any click outside the menu closes it. */}
-						<div className="fixed inset-0 z-[99]" onClick={close} onContextMenu={close} />
-						<div
-							className="fixed z-[100] overflow-hidden whitespace-nowrap"
-							style={{
-								top: pos.top,
-								left: pos.left,
-								...elevatedSurfaceStyle(theme),
-								borderRadius: '8px',
-								minWidth: '12.5rem',
-							}}
-							onClick={(e) => e.stopPropagation()}
-						>
-							<div className="p-1">
-								{/* --- Identity / naming --- */}
-								{kind === 'ai' && aiTab?.agentSessionId && (
-									<PaneMenuItem
-										icon={Copy}
-										label="Copy Session ID"
-										onClick={handleCopySessionId}
-										theme={theme}
-									/>
-								)}
-								<PaneMenuItem
-									icon={Link}
-									label="Copy Deep Link"
-									onClick={handleCopyDeepLink}
-									theme={theme}
-								/>
-								{kind === 'ai' && actions?.onStar && (
-									<PaneMenuItem
-										icon={Star}
-										label={aiTab?.starred ? 'Unstar Session' : 'Star Session'}
-										onClick={handleStar}
-										theme={theme}
-									/>
-								)}
-								{/* File tabs are named by their filename; the rename modal only commits
+			{open && (
+				<PaneMenuShell anchorRef={buttonRef} theme={theme} onClose={close}>
+					<div className="p-1">
+						{/* --- Identity / naming --- */}
+						{kind === 'ai' && aiTab?.agentSessionId && (
+							<PaneMenuItem
+								icon={Copy}
+								label="Copy Session ID"
+								onClick={handleCopySessionId}
+								theme={theme}
+							/>
+						)}
+						<PaneMenuItem
+							icon={Link}
+							label="Copy Deep Link"
+							onClick={handleCopyDeepLink}
+							theme={theme}
+						/>
+						{kind === 'ai' && actions?.onStar && (
+							<PaneMenuItem
+								icon={Star}
+								label={aiTab?.starred ? 'Unstar Session' : 'Star Session'}
+								onClick={handleStar}
+								theme={theme}
+							/>
+						)}
+						{/* File tabs are named by their filename; the rename modal only commits
 								    ai / terminal / browser tabs, so omit Rename for a file pane. */}
-								{kind !== 'file' && (
-									<PaneMenuItem icon={Pencil} label="Rename" onClick={handleRename} theme={theme} />
-								)}
-								{kind === 'ai' && actions?.onMarkUnread && (
-									<PaneMenuItem
-										icon={Mail}
-										label="Mark as Unread"
-										onClick={wrap(actions.onMarkUnread)!}
-										theme={theme}
-									/>
-								)}
-								{kind === 'ai' && actions?.onExportHtml && (
-									<PaneMenuItem
-										icon={Download}
-										label="Export as HTML"
-										onClick={wrap(actions.onExportHtml)!}
-										theme={theme}
-									/>
-								)}
+						{kind !== 'file' && (
+							<PaneMenuItem icon={Pencil} label="Rename" onClick={handleRename} theme={theme} />
+						)}
+						{kind === 'ai' && actions?.onMarkUnread && (
+							<PaneMenuItem
+								icon={Mail}
+								label="Mark as Unread"
+								onClick={wrap(actions.onMarkUnread)!}
+								theme={theme}
+							/>
+						)}
+						{kind === 'ai' && actions?.onExportHtml && (
+							<PaneMenuItem
+								icon={Download}
+								label="Export as HTML"
+								onClick={wrap(actions.onExportHtml)!}
+								theme={theme}
+							/>
+						)}
 
-								{/* --- Context / buffer actions (per kind) --- */}
-								{kind === 'ai' &&
-									(actions?.onCopyContext ||
-										actions?.onSummarizeAndContinue ||
-										actions?.onMergeWith ||
-										actions?.onSendToAgent ||
-										actions?.onPublishGist) && <PaneMenuDivider theme={theme} />}
-								{kind === 'ai' && actions?.onCopyContext && (
-									<PaneMenuItem
-										icon={Clipboard}
-										label="Context: Copy to Clipboard"
-										onClick={wrap(actions.onCopyContext)!}
-										theme={theme}
-									/>
-								)}
-								{kind === 'ai' && actions?.onSummarizeAndContinue && (
-									<PaneMenuItem
-										icon={Minimize2}
-										label="Context: Compact"
-										onClick={wrap(actions.onSummarizeAndContinue)!}
-										theme={theme}
-									/>
-								)}
-								{kind === 'ai' && actions?.onMergeWith && (
-									<PaneMenuItem
-										icon={GitMerge}
-										label="Context: Merge Into"
-										onClick={wrap(actions.onMergeWith)!}
-										theme={theme}
-									/>
-								)}
-								{kind === 'ai' && actions?.onSendToAgent && (
-									<PaneMenuItem
-										icon={ArrowRightCircle}
-										label="Context: Send to Agent"
-										onClick={wrap(actions.onSendToAgent)!}
-										theme={theme}
-									/>
-								)}
-								{kind === 'ai' && actions?.onPublishGist && (
-									<PaneMenuItem
-										icon={Share2}
-										label="Context: Publish as GitHub Gist"
-										onClick={wrap(actions.onPublishGist)!}
-										theme={theme}
-									/>
-								)}
+						{/* --- Context / buffer actions (per kind) --- */}
+						{kind === 'ai' &&
+							(actions?.onCopyContext ||
+								actions?.onSummarizeAndContinue ||
+								actions?.onMergeWith ||
+								actions?.onSendToAgent ||
+								actions?.onPublishGist) && <PaneMenuDivider theme={theme} />}
+						{kind === 'ai' && actions?.onCopyContext && (
+							<PaneMenuItem
+								icon={Clipboard}
+								label="Context: Copy to Clipboard"
+								onClick={wrap(actions.onCopyContext)!}
+								theme={theme}
+							/>
+						)}
+						{kind === 'ai' && actions?.onSummarizeAndContinue && (
+							<PaneMenuItem
+								icon={Minimize2}
+								label="Context: Compact"
+								onClick={wrap(actions.onSummarizeAndContinue)!}
+								theme={theme}
+							/>
+						)}
+						{kind === 'ai' && actions?.onMergeWith && (
+							<PaneMenuItem
+								icon={GitMerge}
+								label="Context: Merge Into"
+								onClick={wrap(actions.onMergeWith)!}
+								theme={theme}
+							/>
+						)}
+						{kind === 'ai' && actions?.onSendToAgent && (
+							<PaneMenuItem
+								icon={ArrowRightCircle}
+								label="Context: Send to Agent"
+								onClick={wrap(actions.onSendToAgent)!}
+								theme={theme}
+							/>
+						)}
+						{kind === 'ai' && actions?.onPublishGist && (
+							<PaneMenuItem
+								icon={Share2}
+								label="Context: Publish as GitHub Gist"
+								onClick={wrap(actions.onPublishGist)!}
+								theme={theme}
+							/>
+						)}
 
-								{/* Terminal buffer actions */}
-								{kind === 'terminal' &&
-									(actions?.onCopyTerminalBuffer ||
-										actions?.onSendTerminalBufferToAgent ||
-										actions?.onPublishTerminalBufferGist ||
-										actions?.onConfigureTerminalStartup) && <PaneMenuDivider theme={theme} />}
-								{kind === 'terminal' && actions?.onCopyTerminalBuffer && (
-									<PaneMenuItem
-										icon={Clipboard}
-										label="Copy Buffer"
-										onClick={wrap(actions.onCopyTerminalBuffer)!}
-										theme={theme}
-									/>
-								)}
-								{kind === 'terminal' && actions?.onSendTerminalBufferToAgent && (
-									<PaneMenuItem
-										icon={ArrowRightCircle}
-										label="Send Buffer to Agent"
-										onClick={wrap(actions.onSendTerminalBufferToAgent)!}
-										theme={theme}
-									/>
-								)}
-								{kind === 'terminal' && actions?.onPublishTerminalBufferGist && (
-									<PaneMenuItem
-										icon={Share2}
-										label="Publish Buffer as GitHub Gist"
-										onClick={wrap(actions.onPublishTerminalBufferGist)!}
-										theme={theme}
-									/>
-								)}
-								{kind === 'terminal' && actions?.onConfigureTerminalStartup && (
-									<PaneMenuItem
-										icon={Play}
-										label="Configure Startup Command"
-										onClick={wrap(actions.onConfigureTerminalStartup)!}
-										theme={theme}
-									/>
-								)}
+						{/* Terminal buffer actions */}
+						{kind === 'terminal' &&
+							(actions?.onCopyTerminalBuffer ||
+								actions?.onSendTerminalBufferToAgent ||
+								actions?.onPublishTerminalBufferGist ||
+								actions?.onConfigureTerminalStartup) && <PaneMenuDivider theme={theme} />}
+						{kind === 'terminal' && actions?.onCopyTerminalBuffer && (
+							<PaneMenuItem
+								icon={Clipboard}
+								label="Copy Buffer"
+								onClick={wrap(actions.onCopyTerminalBuffer)!}
+								theme={theme}
+							/>
+						)}
+						{kind === 'terminal' && actions?.onSendTerminalBufferToAgent && (
+							<PaneMenuItem
+								icon={ArrowRightCircle}
+								label="Send Buffer to Agent"
+								onClick={wrap(actions.onSendTerminalBufferToAgent)!}
+								theme={theme}
+							/>
+						)}
+						{kind === 'terminal' && actions?.onPublishTerminalBufferGist && (
+							<PaneMenuItem
+								icon={Share2}
+								label="Publish Buffer as GitHub Gist"
+								onClick={wrap(actions.onPublishTerminalBufferGist)!}
+								theme={theme}
+							/>
+						)}
+						{kind === 'terminal' && actions?.onConfigureTerminalStartup && (
+							<PaneMenuItem
+								icon={Play}
+								label="Configure Startup Command"
+								onClick={wrap(actions.onConfigureTerminalStartup)!}
+								theme={theme}
+							/>
+						)}
 
-								{/* Browser content actions */}
-								{kind === 'browser' &&
-									(actions?.onCopyBrowserContent || actions?.onSendBrowserContentToAgent) && (
-										<PaneMenuDivider theme={theme} />
-									)}
-								{kind === 'browser' && actions?.onCopyBrowserContent && (
-									<PaneMenuItem
-										icon={Clipboard}
-										label="Copy Content"
-										onClick={wrap(actions.onCopyBrowserContent)!}
-										theme={theme}
-									/>
-								)}
-								{kind === 'browser' && actions?.onSendBrowserContentToAgent && (
-									<PaneMenuItem
-										icon={ArrowRightCircle}
-										label="Send Content to Agent"
-										onClick={wrap(actions.onSendBrowserContentToAgent)!}
-										theme={theme}
-									/>
-								)}
-
-								{/* --- Layout / group actions (always available) --- */}
+						{/* Browser content actions */}
+						{kind === 'browser' &&
+							(actions?.onCopyBrowserContent || actions?.onSendBrowserContentToAgent) && (
 								<PaneMenuDivider theme={theme} />
-								<PaneMenuItem
-									icon={PanelsTopLeft}
-									label="Move to own tab"
-									onClick={handleMoveToOwnTab}
-									theme={theme}
-								/>
-								<PaneMenuItem
-									icon={Ungroup}
-									label="Break apart group"
-									onClick={handleBreakApart}
-									theme={theme}
-								/>
-								{handleClose && (
-									<>
-										<PaneMenuDivider theme={theme} />
-										<PaneMenuItem icon={X} label="Close Tab" onClick={handleClose} theme={theme} />
-									</>
-								)}
-							</div>
-						</div>
-					</>,
-					document.body
-				)}
+							)}
+						{kind === 'browser' && actions?.onCopyBrowserContent && (
+							<PaneMenuItem
+								icon={Clipboard}
+								label="Copy Content"
+								onClick={wrap(actions.onCopyBrowserContent)!}
+								theme={theme}
+							/>
+						)}
+						{kind === 'browser' && actions?.onSendBrowserContentToAgent && (
+							<PaneMenuItem
+								icon={ArrowRightCircle}
+								label="Send Content to Agent"
+								onClick={wrap(actions.onSendBrowserContentToAgent)!}
+								theme={theme}
+							/>
+						)}
+
+						{/* --- Layout / group actions (always available) --- */}
+						<PaneMenuDivider theme={theme} />
+						<PaneMenuItem
+							icon={PanelsTopLeft}
+							label="Move to own tab"
+							onClick={handleMoveToOwnTab}
+							theme={theme}
+						/>
+						<PaneMenuItem
+							icon={Ungroup}
+							label="Break apart group"
+							onClick={handleBreakApart}
+							theme={theme}
+						/>
+						{handleClose && (
+							<>
+								<PaneMenuDivider theme={theme} />
+								<PaneMenuItem icon={X} label="Close Tab" onClick={handleClose} theme={theme} />
+							</>
+						)}
+					</div>
+				</PaneMenuShell>
+			)}
 		</>
 	);
 }

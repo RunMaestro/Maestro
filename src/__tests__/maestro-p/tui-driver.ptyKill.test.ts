@@ -86,7 +86,7 @@ vi.mock('../../shared/platformDetection', async (importOriginal) => ({
 
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
-import { QUIT_GRACE_MS, TuiDriver } from '../../maestro-p/tui-driver';
+import { QUIT_GRACE_MS, QUIT_TERM_GRACE_MS, TuiDriver } from '../../maestro-p/tui-driver';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -145,7 +145,7 @@ describe('TuiDriver PTY teardown on Windows', () => {
 
 		// The TUI ignores /quit, so the grace timer escalates. This is the
 		// `maestro-p --status` path.
-		await vi.advanceTimersByTimeAsync(QUIT_GRACE_MS);
+		await vi.advanceTimersByTimeAsync(QUIT_GRACE_MS + QUIT_TERM_GRACE_MS);
 		await promise;
 
 		expect(fakePty.kill).toHaveBeenCalledWith(undefined);

@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import type { SshRemoteConfig } from '../../../shared/types';
 
 // Mock crypto for deterministic UUIDs
 vi.mock('crypto', () => ({
@@ -12,9 +13,9 @@ vi.mock('crypto', () => ({
 
 // Mock storage
 vi.mock('../../../cli/services/storage', () => ({
-	readSshRemotes: vi.fn(),
+	readSshRemotesForEdit: vi.fn(),
 	writeSshRemotes: vi.fn(),
-	writeSettingValue: vi.fn(),
+	writeSettingValueIn: vi.fn(),
 }));
 
 // Mock formatter
@@ -24,8 +25,19 @@ vi.mock('../../../cli/output/formatter', () => ({
 }));
 
 import { createSshRemote } from '../../../cli/commands/create-ssh-remote';
-import { readSshRemotes, writeSshRemotes, writeSettingValue } from '../../../cli/services/storage';
+import {
+	readSshRemotesForEdit,
+	writeSshRemotes,
+	writeSettingValueIn,
+} from '../../../cli/services/storage';
 import { formatError, formatSuccess } from '../../../cli/output/formatter';
+
+/** The settings directory `readSshRemotesForEdit` reports; writes must land there. */
+const STORE_DIR = '/store';
+
+function mockStoredRemotes(remotes: SshRemoteConfig[]): void {
+	vi.mocked(readSshRemotesForEdit).mockReturnValue({ remotes, defaultId: null, dir: STORE_DIR });
+}
 
 describe('create-ssh-remote command', () => {
 	let consoleSpy: MockInstance;
@@ -37,23 +49,26 @@ describe('create-ssh-remote command', () => {
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-		vi.mocked(readSshRemotes).mockReturnValue([]);
+		mockStoredRemotes([]);
 	});
 
 	describe('successful creation', () => {
 		it('should create a remote with minimal options', () => {
 			createSshRemote('Dev Server', { host: '192.168.1.100' });
 
-			expect(writeSshRemotes).toHaveBeenCalledWith([
-				expect.objectContaining({
-					id: 'mock-uuid-1234',
-					name: 'Dev Server',
-					host: '192.168.1.100',
-					port: 22,
-					username: '',
-					enabled: true,
-				}),
-			]);
+			expect(writeSshRemotes).toHaveBeenCalledWith(
+				[
+					expect.objectContaining({
+						id: 'mock-uuid-1234',
+						name: 'Dev Server',
+						host: '192.168.1.100',
+						port: 22,
+						username: '',
+						enabled: true,
+					}),
+				],
+				STORE_DIR
+			);
 			expect(formatSuccess).toHaveBeenCalledWith('Created SSH remote "Dev Server"');
 		});
 
@@ -63,14 +78,17 @@ describe('create-ssh-remote command', () => {
 				sshOption: ['ProxyCommand=/opt/homebrew/bin/tailcat tcABC 22', 'ConnectTimeout=45'],
 			});
 
-			expect(writeSshRemotes).toHaveBeenCalledWith([
-				expect.objectContaining({
-					sshOptions: {
-						ProxyCommand: '/opt/homebrew/bin/tailcat tcABC 22',
-						ConnectTimeout: '45',
-					},
-				}),
-			]);
+			expect(writeSshRemotes).toHaveBeenCalledWith(
+				[
+					expect.objectContaining({
+						sshOptions: {
+							ProxyCommand: '/opt/homebrew/bin/tailcat tcABC 22',
+							ConnectTimeout: '45',
+						},
+					}),
+				],
+				STORE_DIR
+			);
 		});
 
 		it('should leave sshOptions unset when none are passed', () => {
@@ -105,16 +123,19 @@ describe('create-ssh-remote command', () => {
 				env: ['NODE_ENV=production', 'PORT=8080'],
 			});
 
-			expect(writeSshRemotes).toHaveBeenCalledWith([
-				expect.objectContaining({
-					name: 'Full Remote',
-					host: 'server.example.com',
-					port: 2222,
-					username: 'deploy',
-					privateKeyPath: '~/.ssh/deploy_key',
-					remoteEnv: { NODE_ENV: 'production', PORT: '8080' },
-				}),
-			]);
+			expect(writeSshRemotes).toHaveBeenCalledWith(
+				[
+					expect.objectContaining({
+						name: 'Full Remote',
+						host: 'server.example.com',
+						port: 2222,
+						username: 'deploy',
+						privateKeyPath: '~/.ssh/deploy_key',
+						remoteEnv: { NODE_ENV: 'production', PORT: '8080' },
+					}),
+				],
+				STORE_DIR
+			);
 		});
 
 		it('should create with ssh-config mode', () => {
@@ -123,25 +144,35 @@ describe('create-ssh-remote command', () => {
 				sshConfig: true,
 			});
 
-			expect(writeSshRemotes).toHaveBeenCalledWith([
-				expect.objectContaining({
-					host: 'dev-server',
-					useSshConfig: true,
-					sshConfigHost: 'dev-server',
-				}),
-			]);
+			expect(writeSshRemotes).toHaveBeenCalledWith(
+				[
+					expect.objectContaining({
+						host: 'dev-server',
+						useSshConfig: true,
+						sshConfigHost: 'dev-server',
+					}),
+				],
+				STORE_DIR
+			);
 		});
 
 		it('should create in disabled state', () => {
 			createSshRemote('Disabled', { host: 'server.com', disabled: true });
 
-			expect(writeSshRemotes).toHaveBeenCalledWith([expect.objectContaining({ enabled: false })]);
+			expect(writeSshRemotes).toHaveBeenCalledWith(
+				[expect.objectContaining({ enabled: false })],
+				STORE_DIR
+			);
 		});
 
 		it('should set as default when --set-default is provided', () => {
 			createSshRemote('Default', { host: 'server.com', setDefault: true });
 
-			expect(writeSettingValue).toHaveBeenCalledWith('defaultSshRemoteId', 'mock-uuid-1234');
+			expect(writeSettingValueIn).toHaveBeenCalledWith(
+				STORE_DIR,
+				'defaultSshRemoteId',
+				'mock-uuid-1234'
+			);
 		});
 
 		it('should append to existing remotes', () => {
@@ -154,14 +185,15 @@ describe('create-ssh-remote command', () => {
 				privateKeyPath: '',
 				enabled: true,
 			};
-			vi.mocked(readSshRemotes).mockReturnValue([existing]);
+			mockStoredRemotes([existing]);
 
 			createSshRemote('New', { host: 'new.com' });
 
-			expect(writeSshRemotes).toHaveBeenCalledWith([
-				existing,
-				expect.objectContaining({ name: 'New', host: 'new.com' }),
-			]);
+			// The list is written back to the store the edit read it from.
+			expect(writeSshRemotes).toHaveBeenCalledWith(
+				[existing, expect.objectContaining({ name: 'New', host: 'new.com' })],
+				STORE_DIR
+			);
 		});
 
 		it('should output JSON on success', () => {

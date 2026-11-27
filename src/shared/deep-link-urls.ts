@@ -42,6 +42,26 @@ export function buildFileDeepLink(sessionId: string, filePath: string, line?: nu
 }
 
 /**
+ * Build a Prompt Link URL (`maestro://run/<token>`). The token is opaque and
+ * base64url, so it needs no encoding; everything the link does is stored in
+ * Maestro under a hash of it (see `shared/promptLinks.ts`).
+ */
+export function buildPromptLinkUrl(token: string): string {
+	return `${PROTOCOL}run/${token}`;
+}
+
+/**
+ * The same URL with any Prompt Link token cut to its first four characters, for
+ * logs. A full token in a log line is a working link for anyone who reads the
+ * log; every other `maestro://` URL is returned unchanged.
+ */
+export function redactDeepLinkUrl(url: string): string {
+	return url.replace(/^(maestro:(?:\/\/)?run\/)([^/?#]{0,4})[^/?#]*/, (_m, head, keep) =>
+		keep ? `${head}${keep}...` : head
+	);
+}
+
+/**
  * Pure parser for `maestro://` URLs. Returns null for malformed or
  * unrecognized inputs. Free of side effects (no logging, no IPC) so it can
  * run in any process - main, renderer, or web/mobile.
@@ -75,6 +95,13 @@ export function parseMaestroDeepLink(url: string): ParsedDeepLink | null {
 
 		if (resource === 'group' && id) {
 			return { action: 'group', groupId: safeDecodeURIComponent(id) };
+		}
+
+		// A Prompt Link carries one opaque token and nothing else. Extra path
+		// segments are refused rather than ignored, so a URL that looks like it
+		// says more than it does never runs.
+		if (resource === 'run' && id && parts.length === 2) {
+			return { action: 'run', token: safeDecodeURIComponent(id) };
 		}
 
 		if (resource === 'file' && id && sub) {

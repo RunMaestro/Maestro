@@ -93,6 +93,7 @@ export function JumpToMessageTopButton({
 				if (container && target) scrollMessageToTop(container, target);
 			}}
 			className="absolute bottom-2 left-2 p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+			data-message-footer-control
 			style={{
 				color: theme.colors.textDim,
 				transition: 'opacity 0.15s ease-in-out',

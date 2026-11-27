@@ -16,6 +16,7 @@ import {
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
 	DEFAULT_CUE_SETTINGS,
+	resolveFailureAlertThreshold,
 } from '../../../shared/cue';
 import { asTierLevel } from '../../../shared/modelTiers';
 
@@ -495,6 +496,11 @@ function normalizeSettings(rawSettings: Record<string, unknown> | undefined): Cu
 			rawSettings.susfactor_threshold <= 1
 				? rawSettings.susfactor_threshold
 				: DEFAULT_CUE_SETTINGS.susfactor_threshold,
+		// Same defensive fallback: a negative or fractional count would make the
+		// failure alert fire never or on a run count that cannot occur.
+		failure_alert_threshold: resolveFailureAlertThreshold(
+			rawSettings as Partial<CueSettings> | undefined
+		),
 	};
 }
 

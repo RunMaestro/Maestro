@@ -21,6 +21,7 @@ import type { FlatFileItem } from '../FileSearchModal';
 // Modal store (for reading per-modal data passed by callers)
 import { useModalStore, selectModalData, selectModalOpen } from '../../stores/modalStore';
 import type { GitLogModalData } from '../../stores/modalStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 // Utility Modal Components
 import { QuickActionsModal } from '../QuickActionsModal';
@@ -31,7 +32,10 @@ import type { CrossTabSearchJumpTarget } from '../CrossTabSearchModal';
 import { SnoozeTabModal } from '../SnoozeTabModal';
 import { ModelEffortModal } from '../ModelEffortModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
+import { PromptLinksModal } from '../PromptLinks/PromptLinksModal';
+import { promptLinksAvailable } from '../../services/promptLinks';
 import { snoozeTabWithMirror } from '../../services/snoozeActions';
+import { canReceiveReview } from '../../services/reviewDelivery';
 import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
 import { BatchRunnerModal } from '../BatchRunnerModal';
@@ -555,6 +559,17 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 		[]
 	);
 	const closeSnoozeTab = useCallback(() => useModalStore.getState().closeModal('snoozeTab'), []);
+	// Prompt Links window. Rendered only while its Encore Feature is on, so
+	// turning the feature off with the window open also closes it.
+	const promptLinksOpen = useModalStore(selectModalOpen('promptLinks'));
+	const promptLinksData = useModalStore(selectModalData('promptLinks'));
+	const promptLinksEnabled = useSettingsStore((s) =>
+		promptLinksAvailable(s.encoreFeatures.promptLinks)
+	);
+	const closePromptLinks = useCallback(
+		() => useModalStore.getState().closeModal('promptLinks'),
+		[]
+	);
 	const closeSnoozedTabs = useCallback(
 		() => useModalStore.getState().closeModal('snoozedTabs'),
 		[]
@@ -715,6 +730,10 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						// Falls back to the active agent, matching the cwd fallback
 						// above: the header names whichever agent's repo is on screen.
 						sessionId={gitDiffSessionId ?? activeSession?.id}
+						// Line comments go back to that same agent as one review.
+						enableReview={canReceiveReview(
+							gitDiffSessionId ? sessions.find((s) => s.id === gitDiffSessionId) : activeSession
+						)}
 						theme={theme}
 						onClose={onCloseGitDiff}
 						onOpenFile={onOpenGitFile}
@@ -893,6 +912,11 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						closeSnoozeTab();
 					}}
 				/>
+			)}
+
+			{/* --- PROMPT LINKS (create, copy, revoke maestro://run links) --- */}
+			{promptLinksOpen && promptLinksEnabled && (
+				<PromptLinksModal theme={theme} data={promptLinksData} onClose={closePromptLinks} />
 			)}
 
 			{/* --- MODEL & EFFORT (keyboard-only per-tab tuning) --- */}

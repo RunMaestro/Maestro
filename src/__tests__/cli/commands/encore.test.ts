@@ -75,6 +75,7 @@ describe('encore commands', () => {
 			symphony: true,
 			maestroCue: true,
 			pianola: false,
+			promptLinks: false,
 		});
 	});
 
@@ -85,6 +86,29 @@ describe('encore commands', () => {
 		expect(p.type).toBe('set_setting');
 		expect(p.key).toBe('encoreFeatures');
 		expect(p.value).toMatchObject({ symphony: true, maestroCue: true });
+	});
+
+	it('keeps every flag it does not list when it writes one', async () => {
+		// set_setting REPLACES encoreFeatures, so writing only the listed flags
+		// used to reset Web Login, Concerto, and the rest to their defaults.
+		vi.mocked(readSettingValue).mockReturnValue({
+			symphony: true,
+			webLogin: true,
+			concerto: true,
+		});
+		const getPayload = mockSend({ success: true });
+		await encoreSet('maestroCue', false, {});
+		expect(getPayload().value).toMatchObject({
+			webLogin: true,
+			concerto: true,
+			maestroCue: false,
+		});
+	});
+
+	it('enables Prompt Links through its aliases', async () => {
+		const getPayload = mockSend({ success: true });
+		await encoreSet('prompt-links', true, {});
+		expect((getPayload().value as Record<string, boolean>).promptLinks).toBe(true);
 	});
 
 	it('disable flips a flag off', async () => {

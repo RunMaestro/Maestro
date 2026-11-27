@@ -1196,6 +1196,82 @@ describe('RightPanel', () => {
 			);
 		});
 
+		describe('goal run stats', () => {
+			const goalState = (overrides: Partial<BatchRunState> = {}): BatchRunState => ({
+				isRunning: true,
+				isStopping: false,
+				documents: [],
+				currentDocumentIndex: 0,
+				totalTasks: 100,
+				completedTasks: 42,
+				currentDocTasksTotal: 0,
+				currentDocTasksCompleted: 0,
+				totalTasksAcrossAllDocs: 100,
+				completedTasksAcrossAllDocs: 42,
+				loopEnabled: false,
+				loopIteration: 3,
+				goalMode: true,
+				goalProgress: 42,
+				goalIteration: 3,
+				goalLoops: {
+					maxIterations: 10,
+					lastDelta: 6,
+					flatStreak: 0,
+					flatLimit: 2,
+					completedActiveMs: 3 * 46 * 60_000,
+				},
+				startTime: Date.now() - 150 * 60_000,
+				accumulatedElapsedMs: 150 * 60_000,
+				...overrides,
+			});
+
+			it('shows the loop in flight, the average loop time, and the last loop gain', () => {
+				render(<RightPanel {...createDefaultProps({ currentSessionBatchState: goalState() })} />);
+
+				expect(screen.getByTestId('autorun-stat-progress-value')).toHaveTextContent('42%');
+				expect(screen.getByTestId('autorun-stat-progress-sub')).toHaveTextContent('loop 4 of 10');
+				expect(screen.getByTestId('autorun-stat-elapsed-sub')).toHaveTextContent('≈ 46m 0s / loop');
+				expect(screen.getByTestId('autorun-stat-remaining')).toHaveTextContent('Last loop');
+				expect(screen.getByTestId('autorun-stat-remaining-value')).toHaveTextContent('+6%');
+				expect(screen.getByTestId('autorun-stat-remaining-sub')).toHaveTextContent('stall 0 of 2');
+			});
+
+			it('falls back cleanly while the first loop is still running', () => {
+				const state = goalState({
+					goalIteration: 0,
+					goalLoops: {
+						maxIterations: null,
+						lastDelta: null,
+						flatStreak: 0,
+						flatLimit: 2,
+						completedActiveMs: 0,
+					},
+				});
+				render(<RightPanel {...createDefaultProps({ currentSessionBatchState: state })} />);
+
+				expect(screen.getByTestId('autorun-stat-progress-sub')).toHaveTextContent(/^loop 1$/);
+				expect(screen.getByTestId('autorun-stat-elapsed-sub')).toHaveTextContent('active time');
+				expect(screen.getByTestId('autorun-stat-remaining-value')).toHaveTextContent('-');
+				expect(screen.getByTestId('autorun-stat-remaining-sub')).toHaveTextContent('after loop 1');
+			});
+
+			it('shows a dip and a growing flat streak', () => {
+				const state = goalState({
+					goalLoops: {
+						maxIterations: null,
+						lastDelta: -3,
+						flatStreak: 1,
+						flatLimit: 2,
+						completedActiveMs: 60_000,
+					},
+				});
+				render(<RightPanel {...createDefaultProps({ currentSessionBatchState: state })} />);
+
+				expect(screen.getByTestId('autorun-stat-remaining-value')).toHaveTextContent('-3%');
+				expect(screen.getByTestId('autorun-stat-remaining-sub')).toHaveTextContent('stall 1 of 2');
+			});
+		});
+
 		it('should show single document task count when totalTasksAcrossAllDocs is 0', () => {
 			const currentSessionBatchState: BatchRunState = {
 				isRunning: true,

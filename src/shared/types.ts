@@ -173,12 +173,34 @@ export interface AgentCapabilities {
 	supportsAdditionalDirectories: boolean;
 
 	/**
+	 * Where this agent's token speed (input and output tokens per second, per
+	 * model API call) is measured from. Every agent MUST declare it, so a new
+	 * harness cannot ship without deciding how its throughput is read.
+	 *
+	 * - `'transcript'`: its on-disk transcript times each call (Claude Code,
+	 *   Codex). The live stream is used only when the agent runs on an SSH host,
+	 *   whose transcript Maestro cannot read, and only if its parser implements
+	 *   `extractCallTiming`.
+	 * - `'stream'`: its live JSON stream marks each call; the parser implements
+	 *   `AgentOutputParser.extractCallTiming` and the main process times calls
+	 *   as the events arrive. Recorded from the day it ships, local or SSH.
+	 * - `'none'`: the provider reports no per-call usage (only per-turn totals,
+	 *   or nothing). Say why next to the value.
+	 *
+	 * See `TokenSpeedMeasurement` and PROVIDER-SUPPORT.md "Token speed".
+	 */
+	tokenSpeedMeasurement: TokenSpeedMeasurement;
+
+	/**
 	 * How images should be handled on resume when -i flag is not available.
 	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
 	 * undefined: Use default image handling (or no special resume handling needed).
 	 */
 	imageResumeMode?: 'prompt-embed';
 }
+
+/** Where an agent's per-call token speed comes from (see `AgentCapabilities.tokenSpeedMeasurement`). */
+export type TokenSpeedMeasurement = 'transcript' | 'stream' | 'none';
 
 /**
  * Default capabilities - safe defaults for unknown agents.
@@ -212,6 +234,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsAppendSystemPrompt: false,
 	supportsProjectMemory: false,
 	supportsAdditionalDirectories: false,
+	tokenSpeedMeasurement: 'none',
 };
 
 // Session group
@@ -1038,7 +1061,7 @@ export interface AgentSshRemoteConfig {
  */
 export interface ParsedDeepLink {
 	/** The type of navigation action */
-	action: 'focus' | 'session' | 'group' | 'file';
+	action: 'focus' | 'session' | 'group' | 'file' | 'run';
 	/** Maestro session ID (for action: 'session' and 'file') */
 	sessionId?: string;
 	/** Tab ID within the session (for action: 'session') */
@@ -1049,6 +1072,11 @@ export interface ParsedDeepLink {
 	filePath?: string;
 	/** 1-based line number within the file (for action: 'file', optional) */
 	line?: number;
+	/**
+	 * Prompt Link token (for action: 'run'). Handled entirely in the main
+	 * process; a 'run' link is never forwarded to the renderer.
+	 */
+	token?: string;
 }
 
 // ============================================================================

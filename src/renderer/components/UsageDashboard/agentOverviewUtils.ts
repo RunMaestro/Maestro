@@ -1,23 +1,33 @@
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import type { Session, SessionState, Theme } from '../../types';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
+import { fillDaySeries } from '../../../shared/daySeries';
+import { addLocalDays, toLocalYmd } from '../../../shared/localDay';
 import { visibleAiTabs } from '../../utils/tabHelpers';
 import type { ProviderProfileIndex } from '../../hooks/stats/useProviderProfiles';
 
 export type SortMode = 'name' | 'created' | 'recent' | 'queries' | 'tabs' | 'auto' | 'provider';
 
 export const AGENT_OVERVIEW_SORT_OPTIONS: { value: SortMode; label: string }[] = [
+	{ value: 'queries', label: 'Queries' },
 	{ value: 'name', label: 'Name' },
 	{ value: 'created', label: 'Created' },
 	{ value: 'recent', label: 'Recent' },
-	{ value: 'queries', label: 'Queries' },
 	{ value: 'tabs', label: 'Tabs' },
 	{ value: 'auto', label: 'Auto %' },
 	{ value: 'provider', label: 'Provider' },
 ];
 
-const SPARKLINE_DAYS = 7;
-type SessionByDayEntry = StatsAggregation['bySessionByDay'][string][number];
+/**
+ * The grid's default order, shared with the Groups grid so both tabs open the
+ * same way: busiest first.
+ */
+export const DEFAULT_AGENT_SORT: SortMode = 'queries';
+
+/** Days behind an agent tile's sparkline. */
+export const AGENT_SPARKLINE_DAYS = 7;
+
+type DayCount = { date: string; count: number };
 
 export function getStatusColor(state: SessionState, theme: Theme): string {
 	switch (state) {
@@ -32,31 +42,55 @@ export function getStatusColor(state: SessionState, theme: Theme): string {
 	}
 }
 
-export function buildSessionSparkline(sessionByDay: SessionByDayEntry[] | undefined): number[] {
-	if (!sessionByDay || sessionByDay.length === 0) {
-		return new Array(SPARKLINE_DAYS).fill(0);
-	}
-	const counts = sessionByDay.slice(-SPARKLINE_DAYS).map((day) => day.count);
-	if (counts.length >= SPARKLINE_DAYS) return counts;
-	return [...new Array(SPARKLINE_DAYS - counts.length).fill(0), ...counts];
+/**
+ * A tile sparkline: the entity's daily counts over the last `days` CALENDAR
+ * days, oldest first, ending on the aggregation window's last day (today).
+ *
+ * The per-entity series (`bySessionByDay`, a group's merged days) is sparse -
+ * it only has rows for days with activity - so taking its last N rows drew the
+ * last N ACTIVE days, which could span months while reading as a week. Filling
+ * over real calendar days keeps an idle stretch visible as zeros.
+ *
+ * The window is clipped to the selected range: under Today the sparkline is
+ * one day, not six zero days the range never asked about.
+ */
+export function buildCalendarSparkline(
+	rows: ReadonlyArray<DayCount> | undefined,
+	window: StatsAggregation['window'] | undefined,
+	days: number
+): number[] {
+	const endYmd = window?.endYmd ?? toLocalYmd(Date.now());
+	const earliest = addLocalDays(endYmd, -(Math.max(1, days) - 1));
+	const startYmd = window?.startYmd && window.startYmd > earliest ? window.startYmd : earliest;
+	return fillDaySeries<DayCount>(rows ?? [], startYmd, endYmd, (date) => ({ date, count: 0 })).map(
+		(day) => day.count
+	);
 }
 
-export function getSessionQueryCount(
-	session: Session,
-	data: StatsAggregation,
-	visibleSessions?: Session[]
-): number {
+/**
+ * Daily counts across the WHOLE selected range, zero-filled, for a detail
+ * modal's Daily Activity chart. Returns the dates beside the counts so the
+ * chart can label its ends with real days.
+ */
+export function buildRangeActivity(
+	rows: ReadonlyArray<DayCount> | undefined,
+	window: StatsAggregation['window'] | undefined
+): DayCount[] {
+	const endYmd = window?.endYmd ?? toLocalYmd(Date.now());
+	const startYmd = window?.startYmd ?? endYmd;
+	return fillDaySeries<DayCount>(rows ?? [], startYmd, endYmd, (date) => ({ date, count: 0 }));
+}
+
+/**
+ * Queries the agent ran in the selected range. Only the agent's OWN rows: an
+ * agent with none shows 0. (An earlier fallback showed its provider's whole
+ * total when it was the only visible agent of that provider, which credited
+ * other and deleted agents' work to it.)
+ */
+export function getSessionQueryCount(session: Session, data: StatsAggregation): number {
 	const sessionByDay = data.bySessionByDay?.[session.id];
-	if (sessionByDay && sessionByDay.length > 0) {
-		return sessionByDay.reduce((sum, day) => sum + day.count, 0);
-	}
-	if (visibleSessions) {
-		const sameProviderCount = visibleSessions.filter(
-			(item) => item.toolType === session.toolType
-		).length;
-		if (sameProviderCount !== 1) return 0;
-	}
-	return data.byAgent?.[session.toolType]?.count ?? 0;
+	if (!sessionByDay) return 0;
+	return sessionByDay.reduce((sum, day) => sum + day.count, 0);
 }
 
 /**
@@ -74,19 +108,6 @@ export function getSessionAutoPercent(session: Session, data: StatsAggregation):
 	const total = split.user + split.auto;
 	if (total <= 0) return null;
 	return Math.round((split.auto / total) * 100);
-}
-
-export function isSessionHighlighted(session: Session, activeFilterKey: string | null): boolean {
-	if (!activeFilterKey) return false;
-	if (activeFilterKey === session.id) return true;
-
-	const worktreeSuffix = '__worktree';
-	if (activeFilterKey.endsWith(worktreeSuffix)) {
-		const provider = activeFilterKey.slice(0, -worktreeSuffix.length);
-		return Boolean(session.parentSessionId) && session.toolType === provider;
-	}
-
-	return !session.parentSessionId && session.toolType === activeFilterKey;
 }
 
 export function sortAgentOverviewSessions(
@@ -115,10 +136,7 @@ export function sortAgentOverviewSessions(
 	if (sortMode === 'queries') {
 		return alphabetical
 			.slice()
-			.sort(
-				(a, b) =>
-					getSessionQueryCount(b, data, alphabetical) - getSessionQueryCount(a, data, alphabetical)
-			);
+			.sort((a, b) => getSessionQueryCount(b, data) - getSessionQueryCount(a, data));
 	}
 
 	if (sortMode === 'tabs') {

@@ -106,6 +106,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'concerto',
 			'groupsPlus',
 			'webLogin',
+			'promptLinks',
 		]);
 
 		for (const def of BUILTIN_FEATURES) {

@@ -101,6 +101,7 @@ vi.mock('../../../../renderer/components/MainPanel/BrowserTabView', () => ({
 		React.createElement('div', {
 			'data-testid': 'browser-tab-view',
 			'data-active': String(props.isActive),
+			'data-current': String(props.isCurrent),
 		}),
 }));
 
@@ -319,6 +320,7 @@ describe('MainPanelContent', () => {
 		render(<MainPanelContent {...props} />);
 		// No modal/overlay open -> the webview holds keyboard focus.
 		expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-active', 'true');
+		expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-current', 'true');
 	});
 
 	it('releases browser tab keyboard focus when a layer (e.g. Tab Switcher) is open', () => {
@@ -343,6 +345,10 @@ describe('MainPanelContent', () => {
 		props.activeBrowserTabId = 'browser-1';
 		render(<MainPanelContent {...props} />);
 		expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-active', 'false');
+		// The tab is still the one on screen behind the dialog. Design Mode's side-bar
+		// collapse keys on this, so a dialog does not bring the bars back and take
+		// them away again.
+		expect(screen.getByTestId('browser-tab-view')).toHaveAttribute('data-current', 'true');
 	});
 
 	it('renders TerminalView for mounted terminal sessions', () => {

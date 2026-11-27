@@ -11,6 +11,11 @@
  * Only block-level tags are tagged - inline marks (em, strong, code, a) sit
  * inside a block and would just add noise to the attribute query.
  *
+ * With `{ endLine: true }` a block also carries `data-source-line-end`, the
+ * last source line it came from, so a surface that maps a click back to the
+ * source (File Preview review comments) can name a paragraph's whole span.
+ * Off by default: the chat transcript has no use for it.
+ *
  * The one exception is a GFM task-list checkbox: remark synthesizes that
  * `<input>` during mdast -> hast, so it carries no position of its own. It
  * inherits its list item's line, which is what lets the preview map a click on
@@ -60,7 +65,12 @@ function taskCheckbox(node: Element): Element | undefined {
 	return undefined;
 }
 
-export function rehypeSourceLine() {
+export interface RehypeSourceLineOptions {
+	/** Also stamp `data-source-line-end` on each block. */
+	endLine?: boolean;
+}
+
+export function rehypeSourceLine(options: RehypeSourceLineOptions = {}) {
 	return (tree: Root) => {
 		visit(tree, 'element', (node: Element) => {
 			if (!BLOCK_TAGS.has(node.tagName)) return;
@@ -70,6 +80,10 @@ export function rehypeSourceLine() {
 			// hast camelCase → emitted as `data-source-line` by react-markdown.
 			if (node.properties.dataSourceLine === undefined) {
 				node.properties.dataSourceLine = line;
+			}
+			const endLine = node.position?.end?.line;
+			if (options.endLine && typeof endLine === 'number' && endLine > line) {
+				node.properties.dataSourceLineEnd ??= endLine;
 			}
 			if (node.tagName === 'li') {
 				const box = taskCheckbox(node);

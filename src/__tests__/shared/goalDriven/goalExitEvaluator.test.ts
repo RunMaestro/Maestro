@@ -5,7 +5,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { evaluateGoalExit } from '../../../shared/goalDriven/goalExitEvaluator';
+import {
+	GOAL_STALL_FLAT_LIMIT,
+	evaluateGoalExit,
+	resolveGoalIterationProgress,
+	summarizeGoalLoops,
+} from '../../../shared/goalDriven/goalExitEvaluator';
 import { STALL_THRESHOLD } from '../../../shared/goalDriven/types';
 import type { GoalIterationRecord, GoalRunConfig } from '../../../shared/goalDriven/types';
 
@@ -233,5 +238,85 @@ describe('evaluateGoalExit', () => {
 				expect(decision.reason).toBe('completed');
 			}
 		});
+	});
+});
+
+describe('resolveGoalIterationProgress', () => {
+	it('keeps the reported value at full precision and rounds only the display', () => {
+		expect(resolveGoalIterationProgress({ exactProgress: 48.35 }, [], 0)).toEqual({
+			reported: 48.35,
+			display: 48,
+		});
+	});
+
+	it('carries the previous raw value forward when no marker was reported', () => {
+		expect(resolveGoalIterationProgress({ exactProgress: null }, [rec(1, 48.27)], 48)).toEqual({
+			reported: 48.27,
+			display: 48,
+		});
+		expect(resolveGoalIterationProgress({ exactProgress: null }, [], 0)).toEqual({
+			reported: 0,
+			display: 0,
+		});
+	});
+
+	it('never lets the display slide backward on a dip', () => {
+		expect(resolveGoalIterationProgress({ exactProgress: 35 }, [rec(1, 55)], 55)).toEqual({
+			reported: 35,
+			display: 55,
+		});
+	});
+});
+
+describe('evaluateGoalExit with fractional progress', () => {
+	it('does not stall when every iteration rounds to the same whole percent but climbs', () => {
+		const history = [rec(1, 48.27), rec(2, 48.29), rec(3, 48.31)];
+		expect(evaluateGoalExit(history, config()).action).toBe('continue');
+	});
+});
+
+describe('summarizeGoalLoops', () => {
+	it('reports no delta and no streak before any loop finishes', () => {
+		expect(summarizeGoalLoops([], 10, 0)).toEqual({
+			maxIterations: 10,
+			lastDelta: null,
+			flatStreak: 0,
+			flatLimit: GOAL_STALL_FLAT_LIMIT,
+			completedActiveMs: 0,
+		});
+	});
+
+	it('measures the first loop against a 0% start', () => {
+		const stats = summarizeGoalLoops([rec(1, 12)], null, 60_000);
+		expect(stats.lastDelta).toBe(12);
+		expect(stats.flatStreak).toBe(0);
+		expect(stats.maxIterations).toBeNull();
+		expect(stats.completedActiveMs).toBe(60_000);
+	});
+
+	it('reports the raw gain of the last loop, including a dip', () => {
+		expect(summarizeGoalLoops([rec(1, 30), rec(2, 36)], null, 0).lastDelta).toBe(6);
+		expect(summarizeGoalLoops([rec(1, 30), rec(2, 27)], null, 0).lastDelta).toBe(-3);
+	});
+
+	it('counts trailing loops that did not raise progress and resets on a rise', () => {
+		expect(summarizeGoalLoops([rec(1, 10), rec(2, 20), rec(3, 20)], null, 0).flatStreak).toBe(1);
+		expect(summarizeGoalLoops([rec(1, 20), rec(2, 20), rec(3, 25)], null, 0).flatStreak).toBe(0);
+	});
+
+	it('carries a silent loop forward as flat, the way the evaluator does', () => {
+		const stats = summarizeGoalLoops([rec(1, 40), rec(2, null)], null, 0);
+		expect(stats.lastDelta).toBe(0);
+		expect(stats.flatStreak).toBe(1);
+	});
+
+	it('reaches the flat limit exactly when the evaluator stops the run as stalled', () => {
+		const history = [rec(1, 50)];
+		for (let i = 2; i <= STALL_THRESHOLD + 1; i++) {
+			const stats = summarizeGoalLoops(history, null, 0);
+			const stalled = evaluateGoalExit(history, config()).action === 'stop';
+			expect(stats.flatStreak >= stats.flatLimit).toBe(stalled);
+			history.push(rec(i, 50));
+		}
 	});
 });

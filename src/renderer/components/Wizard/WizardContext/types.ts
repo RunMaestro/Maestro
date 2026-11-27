@@ -150,6 +150,12 @@ export interface WizardContextAPI {
 	nextStep: () => void;
 	previousStep: () => void;
 	canProceedToNext: () => boolean;
+	/**
+	 * The existing agent's name when `state.agentName` is already taken (case
+	 * and surrounding spaces ignored), else null. Blocks the agent-selection
+	 * step, since launch would refuse the name anyway.
+	 */
+	duplicateAgentName: string | null;
 	getCurrentStepNumber: () => number;
 	setSelectedAgent: (agent: ToolType | null) => void;
 	setAvailableAgents: (agents: AgentConfig[]) => void;

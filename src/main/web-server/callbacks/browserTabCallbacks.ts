@@ -4,13 +4,167 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import type { TerminalTabInfo, ReadTerminalTabResult, NewAITabWithPromptResult } from '../types';
+import type {
+	TerminalTabInfo,
+	ReadTerminalTabResult,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
+	BrowserViewportRequest,
+	BrowserViewportResult,
+} from '../types';
+import { coworkingRegistry, type CoworkingRegistry } from '../../coworking/coworking-registry';
+import { runHostBrowserOp } from '../../coworking/coworking-tools';
+import { requestNewAITabWithPrompt } from '../../utils/new-ai-tab-request';
+import { requestFromRenderer } from './remoteRequest';
+import {
+	readBrowserPickTarget,
+	type BrowserOp,
+	type BrowserOpResult,
+} from '../../../shared/coworkingBrowser';
+import { parseBrowserViewportPreset } from '../../../shared/browserViewport';
+import {
+	normalizeDesignPickCommandResult,
+	type DesignPickCommandRequest,
+	type DesignPickCommandResult,
+} from '../../../shared/designPickCommands';
+
+/** A Coworking public id (`browser:3`), as opposed to a renderer tab id. */
+const COWORKING_BROWSER_ID = /^browser:\d+$/;
+
+/**
+ * The renderer tab id a host verb's `tab` argument names: either the tab id
+ * `open-browser` returned, which the renderer checks against `sessionId`, or a
+ * Coworking id, which only resolves while Coworking is on and the tab is visible
+ * to agents (the same rule the agent tools obey).
+ */
+function resolveBrowserTabRef(
+	registry: CoworkingRegistry,
+	sessionId: string,
+	tab: string
+): { ok: true; tabId: string } | { ok: false; error: string } {
+	const tabId = tab.trim();
+	if (!COWORKING_BROWSER_ID.test(tabId)) return { ok: true, tabId };
+	const uuid = registry.resolveBrowserTabUuidForSession(sessionId, tabId);
+	if (uuid) return { ok: true, tabId: uuid };
+	return {
+		ok: false,
+		error: `No browser tab ${tabId} in this agent. Coworking ids need Coworking on and the tab visible to agents; pass the tab id from open-browser instead.`,
+	};
+}
+
+/**
+ * Design Mode by selector or by region (`maestro-cli browser-pick`). Resolves
+ * the tab the caller named, then runs the host-only `pick` op through the
+ * Coworking browser resolver, so the CLI reaches the same renderer code (handle
+ * resolution, mounting a kept-alive tab, the composer delivery) as a click or a
+ * drag.
+ *
+ * `tab` is named as `resolveBrowserTabRef()` reads it.
+ */
+export async function pickBrowserElement(
+	request: PickBrowserElementRequest,
+	deps: {
+		registry?: CoworkingRegistry;
+		run?: (sessionId: string, tabUuid: string, op: BrowserOp) => Promise<BrowserOpResult>;
+	} = {}
+): Promise<PickBrowserElementResult> {
+	const registry = deps.registry ?? coworkingRegistry;
+	const run = deps.run ?? runHostBrowserOp;
+	const target = readBrowserPickTarget(request);
+	if (!target.ok) return { success: false, error: target.error, screenshot: false };
+
+	const resolved = resolveBrowserTabRef(registry, request.sessionId, request.tab);
+	if (!resolved.ok) return { success: false, error: resolved.error, screenshot: false };
+	const tabId = resolved.tabId;
+
+	const op: BrowserOp = {
+		kind: 'pick',
+		...target.target,
+		...(request.note ? { note: request.note } : {}),
+		background: request.background === true,
+		...(request.queue === true ? { queue: true } : {}),
+	};
+	// The resolver rejects with the renderer's message when the op fails (tab
+	// not live, no element matches the selector, no part of the region is on
+	// screen, no AI tab to take it).
+	let result: BrowserOpResult;
+	try {
+		result = await run(request.sessionId, tabId, op);
+	} catch (error) {
+		return {
+			success: false,
+			error: error instanceof Error ? error.message : String(error),
+			tabId,
+			screenshot: false,
+		};
+	}
+	const browserId = registry.getBrowserIdForTab(request.sessionId, tabId) ?? undefined;
+	return {
+		success: result.ok,
+		...(result.ok ? {} : { error: result.content || 'Browser pick failed' }),
+		tabId,
+		...(browserId ? { browserId } : {}),
+		...(result.ok && result.content ? { text: result.content } : {}),
+		screenshot: !!result.dataUrl,
+		...(result.aiTabId ? { aiTabId: result.aiTabId } : {}),
+		...(result.ok && result.pickId ? { pickId: result.pickId } : {}),
+		...(result.ok && result.queueItemId ? { queueItemId: result.queueItemId } : {}),
+	};
+}
+
+/**
+ * Set or read a browser tab's viewport preset (`maestro-cli browser-viewport`).
+ * Resolves the tab the caller named, then runs the host-only `viewport` op
+ * through the Coworking browser resolver, so the CLI reaches the same store
+ * write the toolbar's viewport control ends in. The renderer needs no live
+ * webview for it, so it works for a tab that is not on screen.
+ *
+ * The result always names the preset the tab shows after the call and the one it
+ * showed before, so a write is its own read, and the previous value is the undo.
+ */
+export async function browserViewport(
+	request: BrowserViewportRequest,
+	deps: {
+		registry?: CoworkingRegistry;
+		run?: (sessionId: string, tabUuid: string, op: BrowserOp) => Promise<BrowserOpResult>;
+	} = {}
+): Promise<BrowserViewportResult> {
+	const registry = deps.registry ?? coworkingRegistry;
+	const run = deps.run ?? runHostBrowserOp;
+
+	const resolved = resolveBrowserTabRef(registry, request.sessionId, request.tab);
+	if (!resolved.ok) return { success: false, error: resolved.error };
+	const tabId = resolved.tabId;
+
+	const op: BrowserOp = { kind: 'viewport', ...(request.preset ? { preset: request.preset } : {}) };
+	// The resolver rejects with the renderer's message when the op fails (the tab
+	// is not in this agent, or was closed or hidden from agents meanwhile).
+	let result: BrowserOpResult;
+	try {
+		result = await run(request.sessionId, tabId, op);
+	} catch (error) {
+		return { success: false, error: error instanceof Error ? error.message : String(error), tabId };
+	}
+	const preset = parseBrowserViewportPreset(result.viewportPreset);
+	const previous = parseBrowserViewportPreset(result.previousViewportPreset);
+	if (!result.ok || !preset || !previous) {
+		return {
+			success: false,
+			error: result.ok
+				? "Maestro did not report the tab's viewport"
+				: result.content || 'Browser viewport failed',
+			tabId,
+		};
+	}
+	const browserId = registry.getBrowserIdForTab(request.sessionId, tabId) ?? undefined;
+	return { success: true, tabId, ...(browserId ? { browserId } : {}), preset, previous };
+}
 
 export function registerBrowserTabCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow'>
+	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>
 ): void {
-	const { getMainWindow } = deps;
+	const { getMainWindow, getWindowForSession } = deps;
 
 	server.setOpenBrowserTabCallback(
 		async (sessionId: string, url: string, options?: { background?: boolean }) => {
@@ -99,6 +253,27 @@ export function registerBrowserTabCallbacks(
 				logger.warn(`closeBrowserTab callback timed out for tab ${tabId}`, 'WebServer');
 				resolve(false);
 			}, 5000);
+		});
+	});
+
+	server.setPickBrowserElementCallback((request) => pickBrowserElement(request));
+
+	server.setBrowserViewportCallback((request) => browserViewport(request));
+
+	// Design Mode chip verbs are a ROUND TRIP: the caller is told which chips
+	// wait in the composer, or which one it took off. The chips are renderer
+	// state, so the request goes to the window that owns the agent, the one
+	// whose composer draws them.
+	server.setDesignPickCommandCallback(async (request: DesignPickCommandRequest) => {
+		const targetWindow = getWindowForSession?.(request.sessionId) ?? getMainWindow();
+		if (!targetWindow || !isWebContentsAvailable(targetWindow)) {
+			logger.warn('No window is available for designPickCommand', 'WebServer');
+			return { success: false, error: 'Maestro window is not available' };
+		}
+		return requestFromRenderer<DesignPickCommandResult>(targetWindow, 'remote:designPickCommand', {
+			fallback: { success: false, error: 'Maestro did not answer the Design Mode chip request' },
+			parse: normalizeDesignPickCommandResult,
+			args: [request],
 		});
 	});
 
@@ -308,70 +483,10 @@ export function registerBrowserTabCallbacks(
 		});
 	});
 
+	// One implementation, shared with a fired Prompt Link: see
+	// utils/new-ai-tab-request.ts.
 	server.setNewAITabWithPromptCallback(
-		async (sessionId: string, prompt: string, background?: boolean) => {
-			const mainWindow = getMainWindow();
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
-				return { success: false, error: 'Maestro desktop window is not available' };
-			}
-
-			return new Promise<NewAITabWithPromptResult>((resolve) => {
-				const responseChannel = `remote:newAITabWithPrompt:response:${randomUUID()}`;
-				let resolved = false;
-
-				const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
-					if (resolved) return;
-					resolved = true;
-					clearTimeout(timeoutId);
-					// Renderer was updated to ack with
-					// `{ success, tabId?, queued?, error? }`. Older renderers that
-					// still send a bare boolean stay supported via the
-					// `result === true` fallback.
-					if (typeof result === 'object' && result !== null) {
-						const r = result as {
-							success?: unknown;
-							tabId?: unknown;
-							queued?: unknown;
-							error?: unknown;
-						};
-						resolve({
-							success: r.success === true,
-							tabId: typeof r.tabId === 'string' ? r.tabId : undefined,
-							...(r.queued === true ? { queued: true } : {}),
-							...(typeof r.error === 'string' && r.error ? { error: r.error } : {}),
-						});
-					} else {
-						resolve({ success: result === true });
-					}
-				};
-
-				ipcMain.once(responseChannel, handleResponse);
-				if (!isWebContentsAvailable(mainWindow)) {
-					logger.warn('webContents is not available for newAITabWithPrompt', 'WebServer');
-					ipcMain.removeListener(responseChannel, handleResponse);
-					resolve({ success: false, error: 'Maestro desktop window is not available' });
-					return;
-				}
-				mainWindow.webContents.send(
-					'remote:newAITabWithPrompt',
-					sessionId,
-					prompt,
-					responseChannel,
-					background
-				);
-
-				const timeoutId = setTimeout(() => {
-					if (resolved) return;
-					resolved = true;
-					ipcMain.removeListener(responseChannel, handleResponse);
-					logger.warn(
-						`newAITabWithPrompt callback timed out for session ${sessionId}`,
-						'WebServer'
-					);
-					resolve({ success: false, error: 'Maestro desktop did not answer in time' });
-				}, 5000);
-			});
-		}
+		async (sessionId: string, prompt: string, background?: boolean) =>
+			requestNewAITabWithPrompt(getMainWindow, sessionId, prompt, background)
 	);
 }

@@ -45,7 +45,13 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		process.exit(1);
 	}
 
-	const cwd = resolveAgentCwdArg(options.cwd);
+	// Over SSH the working directory is a path on the REMOTE, and the New Agent
+	// dialog stores it as both the agent's cwd and its workingDirOverride: AI
+	// turns spawn in cwd, terminals and git read the override. Storing --cwd and
+	// --ssh-cwd separately left every AI turn cd-ing into a local path on the
+	// remote. --ssh-cwd names the remote directory; without it, --cwd does.
+	const remoteCwd = options.sshRemote ? options.sshCwd?.trim() || undefined : undefined;
+	const cwd = remoteCwd ?? resolveAgentCwdArg(options.cwd);
 
 	// Parse --env KEY=VALUE pairs into a Record
 	let customEnvVars: Record<string, string> | undefined;
@@ -113,7 +119,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		sessionSshRemoteConfig = {
 			enabled: true,
 			remoteId: options.sshRemote,
-			workingDirOverride: options.sshCwd,
+			workingDirOverride: cwd,
 			syncHistory,
 		};
 	} else if (syncHistory !== undefined) {

@@ -13,6 +13,7 @@
 
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
+import type { CallTimingSignal } from '../../shared/tokenSpeed';
 import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
 import {
 	claudeTurnCost,
@@ -738,6 +739,40 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	/**
 	 * Extract usage statistics from an event
 	 */
+	/**
+	 * Per-call timing for token speed off the live stream (used when the agent
+	 * runs on an SSH host, whose transcript Maestro cannot read; qwen3-coder
+	 * inherits this). A call starts at session init or at the latest tool result
+	 * handed back (`user`), and ends at the `assistant` message carrying that
+	 * call's usage. stream-json repeats an assistant message per content block,
+	 * so the message id keys the end. Subagent messages are skipped: a Task
+	 * subagent's calls run alongside the main transcript's and would interleave
+	 * the clock.
+	 */
+	extractCallTiming(raw: unknown): CallTimingSignal | null {
+		if (!raw || typeof raw !== 'object') return null;
+		const msg = raw as ClaudeRawMessage;
+		if (normalizeParentToolUseId(msg)) return null;
+		if (msg.type === 'user') return { kind: 'start' };
+		if (msg.type === 'system' && (msg.subtype === 'init' || msg.subtype === 'session_start')) {
+			return { kind: 'start' };
+		}
+		if (msg.type !== 'assistant') return null;
+		const usage = msg.message?.usage;
+		const model = msg.message?.model;
+		if (!usage || model === '<synthetic>') return null;
+		return {
+			kind: 'end',
+			key: msg.message?.id || undefined,
+			model: model || undefined,
+			inputTokens:
+				(usage.input_tokens || 0) +
+				(usage.cache_creation_input_tokens || 0) +
+				(usage.cache_read_input_tokens || 0),
+			outputTokens: usage.output_tokens || 0,
+		};
+	}
+
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {
 		return event.usage || null;
 	}

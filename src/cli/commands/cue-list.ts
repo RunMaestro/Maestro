@@ -2,6 +2,11 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { formatCueTurnSettings, type CueTurnSettings } from '../../shared/cue/turn-settings';
+import {
+	describeFailureStreak,
+	type CueFailureStreak,
+	type CueSubscriptionHealth,
+} from '../../shared/cue/failure-streak';
 
 interface CueListOptions {
 	json?: boolean;
@@ -21,6 +26,17 @@ interface CueSubscription {
 	tier?: CueTurnSettings['tier'];
 	model?: string;
 	effort?: CueTurnSettings['effort'];
+	/** Absent from hosts that predate failure tracking; read as `ok`. */
+	health?: CueSubscriptionHealth;
+	failureStreak?: Pick<
+		CueFailureStreak,
+		| 'consecutiveFailures'
+		| 'firstFailedAt'
+		| 'lastFailedAt'
+		| 'lastStatus'
+		| 'lastError'
+		| 'alertThreshold'
+	>;
 }
 
 export async function cueList(options: CueListOptions): Promise<void> {
@@ -48,12 +64,19 @@ export async function cueList(options: CueListOptions): Promise<void> {
 			lines.push(`Cue Subscriptions (${subs.length}):\n`);
 
 			for (const sub of subs) {
+				const failing = sub.health === 'failing';
+				// Enabled state stays visible; `[FAILING]` reports health separately.
 				const status = sub.enabled ? '✓' : '✗';
 				const triggered = sub.lastTriggered
 					? `last: ${formatTimeAgo(sub.lastTriggered)}`
 					: 'never triggered';
-				lines.push(`  ${status}  ${sub.name}`);
+				lines.push(`  ${status}  ${sub.name}${failing ? '  [FAILING]' : ''}`);
 				lines.push(`     event: ${sub.eventType}  |  agent: ${sub.sessionName}  |  ${triggered}`);
+				if (sub.failureStreak) {
+					lines.push(
+						`     ${failing ? 'failing' : 'failures'}: ${describeFailureStreak(sub.failureStreak)}`
+					);
+				}
 				if (sub.pattern) {
 					lines.push(`     pattern: ${sub.pattern}`);
 				}

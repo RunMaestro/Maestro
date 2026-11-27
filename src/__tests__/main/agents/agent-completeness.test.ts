@@ -157,6 +157,29 @@ describe('Agent Completeness', () => {
 					}
 				});
 
+				// Token speed is a declared capability, not an accident of which
+				// parsers happen to be wired: a new harness must say where its
+				// per-call speed comes from, and the declaration must be backed by code.
+				it('backs its tokenSpeedMeasurement with the code that reads it', () => {
+					const caps = getAgentCapabilities(def.id);
+					expect(
+						['transcript', 'stream', 'none'],
+						`Agent "${def.id}" declares no tokenSpeedMeasurement in capabilities.ts`
+					).toContain(caps.tokenSpeedMeasurement);
+					if (caps.tokenSpeedMeasurement === 'stream') {
+						expect(
+							typeof getOutputParser(def.id)?.extractCallTiming,
+							`Agent "${def.id}" says tokenSpeedMeasurement='stream' but its output parser has no extractCallTiming(), so no call is ever timed`
+						).toBe('function');
+					}
+					if (caps.tokenSpeedMeasurement === 'transcript') {
+						expect(
+							getSessionStorage(def.id),
+							`Agent "${def.id}" says tokenSpeedMeasurement='transcript' but has no session storage to read it from`
+						).not.toBeNull();
+					}
+				});
+
 				it('has error patterns if has output parser', () => {
 					const parser = getOutputParser(def.id);
 					if (parser) {

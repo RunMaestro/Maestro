@@ -109,6 +109,24 @@ export function setBrowserResolver(resolver: BrowserResolver | null): void {
 	browserResolver = resolver;
 }
 
+/**
+ * Run a browser op on behalf of the HOST (the desktop app or `maestro-cli`), not
+ * an MCP agent. Same resolver, so the CLI reaches the same renderer code and the
+ * same tab resolution the agent tools use. The caller resolves `tabUuid` itself
+ * and is responsible for any permission check its surface needs; today the only
+ * caller is `browser-pick` (the host-only `pick` op).
+ */
+export async function runHostBrowserOp(
+	sessionId: string,
+	tabUuid: string,
+	op: BrowserOp
+): Promise<BrowserOpResult> {
+	if (!browserResolver) {
+		throw new Error('coworking tools: browser resolver not configured');
+	}
+	return browserResolver(sessionId, tabUuid, op);
+}
+
 /** List browser tabs visible to the agent in its own session (metadata only, no
  *  live webview needed). */
 export function listBrowsers(

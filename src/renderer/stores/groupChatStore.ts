@@ -305,6 +305,12 @@ export interface GroupChatStoreActions {
 	markGroupChatUnread: (groupChatId: string) => void;
 	/** Clear a room's unread flag (opening it), or every room when called bare. */
 	clearGroupChatUnread: (groupChatId?: string) => void;
+	/**
+	 * Flip a room's unread flag by hand (Left Bar menu, Cmd+Shift+U, palette,
+	 * `maestro-cli group-chat unread|read`). Marking the room on screen keeps the
+	 * dot up until the room is opened again, the same as a tab marked unread.
+	 */
+	toggleGroupChatUnread: (groupChatId: string) => void;
 
 	// Execution
 	/** Replace one chat's mirrored queue from a main broadcast. */
@@ -469,6 +475,13 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			if (!s.unreadGroupChatIds.has(groupChatId)) return {};
 			const next = new Set(s.unreadGroupChatIds);
 			next.delete(groupChatId);
+			return { unreadGroupChatIds: next };
+		}),
+
+	toggleGroupChatUnread: (groupChatId) =>
+		set((s) => {
+			const next = new Set(s.unreadGroupChatIds);
+			if (!next.delete(groupChatId)) next.add(groupChatId);
 			return { unreadGroupChatIds: next };
 		}),
 

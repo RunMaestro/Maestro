@@ -178,7 +178,11 @@ type GroupChatData = {
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
-import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
+import type {
+	CueStatsAggregation,
+	CueStatsSourceTotals,
+	CueStatsTimeRange,
+} from '../shared/cue-stats-types';
 import type { QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { DebugPackageOptions } from '../shared/debugPackage';
@@ -225,6 +229,11 @@ import type {
 } from '../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../shared/windowCommands';
 import type { WebUserPublic } from '../shared/webLogin';
+import type {
+	PromptLinkCreateInput,
+	PromptLinkCreated,
+	PromptLinkPublic,
+} from '../shared/promptLinks';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -743,6 +752,10 @@ interface MaestroAPI {
 			callback: (chatId: string, archived: boolean, responseChannel: string) => void
 		) => () => void;
 		sendRemoteArchiveGroupChatResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteSetGroupChatUnread: (
+			callback: (chatId: string, unread: boolean, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSetGroupChatUnreadResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteSendGroupChatMessage: (
 			callback: (chatId: string, message: string, responseChannel: string) => void
 		) => () => void;
@@ -769,6 +782,9 @@ interface MaestroAPI {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
+					/** `ask --btw`: answer from a throwaway fork of `targetTabId`. */
+					sideQuestion?: boolean;
+					targetTabId?: string;
 				},
 				responseChannel: string
 			) => void
@@ -919,6 +935,21 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: SteeringCommandResult
 		) => void;
+		onRemoteDiffReviewCommand: (
+			callback: (
+				request: import('../shared/diffReviewCommands').DiffReviewCommandRequest,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteDiffReviewCommandResponse: (
+			responseChannel: string,
+			result: import('../shared/diffReviewCommands').DiffReviewCommandResult
+		) => void;
+		onRemoteDesignPickCommand: (
+			callback: (
+				request: import('../shared/designPickCommands').DesignPickCommandRequest
+			) => import('../shared/designPickCommands').DesignPickCommandResult
+		) => () => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
 		) => () => void;
@@ -1802,6 +1833,17 @@ interface MaestroAPI {
 		setDisplayName: (id: string, displayName: string) => Promise<WebUserPublic>;
 		setDisabled: (id: string, disabled: boolean) => Promise<WebUserPublic>;
 		deleteUser: (id: string) => Promise<void>;
+	};
+	/**
+	 * Prompt Links (`maestro://run/<token>`). Desktop-only: the web-desktop
+	 * bridge refuses every `promptLinks:*` channel. `create` returns the URL
+	 * once; only a hash of its token is stored.
+	 */
+	promptLinks: {
+		list: () => Promise<PromptLinkPublic[]>;
+		create: (input: PromptLinkCreateInput) => Promise<PromptLinkCreated>;
+		revoke: (id: string) => Promise<PromptLinkPublic>;
+		rendererReady: () => Promise<void>;
 	};
 	agents: {
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
@@ -2825,6 +2867,13 @@ interface MaestroAPI {
 			message?: string;
 		}>;
 		unwatchStatus: (projectPath: string, subscriberId: string) => Promise<Record<string, never>>;
+		// Auto Runs saved across an update restart. `take` reads and deletes.
+		saveRestartResume: (
+			entries: import('../shared/autorunRestartResume').AutoRunRestartEntry[]
+		) => Promise<number>;
+		takeRestartResume: () => Promise<
+			import('../shared/autorunRestartResume').AutoRunRestartEntry[]
+		>;
 		onStatusChanged: (
 			handler: (data: {
 				projectPath: string;
@@ -3016,7 +3065,15 @@ interface MaestroAPI {
 			error?: string;
 		}>;
 		checkin: () => Promise<void>;
-		download: (targetTag?: string) => Promise<{ success: boolean; error?: string }>;
+		download: (
+			targetTag?: string
+		) => Promise<{ success: boolean; version?: string; error?: string }>;
+		listRollbackTargets: (
+			includePrerelease?: boolean
+		) => Promise<import('../shared/updateRollback').RollbackTargetsResult>;
+		rollback: (
+			targetTag: string
+		) => Promise<{ success: boolean; version?: string; error?: string }>;
 		install: () => Promise<void>;
 		getStatus: () => Promise<{
 			status:
@@ -3778,7 +3835,12 @@ interface MaestroAPI {
 			projectPath?: string;
 		}) => Promise<string>;
 		// End an Auto Run session (update duration and completed count)
-		endAutoRun: (id: string, duration: number, tasksCompleted: number) => Promise<boolean>;
+		endAutoRun: (
+			id: string,
+			duration: number,
+			tasksCompleted: number,
+			tasksTotal?: number
+		) => Promise<boolean>;
 		// Record an Auto Run task completion
 		recordAutoTask: (task: {
 			autoRunSessionId: string;
@@ -3825,20 +3887,10 @@ interface MaestroAPI {
 				projectPath?: string;
 			}>
 		>;
-		// Get tasks for a specific Auto Run session
-		getAutoRunTasks: (autoRunSessionId: string) => Promise<
-			Array<{
-				id: string;
-				autoRunSessionId: string;
-				sessionId: string;
-				agentType: string;
-				taskIndex: number;
-				taskContent?: string;
-				startTime: number;
-				duration: number;
-				success: boolean;
-			}>
-		>;
+		// Auto Run agent turns per local hour of day (24 entries, zero-filled)
+		getAutoRunTurnsByHour: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<Array<{ hour: number; count: number; successCount: number }>>;
 		// Token & cost usage aggregate for the Tokens tab. Reads agent session
 		// transcripts; `force` bypasses the accessor's in-memory memo.
 		getTokenUsage: (
@@ -3870,24 +3922,16 @@ interface MaestroAPI {
 			filePath: string
 		) => Promise<import('../shared/stats-types').UsageExportResult>;
 		// Subscribe to stats updates (for real-time dashboard refresh)
-		onStatsUpdate: (callback: () => void) => () => void;
-		// Clear old stats data (older than specified number of days)
-		clearOldData: (olderThanDays: number) => Promise<{
-			success: boolean;
-			deletedQueryEvents: number;
-			deletedAutoRunSessions: number;
-			deletedAutoRunTasks: number;
-			deletedSessionLifecycle: number;
-			error?: string;
-		}>;
+		onStatsUpdate: (
+			callback: (table?: import('../shared/stats-types').StatsTable) => void
+		) => () => void;
 		// Get database size in bytes
 		getDatabaseSize: () => Promise<number>;
-		// Get earliest stat timestamp (null if no entries exist)
-		getEarliestTimestamp: () => Promise<number | null>;
 		// Record an image annotation save event
 		recordImageAnnotation: (createdAt: number) => Promise<string | null>;
 		// Record a keyboard shortcut firing (buckets into local-time day)
-		recordShortcutUsage: (firedAt: number) => Promise<string | null>;
+		// `shortcutId` also bumps that shortcut's own counter
+		recordShortcutUsage: (firedAt: number, shortcutId?: string) => Promise<string | null>;
 		// Get per-day shortcut usage counts within a time range
 		getShortcutUsageByDay: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
@@ -3896,7 +3940,11 @@ interface MaestroAPI {
 		getShortcutUsageTotal: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<number>;
-		// Record session creation (launched)
+		// Firings per shortcut id within a time range, most used first
+		getShortcutUsageByShortcut: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<Array<{ shortcutId: string; count: number }>>;
+		// Record a resolved Agent Resilience outage
 		recordResilience: (event: {
 			id: string;
 			sessionId: string;
@@ -3998,6 +4046,9 @@ interface MaestroAPI {
 			range: CueStatsTimeRange,
 			excludeTriggerTypes?: string[]
 		) => Promise<CueStatsAggregation>;
+		// Runs, completed-run time and tokens only (the Overview's source chart).
+		// Throws 'CueStatsDisabled' under the same gate as getAggregation.
+		getSourceTotals: (range: CueStatsTimeRange) => Promise<CueStatsSourceTotals>;
 		// Conductor time (ms) the retained Cue run history would have credited.
 		// Ungated, unlike getAggregation; resolves 0 when there is no history.
 		getHistoricalConductorCredit: () => Promise<number>;
@@ -4420,6 +4471,26 @@ interface MaestroAPI {
 		}) => Promise<{ success: boolean; command?: string; error?: string }>;
 	};
 
+	// Side question API (`/btw`: ask about a tab through a throwaway session fork)
+	sideQuestion: {
+		ask: (config: {
+			question: string;
+			agentType: string;
+			cwd: string;
+			agentSessionId?: string;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customEffort?: string;
+		}) => Promise<{ success: boolean; answer?: string; error?: string }>;
+	};
+
 	// Director's Notes API (unified history + synopsis generation)
 	directorNotes: {
 		getUnifiedHistory: (options: {
@@ -4428,6 +4499,7 @@ interface MaestroAPI {
 			limit?: number;
 			offset?: number;
 			graphBucketCount?: number;
+			search?: string;
 		}) => Promise<{
 			entries: Array<{
 				id: string;
@@ -4833,6 +4905,8 @@ interface MaestroAPI {
 			agentType?: string,
 			confirmPolicy?: 'off' | 'dangerous' | 'all'
 		) => Promise<void>;
+		/** Coworking `browser:N` id of a browser tab, or null (unknown or hidden from agents). */
+		getBrowserId: (sessionId: string, tabUuid: string) => Promise<string | null>;
 		onRequestBrowserOp: (
 			callback: (
 				tabUuid: string,

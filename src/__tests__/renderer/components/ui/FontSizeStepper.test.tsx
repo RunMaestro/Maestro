@@ -83,6 +83,14 @@ describe('FontSizeStepper', () => {
 		expect(container.querySelector('.w-16')).toBeInTheDocument();
 	});
 
+	it('pulls the first step off a below-minimum default into range', () => {
+		// A small heading default (5px) sits under the 8px floor; increase must
+		// still leave the default rather than do nothing.
+		const { onChange } = renderStepper({ value: 0, inheritedSize: 5 });
+		fireEvent.click(screen.getByTestId('size-increase'));
+		expect(onChange).toHaveBeenCalledWith(8);
+	});
+
 	it('clamps at the surface size bounds', () => {
 		const { onChange } = renderStepper({ value: 8, inheritedSize: 15 });
 		expect(screen.getByTestId('size-decrease')).toBeDisabled();

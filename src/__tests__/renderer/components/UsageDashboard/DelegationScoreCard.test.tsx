@@ -116,4 +116,21 @@ describe('DelegationScoreCard', () => {
 		// because the added time counts on both sides of the ratio.
 		expect(next).toHaveTextContent('20m');
 	});
+
+	it('labels the score as all time, unlike the range-scoped ratio card', () => {
+		render(
+			<DelegationScoreCard
+				totals={totals(1 * HOUR, 1 * HOUR)}
+				theme={mockTheme}
+				unlockedMilestone={0}
+				onUnlockMilestone={onUnlockMilestone}
+			/>
+		);
+		expect(screen.getByTestId('delegation-score-scope')).toHaveTextContent('all time');
+		expect(screen.getByRole('figure')).toHaveAttribute(
+			'aria-label',
+			'Delegation score, all time: 50 percent of tracked AI time ran without you'
+		);
+		expect(screen.getByText('of all tracked AI time ran without you')).toBeInTheDocument();
+	});
 });

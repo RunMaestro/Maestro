@@ -118,9 +118,11 @@ Before writing any `- [ ]`, ask: _can an AI agent with shell, file, and network 
 - Credentials or accounts a person must obtain - "sign up for an API key", "create a Stripe account"
 - Physical or out-of-band work - "plug in the device", "deploy from the admin console"
 
-**Use one of these two instead:**
+**Design the human out first, and push what remains late.** A pause stalls the whole playbook until the person comes back, and they are usually not watching. Before writing a gate, turn the dependency into agent work wherever you can: code against an environment variable and add it to `.env.example`, mock the external service in tests, use a test-mode key, replace "visually verify" with an automated test or a screenshot check, put a risky change behind a flag. Then order the phases so everything that does not need the person runs first. Human steps belong in the LAST phase, never the first: a gate at 20% wastes the hours the person is away, the same gate at 80% costs nothing. Collect the human steps into one gate where you can.
 
-1. **The run must pause for a person** - emit a HITL gate marker on its own line, above the tasks that depend on the human. The engine pauses there, shows the reason in the Auto Run panel, and waits for the user to resume. This is a deliberate, visible pause instead of a silent stall:
+**For the residue a person truly must do, use one of these two:**
+
+1. **The run must pause for a person** - emit a HITL gate marker on its own line, above the tasks that depend on the human, as late in the playbook as the dependency allows. The engine pauses there, shows the reason in the Auto Run panel, and waits for the user to resume. This is a deliberate, visible pause instead of a silent stall:
 
    ```markdown
    <!-- MAESTRO:HITL reason="Add STRIPE_SECRET_KEY to .env before the billing tasks run" artifact=".env" -->

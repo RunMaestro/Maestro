@@ -160,6 +160,15 @@ describe('EncoreTab section components', () => {
 
 		const select = screen.getByLabelText('Select default lookback window') as HTMLSelectElement;
 		expect(select.value).toBe('week');
+		// Same labels as the dashboard's own range dropdown.
+		expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
+			'Today',
+			'Last 7 Days',
+			'Last 30 Days',
+			'Last 90 Days',
+			'Last 365 Days',
+			'All Time',
+		]);
 		fireEvent.change(select, { target: { value: 'quarter' } });
 		expect(setDefaultStatsTimeRange).toHaveBeenCalledWith('quarter');
 

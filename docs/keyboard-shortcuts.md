@@ -67,6 +67,7 @@ Tips and gotchas:
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
+| Prompt Links                  | `Opt+Cmd+Shift+L`       | `Alt+Ctrl+Shift+L`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Cycle Focus Areas             | `Tab`                   | `Tab`                     |
@@ -148,6 +149,19 @@ comment. `Cmd+[` and `Cmd+]` keep switching agents, so indent with `Tab` and
 `Shift+Tab` instead. With **Vim keybindings** on, `Esc` returns to Vim's normal
 mode, and `Cmd+E` leaves the editor.
 
+## Git Diff Review
+
+These work while the Git Diff viewer is open over an agent that can take a
+review. See [Reviewing Diffs](./diff-review).
+
+| Action                        | macOS                     | Windows/Linux             |
+| ----------------------------- | ------------------------- | ------------------------- |
+| Move the line cursor          | `Down` / `Up`             | `Down` / `Up`             |
+| Extend the line selection     | `Shift+Down` / `Shift+Up` | `Shift+Down` / `Shift+Up` |
+| Comment on the selected lines | `C`                       | `C`                       |
+| Save the comment              | `Cmd+Enter`               | `Ctrl+Enter`              |
+| Send the review               | `Cmd+Shift+Enter`         | `Ctrl+Shift+Enter`        |
+
 ## Group Chat
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
@@ -187,6 +201,8 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Open Image Organizer        | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`        |
 | Open Prompt Composer        | `Cmd+Shift+P`         | `Ctrl+Shift+P`        |
 
+Inside a group chat, **Toggle Tab Unread** marks the room itself unread (or read) in the Left Bar. The dot stays until you open the room again.
+
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
 
 ### Walking Unread and Draft Tabs
@@ -201,33 +217,34 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 
 ## Tab Management Shortcuts
 
-| Action                    | macOS                   | Windows/Linux             |
-| ------------------------- | ----------------------- | ------------------------- |
-| New Tab                   | `Cmd+T`                 | `Ctrl+T`                  |
-| New Browser Tab           | `Cmd+B`                 | `Ctrl+B`                  |
-| New File Tab              | `Opt+N`                 | `Alt+N`                   |
-| New Terminal Tab          | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
-| Focus Browser Address Bar | `Cmd+L`                 | `Ctrl+L`                  |
-| Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
-| Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
-| Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
-| Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
-| Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
-| Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
-| Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
-| Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
-| Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
-| Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
-| Close Tabs to Left        | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
-| Close Tabs to Right       | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
-| Reopen Closed Tab         | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
-| Previous Tab              | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
-| Next Tab                  | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
-| Tab Switcher              | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
-| Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
-| Rename Tab Group          | unassigned by default   | unassigned by default     |
-| Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
-| Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
+| Action                     | macOS                   | Windows/Linux             |
+| -------------------------- | ----------------------- | ------------------------- |
+| New Tab                    | `Cmd+T`                 | `Ctrl+T`                  |
+| New Browser Tab            | `Cmd+B`                 | `Ctrl+B`                  |
+| New File Tab               | `Opt+N`                 | `Alt+N`                   |
+| New Terminal Tab           | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
+| Focus Browser Address Bar  | `Cmd+L`                 | `Ctrl+L`                  |
+| Find in Browser Tab        | `Cmd+F`                 | `Ctrl+F`                  |
+| Toggle Browser Design Mode | `Cmd+Shift+C`           | `Ctrl+Shift+C`            |
+| Focus Active Tab           | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
+| Snooze Tab                 | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
+| Change Model and Effort    | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
+| Show Snoozed Tabs          | unassigned by default   | unassigned by default     |
+| Move Tab to First          | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
+| Move Tab to Last           | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
+| Close Tab                  | `Cmd+W`                 | `Ctrl+W`                  |
+| Close All Tabs             | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
+| Close Other Tabs           | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
+| Close Tabs to Left         | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
+| Close Tabs to Right        | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
+| Reopen Closed Tab          | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
+| Previous Tab               | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
+| Next Tab                   | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
+| Tab Switcher               | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
+| Rename Tab                 | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
+| Rename Tab Group           | unassigned by default   | unassigned by default     |
+| Go to Tab 1-9              | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
+| Go to Last Tab             | `Cmd+0`                 | `Ctrl+0`                  |
 
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
@@ -236,6 +253,35 @@ Bar opens if it was closed.
 Inside the **Change Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the model list, so a model you just installed shows up without leaving the console. See [Changing a Tab's Model and Effort](./general-usage#changing-a-tabs-model-and-effort).
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
+
+### Browser Design Mode
+
+These work while [Browser Design Mode](./browser-design-mode) is on in a browser tab. `Cmd+Shift+C` / `Ctrl+Shift+C` (in the table above) turns the mode itself on and off, and it stays on for that tab until you turn it off.
+
+| Action                                                   | macOS          | Windows/Linux  |
+| -------------------------------------------------------- | -------------- | -------------- |
+| Use the page; release to pick again                      | `Space` (hold) | `Space` (hold) |
+| Select the parent of the outlined element                | `Up arrow`     | `Up arrow`     |
+| Go back toward the element under the pointer             | `Down arrow`   | `Down arrow`   |
+| Pick the outlined element                                | `Enter`        | `Enter`        |
+| Cancel a drag, close the pick card, or leave Design Mode | `Esc`          | `Esc`          |
+
+While you hold `Space`, the page gets the pointer, so you can follow a link or open a menu without leaving Design Mode. `Space` in the pick card's note or on a focused button is an ordinary key.
+
+To pick a region instead of one element, drag a box over the page. Release to open the region's card, or press `Esc` before you release to cancel the drag.
+
+#### Pick Card
+
+These work in the note field of the card that opens when you pick an element or a region.
+
+| Action                                    | macOS         | Windows/Linux |
+| ----------------------------------------- | ------------- | ------------- |
+| Add to the message and go to the chat     | `Enter`       | `Enter`       |
+| Add to the message and keep picking       | `Cmd+Enter`   | `Ctrl+Enter`  |
+| Queue as its own message and keep picking | `Opt+Enter`   | `Alt+Enter`   |
+| New line in the note                      | `Shift+Enter` | `Shift+Enter` |
+
+A queued pick goes to the agent's [execution queue](./general-usage#message-queue) as a separate message and leaves your message box alone. The **Queue** button on the card does the same.
 
 ### Tab Switcher
 
@@ -495,6 +541,15 @@ organizer is open. They stop firing while the lightbox or the annotator is open
 on top of it.
 
 ## Usage Dashboard
+
+These keys move between the dashboard's tabs while it is open. See
+[Keyboard Navigation](./usage-dashboard#keyboard-navigation) for the keys that
+move between sections inside a tab.
+
+| Action       | macOS         | Windows/Linux  |
+| ------------ | ------------- | -------------- |
+| Previous tab | `Cmd+Shift+[` | `Ctrl+Shift+[` |
+| Next tab     | `Cmd+Shift+]` | `Ctrl+Shift+]` |
 
 The Agents and Groups tabs draw one tile per agent or group. The tile size is
 yours to set, and it is remembered across restarts. See

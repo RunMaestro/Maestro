@@ -1,25 +1,26 @@
 /**
  * KeyboardStats
  *
- * Renders the "Shortcuts" tab of the Usage Dashboard. Combines two data
- * sources:
+ * Renders the "Shortcuts" tab of the Usage Dashboard. Two kinds of figure, and
+ * the tab labels which is which:
  *
- * 1. Keyboard mastery (which shortcuts the user has ever fired) - sourced from
- *    `settingsStore.keyboardMasteryStats`. This is the same data backing the
- *    "85 / 87 mastered" display in the keyboard shortcuts help modal.
- * 2. Daily firing counts - fetched from
- *    `window.maestro.stats.getShortcutUsageByDay`. Every shortcut firing
- *    increments the local-time day's bucket; the UI zero-fills missing days so
- *    the bar geometry matches calendar reality.
- *
- * The mastery section is free (no schema needed); the daily chart relies on
- * the v7 `shortcut_usage_daily` migration.
+ * 1. ALL TIME: keyboard mastery (which bound shortcuts the user has ever
+ *    fired), from `settingsStore.keyboardMasteryStats`, the same data behind
+ *    the "85 / 87 mastered" display in the keyboard shortcuts help modal. The
+ *    range picker does not move it.
+ * 2. SELECTED RANGE: firings per local day (`shortcut_usage_daily`), firings
+ *    per shortcut (`shortcut_usage_by_id`, recorded since stats schema v14),
+ *    and the total. The day axis covers the range's whole window, zero-filled.
  */
 
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import { Keyboard, Trophy, Sparkles } from 'lucide-react';
-import type { Theme } from '../../types';
-import type { ShortcutUsageDay, StatsTimeRange } from '../../../shared/stats-types';
+import type { Theme, Shortcut } from '../../types';
+import type {
+	ShortcutUsageByShortcut,
+	ShortcutUsageDay,
+	StatsTimeRange,
+} from '../../../shared/stats-types';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import {
@@ -28,18 +29,25 @@ import {
 	countUsedBoundShortcuts,
 	getLevelForPercentage,
 } from '../../constants/keyboardMastery';
-import { formatNumber } from '../../../shared/formatters';
+import { formatCalendarDay, formatNumber } from '../../../shared/formatters';
+import { fillDaySeries } from '../../../shared/daySeries';
+import { usageReadWindow } from '../../../shared/usageDashboardReads';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
-import { MetricCard } from './SummaryCards';
+import { ChartTooltip, StatCardGrid } from '../widgets';
+import type { StatCardDatum } from '../widgets';
 import { buildShortcutsSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
+import { DashboardPanelState } from './DashboardPanelState';
+import { useBarChartFocus } from './useBarChartFocus';
 import { useDashboardResource } from './useDashboardResource';
-import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface KeyboardStatsProps {
 	timeRange: StatsTimeRange;
 	theme: Theme;
 }
+
+/** Rows in the "Most used shortcuts" list. */
+export const MOST_USED_SHORTCUTS_LIMIT = 10;
 
 const RING_DIAMETER = 140;
 const RING_STROKE = 12;
@@ -56,6 +64,7 @@ function MasteryRing({ percentage, theme }: { percentage: number; theme: Theme }
 			viewBox={`0 0 ${RING_DIAMETER} ${RING_DIAMETER}`}
 			role="img"
 			aria-label={`${Math.round(percentage)} percent of keyboard shortcuts mastered`}
+			className="flex-shrink-0"
 		>
 			<circle
 				cx={RING_DIAMETER / 2}
@@ -83,11 +92,7 @@ function MasteryRing({ percentage, theme }: { percentage: number; theme: Theme }
 				y="46%"
 				textAnchor="middle"
 				dominantBaseline="middle"
-				style={{
-					fill: theme.colors.textMain,
-					fontSize: 28,
-					fontWeight: 700,
-				}}
+				style={{ fill: theme.colors.textMain, fontSize: 28, fontWeight: 700 }}
 			>
 				{Math.round(percentage)}%
 			</text>
@@ -110,190 +115,125 @@ function MasteryRing({ percentage, theme }: { percentage: number; theme: Theme }
 }
 
 /**
- * Build a complete date series for the requested range, zero-filling any gaps.
- * The lower bound is inferred from the data itself for `all`, otherwise computed
- * from the time range to keep bar widths consistent across modal opens.
+ * One row per local day of the range's window, zero-filled. The window comes
+ * from `usageReadWindow` (calendar-aligned, the same boundary the query used);
+ * All Time starts at the first day with data.
  */
-function buildContinuousSeries(
+export function buildContinuousSeries(
 	data: ShortcutUsageDay[],
-	range: StatsTimeRange
+	range: StatsTimeRange,
+	now: number = Date.now()
 ): ShortcutUsageDay[] {
-	const ymd = (d: Date) => {
-		const yyyy = d.getFullYear();
-		const mm = String(d.getMonth() + 1).padStart(2, '0');
-		const dd = String(d.getDate()).padStart(2, '0');
-		return `${yyyy}-${mm}-${dd}`;
-	};
-
-	const parseYmd = (s: string): Date | null => {
-		const parts = s.split('-').map(Number);
-		if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
-		return new Date(parts[0], parts[1] - 1, parts[2]);
-	};
-
-	const lookup = new Map<string, number>();
-	let earliest: Date | null = null;
-	for (const entry of data) {
-		lookup.set(entry.date, entry.count);
-		const d = parseYmd(entry.date);
-		if (d && (!earliest || d < earliest)) earliest = d;
-	}
-
-	const today = new Date();
-	today.setHours(0, 0, 0, 0);
-
-	let start: Date;
-	switch (range) {
-		case 'day':
-			start = new Date(today);
-			break;
-		case 'week':
-			start = new Date(today);
-			start.setDate(today.getDate() - 6);
-			break;
-		case 'month':
-			start = new Date(today);
-			start.setDate(today.getDate() - 29);
-			break;
-		case 'quarter':
-			start = new Date(today);
-			start.setDate(today.getDate() - 89);
-			break;
-		case 'year':
-			start = new Date(today);
-			start.setDate(today.getDate() - 364);
-			break;
-		case 'all':
-			start = earliest ?? new Date(today);
-			break;
-		default:
-			start = new Date(today);
-	}
-
-	const series: ShortcutUsageDay[] = [];
-	const cursor = new Date(start);
-	while (cursor <= today) {
-		const key = ymd(cursor);
-		series.push({ date: key, count: lookup.get(key) ?? 0 });
-		cursor.setDate(cursor.getDate() + 1);
-	}
-	return series;
+	const earliest = data.reduce<string | null>(
+		(min, entry) => (min === null || entry.date < min ? entry.date : min),
+		null
+	);
+	const window = usageReadWindow(range, earliest, now);
+	return fillDaySeries(data, window.startYmd, window.endYmd, (date) => ({ date, count: 0 }));
 }
 
-/**
- * Pretty short label for a YYYY-MM-DD bucket. Hides labels on dense series so
- * the axis isn't crowded - the renderer only emits a label every Nth tick.
- */
-function formatTickLabel(date: string, index: number, total: number): string {
-	if (total <= 7) return date.slice(5); // MM-DD on small ranges
-	const stride = Math.max(1, Math.ceil(total / 8));
-	if (index % stride !== 0 && index !== total - 1) return '';
-	return date.slice(5);
-}
-
-interface DailyBarChartProps {
-	series: ShortcutUsageDay[];
-	theme: Theme;
-}
-
-function DailyBarChart({ series, theme }: DailyBarChartProps) {
-	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+function DailyBarChart({ series, theme }: { series: ShortcutUsageDay[]; theme: Theme }) {
 	const maxCount = useMemo(() => Math.max(1, ...series.map((d) => d.count)), [series]);
-	const chartHeight = 160;
-	const total = series.length;
-
-	if (total === 0) {
-		return (
-			<div
-				className="flex items-center justify-center"
-				style={{ height: chartHeight, color: theme.colors.textDim }}
-			>
-				<span className="text-sm">No shortcut usage recorded yet</span>
-			</div>
-		);
-	}
+	const { activeIndex, anchor, containerProps, barProps } = useBarChartFocus(series.length);
+	const active = activeIndex !== null ? series[activeIndex] : null;
+	const describe = (entry: ShortcutUsageDay) =>
+		`${formatCalendarDay(entry.date)}: ${formatNumber(entry.count)} shortcut${entry.count === 1 ? '' : 's'}`;
 
 	return (
 		<div className="relative">
-			<div className="flex items-stretch gap-px" style={{ height: chartHeight }}>
+			<div
+				{...containerProps}
+				className="flex items-stretch gap-px outline-none rounded focus-visible:ring-2"
+				style={{ height: 160 }}
+				role="group"
+				aria-label={`Shortcut firings per day, ${series.length} days`}
+				data-testid="shortcut-daily-bars"
+			>
 				{series.map((entry, index) => {
-					const heightPct = maxCount > 0 ? (entry.count / maxCount) * 100 : 0;
-					const isHovered = hoveredIndex === index;
-					const minVisible = entry.count > 0 ? 2 : 0;
-
+					const heightPct = (entry.count / maxCount) * 100;
+					const isActive = activeIndex === index;
 					return (
 						<div
 							key={entry.date}
+							{...barProps(index)}
 							className="relative flex-1 flex flex-col justify-end cursor-default"
 							style={{ minWidth: 0, height: '100%' }}
-							onMouseEnter={() => setHoveredIndex(index)}
-							onMouseLeave={() => setHoveredIndex(null)}
+							data-testid={`shortcut-day-${entry.date}`}
 						>
 							<div
 								className="w-full rounded-t transition-all duration-200"
 								style={{
-									height: `${Math.max(heightPct, minVisible)}%`,
-									backgroundColor: isHovered ? theme.colors.accent : `${theme.colors.accent}60`,
-									transform: isHovered ? 'scaleY(1.05)' : 'scaleY(1)',
-									transformOrigin: 'bottom',
+									height: `${entry.count > 0 ? Math.max(heightPct, 2) : 0}%`,
+									backgroundColor: isActive ? theme.colors.accent : `${theme.colors.accent}60`,
 								}}
 							/>
-							{isHovered && (
-								<div
-									className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 rounded text-xs whitespace-nowrap z-10"
-									style={{
-										...elevatedSurfaceStyle(theme),
-										color: theme.colors.textMain,
-									}}
-								>
-									<div style={{ fontWeight: 600 }}>{entry.date}</div>
-									<div style={{ color: theme.colors.textDim }}>
-										{formatNumber(entry.count)} shortcut
-										{entry.count === 1 ? '' : 's'}
-									</div>
-								</div>
-							)}
 						</div>
 					);
 				})}
 			</div>
-			{/* X-axis labels */}
 			<div
-				className="flex gap-px mt-2 text-2xs"
+				className="flex justify-between mt-2 text-2xs"
 				style={{ color: theme.colors.textDim }}
 				aria-hidden="true"
 			>
-				{series.map((entry, index) => (
-					<div key={entry.date} className="flex-1 text-center truncate" style={{ minWidth: 0 }}>
-						{formatTickLabel(entry.date, index, total)}
-					</div>
-				))}
+				<span>{series[0] ? formatCalendarDay(series[0].date) : ''}</span>
+				<span>{series.length > 1 ? formatCalendarDay(series[series.length - 1].date) : ''}</span>
 			</div>
+			<span className="sr-only" aria-live="polite">
+				{active ? describe(active) : ''}
+			</span>
+			{active && (
+				<ChartTooltip anchor={anchor} theme={theme} testId="shortcut-day-tooltip">
+					<div className="font-medium">{formatCalendarDay(active.date)}</div>
+					<div style={{ color: theme.colors.textDim }}>
+						{formatNumber(active.count)} shortcut{active.count === 1 ? '' : 's'}
+					</div>
+				</ChartTooltip>
+			)}
 		</div>
 	);
 }
 
-const NO_DAYS: ShortcutUsageDay[] = [];
+function ShortcutKeys({ keys, theme }: { keys: string[]; theme: Theme }) {
+	if (keys.length === 0) return null;
+	return (
+		<kbd
+			className="px-1.5 py-0.5 rounded border font-mono text-2xs font-bold flex-shrink-0 ml-auto"
+			style={{
+				backgroundColor: theme.colors.bgActivity,
+				borderColor: theme.colors.border,
+				color: theme.colors.textMain,
+			}}
+		>
+			{formatShortcutKeys(keys)}
+		</kbd>
+	);
+}
+
+interface ShortcutUsagePayload {
+	byDay: ShortcutUsageDay[];
+	total: number;
+	byShortcut: ShortcutUsageByShortcut[];
+}
 
 export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: KeyboardStatsProps) {
 	const masteryStats = useSettingsStore((s) => s.keyboardMasteryStats);
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 
-	// Cached across opens and refreshed on stats:updated, so the chart reflects
-	// firings while the modal is open without blanking between refreshes.
-	const { data, loading } = useDashboardResource(
+	const { data, loading, error, refresh } = useDashboardResource<ShortcutUsagePayload>(
 		`shortcut-usage:${timeRange}`,
 		async () => {
-			const [byDay, total] = await Promise.all([
+			const [byDay, total, byShortcut] = await Promise.all([
 				window.maestro.stats.getShortcutUsageByDay(timeRange),
 				window.maestro.stats.getShortcutUsageTotal(timeRange),
+				window.maestro.stats.getShortcutUsageByShortcut(timeRange),
 			]);
-			return { byDay, total };
+			return { byDay, total, byShortcut };
 		},
-		'fetchShortcutUsage'
+		'fetchShortcutUsage',
+		{ tables: ['shortcut_usage'] }
 	);
-	const series: ShortcutUsageDay[] | null = data?.byDay ?? (loading ? null : NO_DAYS);
 	const total = data?.total ?? 0;
 
 	// Unbound shortcuts are excluded outright: the user cannot fire a chord that
@@ -303,6 +243,14 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 		() => collectBoundShortcuts(shortcuts, tabShortcuts, FIXED_SHORTCUTS),
 		[shortcuts, tabShortcuts]
 	);
+	// Every known shortcut by id, bound or not, to name the "most used" rows.
+	const shortcutsById = useMemo(() => {
+		const byId = new Map<string, Shortcut>();
+		for (const map of [shortcuts, tabShortcuts, FIXED_SHORTCUTS]) {
+			for (const [id, shortcut] of Object.entries(map ?? {})) byId.set(id, shortcut);
+		}
+		return byId;
+	}, [shortcuts, tabShortcuts]);
 
 	const totalShortcuts = boundShortcuts.length;
 	const usedSet = useMemo(() => new Set(masteryStats.usedShortcuts), [masteryStats.usedShortcuts]);
@@ -336,14 +284,15 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 				})
 	);
 
-	const unusedShortcuts = useMemo(() => {
-		return boundShortcuts.filter((s) => !usedSet.has(s.id));
-	}, [boundShortcuts, usedSet]);
+	const unusedShortcuts = useMemo(
+		() => boundShortcuts.filter((s) => !usedSet.has(s.id)),
+		[boundShortcuts, usedSet]
+	);
 
-	const continuousSeries = useMemo(() => {
-		if (!series) return [];
-		return buildContinuousSeries(series, timeRange);
-	}, [series, timeRange]);
+	const continuousSeries = useMemo(
+		() => buildContinuousSeries(data?.byDay ?? [], timeRange),
+		[data?.byDay, timeRange]
+	);
 
 	const peakDay = useMemo(() => {
 		let peak: ShortcutUsageDay | null = null;
@@ -353,16 +302,41 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 		return peak && peak.count > 0 ? peak : null;
 	}, [continuousSeries]);
 
+	const mostUsed = useMemo(
+		() => (data?.byShortcut ?? []).slice(0, MOST_USED_SHORTCUTS_LIMIT),
+		[data?.byShortcut]
+	);
+	const mostUsedMax = mostUsed[0]?.count ?? 1;
+
+	const rangeCards: StatCardDatum[] = [
+		{
+			label: 'Shortcut Firings',
+			icon: Keyboard,
+			value: total,
+			caption: 'in the selected range',
+		},
+		{
+			label: 'Peak Day',
+			icon: Sparkles,
+			value: peakDay?.count ?? 0,
+			displayValue: peakDay ? formatNumber(peakDay.count) : '-',
+			caption: peakDay ? formatCalendarDay(peakDay.date) : 'No firings in this range',
+		},
+	];
+
+	const panelStyle = {
+		backgroundColor: theme.colors.bgMain,
+		border: `1px solid ${theme.colors.border}`,
+	};
+
 	return (
-		<div className="space-y-6">
-			{/* Mastery + summary cards */}
+		<div className="space-y-6" data-testid="keyboard-stats">
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+				{/* Mastery is lifetime: say so, since every other figure follows the range. */}
 				<div
-					className="p-4 rounded-lg flex items-center gap-4"
-					style={{
-						backgroundColor: theme.colors.bgMain,
-						border: `1px solid ${theme.colors.border}`,
-					}}
+					className="p-4 rounded-lg flex items-center gap-4 flex-wrap"
+					style={panelStyle}
+					data-testid="keyboard-mastery"
 				>
 					<MasteryRing percentage={percentage} theme={theme} />
 					<div className="min-w-0">
@@ -370,7 +344,7 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 							className="text-xs uppercase tracking-wide mb-1"
 							style={{ color: theme.colors.textDim }}
 						>
-							Keyboard Mastery
+							Keyboard Mastery (all time)
 						</div>
 						<div className="text-lg font-semibold mb-1" style={{ color: theme.colors.textMain }}>
 							{currentLevel.name}
@@ -399,66 +373,107 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 					</div>
 				</div>
 
-				<MetricCard
-					icon={<Keyboard className="w-4 h-4" />}
-					label="Shortcut firings"
-					value={loading ? '-' : formatNumber(total)}
-					theme={theme}
-					animationIndex={1}
-					extra={
-						<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-							in selected range
-						</div>
-					}
-				/>
-
-				<MetricCard
-					icon={<Sparkles className="w-4 h-4" />}
-					label="Peak day"
-					value={peakDay ? formatNumber(peakDay.count) : '-'}
-					theme={theme}
-					animationIndex={2}
-					extra={
-						<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-							{peakDay ? peakDay.date : 'No data yet'}
-						</div>
-					}
-				/>
+				<div className="md:col-span-2">
+					<DashboardPanelState
+						theme={theme}
+						loading={loading}
+						error={error}
+						onRetry={() => void refresh()}
+						testId="shortcut-range-cards"
+					>
+						<StatCardGrid theme={theme} cards={rangeCards} />
+					</DashboardPanelState>
+				</div>
 			</div>
 
-			{/* Daily bar chart */}
-			<div
-				className="p-4 rounded-lg"
-				style={{
-					backgroundColor: theme.colors.bgMain,
-					border: `1px solid ${theme.colors.border}`,
-				}}
-				role="figure"
-				aria-label="Daily keyboard shortcut firings"
-			>
+			<div className="p-4 rounded-lg" style={panelStyle} data-testid="shortcut-daily-chart">
 				<div className="flex items-center justify-between mb-3">
 					<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
 						Daily Firings
 					</h3>
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						{continuousSeries.length} day
-						{continuousSeries.length === 1 ? '' : 's'}
+						{continuousSeries.length} day{continuousSeries.length === 1 ? '' : 's'}
 					</span>
 				</div>
-				<DailyBarChart series={continuousSeries} theme={theme} />
+				<DashboardPanelState
+					theme={theme}
+					loading={loading}
+					error={error}
+					empty={total === 0}
+					emptyMessage="No shortcut firings in this range"
+					onRetry={() => void refresh()}
+					minHeight={160}
+					testId="shortcut-daily"
+				>
+					<DailyBarChart series={continuousSeries} theme={theme} />
+				</DashboardPanelState>
 			</div>
 
-			{/* Unused shortcuts */}
-			<div
-				className="p-4 rounded-lg"
-				style={{
-					backgroundColor: theme.colors.bgMain,
-					border: `1px solid ${theme.colors.border}`,
-				}}
-			>
+			<div className="p-4 rounded-lg" style={panelStyle} data-testid="shortcut-most-used">
 				<div className="flex items-center justify-between mb-3">
 					<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-						Unused Shortcuts
+						Most Used Shortcuts
+					</h3>
+					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						in the selected range
+					</span>
+				</div>
+				<DashboardPanelState
+					theme={theme}
+					loading={loading}
+					error={error}
+					empty={mostUsed.length === 0}
+					emptyMessage="No per-shortcut counts in this range yet. Each shortcut you fire from now on is counted here."
+					onRetry={() => void refresh()}
+					testId="shortcut-most-used"
+				>
+					<ol className="space-y-1.5 text-sm">
+						{mostUsed.map((row) => {
+							const shortcut = shortcutsById.get(row.shortcutId);
+							return (
+								<li
+									key={row.shortcutId}
+									className="flex items-center gap-2 min-w-0"
+									data-testid="shortcut-most-used-row"
+								>
+									<span
+										className="truncate"
+										style={{ color: theme.colors.textMain, minWidth: 0, flex: '0 1 40%' }}
+										title={shortcut?.label ?? row.shortcutId}
+									>
+										{shortcut?.label ?? row.shortcutId}
+									</span>
+									<div
+										className="flex-1 h-2 rounded"
+										style={{ backgroundColor: `${theme.colors.border}60` }}
+										aria-hidden="true"
+									>
+										<div
+											className="h-2 rounded"
+											style={{
+												width: `${(row.count / mostUsedMax) * 100}%`,
+												backgroundColor: theme.colors.accent,
+											}}
+										/>
+									</div>
+									<span
+										className="font-mono text-xs w-14 text-right"
+										style={{ color: theme.colors.textDim }}
+									>
+										{formatNumber(row.count)}
+									</span>
+									<ShortcutKeys keys={shortcut?.keys ?? []} theme={theme} />
+								</li>
+							);
+						})}
+					</ol>
+				</DashboardPanelState>
+			</div>
+
+			<div className="p-4 rounded-lg" style={panelStyle} data-testid="shortcut-unused">
+				<div className="flex items-center justify-between mb-3">
+					<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Unused Shortcuts (all time)
 					</h3>
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						{unusedShortcuts.length} remaining
@@ -483,16 +498,7 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 								<span className="truncate" title={s.label}>
 									{s.label}
 								</span>
-								<kbd
-									className="px-1.5 py-0.5 rounded border font-mono text-2xs font-bold flex-shrink-0 ml-auto"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-									}}
-								>
-									{formatShortcutKeys(s.keys)}
-								</kbd>
+								<ShortcutKeys keys={s.keys} theme={theme} />
 							</li>
 						))}
 					</ul>

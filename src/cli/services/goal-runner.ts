@@ -18,7 +18,10 @@ import type {
 } from '../../shared/goalDriven/types';
 import { GOAL_RUN_HARD_ITERATION_CAP } from '../../shared/goalDriven/types';
 import { parseGoalMarkers, stripMaestroMarkers } from '../../shared/goalDriven/goalMarkers';
-import { evaluateGoalExit } from '../../shared/goalDriven/goalExitEvaluator';
+import {
+	evaluateGoalExit,
+	resolveGoalIterationProgress,
+} from '../../shared/goalDriven/goalExitEvaluator';
 import { formatGoalRunDocumentPath } from '../../shared/goalDriven/goalRunLabel';
 import {
 	GOAL_SYNOPSIS_REQUEST_PROMPT,
@@ -107,6 +110,8 @@ async function requestHandoffBlurb(
 					customModel: runOverrides.model ?? session.customModel,
 					customEffort: runOverrides.effort ?? session.customEffort,
 					customArgs: session.customArgs,
+					// The agent's own binary, as a desktop tab spawn uses it.
+					sessionCustomPath: session.customPath,
 					customEnvVars: session.customEnvVars,
 					sshRemoteConfig: session.sessionSshRemoteConfig,
 					appendSystemPrompt,
@@ -247,6 +252,8 @@ export async function* runGoal(
 						customModel: runModel ?? session.customModel,
 						customEffort: runEffort ?? session.customEffort,
 						customArgs: session.customArgs,
+						// The agent's own binary, as a desktop tab spawn uses it.
+						sessionCustomPath: session.customPath,
 						customEnvVars: session.customEnvVars,
 						sshRemoteConfig: session.sessionSshRemoteConfig,
 						appendSystemPrompt,
@@ -261,14 +268,16 @@ export async function* runGoal(
 				totalCost += result.usageStats.totalCostUsd || 0;
 			}
 
-			// Parse the agent's self-report. A missing marker carries the previous
-			// raw value forward (0 on the first iteration).
+			// Parse the agent's self-report. Displayed progress is a whole-number,
+			// monotonic high-water mark; the exit evaluator below uses the RAW value
+			// at full precision so neither a single dip nor a sub-1% gain reads as a
+			// stall.
 			const markers = parseGoalMarkers(result.response ?? '');
-			const reportedProgress =
-				markers.progress ?? (history.length > 0 ? history[history.length - 1].progress : 0);
-			// Displayed progress is a monotonic high-water mark; the exit evaluator
-			// below uses the RAW reported value so a single dip can't freeze a stall.
-			const displayProgress = Math.max(finalProgress, reportedProgress);
+			const { reported: reportedProgress, display: displayProgress } = resolveGoalIterationProgress(
+				markers,
+				history,
+				finalProgress
+			);
 			finalProgress = displayProgress;
 
 			history.push({

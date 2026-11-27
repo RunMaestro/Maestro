@@ -31,7 +31,14 @@ vi.mock('../../main/utils/safe-send', () => ({
 	isWebContentsAvailable: vi.fn().mockReturnValue(true),
 }));
 
-import { parseDeepLink } from '../../main/deep-links';
+const { firePromptLink } = vi.hoisted(() => ({
+	firePromptLink: vi.fn().mockResolvedValue({ ok: true }),
+}));
+vi.mock('../../main/prompt-links', () => ({ firePromptLink }));
+
+import { app } from 'electron';
+import { logger } from '../../main/utils/logger';
+import { parseDeepLink, setupDeepLinkHandling } from '../../main/deep-links';
 
 describe('parseDeepLink', () => {
 	describe('focus action', () => {
@@ -137,5 +144,45 @@ describe('parseDeepLink', () => {
 			// parseDeepLink is tolerant of most inputs, but unrecognized resources return null
 			expect(parseDeepLink('maestro://settings')).toBeNull();
 		});
+	});
+});
+
+describe('run action (Prompt Links)', () => {
+	it('parses a run URL', () => {
+		expect(parseDeepLink('maestro://run/tok123')).toEqual({ action: 'run', token: 'tok123' });
+	});
+
+	it('hands the token to the Prompt Links service and never to the renderer', () => {
+		const send = vi.fn();
+		const win = {
+			isMinimized: vi.fn(() => false),
+			restore: vi.fn(),
+			show: vi.fn(),
+			focus: vi.fn(),
+			webContents: { send },
+		};
+		process.env.ENFORCE_SINGLE_INSTANCE_IN_DEV = '1';
+		vi.mocked(app.on).mockClear();
+		try {
+			setupDeepLinkHandling(() => win as never);
+		} finally {
+			delete process.env.ENFORCE_SINGLE_INSTANCE_IN_DEV;
+		}
+		const openUrl = vi.mocked(app.on).mock.calls.find(([event]) => event === 'open-url')?.[1] as
+			| ((event: { preventDefault: () => void }, url: string) => void)
+			| undefined;
+		expect(openUrl).toBeDefined();
+
+		openUrl?.({ preventDefault: vi.fn() }, 'maestro://run/secret-token-value');
+
+		expect(firePromptLink).toHaveBeenCalledWith('secret-token-value', expect.any(Function));
+		// The link's own `open` setting decides focus; the handler must not raise
+		// the window or forward the payload.
+		expect(win.show).not.toHaveBeenCalled();
+		expect(send).not.toHaveBeenCalled();
+		// The token never reaches the log in full.
+		const logged = JSON.stringify(vi.mocked(logger.info).mock.calls);
+		expect(logged).not.toContain('secret-token-value');
+		expect(logged).toContain('maestro://run/secr...');
 	});
 });

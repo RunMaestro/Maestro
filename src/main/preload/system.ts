@@ -7,6 +7,7 @@
 import { ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
 import type { ParsedDeepLink, ShellInfo, UpdateStatus } from '../../shared/types';
+import type { RollbackTargetsResult } from '../../shared/updateRollback';
 export type { ShellInfo, UpdateStatus } from '../../shared/types';
 
 /**
@@ -157,8 +158,18 @@ export function createUpdatesApi() {
 			error?: string;
 		}> => ipcRenderer.invoke('updates:check', includePrerelease),
 		checkin: (): Promise<void> => ipcRenderer.invoke('updates:checkin'),
-		download: (targetTag?: string): Promise<{ success: boolean; error?: string }> =>
+		download: (
+			targetTag?: string
+		): Promise<{ success: boolean; version?: string; error?: string }> =>
 			ipcRenderer.invoke('updates:download', targetTag),
+		/** Earlier releases installable on this platform, newest first. */
+		listRollbackTargets: (includePrerelease?: boolean): Promise<RollbackTargetsResult> =>
+			ipcRenderer.invoke('updates:listRollbackTargets', includePrerelease),
+		/** Download an earlier release; the next restart installs it. */
+		rollback: (
+			targetTag: string
+		): Promise<{ success: boolean; version?: string; error?: string }> =>
+			ipcRenderer.invoke('updates:rollback', targetTag),
 		install: (): Promise<void> => ipcRenderer.invoke('updates:install'),
 		getStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke('updates:getStatus'),
 		onStatus: (callback: (status: UpdateStatus) => void) => {

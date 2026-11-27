@@ -495,6 +495,8 @@ export function buildCueDbModuleMock(getDb: () => InMemoryCueDb) {
 			failure?: { errorMessage?: string | null; exitCode?: number | null }
 		) => getDb().updateCueEventStatus(id, status, providerSessionId, failure),
 		getRecentCueEvents: (since: number, limit?: number) => getDb().getRecentCueEvents(since, limit),
+		// Streak seeding reads real SQL the mirror does not model; start with none.
+		getCueFailureStreakRecords: () => [],
 		getHistoricalConductorCreditMs: () => getDb().getHistoricalConductorCreditMs(),
 		safeRecordCueEvent: (event: Parameters<InMemoryCueDb['recordCueEvent']>[0]) =>
 			getDb().safeRecordCueEvent(event),

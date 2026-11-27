@@ -217,14 +217,19 @@ export function dispatchCrossAgentMentions(
  * or deleted while the message sat in the queue then resolves correctly, or
  * drops out, instead of consulting a stale id. Returns what
  * `dispatchCrossAgentMentions` does.
+ *
+ * `planText` is what the mentions are resolved from when the message holds
+ * text the user did not type (Design Mode chip blocks); the consult still gets
+ * the whole `message`.
  */
 export function dispatchCrossAgentMentionsForMessage(
 	message: string,
 	sourceSession: Session,
 	sourceTabId: string,
-	images?: string[]
+	images?: string[],
+	planText: string = message
 ): CrossAgentMentionDispatch {
-	const plan = planCrossAgentMentions(message, sourceSession.id);
+	const plan = planCrossAgentMentions(planText, sourceSession.id);
 	if (!plan) return NO_MENTION_DISPATCH;
 	return dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId, images);
 }

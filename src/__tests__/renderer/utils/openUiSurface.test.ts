@@ -31,3 +31,14 @@ describe('openUiSurface - feedback', () => {
 		expect(selectModalOpen('feedback')(useModalStore.getState())).toBe(true);
 	});
 });
+
+describe('openUiSurface - updates', () => {
+	beforeEach(() => {
+		useModalStore.getState().closeModal('updateCheck');
+	});
+
+	it.each(['updates', 'rollback'])('opens Check for Updates or Rollback as %s', (name) => {
+		expect(openUiSurface(name)).toEqual({ ok: true });
+		expect(selectModalOpen('updateCheck')(useModalStore.getState())).toBe(true);
+	});
+});

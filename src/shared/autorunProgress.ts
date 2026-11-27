@@ -18,19 +18,30 @@ export interface AutoRunProgressInput {
 }
 
 /**
+ * The run's task counts: the cross-document totals when the run has them,
+ * otherwise the legacy single-document counters. Every surface that shows an
+ * "X / Y" count reads it from here, so the header pill, the Thinking pill and
+ * the Auto Run card cannot show different numbers for the same run.
+ */
+export function autoRunTaskCounts(state: Omit<AutoRunProgressInput, 'goalMode' | 'goalProgress'>): {
+	completed: number;
+	total: number;
+} {
+	if (state.totalTasksAcrossAllDocs > 0) {
+		return { completed: state.completedTasksAcrossAllDocs, total: state.totalTasksAcrossAllDocs };
+	}
+	return { completed: state.completedTasks, total: state.totalTasks };
+}
+
+/**
  * Percent complete, 0-100 (unrounded). Goal mode reports the agent's own
  * self-assessed percent; task runs report checked tasks over all tasks, which
  * grows when a reset-on-completion document puts its tasks back.
  */
 export function autoRunProgressPercent(state: AutoRunProgressInput): number {
 	if (state.goalMode) return clampPercent(state.goalProgress ?? 0);
-	if (state.totalTasksAcrossAllDocs > 0) {
-		return clampPercent((state.completedTasksAcrossAllDocs / state.totalTasksAcrossAllDocs) * 100);
-	}
-	if (state.totalTasks > 0) {
-		return clampPercent((state.completedTasks / state.totalTasks) * 100);
-	}
-	return 0;
+	const { completed, total } = autoRunTaskCounts(state);
+	return total > 0 ? clampPercent((completed / total) * 100) : 0;
 }
 
 function clampPercent(value: number): number {

@@ -419,22 +419,29 @@ export function useAppInitialization(): AppInitializationReturn {
 	}, []);
 
 	// --- Stats DB corruption check ---
+	// Main reports a damaged stats database it had to replace (restored from a
+	// backup, or started fresh) exactly once: the lifecycle owner shows it and
+	// clears it, so a secondary window or a reload does not repeat the notice.
 	useEffect(() => {
+		if (!isLifecycleOwner) return;
 		window.maestro?.stats
 			?.getInitializationResult()
 			.then((result) => {
-				if (result?.userMessage) {
-					notifyToast({
-						type: 'warning',
-						title: 'Statistics Database',
-						message: result.userMessage,
-						duration: 10000,
-					});
-					window.maestro?.stats?.clearInitializationResult();
-				}
+				if (!result?.userMessage) return;
+				notifyToast({
+					color: 'yellow',
+					title: 'Usage Statistics Reset',
+					message: result.userMessage,
+					// Sticky: it explains missing dashboard history, so it must not
+					// vanish before it is read.
+					dismissible: true,
+				});
+				return window.maestro?.stats?.clearInitializationResult();
 			})
-			.catch(console.error);
-	}, []);
+			.catch((error) => {
+				captureException(error, { extra: { operation: 'stats:initializationResult' } });
+			});
+	}, [isLifecycleOwner]);
 
 	// --- Notification settings sync ---
 	useEffect(() => {

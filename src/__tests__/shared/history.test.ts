@@ -21,6 +21,14 @@ import {
 	isHistoryEntryType,
 	visibleHistoryEntryTypes,
 	ALL_HISTORY_ENTRY_TYPES,
+	MAX_HISTORY_SUMMARY_PREVIEW_CHARS,
+	MAX_HISTORY_SUMMARY_LINE_CHARS,
+	historySummaryPreview,
+	createHistorySearchMatcher,
+	historySummaryLine,
+	clampHistoryEntry,
+	MAX_HISTORY_SUMMARY_STORED_CHARS,
+	MAX_HISTORY_FULL_RESPONSE_STORED_CHARS,
 	type HistoryFileData,
 	type MigrationMarker,
 	type PaginationOptions,
@@ -386,6 +394,78 @@ describe('shared/history', () => {
 	});
 });
 
+describe('history summary helpers', () => {
+	it('historySummaryPreview returns a short summary by reference', () => {
+		const summary = 'Implemented the feature';
+		expect(historySummaryPreview(summary)).toBe(summary);
+	});
+
+	it('historySummaryPreview caps a multi-megabyte summary', () => {
+		const huge = 'log line\n'.repeat(500_000);
+		const preview = historySummaryPreview(huge);
+		expect(preview.length).toBe(MAX_HISTORY_SUMMARY_PREVIEW_CHARS + 1);
+		expect(preview.endsWith('…')).toBe(true);
+		expect(huge.startsWith(preview.slice(0, -1))).toBe(true);
+	});
+
+	it('historySummaryLine keeps only the first non-blank line', () => {
+		expect(historySummaryLine('\n  Failed to push branch: $ prettier\n$ tsc\nerror')).toBe(
+			'Failed to push branch: $ prettier'
+		);
+	});
+
+	it('historySummaryLine truncates a long line at a word boundary', () => {
+		const line = 'word '.repeat(100);
+		const result = historySummaryLine(line);
+		expect(result.length).toBeLessThanOrEqual(MAX_HISTORY_SUMMARY_LINE_CHARS);
+		expect(result.endsWith('word…')).toBe(true);
+	});
+});
+
+// One matcher for the History panel, Director's Notes (main process) and the
+// CLI. Director's Notes once matched only summary + agent name, so a search for
+// a word in the tab-name pill found nothing.
+describe('createHistorySearchMatcher', () => {
+	const base = {
+		id: 'e1',
+		type: 'USER' as const,
+		timestamp: 0,
+		summary: 'Confirmed no desktop exists',
+		projectPath: '/p',
+	};
+
+	it('returns null for a blank query so callers skip the scan', () => {
+		expect(createHistorySearchMatcher('')).toBeNull();
+		expect(createHistorySearchMatcher('   ')).toBeNull();
+		expect(createHistorySearchMatcher(undefined)).toBeNull();
+	});
+
+	it.each([
+		['summary', { summary: 'The Persona seat' }],
+		['fullResponse', { fullResponse: 'long PERSONA text' }],
+		['sessionName', { sessionName: 'Banaco Persona Desktop Setup Check' }],
+		['agentName', { agentName: 'Persona Lab' }],
+		['agentSessionId', { agentSessionId: 'persona-123' }],
+		['hostname', { hostname: 'persona-host' }],
+		['userName', { userName: 'persona' }],
+		['userDisplayName', { userDisplayName: 'Persona Person' }],
+		['cueTriggerName', { cueTriggerName: 'persona-sweep' }],
+	])('matches on %s, case-insensitively', (_field, overrides) => {
+		const matches = createHistorySearchMatcher('  persona ')!;
+		expect(matches({ ...base, ...overrides })).toBe(true);
+	});
+
+	it('rejects an entry with no matching field', () => {
+		expect(createHistorySearchMatcher('persona')!(base)).toBe(false);
+	});
+
+	it('treats regex metacharacters as literal text', () => {
+		const matches = createHistorySearchMatcher('a.b (c)')!;
+		expect(matches({ ...base, summary: 'see a.b (c) here' })).toBe(true);
+		expect(matches({ ...base, summary: 'axb c' })).toBe(false);
+	});
+});
+
 describe('history entry type helpers', () => {
 	const base: HistoryEntry = {
 		id: 'e1',
@@ -472,6 +552,58 @@ describe('history entry type helpers', () => {
 
 		it('handles an empty list', () => {
 			expect(normalizeHistoryEntries([])).toEqual([]);
+		});
+	});
+
+	describe('clampHistoryEntry', () => {
+		const entry = {
+			id: 'e1',
+			type: 'AUTO' as const,
+			timestamp: 1,
+			summary: 'short',
+			fullResponse: 'body',
+			projectPath: '/p',
+		};
+
+		it('returns the same object when nothing is over a cap', () => {
+			expect(clampHistoryEntry(entry)).toBe(entry);
+		});
+
+		it('caps an oversized summary and fullResponse and says what was cut', () => {
+			const big = {
+				...entry,
+				summary: 'x'.repeat(MAX_HISTORY_SUMMARY_STORED_CHARS + 500),
+				fullResponse: 'y'.repeat(MAX_HISTORY_FULL_RESPONSE_STORED_CHARS + 500),
+			};
+			const out = clampHistoryEntry(big);
+			expect(out.summary.length).toBeLessThanOrEqual(MAX_HISTORY_SUMMARY_STORED_CHARS);
+			expect(out.summary).toMatch(/\[truncated \d+ characters\]$/);
+			expect(out.fullResponse.length).toBeLessThanOrEqual(MAX_HISTORY_FULL_RESPONSE_STORED_CHARS);
+			expect(big.summary.length).toBe(MAX_HISTORY_SUMMARY_STORED_CHARS + 500);
+		});
+
+		it('is idempotent: clamping a clamped entry leaves it unchanged', () => {
+			const once = clampHistoryEntry({
+				...entry,
+				summary: 'x'.repeat(MAX_HISTORY_SUMMARY_STORED_CHARS + 500),
+			});
+			expect(clampHistoryEntry(once)).toBe(once);
+		});
+
+		it('does not split a surrogate pair at the cut', () => {
+			const s = 'a'.repeat(MAX_HISTORY_SUMMARY_STORED_CHARS - 1) + '\u{1F600}' + 'b'.repeat(50);
+			const out = clampHistoryEntry({ ...entry, summary: s });
+			expect(out.summary).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+		});
+
+		it('is applied by serializeHistoryEntryLine and stays one line', () => {
+			const line = serializeHistoryEntryLine({
+				...entry,
+				summary: 'z\n'.repeat(MAX_HISTORY_SUMMARY_STORED_CHARS),
+			});
+			expect(line.length).toBeLessThan(MAX_HISTORY_SUMMARY_STORED_CHARS * 3);
+			expect(line.endsWith('\n')).toBe(true);
+			expect(line.slice(0, -1)).not.toContain('\n');
 		});
 	});
 });

@@ -30,6 +30,7 @@ import type {
 import {
 	browserOpNeedsConfirm,
 	BROWSER_INTERACT_TIMEOUT_MS,
+	BROWSER_PICK_TIMEOUT_MS,
 } from '../../../shared/coworkingBrowser';
 
 const LOG_CTX = '[Coworking][IPC]';
@@ -118,6 +119,17 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 					confirmPolicy
 				);
 			}
+		)
+	);
+
+	// The renderer names a browser tab by its Coworking id in a Design Mode pick,
+	// so the agent can address the same tab with read_browser / browser_screenshot.
+	ipcMain.handle(
+		'coworking:getBrowserId',
+		withIpcErrorLogging(
+			handlerOpts('getBrowserId'),
+			async (sessionId: string, tabUuid: string): Promise<string | null> =>
+				coworkingRegistry.getBrowserIdForTab(sessionId, tabUuid)
 		)
 	);
 
@@ -217,7 +229,13 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 					ipcMain.removeListener(responseChannel, handler);
 					reject(new Error('Coworking: timed out waiting for browser op from renderer'));
 				},
-				op.kind === 'read' ? BROWSER_OP_TIMEOUT_MS : BROWSER_INTERACT_TIMEOUT_MS
+				// A viewport op is a store write that never waits on a dialog or a page,
+				// so it gets the read cap, not the approval-sized one.
+				op.kind === 'read' || op.kind === 'viewport'
+					? BROWSER_OP_TIMEOUT_MS
+					: op.kind === 'pick'
+						? BROWSER_PICK_TIMEOUT_MS
+						: BROWSER_INTERACT_TIMEOUT_MS
 			);
 			ipcMain.on(responseChannel, handler);
 			// Main computes the per-call approval requirement from its own mirrored

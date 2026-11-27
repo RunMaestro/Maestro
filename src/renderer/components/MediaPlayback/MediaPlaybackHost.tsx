@@ -48,6 +48,9 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 	// One measurement for the whole app: the transport is the same strip whatever
 	// is loaded, so re-measuring per file would only re-report the same number.
 	const [transportHeight, setTransportHeight] = useState<number | null>(null);
+	// The width floor is re-measured as the row changes: prev/next and
+	// fullscreen come and go with the queue and the file.
+	const [transportMinWidth, setTransportMinWidth] = useState<number | null>(null);
 
 	// Queue writes are debounced, so a window closing mid-debounce would lose the
 	// last position (or the last thing queued). Flush before it goes away.
@@ -117,6 +120,7 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 			// learn how long it is for the queue and history lists.
 			onDurationKnown={handleDurationKnown}
 			onTransportHeightChange={setTransportHeight}
+			onTransportMinWidthChange={setTransportMinWidth}
 			onPrev={stepMediaItem(items, activeItemId, -1) ? () => navigate(-1) : undefined}
 			onNext={stepMediaItem(items, activeItemId, 1) ? () => navigate(1) : undefined}
 			toggleRequest={toggleRequest}
@@ -137,6 +141,7 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 			kind={active.kind}
 			aspect={aspects[active.id]}
 			transportHeight={transportHeight}
+			transportMinWidth={transportMinWidth}
 			hidden={dismissed}
 			theme={theme}
 		>

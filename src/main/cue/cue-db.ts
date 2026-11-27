@@ -916,6 +916,65 @@ export function getCueEventGroupCounts(options: {
 	}));
 }
 
+/** How often one subscription has fired, for `maestro-cli cue list`. */
+export interface CueSubscriptionTriggerStat {
+	sessionId: string;
+	/** Raw `subscription_name`, as the YAML names it. */
+	subscriptionName: string;
+	/** Every recorded run, whatever its outcome. */
+	triggerCount: number;
+	/** `created_at` of the newest run (epoch ms). */
+	lastTriggered: number;
+}
+
+/**
+ * Rows a queue cleanup wrote for work it discarded without running it (stale,
+ * malformed, or whose agent is gone). Both cleanup paths (`cue-run-manager.ts`
+ * and `cue-queue-persistence.ts`) mark them `droppedFromQueue: true` in the
+ * payload and stamp them with the cleanup time. A real run that timed out
+ * carries no such flag. `json_valid` guards `json_extract`, which throws on a
+ * payload that is not JSON, and `IS 1` (not `= 1`) keeps rows with no flag:
+ * `= 1` on a missing key is NULL, and `NOT NULL` would drop the row.
+ */
+const CUE_EVENT_DROPPED_FROM_QUEUE_SQL = `(payload IS NOT NULL AND json_valid(payload) AND json_extract(payload, '$.droppedFromQueue') IS 1)`;
+
+/**
+ * Per-subscription trigger counts and last-trigger times across all retained
+ * Cue history. Unlike {@link getCueEventGroupCounts}, this does NOT apply
+ * {@link CUE_EVENT_WORTH_SHOWING_SQL}: a quiet heartbeat that completes with
+ * no output still fired, and `cue list` must say so. It does exclude
+ * {@link CUE_EVENT_DROPPED_FROM_QUEUE_SQL}: discarding queued work is not a
+ * trigger, and counting it would report a fresh last-trigger time for a run
+ * that never happened.
+ *
+ * Returns `[]` when the DB is not initialized, so `cue list` falls back to
+ * "never triggered" instead of throwing.
+ */
+export function getCueSubscriptionTriggerStats(): CueSubscriptionTriggerStat[] {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT session_id, subscription_name,
+				COUNT(*) AS trigger_count,
+				MAX(created_at) AS last_triggered
+			FROM cue_events
+			WHERE NOT ${CUE_EVENT_DROPPED_FROM_QUEUE_SQL}
+			GROUP BY session_id, subscription_name`
+		)
+		.all() as Array<{
+		session_id: string;
+		subscription_name: string;
+		trigger_count: number;
+		last_triggered: number;
+	}>;
+	return rows.map((row) => ({
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		triggerCount: row.trigger_count,
+		lastTriggered: row.last_triggered,
+	}));
+}
+
 /**
  * Cue's contribution to the delegation split: how many runs finished and how
  * much wall-clock time they took, over all retained history or since `sinceMs`.
@@ -1115,6 +1174,184 @@ export function getRecentCueEvents(since: number, limit?: number): CueEventRecor
 	) as CueEventRow[];
 
 	return rows.map(rowToCueEventRecord);
+}
+
+/**
+ * The columns the Usage Dashboard's Cue aggregation reads, one row per run.
+ * Leaves out the payload and the stored output (`full_output` can be tens of
+ * KB per run), which the aggregation never looks at.
+ */
+export type CueStatsEventRecord = Pick<
+	CueEventRecord,
+	| 'id'
+	| 'type'
+	| 'sessionId'
+	| 'subscriptionName'
+	| 'status'
+	| 'createdAt'
+	| 'completedAt'
+	| 'pipelineId'
+	| 'chainRootId'
+	| 'parentEventId'
+	| 'providerSessionId'
+> & {
+	/**
+	 * True when the engine-start sweep settled this run (`failOrphanedRunningEvents`):
+	 * its `completed_at` is when the NEXT engine started, so its "duration" is
+	 * downtime, not run time.
+	 */
+	orphaned?: boolean;
+};
+
+/**
+ * Cue runs created at or after `since`, newest first, with only the columns
+ * the stats aggregation needs. `orphanedMessage` is the error message the
+ * engine-start sweep stamps on runs it settled; rows carrying it come back
+ * flagged `orphaned`.
+ *
+ * Returns `[]` when the DB is not initialized, like {@link getRecentCueEvents}.
+ */
+export function getCueEventsForStats(
+	since: number,
+	orphanedMessage: string
+): CueStatsEventRecord[] {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT id, type, session_id, subscription_name, status, created_at, completed_at,
+			        pipeline_id, chain_root_id, parent_event_id, provider_session_id,
+			        CASE WHEN error_message = ? THEN 1 ELSE 0 END AS orphaned
+			 FROM cue_events
+			 WHERE created_at >= ?
+			 ORDER BY created_at DESC`
+		)
+		.all(orphanedMessage, since) as Array<
+		Pick<
+			CueEventRow,
+			| 'id'
+			| 'type'
+			| 'session_id'
+			| 'subscription_name'
+			| 'status'
+			| 'created_at'
+			| 'completed_at'
+			| 'pipeline_id'
+			| 'chain_root_id'
+			| 'parent_event_id'
+			| 'provider_session_id'
+		> & { orphaned: number }
+	>;
+	return rows.map((row) => ({
+		id: row.id,
+		type: row.type,
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		status: row.status,
+		createdAt: row.created_at,
+		completedAt: row.completed_at,
+		pipelineId: row.pipeline_id,
+		chainRootId: row.chain_root_id,
+		parentEventId: row.parent_event_id,
+		providerSessionId: row.provider_session_id,
+		orphaned: row.orphaned === 1,
+	}));
+}
+
+/** One subscription's open failure streak as recorded in `cue_events`. */
+export interface CueFailureStreakRecord {
+	sessionId: string;
+	subscriptionName: string;
+	consecutiveFailures: number;
+	/** Epoch ms the first failure of the streak ended. */
+	firstFailedAt: number;
+	/** Epoch ms the newest failure ended. */
+	lastFailedAt: number;
+	lastStatus: 'failed' | 'timeout';
+	lastError: string | null;
+}
+
+/**
+ * Every open failure streak: per (agent, subscription), the `failed` /
+ * `timeout` runs that ended after that subscription's last `completed` run.
+ * Read once at engine start so a restart neither forgets a failing
+ * subscription nor re-alerts for it. Mirrors the live tracker in
+ * `cue-failure-streak.ts`:
+ * - Runs are ordered by when they ENDED, the order the live tracker sees
+ *   them in: a failure that started before a success but finished after it
+ *   still counts. A failure that ends in the same millisecond as the last
+ *   success cannot be ordered from the row (completed_at is all we have), so
+ *   it is kept: hiding a real failure is the bug this alert exists to stop.
+ * - `stopped` rows neither count nor reset (they are simply not selected).
+ * - Generated output-phase rows (`<name>:output` with `outputPromptPhase` in
+ *   the payload) are skipped: live tracking sees only the parent run, which
+ *   keeps its own status when the output phase fails. A subscription the user
+ *   named `x:output` is an ordinary run and is kept.
+ * - Rows carrying `orphanedMessage` (settled by the engine-start sweep because
+ *   the previous engine died mid-run) are skipped: a quit is not a failure.
+ *
+ * Unlike the activity log's 1000-row window, this covers the whole retention
+ * period, so a busy agent cannot push a failing subscription out of view.
+ * Returns `[]` when the DB is not initialized.
+ */
+export function getCueFailureStreakRecords(orphanedMessage: string): CueFailureStreakRecord[] {
+	if (!db) return [];
+	// CASE, not AND: SQLite does not promise to short-circuit AND, and
+	// json_extract raises on a malformed payload.
+	const rows = db
+		.prepare(
+			`WITH runs AS (
+			   SELECT rowid AS seq, session_id, subscription_name, status, error_message,
+			          COALESCE(completed_at, created_at) AS ended_at
+			   FROM cue_events
+			   WHERE CASE
+			           WHEN subscription_name LIKE '%:output' AND json_valid(payload)
+			             THEN COALESCE(json_extract(payload, '$.outputPromptPhase'), 0)
+			           ELSE 0
+			         END = 0
+			 ),
+			 last_ok AS (
+			   SELECT session_id, subscription_name, MAX(ended_at) AS ok_at
+			   FROM runs
+			   WHERE status = 'completed'
+			   GROUP BY session_id, subscription_name
+			 ),
+			 streak AS (
+			   SELECT r.session_id, r.subscription_name, r.status, r.error_message, r.ended_at,
+			          COUNT(*) OVER (PARTITION BY r.session_id, r.subscription_name) AS failures,
+			          MIN(r.ended_at) OVER (PARTITION BY r.session_id, r.subscription_name) AS first_at,
+			          ROW_NUMBER() OVER (
+			            PARTITION BY r.session_id, r.subscription_name
+			            ORDER BY r.ended_at DESC, r.seq DESC
+			          ) AS newest
+			   FROM runs r
+			   LEFT JOIN last_ok l
+			     ON l.session_id = r.session_id AND l.subscription_name = r.subscription_name
+			   WHERE r.status IN ('failed', 'timeout')
+			     AND (r.error_message IS NULL OR r.error_message <> ?)
+			     AND (l.ok_at IS NULL OR r.ended_at >= l.ok_at)
+			 )
+			 SELECT session_id, subscription_name, status, error_message, ended_at, failures, first_at
+			 FROM streak
+			 WHERE newest = 1`
+		)
+		.all(orphanedMessage) as Array<{
+		session_id: string;
+		subscription_name: string;
+		status: 'failed' | 'timeout';
+		error_message: string | null;
+		ended_at: number;
+		failures: number;
+		first_at: number;
+	}>;
+	return rows.map((row) => ({
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		consecutiveFailures: row.failures,
+		firstFailedAt: row.first_at,
+		lastFailedAt: row.ended_at,
+		lastStatus: row.status,
+		lastError: row.error_message,
+	}));
 }
 
 /**

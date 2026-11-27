@@ -41,6 +41,7 @@ import {
 } from '../../shared/tokenSpeed';
 import type { CachedSessionStats } from '../utils/statsCache';
 import type { AgentSessionInfo } from '../agents/session-storage';
+import { codexSessionInfoFold } from './codex-session-info';
 
 /** What the global stats cache stores per transcript, minus its fingerprint. */
 export type UsageStatsParse = Omit<CachedSessionStats, 'fileMtimeMs'>;
@@ -71,6 +72,13 @@ export type TranscriptParseTask =
 			projectPath: string;
 			sizeBytes: number;
 			mtimeMs: number;
+	  }
+	| {
+			kind: 'codex-session-info';
+			filePath: string;
+			sessionId: string;
+			sizeBytes: number;
+			mtimeMs: number;
 	  };
 
 interface TranscriptParseResults {
@@ -78,6 +86,7 @@ interface TranscriptParseResults {
 	'codex-usage-stats': UsageStatsParse;
 	'claude-project-stats': ProjectSessionStatsParse;
 	'claude-session-info': AgentSessionInfo;
+	'codex-session-info': AgentSessionInfo | null;
 }
 
 export type TranscriptParseResult<T extends TranscriptParseTask> =
@@ -111,6 +120,14 @@ export async function runTranscriptParseTask<T extends TranscriptParseTask>(
 					mtimeMs: task.mtimeMs,
 				})
 			)) as TranscriptParseResult<T>;
+		case 'codex-session-info': {
+			const fold = codexSessionInfoFold(task.sessionId, {
+				size: task.sizeBytes,
+				mtimeMs: task.mtimeMs,
+			});
+			await forEachJsonlLine(task.filePath, fold.line);
+			return fold.finish() as TranscriptParseResult<T>;
+		}
 	}
 }
 

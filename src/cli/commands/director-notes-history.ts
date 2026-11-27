@@ -4,7 +4,11 @@
 import { readSessions, readHistory, readSettings } from '../services/storage';
 import { formatError, formatDirectorNotesHistory } from '../output/formatter';
 import type { HistoryEntry, HistoryEntryType } from '../../shared/types';
-import { ALL_HISTORY_ENTRY_TYPES, isHistoryEntryType } from '../../shared/history';
+import {
+	ALL_HISTORY_ENTRY_TYPES,
+	createHistorySearchMatcher,
+	isHistoryEntryType,
+} from '../../shared/history';
 import { formatDurationDecimal } from '../../shared/duration';
 
 type OutputFormat = 'json' | 'markdown' | 'text';
@@ -14,6 +18,7 @@ interface DirectorNotesHistoryOptions {
 	format?: OutputFormat;
 	filter?: string;
 	limit?: string;
+	search?: string;
 	json?: boolean;
 }
 
@@ -49,6 +54,7 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 		const lookbackDays = options.days ? parseInt(options.days, 10) : getDefaultLookbackDays();
 		const limit = options.limit ? parseInt(options.limit, 10) : 100;
 		const typeFilter = options.filter?.toUpperCase() as HistoryEntryType | undefined;
+		const matchesSearch = createHistorySearchMatcher(options.search);
 
 		if (typeFilter && !isHistoryEntryType(typeFilter)) {
 			throw new Error(
@@ -92,11 +98,14 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 			// Apply type filter
 			if (typeFilter && entry.type !== typeFilter) continue;
 
-			allEntries.push({
+			const unified: UnifiedHistoryEntry = {
 				...entry,
 				sourceSessionId: entry.sessionId || 'unknown',
 				agentName: entry.sessionId ? sessionNameMap.get(entry.sessionId) : undefined,
-			});
+			};
+			// Same matcher the Director's Notes search box runs, before the limit.
+			if (matchesSearch && !matchesSearch(unified)) continue;
+			allEntries.push(unified);
 		}
 
 		// Sort newest first

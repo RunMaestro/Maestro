@@ -28,6 +28,7 @@ import type {
 	ReopenClosedTabCallback,
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -42,6 +43,13 @@ import type {
 	OpenBrowserTabOptions,
 	OpenBrowserTabResult,
 	CloseBrowserTabCallback,
+	PickBrowserElementCallback,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
+	BrowserViewportCallback,
+	BrowserViewportRequest,
+	BrowserViewportResult,
+	DesignPickCommandCallback,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
 	OpenTerminalTabResult,
@@ -120,6 +128,7 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	SetGroupChatUnreadCallback,
 	AddGroupChatParticipantCallback,
 	AddGroupChatParticipantResult,
 	SendGroupChatMessageCallback,
@@ -134,9 +143,7 @@ import type {
 	TriggerCueSubscriptionCallback,
 	CueSubscriptionInfo,
 	CueActivityEntry,
-	GetUsageDashboardCallback,
 	GetAchievementsCallback,
-	UsageDashboardData,
 	AchievementData,
 	GenerateDirectorNotesSynopsisCallback,
 	DirectorNotesSynopsisResult,
@@ -167,7 +174,15 @@ import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../../shared/autoRunSteeringCommands';
+import type {
+	DiffReviewCommandRequest,
+	DiffReviewCommandResult,
+} from '../../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
+import type {
+	DesignPickCommandRequest,
+	DesignPickCommandResult,
+} from '../../../shared/designPickCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
@@ -196,6 +211,7 @@ export interface WebServerCallbacks {
 	reopenClosedTab: ReopenClosedTabCallback | null;
 	snoozeCommand: SnoozeCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
+	diffReviewCommand: DiffReviewCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
@@ -208,6 +224,9 @@ export interface WebServerCallbacks {
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
+	pickBrowserElement: PickBrowserElementCallback | null;
+	browserViewport: BrowserViewportCallback | null;
+	designPickCommand: DesignPickCommandCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	writeTerminalTab: WriteTerminalTabCallback | null;
 	listTerminalTabs: ListTerminalTabsCallback | null;
@@ -259,6 +278,7 @@ export interface WebServerCallbacks {
 	getGroupChatState: GetGroupChatStateCallback | null;
 	stopGroupChat: StopGroupChatCallback | null;
 	archiveGroupChat: ArchiveGroupChatCallback | null;
+	setGroupChatUnread: SetGroupChatUnreadCallback | null;
 	addGroupChatParticipant: AddGroupChatParticipantCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	mergeContext: MergeContextCallback | null;
@@ -269,7 +289,6 @@ export interface WebServerCallbacks {
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
 	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
-	getUsageDashboard: GetUsageDashboardCallback | null;
 	getAchievements: GetAchievementsCallback | null;
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 	notifyToast: NotifyToastCallback | null;
@@ -308,6 +327,7 @@ export class CallbackRegistry {
 		reopenClosedTab: null,
 		snoozeCommand: null,
 		autoRunSteeringCommand: null,
+		diffReviewCommand: null,
 		windowCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
@@ -318,6 +338,9 @@ export class CallbackRegistry {
 		refreshFileTree: null,
 		openBrowserTab: null,
 		closeBrowserTab: null,
+		pickBrowserElement: null,
+		browserViewport: null,
+		designPickCommand: null,
 		openTerminalTab: null,
 		writeTerminalTab: null,
 		listTerminalTabs: null,
@@ -369,6 +392,7 @@ export class CallbackRegistry {
 		getGroupChatState: null,
 		stopGroupChat: null,
 		archiveGroupChat: null,
+		setGroupChatUnread: null,
 		addGroupChatParticipant: null,
 		sendGroupChatMessage: null,
 		mergeContext: null,
@@ -379,7 +403,6 @@ export class CallbackRegistry {
 		toggleCueSubscription: null,
 		getCueActivity: null,
 		triggerCueSubscription: null,
-		getUsageDashboard: null,
 		getAchievements: null,
 		generateDirectorNotesSynopsis: null,
 		notifyToast: null,
@@ -513,6 +536,13 @@ export class CallbackRegistry {
 		return this.callbacks.autoRunSteeringCommand(request);
 	}
 
+	async diffReviewCommand(request: DiffReviewCommandRequest): Promise<DiffReviewCommandResult> {
+		if (!this.callbacks.diffReviewCommand) {
+			return { success: false, error: 'Diff review is not configured' };
+		}
+		return this.callbacks.diffReviewCommand(request);
+	}
+
 	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
 		if (!this.callbacks.windowCommand) {
 			return { success: false, error: 'Window commands are not configured' };
@@ -581,6 +611,27 @@ export class CallbackRegistry {
 	async closeBrowserTab(tabId: string): Promise<boolean> {
 		if (!this.callbacks.closeBrowserTab) return false;
 		return this.callbacks.closeBrowserTab(tabId);
+	}
+
+	async pickBrowserElement(request: PickBrowserElementRequest): Promise<PickBrowserElementResult> {
+		if (!this.callbacks.pickBrowserElement) {
+			return { success: false, error: 'Browser Design Mode not configured', screenshot: false };
+		}
+		return this.callbacks.pickBrowserElement(request);
+	}
+
+	async browserViewport(request: BrowserViewportRequest): Promise<BrowserViewportResult> {
+		if (!this.callbacks.browserViewport) {
+			return { success: false, error: 'Browser viewport not configured' };
+		}
+		return this.callbacks.browserViewport(request);
+	}
+
+	async designPickCommand(request: DesignPickCommandRequest): Promise<DesignPickCommandResult> {
+		if (!this.callbacks.designPickCommand) {
+			return { success: false, error: 'Browser Design Mode not configured' };
+		}
+		return this.callbacks.designPickCommand(request);
 	}
 
 	async openTerminalTab(
@@ -966,6 +1017,11 @@ export class CallbackRegistry {
 		return this.callbacks.archiveGroupChat(chatId, archived);
 	}
 
+	async setGroupChatUnread(chatId: string, unread: boolean): Promise<boolean> {
+		if (!this.callbacks.setGroupChatUnread) return false;
+		return this.callbacks.setGroupChatUnread(chatId, unread);
+	}
+
 	async addGroupChatParticipant(
 		chatId: string,
 		agentId: string
@@ -1030,21 +1086,6 @@ export class CallbackRegistry {
 	): Promise<boolean> {
 		if (!this.callbacks.triggerCueSubscription) return false;
 		return this.callbacks.triggerCueSubscription(subscriptionName, prompt, sourceAgentId);
-	}
-
-	async getUsageDashboard(
-		timeRange: 'day' | 'week' | 'month' | 'all'
-	): Promise<UsageDashboardData> {
-		if (!this.callbacks.getUsageDashboard) {
-			return {
-				totalTokensIn: 0,
-				totalTokensOut: 0,
-				totalCost: 0,
-				sessionBreakdown: [],
-				dailyUsage: [],
-			};
-		}
-		return this.callbacks.getUsageDashboard(timeRange);
 	}
 
 	async getAchievements(): Promise<AchievementData[]> {
@@ -1233,6 +1274,10 @@ export class CallbackRegistry {
 		this.callbacks.autoRunSteeringCommand = callback;
 	}
 
+	setDiffReviewCommandCallback(callback: DiffReviewCommandCallback): void {
+		this.callbacks.diffReviewCommand = callback;
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbacks.windowCommand = callback;
 	}
@@ -1267,6 +1312,18 @@ export class CallbackRegistry {
 
 	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
 		this.callbacks.closeBrowserTab = callback;
+	}
+
+	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
+		this.callbacks.pickBrowserElement = callback;
+	}
+
+	setBrowserViewportCallback(callback: BrowserViewportCallback): void {
+		this.callbacks.browserViewport = callback;
+	}
+
+	setDesignPickCommandCallback(callback: DesignPickCommandCallback): void {
+		this.callbacks.designPickCommand = callback;
 	}
 
 	setWriteTerminalTabCallback(callback: WriteTerminalTabCallback): void {
@@ -1473,6 +1530,10 @@ export class CallbackRegistry {
 		this.callbacks.archiveGroupChat = callback;
 	}
 
+	setSetGroupChatUnreadCallback(callback: SetGroupChatUnreadCallback): void {
+		this.callbacks.setGroupChatUnread = callback;
+	}
+
 	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {
 		this.callbacks.addGroupChatParticipant = callback;
 	}
@@ -1511,10 +1572,6 @@ export class CallbackRegistry {
 
 	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
 		this.callbacks.triggerCueSubscription = callback;
-	}
-
-	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
-		this.callbacks.getUsageDashboard = callback;
 	}
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {

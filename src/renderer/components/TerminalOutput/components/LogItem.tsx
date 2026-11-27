@@ -35,6 +35,7 @@ import { AgentDelegationCard } from '../../AgentDelegationCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { TurnSettingPills } from '../../ui/TurnSettingPills';
+import { elementOverlapsAny } from '../../../utils/rectOverlap';
 import { CrossAgentResponseHeader } from '../../CrossAgentResponseHeader';
 import { isHiddenProgressEntry } from '../utils/collapseAiResponseLogs';
 import { SessionRecoveryCardConnector } from './SessionRecoveryCardConnector';
@@ -140,6 +141,17 @@ export const LogItem = memo(
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
+		// Turn attribution pills in the footer. They yield to the hover-revealed
+		// footer controls, but only when the two actually overlap: measured on
+		// hover and written straight to the DOM so a hover never re-renders.
+		const turnPillsRef = useRef<HTMLDivElement>(null);
+		const handleRowMouseEnter = useCallback(() => {
+			const pills = turnPillsRef.current;
+			const bubble = pills?.parentElement;
+			if (!pills || !bubble) return;
+			const controls = bubble.querySelectorAll(':scope > [data-message-footer-control]');
+			pills.toggleAttribute('data-collides', elementOverlapsAny(pills, controls));
+		}, []);
 
 		// Handle expand toggle with scroll adjustment
 		const handleExpandToggle = useCallback(() => {
@@ -471,6 +483,7 @@ export const LogItem = memo(
 		return (
 			<div
 				ref={logItemRef}
+				onMouseEnter={handleRowMouseEnter}
 				// Narrow screens (phones / web-desktop mobile): the fixed side gutter
 				// for the timestamp costs ~96px of bubble width, so the row stacks -
 				// timestamp above, bubble full-width. From `sm` up it's the classic
@@ -997,11 +1010,17 @@ export const LogItem = memo(
 					    configuration the turn was SENT with, so a conversation that changed
 					    model or effort partway through still says who answered what.
 					    Suppressed on cross-agent entries so the attribution pill above
-					    replaces it. */}
+					    replaces it. On hover the row fades out only when it overlaps the
+					    hover-revealed footer controls (narrow bubbles): handleRowMouseEnter
+					    measures and sets `data-collides`. On a wide bubble it stays put. */}
 					{!crossAgent &&
 						log.source !== 'user' &&
 						((isClaudeCode && showProviderModePill) || log.turnModel || log.turnEffort) && (
-							<div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none">
+							<div
+								ref={turnPillsRef}
+								className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 max-w-[60%] pointer-events-none select-none transition-opacity duration-150 group-hover:data-[collides]:opacity-0"
+								data-testid="turn-attribution-pills"
+							>
 								{isClaudeCode &&
 									showProviderModePill &&
 									(() => {
@@ -1036,6 +1055,7 @@ export const LogItem = memo(
 					<div
 						className="absolute bottom-2 right-2 flex items-center gap-1"
 						style={{ transition: 'opacity 0.15s ease-in-out' }}
+						data-message-footer-control
 					>
 						{/* Markdown toggle button - available on both user and assistant
 						    messages in AI mode for consistent UX (#622). */}

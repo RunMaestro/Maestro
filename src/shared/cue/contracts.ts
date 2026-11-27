@@ -5,6 +5,7 @@
  */
 
 import type { EffortLevel, ModelTier } from '../modelTiers';
+import type { CueFailureStreak } from './failure-streak';
 
 /** Days of the week for scheduled triggers */
 export type CueScheduleDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
@@ -391,6 +392,16 @@ export interface CueSettings {
 	 * ordinary security-flavored text such as "stop logging the bearer token".
 	 */
 	susfactor_threshold?: number;
+	/**
+	 * Consecutive failed (or timed-out) runs of one subscription before it
+	 * reads as failing: a red toast names the subscription and agent, and the
+	 * dashboard and `cue list` show it as failing until a run succeeds. A
+	 * second alert fires at ten times this count; nothing more until recovery.
+	 * `0` turns the alert off.
+	 *
+	 * Defaults to 3 (`DEFAULT_CUE_FAILURE_ALERT_THRESHOLD`).
+	 */
+	failure_alert_threshold?: number;
 }
 
 /** Default Cue settings */
@@ -401,7 +412,24 @@ export const DEFAULT_CUE_SETTINGS: CueSettings = {
 	queue_size: 512,
 	susfactor_enabled: true,
 	susfactor_threshold: 0.95,
+	failure_alert_threshold: 3,
 };
+
+/**
+ * Drop the settings that belong to ONE cue.yaml from a settings object, so the
+ * Settings -> Encore Features -> Maestro Cue panel neither reads nor writes
+ * them. That panel reads the first agent's settings and saves the whole object
+ * into EVERY cue.yaml, so a per-root value carried through it would overwrite
+ * every other project's own choice:
+ * - `owner_agent_id` names an agent at that root only (a broadcast owner flags
+ *   every other project with a bogus ownership warning).
+ * - `failure_alert_threshold` is a per-project choice the panel does not show
+ *   (a broadcast would replace one project's `0` opt-out with another's `3`).
+ */
+export function withoutPerRootCueSettings(settings: CueSettings): CueSettings {
+	const { owner_agent_id: _owner, failure_alert_threshold: _threshold, ...global } = settings;
+	return global;
+}
 
 /** Top-level Cue configuration */
 export interface CueConfig {
@@ -476,6 +504,10 @@ export interface CueSessionStatus {
 	 *  projectRoot) or unresolvable (owner_agent_id matches no agent). The
 	 *  dashboard renders a red indicator with this text as the tooltip. */
 	ownershipWarning?: string;
+	/** Subscriptions on this agent whose consecutive-failure streak reached the
+	 *  alert threshold. Omitted when none are failing. The dashboard shows the
+	 *  agent as Failing (red) instead of Active while this is non-empty. */
+	failingSubscriptions?: CueFailureStreak[];
 }
 
 /** Session data with subscriptions for the Cue graph visualization */

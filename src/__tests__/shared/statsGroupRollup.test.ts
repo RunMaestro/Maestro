@@ -15,6 +15,9 @@ import {
 	totalTokens,
 	UNGROUPED_ID,
 	UNGROUPED_NAME,
+	DELETED_AGENTS_ID,
+	DELETED_AGENTS_NAME,
+	orphanedStatSessionIds,
 	type GroupLike,
 	type GroupMemberSession,
 } from '../../shared/statsGroupRollup';
@@ -129,7 +132,7 @@ describe('rollUpGroup', () => {
 
 	it('returns null auto percent when the group has no recorded queries', () => {
 		// null, not 0 - "never ran" and "ran, all interactive" are different
-		// facts, and the tile renders an em-dash for the first.
+		// facts, and the tile renders a hyphen placeholder for the first.
 		const result = rollUpGroup([SESSIONS[0]], makeData());
 
 		expect(result.autoPercent).toBeNull();
@@ -270,5 +273,65 @@ describe('rollUpGroupStats', () => {
 
 		expect(rollups[0].tokens.pricedQueries).toBe(0);
 		expect(rollups[0].queries).toBe(4);
+	});
+});
+
+describe('deleted agents bucket', () => {
+	const data = makeData({
+		bySessionByDay: {
+			s1: [{ date: '2026-08-01', count: 4, duration: 4000 }],
+			gone1: [{ date: '2026-08-01', count: 3, duration: 3000 }],
+			gone2: [{ date: '2026-08-02', count: 2, duration: 2000 }],
+		},
+		bySessionSource: { gone1: { user: 1, auto: 2 } },
+		bySessionTokens: {
+			gone2: {
+				inputTokens: 10,
+				outputTokens: 5,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				costUsd: 1.25,
+				pricedQueries: 2,
+			},
+		},
+	});
+
+	it('lists the session ids that match no live agent', () => {
+		expect(orphanedStatSessionIds(SESSIONS, data)).toEqual(['gone1', 'gone2']);
+	});
+
+	it('is omitted unless asked for, so other callers keep their shape', () => {
+		const rollups = rollUpGroupStats(GROUPS, SESSIONS, data);
+		expect(rollups.some((r) => r.isDeleted)).toBe(false);
+	});
+
+	it("rolls deleted agents' rows into one bucket after Ungrouped", () => {
+		const rollups = rollUpGroupStats(GROUPS, SESSIONS, data, { includeDeletedAgents: true });
+		const deleted = rollups[rollups.length - 1];
+
+		expect(deleted.groupId).toBe(DELETED_AGENTS_ID);
+		expect(deleted.name).toBe(DELETED_AGENTS_NAME);
+		expect(deleted.isDeleted).toBe(true);
+		expect(deleted.isUngrouped).toBe(false);
+		expect(deleted.sessions).toEqual([]);
+		expect(deleted.memberCount).toBe(2);
+		expect(deleted.queries).toBe(5);
+		expect(deleted.autoQueries).toBe(2);
+		expect(deleted.tokens.costUsd).toBe(1.25);
+	});
+
+	it('makes every recorded query land in exactly one bucket', () => {
+		const rollups = rollUpGroupStats(GROUPS, SESSIONS, data, { includeDeletedAgents: true });
+		expect(rollups.reduce((sum, r) => sum + r.queries, 0)).toBe(9);
+	});
+
+	it('adds no bucket when every row belongs to a live agent', () => {
+		const rollups = rollUpGroupStats(
+			GROUPS,
+			SESSIONS,
+			makeData({ bySessionByDay: { s1: [{ date: '2026-08-01', count: 1, duration: 1 }] } }),
+			{ includeDeletedAgents: true }
+		);
+		expect(rollups.some((r) => r.isDeleted)).toBe(false);
 	});
 });

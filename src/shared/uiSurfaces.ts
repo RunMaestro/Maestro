@@ -27,7 +27,8 @@ export type UiSurfaceEncoreFlag =
 	| 'usageStats'
 	| 'symphony'
 	| 'maestroCue'
-	| 'concerto';
+	| 'concerto'
+	| 'promptLinks';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -71,6 +72,17 @@ export const UI_SURFACES: UiSurface[] = [
 		description: 'Persistent notification history and unread entries.',
 		commandPalette: 'Open Notification Center',
 		click: 'the bell in the Main Panel header',
+	},
+	{
+		id: 'prompt-links',
+		label: 'Prompt Links',
+		aliases: ['prompt-link', 'run-links'],
+		modal: 'promptLinks',
+		description: 'Create, copy, and revoke maestro://run links that send a prompt to an agent.',
+		shortcutId: 'openPromptLinks',
+		commandPalette: 'Prompt Links',
+		click: 'Prompt Links in the Left Bar hamburger menu, or Create Prompt Link in an AI tab menu',
+		encore: 'promptLinks',
 	},
 	{
 		id: 'concerto',
@@ -123,10 +135,14 @@ export const UI_SURFACES: UiSurface[] = [
 			{ id: 'overview', label: 'Overview' },
 			{ id: 'agent-overview', label: 'Agent Overview' },
 			{ id: 'agents', label: 'Agents' },
+			{ id: 'groups', label: 'Groups' },
+			{ id: 'tokens', label: 'Tokens' },
 			{ id: 'activity', label: 'Activity' },
 			{ id: 'autorun', label: 'Auto Run' },
 			{ id: 'cue', label: 'Cue' },
 			{ id: 'shortcuts', label: 'Shortcuts' },
+			{ id: 'anthropic-usage', label: 'Anthropic Usage' },
+			{ id: 'codex-usage', label: 'OpenAI Usage' },
 		],
 		shortcutId: 'usageDashboard',
 		commandPalette: 'Usage Dashboard',
@@ -258,6 +274,15 @@ export const UI_SURFACES: UiSurface[] = [
 		description: 'Report a bug or suggest a feature; files a GitHub issue via gh.',
 		commandPalette: 'Send Feedback',
 		click: 'the Feedback button at the bottom of the Left Bar',
+	},
+	{
+		id: 'updates',
+		label: 'Check for Updates or Rollback',
+		aliases: ['update', 'update-check', 'rollback'],
+		modal: 'updateCheck',
+		description: 'Install a newer release, or roll back to an earlier one.',
+		commandPalette: 'Check for Updates or Rollback',
+		click: 'the Maestro menu → Check for Updates or Rollback',
 	},
 	{
 		id: 'about',

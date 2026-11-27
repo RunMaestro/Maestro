@@ -26,8 +26,10 @@ import type {
 	AddGroupChatParticipantResult,
 	CueSubscriptionInfo,
 	CueActivityEntry,
-	UsageDashboardData,
 	AchievementData,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
+	BrowserViewportCallback,
 	CreateSessionConfig,
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
@@ -47,6 +49,8 @@ import type {
 	SnoozeCommandCallback,
 	ReopenClosedTabCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
+	DesignPickCommandCallback,
 	WindowCommandCallback,
 	OpenFileTabOptions,
 } from '../../types';
@@ -163,6 +167,8 @@ export interface MessageHandlerCallbacks {
 	snoozeCommand: SnoozeCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
+	/** `maestro-cli diff-review` - list, add, remove, clear, send Git Diff review comments. */
+	diffReviewCommand: DiffReviewCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
 	windowCommand: WindowCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
@@ -179,6 +185,12 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
+	/** Design Mode by selector or region (`browser-pick`). See `PickBrowserElementCallback`. */
+	pickBrowserElement?: (request: PickBrowserElementRequest) => Promise<PickBrowserElementResult>;
+	/** `maestro-cli browser-viewport` - set or read a browser tab's viewport preset. */
+	browserViewport?: BrowserViewportCallback;
+	/** `maestro-cli browser-picks` - list the Design Mode chips in a composer, or remove one. */
+	designPickCommand?: DesignPickCommandCallback;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
 	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
@@ -376,6 +388,7 @@ export interface MessageHandlerCallbacks {
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
 	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
+	setGroupChatUnread: (chatId: string, unread: boolean) => Promise<boolean>;
 	addGroupChatParticipant: (
 		chatId: string,
 		agentId: string
@@ -408,7 +421,6 @@ export interface MessageHandlerCallbacks {
 	removeCuePipeline: (
 		identifier: string
 	) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
-	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
 	generateDirectorNotesSynopsis: (
 		lookbackDays: number,

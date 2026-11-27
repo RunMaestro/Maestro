@@ -46,6 +46,15 @@ function errorCode(error: unknown): string | undefined {
 }
 
 /**
+ * The `WATCH_LIMIT_ERROR_CODES` code `error` carries, if any: the OS file-watch
+ * limit is used up, which is the host's state and not a Maestro fault.
+ */
+export function watchLimitErrorCode(error: unknown): string | undefined {
+	const code = errorCode(error);
+	return code && WATCH_LIMIT_ERROR_CODES.has(code) ? code : undefined;
+}
+
+/**
  * Creates a chokidar file watcher for a Cue file.changed subscription.
  * Returns a cleanup function to stop watching.
  *

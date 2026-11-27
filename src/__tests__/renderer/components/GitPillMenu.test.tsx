@@ -63,6 +63,14 @@ describe('GitPillMenu', () => {
 		expect(screen.getByText('Configure Worktrees')).toBeInTheDocument();
 	});
 
+	it('caps its height at the room on screen and scrolls the rest', () => {
+		renderMenu();
+		const menu = screen.getByTestId('git-pill-menu');
+		// jsdom lays nothing out, so the cap is the whole viewport below the 0px anchor.
+		expect(menu.style.maxHeight).not.toBe('');
+		expect(menu.className).toContain('overflow-y-auto');
+	});
+
 	// The branch/origin rows below came from the pill's retired hover card.
 	describe('branch / origin detail', () => {
 		it('shows the branch and origin inherited from the hover card', () => {

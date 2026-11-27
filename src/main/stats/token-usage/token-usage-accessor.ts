@@ -19,6 +19,7 @@
 
 import { getStatsDB } from '../singleton';
 import { getSessionStorage } from '../../agents';
+import { AGENT_CAPABILITIES } from '../../agents/capabilities';
 import type { AgentSessionInfo } from '../../agents/session-storage';
 import { getProviderAccountDirs } from '../../agents/provider-account-dirs';
 import { logger } from '../../utils/logger';
@@ -29,6 +30,7 @@ import {
 	type SessionTokenBreakdown,
 	type TokenCoverage,
 	type TokenUsageAggregate,
+	type TokenUsageExclusions,
 	type TokenUsageGroup,
 	type TokenUsageQuery,
 	type TokenSeries,
@@ -39,7 +41,13 @@ import {
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { providerProfileKey, providerProfileLabel } from '../../../shared/providerProfiles';
 import { normalizeModelId } from '../../../shared/modelPricing';
-import { summarizeTokenSpeed, type TokenSpeedSource } from '../../../shared/tokenSpeed';
+import {
+	summarizeTokenSpeed,
+	tokenGranularityFor,
+	tokenSliceStart,
+	tokenSliceStarts,
+	type TokenSpeedSource,
+} from '../../../shared/tokenSpeed';
 import {
 	getTokenUsageCache,
 	sessionFingerprint,
@@ -65,9 +73,14 @@ const COVERAGE_BY_AGENT: Record<string, TokenCoverage> = {
 /** How long collected breakdowns stay fresh in memory before a re-collect. */
 const MEMO_TTL_MS = 30_000;
 
-interface MemoEntry {
-	computedAt: number;
+/** What one collection pass read, plus what it had to skip. */
+interface Collection {
 	breakdowns: SessionTokenBreakdown[];
+	excluded: TokenUsageExclusions;
+}
+
+interface MemoEntry extends Collection {
+	computedAt: number;
 }
 
 /**
@@ -78,7 +91,7 @@ interface MemoEntry {
  */
 let memo: MemoEntry | null = null;
 /** Shared by concurrent callers so a double mount can't run two collections. */
-let inflight: Promise<SessionTokenBreakdown[]> | null = null;
+let inflight: Promise<Collection> | null = null;
 
 /** Reset the in-memory memo (call on external stats changes / tests). */
 export function invalidateTokenUsageMemo(): void {
@@ -89,27 +102,48 @@ export function invalidateTokenUsageMemo(): void {
 // Enumeration
 // ---------------------------------------------------------------------------
 
+/** No exclusions: the default for callers (tests) that build breakdowns directly. */
+function noExclusions(): TokenUsageExclusions {
+	return { unsupportedAgents: [], remoteProjects: 0 };
+}
+
 /**
  * Distinct (agentType -> set of projectPaths) Maestro has tracked locally.
- * Remote sessions are skipped (their transcripts live on the remote host).
+ * Remote sessions are skipped (their transcripts live on the remote host), and
+ * so are agent types with no transcript storage; both are counted into
+ * `excluded` so the dashboard can say what its totals leave out.
  */
-function enumerateAgentProjects(): Map<string, Set<string>> {
+function enumerateAgentProjects(): {
+	byAgent: Map<string, Set<string>>;
+	excluded: TokenUsageExclusions;
+} {
 	const byAgent = new Map<string, Set<string>>();
+	const excluded = noExclusions();
 	const db = getStatsDB();
-	if (!db.isReady()) return byAgent;
+	if (!db.isReady()) return { byAgent, excluded };
 
 	let events;
 	try {
 		events = db.getSessionLifecycleEvents('all');
 	} catch (error) {
 		void captureException(error);
-		return byAgent;
+		return { byAgent, excluded };
 	}
 
+	const remote = new Set<string>();
+	const unsupported = new Set<string>();
 	for (const ev of events) {
-		if (ev.isRemote) continue;
 		if (!ev.projectPath) continue;
-		if (!getSessionStorage(ev.agentType)) continue;
+		if (ev.isRemote) {
+			remote.add(`${ev.agentType}|${ev.projectPath}`);
+			continue;
+		}
+		if (!getSessionStorage(ev.agentType)) {
+			// The terminal is not an agent with a model behind it; leaving it
+			// out is not a gap in the totals.
+			if (ev.agentType !== 'terminal') unsupported.add(ev.agentType);
+			continue;
+		}
 		let set = byAgent.get(ev.agentType);
 		if (!set) {
 			set = new Set<string>();
@@ -117,7 +151,9 @@ function enumerateAgentProjects(): Map<string, Set<string>> {
 		}
 		set.add(ev.projectPath);
 	}
-	return byAgent;
+	excluded.remoteProjects = remote.size;
+	excluded.unsupportedAgents = [...unsupported].sort();
+	return { byAgent, excluded };
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +191,23 @@ function sumModels(byModel: ModelTokenUsage[]): {
 		costUsd,
 		costEstimated,
 	};
+}
+
+/**
+ * Agents whose transcripts count cached input tokens INSIDE `inputTokens`
+ * (`cacheReadTokens` is a subset of it, not an addition). Their input is
+ * reduced to the fresh part so every provider's token fields add up the same
+ * way: `input + output + cacheRead + cacheCreation` counts each token once.
+ */
+const CACHE_READ_INSIDE_INPUT = new Set(['codex']);
+
+/**
+ * Rewrite one model bucket so its input is fresh tokens only. The cost was
+ * computed from the provider's own counts (with subset-aware pricing) before
+ * this point, so it is carried over untouched.
+ */
+function withFreshInput(m: ModelTokenUsage): ModelTokenUsage {
+	return { ...m, inputTokens: Math.max(0, m.inputTokens - m.cacheReadTokens) };
 }
 
 /**
@@ -198,6 +251,10 @@ function toBreakdown(
 		byModel = [];
 	}
 
+	if (CACHE_READ_INSIDE_INPUT.has(agentType)) {
+		byModel = byModel.map(withFreshInput);
+	}
+
 	const totals = sumModels(byModel);
 	return {
 		sessionId: info.sessionId,
@@ -222,8 +279,8 @@ function toBreakdown(
  * Collect one breakdown per known session, using the cache for unchanged ones.
  * Live keys are tracked so the cache can prune sessions deleted on disk.
  */
-async function collectBreakdowns(cache: TokenUsageCache): Promise<SessionTokenBreakdown[]> {
-	const byAgent = enumerateAgentProjects();
+async function collectBreakdowns(cache: TokenUsageCache): Promise<Collection> {
+	const { byAgent, excluded } = enumerateAgentProjects();
 	const breakdowns: SessionTokenBreakdown[] = [];
 	const liveKeys = new Set<string>();
 
@@ -267,7 +324,7 @@ async function collectBreakdowns(cache: TokenUsageCache): Promise<SessionTokenBr
 	}
 
 	cache.prune(liveKeys);
-	return breakdowns;
+	return { breakdowns, excluded };
 }
 
 /**
@@ -316,18 +373,38 @@ function addModelToTotals(t: TokenUsageTotals, m: ModelTokenUsage): void {
 	if (m.costEstimated && m.costUsd > 0) t.costEstimated = true;
 }
 
-/** Round a timestamp down to the start of its day/week/month (local time). */
+/** Round a timestamp down to the start of its hour/day/week/month (local time). */
 function bucketStart(ms: number, granularity: TokenTimelineGranularity): number {
-	const d = new Date(ms);
-	d.setHours(0, 0, 0, 0);
-	if (granularity === 'week') {
-		// Week starts Monday.
-		const day = (d.getDay() + 6) % 7;
-		d.setDate(d.getDate() - day);
-	} else if (granularity === 'month') {
-		d.setDate(1);
+	return tokenSliceStart(ms, granularity);
+}
+
+/**
+ * The window a query covers, and the granularity its timelines use. An open
+ * start (All Time) begins at the earliest activity in the data - a session's
+ * last activity or a timed call, whichever is older - so the timeline spans the
+ * history that exists rather than the epoch.
+ */
+function resolveWindow(
+	all: SessionTokenBreakdown[],
+	query: TokenUsageQuery,
+	nowMs: number
+): { startMs: number; endMs: number; granularity: TokenTimelineGranularity } {
+	const endMs = query.untilMs ?? nowMs;
+	let startMs = query.sinceMs;
+	if (startMs === undefined) {
+		let earliest = Infinity;
+		for (const s of all) {
+			if (s.byModel.length > 0 && s.timestampMs > 0 && s.timestampMs < earliest) {
+				earliest = s.timestampMs;
+			}
+			for (const b of s.speed ?? []) {
+				if (b.startMs < earliest) earliest = b.startMs;
+			}
+		}
+		startMs = Number.isFinite(earliest) ? Math.min(earliest, endMs) : endMs;
 	}
-	return d.getTime();
+	const granularity = query.granularity ?? tokenGranularityFor(Math.max(0, endMs - startMs));
+	return { startMs, endMs, granularity };
 }
 
 function toGroups(map: Map<string, { total: TokenUsageTotals; label: string }>): TokenUsageGroup[] {
@@ -344,8 +421,15 @@ function toGroups(map: Map<string, { total: TokenUsageTotals; label: string }>):
 }
 
 /** Build the dashboard aggregate from raw breakdowns, honoring the query window. */
-function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenUsageAggregate {
-	const granularity: TokenTimelineGranularity = query.granularity ?? 'day';
+function aggregate(
+	all: SessionTokenBreakdown[],
+	query: TokenUsageQuery,
+	excluded: TokenUsageExclusions = noExclusions(),
+	nowMs: number = Date.now(),
+	streamSpeed: readonly TokenSpeedSource[] = []
+): TokenUsageAggregate {
+	const window = resolveWindow(all, query, nowMs);
+	const granularity = window.granularity;
 	const sinceMs = query.sinceMs ?? -Infinity;
 	const untilMs = query.untilMs ?? Infinity;
 
@@ -382,7 +466,7 @@ function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenU
 		const account = accountGroup(s.agentType, s.accountKey);
 		group(byAccount, account.key, account.label).total.sessionCount++;
 
-		const bStart = bucketStart(s.timestampMs || Date.now(), granularity);
+		const bStart = bucketStart(s.timestampMs || nowMs, granularity);
 		let tb = timeline.get(bStart);
 		if (!tb) {
 			tb = { startMs: bStart, ...emptyTotals() };
@@ -402,6 +486,15 @@ function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenU
 		}
 	}
 
+	// Dense over the window: an idle slice is an explicit zero bar, so a quiet
+	// week keeps its width on the axis instead of vanishing between its neighbours.
+	// An open window with no activity has no start to fill from; leave it empty.
+	const fillTimeline = query.sinceMs !== undefined || totals.sessionCount > 0;
+	for (const start of fillTimeline
+		? tokenSliceStarts(window.startMs, window.endMs, granularity)
+		: []) {
+		if (!timeline.has(start)) timeline.set(start, { startMs: start, ...emptyTotals() });
+	}
 	const timelineArr = Array.from(timeline.values()).sort((a, b) => a.startMs - b.startMs);
 
 	return {
@@ -412,9 +505,13 @@ function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenU
 		byAccount: toGroups(byAccount),
 		timeline: timelineArr,
 		series: buildSeries(all, sinceMs, untilMs),
-		speed: buildSpeed(all, query),
+		speed: buildSpeed(all, query, window, streamSpeed),
 		coverageByAgent,
-		generatedAtMs: Date.now(),
+		excluded,
+		granularity,
+		windowStartMs: window.startMs,
+		windowEndMs: window.endMs,
+		generatedAtMs: nowMs,
 	};
 }
 
@@ -486,7 +583,12 @@ function buildSeries(all: SessionTokenBreakdown[], sinceMs: number, untilMs: num
  * not per session: a session is skipped only when its last activity predates
  * the window, since then none of its calls can fall inside it.
  */
-function buildSpeed(all: SessionTokenBreakdown[], query: TokenUsageQuery) {
+function buildSpeed(
+	all: SessionTokenBreakdown[],
+	query: TokenUsageQuery,
+	window: { startMs: number; endMs: number; granularity: TokenTimelineGranularity },
+	streamSpeed: readonly TokenSpeedSource[] = []
+) {
 	const sinceMs = query.sinceMs ?? -Infinity;
 	const sources: TokenSpeedSource[] = [];
 	for (const s of all) {
@@ -494,13 +596,45 @@ function buildSpeed(all: SessionTokenBreakdown[], query: TokenUsageQuery) {
 		if (s.timestampMs > 0 && s.timestampMs < sinceMs) continue;
 		sources.push({ agentType: s.agentType, buckets: s.speed });
 	}
+	// Calls timed off the live stream (providers with no timed transcript, and
+	// transcript providers on an SSH host). They never overlap the transcript
+	// buckets above: the stream sampler skips agents whose transcript it can read.
+	sources.push(...streamSpeed);
 	return summarizeTokenSpeed(sources, {
+		measurableAgents: measurableTokenSpeedAgents(),
 		sinceMs: query.sinceMs,
 		untilMs: query.untilMs,
+		// Same slices as the consumption timeline, so the two charts line up.
+		granularity: window.granularity,
+		windowStartMs: window.startMs,
+		nowMs: window.endMs,
 		agentLabel: getAgentDisplayName,
 		modelKey: (model) => (model ? normalizeModelId(model) : 'unknown'),
 		modelLabel: (key) => (key === 'unknown' ? modelLabel('') : key),
 	});
+}
+
+/** Provider ids whose capabilities say their token speed can be measured. */
+function measurableTokenSpeedAgents(): string[] {
+	return Object.entries(AGENT_CAPABILITIES)
+		.filter(([, caps]) => caps.tokenSpeedMeasurement !== 'none')
+		.map(([agentId]) => agentId)
+		.sort();
+}
+
+/**
+ * The stream-timed speed buckets for a window, or none when the stats database
+ * is unavailable (the transcript figures still stand on their own).
+ */
+function loadStreamSpeed(query: TokenUsageQuery): TokenSpeedSource[] {
+	const db = getStatsDB();
+	if (!db.isReady()) return [];
+	try {
+		return db.getTokenSpeedSources(query.sinceMs);
+	} catch (error) {
+		void captureException(error, { operation: 'loadStreamSpeed' });
+		return [];
+	}
 }
 
 /** Human label for a model bucket. */
@@ -524,19 +658,19 @@ function projectLabel(projectPath: string): string {
  * Collected breakdowns for every known session, served from the memo when it is
  * still fresh. Concurrent callers share one collection.
  */
-async function loadBreakdowns(force: boolean): Promise<SessionTokenBreakdown[]> {
+async function loadBreakdowns(force: boolean): Promise<Collection> {
 	if (!force && memo && Date.now() - memo.computedAt < MEMO_TTL_MS) {
-		return memo.breakdowns;
+		return memo;
 	}
 	if (inflight) return inflight;
 
 	inflight = (async () => {
 		const cache = getTokenUsageCache();
 		await cache.load();
-		const breakdowns = await collectBreakdowns(cache);
+		const collection = await collectBreakdowns(cache);
 		await cache.persist();
-		memo = { computedAt: Date.now(), breakdowns };
-		return breakdowns;
+		memo = { computedAt: Date.now(), ...collection };
+		return collection;
 	})();
 	try {
 		return await inflight;
@@ -557,8 +691,9 @@ export async function getTokenUsageAggregate(
 	query: TokenUsageQuery = {},
 	force = false
 ): Promise<TokenUsageAggregate> {
-	const breakdowns = await loadBreakdowns(force);
-	const result = aggregate(breakdowns, query);
+	const { breakdowns, excluded } = await loadBreakdowns(force);
+	// Read fresh on every call, outside the memo: stream samples land live.
+	const result = aggregate(breakdowns, query, excluded, Date.now(), loadStreamSpeed(query));
 	logger.debug(
 		`Computed token usage: ${result.totals.sessionCount} sessions, $${result.totals.costUsd.toFixed(2)}`,
 		LOG_CONTEXT
@@ -573,6 +708,7 @@ export const _internal = {
 	enumerateAgentProjects,
 	accountGroup,
 	bucketStart,
+	resolveWindow,
 	buildSeries,
 	buildSpeed,
 	localDayKey,

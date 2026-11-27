@@ -12,25 +12,29 @@ export const OVERVIEW_SECTIONS = [
 	'location-distribution',
 	'radial-activity',
 ] as const;
+/** Overview without the location donut: drawn only when some query ran over SSH. */
+export const OVERVIEW_LOCAL_ONLY_SECTIONS = OVERVIEW_SECTIONS.filter(
+	(id) => id !== 'location-distribution'
+);
 
 export const AGENTS_SECTIONS = ['agent-overview-cards'] as const;
 export const GROUPS_SECTIONS = ['group-overview-cards'] as const;
 export const AGENT_OVERVIEW_SECTIONS = [
 	'session-stats',
-	'agent-efficiency',
+	'agent-count-trend',
 	'agent-usage',
 ] as const;
 export const AGENT_OVERVIEW_WITH_WORKTREE_SECTIONS = [
 	'session-stats',
+	'agent-count-trend',
 	'worktree-analytics',
-	'agent-efficiency',
 	'agent-usage',
 ] as const;
+export const TOKENS_SECTIONS = ['token-stats', 'resilience'] as const;
 export const ACTIVITY_SECTIONS = [
 	'prompt-cadence',
 	'delegation-trend',
 	'activity-heatmap',
-	'weekday-comparison',
 	'duration-trends',
 ] as const;
 export const AUTORUN_SECTIONS = [
@@ -40,6 +44,8 @@ export const AUTORUN_SECTIONS = [
 	'tasks-by-hour',
 	'longest-autoruns',
 ] as const;
+export const CUE_SECTIONS = ['cue-stats'] as const;
+export const SHORTCUTS_SECTIONS = ['keyboard-stats'] as const;
 export const ANTHROPIC_USAGE_SECTIONS = ['anthropic-usage'] as const;
 export const CODEX_USAGE_SECTIONS = ['codex-usage'] as const;
 
@@ -49,44 +55,52 @@ export type SectionId =
 	| (typeof GROUPS_SECTIONS)[number]
 	| (typeof AGENT_OVERVIEW_SECTIONS)[number]
 	| (typeof AGENT_OVERVIEW_WITH_WORKTREE_SECTIONS)[number]
+	| (typeof TOKENS_SECTIONS)[number]
 	| (typeof ACTIVITY_SECTIONS)[number]
+	| (typeof CUE_SECTIONS)[number]
+	| (typeof SHORTCUTS_SECTIONS)[number]
 	| (typeof AUTORUN_SECTIONS)[number]
 	| (typeof ANTHROPIC_USAGE_SECTIONS)[number]
 	| (typeof CODEX_USAGE_SECTIONS)[number];
 
 const SECTION_LABELS: Record<SectionId, string> = {
-	'year-in-pixels': 'Past Year Activity Strip',
+	'year-in-pixels': 'Activity Strip',
 	'summary-cards': 'Summary Cards',
 	'token-speed': 'Tokens per Second',
 	'delegation-score': 'Delegation Score',
 	'prompt-cadence': 'Prompts',
 	'delegation-trend': 'Interactive vs Delegated Trend',
 	'query-percentiles': 'Query Duration Percentiles',
-	'autorun-task-percentiles': 'Auto Run Task Duration Percentiles',
-	'agent-overview-cards': 'Active Agents Overview',
+	'autorun-task-percentiles': 'Auto Run Agent Turn Duration Percentiles',
+	'agent-overview-cards': 'Agent Cards',
 	'group-overview-cards': 'Group Usage Overview',
 	'session-stats': 'Agent Statistics',
+	'token-stats': 'Token Usage',
+	resilience: 'Resilience',
+	'cue-stats': 'Cue Statistics',
+	'keyboard-stats': 'Keyboard Shortcuts',
+	'agent-count-trend': 'Agents Over Time',
 	'worktree-analytics': 'Worktree Analytics',
 	'anthropic-usage': 'Anthropic Usage',
 	'codex-usage': 'OpenAI Usage',
-	'agent-efficiency': 'Agent Efficiency Chart',
 	'agent-comparison': 'Provider Comparison Chart',
 	'provider-trends': 'Provider Trends Over Time',
 	'agent-usage': 'Agent Usage Chart',
-	'source-distribution': 'Session Type Chart',
-	'location-distribution': 'Location Distribution Chart',
+	'source-distribution': 'Query Source Chart',
+	'location-distribution': 'Query Location Chart',
 	'radial-activity': 'Activity by Hour and Day of Week',
 	'activity-heatmap': 'Activity Heatmap',
-	'weekday-comparison': 'Weekday vs Weekend Chart',
 	'duration-trends': 'Duration Trends Chart',
 	'autorun-stats': 'Auto Run Statistics',
 	'wizard-stats': 'Auto Run Wizard Statistics',
-	'tasks-by-hour': 'Tasks by Time of Day Chart',
-	'longest-autoruns': 'Top 25 Longest Auto Runs',
+	'tasks-by-hour': 'Agent Turns by Time of Day Chart',
+	'longest-autoruns': 'Longest Auto Runs',
 };
 
 interface SectionOptions {
 	hasWorktreeAnalytics?: boolean;
+	/** Whether any query in range ran on an SSH remote (draws the location donut). */
+	hasRemoteQueries?: boolean;
 }
 
 export function getSectionsForViewMode(
@@ -95,7 +109,7 @@ export function getSectionsForViewMode(
 ): readonly SectionId[] {
 	switch (viewMode) {
 		case 'overview':
-			return OVERVIEW_SECTIONS;
+			return options.hasRemoteQueries ? OVERVIEW_SECTIONS : OVERVIEW_LOCAL_ONLY_SECTIONS;
 		case 'agents':
 			return AGENTS_SECTIONS;
 		case 'groups':
@@ -104,6 +118,8 @@ export function getSectionsForViewMode(
 			return options.hasWorktreeAnalytics
 				? AGENT_OVERVIEW_WITH_WORKTREE_SECTIONS
 				: AGENT_OVERVIEW_SECTIONS;
+		case 'tokens':
+			return TOKENS_SECTIONS;
 		case 'activity':
 			return ACTIVITY_SECTIONS;
 		case 'autorun':
@@ -113,8 +129,9 @@ export function getSectionsForViewMode(
 		case 'codex-usage':
 			return CODEX_USAGE_SECTIONS;
 		case 'cue':
+			return CUE_SECTIONS;
 		case 'shortcuts':
-			return [];
+			return SHORTCUTS_SECTIONS;
 		default:
 			return OVERVIEW_SECTIONS;
 	}

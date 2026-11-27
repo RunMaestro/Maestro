@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 13;
+const RC_TARGET_VERSION = 15;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -186,5 +186,28 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(logger.warn).toHaveBeenCalledTimes(1);
 		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v13');
 		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+	});
+
+	it('v14 creates shortcut_usage_by_id and the (start_time, session_id) query index', () => {
+		const db = openDb();
+		runMigrations(db);
+
+		expect(hasTable(db, 'shortcut_usage_by_id')).toBe(true);
+		expect(columnNames(db, 'shortcut_usage_by_id')).toEqual(['date', 'shortcut_id', 'count']);
+		const index = db
+			.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name = ?")
+			.get('idx_query_start_session');
+		expect(index).toBeTruthy();
+	});
+
+	it('recreates shortcut_usage_by_id for a database stamped v14 without it', () => {
+		const db = openDb();
+		runMigrations(db);
+		db.exec('DROP TABLE shortcut_usage_by_id');
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'shortcut_usage_by_id')).toBe(true);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v14');
 	});
 });

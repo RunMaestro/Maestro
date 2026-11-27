@@ -16,13 +16,14 @@ import { format } from 'date-fns';
 import type { Theme } from '../../types';
 import {
 	TOKEN_SPEED_PEAK_MIN_BUCKET_MS,
+	tokenSliceEnd,
 	type TokenSpeedGranularity,
 	type TokenSpeedGroup,
 	type TokenSpeedPoint,
 	type TokenSpeedStats as SpeedStats,
 	type TokenSpeedSummary,
 } from '../../../shared/tokenSpeed';
-import { formatNumber, formatTokensPerSecond } from '../../../shared/formatters';
+import { formatHourOfDay, formatNumber, formatTokensPerSecond } from '../../../shared/formatters';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { MultiLineChart, type LineSeries } from '../widgets';
 import { SegmentedControl } from '../ui/SegmentedControl';
@@ -30,7 +31,7 @@ import { SortableTh } from '../ui/SortableTh';
 import { useTableSort } from '../../hooks/ui/useTableSort';
 import { usePersistedChoice } from '../../hooks/ui/usePersistedChoice';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
-import { ChartTooltip } from './ChartTooltip';
+import { ChartTooltip } from '../widgets';
 import { TokenSpeedCards } from './TokenSpeedCards';
 import { getSeriesColor } from './chartUtils';
 
@@ -64,23 +65,31 @@ function rateOrGap(value: number, calls: number): number | null {
 	return calls > 0 && value > 0 ? value : null;
 }
 
-function sliceLabel(startMs: number, granularity: TokenSpeedGranularity): string {
+/**
+ * Label for one timeline slice. A day, hour or month names itself; a week names
+ * its span ("Nov 10-16", "Oct 27 - Nov 2"), so a weekly bar is never read as a
+ * single day. `span` also spells out a day's weekday for tooltips.
+ */
+export function formatTokenSlice(
+	startMs: number,
+	granularity: TokenSpeedGranularity,
+	{ span = false }: { span?: boolean } = {}
+): string {
 	switch (granularity) {
 		case 'hour':
 			return format(startMs, 'EEE h a');
 		case 'day':
-			return format(startMs, 'MMM d');
-		case 'week':
-			return `Wk ${format(startMs, 'MMM d')}`;
+			return format(startMs, span ? 'EEE, MMM d' : 'MMM d');
+		case 'week': {
+			// Last day of the week: the next slice's start, minus one millisecond.
+			const lastDay = tokenSliceEnd(startMs, 'week') - 1;
+			return format(startMs, 'MMM') === format(lastDay, 'MMM')
+				? `${format(startMs, 'MMM d')}-${format(lastDay, 'd')}`
+				: `${format(startMs, 'MMM d')} - ${format(lastDay, 'MMM d')}`;
+		}
 		case 'month':
 			return format(startMs, 'MMM yyyy');
 	}
-}
-
-function hourLabel(hour: number): string {
-	if (hour === 0) return '12a';
-	if (hour === 12) return '12p';
-	return hour < 12 ? `${hour}a` : `${hour - 12}p`;
 }
 
 /** Index a set of points by slice start, for aligning series to one x axis. */
@@ -131,7 +140,7 @@ export const TokenSpeedStats = memo(function TokenSpeedStats({
 
 	const starts = useMemo(() => speed.timeline.map((p) => p.startMs), [speed.timeline]);
 	const xLabels = useMemo(
-		() => starts.map((ms) => sliceLabel(ms, speed.granularity)),
+		() => starts.map((ms) => formatTokenSlice(ms, speed.granularity)),
 		[starts, speed.granularity]
 	);
 	const fmt = formatTokensPerSecond;
@@ -196,9 +205,9 @@ export const TokenSpeedStats = memo(function TokenSpeedStats({
 						Token Speed
 					</h3>
 					<p className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-						Tokens per second of API call time, from request sent to response finished. A peak is
-						the fastest single model-hour with {TOKEN_SPEED_PEAK_MIN_BUCKET_MS / 60_000}+ minutes of
-						calls.
+						Tokens per second of API call time, from request sent to response finished, per{' '}
+						{speed.granularity}. A peak is the fastest single model-hour (one model&apos;s calls in
+						one clock hour) with {TOKEN_SPEED_PEAK_MIN_BUCKET_MS / 60_000}+ minutes of calls.
 					</p>
 				</div>
 				<SegmentedControl
@@ -317,8 +326,8 @@ const HourOfDayBars = memo(function HourOfDayBars({
 				</h4>
 				{fastest >= 0 && (
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
-						Fastest {hourLabel(fastest)} ({formatTokensPerSecond(values[fastest])}), slowest{' '}
-						{hourLabel(slowest)} ({formatTokensPerSecond(values[slowest])})
+						Fastest {formatHourOfDay(fastest)} ({formatTokensPerSecond(values[fastest])}), slowest{' '}
+						{formatHourOfDay(slowest)} ({formatTokensPerSecond(values[slowest])})
 					</span>
 				)}
 			</div>
@@ -345,13 +354,13 @@ const HourOfDayBars = memo(function HourOfDayBars({
 			</div>
 			<div className="flex justify-between mt-1 text-2xs" style={{ color: theme.colors.textDim }}>
 				{[0, 6, 12, 18, 23].map((h) => (
-					<span key={h}>{hourLabel(h)}</span>
+					<span key={h}>{formatHourOfDay(h)}</span>
 				))}
 			</div>
 			{hovered && (
 				<ChartTooltip anchor={{ x: hovered.x, y: hovered.y }} theme={theme}>
 					<div className="font-semibold mb-1">
-						{hourLabel(hovered.hour)} - {hourLabel((hovered.hour + 1) % 24)}
+						{formatHourOfDay(hovered.hour)} - {formatHourOfDay((hovered.hour + 1) % 24)}
 					</div>
 					<div>Average: {formatTokensPerSecond(avgOf(hours[hovered.hour], metric))} tok/s</div>
 					<div>
@@ -384,9 +393,21 @@ const SPEED_COLUMNS: ReadonlyArray<{ key: SpeedColumn; label: string; title: str
 	{ key: 'avgInputTps', label: 'Avg In', title: 'Average input tokens per second' },
 	{ key: 'avgOutputTps', label: 'Avg Out', title: 'Average output tokens per second' },
 	{ key: 'avgTotalTps', label: 'Avg Total', title: 'Average input + output tokens per second' },
-	{ key: 'peakInputTps', label: 'Peak In', title: 'Fastest call, input tokens per second' },
-	{ key: 'peakOutputTps', label: 'Peak Out', title: 'Fastest call, output tokens per second' },
-	{ key: 'peakTotalTps', label: 'Peak Total', title: 'Fastest call, total tokens per second' },
+	{
+		key: 'peakInputTps',
+		label: 'Peak In',
+		title: 'Fastest model-hour, input tokens per second',
+	},
+	{
+		key: 'peakOutputTps',
+		label: 'Peak Out',
+		title: 'Fastest model-hour, output tokens per second',
+	},
+	{
+		key: 'peakTotalTps',
+		label: 'Peak Total',
+		title: 'Fastest model-hour, input + output tokens per second',
+	},
 ];
 
 const defaultDirectionFor = (key: SpeedColumn) => (key === 'label' ? 'asc' : 'desc');

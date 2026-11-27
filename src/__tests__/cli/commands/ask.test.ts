@@ -158,6 +158,50 @@ describe('ask command', () => {
 		});
 	});
 
+	describe('--btw side questions', () => {
+		it('asks a side question of the named tab instead of consulting', async () => {
+			const sendCommand = mockClient({
+				type: 'cross_agent_ask_result',
+				success: true,
+				answer: 'teal',
+			});
+
+			await ask('pedtome', 'favourite colour?', { btw: true, tab: 'tab-7' });
+
+			const [message] = sendCommand.mock.calls[0];
+			expect(message).toMatchObject({
+				type: 'cross_agent_ask',
+				sessionId: 'resolved-pedtome',
+				sideQuestion: true,
+				targetTabId: 'tab-7',
+			});
+			expect(logSpy).toHaveBeenCalledWith('teal');
+		});
+
+		it('lets an agent ask a side question about its own conversation', async () => {
+			const sendCommand = mockClient({
+				type: 'cross_agent_ask_result',
+				success: true,
+				answer: 'x',
+			});
+
+			await ask('kensho', 'what did I just do?', { btw: true, from: 'kensho' });
+
+			expect(sendCommand).toHaveBeenCalledTimes(1);
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('refuses --tab without --btw and --with-context with it', async () => {
+			const sendCommand = mockClient({});
+
+			await ask('pedtome', 'q', { tab: 'tab-7' });
+			await ask('pedtome', 'q', { btw: true, withContext: true });
+
+			expect(sendCommand).not.toHaveBeenCalled();
+			expect(exitSpy).toHaveBeenCalledTimes(2);
+		});
+	});
+
 	describe('caller attribution', () => {
 		it('defaults --from to the agent this shell runs under and forwards its tab', async () => {
 			process.env[CALLER_AGENT_ID_ENV_VAR] = 'caller-agent';

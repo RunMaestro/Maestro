@@ -99,6 +99,7 @@ import {
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool } from './plugins';
 import { handleListAgentModels } from './models';
+import { handleListRollbackTargets, handleRollbackUpdate } from './updates';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
@@ -116,6 +117,8 @@ import {
 } from './autoRun';
 import { handleSnoozeCommand } from './snooze';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
+import { handleDiffReviewCommand } from './diffReview';
+import { handlePromptLinkCommand } from './promptLinks';
 import { handleWindowCommand } from './windows';
 import {
 	handleSelectTab,
@@ -134,6 +137,9 @@ import {
 	handleReadTerminalTab,
 	handleListTerminalTabs,
 	handleCloseBrowserTab,
+	handlePickBrowserElement,
+	handleBrowserViewport,
+	handleDesignPickCommand,
 	handleOpenTerminalTab,
 	handleNewAITabWithPrompt,
 } from './tabs';
@@ -160,6 +166,7 @@ import {
 	handleSendGroupChatMessage,
 	handleStopGroupChat,
 	handleArchiveGroupChat,
+	handleSetGroupChatUnread,
 	handleAddGroupChatParticipant,
 } from './groupChat';
 import {
@@ -186,7 +193,6 @@ import {
 	handleDeletePlaybook,
 } from './playbooks';
 import {
-	handleGetUsageDashboard,
 	handleGetStatsAggregation,
 	handleGetTokenUsage,
 	handleGetStatsIndexing,
@@ -194,6 +200,14 @@ import {
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
 } from './stats';
+import {
+	handleGetDelegationStats,
+	handleGetCueStats,
+	handleGetPlanUsage,
+	handleGetAgentCountStats,
+	handleGetActivityStats,
+	handleStatsExport,
+} from './usageDashboard';
 
 /**
  * WebSocket Message Handler Class
@@ -334,6 +348,14 @@ export class WebSocketMessageHandler {
 				handleAutoRunSteeringCommand(this.ctx, client, message);
 				break;
 
+			case 'diff_review_command':
+				handleDiffReviewCommand(this.ctx, client, message);
+				break;
+
+			case 'prompt_link_command':
+				void handlePromptLinkCommand(this.ctx, client, message);
+				break;
+
 			case 'window_command':
 				handleWindowCommand(this.ctx, client, message);
 				break;
@@ -376,6 +398,18 @@ export class WebSocketMessageHandler {
 
 			case 'close_browser_tab':
 				handleCloseBrowserTab(this.ctx, client, message);
+				break;
+
+			case 'pick_browser_element':
+				handlePickBrowserElement(this.ctx, client, message);
+				break;
+
+			case 'browser_viewport':
+				handleBrowserViewport(this.ctx, client, message);
+				break;
+
+			case 'design_pick_command':
+				handleDesignPickCommand(this.ctx, client, message);
 				break;
 
 			case 'open_terminal_tab':
@@ -574,6 +608,10 @@ export class WebSocketMessageHandler {
 				handleArchiveGroupChat(this.ctx, client, message);
 				break;
 
+			case 'set_group_chat_unread':
+				handleSetGroupChatUnread(this.ctx, client, message);
+				break;
+
 			case 'add_group_chat_participant':
 				handleAddGroupChatParticipant(this.ctx, client, message);
 				break;
@@ -626,10 +664,6 @@ export class WebSocketMessageHandler {
 				handleCuePipelineRemove(this.ctx, client, message);
 				break;
 
-			case 'get_usage_dashboard':
-				handleGetUsageDashboard(this.ctx, client, message);
-				break;
-
 			case 'get_achievements':
 				handleGetAchievements(this.ctx, client, message);
 				break;
@@ -648,6 +682,30 @@ export class WebSocketMessageHandler {
 
 			case 'stats_query':
 				handleStatsQuery(this.ctx, client, message);
+				break;
+
+			case 'get_delegation_stats':
+				handleGetDelegationStats(this.ctx, client, message);
+				break;
+
+			case 'get_cue_stats':
+				handleGetCueStats(this.ctx, client, message);
+				break;
+
+			case 'get_plan_usage':
+				handleGetPlanUsage(this.ctx, client, message);
+				break;
+
+			case 'get_agent_count_stats':
+				handleGetAgentCountStats(this.ctx, client, message);
+				break;
+
+			case 'get_activity_stats':
+				handleGetActivityStats(this.ctx, client, message);
+				break;
+
+			case 'stats_export':
+				handleStatsExport(this.ctx, client, message);
 				break;
 
 			case 'generate_director_notes_synopsis':
@@ -764,6 +822,14 @@ export class WebSocketMessageHandler {
 
 			case 'list_agent_models':
 				void handleListAgentModels(this.ctx, client, message);
+				break;
+
+			case 'list_rollback_targets':
+				void handleListRollbackTargets(this.ctx, client, message);
+				break;
+
+			case 'rollback_update':
+				void handleRollbackUpdate(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

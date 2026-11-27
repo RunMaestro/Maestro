@@ -63,6 +63,8 @@ export type {
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
+import type { DesignPickKind } from '../../shared/designPickCommands';
+import type { BrowserViewportPreset } from '../../shared/browserViewport';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -507,6 +509,16 @@ export interface QueuedItem {
 	// mentioned agent is pulled in at the moment the message becomes the agent's
 	// turn - not when the user typed it into a queue that was minutes deep.
 	crossAgentMention?: boolean;
+	// The page-derived text of each Design Mode chip the send expanded into
+	// `text` (each block without its note; see `expandDesignPicks`). It is page
+	// content, not the user's words, so every re-plan of this item's `@mentions`
+	// (the drain, an edit, a note-only edit too) reads `text` with it removed: a
+	// picked page that says `@Other` must not consult Other.
+	designPickPageText?: string[];
+	// Queued with `planMentions: false` (its text is not the user's words, such
+	// as a queued Design Mode pick). It can never consult another agent: an edit
+	// keeps both mention flags off instead of re-planning them from the text.
+	mentionsDisabled?: boolean;
 	// The message is addressed ONLY at the mentioned agent(s) - it leads with an
 	// `@agent` mention, so this agent does not answer it. Dispatching the item
 	// fires the consult and nothing else: no spawn, no turn. It still occupies a
@@ -611,6 +623,11 @@ export interface BatchRunConfig {
 	// over the document/task-driven spec mode. When set, the run pursues a free-text
 	// goal instead of checking off `- [ ]` tasks. See src/shared/goalDriven/types.ts.
 	goalConfig?: import('../../shared/goalDriven/types').GoalRunConfig;
+	// Set only when this launch CONTINUES a run the app quit in the middle of
+	// (an update restart). The document loop starts its first pass at this
+	// document and loop pass instead of the top. Never set by a launch modal.
+	// See src/shared/autorunRestartResume.ts.
+	resumeFrom?: import('../../shared/autorunRestartResume').AutoRunResumePoint;
 }
 
 // Import BatchProcessingState for state machine integration
@@ -704,7 +721,8 @@ export interface BatchRunState {
 	goalMode?: boolean; // True when this run is pursuing a free-text goal (not documents)
 	goalProgress?: number; // Latest self-reported progress toward the goal (0-100)
 	goalRationale?: string; // One-line rationale accompanying the latest progress report
-	goalIteration?: number; // 1-based iteration number the goal loop is on
+	goalIteration?: number; // Goal loops finished so far (0 while the first loop runs)
+	goalLoops?: import('../../shared/goalDriven/types').GoalLoopStats; // Per-loop momentum readout, refreshed after each loop
 	goalExitReason?: import('../../shared/goalDriven/types').GoalExitReason; // Why the goal run stopped
 
 	// Live playbook status parsed from .maestro/STATUS.json (feature, phase,
@@ -805,6 +823,27 @@ export interface ProviderTabSession {
 	customEffort?: string;
 }
 
+/**
+ * One browser Design Mode pick staged in a tab's composer as a chip.
+ *
+ * A pick no longer pastes its selector, computed styles and HTML into the
+ * draft: it waits above the textarea as a chip (thumbnail, short label, note)
+ * the user can review, annotate or remove. The full `text` block, followed by
+ * the `note`, is expanded into the outgoing message at send time, and the
+ * `screenshot` rides along after the staged images. The chip owns its
+ * screenshot; it is never copied into `stagedImages`.
+ */
+export interface StagedDesignPick {
+	id: string; // generateId()
+	kind: DesignPickKind; // 'element' | 'region'
+	label: string; // short: `button.cta "Sign up"` or `Region 640 x 220`
+	url: string;
+	note: string; // editable from the chip
+	text: string; // full block from buildDesignModePrompt (note excluded; appended at send)
+	screenshot: string | null; // data URL or maestro-image ref; owned by the chip, NOT in stagedImages
+	createdAt: number;
+}
+
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
@@ -829,6 +868,16 @@ export interface AITab {
 	 */
 	commandMode?: ComposerCommandMode | boolean;
 	stagedImages: string[]; // Staged images (base64) for this tab
+	/**
+	 * Design Mode picks staged in this tab's composer as chips, in the order they
+	 * were picked (which is the order they expand at send). Absent means none, so
+	 * a fresh tab literal needs no entry. Anything that clears `stagedImages` on
+	 * an EXISTING tab must clear this too, or a sent or discarded draft leaves
+	 * its chips behind. Persisted with the tab like `stagedImages`;
+	 * `relocateSessionImages()` moves each inline `screenshot` out of the
+	 * sessions file.
+	 */
+	stagedDesignPicks?: StagedDesignPick[];
 	usageStats?: UsageStats; // Token usage for this tab
 	createdAt: number; // Timestamp for ordering
 	state: 'idle' | 'busy'; // Tab-level state for write-mode tracking
@@ -1048,6 +1097,15 @@ export interface BrowserTab {
 	// partition and is dropped from persisted session state, so it never
 	// survives an app restart.
 	ephemeral?: boolean;
+	// When true, Design Mode is on for this tab. Sticky: it survives page loads,
+	// tab switches and restarts, and the picker overlay re-arms whenever the tab is
+	// the active surface again. Only Escape and the Design Mode toggle (toolbar
+	// button, shortcut, command palette) turn it off. Persisted.
+	designMode?: boolean;
+	// The width this tab shows its page at: 'fit' (or unset) fills the tab, any other
+	// preset lays the page out at that CSS width and scales it down to fit. Chosen by
+	// the user for this tab, so it survives page loads and restarts. Persisted.
+	viewportPreset?: BrowserViewportPreset;
 	// Runtime-only: populated by the embedded Electron browser surface, never persisted
 	webContentsId?: number;
 }
@@ -1832,6 +1890,10 @@ export interface EncoreFeatureFlags {
 	// per-account attribution on History and stats. Off by default. Optional so
 	// older fixtures and persisted settings remain valid.
 	webLogin?: boolean;
+	// Prompt Links - maestro://run/<token> URLs that open a new tab in an agent
+	// and send a stored prompt. Off by default. Optional so older fixtures and
+	// persisted settings remain valid.
+	promptLinks?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

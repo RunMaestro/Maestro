@@ -7,6 +7,7 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 	AITab,
+	StagedDesignPick,
 } from '../../types';
 import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -20,11 +21,15 @@ import { hasCapabilityCached } from '../agent/useAgentCapabilities';
 import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/shellCommandInput';
 import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
+import { getStagedDesignPicks, removeStagedDesignPicks } from '../../services/stagedDesignPicks';
+import { expandDesignPicks, withoutDesignPickPageText } from '../../utils/designModePicker';
 import {
 	requestTabAutoNameForMessage,
 	requestWizardTabAutoName,
 } from '../../services/tabAutoNaming';
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
+import { askSideQuestion } from '../../services/sideQuestion';
+import { parseSideQuestion } from '../../../shared/sideQuestion';
 import { gitService } from '../../services/git';
 import {
 	withMentionTurnNotes,
@@ -329,13 +334,54 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// `let` because command mode's escape (`\!foo`) is unwrapped in place
 			// below once we know we're in AI mode.
+			// A submit straight from the composer (Enter, the send button), as
+			// opposed to a replay, recovery, macro, or followup that hands its own
+			// text in. Only a composer submit consumes the composer: the others never
+			// read the draft, so its text, staged images, and command mode stay put.
+			const isComposerSubmit = overrideInputValue === undefined;
 			let effectiveInputValue = overrideInputValue ?? getInputValue();
-			// When the caller passes explicit images (e.g. Force Send button replaying a
-			// queued item), use those instead of the active tab's stagedImages. This avoids
-			// the stale-closure race when the caller does setStagedImages() right before
-			// invoking processInput(), and prevents wiping the user's in-progress draft.
-			const effectiveImages = options?.images ?? stagedImages;
+			// When the caller passes explicit images (e.g. a replayed message's
+			// attachments), use those instead of the active tab's stagedImages. This
+			// avoids the stale-closure race when the caller does setStagedImages() right
+			// before invoking processInput(), and prevents wiping the user's draft. A
+			// send that is not from the composer never borrows the draft's images.
+			// `let` because Design Mode chips add their screenshots below.
+			let effectiveImages = options?.images ?? (isComposerSubmit ? stagedImages : []);
 			const usingOverrideImages = options?.images !== undefined;
+			// Design Mode chips staged on the tab this submit sends from. Like the
+			// staged images, only a composer submit in AI mode takes them, and not
+			// when the caller hands in attachments of its own. Read from the live
+			// store: the first of two quick Enters takes them synchronously, and the
+			// second must find them gone, not still in a render-time snapshot.
+			const designPicks: StagedDesignPick[] =
+				activeSession &&
+				targetTabId &&
+				isComposerSubmit &&
+				!usingOverrideImages &&
+				activeSession.inputMode === 'ai'
+					? getStagedDesignPicks(activeSession.id, targetTabId)
+					: [];
+			// Takes the chips this submit expanded off their tab, wherever the
+			// staged images are cleared. By id, so a chip staged after the read
+			// above stays for the next message.
+			const clearSentDesignPicks = () => {
+				if (designPicks.length === 0 || !activeSession || !targetTabId) return;
+				removeStagedDesignPicks(
+					activeSession.id,
+					targetTabId,
+					designPicks.map((pick) => pick.id)
+				);
+			};
+			// Clears the draft text after a slash command or command-mode run. A no-op
+			// for a send that did not come from the composer, because that text was
+			// never in it.
+			const clearComposerText = () => {
+				if (!isComposerSubmit) return;
+				setInputValue('');
+				setSlashCommandOpen(false);
+				syncAiInputToSession('', syncTarget);
+				if (inputRef.current) inputRef.current.style.height = 'auto';
+			};
 			if (options?.forceParallel) {
 				logger.info('[ForcedParallel] processInput called:', undefined, {
 					hasActiveSession: !!activeSession,
@@ -344,7 +390,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					sessionState: activeSession?.state,
 				});
 			}
-			if (!activeSession || (!effectiveInputValue.trim() && effectiveImages.length === 0)) {
+			// Chips alone are a message: they expand into text at send.
+			if (
+				!activeSession ||
+				(!effectiveInputValue.trim() && effectiveImages.length === 0 && designPicks.length === 0)
+			) {
 				if (options?.forceParallel) {
 					logger.info('[ForcedParallel] Early return: no session or empty input');
 				}
@@ -361,8 +411,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Gated on the composer's mode flag, NOT on a leading `!` in the text:
 			// the bang is consumed on entry, so by here the draft is the bare
 			// command (and may legitimately contain bangs of its own).
+			// The mode belongs to the draft, so it only applies to a composer submit:
+			// replaying a message while the composer sits in `!` mode must send that
+			// message to the agent, not run it as a shell command.
 			const composerMode: ComposerCommandMode =
-				activeSession.inputMode === 'ai' ? isCommandMode() : 'off';
+				activeSession.inputMode === 'ai' && isComposerSubmit ? isCommandMode() : 'off';
 			if (composerMode !== 'off' && !isWizardActive) {
 				const commandText = effectiveInputValue.trim();
 				if (!commandText) {
@@ -378,10 +431,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					return;
 				}
 
-				setInputValue('');
-				setSlashCommandOpen(false);
-				syncAiInputToSession('');
-				if (inputRef.current) inputRef.current.style.height = 'auto';
+				clearComposerText();
 
 				if (composerMode === 'ai') {
 					// AI command mode: nothing runs yet. Ask for a command line and let
@@ -423,14 +473,32 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const commandText = effectiveInputValue.trim();
 				const isTerminalMode = activeSession.inputMode === 'terminal';
 
+				// Built-in /btw side question (AI mode, Claude Code only). Handled here,
+				// ahead of the queue further down, because it must run NOW even while
+				// the tab is busy: it forks the tab's session instead of adding a turn
+				// to it, and the answer goes to a card above the composer, never into
+				// the transcript.
+				// Not while the wizard is active: its panel replaces the composer, so
+				// the card would never render and the answer would be lost.
+				const sideQuestion = isTerminalMode ? null : parseSideQuestion(commandText);
+				if (sideQuestion !== null && activeSession.toolType === 'claude-code' && !isWizardActive) {
+					const targetTab = resolveTargetTab(activeSession);
+					if (targetTab) {
+						clearComposerText();
+						void askSideQuestion({
+							session: activeSession,
+							tabId: targetTab.id,
+							question: sideQuestion,
+						});
+						return;
+					}
+				}
+
 				// Handle built-in /history command (only in AI mode)
 				// This is intercepted here because it requires Maestro to handle the synopsis generation
 				// rather than passing through to the agent (which may not support it or require special permissions)
 				if (!isTerminalMode && commandText === '/history' && onHistoryCommand) {
-					setInputValue('');
-					setSlashCommandOpen(false);
-					syncAiInputToSession('', syncTarget);
-					if (inputRef.current) inputRef.current.style.height = 'auto';
+					clearComposerText();
 
 					// Execute the history command handler asynchronously
 					onHistoryCommand().catch((error) => {
@@ -448,10 +516,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// Extract arguments after '/wizard ' (everything after the command)
 					const args = commandText.slice('/wizard'.length).trim();
 
-					setInputValue('');
-					setSlashCommandOpen(false);
-					syncAiInputToSession('', syncTarget);
-					if (inputRef.current) inputRef.current.style.height = 'auto';
+					clearComposerText();
 
 					// Execute the wizard command handler with the argument text
 					onWizardCommand(args);
@@ -466,10 +531,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					onSkillsCommand &&
 					activeSession.toolType === 'claude-code'
 				) {
-					setInputValue('');
-					setSlashCommandOpen(false);
-					syncAiInputToSession('', syncTarget);
-					if (inputRef.current) inputRef.current.style.height = 'auto';
+					clearComposerText();
 
 					// Execute the skills command handler asynchronously
 					onSkillsCommand().catch((error) => {
@@ -502,10 +564,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							: undefined);
 					if (matchingCustomCommand) {
 						// Execute the custom AI command by sending its prompt
-						setInputValue('');
-						setSlashCommandOpen(false);
-						syncAiInputToSession('', syncTarget); // We're in AI mode here (isTerminalMode === false)
-						if (inputRef.current) inputRef.current.style.height = 'auto';
+						clearComposerText(); // We're in AI mode here (isTerminalMode === false)
 
 						// Substitute template variables and send to the AI agent
 						(async () => {
@@ -639,14 +698,42 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			const currentMode = activeSession.inputMode;
 
-			// A submit straight from the composer (Enter, the send button), as
-			// opposed to a replay, Force Send, or recovery that hands its own text
-			// in. Only these read the draft, so only these can read it twice.
-			const isComposerSubmit = overrideInputValue === undefined;
+			// The draft as the user left it, before the chips are expanded into it.
+			// What reads the user's own words reads this: the repeat guard, the tab
+			// namer, and the recall history. The @mention resolution reads it plus
+			// the chips' notes (`mentionPlanText` below). None of them sees a chip's
+			// page content.
+			const typedText = effectiveInputValue;
+			const typedImages = effectiveImages;
+			// The chips' page-derived text the expansion placed in the message.
+			// Every queued copy carries it, so the drain and a queue edit re-plan
+			// `@mentions` from the message without the page's words.
+			let designPickFields: Pick<QueuedItem, 'designPickPageText'> = {};
+			// What `@mentions` are resolved from: the message with the chips' page
+			// text taken out, the same text the drain and a queue edit resolve from.
+			let mentionPlanText = typedText;
+			if (designPicks.length > 0) {
+				// From here on the message is what the agent receives: each chip's
+				// block, then the typed text, with the chips' screenshots after the
+				// staged images. A queued, retried, or requeued copy carries the same.
+				const expanded = expandDesignPicks(designPicks, typedText);
+				effectiveInputValue = expanded.text;
+				if (expanded.images.length > 0) effectiveImages = [...typedImages, ...expanded.images];
+				if (expanded.pageText.length > 0)
+					designPickFields = { designPickPageText: expanded.pageText };
+				mentionPlanText = withoutDesignPickPageText(expanded.text, expanded.pageText);
+			}
+			// A send with nothing typed (chips only) is named from its chips' blocks.
+			const namingText = typedText.trim() ? typedText : effectiveInputValue;
+
+			// Only a composer submit reads the draft, so only it can read it twice.
+			// Chips are never a repeat: they are read live, so any still staged were
+			// staged after the first submit took its own.
 			const inFlightKey = `${activeSession.id}:${targetTabId ?? ''}`;
-			const submitted = { text: effectiveInputValue, images: effectiveImages };
+			const submitted = { text: typedText, images: typedImages };
 			const isRepeatOfInFlight = (composerSubmitsInFlight.get(inFlightKey) ?? []).some(
 				(prior) =>
+					designPicks.length === 0 &&
 					(!submitted.text.trim() || submitted.text === prior.text) &&
 					(submitted.images === prior.images ||
 						(submitted.images.length === 0 && prior.images.length === 0))
@@ -668,8 +755,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// draft never needs putting back.
 			let composerTaken = false;
 			const clearComposer = () => {
+				if (!isComposerSubmit) return;
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
+				clearSentDesignPicks();
 				syncAiInputToSession('', syncTarget);
 				if (inputRef.current) inputRef.current.style.height = 'auto';
 			};
@@ -699,16 +788,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Handle wizard mode - route messages to wizard sendMessage instead of normal AI processing
 			// This allows the wizard to have its own conversation without affecting the regular AI queue
 			if (currentMode === 'ai' && isWizardActive && onWizardSendMessage) {
-				// Don't allow slash commands in wizard mode (except /wizard which ends/restarts it)
-				if (
-					effectiveInputValue.trim().startsWith('/') &&
-					!effectiveInputValue.trim().startsWith('/wizard')
-				) {
+				// Don't allow slash commands in wizard mode (except /wizard which ends/restarts it).
+				// Judged on what the user typed, not on the chips expanded around it.
+				if (typedText.trim().startsWith('/') && !typedText.trim().startsWith('/wizard')) {
 					// Ignore slash commands in wizard mode
 					logger.info(
 						'[processInput] Ignoring slash command in wizard mode:',
 						undefined,
-						effectiveInputValue.trim()
+						typedText.trim()
 					);
 					return;
 				}
@@ -725,18 +812,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					requestWizardTabAutoName(
 						activeSession,
 						wizardTab.id,
-						effectiveInputValue,
+						namingText,
 						(wizardTab.wizardState?.conversationHistory ?? [])
 							.filter((message) => message.role === 'user')
 							.map((message) => message.content)
 					);
 				}
 
-				// Clear input
-				setInputValue('');
-				if (!usingOverrideImages) setStagedImages([]);
-				syncAiInputToSession('', syncTarget);
-				if (inputRef.current) inputRef.current.style.height = 'auto';
+				clearComposer();
 
 				// Send to wizard (with images if any were staged)
 				onWizardSendMessage(effectiveInputValue, imagesToSend).catch((error) => {
@@ -757,7 +840,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// dispatch now name too, so this is no longer the only entry point.)
 			const activeTabForNaming = resolveTargetTab(activeSession);
 			if (currentMode === 'ai' && activeTabForNaming) {
-				requestTabAutoNameForMessage(activeSession, activeTabForNaming.id, effectiveInputValue);
+				requestTabAutoNameForMessage(activeSession, activeTabForNaming.id, namingText);
 			}
 
 			// Cross-agent @mentions (Phase 03). RESOLVE ONLY - nothing is consulted
@@ -772,10 +855,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Gated on `overrideInputValue === undefined` so it resolves exactly once,
 			// on a real input-box submit - not on queued replays / force-sends, which
 			// pass an override value.
+			//
+			// Resolved from the message without its Design Mode chips' page text
+			// (typed text and notes): a chip's page content must not pull in an agent
+			// the user never named. The consult itself still gets the whole message.
 			const mentionSourceTabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
 			const crossAgentMentionPlan =
 				currentMode === 'ai' && overrideInputValue === undefined && onPlanCrossAgentMentions
-					? onPlanCrossAgentMentions(effectiveInputValue, activeSession, mentionSourceTabId)
+					? onPlanCrossAgentMentions(mentionPlanText, activeSession, mentionSourceTabId)
 					: null;
 
 			if (crossAgentMentionPlan) {
@@ -819,6 +906,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							type: 'message',
 							text: effectiveInputValue,
 							images: [...effectiveImages],
+							...designPickFields,
 							tabName:
 								activeTab?.name ||
 								(activeTab?.agentSessionId
@@ -833,7 +921,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						};
 
 						updateSessionWith(resolvedSessionId, (s) => {
-							const trimmed = effectiveInputValue.trim();
+							const trimmed = typedText.trim();
 							const priorHistory = s.aiCommandHistory || [];
 							return {
 								...s,
@@ -874,7 +962,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					updateSessionWith(resolvedSessionId, (s) => {
 						const tab = resolveTargetTab(s);
 						if (!tab) return s;
-						const trimmed = effectiveInputValue.trim();
+						const trimmed = typedText.trim();
 						const priorHistory = s.aiCommandHistory || [];
 						const aiCommandHistory =
 							trimmed && priorHistory[priorHistory.length - 1] !== trimmed
@@ -1070,6 +1158,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						type: 'message',
 						text: effectiveInputValue,
 						images: [...effectiveImages],
+						...designPickFields,
 						// See the slash-command path above: a fallback label, not the
 						// name the queue actually renders.
 						tabName: liveTab ? getTabDisplayName(liveTab) : undefined,
@@ -1273,17 +1362,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			}
 
 			updateSessionWith(resolvedSessionId, (s) => {
-				// Add command to history (separate histories for AI and terminal modes)
+				// Add command to history (separate histories for AI and terminal modes).
+				// What the user typed, not the chips expanded around it.
 				const historyKey = currentMode === 'ai' ? 'aiCommandHistory' : 'shellCommandHistory';
 				const currentHistory =
 					currentMode === 'ai' ? s.aiCommandHistory || [] : s.shellCommandHistory || [];
 				const newHistory = [...currentHistory];
+				const historyText = typedText.trim();
 				if (
-					effectiveInputValue.trim() &&
-					(newHistory.length === 0 ||
-						newHistory[newHistory.length - 1] !== effectiveInputValue.trim())
+					historyText &&
+					(newHistory.length === 0 || newHistory[newHistory.length - 1] !== historyText)
 				) {
-					newHistory.push(effectiveInputValue.trim());
+					newHistory.push(historyText);
 				}
 
 				// For terminal mode (legacy), add to shellLogs
@@ -1395,10 +1485,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			window.maestro.web.broadcastUserInput(activeSession.id, effectiveInputValue, currentMode);
 
 			// An AI send already took the draft before its probe; clearing here again
-			// would wipe whatever the user typed while that probe was out.
-			if (!composerTaken) {
+			// would wipe whatever the user typed while that probe was out. A send that
+			// did not come from the composer leaves it alone.
+			if (!composerTaken && isComposerSubmit) {
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
+				clearSentDesignPicks();
 
 				// Sync empty value to session state (prevents stale input restoration on blur)
 				if (isAiMode) {
@@ -1453,6 +1545,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				type: 'message',
 				text: effectiveInputValue,
 				images: [...effectiveImages],
+				...designPickFields,
 				tabName: tab ? getTabDisplayName(tab) : undefined,
 				readOnlyMode: isReadOnlyEntry,
 				...(isForceParallel && { forceParallel: true }),

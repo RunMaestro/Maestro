@@ -46,6 +46,42 @@ export function orderGroupChatsForDisplay<T extends OrderableGroupChat>(
 		});
 }
 
+export interface VisibleGroupChatsOptions {
+	sortAlphabetical: boolean;
+	/** The list's "show archived" toggle. Archived chats then sort after active ones. */
+	showArchived: boolean;
+	/** The unread filter: only busy or unread chats, plus the active one. */
+	showUnreadAgentsOnly: boolean;
+	activeGroupChatId: string | null;
+	isChatBusy: (chatId: string) => boolean;
+	isChatUnread: (chatId: string) => boolean;
+}
+
+/**
+ * The group chats the Left Bar draws, in draw order. Shared by `GroupChatList`
+ * (which renders them) and the Left Bar's published row order (which Cmd+[ /
+ * Cmd+] walks), so the two cannot disagree about which rooms are on screen.
+ */
+export function selectVisibleGroupChats<T extends OrderableGroupChat>(
+	groupChats: readonly T[],
+	options: VisibleGroupChatsOptions
+): T[] {
+	return groupChats
+		.filter((c) => options.showArchived || !c.archived)
+		.filter((c) => {
+			if (!options.showUnreadAgentsOnly) return true;
+			if (c.id === options.activeGroupChatId) return true;
+			return options.isChatBusy(c.id) || options.isChatUnread(c.id);
+		})
+		.sort((a, b) => {
+			if (options.showArchived && Boolean(a.archived) !== Boolean(b.archived)) {
+				return a.archived ? 1 : -1;
+			}
+			if (options.sortAlphabetical) return a.name.localeCompare(b.name);
+			return (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0);
+		});
+}
+
 /**
  * Pick which group chat should take focus after `deletedId` is removed, so the
  * user stays in the group-chat area while sweeping through and deleting chats:

@@ -24,6 +24,7 @@ import {
 	type HaltMarker,
 } from '../../../../shared/autorunMarkers';
 import { resolveAutoResumePolicy } from '../../../../shared/autorunAutoResume';
+import { historySummaryLine } from '../../../../shared/history';
 import { clearAutoResume } from '../../../stores/autoRunResumeStore';
 import { DEFAULT_BATCH_STATE, type BatchAction } from '../batchReducer';
 import { createLoopSummaryEntry } from './batchLoopSummary';
@@ -40,6 +41,11 @@ import {
 import { createProgressPoll } from './batchProgressPoll';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import { beginSleepAwareSpan } from '../../../services/systemSleep';
+import {
+	noteAutoRunWorkingCopy,
+	trackAutoRunLaunch,
+	untrackAutoRunLaunch,
+} from '../../../services/autoRunRestartResume';
 import {
 	clearPendingSteeringNotes,
 	clearSteeringNotes,
@@ -216,6 +222,14 @@ export function useBatchRunner({
 			}
 
 			const { documents, prompt, loopEnabled, maxLoops, taskSelectionMode, worktree } = config;
+
+			// Continuing a run the app quit in the middle of (an update restart). A
+			// point past the end of the playbook means the documents changed since
+			// it was saved; start from the top rather than skip the whole run.
+			const resumeFrom =
+				config.resumeFrom && config.resumeFrom.documentIndex < documents.length
+					? config.resumeFrom
+					: undefined;
 
 			// Run-scoped model/effort override, built only when the run picked one so
 			// default runs pass no spawn options at all. An absent override means the
@@ -396,6 +410,9 @@ export function useBatchRunner({
 				// must not open the first task of this one.
 				clearSteeringNotes(sessionId);
 
+				// Report the launch so an update restart can save this run's place.
+				trackAutoRunLaunch(sessionId, config, folderPath);
+
 				// Initialize batch run state using START_BATCH action directly
 				// (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
 				const lockedDocuments = documents.map((d) => d.filename);
@@ -409,6 +426,7 @@ export function useBatchRunner({
 						completedTasksAcrossAllDocs: initialCheckedTasks,
 						loopEnabled,
 						maxLoops,
+						loopIteration: resumeFrom?.loopIteration,
 						folderPath,
 						worktreeActive,
 						worktreePath,
@@ -447,7 +465,7 @@ export function useBatchRunner({
 					completedTasksAcrossAllDocs: initialCheckedTasks,
 					initialCompletedTasks: initialCheckedTasks,
 					loopEnabled,
-					loopIteration: 0,
+					loopIteration: resumeFrom?.loopIteration ?? 0,
 					maxLoops,
 					folderPath,
 					worktreeActive,
@@ -477,6 +495,7 @@ export function useBatchRunner({
 						);
 					}
 					timeTracking.stopTracking(sessionId);
+					untrackAutoRunLaunch(sessionId);
 				}
 			}
 
@@ -488,14 +507,17 @@ export function useBatchRunner({
 				maxLoops: maxLoops ?? 'unlimited',
 			});
 
-			// Notify user that Auto Run has started
-			notifyToast({
-				type: 'info',
-				title: 'Auto Run Started',
-				message: `${initialTotalTasks} ${initialTotalTasks === 1 ? 'task' : 'tasks'} across ${documents.length} ${documents.length === 1 ? 'document' : 'documents'}`,
-				project: session.name,
-				sessionId,
-			});
+			// Notify user that Auto Run has started. A resumed run gets one summary
+			// toast from the restart service instead.
+			if (!resumeFrom) {
+				notifyToast({
+					type: 'info',
+					title: 'Auto Run Started',
+					message: `${initialTotalTasks} ${initialTotalTasks === 1 ? 'task' : 'tasks'} across ${documents.length} ${documents.length === 1 ? 'document' : 'documents'}`,
+					project: session.name,
+					sessionId,
+				});
+			}
 
 			// Add initial history entry when using worktree
 			if (worktreeActive && worktreePath && worktreeBranch) {
@@ -584,7 +606,11 @@ export function useBatchRunner({
 			// Collect Claude session IDs and track completion
 			const agentSessionIds: string[] = [];
 			let totalCompletedTasks = 0;
-			let loopIteration = 0;
+			// Agent invocations recorded to auto_run_tasks, productive or not.
+			let agentTurnIndex = 0;
+			let loopIteration = resumeFrom?.loopIteration ?? 0;
+			// Consumed by the first pass only; every later pass starts at the top.
+			let pendingResume = resumeFrom ?? null;
 
 			// Register this Auto Run for emergency stats/history flush on force-kill.
 			// Populated even if startAutoRun failed (statsAutoRunId null) so killBatchRun can
@@ -679,11 +705,18 @@ export function useBatchRunner({
 					break;
 				}
 
+				// A resumed pass starts part way through. The documents before its
+				// start point were worked before the restart, so the pass counts as
+				// productive even if nothing is left to do after it.
+				const firstDocIndex = pendingResume?.documentIndex ?? 0;
+				const resumeWorkingCopy = pendingResume?.workingCopyPath;
+				pendingResume = null;
+
 				// Track if any tasks were processed in this iteration
-				let anyTasksProcessedThisIteration = false;
+				let anyTasksProcessedThisIteration = firstDocIndex > 0 || Boolean(resumeWorkingCopy);
 
 				// Process each document in order
-				for (let docIndex = 0; docIndex < documents.length; docIndex++) {
+				for (let docIndex = firstDocIndex; docIndex < documents.length; docIndex++) {
 					// Check for stop request before each document
 					if (stopRequestedRefs.current[sessionId]) {
 						break;
@@ -734,9 +767,26 @@ export function useBatchRunner({
 					// The actual filename to process (may be working copy for reset-on-completion docs)
 					let effectiveFilename = docEntry.filename;
 
-					// Create working copy for reset-on-completion documents
-					// Working copies are stored in /Runs/ and the original is never modified
-					if (docEntry.resetOnCompletion) {
+					// A run resumed after a restart keeps working in the copy it had
+					// already started, so the tasks it checked off there stay done.
+					// A missing copy reads as empty and falls through to a fresh one.
+					const resumedCopy =
+						docEntry.resetOnCompletion && docIndex === firstDocIndex && resumeWorkingCopy
+							? await readDocAndCountTasks(folderPath, resumeWorkingCopy, sshRemoteId)
+							: null;
+					if (resumeWorkingCopy && resumedCopy?.content) {
+						workingCopies.set(docEntry.filename, resumeWorkingCopy);
+						effectiveFilename = resumeWorkingCopy;
+						remainingTasks = resumedCopy.taskCount;
+						docContent = resumedCopy.content;
+						docCheckedCount = resumedCopy.checkedCount;
+						docTasksTotal = remainingTasks;
+						noteAutoRunWorkingCopy(sessionId, docIndex, loopIteration, effectiveFilename);
+						// This pass had already finished the document before the restart.
+						if (remainingTasks === 0) continue;
+					} else if (docEntry.resetOnCompletion) {
+						// Create working copy for reset-on-completion documents
+						// Working copies are stored in /Runs/ and the original is never modified
 						try {
 							const { workingCopyPath } = await window.maestro.autorun.createWorkingCopy(
 								folderPath,
@@ -746,6 +796,7 @@ export function useBatchRunner({
 							);
 							workingCopies.set(docEntry.filename, workingCopyPath);
 							effectiveFilename = workingCopyPath;
+							noteAutoRunWorkingCopy(sessionId, docIndex, loopIteration, workingCopyPath);
 
 							// Re-read the working copy for task counting
 							const workingCopyResult = await readDocAndCountTasks(
@@ -1078,14 +1129,18 @@ export function useBatchRunner({
 							totalCompletedTasks += tasksCompletedThisRun;
 							loopTasksCompleted += tasksCompletedThisRun;
 
-							// Record this task in stats database (if stats tracking is active)
-							if (statsAutoRunId && tasksCompletedThisRun > 0) {
+							// Record this agent TURN in the stats database (if stats tracking
+							// is active). Every invocation is recorded, including turns that
+							// ticked no checkbox, so the dashboard's turn durations and
+							// time-of-day chart see stalled turns too; checkbox counts come
+							// from the run row, not from here.
+							if (statsAutoRunId) {
 								try {
 									await window.maestro.stats.recordAutoTask({
 										autoRunSessionId: statsAutoRunId,
 										sessionId: sessionId,
 										agentType: session.toolType,
-										taskIndex: totalCompletedTasks - 1, // 0-indexed
+										taskIndex: agentTurnIndex++, // 0-indexed turn within the run
 										taskContent: shortSummary || undefined,
 										startTime: Date.now() - elapsedTimeMs,
 										duration: elapsedTimeMs,
@@ -1633,13 +1688,15 @@ export function useBatchRunner({
 					});
 				}
 
-				// Record PR result in history so it's visible in the worktree agent's history panel
+				// Record PR result in history so it's visible in the worktree agent's history panel.
+				// A failed push's error is its whole pre-push log (megabytes), so the
+				// summary takes one line of it and the full text stays in fullResponse.
 				onAddHistoryEntry({
 					type: 'AUTO',
 					timestamp: Date.now(),
 					summary: prResult.success
 						? `PR created: ${prResult.prUrl}`
-						: `PR creation failed: ${prResult.error || 'Unknown error'}`,
+						: `PR creation failed: ${historySummaryLine(prResult.error || 'Unknown error')}`,
 					fullResponse: prResult.success
 						? `**Pull Request Created**\n\n- **URL:** ${prResult.prUrl}\n- **Branch:** \`${worktreeBranch}\`\n- **Target:** \`${prResult.targetBranch || 'unknown'}\`\n- **Tasks Completed:** ${totalCompletedTasks}`
 						: `**Pull Request Creation Failed**\n\n- **Error:** ${prResult.error || 'Unknown error'}\n- **Branch:** \`${worktreeBranch}\`\n- **Target:** \`${prResult.targetBranch || 'unknown'}\``,
@@ -1732,10 +1789,14 @@ export function useBatchRunner({
 				// End stats tracking for this Auto Run session
 				if (statsAutoRunId) {
 					try {
+						// A looping run ticks the same checkboxes once per loop, so its
+						// completions can pass the start-time total; report the larger
+						// figure (the same one the run's own summary shows).
 						await window.maestro.stats.endAutoRun(
 							statsAutoRunId,
 							finalTotals.totalElapsedMs,
-							finalTotals.totalCompletedTasks
+							finalTotals.totalCompletedTasks,
+							Math.max(initialTotalTasks, finalTotals.totalCompletedTasks)
 						);
 					} catch (statsError) {
 						// Don't fail cleanup if stats tracking fails
@@ -1803,6 +1864,7 @@ export function useBatchRunner({
 
 			// Allow system to sleep now that Auto Run is complete
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
+			untrackAutoRunLaunch(sessionId);
 
 			// Release this run's claim on the STATUS.json watcher. The main-process
 			// watcher only closes once every subscriber has released it, so a sibling

@@ -12,6 +12,7 @@ import {
 } from '../../utils/panelLayout';
 import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
+import { isPromptLinksEnabled, openPromptLinks } from '../../services/promptLinks';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
@@ -544,7 +545,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				// Fire-and-forget. A failed IPC must never block a shortcut from
 				// taking effect; the daily counter is best-effort telemetry.
-				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now(), shortcutId);
 			};
 
 			// Cmd+F while the output find bar is already open: bring focus back to its
@@ -1066,6 +1067,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				toggleAllCadenzas();
 				trackShortcut('toggleCadenzas');
+			} else if (ctx.isShortcut(e, 'openPromptLinks') && isPromptLinksEnabled()) {
+				e.preventDefault();
+				openPromptLinks();
+				trackShortcut('openPromptLinks');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();
@@ -1276,6 +1281,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					trackShortcut(ctx.isTabShortcut(e, 'nextTab') ? 'nextTab' : 'prevTab');
 					return;
 				}
+				// The room is the "tab" here, so Toggle Tab Unread flips the room's
+				// Left Bar dot. Marking it stays put until the room is opened again.
+				if (ctx.isTabShortcut(e, 'toggleTabUnread')) {
+					e.preventDefault();
+					useGroupChatStore.getState().toggleGroupChatUnread(ctx.activeGroupChatId);
+					trackShortcut('toggleTabUnread');
+					return;
+				}
 			}
 
 			// Unified tab shortcuts - works across ALL tab types (AI, file preview, terminal).
@@ -1318,6 +1331,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
 					trackShortcut('focusBrowserAddress');
+				}
+				// Cmd+Shift+C: Design Mode in the active browser tab (Chrome's inspect chord)
+				if (
+					ctx.isTabShortcut(e, 'toggleBrowserDesignMode') &&
+					activeSession?.activeBrowserTabId &&
+					activeSession.inputMode === 'ai'
+				) {
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.toggleBrowserDesignMode();
+					trackShortcut('toggleBrowserDesignMode');
 				}
 				// Cmd+Left / Cmd+Right: Browser history back/forward when a browser
 				// tab is active. We deliberately skip when focus is inside an
@@ -1750,6 +1773,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				});
 				if (ctx?.isTabShortcut(probe, 'focusBrowserAddress')) {
 					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
+					return;
+				}
+				// Design Mode toggled while the page has focus. Routed directly, like
+				// Cmd+L, so the overlay guard and the re-dispatch never see it.
+				if (ctx?.isTabShortcut(probe, 'toggleBrowserDesignMode')) {
+					ctx.mainPanelRef?.current?.toggleBrowserDesignMode();
+					// Count it for keyboard mastery, as the window path does.
+					const mastery = ctx.recordShortcutUsage?.('toggleBrowserDesignMode');
+					if (mastery && mastery.newLevel !== null) {
+						ctx.onKeyboardMasteryLevelUp?.(mastery.newLevel);
+					}
 					return;
 				}
 				// Cmd+F arrives here when forwarded from the webview guest. Open the

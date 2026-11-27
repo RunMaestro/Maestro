@@ -47,7 +47,10 @@ jobs:
             arch: x64
           # ARM64 Linux requires native ARM64 runner for node-pty native module
           # Cross-compilation from x64 doesn't work: https://github.com/electron-userland/electron-builder/issues/7608
-          - os: ubuntu-24.04-arm
+          # Pinned to ubuntu-22.04-arm for the same glibc reason as the x64 job above:
+          # ubuntu-24.04-arm ships glibc 2.39, which raises the floor of the arm64
+          # native modules past Ubuntu 22.04. Enforced by verify-glibc-floor.sh arm64.
+          - os: ubuntu-22.04-arm
             platform: linux-arm64
             arch: arm64
           - os: windows-latest
@@ -55,6 +58,16 @@ jobs:
             arch: x64
 
     runs-on: ${{ matrix.os }}
+
+    # Windows builds from a release tag sign through Azure Artifact Signing. The
+    # `windows-signing` environment holds the Azure IDs (no secrets: login is
+    # GitHub OIDC) and only accepts release tags, and the Azure app trusts only
+    # that environment. Every other leg, and a manual dispatch from a branch, runs
+    # with no environment and ships unsigned as before.
+    environment: ${{ (matrix.platform == 'win' && startsWith(github.ref, 'refs/tags/')) && 'windows-signing' || '' }}
+    permissions:
+      contents: write
+      id-token: write
 
     steps:
       - name: Checkout code
@@ -102,7 +115,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libarchive-tools rpm build-essential
+          sudo apt-get install -y libarchive-tools rpm build-essential xvfb
 
       # Linux ARM64: Install build dependencies for native modules and electron-builder
       # Requires build-essential for compiling node-pty native module
@@ -111,7 +124,7 @@ jobs:
         if: matrix.platform == 'linux-arm64'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libarchive-tools rpm build-essential ruby ruby-dev rubygems
+          sudo apt-get install -y libarchive-tools rpm build-essential ruby ruby-dev rubygems xvfb
           sudo gem install --no-document fpm
 
       # Linux x64: Setup Python 3.11 for node-gyp (Python 3.12+ removed distutils)
@@ -369,12 +382,75 @@ jobs:
         timeout-minutes: 5
         run: npm run smoke:packaged -- --app release/mac-arm64/Maestro.app/Contents/MacOS/Maestro
 
+      # The x64 package runs under Rosetta 2 on this arm64 runner. Install Rosetta
+      # only when the image lacks it. Rosetta's first launch takes about 115 s to
+      # open the window, so the default 120 s ready timeout is too short here.
+      - name: Smoke test packaged app (macOS x64)
+        if: matrix.platform == 'mac'
+        timeout-minutes: 10
+        run: |
+          if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          npm run smoke:packaged -- --app release/mac/Maestro.app/Contents/MacOS/Maestro --ready-timeout 300
+
+      # OIDC login for Azure Artifact Signing. electron-builder's signer
+      # (Invoke-TrustedSigning) picks up this Azure CLI session through
+      # DefaultAzureCredential, so no client secret exists anywhere.
+      - name: Azure login for Windows signing
+        if: matrix.platform == 'win' && startsWith(github.ref, 'refs/tags/')
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # The signing config is passed here, not kept in package.json, so a local or
+      # fork Windows build with no Azure access still packages (unsigned).
+      # publisherName lands in app-update.yml, and every later update must be
+      # signed by that exact name: never change it without a release that lists
+      # both. It must match the CN of the Artifact Signing certificate.
       - name: Package for Windows
         if: matrix.platform == 'win'
         shell: bash
-        run: npx electron-builder --win --publish never --config.extraMetadata.version=${{ steps.version.outputs.VERSION }}
+        run: |
+          SIGN_ARGS=()
+          if [ "$SIGN_WINDOWS" = "true" ]; then
+            SIGN_ARGS=(
+              --config.win.azureSignOptions.endpoint=https://eus.codesigning.azure.net/
+              --config.win.azureSignOptions.codeSigningAccountName=runmaestro-signing
+              --config.win.azureSignOptions.certificateProfileName=maestro-public
+              "--config.win.azureSignOptions.publisherName=Pedram Amini"
+            )
+          fi
+          npx electron-builder --win --publish never --config.extraMetadata.version=${{ steps.version.outputs.VERSION }} "${SIGN_ARGS[@]}"
         env:
           DEBUG: electron-builder
+          SIGN_WINDOWS: ${{ startsWith(github.ref, 'refs/tags/') }}
+
+      # Fail the release if any shipped Windows executable is not validly signed.
+      # Covers the NSIS installer, the portable exe, and the unpacked app binary
+      # (what NsisUpdater and SmartScreen actually check). On success it writes
+      # windows-signature.json, which ships as a release asset: the rollback list
+      # (WINDOWS_SIGNATURE_ASSET in src/shared/updateRollback.ts) only offers
+      # Windows releases that carry it, because a signed Maestro refuses to
+      # install an unsigned one.
+      - name: Verify Windows signatures
+        if: matrix.platform == 'win' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem release -Filter *.exe -File) + @(Get-Item release/win-unpacked/Maestro.exe)
+          $bad = 0
+          $report = @()
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            $subject = if ($sig.SignerCertificate) { $sig.SignerCertificate.Subject } else { '<none>' }
+            Write-Host "$($f.Name): $($sig.Status) | $subject"
+            if ($sig.Status -ne 'Valid' -or $subject -notmatch 'CN=Pedram Amini') { $bad++ }
+            $report += [ordered]@{ file = $f.Name; status = "$($sig.Status)"; subject = $subject }
+          }
+          if ($bad -gt 0) { Write-Error "$bad Windows executable(s) not signed by Pedram Amini"; exit 1 }
+          $report | ConvertTo-Json -AsArray | Set-Content -Path release/windows-signature.json -Encoding utf8
 
       # Verify native modules are correctly included in unpacked resources (Windows x64)
       - name: Verify native modules in package (Windows)
@@ -502,6 +578,12 @@ jobs:
         if: matrix.platform == 'linux'
         run: .github/scripts/verify-glibc-floor.sh 2.35 release/linux-unpacked/resources/app.asar.unpacked
 
+      # Electron needs a display; xvfb-run gives it a virtual one.
+      - name: Smoke test packaged app (Linux x64)
+        if: matrix.platform == 'linux'
+        timeout-minutes: 5
+        run: xvfb-run -a npm run smoke:packaged -- --app release/linux-unpacked/maestro
+
       # Verify native modules are correctly included in unpacked resources (Linux ARM64)
       - name: Verify native modules in package (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
@@ -543,6 +625,16 @@ jobs:
             exit 1
           fi
 
+      # Same glibc floor guard as Linux x64, for the arm64 package.
+      - name: Verify GLIBC floor (Linux ARM64)
+        if: matrix.platform == 'linux-arm64'
+        run: .github/scripts/verify-glibc-floor.sh 2.35 release/linux-arm64-unpacked/resources/app.asar.unpacked arm64
+
+      - name: Smoke test packaged app (Linux ARM64)
+        if: matrix.platform == 'linux-arm64'
+        timeout-minutes: 5
+        run: xvfb-run -a npm run smoke:packaged -- --app release/linux-arm64-unpacked/maestro
+
       # List what was built for debugging
       - name: List release artifacts
         run: ls -la release/
@@ -567,9 +659,12 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: maestro-windows
+          # windows-signature.json exists only for a signed build (see "Verify
+          # Windows signatures"); a branch dispatch uploads without it.
           path: |
             release/*.exe
             release/latest.yml
+            release/windows-signature.json
           if-no-files-found: error
           retention-days: 5
 

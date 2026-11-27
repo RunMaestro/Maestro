@@ -1942,6 +1942,58 @@ maestro-cli steer-auto-run cancel <note-id> -a <agent-id>
 
 `send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts. `send --background` queues the note without the on-screen "Steering note queued" flash.
 
+### Reviewing an Agent's Diff
+
+Pin review comments to lines of an agent's current `git diff`, then send them to the agent as one review. These are the CLI half of the [Git Diff viewer's review comments](diff-review.md): the comments are the same ones the viewer's **Review** tray shows, and `send` runs the same code as its **Send Review** button.
+
+```bash
+# Comment on lines 12-14 of the new version of a file
+maestro-cli diff-review add src/app.ts 12-14 "Parse RETRIES as a number" -a <agent-id>
+
+# Comment on a removed line (numbered in the previous version)
+maestro-cli diff-review add src/app.ts 7 "Why remove this?" --side old -a <agent-id>
+
+# Read the pending comments; outdated ones are flagged
+maestro-cli diff-review list -a <agent-id>
+
+# Reword one in place, keeping its id and lines (accepts a unique id prefix)
+maestro-cli diff-review edit <comment-id> "Parse RETRIES with parseInt" -a <agent-id>
+
+# Drop one (accepts a unique id prefix), or all of them
+maestro-cli diff-review remove <comment-id> -a <agent-id>
+maestro-cli diff-review clear -a <agent-id>
+
+# Send every current comment as one queued prompt
+maestro-cli diff-review send -a <agent-id>
+maestro-cli diff-review send -a <agent-id> --compose   # put it in the agent's message box instead
+```
+
+The lines must be ones the diff shows, inside one hunk, as in the viewer. A comment whose lines changed since it was written is outdated: `list` flags it, and `send` leaves it pending and reports it rather than point the agent at the wrong code. `send` is quiet by default (no agent or tab switch, no flash), since an agent calling it is not the person looking at the screen; `--focus` takes the user to the agent the way the button does.
+
+### Reviewing a File
+
+Pin review comments to lines of any file, then send them to an agent as one review. These are the CLI half of the [File Preview's review comments](file-review.md): the comments are the same ones the file tab's **Review** tray shows, and `send` runs the same code as its **Send Review** button. Each verb names the file first; a relative path is resolved against your shell's directory, and the lines are quoted from the file on disk.
+
+```bash
+# Comment on line 3, or lines 4-5
+maestro-cli file-review add docs/plan.md 3 "Say which parser" -a <agent-id>
+maestro-cli file-review add docs/plan.md 4-5 "Merge these into one step" -a <agent-id>
+
+# Read the pending comments; outdated ones are flagged
+maestro-cli file-review list docs/plan.md -a <agent-id>
+
+# Reword one in place, or drop one (both accept a unique id prefix), or all of them
+maestro-cli file-review edit docs/plan.md <comment-id> "Name the YAML parser" -a <agent-id>
+maestro-cli file-review remove docs/plan.md <comment-id> -a <agent-id>
+maestro-cli file-review clear docs/plan.md -a <agent-id>
+
+# Send every current comment as one queued prompt
+maestro-cli file-review send docs/plan.md -a <agent-id>
+maestro-cli file-review send docs/plan.md -a <agent-id> --compose   # put it in the agent's message box instead
+```
+
+A comment whose lines changed since it was written is outdated: `list` flags it, and `send` leaves it pending and reports it. As with `diff-review send`, `send` is quiet by default; `--focus` takes the user to the agent the way the button does.
+
 ### Checking Status
 
 Check if the Maestro desktop app is running and reachable:
@@ -2174,6 +2226,9 @@ maestro-cli director-notes history -d 3
 # Limit to user-initiated entries only
 maestro-cli director-notes history --filter user -l 50
 
+# Search the whole lookback window (same match as the app's search box)
+maestro-cli director-notes history --search persona -d 30
+
 # Markdown output for piping into a doc
 maestro-cli director-notes history -f markdown -d 1
 
@@ -2182,13 +2237,14 @@ maestro-cli director-notes synopsis -d 1
 maestro-cli director-notes synopsis --json
 ```
 
-| Subcommand | Flag                  | Description                                                              |
-| ---------- | --------------------- | ------------------------------------------------------------------------ |
-| both       | `-d, --days <n>`      | Lookback period in days (defaults to the app's Director's Notes setting) |
-| both       | `-f, --format <type>` | Output format: `json`, `markdown`, `text` (default `text`)               |
-| both       | `--json`              | Shorthand for `--format json`                                            |
-| `history`  | `--filter <type>`     | Filter by entry type: `auto`, `user`, `cue`, `agent`                     |
-| `history`  | `-l, --limit <n>`     | Maximum entries to show (default 100)                                    |
+| Subcommand | Flag                  | Description                                                                                   |
+| ---------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| both       | `-d, --days <n>`      | Lookback period in days (defaults to the app's Director's Notes setting)                      |
+| both       | `-f, --format <type>` | Output format: `json`, `markdown`, `text` (default `text`)                                    |
+| both       | `--json`              | Shorthand for `--format json`                                                                 |
+| `history`  | `--filter <type>`     | Filter by entry type: `auto`, `user`, `cue`, `agent`                                          |
+| `history`  | `-l, --limit <n>`     | Maximum entries to show (default 100)                                                         |
+| `history`  | `-s, --search <text>` | Only entries whose summary, response, tab name, agent name, or sender match, case-insensitive |
 
 `synopsis` requires the desktop app to be running; `history` reads from disk and works offline. If `encoreFeatures.directorNotes` is disabled, enable it first with `maestro-cli settings set encoreFeatures.directorNotes true`.
 

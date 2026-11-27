@@ -317,6 +317,27 @@ describe('MainPanelHeader', () => {
 		expect(screen.getByText('2/5')).toBeInTheDocument();
 	});
 
+	it('counts AUTO progress across all documents, matching the Auto Run card', () => {
+		render(
+			<MainPanelHeader
+				{...defaultProps}
+				isCurrentSessionAutoMode={true}
+				currentSessionBatchState={
+					{
+						isRunning: true,
+						isStopping: false,
+						completedTasks: 32,
+						totalTasks: 975,
+						completedTasksAcrossAllDocs: 635,
+						totalTasksAcrossAllDocs: 975,
+					} as any
+				}
+			/>
+		);
+		expect(screen.getByText('635/975')).toBeInTheDocument();
+		expect(screen.queryByText('32/975')).not.toBeInTheDocument();
+	});
+
 	it('shows Stopping state when batch is stopping', () => {
 		render(
 			<MainPanelHeader

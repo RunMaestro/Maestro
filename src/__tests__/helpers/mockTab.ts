@@ -10,7 +10,7 @@
  * rather than adding project-wide drift to the defaults below.
  */
 
-import type { AITab, FilePreviewTab } from '../../renderer/types';
+import type { AITab, FilePreviewTab, StagedDesignPick } from '../../renderer/types';
 
 /**
  * Create a mock `AITab` with sensible defaults for all required fields.
@@ -33,6 +33,27 @@ export function createMockAITab(overrides: Partial<AITab> = {}): AITab {
 		state: 'idle',
 		...overrides,
 	} as AITab;
+}
+
+/**
+ * Create a mock `StagedDesignPick`: a Design Mode chip staged on an AI tab's
+ * composer (`AITab.stagedDesignPicks`).
+ *
+ * Defaults: an element chip with a short label, the one-word block `BLOCK`,
+ * no note, and no screenshot.
+ */
+export function createMockDesignPick(overrides: Partial<StagedDesignPick> = {}): StagedDesignPick {
+	return {
+		id: 'pick-1',
+		kind: 'element',
+		label: 'button.cta "Sign up"',
+		url: 'https://example.com',
+		note: '',
+		text: 'BLOCK',
+		screenshot: null,
+		createdAt: 1,
+		...overrides,
+	};
 }
 
 /**

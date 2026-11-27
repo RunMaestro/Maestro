@@ -8,6 +8,7 @@ import {
 	useQuotaTabDiscovery,
 	useUsageDashboardData,
 	useUsageDashboardExport,
+	useUsageDashboardKeyboard,
 	useUsageDashboardLayout,
 	useUsageDashboardTabs,
 } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal/hooks';
@@ -39,20 +40,18 @@ const sampleAggregation: StatsAggregation = {
 	bySource: { user: 1, auto: 1 },
 	byLocation: { local: 2, remote: 0 },
 	byDay: [],
+	byDayHour: [],
+	window: { startYmd: '2026-07-04', endYmd: '2026-07-10' },
+	earliestQueryAt: null,
+	streak: { current: 0, longest: 0 },
 	byHour: [],
 	totalSessions: 1,
-	sessionsByAgent: { codex: 1 },
-	sessionsByDay: [],
-	avgSessionDuration: 1000,
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
 	worktreeQueries: 0,
 	parentQueries: 2,
-	byWorktreeStatus: {
-		worktree: { count: 0, duration: 0 },
-		parent: { count: 2, duration: 1000 },
-	},
+	byAgentWorktree: {},
 	imageAnnotations: 0,
 	prompts: emptyPromptCadence(),
 };
@@ -66,7 +65,7 @@ const mockGetDelegationTotals = vi.fn().mockResolvedValue({
 const mockGetDelegationByDay = vi.fn().mockResolvedValue([]);
 const mockGetDatabaseSize = vi.fn();
 const mockOnStatsUpdate = vi.fn();
-const mockCueAggregation = vi.fn();
+const mockCueSourceTotals = vi.fn();
 const mockSaveFile = vi.fn();
 const mockExportUsage = vi.fn();
 const mockWriteFile = vi.fn();
@@ -81,8 +80,8 @@ async function flushPromises() {
 }
 
 function installMaestroMock() {
-	let statsUpdateHandler: (() => void) | undefined;
-	mockOnStatsUpdate.mockImplementation((handler: () => void) => {
+	let statsUpdateHandler: ((table?: string) => void) | undefined;
+	mockOnStatsUpdate.mockImplementation((handler: (table?: string) => void) => {
 		statsUpdateHandler = handler;
 		return vi.fn();
 	});
@@ -98,7 +97,7 @@ function installMaestroMock() {
 				exportUsage: mockExportUsage,
 			},
 			cueStats: {
-				getAggregation: mockCueAggregation,
+				getSourceTotals: mockCueSourceTotals,
 			},
 			dialog: {
 				saveFile: mockSaveFile,
@@ -115,7 +114,7 @@ function installMaestroMock() {
 	});
 
 	return {
-		emitStatsUpdate: () => statsUpdateHandler?.(),
+		emitStatsUpdate: (table?: string) => statsUpdateHandler?.(table),
 	};
 }
 
@@ -134,9 +133,7 @@ describe('UsageDashboardModal hooks', () => {
 		});
 		mockGetDelegationByDay.mockResolvedValue([]);
 		mockGetDatabaseSize.mockResolvedValue(4096);
-		mockCueAggregation.mockResolvedValue({
-			totals: { occurrences: 3, totalDurationMs: 1200 },
-		});
+		mockCueSourceTotals.mockResolvedValue({ occurrences: 3, totalDurationMs: 1200, tokens: 0 });
 		mockSaveFile.mockResolvedValue('/tmp/usage.json');
 		mockExportUsage.mockResolvedValue({
 			path: '/tmp/usage.json',
@@ -162,6 +159,7 @@ describe('UsageDashboardModal hooks', () => {
 				isOpen: true,
 				timeRange: 'week',
 				cueTabEnabled: true,
+				needsCueTotals: true,
 			})
 		);
 
@@ -190,11 +188,100 @@ describe('UsageDashboardModal hooks', () => {
 		await flushPromises();
 		expect(mockGetAggregation).toHaveBeenCalledTimes(1);
 		expect(result.current.showNewDataIndicator).toBe(true);
+		// The Overview is showing, so its Cue slice refreshes with the payload.
+		expect(mockCueSourceTotals).toHaveBeenCalledTimes(2);
 
 		await act(async () => {
 			await vi.advanceTimersByTimeAsync(3000);
 		});
 		expect(result.current.showNewDataIndicator).toBe(false);
+	});
+
+	it('fetches the Cue aggregate only while a tab needs the Cue totals', async () => {
+		vi.useFakeTimers();
+		const controls = installMaestroMock();
+
+		const { result, rerender } = renderHook(
+			({ needsCueTotals }) =>
+				useUsageDashboardData({
+					isOpen: true,
+					timeRange: 'quarter',
+					cueTabEnabled: true,
+					needsCueTotals,
+				}),
+			{ initialProps: { needsCueTotals: false } }
+		);
+		await flushPromises();
+		expect(result.current.data).toBe(sampleAggregation);
+		expect(mockCueSourceTotals).not.toHaveBeenCalled();
+		expect(result.current.cueSourceTotals).toBeNull();
+
+		// A stats update on a non-Overview tab refreshes the payload, not Cue.
+		act(() => controls.emitStatsUpdate('query_events'));
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1000);
+		});
+		await flushPromises();
+		expect(mockCueSourceTotals).not.toHaveBeenCalled();
+
+		rerender({ needsCueTotals: true });
+		await flushPromises();
+		expect(mockCueSourceTotals).toHaveBeenCalledWith('quarter');
+		expect(result.current.cueSourceTotals).toEqual({
+			occurrences: 3,
+			totalDurationMs: 1200,
+			tokens: 0,
+		});
+	});
+
+	it('never fetches Cue totals with the Cue tab off', async () => {
+		installMaestroMock();
+		const { result } = renderHook(() =>
+			useUsageDashboardData({
+				isOpen: true,
+				timeRange: 'year',
+				cueTabEnabled: false,
+				needsCueTotals: true,
+			})
+		);
+		await flushPromises();
+		expect(result.current.data).toBe(sampleAggregation);
+		expect(mockCueSourceTotals).not.toHaveBeenCalled();
+		expect(result.current.cueSourceTotals).toBeNull();
+	});
+
+	it('refetches only for the tables the payload reads', async () => {
+		vi.useFakeTimers();
+		const controls = installMaestroMock();
+
+		renderHook(() =>
+			useUsageDashboardData({ isOpen: true, timeRange: 'day', cueTabEnabled: false })
+		);
+		await flushPromises();
+		mockGetAggregation.mockClear();
+
+		for (const table of ['shortcut_usage', 'resilience', 'wizard_runs', 'session_lifecycle']) {
+			act(() => controls.emitStatsUpdate(table));
+		}
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(2000);
+		});
+		await flushPromises();
+		expect(mockGetAggregation).not.toHaveBeenCalled();
+
+		// A burst across the tables it does read collapses into one refetch, and
+		// an unnamed update (older main, bulk clear) counts as relevant.
+		act(() => {
+			controls.emitStatsUpdate('query_events');
+			controls.emitStatsUpdate('image_annotations');
+			controls.emitStatsUpdate('auto_run');
+			controls.emitStatsUpdate();
+		});
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1000);
+		});
+		await flushPromises();
+		expect(mockGetAggregation).toHaveBeenCalledTimes(1);
 	});
 
 	it('clears realtime indicator timers on unmount', async () => {
@@ -305,6 +392,33 @@ describe('UsageDashboardModal hooks', () => {
 		expect(onViewModeChanged).toHaveBeenCalled();
 	});
 
+	it('follows a deep link into a dashboard that is already open', async () => {
+		// `maestro-cli open usage-dashboard --tab tokens` sets the store while the
+		// dashboard is mounted; the smoke test caught the visible tab staying put.
+		installMaestroMock();
+		useUIStore.setState({ usageDashboardViewMode: 'overview' });
+		const onViewModeChanged = vi.fn();
+
+		const { result } = renderHook(() =>
+			useUsageDashboardTabs({
+				cueTabEnabled: true,
+				hasAnthropicUsageDetails: false,
+				hasCodexUsageDetails: false,
+				contentRef: { current: document.createElement('div') },
+				onViewModeChanged,
+			})
+		);
+		expect(result.current.viewMode).toBe('overview');
+
+		act(() => useUIStore.getState().setUsageDashboardViewMode('tokens'));
+		await waitFor(() => expect(result.current.viewMode).toBe('tokens'));
+
+		// A tab this dashboard does not offer still falls back to the overview.
+		act(() => useUIStore.getState().setUsageDashboardViewMode('codex-usage'));
+		await waitFor(() => expect(result.current.viewMode).toBe('overview'));
+		expect(useUIStore.getState().usageDashboardViewMode).toBe('overview');
+	});
+
 	it('derives responsive layout columns from ResizeObserver width', async () => {
 		installMaestroMock();
 		let observerCallback: ResizeObserverCallback | undefined;
@@ -395,6 +509,122 @@ describe('UsageDashboardModal hooks', () => {
 			expect.objectContaining({ color: 'red', message: 'disk full' })
 		);
 		expect(result.current.isExporting).toBe(false);
+	});
+
+	describe('useUsageDashboardKeyboard', () => {
+		const tabs = [
+			{ value: 'overview', label: 'Overview' },
+			{ value: 'agents', label: 'Agents' },
+			{ value: 'activity', label: 'Activity' },
+		];
+
+		function setup(currentSections: string[], mounted: string[]) {
+			const switchViewMode = vi.fn();
+			const setFocusedSection = vi.fn();
+			const tabsEl = document.createElement('div');
+			tabsEl.focus = vi.fn();
+			const sectionRefs = { current: new Map<string, HTMLDivElement>() };
+			const elements: Record<string, HTMLDivElement> = {};
+			for (const id of mounted) {
+				const el = document.createElement('div');
+				el.focus = vi.fn();
+				el.scrollIntoView = vi.fn();
+				elements[id] = el;
+				sectionRefs.current.set(id, el);
+			}
+			const hook = renderHook(() =>
+				useUsageDashboardKeyboard({
+					isOpen: true,
+					viewMode: 'overview',
+					viewModeRef: { current: 'overview' },
+					viewModeTabs: tabs,
+					switchViewMode,
+					currentSections,
+					tabsRef: { current: tabsEl },
+					sectionRefs,
+					setFocusedSection,
+				} as never)
+			);
+			return { ...hook, switchViewMode, setFocusedSection, elements, tabsEl };
+		}
+
+		function keyEvent(key: string, opts: { shiftKey?: boolean; fromChild?: boolean } = {}) {
+			const currentTarget = document.createElement('div');
+			const target = opts.fromChild ? document.createElement('button') : currentTarget;
+			return {
+				key,
+				shiftKey: !!opts.shiftKey,
+				target,
+				currentTarget,
+				preventDefault: vi.fn(),
+			};
+		}
+
+		it('cycles tabs with Ctrl+Shift+[ / ] as well as Cmd', () => {
+			const { switchViewMode, unmount } = setup(['summary-cards'], ['summary-cards']);
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: ']', ctrlKey: true, shiftKey: true })
+				);
+			});
+			expect(switchViewMode).toHaveBeenLastCalledWith('agents');
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', { key: '[', metaKey: true, shiftKey: true })
+				);
+			});
+			expect(switchViewMode).toHaveBeenLastCalledWith('activity');
+			unmount();
+		});
+
+		it('ignores section keys that come from a control inside the section', () => {
+			const { result, setFocusedSection } = setup(
+				['summary-cards', 'token-speed'],
+				['summary-cards', 'token-speed']
+			);
+			const event = keyEvent('Tab', { fromChild: true });
+			act(() => result.current.handleSectionKeyDown(event as never, 'summary-cards' as never));
+			expect(event.preventDefault).not.toHaveBeenCalled();
+			expect(setFocusedSection).not.toHaveBeenCalled();
+
+			const arrow = keyEvent('ArrowDown', { fromChild: true });
+			act(() => result.current.handleSectionKeyDown(arrow as never, 'summary-cards' as never));
+			expect(arrow.preventDefault).not.toHaveBeenCalled();
+		});
+
+		it('moves between sections when the section itself is focused, skipping unmounted ones', () => {
+			const { result, setFocusedSection, elements, tabsEl } = setup(
+				['summary-cards', 'token-speed', 'radial-activity'],
+				['summary-cards', 'radial-activity']
+			);
+			const down = keyEvent('ArrowDown');
+			act(() => result.current.handleSectionKeyDown(down as never, 'summary-cards' as never));
+			expect(down.preventDefault).toHaveBeenCalled();
+			expect(setFocusedSection).toHaveBeenLastCalledWith('radial-activity');
+			expect(elements['radial-activity'].focus).toHaveBeenCalled();
+
+			const up = keyEvent('Tab', { shiftKey: true });
+			act(() => result.current.handleSectionKeyDown(up as never, 'summary-cards' as never));
+			expect(setFocusedSection).toHaveBeenLastCalledWith(null);
+			expect(tabsEl.focus).toHaveBeenCalled();
+		});
+
+		it('redirects Tab from the tab strip only when a section is on screen', () => {
+			const empty = setup(['summary-cards'], []);
+			const noSection = keyEvent('Tab');
+			act(() => empty.result.current.handleTabKeyDown(noSection as never));
+			expect(noSection.preventDefault).not.toHaveBeenCalled();
+			expect(empty.setFocusedSection).not.toHaveBeenCalled();
+			empty.unmount();
+
+			const ready = setup(['year-in-pixels', 'summary-cards'], ['summary-cards']);
+			const tab = keyEvent('Tab');
+			act(() => ready.result.current.handleTabKeyDown(tab as never));
+			expect(tab.preventDefault).toHaveBeenCalled();
+			expect(ready.setFocusedSection).toHaveBeenLastCalledWith('summary-cards');
+		});
 	});
 
 	it('samples quota tabs once per open and skips when disabled', async () => {

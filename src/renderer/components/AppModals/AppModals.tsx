@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import type React from 'react';
 import type { MainPanelHandle } from '../MainPanel/types';
+import type { QuitConfirmOptions } from '../QuitConfirmModal';
 import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -91,7 +92,7 @@ export interface AppModalsProps {
 	confirmModalTitle?: string;
 	confirmModalDestructive?: boolean;
 	onCloseConfirmModal: () => void;
-	onConfirmQuit: () => void;
+	onConfirmQuit: (options: QuitConfirmOptions) => void;
 	onCancelQuit: () => void;
 	onQuitWhenIdle: () => void;
 	/** Session IDs with active auto-runs (batch processing) */

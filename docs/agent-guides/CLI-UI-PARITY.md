@@ -50,6 +50,7 @@ field still gets the old behaviour, and `--focus` restores it from the CLI.
 | `open-file`                                       | `open_file_tab`                                       | focuses                                 |
 | `open-terminal`                                   | `open_terminal_tab`                                   | focuses                                 |
 | `open-browser`                                    | `open_browser_tab`                                    | focuses                                 |
+| `browser-pick`                                    | `pick_browser_element`                                | focuses (switches to the AI tab)        |
 | `tab new`                                         | `new_tab` / `new_ai_tab_with_prompt`                  | focuses                                 |
 | `dispatch --new-tab`                              | `new_ai_tab_with_prompt`                              | **background** (as it always was)       |
 | `dispatch` (no `--new-tab`)                       | `send_command`                                        | selects the target agent                |
@@ -67,6 +68,10 @@ deliberately absent from the table and must stay that way.
 
 `--focus` ships on every verb even where it currently just names the default,
 because a future default flip needs the escape hatch to already exist.
+
+`browser-pick --queue` is quiet by itself: it sends the pick as its own queued
+message and never touches the view, so `--background` and `--focus` have nothing
+left to decide there.
 
 ### Two verbs of one command name: `dispatch`
 
@@ -227,72 +232,97 @@ of taking a second round trip or trusting a value the caller guessed.
 
 Notification center history uses the live desktop `notificationStore` over a request-response bridge. Main owns durable append/read/clear mutations in `maestro-notification-history.json`; renderer snapshots are synchronized across windows, and CLI results await committed writes. `notify inbox list --unread` filters the snapshot, `read <id>` / `read-all` update read state, `clear` clears history, `dismiss [id]` dismisses one entry or clears visible toasts, and `activate <id>` / `link <id>` run the same entry and inline-link actions as the UI. Every result includes the resulting unread count and history. `detail <id>` / `collapse` expand and collapse the same in-inbox details view. The five opt-in inbox preferences are registered settings and can be changed with `settings set <key> <value>`. `open notification-center` and `notify inbox open` open the app-level popover even when the Main Panel header is absent.
 
-| Point-and-click action                                                   | CLI                                                                                              |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| Open / close notification center                                         | `open notification-center`, `notify inbox open` / `close`                                        |
-| Read / clear / activate notification history                             | `notify inbox list`, `read`, `read-all`, `clear`, `activate`, `link`                             |
-| Dismiss one / all visible notifications                                  | `notify inbox dismiss [id]`                                                                      |
-| Expand / collapse full inbox details                                     | `notify inbox detail <id>` / `collapse`                                                          |
-| In-App Toasts switch (bell popover, palette, Toggle In-App Toasts)       | `settings set toastDuration -1` (off) / `settings set toastDuration <seconds>` (on)              |
-| Bookmark / unbookmark an agent (Cmd+Shift+B)                             | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                          |
-| Create / rename / remove an agent                                        | `create-agent`, `rename-agent`, `remove-agent`                                                   |
-| Edit Agent modal fields                                                  | `update-agent`, `settings agent set`                                                             |
-| Switch an agent's provider                                               | `update-agent --provider --force`                                                                |
-| Move an agent to a group                                                 | `update-agent --group`                                                                           |
-| Change working directory                                                 | `update-agent --cwd`                                                                             |
-| SSH remote execution config                                              | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                     |
-| Edit an SSH remote, incl. its `ssh -o` list                              | `update-ssh-remote --ssh-option / --clear-ssh-options`                                           |
-| SSH outage dialog: which remotes are down, "Check Now"                   | `ssh-remote-status`, `ssh-remote-status --check <remote-id>` (Dismiss is per-window view state)  |
-| Focus an agent, switch AI/Shell mode                                     | `focus-agent`, `switch-mode`                                                                     |
-| Create / rename / remove a group                                         | `create-group`, `rename-group`, `remove-group`                                                   |
-| Group icon, color, and nesting                                           | `create-group --icon/--color/--parent`, `update-group`                                           |
-| Move an agent or a whole group to another window                         | `window move-agent`, `window move-group` (`--to new\|main\|<n>`); read: `window list`            |
-| Create a worktree agent                                                  | `create-worktree`                                                                                |
-| New / close / rename a tab                                               | `tab new`, `tab close`, `tab rename`                                                             |
-| Reopen the last closed tab (Cmd+Shift+T, palette)                        | `tab reopen -a <agent>` (`--background` keeps the visible tab); read: `session list`             |
-| Star a tab (Cmd+Shift+S)                                                 | `tab star` / `tab unstar`                                                                        |
-| Mark a tab unread                                                        | `tab unread` / `tab read`                                                                        |
-| Toggle Save to History                                                   | `tab save-to-history`                                                                            |
-| Composer chips: thinking, read-only access                               | `tab thinking` (off/on/sticky/cycle), `tab read-only`                                            |
-| Model / effort pills on one tab                                          | `tab model`, `tab effort` (`inherit` clears the override)                                        |
-| Refresh the model list (pill dropdown, Model & Effort console, Settings) | `list models <provider> --refresh`; read: `list models <provider>`                               |
-| Enter-to-send chip                                                       | `tab enter-to-send`                                                                              |
-| Read one tab's settings back                                             | `tab show`, or `session list --json`                                                             |
-| Move Tab to First / Last                                                 | `tab move <tab-id> first\|last\|<index>`                                                         |
-| Send a message, or run a shell command (incl. a code fence's Run button) | `send`, `dispatch`, `send-terminal`                                                              |
-| Consult another agent (`@mention`)                                       | `ask <agent> "<question>" --from <caller>`                                                       |
-| Open a file / URL / terminal tab                                         | `open-file`, `open-browser`, `open-terminal`                                                     |
-| Click a folder link (reveal it in the Files panel)                       | `open-file <folder>` (both ride `revealPathInFileTree`)                                          |
-| Open a modal or dashboard                                                | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                |
-| Auto Run: start, stop, resume, skip, abort                               | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                              |
-| Settings, theme, Encore features                                         | `settings`, `theme`, `set-theme`, `encore`                                                       |
-| File editor Vim keybindings (Settings -> Display -> File Edit & Preview) | `settings set fileEditVimMode true`                                                              |
-| Toasts and center flashes                                                | `notify toast`, `notify flash`                                                                   |
-| Save a pasted chat image (right-click)                                   | `image save` (`image list` to find it)                                                           |
-| Cue subscriptions and scheduled tasks                                    | `cue trigger`, `cue schedule`, `cue pipeline`                                                    |
-| Cue Model / Effort (graph node, Scheduled Tasks)                         | `cue model`, `cue schedule --tier --model --effort`; read: `cue model`, `cue list`               |
-| Snooze a tab, list / wake / dismiss what is parked                       | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history` |
-| Send Feedback modal (open / file / +1)                                   | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                      |
-| Feedback: screenshots, support package box                               | `feedback submit --attach <png...> --support-package`                                            |
-| Feedback: Running as (account picker)                                    | `feedback accounts [--use <key> \| --clear]`                                                     |
-| Feedback: Log in to GitHub / Check Again                                 | `feedback login`, `feedback auth --fresh`                                                        |
-| Feedback: live self-diagnosis                                            | `feedback diagnose`                                                                              |
-| Feedback: Submit now (early exit)                                        | `feedback submit` (the caller supplies whatever fields it has)                                   |
-| Create Debug Package (support package)                                   | `support-package -o <dir> [--no-logs ...]`                                                       |
-| Start / End Performance Profiling                                        | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                 |
-| LIVE panel: web interface on/off, Cloudflare tunnel on/off, URLs         | `live on [--tunnel]`, `live off`, `live tunnel on\|off`; read: `live status`                     |
-| Cue dashboard: subscription on/off switch                                | `cue enable <sub>`, `cue disable <sub>` (any event type)                                         |
-| Cue dashboard: activity log                                              | `cue activity [-a <agent>] [-n <limit>]`                                                         |
-| Auto Run panel: progress                                                 | `auto-run-status -a <agent>`                                                                     |
-| Auto Run: save as a playbook (documents must sit in the Auto Run folder) | `auto-run --save-as <name> <docs...>` (read back with `playbook <id> --dry-run`)                 |
-| Auto Run panel: Change folder                                            | `auto-run-folder <path> -a <agent>`                                                              |
-| Thought Stream: Steer Auto Run (send a note, cancel one, read replies)   | `steer-auto-run send <note> -a <agent>`, `steer-auto-run list`, `steer-auto-run cancel <id>`     |
-| Playbook Exchange: browse, README, install                               | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
-| Usage Dashboard: Tokens tab and Overview token speed (avg / peak tok/s)  | `stats-tokens [-r <range>] [--refresh] [--json]`                                                 |
-| Usage Dashboard: Activity tab Prompts section (prompt cadence)           | `stats [-r <range>] [--json]` (JSON under `prompts`)                                             |
-| Usage-data scan progress (modal / corner card)                           | `stats-indexing [--wait] [--timeout <s>] [--json]` (Hide / background are view-only)             |
-| Left Bar: Archive / Unarchive a group chat                               | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)               |
-| Group chat: add an agent by @mention in a message                        | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)      |
+| Point-and-click action                                                                                                    | CLI                                                                                              |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Open / close notification center                                                                                          | `open notification-center`, `notify inbox open` / `close`                                        |
+| Read / clear / activate notification history                                                                              | `notify inbox list`, `read`, `read-all`, `clear`, `activate`, `link`                             |
+| Dismiss one / all visible notifications                                                                                   | `notify inbox dismiss [id]`                                                                      |
+| Expand / collapse full inbox details                                                                                      | `notify inbox detail <id>` / `collapse`                                                          |
+| In-App Toasts switch (bell popover, palette, Toggle In-App Toasts)                                                        | `settings set toastDuration -1` (off) / `settings set toastDuration <seconds>` (on)              |
+| Bookmark / unbookmark an agent (Cmd+Shift+B)                                                                              | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                          |
+| Create / rename / remove an agent                                                                                         | `create-agent`, `rename-agent`, `remove-agent`                                                   |
+| Edit Agent modal fields                                                                                                   | `update-agent`, `settings agent set`                                                             |
+| Switch an agent's provider                                                                                                | `update-agent --provider --force`                                                                |
+| Move an agent to a group                                                                                                  | `update-agent --group`                                                                           |
+| Change working directory                                                                                                  | `update-agent --cwd`                                                                             |
+| SSH remote execution config                                                                                               | `update-agent --ssh-remote / --ssh-cwd`, `create-ssh-remote`                                     |
+| Edit an SSH remote, incl. its `ssh -o` list                                                                               | `update-ssh-remote --ssh-option / --clear-ssh-options`                                           |
+| SSH outage dialog: which remotes are down, "Check Now"                                                                    | `ssh-remote-status`, `ssh-remote-status --check <remote-id>` (Dismiss is per-window view state)  |
+| Focus an agent, switch AI/Shell mode                                                                                      | `focus-agent`, `switch-mode`                                                                     |
+| Create / rename / remove a group                                                                                          | `create-group`, `rename-group`, `remove-group`                                                   |
+| Group icon, color, and nesting                                                                                            | `create-group --icon/--color/--parent`, `update-group`                                           |
+| Move an agent or a whole group to another window                                                                          | `window move-agent`, `window move-group` (`--to new\|main\|<n>`); read: `window list`            |
+| Create a worktree agent                                                                                                   | `create-worktree`                                                                                |
+| New / close / rename a tab                                                                                                | `tab new`, `tab close`, `tab rename`                                                             |
+| Reopen the last closed tab (Cmd+Shift+T, palette)                                                                         | `tab reopen -a <agent>` (`--background` keeps the visible tab); read: `session list`             |
+| Star a tab (Cmd+Shift+S)                                                                                                  | `tab star` / `tab unstar`                                                                        |
+| Mark a tab unread                                                                                                         | `tab unread` / `tab read`                                                                        |
+| Toggle Save to History                                                                                                    | `tab save-to-history`                                                                            |
+| Composer chips: thinking, read-only access                                                                                | `tab thinking` (off/on/sticky/cycle), `tab read-only`                                            |
+| Model / effort pills on one tab                                                                                           | `tab model`, `tab effort` (`inherit` clears the override)                                        |
+| Refresh the model list (pill dropdown, Model & Effort console, Settings)                                                  | `list models <provider> --refresh`; read: `list models <provider>`                               |
+| Enter-to-send chip                                                                                                        | `tab enter-to-send`                                                                              |
+| Read one tab's settings back                                                                                              | `tab show`, or `session list --json`                                                             |
+| Move Tab to First / Last                                                                                                  | `tab move <tab-id> first\|last\|<index>`                                                         |
+| Send a message, or run a shell command (incl. a code fence's Run button)                                                  | `send`, `dispatch`, `send-terminal`                                                              |
+| Consult another agent (`@mention`)                                                                                        | `ask <agent> "<question>" --from <caller>`                                                       |
+| Side question about a tab (`/btw <question>`)                                                                             | `ask <agent> "<question>" --btw [--tab <tab-id>]`                                                |
+| Open a file / URL / terminal tab                                                                                          | `open-file`, `open-browser`, `open-terminal`                                                     |
+| Click a folder link (reveal it in the Files panel)                                                                        | `open-file <folder>` (both ride `revealPathInFileTree`)                                          |
+| Open a modal or dashboard                                                                                                 | `open <surface> [--tab]` (registry in `src/shared/uiSurfaces.ts`)                                |
+| Auto Run: start, stop, resume, skip, abort                                                                                | `auto-run`, `stop-auto-run`, `resume-auto-run`, ...                                              |
+| Settings, theme, Encore features                                                                                          | `settings`, `theme`, `set-theme`, `encore`                                                       |
+| File editor Vim keybindings (Settings -> Display -> File Edit & Preview)                                                  | `settings set fileEditVimMode true`                                                              |
+| Heading styles, H1-H6 font and size, Restore Default Headings (Settings -> Display -> Headings)                           | `display heading <h1-h6> --font <family> --size <px>`, `--reset`; read: `display heading`        |
+| Toasts and center flashes                                                                                                 | `notify toast`, `notify flash`                                                                   |
+| Save a pasted chat image (right-click)                                                                                    | `image save` (`image list` to find it)                                                           |
+| Cue subscriptions and scheduled tasks                                                                                     | `cue trigger`, `cue schedule`, `cue pipeline`                                                    |
+| Cue Model / Effort (graph node, Scheduled Tasks)                                                                          | `cue model`, `cue schedule --tier --model --effort`; read: `cue model`, `cue list`               |
+| Snooze a tab, list / wake / dismiss what is parked                                                                        | `snooze tab`, `snooze list`, `unsnooze`, `snooze dismiss`, `snooze reschedule`, `snooze history` |
+| Send Feedback modal (open / file / +1)                                                                                    | `open feedback`, `feedback auth\|search\|submit\|subscribe`                                      |
+| Feedback: screenshots, support package box                                                                                | `feedback submit --attach <png...> --support-package`                                            |
+| Feedback: Running as (account picker)                                                                                     | `feedback accounts [--use <key> \| --clear]`                                                     |
+| Feedback: Log in to GitHub / Check Again                                                                                  | `feedback login`, `feedback auth --fresh`                                                        |
+| Agent error: Install <provider> (CLI missing)                                                                             | `install-command <provider> [--platform] [--json]` (prints the line)                             |
+| Check for Updates or Rollback: Roll Back (list earlier releases, download one)                                            | `rollback [version] [--prerelease] [--json]`; open the window with `open updates`                |
+| Feedback: live self-diagnosis                                                                                             | `feedback diagnose`                                                                              |
+| Feedback: Submit now (early exit)                                                                                         | `feedback submit` (the caller supplies whatever fields it has)                                   |
+| Create Debug Package (support package)                                                                                    | `support-package -o <dir> [--no-logs ...]`                                                       |
+| Start / End Performance Profiling                                                                                         | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                 |
+| LIVE panel: web interface on/off, Cloudflare tunnel on/off, URLs                                                          | `live on [--tunnel]`, `live off`, `live tunnel on\|off`; read: `live status`                     |
+| Cue dashboard: subscription on/off switch                                                                                 | `cue enable <sub>`, `cue disable <sub>` (any event type)                                         |
+| Cue dashboard: activity log                                                                                               | `cue activity [-a <agent>] [-n <limit>]`                                                         |
+| Auto Run panel: progress                                                                                                  | `auto-run-status -a <agent>`                                                                     |
+| Auto Run: save as a playbook (documents must sit in the Auto Run folder)                                                  | `auto-run --save-as <name> <docs...>` (read back with `playbook <id> --dry-run`)                 |
+| Auto Run panel: Change folder                                                                                             | `auto-run-folder <path> -a <agent>`                                                              |
+| Thought Stream: Steer Auto Run (send a note, cancel one, read replies)                                                    | `steer-auto-run send <note> -a <agent>`, `steer-auto-run list`, `steer-auto-run cancel <id>`     |
+| Git Diff review comments (add, edit, remove, discard, send, compose)                                                      | `diff-review add <path> <lines> <text>`, `edit`, `list`, `remove`, `clear`, `send --compose`     |
+| File Preview review comments: Comment on Line(s), edit, remove, discard, send, compose                                    | `file-review add <file> <lines> <text>`, `edit`, `list`, `remove`, `clear`, `send --compose`     |
+| Playbook Exchange: browse, README, install                                                                                | `marketplace list`, `marketplace show <id>`, `marketplace import`                                |
+| Prompt Links window and tile: create, list, revoke a `maestro://run` link (open the window: `open prompt-links`)          | `prompt-link create <agent> [prompt]`, `prompt-link list [--all]`, `prompt-link revoke <id>`     |
+| Usage Dashboard: Tokens tab and Overview token speed (avg / peak tok/s)                                                   | `stats-tokens [-r <range>] [--refresh] [--json]`                                                 |
+| Usage Dashboard: Activity tab Prompts section (prompt cadence)                                                            | `stats [-r <range>] [--json]` (JSON under `prompts`)                                             |
+| Usage-data scan progress (modal / corner card)                                                                            | `stats-indexing [--wait] [--timeout <s>] [--json]` (Hide / background are view-only)             |
+| Usage Dashboard: Overview summary (queries, active agents, streak)                                                        | `stats [-r <range>] [--json]`                                                                    |
+| Usage Dashboard: raw stats database (any table)                                                                           | `stats-query <sql> [-p <value>...] [--json]` (read-only)                                         |
+| Usage Dashboard: delegation score and Activity delegation trend                                                           | `stats-delegation [-r <range>] [--json]`                                                         |
+| Usage Dashboard: Cue tab (totals, percentiles, breakdowns, trigger chips)                                                 | `stats-cue [-r <range>] [--exclude-trigger <type>...] [--json]`                                  |
+| Usage Dashboard: Anthropic Usage / OpenAI Usage tabs (cached plan usage)                                                  | `stats-plan-usage [--provider claude\|codex] [--json]`                                           |
+| Usage Dashboard: Agent Overview Agents Over Time                                                                          | `stats-agents [-r <range>] [--json]`                                                             |
+| Usage Dashboard: Auto Run (tab's run/task rules), agent turns by hour, wizard, resilience, daily and per-shortcut presses | `stats-activity [-r <range>] [--json]`                                                           |
+| Usage Dashboard: Export button (JSON, or a zip of CSVs)                                                                   | `stats-export -o <path> [-f csv\|json] [-r <range>] [--json]`                                    |
+| Left Bar: Archive / Unarchive a group chat                                                                                | `group-chat archive <chat>` / `--restore` (read back with `group-chat list --all`)               |
+| Left Bar / Cmd+Shift+U: Mark a group chat unread / read                                                                   | `group-chat unread <chat>` / `group-chat read <chat>` (read back with `group-chat list`)         |
+| Group chat: add an agent by @mention in a message                                                                         | `group-chat add <chat> <agent>` (ID, ID prefix or name; read back with `group-chat status`)      |
+| Browser Design Mode: add a picked element to the message (pick card)                                                      | `browser-pick <tab> -s <css> [--note]`; read: `browser-picks`, its `--json` text and `pickId`    |
+| Browser Design Mode: queue a pick as its own message (pick card's Queue button, Alt+Enter)                                | `browser-pick <tab> -s <css> --queue`; id in `--json`; read: `queue list`; undo: `queue remove`  |
+| Browser Design Mode region pick: drag a box over the page, add the region to the message (region card)                    | `browser-pick <tab> --rect <x,y,w,h> [--note] [--queue]`; read: `browser-picks` or `queue list`  |
+| Browser Design Mode: list the chips waiting in the composer (chip strip, chip popover)                                    | `browser-picks [-a <agent>] [--json]` (id, kind, label, url, note, text of each)                 |
+| Browser Design Mode: edit a chip's note in the composer (the chip popover's note box)                                     | `browser-picks --edit <pickId> --note <text>`; read: the printed chip, or `browser-picks`        |
+| Browser Design Mode: remove a chip from the composer (the chip's X)                                                       | `browser-picks --remove <pickId>`; read: `browser-picks`                                         |
+| Director's Notes Unified History: search box (same matcher, whole lookback window)                                        | `director-notes history --search <text> [-d <days>] [--json]`                                    |
+| Browser tab: viewport preset (toolbar Viewport control, palette "Browser: Viewport ...")                                  | `browser-viewport <tab> [preset] [-a <agent>] [--json]` (omit the preset to read it)             |
+| Browser Design Mode: fold the side bars while it is on (a setting; `settings` covers it, no new verb)                     | `settings set designModeCollapsePanels true\|false`; read: `settings get <key>`                  |
 
 ## Open gaps
 
@@ -351,8 +381,8 @@ a design constraint; they are simply not built yet.
     device-code flow in a PTY, so there is nothing a non-interactive verb could
     complete. The capability is reachable from an agent's shell as
     `CODEX_HOME=<dir> codex login` / `CLAUDE_CONFIG_DIR=<dir> claude` then
-    `/login`. There is no CLI read of the quota snapshots yet, so verifying the
-    login from the CLI is part of this gap.
+    `/login`. Verify the login afterwards with `stats-plan-usage` (it reads
+    the cached snapshot; the tab's Refresh re-sample has no verb yet).
 12. **Pipeline Graph view selection** (the selector's pipeline / agent / All
     Pipelines choice, and the dashboard's "View in Graph"). `open cue --tab
 pipeline` reaches the graph but cannot name what it shows. Pure view state
@@ -367,6 +397,36 @@ pipeline` reaches the graph but cannot name what it shows. Pure view state
     reachable without it: an agent reads the file, quotes `path:lines` itself,
     and hands the text over with `dispatch` / `send`; replacing text is an edit
     to the file on disk, which an agent makes directly and `open-file` shows.
+14. **Turn browser Design Mode on or off** (address-bar pointer button,
+    Cmd+Shift+C, palette "Design Mode: Pick an Element"). The mode only arms
+    a hover overlay for a person's pointer; there is nothing for a script to
+    point with once it is on. The outcome it leads to, an element or a region
+    added to the message, is covered by `browser-pick <tab> --selector <css>`
+    or `browser-pick <tab> --rect <x,y,w,h>`, which run the same capture,
+    crop, and delivery code as a click or a drag, without the overlay
+    (`--queue` sends it as its own queued message, as the card's Queue button
+    does).
+    The mode is sticky per browser tab (`BrowserTab.designMode`, saved with
+    the tab): it survives page loads, tab switches, Add to Message and
+    restarts, and only Escape and the toggle turn it off. It is still a mode
+    for a person's pointer, so the gap stays open on the same reasoning, and
+    no read reports the flag either (`session list --type browser` lists a
+    browser tab's id, title, url and visibility, not its mode). Closing it
+    means a `browser-design-mode <tab> [on|off] [--json]` verb that writes
+    the flag through `updateBrowserTab()`, as the toggle does, and reads it
+    back.
+    Holding Space to use the page and clicking a crumb in the hover label
+    need no verb: both are pointer gestures with no effect of their own, an
+    agent drives the page through Coworking (`browser_click`, `browser_type`),
+    and `browser-pick --selector` picks any ancestor directly. Dragging the
+    box is `--rect` (guest CSS px, the box a drag would draw).
+15. **Verify whether a provider CLI is detected after installing it.**
+    `install-command <provider>` prints the install command so an agent can run
+    it in its own shell, and the desktop refreshes detection on Retry via
+    `agents:reprobe`, but there is no `maestro-cli` read verb yet that queries
+    `agents:detect` or `agents:reprobe` to report detected provider binaries.
+    Agents can check `command -v <binary>` (or `where <binary>` on Windows) in
+    their own shell.
 
 ### Audit backlog (2026-09-27)
 
@@ -395,8 +455,16 @@ still missing. Grouped, highest value first:
 - **SSH remotes:** test, edit, enable/disable, set default.
 - **Prompts:** edit or reset a Maestro prompt (`prompts set/reset`).
 - **Web access:** QR pairing, persistent token (`live on/off/status` and the tunnel are covered).
-- **Updates:** check/download/install.
-- **Exports:** tab as HTML, Usage Dashboard CSV, plan usage.
+- **Updates:** check/download/install. (Rollback's list and download are covered by
+  `rollback`; its restart is the same install verb missing here.) A CLI install verb must call
+  `saveAutoRunsForRestart('update')` (`src/renderer/services/autoRunRestartResume.ts`) first, the
+  same as the modal's Restart and Resume, or running Auto Runs will not resume.
+- **Quit:** there is no `maestro-cli` quit verb. One must call `saveAutoRunsForRestart('quit')`
+  before `confirmQuit()`, as `handleConfirmQuit` does.
+- **Exports:** tab as HTML.
+- **Usage Dashboard:** plan usage Refresh (re-sample every account), and the Shortcuts tab's
+  keyboard mastery figure (the math lives in `src/renderer/constants/keyboardMastery.ts`, which
+  main and the CLI cannot import; move it to `src/shared/` to close this).
 - **Media player:** play/pause/next/prev/seek/volume, queue management.
 - **Cue:** engine start/stop, stop a run, backups, global settings, rename pipeline.
 - **Agents/groups:** worktree folder + scan, group emoji, `remove-agent --erase`.

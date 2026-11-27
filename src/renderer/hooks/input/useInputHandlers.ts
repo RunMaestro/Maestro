@@ -768,43 +768,18 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		}
 	}, [syncAiInputToSession, syncTerminalInputToSession]);
 
-	const handleReplayMessage = useCallback(
-		(text: string, images?: string[]) => {
-			// Preserve draft input so replay doesn't clobber what the user was typing
-			const draftInput = useComposerInputStore.getState().aiValue;
-			const activeSession = selectActiveSession(useSessionStore.getState());
-			const activeTab = activeSession ? getActiveTab(activeSession) : null;
-			const draftImages = activeTab?.stagedImages ? [...activeTab.stagedImages] : [];
-			// The restore below runs a tick later - pin it to the tab that OWNS the
-			// draft so it can't be written onto whatever tab is active by then.
-			const draftTabId = useComposerInputStore.getState().aiValueTabId ?? activeTabIdRef.current;
-			const pin = activeSession
-				? { sessionId: activeSession.id, tabId: draftTabId ?? activeTab?.id }
-				: undefined;
-
-			if (images && images.length > 0) {
-				setStagedImages(images);
-			}
-			setTimeout(() => {
-				// Pin the agent/tab from click time so a focus change before the
-				// timeout cannot retarget the replay. Images were staged above.
-				processInputRef.current(text, pin);
-				// Restore draft input after processInput clears it
-				if (draftInput) {
-					setInputValue(draftInput);
-					if (pin) {
-						syncAiInputToSession(draftInput, pin);
-					} else {
-						syncAiInputToSession(draftInput);
-					}
-				}
-				if (draftImages.length > 0) {
-					setStagedImages(draftImages);
-				}
-			}, 0);
-		},
-		[setStagedImages, setInputValue, syncAiInputToSession]
-	);
+	const handleReplayMessage = useCallback((text: string, images?: string[]) => {
+		// The replayed text and images go straight to processInput, which leaves
+		// the composer alone for a send it did not read from it. The user's draft
+		// (text, staged images, command mode) survives the replay untouched.
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		const activeTab = activeSession ? getActiveTab(activeSession) : null;
+		processInputRef.current(text, {
+			// Pin the agent/tab from click time so the send cannot be retargeted.
+			...(activeSession && { sessionId: activeSession.id, tabId: activeTab?.id }),
+			images: images ?? [],
+		});
+	}, []);
 
 	const handlePaste = useCallback(
 		(e: React.ClipboardEvent) => {
@@ -820,26 +795,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const items = e.clipboardData.items;
 			const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
 
-			// Handle text paste with whitespace trimming
-			if (!hasImage && !isGroupChatActive) {
-				const text = e.clipboardData.getData('text/plain');
-				if (text) {
-					const trimmedText = text.trim();
-					if (trimmedText !== text) {
-						e.preventDefault();
-						const target = e.target as HTMLTextAreaElement;
-						const start = target.selectionStart ?? 0;
-						const end = target.selectionEnd ?? 0;
-						const currentValue = target.value;
-						const newValue = currentValue.slice(0, start) + trimmedText + currentValue.slice(end);
-						setInputValue(newValue);
-						requestAnimationFrame(() => {
-							target.selectionStart = target.selectionEnd = start + trimmedText.length;
-						});
-					}
-				}
-				return;
-			}
+			// Text paste lands verbatim (native paste). No trimming: dictation tools
+			// such as Scribe append a trailing space on purpose.
+			if (!hasImage && !isGroupChatActive) return;
 
 			// Image handling requires AI mode or group chat
 			if (!isGroupChatActive && !isDirectAIMode) return;
@@ -893,7 +851,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 				}
 			}
 		},
-		[setInputValue, setStagedImages, getCommandMode]
+		[setStagedImages, getCommandMode]
 	);
 
 	/**

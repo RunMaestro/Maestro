@@ -123,10 +123,11 @@ export function usePromptComposerHandlers(
 					prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: '' } : c))
 				);
 			} else {
-				// Set the input value and trigger send
+				// Put the text in the composer, then send it AS a composer submit (no
+				// override) so processInput consumes the composer, staged images included.
 				setInputValue(value);
 				// Use setTimeout to ensure state updates before processing
-				setTimeout(() => processInput(value), 0);
+				setTimeout(() => processInput(), 0);
 			}
 		},
 		[

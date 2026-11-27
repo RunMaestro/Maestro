@@ -162,6 +162,7 @@ export interface SessionItemProps {
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
 	cueSubscriptionCount?: number; // Number of active Cue subscriptions (0 or undefined = no indicator)
 	cueActiveRun?: boolean; // Whether a Cue pipeline is currently running for this agent
+	cueFailingCount?: number; // Cue subscriptions on this agent past their failure-alert threshold
 	wizardActive?: boolean; // Inline wizard active on at least one tab of this agent
 	wizardGeneratingDocs?: boolean; // Wizard is generating Auto Run documents (drives pulse)
 	worktreeChildCount?: number; // Number of worktree children (used for collapsed count badge)
@@ -217,6 +218,7 @@ export const SessionItem = memo(function SessionItem({
 	jumpNumber,
 	cueSubscriptionCount,
 	cueActiveRun,
+	cueFailingCount,
 	wizardActive = false,
 	wizardGeneratingDocs = false,
 	worktreeChildCount,
@@ -452,6 +454,7 @@ export const SessionItem = memo(function SessionItem({
 							<CueIndicator
 								subscriptionCount={cueSubscriptionCount ?? 0}
 								activeRun={!!cueActiveRun}
+								failingCount={cueFailingCount ?? 0}
 							/>
 						)}
 						{/* Persistent-terminal indicator: agent has at least one terminal tab with

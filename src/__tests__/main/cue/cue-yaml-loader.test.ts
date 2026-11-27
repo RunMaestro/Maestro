@@ -230,6 +230,32 @@ subscriptions:
 			expect(result!.settings.timeout_on_fail).toBe('break');
 			expect(result!.settings.max_concurrent).toBe(1);
 			expect(result!.settings.queue_size).toBe(512);
+			expect(result!.settings.failure_alert_threshold).toBe(3);
+		});
+
+		it('keeps a valid failure_alert_threshold and falls back on an invalid one', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: test-sub
+    event: time.heartbeat
+    prompt: Do stuff
+    interval_minutes: 5
+settings:
+  failure_alert_threshold: 0
+`);
+			expect(loadCueConfig('/projects/test')!.settings.failure_alert_threshold).toBe(0);
+
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: test-sub
+    event: time.heartbeat
+    prompt: Do stuff
+    interval_minutes: 5
+settings:
+  failure_alert_threshold: -4
+`);
+			expect(loadCueConfig('/projects/test')!.settings.failure_alert_threshold).toBe(3);
 		});
 
 		it('defaults enabled to true when not specified', () => {
@@ -1159,6 +1185,25 @@ subscriptions:
 			const result = validateCueConfig({
 				subscriptions: [],
 				settings: { queue_size: 0 },
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		it.each([-1, 1.5, 1001, 'three'])('rejects failure_alert_threshold of %s', (value) => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { failure_alert_threshold: value },
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('failure_alert_threshold')])
+			);
+		});
+
+		it.each([0, 3, 1000])('accepts failure_alert_threshold of %s', (value) => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { failure_alert_threshold: value },
 			});
 			expect(result.valid).toBe(true);
 		});

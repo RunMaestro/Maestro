@@ -12,8 +12,8 @@ import {
 	bucketDelegatedValue,
 	bucketInteractiveValue,
 	buildDelegationSeries,
-	toYmd,
 } from '../../../../renderer/components/UsageDashboard/delegationTrendUtils';
+import { toLocalYmd as toYmd } from '../../../../shared/localDay';
 import type { DelegationDay } from '../../../../shared/delegation';
 
 function day(
@@ -61,6 +61,28 @@ describe('buildDelegationSeries', () => {
 		expect(series).toHaveLength(4);
 		expect(series[3].date).toBe('2026-01-04');
 		expect(series[3].interactive.durationMs).toBe(0);
+	});
+
+	it('starts at `fromDate` so a quiet start of the range still shows as quiet', () => {
+		const series = buildDelegationSeries([day('2026-01-04', 100, 0)], {
+			fromDate: '2026-01-01',
+			throughDate: '2026-01-05',
+		});
+		expect(series.map((b) => b.date)).toEqual([
+			'2026-01-01',
+			'2026-01-02',
+			'2026-01-03',
+			'2026-01-04',
+			'2026-01-05',
+		]);
+		expect(series[0].interactive.durationMs).toBe(0);
+		expect(series[3].interactive.durationMs).toBe(100);
+	});
+
+	it('draws a window with no activity as zero bars rather than nothing', () => {
+		const series = buildDelegationSeries([], { fromDate: '2026-01-01', throughDate: '2026-01-03' });
+		expect(series).toHaveLength(3);
+		expect(series.every((b) => b.interactive.durationMs === 0)).toBe(true);
 	});
 
 	it('groups long ranges into equal-width buckets under the cap', () => {

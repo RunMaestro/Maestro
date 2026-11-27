@@ -102,6 +102,7 @@ vi.mock('../../../../main/utils/execFile', () => ({
 // Mock update checker
 vi.mock('../../../../main/update-checker', () => ({
 	checkForUpdates: vi.fn(),
+	listRollbackTargets: vi.fn(),
 }));
 
 // Mock auto-updater
@@ -161,7 +162,7 @@ import { detectShells } from '../../../../main/utils/shellDetector';
 import { isCloudflaredInstalled } from '../../../../main/utils/cliDetection';
 import { execFileNoThrow } from '../../../../main/utils/execFile';
 import { captureException } from '../../../../main/utils/sentry';
-import { checkForUpdates } from '../../../../main/update-checker';
+import { checkForUpdates, listRollbackTargets } from '../../../../main/update-checker';
 import { setAllowPrerelease } from '../../../../main/auto-updater';
 import { tunnelManager } from '../../../../main/tunnel-manager';
 import { powerManager } from '../../../../main/power-manager';
@@ -282,6 +283,7 @@ describe('system IPC handlers', () => {
 				// Update handlers
 				'updates:check',
 				'updates:checkin',
+				'updates:listRollbackTargets',
 				'updates:setAllowPrerelease',
 				// Logger handlers
 				'logger:log',
@@ -1446,6 +1448,36 @@ describe('system IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(result).toEqual(mockUpdateInfo);
+		});
+	});
+
+	describe('updates:listRollbackTargets', () => {
+		it('lists rollback targets for the running version (stable only by default)', async () => {
+			const targets = {
+				currentVersion: '1.0.0',
+				releases: [],
+				releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
+			};
+			vi.mocked(listRollbackTargets).mockResolvedValue(targets);
+
+			const handler = handlers.get('updates:listRollbackTargets');
+			const result = await handler!({} as any);
+
+			expect(listRollbackTargets).toHaveBeenCalledWith('1.0.0', false);
+			expect(result).toEqual(targets);
+		});
+
+		it('passes the includePrerelease flag through', async () => {
+			vi.mocked(listRollbackTargets).mockResolvedValue({
+				currentVersion: '1.0.0',
+				releases: [],
+				releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
+			});
+
+			const handler = handlers.get('updates:listRollbackTargets');
+			await handler!({} as any, true);
+
+			expect(listRollbackTargets).toHaveBeenCalledWith('1.0.0', true);
 		});
 	});
 

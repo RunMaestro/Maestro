@@ -25,7 +25,7 @@ import { logger } from '../../utils/logger';
 import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
-import { checkForUpdates } from '../../update-checker';
+import { checkForUpdates, listRollbackTargets } from '../../update-checker';
 import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
@@ -511,6 +511,13 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		const currentVersion = app.getVersion();
 		return checkForUpdates(currentVersion, includePrerelease);
 	});
+
+	// Earlier releases the user can roll back to (Check for Updates -> Roll Back).
+	ipcMain.handle(
+		'updates:listRollbackTargets',
+		async (_event, includePrerelease: boolean = false) =>
+			listRollbackTargets(app.getVersion(), includePrerelease)
+	);
 
 	// Anonymous DAU/MAU check-in ping. Fired by the renderer alongside the update
 	// check, gated by the same "check for updates" preference. Fire-and-forget:

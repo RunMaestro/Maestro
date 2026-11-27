@@ -19,6 +19,12 @@ describe('StatusDot', () => {
 		expect(dot).toHaveStyle({ backgroundColor: lightTheme.colors.warning });
 	});
 
+	it('uses theme error color for failing status', () => {
+		const { container } = render(<StatusDot status="failing" theme={darkTheme} />);
+		const dot = container.firstElementChild as HTMLElement;
+		expect(dot).toHaveStyle({ backgroundColor: darkTheme.colors.error });
+	});
+
 	it('uses theme textDim color for none status', () => {
 		const { container } = render(<StatusDot status="none" theme={darkTheme} />);
 		const dot = container.firstElementChild as HTMLElement;

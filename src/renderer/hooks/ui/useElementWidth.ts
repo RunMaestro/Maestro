@@ -17,7 +17,7 @@
  * ```
  */
 
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 
 export function useElementWidth(ref: RefObject<HTMLElement | null>, enabled = true): number {
 	const [width, setWidth] = useState(0);
@@ -43,6 +43,60 @@ export function useElementWidth(ref: RefObject<HTMLElement | null>, enabled = tr
 	}, [ref, enabled]);
 
 	return width;
+}
+
+/** The inner size of an element, in px (`clientWidth` by `clientHeight`). */
+export interface ElementSize {
+	width: number;
+	height: number;
+}
+
+const UNMEASURED: ElementSize = { width: 0, height: 0 };
+
+/**
+ * useElementSize - the width and height of an element, kept current with a
+ * ResizeObserver, for layout that has to be computed in JS (a box sized from
+ * the space its parent gives it).
+ *
+ * Measured in a layout effect, so the first paint already has the real size
+ * instead of one frame at the placeholder. Returns `{ 0, 0 }` until then, and
+ * the last size it saw while `enabled` is false: pass `enabled` only while a
+ * caller needs the number, so an idle element costs no observer and no
+ * re-render. Reports a new object only when a side changed.
+ */
+export function useElementSize(ref: RefObject<HTMLElement | null>, enabled = true): ElementSize {
+	const [size, setSize] = useState<ElementSize>(UNMEASURED);
+	// Compared here, not in a setState updater: an updater that returns the old
+	// state still costs React one render of the caller before it bails out.
+	const lastRef = useRef<ElementSize>(UNMEASURED);
+
+	useLayoutEffect(() => {
+		const element = ref.current;
+		if (!enabled || !element) {
+			return;
+		}
+
+		const measure = () => {
+			const { clientWidth: width, clientHeight: height } = element;
+			const last = lastRef.current;
+			if (last.width === width && last.height === height) return;
+			const next = { width, height };
+			lastRef.current = next;
+			setSize(next);
+		};
+		measure();
+
+		// Same jsdom caveat as useElementWidth.
+		if (typeof ResizeObserver === 'undefined') {
+			return;
+		}
+
+		const observer = new ResizeObserver(measure);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [ref, enabled]);
+
+	return size;
 }
 
 /**

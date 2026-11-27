@@ -363,8 +363,8 @@ Maestro checks for updates automatically on startup (configurable in Settings �
 
 **To manually check for updates:**
 
-- **Quick Actions:** `Cmd+K` / `Ctrl+K` → "Check for Updates"
-- **Menu:** Click the hamburger menu (☰) → "Check for Updates"
+- **Quick Actions:** `Cmd+K` / `Ctrl+K` → "Check for Updates or Rollback"
+- **Menu:** Click the hamburger menu (☰) → "Check for Updates or Rollback"
 
 When an update is available, you'll see:
 
@@ -372,6 +372,34 @@ When an update is available, you'll see:
 - Release notes summary
 - **Download** button to get the latest release from GitHub
 - Option to enable/disable automatic update checks
+
+### Updating During an Auto Run
+
+You do not have to wait for an Auto Run to finish before you update. When you click **Restart to Update** while an Auto Run is going, choose **Restart and Resume Auto Run**. Maestro saves the place of each run, restarts into the new version, and continues each run at the document and loop pass it was on. The task in progress when the app quit starts over from the top, because its checkbox was not ticked yet.
+
+- A goal-driven run continues with the iterations it already used taken off its limit.
+- A reset-on-completion document continues in the working copy it was using, so the tasks it already checked off in that pass stay done.
+- A run you already asked to stop does not resume.
+- Other agents that are mid-reply when you restart are still interrupted. Only Auto Runs resume.
+- If you would rather wait, choose **Wait Until Auto Runs Finish** and Maestro restarts on its own when they are done.
+
+The same applies when you quit Maestro with an Auto Run going. Confirm the quit, and the next time you open Maestro each run continues where it stopped. A run saved by a quit stays resumable for 7 days; one saved by an update restart, for 1 hour.
+
+The quit dialog has a **Resume Auto Runs on next launch** checkbox, on by default. Clear it to use the quit as an emergency stop: every Auto Run stops and none of them comes back. This is the fastest way to stop a batch of runs you started by mistake. Press `Cmd+Q` / `Ctrl+Q`, clear the box, and choose **Quit Anyway**.
+
+### Rolling Back to an Earlier Version
+
+If an update causes a problem, you can go back to an earlier release from the same window. Open **Check for Updates or Rollback** and expand **Roll back to an earlier version** below the update status. From the CLI, `maestro-cli rollback` lists the earlier releases, and `maestro-cli rollback 1.0.3` downloads one.
+
+The list shows up to 15 earlier releases that can be installed on your platform, newest first, each with its release notes. Pre-release builds appear only when **Include pre-release updates** is on. Click **Roll Back** beside a release to download it, then **Restart to Roll Back** to install it. A downloaded rollback also installs the next time Maestro quits, the same as a downloaded update.
+
+Keep these points in mind:
+
+- Your agents, settings, and history stay in place. An older version may not read data that a newer version wrote, so roll back only as far as you need to.
+- Auto Runs in progress do not resume after a rollback, because an older version may not have that feature. Let them finish first, or use **Restart App When Idle**.
+- Check for Updates offers the newest version again, so you can move forward when the fix ships.
+- Maestro installs only builds signed by the same publisher as the one you run, so releases from before code signing are not offered. On macOS that is any release before v0.8.1. On Windows, only releases built after Windows code signing began are offered.
+- A rollback can be started only from the desktop app or `maestro-cli`, never from the web interface, because an older version can bring back problems that a newer release fixed.
 
 ### Anonymous Check-in
 

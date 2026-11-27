@@ -13,6 +13,30 @@ export interface SessionValidationResult {
 }
 
 /**
+ * The agent already using `name`, compared trimmed (both sides: a stored name
+ * can keep surrounding spaces) and case-insensitively, the
+ * same way both validators below reject a duplicate. A blank name matches
+ * nothing. `excludeSessionId` skips the agent being renamed.
+ *
+ * Exported so a form can flag the clash while the user is still typing,
+ * instead of only at submit (MAESTRO-199: the onboarding wizard took a
+ * duplicate name on step 1 and refused it only at launch, after the whole
+ * planning conversation).
+ */
+export function findAgentWithName(
+	name: string,
+	existingSessions: readonly Session[],
+	excludeSessionId?: string
+): Session | undefined {
+	const trimmedName = name.trim().toLowerCase();
+	if (!trimmedName) return undefined;
+	return existingSessions.find(
+		(session) =>
+			session.id !== excludeSessionId && session.name.trim().toLowerCase() === trimmedName
+	);
+}
+
+/**
  * Validates that a new session can be created with the given parameters.
  *
  * Rules:
@@ -29,14 +53,11 @@ export function validateNewSession(
 	existingSessions: Session[],
 	sshRemoteId?: string | null
 ): SessionValidationResult {
-	const trimmedName = name.trim();
 	const normalizedDir = normalizeDirectory(directory);
 	const newRemoteId = sshRemoteId || null;
 
 	// Check for duplicate name (hard error - cannot proceed)
-	const duplicateName = existingSessions.find(
-		(session) => session.name.toLowerCase() === trimmedName.toLowerCase()
-	);
+	const duplicateName = findAgentWithName(name, existingSessions);
 	if (duplicateName) {
 		return {
 			valid: false,
@@ -80,13 +101,8 @@ export function validateEditSession(
 	sessionId: string,
 	existingSessions: Session[]
 ): SessionValidationResult {
-	const trimmedName = name.trim();
-
 	// Check for duplicate name (excluding the current session)
-	const duplicateName = existingSessions.find(
-		(session) =>
-			session.id !== sessionId && session.name.toLowerCase() === trimmedName.toLowerCase()
-	);
+	const duplicateName = findAgentWithName(name, existingSessions, sessionId);
 	if (duplicateName) {
 		return {
 			valid: false,

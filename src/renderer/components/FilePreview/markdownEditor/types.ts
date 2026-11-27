@@ -1,5 +1,6 @@
 import type { Theme } from '../../../constants/themes';
 import type { CompletionActivation, CodeEditorShortcutId } from './codeEditing';
+import type { CommentSlotElementCallback, CommentSlotsPayload } from './commentSlots';
 
 /** The main selection, with its 1-based line span. */
 export interface EditorSelectionDetails {
@@ -135,5 +136,14 @@ export interface MarkdownEditorProps {
 	onShortcutUsed?: (id: CodeEditorShortcutId) => void;
 	/** Right-click on selected text (see `BuildEditorExtensionsOptions`). */
 	onSelectionContextMenu?: (selection: EditorSelectionDetails, event: MouseEvent) => void;
+	/** Right-click on a line's text, off the selection (see `BuildEditorExtensionsOptions`). */
+	onLineContextMenu?: (lineNumber: number, event: MouseEvent) => void;
+	/**
+	 * Review comments drawn under their lines (see `./commentSlots`). The editor
+	 * reserves an element under each slot's last line and hands it to
+	 * `onCommentSlotElement`; the host renders into it with a portal.
+	 */
+	commentSlots?: CommentSlotsPayload;
+	onCommentSlotElement?: CommentSlotElementCallback;
 	className?: string;
 }

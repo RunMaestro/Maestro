@@ -13,6 +13,7 @@ import {
 	formatScreenTailReport,
 	idleTimeoutMessage,
 	readyTimeoutMessage,
+	startupDialogBlockedMessage,
 } from '../../maestro-p/timeout-report';
 
 describe('formatScreenTailReport', () => {
@@ -48,5 +49,14 @@ describe('readyTimeoutMessage', () => {
 		expect(message).toContain('within 30s (--ready-timeout)');
 		expect(message).toContain('Nothing was sent to the model.');
 		expect(message).toContain('Failing with ready_timeout.');
+	});
+});
+
+describe('startupDialogBlockedMessage', () => {
+	it('quotes the highlighted option, says nothing reached the model, and the error code', () => {
+		const message = startupDialogBlockedMessage('No, exit');
+		expect(message).toContain('its highlighted option is "No, exit"');
+		expect(message).toContain('Nothing was sent to the model.');
+		expect(message).toContain('Failing with startup_dialog_blocked.');
 	});
 });

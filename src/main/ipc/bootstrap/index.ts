@@ -39,12 +39,14 @@ import {
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	registerWebLoginHandlers,
+	registerPromptLinkHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerNotificationHistoryHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
 	registerAiCommandHandlers,
+	registerSideQuestionHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCrossAgentHandlers,
@@ -69,6 +71,7 @@ import {
 } from '../handlers';
 import { wireMultiWindowTelemetry } from '../../stats';
 import { saveWindowState } from '../../window-state-persistence';
+import { registerAutoRunRestartResumeHandlers } from '../../autorun-restart-resume';
 import { ensureCoworkingServerScript } from '../../coworking/coworking-server-paths';
 import { startCoworkingBridge } from '../../coworking/coworking-bridge';
 import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
@@ -109,6 +112,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// `webLogin:*` channel. See src/main/ipc/handlers/webLogin.ts.
 	registerWebLoginHandlers();
 
+	// Prompt Links (`maestro://run/<token>`) - desktop-only, the bridge refuses
+	// every `promptLinks:*` channel. See src/main/ipc/handlers/promptLinks.ts.
+	registerPromptLinkHandlers();
+
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({
 		settingsStore: deps.settingsStore,
@@ -130,6 +137,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		app: deps.app,
 		settingsStore: deps.settingsStore,
 	});
+
+	// Auto Runs saved across an update restart - src/main/autorun-restart-resume.ts
+	registerAutoRunRestartResumeHandlers(deps.app.getPath('userData'));
 
 	// Playbook operations - extracted to src/main/ipc/handlers/playbooks.ts
 	registerPlaybooksHandlers({
@@ -426,7 +436,6 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register Stats handlers for usage tracking
 	registerStatsHandlers({
-		getMainWindow: deps.getMainWindow,
 		settingsStore: deps.settingsStore,
 	});
 
@@ -534,6 +543,14 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// AI Command handlers (plain-English request -> one shell command line).
 	// Same dependency shape as tab naming: both spawn a short-lived agent turn.
 	registerAiCommandHandlers({
+		getProcessManager: deps.getProcessManager,
+		getAgentDetector: deps.getAgentDetector,
+		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
+	});
+
+	// Side question handlers (`/btw`): a throwaway fork of the tab's session.
+	registerSideQuestionHandlers({
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,

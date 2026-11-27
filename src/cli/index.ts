@@ -4,6 +4,7 @@
 
 import { Command } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
+import { BROWSER_VIEWPORT_PRESETS } from '../shared/browserViewport';
 import { parseCliBool, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
@@ -29,13 +30,20 @@ import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
-import { openBrowser, closeBrowser } from './commands/open-browser';
+import {
+	openBrowser,
+	closeBrowser,
+	browserPick,
+	browserPicks,
+	browserViewport,
+} from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
 import { version } from './commands/version';
+import { installCommand } from './commands/install-command';
 import {
 	groupChatList,
 	groupChatSend,
@@ -44,6 +52,7 @@ import {
 	groupChatStop,
 	groupChatArchive,
 	groupChatAdd,
+	groupChatUnread,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -71,6 +80,7 @@ import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { listModels } from './commands/list-models';
+import { rollback } from './commands/rollback';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
@@ -92,6 +102,7 @@ import {
 	displayPreset,
 	displayZoom,
 } from './commands/display-font';
+import { displayHeading } from './commands/display-heading';
 import { settingsReset } from './commands/settings-reset';
 import {
 	settingsAgentList,
@@ -128,7 +139,18 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsIndexing, statsQuery, statsTokens } from './commands/stats';
+import {
+	stats,
+	statsActivity,
+	statsAgents,
+	statsCue,
+	statsDelegation,
+	statsExport,
+	statsIndexing,
+	statsPlanUsage,
+	statsQuery,
+	statsTokens,
+} from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -142,6 +164,21 @@ import {
 	autoRunFolder,
 } from './commands/auto-run-control';
 import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
+import {
+	diffReviewAdd,
+	diffReviewClear,
+	diffReviewEdit,
+	diffReviewList,
+	diffReviewRemove,
+	diffReviewSend,
+	fileReviewAdd,
+	fileReviewClear,
+	fileReviewEdit,
+	fileReviewList,
+	fileReviewRemove,
+	fileReviewSend,
+} from './commands/diff-review';
+import { promptLinkCreate, promptLinkList, promptLinkRevoke } from './commands/prompt-link';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import {
@@ -543,6 +580,14 @@ program
 		'--with-context',
 		'Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context'
 	)
+	.option(
+		'--btw',
+		"Ask a side question (`/btw`) instead: answered from a throwaway fork of the agent's tab conversation, runs even while that tab is busy, and is never written to it. Claude Code agents only; the answer also shows on that tab's /btw card"
+	)
+	.option(
+		'--tab <tab-id>',
+		'With --btw: the AI tab whose conversation to fork (default: its active tab)'
+	)
 	.option('--timeout <seconds>', 'How long to wait for the answer (default 600, min 10, max 3600)')
 	.option('--json', 'Output the answer as JSON')
 	.action(ask);
@@ -774,6 +819,18 @@ groupChat
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatArchive);
 
+groupChat
+	.command('unread <chat>')
+	.description('Mark a group chat unread (the red dot on its Left Bar row)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options: { json?: boolean }) => groupChatUnread(chat, true, options));
+
+groupChat
+	.command('read <chat>')
+	.description("Clear a group chat's unread dot")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options: { json?: boolean }) => groupChatUnread(chat, false, options));
+
 // Open file command - open a file in the Maestro desktop app.
 //
 // Also the verb that PLAYS media: the renderer's open path recognizes a
@@ -880,6 +937,55 @@ program
 	.description('Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(closeBrowser);
+
+// Browser pick command - Design Mode by selector or by region: stage an element
+// of a browser tab (selector, trimmed HTML, computed styles, cropped screenshot),
+// or a region of it (--rect: its screenshot and the outermost elements in it), as
+// a chip in the owning agent's composer, through the same code a click or a drag
+// in Design Mode runs. Exactly one of --selector and --rect. With --queue it is
+// queued as its own message instead, as the pick card's Queue button does.
+program
+	.command('browser-pick <tab>')
+	.description(
+		"Add an element or a region of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
+	)
+	.option('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
+	.option('--rect <x,y,w,h>', 'Pick a region: x,y,width,height in viewport CSS px')
+	.option('--note <text>', 'Note added under the pick, as typed in the pick card')
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--background', 'Add it without switching the view to the AI tab')
+	.option('--focus', 'Switch to the AI tab the pick lands in (default)')
+	.option('--queue', 'Queue it as its own message instead of a chip')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPick);
+
+// Browser picks command - the Design Mode chips waiting in an agent's composer:
+// list them, each with the block it adds to the message at send, edit one's
+// note as the chip's note box does, or take one off by id, as the chip's X does.
+program
+	.command('browser-picks')
+	.description(
+		"List the Design Mode chips waiting in an agent's composer, edit one's note, or remove one"
+	)
+	.option('-a, --agent <id>', 'Agent whose composer holds the chips (defaults to active)')
+	.option('--edit <pickId>', "Replace this chip's note (with --note)")
+	.option('--note <text>', 'The new note for --edit (an empty string clears it)')
+	.option('--remove <pickId>', 'Remove this chip (id from the list, or from browser-pick)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPicks);
+
+// Browser viewport command - the width a browser tab shows its page at (Fit,
+// Desktop 1440, Laptop 1280, Tablet 768, Phone 390), as the toolbar's viewport
+// control sets it. Gives the preset to set it; always reports the one the tab
+// shows afterwards and the one it showed before. Never moves the view.
+program
+	.command('browser-viewport <tab> [preset]')
+	.description(
+		`Set or read the width a browser tab shows its page at (preset: ${BROWSER_VIEWPORT_PRESETS.join(', ')}; omit to read). tab: id from open-browser, or browser:N`
+	)
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserViewport);
 
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program
@@ -1077,6 +1183,175 @@ steerAutoRun
 	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
 	.option('--json', 'Output the cancelled note as JSON')
 	.action(steerAutoRunCancel);
+
+// Git Diff review comments - the CLI half of the Git Diff viewer's Review tray.
+// Comments are pinned to lines of the agent's current diff and sent to it as
+// one prompt, each with its path:lines and hunk.
+const diffReview = program
+	.command('diff-review')
+	.description("Pin review comments to lines of an agent's git diff and send them as one review");
+
+diffReview
+	.command('list')
+	.description('Show the pending comments, flagging any whose lines changed since')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewList);
+
+diffReview
+	.command('add <path> <lines> <comment>')
+	.description('Pin a comment to path:lines of the current diff (lines: 12 or 12-14)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--side <side>', 'Which version the line numbers are in: new (default) or old', 'new')
+	.option('--background', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--json', 'Output the new comment as JSON')
+	.action(diffReviewAdd);
+
+diffReview
+	.command('edit <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(diffReviewEdit);
+
+diffReview
+	.command('remove <comment-id>')
+	.description('Drop one pending comment (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--json', 'Output the removed comment as JSON')
+	.action(diffReviewRemove);
+
+diffReview
+	.command('clear')
+	.description('Discard every pending comment')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: discarding raises no notice')
+	.option('--focus', 'Accepted and ignored: discarding raises no notice')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewClear);
+
+diffReview
+	.command('send')
+	.description('Send every current comment to the agent as one queued prompt')
+	.requiredOption('-a, --agent <id>', 'Agent to send the review to')
+	.option('--compose', "Put the review in the agent's message box instead of sending it")
+	.option('--background', 'Deliver without switching the view (the default)')
+	.option('--focus', 'Take the user to the agent, as the Send Review button does')
+	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
+	.action(diffReviewSend);
+
+// File review comments - the CLI half of the File Preview's Review tray.
+// Comments are pinned to lines of one file ("Comment on line" on the File
+// Preview's right-click menu) and sent to the agent as one prompt, each with
+// its path:lines and the lines it quotes.
+const fileReview = program
+	.command('file-review')
+	.description('Pin review comments to lines of a file and send them to an agent as one review');
+
+fileReview
+	.command('list <file>')
+	.description('Show the pending comments on a file, flagging any whose lines changed since')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(fileReviewList);
+
+fileReview
+	.command('add <file> <lines> <comment>')
+	.description('Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--json', 'Output the new comment as JSON')
+	.action(fileReviewAdd);
+
+fileReview
+	.command('edit <file> <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(fileReviewEdit);
+
+fileReview
+	.command('remove <file> <comment-id>')
+	.description('Drop one pending comment (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--json', 'Output the removed comment as JSON')
+	.action(fileReviewRemove);
+
+fileReview
+	.command('clear <file>')
+	.description('Discard every pending comment on a file')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: discarding raises no notice')
+	.option('--focus', 'Accepted and ignored: discarding raises no notice')
+	.option('--json', 'Output as JSON')
+	.action(fileReviewClear);
+
+fileReview
+	.command('send <file>')
+	.description('Send every current comment on a file to the agent as one queued prompt')
+	.requiredOption('-a, --agent <id>', 'Agent to send the review to')
+	.option('--compose', "Put the review in the agent's message box instead of sending it")
+	.option('--background', 'Deliver without switching the view (the default)')
+	.option('--focus', 'Take the user to the agent, as the Send Review button does')
+	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
+	.action(fileReviewSend);
+
+// Prompt Links - `maestro://run/<token>` URLs that open a new tab in one agent
+// and send one stored prompt. The URL carries only a random token; creating a
+// link needs the Prompt Links Encore Feature. Same service as the Prompt Links
+// window (Opt+Cmd+Shift+L).
+const promptLink = program
+	.command('prompt-link')
+	.description(
+		'Create, list, and revoke one-shot maestro://run links (the window: `open prompt-links`)'
+	);
+
+promptLink
+	.command('create <agent> [prompt]')
+	.description('Create a link that runs PROMPT in a new tab of AGENT; prints the URL once')
+	.option('--prompt-file <path>', 'Read the prompt from a file instead of the argument')
+	.option('--uses <n>', 'How many times the link may run: a number, or "unlimited" (default: 1)')
+	.option('--expires <duration>', 'Expire after 12h, 7d, 30d, ... or "never" (default: never)')
+	.option('--label <text>', 'A name to recognize the link by in lists and toasts')
+	.option(
+		'--open <mode>',
+		'Where the tab opens when the link fires: background (default) or foreground'
+	)
+	.option('--background', 'Accepted and ignored: creating a link changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: creating a link changes nothing on screen')
+	.option('--json', 'Output the URL and link as JSON')
+	.action(promptLinkCreate);
+
+promptLink
+	.command('list')
+	.description('List active prompt links (never their URLs: only a hash is stored)')
+	.option('--all', 'Include used, expired, and revoked links')
+	.option('--background', 'Accepted and ignored: listing changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(promptLinkList);
+
+promptLink
+	.command('revoke <id>')
+	.description('Revoke a prompt link so it never runs again (accepts a unique id prefix)')
+	.option('--background', 'Accepted and ignored: revoking changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: revoking changes nothing on screen')
+	.option('--json', 'Output the revoked link as JSON')
+	.action(promptLinkRevoke);
 
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
@@ -1279,6 +1554,10 @@ directorNotes
 	.option('-f, --format <type>', 'Output format: json, markdown, text (default: text)')
 	.option('--filter <type>', 'Filter by entry type: auto, user, cue, agent')
 	.option('-l, --limit <n>', 'Maximum entries to show (default: 100)')
+	.option(
+		'-s, --search <text>',
+		'Only entries whose summary, response, tab name, agent name, or sender match <text>'
+	)
 	.option('--json', 'Output as JSON (shorthand for --format json)')
 	.action(directorNotesHistory);
 
@@ -1310,6 +1589,32 @@ program
 	.description('Diagnose CLI connectivity, version skew, and configuration')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => doctor(cliVersion, options));
+
+// Install-command - print the install line for a provider CLI (the error dialog's Install action)
+program
+	.command('install-command <provider>')
+	.description(
+		'Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing'
+	)
+	.option(
+		'--platform <platform>',
+		'Target platform: darwin, linux, or win32 (default: this machine)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((provider: string, options) => installCommand(provider, options));
+
+// Rollback - Check for Updates -> Roll Back: list earlier releases, or download one
+program
+	.command('rollback [version]')
+	.description(
+		'List earlier Maestro releases you can roll back to, or download one (e.g. 1.0.3) so the next restart installs it'
+	)
+	.option(
+		'--prerelease',
+		'Include beta and RC releases (default: the "Include pre-release updates" setting)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((version: string | undefined, options) => rollback(version, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
@@ -1350,7 +1655,10 @@ program
 	.option('--context-window <size>', 'Context window size in tokens')
 	.option('--provider-path <path>', 'Custom provider path')
 	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
-	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
+	.option(
+		'--ssh-cwd <path>',
+		'Working directory on the SSH remote (the agent runs there; defaults to --cwd)'
+	)
 	.option(
 		'--sync-history-to-remote <bool>',
 		'Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)'
@@ -1819,6 +2127,20 @@ display
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(displayPreset);
+
+display
+	.command('heading [level]')
+	.description(
+		'Get or set the font and size of a markdown heading level (h1-h6). Omit the level to list all six. Pass "default" to --font or --size to clear one field, or --reset to clear the level (or every level when none is named).'
+	)
+	.option(
+		'--font <family>',
+		'Font family for this level ("default" keeps the surrounding text font)'
+	)
+	.option('--size <px>', 'Size in px before zoom ("default" keeps the stylesheet size)')
+	.option('--reset', 'Restore the default style (one level, or all six when no level is named)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayHeading);
 
 display
 	.command('fonts')
@@ -2654,6 +2976,62 @@ program
 	)
 	.option('--json', 'Output rows as JSON instead of a tab-separated table')
 	.action(statsQuery);
+
+program
+	.command('stats-delegation')
+	.description(
+		'Show the delegation split (interactive turns vs Auto Run tasks vs Cue runs) for a range and per day'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output totals, delegated share, and the per-day split as JSON')
+	.action(statsDelegation);
+
+program
+	.command('stats-cue')
+	.description(
+		'Show the Usage Dashboard Cue tab: run totals, durations, and per-pipeline breakdowns'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option(
+		'--exclude-trigger <type>',
+		'Leave out a trigger type, like the Cue tab filter chips (repeatable)',
+		(value: string, prev: string[]) => [...prev, value],
+		[] as string[]
+	)
+	.option('--json', 'Output the full Cue statistics object as JSON')
+	.action(statsCue);
+
+program
+	.command('stats-plan-usage')
+	.description('Show the last sampled plan usage per Anthropic (Claude) and OpenAI (Codex) account')
+	.option('--provider <provider>', 'Only one provider: claude or codex')
+	.option('--json', 'Output the accounts as JSON')
+	.action(statsPlanUsage);
+
+program
+	.command('stats-agents')
+	.description('Show Agents Over Time: agents that existed each day, plus created and deleted')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the daily series as JSON')
+	.action(statsAgents);
+
+program
+	.command('stats-activity')
+	.description(
+		'Show Auto Run runs, wizard runs, resilience outages, and shortcut presses for a range and per day'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output totals and the daily counts as JSON')
+	.action(statsActivity);
+
+program
+	.command('stats-export')
+	.description('Export everything the Usage Dashboard reads for a range (the Export button)')
+	.requiredOption('-o, --output <path>', 'File to write (a .zip of CSVs, or a .json file)')
+	.option('-f, --format <format>', 'csv (a zip of CSV files) or json (default: csv)')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the result (path, row counts, notes) as JSON')
+	.action(statsExport);
 
 // Plugin authoring commands - scaffold, validate, sign, and package a Maestro
 // plugin from the command line. The manifest/signature contracts are the shared

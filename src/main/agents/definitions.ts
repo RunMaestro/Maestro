@@ -102,6 +102,20 @@ export interface AgentConfig extends BaseAgentConfig {
 	batchModeArgs?: string[]; // Args only applied in batch mode (e.g., ['--skip-git-repo-check'] for Codex exec)
 	jsonOutputArgs?: string[]; // Args for JSON output format (e.g., ['--format', 'json'])
 	resumeArgs?: (sessionId: string) => string[]; // Function to build resume args
+	/**
+	 * Args that turn a resumed turn into a throwaway branch of the session: the
+	 * turn reads the whole conversation but writes nothing back to it and leaves
+	 * no new transcript on disk. Only applied together with `resumeArgs`. Used by
+	 * side questions (`/btw`), which must never land in the tab's own history.
+	 * Agents without it cannot answer a side question with context.
+	 */
+	ephemeralForkArgs?: string[];
+	/**
+	 * Args that stop a fresh (non-resumed) turn from saving a session at all.
+	 * The no-session counterpart of `ephemeralForkArgs`: a side question on a tab
+	 * that has not had a turn yet must not leave a transcript behind either.
+	 */
+	noPersistenceArgs?: string[];
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
 	noToolsArgs?: string[]; // Args that disable ALL tool use, forcing a pure text response (e.g., ['--tools', ''] for Claude). Used by tab naming so a task-like first message produces a name instead of triggering a real agentic investigation.
 	modelArgs?: (modelId: string) => string[]; // Function to build model selection args (e.g., ['--model', modelId])
@@ -127,6 +141,12 @@ export interface AgentConfig extends BaseAgentConfig {
 	imagePromptBuilder?: (imagePaths: string[]) => string; // Function to embed image references into the prompt (e.g., Copilot @mentions)
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
 	stdinPromptArgs?: string[]; // Args required to read a raw query from stdin instead of argv
+	/**
+	 * Wraps a prompt delivered over stdin in the line format the CLI reads there,
+	 * paired with `stdinPromptArgs` (which switch the CLI to that input format).
+	 * Unset means the CLI reads the prompt as plain text.
+	 */
+	stdinPromptMessage?: (prompt: string) => string;
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
@@ -206,6 +226,13 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// mode the permission relay mediates each tool call instead.
 		fullAccessArgs: ['--dangerously-skip-permissions'],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID; works for both api and interactive (forwarded by maestro-p)
+		// `--fork-session` gives the resumed turn a new session id, so the original
+		// transcript is never appended to; `--no-session-persistence` stops the fork
+		// itself from being written, so nothing shows up in the session browser.
+		// Print mode only: maestro-p tails the transcript it resumed, which a fork
+		// never writes, so side questions always run `claude --print`.
+		ephemeralForkArgs: ['--fork-session', '--no-session-persistence'],
+		noPersistenceArgs: ['--no-session-persistence'],
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
 		readOnlyCliEnforced: true, // CLI enforces read-only via --permission-mode plan
 		// `--add-dir` allows tool access to a dir (read AND write), so it maps to
@@ -431,6 +458,16 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		imageArgs: undefined,
 		modelArgs: (modelId: string) => ['--model', modelId],
 		promptArgs: (prompt: string) => ['-p', prompt],
+		// Where Maestro delivers the prompt over stdin (Windows, or an argv too long
+		// for the OS), `agy` reads it as stream-json input: one JSON object per line,
+		// `{"event":"user","message":{"content":"..."}}`. In that mode a prompt passed
+		// by flag is dropped, and the run stays open until stdin closes, then exits
+		// after the current turn. Its output side is the same `--output-format
+		// stream-json` already in jsonOutputArgs, which the input format requires.
+		// https://antigravity.google/docs/cli/headless
+		stdinPromptArgs: ['--input-format', 'stream-json'],
+		stdinPromptMessage: (prompt: string) =>
+			JSON.stringify({ event: 'user', message: { content: prompt } }) + '\n',
 		configOptions: [
 			{
 				key: 'model',

@@ -1,6 +1,7 @@
 import React, {
 	useState,
 	useEffect,
+	useLayoutEffect,
 	useRef,
 	useMemo,
 	memo,
@@ -21,6 +22,7 @@ import {
 	Trash2,
 	Bot,
 	Star,
+	Link2,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { HamburgerDropdown } from './HamburgerDropdown';
@@ -89,11 +91,27 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { getBusyGroupChatIds } from '../../utils/groupChatStatus';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import type { StarredItem } from '../../hooks/session/useStarredItems';
+import { safeClipboardWrite } from '../../utils/clipboard';
+import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
+import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useHeaderTextDelta } from '../../hooks/ui/useHeaderTextDelta';
 import { Wordmark } from '../ui/Wordmark';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { usePluginGroupings } from '../../hooks/usePluginGroupings';
 import { buildVirtualGrouping } from '../../utils/pluginGroupings';
+import { isGroupChatBusy, type GroupChatBusySnapshot } from '../../utils/groupChatStatus';
+import { selectVisibleGroupChats } from '../../utils/groupChatOrdering';
+import {
+	buildSidebarRowOrder,
+	layoutGroupSections,
+	layoutVirtualGroupSections,
+	sidebarChildNavKey,
+	sidebarNavKey,
+	sidebarWorktreeChildren,
+	sidebarWorktreesExpanded,
+	type SidebarRowVariant,
+	type SidebarSessionSection,
+} from '../../utils/sidebarRowOrder';
 
 /**
  * Sidebar widths at which the header's two pills can afford their text labels.
@@ -389,11 +407,11 @@ function SessionListInner(props: SessionListProps) {
 		return { groups, bookmarkActive, bookmarkGenerating };
 	}, [wizardActiveSessions, sessions]);
 
-	// Cue session status map: sessionId → { count, active }
+	// Cue session status map: sessionId → { count, active, failing }
 	// Always fetched - the indicator shows whenever a .maestro/cue.yaml has subscriptions,
 	// regardless of whether the Cue Encore Feature is enabled (that only gates execution).
 	const [cueSessionMap, setCueSessionMap] = useState<
-		Map<string, { count: number; active: boolean }>
+		Map<string, { count: number; active: boolean; failing: number }>
 	>(new Map());
 	useEffect(() => {
 		let mounted = true;
@@ -402,12 +420,13 @@ function SessionListInner(props: SessionListProps) {
 			try {
 				const statuses = await cueService.getStatus();
 				if (!mounted) return;
-				const map = new Map<string, { count: number; active: boolean }>();
+				const map = new Map<string, { count: number; active: boolean; failing: number }>();
 				for (const s of statuses) {
 					if (s.subscriptionCount > 0) {
 						map.set(s.sessionId, {
 							count: s.subscriptionCount,
 							active: s.activeRuns > 0,
+							failing: s.enabled ? (s.failingSubscriptions?.length ?? 0) : 0,
 						});
 					}
 				}
@@ -419,7 +438,13 @@ function SessionListInner(props: SessionListProps) {
 					if (prev.size !== map.size) return map;
 					for (const [id, next] of map) {
 						const cur = prev.get(id);
-						if (!cur || cur.count !== next.count || cur.active !== next.active) return map;
+						if (
+							!cur ||
+							cur.count !== next.count ||
+							cur.active !== next.active ||
+							cur.failing !== next.failing
+						)
+							return map;
 					}
 					return prev;
 				});
@@ -472,23 +497,25 @@ function SessionListInner(props: SessionListProps) {
 
 	// Shared with the group chat rows' status dots and the agent jumper's LIVE
 	// bucket, so all three agree on what "running" means.
-	const isAnyGroupChatBusy = useMemo(
-		() =>
-			getBusyGroupChatIds(groupChats, {
-				activeGroupChatId,
-				groupChatState,
-				participantStates,
-				groupChatStates,
-				allGroupChatParticipantStates,
-			}).length > 0,
+	const groupChatBusySnapshot = useMemo(
+		(): GroupChatBusySnapshot => ({
+			activeGroupChatId,
+			groupChatState,
+			participantStates,
+			groupChatStates,
+			allGroupChatParticipantStates,
+		}),
 		[
-			groupChats,
 			activeGroupChatId,
 			groupChatState,
 			participantStates,
 			groupChatStates,
 			allGroupChatParticipantStates,
 		]
+	);
+	const isAnyGroupChatBusy = useMemo(
+		() => getBusyGroupChatIds(groupChats, groupChatBusySnapshot).length > 0,
+		[groupChats, groupChatBusySnapshot]
 	);
 
 	// Bring the keyboard cursor into view whenever the active agent or group chat
@@ -1047,6 +1074,152 @@ function SessionListInner(props: SessionListProps) {
 	}, [isSecondaryWindow, orderedGroups, sortedGroupSessionsById, childrenByParentId]);
 	const hasDisplayGroups = isSecondaryWindow ? displayGroups.length > 0 : groups.length > 0;
 
+	// ---------------------------------------------------------------------------
+	// What the list draws. Every section decision below is read by BOTH the JSX
+	// and the published row order (sidebarNavStore.visibleRows) that Cmd+[ /
+	// Cmd+] walks, so the shortcut can only ever step onto a row on screen.
+	// ---------------------------------------------------------------------------
+	const showArchivedGroupChats = useUIStore((s) => s.showArchivedGroupChats);
+	const worktreeChildrenFor = useCallback(
+		(session: Session): Session[] =>
+			sidebarWorktreeChildren(sortedWorktreeChildrenByParentId.get(session.id) ?? [], {
+				showUnreadAgentsOnly,
+				activeSessionId,
+				attentionCtx,
+			}),
+		[sortedWorktreeChildrenByParentId, showUnreadAgentsOnly, activeSessionId, attentionCtx]
+	);
+	const pianolaRowDrawn = !!(pianolaEnabled && pianolaSession);
+	const starredSectionDrawn =
+		showStarredSessionsSection &&
+		!showUnreadAgentsOnly &&
+		!isSecondaryWindow &&
+		starredItems.length > 0;
+	const bookmarksSectionDrawn =
+		bookmarkedSessions.length > 0 && !showUnreadAgentsOnly && !isSecondaryWindow;
+	const groupSectionLayouts = useMemo(
+		() =>
+			layoutGroupSections(displayGroups, {
+				sessionsByGroupId: sortedGroupSessionsById,
+				groupById,
+				childrenByParentId,
+				groupsPlusEnabled,
+				showUnreadAgentsOnly,
+			}),
+		[
+			displayGroups,
+			sortedGroupSessionsById,
+			groupById,
+			childrenByParentId,
+			groupsPlusEnabled,
+			showUnreadAgentsOnly,
+		]
+	);
+	const virtualGroupSectionLayouts = useMemo(
+		() =>
+			virtualGrouping
+				? layoutVirtualGroupSections(virtualGrouping, virtualCollapsed, sortedFilteredSessions)
+				: [],
+		[virtualGrouping, virtualCollapsed, sortedFilteredSessions]
+	);
+	// 'flat' when no groups are drawn, 'folder' for the Ungrouped Agents folder.
+	const ungroupedLayout: 'flat' | 'folder' | 'none' = activeVirtualGrouping
+		? 'none'
+		: sessions.length > 0 && !hasDisplayGroups
+			? 'flat'
+			: hasDisplayGroups && ungroupedSessions.length > 0
+				? 'folder'
+				: 'none';
+	const groupChatSectionDrawn =
+		!!(
+			onNewGroupChat &&
+			onOpenGroupChat &&
+			onEditGroupChat &&
+			onRenameGroupChat &&
+			onDeleteGroupChat
+		) && sessions.filter((s) => s.toolType !== 'terminal').length >= 2;
+
+	const visibleRows = useMemo(() => {
+		if (!leftSidebarOpen) return null;
+		const sections: SidebarSessionSection[] = [];
+		if (pianolaRowDrawn && pianolaSession) {
+			sections.push({ variant: 'flat', sessions: [pianolaSession] });
+		}
+		if (bookmarksSectionDrawn && !bookmarksCollapsed) {
+			sections.push({ variant: 'bookmark', sessions: sortedBookmarkedSessions });
+		}
+		if (activeVirtualGrouping) {
+			for (const layout of virtualGroupSectionLayouts) {
+				if (!layout.collapsed) sections.push({ variant: 'group', sessions: layout.sessions });
+			}
+		} else {
+			for (const layout of groupSectionLayouts) {
+				if (layout.expanded) {
+					sections.push({ variant: 'group', groupId: layout.group.id, sessions: layout.sessions });
+				}
+			}
+		}
+		if (ungroupedLayout === 'flat') {
+			sections.push({ variant: 'flat', sessions: sortedFilteredSessions });
+		} else if (ungroupedLayout === 'folder' && !ungroupedCollapsed) {
+			sections.push({ variant: 'ungrouped', sessions: sortedUngroupedSessions });
+		}
+		return buildSidebarRowOrder({
+			starredItems: starredSectionDrawn && !starredSectionCollapsed ? starredItems : [],
+			sections,
+			drawnWorktreeChildren: (parent) =>
+				onToggleWorktreeExpanded && sidebarWorktreesExpanded(parent, showUnreadAgentsOnly)
+					? worktreeChildrenFor(parent)
+					: [],
+			groupChats:
+				groupChatSectionDrawn && groupChatsExpanded
+					? selectVisibleGroupChats(groupChats, {
+							sortAlphabetical: groupChatSortAlphabetical,
+							showArchived: showArchivedGroupChats,
+							showUnreadAgentsOnly,
+							activeGroupChatId,
+							isChatBusy: (id) => isGroupChatBusy(id, groupChatBusySnapshot),
+							isChatUnread: (id) => unreadGroupChatIds.has(id),
+						})
+					: [],
+		});
+	}, [
+		leftSidebarOpen,
+		pianolaRowDrawn,
+		pianolaSession,
+		bookmarksSectionDrawn,
+		bookmarksCollapsed,
+		sortedBookmarkedSessions,
+		activeVirtualGrouping,
+		virtualGroupSectionLayouts,
+		groupSectionLayouts,
+		ungroupedLayout,
+		ungroupedCollapsed,
+		sortedFilteredSessions,
+		sortedUngroupedSessions,
+		starredSectionDrawn,
+		starredSectionCollapsed,
+		starredItems,
+		onToggleWorktreeExpanded,
+		showUnreadAgentsOnly,
+		worktreeChildrenFor,
+		groupChatSectionDrawn,
+		groupChatsExpanded,
+		groupChats,
+		groupChatSortAlphabetical,
+		showArchivedGroupChats,
+		activeGroupChatId,
+		groupChatBusySnapshot,
+		unreadGroupChatIds,
+	]);
+	// Layout effect: published before paint, so a Cmd+[ in the same tick as a
+	// filter or collapse change walks the list the user is about to see.
+	const setVisibleRows = useSidebarNavStore((s) => s.setVisibleRows);
+	useLayoutEffect(() => {
+		setVisibleRows(visibleRows);
+	}, [visibleRows, setVisibleRows]);
+	useLayoutEffect(() => () => setVisibleRows(null), [setVisibleRows]);
+
 	// PERF: Cached callback maps to prevent SessionItem re-renders.
 	// These Maps store stable function references keyed by session id. They only
 	// depend on the *set of session ids* - not on per-session field changes - so
@@ -1154,24 +1327,10 @@ function SessionListInner(props: SessionListProps) {
 		return map;
 	}, [groupIdsKey, handleDropOnGroup]);
 
-	// Helper: compute navIndexMap key for a session based on render context
-	const getNavKey = (variant: string, session: Session, groupId?: string): string => {
-		if (variant === 'bookmark') return `bookmark:${session.id}`;
-		if (variant === 'group' && groupId) return `group:${groupId}:${session.id}`;
-		return `ungrouped:${session.id}`;
-	};
-
-	// Helper: compute navIndexMap key for a worktree child based on render context
-	const getChildNavKey = (variant: string, childId: string, groupId?: string): string => {
-		if (variant === 'bookmark') return `bookmark:wt:${childId}`;
-		if (variant === 'group' && groupId) return `group:${groupId}:wt:${childId}`;
-		return `ungrouped:wt:${childId}`;
-	};
-
 	// Helper component: Renders a session item with its worktree children (if any)
 	const renderSessionWithWorktrees = (
 		session: Session,
-		variant: 'bookmark' | 'group' | 'flat' | 'ungrouped',
+		variant: SidebarRowVariant,
 		options: {
 			keyPrefix: string;
 			groupId?: string;
@@ -1179,20 +1338,14 @@ function SessionListInner(props: SessionListProps) {
 			onDrop?: () => void;
 		}
 	) => {
-		const allWorktreeChildren = getWorktreeChildren(session.id);
-		// When filtering unread, only show worktree children that need attention:
-		// unread, busy, in an error state, auto-running an Auto Run batch, or stuck
-		// auto-retrying an outage (the shared predicate, plus the active child).
-		const worktreeChildren = showUnreadAgentsOnly
-			? allWorktreeChildren.filter(
-					(child) => child.id === activeSessionId || sessionNeedsAttention(child, attentionCtx)
-				)
-			: allWorktreeChildren;
+		// When filtering unread, only worktree children that need attention (or are
+		// active) are drawn, and the unread filter forces them open. Shared with the
+		// published row order (sidebarRowOrder) so Cmd+[ / Cmd+] walks the same rows.
+		const worktreeChildren = worktreeChildrenFor(session);
 		const hasWorktrees = worktreeChildren.length > 0;
-		// Force expand worktrees when filtering by unread
-		const worktreesExpanded = showUnreadAgentsOnly ? true : (session.worktreesExpanded ?? true);
+		const worktreesExpanded = sidebarWorktreesExpanded(session, showUnreadAgentsOnly);
 		// Use navIndexMap for keyboard selection (context-aware: distinguishes bookmark vs group instances)
-		const navKey = getNavKey(variant, session, options.groupId);
+		const navKey = sidebarNavKey(variant, session.id, options.groupId);
 		const globalIdx = navIndexMap?.get(navKey) ?? sortedSessionIndexById.get(session.id) ?? -1;
 		// Suppressed while a Starred/Group-Chat cursor is live so only one row is highlighted.
 		const isKeyboardSelected =
@@ -1238,6 +1391,7 @@ function SessionListInner(props: SessionListProps) {
 					jumpNumber={getSessionJumpNumber(session.id)}
 					cueSubscriptionCount={cueSessionMap.get(session.id)?.count}
 					cueActiveRun={cueSessionMap.get(session.id)?.active}
+					cueFailingCount={cueSessionMap.get(session.id)?.failing}
 					wizardActive={wizardActiveSessions.has(session.id)}
 					wizardGeneratingDocs={!!wizardActiveSessions.get(session.id)?.isGeneratingDocs}
 					worktreeChildCount={worktreeChildren.length}
@@ -1268,11 +1422,8 @@ function SessionListInner(props: SessionListProps) {
 							} as React.CSSProperties
 						}
 					>
-						{(showUnreadAgentsOnly
-							? worktreeChildren
-							: sortedWorktreeChildrenByParentId.get(session.id) || []
-						).map((child) => {
-							const childNavKey = getChildNavKey(variant, child.id, options.groupId);
+						{worktreeChildren.map((child) => {
+							const childNavKey = sidebarChildNavKey(variant, child.id, options.groupId);
 							const childGlobalIdx =
 								navIndexMap?.get(childNavKey) ?? sortedSessionIndexById.get(child.id) ?? -1;
 							const isChildKeyboardSelected =
@@ -1300,6 +1451,7 @@ function SessionListInner(props: SessionListProps) {
 										jumpNumber={getSessionJumpNumber(child.id)}
 										cueSubscriptionCount={cueSessionMap.get(child.id)?.count}
 										cueActiveRun={cueSessionMap.get(child.id)?.active}
+										cueFailingCount={cueSessionMap.get(child.id)?.failing}
 										wizardActive={wizardActiveSessions.has(child.id)}
 										wizardGeneratingDocs={!!wizardActiveSessions.get(child.id)?.isGeneratingDocs}
 										otherWindowNumber={windowCtx?.getSessionWindow(child.id)?.windowNumber}
@@ -1576,19 +1728,9 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					</>
 				) : (
-					// The collapsed rail gets the pill too, in its compact form.
-					//
-					// It used to be left out on the grounds that a 64px icon strip is
-					// for agents and a media control there competes with them. That
-					// reasoning ignored what minimizing MEANS: the pill is the only
-					// place the widget parks, so on the rail "minimize" hid the player
-					// with nothing left on screen and no way back - the user reads that
-					// as the player having closed itself, which is precisely what the
-					// minimize/close split exists to prevent. A control the user can
-					// always get back to is worth more than 24px of rail.
-					//
-					// The compact form is the transport and the restore button and
-					// nothing else, which fits the rail's width without a label to clip.
+					// The collapsed rail carries no media pill. The rail is an icon strip
+					// for agents, and a minimized player is restored by expanding the Left
+					// Bar, where the full pill lives.
 					<div className="w-full flex flex-col items-center gap-2 relative z-30" ref={menuRef}>
 						<GhostIconButton onClick={() => setMenuOpen(!menuOpen)} padding="p-2" title="Menu">
 							<BusyWand
@@ -1598,9 +1740,6 @@ function SessionListInner(props: SessionListProps) {
 								color={theme.colors.accent}
 							/>
 						</GhostIconButton>
-						{/* Renders nothing unless the player is actually minimized, so
-						    the rail is unchanged for anyone not playing anything. */}
-						<NowPlayingIndicator theme={theme} compact />
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<HamburgerDropdown theme={theme} isPhone={isXs} onClose={() => setMenuOpen(false)}>
@@ -1685,7 +1824,7 @@ function SessionListInner(props: SessionListProps) {
 					    the pianola Encore flag. Stays pinned at the top even while filtering by
 					    unread agents (it is the control surface, always reachable), rendered before
 					    the empty state so it is not pushed down. Excluded from all normal categories. */}
-					{pianolaEnabled && pianolaSession && (
+					{pianolaRowDrawn && pianolaSession && (
 						<div className="mb-1">
 							{renderSessionWithWorktrees(pianolaSession, 'flat', {
 								keyPrefix: 'pianola',
@@ -1710,73 +1849,84 @@ function SessionListInner(props: SessionListProps) {
 					    aggregated from agentSessions.getAllNamedSessions, across all agents.
 					    Click switches to the owning agent and either jumps to the open tab
 					    or resumes the closed session. */}
-					{showStarredSessionsSection &&
-						!showUnreadAgentsOnly &&
-						!isSecondaryWindow &&
-						starredItems.length > 0 && (
-							<div className="mb-1">
-								<button
-									type="button"
-									className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
-									onClick={() => setStarredSectionCollapsed(!starredSectionCollapsed)}
-									aria-expanded={!starredSectionCollapsed}
+					{starredSectionDrawn && (
+						<div className="mb-1">
+							<button
+								type="button"
+								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer row-hover group"
+								onClick={() => setStarredSectionCollapsed(!starredSectionCollapsed)}
+								aria-expanded={!starredSectionCollapsed}
+							>
+								<div
+									className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
+									style={{ color: theme.colors.accent }}
 								>
-									<div
-										className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
-										style={{ color: theme.colors.accent }}
-									>
-										{starredSectionCollapsed ? (
-											<ChevronRight className="w-3 h-3" />
-										) : (
-											<ChevronDown className="w-3 h-3" />
+									{starredSectionCollapsed ? (
+										<ChevronRight className="w-3 h-3" />
+									) : (
+										<ChevronDown className="w-3 h-3" />
+									)}
+									<Star className="w-3.5 h-3.5" fill={theme.colors.accent} />
+									<span>
+										Starred Sessions
+										{showLeftPanelGroupMemberCount && (
+											<span className="ml-1 opacity-60">({starredItems.length})</span>
 										)}
-										<Star className="w-3.5 h-3.5" fill={theme.colors.accent} />
-										<span>
-											Starred Sessions
-											{showLeftPanelGroupMemberCount && (
-												<span className="ml-1 opacity-60">({starredItems.length})</span>
-											)}
-										</span>
-									</div>
-								</button>
+									</span>
+								</div>
+							</button>
 
-								{!starredSectionCollapsed && (
-									<div
-										className="flex flex-col border-l ml-4"
-										style={{ borderColor: theme.colors.accent }}
-									>
-										{starredItems.map((item) => {
-											// Not focus-gated: a starred row has no separate "active" highlight,
-											// so this doubles as the indicator when Cmd+[ / Cmd+] (a global
-											// shortcut, fired with focus on the main panel) lands here.
-											const isStarredKeyboardSelected =
-												sidebarExtraSelection?.kind === 'starred' &&
-												sidebarExtraSelection.key === item.key;
-											return (
+							{!starredSectionCollapsed && (
+								<div
+									className="flex flex-col border-l ml-4"
+									style={{ borderColor: theme.colors.accent }}
+								>
+									{starredItems.map((item) => {
+										// Not focus-gated: a starred row has no separate "active" highlight,
+										// so this doubles as the indicator when Cmd+[ / Cmd+] (a global
+										// shortcut, fired with focus on the main panel) lands here.
+										const isStarredKeyboardSelected =
+											sidebarExtraSelection?.kind === 'starred' &&
+											sidebarExtraSelection.key === item.key;
+										// Open rows carry a tab, so they get the same deep link and unread
+										// dot as the tab itself. A closed row has no tab for a link to open.
+										const showUnread = item.kind === 'open' && item.hasUnread;
+										return (
+											<div
+												key={item.key}
+												className="group flex items-center hover:bg-white/5 transition-colors"
+												style={{
+													backgroundColor: isStarredKeyboardSelected
+														? theme.colors.bgActivity + '40'
+														: undefined,
+													boxShadow: isStarredKeyboardSelected
+														? `inset 2px 0 0 0 ${theme.colors.accent}`
+														: undefined,
+												}}
+											>
 												<button
-													key={item.key}
 													type="button"
 													data-nav-key={`starred:${item.key}`}
 													onClick={() => void activateStarredItem(item)}
-													className="px-3 py-1.5 flex flex-col text-left hover:bg-white/5 transition-colors"
-													style={{
-														color: theme.colors.textMain,
-														backgroundColor: isStarredKeyboardSelected
-															? theme.colors.bgActivity + '40'
-															: undefined,
-														boxShadow: isStarredKeyboardSelected
-															? `inset 2px 0 0 0 ${theme.colors.accent}`
-															: undefined,
-													}}
-													title={`${item.displayName} - ${item.agentName}`}
+													className="flex-1 min-w-0 px-3 py-1.5 flex flex-col text-left"
+													style={{ color: theme.colors.textMain }}
+													title={`${item.displayName} - ${item.agentName}${showUnread ? ' (unread)' : ''}`}
 												>
-													<span className="flex items-center gap-1.5 text-sm truncate">
+													<span className="flex items-center gap-1.5 text-sm min-w-0 w-full">
 														<Star
 															className="w-3 h-3 flex-shrink-0"
 															fill={theme.colors.accent}
 															stroke={theme.colors.accent}
 														/>
 														<span className="truncate">{item.displayName}</span>
+														{showUnread && (
+															<span
+																className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+																style={{ backgroundColor: theme.colors.error }}
+																title="Unread messages"
+																data-testid="starred-unread-dot"
+															/>
+														)}
 													</span>
 													<span
 														className="text-xs opacity-60 truncate ml-[1.125rem]"
@@ -1785,15 +1935,34 @@ function SessionListInner(props: SessionListProps) {
 														{item.agentName}
 													</span>
 												</button>
-											);
-										})}
-									</div>
-								)}
-							</div>
-						)}
+												{item.kind === 'open' && (
+													<GhostIconButton
+														onClick={() => {
+															const link = buildSessionDeepLink(item.parentSessionId, item.tabId);
+															void safeClipboardWrite(link).then((ok) => {
+																if (ok) flashCopiedToClipboard(link);
+															});
+														}}
+														stopPropagation
+														title="Copy Deep Link"
+														ariaLabel={`Copy deep link to ${item.displayName}`}
+														color={theme.colors.textDim}
+														className="mr-2 flex-shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+														testId="starred-copy-link"
+													>
+														<Link2 className="w-3.5 h-3.5" />
+													</GhostIconButton>
+												)}
+											</div>
+										);
+									})}
+								</div>
+							)}
+						</div>
+					)}
 
 					{/* BOOKMARKS SECTION - hidden when filtering by unread agents */}
-					{bookmarkedSessions.length > 0 && !showUnreadAgentsOnly && !isSecondaryWindow && (
+					{bookmarksSectionDrawn && (
 						<div className="mb-1">
 							<button
 								type="button"
@@ -1860,84 +2029,51 @@ function SessionListInner(props: SessionListProps) {
 					)}
 
 					{activeVirtualGrouping &&
-						virtualGrouping &&
-						virtualGrouping.groups
-							.filter(
-								(group) =>
-									!group.parentGroupId ||
-									!virtualGrouping.groups.some((candidate) => candidate.id === group.parentGroupId)
-							)
-							.flatMap((group) => [
-								group,
-								...virtualGrouping.groups.filter(
-									(candidate) => candidate.parentGroupId === group.id
-								),
-							])
-							.map((group) => {
-								const parent = group.parentGroupId
-									? virtualGrouping.groups.find((candidate) => candidate.id === group.parentGroupId)
-									: undefined;
-								const collapsed = virtualCollapsed[group.id] === true;
-								if (parent && virtualCollapsed[parent.id] === true) return null;
-								const groupSessions = sortedFilteredSessions.filter(
-									(session) => virtualGrouping.assignments[session.id] === group.id
-								);
-								return (
-									<div key={group.id} className={parent ? 'ml-4 mb-1 rounded' : 'mb-1 rounded'}>
-										<button
-											type="button"
-											className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider row-hover"
-											style={{ color: theme.colors.textDim }}
-											aria-expanded={!collapsed}
-											onClick={() =>
-												setVirtualCollapsed((previous) => ({ ...previous, [group.id]: !collapsed }))
-											}
-										>
-											{collapsed ? (
-												<ChevronRight className="w-3 h-3" />
-											) : (
-												<ChevronDown className="w-3 h-3" />
-											)}
-											<Folder className="w-3.5 h-3.5" />
-											<span>{group.name}</span>
-											<span className="normal-case font-normal opacity-60">
-												from {activeVirtualGrouping.pluginName ?? activeVirtualGrouping.pluginId}
-											</span>
-										</button>
-										{!collapsed && (
-											<div
-												className="flex flex-col border-l ml-4"
-												style={{ borderColor: theme.colors.border }}
-											>
-												{groupSessions.map((session) =>
-													renderSessionWithWorktrees(session, 'group', {
-														keyPrefix: ['virtual', group.id].join('-'),
-													})
-												)}
-											</div>
+						virtualGroupSectionLayouts.map((layout) => {
+							const { group, parent, collapsed, sessions: groupSessions } = layout;
+							return (
+								<div key={group.id} className={parent ? 'ml-4 mb-1 rounded' : 'mb-1 rounded'}>
+									<button
+										type="button"
+										className="w-full px-3 py-1.5 flex items-center gap-2 text-xs font-bold uppercase tracking-wider row-hover"
+										style={{ color: theme.colors.textDim }}
+										aria-expanded={!collapsed}
+										onClick={() =>
+											setVirtualCollapsed((previous) => ({ ...previous, [group.id]: !collapsed }))
+										}
+									>
+										{collapsed ? (
+											<ChevronRight className="w-3 h-3" />
+										) : (
+											<ChevronDown className="w-3 h-3" />
 										)}
-									</div>
-								);
-							})}
+										<Folder className="w-3.5 h-3.5" />
+										<span>{group.name}</span>
+										<span className="normal-case font-normal opacity-60">
+											from {activeVirtualGrouping.pluginName ?? activeVirtualGrouping.pluginId}
+										</span>
+									</button>
+									{!collapsed && (
+										<div
+											className="flex flex-col border-l ml-4"
+											style={{ borderColor: theme.colors.border }}
+										>
+											{groupSessions.map((session) =>
+												renderSessionWithWorktrees(session, 'group', {
+													keyPrefix: ['virtual', group.id].join('-'),
+												})
+											)}
+										</div>
+									)}
+								</div>
+							);
+						})}
 
 					{/* GROUPS - a secondary window draws only the groups holding its owned
 					    agents (see `displayGroups`). */}
 					{!activeVirtualGrouping &&
-						displayGroups.map((group) => {
-							const groupSessions = sortedGroupSessionsById.get(group.id) || [];
-							const parentGroup =
-								groupsPlusEnabled && group.parentGroupId
-									? groupById.get(group.parentGroupId)
-									: undefined;
-							const isNestedGroup = Boolean(parentGroup && !parentGroup.parentGroupId);
-							if (isNestedGroup && parentGroup?.collapsed && !showUnreadAgentsOnly) return null;
-							const childGroups = groupsPlusEnabled ? (childrenByParentId.get(group.id) ?? []) : [];
-							const hasVisibleChild = childGroups.some(
-								(childGroup) => (sortedGroupSessionsById.get(childGroup.id) || []).length > 0
-							);
-							// Keep a parent visible for a matching child while filtering by unread agents.
-							if (showUnreadAgentsOnly && groupSessions.length === 0 && !hasVisibleChild)
-								return null;
+						groupSectionLayouts.map((layout) => {
+							const { group, sessions: groupSessions, nested: isNestedGroup, expanded } = layout;
 							const groupCollapsedPills = groupSessions.filter(
 								(session) => !session.parentSessionId
 							);
@@ -2011,7 +2147,7 @@ function SessionListInner(props: SessionListProps) {
 											className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
 											style={{ color: theme.colors.textDim }}
 										>
-											{group.collapsed && !showUnreadAgentsOnly ? (
+											{group.collapsed ? (
 												<ChevronRight className="w-3 h-3" />
 											) : (
 												<ChevronDown className="w-3 h-3" />
@@ -2110,7 +2246,7 @@ function SessionListInner(props: SessionListProps) {
 											)}
 									</LongPressable>
 
-									{!group.collapsed || showUnreadAgentsOnly ? (
+									{expanded ? (
 										<div
 											className="flex flex-col border-l ml-4"
 											style={{ borderColor: theme.colors.border }}
@@ -2146,7 +2282,7 @@ function SessionListInner(props: SessionListProps) {
 
 					{/* SESSIONS - Flat list when no groups are drawn (a secondary window with
 					    no owned grouped agents counts), otherwise the Ungrouped folder. */}
-					{!activeVirtualGrouping && sessions.length > 0 && !hasDisplayGroups ? (
+					{ungroupedLayout === 'flat' ? (
 						/* FLAT LIST - No groups exist yet, show sessions directly with New Group button */
 						<>
 							<div className="flex flex-col">
@@ -2172,7 +2308,7 @@ function SessionListInner(props: SessionListProps) {
 								</div>
 							)}
 						</>
-					) : !activeVirtualGrouping && hasDisplayGroups && ungroupedSessions.length > 0 ? (
+					) : ungroupedLayout === 'folder' ? (
 						/* UNGROUPED FOLDER - Groups exist and there are ungrouped agents */
 						<div
 							className="mb-1 mt-4 rounded"
@@ -2321,12 +2457,12 @@ function SessionListInner(props: SessionListProps) {
 					<div className="flex-grow min-h-4" />
 
 					{/* GROUP CHATS SECTION - Only show when at least 2 AI agents exist */}
-					{onNewGroupChat &&
+					{groupChatSectionDrawn &&
+						onNewGroupChat &&
 						onOpenGroupChat &&
 						onEditGroupChat &&
 						onRenameGroupChat &&
-						onDeleteGroupChat &&
-						sessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
+						onDeleteGroupChat && (
 							<GroupChatList
 								theme={theme}
 								groupChats={groupChats}

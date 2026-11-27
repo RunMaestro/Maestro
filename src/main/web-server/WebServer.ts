@@ -58,7 +58,12 @@ import {
 	WsRoute,
 } from './routes';
 import { MEDIA_PATH_PARAM_MAX_LENGTH } from './routes/mediaRoutes';
-import { IMMUTABLE_ASSET_CACHE_CONTROL, isContentHashedAsset } from './asset-cache-policy';
+import {
+	ERROR_RESPONSE_CACHE_CONTROL,
+	IMMUTABLE_ASSET_CACHE_CONTROL,
+	isContentHashedAsset,
+	mayCacheAssetResponse,
+} from './asset-cache-policy';
 import { webLoginPreHandler } from './auth/web-login-hook';
 import { getWebUserStore } from './auth/web-user-store';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../shared/webLogin';
@@ -95,6 +100,7 @@ import type {
 	ReopenClosedTabCallback,
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -105,6 +111,9 @@ import type {
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
 	CloseBrowserTabCallback,
+	PickBrowserElementCallback,
+	BrowserViewportCallback,
+	DesignPickCommandCallback,
 	OpenTerminalTabCallback,
 	WriteTerminalTabCallback,
 	WriteTerminalTabPayload,
@@ -166,6 +175,7 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	SetGroupChatUnreadCallback,
 	AddGroupChatParticipantCallback,
 	SendGroupChatMessageCallback,
 	GroupChatMessage,
@@ -180,7 +190,6 @@ import type {
 	GetCueActivityCallback,
 	CueActivityEntry,
 	CueSubscriptionInfo,
-	GetUsageDashboardCallback,
 	GetAchievementsCallback,
 	GenerateDirectorNotesSynopsisCallback,
 	NotifyToastCallback,
@@ -200,6 +209,7 @@ import type {
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
+import type { DiffReviewCommandRequest } from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
 
 // Logger context for all web server logs
@@ -571,6 +581,10 @@ export class WebServer {
 		this.callbackRegistry.setAutoRunSteeringCommandCallback(callback);
 	}
 
+	setDiffReviewCommandCallback(callback: DiffReviewCommandCallback): void {
+		this.callbackRegistry.setDiffReviewCommandCallback(callback);
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbackRegistry.setWindowCommandCallback(callback);
 	}
@@ -612,6 +626,18 @@ export class WebServer {
 
 	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
 		this.callbackRegistry.setCloseBrowserTabCallback(callback);
+	}
+
+	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
+		this.callbackRegistry.setPickBrowserElementCallback(callback);
+	}
+
+	setBrowserViewportCallback(callback: BrowserViewportCallback): void {
+		this.callbackRegistry.setBrowserViewportCallback(callback);
+	}
+
+	setDesignPickCommandCallback(callback: DesignPickCommandCallback): void {
+		this.callbackRegistry.setDesignPickCommandCallback(callback);
 	}
 
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
@@ -841,6 +867,10 @@ export class WebServer {
 		this.callbackRegistry.setArchiveGroupChatCallback(callback);
 	}
 
+	setSetGroupChatUnreadCallback(callback: SetGroupChatUnreadCallback): void {
+		this.callbackRegistry.setSetGroupChatUnreadCallback(callback);
+	}
+
 	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {
 		this.callbackRegistry.setAddGroupChatParticipantCallback(callback);
 	}
@@ -879,10 +909,6 @@ export class WebServer {
 
 	setGetCueActivityCallback(callback: GetCueActivityCallback): void {
 		this.callbackRegistry.setGetCueActivityCallback(callback);
-	}
-
-	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
-		this.callbackRegistry.setGetUsageDashboardCallback(callback);
 	}
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {
@@ -1030,6 +1056,14 @@ export class WebServer {
 		// bundle (copied there by its vite publicDir), so webAssetsPath points at
 		// that bundle root. The bundle's own JS/CSS assets are served separately
 		// at /<token>/desktop/assets/ (see below).
+		//
+		// Both fastifyStatic roots below MUST stay outside app.asar: the
+		// package.json `asarUnpack` entry `dist/web-desktop/**/*` ships them as
+		// real files. fastifyStatic streams with fs.open, and Electron answers an
+		// fs.open inside app.asar by copying the file to a temp file in $TMPDIR
+		// and caching that path for the life of the process. macOS purges
+		// untouched $TMPDIR files after a few days, so every asset then 500s
+		// with ENOENT until restart (issue #2155).
 		if (this.webAssetsPath) {
 			const iconsPath = path.join(this.webAssetsPath, 'icons');
 			if (existsSync(iconsPath)) {
@@ -1048,19 +1082,34 @@ export class WebServer {
 		if (this.webDesktopPath) {
 			const wdAssets = path.join(this.webDesktopPath, 'assets');
 			if (existsSync(wdAssets)) {
-				await this.server.register(fastifyStatic, {
-					root: wdAssets,
-					prefix: `/${this.securityToken}/desktop/assets/`,
-					decorateReply: false,
-					// Runs after the plugin's own headers (200, 206 and 304 alike), so
-					// this replaces its default `max-age=0` for hashed files only.
-					// See asset-cache-policy.ts for why revalidating them broke boot
-					// over a Cloudflare quick tunnel.
-					setHeaders: (reply, filePath) => {
-						if (isContentHashedAsset(wdAssets, filePath)) {
-							reply.header('Cache-Control', IMMUTABLE_ASSET_CACHE_CONTROL);
+				const prefix = `/${this.securityToken}/desktop/assets/`;
+				// Encapsulated so the onSend hook below sees only this mount.
+				await this.server.register(async (scope) => {
+					// setHeaders runs before the file opens, so a failed open still
+					// carries the immutable header into its error response (#2158).
+					scope.addHook('onSend', async (_request, reply, payload) => {
+						if (
+							!mayCacheAssetResponse(reply.statusCode) &&
+							reply.getHeader('Cache-Control') === IMMUTABLE_ASSET_CACHE_CONTROL
+						) {
+							reply.header('Cache-Control', ERROR_RESPONSE_CACHE_CONTROL);
 						}
-					},
+						return payload;
+					});
+					await scope.register(fastifyStatic, {
+						root: wdAssets,
+						prefix,
+						decorateReply: false,
+						// Runs after the plugin's own headers (200, 206 and 304 alike), so
+						// this replaces its default `max-age=0` for hashed files only.
+						// See asset-cache-policy.ts for why revalidating them broke boot
+						// over a Cloudflare quick tunnel.
+						setHeaders: (reply, filePath) => {
+							if (isContentHashedAsset(wdAssets, filePath)) {
+								reply.header('Cache-Control', IMMUTABLE_ASSET_CACHE_CONTROL);
+							}
+						},
+					});
 				});
 			}
 		}
@@ -1212,6 +1261,8 @@ export class WebServer {
 				this.callbackRegistry.snoozeCommand(request),
 			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
 				this.callbackRegistry.autoRunSteeringCommand(request),
+			diffReviewCommand: async (request: DiffReviewCommandRequest) =>
+				this.callbackRegistry.diffReviewCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
 				this.callbackRegistry.windowCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
@@ -1227,6 +1278,9 @@ export class WebServer {
 			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
 				this.callbackRegistry.openBrowserTab(sessionId, url, options),
 			closeBrowserTab: async (tabId: string) => this.callbackRegistry.closeBrowserTab(tabId),
+			pickBrowserElement: async (request) => this.callbackRegistry.pickBrowserElement(request),
+			browserViewport: async (request) => this.callbackRegistry.browserViewport(request),
+			designPickCommand: async (request) => this.callbackRegistry.designPickCommand(request),
 			openTerminalTab: async (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
@@ -1360,6 +1414,8 @@ export class WebServer {
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
 			archiveGroupChat: async (chatId: string, archived: boolean) =>
 				this.callbackRegistry.archiveGroupChat(chatId, archived),
+			setGroupChatUnread: async (chatId: string, unread: boolean) =>
+				this.callbackRegistry.setGroupChatUnread(chatId, unread),
 			addGroupChatParticipant: async (chatId: string, agentId: string) =>
 				this.callbackRegistry.addGroupChatParticipant(chatId, agentId),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
@@ -1410,8 +1466,6 @@ export class WebServer {
 				const { removePipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
 				return removePipelineOnDisk(identifier);
 			},
-			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
-				this.callbackRegistry.getUsageDashboard(timeRange),
 			getAchievements: async () => this.callbackRegistry.getAchievements(),
 			generateDirectorNotesSynopsis: async (lookbackDays: number, provider: string) =>
 				this.callbackRegistry.generateDirectorNotesSynopsis(lookbackDays, provider),
@@ -1684,6 +1738,18 @@ export class WebServer {
 			this.watchWebUserStore();
 
 			await this.server.listen({ port: this.port, host: bindHost });
+
+			// Fastify drops its own 'error' listener once listen() resolves, so from
+			// here a failed accept() (Windows reports `accept UNKNOWN`, any platform
+			// can report EMFILE) is an 'error' event nobody handles, and Node throws
+			// it into the uncaught-exception handler as a fatal crash (MAESTRO-19C).
+			// The server keeps listening after a failed accept; only that one
+			// connection is lost, so a log line is the whole response.
+			this.server.server.on('error', (error: NodeJS.ErrnoException) => {
+				logger.warn(`Web server connection error: ${error.message}`, LOG_CONTEXT, {
+					code: error.code,
+				});
+			});
 
 			// Get the actual port (important when using port 0 for random assignment)
 			const address = this.server.server.address();

@@ -60,6 +60,7 @@ export interface MaestroSettings {
 	filePreviewFontSize: number;
 	fileEditorFontSize: number;
 	documentGraphFontSize: number;
+	headingTypography: Record<string, { fontFamily: string; fontSize: number }>;
 	fontZoom: number;
 	typographySnapshot: unknown;
 	typographyPromptSeen: boolean;
