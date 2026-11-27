@@ -283,6 +283,10 @@ describe('peerMirrorStore', () => {
 			// A peer this window does not hold: nothing to bump.
 			usePeerMirrorStore.getState().noteHostHistoryEntry('nope', 'x1');
 			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1, 'gpu:b1': 4 });
+			// A peer id that names a prototype key is not taken for an announcement (CodeRabbit on #2176).
+			usePeerMirrorStore.getState().hydrate([peerWith('constructor', [agent('c1')])]);
+			usePeerMirrorStore.getState().noteHostHistoryEntry('constructor', 'c1');
+			expect(versions()).toEqual({ 'constructor:c1': 2 });
 		});
 
 		it('bumps every agent of the peer on peer.stale and on peer.agents', () => {

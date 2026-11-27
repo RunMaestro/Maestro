@@ -128,6 +128,11 @@ function bumpHistory(
 	return { ...state, historyVersions };
 }
 
+/** The peer's host said it writes History. An own key only: a peer id may name a prototype key. */
+function announcedHistory(state: PeerMirrorData, peerId: string): boolean {
+	return Object.prototype.hasOwnProperty.call(state.historyAnnounced, peerId);
+}
+
 /** Every agent of every peer in a snapshot gets a new History version. */
 function bumpAll(
 	versions: Record<string, number>,
@@ -310,7 +315,7 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 			// The host wrote the agent's History after the fact (a synopsis): an open panel reads again.
 			if (!existing) return state;
 			return bumpHistory(
-				state.historyAnnounced[peerId]
+				announcedHistory(state, peerId)
 					? state
 					: { ...state, historyAnnounced: { ...state.historyAnnounced, [peerId]: true } },
 				peerId,
@@ -429,7 +434,7 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 
 	noteHostHistoryEntry: (peerId, agentId) =>
 		set((state) =>
-			state.peers[peerId] && !state.historyAnnounced[peerId]
+			state.peers[peerId] && !announcedHistory(state, peerId)
 				? bumpHistory(state, peerId, [agentId])
 				: state
 		),
