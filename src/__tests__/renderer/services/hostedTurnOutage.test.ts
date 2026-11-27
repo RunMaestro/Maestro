@@ -18,6 +18,7 @@ import {
 	sendTakenItemToHost,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { interruptTurn } from '../../../renderer/services/turnInterrupt';
+import { sendHostedTurn } from '../../../renderer/services/hostedTurns';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
 	getRetryEntry,
@@ -618,6 +619,64 @@ describe('a message sent while the link is down is kept for a retry', () => {
 			await flush();
 
 			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(0);
+		});
+
+		it('probes on a send while the mirror has not read the agents yet (an app started with the host down) (Greptile on #2180)', async () => {
+			const session = seed('hosted');
+			usePeerMirrorStore.getState().hydrate([
+				{
+					...createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+					connection: 'host-down',
+				},
+			]);
+			probeFindsHost();
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+			const unavailable = vi.fn();
+
+			const receipt = await sendHostedTurn(session, 't1', 'hello', [], {
+				onHostUnavailable: unavailable,
+			});
+
+			expect(reconnect$).toHaveBeenCalledWith('box');
+			expect(unavailable).not.toHaveBeenCalled();
+			expect(receipt).toMatchObject({ status: 'started' });
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(1);
+		});
+
+		it('sends nothing when Stop lands on the tab while a drained message waits for discovery (Greptile on #2180)', async () => {
+			const session = seed('hosted');
+			hostDown();
+			useSessionStore.setState({
+				sessions: [{ ...session, executionQueue: [message('q1', 'wake up')] }],
+			});
+			let found!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						found = () => {
+							hydrateHost();
+							resolve({ ok: true });
+						};
+					})
+			);
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+
+			expect(handQueuedItemToHost(session.id, 'q1')).toBe(true);
+			await flush();
+			await interruptTurn(session.id, { tabId: 't1' });
+			found();
+			await flush();
+			await flush();
+
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(0);
+			// Parked held, one click from Force Send, as Stop parks a kept message.
+			expect(queue().map((queued) => [queued.id, queued.paused === true])).toEqual([['q1', true]]);
 		});
 
 		it('shares one probe among ten kept messages of the burst', async () => {

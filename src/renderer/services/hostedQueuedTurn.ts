@@ -113,6 +113,27 @@ import {
 const sendsInFlight = new Map<string, Promise<TurnSendReceipt | null>>();
 
 /**
+ * When Stop last ran on a hosted agent (`agent`) or one of its tabs (`agent:tab`), on one counter
+ * (`hostedStopSeq`). A send that waits for discovery (`reachPeerNow()`) reads it after the wait:
+ * a Stop meanwhile parks the message held, as Stop parks a kept one, and nothing goes (R68).
+ */
+const hostedStops = new Map<string, number>();
+let hostedStopSeq = 0;
+
+/** Stop ran on a hosted agent: the whole agent, or the tab `tabId`. */
+export function noteHostedStop(sessionId: string, tabId?: string): void {
+	hostedStopSeq += 1;
+	hostedStops.set(tabId ? `${sessionId}:${tabId}` : sessionId, hostedStopSeq);
+}
+
+/** Whether Stop ran on the agent, or on its tab `tabId`, after the mark `since`. */
+function hostedStoppedSince(sessionId: string, tabId: string, since: number): boolean {
+	const agentStop = hostedStops.get(sessionId) ?? 0;
+	const tabStop = hostedStops.get(`${sessionId}:${tabId}`) ?? 0;
+	return Math.max(agentStop, tabStop) > since;
+}
+
+/**
  * The host's answer for an item this queue handed over and is still sending, or undefined when it
  * is not on its way to a host. A caller that follows the turn (Quick Chat) reads the receipt: a
  * `queued` one names the host's queue item that now stands for it.
@@ -610,6 +631,8 @@ function forwardToHost(
 	// A resend (Try now, an auto-retry, a drain) is an explicit act: a host that is not connected
 	// is probed again first (R68), so a host started after the last probe takes the message, and a
 	// cut turn's fate is then read from it before anything goes.
+	const lineTabId = item.tabId || session.activeTabId;
+	const stopMark = hostedStopSeq;
 	const reaching =
 		usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected'
 			? null
@@ -617,10 +640,12 @@ function forwardToHost(
 	const send = !reaching
 		? decideAndSend()
 		: reaching.then(() => {
+				// The retry it belongs to was stopped, or Stop ran on its tab (any send, a drained one
+				// too, has no other mark of it) while discovery ran.
 				const owned =
 					retryOutage === undefined ||
 					getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
-				if (!owned) {
+				if (!owned || hostedStoppedSince(sessionId, lineTabId, stopMark)) {
 					// Stopped while it waited: parked held, one click from Force Send, as Stop parks it.
 					holdRefusedItem(sessionId, item, index);
 					return null;
@@ -630,7 +655,6 @@ function forwardToHost(
 	sendsInFlight.set(item.id, send);
 	// The tab holds its line until the host answered: nothing queued behind this turn goes ahead of
 	// it, and a consult it fires holds the tab before the line is let go (U1).
-	const lineTabId = item.tabId || session.activeTabId;
 	const lineHolder = `send:${item.id}`;
 	holdHostedTabLine(sessionId, lineTabId, lineHolder, { handingOver: true });
 	const settle = () => {

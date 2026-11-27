@@ -29,7 +29,11 @@ import { useSessionStore, selectSessionById, updateSessionWith } from '../stores
 import { useBatchStore } from '../stores/batchStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../stores/retryStore';
 import { dropMentionHandoffs } from './crossAgentHandoff';
-import { dropStoppedHostStartMentions, settleStoppedHostStartMentions } from './hostedQueuedTurn';
+import {
+	dropStoppedHostStartMentions,
+	noteHostedStop,
+	settleStoppedHostStartMentions,
+} from './hostedQueuedTurn';
 import { cancelHostedConsults } from '../hooks/agent/useCrossAgentDispatch';
 import { useCrossAgentInFlightStore } from '../stores/crossAgentInFlightStore';
 import { generateId } from '../utils/ids';
@@ -163,6 +167,8 @@ export async function interruptTurn(
 	const terminalCommand =
 		tabId === null && session.state === 'busy' && session.busySource === 'terminal';
 	if (hostedTargetOf(session) && !terminalCommand) {
+		// First, before any await: a send still waiting for its host's discovery goes nowhere (R68).
+		noteHostedStop(sessionId, scopeTabId);
 		const hostBusy = scopedTab
 			? scopedTab.state === 'busy'
 				? [scopedTab.id]

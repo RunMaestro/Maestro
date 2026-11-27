@@ -155,6 +155,27 @@ describe('runLift refusals', () => {
 		expect(error.message).toContain('"Docs" is busy: a turn is running.');
 	});
 
+	it('refuses with nothing moved when a turn starts while the host is reached (CodeRabbit on #2180)', async () => {
+		let running = false;
+		const conn = connectionWith();
+		const { deps, importAgent } = depsWith(
+			sshAgent(),
+			{
+				busyReason: () => (running ? 'a turn is running' : undefined),
+				connect: vi.fn(async () => {
+					// The desktop's discovery waits; a turn starts meanwhile.
+					running = true;
+					return conn.connection;
+				}),
+			},
+			conn
+		);
+		const error = await refusalOf(runLift('agent-1', {}, deps));
+		expect(error.code).toBe('LIFT_BUSY');
+		expect(importAgent).not.toHaveBeenCalled();
+		expect(deps.setPointer).not.toHaveBeenCalled();
+	});
+
 	it('throws the caller refusal last, before the host is reached', async () => {
 		const { deps } = depsWith(sshAgent(), {
 			localRefusal: () => new LiftRunError('LIFT_LOCAL_HOST', 'a host owns the store'),

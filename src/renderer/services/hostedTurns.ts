@@ -723,14 +723,19 @@ export async function sendHostedTurn(
 		reached?: boolean;
 	} = {}
 ): Promise<TurnSendReceipt | null> {
-	const target = hostedTargetOf(session);
+	let target = hostedTargetOf(session);
 	if (!target) return null;
 	let connection = usePeerMirrorStore.getState().peers[target.peerId]?.connection;
-	// A send is an explicit act: a host that is not connected is probed again now (R68), so a host
+	// A send is an explicit act: a host that is not connected, or whose agents the mirror has not
+	// read yet (an app started while the host was down), is probed again now (R68), so a host
 	// started after the last probe takes the message, as an SSH agent's next send dials.
-	if (target.agent && opts.onHostUnavailable && connection !== 'connected' && !opts.reached) {
-		if (await reachPeerNow(target.peerId)) connection = 'connected';
-		else connection = usePeerMirrorStore.getState().peers[target.peerId]?.connection;
+	const unreached = !target.agent || (opts.onHostUnavailable && connection !== 'connected');
+	if (unreached && !opts.reached) {
+		const reached = await reachPeerNow(target.peerId);
+		target = hostedTargetOf(session) ?? target;
+		connection = reached
+			? 'connected'
+			: usePeerMirrorStore.getState().peers[target.peerId]?.connection;
 	}
 	if (!target.agent || (opts.onHostUnavailable && connection !== 'connected')) {
 		// Nothing is sent to a host that is not connected, including the steps ahead of the send
