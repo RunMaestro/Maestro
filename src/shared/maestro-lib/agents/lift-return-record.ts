@@ -23,9 +23,11 @@ export interface ReturnedFromHost {
 	leftOnHost?: LiftedToPointer;
 	/**
 	 * A stale-copy merge (`keepDivergentHostTabs()`): for each tab both sides have, by tab id, the
-	 * side whose transcript (`containingTranscript()`) the tab keeps, never recounted here. Without
-	 * an entry (a Move Back), the tab takes the transcript that went further (`furtherTranscript()`)
-	 * and the host's name, star and provider session.
+	 * side whose transcript (`containingTranscript()`), usage stats and provider session the tab
+	 * keeps, never recounted here. The local tab itself survives: its id, name, draft, staged images,
+	 * pins and queue items, starred when either side starred it (`keepLocalTab()`). Without an entry
+	 * (a Move Back), the tab takes the transcript that went further (`furtherTranscript()`) and the
+	 * host's name, star and provider session.
 	 */
 	transcriptSides?: Record<string, TranscriptSide>;
 }
@@ -166,18 +168,21 @@ function asLocalTab(tab: AITabRecord): AITabRecord {
 }
 
 /**
- * A tab of a stale-copy merge (`ReturnedFromHost.transcriptSides`): the transcript of the side that
- * holds the other's, as the caller says, never recounted here.
+ * A tab of a stale-copy merge (`ReturnedFromHost.transcriptSides`): the local tab, with the
+ * transcript, usage stats and provider session of the side that holds the other's transcript
+ * (that session is the one the transcript went on in), starred when either side starred it.
  */
 function keepLocalTab(local: AITabRecord, host: AITabRecord, side: TranscriptSide): AITabRecord {
 	const winner = side === 'host' ? host : local;
+	const other = side === 'host' ? local : host;
+	const { usageStats: _usageStats, ...rest } = local;
 	return {
-		...local,
-		agentSessionId: host.agentSessionId ?? local.agentSessionId ?? null,
-		name: host.name ?? local.name ?? null,
-		starred: host.starred === true,
+		...rest,
+		agentSessionId: winner.agentSessionId ?? other.agentSessionId ?? null,
+		name: local.name ?? host.name ?? null,
+		starred: local.starred === true || host.starred === true,
 		logs: Array.isArray(winner.logs) ? winner.logs : [],
-		...(host.usageStats ? { usageStats: host.usageStats } : {}),
+		...(winner.usageStats ? { usageStats: winner.usageStats } : {}),
 		state: 'idle',
 	};
 }
