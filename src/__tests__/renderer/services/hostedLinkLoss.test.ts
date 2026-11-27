@@ -824,6 +824,51 @@ describe('projectHostedSession with the link lost', () => {
 		}
 	);
 
+	it("keeps a cut turn's thinking and tool rows above the card once the host saves them, with the host clock ahead (R69)", () => {
+		const card: LogEntry = {
+			id: 'card',
+			timestamp: 50,
+			source: 'system',
+			text: 'Connection lost',
+			retryOutageId: 'o1',
+		};
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'sticky', logs: [card] })],
+		});
+		const hostAt = 4_000;
+		const rows = [
+			{ ...QUESTION, timestamp: hostAt },
+			{ id: 'th1', timestamp: hostAt + 10, source: 'thinking', text: 'Let me think' },
+			{
+				id: 'tool1',
+				timestamp: hostAt + 20,
+				source: 'tool',
+				text: 'Read',
+				metadata: { toolState: { status: 'completed' } },
+			},
+		];
+		const liveTurns = {
+			[liveTurnKey('h1', 't1')]: { startedAt: hostAt, busy: true, entries: rows },
+		} as never;
+		const during = projectHostedSession(local, {
+			agent,
+			liveTurns,
+			linkLost,
+			keptCuts: new Set(['t1']),
+		});
+		expect(during.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'th1', 'tool1', 'card']);
+		// The host is back and its transcript holds the turn's rows under the same ids.
+		const back = projectHostedSession(during, {
+			agent: peerWith('idle', 'connected').agents[0],
+			transcripts: {
+				[liveTurnKey('h1', 't1')]: { loaded: true, entries: rows },
+			} as never,
+		});
+		expect(back.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'th1', 'tool1', 'card']);
+	});
+
 	it('never draws reasoning as a reply row at the cut (R58)', () => {
 		const local = createModeSession('hosted', {
 			id: 'row',
@@ -1746,6 +1791,31 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 			attempt: before.attempt,
 		});
 		expect(queue().map((item) => item.hostEntryId)).toContain('u1');
+	});
+
+	it('drops every cut-reply copy when the cut turn has no message here and the host runs it on (R69)', async () => {
+		// The tab's newest message is an earlier turn's (older than the running turn's start): the
+		// cut has no message on record.
+		const earlier: LogEntry = { id: 'a0', timestamp: 20, source: 'ai', text: 'Earlier answer' };
+		updateAiTab('row', 't1', (current) => ({ ...current, logs: [QUESTION, earlier] }));
+		hostReports('busy', 'reconnecting', 100);
+		confirmOutage();
+		syncHostedAgents();
+		expect(queue()).toHaveLength(0);
+		updateAiTab('row', 't1', (current) => ({
+			...current,
+			logs: [...current.logs, { ...PARTIAL_REPLY, timestamp: 120 }],
+		}));
+		transcript.mockResolvedValue([QUESTION, earlier]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		hostReports('busy', 'connected', 100);
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		// Running on there: its live tail draws what streamed before the cut; no copy stays beside it.
+		expect(tab().logs.some((entry) => entry.cutReply)).toBe(false);
+		expect(sends()).toHaveLength(0);
 	});
 
 	it('sends the kept message when only a LATER message of the tab was answered: its own turn died (R23)', async () => {

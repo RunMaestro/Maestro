@@ -43,6 +43,7 @@ import {
 	type HiddenTurnSpawner,
 } from '../../../renderer/services/contextCompaction';
 import { getContextCompactionBlocker } from '../../../shared/contextCompaction';
+import { takeNextRunnableQueueItem } from '../../../renderer/utils/executionQueue';
 import { logger } from '../../../renderer/utils/logger';
 import {
 	useSessionStore,
@@ -1781,6 +1782,55 @@ describe('queue durability across an outage', () => {
 			expect(session.agentErrorTabId).toBeUndefined();
 			expect(session.aiTabs[0].agentError).toBeUndefined();
 			expect(useRetryStore.getState().outages[outageId]?.status).toBe('stopped');
+		}
+	);
+
+	// Parity R69 (c): after Stop on a kept message, what waits behind it on the tab stays, in every
+	// mode: a local agent's queue waits behind the error state its Stop raises; an SSH or hosted
+	// agent reads Ready (R62), so what waits is held, never drained into the link that is down.
+	it.each(AGENT_MODES)(
+		'keeps the queue behind a stopped kept message until the user acts, on a %s agent (R69)',
+		(mode) => {
+			const failure =
+				mode === 'local'
+					? quota()
+					: err({
+							type: 'network_error',
+							message: 'SSH connection failed: Connection refused',
+							sshRemoteId: 'r1',
+						});
+			useSessionStore.setState({
+				sessions: [
+					createModeSession(mode, {
+						id: 'q8',
+						state: 'idle',
+						activeTabId: 't1',
+						aiTabs: [
+							createMockAITab({ id: 't1', agentError: failure }),
+							createMockAITab({ id: 't2' }),
+						],
+						executionQueue: [queuedItem('item-2', 't1', '2'), queuedItem('other', 't2', 'x')],
+					}),
+				],
+			} as any);
+			seedSnapshot('q8', 't1');
+			expect(scheduleRetryForError('q8', 't1', failure)).toBe(true);
+
+			cancelRetry('q8', 't1');
+
+			const session = useSessionStore.getState().sessions[0];
+			// The message behind the stopped one is still owed, and nothing sends it on its own.
+			expect(sessionQueue()).toEqual(['item-2', 'other']);
+			const waiting = session.executionQueue.find((item: any) => item.id === 'item-2');
+			const drainable = session.state !== 'error' && !waiting.paused;
+			expect(drainable).toBe(false);
+			if (mode !== 'local') {
+				expect(session.state).not.toBe('error');
+				expect(waiting.paused).toBe(true);
+				// Another tab's queue is that tab's own: untouched.
+				expect(takeNextRunnableQueueItem(session.executionQueue).item?.id).toBe('other');
+			}
+			expect(processQueuedItem).not.toHaveBeenCalled();
 		}
 	);
 });

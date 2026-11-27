@@ -48,7 +48,7 @@ import {
 	recoverQueuedItem,
 	type ReplayBlockedReason,
 } from '../utils/executionQueue';
-import { settleTabThinkingState } from '../utils/tabHelpers';
+import { resolveQueuedItemTarget, settleTabThinkingState } from '../utils/tabHelpers';
 import { getContextCompactCommand } from '../../shared/contextCompaction';
 import {
 	canCompactTabContext,
@@ -1841,15 +1841,37 @@ export function cancelRetry(sessionId: string, tabId: string): void {
 	// Except for a lost link (R62): nothing in the agent is the user's to fix, the outage dialog
 	// says what is down, and a message sent next is kept under its own retry card, as one sent
 	// during the outage is. The agent reads Ready, as a local one does and a hosted one does; the
-	// tab's copy of the link error goes with the retry it stood for.
+	// tab's copy of the link error goes with the retry it stood for. What waits behind the stopped
+	// message on its tab stays, as a local agent's queue stays behind the error state until the
+	// user acts: each is held (`paused`), one click from Resume or Force Send, never drained into
+	// the link the user just stopped retrying against (R69).
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const failedTabError = session?.aiTabs?.find((t) => t.id === tabId)?.agentError;
 	const linkLost = useRetryStore.getState().outages[entry.outageId]?.cause === 'connection';
-	if (failedTabError && linkLost) {
-		updateSessionWith(sessionId, (s) => ({
-			...s,
-			aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, agentError: undefined } : t)),
-		}));
+	if (linkLost) {
+		const heldByRetries = new Set(
+			Object.values(useRetryStore.getState().retries)
+				.filter((other) => other.sessionId === sessionId && other.key !== key)
+				.map((other) => other.heldItemId)
+				.filter(Boolean)
+		);
+		updateSessionWith(sessionId, (s) => {
+			const behind = (item: QueuedItem) =>
+				!item.paused &&
+				!heldByRetries.has(item.id) &&
+				resolveQueuedItemTarget(s, item)?.tabId === tabId;
+			const holds = s.executionQueue?.some(behind) ?? false;
+			if (!failedTabError && !holds) return s;
+			return {
+				...s,
+				aiTabs: failedTabError
+					? s.aiTabs.map((t) => (t.id === tabId ? { ...t, agentError: undefined } : t))
+					: s.aiTabs,
+				executionQueue: holds
+					? s.executionQueue.map((item) => (behind(item) ? { ...item, paused: true } : item))
+					: s.executionQueue,
+			};
+		});
 	} else if (failedTabError) {
 		updateSessionWith(sessionId, (s) => ({
 			...s,

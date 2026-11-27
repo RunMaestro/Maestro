@@ -200,14 +200,12 @@ function cutTurnLogs(
 function insertByTime(logs: LogEntry[], entry: LogEntry): LogEntry[] {
 	const at = logs.findIndex((other) => !writtenBefore(other, entry.timestamp));
 	if (at === -1) return [...logs, entry];
-	// The turn's message keeps that place once the host's saved copy takes over from this one
-	// (`keptPlace`, as a kept bubble's does, R33): drawn by the host's time, a clock ahead of this
-	// one would put it below the card again (CodeRabbit on #2177).
+	// The turn's rows (its message, and its thinking and tool cards a tab keeps) keep that place
+	// once the host's saved copy takes over from this one under the same ids (`keptPlace`, as a
+	// kept bubble's does, R33): drawn by the host's time, a clock ahead of this one would put them
+	// below the card again (CodeRabbit on #2177, R69).
 	const next = logs[at];
-	const placed =
-		entry.source === 'user' && next.timestamp < entry.timestamp
-			? { ...entry, keptPlace: next.timestamp }
-			: entry;
+	const placed = next.timestamp < entry.timestamp ? { ...entry, keptPlace: next.timestamp } : entry;
 	return [...logs.slice(0, at), placed, ...logs.slice(at)];
 }
 
@@ -415,8 +413,9 @@ function keptPlaces(local: readonly LogEntry[]): Map<string, number> {
 /**
  * The host's copies of kept messages drawn where their bubbles were, as an SSH agent's kept message
  * stays above its retry card and the "Connection restored" note (R33). The host stamps its copy
- * when it takes the resend, after the card: drawn at that time it would sit below the card. A user
- * entry with a place (`placed` this pass, or `drawnAt` from an earlier one) earlier than its own
+ * when it takes the resend, after the card: drawn at that time it would sit below the card. An
+ * entry with a place (`placed` this pass, or `drawnAt` from an earlier one: a user entry's kept
+ * bubble, or any row of a cut turn drawn above its card, R69) earlier than its own
  * time is drawn at that place (`keptPlace`); a tie goes to it, as its bubble was drawn before the
  * card raised in the same moment. Every other entry keeps its order. `entries` already carry their
  * delivered ticks, decided in the order the host recorded the turns (CodeRabbit on #2167).
@@ -438,8 +437,9 @@ function atKeptPlaces(
 		if (fromHost.has(entries[i].id)) following = entries[i].timestamp;
 	}
 	entries.forEach((entry, index) => {
-		const kept =
-			entry.source === 'user' ? (placed.get(entry.id) ?? drawnAt.get(entry.id)) : undefined;
+		// A message has a place where its bubble was kept; any row of a cut turn has one where
+		// this machine drew it above the card the cut raised (`keptPlace`, R69).
+		const kept = placed.get(entry.id) ?? drawnAt.get(entry.id);
 		// A place later than the host's time (a host clock behind this one) is kept too, but never
 		// past what the host wrote after the message: its answer stays below it (CodeRabbit on #2167).
 		const after = nextHostAt[index];
