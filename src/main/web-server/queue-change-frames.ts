@@ -32,6 +32,20 @@ export function queueChangesSeq(agentId: string): number {
 	return framed.get(agentId)?.seq ?? 0;
 }
 
+/**
+ * Every agent's last changes frame `seq`, as it stands now: a `list_queue` takes it BEFORE it reads
+ * the queues, so its answer never labels an older list with a newer `seq` (M29). An agent not in
+ * it is at 0.
+ */
+export function queueChangesSeqs(): Map<string, number> {
+	return new Map([...framed].map(([agentId, queue]) => [agentId, queue.seq]));
+}
+
+/** Forget what the frames sent for an agent that is gone (deleted, or moved off this desktop). */
+export function forgetFramedQueue(agentId: string): void {
+	framed.delete(agentId);
+}
+
 /** Forget every agent's frames (tests only). */
 export function resetQueueChangeFrames(): void {
 	framed.clear();

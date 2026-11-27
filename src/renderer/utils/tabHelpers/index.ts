@@ -958,18 +958,27 @@ export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: 
 }
 
 /**
- * The queue item a busy tab's running turn came from: the `queuedItemId`
- * {@link markTabRunningQueuedItem} stamped on its user entry, read from the tab's
- * latest user entry. Undefined for an idle tab and for a turn sent straight from
- * the composer (its entry carries no id).
+ * The queue items a busy tab's running work came from, by the `queuedItemId`
+ * {@link markTabRunningQueuedItem} stamped on their user entries: the latest user
+ * entry that started a turn, and each steer after it that the agent took as input of
+ * its own (`steered`, `steerState: 'queued'`). Such a steer waits inside the turn while
+ * that turn runs, then runs as the turn's follow-up in the same busy stretch, and the
+ * tab records no start between the two, so a Stop in that stretch ends both (Greptile
+ * and CodeRabbit on #2162). A steer the turn absorbed is part of it and named by none.
+ * Empty for an idle tab and for a turn sent straight from the composer (no id).
  */
-export function runningQueuedItemId(tab: Pick<AITab, 'state' | 'logs'>): string | undefined {
-	if (tab.state !== 'busy') return undefined;
+export function runningQueuedItemIds(tab: Pick<AITab, 'state' | 'logs'>): string[] {
+	if (tab.state !== 'busy') return [];
+	const steers: string[] = [];
 	for (let index = tab.logs.length - 1; index >= 0; index--) {
 		const entry = tab.logs[index];
-		if (entry.source === 'user') return entry.queuedItemId;
+		if (entry.source !== 'user') continue;
+		if (!entry.steered) {
+			return entry.queuedItemId ? [entry.queuedItemId, ...steers] : steers;
+		}
+		if (entry.steerState === 'queued' && entry.queuedItemId) steers.unshift(entry.queuedItemId);
 	}
-	return undefined;
+	return steers;
 }
 
 /**
