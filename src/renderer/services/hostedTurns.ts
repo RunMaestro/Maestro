@@ -112,6 +112,32 @@ export function hostedTargetOf(
 }
 
 /**
+ * When Stop last ran on a hosted agent (`agent`) or one of its tabs (`agent:tab`), on one counter.
+ * A send that waits for discovery (`reachPeerNow()`) or for a cut turn's fate reads it after the
+ * wait: a Stop meanwhile means nothing goes (R68, Greptile and CodeRabbit on #2180).
+ */
+const hostedStops = new Map<string, number>();
+let hostedStopSeq = 0;
+
+/** Stop ran on a hosted agent: the whole agent, or the tab `tabId`. */
+export function noteHostedStop(sessionId: string, tabId?: string): void {
+	hostedStopSeq += 1;
+	hostedStops.set(tabId ? `${sessionId}:${tabId}` : sessionId, hostedStopSeq);
+}
+
+/** The mark a send takes before it waits: `hostedStoppedSince()` compares a later Stop with it. */
+export function hostedStopMark(): number {
+	return hostedStopSeq;
+}
+
+/** Whether Stop ran on the agent, or on its tab `tabId`, after the mark `since`. */
+export function hostedStoppedSince(sessionId: string, tabId: string, since: number): boolean {
+	const agentStop = hostedStops.get(sessionId) ?? 0;
+	const tabStop = hostedStops.get(`${sessionId}:${tabId}`) ?? 0;
+	return Math.max(agentStop, tabStop) > since;
+}
+
+/**
  * Tabs `openHostedTab()` opened, by `peer/agent/tab`. The host's answer can reach this machine
  * before its update lists the tab; a send to it in that moment must not open a second one.
  */
@@ -731,7 +757,18 @@ export async function sendHostedTurn(
 	// started after the last probe takes the message, as an SSH agent's next send dials.
 	const unreached = !target.agent || (opts.onHostUnavailable && connection !== 'connected');
 	if (unreached && !opts.reached) {
+		const stopMark = hostedStopMark();
 		const reached = await reachPeerNow(target.peerId);
+		if (hostedStoppedSince(session.id, tabId ?? session.activeTabId, stopMark)) {
+			// Stop ran while the host was reached: nothing goes, and no retry takes the message. The
+			// composer keeps the draft; a caller that sends for someone else hears null.
+			notifyToast({
+				color: 'theme',
+				title: 'Message not sent',
+				message: 'Stop ran while the Maestro host was being reached. Nothing was sent.',
+			});
+			return null;
+		}
 		target = hostedTargetOf(session) ?? target;
 		connection = reached
 			? 'connected'

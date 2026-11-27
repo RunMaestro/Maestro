@@ -2211,6 +2211,32 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
 	});
 
+	it.each([
+		['the turn died there', 'died'],
+		['the host tab cannot be read', 'unread'],
+	])(
+		'sends nothing, and holds the message, when Stop lands while the host says how its turn ended (%s) (CodeRabbit on #2180)',
+		async (_how, outcome) => {
+			relaunch('idle', [QUESTION]);
+			let land!: () => void;
+			transcript.mockReturnValue(
+				new Promise<LogEntry[]>((resolve, reject) => {
+					land = () =>
+						outcome === 'died' ? resolve([QUESTION]) : reject(new Error('read failed'));
+				})
+			);
+			expect(handQueuedItemToHost('row', 'k1')).toBe(true);
+			await flush();
+			await interruptTurn('row', { tabId: 't1' });
+			land();
+			await flush();
+			await flush();
+			expect(sends()).toHaveLength(0);
+			expect(getRetryEntry('row', 't1')).toBeUndefined();
+			expect(queue().map((item) => [item.id, item.paused === true])).toEqual([['k1', true]]);
+		}
+	);
+
 	it('keeps the message, unsent, when the host tab cannot be read', async () => {
 		relaunch('idle', [QUESTION]);
 		transcript.mockRejectedValue(new Error('read failed'));

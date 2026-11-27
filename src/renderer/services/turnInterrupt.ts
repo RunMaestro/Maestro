@@ -18,7 +18,7 @@
  * (`send-terminal --control C`), and a `!` command has its own card Stop.
  */
 
-import { hostedTargetOf, interruptHostedTurn } from './hostedTurns';
+import { hostedTargetOf, interruptHostedTurn, noteHostedStop } from './hostedTurns';
 import { reachPeerNow } from './peerMirror';
 import { cutHostedTurnTabs, endHostedTurnsHere, markHostedTurnsStopped } from './hostedLinkLoss';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
@@ -29,11 +29,7 @@ import { useSessionStore, selectSessionById, updateSessionWith } from '../stores
 import { useBatchStore } from '../stores/batchStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../stores/retryStore';
 import { dropMentionHandoffs } from './crossAgentHandoff';
-import {
-	dropStoppedHostStartMentions,
-	noteHostedStop,
-	settleStoppedHostStartMentions,
-} from './hostedQueuedTurn';
+import { dropStoppedHostStartMentions, settleStoppedHostStartMentions } from './hostedQueuedTurn';
 import { cancelHostedConsults } from '../hooks/agent/useCrossAgentDispatch';
 import { useCrossAgentInFlightStore } from '../stores/crossAgentInFlightStore';
 import { generateId } from '../utils/ids';

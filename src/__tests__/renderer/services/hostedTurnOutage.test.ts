@@ -679,6 +679,42 @@ describe('a message sent while the link is down is kept for a retry', () => {
 			expect(queue().map((queued) => [queued.id, queued.paused === true])).toEqual([['q1', true]]);
 		});
 
+		it('sends nothing on a direct send when Stop lands while the host is reached (CodeRabbit on #2180)', async () => {
+			const session = seed('hosted');
+			hostDown();
+			let found!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						found = () => {
+							hydrateHost();
+							resolve({ ok: true });
+						};
+					})
+			);
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+			const unavailable = vi.fn();
+
+			const sending = sendHostedTurn(session, 't1', 'hello', [], {
+				onHostUnavailable: unavailable,
+			});
+			await flush();
+			await interruptTurn(session.id, { tabId: 't1' });
+			found();
+
+			expect(await sending).toBeNull();
+			// Nothing reached the host, and no retry takes the message: the draft stays the user's.
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(0);
+			expect(unavailable).not.toHaveBeenCalled();
+			expect(getRetryEntry(session.id, 't1')).toBeUndefined();
+			expect(useNotificationStore.getState().toasts.map((toast) => toast.title)).toContain(
+				'Message not sent'
+			);
+		});
+
 		it('shares one probe among ten kept messages of the burst', async () => {
 			const session = seed('hosted');
 			hostDown();

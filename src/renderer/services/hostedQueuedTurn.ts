@@ -91,7 +91,7 @@ import {
 } from './crossAgentHandoff';
 import { resolveConsultTargets } from './crossAgentConsultHold';
 import { cutTurnFate } from './hostedLinkLoss';
-import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
+import { hostedStopMark, hostedStoppedSince, hostedTargetOf, sendHostedTurn } from './hostedTurns';
 import { reachPeerNow } from './peerMirror';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { hostTabTurnStartedAt } from '../utils/hostedSession';
@@ -111,27 +111,6 @@ import {
  * is back in this queue held). A second trigger in the same window cannot send one twice.
  */
 const sendsInFlight = new Map<string, Promise<TurnSendReceipt | null>>();
-
-/**
- * When Stop last ran on a hosted agent (`agent`) or one of its tabs (`agent:tab`), on one counter
- * (`hostedStopSeq`). A send that waits for discovery (`reachPeerNow()`) reads it after the wait:
- * a Stop meanwhile parks the message held, as Stop parks a kept one, and nothing goes (R68).
- */
-const hostedStops = new Map<string, number>();
-let hostedStopSeq = 0;
-
-/** Stop ran on a hosted agent: the whole agent, or the tab `tabId`. */
-export function noteHostedStop(sessionId: string, tabId?: string): void {
-	hostedStopSeq += 1;
-	hostedStops.set(tabId ? `${sessionId}:${tabId}` : sessionId, hostedStopSeq);
-}
-
-/** Whether Stop ran on the agent, or on its tab `tabId`, after the mark `since`. */
-function hostedStoppedSince(sessionId: string, tabId: string, since: number): boolean {
-	const agentStop = hostedStops.get(sessionId) ?? 0;
-	const tabStop = hostedStops.get(`${sessionId}:${tabId}`) ?? 0;
-	return Math.max(agentStop, tabStop) > since;
-}
 
 /**
  * The host's answer for an item this queue handed over and is still sending, or undefined when it
@@ -573,6 +552,8 @@ function forwardToHost(
 		// may have run on, or finished (`cutTurnFate()`). Never sent twice.
 		const connected =
 			usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';
+		// A Stop from here on lands while the host says how a cut turn ended (CodeRabbit on #2180).
+		const fateMark = hostedStopMark();
 		// A held copy sent by hand while no retry owns it (Stop ended that retry): the user's send.
 		const fate = cutTurnFate(sessionId, item, target, connected, {
 			userSent: userSent && retryOutage === undefined,
@@ -611,7 +592,7 @@ function forwardToHost(
 						);
 						return null;
 					}
-					if (retryOutage && !stillOwned) {
+					if ((retryOutage && !stillOwned) || hostedStoppedSince(sessionId, lineTabId, fateMark)) {
 						// Stopped while it waited: parked held, one click from Force Send, as Stop parks it.
 						holdRefusedItem(sessionId, item, index);
 						return null;
@@ -632,7 +613,7 @@ function forwardToHost(
 	// is probed again first (R68), so a host started after the last probe takes the message, and a
 	// cut turn's fate is then read from it before anything goes.
 	const lineTabId = item.tabId || session.activeTabId;
-	const stopMark = hostedStopSeq;
+	const stopMark = hostedStopMark();
 	const reaching =
 		usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected'
 			? null
