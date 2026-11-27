@@ -35,6 +35,7 @@ import {
 	readSessionsStoreFile,
 	writeSessionsStoreFile,
 } from '../../main/stores/sessions-store-file';
+import { configureImageStore } from '../../main/storage/session-image-store';
 import { ExitCode } from '../exit-codes';
 import { formatError, formatSuccess, formatWarning } from '../output/formatter';
 import { checkAgentBusy, type BusyCheckResult } from '../services/agent-busy';
@@ -221,7 +222,11 @@ export async function lift(
 	overrides: Partial<LiftDeps> = {}
 ): Promise<void> {
 	const deps = { ...defaultDeps, ...overrides };
+	// A pasted image in a transcript is a `maestro-image://` ref into this machine's image store;
+	// the plan inlines it so the host gets the picture. Point the store at the data dir first, as
+	// `image save` does: unconfigured, reading a ref throws and the whole lift fails.
 	try {
+		configureImageStore(getSyncDir());
 		const result = await runLift(agentRef, options, sharedDeps(deps), (plan) => {
 			if (!options.json) console.log(formatLiftPlan(plan.summary, options.dryRun === true));
 		});
