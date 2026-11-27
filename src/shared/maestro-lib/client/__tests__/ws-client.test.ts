@@ -928,6 +928,22 @@ describe('createWsMaestroClient', () => {
 			expect(turnKinds()).toEqual([]);
 		});
 
+		it("reports retrying, and begins no turn, when the host's own retry holds the message it names (R41)", async () => {
+			bridge.typed.set(
+				'enqueue_command',
+				// `answered` as well: what a client too old to know `retrying` reads.
+				reply('enqueue_command_result', {
+					tabId: A1_TAB,
+					queued: false,
+					answered: true,
+					retrying: true,
+				})
+			);
+			const result = await client.turns.send(A1, A1_TAB, { text: 'hello', entryId: 'u1' });
+			expect(result).toEqual({ ok: true, value: { status: 'retrying' } });
+			expect(turnKinds()).toEqual([]);
+		});
+
 		it('reads a transcript-changed frame for an idle tab as a gap, so the tab is read again (M13)', async () => {
 			bridge.pushBridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, PID, A1, A1_TAB);
 			await vi.waitFor(() => expect(turnKinds()).toEqual(['gap']));

@@ -39,9 +39,12 @@ import type { AgentRepository, TabWriteGuard } from '../agents/repository';
 import { matchesNativeSessionBinding, type NativeSessionBinding } from '../agents/providerSwap';
 import {
 	DEFAULT_RULE_CONTEXT,
+	isSameUserEntry,
 	recordTabSession,
 	turnEntryIdFor,
+	tabRunsUserEntry,
 	userEntryAnswered,
+	userEntryFate,
 	type RuleContext,
 	type TabSessionUpdate,
 } from '../agents/rules';
@@ -471,6 +474,30 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	// Starting one turn (the queue's `start`)
 	// -----------------------------------------------------------------------
 
+	/**
+	 * For each message (agent, tab, entry id) a copy of which this host started since it came up,
+	 * the item id of that copy, so a resend of it that waited meanwhile is known (`startItem`). Kept
+	 * while that copy runs or another copy of the message waits, however many other turns start
+	 * (CodeRabbit on #2167); let go once neither holds (`releaseStartedEntry()`).
+	 */
+	const startedEntries = new Map<string, string>();
+	const startedEntryKey = (agentId: string, tabId: string, entryId: string) =>
+		`${agentId}\u0000${tabId}\u0000${entryId}`;
+	const startedEntryKeyOf = (agentId: string, item: TurnItem) =>
+		startedEntryKey(agentId, item.tabId, item.entryId ?? '');
+	const releaseStartedEntry = (agentId: string, item: TurnItem) => {
+		if (!item.entryId) return;
+		const key = startedEntryKey(agentId, item.tabId, item.entryId);
+		const ranBy = startedEntries.get(key);
+		if (ranBy === undefined) return;
+		const queue = queues.get(agentId);
+		if (queue?.busyItemId(item.tabId) === ranBy) return;
+		const waits = queue
+			?.items()
+			.some((queued) => queued.tabId === item.tabId && queued.entryId === item.entryId);
+		if (!waits) startedEntries.delete(key);
+	};
+
 	async function startItem(agentId: string, item: TurnItem): Promise<QueuedTurnHandle> {
 		const record = repository.getAgent(agentId);
 		if (!record) throw new Error(`No agent ${agentId}.`);
@@ -482,6 +509,31 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// session: a timing collision, not a verdict on the item.
 		if (registry.isBusy(agentId, item.tabId) || synopsisHolds.has(waiterKey(agentId, item.tabId))) {
 			throw new TurnCollisionError();
+		}
+		// A resend that waited here while an earlier copy of the same message started on this host
+		// (it could not be told apart when it came: that turn was still starting, or not begun yet).
+		// The message ran once, from that copy, and never runs again (CodeRabbit on #2167). Only a
+		// copy started since this host came up counts: the turn a crash cut is run again.
+		if (item.entryId) {
+			const key = startedEntryKey(agentId, item.tabId, item.entryId);
+			const sent = { id: item.entryId, text: item.text, images: item.images ?? [] };
+			const logs = (Array.isArray(tabRecord.logs) ? tabRecord.logs : []) as LogEntryRecord[];
+			const ranBy = logs.find((entry) => isSameUserEntry(entry, sent))?.queuedItemId;
+			// A copy that ended on its own error is not one that ran: its retry runs into the entry,
+			// as `send()` admits it (`userEntryAnswered()`; CodeRabbit on #2167).
+			if (
+				ranBy &&
+				ranBy !== item.id &&
+				startedEntries.get(key) === ranBy &&
+				userEntryFate(logs, sent) !== 'errored'
+			) {
+				return { done: Promise.resolve(), interrupt: () => undefined };
+			}
+			// A copy edited while it waited is another message: it gets an entry of its own
+			// (`turnEntryIdFor()`), so it never stands for the copy that started this entry, and a
+			// later copy of the original is still known as run (CodeRabbit on #2167).
+			const held = logs.find((entry) => entry?.id === item.entryId);
+			if (!held || isSameUserEntry(held, sent)) startedEntries.set(key, item.id);
 		}
 
 		const agent = toTurnAgent(record);
@@ -688,6 +740,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				scope,
 				expected,
 				writeGuard,
+				userEntryId: userEntry.id,
 				...(item.originHost ? { originHost: item.originHost } : {}),
 				...(item.overrides?.saveToHistory !== undefined
 					? { saveToHistory: item.overrides.saveToHistory }
@@ -716,11 +769,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		scope: RecordedTurn['scope'];
 		expected: NonNullable<TabSessionUpdate['expected']>;
 		writeGuard?: TabWriteGuard;
+		/** The id of the message's transcript entry `beginTurn` wrote. */
+		userEntryId: string;
 		originHost?: string;
 		/** The sender's save-to-History chip for this turn (`TurnOverrides.saveToHistory`). */
 		saveToHistory?: boolean;
 	}): Promise<void> {
 		const { agentId, tabId, turn, run, startedAt, expected, writeGuard, originHost } = input;
+		const { userEntryId } = input;
 		const { saveToHistory } = input;
 		const provider = turn.settings.provider;
 		const mapper = createTurnEventMapper({
@@ -861,6 +917,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				startedAt,
 				endedAt,
 				userEntryWritten: true,
+				userEntryId,
 				...(streamed ? { streamed: streamed.entries } : {}),
 				ranTool,
 				scope,
@@ -964,8 +1021,16 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				break;
 			case 'ended':
 				wakeIdleWaiters(agentId, event.item.tabId);
+				releaseStartedEntry(agentId, event.item);
+				break;
+			case 'removed':
+				releaseStartedEntry(agentId, event.item);
 				break;
 			case 'dispatch-failed': {
+				// The copy that set the record did not start: a later copy may run the message.
+				if (startedEntries.get(startedEntryKeyOf(agentId, event.item)) === event.item.id) {
+					startedEntries.delete(startedEntryKeyOf(agentId, event.item));
+				}
 				if (event.held) {
 					logger.warn(`A turn could not start: ${event.error.message}`, LOG_CONTEXT);
 					emitTurn(agentId, event.item.tabId, {
@@ -1102,17 +1167,26 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const kept = await keepImages(admitted.images);
 		if (!kept.ok) return fail(method, 'failed', kept.error);
 		const images = kept.images;
+		// Read again: a turn may have begun on the tab while the images were kept (CodeRabbit on #2167).
+		const currentTab = repository.getTab(agentId, tabId);
+		if (!currentTab) return fail(method, 'not-found', `No tab ${tabId}.`);
 		// The resend of a message whose turn already answered (its sender lost the link, or quit, while
 		// it ran): it ran once, and never runs again. The sender reads `answered` as "already ran".
+		// The same for the message of the turn running on the tab now (the entry it wrote names the
+		// running item): a sender whose link dropped cannot see that it still runs (parity R31). The
+		// item the queue runs or starts on the tab must be the turn the tab record names: a turn that
+		// is starting before it wrote its own id leaves the record naming the one before it.
 		const entryId = readTurnEntryId(input.entryId);
-		if (
-			entryId &&
-			userEntryAnswered(Array.isArray(tabRecord.logs) ? tabRecord.logs : [], {
-				id: entryId,
-				text,
-				images,
-			})
-		) {
+		const tabLogs = (Array.isArray(currentTab.logs) ? currentTab.logs : []) as LogEntryRecord[];
+		const sentEntry = { id: entryId ?? '', text, images };
+		const busyItemId = queues.get(agentId)?.busyItemId(tabId);
+		const runsNow =
+			!!entryId &&
+			tabRunsUserEntry(tabLogs, sentEntry, {
+				busy: !!busyItemId && busyItemId === currentTab.runtimeTurnId,
+				itemId: busyItemId,
+			});
+		if (entryId && (runsNow || userEntryAnswered(tabLogs, sentEntry))) {
 			return ok({ status: 'answered' });
 		}
 

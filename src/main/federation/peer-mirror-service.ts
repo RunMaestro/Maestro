@@ -79,9 +79,14 @@ import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { HistoryEntry } from '../../shared/types';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { ProjectTokenUsage, ProjectTokenUsageProject } from '../../shared/projectTokenUsage';
+import { STREAM_FLUSH_INTERVAL_MS } from '../../shared/streamFlushInterval';
 
-/** Per-tab turn pushes are batched this long, so a fast stream is not one IPC per chunk. */
-export const MIRROR_TURN_COALESCE_MS = 50;
+/**
+ * Per-tab turn pushes are batched this long, so a fast stream is not one IPC per chunk: the cadence
+ * a local tab flushes its output at, so a hosted reply renders (and commits) as often as a local
+ * one, not four times as often (R34).
+ */
+export const MIRROR_TURN_COALESCE_MS = STREAM_FLUSH_INTERVAL_MS;
 /** Transcripts served, kept for a second read of the same tab (another window, a re-open). */
 export const MIRROR_TRANSCRIPT_CACHE_SIZE = 20;
 /** Entries a transcript read returns when the caller does not say. */

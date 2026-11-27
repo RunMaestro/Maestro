@@ -2169,6 +2169,9 @@ class WsMaestroClient implements MaestroClient {
 		}
 		// One of Maestro's own commands: the host ran it, and no turn will end, so none begins here.
 		if (reply.ran === true) return ok({ status: 'ran' });
+		// The host's own retry holds the message it named (`TurnSendReceipt` `retrying`): nothing
+		// began. Checked first: the host also says `answered` for a client too old to know it.
+		if (reply.retrying === true) return ok({ status: 'retrying' });
 		// The message it named already ran on the host (`TurnSendReceipt` `answered`): nothing began.
 		if (reply.answered === true) return ok({ status: 'answered' });
 		this.beginTurn(agentId, asString(reply.tabId) ?? tabId);
