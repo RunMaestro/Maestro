@@ -1503,13 +1503,25 @@ describe('isUserTurnStart', () => {
 		expect(turnFateAfter(logs, 2, 'desktop')).toBe('answered');
 	});
 
-	// CodeRabbit on #2171: a kept queued steer resent into its own entry, whose turn wrote nothing,
-	// is stamped on that entry; the earlier turn's end is a later stamp, so this one is its own.
-	it('reads a stamp on a resent steer as its own when the earlier turn ended after it', () => {
-		const logs = [u1, partialA, { ...steer, turnEnded: true }, endA];
-		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 4 });
+	// CodeRabbit on #2171: a stamp on the steer is the earlier turn's end, whatever follows: a later
+	// stamp is the steer's own turn's, and never moves that boundary.
+	it("keeps the earlier turn's end on the steer when the steer's own turn ends after it", () => {
+		const errorB = {
+			id: 'eb',
+			timestamp: 5,
+			source: 'error',
+			text: 'Rate limited',
+			turnEnded: true,
+		};
+		const logs = [u1, partialA, { ...steer, turnEnded: true }, errorB];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 3 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 3, to: 4 });
 		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
-		expect(turnFateAfter(logs, 2, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('errored');
+		// The same for an answer after the steer: both turns read answered.
+		const answered = [u1, partialA, { ...steer, turnEnded: true }, endA];
+		expect(turnFateAfter(answered, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(answered, 2, 'desktop')).toBe('answered');
 	});
 
 	it("has the steer's turn not begun while the turn it was sent into still runs", () => {

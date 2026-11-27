@@ -889,8 +889,9 @@ export function userTurnSpan(
  * Where the turn a queued steer at `at` was steered into ended, relative to the steer: `before`
  * (it had ended when the steer was written: its last entry before the steer is stamped), the
  * index of its stamp after the steer (it ran on past the steer, the usual order), `on` (its end
- * landed on the steer, its last entry then), or `running` (no end yet). A stamp on the steer
- * with a later stamp after it is the steer's own (its resend into the same entry), never `on`.
+ * landed on the steer, its last entry then), or `running` (no end yet). A stamp on the steer is
+ * always that turn's end: a later stamp is the steer's own turn's, so it never moves the earlier
+ * turn's boundary (CodeRabbit on #2171).
  */
 function steerParentEnd(
 	entries: readonly (Partial<LogEntryRecord> | null)[],
@@ -903,12 +904,13 @@ function steerParentEnd(
 		if (entry?.turnEnded === true) return 'before';
 		break;
 	}
+	if (entries[at]?.turnEnded === true) return 'on';
 	for (let i = at + 1; i < entries.length; i += 1) {
 		const entry = entries[i];
 		if (entry?.source === 'user' && entry.steered !== true) break;
 		if (entry?.turnEnded === true && !queuedSteer(entry)) return i;
 	}
-	return entries[at]?.turnEnded === true ? 'on' : 'running';
+	return 'running';
 }
 
 /**
