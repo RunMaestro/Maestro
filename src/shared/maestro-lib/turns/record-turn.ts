@@ -35,7 +35,12 @@ import { TURN_CANCELED_NOTE, type LogEntryRecord } from '../store/transcript';
 import type { AgentRecord, AITabRecord } from '../store/records';
 import type { NativeSessionBinding } from '../agents/providerSwap';
 import type { AgentRepository, TabWriteGuard } from '../agents/repository';
-import { DEFAULT_RULE_CONTEXT, sshRecordOf, type RuleContext } from '../agents/rules';
+import {
+	DEFAULT_RULE_CONTEXT,
+	markTurnEnded,
+	sshRecordOf,
+	type RuleContext,
+} from '../agents/rules';
 import type { ClientResult } from '../client/types';
 import type { MaestroPaths } from '../paths/resolve';
 import { estimateContextUsage } from '../parsers/usage-aggregator';
@@ -90,6 +95,11 @@ export interface RecordedTurn {
 	 * starts, through `beginTurn`). The entries written here then start at the answer.
 	 */
 	userEntryWritten?: boolean;
+	/**
+	 * The id of that entry. A turn that writes no entry of its own stamps its end on it
+	 * (`markTurnEnded()`), so the transcript still says the turn ended.
+	 */
+	userEntryId?: string;
 	/** The machine the person sent the turn from (`TurnInput.originHost`): the entry's `hostname`. */
 	originHost?: string;
 	/**
@@ -138,7 +148,7 @@ export interface TurnSummaryHandoff {
 export interface TurnRecorderOptions {
 	paths: Pick<MaestroPaths, 'historyDir' | 'statsFile' | 'settingsFile'>;
 	repository: Pick<AgentRepository, 'getAgent' | 'getTab' | 'appendTranscript'> &
-		Partial<Pick<AgentRepository, 'withTabWriteGuard'>>;
+		Partial<Pick<AgentRepository, 'withTabWriteGuard' | 'replaceTranscriptEntry'>>;
 	/** The host's `better-sqlite3` loader (the CLI's `loadBetterSqlite3`). It throws when the module cannot load. */
 	loadSqlite: () => StatsConnectionConstructor;
 	/** Is this process still the data directory's writer? Asked before the History and usage writes. */
@@ -251,7 +261,8 @@ export function buildTurnTranscript(
 			text: TURN_CANCELED_NOTE,
 		});
 	}
-	return entries;
+	// The turn ended, however it ended: its last entry says so (a host that died mid-turn writes none).
+	return markTurnEnded(entries);
 }
 
 export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
@@ -295,12 +306,28 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 			};
 		}
 
+		const entries = buildTurnTranscript(turn, ctx, tab.showThinking);
 		const transcript = await options.repository.appendTranscript(
 			turn.agentId,
 			turn.tabId,
-			buildTurnTranscript(turn, ctx, tab.showThinking),
+			entries,
 			...(turn.writeGuard ? [turn.writeGuard] : [])
 		);
+		// Nothing of its own to stamp: the end goes on the message's entry the runtime wrote.
+		const userEntry =
+			entries.length === 0 && turn.userEntryWritten && turn.userEntryId
+				? (Array.isArray(tab.logs) ? (tab.logs as LogEntryRecord[]) : []).find(
+						(entry) => entry?.id === turn.userEntryId
+					)
+				: undefined;
+		if (transcript.ok && userEntry && options.repository.replaceTranscriptEntry) {
+			await options.repository.replaceTranscriptEntry(
+				turn.agentId,
+				turn.tabId,
+				markTurnEnded([userEntry])[0],
+				...(turn.writeGuard ? [turn.writeGuard] : [])
+			);
+		}
 
 		// Reserve the repository mutation queue across the writers' own queues and
 		// filesystem awaits. A prior CAS alone leaves a replacement race here.

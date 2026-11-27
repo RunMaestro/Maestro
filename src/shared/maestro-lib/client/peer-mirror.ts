@@ -16,7 +16,7 @@ import { peerAgentRef } from '../agents/lift-pointer';
 import type { AgentRecord, GroupRecord } from '../store/records';
 import { foldLiveTurn, liveTurnKey, type LiveTurn, type LiveTurnContext } from './live-turn';
 import type { PeerConnectErrorCode } from './peer-connection';
-import type { MaestroEvent, QueuedTurn, QueueExit, TurnEvent } from './types';
+import type { HostKind, MaestroEvent, QueuedTurn, QueueExit, TurnEvent } from './types';
 
 /** How the desktop's connection to a peer stands. The failure codes are `PeerConnectErrorCode`. */
 export type PeerMirrorConnection =
@@ -77,6 +77,11 @@ export interface MirroredPeer {
 	 * busy, or an agent list still empty, says nothing about the host now (`hostReportIsCurrent()`).
 	 */
 	reportedSinceLink?: boolean;
+	/**
+	 * The kind of host this peer last attached to (`host.connected`): what a transcript's turn with
+	 * no end stamp means (`turnFateAfter()`). Kept through a disconnect.
+	 */
+	hostKind?: HostKind;
 }
 
 /**
@@ -100,6 +105,8 @@ export interface MirrorPeerSummary {
 	lastSyncAt?: number;
 	/** `MirroredPeer.reportedSinceLink`, carried so every window judges the report the same. */
 	reportedSinceLink?: boolean;
+	/** `MirroredPeer.hostKind`. */
+	hostKind?: HostKind;
 }
 
 /** A change a window applies to its own copy of a peer. */
@@ -187,6 +194,7 @@ export function summarizePeer(peer: MirroredPeer): MirrorPeerSummary {
 		agentCount: peer.agents.length,
 		...(peer.lastSyncAt !== undefined ? { lastSyncAt: peer.lastSyncAt } : {}),
 		...(peer.reportedSinceLink ? { reportedSinceLink: true } : {}),
+		...(peer.hostKind ? { hostKind: peer.hostKind } : {}),
 	};
 }
 
@@ -556,7 +564,11 @@ export function applyPeerEvent(
 ): MirrorStep {
 	switch (event.type) {
 		case 'host.connected': {
-			const connected = setPeerConnection(peer, 'connected');
+			const kind = event.host?.kind;
+			const connected =
+				kind && kind !== peer.hostKind
+					? stateStep({ ...setPeerConnection(peer, 'connected').peer, hostKind: kind })
+					: setPeerConnection(peer, 'connected');
 			if (event.resumed) return connected;
 			// Nothing was replayed: every transcript a window holds may be behind.
 			const stale = markAllTabsStale(connected.peer);

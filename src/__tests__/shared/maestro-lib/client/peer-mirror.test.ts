@@ -406,6 +406,20 @@ describe('peer helpers', () => {
 		expect(hostReportIsCurrent(setPeerConnection(lostListed, 'lost').peer)).toBe(false);
 	});
 
+	it('keeps the kind of host it attached to, through a disconnect, and tells every window (R36)', () => {
+		const step = applyPeerEvent(
+			peerWith([]),
+			{ type: 'host.connected', host: { kind: 'desktop', label: 'desktop pid 1' }, resumed: true },
+			ctx()
+		);
+		expect(step.peer.hostKind).toBe('desktop');
+		expect(step.push).toContainEqual({
+			type: 'peer.state',
+			peer: expect.objectContaining({ hostKind: 'desktop', connection: 'connected' }),
+		});
+		expect(setPeerConnection(step.peer, 'lost', 'gone').peer.hostKind).toBe('desktop');
+	});
+
 	it('markAllTabsStale then clearTabStale leaves only the other tabs stale', () => {
 		const peer = markAllTabsStale(peerWith([agent('a1', ['t1', 't2'])])).peer;
 		const read = clearTabStale(peer, 'a1', 't1');

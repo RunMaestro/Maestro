@@ -28,6 +28,7 @@ import {
 	isSameUserEntry,
 	turnEndedAfter,
 	userEntryAnswered,
+	type TranscriptHostKind,
 } from '../../shared/maestro-lib/agents/rules';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import {
@@ -303,6 +304,17 @@ function hostReportCurrent(peerId: string): boolean {
 }
 
 /**
+ * The kind of host `peerId` runs: how its transcript tells a turn that ended from one it lost with
+ * no end stamp (`turnFateAfter()`). Not known yet: read as a headless host's, which never sends a
+ * message again for text it already wrote.
+ */
+function transcriptHostKind(peerId: string): TranscriptHostKind {
+	return usePeerMirrorStore.getState().peers[peerId]?.hostKind === 'desktop'
+		? 'desktop'
+		: 'headless';
+}
+
+/**
  * Wait, at most `timeoutMs`, for the host's report as it is now. False when none came: the caller
  * keeps the message for the next try, never deciding from the old report.
  */
@@ -402,7 +414,7 @@ async function readKeptEntryFate(
 	// Edited while it was kept: the user's own message now, sent as one (the host gives it an entry
 	// of its own, since it no longer matches the one it names).
 	if (!isSameUserEntry(slot.entries[at], entry)) return 'send';
-	if (userEntryAnswered(slot.entries, entry)) return 'answered';
+	if (userEntryAnswered(slot.entries, entry, transcriptHostKind(host.peerId))) return 'answered';
 	const newestUser = lastUserMessage(slot.entries as LogEntry[]);
 	if (hostTab.state === 'busy' && newestUser?.id === entry.id) return 'answered';
 	return 'send';
@@ -518,9 +530,10 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 		settleKeptCut(cut, missingEntryFate(slot.entries));
 		return;
 	}
-	// Its own turn ended (an answer before the next user message, `turnEndedAfter()`); an answer to
-	// a LATER message is that one's, and this turn died.
-	if (turnEndedAfter(slot.entries, at)) {
+	// Its own turn ended (stamped, or an answer before the next user message on a host too old to
+	// stamp, `turnFateAfter()`); an answer to a LATER message is that one's, and this turn died. A
+	// desktop host's streamed text with no end stamp is a turn it lost.
+	if (turnEndedAfter(slot.entries, at, transcriptHostKind(link.peerId))) {
 		settleKeptCut(cut);
 		return;
 	}

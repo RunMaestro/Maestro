@@ -231,6 +231,7 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 			if (summary.lastSyncAt !== undefined) next.lastSyncAt = summary.lastSyncAt;
 			if (summary.reportedSinceLink) next.reportedSinceLink = true;
 			else delete next.reportedSinceLink;
+			if (summary.hostKind) next.hostKind = summary.hostKind;
 			return settlePeer(state, peerId, next);
 		}
 		case 'peer.agents': {

@@ -4079,7 +4079,11 @@ describe('WebSocketMessageHandler', () => {
 
 			it('answers "already ran" and queues nothing when an answer follows the entry', async () => {
 				bridgeRead.invokeAsBridge.mockResolvedValue({
-					logs: [QUESTION, { id: 'a1', timestamp: 2, source: 'ai', text: 'The docs say...' }],
+					logs: [
+						QUESTION,
+						// This desktop stamps a turn's end when its process exits (R36).
+						{ id: 'a1', timestamp: 2, source: 'ai', text: 'The docs say...', turnEnded: true },
+					],
 				});
 				resend();
 				await vi.waitFor(() =>
@@ -4115,6 +4119,25 @@ describe('WebSocketMessageHandler', () => {
 
 			it.each([
 				['the turn died before an answer', { logs: [QUESTION] }, 'Summarize the docs'],
+				// Parity R36: this desktop writes streamed text as it arrives, so text with no end stamp
+				// is a turn that died with the host part way through, never an answer.
+				[
+					'the turn streamed some text and died with the host (no end stamp, R36)',
+					{
+						logs: [
+							{ id: 'u0', timestamp: 0, source: 'user', text: 'Hello' },
+							{ id: 'a0', timestamp: 0, source: 'ai', text: 'Hi', turnEnded: true },
+							QUESTION,
+							{ id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' },
+						],
+					},
+					'Summarize the docs',
+				],
+				[
+					'the turn streamed some text and died, on a host too old to stamp (R36)',
+					{ logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }] },
+					'Summarize the docs',
+				],
 				// Parity R23: a2 answers the later u2, never u1, whose own turn died.
 				[
 					'only a later message was answered',

@@ -80,5 +80,21 @@ describe('exitTabCleanup helpers', () => {
 			const out = cleanupExitedTabLogs(logs, 'tab-1', { showThinking: 'sticky' });
 			expect(out.map((l) => l.id)).toEqual(['a']);
 		});
+
+		// Parity R36: a desktop host stamps the end of the turn whose process exited, so a client
+		// asking whether a message ran tells an ended turn from one the host lost mid-stream.
+		it("stamps the turn's end on the last entry kept, once", () => {
+			const logs = [
+				log({ id: 'u', source: 'user' }),
+				log({ id: 'b', source: 'stdout' }),
+				log({ id: 'c', source: 'thinking' }),
+			];
+			const out = cleanupExitedTabLogs(logs, 'tab-1', { showThinking: 'on' });
+			expect(out.map((l) => [l.id, l.turnEnded === true])).toEqual([
+				['u', false],
+				['b', true],
+			]);
+			expect(cleanupExitedTabLogs(out, 'tab-1', { showThinking: 'on' })).toBe(out);
+		});
 	});
 });

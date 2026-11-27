@@ -829,10 +829,15 @@ async function desktopTabAnswered(
 			comparable[at] = { ...held, images: await asDataUrls(held.images) };
 		}
 		const sent = entry.images?.length ? await asDataUrls(entry.images) : undefined;
-		return userEntryAnswered(comparable, {
-			...entry,
-			...(sent ? { images: sent.filter((image): image is string => image !== null) } : {}),
-		});
+		// This desktop writes streamed text as it arrives: only its end stamp says the turn ended.
+		return userEntryAnswered(
+			comparable,
+			{
+				...entry,
+				...(sent ? { images: sent.filter((image): image is string => image !== null) } : {}),
+			},
+			'desktop'
+		);
 	} catch (error) {
 		logger.warn(`Could not read tab ${tabId} to check a resend: ${String(error)}`, LOG_CONTEXT);
 		return false;

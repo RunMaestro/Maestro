@@ -280,6 +280,10 @@ export interface LogEntry {
 	// applyQueuedItemDispatchFailure) instead of matching on text, which would
 	// also delete an identical message the user really did send earlier.
 	queuedItemId?: string;
+	// The turn this entry belongs to ended here: stamped on a tab's last entry when its turn's
+	// process exits (`markTurnEnded()`), so a Federation client asking whether a message ran tells
+	// a turn that ended from one its host lost mid-stream (`turnFateAfter()`).
+	turnEnded?: boolean;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
 	// For user messages - the sender's own save to History choice for this turn (Federation

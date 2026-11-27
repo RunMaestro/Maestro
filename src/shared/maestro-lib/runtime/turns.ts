@@ -721,6 +721,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				scope,
 				expected,
 				writeGuard,
+				userEntryId: userEntry.id,
 				...(item.originHost ? { originHost: item.originHost } : {}),
 				...(item.overrides?.saveToHistory !== undefined
 					? { saveToHistory: item.overrides.saveToHistory }
@@ -749,11 +750,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		scope: RecordedTurn['scope'];
 		expected: NonNullable<TabSessionUpdate['expected']>;
 		writeGuard?: TabWriteGuard;
+		/** The id of the message's transcript entry `beginTurn` wrote. */
+		userEntryId: string;
 		originHost?: string;
 		/** The sender's save-to-History chip for this turn (`TurnOverrides.saveToHistory`). */
 		saveToHistory?: boolean;
 	}): Promise<void> {
 		const { agentId, tabId, turn, run, startedAt, expected, writeGuard, originHost } = input;
+		const { userEntryId } = input;
 		const { saveToHistory } = input;
 		const provider = turn.settings.provider;
 		const mapper = createTurnEventMapper({
@@ -894,6 +898,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				startedAt,
 				endedAt,
 				userEntryWritten: true,
+				userEntryId,
 				...(streamed ? { streamed: streamed.entries } : {}),
 				ranTool,
 				scope,

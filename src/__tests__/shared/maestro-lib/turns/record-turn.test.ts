@@ -181,11 +181,29 @@ describe('turn records', () => {
 				text: 'Fixed the login bug in the session handler. Tests pass.',
 				turnModel: 'opus',
 				turnEffort: 'high',
+				// The turn's end, as every host stamps it (R36).
+				turnEnded: true,
 			},
 		]);
 		// The desktop reads the same file.
 		const onDisk = JSON.parse(fs.readFileSync(paths.sessionsFile, 'utf-8'));
 		expect(onDisk.sessions[0].aiTabs[0].logs).toHaveLength(2);
+	});
+
+	// Parity R36: a turn that wrote nothing of its own still says it ended, on its message.
+	it("stamps the end on the message's entry when the turn wrote nothing of its own (R36)", async () => {
+		seed({}, { logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug' }] });
+		const { recorder: records, repository } = await recorder();
+		await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(transcriptOf(repository.getTab('a1', 't1')!)).toEqual([
+			{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug', turnEnded: true },
+		]);
 	});
 
 	it('records usage under the provider the turn was sent to, not the one the agent has now', async () => {
@@ -801,6 +819,19 @@ describe('turn records', () => {
 		it('starts at the answer when the runtime already wrote the message', () => {
 			const entries = buildTurnTranscript(turn({ userEntryWritten: true }), ctx);
 			expect(entries.map((e) => e.source)).toEqual(['stdout']);
+		});
+
+		it.each([
+			['answered', {}, 'stdout'],
+			['crashed', { outcome: 'crashed' as const, answerText: '' }, 'error'],
+			['stopped', { outcome: 'interrupted' as const, answerText: '' }, 'system'],
+		])("stamps the turn's end on its last entry when it %s (R36)", (_how, completed, last) => {
+			const entries = buildTurnTranscript(
+				turn({ userEntryWritten: true, completed: { ...turn().completed, ...completed } }),
+				ctx
+			);
+			expect(entries.at(-1)).toMatchObject({ source: last, turnEnded: true });
+			expect(entries.slice(0, -1).some((entry) => entry.turnEnded)).toBe(false);
 		});
 
 		it('builds the same user entry the recorder would, from the same inputs', () => {

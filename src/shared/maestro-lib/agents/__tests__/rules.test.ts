@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
 	activeAgentAfterRemoval,
 	addTabRecord,
+	markTurnEnded,
+	turnFateAfter,
 	agentsMovingWithParent,
 	withAgentInGroup,
 	applyAgentConfigPatch,
@@ -1283,5 +1285,51 @@ describe('consult tab records', () => {
 		// The live slot belongs to codex now; the old provider's token is parked.
 		expect(after.agentSessionId).toBeNull();
 		expect(JSON.stringify(after.providerSessions)).toContain('sess-claude');
+	});
+});
+
+// Parity R36: one reader of how a message's turn ended, for both host kinds.
+describe('turnFateAfter', () => {
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
+	const partial = { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' };
+	const stamped = (entry: object) => ({ ...entry, turnEnded: true });
+	const error = { id: 'e1', timestamp: 3, source: 'error', text: 'Rate limited' };
+	const stop = { id: 's1', timestamp: 3, source: 'system', text: 'Canceled by user' };
+	const u2 = { id: 'u2', timestamp: 4, source: 'user', text: 'And the tests?' };
+	const a2 = stamped({ id: 'a2', timestamp: 5, source: 'ai', text: 'The tests...' });
+
+	it.each([
+		['an answer stamped', [u1, stamped(partial)], 'desktop', 'answered'],
+		['its own error stamped', [u1, partial, stamped(error)], 'desktop', 'errored'],
+		['the Stop note stamped', [u1, stamped(stop)], 'headless', 'stopped'],
+		['the message itself stamped (nothing of its own)', [stamped(u1)], 'headless', 'answered'],
+		['streamed text, no stamp, desktop', [u1, partial], 'desktop', 'unended'],
+		['streamed text, no stamp, a later turn stamped', [u1, partial, u2, a2], 'desktop', 'unended'],
+		['nothing after it', [u1], 'headless', 'unended'],
+		['only a later message answered', [u1, u2, a2], 'headless', 'unended'],
+		['a host too old to stamp: headless text is its answer', [u1, partial], 'headless', 'answered'],
+		[
+			'a host too old to stamp: desktop text, then another message',
+			[u1, partial, u2],
+			'desktop',
+			'answered',
+		],
+		['a host too old to stamp: its own error', [u1, error], 'desktop', 'errored'],
+		[
+			'a steer into it is part of it',
+			[u1, { ...u2, steered: true }, stamped(partial)],
+			'desktop',
+			'answered',
+		],
+	] as const)('%s', (_how, logs, hostKind, fate) => {
+		expect(turnFateAfter(logs, 0, hostKind)).toBe(fate);
+	});
+
+	it('stamps only the last entry, once', () => {
+		const logs = [u1, partial];
+		const once = markTurnEnded(logs);
+		expect(once).toEqual([u1, { ...partial, turnEnded: true }]);
+		expect(markTurnEnded(once)).toBe(once);
+		expect(markTurnEnded([])).toEqual([]);
 	});
 });

@@ -760,6 +760,48 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(queue()).toHaveLength(0);
 	});
 
+	// Parity R36: a desktop host writes streamed text into the tab as it arrives, so a crash after
+	// some text leaves the message and that text, with no end stamp: a turn the host lost.
+	it.each([
+		['a desktop host that streamed some text before it died', 'desktop' as const, 1],
+		['a headless host too old to stamp (its text is its answer)', 'headless' as const, 0],
+	])('reads the end stamp, not the text, on %s (R36)', async (_how, hostKind, sent) => {
+		cut();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		transcript.mockResolvedValue([
+			QUESTION,
+			{ id: 'o1', timestamp: 15, source: 'stdout', text: 'The docs s' },
+		]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...peerWith('idle', 'connected'), hostKind } },
+		}));
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(sends()).toHaveLength(sent);
+		if (sent) expect(sends()[0][2]).toMatchObject({ kind: 'send', entryId: 'u1' });
+	});
+
+	it('never sends again a cut turn the desktop host stamped ended after its streamed text (R36)', async () => {
+		cut();
+		transcript.mockResolvedValue([
+			QUESTION,
+			{ id: 'o1', timestamp: 15, source: 'stdout', text: 'The docs say...', turnEnded: true },
+		]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...peerWith('idle', 'connected'), hostKind: 'desktop' } },
+		}));
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(queue()).toHaveLength(0);
+	});
+
 	it('sends the kept message when only a LATER message of the tab was answered: its own turn died (R23)', async () => {
 		cut();
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });

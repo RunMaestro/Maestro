@@ -70,6 +70,12 @@ export interface LogEntryRecord extends UnknownFields {
 	 * never by text or position (two messages with the same text, or an image-only message).
 	 */
 	queuedItemId?: string;
+	/**
+	 * The turn this entry belongs to ended here (answered, on its own error, or stopped): stamped by
+	 * the host on the turn's last entry when the turn ends (`markTurnEnded()`). A turn with no stamp
+	 * on a host that stamps did not end: it runs, or died with its host (`turnFateAfter()`).
+	 */
+	turnEnded?: boolean;
 	/** A custom AI command (`/commit`) this user message invoked. */
 	aiCommand?: { command: string; description: string };
 	metadata?: UnknownFields & {

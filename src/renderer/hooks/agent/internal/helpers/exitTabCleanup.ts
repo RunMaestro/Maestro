@@ -19,6 +19,7 @@
 import type { LogEntry, ThinkingMode } from '../../../../types';
 import { buildHiddenProgressLogId } from '../../../../utils/hiddenProgress';
 import { logsKeptAtTurnEnd } from '../../../../../shared/types';
+import { markTurnEnded } from '../../../../../shared/maestro-lib/agents/rules';
 
 export function removeHiddenProgressLog(logs: LogEntry[], tabId: string): LogEntry[] {
 	const hiddenLogId = buildHiddenProgressLogId(tabId);
@@ -36,12 +37,16 @@ export function applyExitThinkingPolicy(
 /**
  * Standard cleanup applied to a just-exited AI tab's logs:
  * removes the hidden-progress placeholder AND drops transient
- * thinking/tool entries unless the tab is in sticky mode.
+ * thinking/tool entries unless the tab is in sticky mode. The turn's
+ * last entry is then stamped as its end (`markTurnEnded()`), as a headless
+ * host stamps the turns it runs: a Federation client asking whether a
+ * message ran on this host tells an ended turn from one lost mid-stream.
  */
 export function cleanupExitedTabLogs(
 	logs: LogEntry[],
 	tabId: string,
 	tab: { showThinking?: ThinkingMode }
 ): LogEntry[] {
-	return applyExitThinkingPolicy(removeHiddenProgressLog(logs, tabId), tab);
+	const cleaned = applyExitThinkingPolicy(removeHiddenProgressLog(logs, tabId), tab);
+	return markTurnEnded(cleaned);
 }
