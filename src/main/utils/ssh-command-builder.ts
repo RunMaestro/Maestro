@@ -8,7 +8,12 @@
  */
 
 import { SshRemoteConfig } from '../../shared/types';
-import { shellEscape, buildShellCommand, shellEscapeRemotePath } from './shell-escape';
+import {
+	shellEscape,
+	buildShellCommand,
+	shellEscapeRemoteArg,
+	shellEscapeRemotePath,
+} from './shell-escape';
 import { expandTilde } from '../../shared/pathUtils';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
@@ -433,8 +438,10 @@ export async function buildSshCommandWithStdin(
 	}
 
 	// Build the command line
-	// For the script, we use simple quoting since we're not going through shell parsing layers
-	const cmdParts = [remoteOptions.command, ...remoteOptions.args.map((arg) => shellEscape(arg))];
+	// For the script, we use simple quoting since we're not going through shell parsing layers.
+	// A home-relative path argument (a `~/ref` Additional Directory grant) keeps its `~`
+	// expandable, since only the remote knows its own home.
+	const cmdParts = [remoteOptions.command, ...remoteOptions.args.map(shellEscapeRemoteArg)];
 
 	// Add image args for file-based agents (decoded temp files on remote)
 	if (imageArgParts.length > 0) {

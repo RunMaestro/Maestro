@@ -119,3 +119,20 @@ export function shellEscapeRemotePath(remotePath: string): string {
 
 	return shellEscape(remotePath);
 }
+
+/** `~` or `~/<path>` with no whitespace: a path into the remote user's home. */
+const HOME_RELATIVE_ARG = /^~(\/\S*)?$/;
+
+/**
+ * Escape one agent argument for the command line an SSH run executes remotely.
+ *
+ * A bare home-relative path (`~` or `~/...`, no whitespace) goes through
+ * `shellEscapeRemotePath()` so it expands on the remote. That is what a
+ * home-relative Additional Directory grant needs: `--add-dir '~/ref'` names a
+ * directory literally called `~`, and the local home is wrong for the remote.
+ * Every other argument, prompt text included, stays single-quoted exactly as
+ * `shellEscape()` renders it, and `$HOME/...` stays literal.
+ */
+export function shellEscapeRemoteArg(arg: string): string {
+	return HOME_RELATIVE_ARG.test(arg) ? shellEscapeRemotePath(arg) : shellEscape(arg);
+}

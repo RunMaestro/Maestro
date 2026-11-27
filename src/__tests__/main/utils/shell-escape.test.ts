@@ -3,6 +3,7 @@ import {
 	shellEscape,
 	buildShellCommand,
 	shellEscapeRemotePath,
+	shellEscapeRemoteArg,
 } from '../../../main/utils/shell-escape';
 
 describe('shell-escape', () => {
@@ -70,6 +71,29 @@ describe('shell-escape', () => {
 		it('handles complex command with multiple arguments', () => {
 			const result = buildShellCommand('git', ['commit', '-m', "fix: it's working"]);
 			expect(result).toBe("git 'commit' '-m' 'fix: it'\\''s working'");
+		});
+	});
+
+	describe('shellEscapeRemoteArg', () => {
+		it('keeps a bare home-relative path expandable on the remote', () => {
+			expect(shellEscapeRemoteArg('~')).toBe('"$HOME"');
+			expect(shellEscapeRemoteArg('~/reference')).toBe('"$HOME/reference"');
+			expect(shellEscapeRemoteArg('~/a/$b')).toBe('"$HOME/a/\\$b"');
+		});
+
+		it('single-quotes every other argument exactly like shellEscape', () => {
+			for (const arg of [
+				'--add-dir',
+				'/opt/reference',
+				'$HOME/reference', // only `~` is a home path in an argument
+				'~/two words', // whitespace means text, not a path
+				'~ is a tilde',
+				'~user/other',
+				'a ~/path in a sentence',
+				'',
+			]) {
+				expect(shellEscapeRemoteArg(arg)).toBe(shellEscape(arg));
+			}
 		});
 	});
 
