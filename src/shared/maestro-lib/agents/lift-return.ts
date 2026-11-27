@@ -32,7 +32,7 @@ import type { AITabRecord, AgentRecord } from '../store/records';
 import type { HistoryEntry } from '../../types';
 import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
 import { LiftRunError } from './lift-run';
-import type { ReturnedFromHost, ReturnedHeldItem } from './lift-return-record';
+import { readLeftOnHost, type ReturnedFromHost, type ReturnedHeldItem } from './lift-return-record';
 import {
 	bringHostHistoryHome,
 	historyEntryCount,
@@ -113,6 +113,15 @@ export function hostCopyLeftAdvice(from: string): string {
 	return `Moving the agent to the host again replaces that copy. To remove it instead, once the host is back: maestro-cli remove-agent ${from} (check it with: maestro-cli show agent ${from}).`;
 }
 
+/**
+ * The notice of a copy an earlier Move Back left on ANOTHER host that this move can no longer
+ * track (the agent holds one such pointer): the History written there stays with that copy.
+ */
+function untrackedCopyNotice(earlier: LiftedToPointer): string {
+	const ref = peerAgentRef(earlier.peer, earlier.agentId);
+	return `The copy an earlier Move Back left on ${earlier.peer} (${ref}) is no longer tracked, and the History written there stays with it. Remove it once it is not needed: maestro-cli remove-agent ${ref}`;
+}
+
 function sshRemoteIdOf(agent: AgentRecord): string | undefined {
 	const ssh = (agent as { sessionSshRemoteConfig?: { enabled?: boolean; remoteId?: unknown } })
 		.sessionSshRemoteConfig;
@@ -157,6 +166,12 @@ export async function runReturnFromHost(
 	}
 	const from = peerAgentRef(pointer.peer, pointer.agentId);
 	const summary = { id: agent.id, name: agent.name };
+	// A copy an earlier offline Move Back left on ANOTHER host, with the History written there: the
+	// pointer survives a lift to this host (the lift only sets `liftedTo`), and this Move Back keeps
+	// it whenever this host's copy is gone after it, so the next Move to Host onto that host still
+	// brings that History home (L45 a).
+	const earlier = readLeftOnHost(agent);
+	const earlierElsewhere = earlier && earlier.peer !== pointer.peer ? earlier : undefined;
 
 	if (options.offline) {
 		if (!options.dryRun) await restoreOrThrow(deps, agent, { tabs: [], leftOnHost: pointer });
@@ -170,7 +185,8 @@ export async function runReturnFromHost(
 			hostCopyKept: true,
 			...(options.dryRun ? { dryRun: true } : {}),
 			notices: [
-				`The host was not reached, so conversations started there after the move stay there, and so does the History written there; its copy (${from}) still exists. The next Move to Host brings that History home. ${hostCopyLeftAdvice(from)}`,
+				`The host was not reached, so conversations started there after the move stay there, and so does the History written there; its copy (${from}) still exists. The next Move to Host onto ${pointer.peer} brings that History home. ${hostCopyLeftAdvice(from)}`,
+				...(earlierElsewhere ? [untrackedCopyNotice(earlierElsewhere)] : []),
 			],
 		};
 	}
@@ -323,19 +339,28 @@ export async function runReturnFromHost(
 		// The host's copy is recorded on the agent until its removal is confirmed (it is removed
 		// below, after the restore), so a kept copy, or one whose removal fails, is replaced by a
 		// later Move to Host. A pointer to a copy since removed is harmless: the lift finds no copy.
-		await restoreOrThrow(
-			deps,
-			agent,
-			hostAgent.ok ? { ...returned, leftOnHost: pointer } : returned
-		);
+		// A copy left on another host keeps its pointer instead when this copy goes (its History came
+		// home above, so this one holds nothing that is not here) or is gone already.
+		const copyStays = hostAgent.ok && (options.keepHostCopy === true || historyStaysOnHost);
+		const recorded =
+			copyStays || !earlierElsewhere ? (hostAgent.ok ? pointer : undefined) : earlierElsewhere;
+		if (earlierElsewhere && recorded !== earlierElsewhere) {
+			notices.push(untrackedCopyNotice(earlierElsewhere));
+		}
+		await restoreOrThrow(deps, agent, recorded ? { ...returned, leftOnHost: recorded } : returned);
 
 		let hostCopyRemoved = false;
-		if (hostAgent.ok && !options.keepHostCopy && !historyStaysOnHost) {
+		if (hostAgent.ok && !copyStays) {
 			const removed = await connection.client.agents.remove(pointer.agentId);
 			if (removed.ok) hostCopyRemoved = true;
 			else {
+				// Moving to the host again replaces the copy only while the agent points at it.
+				const advice =
+					recorded === pointer
+						? hostCopyLeftAdvice(from)
+						: `Remove it once the host is back: maestro-cli remove-agent ${from}`;
 				notices.push(
-					`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} ${hostCopyLeftAdvice(from)}`
+					`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} ${advice}`
 				);
 			}
 		} else if (hostAgent.ok && options.keepHostCopy) {

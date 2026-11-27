@@ -136,3 +136,73 @@ export async function handleUpdateHistoryEntry(
 		reply({ success: false, error: `The entry could not be changed: ${errorText(error)}` });
 	}
 }
+
+/** The most entries one `import_history_entries` may carry: an agent's History cap, with room. */
+const MAX_IMPORTED_ENTRIES = 50_000;
+
+/**
+ * `import_history_entries`: the CLI's half of a Federation move made while this desktop runs
+ * (`maestro-cli unlift`, a `lift` that replaces a stale host copy). The entries a host copy wrote
+ * come home through this app's `HistoryManager.importEntries()`, on the agent's write queue, so
+ * they cannot race a rotation, a Delete, or a Validate this app is making on the same file (an
+ * append from another process can land between that rewrite's read and its rename, and be lost).
+ * Each id once; a failed write is answered as a failure, never as success.
+ *
+ * CLI ONLY (`client.cli`): a browser client adds History only through its own turns.
+ */
+export async function handleImportHistoryEntries(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	const reply = (payload: Record<string, unknown>) =>
+		ctx.send(client, {
+			type: 'import_history_entries_result',
+			...payload,
+			requestId: message.requestId,
+		});
+	if (!client.cli) {
+		reply({ success: false, error: 'Only maestro-cli may import History entries.' });
+		return;
+	}
+	const agent = findAgent(ctx, message, reply);
+	if (!agent) return;
+	const raw = Array.isArray(message.entries) ? (message.entries as unknown[]) : undefined;
+	if (!raw || raw.length > MAX_IMPORTED_ENTRIES) {
+		reply({
+			success: false,
+			error: `entries must be a list of at most ${MAX_IMPORTED_ENTRIES} History entries.`,
+		});
+		return;
+	}
+	const entries: HistoryEntry[] = [];
+	for (const item of raw) {
+		const candidate = item as Partial<HistoryEntry> | null;
+		if (
+			!candidate ||
+			typeof candidate !== 'object' ||
+			typeof candidate.id !== 'string' ||
+			!candidate.id ||
+			typeof candidate.timestamp !== 'number' ||
+			!Number.isFinite(candidate.timestamp) ||
+			typeof candidate.type !== 'string'
+		) {
+			reply({ success: false, error: 'Every entry needs an id, a timestamp, and a type.' });
+			return;
+		}
+		// Filed under the agent the message names, whatever the entry says.
+		entries.push({ ...(candidate as HistoryEntry), sessionId: agent.id });
+	}
+	try {
+		reply({ success: true, imported: await getHistoryManager().importEntries(agent.id, entries) });
+	} catch (error) {
+		logger.warn(
+			`import_history_entries: the entries for ${agent.id} were not written`,
+			LOG_CONTEXT,
+			{
+				error: errorText(error),
+			}
+		);
+		reply({ success: false, error: `The History entries were not written: ${errorText(error)}` });
+	}
+}

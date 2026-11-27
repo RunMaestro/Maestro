@@ -482,6 +482,21 @@ export class HistoryManager {
 	}
 
 	/**
+	 * A stamp of the session's History file that changes with every write to it, from this app or
+	 * any other process (the CLI appends to the same file): its size and modification time. Null
+	 * when the session has no JSONL file (none yet, or a legacy `.json` not migrated). Lets a reader
+	 * keep a parsed list until the file changes (`desktopAgentHistoryStore()`).
+	 */
+	async getFileStamp(sessionId: string): Promise<string | null> {
+		try {
+			const stat = await fsp.stat(this.getSessionFilePath(sessionId));
+			return `${stat.mtimeMs}:${stat.size}`;
+		} catch {
+			return null;
+		}
+	}
+
+	/**
 	 * Read history for a specific session, newest first.
 	 *
 	 * The newest-first contract predates JSONL (the legacy file stored entries

@@ -175,4 +175,37 @@ describe('History messages on a desktop host (L43)', () => {
 		const coming = await planHostHistoryHome(reader, 'host-agent', 'local', here);
 		expect(coming?.map((e) => [e.id, e.sessionId])).toEqual([['old', 'local']]);
 	});
+
+	it('import_history_entries writes through the HistoryManager for the CLI only, each id once (review on #2181)', async () => {
+		const browser = await ask(handler, client, {
+			type: 'import_history_entries',
+			sessionId: 'host-agent',
+			entries: [entry('x', 'other', 3_000)],
+		});
+		expect(browser).toMatchObject({ success: false });
+		expect((await manager.getEntries('host-agent')).map((e) => e.id)).toEqual(['new', 'old']);
+
+		const cli = { ...createClient(), cli: true } as WebClient;
+		const written = await ask(handler, cli, {
+			type: 'import_history_entries',
+			sessionId: 'host-agent',
+			entries: [entry('x', 'other', 3_000), entry('old', 'host-agent', 1_000)],
+		});
+		expect(written).toMatchObject({
+			type: 'import_history_entries_result',
+			success: true,
+			imported: 1,
+		});
+		const after = await manager.getEntries('host-agent');
+		expect(after.map((e) => e.id)).toEqual(['x', 'new', 'old']);
+		// Filed under the agent the message names.
+		expect(after[0].sessionId).toBe('host-agent');
+
+		const bad = await ask(handler, cli, {
+			type: 'import_history_entries',
+			sessionId: 'host-agent',
+			entries: [{ id: 'no-time', type: 'USER' }],
+		});
+		expect(bad).toMatchObject({ success: false });
+	});
 });

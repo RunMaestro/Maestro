@@ -30,7 +30,7 @@ import {
 import type { LiftedToPointer } from '../../shared/maestro-lib/agents/lift-pointer';
 import { isPidAlive, readCliServerInfo } from '../../shared/maestro-lib/client/discovery';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
-import type { SshRemoteConfig } from '../../shared/types';
+import type { HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	readSessionsStoreFile,
 	writeSessionsStoreFile,
@@ -133,6 +133,58 @@ export function localStoreOwner(): LocalStoreOwner {
 	return info.hostKind === 'headless' ? 'headless-host' : 'desktop';
 }
 
+/**
+ * This machine's History as a CLI move writes it (`AgentHistoryStore`). Reads come from the files.
+ * The entries a host copy wrote come home through whoever owns the store: the running desktop
+ * (`import_history_entries`, on its write queue, so an append cannot race a rotation, a Delete, or
+ * a Validate it rewrites the same file for), or the files when nothing runs. A headless host on
+ * this machine owns them too: refused, as the move's own store write is.
+ */
+export function cliAgentHistoryStore(
+	deps: {
+		owner?: () => LocalStoreOwner;
+		importInDesktop?: (
+			agentId: string,
+			entries: readonly HistoryEntry[]
+		) => Promise<SimpleResult & { imported?: number }>;
+		disk?: AgentHistoryStore;
+	} = {}
+): AgentHistoryStore {
+	const owner = deps.owner ?? localStoreOwner;
+	const disk = deps.disk ?? diskAgentHistoryStore(() => ({ historyDir: getHistoryDir() }));
+	const importInDesktop =
+		deps.importInDesktop ??
+		((agentId: string, entries: readonly HistoryEntry[]) =>
+			sendSimpleCommand<SimpleResult & { imported?: number }>(
+				{ type: 'import_history_entries', sessionId: agentId, entries },
+				'import_history_entries_result'
+			));
+	return {
+		read: (agentId) => disk.read(agentId),
+		append: async (agentId, entries) => {
+			const who = owner();
+			if (who === 'headless-host') {
+				throw new Error(
+					"a maestro-cli host owns this machine's agents. Stop it (maestro-cli host stop), or move the agent from the desktop app"
+				);
+			}
+			if (who === 'desktop') {
+				try {
+					const result = await importInDesktop(agentId, entries);
+					if (result.success) return;
+					throw new Error(
+						result.error || errorFrameMessage(result) || 'The desktop did not write the History'
+					);
+				} catch (error) {
+					// The desktop quit since the check: nothing owns the files now, so they are ours.
+					if (!(error instanceof MaestroNotRunningError)) throw error;
+				}
+			}
+			await disk.append(agentId, entries);
+		},
+	};
+}
+
 const defaultDeps: LiftDeps = {
 	readAgents: () => readSessions() as unknown as AgentRecord[],
 	readRemotes: () => readSshRemotes(),
@@ -167,7 +219,7 @@ const defaultDeps: LiftDeps = {
 		);
 		await writeSessionsStoreFile(dir, { ...data, sessions: updated });
 	},
-	history: diskAgentHistoryStore(() => ({ historyDir: getHistoryDir() })),
+	history: cliAgentHistoryStore(),
 	now: () => Date.now(),
 };
 

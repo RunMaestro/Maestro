@@ -532,7 +532,9 @@ describe('an offline Move Back and History (L39 e)', () => {
 		expect(result.history).toBe(0);
 		expect(history.appends).toEqual([]);
 		expect(result.notices?.[0]).toContain('so does the History written there');
-		expect(result.notices?.[0]).toContain('The next Move to Host brings that History home');
+		expect(result.notices?.[0]).toContain(
+			'The next Move to Host onto build-box brings that History home'
+		);
 		expect(d.restore).toHaveBeenCalledWith(
 			'agent-1',
 			expect.objectContaining({ leftOnHost: { peer: 'build-box', agentId: 'host-1', at: 1 } })
@@ -585,6 +587,52 @@ describe('a Move Back from a host that does not send History (L43)', () => {
 		expect(result.hostCopyKept).toBe(true);
 		expect(describeReturn(result)).toContain('and its copy there is kept.');
 		expect(result.notices?.join(' ')).toContain('does not send an agent');
+	});
+});
+
+/**
+ * L45 a: an offline Move Back from host A left a copy there (`leftOnHost`), with the History
+ * written there; then the agent moved to host B. That pointer survives the lift to B (a lift only
+ * sets `liftedTo`). A Move Back from B keeps it whenever B's copy is gone after the move, so the
+ * next Move to Host onto A still finds that copy and brings its History home.
+ */
+describe('a copy left on another host, across a Move Back (L45 a)', () => {
+	const onA = { peer: 'old-box', agentId: 'old-1', at: 0 };
+	const fromB = () => hostedAgent({ leftOnHost: onA } as Partial<AgentRecord>);
+
+	it("keeps the pointer to the other host's copy when this host's copy is removed", async () => {
+		const d = deps(fromB(), hostClient({ history: ok([entry('on-b', 10, 'host-1')]) }));
+		const result = await runReturnFromHost('agent-1', {}, d.value);
+		expect(d.client.agents.remove).toHaveBeenCalledWith('host-1');
+		expect(d.restore).toHaveBeenCalledWith('agent-1', expect.objectContaining({ leftOnHost: onA }));
+		expect(result.history).toBe(1);
+		expect(result.notices ?? []).toEqual([]);
+	});
+
+	it('keeps it when this host no longer has its copy', async () => {
+		const d = deps(fromB(), hostClient({ agent: fail('not-found') }));
+		await runReturnFromHost('agent-1', {}, d.value);
+		expect(d.restore).toHaveBeenCalledWith('agent-1', expect.objectContaining({ leftOnHost: onA }));
+	});
+
+	it("names the other host's copy when this host's copy stays and takes the one pointer", async () => {
+		const d = deps(fromB());
+		const result = await runReturnFromHost('agent-1', { keepHostCopy: true }, d.value);
+		expect(d.restore).toHaveBeenCalledWith(
+			'agent-1',
+			expect.objectContaining({ leftOnHost: { peer: 'build-box', agentId: 'host-1', at: 1 } })
+		);
+		expect(result.notices?.join(' ')).toContain(
+			'The copy an earlier Move Back left on old-box (old-box:old-1) is no longer tracked'
+		);
+		expect(result.notices?.join(' ')).toContain('maestro-cli remove-agent old-box:old-1');
+	});
+
+	it('an offline Move Back from this host names both copies', async () => {
+		const d = deps(fromB());
+		const result = await runReturnFromHost('agent-1', { offline: true }, d.value);
+		expect(result.notices?.[0]).toContain('The next Move to Host onto build-box');
+		expect(result.notices?.[1]).toContain('old-box:old-1');
 	});
 });
 

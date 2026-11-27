@@ -22,7 +22,6 @@ import {
 	type ReturnRunDeps,
 } from '../../shared/maestro-lib/agents/lift-return';
 import type { AgentHistoryStore } from '../../shared/maestro-lib/agents/lift-history';
-import { diskAgentHistoryStore } from '../../shared/maestro-lib/agents/lift-history-disk';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import {
 	readSessionsStoreFile,
@@ -43,8 +42,8 @@ import {
 	sendSimpleCommand,
 	type SimpleResult,
 } from '../services/session-command';
-import { getHistoryDir, getSyncDir, readSessions, resolveAgentId } from '../services/storage';
-import { localStoreOwner, type LocalStoreOwner } from './lift';
+import { getSyncDir, readSessions, resolveAgentId } from '../services/storage';
+import { cliAgentHistoryStore, localStoreOwner, type LocalStoreOwner } from './lift';
 
 export interface UnliftOptions {
 	json?: boolean;
@@ -100,9 +99,8 @@ const defaultDeps: UnliftDeps = {
 		);
 		await writeSessionsStoreFile(dir, { ...data, sessions: updated });
 	},
-	// Appended with O_APPEND beside a running desktop, whose History watcher picks the lines up.
-	// The folder is resolved per call, after --data-dir applied.
-	history: diskAgentHistoryStore(() => ({ historyDir: getHistoryDir() })),
+	// Written through the running desktop, else the files (`cliAgentHistoryStore()`).
+	history: cliAgentHistoryStore(),
 };
 
 /** Write the restored record through whoever owns the store. Throws on failure. */
