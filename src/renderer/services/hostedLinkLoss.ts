@@ -229,6 +229,10 @@ function routeErroredTurn(
 	const waiting = getRetryEntry(sessionId, tabId);
 	if (waiting && waiting.heldItemId !== item?.id) return 'not-held';
 	if (!error) return 'not-retried';
+	// Nothing to resend: no copy was kept here and no retry holds one. Raising the error would
+	// draw it a second time (a local error entry and the error state, over the one drawn from the
+	// host's transcript) for a retry that cannot take it; the caller holds the message (R54).
+	if (!item && !waiting) return 'not-retried';
 	// The lost link's retry holds the copy: that outage is over (the host is back), and the
 	// provider error is a new one, so its backoff starts at its own first attempt, under its own
 	// card. Handed over in one write (`freshOutage`), so a dispatch callback parked on the link's

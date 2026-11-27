@@ -484,6 +484,49 @@ describe('a turn cut by a lost link (Agent Resilience off: the cut draws its not
 		await flush();
 		expect(raised).toEqual([]);
 	});
+
+	// Parity R54: no copy was kept at the cut (the link loss has no retry here) and no retry waits,
+	// so there is no prompt to resend. The turn's own error (a retryable quota limit) is drawn once,
+	// from the host's transcript; raising it here would add a second error entry and the error
+	// state, then hold the message as well.
+	it('draws a cut turn that ended on its own error once, and raises nothing with no prompt to resend (R54)', async () => {
+		const QUOTA: LogEntry = {
+			id: 'e1',
+			timestamp: 20,
+			source: 'error',
+			text: 'Claude AI usage limit reached|1755500000',
+			turnEnded: true,
+		};
+		expect(
+			classifyRetryableError({ type: 'unknown', message: QUOTA.text, recoverable: true })
+		).toBe('token-exhaustion');
+		hostReports('busy', 'reconnecting');
+		confirmOutage();
+		syncHostedAgents();
+		expect(record().executionQueue).toEqual([]);
+
+		transcript.mockResolvedValue([QUESTION, QUOTA]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		hostReports('idle', 'connected');
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+
+		expect(raised).toEqual([]);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		// The turn's own error, once (the link card beside it is the cut's, as on an SSH tab).
+		const turnErrors = tab().logs.filter(
+			(entry) => entry.source === 'error' && entry.agentError?.source !== 'host-link'
+		);
+		expect(turnErrors).toEqual([expect.objectContaining({ id: 'e1' })]);
+		expect(record().state).not.toBe('error');
+		// Held for the user to send again, with a toast saying why (no retry card stands for it).
+		expect(record().executionQueue).toEqual([
+			expect.objectContaining({ text: QUESTION.text, paused: true }),
+		]);
+		expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Not sent' }));
+	});
 });
 
 describe('projectHostedSession with the link lost', () => {
