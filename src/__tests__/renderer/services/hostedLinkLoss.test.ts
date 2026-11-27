@@ -687,6 +687,68 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(userBubbles()).toHaveLength(1);
 	});
 
+	// Parity R31, as the live pass caught it: a host that died mid-turn and was started again. The
+	// mirror says connected while it still holds the host's report from before the cut (the tab
+	// busy), and the tab's read lands before the restarted host's first snapshot.
+	it('decides from the host report after the reconnect, never the one that drew the cut turn running (R31)', async () => {
+		cut();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		transcript.mockResolvedValue([QUESTION]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...current.peers.box, connection: 'connected' } },
+		}));
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		// The read is in, the report is still the old one: nothing is settled, nothing sent.
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toBeDefined();
+		expect(queue().map((item) => item.hostEntryId)).toEqual(['u1']);
+
+		// The restarted host's snapshot: the tab is idle. Its turn died with the host: sent once.
+		hostReports('idle', 'connected');
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	it('never sends again a cut turn the host reports running after the reconnect (R31)', async () => {
+		cut();
+		transcript.mockResolvedValue([QUESTION]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...current.peers.box, connection: 'connected' } },
+		}));
+		syncHostedAgents();
+		await flush();
+		// A fresh report (a desktop host that kept running): the turn runs there.
+		hostReports('busy', 'connected');
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		expect(queue()).toHaveLength(0);
+	});
+
+	it('never sends again a cut turn that ended on its own provider error on the host (R31)', async () => {
+		cut();
+		await hostBack('idle', [
+			QUESTION,
+			{ id: 'e1', timestamp: 20, source: 'error', text: 'The provider failed.' },
+		]);
+		expect(sends()).toHaveLength(0);
+		expect(queue()).toHaveLength(0);
+	});
+
 	it('sends the kept message when only a LATER message of the tab was answered: its own turn died (R23)', async () => {
 		cut();
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });

@@ -110,6 +110,15 @@ interface CutTurn {
 	 * reading again in a loop against a host that errors.
 	 */
 	awaitingRead?: boolean;
+	/**
+	 * The host's record of the agent as it last reported it before the link was lost: the report
+	 * that drew this tab running. Until a newer one lands, its busy tab says nothing about the turn
+	 * now: a host that restarted sends its first report after the reconnect, and can answer a
+	 * transcript read before it.
+	 */
+	report?: AgentRecord;
+	/** The tab's read is in, and the decision waits for the host's first report since the cut. */
+	awaitingReport?: boolean;
 	/** The user stopped this turn here while the host could not be told: never sent again. */
 	stopped?: boolean;
 	/** The message is kept for a resend under the auto-retry card, as this queue item. */
@@ -209,6 +218,7 @@ export function noteHostedTurnsCut(session: Session, link: HostLink, lost?: Agen
 			sessionId: session.id,
 			tabId: hostTab.id,
 			remoteName: link.remoteName,
+			report: link.agent,
 			...(stoppedHere(key, message?.id) ? { stopped: true } : {}),
 			...(message
 				? {
@@ -430,11 +440,19 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 	if (!cut) return;
 	cut.reading = false;
 	const mirror = usePeerMirrorStore.getState();
-	// Read now, not when the host came back: the host's fresh snapshot follows its reconnect, and
-	// lands before the answer to a read sent after it.
-	const hostTab = mirror.peers[link.peerId]?.agents
-		.find((agent) => agent.id === link.agentId)
-		?.aiTabs?.find((tab) => tab.id === cut.tabId);
+	// Read now, not when the host came back. The mirror can say connected before the host's first
+	// report since the cut lands (a host that restarted answers a read before its snapshot is in).
+	const agent = mirror.peers[link.peerId]?.agents.find(
+		(candidate) => candidate.id === link.agentId
+	);
+	const hostTab = agent?.aiTabs?.find((tab) => tab.id === cut.tabId);
+	// Still the report that drew the turn running: its busy is the turn as it was before the link
+	// was lost, not proof that it runs now. The decision waits for the host's next report, which
+	// starts one read (`settleCutHostedTurns()`).
+	if (hostTab?.state === 'busy' && agent === cut.report && !cut.stopped) {
+		cut.awaitingReport = true;
+		return;
+	}
 	// Closed on the host: not sent into a tab that is gone, and held for the user to send again.
 	if (!hostTab) {
 		cutTurns.delete(key);
@@ -513,7 +531,11 @@ export function settleCutHostedTurns(sessionId: string, link: HostLink): void {
 			cutTurns.delete(key);
 			continue;
 		}
-		if (cut.awaitingRead) {
+		if (cut.awaitingReport) {
+			// Still the report from before the cut: nothing new to decide from, and no read started.
+			if (link.agent === cut.report) continue;
+			cut.awaitingReport = false;
+		} else if (cut.awaitingRead) {
 			// Decided by the tab's next read that lands: never by another read started here.
 			decideCutTurn(key, link);
 			continue;

@@ -1596,6 +1596,33 @@ describe('runtime turns', () => {
 				expect(argvFiles).toHaveLength(1);
 			});
 
+			// Parity R31: the turn ended on the provider's own error. It ran once; the error is its end.
+			it('answers "already ran" for the resend of a message whose turn ended on a provider error', async () => {
+				const FAILED = { id: 'e1', timestamp: 2, source: 'error', text: 'The provider failed.' };
+				const runtime = await start([cutTab([QUESTION, FAILED])]);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(argvFiles).toHaveLength(0);
+			});
+
+			// Parity R31: the sender lost the link while the turn ran, and the turn still runs here.
+			it('answers "already ran" for the resend of the message the tab is running now', async () => {
+				hold = true;
+				const runtime = await start([cutTab([])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.started();
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
 			// Parity R23: an answer after a LATER message is that message's. The resend of a message
 			// whose own turn died runs, though the tab holds an answer further down.
 			it('runs the resend of a message when only a later message of the tab was answered', async () => {

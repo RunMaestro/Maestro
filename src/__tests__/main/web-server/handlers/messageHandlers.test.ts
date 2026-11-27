@@ -4100,6 +4100,19 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
 			});
 
+			// Parity R31: a turn that ended on the provider's own error ran once.
+			it('answers "already ran" when the entry\'s turn ended on a provider error', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{ id: 'e1', timestamp: 2, source: 'error', text: 'The provider failed.' },
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(lastSend()).toMatchObject({ answered: true }));
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			});
+
 			it.each([
 				['the turn died before an answer', { logs: [QUESTION] }, 'Summarize the docs'],
 				// Parity R23: a2 answers the later u2, never u1, whose own turn died.

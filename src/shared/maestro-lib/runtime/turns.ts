@@ -39,6 +39,7 @@ import type { AgentRepository, TabWriteGuard } from '../agents/repository';
 import { matchesNativeSessionBinding, type NativeSessionBinding } from '../agents/providerSwap';
 import {
 	DEFAULT_RULE_CONTEXT,
+	isSameUserEntry,
 	recordTabSession,
 	turnEntryIdFor,
 	userEntryAnswered,
@@ -1095,15 +1096,20 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const images = kept.images;
 		// The resend of a message whose turn already answered (its sender lost the link, or quit, while
 		// it ran): it ran once, and never runs again. The sender reads `answered` as "already ran".
+		// The same for the message of the turn running on the tab now (the entry it wrote names the
+		// running item): a sender whose link dropped cannot see that it still runs (parity R31).
 		const entryId = readTurnEntryId(input.entryId);
-		if (
-			entryId &&
-			userEntryAnswered(Array.isArray(tabRecord.logs) ? tabRecord.logs : [], {
-				id: entryId,
-				text,
-				images,
-			})
-		) {
+		const tabLogs = (Array.isArray(tabRecord.logs) ? tabRecord.logs : []) as LogEntryRecord[];
+		const sentEntry = { id: entryId ?? '', text, images };
+		const runsNow =
+			!!entryId &&
+			!!tabRecord.runtimeTurnId &&
+			queues.get(agentId)?.isTabBusy(tabId) === true &&
+			tabLogs.some(
+				(entry) =>
+					isSameUserEntry(entry, sentEntry) && entry.queuedItemId === tabRecord.runtimeTurnId
+			);
+		if (entryId && (runsNow || userEntryAnswered(tabLogs, sentEntry))) {
 			return ok({ status: 'answered' });
 		}
 
