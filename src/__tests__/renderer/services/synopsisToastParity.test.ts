@@ -346,6 +346,23 @@ describe('U3: the "Synopsis" toast after a plain turn', () => {
 		expect(toasts().map((toast) => toast.message)).toEqual(['my turn']);
 	});
 
+	it('hosted: a queued turn whose message left the host queue unrun raises nothing for a turn another client sent (U8)', async () => {
+		seed('hosted');
+		hostTab('idle');
+		queueOnHost([{ itemId: 'mine' }]);
+		watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1', {
+			queuedItemId: 'mine',
+		});
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		// The message is removed from the host's queue before it runs. Another client's turn on the
+		// same conversation saves its entry in the window the watch still reads.
+		queueOnHost([]);
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS);
+		hostEntries.push(entry('theirs', 400, { summary: 'their turn' }));
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 4);
+		expect(toasts()).toEqual([]);
+	});
+
 	it('hosted: a held message on the tab does not stop the watch from reading (CodeRabbit on #2166)', async () => {
 		seed('hosted');
 		hostTab('busy', 100);

@@ -243,8 +243,13 @@ export function watchHostedTurnSynopsis(
 
 	const watch = {
 		key: `${sessionId}\u0000${tabId}`,
+		// Saved after this turn started. A queued turn this watch never saw run (its message left the
+		// host's queue without running) has no entry: one saved now is another client's turn (U8).
+		// A started turn ran from the send on, so a new entry of the tab's session is its own.
 		covers: (entry: HistoryEntry) =>
-			(runStartedAt === undefined || entry.timestamp >= runStartedAt) &&
+			(runStartedAt !== undefined
+				? entry.timestamp >= runStartedAt
+				: opts.queuedItemId === undefined) &&
 			(laterRunStartedAt === undefined || entry.timestamp < laterRunStartedAt),
 		stop: () => {
 			if (done) return;
