@@ -164,7 +164,7 @@ export function formatLiftPlan(summary: LiftPlanSummary, dryRun: boolean): strin
 	if (summary.replaces) {
 		const home = summary.history?.comesHome ?? 0;
 		lines.push(
-			`Replaces the copy an earlier Move Back left on the host (${summary.replaces}): its tabs and transcripts are merged into what moves, its processes are stopped, and its ${historyEntryCount(home)} come home to this machine first.`
+			`Replaces the copy an earlier Move Back left on the host (${summary.replaces}): its tabs and transcripts are merged into what moves, its processes are stopped, and its ${historyEntryCount(home)} ${home === 1 ? 'comes' : 'come'} home to this machine first.`
 		);
 		const merge = formatHostTabMerge(summary.tabMerge);
 		if (merge) lines.push(`  ${merge}`);

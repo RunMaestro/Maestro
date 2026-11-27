@@ -226,6 +226,17 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 		expect(order.lastIndexOf('queue')).toBeGreaterThan(order.indexOf('history'));
 	});
 
+	it('(d) the plan says "1 History entry comes home" for one entry', async () => {
+		fs.writeFileSync(
+			path.join(dir, 'history', 'host-1.jsonl'),
+			`${historyLine('on-host-1', T0 - 2000, 'host-1')}\n`
+		);
+		const result = await runLift('agent-1', { dryRun: true }, deps(localAgent('agent-1', true)));
+		expect(formatLiftPlan(result.plan, true)).toContain(
+			'and its 1 History entry comes home to this machine first.'
+		);
+	});
+
 	it('(c) a dry run counts the History and writes nothing (L39)', async () => {
 		const result = await runLift('agent-1', { dryRun: true }, deps(localAgent('agent-1', true)));
 		expect(result.plan.history).toEqual({ here: 1, comesHome: 2 });
