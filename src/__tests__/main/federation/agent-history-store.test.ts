@@ -18,10 +18,10 @@ const entry = (id: string, timestamp: number, extra: Partial<HistoryEntry> = {})
 });
 
 describe('desktopAgentHistoryStore', () => {
-	it("goes through the desktop's HistoryManager, each entry under its own project path", async () => {
+	it("goes through the desktop's HistoryManager, appending through its checked import", async () => {
 		const manager = {
 			getEntries: vi.fn(async () => [entry('a', 1)]),
-			addEntry: vi.fn(async () => undefined),
+			importEntries: vi.fn(async () => 1),
 			deleteEntry: vi.fn(async () => true),
 			updateEntry: vi.fn(async () => false),
 		};
@@ -29,7 +29,7 @@ describe('desktopAgentHistoryStore', () => {
 		expect(await store.read('l')).toEqual([entry('a', 1)]);
 		const b = entry('b', 2, { projectPath: '/remote/project' });
 		await store.append('l', [b]);
-		expect(manager.addEntry).toHaveBeenCalledWith('l', '/remote/project', b);
+		expect(manager.importEntries).toHaveBeenCalledWith('l', [b]);
 		expect(await store.remove?.('l', 'a')).toBe(true);
 		expect(await store.update?.('l', 'a', { validated: true })).toBe(false);
 		expect(manager.updateEntry).toHaveBeenCalledWith('l', 'a', { validated: true });

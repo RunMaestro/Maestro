@@ -829,6 +829,49 @@ describe('HistoryManager', () => {
 	// ----------------------------------------------------------------
 	// addEntry(sessionId, projectPath, entry)
 	// ----------------------------------------------------------------
+	describe('importEntries() (a Move Back brings a host agent History home, L39)', () => {
+		const sessionFile = path.join(
+			'/mock/userData',
+			'history',
+			`${sanitizeSessionId('session-1')}${HISTORY_JSONL_EXT}`
+		);
+
+		it('appends only the ids the file does not hold, in one write, and says how many', async () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === sessionFile);
+			mockReadFileSync.mockReturnValue(createJsonlFileData([createMockEntry({ id: 'here' })]));
+
+			const added = await manager.importEntries('session-1', [
+				createMockEntry({ id: 'here' }),
+				createMockEntry({ id: 'a' }),
+				createMockEntry({ id: 'b' }),
+			]);
+
+			expect(added).toBe(2);
+			expect(mockAppendFileSync).toHaveBeenCalledTimes(1);
+			expect(parseJsonlWrite(mockAppendFileSync.mock.calls[0][1]).map((e) => e.id)).toEqual([
+				'a',
+				'b',
+			]);
+		});
+
+		it('writes nothing when every entry is already here', async () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === sessionFile);
+			mockReadFileSync.mockReturnValue(createJsonlFileData([createMockEntry({ id: 'here' })]));
+			expect(await manager.importEntries('session-1', [createMockEntry({ id: 'here' })])).toBe(0);
+			expect(mockAppendFileSync).not.toHaveBeenCalled();
+		});
+
+		it('throws on a failed write, where addEntry only logs it (Greptile on #2181)', async () => {
+			mockExistsSync.mockReturnValue(false);
+			mockAppendFileSync.mockImplementationOnce(() => {
+				throw new Error('ENOSPC: no space left on device');
+			});
+			await expect(
+				manager.importEntries('session-1', [createMockEntry({ id: 'a' })])
+			).rejects.toThrow('ENOSPC');
+		});
+	});
+
 	describe('addEntry()', () => {
 		const sessionFile = path.join(
 			'/mock/userData',

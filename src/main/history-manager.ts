@@ -549,6 +549,31 @@ export class HistoryManager {
 	}
 
 	/**
+	 * Add entries another machine wrote for this agent (a Federation Move Back brings a host's
+	 * entries home): each id once, appended oldest first in one write on the session's queue, so the
+	 * check for ids already here and the append cannot interleave with a Delete, a Validate, or a
+	 * rotation. Unlike `addEntry`, a failed write THROWS: the caller must not go on (and remove the
+	 * host's copy) as if the entries were saved. Returns how many were new.
+	 */
+	async importEntries(sessionId: string, entries: readonly HistoryEntry[]): Promise<number> {
+		if (entries.length === 0) return 0;
+		const limit = this.resolveMaxEntries();
+		return this.writeQueue.enqueue(sessionId, async () => {
+			await this.ensureJsonlFile(sessionId);
+			const here = new Set((await this.readEntriesInFileOrder(sessionId)).map((e) => e.id));
+			const fresh = entries.filter((entry) => !here.has(entry.id));
+			if (fresh.length === 0) return 0;
+			await fsp.appendFile(
+				this.getSessionFilePath(sessionId),
+				fresh.map((entry) => serializeHistoryEntryLine(entry)).join(''),
+				'utf-8'
+			);
+			await this.maybeRotate(sessionId, limit);
+			return fresh.length;
+		});
+	}
+
+	/**
 	 * Ensure a JSONL file exists for this session, migrating a legacy `.json`
 	 * first if one is present. Cheap on the steady-state path (one `access`).
 	 */
