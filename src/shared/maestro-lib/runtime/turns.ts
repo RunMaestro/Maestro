@@ -238,9 +238,6 @@ interface TurnItem extends QueueItem {
 type Verdict = { ok: true } | { ok: false; message: string };
 
 /** A start the provider layer refused before anything ran, with its reason. */
-/** How many started queue items a host remembers to know a resend of a message one ran. */
-const MAX_REMEMBERED_STARTED_ITEMS = 1_000;
-
 class TurnStartRefusal extends Error {
 	constructor(
 		readonly reason: RunAgentTurnRefusal,
@@ -470,16 +467,27 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * The queue items whose turns this host started since it came up, newest last, so a resend of
-	 * a message one of them ran is known (`startItem`). Bounded: the oldest is let go.
+	 * For each message (agent, tab, entry id) a copy of which this host started since it came up,
+	 * the item id of that copy, so a resend of it that waited meanwhile is known (`startItem`). Kept
+	 * while that copy runs or another copy of the message waits, however many other turns start
+	 * (CodeRabbit on #2167); let go once neither holds (`releaseStartedEntry()`).
 	 */
-	const startedItemIds = new Set<string>();
-	const noteStartedItem = (id: string) => {
-		startedItemIds.delete(id);
-		startedItemIds.add(id);
-		if (startedItemIds.size > MAX_REMEMBERED_STARTED_ITEMS) {
-			startedItemIds.delete(startedItemIds.values().next().value as string);
-		}
+	const startedEntries = new Map<string, string>();
+	const startedEntryKey = (agentId: string, tabId: string, entryId: string) =>
+		`${agentId}\u0000${tabId}\u0000${entryId}`;
+	const startedEntryKeyOf = (agentId: string, item: TurnItem) =>
+		startedEntryKey(agentId, item.tabId, item.entryId ?? '');
+	const releaseStartedEntry = (agentId: string, item: TurnItem) => {
+		if (!item.entryId) return;
+		const key = startedEntryKey(agentId, item.tabId, item.entryId);
+		const ranBy = startedEntries.get(key);
+		if (ranBy === undefined) return;
+		const queue = queues.get(agentId);
+		if (queue?.busyItemId(item.tabId) === ranBy) return;
+		const waits = queue
+			?.items()
+			.some((queued) => queued.tabId === item.tabId && queued.entryId === item.entryId);
+		if (!waits) startedEntries.delete(key);
 	};
 
 	async function startItem(agentId: string, item: TurnItem): Promise<QueuedTurnHandle> {
@@ -499,14 +507,15 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// The message ran once, from that copy, and never runs again (CodeRabbit on #2167). Only a
 		// copy started since this host came up counts: the turn a crash cut is run again.
 		if (item.entryId) {
+			const key = startedEntryKey(agentId, item.tabId, item.entryId);
 			const sent = { id: item.entryId, text: item.text, images: item.images ?? [] };
 			const logs = (Array.isArray(tabRecord.logs) ? tabRecord.logs : []) as LogEntryRecord[];
 			const ranBy = logs.find((entry) => isSameUserEntry(entry, sent))?.queuedItemId;
-			if (ranBy && ranBy !== item.id && startedItemIds.has(ranBy)) {
+			if (ranBy && ranBy !== item.id && startedEntries.get(key) === ranBy) {
 				return { done: Promise.resolve(), interrupt: () => undefined };
 			}
+			startedEntries.set(key, item.id);
 		}
-		noteStartedItem(item.id);
 
 		const agent = toTurnAgent(record);
 		if (!agent) throw new Error('The agent has no working directory to run in.');
@@ -986,8 +995,16 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				break;
 			case 'ended':
 				wakeIdleWaiters(agentId, event.item.tabId);
+				releaseStartedEntry(agentId, event.item);
+				break;
+			case 'removed':
+				releaseStartedEntry(agentId, event.item);
 				break;
 			case 'dispatch-failed': {
+				// The copy that set the record did not start: a later copy may run the message.
+				if (startedEntries.get(startedEntryKeyOf(agentId, event.item)) === event.item.id) {
+					startedEntries.delete(startedEntryKeyOf(agentId, event.item));
+				}
 				if (event.held) {
 					logger.warn(`A turn could not start: ${event.error.message}`, LOG_CONTEXT);
 					emitTurn(agentId, event.item.tabId, {

@@ -1641,6 +1641,11 @@ describe('runtime turns', () => {
 				expect(argvFiles).toHaveLength(1);
 			});
 
+			/** How many provider turns ran a message with these words (a History synopsis is not one). */
+			const runsOf = (text: string) =>
+				launched.filter((turn) => (turn as { entry?: { text?: string } }).entry?.text === text)
+					.length;
+
 			// CodeRabbit on #2167: two resends of a message that wait behind another turn. The first
 			// runs it; the second, when its turn comes, never runs the message again.
 			it('never runs a waiting resend of a message an earlier copy ran while it waited', async () => {
@@ -1664,7 +1669,31 @@ describe('runtime turns', () => {
 				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
 				// One run for the other message, one for this one: never a second for this one.
 				expect(turn.outcomes()).toHaveLength(2);
-				expect(argvFiles).toHaveLength(2);
+				expect(runsOf('Summarize the docs')).toBe(1);
+			});
+
+			// CodeRabbit on #2167: a held copy keeps the record of the copy that ran, through other
+			// turns, and still never runs the message when it is resumed.
+			it('never runs a held resend of a message an earlier copy ran, resumed after other turns', async () => {
+				hold = true;
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Something else first' }));
+				await turn.started();
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				value(await runtime.turns.send('a1', 't1', resend));
+				const held = value(await runtime.turns.send('a1', 't1', { ...resend, held: true }));
+				value(await runtime.turns.send('a1', 't1', { text: 'And then this' }));
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(3);
+				expect(runsOf('Summarize the docs')).toBe(1);
+				const heldId = (held as { itemId?: string }).itemId as string;
+				value(await runtime.turns.queue.setPaused('a1', heldId, false));
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				expect(turn.outcomes()).toHaveLength(3);
+				expect(runsOf('Summarize the docs')).toBe(1);
 			});
 
 			// Parity R23: an answer after a LATER message is that message's. The resend of a message
