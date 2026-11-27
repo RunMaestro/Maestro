@@ -5,35 +5,46 @@
  */
 
 import { useMemo } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { buildHostedAgentListings } from '../../services/hostedAgents';
 import {
 	agentFederationStatus,
+	sameFederationStatus,
 	type AgentFederationStatus,
 	type LiftableAgent,
 } from '../../utils/peerMirrorView';
 
-/** How `agent` stands with Federation (`agentFederationStatus()`), kept in step with the mirror. */
+const LOCAL_STATUS: AgentFederationStatus = { kind: 'local' };
+
+/**
+ * How `agent` stands with Federation (`agentFederationStatus()`), kept in step with the mirror.
+ * Re-renders only when the status draws differently (`sameFederationStatus()`): the mirror
+ * replaces its peer on every frame of a hosted turn, and a subscription to the whole peer map drew
+ * every mode pill again per frame, a commit of its own each time (L36).
+ */
 export function useAgentFederationStatus(
 	agent: LiftableAgent | null | undefined
 ): AgentFederationStatus {
-	const order = usePeerMirrorStore((s) => s.order);
-	const peers = usePeerMirrorStore((s) => s.peers);
 	// Hosted agents switched off: a hosted agent stands as the SSH agent it was.
 	const hostingOn = useSettingsStore((s) => s.federationHostedAgents === true);
 	const liftedTo = hostingOn ? agent?.liftedTo : undefined;
 	const ssh = agent?.sessionSshRemoteConfig;
 	const sshEnabled = ssh?.enabled === true;
 	const remoteId = ssh?.remoteId ?? null;
-	return useMemo(() => {
-		if (!liftedTo && (!sshEnabled || !remoteId)) return { kind: 'local' };
-		return agentFederationStatus(
-			{ liftedTo, sessionSshRemoteConfig: { enabled: sshEnabled, remoteId } },
-			order.flatMap((peerId) => (peers[peerId] ? [peers[peerId]] : []))
-		);
-	}, [liftedTo, sshEnabled, remoteId, order, peers]);
+	return useStoreWithEqualityFn(
+		usePeerMirrorStore,
+		(s) => {
+			if (!liftedTo && (!sshEnabled || !remoteId)) return LOCAL_STATUS;
+			return agentFederationStatus(
+				{ liftedTo, sessionSshRemoteConfig: { enabled: sshEnabled, remoteId } },
+				s.order.flatMap((peerId) => (s.peers[peerId] ? [s.peers[peerId]] : []))
+			);
+		},
+		sameFederationStatus
+	);
 }
 
 /**
