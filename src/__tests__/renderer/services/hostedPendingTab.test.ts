@@ -208,6 +208,49 @@ describe('New Tab while the link is down (R15)', () => {
 		expect(current().activeTabId).toBe('host-own');
 	});
 
+	// Parity R27: the tab stays a copy here (a kept message is keyed on it), and its first send goes
+	// into the tab the older host made for it, never into yet another new one.
+	it('sends the kept message of a tab an older host made under its own id into that host tab (R27)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		useSessionStore.setState({
+			sessions: [
+				{
+					...current(),
+					executionQueue: [{ id: 'kept', timestamp: 1, tabId, type: 'message', text: 'continue' }],
+				},
+			],
+		});
+		hydrateHost(['t1'], 'connected');
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) => {
+			if (action.kind === 'new-tab') {
+				return { ok: true, result: { kind: 'new-tab', tabId: 'host-own' } };
+			}
+			if (action.kind === 'send') {
+				return { ok: true, result: { kind: 'send', receipt: { status: 'started' } } };
+			}
+			return { ok: true, result: { kind: action.kind } };
+		});
+
+		createPendingHostTabs(current());
+		await flush();
+		// The copy keeps its id: the kept message is keyed on it.
+		expect(current().aiTabs.map((tab) => tab.id)).toContain(tabId);
+
+		await act(async () => {
+			await sendHostedTurn(current(), tabId, 'continue', []);
+		});
+
+		const creates = act$.mock.calls.filter(([, , action]) => action?.kind === 'new-tab');
+		expect(creates).toHaveLength(1);
+		const send = act$.mock.calls.find(([, , action]) => action?.kind === 'send')?.[2];
+		expect(send).toMatchObject({ tabId: 'host-own', text: 'continue' });
+	});
+
 	it('leaves one tab when the report of an older host draws its tab before the answer (Greptile on #2161)', async () => {
 		const session = seed('hosted');
 		hydrateHost(['t1'], 'lost');

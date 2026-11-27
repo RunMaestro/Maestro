@@ -336,6 +336,12 @@ function mayHaveBeenDone(answer: MirroredActionAnswer | null): boolean {
 		answer.code === 'host-unavailable'
 	);
 }
+/**
+ * The host tab an older host made under its own id for a pending tab that stays a copy here (a kept
+ * message or a retry is keyed on the copy), by the copy's `peer/agent/tab`: the copy's sends go into
+ * that tab (`sendHostedTurn()`), never into yet another one.
+ */
+const copyHostTabs = new Map<string, string>();
 /** When making a pending tab last failed, by `peer/agent/tab`: the link-back path waits a while. */
 const pendingTabFailedAt = new Map<string, number>();
 /** How long the link-back path waits after a failed try before it asks the host again. */
@@ -401,7 +407,10 @@ export function createPendingHostTab(
 			return null;
 		}
 		const hostTabId = adoptHostTabId(sessionId, tabId, result.tabId);
-		if (!hostTabId) return result.tabId;
+		if (!hostTabId) {
+			copyHostTabs.set(key, result.tabId);
+			return result.tabId;
+		}
 		const local = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
 			(candidate) => candidate.id === hostTabId
 		);
@@ -654,6 +663,17 @@ export async function sendHostedTurn(
 				message: `The Maestro host on ${target.peerId} made that tab under its own id, so the message continues in a new tab there.`,
 			});
 		}
+	}
+	// The copy of a pending tab an older host made under its own id (the link-back path made it):
+	// its message goes into that host tab, as the first send would have.
+	const madeForCopy = tabId ? copyHostTabs.get(hostTabKey(target, tabId)) : undefined;
+	if (!isHostTab(target, hostTabId) && madeForCopy && isHostTab(target, madeForCopy)) {
+		hostTabId = madeForCopy;
+		notifyToast({
+			color: 'theme',
+			title: 'Sent in a new tab',
+			message: `The Maestro host on ${target.peerId} made that tab under its own id, so the message continues in a new tab there.`,
+		});
 	}
 	if (!isHostTab(target, hostTabId)) {
 		hostTabId = (await openHostedTab(session)) ?? undefined;
