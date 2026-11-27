@@ -18,6 +18,7 @@ import { useAgentThinkingListener } from '../../../../renderer/hooks/agent/inter
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
 import { BridgeTransportError } from '../../../../shared/bridgeError';
 import { captureException } from '../../../../renderer/utils/sentry';
+import { registerBatchedOutputFlush } from '../../../../renderer/services/sessionPersistenceFlush';
 
 vi.mock('../../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
 
@@ -87,6 +88,41 @@ beforeEach(() => {
 });
 
 describe('owning host transcript identities', () => {
+	// Parity R29: a desktop host's turn end reaches a Federation client before this window's exit
+	// listener flushes the output batch. A read begun at that end must still hold the reply, or the
+	// client drops its live copy of the reply for a blank.
+	it('answers a transcript read with the output still in the batch (R29)', async () => {
+		const sync = renderHook(() => useSessionTranscriptSync(ready));
+		const batch = renderHook(() => useBatchedSessionUpdates());
+		registerBatchedOutputFlush(() => batch.result.current.flushNow());
+		const session = createMockSession({
+			id: 'host',
+			aiTabs: [
+				createMockAITab({
+					id: 'tab',
+					logs: [{ id: 'ask', source: 'user', text: 'Explain', timestamp: 1 }],
+				}),
+			],
+		});
+		await act(async () => {
+			useSessionStore.setState({ sessions: [session] });
+		});
+		try {
+			await act(async () => {
+				batch.result.current.appendLog('host', 'tab', true, 'The reply.');
+				request({ sessionId: 'host', tabId: 'tab', requestId: 'after-end' });
+			});
+			const answer = vi
+				.mocked(window.maestro.sessions.publishTranscript)
+				.mock.calls.find(([, requestId]) => requestId === 'after-end')?.[0];
+			expect(answer?.upserts.map((row) => row.text)).toContain('The reply.');
+		} finally {
+			registerBatchedOutputFlush(null);
+			batch.unmount();
+			sync.unmount();
+		}
+	});
+
 	it('publishes ordered native observation commits for same-length rewrites and snooze', async () => {
 		const { unmount } = renderHook(() => useSessionTranscriptSync(ready));
 		const session = createMockSession({

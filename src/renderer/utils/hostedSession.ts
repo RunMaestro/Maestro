@@ -319,20 +319,41 @@ function withDrawnEntriesKept(next: LogEntry[], local: readonly LogEntry[]): Log
 	let kept = 0;
 	const out = next.map((entry) => {
 		const before = prior.get(entry.id);
-		if (!before || before === entry || !drawsTheSame(before, entry)) return entry;
+		if (!before || before === entry) return entry;
+		// The same pair as an earlier pass: `persistedView()` hands back its cached objects, which
+		// are never the ones `local` kept, so without this every entry is compared on every chunk
+		// of a streaming reply (R29). Both objects are never changed in place.
+		if (keptLocalEntry.get(entry) !== before) {
+			if (!drawsTheSame(before, entry)) return entry;
+			keptLocalEntry.set(entry, before);
+		}
 		kept += 1;
 		return before;
 	});
 	return kept === 0 ? next : out;
 }
 
+/** The local entry a host entry object was found to draw the same as (`withDrawnEntriesKept()`). */
+const keptLocalEntry = new WeakMap<LogEntry, LogEntry>();
+
+/** Test-only: how many times `drawsTheSame()` compared two entries since the last reset. */
+let entryCompares = 0;
+export function __hostedEntryComparesForTests(reset = false): number {
+	const count = entryCompares;
+	if (reset) entryCompares = 0;
+	return count;
+}
+
 /** Whether two entries under one id draw the same: every field equal, nested ones by value. */
 function drawsTheSame(a: LogEntry, b: LogEntry): boolean {
+	entryCompares += 1;
 	const fields = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof LogEntry>;
 	for (const field of fields) {
 		const x = a[field];
 		const y = b[field];
+		// By identity first: a tool card's `metadata` is turned into a string only when it differs.
 		if (x === y) continue;
+		// String arrays only (`images`, `options`): compared item by item.
 		if (Array.isArray(x) && Array.isArray(y)) {
 			if (x.length !== y.length || x.some((value, i) => value !== y[i])) return false;
 			continue;
