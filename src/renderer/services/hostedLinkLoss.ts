@@ -152,30 +152,39 @@ export type CutTurnFate = 'send' | 'answered' | 'errored' | 'tab-gone' | 'entry-
 const erroredResends = new Map<string, string>();
 
 /**
- * The error a host recorded for the turn of the user message at `at`: the first error entry of
- * that turn, as its structured error when the host kept one.
+ * The error a host recorded for the turn of the user message at `at`: the error of its LAST failed
+ * attempt (a retry runs into the same entry, and each end stamp closes one attempt, as
+ * `turnFateAfter()` reads them; CodeRabbit on #2167), as its structured error when the host kept
+ * one.
  */
 function turnErrorAfter(
 	sessionId: string,
 	entries: readonly LogEntryRecord[],
 	at: number
 ): AgentError | undefined {
+	let latest: LogEntryRecord | undefined;
+	let attempt: LogEntryRecord | undefined;
 	for (let i = at + 1; i < entries.length; i += 1) {
 		const entry = entries[i];
-		if (entry.source === 'user' && entry.steered !== true) return undefined;
-		if (entry.source !== 'error') continue;
-		if (entry.agentError) return entry.agentError as AgentError;
-		const session = selectSessionById(sessionId)(useSessionStore.getState());
-		return {
-			type: 'unknown',
-			message: entry.text,
-			recoverable: true,
-			agentId: session?.toolType ?? 'claude-code',
-			sessionId,
-			timestamp: entry.timestamp,
-		};
+		if (entry.source === 'user' && entry.steered !== true) break;
+		if (entry.source === 'error' && !attempt) attempt = entry;
+		if (entry.turnEnded === true) {
+			if (attempt) latest = attempt;
+			attempt = undefined;
+		}
 	}
-	return undefined;
+	const failed = attempt ?? latest;
+	if (!failed) return undefined;
+	if (failed.agentError) return failed.agentError as AgentError;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	return {
+		type: 'unknown',
+		message: failed.text,
+		recoverable: true,
+		agentId: session?.toolType ?? 'claude-code',
+		sessionId,
+		timestamp: failed.timestamp,
+	};
 }
 
 /**

@@ -287,6 +287,25 @@ describe('mergeHostedLogs', () => {
 			expect(mergeHostedLogs(saved, [record('h1'), copy, answer], undefined)).toBe(saved);
 		});
 
+		// CodeRabbit on #2167: the copy, the bubble and the card stamped at the same time (the clock
+		// skew allowed makes it reachable): the copy still takes the bubble's place, above the card.
+		it('draws the copy above the card when the copy, the bubble and the card share a time', () => {
+			const sameBubble = local('k1', {
+				text: 'hello',
+				timestamp: 5,
+				keptForHost: true,
+				keptSentAt: 5,
+			});
+			const sameCard = local('card', { source: 'system', timestamp: 5, retryOutageId: 'o1' });
+			const copy = { ...record('k1', 'hello'), timestamp: 5 };
+			const saved = mergeHostedLogs(
+				[local('h1'), sameBubble, sameCard],
+				[record('h1'), copy, answer],
+				undefined
+			);
+			expect(order(saved, 'k1')).toEqual(sshOrder);
+		});
+
 		it('a turn that ended before any live frame: saved at once', () => {
 			const copy = { ...record('k1', 'hello'), timestamp: 20 };
 			const saved = mergeHostedLogs(kept, [record('h1'), copy, answer], undefined);

@@ -44,6 +44,7 @@ import {
 	turnEntryIdFor,
 	tabRunsUserEntry,
 	userEntryAnswered,
+	userEntryFate,
 	type RuleContext,
 	type TabSessionUpdate,
 } from '../agents/rules';
@@ -518,7 +519,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			const sent = { id: item.entryId, text: item.text, images: item.images ?? [] };
 			const logs = (Array.isArray(tabRecord.logs) ? tabRecord.logs : []) as LogEntryRecord[];
 			const ranBy = logs.find((entry) => isSameUserEntry(entry, sent))?.queuedItemId;
-			if (ranBy && ranBy !== item.id && startedEntries.get(key) === ranBy) {
+			// A copy that ended on its own error is not one that ran: its retry runs into the entry,
+			// as `send()` admits it (`userEntryAnswered()`; CodeRabbit on #2167).
+			if (
+				ranBy &&
+				ranBy !== item.id &&
+				startedEntries.get(key) === ranBy &&
+				userEntryFate(logs, sent) !== 'errored'
+			) {
 				return { done: Promise.resolve(), interrupt: () => undefined };
 			}
 			// A copy edited while it waited is another message: it gets an entry of its own

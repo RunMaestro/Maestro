@@ -326,7 +326,7 @@ function atKeptPlaces(
 	for (const entry of entries) {
 		const at =
 			entry.source === 'user' ? (placed.get(entry.id) ?? drawnAt.get(entry.id)) : undefined;
-		if (at === undefined || at >= entry.timestamp) stay.push(entry);
+		if (at === undefined || at > entry.timestamp) stay.push(entry);
 		else moved.push(atPlace(entry, at));
 	}
 	if (moved.length === 0) return entries;

@@ -26,6 +26,7 @@ import { HistoryManager } from '../../../../main/history-manager';
 import { createAgentRepository } from '../../../../shared/maestro-lib/agents/repository';
 import {
 	DEFAULT_TAB_DEFAULTS,
+	turnFateAfter,
 	type RuleContext,
 } from '../../../../shared/maestro-lib/agents/rules';
 import { createEventBus } from '../../../../shared/maestro-lib/client/event-bus';
@@ -202,8 +203,38 @@ describe('turn records', () => {
 			})
 		);
 		expect(transcriptOf(repository.getTab('a1', 't1')!)).toEqual([
-			{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug', turnEnded: true },
+			{
+				id: 'u1',
+				timestamp: 1,
+				source: 'user',
+				text: 'fix the login bug',
+				turnEnded: true,
+				turnEndedAt: 1_700_000_004_200,
+			},
 		]);
+	});
+
+	// CodeRabbit on #2167: a retry into the same entry that answers empty, after an attempt that
+	// ended on its error, is the last attempt: the message reads answered, never errored again.
+	it('reads an empty retry after an errored attempt as answered (R37)', async () => {
+		seed(
+			{},
+			{
+				logs: [
+					{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug' },
+					{ id: 'e1', timestamp: 2, source: 'error', text: 'Overloaded', turnEnded: true },
+				],
+			}
+		);
+		const { recorder: records, repository } = await recorder();
+		await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(turnFateAfter(transcriptOf(repository.getTab('a1', 't1')!), 0)).toBe('answered');
 	});
 
 	// CodeRabbit on #2167: a stamp that could not be written is reported, never a silent success.

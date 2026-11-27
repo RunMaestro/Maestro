@@ -798,16 +798,31 @@ export type TranscriptHostKind = 'headless' | 'desktop';
  * a headless host on the entries the turn appends, a desktop host on the tab's logs when the
  * turn's process exits. With no entry from `from` on, nothing is stamped (the same array).
  */
-export function markTurnEnded<T extends object>(entries: readonly T[], from = 0): T[] {
+export function markTurnEnded<T extends object>(
+	entries: readonly T[],
+	from = 0,
+	endedAt?: number
+): T[] {
+	const stampAt = (i: number, timed: boolean): T[] => {
+		const next = [...entries];
+		next[i] = {
+			...entries[i],
+			turnEnded: true,
+			...(timed && endedAt !== undefined ? { turnEndedAt: endedAt } : {}),
+		};
+		return next;
+	};
 	for (let i = entries.length - 1; i >= Math.max(from, 0); i -= 1) {
 		const entry = entries[i] as Partial<LogEntryRecord>;
 		// Thinking and tool cards are dropped by a later exit in a tab that does not keep them
 		// (`logsKeptAtTurnEnd()`): the stamp goes on an entry that stays (CodeRabbit on #2167).
 		if (entry.source === 'thinking' || entry.source === 'tool') continue;
-		if (entry.turnEnded === true) return entries as T[];
-		const next = [...entries];
-		next[i] = { ...entries[i], turnEnded: true };
-		return next;
+		if (entry.turnEnded !== true) return stampAt(i, i === from);
+		// Already stamped: this attempt wrote nothing that stays (a retry into the same entry that
+		// answered empty). With `endedAt`, its message at `from` records the end, timed after the
+		// attempt before it, so the reader takes this attempt as the last (CodeRabbit on #2167).
+		if (endedAt === undefined || from < 0 || from >= entries.length) return entries as T[];
+		return stampAt(from, true);
 	}
 	return entries as T[];
 }
@@ -838,6 +853,10 @@ export function turnFateAfter(
 ): TurnFate {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
 	let ended: TurnFate | undefined = entries[at]?.turnEnded === true ? 'answered' : undefined;
+	// The message itself stamped as ended after every entry of its turn: an attempt that answered
+	// with nothing that stays, after the attempts before it (`markTurnEnded()` with `endedAt`).
+	const emptyEndAt = entries[at]?.turnEndedAt;
+	let latestAt = Number.NEGATIVE_INFINITY;
 	// What the attempt being read says so far; each stamp ends one, and the next starts clean.
 	let errored = false;
 	let stopped = false;
@@ -846,6 +865,7 @@ export function turnFateAfter(
 	for (; next < entries.length; next += 1) {
 		const entry = entries[next];
 		if (isUserTurnStart(entry)) break;
+		if (typeof entry?.timestamp === 'number') latestAt = Math.max(latestAt, entry.timestamp);
 		if (entry?.source === 'error') errored = true;
 		else if (entry?.source === 'system' && entry.text === TURN_CANCELED_NOTE) stopped = true;
 		else if (entry?.source === 'stdout' || entry?.source === 'ai') output = true;
@@ -854,6 +874,7 @@ export function turnFateAfter(
 			errored = stopped = output = false;
 		}
 	}
+	if (typeof emptyEndAt === 'number' && emptyEndAt >= latestAt) return 'answered';
 	if (errored) return 'errored';
 	if (stopped) return 'stopped';
 	if (!output) return ended ?? 'unended';

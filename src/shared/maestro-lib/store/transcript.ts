@@ -76,6 +76,11 @@ export interface LogEntryRecord extends UnknownFields {
 	 * on a host that stamps did not end: it runs, or died with its host (`turnFateAfter()`).
 	 */
 	turnEnded?: boolean;
+	/**
+	 * On a user message: when its turn's latest attempt ended with nothing of its own that stays
+	 * (a retry into the same entry that answered empty), epoch ms (`markTurnEnded()`).
+	 */
+	turnEndedAt?: number;
 	/** A custom AI command (`/commit`) this user message invoked. */
 	aiCommand?: { command: string; description: string };
 	metadata?: UnknownFields & {

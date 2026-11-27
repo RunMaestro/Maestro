@@ -1332,6 +1332,19 @@ describe('turnFateAfter', () => {
 			'desktop',
 			'unended',
 		],
+		// An empty retry after an errored attempt: its end is on the message, timed after it.
+		[
+			'an errored attempt, then a retry that answered empty',
+			[{ ...stamped(u1), turnEndedAt: 9 }, stamped(error)],
+			'headless',
+			'answered',
+		],
+		[
+			'an empty attempt, then a retry that errored',
+			[{ ...stamped(u1), turnEndedAt: 2 }, stamped(error)],
+			'headless',
+			'errored',
+		],
 		['nothing after it', [u1], 'headless', 'unended'],
 		['only a later message answered', [u1, u2, a2], 'headless', 'unended'],
 		['a host too old to stamp: headless text is its answer', [u1, partial], 'headless', 'answered'],

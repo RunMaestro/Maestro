@@ -5,6 +5,7 @@ import {
 	cleanupExitedTabLogs,
 } from '../../../../../../renderer/hooks/agent/internal/helpers/exitTabCleanup';
 import type { LogEntry } from '../../../../../../renderer/types';
+import { turnFateAfter } from '../../../../../../shared/maestro-lib/agents/rules';
 import { buildHiddenProgressLogId } from '../../../../../../renderer/utils/hiddenProgress';
 
 function log(partial: Partial<LogEntry> & { id: string }): LogEntry {
@@ -94,7 +95,9 @@ describe('exitTabCleanup helpers', () => {
 				['u', false],
 				['b', true],
 			]);
-			expect(cleanupExitedTabLogs(out, 'tab-1', { showThinking: 'on' })).toBe(out);
+			// A second exit with nothing new keeps the turn answered.
+			const again = cleanupExitedTabLogs(out, 'tab-1', { showThinking: 'on' });
+			expect(turnFateAfter(again, 0, 'desktop')).toBe('answered');
 		});
 
 		// CodeRabbit on #2167: a sticky turn that ended on a tool card keeps its stamp on an entry a

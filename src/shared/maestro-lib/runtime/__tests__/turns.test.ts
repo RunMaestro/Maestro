@@ -1699,6 +1699,37 @@ describe('runtime turns', () => {
 				expect(runsOf('Summarize the docs')).toBe(1);
 			});
 
+			// CodeRabbit on #2167: copy A of a message ends on its own error while a held copy C still
+			// waits. The retry of that error is admitted (an errored turn is not answered) and must run
+			// into the entry, not be dropped as a copy of a message that already ran.
+			it('runs the retry of a copy that ended on its own error while a held copy waits', async () => {
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				// C waits, held; A runs at once and ends on its own error.
+				value(await runtime.turns.send('a1', 't1', { ...resend, held: true }));
+				const answers = recordings['claude-code'];
+				recordings['claude-code'] = writeFakeTurn(work, {
+					chunks: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-x' }) + '\n'],
+					close: { code: 1, signal: null },
+				});
+				value(await runtime.turns.send('a1', 't1', resend));
+				await turn.outcome(1);
+				expect(
+					(await transcript(runtime)).map((entry) => [entry.source, !!entry.turnEnded])
+				).toEqual([
+					['user', false],
+					['error', true],
+				]);
+				recordings['claude-code'] = answers;
+				// The retry of that error: admitted, and it runs into the entry.
+				expect(value(await runtime.turns.send('a1', 't1', resend))).not.toEqual({
+					status: 'answered',
+				});
+				await turn.outcome(2);
+				expect(runsOf('Summarize the docs')).toBe(2);
+			});
+
 			// CodeRabbit on #2167: copies A, B and C of a message wait behind another turn, and B is
 			// edited. A runs the message; B is another message now and runs as its own entry; C, when
 			// its turn comes, is still known as the message A ran.

@@ -877,6 +877,29 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
 	});
 
+	// CodeRabbit on #2167: a retry ran into the same entry and failed again, differently. The LAST
+	// attempt's error decides by its own rule: here a login error, which no retry takes.
+	it("retries by the last attempt's error, not the first one's (R37)", async () => {
+		cut();
+		const authError: LogEntry = {
+			id: 'e2',
+			timestamp: 30,
+			source: 'error',
+			text: 'Invalid API key. Please run /login.',
+			agentError: {
+				type: 'auth_expired',
+				message: 'Invalid API key. Please run /login.',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: 30,
+			},
+			turnEnded: true,
+		};
+		await hostBack('idle', [QUESTION, OVERLOADED, authError]);
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+	});
+
 	// CodeRabbit on #2167: the tab's retry holds another message when the cut message's turn ends on
 	// its own error. That error must not reschedule the other message; the cut copy waits behind
 	// it, unsent, and is decided from the host again when its own turn comes.

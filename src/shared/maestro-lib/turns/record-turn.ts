@@ -330,7 +330,7 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 				? await options.repository.replaceTranscriptEntry(
 						turn.agentId,
 						turn.tabId,
-						markTurnEnded([userEntry])[0],
+						markTurnEnded([userEntry], 0, turn.endedAt)[0],
 						...(turn.writeGuard ? [turn.writeGuard] : [])
 					)
 				: appended;

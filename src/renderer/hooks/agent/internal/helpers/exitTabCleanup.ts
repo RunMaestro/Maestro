@@ -48,5 +48,13 @@ export function cleanupExitedTabLogs(
 	tab: { showThinking?: ThinkingMode }
 ): LogEntry[] {
 	const cleaned = applyExitThinkingPolicy(removeHiddenProgressLog(logs, tabId), tab);
-	return markTurnEnded(cleaned);
+	// The turn's message: a retry into it that leaves nothing of its own is stamped there.
+	let message = -1;
+	for (let i = cleaned.length - 1; i >= 0; i -= 1) {
+		if (cleaned[i].source === 'user' && !cleaned[i].steered) {
+			message = i;
+			break;
+		}
+	}
+	return markTurnEnded(cleaned, Math.max(message, 0), Date.now());
 }
