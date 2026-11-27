@@ -415,6 +415,22 @@ export const DEFAULT_CUE_SETTINGS: CueSettings = {
 	failure_alert_threshold: 3,
 };
 
+/**
+ * Drop the settings that belong to ONE cue.yaml from a settings object, so the
+ * Settings -> Encore Features -> Maestro Cue panel neither reads nor writes
+ * them. That panel reads the first agent's settings and saves the whole object
+ * into EVERY cue.yaml, so a per-root value carried through it would overwrite
+ * every other project's own choice:
+ * - `owner_agent_id` names an agent at that root only (a broadcast owner flags
+ *   every other project with a bogus ownership warning).
+ * - `failure_alert_threshold` is a per-project choice the panel does not show
+ *   (a broadcast would replace one project's `0` opt-out with another's `3`).
+ */
+export function withoutPerRootCueSettings(settings: CueSettings): CueSettings {
+	const { owner_agent_id: _owner, failure_alert_threshold: _threshold, ...global } = settings;
+	return global;
+}
+
 /** Top-level Cue configuration */
 export interface CueConfig {
 	subscriptions: CueSubscription[];

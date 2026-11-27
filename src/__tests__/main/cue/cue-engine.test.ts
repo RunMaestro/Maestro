@@ -16,7 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as yaml from 'js-yaml';
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
-import type { CueEventRecord } from '../../../main/cue/cue-db';
+import type { CueFailureStreakRecord } from '../../../main/cue/cue-db';
 import { ORPHANED_RUN_MESSAGE } from '../../../main/cue/cue-recovery-service';
 
 // Mock the yaml loader
@@ -72,12 +72,15 @@ vi.mock('../../../main/cue/cue-task-scanner', async () => {
 const mockInitCueDb = vi.fn();
 const mockCloseCueDb = vi.fn();
 const mockPruneCueEvents = vi.fn();
-const mockGetRecentCueEvents = vi.fn<(...args: unknown[]) => CueEventRecord[]>(() => []);
+const mockGetCueFailureStreakRecords = vi.fn<(orphanedMessage: string) => CueFailureStreakRecord[]>(
+	() => []
+);
 vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: (...args: unknown[]) => mockInitCueDb(...args),
 	closeCueDb: () => mockCloseCueDb(),
 	pruneCueEvents: (...args: unknown[]) => mockPruneCueEvents(...args),
-	getRecentCueEvents: (...args: unknown[]) => mockGetRecentCueEvents(...args),
+	getCueFailureStreakRecords: (orphanedMessage: string) =>
+		mockGetCueFailureStreakRecords(orphanedMessage),
 	failOrphanedRunningEvents: () => 0,
 	isCueDbReady: () => true,
 	recordCueEvent: vi.fn(),
@@ -4012,46 +4015,92 @@ describe('CueEngine', () => {
 			engine.stop();
 		});
 
-		it('re-seeds streaks from cue_events on start, skipping runs orphaned by an engine exit', async () => {
+		/** One open streak as `getCueFailureStreakRecords` returns it. */
+		const storedStreak = (consecutiveFailures: number): CueFailureStreakRecord => ({
+			sessionId: 'session-1',
+			subscriptionName: 'sms-poll',
+			consecutiveFailures,
+			firstFailedAt: Date.UTC(2026, 10, 17, 1),
+			lastFailedAt: Date.UTC(2026, 10, 17, 2),
+			lastStatus: 'failed',
+			lastError: 'Claude Code trust prompt: No, exit',
+		});
+
+		it('restores a failing streak from cue_events on start without announcing it again', async () => {
 			mockLoadCueConfig.mockReturnValue(triggerConfig());
-			const failedRow = (id: string, at: number, errorMessage: string): CueEventRecord => ({
-				id,
-				type: 'cli.trigger',
-				triggerName: 'sms-poll',
-				sessionId: 'session-1',
-				subscriptionName: 'sms-poll',
-				status: 'failed',
-				createdAt: at,
-				completedAt: at + 5,
-				payload: null,
-				errorMessage,
-			});
-			// Newest first, as getRecentCueEvents returns them. The newest row is
-			// one the start-up sweep settled because the previous engine died.
-			mockGetRecentCueEvents.mockReturnValueOnce([
-				failedRow('orphan', 3_000, ORPHANED_RUN_MESSAGE),
-				failedRow('real-2', 2_000, 'exit 1'),
-				failedRow('real-1', 1_000, 'exit 1'),
-			]);
-			const deps = createMockDeps({ onCueRun: scriptedRuns(['failed']) });
+			mockGetCueFailureStreakRecords.mockReturnValueOnce([storedStreak(5)]);
+			const deps = createMockDeps({ onCueRun: scriptedRuns(['failed', 'completed']) });
 			const engine = new CueEngine(deps);
 			engine.start();
 
-			// Two real failures, not three: the orphan neither counts nor resets.
-			expect(engine.getFailureStreaks()).toEqual([
+			// Orphaned runs are excluded in SQL by the sweep's message.
+			expect(mockGetCueFailureStreakRecords).toHaveBeenCalledWith(ORPHANED_RUN_MESSAGE);
+			expect(engine.getStatus()[0].failingSubscriptions).toEqual([
 				expect.objectContaining({
+					sessionName: 'Test Session',
 					subscriptionName: 'sms-poll',
-					consecutiveFailures: 2,
-					failing: false,
+					consecutiveFailures: 5,
+					firstFailedAt: '2026-11-17T01:00:00.000Z',
+					lastError: 'Claude Code trust prompt: No, exit',
+					failing: true,
 				}),
 			]);
-			expect(streakPayloads(deps, 'subscriptionFailing')).toHaveLength(0);
 
-			// The next real failure is the third, so it alerts.
+			// The user was told before the restart: the next failure is quiet...
 			await runTimes(engine, 1);
-			const alerts = streakPayloads(deps, 'subscriptionFailing');
-			expect(alerts).toHaveLength(1);
-			expect(alerts[0]).toMatchObject({ consecutiveFailures: 3 });
+			expect(streakPayloads(deps, 'subscriptionFailing')).toHaveLength(0);
+			// ...but recovery is still announced.
+			await runTimes(engine, 1);
+			expect(streakPayloads(deps, 'subscriptionRecovered')).toEqual([
+				expect.objectContaining({ consecutiveFailures: 6 }),
+			]);
+
+			engine.stop();
+		});
+
+		it('alerts on the live run that takes a restored streak to the threshold', async () => {
+			mockLoadCueConfig.mockReturnValue(triggerConfig());
+			mockGetCueFailureStreakRecords.mockReturnValueOnce([storedStreak(2)]);
+			const deps = createMockDeps({ onCueRun: scriptedRuns(['failed']) });
+			const engine = new CueEngine(deps);
+			engine.start();
+			expect(engine.getFailureStreaks()[0]).toMatchObject({
+				consecutiveFailures: 2,
+				failing: false,
+			});
+
+			await runTimes(engine, 1);
+			expect(streakPayloads(deps, 'subscriptionFailing')).toEqual([
+				expect.objectContaining({ consecutiveFailures: 3, escalated: false }),
+			]);
+
+			engine.stop();
+		});
+
+		it('re-judges existing streaks when failure_alert_threshold changes in cue.yaml', async () => {
+			mockLoadCueConfig.mockReturnValue(triggerConfig());
+			const deps = createMockDeps({ onCueRun: scriptedRuns(Array(3).fill('failed')) });
+			const engine = new CueEngine(deps);
+			engine.start();
+			await runTimes(engine, 3);
+			expect(engine.getStatus()[0].failingSubscriptions).toHaveLength(1);
+
+			// Alert turned off: no longer failing, but the count is kept.
+			mockLoadCueConfig.mockReturnValue(triggerConfig({ failure_alert_threshold: 0 }));
+			engine.refreshSession('session-1', '/projects/test');
+			expect(engine.getStatus()[0].failingSubscriptions).toBeUndefined();
+			expect(engine.getFailureStreaks()[0]).toMatchObject({
+				consecutiveFailures: 3,
+				alertThreshold: 0,
+				failing: false,
+			});
+
+			// Back on at 2: already past it, so it reads failing again at once.
+			mockLoadCueConfig.mockReturnValue(triggerConfig({ failure_alert_threshold: 2 }));
+			engine.refreshSession('session-1', '/projects/test');
+			expect(engine.getStatus()[0].failingSubscriptions).toEqual([
+				expect.objectContaining({ consecutiveFailures: 3, alertThreshold: 2 }),
+			]);
 
 			engine.stop();
 		});

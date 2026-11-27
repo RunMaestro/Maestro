@@ -368,6 +368,23 @@ describe('getSettings', () => {
 		expect(settings).toEqual(DEFAULT_CUE_SETTINGS);
 	});
 
+	it('strips per-root failure_alert_threshold so the Encore panel cannot broadcast it', () => {
+		const state = makeState(
+			makeConfig([], {
+				timeout_minutes: 60,
+				timeout_on_fail: 'continue',
+				max_concurrent: 1,
+				queue_size: 50,
+				failure_alert_threshold: 0,
+			})
+		);
+		const deps = makeDeps({ getSessionStates: () => new Map([['s1', state]]) });
+		const settings = createCueQueryService(deps).getSettings();
+
+		expect(settings).not.toHaveProperty('failure_alert_threshold');
+		expect(settings.timeout_minutes).toBe(60);
+	});
+
 	it('strips per-root owner_agent_id so it is never exposed as a global setting', () => {
 		// Regression: owner_agent_id is per-root (it names an agent that must live
 		// at that cue.yaml's root). When getSettings surfaced the first session's

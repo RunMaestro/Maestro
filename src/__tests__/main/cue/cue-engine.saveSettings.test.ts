@@ -49,6 +49,7 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	closeCueDb: vi.fn(),
 	pruneCueEvents: vi.fn(),
 	failOrphanedRunningEvents: vi.fn(() => 0),
+	getCueFailureStreakRecords: vi.fn(() => []),
 	isCueDbReady: () => true,
 	recordCueEvent: vi.fn(),
 	updateCueEventStatus: vi.fn(),
@@ -256,6 +257,45 @@ describe('CueEngine.saveSettings', () => {
 		expect(reparsed.settings.timeout_minutes).toBe(60);
 		// ...but the root keeps its OWN owner, not the foreign one we passed in.
 		expect(reparsed.settings.owner_agent_id).toBe('this-roots-own-owner');
+	});
+
+	it('never propagates failure_alert_threshold, and writes none into a root that had none', () => {
+		// The Encore panel saves the whole settings object it read from the FIRST
+		// agent. Broadcasting this per-project value would replace another
+		// project's `0` opt-out with `3`.
+		const engine = startEngineWithSessions([
+			{ id: 's1', projectRoot: '/opted-out', config: createMockConfig() },
+			{ id: 's2', projectRoot: '/unset', config: createMockConfig() },
+		]);
+		const files: Record<string, string> = {
+			'/opted-out': yaml.dump({ settings: { timeout_minutes: 30, failure_alert_threshold: 0 } }),
+			'/unset': yaml.dump({ settings: { timeout_minutes: 30 } }),
+		};
+		mockReadCueConfigFile.mockImplementation((root: string) => ({
+			filePath: `${root}/.maestro/cue.yaml`,
+			raw: files[root],
+		}));
+
+		engine.saveSettings({
+			timeout_minutes: 45,
+			timeout_on_fail: 'break',
+			max_concurrent: 1,
+			queue_size: 10,
+			failure_alert_threshold: 3,
+		});
+
+		const written = Object.fromEntries(
+			mockWriteCueConfigFile.mock.calls.map(([root, content]) => [
+				root,
+				(yaml.load(content) as { settings: Record<string, unknown> }).settings,
+			])
+		);
+		expect(written['/opted-out']).toMatchObject({
+			timeout_minutes: 45,
+			failure_alert_threshold: 0,
+		});
+		expect(written['/unset'].timeout_minutes).toBe(45);
+		expect(written['/unset']).not.toHaveProperty('failure_alert_threshold');
 	});
 
 	it('mirrors new settings into in-memory state so getSettings() returns them immediately', () => {

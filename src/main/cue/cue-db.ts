@@ -1257,6 +1257,86 @@ export function getCueEventsForStats(
 	}));
 }
 
+/** One subscription's open failure streak as recorded in `cue_events`. */
+export interface CueFailureStreakRecord {
+	sessionId: string;
+	subscriptionName: string;
+	consecutiveFailures: number;
+	/** Epoch ms the first failure of the streak ended. */
+	firstFailedAt: number;
+	/** Epoch ms the newest failure ended. */
+	lastFailedAt: number;
+	lastStatus: 'failed' | 'timeout';
+	lastError: string | null;
+}
+
+/**
+ * Every open failure streak: per (agent, subscription), the `failed` /
+ * `timeout` runs since that subscription's last `completed` run. Read once at
+ * engine start so a restart neither forgets a failing subscription nor
+ * re-alerts for it. Mirrors the live tracker in `cue-failure-streak.ts`:
+ * - `stopped` rows neither count nor reset (they are simply not selected).
+ * - `<name>:output` rows are skipped. Live tracking sees only the parent run,
+ *   which keeps its own status when the output phase fails.
+ * - Rows carrying `orphanedMessage` (settled by the engine-start sweep because
+ *   the previous engine died mid-run) are skipped: a quit is not a failure.
+ *
+ * Unlike the activity log's 1000-row window, this covers the whole retention
+ * period, so a busy agent cannot push a failing subscription out of view.
+ * Returns `[]` when the DB is not initialized.
+ */
+export function getCueFailureStreakRecords(orphanedMessage: string): CueFailureStreakRecord[] {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`WITH last_ok AS (
+			   SELECT session_id, subscription_name, MAX(created_at) AS ok_at
+			   FROM cue_events
+			   WHERE status = 'completed'
+			   GROUP BY session_id, subscription_name
+			 ),
+			 streak AS (
+			   SELECT e.session_id, e.subscription_name, e.status, e.error_message,
+			          COALESCE(e.completed_at, e.created_at) AS ended_at,
+			          COUNT(*) OVER (PARTITION BY e.session_id, e.subscription_name) AS failures,
+			          MIN(COALESCE(e.completed_at, e.created_at))
+			            OVER (PARTITION BY e.session_id, e.subscription_name) AS first_at,
+			          ROW_NUMBER() OVER (
+			            PARTITION BY e.session_id, e.subscription_name
+			            ORDER BY e.created_at DESC, e.rowid DESC
+			          ) AS newest
+			   FROM cue_events e
+			   LEFT JOIN last_ok l
+			     ON l.session_id = e.session_id AND l.subscription_name = e.subscription_name
+			   WHERE e.status IN ('failed', 'timeout')
+			     AND e.subscription_name NOT LIKE '%:output'
+			     AND (e.error_message IS NULL OR e.error_message <> ?)
+			     AND (l.ok_at IS NULL OR e.created_at > l.ok_at)
+			 )
+			 SELECT session_id, subscription_name, status, error_message, ended_at, failures, first_at
+			 FROM streak
+			 WHERE newest = 1`
+		)
+		.all(orphanedMessage) as Array<{
+		session_id: string;
+		subscription_name: string;
+		status: 'failed' | 'timeout';
+		error_message: string | null;
+		ended_at: number;
+		failures: number;
+		first_at: number;
+	}>;
+	return rows.map((row) => ({
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		consecutiveFailures: row.failures,
+		firstFailedAt: row.first_at,
+		lastFailedAt: row.ended_at,
+		lastStatus: row.status,
+		lastError: row.error_message,
+	}));
+}
+
 /**
  * Total Conductor time that Cue runs recorded in this database would have
  * credited, using the engine's live crediting rule (see cue-engine.ts): only

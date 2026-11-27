@@ -57,14 +57,6 @@ export function isFailedRunStatus(status: CueRunStatus): status is 'failed' | 't
 	return status === 'failed' || status === 'timeout';
 }
 
-/**
- * Strip the two-phase `:output` suffix so the output phase of a run and the
- * run itself share one streak.
- */
-export function baseSubscriptionName(name: string): string {
-	return name.endsWith(':output') ? name.slice(0, -':output'.length) : name;
-}
-
 /** The threshold a cue.yaml asks for, falling back to the default when unset or invalid. */
 export function resolveFailureAlertThreshold(settings?: Partial<CueSettings> | null): number {
 	const raw = settings?.failure_alert_threshold;

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
 	DEFAULT_CUE_FAILURE_ALERT_THRESHOLD,
-	baseSubscriptionName,
 	describeFailureStreak,
 	failureStreakEscalationThreshold,
 	isFailedRunStatus,
@@ -15,12 +14,6 @@ describe('failure-streak rules', () => {
 		expect(isFailedRunStatus('completed')).toBe(false);
 		expect(isFailedRunStatus('stopped')).toBe(false);
 		expect(isFailedRunStatus('running')).toBe(false);
-	});
-
-	it('strips only a trailing :output suffix', () => {
-		expect(baseSubscriptionName('poll:output')).toBe('poll');
-		expect(baseSubscriptionName('poll')).toBe('poll');
-		expect(baseSubscriptionName('a:output:b')).toBe('a:output:b');
 	});
 
 	it('resolves the threshold from settings, defaulting on unset or invalid values', () => {

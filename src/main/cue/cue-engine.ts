@@ -50,6 +50,7 @@ import {
 	resolveFailureAlertThreshold,
 	type CueFailureStreak,
 } from '../../shared/cue/failure-streak';
+import { withoutPerRootCueSettings } from '../../shared/cue/contracts';
 import type { CueActivityLog } from './cue-activity-log';
 import { createCueHeartbeat } from './cue-heartbeat';
 import type { CueHeartbeat } from './cue-heartbeat';
@@ -75,7 +76,12 @@ import {
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
 import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './cue-metrics';
 import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
-import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-db';
+import {
+	countCueEvents,
+	getCueFailureStreakRecords,
+	getRecentCueEvents,
+	type CueEventRecord,
+} from './cue-db';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { readCueConfigFile, writeCueConfigFile } from './config/cue-config-repository';
 import { removeSubscriptionFromYaml, type SelfDestructResult } from './cue-self-destruct';
@@ -171,13 +177,9 @@ export class CueEngine {
 	private startReason: 'system-boot' | null = null;
 	private activityLog: CueActivityLog = createCueActivityLog();
 	/** Consecutive failed runs per (agent, subscription). See cue-failure-streak.ts. */
-	private failureStreaks: CueFailureStreakTracker = createCueFailureStreakTracker();
-	/**
-	 * Runs the engine-start sweep settled as `failed` because the PREVIOUS
-	 * engine died mid-run. Set by hydrateActivityLogFromDb, read once by
-	 * seedFailureStreaks: a quit or crash is not the subscription failing.
-	 */
-	private orphanedRunIds = new Set<string>();
+	private failureStreaks: CueFailureStreakTracker = createCueFailureStreakTracker((sessionId) =>
+		this.failureAlertThresholdFor(sessionId)
+	);
 	private registry: CueSessionRegistry;
 	private fanInTracker!: CueFanInTracker;
 	private runManager!: CueRunManager;
@@ -1065,14 +1067,12 @@ export class CueEngine {
 	 * this state by inspecting the returned `writtenRoots` array.
 	 */
 	saveSettings(settings: import('./cue-types').CueSettings): { writtenRoots: string[] } {
-		// Strip `owner_agent_id` - it is a PER-ROOT field (it pins ownership to an
-		// agent that lives at one specific projectRoot) and must never propagate
-		// across roots. Merging it into every cue.yaml here is exactly how every
-		// single-agent project ended up with a bogus
-		// "settings.owner_agent_id ... does not match any agent" warning: one
-		// root's owner leaked through getSettings() and got broadcast to all.
-		// Each file keeps its OWN existing owner_agent_id via the merge below.
-		const { owner_agent_id: _perRootOwner, ...globalSettings } = settings;
+		// Strip the PER-ROOT fields (`owner_agent_id`, `failure_alert_threshold`):
+		// they must never propagate across roots. Merging `owner_agent_id` into
+		// every cue.yaml here is exactly how every single-agent project ended up
+		// with a bogus "settings.owner_agent_id ... does not match any agent"
+		// warning. Each file keeps its OWN existing values via the merge below.
+		const globalSettings = withoutPerRootCueSettings(settings);
 		// Dedupe by config root so two sessions sharing the same cue.yaml don't
 		// cause a double-write race. Prefer `configRoot` (config-from-ancestor
 		// case) over the session's own projectRoot.
@@ -1507,10 +1507,7 @@ export class CueEngine {
 	 */
 	private recordFailureStreak(result: CueRunResult): void {
 		try {
-			const transition = this.failureStreaks.record(
-				result,
-				this.failureAlertThresholdFor(result.sessionId)
-			);
+			const transition = this.failureStreaks.record(result);
 			if (!transition) return;
 			const payload = failureStreakPayload(transition);
 			if (payload.type === 'subscriptionFailing') {
@@ -1532,22 +1529,28 @@ export class CueEngine {
 	}
 
 	/**
-	 * Rebuild failure streaks from the activity log hydrated at start, so a
-	 * subscription that was failing before a restart still reads as failing
-	 * (and is not announced a second time). Runs orphaned by a previous engine
-	 * exit are skipped, like `stopped` runs: they neither count nor reset.
+	 * Rebuild failure streaks from `cue_events`, so a subscription that was
+	 * failing before a restart still reads as failing (and is not announced a
+	 * second time). Reads the DB, not the 1000-row activity log, so a busy
+	 * agent cannot push a failing subscription out of the window.
 	 */
 	private seedFailureStreaks(): void {
 		try {
-			const orphaned = this.orphanedRunIds;
+			const sessionNamesById = new Map(this.deps.getSessions().map((s) => [s.id, s.name]));
 			this.failureStreaks.seed(
-				this.activityLog.getAll().filter((run) => !orphaned.has(run.runId)),
-				(sessionId) => this.failureAlertThresholdFor(sessionId)
+				getCueFailureStreakRecords(ORPHANED_RUN_MESSAGE).map((record) => ({
+					sessionId: record.sessionId,
+					sessionName: sessionNamesById.get(record.sessionId) ?? record.sessionId,
+					subscriptionName: record.subscriptionName,
+					consecutiveFailures: record.consecutiveFailures,
+					firstFailedAt: new Date(record.firstFailedAt).toISOString(),
+					lastFailedAt: new Date(record.lastFailedAt).toISOString(),
+					lastStatus: record.lastStatus,
+					lastError: record.lastError ?? undefined,
+				}))
 			);
 		} catch (err) {
 			captureException(err, { operation: 'cue:failureStreakSeed' });
-		} finally {
-			this.orphanedRunIds = new Set();
 		}
 	}
 
@@ -1560,13 +1563,9 @@ export class CueEngine {
 	 * 0ms success.
 	 */
 	private hydrateActivityLogFromDb(): void {
-		this.orphanedRunIds = new Set();
 		try {
 			const records = getRecentCueEvents(0, 1000);
 			if (records.length === 0) return;
-			for (const record of records) {
-				if (record.errorMessage === ORPHANED_RUN_MESSAGE) this.orphanedRunIds.add(record.id);
-			}
 			const sessionNamesById = new Map(this.deps.getSessions().map((s) => [s.id, s.name]));
 			// getRecentCueEvents returns newest-first; reverse so the ring buffer
 			// ends up with oldest at the front and newest at the back, matching

@@ -11,9 +11,11 @@
  * A `completed` run ends the streak and, if it had alerted, emits
  * `subscriptionRecovered`.
  *
- * `stopped` runs (user aborts) neither extend nor end a streak. State is in
- * memory and re-seeded from the hydrated activity log on engine start, so a
- * restart neither forgets a failing subscription nor re-alerts for it.
+ * `stopped` runs (user aborts) neither extend nor end a streak. The threshold
+ * is read live through `thresholdFor`, so editing it in cue.yaml re-judges
+ * existing streaks at once. State is in memory and re-seeded on engine start
+ * from `cue_events` (`getCueFailureStreakRecords` in `cue-db.ts`), so a restart
+ * neither forgets a failing subscription nor re-alerts for it.
  *
  * Electron-free on purpose: the toast is only DESCRIBED here
  * ({@link failureStreakToast}); `src/main/index.ts` sends it.
@@ -23,7 +25,6 @@ import type { CueRunStatus } from './cue-types';
 import type { CueLogPayload } from '../../shared/cue-log-types';
 import {
 	CUE_FAILURE_ERROR_MAX_CHARS,
-	baseSubscriptionName,
 	failureStreakEscalationThreshold,
 	isFailedRunStatus,
 	type CueFailureStreak,
@@ -42,6 +43,12 @@ export interface CueFailureStreakRun {
 	endedAt?: string;
 }
 
+/** A streak restored at engine start. The tracker derives threshold and health itself. */
+export type CueFailureStreakSeed = Omit<CueFailureStreak, 'alertThreshold' | 'failing'>;
+
+/** The alert threshold in force for one agent's cue.yaml. 0 = alerts off. */
+export type CueFailureThresholdFor = (sessionId: string) => number;
+
 export type CueFailureStreakTransition =
 	| { kind: 'failing'; escalated: boolean; streak: CueFailureStreak }
 	| { kind: 'recovered'; streak: CueFailureStreak };
@@ -51,14 +58,14 @@ export interface CueFailureStreakTracker {
 	 * Fold one finished run into its streak. Returns the transition the caller
 	 * must announce, or `null` when there is nothing to say.
 	 */
-	record(run: CueFailureStreakRun, threshold: number): CueFailureStreakTransition | null;
+	record(run: CueFailureStreakRun): CueFailureStreakTransition | null;
 	/**
-	 * Rebuild streaks from past runs (oldest first) without announcing them.
-	 * Alert levels a streak already reached count as sent, so a restart does
-	 * not re-toast a subscription the user was already told about.
+	 * Replace all state with streaks restored from `cue_events`, without
+	 * announcing them. Alert levels a streak already reached count as sent, so
+	 * a restart does not re-toast a subscription the user was already told about.
 	 */
-	seed(runs: CueFailureStreakRun[], thresholdFor: (sessionId: string) => number): void;
-	/** Current streaks (copies), optionally for one agent. */
+	seed(streaks: CueFailureStreakSeed[]): void;
+	/** Current streaks (copies), judged against the current threshold, optionally for one agent. */
 	list(sessionId?: string): CueFailureStreak[];
 	/** Drop every streak of one agent (its Cue config went away). */
 	clearSession(sessionId: string): void;
@@ -66,7 +73,7 @@ export interface CueFailureStreakTracker {
 }
 
 interface StreakEntry {
-	streak: CueFailureStreak;
+	streak: CueFailureStreakSeed;
 	/** 0 = none, 1 = threshold alert sent, 2 = escalation sent. */
 	alertsSent: number;
 }
@@ -76,91 +83,98 @@ function streakKey(sessionId: string, subscriptionName: string): string {
 }
 
 /** Collapse whitespace and cap, so a multi-line stack trace fits a toast line. */
-function summarizeError(stderr: string | undefined): string | undefined {
+function summarizeError(stderr: string | null | undefined): string | undefined {
 	const text = stderr?.replace(/\s+/g, ' ').trim();
 	if (!text) return undefined;
 	return truncateAtWordBoundary(text, CUE_FAILURE_ERROR_MAX_CHARS);
 }
 
-export function createCueFailureStreakTracker(): CueFailureStreakTracker {
+/** Alert levels a streak of `count` failures has reached under `threshold`. */
+function alertLevelReached(count: number, threshold: number): number {
+	if (threshold <= 0 || count < threshold) return 0;
+	return count >= failureStreakEscalationThreshold(threshold) ? 2 : 1;
+}
+
+function judged(streak: CueFailureStreakSeed, threshold: number): CueFailureStreak {
+	return {
+		...streak,
+		alertThreshold: threshold,
+		failing: threshold > 0 && streak.consecutiveFailures >= threshold,
+	};
+}
+
+export function createCueFailureStreakTracker(
+	thresholdFor: CueFailureThresholdFor
+): CueFailureStreakTracker {
 	const entries = new Map<string, StreakEntry>();
 
-	function record(run: CueFailureStreakRun, threshold: number): CueFailureStreakTransition | null {
-		const subscriptionName = baseSubscriptionName(run.subscriptionName);
-		const key = streakKey(run.sessionId, subscriptionName);
-
-		if (run.status === 'completed') {
-			const ended = entries.get(key);
-			if (!ended) return null;
-			entries.delete(key);
-			return ended.alertsSent > 0 ? { kind: 'recovered', streak: { ...ended.streak } } : null;
-		}
-		if (!isFailedRunStatus(run.status)) return null;
-
-		// `||`, not `??`: runs rehydrated from cue_events carry '' when the row
-		// never recorded a completion time.
-		const at = run.endedAt || new Date().toISOString();
-		const lastError = summarizeError(run.stderr);
-		let entry = entries.get(key);
-		if (entry) {
-			entry.streak.consecutiveFailures += 1;
-		} else {
-			entry = {
-				alertsSent: 0,
-				streak: {
-					sessionId: run.sessionId,
-					sessionName: run.sessionName,
-					subscriptionName,
-					consecutiveFailures: 1,
-					firstFailedAt: at,
-					lastFailedAt: at,
-					lastStatus: run.status,
-					alertThreshold: threshold,
-					failing: false,
-				},
-			};
-			entries.set(key, entry);
-		}
-
-		const { streak } = entry;
-		streak.sessionName = run.sessionName;
-		streak.lastFailedAt = at;
-		streak.lastStatus = run.status;
-		streak.lastError = lastError;
-		streak.alertThreshold = threshold;
-		streak.failing = threshold > 0 && streak.consecutiveFailures >= threshold;
-
-		if (!streak.failing) return null;
-		if (entry.alertsSent === 0) {
-			entry.alertsSent = 1;
-			return { kind: 'failing', escalated: false, streak: { ...streak } };
-		}
-		if (
-			entry.alertsSent === 1 &&
-			streak.consecutiveFailures >= failureStreakEscalationThreshold(threshold)
-		) {
-			entry.alertsSent = 2;
-			return { kind: 'failing', escalated: true, streak: { ...streak } };
-		}
-		return null;
-	}
-
 	return {
-		record,
+		record(run) {
+			const key = streakKey(run.sessionId, run.subscriptionName);
+			const threshold = thresholdFor(run.sessionId);
 
-		seed(runs, thresholdFor) {
+			if (run.status === 'completed') {
+				const ended = entries.get(key);
+				if (!ended) return null;
+				entries.delete(key);
+				return ended.alertsSent > 0
+					? { kind: 'recovered', streak: judged(ended.streak, threshold) }
+					: null;
+			}
+			if (!isFailedRunStatus(run.status)) return null;
+
+			const at = run.endedAt || new Date().toISOString();
+			let entry = entries.get(key);
+			if (entry) {
+				entry.streak.consecutiveFailures += 1;
+			} else {
+				entry = {
+					alertsSent: 0,
+					streak: {
+						sessionId: run.sessionId,
+						sessionName: run.sessionName,
+						subscriptionName: run.subscriptionName,
+						consecutiveFailures: 1,
+						firstFailedAt: at,
+						lastFailedAt: at,
+						lastStatus: run.status,
+					},
+				};
+				entries.set(key, entry);
+			}
+
+			const { streak } = entry;
+			streak.sessionName = run.sessionName;
+			streak.lastFailedAt = at;
+			streak.lastStatus = run.status;
+			streak.lastError = summarizeError(run.stderr);
+
+			// One alert per level crossed, never repeated: a threshold raised past
+			// the count waits for the new level, one lowered below it fires next run.
+			const level = alertLevelReached(streak.consecutiveFailures, threshold);
+			if (level <= entry.alertsSent) return null;
+			const escalated = level === 2 && entry.alertsSent === 1;
+			entry.alertsSent = level;
+			return { kind: 'failing', escalated, streak: judged(streak, threshold) };
+		},
+
+		seed(streaks) {
 			entries.clear();
-			for (const run of runs) {
-				// Announcements are discarded; record() still marks the alert
-				// levels each streak crossed as sent.
-				record(run, thresholdFor(run.sessionId));
+			for (const seed of streaks) {
+				const streak = { ...seed, lastError: summarizeError(seed.lastError) };
+				entries.set(streakKey(seed.sessionId, seed.subscriptionName), {
+					streak,
+					alertsSent: alertLevelReached(streak.consecutiveFailures, thresholdFor(streak.sessionId)),
+				});
 			}
 		},
 
 		list(sessionId) {
 			const out: CueFailureStreak[] = [];
 			for (const { streak } of entries.values()) {
-				if (sessionId === undefined || streak.sessionId === sessionId) out.push({ ...streak });
+				if (sessionId === undefined || streak.sessionId === sessionId) {
+					out.push(judged(streak, thresholdFor(streak.sessionId)));
+				}
 			}
 			return out;
 		},
