@@ -28,12 +28,14 @@ import { LIFT_HOST_TOO_OLD } from '../../federationCommands';
 import type { ClientError, MaestroClient } from '../client/types';
 import type { AgentRecord } from '../store/records';
 import { staleCopyMismatch } from './import-plan';
-import { liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
+import { formatHostTabMerge, liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
 import type { LiftPlan, LiftPlanSummary } from './lift-plan';
 import { peerAgentRef, runningTurnWhere, type LiftedToPointer } from './lift-pointer';
 import { readLeftOnHost, withReturnedFromHost } from './lift-return-record';
 import { liftFollowUpPatch } from './lift-settings-sync';
 import type { AITabRecord } from '../store/records';
+import { truncateAtWordBoundary } from '../../formatters';
+import { stripMarkdown } from '../../markdown';
 
 export interface LiftRunOptions {
 	/** Build and show the plan, then stop. */
@@ -146,6 +148,8 @@ export function formatLiftPlan(summary: LiftPlanSummary, dryRun: boolean): strin
 		lines.push(
 			`Replaces the copy an earlier Move Back left on the host (${summary.replaces}): its tabs and transcripts are merged into what moves, its processes are stopped, and its History on the host stays filed under its old id, so the moved agent's History does not show it.`
 		);
+		const merge = formatHostTabMerge(summary.tabMerge);
+		if (merge) lines.push(`  ${merge}`);
 	}
 	lines.push('Stays on this machine:');
 	lines.push(
@@ -199,6 +203,8 @@ interface StaleHostCopy {
 	ref: string;
 	/** The agent with that copy's tabs merged in, as an online Move Back would have left it. */
 	merged: AgentRecord;
+	/** How those tabs merged, for the plan (`LiftPlanSummary.tabMerge`). */
+	tabMerge: NonNullable<LiftPlanSummary['tabMerge']>;
 }
 
 /**
@@ -255,15 +261,20 @@ async function readStaleHostCopy(
 		withLogs.push({ ...tab, logs: transcript.value });
 	}
 	const hostTabs = keepDivergentHostTabs(agent.aiTabs ?? [], withLogs);
-	// The host's selection follows its tab when that tab comes in under a new id.
+	// The host's selection follows its tab when that tab comes in under another id.
 	const hostActive = hostCopy.value.activeTabId;
 	const activeIndex = hostActive ? withLogs.findIndex((tab) => tab.id === hostActive) : -1;
-	const activeTabId = activeIndex >= 0 ? hostTabs[activeIndex].id : hostActive;
+	const activeTabId = activeIndex >= 0 ? hostTabs.tabs[activeIndex].id : hostActive;
 	const merged = withReturnedFromHost(agent as unknown as Record<string, unknown>, {
-		tabs: hostTabs,
+		tabs: hostTabs.tabs,
 		...(activeTabId ? { activeTabId } : {}),
 	}) as unknown as AgentRecord;
-	return { pointer, ref, merged };
+	return {
+		pointer,
+		ref,
+		merged,
+		tabMerge: { merged: hostTabs.merged, copies: hostTabs.copies, added: hostTabs.added },
+	};
 }
 
 /** The ids of a transcript's entries, in order. */
@@ -278,36 +289,120 @@ function startsWith(all: readonly unknown[], head: readonly unknown[]): boolean 
 	return head.length <= all.length && head.every((id, index) => all[index] === id);
 }
 
+/** The text of a transcript's user messages, in order: the turns of its conversation. */
+function userTurns(tab: AITabRecord): string[] {
+	const turns: string[] = [];
+	for (const entry of Array.isArray(tab.logs) ? tab.logs : []) {
+		if (!entry || typeof entry !== 'object') continue;
+		const { source, text } = entry as { source?: unknown; text?: unknown };
+		if (source === 'user') turns.push(typeof text === 'string' ? text : '');
+	}
+	return turns;
+}
+
+/**
+ * Whether two transcripts of one tab are one conversation, one side only longer: one's entries
+ * start the other's, or, where the two sides wrote their own notes (a Move Back note, a link
+ * note) or gave entries other ids, one's user turns start the other's. Both sides having a turn
+ * the other lacks means both went on after the Move Back: two conversations.
+ */
+function isOneConversation(local: AITabRecord, host: AITabRecord): boolean {
+	const hostIds = entryIds(host);
+	const localIds = entryIds(local);
+	if (startsWith(localIds, hostIds) || startsWith(hostIds, localIds)) return true;
+	const hostTurns = userTurns(host);
+	const localTurns = userTurns(local);
+	return startsWith(localTurns, hostTurns) || startsWith(hostTurns, localTurns);
+}
+
+/** The longest name a host tab is given from its first message. */
+const MAX_FIRST_MESSAGE_TAB_NAME_CHARS = 40;
+
+/**
+ * A name for a host tab that has none (a turn run on the host copy itself, which no client named):
+ * the first line of its first message, as plain text. Undefined when it has no message.
+ */
+function firstMessageTabName(tab: AITabRecord): string | undefined {
+	for (const turn of userTurns(tab)) {
+		const line = stripMarkdown(turn)
+			.split('\n')
+			.map((part) => part.trim())
+			.find(Boolean);
+		if (line) return truncateAtWordBoundary(line, MAX_FIRST_MESSAGE_TAB_NAME_CHARS);
+	}
+	return undefined;
+}
+
+/** How the host copy's tabs merge into what moves (`keepDivergentHostTabs()`). */
+export interface HostTabMerge {
+	/** The host's tabs, in its order, ready for `withReturnedFromHost()`. */
+	tabs: AITabRecord[];
+	/** Host tabs that are a local tab's conversation: merged into it, one tab each. */
+	merged: number;
+	/** Host tabs of a conversation both sides went on in: kept as their own "(on the host)" tab. */
+	copies: number;
+	/** Host tabs this machine never had (a conversation started on the host copy). */
+	added: number;
+}
+
 /**
  * The host copy's tabs, ready to merge into the local agent (`withReturnedFromHost()`, which keeps
- * the longer of two transcripts of one tab). After a Move Back while the host was down, both sides
- * may have gone on in the same tab. Where neither transcript is the other's start, the host's tab
- * comes in as a tab of its own, so neither side's entries are dropped.
+ * the longer of two transcripts of one tab). A host tab is the local tab with its id, else the one
+ * that resumes its provider session: one conversation, so one tab (U4). After a Move Back while
+ * the host was down, both sides may have gone on in it (`isOneConversation()` says no): the host's
+ * tab comes in as a tab of its own, "(on the host)", so neither side's entries are dropped. A host
+ * tab with no name is named from its first message, never left to read as its session id.
  */
 export function keepDivergentHostTabs(
 	localTabs: readonly AITabRecord[],
 	hostTabs: readonly AITabRecord[]
-): AITabRecord[] {
+): HostTabMerge {
 	const localById = new Map(localTabs.map((tab) => [tab.id, tab]));
+	const localBySession = new Map<string, AITabRecord>();
+	for (const tab of localTabs) {
+		if (tab.agentSessionId && !localBySession.has(tab.agentSessionId)) {
+			localBySession.set(tab.agentSessionId, tab);
+		}
+	}
 	const taken = new Set([...localTabs, ...hostTabs].map((tab) => tab.id));
-	return hostTabs.map((host) => {
-		const local = localById.get(host.id);
-		if (!local) return host;
-		const hostIds = entryIds(host);
-		const localIds = entryIds(local);
-		if (startsWith(localIds, hostIds) || startsWith(hostIds, localIds)) return host;
+	// A local tab takes at most one host tab: a second host tab of it is its own.
+	const claimed = new Set<string>();
+	const result: HostTabMerge = { tabs: [], merged: 0, copies: 0, added: 0 };
+	for (const host of hostTabs) {
+		const byId = localById.get(host.id);
+		const bySession = host.agentSessionId ? localBySession.get(host.agentSessionId) : undefined;
+		const local = byId ?? (bySession && !localById.has(host.id) ? bySession : undefined);
+		const named = host.name ? host : { ...host, name: firstMessageTabName(host) ?? host.name };
+		if (!local || claimed.has(local.id)) {
+			if (!local) result.added += 1;
+			result.tabs.push(named);
+			continue;
+		}
+		claimed.add(local.id);
+		if (isOneConversation(local, host)) {
+			result.merged += 1;
+			result.tabs.push(local.id === host.id ? host : { ...host, id: local.id });
+			continue;
+		}
+		result.copies += 1;
 		let id = `${host.id}-host`;
 		for (let n = 2; taken.has(id); n++) id = `${host.id}-host-${n}`;
 		taken.add(id);
-		return { ...host, id, name: `${host.name || local.name || 'Tab'} (on the host)` };
-	});
+		result.tabs.push({ ...host, id, name: `${host.name || local.name || 'Tab'} (on the host)` });
+	}
+	return result;
 }
 
 /** The plan, with the import replacing the stale copy and the summary saying so. */
-function withReplacement(plan: LiftPlan, ref: string, replacesAgentId: string): LiftPlan {
+function withReplacement(
+	plan: LiftPlan,
+	ref: string,
+	replacesAgentId: string,
+	tabMerge: LiftPlanSummary['tabMerge']
+): LiftPlan {
 	return {
 		...plan,
-		summary: { ...plan.summary, replaces: ref },
+		summary: { ...plan.summary, replaces: ref, ...(tabMerge ? { tabMerge } : {}) },
 		input: { ...plan.input, replacesAgentId },
 	};
 }
@@ -375,7 +470,7 @@ export async function runLift(
 		const hostError = deps.hostCallError ?? defaultHostCallError;
 		const stale = await readStaleHostCopy(agent, connection, hostError);
 		const plan = stale
-			? withReplacement(planFor(stale.merged), stale.ref, stale.pointer.agentId)
+			? withReplacement(planFor(stale.merged), stale.ref, stale.pointer.agentId, stale.tabMerge)
 			: planFor(agent);
 		onPlan(plan);
 		if (options.dryRun) return { plan: plan.summary, dryRun: true };
