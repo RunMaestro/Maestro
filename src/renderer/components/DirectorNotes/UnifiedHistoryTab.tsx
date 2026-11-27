@@ -26,7 +26,7 @@ import {
 import type { PrecomputedGraphBucket } from '../History/ActivityGraph';
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
-import { useListNavigation, useThrottledCallback } from '../../hooks';
+import { useDebouncedValue, useListNavigation, useThrottledCallback } from '../../hooks';
 import { useHistoryPagination } from '../../hooks/history/useHistoryPagination';
 import type { PaginatedPage } from '../../hooks/history/useHistoryPagination';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
@@ -38,10 +38,13 @@ import { lookbackHoursToDays, bucketCountForLookback } from './lookback';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
-import { visibleHistoryEntryTypes } from '../../../shared/history';
+import { createHistorySearchMatcher, visibleHistoryEntryTypes } from '../../../shared/history';
 
 /** Page size for progressive loading */
 const PAGE_SIZE = 100;
+
+/** Typing pause before a search query goes to the main process. */
+const SEARCH_DEBOUNCE_MS = 250;
 
 /** Distance from bottom (in px) at which to trigger loading the next page */
 const SCROLL_LOAD_THRESHOLD = 500;
@@ -109,6 +112,11 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		// ("Sep 5", "Now") printed on top of each other.
 		const phone = usePhoneLayout();
 		const [searchQuery, setSearchQuery] = useState('');
+		// The search runs in the main process over the whole lookback window,
+		// before pagination. Filtering the loaded page here only ever saw the
+		// newest 100 rows, so anything older came back "No entries matching".
+		const debouncedSearch = useDebouncedValue(searchQuery.trim(), SEARCH_DEBOUNCE_MS);
+		const searchMatcher = useMemo(() => createHistorySearchMatcher(searchQuery), [searchQuery]);
 
 		// Pre-computed graph buckets from backend (covers all entries in
 		// the lookback window - server-cached). Independent from the
@@ -129,7 +137,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const searchInputRef = useRef<HTMLInputElement>(null);
 
 		// Page loader for the shared pagination hook. Memoized on
-		// `lookbackHours` so changing the lookback resets the window
+		// `lookbackHours` and the search so changing either resets the window
 		// (the hook re-runs its initial load when this identity changes).
 		// Side effect: keeps `historyStats` in sync from the same IPC
 		// response so we don't fan out to a second call.
@@ -140,6 +148,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					filter: activeFilterArray,
 					limit,
 					offset,
+					search: debouncedSearch || undefined,
 				});
 				if (result.stats) {
 					setHistoryStats(result.stats);
@@ -150,7 +159,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					total: result.total,
 				};
 			},
-			[lookbackHours, activeFilterArray]
+			[lookbackHours, activeFilterArray, debouncedSearch]
 		);
 
 		const getEntryId = useCallback((entry: UnifiedHistoryEntry) => entry.id, []);
@@ -360,18 +369,13 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const filteredEntries = useMemo(() => {
 			return entries.filter((entry) => {
 				if (!activeFilters.has(entry.type)) return false;
-				if (searchQuery) {
-					const search = searchQuery.toLowerCase();
-					if (
-						!entry.summary?.toLowerCase().includes(search) &&
-						!entry.agentName?.toLowerCase().includes(search)
-					) {
-						return false;
-					}
-				}
+				// The server already searched every page it returns. This pass
+				// covers live entries prepended while a search is open, and the
+				// debounce gap while a new query is in flight.
+				if (searchMatcher && !searchMatcher(entry)) return false;
 				return true;
 			});
-		}, [entries, activeFilters, searchQuery]);
+		}, [entries, activeFilters, searchMatcher]);
 
 		// Sync activeFilters when the Cue Encore feature is toggled. Only a
 		// genuine off->on transition auto-enables the CUE filter (new feature
@@ -690,7 +694,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 							type="text"
 							value={searchQuery}
 							onChange={(e) => setSearchQuery(e.target.value)}
-							placeholder="Filter by summary or agent name..."
+							placeholder="Search summaries, responses, tab and agent names..."
 							className="flex-1 bg-transparent outline-none text-xs"
 							style={{ color: theme.colors.textMain }}
 							autoFocus
@@ -700,7 +704,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 								className="text-2xs font-mono whitespace-nowrap flex-shrink-0"
 								style={{ color: theme.colors.textDim }}
 							>
-								{filteredEntries.length}
+								{/* Matches across the whole window, not just the loaded page */}
+								{totalEntries}
 							</span>
 						)}
 						<button
@@ -790,7 +795,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					) : filteredEntries.length === 0 ? (
 						<div className="text-center py-8 text-xs" style={{ color: theme.colors.textDim }}>
 							{searchQuery
-								? `No entries matching "${searchQuery}".`
+								? `No entries matching "${searchQuery}" in this lookback window.`
 								: activeFilters.size === 0
 									? 'No entry types selected. Enable a filter above.'
 									: // `filter` is sent to the main process, so `entries` is already

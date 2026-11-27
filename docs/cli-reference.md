@@ -1214,13 +1214,14 @@ Director's Notes: unified history and AI synopsis
 
 Show unified history across all agents
 
-| Option                | Description                                          | Default |
-| --------------------- | ---------------------------------------------------- | ------- |
-| `-d, --days <n>`      | Lookback period in days (default: from app settings) | -       |
-| `-f, --format <type>` | Output format: json, markdown, text (default: text)  | -       |
-| `--filter <type>`     | Filter by entry type: auto, user, cue, agent         | -       |
-| `-l, --limit <n>`     | Maximum entries to show (default: 100)               | -       |
-| `--json`              | Output as JSON (shorthand for --format json)         | -       |
+| Option                | Description                                                                           | Default |
+| --------------------- | ------------------------------------------------------------------------------------- | ------- |
+| `-d, --days <n>`      | Lookback period in days (default: from app settings)                                  | -       |
+| `-f, --format <type>` | Output format: json, markdown, text (default: text)                                   | -       |
+| `--filter <type>`     | Filter by entry type: auto, user, cue, agent                                          | -       |
+| `-l, --limit <n>`     | Maximum entries to show (default: 100)                                                | -       |
+| `-s, --search <text>` | Only entries whose summary, response, tab name, agent name, or sender match &lt;text> | -       |
+| `--json`              | Output as JSON (shorthand for --format json)                                          | -       |
 
 ## `maestro-cli director-notes synopsis`
 

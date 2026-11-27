@@ -283,7 +283,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Feedback: Running as (account picker)                                                                                     | `feedback accounts [--use <key> \| --clear]`                                                     |
 | Feedback: Log in to GitHub / Check Again                                                                                  | `feedback login`, `feedback auth --fresh`                                                        |
 | Agent error: Install <provider> (CLI missing)                                                                             | `install-command <provider> [--platform] [--json]` (prints the line)                             |
-| Check for Updates: Roll Back (list earlier releases, download one)                                                        | `rollback [version] [--prerelease] [--json]`; also `open updates --tab rollback`                 |
+| Check for Updates or Rollback: Roll Back (list earlier releases, download one)                                            | `rollback [version] [--prerelease] [--json]`; open the window with `open updates`                |
 | Feedback: live self-diagnosis                                                                                             | `feedback diagnose`                                                                              |
 | Feedback: Submit now (early exit)                                                                                         | `feedback submit` (the caller supplies whatever fields it has)                                   |
 | Create Debug Package (support package)                                                                                    | `support-package -o <dir> [--no-logs ...]`                                                       |
@@ -319,6 +319,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Browser Design Mode: list the chips waiting in the composer (chip strip, chip popover)                                    | `browser-picks [-a <agent>] [--json]` (id, kind, label, url, note, text of each)                 |
 | Browser Design Mode: edit a chip's note in the composer (the chip popover's note box)                                     | `browser-picks --edit <pickId> --note <text>`; read: the printed chip, or `browser-picks`        |
 | Browser Design Mode: remove a chip from the composer (the chip's X)                                                       | `browser-picks --remove <pickId>`; read: `browser-picks`                                         |
+| Director's Notes Unified History: search box (same matcher, whole lookback window)                                        | `director-notes history --search <text> [-d <days>] [--json]`                                    |
 | Browser tab: viewport preset (toolbar Viewport control, palette "Browser: Viewport ...")                                  | `browser-viewport <tab> [preset] [-a <agent>] [--json]` (omit the preset to read it)             |
 | Browser Design Mode: fold the side bars while it is on (a setting; `settings` covers it, no new verb)                     | `settings set designModeCollapsePanels true\|false`; read: `settings get <key>`                  |
 

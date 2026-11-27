@@ -7,11 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openUiSurface } from '../../../renderer/utils/openUiSurface';
-import {
-	selectModalData,
-	selectModalOpen,
-	useModalStore,
-} from '../../../renderer/stores/modalStore';
+import { selectModalOpen, useModalStore } from '../../../renderer/stores/modalStore';
 import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
 
 describe('openUiSurface - feedback', () => {
@@ -41,14 +37,8 @@ describe('openUiSurface - updates', () => {
 		useModalStore.getState().closeModal('updateCheck');
 	});
 
-	it('opens Check for Updates on its updates page by default', () => {
-		expect(openUiSurface('updates')).toEqual({ ok: true });
+	it.each(['updates', 'rollback'])('opens Check for Updates or Rollback as %s', (name) => {
+		expect(openUiSurface(name)).toEqual({ ok: true });
 		expect(selectModalOpen('updateCheck')(useModalStore.getState())).toBe(true);
-		expect(selectModalData('updateCheck')(useModalStore.getState())?.initialView).toBe('updates');
-	});
-
-	it('deep-links to the rollback list', () => {
-		expect(openUiSurface('updates', 'rollback')).toEqual({ ok: true });
-		expect(selectModalData('updateCheck')(useModalStore.getState())?.initialView).toBe('rollback');
 	});
 });

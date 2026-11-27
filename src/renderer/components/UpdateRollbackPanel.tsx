@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertCircle, AlertTriangle, ArrowLeft, ExternalLink, History } from 'lucide-react';
+import { AlertCircle, AlertTriangle, ExternalLink, History } from 'lucide-react';
 import type { Theme } from '../types';
 import { Spinner } from './ui/Spinner';
 import { UpdateReleaseCard } from './UpdateReleaseCard';
@@ -15,11 +15,10 @@ interface UpdateRollbackPanelProps {
 	/** True while any download (update or rollback) is running. */
 	downloading: boolean;
 	onRollback: (tag: string) => void;
-	onBack: () => void;
 }
 
 /**
- * The rollback view of the Check for Updates modal: earlier releases this
+ * The rollback section of the Check for Updates modal: earlier releases this
  * platform can install, each with its notes and a Roll Back button. Picking one
  * only DOWNLOADS it; the modal's restart controls install it.
  */
@@ -30,7 +29,6 @@ export function UpdateRollbackPanel({
 	activeTag,
 	downloading,
 	onRollback,
-	onBack,
 }: UpdateRollbackPanelProps) {
 	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -44,16 +42,6 @@ export function UpdateRollbackPanel({
 
 	return (
 		<div className="space-y-4">
-			<button
-				onClick={onBack}
-				disabled={downloading}
-				className="flex items-center gap-1.5 text-xs hover:underline disabled:opacity-50"
-				style={{ color: theme.colors.accent }}
-			>
-				<ArrowLeft className="w-3.5 h-3.5" />
-				Back to updates
-			</button>
-
 			<div
 				className="p-4 rounded-lg border"
 				style={{ backgroundColor: `${theme.colors.warning}15`, borderColor: theme.colors.warning }}
@@ -64,9 +52,6 @@ export function UpdateRollbackPanel({
 						style={{ color: theme.colors.warning }}
 					/>
 					<div className="flex-1 text-xs space-y-1.5" style={{ color: theme.colors.textDim }}>
-						<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-							Roll back to an earlier version
-						</div>
 						<p>
 							This installs an older build over{' '}
 							<span className="font-mono">v{result?.currentVersion ?? __APP_VERSION__}</span>. Your
@@ -74,8 +59,8 @@ export function UpdateRollbackPanel({
 							that a newer one wrote.
 						</p>
 						<p>
-							Auto Runs in progress may not resume after a rollback. Check for Updates will offer
-							the newest version again, so you can move forward when the fix ships.
+							Auto Runs in progress may not resume after a rollback. This window will offer the
+							newest version again, so you can move forward when the fix ships.
 						</p>
 					</div>
 				</div>

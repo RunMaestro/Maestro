@@ -2226,6 +2226,9 @@ maestro-cli director-notes history -d 3
 # Limit to user-initiated entries only
 maestro-cli director-notes history --filter user -l 50
 
+# Search the whole lookback window (same match as the app's search box)
+maestro-cli director-notes history --search persona -d 30
+
 # Markdown output for piping into a doc
 maestro-cli director-notes history -f markdown -d 1
 
@@ -2234,13 +2237,14 @@ maestro-cli director-notes synopsis -d 1
 maestro-cli director-notes synopsis --json
 ```
 
-| Subcommand | Flag                  | Description                                                              |
-| ---------- | --------------------- | ------------------------------------------------------------------------ |
-| both       | `-d, --days <n>`      | Lookback period in days (defaults to the app's Director's Notes setting) |
-| both       | `-f, --format <type>` | Output format: `json`, `markdown`, `text` (default `text`)               |
-| both       | `--json`              | Shorthand for `--format json`                                            |
-| `history`  | `--filter <type>`     | Filter by entry type: `auto`, `user`, `cue`, `agent`                     |
-| `history`  | `-l, --limit <n>`     | Maximum entries to show (default 100)                                    |
+| Subcommand | Flag                  | Description                                                                                   |
+| ---------- | --------------------- | --------------------------------------------------------------------------------------------- |
+| both       | `-d, --days <n>`      | Lookback period in days (defaults to the app's Director's Notes setting)                      |
+| both       | `-f, --format <type>` | Output format: `json`, `markdown`, `text` (default `text`)                                    |
+| both       | `--json`              | Shorthand for `--format json`                                                                 |
+| `history`  | `--filter <type>`     | Filter by entry type: `auto`, `user`, `cue`, `agent`                                          |
+| `history`  | `-l, --limit <n>`     | Maximum entries to show (default 100)                                                         |
+| `history`  | `-s, --search <text>` | Only entries whose summary, response, tab name, agent name, or sender match, case-insensitive |
 
 `synopsis` requires the desktop app to be running; `history` reads from disk and works offline. If `encoreFeatures.directorNotes` is disabled, enable it first with `maestro-cli settings set encoreFeatures.directorNotes true`.
 

@@ -238,10 +238,11 @@ export const SessionActivityGraph: React.FC<SessionActivityGraphProps> = ({
 			{contextMenu && (
 				<div
 					ref={contextMenuRef}
-					className="fixed z-50 py-1 rounded"
+					className="fixed z-50 py-1 rounded overflow-y-auto scrollbar-thin"
 					style={{
 						left: contextMenuPos.left,
 						top: contextMenuPos.top,
+						maxHeight: contextMenuPos.maxHeight,
 						opacity: contextMenuPos.ready ? 1 : 0,
 						...elevatedSurfaceStyle(theme),
 						minWidth: '120px',

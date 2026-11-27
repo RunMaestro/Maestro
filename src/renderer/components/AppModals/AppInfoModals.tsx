@@ -16,7 +16,7 @@ import { AboutModal } from '../AboutModal';
 import { FeedbackModal } from '../FeedbackModal';
 import { ShortcutsHelpModal } from '../ShortcutsHelpModal';
 import { UpdateCheckModal } from '../UpdateCheckModal';
-import { getModalActions, selectModalData, useModalStore } from '../../stores/modalStore';
+import { getModalActions } from '../../stores/modalStore';
 
 // Lazy-loaded heavy modals (rarely used, loaded on-demand)
 const ProcessMonitor = lazy(() =>
@@ -136,7 +136,6 @@ export const AppInfoModals = memo(function AppInfoModals({
 	agentRunDashboardOpen,
 	onCloseAgentRunDashboard,
 }: AppInfoModalsProps) {
-	const updateCheckData = useModalStore(selectModalData('updateCheck'));
 	return (
 		<>
 			{/* --- SHORTCUTS HELP MODAL --- */}
@@ -182,15 +181,7 @@ export const AppInfoModals = memo(function AppInfoModals({
 			)}
 
 			{/* --- UPDATE CHECK MODAL --- */}
-			{updateCheckModalOpen && (
-				<UpdateCheckModal
-					// Re-opening on the other page (menu "Roll Back" while it is open) remounts it there.
-					key={updateCheckData?.initialView ?? 'updates'}
-					theme={theme}
-					onClose={onCloseUpdateCheckModal}
-					initialView={updateCheckData?.initialView}
-				/>
-			)}
+			{updateCheckModalOpen && <UpdateCheckModal theme={theme} onClose={onCloseUpdateCheckModal} />}
 
 			{/* --- PROCESS MONITOR (lazy-loaded) --- */}
 			{processMonitorOpen && (

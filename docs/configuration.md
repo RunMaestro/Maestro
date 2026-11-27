@@ -363,8 +363,8 @@ Maestro checks for updates automatically on startup (configurable in Settings �
 
 **To manually check for updates:**
 
-- **Quick Actions:** `Cmd+K` / `Ctrl+K` → "Check for Updates"
-- **Menu:** Click the hamburger menu (☰) → "Check for Updates"
+- **Quick Actions:** `Cmd+K` / `Ctrl+K` → "Check for Updates or Rollback"
+- **Menu:** Click the hamburger menu (☰) → "Check for Updates or Rollback"
 
 When an update is available, you'll see:
 
@@ -389,12 +389,7 @@ The quit dialog has a **Resume Auto Runs on next launch** checkbox, on by defaul
 
 ### Rolling Back to an Earlier Version
 
-If an update causes a problem, you can go back to an earlier release:
-
-- **Quick Actions:** `Cmd+K` / `Ctrl+K` → "Roll Back to an Earlier Version"
-- **Menu:** Click the hamburger menu (☰) → "Roll Back Version"
-- **Check for Updates:** Click **Having trouble with this version? Roll back to an earlier one** at the bottom of the window.
-- **CLI:** `maestro-cli rollback` lists the earlier releases, and `maestro-cli rollback 1.0.3` downloads one.
+If an update causes a problem, you can go back to an earlier release from the same window. Open **Check for Updates or Rollback** and expand **Roll back to an earlier version** below the update status. From the CLI, `maestro-cli rollback` lists the earlier releases, and `maestro-cli rollback 1.0.3` downloads one.
 
 The list shows up to 15 earlier releases that can be installed on your platform, newest first, each with its release notes. Pre-release builds appear only when **Include pre-release updates** is on. Click **Roll Back** beside a release to download it, then **Restart to Roll Back** to install it. A downloaded rollback also installs the next time Maestro quits, the same as a downloaded update.
 

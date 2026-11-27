@@ -235,6 +235,52 @@ describe('director-notes IPC handlers', () => {
 			expect(result.hasMore).toBe(false);
 		});
 
+		// The renderer used to search only the page it had loaded, so a match past
+		// the newest 100 rows was invisible. The search now runs here, before
+		// pagination, and reaches fields the old filter skipped (tab name, response).
+		it('searches the whole window before paginating, leaving stats unsearched', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				...Array.from({ length: 150 }, (_, i) =>
+					createMockEntry({ id: `noise-${i}`, timestamp: now - 1000 - i, summary: 'Heartbeat' })
+				),
+				createMockEntry({
+					id: 'tab-hit',
+					timestamp: now - 60_000,
+					summary: 'Confirmed no desktop exists',
+					sessionName: 'Banaco Persona Desktop Setup Check',
+				}),
+				createMockEntry({
+					id: 'response-hit',
+					timestamp: now - 70_000,
+					summary: 'Renamed the desktop',
+					fullResponse: 'The Maestro PERSONAS seat desktop stays on 3020.',
+				}),
+			]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7, limit: 100, search: 'persona' });
+
+			expect(result.entries.map((e: any) => e.id)).toEqual(['tab-hit', 'response-hit']);
+			expect(result.total).toBe(2);
+			expect(result.stats.totalCount).toBe(152);
+		});
+
+		it('treats a blank search as no search', async () => {
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'e1', timestamp: now - 1000 }),
+				createMockEntry({ id: 'e2', timestamp: now - 2000 }),
+			]);
+
+			const handler = handlers.get('director-notes:getUnifiedHistory');
+			const result = await handler!({} as any, { lookbackDays: 7, search: '   ' });
+
+			expect(result.total).toBe(2);
+		});
+
 		it('should include stats in the response', async () => {
 			const now = Date.now();
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([

@@ -277,16 +277,12 @@ export const UI_SURFACES: UiSurface[] = [
 	},
 	{
 		id: 'updates',
-		label: 'Check for Updates',
+		label: 'Check for Updates or Rollback',
 		aliases: ['update', 'update-check', 'rollback'],
 		modal: 'updateCheck',
-		description: 'Newer releases to install, or an earlier one to roll back to.',
-		tabs: [
-			{ id: 'updates', label: 'Updates' },
-			{ id: 'rollback', label: 'Roll Back' },
-		],
-		commandPalette: 'Check for Updates',
-		click: 'the Maestro menu → Check for Updates',
+		description: 'Install a newer release, or roll back to an earlier one.',
+		commandPalette: 'Check for Updates or Rollback',
+		click: 'the Maestro menu → Check for Updates or Rollback',
 	},
 	{
 		id: 'about',

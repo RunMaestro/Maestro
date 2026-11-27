@@ -64,6 +64,7 @@ export function useBatchBroadcast({ dispatch }: UseBatchBroadcastDeps): UseBatch
 				goalProgress: state.goalProgress,
 				goalRationale: state.goalRationale,
 				goalIteration: state.goalIteration,
+				goalLoops: state.goalLoops,
 				// Mirror fields - what a web-desktop client needs to draw the same
 				// Auto Run card the owning client draws. Auto Run is renderer-owned
 				// in-memory state, so this broadcast is the only way a second client
@@ -175,6 +176,10 @@ export function useBatchBroadcast({ dispatch }: UseBatchBroadcastDeps): UseBatch
 									goalIteration:
 										newStateForSession.goalIteration !== prevSessionState.goalIteration
 											? newStateForSession.goalIteration
+											: undefined,
+									goalLoops:
+										newStateForSession.goalLoops !== prevSessionState.goalLoops
+											? newStateForSession.goalLoops
 											: undefined,
 									goalExitReason:
 										newStateForSession.goalExitReason !== prevSessionState.goalExitReason

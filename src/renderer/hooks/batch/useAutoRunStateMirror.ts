@@ -126,6 +126,7 @@ export function buildMirroredBatchState(
 		goalProgress: incoming.goalProgress,
 		goalRationale: incoming.goalRationale,
 		goalIteration: incoming.goalIteration,
+		goalLoops: incoming.goalLoops,
 	};
 }
 

@@ -289,6 +289,9 @@ const createPaginatedResponse = (entries: any[], hasMore = false, total?: number
 	},
 });
 
+/** The store's shortcut-usage state before any test records one. */
+const initialKeyboardMasteryStats = useSettingsStore.getState().keyboardMasteryStats;
+
 beforeEach(() => {
 	// Install a fresh in-memory localStorage mock between tests so a filter
 	// toggle in one test can't leak a restrictive selection (UNIFIED_HISTORY_FILTERS_KEY)
@@ -320,9 +323,12 @@ beforeEach(() => {
 	mockGetGraphData.mockResolvedValue(createGraphDataResponse());
 	mockGetOffsetForTimestamp.mockResolvedValue(0);
 
-	// Default: maestroCue disabled
+	// Default: maestroCue disabled. Shortcut usage resets too: every test that
+	// opens the search with Cmd+F records `searchDirectorNotes`, and the test
+	// that asserts the first recording must not inherit one.
 	useSettingsStore.setState({
 		encoreFeatures: { directorNotes: false, usageStats: false, symphony: false, maestroCue: false },
+		keyboardMasteryStats: initialKeyboardMasteryStats,
 	});
 });
 
@@ -617,6 +623,85 @@ describe('UnifiedHistoryTab', () => {
 				expect(screen.getByText('No entries match the current filters.')).toBeInTheDocument();
 			});
 			expect(screen.queryByText(/No history entries/)).not.toBeInTheDocument();
+		});
+	});
+
+	// The search used to filter only the loaded page (the newest 100 rows of
+	// thousands), and only on summary + agent name, so a match on an older
+	// entry or on the tab-name pill came back "No entries matching".
+	describe('Search', () => {
+		const openSearchAndType = async (query: string) => {
+			const listContainer = screen.getByText('User performed action A').closest('[tabindex="0"]');
+			act(() => {
+				fireEvent.keyDown(listContainer!, { key: 'f', metaKey: true });
+			});
+			const input = await screen.findByPlaceholderText(/Search summaries/);
+			fireEvent.change(input, { target: { value: query } });
+		};
+
+		it('sends the query to the main process so it covers the whole window', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			await openSearchAndType('  persona ');
+
+			await waitFor(() => {
+				expect(mockGetUnifiedHistory).toHaveBeenLastCalledWith(
+					expect.objectContaining({ search: 'persona', offset: 0 })
+				);
+			});
+		});
+
+		it('keeps a server match whose only hit is the tab name', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			mockGetUnifiedHistory.mockResolvedValue(
+				createPaginatedResponse(
+					[
+						{
+							id: 'tab-name-hit',
+							type: 'USER' as const,
+							timestamp: Date.now() - 5000,
+							summary: 'Confirmed that no desktop exists on docker01',
+							sessionName: 'Banaco Persona Desktop Setup Check',
+							sourceSessionId: 'session-9',
+							agentName: 'Proxmox',
+							projectPath: '/test',
+						},
+					],
+					false,
+					37
+				)
+			);
+			await openSearchAndType('persona');
+
+			await waitFor(() => {
+				expect(
+					screen.getByText('Confirmed that no desktop exists on docker01')
+				).toBeInTheDocument();
+			});
+			// The badge beside the input counts matches across the window, not
+			// the rows loaded so far.
+			expect(screen.getByText('37')).toBeInTheDocument();
+		});
+
+		it('names the lookback window when nothing matches', async () => {
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+			await waitFor(() => {
+				expect(screen.getByText('User performed action A')).toBeInTheDocument();
+			});
+
+			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse([]));
+			await openSearchAndType('nothing-here');
+
+			expect(
+				await screen.findByText('No entries matching "nothing-here" in this lookback window.')
+			).toBeInTheDocument();
 		});
 	});
 

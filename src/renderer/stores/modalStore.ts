@@ -20,7 +20,6 @@ import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 import { UI_SURFACES } from '../../shared/uiSurfaces';
-import type { UpdateCheckView } from '../../shared/updateRollback';
 import { logger } from '../utils/logger';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
 
@@ -254,11 +253,6 @@ export interface DeleteAgentModalData {
 /** Director's Notes modal data */
 export interface DirectorNotesData {
 	initialTab?: 'overview' | 'history' | 'ai-overview';
-}
-
-/** Check for Updates modal data: which page it opens on. */
-export interface UpdateCheckModalData {
-	initialView: UpdateCheckView;
 }
 
 /** Quit confirmation modal data */
@@ -639,7 +633,6 @@ export interface ModalDataMap {
 	cueModal: CueModalData;
 	cueYamlEditor: CueYamlEditorData;
 	quitConfirm: QuitConfirmModalData;
-	updateCheck: UpdateCheckModalData;
 }
 
 // Helper type to get data type for a modal ID
@@ -955,9 +948,8 @@ export function getModalActions() {
 			open ? openModal('feedback') : closeModal('feedback'),
 
 		// Update Check Modal
-		// `view` opens it straight on the rollback list (menu, palette, `open updates --tab rollback`).
-		setUpdateCheckModalOpen: (open: boolean, view: UpdateCheckView = 'updates') =>
-			open ? openModal('updateCheck', { initialView: view }) : closeModal('updateCheck'),
+		setUpdateCheckModalOpen: (open: boolean) =>
+			open ? openModal('updateCheck') : closeModal('updateCheck'),
 
 		// Leaderboard Registration Modal
 		setLeaderboardRegistrationOpen: (open: boolean) =>

@@ -19,6 +19,7 @@
 
 import type { HistoryEntry, HistoryEntryType } from './types';
 import { truncateAtWordBoundary } from './formatters';
+import { escapeRegExp } from './stringUtils';
 
 /**
  * Every history entry type, in the order filter UIs display them.
@@ -118,6 +119,43 @@ export const MAX_HISTORY_SUMMARY_PREVIEW_CHARS = 1000;
 export function historySummaryPreview(summary: string): string {
 	if (summary.length <= MAX_HISTORY_SUMMARY_PREVIEW_CHARS) return summary;
 	return `${summary.slice(0, MAX_HISTORY_SUMMARY_PREVIEW_CHARS)}…`;
+}
+
+/**
+ * The predicate every history search runs: the History panel, Director's Notes
+ * (in the main process, over the whole lookback window, not one loaded page),
+ * and `maestro-cli director-notes history --search`.
+ *
+ * It matches every field a row SHOWS or a user would type from one: the tab name
+ * (`sessionName`) is the bold pill on every row, so leaving it out made a search
+ * for words in that pill come back empty. Case-insensitive substring match.
+ *
+ * Returns null for a blank query, meaning "no search", so callers skip the scan
+ * outright. The regex is compiled once per search, not once per entry, and
+ * `test()` with the `i` flag never allocates a lowercased copy of a 250 KB
+ * `fullResponse`.
+ */
+export function createHistorySearchMatcher(
+	query: string | null | undefined
+): ((entry: HistoryEntry & { agentName?: string }) => boolean) | null {
+	const trimmed = query?.trim();
+	if (!trimmed) return null;
+	const pattern = new RegExp(escapeRegExp(trimmed), 'i');
+	return (entry) =>
+		[
+			entry.summary,
+			entry.fullResponse,
+			entry.sessionName,
+			entry.agentName,
+			entry.agentSessionId,
+			entry.hostname,
+			// Both halves of the sender pill: the pill draws the display name, the
+			// filter and the CLI speak the username.
+			entry.userName,
+			entry.userDisplayName,
+			// The trigger name is the whole label on a collapsed Cue row.
+			entry.cueTriggerName,
+		].some((field) => typeof field === 'string' && pattern.test(field));
 }
 
 /** Longest one-line summary a producer should write from free-form text. */

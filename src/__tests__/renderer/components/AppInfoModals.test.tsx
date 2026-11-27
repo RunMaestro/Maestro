@@ -14,7 +14,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { AppInfoModals } from '../../../renderer/components/AppModals';
 import type { Theme } from '../../../renderer/types';
-import { useModalStore } from '../../../renderer/stores/modalStore';
 
 // Mock all child modal components
 vi.mock('../../../renderer/components/ShortcutsHelpModal', () => ({
@@ -26,9 +25,7 @@ vi.mock('../../../renderer/components/AboutModal', () => ({
 }));
 
 vi.mock('../../../renderer/components/UpdateCheckModal', () => ({
-	UpdateCheckModal: (props: any) => (
-		<div data-testid="update-check-modal" data-initial-view={props.initialView ?? ''} />
-	),
+	UpdateCheckModal: (props: any) => <div data-testid="update-check-modal" />,
 }));
 
 vi.mock('../../../renderer/components/ProcessMonitor', () => ({
@@ -137,17 +134,6 @@ describe('AppInfoModals', () => {
 		render(<AppInfoModals {...defaultProps} updateCheckModalOpen={true} />);
 
 		expect(screen.getByTestId('update-check-modal')).toBeInTheDocument();
-	});
-
-	it('opens UpdateCheckModal on the page the modal store names', () => {
-		useModalStore.getState().openModal('updateCheck', { initialView: 'rollback' });
-		render(<AppInfoModals {...defaultProps} updateCheckModalOpen={true} />);
-
-		expect(screen.getByTestId('update-check-modal')).toHaveAttribute(
-			'data-initial-view',
-			'rollback'
-		);
-		useModalStore.getState().closeModal('updateCheck');
 	});
 
 	it('renders ProcessMonitor when processMonitorOpen is true', async () => {

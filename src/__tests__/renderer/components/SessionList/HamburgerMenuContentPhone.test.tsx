@@ -13,11 +13,7 @@ import { HamburgerMenuContent } from '../../../../renderer/components/SessionLis
 import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
-import {
-	selectModalData,
-	selectModalOpen,
-	useModalStore,
-} from '../../../../renderer/stores/modalStore';
+import { selectModalOpen, useModalStore } from '../../../../renderer/stores/modalStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
@@ -105,15 +101,15 @@ describe('HamburgerMenuContent sections', () => {
 });
 
 describe('HamburgerMenuContent update entries', () => {
-	it('opens Check for Updates straight on the rollback list from Roll Back Version', () => {
+	it('has one Check for Updates or Rollback entry, which opens the window', () => {
 		useModalStore.getState().closeModal('updateCheck');
 		const closeMenu = vi.fn();
 		renderMenu(closeMenu);
 
-		fireEvent.click(screen.getByRole('button', { name: /Roll Back Version/ }));
+		expect(screen.queryByText(/Roll Back Version/)).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: /Check for Updates or Rollback/ }));
 
 		expect(selectModalOpen('updateCheck')(useModalStore.getState())).toBe(true);
-		expect(selectModalData('updateCheck')(useModalStore.getState())?.initialView).toBe('rollback');
 		expect(closeMenu).toHaveBeenCalledWith(false);
 		useModalStore.getState().closeModal('updateCheck');
 	});

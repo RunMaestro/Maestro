@@ -15,6 +15,11 @@
  *     scroll it and no way to dismiss it (see the tab menu screenshot in the
  *     mobile pass).
  *
+ * When the window is too short for the whole menu, the anchored shape caps its
+ * height at the room below the chip and scrolls, instead of running off the
+ * bottom of the window. The cap never drops below `OVERLAY_MIN_HEIGHT`; past
+ * that the viewport clamp in `useTabHoverOverlay` slides the menu up.
+ *
  * The menu CONTENT is unchanged in both shapes; the sheet restyles it through
  * `.maestro-tab-sheet__body` in index.css (full width, finger-sized rows, no
  * shortcut badges), so a menu never has to know which shell it is in.
@@ -23,7 +28,11 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../types';
-import type { OverlayPosition } from '../../hooks/tabs/useTabHoverOverlay';
+import {
+	OVERLAY_MIN_HEIGHT,
+	OVERLAY_VIEWPORT_PADDING,
+	type OverlayPosition,
+} from '../../hooks/tabs/useTabHoverOverlay';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { PhoneBottomSheet, PHONE_SHEET_SCRIM_ARM_MS } from '../ui/PhoneBottomSheet';
 
@@ -90,13 +99,19 @@ export function TabOverlayPortal({
 
 	if (!position) return null;
 
+	const maxHeight = Math.max(
+		OVERLAY_MIN_HEIGHT,
+		window.innerHeight - position.top - OVERLAY_VIEWPORT_PADDING
+	);
+
 	return createPortal(
 		<div
 			ref={setOverlayRef}
-			className="fixed z-[100]"
+			className="fixed z-[100] overflow-y-auto overflow-x-hidden overscroll-contain scrollbar-thin"
 			style={{
 				top: position.top,
 				left: position.left,
+				maxHeight,
 				opacity: positionReady ? 1 : 0,
 			}}
 			onClick={(e) => e.stopPropagation()}

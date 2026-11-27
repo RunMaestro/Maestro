@@ -10,6 +10,8 @@ import {
 	RefreshCw,
 	RotateCcw,
 	History,
+	ChevronDown,
+	ChevronRight,
 	FlaskConical,
 	Clock,
 	Play,
@@ -33,11 +35,7 @@ import {
 } from '../services/autoRunRestartResume';
 import { ipcErrorMessage } from '../../shared/serializeError';
 import { formatSize } from '../../shared/formatters';
-import {
-	normalizeReleaseTag,
-	type RollbackTargetsResult,
-	type UpdateCheckView,
-} from '../../shared/updateRollback';
+import { normalizeReleaseTag, type RollbackTargetsResult } from '../../shared/updateRollback';
 import { compareVersions } from '../../shared/pathUtils';
 
 interface Release {
@@ -59,18 +57,15 @@ interface UpdateCheckResult {
 	error?: string;
 }
 
+/** What a download is: a forward update, or a rollback to an earlier release. */
+type DownloadKind = 'update' | 'rollback';
+
 interface UpdateCheckModalProps {
 	theme: Theme;
 	onClose: () => void;
-	/** Open straight on the rollback list (the menu and palette "Roll Back" entries). */
-	initialView?: UpdateCheckView;
 }
 
-export function UpdateCheckModal({
-	theme,
-	onClose,
-	initialView = 'updates',
-}: UpdateCheckModalProps) {
+export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	const [loading, setLoading] = useState(true);
 	const [result, setResult] = useState<UpdateCheckResult | null>(null);
 	const [expandedReleases, setExpandedReleases] = useState<Set<string>>(new Set());
@@ -83,27 +78,34 @@ export function UpdateCheckModal({
 	const [downloadError, setDownloadError] = useState<string | null>(null);
 	const [showBusyWarning, setShowBusyWarning] = useState(false);
 	// What this modal last asked main to download: a forward update, or a
-	// rollback to `downloadTag`. The two views must not show each other's
-	// progress or Restart button.
-	const [downloadKind, setDownloadKind] = useState<UpdateCheckView | null>(null);
+	// rollback to `downloadTag`. The update and rollback sections must not show
+	// each other's progress or Restart button.
+	const [downloadKind, setDownloadKind] = useState<DownloadKind | null>(null);
 	const [downloadTag, setDownloadTag] = useState<string | null>(null);
 	// A finished download names its version, which settles the question even for
 	// a download this modal did not start (`maestro-cli rollback`). Mid-download
 	// status carries no version, so the modal's own request decides then.
 	const downloadedVersion = downloadStatus.info?.version;
-	const activeDownloadKind: UpdateCheckView = downloadedVersion
+	const activeDownloadKind: DownloadKind = downloadedVersion
 		? compareVersions(downloadedVersion, __APP_VERSION__) < 0
 			? 'rollback'
-			: 'updates'
-		: (downloadKind ?? 'updates');
+			: 'update'
+		: (downloadKind ?? 'update');
 	const activeDownloadTag =
 		downloadTag ?? (downloadedVersion ? normalizeReleaseTag(downloadedVersion) : null);
 
-	// Rollback view state, fetched the first time the view opens.
-	const [view, setView] = useState<UpdateCheckView>(initialView);
+	// Rollback section: collapsed until asked for, and its list is fetched the
+	// first time it opens, so a plain update check never pays for it.
+	const [rollbackOpen, setRollbackOpen] = useState(false);
 	const [rollbackLoading, setRollbackLoading] = useState(false);
 	const [rollbackResult, setRollbackResult] = useState<RollbackTargetsResult | null>(null);
 	const [rollbackReload, setRollbackReload] = useState(0);
+	// A rollback in flight or ready to install keeps its section open, even one
+	// started outside this window (`maestro-cli rollback`).
+	const showRollback =
+		rollbackOpen ||
+		(activeDownloadKind === 'rollback' &&
+			(downloadStatus.status === 'downloading' || downloadStatus.status === 'downloaded'));
 
 	// Idle / restart-pending state
 	const anySessionBusy = useSessionStore(selectIsAnySessionBusy);
@@ -141,9 +143,11 @@ export function UpdateCheckModal({
 		checkForUpdates();
 	}, [enableBetaUpdates]);
 
-	// Load the rollback list when that view opens (or the beta toggle changes it).
+	// Load the rollback list when that section shows (or the beta toggle changes
+	// it). Keyed on `showRollback`, not `rollbackOpen`: a CLI-started rollback
+	// opens the section without a click and still needs its list.
 	useEffect(() => {
-		if (view !== 'rollback') return;
+		if (!showRollback) return;
 		let cancelled = false;
 		setRollbackLoading(true);
 		window.maestro.updates
@@ -166,7 +170,7 @@ export function UpdateCheckModal({
 		return () => {
 			cancelled = true;
 		};
-	}, [view, enableBetaUpdates, rollbackReload]);
+	}, [showRollback, enableBetaUpdates, rollbackReload]);
 
 	// Subscribe to update status changes
 	useEffect(() => {
@@ -222,7 +226,7 @@ export function UpdateCheckModal({
 	const handleDownloadUpdate = async () => {
 		setDownloadError(null);
 		setShowBusyWarning(false);
-		setDownloadKind('updates');
+		setDownloadKind('update');
 		setDownloadTag(result?.releases?.[0]?.tag_name ?? null);
 		setDownloadStatus({
 			status: 'downloading',
@@ -298,15 +302,15 @@ export function UpdateCheckModal({
 
 	const isDownloading = downloadStatus.status === 'downloading';
 	const isDownloaded = downloadStatus.status === 'downloaded';
-	const isUpdateDownloaded = isDownloaded && activeDownloadKind === 'updates';
+	const isUpdateDownloaded = isDownloaded && activeDownloadKind === 'update';
 	const isRollbackDownloaded = isDownloaded && activeDownloadKind === 'rollback';
 
 	const releasesUrl = result?.releasesUrl ?? 'https://github.com/RunMaestro/Maestro/releases';
 
-	// Each view shows only its own download: a failed rollback is not a failed update.
-	const ownsDownload = (kind: UpdateCheckView) => activeDownloadKind === kind;
+	// Each section shows only its own download: a failed rollback is not a failed update.
+	const ownsDownload = (kind: DownloadKind) => activeDownloadKind === kind;
 
-	const renderDownloadError = (kind: UpdateCheckView) =>
+	const renderDownloadError = (kind: DownloadKind) =>
 		downloadError && ownsDownload(kind) ? (
 			<div
 				className="p-3 rounded border text-xs"
@@ -332,7 +336,7 @@ export function UpdateCheckModal({
 			</div>
 		) : null;
 
-	const renderDownloadProgress = (kind: UpdateCheckView, label: string) =>
+	const renderDownloadProgress = (kind: DownloadKind, label: string) =>
 		isDownloading && downloadStatus.progress && ownsDownload(kind) ? (
 			<div className="space-y-2">
 				<div
@@ -553,24 +557,23 @@ export function UpdateCheckModal({
 			style={{ borderColor: theme.colors.border }}
 		>
 			<div className="flex items-center gap-2">
-				{view === 'rollback' ? (
-					<History className="w-5 h-5" style={{ color: theme.colors.accent }} />
-				) : (
-					<Download className="w-5 h-5" style={{ color: theme.colors.accent }} />
-				)}
+				<Download className="w-5 h-5" style={{ color: theme.colors.accent }} />
 				<h2 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-					{view === 'rollback' ? 'Roll Back to an Earlier Version' : 'Check for Updates'}
+					Check for Updates or Rollback
 				</h2>
 			</div>
 			<div className="flex items-center gap-2">
 				<button
-					onClick={view === 'rollback' ? () => setRollbackReload((n) => n + 1) : checkForUpdates}
-					disabled={(view === 'rollback' ? rollbackLoading : loading) || isDownloading}
+					onClick={() => {
+						checkForUpdates();
+						if (showRollback) setRollbackReload((n) => n + 1);
+					}}
+					disabled={loading || rollbackLoading || isDownloading}
 					className="p-1 rounded hover:bg-white/10 transition-colors disabled:opacity-50"
 					title="Refresh"
 				>
 					<RefreshCw
-						className={`w-4 h-4 ${(view === 'rollback' ? rollbackLoading : loading) ? 'animate-spin' : ''}`}
+						className={`w-4 h-4 ${loading || rollbackLoading ? 'animate-spin' : ''}`}
 						style={{ color: theme.colors.textDim }}
 					/>
 				</button>
@@ -584,7 +587,7 @@ export function UpdateCheckModal({
 	return (
 		<Modal
 			theme={theme}
-			title="Check for Updates"
+			title="Check for Updates or Rollback"
 			priority={MODAL_PRIORITIES.UPDATE_CHECK}
 			onClose={onClose}
 			customHeader={customHeader}
@@ -593,32 +596,7 @@ export function UpdateCheckModal({
 			maxHeight="80vh"
 		>
 			<div className="space-y-4 -my-2">
-				{view === 'rollback' ? (
-					<>
-						<UpdateRollbackPanel
-							theme={theme}
-							loading={rollbackLoading}
-							result={rollbackResult}
-							activeTag={activeDownloadKind === 'rollback' ? activeDownloadTag : null}
-							downloading={isDownloading}
-							onRollback={handleRollback}
-							onBack={() => setView('updates')}
-						/>
-						{renderDownloadError('rollback')}
-						{renderDownloadProgress('rollback', `Downloading ${activeDownloadTag ?? 'release'}...`)}
-						{isRollbackDownloaded && (
-							<div className="space-y-2">
-								{renderRestartControls(
-									`Restart to Roll Back to ${activeDownloadTag ?? 'This Version'}`
-								)}
-								<div className="text-xs text-center" style={{ color: theme.colors.textDim }}>
-									{activeDownloadTag} is downloaded and installs the next time Maestro restarts or
-									quits.
-								</div>
-							</div>
-						)}
-					</>
-				) : loading ? (
+				{loading ? (
 					<div className="flex flex-col items-center justify-center py-8 gap-3">
 						<Spinner size={32} color={theme.colors.accent} />
 						<span className="text-sm" style={{ color: theme.colors.textDim }}>
@@ -703,8 +681,8 @@ export function UpdateCheckModal({
 							</div>
 						</div>
 
-						{renderDownloadError('updates')}
-						{renderDownloadProgress('updates', 'Downloading update...')}
+						{renderDownloadError('update')}
+						{renderDownloadProgress('update', 'Downloading update...')}
 
 						{/* Action Buttons */}
 						<div className="space-y-2">
@@ -777,17 +755,57 @@ export function UpdateCheckModal({
 					</div>
 				)}
 
-				{view === 'updates' && !loading && (
+				{/* Rollback: earlier releases, folded away until asked for */}
+				<div className="border-t pt-4" style={{ borderColor: theme.colors.border }}>
 					<button
-						onClick={() => setView('rollback')}
-						disabled={isDownloading}
-						className="w-full flex items-center justify-center gap-2 p-2 rounded text-xs transition-colors hover:bg-white/5 disabled:opacity-50"
-						style={{ color: theme.colors.textDim }}
+						onClick={() => setRollbackOpen((open) => !open)}
+						aria-expanded={showRollback}
+						disabled={activeDownloadKind === 'rollback' && (isDownloading || isDownloaded)}
+						className="w-full flex items-center gap-2 text-left text-sm font-bold disabled:cursor-default"
+						style={{ color: theme.colors.textMain }}
 					>
-						<History className="w-3.5 h-3.5" />
-						Having trouble with this version? Roll back to an earlier one
+						{showRollback ? (
+							<ChevronDown className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+						) : (
+							<ChevronRight className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+						)}
+						<History className="w-4 h-4" style={{ color: theme.colors.accent }} />
+						Roll back to an earlier version
+						{!showRollback && (
+							<span className="text-xs font-normal" style={{ color: theme.colors.textDim }}>
+								- if this version is giving you trouble
+							</span>
+						)}
 					</button>
-				)}
+					{showRollback && (
+						<div className="space-y-4 mt-3">
+							<UpdateRollbackPanel
+								theme={theme}
+								loading={rollbackLoading}
+								result={rollbackResult}
+								activeTag={activeDownloadKind === 'rollback' ? activeDownloadTag : null}
+								downloading={isDownloading}
+								onRollback={handleRollback}
+							/>
+							{renderDownloadError('rollback')}
+							{renderDownloadProgress(
+								'rollback',
+								`Downloading ${activeDownloadTag ?? 'release'}...`
+							)}
+							{isRollbackDownloaded && (
+								<div className="space-y-2">
+									{renderRestartControls(
+										`Restart to Roll Back to ${activeDownloadTag ?? 'This Version'}`
+									)}
+									<div className="text-xs text-center" style={{ color: theme.colors.textDim }}>
+										{activeDownloadTag} is downloaded and installs the next time Maestro restarts or
+										quits.
+									</div>
+								</div>
+							)}
+						</div>
+					)}
+				</div>
 
 				{/* Beta Opt-in Toggle */}
 				<div className="mt-4 pt-4 border-t" style={{ borderColor: theme.colors.border }}>

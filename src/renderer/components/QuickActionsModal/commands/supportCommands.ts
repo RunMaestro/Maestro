@@ -3,7 +3,6 @@ import type { NotifyToastInput } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
 import type { SettingsTab } from '../../../types';
 import type { QuickAction } from '../types';
-import type { UpdateCheckView } from '../../../../shared/updateRollback';
 
 interface FeedbackDraftActions {
 	isMinimized: boolean;
@@ -21,7 +20,7 @@ interface BuildSupportCommandsArgs {
 	setFeedbackModalOpen: (open: boolean) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
-	setUpdateCheckModalOpen?: (open: boolean, view?: UpdateCheckView) => void;
+	setUpdateCheckModalOpen?: (open: boolean) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;
 	startTour?: () => void;
 	getFeedbackDraft: () => FeedbackDraftActions;
@@ -253,18 +252,10 @@ export function buildSupportCommands({
 	if (setUpdateCheckModalOpen) {
 		commands.push({
 			id: 'updateCheck',
-			label: 'Check for Updates',
+			label: 'Check for Updates or Rollback',
+			subtext: 'Install the latest version, or roll back to an earlier release',
 			action: () => {
 				setUpdateCheckModalOpen(true);
-				setQuickActionOpen(false);
-			},
-		});
-		commands.push({
-			id: 'updateRollback',
-			label: 'Roll Back to an Earlier Version',
-			subtext: 'Reinstall a previous Maestro release',
-			action: () => {
-				setUpdateCheckModalOpen(true, 'rollback');
 				setQuickActionOpen(false);
 			},
 		});

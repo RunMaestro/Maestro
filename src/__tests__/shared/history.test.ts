@@ -24,6 +24,7 @@ import {
 	MAX_HISTORY_SUMMARY_PREVIEW_CHARS,
 	MAX_HISTORY_SUMMARY_LINE_CHARS,
 	historySummaryPreview,
+	createHistorySearchMatcher,
 	historySummaryLine,
 	clampHistoryEntry,
 	MAX_HISTORY_SUMMARY_STORED_CHARS,
@@ -418,6 +419,50 @@ describe('history summary helpers', () => {
 		const result = historySummaryLine(line);
 		expect(result.length).toBeLessThanOrEqual(MAX_HISTORY_SUMMARY_LINE_CHARS);
 		expect(result.endsWith('word…')).toBe(true);
+	});
+});
+
+// One matcher for the History panel, Director's Notes (main process) and the
+// CLI. Director's Notes once matched only summary + agent name, so a search for
+// a word in the tab-name pill found nothing.
+describe('createHistorySearchMatcher', () => {
+	const base = {
+		id: 'e1',
+		type: 'USER' as const,
+		timestamp: 0,
+		summary: 'Confirmed no desktop exists',
+		projectPath: '/p',
+	};
+
+	it('returns null for a blank query so callers skip the scan', () => {
+		expect(createHistorySearchMatcher('')).toBeNull();
+		expect(createHistorySearchMatcher('   ')).toBeNull();
+		expect(createHistorySearchMatcher(undefined)).toBeNull();
+	});
+
+	it.each([
+		['summary', { summary: 'The Persona seat' }],
+		['fullResponse', { fullResponse: 'long PERSONA text' }],
+		['sessionName', { sessionName: 'Banaco Persona Desktop Setup Check' }],
+		['agentName', { agentName: 'Persona Lab' }],
+		['agentSessionId', { agentSessionId: 'persona-123' }],
+		['hostname', { hostname: 'persona-host' }],
+		['userName', { userName: 'persona' }],
+		['userDisplayName', { userDisplayName: 'Persona Person' }],
+		['cueTriggerName', { cueTriggerName: 'persona-sweep' }],
+	])('matches on %s, case-insensitively', (_field, overrides) => {
+		const matches = createHistorySearchMatcher('  persona ')!;
+		expect(matches({ ...base, ...overrides })).toBe(true);
+	});
+
+	it('rejects an entry with no matching field', () => {
+		expect(createHistorySearchMatcher('persona')!(base)).toBe(false);
+	});
+
+	it('treats regex metacharacters as literal text', () => {
+		const matches = createHistorySearchMatcher('a.b (c)')!;
+		expect(matches({ ...base, summary: 'see a.b (c) here' })).toBe(true);
+		expect(matches({ ...base, summary: 'axb c' })).toBe(false);
 	});
 });
 

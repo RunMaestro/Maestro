@@ -174,15 +174,16 @@ function GitStatusTooltip({
 	onScheduleClose,
 }: GitStatusTooltipProps) {
 	const tooltipRef = useRef<HTMLDivElement>(null);
-	const { left, top, ready } = useAnchoredMenuPosition(tooltipRef, anchorRef);
+	const { left, top, maxHeight, ready } = useAnchoredMenuPosition(tooltipRef, anchorRef);
 
 	return createPortal(
 		<div
 			ref={tooltipRef}
-			className="fixed w-max max-w-[min(560px,calc(100vw-16px))] rounded z-[100] pointer-events-auto"
+			className="fixed flex flex-col w-max max-w-[min(560px,calc(100vw-16px))] rounded z-[100] pointer-events-auto"
 			style={{
 				left,
 				top,
+				maxHeight,
 				opacity: ready ? 1 : 0,
 				...elevatedSurfaceStyle(theme),
 			}}
@@ -191,7 +192,7 @@ function GitStatusTooltip({
 			data-testid="git-status-tooltip"
 		>
 			<div
-				className="text-2xs uppercase font-bold p-3 border-b"
+				className="shrink-0 text-2xs uppercase font-bold p-3 border-b"
 				style={{
 					color: theme.colors.textDim,
 					borderColor: theme.colors.border,
@@ -199,7 +200,7 @@ function GitStatusTooltip({
 			>
 				Changed Files ({totalChanges}) • +{additions} −{deletions}
 			</div>
-			<div className="max-h-96 overflow-y-auto scrollbar-thin">
+			<div className="min-h-0 max-h-96 overflow-y-auto scrollbar-thin">
 				{fileChanges.map((file: GitFileChange, idx: number) => {
 					const total = file.additions + file.deletions;
 					const maxBarWidth = 60; // Max width in pixels for the bar

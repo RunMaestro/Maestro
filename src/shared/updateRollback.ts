@@ -17,9 +17,6 @@
 
 import { compareVersions } from './pathUtils';
 
-/** Which page of the Check for Updates modal shows: newer releases, or earlier ones. */
-export type UpdateCheckView = 'updates' | 'rollback';
-
 /** How many earlier releases the rollback list offers, newest first. */
 export const ROLLBACK_LIST_LIMIT = 15;
 

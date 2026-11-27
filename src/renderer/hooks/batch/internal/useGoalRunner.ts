@@ -20,6 +20,7 @@ import { parseGoalMarkers, stripMaestroMarkers } from '../../../../shared/goalDr
 import {
 	evaluateGoalExit,
 	resolveGoalIterationProgress,
+	summarizeGoalLoops,
 } from '../../../../shared/goalDriven/goalExitEvaluator';
 import { formatGoalRunDocumentPath } from '../../../../shared/goalDriven/goalRunLabel';
 import {
@@ -385,6 +386,7 @@ export function useGoalRunner({
 							goalMode: true,
 							goalProgress: 0,
 							goalIteration: 0,
+							goalLoops: summarizeGoalLoops([], goalConfig.maxIterations, 0),
 							goalRationale: undefined,
 							goalExitReason: undefined,
 						},
@@ -662,6 +664,13 @@ export function useGoalRunner({
 					deadlockReason: markers.deadlockReason,
 				});
 
+				// Snapshot now: the updater may run after `history` grows.
+				const goalLoops = summarizeGoalLoops(
+					history,
+					goalConfig.maxIterations,
+					timeTracking.getElapsedTime(sessionId)
+				);
+
 				// Update batch state via the broadcast updater so desktop + web stay in sync.
 				// The legacy completedTasks fields mirror progress so existing progress UI
 				// (which reads completed/total) renders the percent without goal-specific code.
@@ -674,6 +683,7 @@ export function useGoalRunner({
 							goalProgress: displayProgress,
 							goalRationale: markers.rationale ?? undefined,
 							goalIteration: iteration,
+							goalLoops,
 							completedTasksAcrossAllDocs: displayProgress,
 							completedTasks: displayProgress,
 							loopIteration: iteration,

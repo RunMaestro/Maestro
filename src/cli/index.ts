@@ -1553,6 +1553,10 @@ directorNotes
 	.option('-f, --format <type>', 'Output format: json, markdown, text (default: text)')
 	.option('--filter <type>', 'Filter by entry type: auto, user, cue, agent')
 	.option('-l, --limit <n>', 'Maximum entries to show (default: 100)')
+	.option(
+		'-s, --search <text>',
+		'Only entries whose summary, response, tab name, agent name, or sender match <text>'
+	)
 	.option('--json', 'Output as JSON (shorthand for --format json)')
 	.action(directorNotesHistory);
 

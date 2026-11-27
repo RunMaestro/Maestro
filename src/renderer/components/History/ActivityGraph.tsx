@@ -66,6 +66,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	const {
 		left: contextMenuLeft,
 		top: contextMenuTop,
+		maxHeight: contextMenuMaxHeight,
 		ready: contextMenuReady,
 	} = useContextMenuPosition(contextMenuRef, contextMenu?.x ?? 0, contextMenu?.y ?? 0);
 
@@ -315,10 +316,11 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			{contextMenu && (
 				<div
 					ref={contextMenuRef}
-					className="fixed z-50 py-1 rounded"
+					className="fixed z-50 py-1 rounded overflow-y-auto scrollbar-thin"
 					style={{
 						left: contextMenuLeft,
 						top: contextMenuTop,
+						maxHeight: contextMenuMaxHeight,
 						...elevatedSurfaceStyle(theme),
 						minWidth: '120px',
 						opacity: contextMenuReady ? 1 : 0,

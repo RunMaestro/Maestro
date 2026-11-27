@@ -827,7 +827,7 @@ describe('QuickActions command builders', () => {
 		expect(debugCommandIds).toContain('debugAgentProbe');
 	});
 
-	it('offers a rollback command that opens Check for Updates on its rollback list', () => {
+	it('offers one Check for Updates or Rollback command', () => {
 		const close = vi.fn();
 		const setUpdateCheckModalOpen = vi.fn();
 		const commands = buildSupportCommands({
@@ -848,10 +848,11 @@ describe('QuickActions command builders', () => {
 			shortcuts: {},
 		} as Parameters<typeof buildSupportCommands>[0]);
 
-		const rollback = commands.find((c) => c.id === 'updateRollback');
-		expect(rollback?.label).toBe('Roll Back to an Earlier Version');
-		rollback!.action();
-		expect(setUpdateCheckModalOpen).toHaveBeenCalledWith(true, 'rollback');
+		expect(commands.find((c) => c.id === 'updateRollback')).toBeUndefined();
+		const updates = commands.find((c) => c.id === 'updateCheck');
+		expect(updates?.label).toBe('Check for Updates or Rollback');
+		updates!.action();
+		expect(setUpdateCheckModalOpen).toHaveBeenCalledWith(true);
 		expect(close).toHaveBeenCalledWith(false);
 	});
 

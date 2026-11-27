@@ -60,6 +60,7 @@ Grep-verified 2026-11-05 (`npm run docs:verify` re-checks every path). This is t
 - **Truncate prose without splitting a word:** `truncateAtWordBoundary()` in `src/shared/formatters.ts`
 - **Format numbers:** `formatNumber()`, `formatCount()` in `src/shared/formatters.ts`
 - **A history summary from free-form text / what a row renders of one:** `historySummaryLine()`, `historySummaryPreview()`, `clampHistoryEntry()` in `src/shared/history.ts`
+- **Searching history entries (panel, Director's Notes, CLI):** `createHistorySearchMatcher()` in `src/shared/history.ts`.
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()` in `src/shared/formatters.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`
 - **Humanized durations:** everything in `src/shared/duration.ts` (re-exported from `formatters.ts`).

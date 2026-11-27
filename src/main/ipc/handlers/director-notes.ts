@@ -14,7 +14,11 @@ import { ipcMain, type BrowserWindow } from 'electron';
 import { logger } from '../../utils/logger';
 import { createSafeSend } from '../../utils/safe-send';
 import { HistoryEntry, HistoryEntryType, ToolType } from '../../../shared/types';
-import { paginateEntries, resolveHistoryEntryLimit } from '../../../shared/history';
+import {
+	createHistorySearchMatcher,
+	paginateEntries,
+	resolveHistoryEntryLimit,
+} from '../../../shared/history';
 import type { PaginatedResult, GraphBucket } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore, getSettingsStore } from '../../stores';
@@ -360,6 +364,12 @@ export interface UnifiedHistoryOptions {
 	offset?: number;
 	/** Number of buckets for the activity graph (passed from frontend lookback config) */
 	graphBucketCount?: number;
+	/**
+	 * Text search, applied here BEFORE pagination so it covers the whole lookback
+	 * window. Filtering in the renderer only ever saw the one loaded page.
+	 * Blank or omitted means no search. `stats` stay unsearched (window totals).
+	 */
+	search?: string;
 }
 
 export interface UnifiedHistoryEntry extends HistoryEntry {
@@ -584,7 +594,8 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					graphBuckets?: GraphBucket[];
 				}
 			> => {
-				const { lookbackDays, filter, limit, offset, graphBucketCount } = options;
+				const { lookbackDays, filter, limit, offset, graphBucketCount, search } = options;
+				const matchesSearch = createHistorySearchMatcher(search);
 				const now = Date.now();
 				// lookbackDays <= 0 means "all time" - no cutoff
 				const cutoffTime = lookbackDays > 0 ? now - lookbackDays * 24 * 60 * 60 * 1000 : 0;
@@ -661,11 +672,13 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 						// Apply type filter for the result set
 						if (!entryPassesFilter(entry.type, filter ?? null)) continue;
 
-						allEntries.push({
+						const unified: UnifiedHistoryEntry = {
 							...entry,
 							sourceSessionId: agent.sourceSessionId,
 							agentName: agent.agentName,
-						});
+						};
+						if (matchesSearch && !matchesSearch(unified)) continue;
+						allEntries.push(unified);
 					}
 				}
 

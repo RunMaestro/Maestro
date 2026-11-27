@@ -1,6 +1,5 @@
 import type React from 'react';
 import type { GroupChat } from '../../../shared/group-chat-types';
-import type { UpdateCheckView } from '../../../shared/updateRollback';
 import type {
 	Group,
 	RightPanelTab,
@@ -130,7 +129,7 @@ export interface QuickActionsModalProps {
 	onDebugReleaseQueuedItem?: () => void;
 	markdownEditMode?: boolean;
 	onToggleMarkdownEditMode?: () => void;
-	setUpdateCheckModalOpen?: (open: boolean, view?: UpdateCheckView) => void;
+	setUpdateCheckModalOpen?: (open: boolean) => void;
 	openWizard?: () => void;
 	wizardGoToStep?: (step: WizardStep) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;

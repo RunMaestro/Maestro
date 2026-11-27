@@ -12,7 +12,7 @@
  */
 
 import type { BatchRunState, AgentError, PlaybookStatus } from '../../types';
-import type { GoalExitReason } from '../../../shared/goalDriven/types';
+import type { GoalExitReason, GoalLoopStats } from '../../../shared/goalDriven/types';
 import {
 	transition,
 	canTransition,
@@ -208,6 +208,7 @@ export interface UpdateProgressPayload {
 	goalProgress?: number;
 	goalRationale?: string;
 	goalIteration?: number;
+	goalLoops?: GoalLoopStats;
 	goalExitReason?: GoalExitReason;
 }
 
@@ -386,6 +387,7 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					...(payload.goalProgress !== undefined && { goalProgress: payload.goalProgress }),
 					...(payload.goalRationale !== undefined && { goalRationale: payload.goalRationale }),
 					...(payload.goalIteration !== undefined && { goalIteration: payload.goalIteration }),
+					...(payload.goalLoops !== undefined && { goalLoops: payload.goalLoops }),
 					...(payload.goalExitReason !== undefined && { goalExitReason: payload.goalExitReason }),
 				},
 			};

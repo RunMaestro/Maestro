@@ -9,6 +9,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { LiveModeState } from '../../shared/liveMode';
+import type { GoalLoopStats } from '../../shared/goalDriven/types';
 
 /**
  * Auto Run state for broadcasting
@@ -34,6 +35,7 @@ export interface AutoRunState {
 	goalProgress?: number;
 	goalRationale?: string;
 	goalIteration?: number;
+	goalLoops?: GoalLoopStats;
 }
 
 /**

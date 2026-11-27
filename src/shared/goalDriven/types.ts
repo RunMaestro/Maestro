@@ -85,6 +85,24 @@ export type GoalExitDecision =
 	| { action: 'stop'; reason: GoalExitReason; detail: string };
 
 /**
+ * Per-loop readout for a running goal run, published on the batch state so the
+ * Auto Run card can show momentum instead of an ETA (a goal run has no task
+ * count to project from). Built by `summarizeGoalLoops()` after each loop.
+ */
+export interface GoalLoopStats {
+	/** The run's iteration cap; `null` for an unlimited run. */
+	maxIterations: number | null;
+	/** Raw progress gained by the last finished loop (can be negative); `null` before the first one finishes. */
+	lastDelta: number | null;
+	/** Finished loops in a row that did not raise progress. */
+	flatStreak: number;
+	/** Flat loops in a row that stop the run as stalled. */
+	flatLimit: number;
+	/** Active run time (sleep and paused spans excluded) when the last loop finished. */
+	completedActiveMs: number;
+}
+
+/**
  * Number of consecutive non-progressing iterations that trips stall detection.
  *
  * Mirrors `MAX_CONSECUTIVE_NO_CHANGES` (= 3) in the task-mode runner

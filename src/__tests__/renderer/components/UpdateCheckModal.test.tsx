@@ -637,7 +637,7 @@ describe('UpdateCheckModal', () => {
 					blocksLowerLayers: true,
 					capturesFocus: true,
 					focusTrap: 'strict',
-					ariaLabel: 'Check for Updates',
+					ariaLabel: 'Check for Updates or Rollback',
 				})
 			);
 		});
@@ -686,7 +686,10 @@ describe('UpdateCheckModal', () => {
 		it('has aria-label', async () => {
 			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
 
-			expect(screen.getByRole('dialog')).toHaveAttribute('aria-label', 'Check for Updates');
+			expect(screen.getByRole('dialog')).toHaveAttribute(
+				'aria-label',
+				'Check for Updates or Rollback'
+			);
 		});
 	});
 
@@ -719,7 +722,7 @@ describe('UpdateCheckModal', () => {
 		it('shows title', async () => {
 			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
 
-			expect(screen.getByText('Check for Updates')).toBeInTheDocument();
+			expect(screen.getByText('Check for Updates or Rollback')).toBeInTheDocument();
 		});
 	});
 
@@ -1351,44 +1354,42 @@ describe('UpdateCheckModal', () => {
 			useBatchStore.setState({ batchRunStates: {} });
 		});
 
-		it('opens straight on the rollback list when asked to', async () => {
-			render(
-				<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} initialView="rollback" />
-			);
-
+		/** Render the window and unfold its rollback section. */
+		const renderWithRollbackOpen = async () => {
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
+			await waitFor(() => {
+				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			});
+			fireEvent.click(screen.getByText('Roll back to an earlier version'));
 			await waitFor(() => {
 				expect(screen.getByText('v0.9.0')).toBeInTheDocument();
 			});
-			expect(screen.getByText('- Steady')).toBeInTheDocument();
-			expect(screen.getByText('Roll Back to an Earlier Version')).toBeInTheDocument();
-			expect(window.maestro.updates.listRollbackTargets).toHaveBeenCalledWith(false);
-		});
+		};
 
-		it('reaches the rollback list from the updates page, and does not fetch it before', async () => {
+		it('keeps the rollback section folded, and unfetched, until it is opened', async () => {
 			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
 
 			await waitFor(() => {
 				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
 			});
+			expect(screen.getByText('Roll back to an earlier version')).toBeInTheDocument();
+			expect(screen.queryByText('v0.9.0')).not.toBeInTheDocument();
 			expect(window.maestro.updates.listRollbackTargets).not.toHaveBeenCalled();
+		});
 
-			fireEvent.click(screen.getByText(/Roll back to an earlier one/));
+		it('shows the update and the earlier releases in the same window', async () => {
+			await renderWithRollbackOpen();
 
-			await waitFor(() => {
-				expect(screen.getByText('v0.9.0')).toBeInTheDocument();
-			});
-
-			fireEvent.click(screen.getByText('Back to updates'));
+			expect(screen.getByText('- Steady')).toBeInTheDocument();
 			expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			expect(window.maestro.updates.listRollbackTargets).toHaveBeenCalledWith(false);
+
+			fireEvent.click(screen.getByText('Roll back to an earlier version'));
+			expect(screen.queryByText('v0.9.0')).not.toBeInTheDocument();
 		});
 
 		it('downloads the picked release, then restarts into it', async () => {
-			render(
-				<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} initialView="rollback" />
-			);
-			await waitFor(() => {
-				expect(screen.getByText('v0.9.0')).toBeInTheDocument();
-			});
+			await renderWithRollbackOpen();
 
 			fireEvent.click(screen.getByText('Roll Back'));
 			expect(window.maestro.updates.rollback).toHaveBeenCalledWith('v0.9.0');
@@ -1406,12 +1407,7 @@ describe('UpdateCheckModal', () => {
 			(window.maestro.updates as any).rollback = vi
 				.fn()
 				.mockResolvedValue({ success: false, error: 'ENOSPC: disk full' });
-			render(
-				<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} initialView="rollback" />
-			);
-			await waitFor(() => {
-				expect(screen.getByText('v0.9.0')).toBeInTheDocument();
-			});
+			await renderWithRollbackOpen();
 
 			fireEvent.click(screen.getByText('Roll Back'));
 
@@ -1426,13 +1422,35 @@ describe('UpdateCheckModal', () => {
 				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
 			});
 
-			// e.g. `maestro-cli rollback 0.9.0` finished while this page was open
+			// e.g. `maestro-cli rollback 0.9.0` finished while this window was open
 			statusCallback!({ status: 'downloaded', info: { version: '0.9.0' } });
 
+			// The rollback section unfolds itself to offer the restart; the update keeps its button.
+			await waitFor(() => {
+				expect(screen.getByText('Restart to Roll Back to v0.9.0')).toBeInTheDocument();
+			});
+			expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
+			expect(screen.queryByText('Restart to Update')).not.toBeInTheDocument();
+		});
+
+		it('loads the earlier releases when a CLI rollback unfolds the section', async () => {
+			render(<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} />);
 			await waitFor(() => {
 				expect(screen.getByText('Download and Install Update')).toBeInTheDocument();
 			});
-			expect(screen.queryByText('Restart to Update')).not.toBeInTheDocument();
+			expect(window.maestro.updates.listRollbackTargets).not.toHaveBeenCalled();
+
+			// The section opened without a click; it must still fetch its list
+			// rather than claim no earlier release can be installed.
+			statusCallback!({ status: 'downloaded', info: { version: '0.9.0' } });
+
+			await waitFor(() => {
+				expect(screen.getByText('- Steady')).toBeInTheDocument();
+			});
+			expect(window.maestro.updates.listRollbackTargets).toHaveBeenCalledWith(false);
+			expect(
+				screen.queryByText('No earlier releases can be installed on this platform.')
+			).not.toBeInTheDocument();
 		});
 
 		it('never promises that a running Auto Run resumes after a rollback', async () => {
@@ -1444,12 +1462,7 @@ describe('UpdateCheckModal', () => {
 			useBatchStore.setState({
 				batchRunStates: { 'agent-a': { ...DEFAULT_BATCH_STATE, isRunning: true } },
 			});
-			render(
-				<UpdateCheckModal theme={createMockTheme()} onClose={vi.fn()} initialView="rollback" />
-			);
-			await waitFor(() => {
-				expect(screen.getByText('v0.9.0')).toBeInTheDocument();
-			});
+			await renderWithRollbackOpen();
 			fireEvent.click(screen.getByText('Roll Back'));
 			statusCallback!({ status: 'downloaded', info: { version: '0.9.0' } });
 			await waitFor(() => {

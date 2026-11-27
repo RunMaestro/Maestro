@@ -4499,6 +4499,7 @@ interface MaestroAPI {
 			limit?: number;
 			offset?: number;
 			graphBucketCount?: number;
+			search?: string;
 		}) => Promise<{
 			entries: Array<{
 				id: string;

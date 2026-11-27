@@ -721,7 +721,8 @@ export interface BatchRunState {
 	goalMode?: boolean; // True when this run is pursuing a free-text goal (not documents)
 	goalProgress?: number; // Latest self-reported progress toward the goal (0-100)
 	goalRationale?: string; // One-line rationale accompanying the latest progress report
-	goalIteration?: number; // 1-based iteration number the goal loop is on
+	goalIteration?: number; // Goal loops finished so far (0 while the first loop runs)
+	goalLoops?: import('../../shared/goalDriven/types').GoalLoopStats; // Per-loop momentum readout, refreshed after each loop
 	goalExitReason?: import('../../shared/goalDriven/types').GoalExitReason; // Why the goal run stopped
 
 	// Live playbook status parsed from .maestro/STATUS.json (feature, phase,

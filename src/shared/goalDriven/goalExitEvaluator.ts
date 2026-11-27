@@ -11,7 +11,13 @@
  * No Electron, React, or IPC - just data in, decision out.
  */
 
-import type { GoalExitDecision, GoalIterationRecord, GoalMarkers, GoalRunConfig } from './types';
+import type {
+	GoalExitDecision,
+	GoalIterationRecord,
+	GoalLoopStats,
+	GoalMarkers,
+	GoalRunConfig,
+} from './types';
 import { STALL_THRESHOLD } from './types';
 
 /**
@@ -80,6 +86,39 @@ function detectStall(series: number[]): number | null {
 		}
 	}
 	return window[window.length - 1];
+}
+
+/**
+ * Flat loops in a row that stop the run: `detectStall` needs `STALL_THRESHOLD`
+ * records with no rise between them, which is `STALL_THRESHOLD - 1` non-rising
+ * steps after the loop that set the plateau.
+ */
+export const GOAL_STALL_FLAT_LIMIT = STALL_THRESHOLD - 1;
+
+/**
+ * Summarize the finished loops for the Auto Run card: the last loop's raw gain
+ * and how many trailing loops were flat. Reads the same normalized series as
+ * `detectStall`, so `flatStreak` reaching `flatLimit` is exactly when the
+ * evaluator stops the run as stalled.
+ */
+export function summarizeGoalLoops(
+	history: GoalIterationRecord[],
+	maxIterations: number | null,
+	completedActiveMs: number
+): GoalLoopStats {
+	const series = normalizeProgressSeries(history);
+	const n = series.length;
+	let flatStreak = 0;
+	for (let i = n - 1; i > 0 && series[i] <= series[i - 1]; i--) {
+		flatStreak++;
+	}
+	return {
+		maxIterations,
+		lastDelta: n === 0 ? null : series[n - 1] - (n > 1 ? series[n - 2] : 0),
+		flatStreak,
+		flatLimit: GOAL_STALL_FLAT_LIMIT,
+		completedActiveMs,
+	};
 }
 
 /**

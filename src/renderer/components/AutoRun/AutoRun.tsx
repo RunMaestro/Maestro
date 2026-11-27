@@ -1112,6 +1112,7 @@ export const AutoRun = memo(AutoRunInner, (prevProps, nextProps) => {
 		prevProps.batchRunState?.goalMode === nextProps.batchRunState?.goalMode &&
 		prevProps.batchRunState?.goalProgress === nextProps.batchRunState?.goalProgress &&
 		prevProps.batchRunState?.goalIteration === nextProps.batchRunState?.goalIteration &&
+		prevProps.batchRunState?.goalLoops === nextProps.batchRunState?.goalLoops &&
 		prevProps.batchRunState?.goalRationale === nextProps.batchRunState?.goalRationale &&
 		// Error state is read directly from Zustand store (not props), so no comparison needed here.
 		// Session state affects UI (busy disables Run button)

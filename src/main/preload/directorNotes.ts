@@ -49,6 +49,8 @@ export interface UnifiedHistoryOptions {
 	offset?: number;
 	/** Number of buckets for the activity graph (passed from frontend lookback config) */
 	graphBucketCount?: number;
+	/** Text search over the whole lookback window, applied before pagination. */
+	search?: string;
 }
 
 /**

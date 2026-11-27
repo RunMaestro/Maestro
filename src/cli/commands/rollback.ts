@@ -108,7 +108,7 @@ async function downloadTarget(version: string, options: RollbackOptions): Promis
 	}
 	console.log(
 		`Downloaded v${result.version ?? version}. It installs the next time Maestro restarts or quits ` +
-			`(Check for Updates -> Restart to Roll Back).`
+			`(Check for Updates or Rollback -> Restart to Roll Back).`
 	);
 }
 

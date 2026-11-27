@@ -42,7 +42,7 @@ import { trackShortcutUsage } from '../utils/shortcutTracking';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { logger } from '../utils/logger';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../constants/rightPanel';
-import { visibleHistoryEntryTypes } from '../../shared/history';
+import { createHistorySearchMatcher, visibleHistoryEntryTypes } from '../../shared/history';
 import { EscCloseButton } from './ui/EscCloseButton';
 
 interface HistoryPanelProps {
@@ -422,6 +422,7 @@ export const HistoryPanel = React.memo(
 		// now server-side (part of the page loader), so it doesn't appear
 		// here - entries arriving from the IPC are already inside the
 		// window. Type + search + host all stay client-side over loaded pages.
+		const searchMatcher = useMemo(() => createHistorySearchMatcher(searchFilter), [searchFilter]);
 		const allFilteredEntries = useMemo(() => {
 			return historyEntries.filter((entry) => {
 				if (!entry || !entry.type) return false;
@@ -437,40 +438,11 @@ export const HistoryPanel = React.memo(
 					if (entryUser !== selectedUser) return false;
 				}
 
-				if (searchFilter) {
-					const searchLower = searchFilter.toLowerCase();
-					const summaryMatch = entry.summary?.toLowerCase().includes(searchLower);
-					const responseMatch = entry.fullResponse?.toLowerCase().includes(searchLower);
-					const sessionIdMatch = entry.agentSessionId?.toLowerCase().includes(searchLower);
-					const sessionNameMatch = entry.sessionName?.toLowerCase().includes(searchLower);
-					const hostnameMatch = entry.hostname?.toLowerCase().includes(searchLower);
-					// Both halves of the sender pill are searchable: the pill draws
-					// the display name, so typing what is on screen has to find the
-					// row, while the username is what the filter and the CLI speak.
-					const userMatch =
-						entry.userName?.toLowerCase().includes(searchLower) ||
-						entry.userDisplayName?.toLowerCase().includes(searchLower);
-					// The trigger name is the most prominent text on a Cue row
-					// (and the whole label on a collapsed one), so a user who
-					// types it expects that row back. Without this, the name is
-					// only findable when it happens to appear in the run's own
-					// output excerpt.
-					const cueTriggerMatch = entry.cueTriggerName?.toLowerCase().includes(searchLower);
-					if (
-						!summaryMatch &&
-						!responseMatch &&
-						!sessionIdMatch &&
-						!sessionNameMatch &&
-						!hostnameMatch &&
-						!userMatch &&
-						!cueTriggerMatch
-					)
-						return false;
-				}
+				if (searchMatcher && !searchMatcher(entry)) return false;
 
 				return true;
 			});
-		}, [historyEntries, activeFilters, searchFilter, selectedHost, selectedUser]);
+		}, [historyEntries, activeFilters, searchMatcher, selectedHost, selectedUser]);
 
 		// Is the user hiding at least one entry type right now? The type filter
 		// runs SERVER-side (see `loadPage`), so `totalCount` is already net of
