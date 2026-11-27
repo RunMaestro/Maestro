@@ -60,6 +60,11 @@ const LOG_CONTEXT = 'BroadcastService';
 // reload it replaced; raise both if that bites.
 const REPLAY_MAX_FRAMES = 2000;
 const REPLAY_MAX_BYTES = 8 * 1024 * 1024;
+// The `cli` frames (`queue_changed`) keep their own, smaller replay, so they never push a
+// browser's frames out of its replay: a client the CLI secret admitted that misses more than this
+// resyncs from scratch, and reads the queues again.
+const CLI_REPLAY_MAX_FRAMES = 500;
+const CLI_REPLAY_MAX_BYTES = 2 * 1024 * 1024;
 
 /**
  * Who a broadcast frame is for. Recorded beside each buffered frame so a
@@ -106,6 +111,32 @@ function frameReaches(
 }
 
 /**
+ * The most recent frames, bounded by count and bytes, oldest first. `evictedThrough` is the
+ * highest seq it let go: a client that last saw a seq below it may have missed a frame it holds.
+ */
+class ReplayBuffer {
+	readonly frames: ReplayFrame[] = [];
+	private bytes = 0;
+	evictedThrough = 0;
+
+	constructor(
+		private readonly maxFrames: number,
+		private readonly maxBytes: number
+	) {}
+
+	push(frame: ReplayFrame): void {
+		this.frames.push(frame);
+		this.bytes += frame.bytes;
+		while (this.frames.length > this.maxFrames || this.bytes > this.maxBytes) {
+			const dropped = this.frames.shift();
+			if (!dropped) break;
+			this.bytes -= dropped.bytes;
+			this.evictedThrough = dropped.seq;
+		}
+	}
+}
+
+/**
  * Web client connection info (alias for backwards compatibility)
  */
 export type WebClientInfo = WebClient;
@@ -136,8 +167,8 @@ export class BroadcastService {
 	// cannot be resumed, because that run's counter means nothing here.
 	readonly bridgeEpoch = randomUUID();
 	private bridgeSeq = 0;
-	private replayFrames: ReplayFrame[] = [];
-	private replayBytes = 0;
+	private replay = new ReplayBuffer(REPLAY_MAX_FRAMES, REPLAY_MAX_BYTES);
+	private cliReplay = new ReplayBuffer(CLI_REPLAY_MAX_FRAMES, CLI_REPLAY_MAX_BYTES);
 
 	/**
 	 * Set the callback for getting web clients
@@ -154,13 +185,7 @@ export class BroadcastService {
 		const seq = ++this.bridgeSeq;
 		const data = JSON.stringify({ ...message, seq });
 		const frame: ReplayFrame = { seq, data, bytes: Buffer.byteLength(data), scope };
-		this.replayFrames.push(frame);
-		this.replayBytes += frame.bytes;
-		while (this.replayFrames.length > REPLAY_MAX_FRAMES || this.replayBytes > REPLAY_MAX_BYTES) {
-			const dropped = this.replayFrames.shift();
-			if (!dropped) break;
-			this.replayBytes -= dropped.bytes;
-		}
+		(scope.kind === 'cli' ? this.cliReplay : this.replay).push(frame);
 		return frame;
 	}
 
@@ -204,9 +229,14 @@ export class BroadcastService {
 			return null;
 		}
 		if (lastSeq === this.bridgeSeq) return [];
-		const oldest = this.replayFrames[0]?.seq;
-		if (oldest === undefined || oldest > lastSeq + 1) return null;
-		return this.replayFrames
+		// A frame after `lastSeq` was let go: the client may have missed it, so it reloads. A browser
+		// is judged by the frames it is sent only, so the `cli` replay's evictions never reach it.
+		if (lastSeq < this.replay.evictedThrough) return null;
+		if (cli && lastSeq < this.cliReplay.evictedThrough) return null;
+		const frames = cli
+			? [...this.replay.frames, ...this.cliReplay.frames].sort((a, b) => a.seq - b.seq)
+			: this.replay.frames;
+		return frames
 			.filter((frame) => frame.seq > lastSeq && frameReaches(frame.scope, subscribedSessionId, cli))
 			.map((frame) => frame.data);
 	}

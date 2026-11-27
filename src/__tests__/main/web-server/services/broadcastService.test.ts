@@ -656,6 +656,28 @@ describe('BroadcastService bridge resume (seq stamping + replay)', () => {
 		]);
 	});
 
+	it('keeps CLI-only frames out of a browser replay budget, so queue traffic never forces a browser reload (Greptile on #2160)', () => {
+		service.broadcastToAll({ type: 'before' });
+		// Far more CLI-only traffic than the browser replay could hold.
+		const big = 'x'.repeat(64 * 1024);
+		for (let index = 0; index < 2100; index++) {
+			service.broadcastToCliClients({ type: 'queue_changed', big });
+		}
+		service.broadcastToAll({ type: 'after' });
+
+		const types = (frames: string[] | null) => frames?.map((f) => JSON.parse(f).type);
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 1))).toEqual(['after']);
+		// A CLI client that missed CLI-only frames its replay let go resyncs instead.
+		expect(service.resumeBridgeClient(service.bridgeEpoch, 1, undefined, true)).toBeNull();
+		const tail = service.resumeBridgeClient(
+			service.bridgeEpoch,
+			service.getBridgeSeq() - 2,
+			undefined,
+			true
+		);
+		expect(types(tail)).toEqual(['queue_changed', 'after']);
+	});
+
 	it('stamps tool events too, so one lost to a dropped socket is replayed rather than gone', () => {
 		const subscriber = createMockClient('sub', { subscribedSessionId: 'session-a' });
 		clients.set('sub', subscriber);
