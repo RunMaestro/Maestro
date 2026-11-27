@@ -888,6 +888,31 @@ export function userEntryAnswered(
 }
 
 /**
+ * Whether a tab runs the turn of the user message `entry` right now: a resend that arrives then is
+ * the message running (its sender lost the link and cannot see it), and never runs a second time.
+ * Both host kinds ask it before they take a resend. `running.busy`: the tab runs a turn. With
+ * `running.itemId` (a headless host knows the item its queue runs on the tab), the entry must name
+ * that item; without it (a desktop host), the entry must be the tab's newest turn start, its turn
+ * not ended.
+ */
+export function tabRunsUserEntry(
+	logs: readonly unknown[],
+	entry: SentUserEntry,
+	running: { busy: boolean; itemId?: string }
+): boolean {
+	if (!running.busy) return false;
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
+	if (at === -1) return false;
+	if (running.itemId !== undefined) {
+		return (logs[at] as LogEntryRecord).queuedItemId === running.itemId;
+	}
+	for (let i = logs.length - 1; i > at; i -= 1) {
+		if (isUserTurnStart(logs[i] as Partial<LogEntryRecord> | null)) return false;
+	}
+	return turnFateAfter(logs, at, 'desktop') === 'unended';
+}
+
+/**
  * `logs` with the message a turn starts on. A resend of a message the transcript already holds
  * (`TurnInput.entryId`: the same id, and the same user message, text and images) is that entry:
  * the transcript stays as it is, except that the entry now names the turn that runs it

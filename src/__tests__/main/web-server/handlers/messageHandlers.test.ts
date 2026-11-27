@@ -4124,6 +4124,27 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastSend()).not.toHaveProperty('answered');
 			});
 
+			// Parity R38: a resend that arrives while this desktop still runs the message's turn (its
+			// sender lost the link and cannot see that) is the message running: never queued to run
+			// a second time, as a headless host refuses it.
+			it.each([
+				['runs it right now', 'busy', true],
+				['is idle (the turn died with the host)', 'idle', false],
+			])('answers "already ran" only when the tab %s (R38)', async (_how, state, answered) => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }],
+					transcriptSnapshots: [{ sessionId: 'session-1', tabId: 'tab-1', runtime: { state } }],
+				});
+				resend();
+				if (answered) {
+					await vi.waitFor(() => expect(lastSend()).toMatchObject({ answered: true }));
+					expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+				} else {
+					await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+					expect(lastSend()).not.toHaveProperty('answered');
+				}
+			});
+
 			it('answers "already ran" when the entry\'s turn was stopped by the person', async () => {
 				bridgeRead.invokeAsBridge.mockResolvedValue({
 					logs: [

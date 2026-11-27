@@ -42,6 +42,7 @@ import {
 	isSameUserEntry,
 	recordTabSession,
 	turnEntryIdFor,
+	tabRunsUserEntry,
 	userEntryAnswered,
 	type RuleContext,
 	type TabSessionUpdate,
@@ -1160,11 +1161,10 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const busyItemId = queues.get(agentId)?.busyItemId(tabId);
 		const runsNow =
 			!!entryId &&
-			!!busyItemId &&
-			busyItemId === currentTab.runtimeTurnId &&
-			tabLogs.some(
-				(entry) => isSameUserEntry(entry, sentEntry) && entry.queuedItemId === busyItemId
-			);
+			tabRunsUserEntry(tabLogs, sentEntry, {
+				busy: !!busyItemId && busyItemId === currentTab.runtimeTurnId,
+				itemId: busyItemId,
+			});
 		if (entryId && (runsNow || userEntryAnswered(tabLogs, sentEntry))) {
 			return ok({ status: 'answered' });
 		}

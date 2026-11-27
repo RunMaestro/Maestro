@@ -3,6 +3,7 @@ import {
 	activeAgentAfterRemoval,
 	addTabRecord,
 	markTurnEnded,
+	tabRunsUserEntry,
 	turnFateAfter,
 	agentsMovingWithParent,
 	withAgentInGroup,
@@ -1331,5 +1332,34 @@ describe('turnFateAfter', () => {
 		expect(once).toEqual([u1, { ...partial, turnEnded: true }]);
 		expect(markTurnEnded(once)).toBe(once);
 		expect(markTurnEnded([])).toEqual([]);
+	});
+});
+
+// Parity R38: one check, on both host kinds, that a resend is the message running now.
+describe('tabRunsUserEntry', () => {
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize', queuedItemId: 'q1' };
+	const sent = { id: 'u1', text: 'Summarize' };
+	const partial = { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' };
+
+	it.each([
+		['a desktop tab running it, mid-stream', [u1, partial], { busy: true }, true],
+		['a desktop tab that is idle', [u1, partial], { busy: false }, false],
+		[
+			'a desktop tab whose turn ended (stamped)',
+			[u1, { ...partial, turnEnded: true }],
+			{ busy: true },
+			false,
+		],
+		[
+			'a desktop tab running a LATER message',
+			[u1, { id: 'u2', timestamp: 3, source: 'user', text: 'Next' }],
+			{ busy: true },
+			false,
+		],
+		['a headless tab running its item', [u1], { busy: true, itemId: 'q1' }, true],
+		['a headless tab running another item', [u1], { busy: true, itemId: 'q2' }, false],
+		['a tab without the message', [partial], { busy: true }, false],
+	] as const)('%s', (_how, logs, running, runs) => {
+		expect(tabRunsUserEntry(logs, sent, running)).toBe(runs);
 	});
 });

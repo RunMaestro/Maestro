@@ -34,7 +34,11 @@ import {
 	readTurnEntryId,
 	type TurnAgentText,
 } from '../../../../shared/maestro-lib/client/types';
-import { userEntryAnswered, type SentUserEntry } from '../../../../shared/maestro-lib/agents/rules';
+import {
+	tabRunsUserEntry,
+	userEntryAnswered,
+	type SentUserEntry,
+} from '../../../../shared/maestro-lib/agents/rules';
 import { invokeAsBridge } from '../bridgeHandlers';
 import { resolveToDataUrl } from '../../../storage/session-image-store';
 import type { QueuedItemSnapshot, QueueSessionSnapshot } from '../../types';
@@ -799,11 +803,13 @@ export function handleSendQueueItemNow(
 }
 
 /**
- * Whether this desktop's tab holds the user message `entry` with an answer after it, read as a
- * bridge client reads the tab (the owning window's live transcript). Images are compared as data
- * URLs: the tab keeps its own as store refs, the client sends the bytes. A read that fails answers
- * false: the client already read the host's tab before it sent, and a message is never dropped on
- * a read error.
+ * Whether this desktop's tab holds the user message `entry` that already ran: its turn answered or
+ * stopped, or running right now (`tabRunsUserEntry()`, as a headless host refuses it: a resend that
+ * arrives while the turn still runs would otherwise queue and run it a second time). Read as a
+ * bridge client reads the tab (the owning window's live transcript and its runtime state). Images
+ * are compared as data URLs: the tab keeps its own as store refs, the client sends the bytes. A
+ * read that fails answers false: the client already read the host's tab before it sent, and a
+ * message is never dropped on a read error.
  */
 async function desktopTabAnswered(
 	sessionId: string,
@@ -812,7 +818,10 @@ async function desktopTabAnswered(
 ): Promise<boolean> {
 	try {
 		const read = (await invokeAsBridge('sessions:getDeferredContent', sessionId, tabId, false)) as
-			| { logs?: unknown }
+			| {
+					logs?: unknown;
+					transcriptSnapshots?: Array<{ tabId?: string; runtime?: { state?: unknown } }>;
+			  }
 			| undefined;
 		const logs: unknown[] = Array.isArray(read?.logs) ? read.logs : [];
 		const asDataUrls = (images: readonly unknown[]) =>
@@ -829,14 +838,16 @@ async function desktopTabAnswered(
 			comparable[at] = { ...held, images: await asDataUrls(held.images) };
 		}
 		const sent = entry.images?.length ? await asDataUrls(entry.images) : undefined;
+		const asSent: SentUserEntry = {
+			...entry,
+			...(sent ? { images: sent.filter((image): image is string => image !== null) } : {}),
+		};
+		const state = read?.transcriptSnapshots?.find((snapshot) => snapshot.tabId === tabId)?.runtime
+			?.state;
 		// This desktop writes streamed text as it arrives: only its end stamp says the turn ended.
-		return userEntryAnswered(
-			comparable,
-			{
-				...entry,
-				...(sent ? { images: sent.filter((image): image is string => image !== null) } : {}),
-			},
-			'desktop'
+		return (
+			userEntryAnswered(comparable, asSent, 'desktop') ||
+			tabRunsUserEntry(comparable, asSent, { busy: state === 'busy' })
 		);
 	} catch (error) {
 		logger.warn(`Could not read tab ${tabId} to check a resend: ${String(error)}`, LOG_CONTEXT);
