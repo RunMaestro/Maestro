@@ -302,7 +302,46 @@ export function mergeHostedLogs(
 		const keptChanged = next.some((entry, i) => !!entry.keptForHost !== !!local[i].keptForHost);
 		if (!liveChanged && !tickChanged && !savedChanged && !keptChanged) return local;
 	}
-	return next;
+	return withDrawnEntriesKept(next, local);
+}
+
+/**
+ * `next` with each entry that draws the same as the one `local` holds under its id replaced by
+ * that one, so only the rows that changed render again. Every pass builds new entry objects (the
+ * host's saved entries, the live tail, the delivered tick); a local turn appends to one entry and
+ * leaves the others' identity alone, and a hosted turn must cost the same (R8).
+ */
+function withDrawnEntriesKept(next: LogEntry[], local: readonly LogEntry[]): LogEntry[] {
+	if (local.length === 0) return next;
+	const prior = new Map(local.map((entry) => [entry.id, entry]));
+	let kept = 0;
+	const out = next.map((entry) => {
+		const before = prior.get(entry.id);
+		if (!before || before === entry || !drawsTheSame(before, entry)) return entry;
+		kept += 1;
+		return before;
+	});
+	return kept === 0 ? next : out;
+}
+
+/** Whether two entries under one id draw the same: every field equal, nested ones by value. */
+function drawsTheSame(a: LogEntry, b: LogEntry): boolean {
+	const fields = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof LogEntry>;
+	for (const field of fields) {
+		const x = a[field];
+		const y = b[field];
+		if (x === y) continue;
+		if (Array.isArray(x) && Array.isArray(y)) {
+			if (x.length !== y.length || x.some((value, i) => value !== y[i])) return false;
+			continue;
+		}
+		if (x && y && typeof x === 'object' && typeof y === 'object') {
+			if (canonicalJson(x) !== canonicalJson(y)) return false;
+			continue;
+		}
+		return false;
+	}
+	return true;
 }
 
 /**

@@ -57,6 +57,37 @@ const hostedRow = (aiTabs = [createMockAITab({ id: 't1', logs: [local('old')] })
 	});
 
 describe('mergeHostedLogs', () => {
+	// Parity R8: a local turn appends to one entry and leaves the others' identity alone, so only
+	// that row renders again. A hosted turn's pass builds new objects for the live tail (and the
+	// delivered tick); every entry that draws the same keeps the object it had.
+	it('keeps the object of every entry that draws the same while a live reply grows (R8)', () => {
+		const saved = [
+			record('u1', 'question'),
+			{ ...record('a0'), source: 'stdout', text: 'earlier' },
+		];
+		const tool = {
+			id: 'tool1',
+			timestamp: 2,
+			source: 'tool',
+			text: 'Read',
+			metadata: { toolState: { status: 'completed', input: { file: 'a.ts' } } },
+		} as unknown as LogEntryRecord;
+		const reply = (text: string): LogEntryRecord => ({
+			id: 'live1',
+			timestamp: 3,
+			source: 'stdout',
+			text,
+		});
+		const first = mergeHostedLogs([], saved, [tool, reply('line 1\n')]);
+		const second = mergeHostedLogs(first, saved, [tool, reply('line 1\nline 2\n')]);
+		expect(second).not.toBe(first);
+		// The saved entries and the finished tool card are the same objects: their rows do not render.
+		expect(second.slice(0, 3).every((entry, i) => entry === first[i])).toBe(true);
+		// Only the growing reply is new.
+		expect(second[3]).not.toBe(first[3]);
+		expect(second[3].text).toBe('line 1\nline 2\n');
+	});
+
 	it('takes the new text of a saved entry the host rewrote in place (M22)', () => {
 		const pending = { ...record('p1'), source: 'system', text: 'Generating history synopsis...' };
 		const first = mergeHostedLogs([], [pending], undefined);
