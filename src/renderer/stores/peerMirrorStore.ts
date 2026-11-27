@@ -70,6 +70,11 @@ export interface PeerMirrorData {
 	 * a turn of the agent ended, or the peer reloaded. A History panel reads again on a change.
 	 */
 	historyVersions: Record<string, number>;
+	/**
+	 * Peers whose host said it wrote an agent's History (`agent.history`) since their connection came
+	 * up, so it says every write. An older host never does: `noteHostHistoryEntry()` stands in for it.
+	 */
+	historyAnnounced: Record<string, true>;
 }
 
 export interface PeerMirrorActions {
@@ -89,6 +94,12 @@ export interface PeerMirrorActions {
 		staleVersion: number
 	): void;
 	failTranscriptRead(peerId: string, agentId: string, tabId: string, message: string): void;
+	/**
+	 * A read of the host's History found an entry it wrote after a turn's end (the Synopsis toast's
+	 * watch). A host that never says it writes History gave an open panel no reason to read again:
+	 * bump the agent's History version once. A host that says so already did.
+	 */
+	noteHostHistoryEntry(peerId: string, agentId: string): void;
 }
 
 export type PeerMirrorState = PeerMirrorData & PeerMirrorActions;
@@ -99,6 +110,7 @@ const EMPTY: PeerMirrorData = {
 	peers: {},
 	transcripts: {},
 	historyVersions: {},
+	historyAnnounced: {},
 };
 
 /** Bump the History version of one agent, or of every agent the peer has. */
@@ -114,6 +126,11 @@ function bumpHistory(
 		historyVersions[key] = (historyVersions[key] ?? 0) + 1;
 	}
 	return { ...state, historyVersions };
+}
+
+/** The peer's host said it writes History. An own key only: a peer id may name a prototype key. */
+function announcedHistory(state: PeerMirrorData, peerId: string): boolean {
+	return Object.prototype.hasOwnProperty.call(state.historyAnnounced, peerId);
 }
 
 /** Every agent of every peer in a snapshot gets a new History version. */
@@ -296,7 +313,14 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 			return settlePeer(state, peerId, setAgentAutoRun(peer, event.agentId, event.state).peer);
 		case 'agent.history':
 			// The host wrote the agent's History after the fact (a synopsis): an open panel reads again.
-			return existing ? bumpHistory(state, peerId, [event.agentId]) : state;
+			if (!existing) return state;
+			return bumpHistory(
+				announcedHistory(state, peerId)
+					? state
+					: { ...state, historyAnnounced: { ...state.historyAnnounced, [peerId]: true } },
+				peerId,
+				[event.agentId]
+			);
 		case 'tab.stale': {
 			if (!existing) return state;
 			const key = liveTurnKey(event.agentId, event.tabId);
@@ -309,7 +333,12 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 			const next: Record<string, MirrorTranscriptSlot> = {};
 			for (const [key, slot] of Object.entries(slots)) next[key] = markStale(slot);
 			return bumpHistory(
-				{ ...state, transcripts: { ...state.transcripts, [peerId]: next } },
+				{
+					...state,
+					transcripts: { ...state.transcripts, [peerId]: next },
+					// A connection that could not resume may have reached another build of the host.
+					historyAnnounced: withoutKey(state.historyAnnounced, peerId),
+				},
 				peerId,
 				existing.agents.map((agent) => agent.id)
 			);
@@ -322,6 +351,7 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 				order: state.order.filter((id) => id !== peerId),
 				transcripts: withoutKey(state.transcripts, peerId),
 				historyVersions: withoutPeerVersions(state.historyVersions, peerId),
+				historyAnnounced: withoutKey(state.historyAnnounced, peerId),
 			};
 		}
 		default:
@@ -344,6 +374,8 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 				transcripts: {},
 				// A fresh snapshot may be ahead of any History a panel read before it.
 				historyVersions: bumpAll(state.historyVersions, peers),
+				// Whether a host says it writes History is learned again from its pushes.
+				historyAnnounced: {},
 			};
 		}),
 
@@ -399,4 +431,11 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 				error: message,
 			}));
 		}),
+
+	noteHostHistoryEntry: (peerId, agentId) =>
+		set((state) =>
+			state.peers[peerId] && !announcedHistory(state, peerId)
+				? bumpHistory(state, peerId, [agentId])
+				: state
+		),
 }));
