@@ -1,4 +1,7 @@
 /**
+ * The History toasts, the same in every agent mode: the "History Entry Added" toast a `/history`
+ * raises, and the "Synopsis" toast a finished turn raises once its History entry is saved.
+ *
  * The "History Entry Added" toast a `/history` raises, the same in every agent mode.
  *
  * A local or SSH agent's `/history` raises it when its handler saves the entry
@@ -14,7 +17,7 @@ import { readHistoryCommandOutcome } from '../../shared/maestroBuiltinCommandTex
 import { notifyToast } from '../stores/notificationStore';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { selectSessionById, useSessionStore } from '../stores/sessionStore';
-import type { Session } from '../types';
+import type { HistoryEntry, Session } from '../types';
 import { readMirrorTranscript } from './peerMirror';
 
 /** How long a window waits for a hosted `/history` to finish before it stops watching. */
@@ -130,4 +133,209 @@ export function watchHostedHistoryCommand(
 	unsubscribe = usePeerMirrorStore.subscribe(check);
 	check();
 	return stop;
+}
+
+/** What the "Synopsis" toast names. */
+export interface SynopsisToast {
+	summary: string;
+	group: string;
+	project: string;
+	/** How long the synopsis took ("Completed in"). */
+	taskDuration: number;
+	sessionId: string;
+	tabId?: string;
+	tabName?: string;
+}
+
+/**
+ * Raise the toast a finished turn raises once its History synopsis is saved (`runExitSynopsis()`
+ * for a local or SSH agent, `watchHostedTurnSynopsis()` for a hosted one): one toast, the same
+ * words and the same click target in every mode. The toast settings switch it off as any toast.
+ */
+export function notifySynopsisSaved(toast: SynopsisToast): void {
+	notifyToast({
+		type: 'info',
+		title: 'Synopsis',
+		message: toast.summary,
+		group: toast.group,
+		project: toast.project,
+		taskDuration: toast.taskDuration,
+		sessionId: toast.sessionId,
+		tabId: toast.tabId,
+		tabName: toast.tabName,
+		skipCustomNotification: true,
+	});
+}
+
+/** How often a watch looks at the tab, and reads the host's History in the first seconds idle. */
+export const HOSTED_SYNOPSIS_POLL_MS = 1000;
+/** A synopsis that takes longer is read for less often: one read per this many ms. */
+export const HOSTED_SYNOPSIS_SLOW_POLL_MS = 5000;
+/** How long after the turn ended the watch reads every `HOSTED_SYNOPSIS_POLL_MS`. */
+const HOSTED_SYNOPSIS_FAST_MS = 10 * 1000;
+/** How long after the turn ended a watch waits for its History entry (its synopsis runs then). */
+export const HOSTED_SYNOPSIS_IDLE_MS = 60 * 1000;
+/** The longest a watch lives, turn included: a turn that runs longer raises no toast. */
+export const HOSTED_SYNOPSIS_WATCH_MS = 60 * 60 * 1000;
+/** How many of the host's newest USER entries a watch reads. */
+const HOSTED_SYNOPSIS_PAGE = 20;
+
+/** Entries a watch already raised the toast for: one turn's entry is one toast. */
+const toastedSynopsisEntries = new Set<string>();
+/** The live watches, so one that raised the toast ends the others it covers. */
+const synopsisWatches = new Set<{
+	key: string;
+	covers(entry: HistoryEntry): boolean;
+	stop(): void;
+}>();
+
+/** Test only: forget the watches and the entries already raised. */
+export function resetHostedSynopsisWatchesForTest(): void {
+	for (const watch of [...synopsisWatches]) watch.stop();
+	toastedSynopsisEntries.clear();
+}
+
+/**
+ * After this window sent a hosted tab a turn that saves to History, raise the "Synopsis" toast
+ * once the host saved that turn's entry, as the local exit synopsis raises it here
+ * (`notifySynopsisSaved()`). The host writes the entry from its own synopsis turn after the turn
+ * ends; a headless host has no screen to raise the toast on, and a desktop host raises it on its
+ * own. So the window that sent the turn reads the host's History while the tab runs no turn, and
+ * takes the first USER entry it did not hold when it began (`baseline`, read at once: the turn
+ * cannot have been summarized yet), saved after the turn started (host clock), for the tab's
+ * provider session. A turn another client sent raises nothing here, as no exit synopsis of a local
+ * agent runs for it here either. A host that skips the synopsis (a message waits on the tab, the
+ * turn did no work) writes no entry, and the watch ends quietly when its time runs out.
+ *
+ * Returns a function that stops watching.
+ */
+export function watchHostedTurnSynopsis(
+	sessionId: string,
+	target: { peerId: string; agentId: string },
+	tabId: string,
+	opts: { pollMs?: number; idleMs?: number; maxMs?: number; now?: () => number } = {}
+): () => void {
+	const now = opts.now ?? Date.now;
+	const key = liveTurnKey(target.agentId, tabId);
+	const startedAt = now();
+	let done = false;
+	let baseline: ReadonlySet<string> | undefined;
+	let reading = false;
+	let lastReadAt: number | undefined;
+	/** When the turn started on the host (host clock), once a read saw it run. */
+	let runStartedAt: number | undefined;
+	/** When this window first saw the tab free after the turn (this machine's clock). */
+	let idleSince: number | undefined;
+
+	const watch = {
+		key: `${sessionId}\u0000${tabId}`,
+		covers: (entry: HistoryEntry) => runStartedAt === undefined || entry.timestamp >= runStartedAt,
+		stop: () => {
+			if (done) return;
+			done = true;
+			clearInterval(timer);
+			synopsisWatches.delete(watch);
+		},
+	};
+	synopsisWatches.add(watch);
+
+	const readPage = async (): Promise<HistoryEntry[] | undefined> => {
+		try {
+			const page = await window.maestro.federation.historyPage(target.peerId, target.agentId, {
+				types: ['USER'],
+				pagination: { offset: 0, limit: HOSTED_SYNOPSIS_PAGE },
+			});
+			return Array.isArray(page?.entries) ? page.entries : undefined;
+		} catch {
+			return undefined;
+		}
+	};
+
+	const hostTab = () => {
+		const peer = usePeerMirrorStore.getState().peers[target.peerId];
+		const agent = peer?.agents.find((candidate) => candidate.id === target.agentId);
+		return {
+			peer,
+			tab: agent?.aiTabs?.find((candidate) => candidate.id === tabId),
+			waiting: (peer?.queues?.[target.agentId] ?? []).some((item) => item.tabId === tabId),
+		};
+	};
+
+	const tick = () => {
+		if (done) return;
+		const at = now();
+		const session = selectSessionById(sessionId)(useSessionStore.getState());
+		if (!session || at - startedAt > (opts.maxMs ?? HOSTED_SYNOPSIS_WATCH_MS)) {
+			watch.stop();
+			return;
+		}
+		const { peer, tab, waiting } = hostTab();
+		const running = tab?.state === 'busy' || !!peer?.liveTurns?.[key];
+		if (running) {
+			if (typeof tab?.thinkingStartTime === 'number') {
+				runStartedAt ??= tab.thinkingStartTime;
+			}
+			idleSince = undefined;
+			return;
+		}
+		// Still waiting in the host's queue: the turn has not run yet.
+		if (waiting) return;
+		idleSince ??= at;
+		if (at - idleSince > (opts.idleMs ?? HOSTED_SYNOPSIS_IDLE_MS)) {
+			watch.stop();
+			return;
+		}
+		if (!baseline || reading) return;
+		const spacing = at - idleSince < HOSTED_SYNOPSIS_FAST_MS ? 0 : HOSTED_SYNOPSIS_SLOW_POLL_MS - 1;
+		if (lastReadAt !== undefined && at - lastReadAt < spacing) return;
+		lastReadAt = at;
+		reading = true;
+		void readPage().then((entries) => {
+			reading = false;
+			if (done || !entries) return;
+			const agentSessionId = hostTab().tab?.agentSessionId;
+			const entry = entries.find(
+				(candidate) =>
+					typeof candidate.id === 'string' &&
+					!baseline!.has(candidate.id) &&
+					!toastedSynopsisEntries.has(candidate.id) &&
+					typeof candidate.summary === 'string' &&
+					candidate.summary.trim() !== '' &&
+					watch.covers(candidate) &&
+					(!agentSessionId || candidate.agentSessionId === agentSessionId)
+			);
+			if (!entry) return;
+			toastedSynopsisEntries.add(entry.id);
+			const current = selectSessionById(sessionId)(useSessionStore.getState());
+			if (!current) return;
+			const localTab = current.aiTabs.find((candidate) => candidate.id === tabId);
+			notifySynopsisSaved({
+				summary: entry.summary,
+				group: historyToastGroupName(current),
+				project: current.name,
+				taskDuration: Math.max(0, now() - (idleSince ?? startedAt)),
+				sessionId: current.id,
+				tabId,
+				tabName: localTab?.name || undefined,
+			});
+			// The other watches of this tab whose turn this entry covers end with it: one toast.
+			for (const other of [...synopsisWatches]) {
+				if (other.key === watch.key && other.covers(entry)) other.stop();
+			}
+		});
+	};
+
+	const timer = setInterval(tick, opts.pollMs ?? HOSTED_SYNOPSIS_POLL_MS);
+	// The entries already saved before this turn could end: never taken for its own. A failed read
+	// leaves no baseline, and no toast is better than a wrong one.
+	void readPage().then((entries) => {
+		if (done) return;
+		if (!entries) {
+			watch.stop();
+			return;
+		}
+		baseline = new Set(entries.map((entry) => entry.id));
+		tick();
+	});
+	return watch.stop;
 }
