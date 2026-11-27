@@ -110,28 +110,41 @@ export function shellEscapeRemotePath(remotePath: string): string {
 	}
 
 	if (remotePath.startsWith('~/')) {
-		return `"$HOME/${shellEscapeForDoubleQuotes(remotePath.slice(2))}"`;
+		return homeRelative(remotePath.slice(2));
 	}
 
 	if (remotePath.startsWith('$HOME/')) {
-		return `"$HOME/${shellEscapeForDoubleQuotes(remotePath.slice('$HOME/'.length))}"`;
+		return homeRelative(remotePath.slice('$HOME/'.length));
 	}
 
 	return shellEscape(remotePath);
 }
 
-/** `~` or `~/<path>` with no whitespace: a path into the remote user's home. */
-const HOME_RELATIVE_ARG = /^~(\/\S*)?$/;
+/**
+ * `"$HOME/rest"`, with `rest` kept byte for byte. Inside double quotes a
+ * non-interactive shell (the `bash -s` an SSH run executes) keeps the
+ * backslash of `\!`, so a `!` in `rest` would add a stray `\` to the name.
+ * Such a remainder is single-quoted after the expandable `"$HOME"` instead.
+ */
+function homeRelative(rest: string): string {
+	if (rest.includes('!')) return `"$HOME"${shellEscape(`/${rest}`)}`;
+	return `"$HOME/${shellEscapeForDoubleQuotes(rest)}"`;
+}
+
+/** `~` or a one-line `~/<path>`: a path into the remote user's home. */
+const HOME_RELATIVE_ARG = /^~(\/[^\n]*)?$/;
 
 /**
  * Escape one agent argument for the command line an SSH run executes remotely.
  *
- * A bare home-relative path (`~` or `~/...`, no whitespace) goes through
- * `shellEscapeRemotePath()` so it expands on the remote. That is what a
- * home-relative Additional Directory grant needs: `--add-dir '~/ref'` names a
- * directory literally called `~`, and the local home is wrong for the remote.
- * Every other argument, prompt text included, stays single-quoted exactly as
- * `shellEscape()` renders it, and `$HOME/...` stays literal.
+ * A home-relative path (`~` or a one-line `~/...`, spaces allowed) goes
+ * through `shellEscapeRemotePath()` so it expands on the remote. That is what
+ * a home-relative Additional Directory grant needs: `--add-dir '~/ref'` names
+ * a directory literally called `~`, and the local home is wrong for the
+ * remote. The prompt never travels as an argument on an SSH run (it goes over
+ * stdin), so this cannot rewrite prompt text. Every other argument stays
+ * single-quoted exactly as `shellEscape()` renders it, and `$HOME/...` stays
+ * literal.
  */
 export function shellEscapeRemoteArg(arg: string): string {
 	return HOME_RELATIVE_ARG.test(arg) ? shellEscapeRemotePath(arg) : shellEscape(arg);

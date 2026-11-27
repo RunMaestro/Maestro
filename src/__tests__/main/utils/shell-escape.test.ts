@@ -79,6 +79,7 @@ describe('shell-escape', () => {
 			expect(shellEscapeRemoteArg('~')).toBe('"$HOME"');
 			expect(shellEscapeRemoteArg('~/reference')).toBe('"$HOME/reference"');
 			expect(shellEscapeRemoteArg('~/a/$b')).toBe('"$HOME/a/\\$b"');
+			expect(shellEscapeRemoteArg('~/Reference Project')).toBe('"$HOME/Reference Project"');
 		});
 
 		it('single-quotes every other argument exactly like shellEscape', () => {
@@ -86,7 +87,7 @@ describe('shell-escape', () => {
 				'--add-dir',
 				'/opt/reference',
 				'$HOME/reference', // only `~` is a home path in an argument
-				'~/two words', // whitespace means text, not a path
+				'~/two\nlines', // a path is one line
 				'~ is a tilde',
 				'~user/other',
 				'a ~/path in a sentence',
@@ -109,6 +110,13 @@ describe('shell-escape', () => {
 			// The remainder is in a double-quoted context, so its own metacharacters
 			// must be neutralized there rather than by single quotes.
 			expect(shellEscapeRemotePath('~/my "proj" $x')).toBe('"$HOME/my \\"proj\\" \\$x"');
+		});
+
+		it('keeps a ! in the remainder byte for byte', () => {
+			// `bash -s` keeps the backslash of `\!` inside double quotes, so the
+			// remainder is single-quoted after the expandable "$HOME" instead.
+			expect(shellEscapeRemotePath('~/reference!')).toBe(`"$HOME"'/reference!'`);
+			expect(shellEscapeRemotePath("$HOME/it's here!")).toBe(`"$HOME"'/it'\\''s here!'`);
 		});
 
 		it('falls through to shellEscape for every other path, byte for byte', () => {
