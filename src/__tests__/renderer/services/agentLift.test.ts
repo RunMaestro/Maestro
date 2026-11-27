@@ -18,6 +18,7 @@ vi.mock('../../../renderer/services/sessionPersistenceFlush', () => ({
 import {
 	moveAgentToHost,
 	planMoveToHost,
+	requestMoveBackFromHost,
 	requestMoveToHost,
 	setupRemoteHostFromWindow,
 	startPeerHost,
@@ -33,6 +34,7 @@ import { resetStores } from '../../helpers';
 
 const lift = vi.fn();
 const setupHost = vi.fn();
+const unlift = vi.fn();
 
 const okAnswer = {
 	ok: true,
@@ -51,9 +53,10 @@ beforeEach(() => {
 	flush.mockClear();
 	lift.mockReset();
 	setupHost.mockReset();
+	unlift.mockReset();
 	(window as unknown as { maestro: Record<string, unknown> }).maestro = {
 		...(window as unknown as { maestro?: Record<string, unknown> }).maestro,
-		federation: { lift, setupHost },
+		federation: { lift, setupHost, unlift },
 	};
 });
 
@@ -137,5 +140,52 @@ describe('setupRemoteHostFromWindow / startPeerHost', () => {
 			'Starting the host on box',
 			'Host running on box',
 		]);
+	});
+});
+
+describe('requestMoveBackFromHost (L39)', () => {
+	const confirm = () =>
+		useModalStore.getState().modals.get('confirm')?.data as
+			| { message: string; onConfirm: () => void }
+			| undefined;
+	const back = (dryRun: boolean) => ({
+		ok: true,
+		result: {
+			agent: { id: 'a1', name: 'Docs' },
+			from: 'box:h1',
+			tabs: 3,
+			newTabs: 1,
+			history: 16,
+			hostCopyRemoved: !dryRun,
+			...(dryRun ? { dryRun: true } : {}),
+		},
+	});
+
+	it('confirms with what comes back, counted by a dry run, then moves it back', async () => {
+		unlift.mockImplementation(async (_id: string, options: { dryRun?: boolean }) =>
+			back(options.dryRun === true)
+		);
+		requestMoveBackFromHost('a1', 'Docs', 'box');
+		await vi.waitFor(() => expect(confirm()).toBeDefined());
+		expect(unlift).toHaveBeenCalledWith('a1', { offline: false, dryRun: true });
+		expect(confirm()?.message).toBe(
+			'Moving "Docs" back from box:h1: 3 tab(s) (1 new) and 16 History entries come back to this machine, and its copy there is removed. "Docs" becomes an SSH agent again, and automatic moves leave it here.'
+		);
+		confirm()?.onConfirm();
+		await vi.waitFor(() => expect(notifyToast).toHaveBeenCalled());
+		expect(unlift).toHaveBeenLastCalledWith('a1', { offline: false });
+		expect(vi.mocked(notifyToast).mock.calls.at(-1)?.[0]).toMatchObject({
+			color: 'green',
+			message:
+				'"Docs" is an SSH agent again: 3 tab(s) (1 new) and 16 History entries came back from box:h1, host copy removed. Automatic moves leave it here.',
+		});
+	});
+
+	it('offers the offline Move Back, naming the History that stays, when the host cannot be reached', async () => {
+		unlift.mockResolvedValue({ ok: false, code: 'PEER_NOT_CONNECTED', error: 'not connected' });
+		requestMoveBackFromHost('a1', 'Docs', 'box');
+		await vi.waitFor(() => expect(confirm()).toBeDefined());
+		expect(confirm()?.message).toContain('so does the History written there');
+		expect(confirm()?.message).toContain('the next Move to Host brings it home');
 	});
 });

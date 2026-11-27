@@ -2334,6 +2334,7 @@ program
 	)
 	.option('--offline', "Do not reach the host: restore from this machine's copy only")
 	.option('--keep-host-copy', 'Leave the agent on the host too (it then has two owners)')
+	.option('--dry-run', 'Show what would come back (tabs, History entries) and stop')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agent: string, options) => unlift(agent, options));
 

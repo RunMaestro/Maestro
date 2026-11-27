@@ -108,6 +108,8 @@ import {
 } from '../../group-chat/group-chat-router';
 import { mapSessionsForMentions } from './session-mention-mapper';
 import { getPeerMirrorService, noteHostedAgentsChanged } from '../../federation';
+import { desktopAgentHistoryStore } from '../../federation/agent-history-store';
+import { getHistoryManager } from '../../history-manager';
 import { withHostedAgentsNote } from './sessions-persisted';
 import { resolveSessionWindow } from './session-window';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
@@ -162,6 +164,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// A hosted agent's Cue runs run here: its History panel lists them as a local agent's does.
 		getCueHistoryEntries,
 		getCueHistoryGroups,
+		// One History for an agent across a move: read beside the host's, and brought home.
+		history: desktopAgentHistoryStore(getHistoryManager()),
 	});
 
 	// MaestroRun - install, grant walkthrough, and the readiness that gates its

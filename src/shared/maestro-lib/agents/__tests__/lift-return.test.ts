@@ -10,10 +10,13 @@ import { LiftRunError } from '../lift-run';
 import {
 	readReturnedFromHost,
 	returnRestoreRefusal,
+	describeReturn,
 	runReturnFromHost,
 	withReturnedFromHost,
 	type ReturnRunDeps,
 } from '../lift-return';
+import { createMemoryAgentHistoryStore } from '../../../../__tests__/helpers/agentHistoryStore';
+import type { HistoryEntry } from '../../../types';
 
 const ok = <T>(value: T) => ({ ok: true as const, value });
 const fail = (code: string, message = 'nope') => ({
@@ -48,6 +51,7 @@ function hostClient(
 		tabs?: AITabRecord[];
 		transcripts?: Record<string, unknown[]>;
 		remove?: unknown;
+		history?: unknown;
 	} = {}
 ) {
 	const tabs = overrides.tabs ?? [
@@ -72,10 +76,15 @@ function hostClient(
 			transcript: vi.fn(async (_agentId: string, tabId: string) => ok(transcripts[tabId] ?? [])),
 		},
 		turns: { queue: { list: vi.fn().mockResolvedValue(overrides.queue ?? ok([])) } },
+		history: { list: vi.fn().mockResolvedValue(overrides.history ?? ok([])) },
 	};
 }
 
-function deps(agent: AgentRecord, client = hostClient()) {
+function deps(
+	agent: AgentRecord,
+	client = hostClient(),
+	history = createMemoryAgentHistoryStore()
+) {
 	const release = vi.fn().mockResolvedValue(undefined);
 	const restore = vi.fn().mockResolvedValue(undefined);
 	const connect = vi.fn().mockResolvedValue({ peer: 'build-box', client, release });
@@ -83,9 +92,26 @@ function deps(agent: AgentRecord, client = hostClient()) {
 		readAgents: () => [agent],
 		connect,
 		restore,
+		history,
 	};
-	return { value, client, connect, restore, release };
+	return { value, client, connect, restore, release, history };
 }
+
+const entry = (
+	id: string,
+	timestamp: number,
+	sessionId: string,
+	extra: Partial<HistoryEntry> = {}
+) =>
+	({
+		id,
+		type: 'AUTO',
+		timestamp,
+		summary: id,
+		projectPath: '/home/me/docs',
+		sessionId,
+		...extra,
+	}) as HistoryEntry;
 
 describe('withReturnedFromHost', () => {
 	it('drops the pointer, opts out of automatic moves, and merges the host tabs by id', () => {
@@ -189,6 +215,7 @@ describe('runReturnFromHost', () => {
 			from: 'build-box:host-1',
 			tabs: 2,
 			newTabs: 1,
+			history: 0,
 			hostCopyRemoved: true,
 		});
 		expect(d.release).toHaveBeenCalled();
@@ -357,5 +384,165 @@ describe('runReturnFromHost', () => {
 	it('throws a LiftRunError for an unknown agent', async () => {
 		const d = deps(hostedAgent());
 		await expect(runReturnFromHost('missing', {}, d.value)).rejects.toBeInstanceOf(LiftRunError);
+	});
+});
+
+/**
+ * L39: an agent's History is one list wherever it runs. Both host kinds answer `history.list` the
+ * same way: the agent's own entries (filed under the host agent's id) and the project's shared
+ * History from other Maestros. A headless host stamps the shared ones with their `hostname`; a
+ * desktop host lists its own entries with no hostname. Only the host agent's own come home.
+ */
+describe.each([
+	{
+		kind: 'headless host',
+		list: [
+			entry('host-2', 30, 'host-1'),
+			entry('shared-from-laptop', 25, 'laptop-agent', { hostname: 'laptop' }),
+			entry('both', 20, 'host-1'),
+			entry('host-1st', 10, 'host-1'),
+		],
+	},
+	{
+		kind: 'desktop host',
+		list: [
+			entry('host-2', 30, 'host-1'),
+			entry('both', 20, 'host-1'),
+			entry('host-1st', 10, 'host-1'),
+		],
+	},
+])('Move Back brings the History home ($kind, L39)', ({ list }) => {
+	const here = () =>
+		createMemoryAgentHistoryStore({
+			'agent-1': [entry('pre-move', 5, 'agent-1'), entry('both', 20, 'agent-1')],
+		});
+
+	it("(b) writes the host agent's own entries here, re-filed, oldest first, nothing twice, before the restore", async () => {
+		const history = here();
+		const order: string[] = [];
+		const d = deps(hostedAgent(), hostClient({ history: ok(list) }), history);
+		d.restore.mockImplementation(async () => {
+			order.push('restore');
+		});
+		const append = history.append;
+		history.append = async (agentId, entries) => {
+			order.push('history');
+			await append(agentId, entries);
+		};
+		const result = await runReturnFromHost('agent-1', {}, d.value);
+		expect(result.history).toBe(2);
+		expect(history.appends).toEqual([
+			{
+				agentId: 'agent-1',
+				entries: [
+					expect.objectContaining({ id: 'host-1st', sessionId: 'agent-1' }),
+					expect.objectContaining({ id: 'host-2', sessionId: 'agent-1' }),
+				],
+			},
+		]);
+		expect(history.entriesOf('agent-1').map((e) => e.id)).toEqual([
+			'host-2',
+			'both',
+			'host-1st',
+			'pre-move',
+		]);
+		// Written before the restore and the copy's removal: a failure leaves nothing changed.
+		expect(order).toEqual(['history', 'restore']);
+		expect(d.client.agents.remove).toHaveBeenCalled();
+	});
+
+	it('(b) a second Move Back of the same entries writes nothing', async () => {
+		const history = here();
+		await runReturnFromHost(
+			'agent-1',
+			{},
+			deps(hostedAgent(), hostClient({ history: ok(list) }), history).value
+		);
+		const again = await runReturnFromHost(
+			'agent-1',
+			{},
+			deps(hostedAgent(), hostClient({ history: ok(list) }), history).value
+		);
+		expect(again.history).toBe(0);
+		expect(history.appends).toHaveLength(1);
+	});
+
+	it('(b) refuses with nothing changed when the host cannot list its History', async () => {
+		const history = here();
+		const d = deps(
+			hostedAgent(),
+			hostClient({ history: fail('failed', 'the file is corrupt') }),
+			history
+		);
+		const error = await runReturnFromHost('agent-1', {}, d.value).catch((e) => e);
+		expect(error).toBeInstanceOf(LiftRunError);
+		expect(error.code).toBe('RETURN_HISTORY_FAILED');
+		expect(error.message).toContain('the file is corrupt');
+		expect(d.restore).not.toHaveBeenCalled();
+		expect(d.client.agents.remove).not.toHaveBeenCalled();
+		expect(history.appends).toEqual([]);
+	});
+
+	it('(b) refuses with nothing changed when the entries cannot be written here', async () => {
+		const history = here();
+		history.append = async () => {
+			throw new Error('disk full');
+		};
+		const d = deps(hostedAgent(), hostClient({ history: ok(list) }), history);
+		const error = await runReturnFromHost('agent-1', {}, d.value).catch((e) => e);
+		expect(error.code).toBe('RETURN_HISTORY_FAILED');
+		expect(error.message).toContain('2 History entries');
+		expect(d.restore).not.toHaveBeenCalled();
+		expect(d.client.agents.remove).not.toHaveBeenCalled();
+	});
+
+	it('(d) a dry run counts the tabs and History entries and writes nothing on either side', async () => {
+		const history = here();
+		const d = deps(hostedAgent(), hostClient({ history: ok(list) }), history);
+		const result = await runReturnFromHost('agent-1', { dryRun: true }, d.value);
+		expect(result).toMatchObject({
+			dryRun: true,
+			tabs: 2,
+			newTabs: 1,
+			history: 2,
+			hostCopyRemoved: false,
+		});
+		expect(d.restore).not.toHaveBeenCalled();
+		expect(d.client.agents.remove).not.toHaveBeenCalled();
+		expect(history.appends).toEqual([]);
+		expect(describeReturn(result)).toBe(
+			'Moving "Docs" back from build-box:host-1: 2 tab(s) (1 new) and 2 History entries come back to this machine, and its copy there is removed.'
+		);
+	});
+
+	it('(d) the result says how many entries came home', async () => {
+		const d = deps(hostedAgent(), hostClient({ history: ok(list) }), here());
+		const result = await runReturnFromHost('agent-1', {}, d.value);
+		expect(describeReturn(result)).toBe(
+			'"Docs" is an SSH agent again: 2 tab(s) (1 new) and 2 History entries came back from build-box:host-1, host copy removed.'
+		);
+	});
+});
+
+describe('an offline Move Back and History (L39 e)', () => {
+	it('cannot bring the host entries, says so, and leaves the copy for the next Move to Host', async () => {
+		const history = createMemoryAgentHistoryStore();
+		const d = deps(hostedAgent(), hostClient(), history);
+		const result = await runReturnFromHost('agent-1', { offline: true }, d.value);
+		expect(result.history).toBe(0);
+		expect(history.appends).toEqual([]);
+		expect(result.notices?.[0]).toContain('so does the History written there');
+		expect(result.notices?.[0]).toContain('The next Move to Host brings that History home');
+		expect(d.restore).toHaveBeenCalledWith(
+			'agent-1',
+			expect.objectContaining({ leftOnHost: { peer: 'build-box', agentId: 'host-1', at: 1 } })
+		);
+	});
+
+	it('an offline dry run writes nothing', async () => {
+		const d = deps(hostedAgent());
+		const result = await runReturnFromHost('agent-1', { offline: true, dryRun: true }, d.value);
+		expect(result).toMatchObject({ dryRun: true, history: 0 });
+		expect(d.restore).not.toHaveBeenCalled();
 	});
 });

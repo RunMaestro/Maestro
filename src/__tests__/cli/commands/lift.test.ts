@@ -5,6 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createMemoryAgentHistoryStore } from '../../helpers/agentHistoryStore';
 
 vi.mock('../../../cli/services/storage', () => ({
 	getSyncDir: vi.fn(() => '/tmp/maestro'),
@@ -75,7 +76,10 @@ function fakeConnection(
 	const connection = {
 		peer: 'build-box',
 		remote,
-		client: { agents: { import: importAgent, remove } },
+		client: {
+			agents: { import: importAgent, remove },
+			history: { list: vi.fn().mockResolvedValue({ ok: true, value: [] }) },
+		},
 		release,
 	} as unknown as PeerConnection;
 	return { connection, importAgent, remove, release };
@@ -99,6 +103,7 @@ function depsWith(
 		connect: vi.fn().mockResolvedValue(connection.connection),
 		setPointerInDesktop: vi.fn().mockResolvedValue({ success: true }),
 		setPointerOnDisk: vi.fn().mockResolvedValue(undefined),
+		history: createMemoryAgentHistoryStore(),
 		now: () => NOW,
 		...overrides,
 	};

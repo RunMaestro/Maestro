@@ -250,7 +250,7 @@ function hasMigrated(): boolean {
 /**
  * Get the history directory path
  */
-function getHistoryDir(): string {
+export function getHistoryDir(): string {
 	return path.join(getConfigDir(), 'history');
 }
 

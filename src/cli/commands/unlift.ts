@@ -15,11 +15,14 @@
 
 import { LiftRunError } from '../../shared/maestro-lib/agents/lift-run';
 import {
+	describeReturn,
 	runReturnFromHost,
 	withReturnedFromHost,
 	type ReturnedFromHost,
 	type ReturnRunDeps,
 } from '../../shared/maestro-lib/agents/lift-return';
+import type { AgentHistoryStore } from '../../shared/maestro-lib/agents/lift-history';
+import { diskAgentHistoryStore } from '../../shared/maestro-lib/agents/lift-history-disk';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import {
 	readSessionsStoreFile,
@@ -40,7 +43,7 @@ import {
 	sendSimpleCommand,
 	type SimpleResult,
 } from '../services/session-command';
-import { getSyncDir, readSessions, resolveAgentId } from '../services/storage';
+import { getHistoryDir, getSyncDir, readSessions, resolveAgentId } from '../services/storage';
 import { localStoreOwner, type LocalStoreOwner } from './lift';
 
 export interface UnliftOptions {
@@ -49,6 +52,8 @@ export interface UnliftOptions {
 	offline?: boolean;
 	/** Leave the agent on the host too. */
 	keepHostCopy?: boolean;
+	/** Read what would come back (tabs, History) and stop. */
+	dryRun?: boolean;
 }
 
 /** What `unlift` needs from the world, so a test can stand in for it. */
@@ -61,6 +66,8 @@ export interface UnliftDeps {
 	restoreInDesktop(agentId: string, returned: ReturnedFromHost): Promise<SimpleResult>;
 	/** Restore in the store file. Only while nothing else owns the store. */
 	restoreOnDisk(agentId: string, returned: ReturnedFromHost): Promise<void>;
+	/** This machine's History files: the host copy's entries come home into them. */
+	history: AgentHistoryStore;
 }
 
 const defaultDeps: UnliftDeps = {
@@ -93,6 +100,9 @@ const defaultDeps: UnliftDeps = {
 		);
 		await writeSessionsStoreFile(dir, { ...data, sessions: updated });
 	},
+	// Appended with O_APPEND beside a running desktop, whose History watcher picks the lines up.
+	// The folder is resolved per call, after --data-dir applied.
+	history: diskAgentHistoryStore(() => ({ historyDir: getHistoryDir() })),
 };
 
 /** Write the restored record through whoever owns the store. Throws on failure. */
@@ -127,6 +137,7 @@ function sharedDeps(deps: UnliftDeps): ReturnRunDeps {
 		connect: (remoteId) => deps.connect(remoteId),
 		hostCallError,
 		restore: (agentId, returned) => restore(deps, agentId, returned),
+		history: deps.history,
 	};
 }
 
@@ -140,7 +151,11 @@ export async function unlift(
 	try {
 		const result = await runReturnFromHost(
 			agentRef,
-			{ offline: options.offline === true, keepHostCopy: options.keepHostCopy === true },
+			{
+				offline: options.offline === true,
+				keepHostCopy: options.keepHostCopy === true,
+				dryRun: options.dryRun === true,
+			},
 			sharedDeps(deps)
 		);
 		if (options.json) {
@@ -148,11 +163,8 @@ export async function unlift(
 			return;
 		}
 		for (const notice of result.notices ?? []) console.log(formatWarning(notice));
-		console.log(
-			formatSuccess(
-				`"${result.agent.name}" is an SSH agent again (${result.tabs} tab(s) back from ${result.from}${result.hostCopyRemoved ? ', host copy removed' : ''})`
-			)
-		);
+		const line = describeReturn(result, options.keepHostCopy === true);
+		console.log(result.dryRun ? line : formatSuccess(line));
 	} catch (error) {
 		const code =
 			error instanceof LiftRunError

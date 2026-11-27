@@ -181,6 +181,12 @@ export interface LiftPlanSummary {
 	 * own "(on the host)" tab; `added` only the host had.
 	 */
 	tabMerge?: { merged: number; copies: number; added: number };
+	/**
+	 * The agent's History (`lift-history.ts`): `here` entries stay on this machine and its History
+	 * panel lists them with what the host writes; `comesHome` entries of a replaced copy come home
+	 * first. Set by `runLift()`.
+	 */
+	history?: { here: number; comesHome: number };
 }
 
 /**

@@ -35,6 +35,7 @@ import {
 	type ReturnRunOptions,
 } from '../../shared/maestro-lib/agents/lift-return';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
+import type { AgentHistoryStore } from '../../shared/maestro-lib/agents/lift-history';
 import type { SshRemoteConfig } from '../../shared/types';
 import { isAgentBusy, type ProcessLivenessProbe } from '../utils/agent-busy';
 import { isWebContentsAvailable } from '../utils/safe-send';
@@ -64,6 +65,8 @@ export interface DesktopLiftDeps {
 	setPointer(agentId: string, pointer: LiftedToPointer, movedQueueItemIds: string[]): Promise<void>;
 	/** Move Back: make the agent an SSH agent again with the host's tabs merged in. */
 	restore(agentId: string, returned: ReturnedFromHost): Promise<void>;
+	/** This machine's History of its agents: a move brings the host's entries home into it. */
+	history: AgentHistoryStore;
 	now?(): number;
 }
 
@@ -101,6 +104,7 @@ export async function returnAgentFromDesktop(
 				}
 			},
 			restore: deps.restore,
+			history: deps.history,
 		});
 		return { ok: true, result };
 	} catch (error) {
@@ -144,6 +148,7 @@ export async function liftAgentFromDesktop(
 			}
 		},
 		setPointer: deps.setPointer,
+		history: deps.history,
 		now: deps.now,
 	};
 	let planText = '';
@@ -231,6 +236,8 @@ export interface DesktopLiftRuntime {
 	getMainWindow(): BrowserWindow | null;
 	getProcessManager(): ProcessLivenessProbe | null;
 	service(): PeerMirrorService | null;
+	/** This machine's History of its agents (`desktopAgentHistoryStore()`). */
+	history: AgentHistoryStore;
 }
 
 function arrayOf<T>(value: unknown): T[] {
@@ -254,5 +261,6 @@ export function buildDesktopLiftDeps(runtime: DesktopLiftRuntime): DesktopLiftDe
 			setLiftPointerInWindow(runtime.getMainWindow(), agentId, pointer, moved),
 		restore: (agentId, returned) =>
 			restoreReturnedAgentInWindow(runtime.getMainWindow(), agentId, returned),
+		history: runtime.history,
 	};
 }

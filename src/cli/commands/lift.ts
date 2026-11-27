@@ -58,7 +58,10 @@ import {
 	readSessions,
 	readSshRemotes,
 	resolveAgentId,
+	getHistoryDir,
 } from '../services/storage';
+import type { AgentHistoryStore } from '../../shared/maestro-lib/agents/lift-history';
+import { diskAgentHistoryStore } from '../../shared/maestro-lib/agents/lift-history-disk';
 
 export interface LiftOptions {
 	json?: boolean;
@@ -95,6 +98,8 @@ export interface LiftDeps {
 		pointer: LiftedToPointer,
 		movedQueueItemIds: string[]
 	): Promise<void>;
+	/** This machine's History files: counted for the plan; a replaced copy's comes home into them. */
+	history: AgentHistoryStore;
 	now(): number;
 }
 
@@ -162,6 +167,7 @@ const defaultDeps: LiftDeps = {
 		);
 		await writeSessionsStoreFile(dir, { ...data, sessions: updated });
 	},
+	history: diskAgentHistoryStore(() => ({ historyDir: getHistoryDir() })),
 	now: () => Date.now(),
 };
 
@@ -211,6 +217,7 @@ function sharedDeps(deps: LiftDeps): LiftRunDeps {
 		connect: (remote) => deps.connect(remote.id),
 		hostCallError,
 		setPointer: (agentId, pointer, moved) => setPointer(deps, owner, agentId, pointer, moved),
+		history: deps.history,
 		now: deps.now,
 	};
 }

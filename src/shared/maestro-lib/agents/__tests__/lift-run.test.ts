@@ -7,6 +7,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createMemoryAgentHistoryStore } from '../../../../__tests__/helpers/agentHistoryStore';
 
 import type { SshRemoteConfig } from '../../../types';
 import { MAX_PERSISTED_TOOL_OUTPUT_CHARS, compactLogToolOutputs } from '../../../toolOutput';
@@ -72,7 +73,10 @@ function connectionWith(
 	const release = vi.fn().mockResolvedValue(undefined);
 	const connection = {
 		peer: 'build-box',
-		client: { agents: { import: importAgent, remove, update } },
+		client: {
+			agents: { import: importAgent, remove, update },
+			history: { list: vi.fn().mockResolvedValue({ ok: true, value: [] }) },
+		},
 		release,
 	} as unknown as LiftHostConnection;
 	return { connection, importAgent, remove, update, release };
@@ -90,6 +94,7 @@ function depsWith(
 		busyReason: () => undefined,
 		connect: vi.fn().mockResolvedValue(conn.connection),
 		setPointer: vi.fn().mockResolvedValue(undefined),
+		history: createMemoryAgentHistoryStore(),
 		now: () => NOW,
 		...overrides,
 	};

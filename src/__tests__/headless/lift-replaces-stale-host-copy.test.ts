@@ -21,6 +21,10 @@ import {
 } from '../../shared/maestro-lib/agents/lift-run';
 import type { LiftPlan } from '../../shared/maestro-lib/agents/lift-plan';
 import { withReturnedFromHost } from '../../shared/maestro-lib/agents/lift-return-record';
+import {
+	createMemoryAgentHistoryStore,
+	type MemoryAgentHistoryStore,
+} from '../helpers/agentHistoryStore';
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
 const PEER = 'build-box';
@@ -47,10 +51,27 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 	let dir: string;
 	let work: string;
 	let host: MaestroRuntime;
+	let localHistory: MemoryAgentHistoryStore;
+	const historyLine = (id: string, timestamp: number, sessionId: string) =>
+		JSON.stringify({ id, type: 'AUTO', timestamp, summary: id, projectPath: work, sessionId });
 
 	beforeEach(async () => {
 		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-t5-'));
 		work = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-t5-work-'));
+		// The copy's History on the host, filed under its id: two turns it ran there (L39).
+		fs.mkdirSync(path.join(dir, 'history'), { recursive: true });
+		fs.writeFileSync(
+			path.join(dir, 'history', 'host-1.jsonl'),
+			[historyLine('on-host-1', T0 - 2000, 'host-1'), historyLine('on-host-2', T0 - 1000, 'host-1')]
+				.map((entry) => `${entry}\n`)
+				.join('')
+		);
+		// This machine's History of the agent: one entry from before the first move.
+		localHistory = createMemoryAgentHistoryStore({
+			'agent-1': [
+				{ id: 'before', type: 'USER', timestamp: T0 - 9000, summary: 'before', projectPath: work },
+			],
+		});
 		// The host still holds the copy the first lift made ("host-1"), with a tab opened there.
 		fs.writeFileSync(
 			path.join(dir, 'maestro-sessions.json'),
@@ -138,6 +159,7 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 			busyReason: () => undefined,
 			connect: async () => ({ peer: PEER, client: host, release: async () => undefined }),
 			setPointer: async () => undefined,
+			history: localHistory,
 			now: () => T0,
 		};
 	}
@@ -149,7 +171,7 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 		});
 		expect(plan?.summary.replaces).toBe(`${PEER}:host-1`);
 		expect(formatLiftPlan(plan!.summary, false)).toContain(
-			`Replaces the copy an earlier Move Back left on the host (${PEER}:host-1): its tabs and transcripts are merged into what moves, its processes are stopped, and its History on the host stays filed under its old id, so the moved agent's History does not show it.`
+			`Replaces the copy an earlier Move Back left on the host (${PEER}:host-1): its tabs and transcripts are merged into what moves, its processes are stopped, and its 2 History entries come home to this machine first.`
 		);
 
 		const agents = value(await host.agents.list());
@@ -161,6 +183,37 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 		expect(tabs.map((tab) => tab.id).sort()).toEqual(['tab-1', 'tab-h']);
 		const said = value(await host.tabs.transcript(agents[0].id, 'tab-h'));
 		expect(said.map((entry) => entry.text)).toContain('said on the host');
+	});
+
+	it("(c) brings the replaced copy's History home first, under this agent's id, and the plan counts it (L39)", async () => {
+		let plan: LiftPlan | undefined;
+		await runLift('agent-1', {}, deps(localAgent('agent-1', true)), (shown) => {
+			plan = shown;
+		});
+		expect(plan?.summary.history).toEqual({ here: 1, comesHome: 2 });
+		expect(formatLiftPlan(plan!.summary, false)).toContain(
+			'  History (3 History entries): its History panel lists them with the entries the host writes, and a Move Back brings those home'
+		);
+		expect(localHistory.entriesOf('agent-1').map((entry) => [entry.id, entry.sessionId])).toEqual([
+			['on-host-2', 'agent-1'],
+			['on-host-1', 'agent-1'],
+			['before', undefined],
+		]);
+		// The copy's History was read before the import replaced the copy: nothing is lost.
+		expect(localHistory.appends).toHaveLength(1);
+	});
+
+	it('(c) a dry run counts the History and writes nothing (L39)', async () => {
+		const result = await runLift('agent-1', { dryRun: true }, deps(localAgent('agent-1', true)));
+		expect(result.plan.history).toEqual({ here: 1, comesHome: 2 });
+		expect(localHistory.appends).toEqual([]);
+		expect(value(await host.agents.list()).map((agent) => agent.id)).toEqual(['host-1']);
+	});
+
+	it('(d) a plain lift counts the History that stays here (L39)', async () => {
+		const result = await runLift('agent-2', { dryRun: true }, deps(localAgent('agent-2', false)));
+		expect(result.plan.history).toEqual({ here: 0, comesHome: 0 });
+		expect(formatLiftPlan(result.plan, true)).toContain('  History (0 History entries)');
 	});
 
 	it('never replaces a host agent that is not the copy of this agent, and names the remove command (T9)', async () => {

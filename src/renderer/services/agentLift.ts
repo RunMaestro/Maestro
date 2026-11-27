@@ -19,6 +19,7 @@ import type {
 	DesktopSetupHostOptions,
 } from '../../main/federation/setup-host';
 import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../shared/federationCommands';
+import { describeReturn } from '../../shared/maestro-lib/agents/lift-history';
 import { getModalActions, useModalStore } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
@@ -119,7 +120,7 @@ export async function moveAgentToHost(
 
 async function callUnlift(
 	sessionId: string,
-	options: { offline: boolean }
+	options: { offline: boolean; dryRun?: boolean }
 ): Promise<DesktopReturnAnswer> {
 	const api = window.maestro?.federation;
 	if (!api?.unlift)
@@ -145,10 +146,7 @@ function reportUnlift(answer: DesktopReturnAnswer): void {
 	notifyToast({
 		color: 'green',
 		title: `"${result.agent.name}" is an SSH agent again`,
-		message:
-			result.tabs > 0
-				? `${result.tabs} tab(s) came back from ${result.from}${result.newTabs > 0 ? `, ${result.newTabs} of them new` : ''}. Automatic moves leave it here.`
-				: 'Automatic moves leave it here.',
+		message: `${describeReturn(result)} Automatic moves leave it here.`,
 	});
 }
 
@@ -163,22 +161,33 @@ export function requestMoveBackFromHost(
 	peerName: string
 ): void {
 	const { showConfirmation } = getModalActions();
-	showConfirmation(
-		`Move "${agentName}" back from ${peerName}? It becomes an SSH agent again: its conversations on ${peerName} come back as tabs here, its copy on ${peerName} is removed, and automatic moves leave it here.`,
-		() => {
-			void (async () => {
-				const answer = await callUnlift(sessionId, { offline: false });
-				if (!answer.ok && answer.code === 'PEER_NOT_CONNECTED') {
-					showConfirmation(
-						`${peerName} cannot be reached. Move "${agentName}" back anyway, with only this machine's copy? Conversations started on ${peerName} after the move stay there, and its copy there is not removed.`,
-						() => {
-							void callUnlift(sessionId, { offline: true }).then(reportUnlift);
-						}
-					);
-					return;
-				}
-				reportUnlift(answer);
-			})();
+	const offerOffline = () =>
+		showConfirmation(
+			`${peerName} cannot be reached. Move "${agentName}" back anyway, with only this machine's copy? Conversations started on ${peerName} after the move stay there, and so does the History written there (the next Move to Host brings it home); its copy there is not removed.`,
+			() => {
+				void callUnlift(sessionId, { offline: true }).then(reportUnlift);
+			}
+		);
+	void (async () => {
+		// The plan first, as `maestro-cli unlift --dry-run` prints it: what comes back, counted.
+		const plan = await callUnlift(sessionId, { offline: false, dryRun: true });
+		if (!plan.ok) {
+			if (plan.code === 'PEER_NOT_CONNECTED') offerOffline();
+			else reportUnlift(plan);
+			return;
 		}
-	);
+		showConfirmation(
+			`${describeReturn(plan.result)} "${agentName}" becomes an SSH agent again, and automatic moves leave it here.`,
+			() => {
+				void (async () => {
+					const answer = await callUnlift(sessionId, { offline: false });
+					if (!answer.ok && answer.code === 'PEER_NOT_CONNECTED') {
+						offerOffline();
+						return;
+					}
+					reportUnlift(answer);
+				})();
+			}
+		);
+	})();
 }

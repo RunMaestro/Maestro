@@ -12,10 +12,14 @@
  *    own local tab, and the next turn over SSH resumes the same provider session.
  * 3. The local record is restored (`withReturnedFromHost()`): no pointer, the host's tabs merged
  *    in, and `hostedOptOut`, so automatic Federation does not move it straight back.
- * 4. The host's copy is removed, unless the caller keeps it, so the agent has one owner again.
+ * 4. The History the host copy wrote comes home (`lift-history.ts`), re-filed under the local id,
+ *    before anything else is written, so the agent's History stays one list.
+ * 5. The host's copy is removed, unless the caller keeps it, so the agent has one owner again.
  *
- * `offline` skips 2 and 4 for a host that cannot be reached: the agent comes back with only what
- * this machine kept, and the result says the host's copy is still there.
+ * `offline` skips 2, 4, and 5 for a host that cannot be reached: the agent comes back with only
+ * what this machine kept, and the result says the host's copy, and the History it wrote, are still
+ * there (the next Move to Host brings that History home). `dryRun` reads 2 and 4 and stops: the
+ * counts a person confirms before anything moves.
  *
  * Tabs are never dropped: a local tab the host no longer has stays, and a host transcript shorter
  * than the local one does not replace it.
@@ -26,6 +30,14 @@ import type { AITabRecord, AgentRecord } from '../store/records';
 import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
 import { LiftRunError } from './lift-run';
 import type { ReturnedFromHost, ReturnedHeldItem } from './lift-return-record';
+import {
+	bringHostHistoryHome,
+	historyEntryCount,
+	planHostHistoryHome,
+	type AgentHistoryStore,
+} from './lift-history';
+
+export { describeReturn } from './lift-history';
 
 export {
 	readLeftOnHost,
@@ -40,12 +52,14 @@ export interface ReturnRunOptions {
 	offline?: boolean;
 	/** Leave the agent on the host too (it then has two owners until one is removed). */
 	keepHostCopy?: boolean;
+	/** Read what would come back (tabs, History) and stop: nothing is written on either side. */
+	dryRun?: boolean;
 }
 
 /** A client attached to the agent's host. `release()` is the caller's. */
 export interface ReturnHostConnection {
 	peer: string;
-	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'>;
+	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns' | 'history'>;
 	release(): Promise<void>;
 }
 
@@ -58,6 +72,8 @@ export interface ReturnRunDeps {
 	hostCallError?(peer: string, error: Pick<ClientError, 'code' | 'message'>): Error;
 	/** Write the restored record (see `withReturnedFromHost()`). Throws on failure. */
 	restore(agentId: string, returned: ReturnedFromHost): Promise<void>;
+	/** This machine's History of its agents: the host copy's entries come home into it. */
+	history: AgentHistoryStore;
 }
 
 export interface ReturnResult {
@@ -68,7 +84,11 @@ export interface ReturnResult {
 	tabs: number;
 	/** Host tabs this machine did not have, added as new tabs. */
 	newTabs: number;
+	/** History entries the host copy wrote that came home (0 when offline or none). */
+	history: number;
 	hostCopyRemoved: boolean;
+	/** Set on a dry run: the counts are what WOULD come back; nothing was written. */
+	dryRun?: boolean;
 	notices?: string[];
 }
 
@@ -130,15 +150,17 @@ export async function runReturnFromHost(
 	const summary = { id: agent.id, name: agent.name };
 
 	if (options.offline) {
-		await restoreOrThrow(deps, agent, { tabs: [], leftOnHost: pointer });
+		if (!options.dryRun) await restoreOrThrow(deps, agent, { tabs: [], leftOnHost: pointer });
 		return {
 			agent: summary,
 			from,
 			tabs: 0,
 			newTabs: 0,
+			history: 0,
 			hostCopyRemoved: false,
+			...(options.dryRun ? { dryRun: true } : {}),
 			notices: [
-				`The host was not reached, so conversations started there after the move stay there, and its copy (${from}) still exists. ${hostCopyLeftAdvice(from)}`,
+				`The host was not reached, so conversations started there after the move stay there, and so does the History written there; its copy (${from}) still exists. The next Move to Host brings that History home. ${hostCopyLeftAdvice(from)}`,
 			],
 		};
 	}
@@ -149,6 +171,7 @@ export async function runReturnFromHost(
 		const notices: string[] = [];
 		let returned: ReturnedFromHost = { tabs: [] };
 		let heldQueue: ReturnedHeldItem[] = [];
+		let historyHome: Awaited<ReturnType<typeof planHostHistoryHome>> = [];
 		const hostAgent = await connection.client.agents.get(pointer.agentId);
 		const hostGone = !hostAgent.ok && hostAgent.error.code === 'not-found';
 		if (!hostAgent.ok && !hostGone) throw hostError(connection.peer, hostAgent.error);
@@ -224,6 +247,21 @@ export async function runReturnFromHost(
 					);
 				}
 			}
+			// The History the copy wrote, read before anything changes: a copy whose History cannot be
+			// read is not removed, and nothing moves.
+			try {
+				historyHome = await planHostHistoryHome(
+					connection.client.history,
+					pointer.agentId,
+					agent.id,
+					deps.history
+				);
+			} catch (error) {
+				throw new LiftRunError(
+					'RETURN_HISTORY_FAILED',
+					`Could not move "${agent.name}" back: ${error instanceof Error ? error.message : String(error)}. Nothing changed.`
+				);
+			}
 			returned = {
 				tabs: withLogs,
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
@@ -232,6 +270,32 @@ export async function runReturnFromHost(
 		} else {
 			notices.push(
 				`The host no longer has ${from}: the agent comes back with this machine's copy.`
+			);
+		}
+
+		const localIds = new Set((agent.aiTabs ?? []).map((tab) => tab.id));
+		const newTabs = returned.tabs.filter((tab) => !localIds.has(tab.id)).length;
+		if (options.dryRun) {
+			return {
+				agent: summary,
+				from,
+				tabs: returned.tabs.length,
+				newTabs,
+				history: historyHome.length,
+				hostCopyRemoved: false,
+				dryRun: true,
+				...(notices.length > 0 ? { notices } : {}),
+			};
+		}
+
+		// The History comes home first: when it cannot be written here, nothing has changed yet.
+		let history = 0;
+		try {
+			history = await bringHostHistoryHome(deps.history, agent.id, historyHome);
+		} catch (error) {
+			throw new LiftRunError(
+				'RETURN_HISTORY_FAILED',
+				`Could not move "${agent.name}" back: ${historyEntryCount(historyHome.length)} from the host could not be written here (${error instanceof Error ? error.message : String(error)}). Nothing changed on the host.`
 			);
 		}
 
@@ -257,12 +321,12 @@ export async function runReturnFromHost(
 			notices.push(`The host keeps its copy (${from}). Do not send to both.`);
 		}
 
-		const localIds = new Set((agent.aiTabs ?? []).map((tab) => tab.id));
 		return {
 			agent: summary,
 			from,
 			tabs: returned.tabs.length,
-			newTabs: returned.tabs.filter((tab) => !localIds.has(tab.id)).length,
+			newTabs,
+			history,
 			hostCopyRemoved,
 			...(notices.length > 0 ? { notices } : {}),
 		};
