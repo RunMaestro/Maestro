@@ -18,6 +18,22 @@ export interface FontSizeStepperProps {
 	allowInherit?: boolean;
 	testId?: string;
 	label?: string;
+	/** Upper bound in px. Defaults to the surface maximum; headings run larger. */
+	max?: number;
+	/**
+	 * What the inherit slot calls the 0 state, for controls whose 0 is not the
+	 * interface size (a heading's 0 is its stylesheet's default size).
+	 */
+	inheritWording?: {
+		/** Shown while on the 0 state. Default "Inherited". */
+		active: string;
+		/** The button that returns to the 0 state. Default "Inherit". */
+		action: string;
+		/** Tooltip on the value while on the 0 state; the px size is appended. */
+		activeTitle: string;
+		/** Tooltip on the button that returns to the 0 state. */
+		title: string;
+	};
 }
 
 /**
@@ -48,6 +64,13 @@ export function FontSizeStepper({
 	allowInherit = true,
 	testId,
 	label = 'Size',
+	max = SURFACE_FONT_SIZE_MAX,
+	inheritWording = {
+		active: 'Inherited',
+		action: 'Inherit',
+		activeTitle: 'Inheriting the interface size',
+		title: 'Inherit the interface font size',
+	},
 }: FontSizeStepperProps) {
 	const inheriting = allowInherit && value === 0;
 	const effective = inheriting ? inheritedSize : value;
@@ -55,9 +78,12 @@ export function FontSizeStepper({
 	const step = (delta: number) => {
 		// Stepping away from "inherit" starts at the size the user can currently
 		// see, so the first click nudges by one pixel rather than jumping to
-		// some unrelated default.
-		const next = effective + delta;
-		if (next < SURFACE_FONT_SIZE_MIN || next > SURFACE_FONT_SIZE_MAX) return;
+		// some unrelated default. That first step is pulled into range: a
+		// default readout can sit below the minimum (a small H6), and a rejected
+		// step would leave an enabled button that does nothing.
+		const raw = effective + delta;
+		const next = inheriting ? Math.min(max, Math.max(SURFACE_FONT_SIZE_MIN, raw)) : raw;
+		if (next < SURFACE_FONT_SIZE_MIN || next > max) return;
 		onChange(next);
 	};
 
@@ -94,7 +120,7 @@ export function FontSizeStepper({
 			<span
 				className="text-xs tabular-nums text-center min-w-[3rem] shrink-0"
 				data-testid={testId ? `${testId}-value` : undefined}
-				title={inheriting ? `Inheriting the interface size (${effective}px)` : `${effective}px`}
+				title={inheriting ? `${inheritWording.activeTitle} (${effective}px)` : `${effective}px`}
 				style={{ color: inheriting ? theme.colors.textDim : theme.colors.textMain }}
 			>
 				{effective}px
@@ -102,7 +128,7 @@ export function FontSizeStepper({
 			<button
 				type="button"
 				onClick={() => step(1)}
-				disabled={effective >= SURFACE_FONT_SIZE_MAX}
+				disabled={effective >= max}
 				aria-label="Increase font size"
 				title="Increase font size"
 				data-testid={testId ? `${testId}-increase` : undefined}
@@ -126,18 +152,18 @@ export function FontSizeStepper({
 							data-testid={testId ? `${testId}-inheriting` : undefined}
 							style={{ color: theme.colors.textDim }}
 						>
-							Inherited
+							{inheritWording.active}
 						</span>
 					) : (
 						<button
 							type="button"
 							onClick={() => onChange(0)}
-							title="Inherit the interface font size"
+							title={inheritWording.title}
 							data-testid={testId ? `${testId}-inherit` : undefined}
 							className="focus-ring text-xs underline underline-offset-2 rounded hover:opacity-80 transition-opacity"
 							style={{ color: theme.colors.textDim }}
 						>
-							Inherit
+							{inheritWording.action}
 						</button>
 					))}
 			</span>

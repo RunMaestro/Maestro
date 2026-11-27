@@ -90,6 +90,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	filePreviewFontSize: 0,
 	fileEditorFontSize: 0,
 	documentGraphFontSize: 0,
+	// Per-level H1-H6 overrides. Sparse; empty means every heading keeps its
+	// stylesheet's look. See HeadingTypography in shared/typography.ts.
+	headingTypography: {},
 	fontZoom: 1,
 	// The user's own saved fonts and sizes, so the Factory Reset presets are
 	// safe to try. Null until they save one. See shared/typographySnapshot.ts.

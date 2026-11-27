@@ -48,10 +48,14 @@ import type { ModalResizeKey, ModalSize, ModalSizes } from '../../utils/modalSiz
 import { notifyToast } from '../../stores/notificationStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { logger } from '../../utils/logger';
-import type { TypographySurface } from '../../../shared/typography';
+import type {
+	HeadingLevel,
+	HeadingTypography,
+	TypographySurface,
+} from '../../../shared/typography';
 import type { TypographyPresetId } from '../../../shared/typographyPresets';
 import type { TypographySnapshot } from '../../../shared/typographySnapshot';
-import { applyTypographyVars } from '../../utils/applyTypographyVars';
+import { applyHeadingTypographyVars, applyTypographyVars } from '../../utils/applyTypographyVars';
 
 export interface UseSettingsReturn {
 	// Loading state
@@ -105,6 +109,10 @@ export interface UseSettingsReturn {
 	setSurfaceFontFamily: (surface: TypographySurface, value: string) => void;
 	setSurfaceFontSize: (surface: TypographySurface, value: number) => void;
 	setFontZoom: (value: number) => void;
+	headingTypography: HeadingTypography;
+	setHeadingFontFamily: (level: HeadingLevel, value: string) => void;
+	setHeadingFontSize: (level: HeadingLevel, value: number) => void;
+	resetHeadingTypography: (level?: HeadingLevel) => void;
 	resetTypography: (id: TypographyPresetId) => void;
 	typographySnapshot: TypographySnapshot | null;
 	saveTypographySnapshot: () => void;
@@ -690,6 +698,13 @@ export function useSettings(): UseSettingsReturn {
 		store.documentGraphFontSize,
 		store.fontZoom,
 	]);
+
+	// Heading overrides ride the same root element. A separate effect so moving
+	// one heading's size does not re-publish the dozen surface variables.
+	useEffect(() => {
+		if (!store.settingsLoaded) return;
+		applyHeadingTypographyVars(store.headingTypography, store.fontZoom);
+	}, [store.settingsLoaded, store.headingTypography, store.fontZoom]);
 
 	// Surface global-hotkey registration failures (e.g. combo already owned by
 	// another app). Mounted here so the toast fires even when Settings is closed.

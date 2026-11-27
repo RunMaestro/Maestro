@@ -1750,6 +1750,17 @@ Get the active typography preset, or reset every font and size to one (default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli display heading [level]`
+
+Get or set the font and size of a markdown heading level (h1-h6). Omit the level to list all six. Pass "default" to --font or --size to clear one field, or --reset to clear the level (or every level when none is named).
+
+| Option            | Description                                                              | Default |
+| ----------------- | ------------------------------------------------------------------------ | ------- |
+| `--font <family>` | Font family for this level ("default" keeps the surrounding text font)   | -       |
+| `--size <px>`     | Size in px before zoom ("default" keeps the stylesheet size)             | -       |
+| `--reset`         | Restore the default style (one level, or all six when no level is named) | -       |
+| `--json`          | Output as JSON (for scripting)                                           | -       |
+
 ## `maestro-cli display fonts`
 
 List the fonts bundled with Maestro (guaranteed available on any machine)

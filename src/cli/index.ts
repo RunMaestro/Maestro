@@ -102,6 +102,7 @@ import {
 	displayPreset,
 	displayZoom,
 } from './commands/display-font';
+import { displayHeading } from './commands/display-heading';
 import { settingsReset } from './commands/settings-reset';
 import {
 	settingsAgentList,
@@ -2126,6 +2127,20 @@ display
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(displayPreset);
+
+display
+	.command('heading [level]')
+	.description(
+		'Get or set the font and size of a markdown heading level (h1-h6). Omit the level to list all six. Pass "default" to --font or --size to clear one field, or --reset to clear the level (or every level when none is named).'
+	)
+	.option(
+		'--font <family>',
+		'Font family for this level ("default" keeps the surrounding text font)'
+	)
+	.option('--size <px>', 'Size in px before zoom ("default" keeps the stylesheet size)')
+	.option('--reset', 'Restore the default style (one level, or all six when no level is named)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(displayHeading);
 
 display
 	.command('fonts')

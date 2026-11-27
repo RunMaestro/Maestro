@@ -62,6 +62,7 @@ import { buildFileDeepLink } from '../../../shared/deep-link-urls';
 import { useUIStore } from '../../stores/uiStore';
 import { openUrl } from '../../utils/openUrl';
 import { isWebUrl } from '../../../shared/urlRoutingHint';
+import { headingFontCss } from '../../../shared/typography';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
@@ -2882,12 +2883,12 @@ export const FilePreview = React.memo(
 							    Everything below is in `em`, so it follows. */}
 							<style>{`
               .file-preview-content.prose { font-size: calc(1em * var(--fp-font-scale, 1)); }
-            .file-preview-content.prose h1 { color: ${theme.colors.accent}; font-size: 2em; font-weight: bold; margin: 0.67em 0; }
-              .file-preview-content.prose h2 { color: ${theme.colors.success}; font-size: 1.5em; font-weight: bold; margin: 0.75em 0; }
-              .file-preview-content.prose h3 { color: ${theme.colors.warning}; font-size: 1.17em; font-weight: bold; margin: 0.83em 0; }
-              .file-preview-content.prose h4 { color: ${theme.colors.textMain}; font-size: 1em; font-weight: bold; margin: 1em 0; opacity: 0.9; }
-              .file-preview-content.prose h5 { color: ${theme.colors.textMain}; font-size: 0.83em; font-weight: bold; margin: 1.17em 0; opacity: 0.8; }
-              .file-preview-content.prose h6 { color: ${theme.colors.textDim}; font-size: 0.67em; font-weight: bold; margin: 1.33em 0; }
+            .file-preview-content.prose h1 { color: ${theme.colors.accent}; ${headingFontCss('h1', '2em')} font-weight: bold; margin: 0.67em 0; }
+              .file-preview-content.prose h2 { color: ${theme.colors.success}; ${headingFontCss('h2', '1.5em')} font-weight: bold; margin: 0.75em 0; }
+              .file-preview-content.prose h3 { color: ${theme.colors.warning}; ${headingFontCss('h3', '1.17em')} font-weight: bold; margin: 0.83em 0; }
+              .file-preview-content.prose h4 { color: ${theme.colors.textMain}; ${headingFontCss('h4', '1em')} font-weight: bold; margin: 1em 0; opacity: 0.9; }
+              .file-preview-content.prose h5 { color: ${theme.colors.textMain}; ${headingFontCss('h5', '0.83em')} font-weight: bold; margin: 1.17em 0; opacity: 0.8; }
+              .file-preview-content.prose h6 { color: ${theme.colors.textDim}; ${headingFontCss('h6', '0.67em')} font-weight: bold; margin: 1.33em 0; }
               .file-preview-content.prose p { color: ${theme.colors.textMain}; margin: 0.5em 0; }
               .file-preview-content.prose ul, .file-preview-content.prose ol { color: ${theme.colors.textMain}; margin: 0.5em 0; padding-left: 1.5em; }
               .file-preview-content.prose li { margin: 0.25em 0; }

@@ -121,6 +121,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 0,
 		category: 'appearance',
 	},
+	headingTypography: {
+		description:
+			'Per-level font overrides for rendered markdown headings, keyed h1-h6: { "h1": { "fontFamily": "Georgia", "fontSize": 28 } }. An empty fontFamily keeps the surrounding text font; a fontSize of 0 keeps the default relative size. Sizes are px before zoom. Applies to the AI chat, file previews, Auto Run, and every other rendered markdown view. Use "maestro-cli display heading" to edit one level.',
+		type: 'object',
+		default: {},
+		category: 'appearance',
+	},
 	documentGraphFontFamily: {
 		description:
 			'Font family for node titles and previews in the document graph. Empty inherits the interface font; "@terminal" follows the terminal font.',
