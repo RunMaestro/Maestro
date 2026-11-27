@@ -88,46 +88,76 @@ function entryId(entry: unknown): string | undefined {
 	return typeof id === 'string' && id ? id : undefined;
 }
 
-/**
- * What an entry says, to tell two copies of one entry stored under other ids: its source, text,
- * timestamp and images. Undefined when the entry is not a JSON object (a value from the host is
- * untrusted), so it matches nothing.
- */
-function entrySignature(entry: unknown): string | undefined {
-	if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined;
-	const { source, text, timestamp, images } = entry as Record<string, unknown>;
+/** What a transcript entry is matched by (`holdsEntry()`). */
+interface EntryKey {
+	id: string | undefined;
+	/** Its source, text, timestamp and images: one entry stored under other ids. */
+	signature: string | undefined;
+	/** Its source and images: what one entry under one id keeps while its text grows. */
+	frame: string | undefined;
+	text: unknown;
+}
+
+/** `canonicalJson()` of an untrusted value, or undefined when it is not JSON (it matches nothing). */
+function canonicalOrUndefined(value: unknown): string | undefined {
 	try {
-		return canonicalJson({ source, text, timestamp, images });
+		return canonicalJson(value);
 	} catch {
 		return undefined;
 	}
 }
 
-/**
- * Whether `outer` holds every entry of `inner`, in order: entry for entry, by entry id, and where
- * the ids differ by what the entry says (`entrySignature()`). `outer` may hold more entries
- * anywhere (a note one side wrote, a turn it went on with).
- */
-export function transcriptContains(outer: unknown, inner: unknown): boolean {
-	const outerLogs = Array.isArray(outer) ? outer : [];
-	const innerLogs = Array.isArray(inner) ? inner : [];
-	const outerIds = outerLogs.map(entryId);
-	const outerSignatures = outerLogs.map(entrySignature);
-	let at = 0;
-	for (const entry of innerLogs) {
-		const id = entryId(entry);
-		const signature = entrySignature(entry);
-		while (
-			at < outerLogs.length &&
-			!(id !== undefined && outerIds[at] === id) &&
-			!(signature !== undefined && outerSignatures[at] === signature)
-		) {
-			at++;
-		}
-		if (at === outerLogs.length) return false;
-		at++;
+function entryKey(entry: unknown): EntryKey {
+	if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+		return { id: undefined, signature: undefined, frame: undefined, text: undefined };
 	}
-	return true;
+	const { source, text, timestamp, images } = entry as Record<string, unknown>;
+	return {
+		id: entryId(entry),
+		signature: canonicalOrUndefined({ source, text, timestamp, images }),
+		frame: canonicalOrUndefined({ source, images }),
+		text,
+	};
+}
+
+/**
+ * Whether the entry `outer` holds the entry `inner`: the same thing said (`signature`), or the
+ * same entry id whose text `outer` goes on from. A reply streams into one entry, so a copy taken
+ * mid-stream holds the start of the text under the same id: the finished copy holds it, never the
+ * other way round, and an id whose text was changed otherwise matches nothing.
+ */
+function holdsEntry(outer: EntryKey, inner: EntryKey): boolean {
+	if (inner.signature !== undefined && outer.signature === inner.signature) return true;
+	if (inner.id === undefined || outer.id !== inner.id) return false;
+	if (inner.frame === undefined || outer.frame !== inner.frame) return false;
+	return (
+		typeof outer.text === 'string' &&
+		typeof inner.text === 'string' &&
+		outer.text.startsWith(inner.text)
+	);
+}
+
+/**
+ * Where `outer` holds each entry of `inner`, in order (`holdsEntry()`): `outer`'s index for each,
+ * or undefined when an entry of `inner` is not there. `outer` may hold more entries anywhere (a
+ * note one side wrote, a turn it went on with).
+ */
+function matchTranscript(outer: unknown, inner: unknown): number[] | undefined {
+	const outerKeys = (Array.isArray(outer) ? outer : []).map(entryKey);
+	const at: number[] = [];
+	let next = 0;
+	for (const entry of Array.isArray(inner) ? inner : []) {
+		const key = entryKey(entry);
+		while (next < outerKeys.length && !holdsEntry(outerKeys[next], key)) next++;
+		if (next === outerKeys.length) return undefined;
+		at.push(next++);
+	}
+	return at;
+}
+
+/** Whether `outer` holds every entry of `inner`, in order, entry for entry (`matchTranscript()`). */
+export function transcriptContains(outer: unknown, inner: unknown): boolean {
+	return matchTranscript(outer, inner) !== undefined;
 }
 
 /**
@@ -168,6 +198,32 @@ function asLocalTab(tab: AITabRecord): AITabRecord {
 }
 
 /**
+ * The local tab's pins, moved onto the host transcript a merge keeps: a pin made on a local entry
+ * that the host stored under another id names the host's id, so it still finds its row. Undefined
+ * when nothing moves.
+ */
+function pinsOnHostEntries(local: AITabRecord, host: AITabRecord): unknown[] | undefined {
+	const pins = (local as { pinnedMessages?: unknown }).pinnedMessages;
+	if (!Array.isArray(pins) || pins.length === 0) return undefined;
+	const localLogs = Array.isArray(local.logs) ? local.logs : [];
+	const hostLogs = Array.isArray(host.logs) ? host.logs : [];
+	const at = matchTranscript(hostLogs, localLogs);
+	if (!at) return undefined;
+	const hostIdOf = new Map<string, string>();
+	localLogs.forEach((entry, index) => {
+		const localId = entryId(entry);
+		const hostId = entryId(hostLogs[at[index]]);
+		if (localId && hostId && localId !== hostId) hostIdOf.set(localId, hostId);
+	});
+	if (hostIdOf.size === 0) return undefined;
+	return pins.map((pin) => {
+		const logId = (pin as { logId?: unknown } | null)?.logId;
+		const moved = typeof logId === 'string' ? hostIdOf.get(logId) : undefined;
+		return moved ? { ...(pin as object), logId: moved } : pin;
+	});
+}
+
+/**
  * A tab of a stale-copy merge (`ReturnedFromHost.transcriptSides`): the local tab, with the
  * transcript, usage stats and provider session of the side that holds the other's transcript
  * (that session is the one the transcript went on in), starred when either side starred it.
@@ -176,8 +232,10 @@ function keepLocalTab(local: AITabRecord, host: AITabRecord, side: TranscriptSid
 	const winner = side === 'host' ? host : local;
 	const other = side === 'host' ? local : host;
 	const { usageStats: _usageStats, ...rest } = local;
+	const pins = side === 'host' ? pinsOnHostEntries(local, host) : undefined;
 	return {
 		...rest,
+		...(pins ? { pinnedMessages: pins } : {}),
 		agentSessionId: winner.agentSessionId ?? other.agentSessionId ?? null,
 		name: local.name ?? host.name ?? null,
 		starred: local.starred === true || host.starred === true,

@@ -102,7 +102,7 @@ export function onHostedTabLineChanged(listener: () => void): () => void {
  */
 const handOversSeen = new Map<
 	string,
-	{ itemId: string; at: number; until: number; checkedAt: number }
+	{ itemId: string; at: number; until: number; checkedAt: number; hostSince?: number }
 >();
 
 /** The clock `projectHostedSession()` reads a host-queue hand-over's time limit from. */
@@ -111,7 +111,8 @@ export interface HandOverClock {
 	 * When the limit of `itemId`'s hand-over started: the host's own time for it (`hostSince`, the
 	 * item's `handOverSince`) when it sends one, never later than when this machine first saw it, so
 	 * a client that connects late in the gap runs out with the host, and a host clock ahead of this
-	 * one never makes it last longer (U9). The first call starts the limit.
+	 * one never makes it last longer (U9). The first call starts the limit, and so does a new
+	 * `hostSince` for the same message.
 	 */
 	seenAt(itemId: string, limitMs: number, hostSince?: number): number;
 	/** No hand-over now: the next one starts its own limit. */
@@ -122,16 +123,24 @@ export interface HandOverClock {
 export function hostHandOverClock(sessionId: string, now: number): HandOverClock {
 	return {
 		seenAt(itemId, limitMs, hostSince) {
+			const since =
+				typeof hostSince === 'number' && Number.isFinite(hostSince) ? hostSince : undefined;
 			const seen = handOversSeen.get(sessionId);
-			if (seen?.itemId === itemId) {
+			// The same message, and the host's time for it unchanged (or never sent). A new time is a
+			// new hand-over of the same message (it waited for something else in between, maybe
+			// while this client was away): it gets a limit of its own (CodeRabbit on #2166).
+			if (seen?.itemId === itemId && (since === undefined || since === seen.hostSince)) {
 				seen.checkedAt = Math.max(seen.checkedAt, now);
 				return seen.at;
 			}
-			const at =
-				typeof hostSince === 'number' && Number.isFinite(hostSince)
-					? Math.min(hostSince, now)
-					: now;
-			handOversSeen.set(sessionId, { itemId, at, until: at + limitMs, checkedAt: now });
+			const at = since === undefined ? now : Math.min(since, now);
+			handOversSeen.set(sessionId, {
+				itemId,
+				at,
+				until: at + limitMs,
+				checkedAt: now,
+				...(since !== undefined ? { hostSince: since } : {}),
+			});
 			return at;
 		},
 		clear() {

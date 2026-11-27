@@ -297,6 +297,24 @@ describe('U6: a tab reads busy only while its message waits for that tab alone',
 		expect(again.aiTabs[0].state).toBe('busy');
 	});
 
+	it('hosted: a renewed hand-over of the same message, with a new host time, gets a limit of its own (CodeRabbit on #2166)', () => {
+		const at = (now: number, since: number) =>
+			project(idleRow('hosted'), {
+				agent: host(),
+				queue: [waiting({ handOverSince: since })],
+				now,
+				handOverClock: hostHandOverClock('row', now),
+			});
+		expect(at(1_000, 1_000).aiTabs[0].state).toBe('busy');
+		// The message waited for something else meanwhile (this client never saw it), and the host
+		// now times its new hand-over from later.
+		const renewed = 1_000 + HAND_OVER_MAX_MS + 5;
+		expect(at(renewed, renewed).aiTabs[0].state).toBe('busy');
+		expect(nextHostHandOverDeadline()).toBe(renewed + HAND_OVER_MAX_MS);
+		// The same host time again keeps the limit it started.
+		expect(at(renewed + HAND_OVER_MAX_MS, renewed).aiTabs[0].state).toBe('idle');
+	});
+
 	it("hosted: a client that connects late in the gap runs out with the host's own limit, not 30 s after it first looked (U9)", () => {
 		// The host has said since 1 000 that the message waits for its tab alone; this client first
 		// sees it 25 s later, so 5 s are left, as the host's own Stop has.

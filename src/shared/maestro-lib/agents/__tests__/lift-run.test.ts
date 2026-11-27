@@ -628,7 +628,7 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 	});
 
 	it("a merged tab stays the local tab: its name, star, draft, pins and queue, with the containing side's transcript and usage (U13)", () => {
-		const pin = { entryId: 'l-a0', pinnedAt: 5 };
+		const pin = { id: 'p1', logId: 'l-a0', pinnedAt: 5 };
 		const localTab = {
 			...tab('t1', 's1', conversation('l', ['one'])),
 			name: 'Renamed here',
@@ -692,6 +692,40 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 			keepDivergentHostTabs([unstarred], [hostBehind])
 		).aiTabs as Array<Record<string, unknown>>;
 		expect(starredThere.starred).toBe(true);
+	});
+
+	it('a reply copied mid-stream under the same entry id is held by its finished copy, which wins (CodeRabbit on #2166)', () => {
+		const [userOne, answerOne] = conversation('x', ['one']);
+		const partial = { ...answerOne, text: 're: o' };
+		const local = [tab('t1', 's1', [userOne, partial])];
+		const host = [tab('t1', 's1', [userOne, answerOne])];
+		const merge = keepDivergentHostTabs(local, host);
+		expect(merge).toMatchObject({ merged: 1, copies: 0, transcriptSides: { t1: 'host' } });
+		const [only] = mergedRecord(local, merge).aiTabs as Array<{ logs: Entry[] }>;
+		expect(only.logs.map((entry) => entry.text)).toEqual(['one', 're: one']);
+		// An entry whose text was changed otherwise is no copy of the other: two tabs.
+		const changed = keepDivergentHostTabs(
+			[tab('t1', 's1', [userOne, { ...answerOne, text: 'something else' }])],
+			host
+		);
+		expect(changed).toMatchObject({ merged: 0, copies: 1 });
+	});
+
+	it("a pin on a local entry the host stored under another id names the host's id once the host transcript wins (CodeRabbit on #2166)", () => {
+		const pin = { id: 'p1', logId: 'l-a0', pinnedAt: 5 };
+		const other = { id: 'p2', logId: 'not-in-the-transcript', pinnedAt: 6 };
+		const local = [
+			{ ...tab('t1', 's1', conversation('l', ['one'])), pinnedMessages: [pin, other] },
+		];
+		const host = [tab('t1', 's1', conversation('h', ['one', 'two']))];
+		const merge = keepDivergentHostTabs(local, host);
+		expect(merge.transcriptSides).toEqual({ t1: 'host' });
+		const [only] = mergedRecord(local, merge).aiTabs as Array<{
+			logs: Entry[];
+			pinnedMessages: Array<{ id: string; logId: string }>;
+		}>;
+		expect(only.logs.map((entry) => entry.id)).toEqual(['h-u0', 'h-a0', 'h-u1', 'h-a1']);
+		expect(only.pinnedMessages).toEqual([{ ...pin, logId: 'h-a0' }, other]);
 	});
 
 	it('the plan the user confirms says how many tabs merge and how many stay as copies', () => {
