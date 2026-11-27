@@ -30,7 +30,7 @@ import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/records';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import { HAND_OVER_MAX_MS } from '../../shared/maestro-lib/turns/queue';
-import type { AgentError } from '../../shared/types';
+import { logsShownMidTurn, type AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem, Session, UnifiedTabRef } from '../types';
 import { mirrorLogEntry, mirrorQueuedItem, mirrorTab, mirrorUsageStats } from './peerMirrorView';
 import { isAiTabHidden } from './unifiedTabOrderUtils';
@@ -412,11 +412,14 @@ export function mergeHostedLogs(
 	const shown = withoutKeptCopies(older, [...hostEntries, ...live], local, placed);
 	// Delivered ticks are decided in the order the host recorded the turns; then a kept message's
 	// host copy is drawn where its bubble was, above the retry card (R33).
-	const next = atKeptPlaces(
-		withAnswerDelivery([...byTime(shown, hostEntries), ...live], fromHost),
-		keptPlaces(local),
-		placed,
-		fromHost
+	const next = withRowKeysKept(
+		atKeptPlaces(
+			withAnswerDelivery([...byTime(shown, hostEntries), ...live], fromHost),
+			keptPlaces(local),
+			placed,
+			fromHost
+		),
+		local
 	);
 	if (sameIds(next, local)) {
 		// Same entries in the same order: keep the old array unless a live entry's text moved on,
@@ -438,6 +441,53 @@ export function mergeHostedLogs(
 	}
 	return withDrawnEntriesKept(next, local);
 }
+
+/**
+ * `next` with each entry drawn under the row key of the row it takes over (`LogEntry.rowKey`), so a
+ * hosted turn's answer is drawn once, as a local turn's is: when the host's saved copy replaces the
+ * live row that showed it (same source and text, under the host's own id), it takes that row's key
+ * and the row is updated in place instead of mounted again (L30). An entry keeps the key an earlier
+ * pass gave it. A live row the saved copy differs from is replaced as before.
+ */
+function withRowKeysKept(next: LogEntry[], local: readonly LogEntry[]): LogEntry[] {
+	if (local.length === 0) return next;
+	const nextIds = new Set(next.map((entry) => entry.id));
+	const localById = new Map(local.map((entry) => [entry.id, entry]));
+	// The live rows this pass takes off the screen, by source, oldest first.
+	const leaving = new Map<string, LogEntry[]>();
+	for (const entry of local) {
+		if (!entry.hostLive || nextIds.has(entry.id)) continue;
+		leaving.set(entry.source, [...(leaving.get(entry.source) ?? []), entry]);
+	}
+	let changed = false;
+	const out = next.map((entry) => {
+		const before = localById.get(entry.id);
+		let rowKey = before?.rowKey;
+		if (!before && !entry.hostLive) {
+			const rows = leaving.get(entry.source);
+			const at = rows?.findIndex((row) => row.text === entry.text) ?? -1;
+			if (rows && at >= 0) {
+				const [row] = rows.splice(at, 1);
+				rowKey = row.rowKey ?? row.id;
+			}
+		}
+		if (rowKey === undefined || rowKey === entry.rowKey) return entry;
+		changed = true;
+		return keyedCopy(entry, rowKey);
+	});
+	return changed ? out : next;
+}
+
+/** The copy of a host entry drawn under `rowKey`, the same object on every pass (R29). */
+function keyedCopy(entry: LogEntry, rowKey: string): LogEntry {
+	const cached = keyedCopies.get(entry);
+	if (cached?.rowKey === rowKey) return cached;
+	const copy = { ...entry, rowKey };
+	keyedCopies.set(entry, copy);
+	return copy;
+}
+
+const keyedCopies = new WeakMap<LogEntry, LogEntry>();
 
 /**
  * `next` with each entry that draws the same as the one `local` holds under its id replaced by
@@ -759,14 +809,21 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 	for (const tab of incoming.aiTabs) {
 		if (closedOnHost(tab)) session = closeTab(session, tab.id)?.session ?? session;
 	}
-	const logsFor = (tabId: string, local: LogEntry[]): LogEntry[] => {
+	// The live tail shows what a local turn shows under the tab's Thinking mode: with it off, no
+	// thinking row (Claude's reply streams as thinking chunks too), so the reply is drawn once.
+	const logsFor = (
+		tabId: string,
+		local: LogEntry[],
+		thinking: AITab['showThinking']
+	): LogEntry[] => {
 		const key = liveTurnKey(agent.id, tabId);
 		const slot = input.transcripts?.[key];
 		const live = input.liveTurns?.[key];
+		const tail = live?.entries ?? slot?.carryover;
 		return mergeHostedLogs(
 			local,
 			slot?.loaded ? slot.entries : undefined,
-			live?.entries ?? slot?.carryover
+			tail ? logsShownMidTurn(tail, thinking) : undefined
 		);
 	};
 
@@ -834,7 +891,7 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 		const projected = projectTab(
 			reported,
 			host,
-			logsFor(local.id, local.logs ?? []),
+			logsFor(local.id, local.logs ?? [], local.showThinking),
 			input.liveTurns?.[liveTurnKey(agent.id, local.id)],
 			input.viewing === true && local.id === session.activeTabId,
 			hostingAt ?? local.hostSeenAt,
@@ -862,7 +919,7 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 	for (const host of hostTabs) {
 		if (localIds.has(host.id) || input.closing?.has(host.id)) continue;
 		const tab = mirrorTab(host);
-		tab.logs = logsFor(host.id, []);
+		tab.logs = logsFor(host.id, [], tab.showThinking);
 		if (hostingAt !== undefined) tab.hostSeenAt = hostingAt;
 		if (input.linkLost && tab.state === 'busy') {
 			// First drawn while the link is down: nothing here can follow its turn either.

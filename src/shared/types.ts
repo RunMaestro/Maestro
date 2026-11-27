@@ -70,6 +70,32 @@ export function logsKeptAtTurnEnd<T extends { source: string }>(logs: T[], mode:
 }
 
 /**
+ * The mid-turn clearing points of {@link ThinkingMode}: what a turn that is still running shows.
+ * 'off' shows no `thinking` entry (the desktop drops the chunk, `useAgentThinkingListener`); once
+ * answer text arrived, 'on' and 'off' show no `thinking` or `tool` entry from before it (the
+ * inline clear point of `useBatchedSessionUpdates`); 'sticky' shows them all. For the live tail of
+ * a turn another Maestro runs (`projectHostedSession()`), so it draws what a local turn draws.
+ * Returns `logs` itself when nothing is dropped.
+ */
+export function logsShownMidTurn<T extends { source: string }>(logs: T[], mode: unknown): T[] {
+	if (mode === 'sticky') return logs;
+	const showsThinking = !!mode && mode !== 'off';
+	let answerAt = -1;
+	for (let i = logs.length - 1; i >= 0; i--) {
+		if (logs[i].source === 'stdout') {
+			answerAt = i;
+			break;
+		}
+	}
+	const kept = logs.filter((log, i) => {
+		if (log.source !== 'thinking' && log.source !== 'tool') return true;
+		if (i < answerAt) return false;
+		return log.source === 'tool' || showsThinking;
+	});
+	return kept.length === logs.length ? logs : kept;
+}
+
+/**
  * Capability flags that determine what features are available for each agent.
  *
  * This is the single canonical definition. All other AgentCapabilities types
