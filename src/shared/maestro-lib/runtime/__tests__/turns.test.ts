@@ -1641,6 +1641,31 @@ describe('runtime turns', () => {
 				expect(argvFiles).toHaveLength(1);
 			});
 
+			// CodeRabbit on #2167: two resends of a message that wait behind another turn. The first
+			// runs it; the second, when its turn comes, never runs the message again.
+			it('never runs a waiting resend of a message an earlier copy ran while it waited', async () => {
+				hold = true;
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Something else first' }));
+				await turn.started();
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				expect(value(await runtime.turns.send('a1', 't1', resend))).toMatchObject({
+					status: 'queued',
+				});
+				expect(value(await runtime.turns.send('a1', 't1', resend))).toMatchObject({
+					status: 'queued',
+				});
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(2);
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				const answers = (await transcript(runtime)).filter((entry) => entry.source === 'stdout');
+				expect(answers).toHaveLength(1);
+				expect(argvFiles).toHaveLength(2);
+			});
+
 			// Parity R23: an answer after a LATER message is that message's. The resend of a message
 			// whose own turn died runs, though the tab holds an answer further down.
 			it('runs the resend of a message when only a later message of the tab was answered', async () => {

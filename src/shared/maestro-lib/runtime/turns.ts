@@ -238,6 +238,9 @@ interface TurnItem extends QueueItem {
 type Verdict = { ok: true } | { ok: false; message: string };
 
 /** A start the provider layer refused before anything ran, with its reason. */
+/** How many started queue items a host remembers to know a resend of a message one ran. */
+const MAX_REMEMBERED_STARTED_ITEMS = 1_000;
+
 class TurnStartRefusal extends Error {
 	constructor(
 		readonly reason: RunAgentTurnRefusal,
@@ -466,6 +469,19 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	// Starting one turn (the queue's `start`)
 	// -----------------------------------------------------------------------
 
+	/**
+	 * The queue items whose turns this host started since it came up, newest last, so a resend of
+	 * a message one of them ran is known (`startItem`). Bounded: the oldest is let go.
+	 */
+	const startedItemIds = new Set<string>();
+	const noteStartedItem = (id: string) => {
+		startedItemIds.delete(id);
+		startedItemIds.add(id);
+		if (startedItemIds.size > MAX_REMEMBERED_STARTED_ITEMS) {
+			startedItemIds.delete(startedItemIds.values().next().value as string);
+		}
+	};
+
 	async function startItem(agentId: string, item: TurnItem): Promise<QueuedTurnHandle> {
 		const record = repository.getAgent(agentId);
 		if (!record) throw new Error(`No agent ${agentId}.`);
@@ -478,6 +494,19 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (registry.isBusy(agentId, item.tabId) || synopsisHolds.has(waiterKey(agentId, item.tabId))) {
 			throw new TurnCollisionError();
 		}
+		// A resend that waited here while an earlier copy of the same message started on this host
+		// (it could not be told apart when it came: that turn was still starting, or not begun yet).
+		// The message ran once, from that copy, and never runs again (CodeRabbit on #2167). Only a
+		// copy started since this host came up counts: the turn a crash cut is run again.
+		if (item.entryId) {
+			const sent = { id: item.entryId, text: item.text, images: item.images ?? [] };
+			const logs = (Array.isArray(tabRecord.logs) ? tabRecord.logs : []) as LogEntryRecord[];
+			const ranBy = logs.find((entry) => isSameUserEntry(entry, sent))?.queuedItemId;
+			if (ranBy && ranBy !== item.id && startedItemIds.has(ranBy)) {
+				return { done: Promise.resolve(), interrupt: () => undefined };
+			}
+		}
+		noteStartedItem(item.id);
 
 		const agent = toTurnAgent(record);
 		if (!agent) throw new Error('The agent has no working directory to run in.');
