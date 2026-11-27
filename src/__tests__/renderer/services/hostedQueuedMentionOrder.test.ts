@@ -287,7 +287,7 @@ describe('U1: two queued mentions run in the same order in every mode', () => {
 		]);
 	});
 
-	it('hosted: a consult waiting for its turn on the host holds its tab, and lets go of that tab, whatever tab is active then (CodeRabbit on #2166)', async () => {
+	it('hosted: a consult waiting for its turn on the host holds its tab, and lets go of that tab, whatever tab is active then (CodeRabbit on #2166, U7)', async () => {
 		act$.mockImplementation(async (_peer: unknown, _agent: unknown, action: { kind: string }) =>
 			action?.kind === 'send'
 				? {
@@ -297,7 +297,9 @@ describe('U1: two queued mentions run in the same order in every mode', () => {
 							receipt: { status: 'queued', itemId: 'h9', position: 1, queueLength: 1 },
 						},
 					}
-				: { ok: true, result: {} }
+				: action?.kind === 'new-tab'
+					? { ok: true, result: { kind: 'new-tab', tabId: 'hn' } }
+					: { ok: true, result: {} }
 		);
 		seed('hosted', []);
 		useSessionStore.setState((state) => ({
@@ -305,18 +307,28 @@ describe('U1: two queued mentions run in the same order in every mode', () => {
 				s.id === 'row' ? { ...s, aiTabs: [...s.aiTabs, createMockAITab({ id: 't2' })] } : s
 			),
 		}));
-		// The host queued it behind another turn: its consult waits for it to start, holding t1.
-		await useAgentStore.getState().processQueuedItem('row', twin('waits'), drainDeps);
+		// The item names no tab: it goes to a new host tab, the active one while its consult waits
+		// for it to start there, holding that tab. Only the key taken then can find the hold again.
+		await useAgentStore
+			.getState()
+			.processQueuedItem('row', { ...twin('waits'), tabId: '' }, drainDeps);
 		await flush();
-		expect(hostedTabHoldsLine('row', 't1')).toBe(true);
+		expect(hostedTabHoldsLine('row', 'hn')).toBe(true);
 
 		useSessionStore.setState((state) => ({
 			sessions: state.sessions.map((s) => (s.id === 'row' ? { ...s, activeTabId: 't2' } : s)),
 		}));
 		// The agent is no longer followed on that host: the consult is let go.
 		pruneHostStartedMentions(new Set());
-		expect(hostedTabHoldsLine('row', 't1')).toBe(false);
+		expect(hostedTabHoldsLine('row', 'hn')).toBe(false);
 		expect(hostedTabHoldsLine('row', 't2')).toBe(false);
+
+		// A message with its own tab holds and lets go of that tab the same way.
+		await useAgentStore.getState().processQueuedItem('row', twin('named'), drainDeps);
+		await flush();
+		expect(hostedTabHoldsLine('row', 't1')).toBe(true);
+		pruneHostStartedMentions(new Set());
+		expect(hostedTabHoldsLine('row', 't1')).toBe(false);
 	});
 
 	it('hosted: a message queued from outside the composer waits behind a turn on its way', async () => {
