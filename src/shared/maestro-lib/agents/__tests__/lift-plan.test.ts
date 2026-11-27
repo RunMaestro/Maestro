@@ -280,6 +280,9 @@ describe('planAgentLift', () => {
 						turnReadOnly: false,
 					},
 					{ id: 'q3', tabId: 'tab-1', type: 'message', text: 'no choice' },
+					// Writable when queued is no choice: the host tab's read-only state decides, as a
+					// local drain lets the tab lock it further (CodeRabbit on #2171).
+					{ id: 'q5', tabId: 'tab-1', type: 'message', text: 'writable', readOnlyMode: false },
 					// A malformed stored value is not sent.
 					{
 						id: 'q4',
@@ -303,6 +306,7 @@ describe('planAgentLift', () => {
 			},
 			{ tabId: 'tab-1', text: 'writable', overrides: { readOnly: false } },
 			{ tabId: 'tab-1', text: 'no choice' },
+			{ tabId: 'tab-1', text: 'writable' },
 			{ tabId: 'tab-1', text: 'bad' },
 		]);
 	});

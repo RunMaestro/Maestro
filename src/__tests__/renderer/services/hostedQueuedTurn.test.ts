@@ -350,7 +350,9 @@ describe('queuedItemHostOverrides (R51)', () => {
 		],
 		['the sender chose read-only', { turnReadOnly: true }, true],
 		['read-only when queued', { readOnlyMode: true }, true],
-		['writable when queued', { readOnlyMode: false }, false],
+		// CodeRabbit on #2171: writable when queued is no choice; the host tab's read-only state
+		// decides, as a local drain lets the tab's lock it further.
+		['writable when queued', { readOnlyMode: false }, undefined],
 	] as const)('%s', (_name, fields, readOnly) => {
 		expect(queuedItemHostOverrides(item(fields))?.readOnly).toBe(readOnly);
 	});
