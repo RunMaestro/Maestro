@@ -40,7 +40,7 @@ vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 
 import { interruptTurn, registerTurnInterruptDeps } from '../../../renderer/services/turnInterrupt';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { runningQueuedItemId } from '../../../renderer/utils/tabHelpers';
+import { runningQueuedItemIds } from '../../../renderer/utils/tabHelpers';
 import { cancelContextCompaction, stopRetriesForAgent } from '../../../renderer/stores/retryStore';
 import { dropMentionHandoffs } from '../../../renderer/services/crossAgentHandoff';
 import { interruptMirroredAgent } from '../../../renderer/services/peerMirror';
@@ -294,24 +294,43 @@ describe('interruptTurn: the queue items a Stop ended (M27)', () => {
 		}
 	);
 
-	// Greptile on #2162: a steer the agent ran as a turn of its own (`steerState: 'queued'`) is the
-	// running turn, and a Stop names it.
-	it('names a steer that became its own turn, and passes over one the turn absorbed', () => {
-		const logs = (steerState: 'queued' | 'absorbed') => [
-			{ id: 'l2', timestamp: 2, source: 'user' as const, text: 'second', queuedItemId: 'q-9' },
-			{
-				id: 'l3',
-				timestamp: 3,
-				source: 'user' as const,
-				text: 'and also',
-				queuedItemId: 'q-steer',
-				steered: true,
-				steerState,
-			},
-		];
-		expect(runningQueuedItemId({ state: 'busy', logs: logs('queued') })).toBe('q-steer');
-		expect(runningQueuedItemId({ state: 'busy', logs: logs('absorbed') })).toBe('q-9');
-		expect(runningQueuedItemId({ state: 'idle', logs: logs('queued') })).toBeUndefined();
+	// Greptile and CodeRabbit on #2162: a steer the agent took as input of its own waits inside the
+	// running turn, then runs as its follow-up with no start recorded between: a Stop names both.
+	it('names the running turn and each steer queued after it, and no steer the turn absorbed', () => {
+		const steer = (id: string, steerState: 'queued' | 'absorbed' | 'pending') => ({
+			id,
+			timestamp: 3,
+			source: 'user' as const,
+			text: 'and also',
+			queuedItemId: id,
+			steered: true,
+			steerState,
+		});
+		const turn = {
+			id: 'l2',
+			timestamp: 2,
+			source: 'user' as const,
+			text: 'go',
+			queuedItemId: 'q-9',
+		};
+		// The original turn still runs, a steer queued for after it: both.
+		expect(runningQueuedItemIds({ state: 'busy', logs: [turn, steer('q-s1', 'queued')] })).toEqual([
+			'q-9',
+			'q-s1',
+		]);
+		// An absorbed or still pending steer is part of the turn.
+		expect(
+			runningQueuedItemIds({
+				state: 'busy',
+				logs: [turn, steer('q-s2', 'absorbed'), steer('q-s3', 'pending')],
+			})
+		).toEqual(['q-9']);
+		// A turn sent from the composer, with a steer queued after it: the steer.
+		const composed = { id: 'l1', timestamp: 1, source: 'user' as const, text: 'typed' };
+		expect(
+			runningQueuedItemIds({ state: 'busy', logs: [composed, steer('q-s4', 'queued')] })
+		).toEqual(['q-s4']);
+		expect(runningQueuedItemIds({ state: 'idle', logs: [turn] })).toEqual([]);
 	});
 });
 
