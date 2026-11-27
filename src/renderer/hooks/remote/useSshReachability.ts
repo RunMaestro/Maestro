@@ -2,7 +2,13 @@ import { useEffect } from 'react';
 
 import { useIsLifecycleOwner } from '../../contexts/WindowContext';
 import { notifyToast } from '../../stores/notificationStore';
-import { outageRecoveryNotice, useSshOutageStore } from '../../stores/sshOutageStore';
+import { retryConnectionOutagesNow } from '../../stores/retryStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import {
+	agentsStoppedBy,
+	outageRecoveryNotice,
+	useSshOutageStore,
+} from '../../stores/sshOutageStore';
 import { logger } from '../../utils/logger';
 
 /**
@@ -38,6 +44,14 @@ export function useSshReachability(): void {
 
 		const unsubscribe = api.onReachability((event) => {
 			const ended = useSshOutageStore.getState().applyReachability(event);
+			// The link is back: a message kept for it goes now, not at the end of its backoff, for an
+			// SSH agent and a hosted one alike. Each window fires only the retries it holds.
+			if (event.reachable && !event.cleared) {
+				const sessions = useSessionStore.getState().sessions;
+				retryConnectionOutagesNow(
+					new Set(agentsStoppedBy(sessions, event).map((session) => session.id))
+				);
+			}
 			// Only an outage the user saw announces its recovery; a remote that
 			// went down and came back unnoticed stays quiet.
 			// A cleared outage (the remote was deleted) did not come back: nothing to announce.

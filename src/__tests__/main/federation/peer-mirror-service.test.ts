@@ -497,28 +497,6 @@ describe('PeerMirrorService', () => {
 			h.service.noteHostedAgentsChanged();
 			expect(ceiling).not.toHaveBeenCalled();
 		});
-
-		it('dials a downed forward at once on an act (a send), and still refuses it', async () => {
-			const a = fakeHost('a');
-			const h = harness([remoteOf('a')], { a }, { hostsAgents: () => false });
-			h.service.start();
-			await settle();
-			const down: SshForwardState = {
-				status: 'down',
-				error: new Error('ssh: connect refused'),
-				attempt: 3,
-				retryInMs: 240_000,
-			};
-			(a.lease as unknown as { state: () => SshForwardState }).state = () => down;
-			a.emitLease(down);
-			const answer = await h.service.act('a', 'a-a1', {
-				kind: 'send',
-				tabId: 't1',
-				text: 'hi',
-			} as never);
-			expect(a.lease.restart).toHaveBeenCalledTimes(1);
-			expect(answer).toMatchObject({ ok: false, notSent: true });
-		});
 	});
 
 	it('drops a remote that is deleted or opted out, and mirrors a newly opted-in one', async () => {
@@ -900,6 +878,60 @@ describe('PeerMirrorService', () => {
 			(host.client as unknown as Record<string, unknown>).turns = turns;
 			return { turns, tabs };
 		}
+
+		// Parity R16 and R18: an act (an auto-retry's send too) on a peer whose forward waits out a
+		// backoff dials at once and waits for that dial, as for a reconnect in progress.
+		describe('on a peer whose forward is down (R16, R18)', () => {
+			const down: SshForwardState = {
+				status: 'down',
+				error: new Error('ssh: connect refused'),
+				attempt: 3,
+				retryInMs: 240_000,
+			};
+			async function downedPeer() {
+				const a = fakeHost('a');
+				const h = harness([remoteOf('a')], { a }, { hostsAgents: () => false });
+				const { turns } = withInput(a);
+				h.service.start();
+				await settle();
+				(a.lease as unknown as { state: () => SshForwardState }).state = () => down;
+				a.setState('disconnected' as ConnectionState);
+				a.emitLease(down);
+				expect(h.service.peers()[0].connection).toBe('lost');
+				return { a, h, turns };
+			}
+
+			it('dials at once and sends once the dial attaches', async () => {
+				const { a, h, turns } = await downedPeer();
+				const answer = await h.service.act('a', 'a-a1', {
+					kind: 'send',
+					tabId: 't1',
+					text: 'hi',
+				} as never);
+				expect(a.lease.restart).toHaveBeenCalledTimes(1);
+				expect(a.reconnect).toHaveBeenCalled();
+				expect(turns.send).toHaveBeenCalledTimes(1);
+				expect(answer).toMatchObject({ ok: true });
+				expect(h.service.peers()[0].connection).toBe('connected');
+			});
+
+			it('refuses with what the dial found when it fails, and sends nothing', async () => {
+				const { a, h, turns } = await downedPeer();
+				a.reconnect.mockResolvedValueOnce({
+					ok: false,
+					error: { code: 'not-running', message: 'No maestro-cli host is running.' },
+				});
+				const answer = await h.service.act('a', 'a-a1', {
+					kind: 'send',
+					tabId: 't1',
+					text: 'hi',
+				} as never);
+				expect(a.lease.restart).toHaveBeenCalledTimes(1);
+				expect(turns.send).not.toHaveBeenCalled();
+				expect(answer).toMatchObject({ ok: false, notSent: true });
+				expect((answer as { error: string }).error).toContain('No maestro-cli host is running.');
+			});
+		});
 
 		it('runs each action on the held client of a connected peer', async () => {
 			const a = fakeHost('a');

@@ -24,9 +24,11 @@ import {
 	noteDirectDispatch,
 	registerAgentErrorSurfacer,
 	registerDispatchDepsProvider,
+	retryConnectionOutagesNow,
 	scheduleRetryForError,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
+import { syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
 import { isSshTransportError } from '../../../renderer/stores/sshOutageStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -318,6 +320,64 @@ describe('a message sent while the link is down is kept for a retry', () => {
 		expect(outcomes.hosted).toEqual({ wasBusy: true, retry: undefined });
 		// Nothing was forwarded to the host for an idle tab.
 		expect(act$).not.toHaveBeenCalled();
+	});
+
+	// Parity R18: the link coming back fires the kept message's retry at once, never at the end of
+	// its backoff, for an SSH agent (its remote reachable again) and a hosted one (its host back).
+	it('fires the kept retry at once when the link is back, for SSH and hosted alike (R18)', () => {
+		const outcomes: Record<string, unknown> = {};
+		for (const mode of ['ssh', 'hosted'] as const) {
+			useRetryStore.setState({ retries: {}, outages: {} });
+			const session = seed(mode);
+			const item = message('m1', 'hello');
+			if (mode === 'ssh') {
+				noteDirectDispatch(session.id, item);
+				listenerStandIn('row-ai-t1', sshTurnError);
+			} else {
+				keepTurnForHost(session.id, item, UNAVAILABLE.error);
+			}
+			const before = getRetryEntry(session.id, 't1')?.status;
+			const fired = retryConnectionOutagesNow(new Set([session.id]));
+			outcomes[mode] = { before, fired, after: getRetryEntry(session.id, 't1')?.status };
+		}
+		expect(outcomes.hosted).toEqual(outcomes.ssh);
+		expect(outcomes.hosted).toEqual({ before: 'scheduled', fired: 1, after: 'in-flight' });
+	});
+
+	it("leaves a tab's retry on its countdown when the caller excepts it (a cut the host has yet to settle) (R18)", () => {
+		const session = seed('hosted');
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		expect(retryConnectionOutagesNow(new Set([session.id]), () => true)).toBe(0);
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+	});
+
+	it('leaves a provider outage on its countdown when a link comes back (R18)', () => {
+		const session = seed('ssh');
+		const item = message('m1', 'hello');
+		noteDirectDispatch(session.id, item);
+		listenerStandIn('row-ai-t1', {
+			...sshTurnError,
+			sshRemoteId: undefined,
+			type: 'rate_limited',
+			message: 'Service overloaded (529).',
+		});
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+		expect(retryConnectionOutagesNow(new Set([session.id]))).toBe(0);
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+	});
+
+	it("fires the kept retry when the sync sees the agent's host connect again (R18)", () => {
+		const session = seed('hosted');
+		const lost = usePeerMirrorStore.getState().peers.box;
+		usePeerMirrorStore.getState().hydrate([{ ...lost, connection: 'lost' }]);
+		syncHostedAgents();
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		syncHostedAgents();
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+
+		usePeerMirrorStore.getState().hydrate([{ ...lost, connection: 'connected' }]);
+		syncHostedAgents();
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('in-flight');
 	});
 
 	it('a queued item the host refuses as not connected is kept for a retry, not held paused', async () => {

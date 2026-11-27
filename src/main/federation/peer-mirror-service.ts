@@ -285,11 +285,16 @@ export class PeerMirrorService {
 		for (const entry of this.entries.values()) this.applyRedialPace(entry);
 	}
 
-	/** Restart a held forward that is down, skipping its backoff (an explicit act on the peer). */
-	private redialNow(entry: PeerEntry): void {
+	/**
+	 * Restart a held forward that is down, skipping its backoff (an explicit act on the peer).
+	 * Returns true when it did.
+	 */
+	private redialNow(entry: PeerEntry): boolean {
 		const lease = entry.connection?.lease;
 		const forward = lease?.state().status;
-		if (lease && (forward === 'down' || forward === 'stopped')) lease.restart();
+		if (!lease || (forward !== 'down' && forward !== 'stopped')) return false;
+		lease.restart();
+		return true;
 	}
 
 	/** The forward's redial ceiling for this peer: slow while nothing here is hosted on it. */
@@ -452,9 +457,12 @@ export class PeerMirrorService {
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		}
-		// A send (or any act) on a peer whose forward waits out a backoff: dial now, and start the
-		// wait over, as Check Now does. The act itself is not held for it.
-		this.redialNow(entry);
+		// A send (or any act, an auto-retry too) on a peer whose forward waits out a backoff: dial now
+		// and start the wait over, as Check Now does, and wait for that dial as for a reconnect in
+		// progress (bounded by `MIRROR_ACT_RECONNECT_WAIT_MS`), never failing ahead of it.
+		if (this.redialNow(entry)) {
+			this.commit(entry, setPeerConnection(entry.state, 'reconnecting', entry.state.error));
+		}
 		const failure = await this.awaitReconnect(entry);
 		const client = entry.connection?.client;
 		if (entry.dropped || !client || entry.state.connection !== 'connected') {

@@ -69,8 +69,10 @@ import {
 	noteHostedTurnsCut,
 	pruneHostedLinkLoss,
 	settleCutHostedTurns,
+	cutTurnUndecided,
 	type HostLink,
 } from './hostedLinkLoss';
+import { retryConnectionOutagesNow } from '../stores/retryStore';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
 function hostedInput(session: { liftedTo?: unknown; aiTabs: Session['aiTabs'] }):
@@ -206,6 +208,22 @@ function forgetHostedRun(sessionId: string): void {
 	forgetHostedSteering(sessionId);
 }
 
+/** Whether each hosted record's host was connected at the last sync, by record id. */
+const hostConnected = new Map<string, boolean>();
+
+/**
+ * A hosted record's host connected again: a message kept for it while the link was down goes now,
+ * not at the end of its backoff, as an SSH agent's goes when its remote is reachable again
+ * (`retryConnectionOutagesNow()`). Called once per sync per record.
+ */
+function noteHostConnected(sessionId: string, connected: boolean): void {
+	const was = hostConnected.get(sessionId);
+	hostConnected.set(sessionId, connected);
+	if (connected && was === false) {
+		retryConnectionOutagesNow(new Set([sessionId]), cutTurnUndecided);
+	}
+}
+
 /** Records already released since hosted agents were switched off (see `releaseHostedSession()`). */
 const released = new Set<string>();
 
@@ -228,6 +246,7 @@ export function syncHostedAgents(): void {
 		dropStaleAutoRuns(new Set());
 		pruneHostStartedMentions(new Set());
 		pruneHostedLinkLoss(new Set());
+		hostConnected.clear();
 		releaseHostedAgents();
 		return;
 	}
@@ -240,6 +259,7 @@ export function syncHostedAgents(): void {
 	);
 	if (!usePeerMirrorStore.getState().enabled) {
 		pruneHostedLinkLoss(new Set());
+		hostConnected.clear();
 		return;
 	}
 	const hostedIds = new Set<string>();
@@ -260,6 +280,8 @@ export function syncHostedAgents(): void {
 		else if (hosted.connected) settleCutHostedTurns(session.id, hosted.link);
 		// A tab opened here while the host was down is made there once the link is back (R15).
 		if (hosted.connected) createPendingHostTabs(session);
+		// The host is back: a kept message's retry fires now (R18).
+		noteHostConnected(session.id, hosted.connected);
 		const endedHere = hostedTurnsEndedHere(session.id, hosted.connected);
 		const keptCuts = linkLost ? hostedCutsKept(session.id) : undefined;
 		// The unread rule reads whether this agent is the one on screen, as a local tab's does.
@@ -314,6 +336,7 @@ export function syncHostedAgents(): void {
 	dropStaleAutoRuns(hostedIds);
 	// A deleted agent, one moved back, or one whose peer was removed lets go of its cut turns.
 	pruneHostedLinkLoss(hostedIds);
+	for (const id of hostConnected.keys()) if (!hostedIds.has(id)) hostConnected.delete(id);
 }
 
 /**

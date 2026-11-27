@@ -254,6 +254,14 @@ function keepCutMessage(cut: CutTurn, reason: string): void {
  * The tabs of `sessionId` whose cut turn's message is kept for a resend: drawn ended with no link
  * note, since the auto-retry card stands for the cut (as it does for an SSH turn's).
  */
+/**
+ * Whether a cut turn of this tab still waits for the host to say how it ended. Its kept message
+ * fires from that decision (`decideCutTurn()`), never ahead of it, when the host comes back.
+ */
+export function cutTurnUndecided(sessionId: string, tabId: string): boolean {
+	return cutTurns.has(cutKey(sessionId, tabId));
+}
+
 export function hostedCutsKept(sessionId: string): ReadonlySet<string> | undefined {
 	let tabs: Set<string> | undefined;
 	for (const cut of cutTurns.values()) {
