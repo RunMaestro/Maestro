@@ -250,6 +250,11 @@ export interface LogEntry {
 	 * entry for it replaces it once the host has it (`mergeHostedLogs()`).
 	 */
 	keptForHost?: boolean;
+	/**
+	 * When this machine handed a kept message (`keptForHost`) to its host. Only then may a host
+	 * message with the same words be taken as its copy; cleared when the host refused it again.
+	 */
+	keptSentAt?: number;
 	// One union shared with the on-disk record (`LogEntryRecord`) every client reads.
 	source: LogEntrySource;
 	text: string;

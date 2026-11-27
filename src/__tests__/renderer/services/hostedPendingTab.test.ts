@@ -8,7 +8,10 @@
 import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	closeHostedTab,
+	closingHostTabIds,
 	createPendingHostTabs,
+	hostedTargetOf,
 	openHostedTabOrHere,
 	sendHostedTurn,
 } from '../../../renderer/services/hostedTurns';
@@ -18,7 +21,7 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import type { Session } from '../../../renderer/types';
 import { projectHostedSession } from '../../../renderer/utils/hostedSession';
-import { createTab } from '../../../renderer/utils/tabHelpers';
+import { closeTab, createTab } from '../../../renderer/utils/tabHelpers';
 import {
 	createMirroredPeer,
 	replacePeerAgents,
@@ -178,6 +181,8 @@ describe('New Tab while the link is down (R15)', () => {
 		});
 
 		const kinds = act$.mock.calls.map(([, , action]) => action?.kind);
+		expect(kinds).toContain('new-tab');
+		expect(kinds).toContain('send');
 		expect(kinds.indexOf('new-tab')).toBeLessThan(kinds.indexOf('send'));
 		const send = act$.mock.calls.find(([, , action]) => action?.kind === 'send')?.[2];
 		expect(send).toMatchObject({ tabId, text: 'hello' });
@@ -201,5 +206,100 @@ describe('New Tab while the link is down (R15)', () => {
 		expect(ids).toEqual(['t1', 'host-own']);
 		expect(ids).not.toContain(tabId);
 		expect(current().activeTabId).toBe('host-own');
+	});
+
+	it('leaves one tab when the report of an older host draws its tab before the answer (Greptile on #2161)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		await act(async () => {
+			await openHostedTabOrHere(session);
+		});
+		hydrateHost(['t1'], 'connected');
+		act$.mockImplementation(async () => {
+			// The client reads the agents again before it answers: the sync draws the host's tab.
+			useSessionStore.setState({
+				sessions: [projectHostedSession(current(), { agent: hostAgent(['t1', 'host-own']) })],
+			});
+			return { ok: true, result: { kind: 'new-tab', tabId: 'host-own' } };
+		});
+
+		createPendingHostTabs(current());
+		await flush();
+
+		expect(current().aiTabs.map((tab) => tab.id)).toEqual(['t1', 'host-own']);
+		expect(current().unifiedTabOrder.filter((ref) => ref.id === 'host-own')).toHaveLength(1);
+	});
+
+	it('closes the tab on the host, and never draws it back, when the tab was closed while being made (Greptile and CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		hydrateHost(['t1'], 'connected');
+		let answer!: (value: unknown) => void;
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+			action.kind === 'new-tab'
+				? new Promise((resolve) => (answer = resolve))
+				: { ok: true, result: { kind: action.kind, tabId } }
+		);
+
+		createPendingHostTabs(current());
+		// The user closes it here while the host makes it.
+		const before = current();
+		useSessionStore.setState({ sessions: [closeTab(before, tabId)!.session] });
+		closeHostedTab(before, tabId);
+		const target = hostedTargetOf(current())!;
+		expect(closingHostTabIds(target).has(tabId)).toBe(true);
+
+		answer({ ok: true, result: { kind: 'new-tab', tabId } });
+		await flush();
+
+		const closes = act$.mock.calls.filter(([, , action]) => action?.kind === 'close-tab');
+		expect(closes.map(([, , action]) => action.tabId)).toEqual([tabId]);
+		// The host reports the tab it made before it reports the close.
+		hydrateHost(['t1', tabId], 'connected');
+		const synced = projectHostedSession(current(), {
+			agent: hostAgent(['t1', tabId]),
+			closing: closingHostTabIds(hostedTargetOf(current())!),
+		});
+		expect(synced.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+	});
+
+	it('gives the host the name the tab got while it waited, even when the report of the host lands first (CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		useSessionStore.setState({
+			sessions: [
+				{
+					...current(),
+					aiTabs: current().aiTabs.map((tab) =>
+						tab.id === tabId ? { ...tab, name: 'Notes' } : tab
+					),
+				},
+			],
+		});
+		hydrateHost(['t1'], 'connected');
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) => {
+			if (action.kind === 'new-tab') {
+				// The host's blank report of the tab lands before the answer.
+				useSessionStore.setState({
+					sessions: [projectHostedSession(current(), { agent: hostAgent(['t1', tabId]) })],
+				});
+				return { ok: true, result: { kind: 'new-tab', tabId } };
+			}
+			return { ok: true, result: { kind: action.kind, tabId } };
+		});
+
+		createPendingHostTabs(current());
+		await flush();
+
+		const rename = act$.mock.calls.find(([, , action]) => action?.kind === 'rename-tab')?.[2];
+		expect(rename).toMatchObject({ tabId, name: 'Notes' });
 	});
 });

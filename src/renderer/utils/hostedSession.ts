@@ -211,10 +211,11 @@ function sameMetadata(a: LogEntry['metadata'], b: LogEntry['metadata']): boolean
 /**
  * `older` without the bubbles of kept messages (`LogEntry.keptForHost`) the host now has. A host
  * that takes the sent `entryId` writes the same id, and the bubble is replaced by id above. One
- * that does not (a desktop host) writes the message under its own id: the first user entry new to
- * this tab with the same text and the same number of images replaces one bubble. Each host entry
- * replaces at most one. Never an entry this tab already drew before (an earlier message with the
- * same words), so a kept bubble waits for its own copy.
+ * that does not (a desktop host) writes the message under its own id: once this machine handed the
+ * message over (`keptSentAt`), the first user entry new to this tab with the same text and the
+ * same number of images replaces one bubble. Each host entry replaces at most one. Never an entry
+ * this tab already drew before (an earlier message with the same words), and never before the send
+ * (a message another client sent with the same words), so a kept bubble waits for its own copy.
  */
 function withoutKeptCopies(
 	older: LogEntry[],
@@ -226,7 +227,7 @@ function withoutKeptCopies(
 	const copies = host.filter((entry) => entry.source === 'user' && !drawn.has(entry.id));
 	if (copies.length === 0) return older;
 	return older.filter((entry) => {
-		if (!entry.keptForHost) return true;
+		if (!entry.keptForHost || entry.keptSentAt === undefined) return true;
 		const at = copies.findIndex(
 			(copy) =>
 				copy.text === entry.text && (copy.images?.length ?? 0) === (entry.images?.length ?? 0)
@@ -254,7 +255,17 @@ export function mergeHostedLogs(
 		const text = rewrites.get(entry.id);
 		return text === undefined || text === entry.text ? entry : { ...entry, text };
 	};
-	const kept = local.filter((entry) => !entry.hostLive).map(rewritten);
+	// A kept message the host now runs under its own id (its live entry has that id) is the
+	// host's from here on: no longer kept, so a later cut finds it as the turn's message.
+	const hostHolds = (entry: LogEntry) => rewrites.has(entry.id);
+	const kept = local
+		.filter((entry) => !entry.hostLive)
+		.map(rewritten)
+		.map((entry) =>
+			entry.keptForHost && hostHolds(entry)
+				? { ...entry, keptForHost: undefined, keptSentAt: undefined }
+				: entry
+		);
 	const hostEntries = persisted ? persistedView(persisted).map(rewritten) : [];
 	const hostIds = new Set(hostEntries.map((entry) => entry.id));
 	const older = persisted ? kept.filter((entry) => !hostIds.has(entry.id)) : kept;
@@ -281,7 +292,8 @@ export function mergeHostedLogs(
 		// A saved entry the host rewrote in place (a command's progress line settled to its
 		// outcome, M22) keeps its id: its text is what changed.
 		const savedChanged = next.some((entry, i) => !entry.hostLive && entry.text !== local[i].text);
-		if (!liveChanged && !tickChanged && !savedChanged) return local;
+		const keptChanged = next.some((entry, i) => !!entry.keptForHost !== !!local[i].keptForHost);
+		if (!liveChanged && !tickChanged && !savedChanged && !keptChanged) return local;
 	}
 	return next;
 }

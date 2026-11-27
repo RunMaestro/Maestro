@@ -218,8 +218,11 @@ export function keepTurnForHost(
 ): boolean {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	if (!session) return false;
-	const error = hostUnavailableError(session, keptForHostText(message));
-	if (opts.onlyIfRetried && !wouldAutoRetry(sessionId, error)) return false;
+	// Worded as kept only when a retry will hold it: with Agent Resilience off nothing resends it.
+	const refusal = hostUnavailableError(session, message);
+	const retried = wouldAutoRetry(sessionId, refusal);
+	if (opts.onlyIfRetried && !retried) return false;
+	const error = retried ? { ...refusal, message: keptForHostText(message) } : refusal;
 	const waiting = getRetryEntry(sessionId, item.tabId);
 	if (waiting && waiting.heldItemId !== item.id) {
 		queueBehind(sessionId, item);
@@ -227,8 +230,11 @@ export function keepTurnForHost(
 	}
 	// The message's bubble, above the retry card, as an SSH agent's send draws it before its link
 	// fails: once, for a message the host never had (a cut turn's is the host's own entry).
-	const bubble = waiting?.heldItemId === item.id ? null : keptBubbleFor(item);
+	const resend = waiting?.heldItemId === item.id;
+	const bubble = resend ? null : keptBubbleFor(item);
 	const kept = bubble ? { ...item, keptEntryId: bubble.id } : item;
+	// Refused again: the host did not get it, so no host message may stand in for its bubble.
+	if (resend) markKeptBubble(sessionId, item, false);
 	if (bubble) {
 		updateAiTab(sessionId, item.tabId, (tab) => ({ ...tab, logs: [...tab.logs, bubble] }));
 	}
@@ -249,6 +255,34 @@ export function keepTurnForHost(
 		return false;
 	}
 	return held;
+}
+
+/**
+ * Mark a kept message's bubble as handed to the host now (`sending`), or not: only a bubble this
+ * machine sent may be replaced by the host's copy of it (`mergeHostedLogs()`), so a message another
+ * client sent with the same words never takes its place. A send also brings the bubble to the
+ * words and images it carries, so a message edited while it waited is drawn as it was sent.
+ */
+function markKeptBubble(sessionId: string, item: QueuedItem, sending: boolean): void {
+	const bubbleId = item.keptEntryId;
+	if (!bubbleId) return;
+	updateAiTab(sessionId, item.tabId, (tab) => {
+		const at = tab.logs.findIndex((entry) => entry.id === bubbleId && entry.keptForHost);
+		if (at === -1) return tab;
+		const bubble = tab.logs[at];
+		const next: LogEntry = sending
+			? {
+					...bubble,
+					keptSentAt: Date.now(),
+					text: item.text ?? '',
+					images: item.images?.length ? item.images : undefined,
+				}
+			: { ...bubble, keptSentAt: undefined };
+		if (!sending && bubble.keptSentAt === undefined) return tab;
+		const logs = [...tab.logs];
+		logs[at] = next;
+		return { ...tab, logs };
+	});
 }
 
 /** The bubble a kept message draws, or null when it has one already or is not a message. */
@@ -372,8 +406,9 @@ function forwardToHost(
 	// The retry this resend belongs to: a Stop while it waits ends that retry, and then nothing goes.
 	const retry = getRetryEntry(sessionId, item.tabId);
 	const retryOutage = retry?.heldItemId === item.id ? retry.outageId : undefined;
-	const sendToHost = () =>
-		sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
+	const sendToHost = () => {
+		markKeptBubble(sessionId, item, true);
+		return sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
 			held: item.paused === true,
 			...(overrides ? { overrides } : {}),
 			...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
@@ -415,6 +450,7 @@ function forwardToHost(
 				throw error;
 			}
 		);
+	};
 	// The message of a turn a lost link cut goes again only once the host says that turn died: it
 	// may have run on, or finished (`cutTurnFate()`). Never sent twice.
 	const connected = usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';

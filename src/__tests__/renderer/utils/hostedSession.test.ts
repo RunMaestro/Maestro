@@ -99,8 +99,27 @@ describe('mergeHostedLogs', () => {
 		expect(saved.filter((e) => e.text === 'hello').map((e) => e.id)).toEqual(['k1']);
 	});
 
+	it('makes a kept message the host one once the host runs it under that id (Greptile on #2161)', () => {
+		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true, keptSentAt: 6 });
+		const live = mergeHostedLogs([local('h1'), bubble], [record('h1')], [record('k1', 'hello')]);
+		const drawn = live.find((e) => e.id === 'k1');
+		expect(drawn?.keptForHost).toBeUndefined();
+		expect(drawn?.keptSentAt).toBeUndefined();
+	});
+
+	it('never takes a host message with the same words for a kept message this machine has not sent (Greptile on #2161)', () => {
+		const bubble = local('k1', { text: 'continue', timestamp: 5, keptForHost: true });
+		// Another client sent "continue" while this one still waits for its retry.
+		const merged = mergeHostedLogs(
+			[local('h1'), bubble],
+			[record('h1'), record('y1', 'continue')],
+			undefined
+		);
+		expect(merged.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y1', 'k1']);
+	});
+
 	it('draws a kept message once when the host writes it under its own id (R14)', () => {
-		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true });
+		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true, keptSentAt: 6 });
 		const before = [local('h1'), bubble];
 		const live = mergeHostedLogs(before, [record('h1')], [record('y1', 'hello'), record('a1')]);
 		expect(live.filter((e) => e.text === 'hello').map((e) => e.id)).toEqual(['y1']);

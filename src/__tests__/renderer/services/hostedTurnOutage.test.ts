@@ -244,6 +244,47 @@ describe('a message sent while the link is down is kept for a retry', () => {
 		expect(users.map((logged) => logged.id)).toEqual([held.keptEntryId]);
 	});
 
+	it('keeps the refusal words, never "kept", when Agent Resilience is off (Greptile on #2161)', () => {
+		const session = seed('hosted');
+		useSessionStore.setState({
+			sessions: [{ ...session, retryOnAvailabilityErrors: false }],
+		});
+		expect(keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error)).toBe(false);
+		expect(raised[0]?.error.message).toBe(UNAVAILABLE.error);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual([]);
+	});
+
+	it('draws an edited kept message as it is sent, and marks it handed over (Greptile on #2161)', async () => {
+		const session = seed('hosted');
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		const entry = getRetryEntry(session.id, 't1')!;
+		useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+		const edited = { ...queue()[0], text: 'hello, edited' };
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
+
+		await sendTakenItemToHost(session.id, edited);
+		await flush();
+
+		const [bubble] = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(bubble).toMatchObject({ id: edited.keptEntryId, text: 'hello, edited' });
+		expect(bubble.keptSentAt).toEqual(expect.any(Number));
+	});
+
+	it('takes the handed-over mark off when the host refuses the resend again (Greptile on #2161)', async () => {
+		const session = seed('hosted');
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		const entry = getRetryEntry(session.id, 't1')!;
+		useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+		act$.mockResolvedValue(UNAVAILABLE);
+
+		await sendTakenItemToHost(session.id, queue()[0]);
+		await flush();
+
+		const [bubble] = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(bubble.keptForHost).toBe(true);
+		expect(bubble.keptSentAt).toBeUndefined();
+	});
+
 	it('draws no bubble for a message that is not kept (Agent Resilience off) (R14)', () => {
 		const session = seed('hosted');
 		registerAgentErrorSurfacer(() => undefined);
