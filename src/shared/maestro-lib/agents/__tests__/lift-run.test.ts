@@ -700,4 +700,14 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 		);
 		expect(formatHostTabMerge(undefined)).toBeUndefined();
 	});
+
+	it('the plan leaves out a part with no tab (U14)', () => {
+		expect(formatHostTabMerge({ merged: 0, copies: 2, added: 1 })).toBe(
+			'The host copy\'s tabs: 2 tabs stay as a copy named "(on the host)" (both sides went on after the Move Back); 1 tab comes in that only the host had.'
+		);
+		expect(formatHostTabMerge({ merged: 1, copies: 0, added: 0 })).toBe(
+			"The host copy's tabs: 1 tab merges into the tab of the same conversation."
+		);
+		expect(formatHostTabMerge({ merged: 0, copies: 0, added: 0 })).toBeUndefined();
+	});
 });

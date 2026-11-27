@@ -170,13 +170,17 @@ export interface LiftPlanSummary {
 
 /**
  * What the host copy's tabs become in the agent that moves, in one sentence (the plan the user
- * confirms), or undefined when the plan does not say.
+ * confirms), naming only the parts that hold a tab; undefined when the plan does not say or the
+ * copy has no tab.
  */
 export function formatHostTabMerge(merge: LiftPlanSummary['tabMerge']): string | undefined {
 	if (!merge) return undefined;
 	const tabs = (n: number, one: string, many: string) =>
 		`${n} tab${n === 1 ? '' : 's'} ${n === 1 ? one : many}`;
-	const parts = [tabs(merge.merged, 'merges', 'merge') + ' into the tab of the same conversation'];
+	const parts: string[] = [];
+	if (merge.merged > 0) {
+		parts.push(tabs(merge.merged, 'merges', 'merge') + ' into the tab of the same conversation');
+	}
 	if (merge.copies > 0) {
 		parts.push(
 			tabs(merge.copies, 'stays', 'stay') +
@@ -185,6 +189,7 @@ export function formatHostTabMerge(merge: LiftPlanSummary['tabMerge']): string |
 	}
 	if (merge.added > 0)
 		parts.push(tabs(merge.added, 'comes', 'come') + ' in that only the host had');
+	if (parts.length === 0) return undefined;
 	return `The host copy's tabs: ${parts.join('; ')}.`;
 }
 
