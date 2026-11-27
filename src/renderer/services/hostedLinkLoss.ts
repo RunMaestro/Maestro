@@ -494,12 +494,18 @@ function awaitCurrentHostReport(peerId: string, timeoutMs: number): Promise<bool
  * A cut still on record decides (edited while kept: the user's own message, sent as one). With no
  * cut on record for it (the app restarted since the cut, or the user stopped the cut and now sends
  * the parked copy), the host's transcript decides (`readKeptEntryFate()`), never memory alone.
+ *
+ * `userSent`: the user sent the held copy themselves (Force Send after a Stop). A turn that ended
+ * on its own error then goes at once, as a local agent's Force Send does, never into a new
+ * countdown of that error's retry (R43). Answered, still running, or held by the host's own retry
+ * are judged as for any resend: never sent twice.
  */
 export function cutTurnFate(
 	sessionId: string,
 	item: QueuedItem,
 	host: HostAgentRef,
-	connected: boolean
+	connected: boolean,
+	{ userSent = false }: { userSent?: boolean } = {}
 ): Promise<CutTurnFate> | null {
 	if (!item.hostEntryId || !connected) return null;
 	const key = cutKey(sessionId, item.tabId);
@@ -513,7 +519,7 @@ export function cutTurnFate(
 	}
 	const cut = cutTurns.get(key);
 	if (!cut || cut.stopped || cut.message?.id !== item.hostEntryId) {
-		return readKeptEntryFate(sessionId, host, { ...item, hostEntryId: item.hostEntryId });
+		return readKeptEntryFate(sessionId, host, { ...item, hostEntryId: item.hostEntryId }, userSent);
 	}
 	// Edited while it was kept: the user's own message now, sent as one whatever the turn did.
 	if (!sameAsCut(item, cut)) return null;
@@ -552,7 +558,8 @@ export function cutTurnFate(
 async function readKeptEntryFate(
 	sessionId: string,
 	host: HostAgentRef,
-	item: QueuedItem & { hostEntryId: string }
+	item: QueuedItem & { hostEntryId: string },
+	userSent = false
 ): Promise<CutTurnFate> {
 	// After a reload the mirror can say connected while it still holds the host's report from
 	// before a crash (the tab busy, or no agents yet): decided only from a report since the link.
@@ -586,6 +593,8 @@ async function readKeptEntryFate(
 	if (fate === 'answered' || fate === 'stopped') return 'answered';
 	const newestUser = lastUserMessage(slot.entries as LogEntry[]);
 	if (hostTab.state === 'busy' && newestUser?.id === entry.id) return 'answered';
+	// Sent by hand: the user's Force Send goes now, into the same entry (R43).
+	if (fate === 'errored' && userSent) return 'send';
 	if (fate === 'errored') {
 		const error = turnErrorAfter(sessionId, slot.entries, at);
 		const routed = routeErroredTurn(sessionId, item.tabId, entry.id, error, item);

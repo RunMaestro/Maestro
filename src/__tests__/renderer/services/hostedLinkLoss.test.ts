@@ -1014,6 +1014,26 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		});
 	});
 
+	// Parity R43: Stop, then Force Send. A local agent's Force Send sends at once; so does a hosted
+	// one whose turn ended on its own error: no new countdown of that error's retry.
+	it('sends at once on Force Send after Stop, never a new countdown (R43)', async () => {
+		cut();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		await hostBack('idle', [QUESTION, OVERLOADED]);
+		expect(getRetryEntry('row', 't1')?.status).toBe('scheduled');
+		stopRetriesForAgent('row', 't1');
+		const parked = queue().find((item) => item.hostEntryId === 'u1')!;
+		expect(parked.paused).toBe(true);
+
+		await act(async () => {
+			await sendTakenItemToHost('row', parked);
+		});
+		await flush();
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
 	// CodeRabbit on #2167: a retry ran into the same entry and failed again, differently. The LAST
 	// attempt's error decides by its own rule: here a login error, which no retry takes.
 	it("retries by the last attempt's error, not the first one's (R37)", async () => {

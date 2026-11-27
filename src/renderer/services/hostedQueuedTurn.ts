@@ -447,12 +447,17 @@ function consultFirstWhileHostDown(
 	return true;
 }
 
-/** Send one item that is no longer in this queue to the host. Resolves the host's receipt. */
+/**
+ * Send one item that is no longer in this queue to the host. Resolves the host's receipt.
+ * `userSent`: the user sent a held copy themselves (Force Send), so it goes now, as a local
+ * agent's Force Send does, never into a new countdown (R43).
+ */
 function forwardToHost(
 	sessionId: string,
 	item: QueuedItem,
 	index: number,
-	mention: CrossAgentMentionPlan | null = null
+	mention: CrossAgentMentionPlan | null = null,
+	{ userSent = false }: { userSent?: boolean } = {}
 ): Promise<TurnSendReceipt | null> {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const target = hostedTargetOf(session);
@@ -545,7 +550,10 @@ function forwardToHost(
 	// The message of a turn a lost link cut goes again only once the host says that turn died: it
 	// may have run on, or finished (`cutTurnFate()`). Never sent twice.
 	const connected = usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';
-	const fate = cutTurnFate(sessionId, item, target, connected);
+	// A held copy sent by hand while no retry owns it (Stop ended that retry): the user's send.
+	const fate = cutTurnFate(sessionId, item, target, connected, {
+		userSent: userSent && retryOutage === undefined,
+	});
 	const send = !fate
 		? sendToHost()
 		: fate.then((decided) => {
@@ -1291,6 +1299,8 @@ export async function sendTakenItemToHost(sessionId: string, item: QueuedItem): 
 	// A drain never takes a held item, so a held one here was sent on purpose (Force Send on a
 	// card the host refused earlier, or a retry). It runs now: sending it held would park it on
 	// the host and take its card away from the user who just asked for it to go.
-	await forwardToHost(sessionId, { ...item, paused: false }, 0, mention);
+	await forwardToHost(sessionId, { ...item, paused: false }, 0, mention, {
+		userSent: item.paused === true,
+	});
 	return true;
 }
