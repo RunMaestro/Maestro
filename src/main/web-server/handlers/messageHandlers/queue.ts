@@ -38,7 +38,7 @@ import { userEntryAnswered, type SentUserEntry } from '../../../../shared/maestr
 import { invokeAsBridge } from '../bridgeHandlers';
 import { resolveToDataUrl } from '../../../storage/session-image-store';
 import type { QueuedItemSnapshot, QueueSessionSnapshot } from '../../types';
-import { queueChangesSeq } from '../../queue-change-frames';
+import { queueChangesSeqs } from '../../queue-change-frames';
 
 /**
  * Handle enqueue_command message - hand a CLI prompt to the renderer's
@@ -427,13 +427,16 @@ export function handleListQueue(
 		});
 		return;
 	}
+	// Each queue says the seq of the last changes frame sent for it (M28), so a client that reads
+	// changes applies the next one over this answer. Taken before the queues are read (M29): a
+	// frame sent while the read is out may change a list older than it, so the answer names the
+	// seq it is sure the list is at, and a later change that does not fit reads the queue again.
+	const seqsAtRead = queueChangesSeqs();
 	ctx.callbacks
 		.listQueue(sessionId)
 		.then(async (result) => {
-			// Each queue says the seq of the last changes frame sent for it (M28), so a client that
-			// reads changes applies the next one over this answer.
 			const queues = (await withQueueImages(result.queues, message.inlineImages === true)).map(
-				(queue) => ({ ...queue, queueSeq: queueChangesSeq(queue.sessionId) })
+				(queue) => ({ ...queue, queueSeq: seqsAtRead.get(queue.sessionId) ?? 0 })
 			);
 			ctx.send(client, {
 				type: 'list_queue_result',

@@ -37,7 +37,7 @@ import {
 	getBusyTabs,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
-	runningQueuedItemId,
+	runningQueuedItemIds,
 	syncAgentStateToTabs,
 } from '../utils/tabHelpers';
 import { takeNextRunnableQueueItem } from '../utils/executionQueue';
@@ -101,15 +101,14 @@ export const FORCE_KILL_PROMPT =
 	'Failed to interrupt the process gracefully. Would you like to force kill it?\n\n' +
 	'Warning: This may cause data loss or leave the process in an inconsistent state.';
 
-/** The queue item ids of the turns `tabIds` of the agent run now (`runningQueuedItemId()`). */
+/** The queue item ids of the turns `tabIds` of the agent run now (`runningQueuedItemIds()`). */
 function queuedItemsOfRunningTurns(sessionId: string, tabIds: readonly string[]): string[] {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tabs = [...(session?.aiTabs ?? []), ...(session?.orphanedThinkingTabs ?? [])];
 	const ids = new Set<string>();
 	for (const tab of tabs) {
 		if (!tabIds.includes(tab.id)) continue;
-		const itemId = runningQueuedItemId(tab);
-		if (itemId) ids.add(itemId);
+		for (const itemId of runningQueuedItemIds(tab)) ids.add(itemId);
 	}
 	return [...ids];
 }
