@@ -556,6 +556,26 @@ function latestUserTurn(logs: readonly LogEntry[]): LogEntry[] {
 	return [];
 }
 
+/**
+ * Whether `tab` runs the waiting message's own turn, later than the one a Stop ended: the host
+ * answered that Stop, the tab is busy with a turn that started at another time, and that turn is
+ * the message's own (its entry is the tab's latest user entry). A stopped message's entry read back
+ * while another message's turn runs is no start of its own (CodeRabbit on #2160).
+ */
+function isOwnLaterTurn(
+	tab: Pick<Session['aiTabs'][number], 'state' | 'thinkingStartTime' | 'logs'>,
+	hostItemId: string,
+	waiting: AwaitingHostStart,
+	stop: NonNullable<AwaitingHostStart['stop']>
+): boolean {
+	return (
+		!stop.pending &&
+		tab.state === 'busy' &&
+		tab.thinkingStartTime !== stop.turnStartedAt &&
+		hostRanMessage(latestUserTurn(tab.logs), undefined, waitingMessage(hostItemId, waiting))
+	);
+}
+
 /** A waiting consult's message, as the host's user entry for it is matched. */
 function waitingMessage(hostItemId: string, waiting: AwaitingHostStart): HostedMessageRef {
 	return {
@@ -712,7 +732,10 @@ export function settleStoppedHostStartMentions(
 			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 			continue;
 		}
-		if (listed.has(hostItemId)) waiting.stop = undefined;
+		// The host's own list holds it: it waited through the Stop. Listed only by the mirror (the
+		// read failed or was late), it may still be the stopped turn whose frames trail: it stays
+		// marked, and consults only once its own turn is seen running after Stop (CodeRabbit on #2160).
+		if (listed.has(hostItemId) && waitingAtStop) waiting.stop = undefined;
 		else waiting.stop = { ...waiting.stop, pending: false };
 	}
 }
@@ -764,6 +787,25 @@ export function fireHostStartedMentions(
 		if (exit === 'started' && waiting.stop?.pending) {
 			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 			continue;
+		}
+		// A named start of one a Stop left marked (no list from the host said it waited): it is its
+		// own later turn once the tab runs it; ran and ended unseen (or never ran again) is the
+		// stopped turn; until either shows, it waits for the next sync.
+		if (exit === 'started' && waiting.stop && tab) {
+			if (!isOwnLaterTurn(tab, hostItemId, waiting, waiting.stop)) {
+				const ranHere = hostRanMessage(
+					tab.logs,
+					waiting.afterEntryId,
+					waitingMessage(hostItemId, waiting)
+				);
+				if (ranHere && tab.state !== 'busy') {
+					letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+				} else if (!ranHere && tab.state !== 'busy' && tabId && !transcript.isCurrent(tabId)) {
+					// Idle with no entry of its own drawn: its saved transcript says whether it ran.
+					transcript.read(tabId);
+				}
+				continue;
+			}
 		}
 		if (exit !== 'started') {
 			if (exit === 'removed') {
@@ -829,12 +871,7 @@ export function fireHostStartedMentions(
 			// turn runs is no start of its own (CodeRabbit on #2160). Otherwise it was the stopped
 			// turn (M25).
 			if (waiting.stop) {
-				const ownLaterTurn =
-					!waiting.stop.pending &&
-					tab?.state === 'busy' &&
-					tab.thinkingStartTime !== waiting.stop.turnStartedAt &&
-					hostRanMessage(latestUserTurn(tab.logs), undefined, waitingMessage(hostItemId, waiting));
-				if (!ownLaterTurn) {
+				if (!tab || !isOwnLaterTurn(tab, hostItemId, waiting, waiting.stop)) {
 					letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 					continue;
 				}
