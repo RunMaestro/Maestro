@@ -20,11 +20,19 @@ import {
 	STRUCTURED_OUTPUT_SUFFIX,
 	READY_CONFIDENCE_THRESHOLD,
 	wizardReadableDirectories,
+	resolveWizardReadableDirectories,
 	type StructuredAgentResponse,
 	type ParsedResponse,
 	type SystemPromptConfig,
 } from '../../../../../renderer/components/Wizard/services/wizardPrompts';
 import { getAllInitialQuestions } from '../../../../../renderer/components/Wizard/services/fillerPhrases';
+import { resolveHomeDir } from '../../../../../renderer/utils/homeDir';
+
+// The real module reads the home directory over IPC. A stand-in that resolves
+// late, the way a cold cache does, proves the wizard waits for it.
+vi.mock('../../../../../renderer/utils/homeDir', () => ({
+	resolveHomeDir: vi.fn(async () => '/Users/test'),
+}));
 
 // Load actual prompt files from disk so generateSystemPrompt tests work with real content.
 // Mirror the {{INCLUDE:name}} and {{REF:name}} resolution that src/main/prompt-manager.ts
@@ -1066,6 +1074,44 @@ I'm about 45% confident I understand your needs so far.`;
 		it('returns undefined when nothing is readable', () => {
 			expect(wizardReadableDirectories(undefined)).toBeUndefined();
 			expect(wizardReadableDirectories([{ path: '/b', read: false, write: true }])).toBeUndefined();
+		});
+
+		it('expands ~ only when given a home directory', () => {
+			const dirs = [{ path: '~/reference', read: true, write: false }];
+			expect(wizardReadableDirectories(dirs)?.[0].path).toBe('~/reference');
+			expect(wizardReadableDirectories(dirs, '/Users/test')?.[0].path).toBe(
+				'/Users/test/reference'
+			);
+		});
+	});
+
+	describe('resolveWizardReadableDirectories', () => {
+		const dirs = [
+			{ path: '~/reference', read: true, write: true },
+			{ path: '/drop-box', read: false, write: true },
+		];
+
+		it('waits for the local home directory before expanding ~ (#2045)', async () => {
+			await expect(resolveWizardReadableDirectories(dirs)).resolves.toEqual([
+				{ path: '/Users/test/reference', read: true, write: false },
+			]);
+			await expect(resolveWizardReadableDirectories(dirs, { enabled: false })).resolves.toEqual([
+				{ path: '/Users/test/reference', read: true, write: false },
+			]);
+		});
+
+		it('leaves ~ for the remote to read on an SSH run, never the local home', async () => {
+			vi.mocked(resolveHomeDir).mockClear();
+			await expect(resolveWizardReadableDirectories(dirs, { enabled: true })).resolves.toEqual([
+				{ path: '~/reference', read: true, write: false },
+			]);
+			expect(resolveHomeDir).not.toHaveBeenCalled();
+		});
+
+		it('skips the home lookup when no folder was granted', async () => {
+			vi.mocked(resolveHomeDir).mockClear();
+			await expect(resolveWizardReadableDirectories(undefined)).resolves.toBeUndefined();
+			expect(resolveHomeDir).not.toHaveBeenCalled();
 		});
 	});
 });

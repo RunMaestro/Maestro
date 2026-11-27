@@ -12,8 +12,7 @@ vi.mock('../../../renderer/stores/notificationStore', () => ({
 }));
 
 vi.mock('../../../renderer/utils/homeDir', () => ({
-	getHomeDir: () => '/home/tester',
-	getHomeDirAsync: () => Promise.resolve('/home/tester'),
+	resolveHomeDir: () => Promise.resolve('/home/tester'),
 }));
 
 const CODEX_HOME_KEY = '/home/tester/.codex';

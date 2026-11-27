@@ -11,7 +11,7 @@ import type { AdditionalDirectory } from '../../../../shared/types';
 import type { WizardMessage } from '../WizardContext';
 import {
 	generateSystemPrompt,
-	wizardReadableDirectories,
+	resolveWizardReadableDirectories,
 	parseStructuredOutput,
 	formatUserMessage,
 	isReadyToProceed,
@@ -194,7 +194,10 @@ class ConversationManager {
 		}
 
 		const sessionId = generateWizardSessionId();
-		const additionalDirectories = wizardReadableDirectories(config.additionalDirectories);
+		const additionalDirectories = await resolveWizardReadableDirectories(
+			config.additionalDirectories,
+			config.sshRemoteConfig
+		);
 		const systemPrompt = generateSystemPrompt({
 			agentName: config.projectName,
 			agentPath: config.directoryPath,

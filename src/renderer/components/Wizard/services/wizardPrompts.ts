@@ -16,7 +16,7 @@ import {
 	formatAdditionalDirectoriesForPrompt,
 	normalizeAdditionalDirectories,
 } from '../../../../shared/additionalDirectories';
-import { getHomeDir } from '../../../utils/homeDir';
+import { resolveHomeDir } from '../../../utils/homeDir';
 
 let cachedWizardSystemPrompt: string | null = null;
 let cachedWizardSystemContinuationPrompt: string | null = null;
@@ -254,12 +254,33 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
  * (`sessionAdditionalDirectories`, e.g. Claude's `--add-dir`).
  */
 export function wizardReadableDirectories(
-	dirs: AdditionalDirectory[] | undefined
+	dirs: AdditionalDirectory[] | undefined,
+	homeDir?: string
 ): AdditionalDirectory[] | undefined {
-	const readable = normalizeAdditionalDirectories(dirs, getHomeDir())
+	const readable = normalizeAdditionalDirectories(dirs, homeDir)
 		?.filter((dir) => dir.read)
 		.map((dir) => ({ ...dir, write: false }));
 	return readable?.length ? readable : undefined;
+}
+
+/**
+ * `wizardReadableDirectories` with `~` expanded on the machine the wizard's
+ * agent runs on. Call it once per run and hand the result to both the prompt
+ * and the spawn, so the two always name the same paths.
+ *
+ * Locally this waits for the home directory rather than reading the cache,
+ * which is still empty if nothing has asked for it yet in this session. Over
+ * SSH `~` means the remote's home, which this machine does not know, so the
+ * path is left as typed instead of being rewritten to a local home that does
+ * not exist on the remote.
+ */
+export async function resolveWizardReadableDirectories(
+	dirs: AdditionalDirectory[] | undefined,
+	sshRemoteConfig?: { enabled: boolean }
+): Promise<AdditionalDirectory[] | undefined> {
+	if (!dirs?.length) return undefined;
+	const homeDir = sshRemoteConfig?.enabled ? undefined : await resolveHomeDir();
+	return wizardReadableDirectories(dirs, homeDir);
 }
 
 /**

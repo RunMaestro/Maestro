@@ -15,7 +15,7 @@ import {
 import { createGenericErrorMessage } from './wizardErrorDetection';
 import type { AdditionalDirectory } from '../../../../shared/types';
 import { formatAdditionalDirectoriesForPrompt } from '../../../../shared/additionalDirectories';
-import { wizardReadableDirectories } from './wizardPrompts';
+import { resolveWizardReadableDirectories, wizardReadableDirectories } from './wizardPrompts';
 
 let cachedPhaseGenDocPrompt: string | null = null;
 let phaseGeneratorPromptsLoaded = false;
@@ -694,8 +694,18 @@ class PhaseGenerator {
 				argsCount: agent.args?.length || 0,
 			});
 
+			// Resolve the extra folders once, so the prompt and the native grant
+			// flags name the same paths.
+			const runConfig: GenerationConfig = {
+				...config,
+				additionalDirectories: await resolveWizardReadableDirectories(
+					config.additionalDirectories,
+					config.sshRemoteConfig
+				),
+			};
+
 			// Generate the prompt
-			const prompt = generateDocumentGenerationPrompt(config);
+			const prompt = generateDocumentGenerationPrompt(runConfig);
 			wizardDebugLogger.log('info', 'Document generation prompt created', {
 				promptLength: prompt.length,
 				promptPreview: prompt.slice(0, 200),
@@ -705,7 +715,7 @@ class PhaseGenerator {
 
 			// Spawn the agent and wait for completion
 			wizardDebugLogger.log('info', 'Starting agent run');
-			const result = await this.runAgent(agent, config, prompt, callbacks);
+			const result = await this.runAgent(agent, runConfig, prompt, callbacks);
 
 			if (!result.success) {
 				wizardDebugLogger.log('error', 'Agent run failed', {
@@ -1199,8 +1209,9 @@ class PhaseGenerator {
 					sessionCustomModel: config.model,
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: config.sshRemoteConfig,
-					// Native read grants for the Directory screen's extra folders.
-					sessionAdditionalDirectories: wizardReadableDirectories(config.additionalDirectories),
+					// Native read grants for the Directory screen's extra folders,
+					// already resolved by generateDocuments.
+					sessionAdditionalDirectories: config.additionalDirectories,
 					...getClaudeTokenSourceFields(config.claudeTokenSource),
 				})
 				.then(() => {
