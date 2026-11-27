@@ -33,10 +33,12 @@ import { TURN_CANCELED_NOTE } from '../../../shared/maestro-lib/store/transcript
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
 	getRetryEntry,
+	heldOnHostOf,
 	noteDirectDispatch,
 	notOnHostText,
 	registerAgentErrorSurfacer,
 	registerDispatchDepsProvider,
+	resetDispatchSnapshotsForTests,
 	retryNow,
 	scheduleRetryForError,
 	stopRetriesForAgent,
@@ -801,7 +803,10 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 			{ id: 'e1', timestamp: 20, source: 'error', text: 'The provider failed.' },
 		]);
 		expect(sends()).toHaveLength(0);
-		expect(queue()).toHaveLength(0);
+		// R40: an error no retry takes leaves the message held for the user, never dropped.
+		expect(queue()).toEqual([
+			expect.objectContaining({ text: QUESTION.text, paused: true, hostEntryId: undefined }),
+		]);
 	});
 
 	// Parity R36: a desktop host writes streamed text into the tab as it arrives, so a crash after
@@ -888,7 +893,14 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(getRetryEntry('row', 't1')).toBeUndefined();
 		const fate = cutTurnFate(
 			'row',
-			{ id: heldId, tabId: 't1', hostEntryId: 'u1', text: QUESTION.text },
+			{
+				id: heldId,
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				hostEntryId: 'u1',
+				text: QUESTION.text,
+			},
 			{ peerId: 'box', agentId: 'h1' },
 			true
 		);
@@ -916,9 +928,18 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 			},
 			turnEnded: true,
 		};
+		const outageId = getRetryEntry('row', 't1')!.outageId;
 		await hostBack('idle', [QUESTION, OVERLOADED, authError]);
 		expect(sends()).toHaveLength(0);
 		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		// R40: never dropped as answered. The kept copy is held with the error, and the card says why.
+		expect(queue()).toEqual([
+			expect.objectContaining({ text: QUESTION.text, paused: true, hostEntryId: undefined }),
+		]);
+		const outage = useRetryStore.getState().outages[outageId];
+		expect(outage).toMatchObject({ settledByHost: true, hostError: authError.text });
+		expect(notOnHostText(heldOnHostOf(outage)!)).toContain(authError.text);
+		expect(notOnHostText(heldOnHostOf(outage)!)).toContain('held in the queue');
 	});
 
 	// CodeRabbit on #2167: the tab's retry holds another message when the cut message's turn ends on
@@ -1252,6 +1273,8 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		useSettingsStore.setState({ federationHostedAgents: true });
 		// A relaunch: nothing about the cut survives in memory, only the saved queue does.
 		__resetHostedLinkLossForTests();
+		// The retry's prompt is held in memory only: a relaunch has none.
+		resetDispatchSnapshotsForTests();
 		toastMock.mockReset();
 		transcript.mockReset();
 		act$.mockReset();
@@ -1429,6 +1452,31 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		await flush();
 		expect(sends()).toHaveLength(1);
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	// Parity R40: after a reload no retry holds a prompt to resend. A rate-limited kept message
+	// records itself as the prompt (above), and one whose error no retry takes is held with it.
+	it('holds a kept message whose turn ended on an error no retry takes, after a restart (R40)', async () => {
+		const AUTH = 'Invalid API key. Please run /login.';
+		relaunch('idle', [
+			QUESTION,
+			{ id: 'e1', timestamp: 20, source: 'error', text: AUTH, turnEnded: true },
+		]);
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		// Kept, held for the user to send again as a new message, with the error's own words.
+		expect(queue()).toEqual([
+			expect.objectContaining({ id: 'k1', paused: true, hostEntryId: undefined }),
+		]);
+		expect(toastMock).toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Not sent', message: expect.stringContaining(AUTH) })
+		);
+		expect(toastMock).not.toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Not sent again' })
+		);
 	});
 
 	// CodeRabbit on #2167: the link drops while the tab's read is out. The busy tab held now is the

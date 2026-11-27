@@ -55,7 +55,7 @@ import {
 	useRetryStore,
 	HOST_HAD_MESSAGE_TEXT,
 	notOnHostText,
-	type NotOnHost,
+	type HeldOnHost,
 	wouldAutoRetry,
 } from '../stores/retryStore';
 import {
@@ -365,15 +365,16 @@ export function queuedItemHostOverrides(item: QueuedItem): TurnOverrides | undef
  * (Force Send of a copy parked by Stop) says it with a toast, so it never vanishes unexplained.
  *
  * With `notOnHost` the host no longer has the tab or the message the copy named (closed, or
- * cleared): nothing is sent there, and the copy is parked held, no longer naming that entry, so
- * the user can send it again as a new message. The card or the toast says which.
+ * cleared), or the copy's own turn ended there on an error no retry takes (`{ error }`): nothing
+ * is sent there, and the copy is parked held, no longer naming that entry, so the user can send it
+ * again as a new message. The card or the toast says which.
  */
 function notHostedAgain(
 	sessionId: string,
 	item: QueuedItem,
 	index: number,
 	retryOutage: string | undefined,
-	notOnHost?: NotOnHost
+	notOnHost?: HeldOnHost
 ): void {
 	const owned =
 		retryOutage !== undefined && getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
@@ -515,6 +516,12 @@ function forwardToHost(
 				}
 				// Ended on its own error there: the retry of that error holds it now, and sends it.
 				if (decided === 'errored') return null;
+				// Ended on its own error there, and no retry takes it: held with that error, never
+				// dropped as answered.
+				if (typeof decided === 'object') {
+					notHostedAgain(sessionId, item, index, retryOutage, decided);
+					return null;
+				}
 				if (decided === 'tab-gone' || decided === 'entry-gone') {
 					notHostedAgain(
 						sessionId,

@@ -107,6 +107,22 @@ describe('RetryStatusCard', () => {
 		expect(screen.queryByText(/Sent after/)).not.toBeInTheDocument();
 	});
 
+	it('says the host turn ended on an error no retry takes, and the message is held (R40)', () => {
+		setOutage({
+			cause: 'connection',
+			status: 'recovered',
+			settledByHost: true,
+			hostError: 'Invalid API key. Please run /login.',
+			attempts: 0,
+			startedAt: NOW,
+			resolvedAt: NOW + 5_000,
+		});
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+		expect(screen.getByText(/Invalid API key\. Please run \/login\./)).toBeInTheDocument();
+		expect(screen.getByText(/held in the queue for you to send again/)).toBeInTheDocument();
+		expect(screen.queryByText(/already had this message/)).not.toBeInTheDocument();
+	});
+
 	it('says the link was still down when a connection retry is stopped (R6)', () => {
 		setOutage({ cause: 'connection', status: 'stopped', attempts: 2, resolvedAt: NOW + 1 });
 		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
