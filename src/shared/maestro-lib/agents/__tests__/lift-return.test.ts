@@ -273,6 +273,18 @@ describe('runReturnFromHost', () => {
 			},
 		]);
 
+		// Resumed on the host by another client while the tabs were read: nothing changes.
+		const raced = hostClient({ queue: ok([heldItem]) });
+		raced.turns.queue.list
+			.mockResolvedValueOnce(ok([heldItem]))
+			.mockResolvedValueOnce(ok([{ ...heldItem, paused: false }]));
+		const racedDeps = deps(hostedAgent(), raced);
+		await expect(runReturnFromHost('agent-1', {}, racedDeps.value)).rejects.toMatchObject({
+			code: 'RETURN_QUEUED',
+		});
+		expect(racedDeps.restore).not.toHaveBeenCalled();
+		expect(raced.agents.remove).not.toHaveBeenCalled();
+
 		for (const [queue, options] of [
 			[[heldItem, { ...heldItem, itemId: 'r1', paused: false }], {}],
 			[[heldItem], { keepHostCopy: true }],

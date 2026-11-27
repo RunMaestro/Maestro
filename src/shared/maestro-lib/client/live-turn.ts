@@ -136,6 +136,15 @@ export function foldLiveTurn(
 	switch (event.kind) {
 		case 'user': {
 			const next = begin(turn, event.at);
+			// The same entry again (a steer whose outcome the host stamped since): it takes its
+			// place, never drawn twice.
+			const at = next.entries.findIndex((entry) => entry.id === event.entry.id);
+			if (at !== -1) {
+				return {
+					...next,
+					entries: next.entries.map((entry, i) => (i === at ? event.entry : entry)),
+				};
+			}
 			return { ...next, entries: [...next.entries, event.entry] };
 		}
 		case 'started':

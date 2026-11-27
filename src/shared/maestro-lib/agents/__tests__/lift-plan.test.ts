@@ -296,7 +296,7 @@ describe('planAgentLift', () => {
 						ref: 'tab-1',
 						count: 1,
 						reason:
-							'1 image(s) in the conversation "Main" could not be read from this machine\'s image store and do not move. They stay in this machine\'s copy.',
+							'1 image(s) in the conversation "Main" (tab-1) could not be read from this machine\'s image store and do not move. They stay in this machine\'s copy.',
 					},
 				])
 			);

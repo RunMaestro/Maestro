@@ -370,7 +370,8 @@ export function planAgentLift(input: PlanAgentLiftInput): LiftPlan {
 	// per tab, with the count, so the plan the person confirms names it (R52).
 	imported.forEach(({ tab, unresolvedImages }) => {
 		if (unresolvedImages === 0) return;
-		const name = tab.name ? `"${tab.name}"` : tab.id;
+		// Named with its id too: two tabs may share a name, and each must show in the plan.
+		const name = tab.name ? `"${tab.name}" (${tab.id})` : tab.id;
 		stays.push({
 			kind: 'transcript-image',
 			ref: tab.id,

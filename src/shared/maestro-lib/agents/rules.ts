@@ -832,12 +832,51 @@ export function markTurnEnded<T extends object>(
 /**
  * Whether `entry` starts a user turn of its own: a message steered into the running turn does
  * not, unless the agent ran it as a turn of its own after that one (`steerState: 'queued'`, the
- * steer it could not fold in: its follow-up is its own turn, with its own end).
+ * steer it could not fold in: its follow-up is its own turn, with its own end). Such a steer is
+ * written while the turn it was steered into still runs, so its turn begins only after that
+ * turn's end stamp: read a turn's entries with `userTurnSpan()`, never by this alone.
  */
 export function isUserTurnStart(
 	entry: Pick<Partial<LogEntryRecord>, 'source' | 'steered' | 'steerState'> | null | undefined
 ): boolean {
-	return entry?.source === 'user' && (entry.steered !== true || entry.steerState === 'queued');
+	return entry?.source === 'user' && (entry.steered !== true || queuedSteer(entry));
+}
+
+function queuedSteer(
+	entry: Pick<Partial<LogEntryRecord>, 'source' | 'steered' | 'steerState'> | null | undefined
+): boolean {
+	return entry?.source === 'user' && entry.steered === true && entry.steerState === 'queued';
+}
+
+/**
+ * The entries of the turn of the user message at `at` in `logs`, `from` (inclusive) to `to`
+ * (exclusive), or null when that turn has not begun. The one reader of where a turn's entries end
+ * (R51; CodeRabbit on #2171):
+ *
+ * - A turn runs to the next message the person sent. A message steered into it is part of it.
+ * - A steer the agent ran as a turn of its own (`steerState: 'queued'`) is written while the turn
+ *   it was steered into still runs: that turn runs on past it to its next end stamp, and the
+ *   steer's own turn begins right after that stamp (null while it has not).
+ */
+export function userTurnSpan(
+	logs: readonly unknown[],
+	at: number
+): { from: number; to: number } | null {
+	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	let from = at + 1;
+	if (queuedSteer(entries[at])) {
+		const end = entries.findIndex((entry, i) => i > at && entry?.turnEnded === true);
+		if (end === -1) return null;
+		from = end + 1;
+	}
+	let steerWaits = false;
+	for (let i = from; i < entries.length; i += 1) {
+		const entry = entries[i];
+		if (entry?.source === 'user' && entry.steered !== true) return { from, to: i };
+		if (queuedSteer(entry)) steerWaits = true;
+		else if (steerWaits && entry?.turnEnded === true) return { from, to: i + 1 };
+	}
+	return { from, to: entries.length };
 }
 
 /**
@@ -876,10 +915,13 @@ export function turnFateAfter(
 	let errored = false;
 	let stopped = false;
 	let output = false;
-	let next = at + 1;
-	for (; next < entries.length; next += 1) {
+	// A queued steer whose turn has not begun has nothing of its own yet.
+	const span = userTurnSpan(entries, at);
+	if (!span) return 'unended';
+	let next = span.from;
+	for (; next < span.to; next += 1) {
 		const entry = entries[next];
-		if (isUserTurnStart(entry)) break;
+		if (queuedSteer(entry)) continue;
 		// What an attempt wrote, for the empty end on the message: never a note about the turn.
 		if (typeof entry?.timestamp === 'number' && entry.source !== 'system') {
 			latestAt = Math.max(latestAt, entry.timestamp);
@@ -913,7 +955,7 @@ export function turnFateAfter(
 	if (errored) return 'errored';
 	if (stopped) return 'stopped';
 	if (!output) return pending ? 'unended' : (ended ?? 'unended');
-	return hostKind === 'headless' || next < entries.length ? 'answered' : 'unended';
+	return hostKind === 'headless' || span.to < entries.length ? 'answered' : 'unended';
 }
 
 /** Whether the turn of the user message at `at` in `logs` ended (`turnFateAfter()`). */
@@ -940,9 +982,10 @@ export function turnEndedAfter(
 export function hostRetriesTurn(logs: readonly unknown[], at: number): boolean {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
 	let retrying = false;
-	for (let next = at + 1; next < entries.length; next += 1) {
+	const span = userTurnSpan(entries, at);
+	if (!span) return false;
+	for (let next = span.from; next < span.to; next += 1) {
 		const entry = entries[next];
-		if (isUserTurnStart(entry)) break;
 		if (typeof entry?.retryOutageId === 'string' && entry.retryOutageId) {
 			retrying = entry.retryStopped !== true;
 		} else if (
@@ -1000,9 +1043,8 @@ export function tabRunsUserEntry(
 	if (running.itemId !== undefined) {
 		return (logs[at] as LogEntryRecord).queuedItemId === running.itemId;
 	}
-	for (let i = logs.length - 1; i > at; i -= 1) {
-		if (isUserTurnStart(logs[i] as Partial<LogEntryRecord> | null)) return false;
-	}
+	// A later turn began after this one: the tab runs that one, not this.
+	if (userTurnSpan(logs, at)?.to !== logs.length) return false;
 	// The running turn began with this message, not after it: a turn that writes no message of its
 	// own (a command) started later is not this one (CodeRabbit on #2167). A desktop writes the
 	// message at the turn's start, on the same clock (`markTabRunningQueuedItem()`).

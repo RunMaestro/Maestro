@@ -1061,32 +1061,35 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 	// ended (`steerState: 'queued'`). The link is cut during that follow-up: it is the cut turn, so
 	// its message is the one kept and sent again once it died with the host, never the first one.
 	it("keeps the queued steer's message when the link is cut during its follow-up (R51)", async () => {
-		const ANSWER: LogEntry = {
-			id: 'a1',
-			timestamp: 12,
-			source: 'ai',
-			text: 'The docs say...',
-			turnEnded: true,
-		};
+		// As a host writes them: the steer joins while the first turn runs, before its end.
+		const PARTIAL: LogEntry = { id: 'a0', timestamp: 11, source: 'stdout', text: 'The docs' };
 		const STEER: LogEntry = {
 			id: 'b1',
-			timestamp: 14,
+			timestamp: 12,
 			source: 'user',
 			text: 'Also the README',
 			steered: true,
 			steerState: 'queued',
 		};
+		const ANSWER: LogEntry = {
+			id: 'a1',
+			timestamp: 13,
+			source: 'stdout',
+			text: ' say...',
+			turnEnded: true,
+		};
 		updateSessionWith('row', (s) => ({
 			...s,
-			aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [QUESTION, ANSWER, STEER] })),
+			aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [QUESTION, PARTIAL, STEER, ANSWER] })),
 		}));
 		cut();
 		expect(queue().map((item) => item.hostEntryId)).toEqual(['b1']);
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
 		transcript.mockResolvedValue([
 			QUESTION,
-			ANSWER,
+			PARTIAL,
 			STEER,
+			ANSWER,
 			{ id: 'o2', timestamp: 16, source: 'stdout', text: 'The READ' },
 		]);
 		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });

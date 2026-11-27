@@ -192,6 +192,25 @@ export async function runReturnFromHost(
 				if (!transcript.ok) throw hostError(connection.peer, transcript.error);
 				withLogs.push({ ...tab, logs: transcript.value });
 			}
+			// The held messages come home only as they were listed: one another client resumed or
+			// sent on the host while the tabs were read could run there and come home held too
+			// (CodeRabbit on #2171). Read the queue again just before the restore; any change refuses
+			// the move with nothing changed.
+			if (heldQueue.length > 0) {
+				const again = await connection.client.turns.queue.list(pointer.agentId);
+				if (!again.ok) throw hostError(connection.peer, again.error);
+				const unchanged =
+					again.value.length === heldQueue.length &&
+					again.value.every(
+						(item) => item.paused === true && heldQueue.some((held) => held.id === item.itemId)
+					);
+				if (!unchanged) {
+					throw new LiftRunError(
+						'RETURN_QUEUED',
+						`"${agent.name}"'s queue on its host changed while it was being moved back. Nothing changed; move it back again.`
+					);
+				}
+			}
 			returned = {
 				tabs: withLogs,
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),

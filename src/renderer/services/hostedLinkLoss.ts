@@ -29,6 +29,7 @@ import {
 	isSameUserEntry,
 	isUserTurnStart,
 	turnFateAfter,
+	userTurnSpan,
 	userEntryFate,
 	type TranscriptHostKind,
 } from '../../shared/maestro-lib/agents/rules';
@@ -181,9 +182,9 @@ function turnErrorAfter(
 ): AgentError | undefined {
 	let latest: LogEntryRecord | undefined;
 	let attempt: LogEntryRecord | undefined;
-	for (let i = at + 1; i < entries.length; i += 1) {
+	const span = userTurnSpan(entries, at);
+	for (let i = span?.from ?? entries.length; i < (span?.to ?? 0); i += 1) {
 		const entry = entries[i];
-		if (isUserTurnStart(entry)) break;
 		if (entry.source === 'error' && !attempt) attempt = entry;
 		if (entry.turnEnded === true) {
 			if (attempt) latest = attempt;
@@ -310,13 +311,15 @@ function cutTurnMessage(
 /**
  * The newest message the user sent in a tab that its host has: the one its running turn answers.
  * A kept message's bubble (`keptForHost`) never reached the host, so no turn there answers it. A
- * message steered into a turn is part of that turn, never a turn of its own (`isUserTurnStart()`):
- * read as the newest message, a steer would make the turn it joined read as a later one (R47).
+ * message steered into a turn is part of that turn, never a turn of its own (R47); a steer the
+ * agent ran as a turn of its own is that turn's message only once the turn it was steered into
+ * ended (`userTurnSpan()`, R51).
  */
 function lastUserMessage(logs: readonly LogEntry[] | undefined): LogEntry | undefined {
 	for (let i = (logs?.length ?? 0) - 1; i >= 0; i -= 1) {
 		const entry = logs![i];
-		if (isUserTurnStart(entry) && !entry.keptForHost) return entry;
+		if (!isUserTurnStart(entry) || entry.keptForHost) continue;
+		if (userTurnSpan(logs!, i)) return entry;
 	}
 	return undefined;
 }

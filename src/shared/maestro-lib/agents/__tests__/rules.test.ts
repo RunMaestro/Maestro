@@ -7,6 +7,7 @@ import {
 	tabRunsUserEntry,
 	turnFateAfter,
 	isUserTurnStart,
+	userTurnSpan,
 	agentsMovingWithParent,
 	withAgentInGroup,
 	applyAgentConfigPatch,
@@ -1455,17 +1456,38 @@ describe('isUserTurnStart', () => {
 		expect(isUserTurnStart(entry)).toBe(starts);
 	});
 
-	it("ends the first turn at a queued steer: its output is the steer turn's, not the first one's", () => {
-		const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
-		const a1 = { id: 'a1', timestamp: 2, source: 'ai', text: 'Done', turnEnded: true };
-		const b = { id: 'b', timestamp: 3, source: 'user', text: 'And the README', steered: true };
-		const partial = { id: 'o2', timestamp: 4, source: 'stdout', text: 'The READ' };
-		expect(turnFateAfter([u1, a1, { ...b, steerState: 'queued' }, partial], 0, 'desktop')).toBe(
-			'answered'
-		);
-		expect(turnFateAfter([u1, a1, { ...b, steerState: 'queued' }, partial], 2, 'desktop')).toBe(
-			'unended'
-		);
+	// The steer is written while the turn it was sent into still runs, before that turn's answer
+	// ends (CodeRabbit on #2171): that turn reads its own answer, and the steer's turn begins after
+	// that answer's end stamp.
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
+	const partialA = { id: 'oa', timestamp: 2, source: 'stdout', text: 'The docs s' };
+	const steer = {
+		id: 'b',
+		timestamp: 3,
+		source: 'user',
+		text: 'And the README',
+		steered: true,
+		steerState: 'queued',
+	};
+	const endA = { id: 'ea', timestamp: 4, source: 'stdout', text: 'ay...', turnEnded: true };
+	const partialB = { id: 'ob', timestamp: 5, source: 'stdout', text: 'The READ' };
+
+	it('reads the first turn to its own end past a queued steer, and the steer from there', () => {
+		const logs = [u1, partialA, steer, endA, partialB];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 4 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 4, to: 5 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('unended');
+		const answeredB = [...logs.slice(0, 4), { ...partialB, turnEnded: true }];
+		expect(turnFateAfter(answeredB, 2, 'desktop')).toBe('answered');
+	});
+
+	it("has the steer's turn not begun while the turn it was sent into still runs", () => {
+		const logs = [u1, partialA, steer];
+		expect(userTurnSpan(logs, 2)).toBeNull();
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('unended');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('unended');
+		expect(hostRetriesTurn(logs, 2)).toBe(false);
 	});
 });
 
