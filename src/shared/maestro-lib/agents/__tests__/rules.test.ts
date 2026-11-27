@@ -1378,6 +1378,17 @@ describe('turnFateAfter', () => {
 			'desktop',
 			'answered',
 		],
+		// CodeRabbit on #2167: a note after an empty retry's end does not undo that end.
+		[
+			'an errored attempt, an empty retry, then a note',
+			[
+				{ ...stamped(u1), turnEndedAt: 30 },
+				{ ...stamped(error), timestamp: 10 },
+				{ id: 'n2', timestamp: 40, source: 'system', text: 'Auto Run paused' },
+			],
+			'headless',
+			'answered',
+		],
 		['nothing after it', [u1], 'headless', 'unended'],
 		['only a later message answered', [u1, u2, a2], 'headless', 'unended'],
 		['a host too old to stamp: headless text is its answer', [u1, partial], 'headless', 'answered'],
