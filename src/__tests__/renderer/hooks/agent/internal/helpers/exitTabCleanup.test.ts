@@ -119,5 +119,37 @@ describe('exitTabCleanup helpers', () => {
 				['a2', true],
 			]);
 		});
+
+		// Parity R63 (a): the first turn ended on the queued steer (its last entry); the steer's own
+		// follow-up then exits with nothing that stays. Its end goes on the steer as that follow-up's
+		// message, never on the first message again, so the steer reads answered, not unended.
+		it("stamps a queued steer's empty follow-up on the steer, after the earlier turn ended on it", () => {
+			const steer = log({
+				id: 's',
+				source: 'user',
+				steered: true,
+				steerState: 'queued',
+			});
+			const first = cleanupExitedTabLogs(
+				[log({ id: 'u', source: 'user' }), log({ id: 'a', source: 'stdout' }), steer],
+				'tab-1',
+				{ showThinking: 'on' }
+			);
+			expect(first.map((l) => [l.id, l.turnEnded === true])).toEqual([
+				['u', false],
+				['a', false],
+				['s', true],
+			]);
+			expect(turnFateAfter(first, 2, 'desktop')).toBe('unended');
+			const followUp = cleanupExitedTabLogs(
+				[...first, log({ id: 'k', source: 'thinking' })],
+				'tab-1',
+				{ showThinking: 'on' }
+			);
+			expect(followUp[0].turnEnded).toBeUndefined();
+			expect(followUp[2]).toMatchObject({ turnEnded: true, steerTurnEnded: true });
+			expect(turnFateAfter(followUp, 0, 'desktop')).toBe('answered');
+			expect(turnFateAfter(followUp, 2, 'desktop')).toBe('answered');
+		});
 	});
 });

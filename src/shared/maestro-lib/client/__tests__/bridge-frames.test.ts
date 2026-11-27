@@ -54,6 +54,15 @@ describe('parseProcessFrame', () => {
 			kind: 'stream',
 			event: { kind: 'thinking', text: 'hmm' },
 		});
+		// Parity R58: a chunk that is also answer text says so with a third argument, `true`.
+		expect(parseProcessFrame('process:thinking-chunk', [pid, 'Part', true])?.frame).toEqual({
+			kind: 'stream',
+			event: { kind: 'thinking', text: 'Part', answer: true },
+		});
+		expect(parseProcessFrame('process:thinking-chunk', [pid, 'Part', 'yes'])?.frame).toEqual({
+			kind: 'stream',
+			event: { kind: 'thinking', text: 'Part' },
+		});
 		expect(parseProcessFrame('process:session-id', [pid, 'sess-1'])?.frame).toEqual({
 			kind: 'stream',
 			event: { kind: 'session', providerSessionId: 'sess-1' },

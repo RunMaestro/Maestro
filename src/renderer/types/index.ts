@@ -293,6 +293,13 @@ export interface LogEntry {
 	turnEnded?: boolean;
 	// On a user message: when its turn's latest attempt ended with nothing of its own that stays
 	turnEndedAt?: number;
+	// On a queued steer: its own follow-up turn ended on it with nothing of its own that stays
+	// (`markTurnEnded()`); its `turnEnded` may also be the end of the turn it was steered into
+	steerTurnEnded?: boolean;
+	steerTurnEndedAt?: number;
+	// This machine's copy of the reply text a hosted turn streamed before its link was cut, drawn
+	// as an SSH turn's partial reply is (R58); dropped when the host turns out to have answered
+	cutReply?: boolean;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
 	// For user messages - the sender's own save to History choice for this turn (Federation

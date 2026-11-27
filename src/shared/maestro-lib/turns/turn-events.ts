@@ -288,7 +288,12 @@ export function createTurnEventMapper(options: TurnEventMapperOptions): TurnEven
 								// also answer text (Claude's assistant messages): the desktop streams it to the
 								// thinking display and draws the answer from the `result`, which this mapper then
 								// says, so a client never gets the same words twice.
-								out.push({ kind: 'thinking', text: event.text });
+								out.push({
+									kind: 'thinking',
+									text: event.text,
+									// Also answer text: a client draws it as the reply if the turn is cut (R58).
+									...(route.answer ? { answer: true } : {}),
+								});
 							} else if (route.answer) {
 								answerTextSeen = true;
 								out.push({ kind: 'text', text: event.text });

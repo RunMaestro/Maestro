@@ -257,6 +257,43 @@ describe('runLift', () => {
 		}
 	);
 
+	// Parity R63 (c): a lift that replaces a stale host copy plans from the merged record; the
+	// held-message check reads that same record, so a held message there never moves unheld.
+	it('checks held messages on the record the plan is built from when it replaces a stale host copy (R63)', async () => {
+		const conn = connectionWith();
+		const capabilitiesCall = vi.fn().mockResolvedValue({ ok: true, value: [] });
+		const client = conn.connection.client as unknown as Record<string, unknown>;
+		client.connection = { capabilities: capabilitiesCall };
+		(client.agents as Record<string, unknown>).get = vi.fn().mockResolvedValue({
+			ok: true,
+			value: { id: 'host-old', name: 'Docs', liftedFromAgentId: 'agent-1', aiTabs: [] },
+		});
+		client.turns = { queue: { list: vi.fn().mockResolvedValue({ ok: true, value: [] }) } };
+		client.tabs = {
+			list: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+			transcript: vi.fn(),
+		};
+		const agent = sshAgent({
+			leftOnHost: { peer: 'build-box', agentId: 'host-old', at: 1 },
+			executionQueue: [
+				{ id: 'q1', tabId: 'tab-1', type: 'message', text: 'ready' },
+				{ id: 'q2', tabId: 'tab-1', type: 'message', text: 'held', paused: true },
+			],
+		} as Partial<AgentRecord>);
+		const { deps, importAgent } = depsWith(agent, {}, conn);
+		await runLift('agent-1', {}, deps);
+		expect(capabilitiesCall).toHaveBeenCalledTimes(1);
+		expect(importAgent.mock.calls[0][0]).toMatchObject({
+			replacesAgentId: 'host-old',
+			queue: [{ tabId: 'tab-1', text: 'ready' }],
+		});
+		expect(deps.setPointer).toHaveBeenCalledWith(
+			'agent-1',
+			{ peer: 'build-box', agentId: 'host-1', at: NOW },
+			['q1']
+		);
+	});
+
 	it('asks nothing about held messages when the queue holds none (R57)', async () => {
 		const conn = connectionWith();
 		const capabilitiesCall = vi.fn();

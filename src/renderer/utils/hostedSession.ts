@@ -30,7 +30,7 @@ import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/records';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import { HAND_OVER_MAX_MS } from '../../shared/maestro-lib/turns/queue';
-import { logsShownMidTurn, type AgentError } from '../../shared/types';
+import { logsKeptAtTurnEnd, logsShownMidTurn, type AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem, Session, UnifiedTabRef } from '../types';
 import { mirrorLogEntry, mirrorQueuedItem, mirrorTab, mirrorUsageStats } from './peerMirrorView';
 import { isAiTabHidden } from './unifiedTabOrderUtils';
@@ -138,6 +138,88 @@ export function hostLinkNoteId(
 		if (logs[i].source === 'user' && !logs[i].keptForHost) return `${prefix}${logs[i].id}`;
 	}
 	return `${prefix}${error.timestamp}`;
+}
+
+/**
+ * The rows a turn cut by a lost link leaves, as an SSH turn's do when its link is cut, drawn in
+ * time order with this machine's own entries (the retry card the cut raised), never as a live tail
+ * after them (R59): the turn's message, the answer text it streamed (`text` events, and the answer
+ * it streamed as thinking chunks, which a desktop flushes as the reply when the process ends with
+ * no result), and the thinking and tool cards the tab's Thinking mode keeps at a turn's end, in
+ * the order they streamed (CodeRabbit on #2177). They become this machine's own entries, so they
+ * stay once the turn's live tail is gone: the turn's rows (`cutReply`) also after the resend's
+ * answer lands (R58), and the message until the host's transcript holds it under the same id.
+ */
+function cutTurnLogs(
+	tabId: string,
+	local: LogEntry[],
+	live: LiveTurn,
+	thinking: AITab['showThinking']
+): LogEntry[] {
+	const rows: LogEntry[] = logsKeptAtTurnEnd(live.entries, thinking).map((record) =>
+		record.source === 'user'
+			? mirrorLogEntry(record)
+			: { ...mirrorLogEntry(record), cutReply: true }
+	);
+	if (live.answerText && !live.entries.some((record) => record.source === 'stdout')) {
+		rows.push({
+			id: `host-cut-reply-${tabId}-${live.startedAt}`,
+			timestamp: live.answerAt ?? live.startedAt,
+			source: 'stdout',
+			text: live.answerText,
+			cutReply: true,
+		});
+	}
+	// Drawn live until now (`hostLive`): the live row gives way to this machine's copy. A copy
+	// already made follows its live row's text while that row still moves on.
+	const held = new Map(
+		local.filter((entry) => !entry.hostLive).map((entry) => [entry.id, entry] as const)
+	);
+	const moved = new Map(
+		rows
+			.filter((entry) => entry.cutReply && held.get(entry.id)?.cutReply)
+			.filter((entry) => held.get(entry.id)!.text !== entry.text)
+			.map((entry) => [entry.id, entry.text] as const)
+	);
+	const added = rows.filter((entry) => !held.has(entry.id));
+	if (added.length === 0 && moved.size === 0) return local;
+	const addedIds = new Set(added.map((entry) => entry.id));
+	let next = local
+		.filter((entry) => !(entry.hostLive && addedIds.has(entry.id)))
+		.map((entry) => (moved.has(entry.id) ? { ...entry, text: moved.get(entry.id)! } : entry));
+	for (const entry of added) next = insertByTime(next, entry);
+	return next;
+}
+
+/**
+ * `logs` with a host row `entry` before the first entry written after it. A card or note this
+ * machine wrote (the retry card, the link note) counts as after a host row written up to
+ * `HOST_COPY_CLOCK_SKEW_MS` later by the host's clock: a host clock ahead of this one never puts
+ * the cut turn's rows below the card the cut raised (CodeRabbit on #2177).
+ */
+function insertByTime(logs: LogEntry[], entry: LogEntry): LogEntry[] {
+	const at = logs.findIndex((other) => !writtenBefore(other, entry.timestamp));
+	if (at === -1) return [...logs, entry];
+	// The turn's message keeps that place once the host's saved copy takes over from this one
+	// (`keptPlace`, as a kept bubble's does, R33): drawn by the host's time, a clock ahead of this
+	// one would put it below the card again (CodeRabbit on #2177).
+	const next = logs[at];
+	const placed =
+		entry.source === 'user' && next.timestamp < entry.timestamp
+			? { ...entry, keptPlace: next.timestamp }
+			: entry;
+	return [...logs.slice(0, at), placed, ...logs.slice(at)];
+}
+
+/**
+ * Whether the entry `local` comes before a cut turn's host row stamped `hostAt` by the host's
+ * clock. A card or note this machine wrote about the cut (the retry card, the link note) comes
+ * after any such row stamped up to `HOST_COPY_CLOCK_SKEW_MS` after it, the bound included: a host
+ * clock ahead of this one never draws the cut turn's rows below it (CodeRabbit on #2177).
+ */
+function writtenBefore(local: LogEntry, hostAt: number): boolean {
+	const ownNote = local.retryOutageId !== undefined || local.agentError?.source === 'host-link';
+	return ownNote ? local.timestamp + HOST_COPY_CLOCK_SKEW_MS < hostAt : local.timestamp <= hostAt;
 }
 
 /**
@@ -839,14 +921,24 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 	}
 	// The live tail shows what a local turn shows under the tab's Thinking mode: with it off, no
 	// thinking row (Claude's reply streams as thinking chunks too), so the reply is drawn once.
+	// A turn cut by the lost link ended here: its tail is drawn as a local turn's at its end.
 	const logsFor = (
 		tabId: string,
 		local: LogEntry[],
-		thinking: AITab['showThinking']
+		thinking: AITab['showThinking'],
+		cut = false
 	): LogEntry[] => {
 		const key = liveTurnKey(agent.id, tabId);
 		const slot = input.transcripts?.[key];
 		const live = input.liveTurns?.[key];
+		if (cut && live) {
+			// Nothing of it is a live tail any more: its rows are this machine's.
+			return mergeHostedLogs(
+				cutTurnLogs(tabId, local, live, thinking),
+				slot?.loaded ? slot.entries : undefined,
+				undefined
+			);
+		}
 		const tail = live?.entries ?? slot?.carryover;
 		return mergeHostedLogs(
 			local,
@@ -920,7 +1012,12 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 		const projected = projectTab(
 			reported,
 			host,
-			logsFor(local.id, local.logs ?? [], local.showThinking),
+			logsFor(
+				local.id,
+				local.logs ?? [],
+				local.showThinking,
+				host.state === 'busy' && input.linkLost !== undefined
+			),
 			input.liveTurns?.[liveTurnKey(agent.id, local.id)],
 			input.viewing === true && local.id === session.activeTabId,
 			hostingAt ?? local.hostSeenAt,

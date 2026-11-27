@@ -95,6 +95,19 @@ describe('framesForEvent', () => {
 			frame: { kind: 'stream', event: { kind: 'text', text: 'hello' } },
 		});
 
+		// Parity R58: a thinking chunk that is also answer text keeps the flag across the wire.
+		const answer = framesForEvent(
+			turn({ kind: 'thinking', at, text: 'Part', answer: true }),
+			state
+		);
+		expect(answer[0].args).toEqual([id, 'Part', true]);
+		expect(parsed(answer[0])?.frame).toEqual({
+			kind: 'stream',
+			event: { kind: 'thinking', text: 'Part', answer: true },
+		});
+		const reasoning = framesForEvent(turn({ kind: 'thinking', at, text: 'Hmm' }), state);
+		expect(reasoning[0].args).toEqual([id, 'Hmm']);
+
 		const tool = framesForEvent(
 			turn({
 				kind: 'tool',
