@@ -13,6 +13,7 @@ import {
 	HOST_TAB_EDIT_ECHO_MS,
 	pruneHostedTabBooks,
 	renameHostedTab,
+	renameHostedTabSettled,
 	starHostedTab,
 } from '../../../renderer/services/hostedTurns';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -156,6 +157,70 @@ describe('a tab edited here is drawn once in every mode (L36)', () => {
 			await vi.advanceTimersByTimeAsync(HOST_TAB_EDIT_ECHO_MS + 1);
 		});
 		expect(tabOf().name).toBe('Main');
+	});
+
+	it('keeps a star toggled back before the host reports either change (Greptile and CodeRabbit on #2179)', async () => {
+		await setUp('hosted');
+		const answers: Array<(value: unknown) => void> = [];
+		act$.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+		const session = useSessionStore.getState().sessions[0];
+		updateAiTab('row', 't1', (tab) => ({ ...tab, starred: true }));
+		starHostedTab(session, 't1', true);
+		updateAiTab('row', 't1', (tab) => ({ ...tab, starred: false }));
+		starHostedTab(session, 't1', false);
+		await flush();
+		// The host's report of the first star lands before the second change reaches it.
+		hostReports({ id: 't1', name: 'Main', starred: true });
+		await flush();
+		for (const answer of answers) answer({ ok: true, result: { kind: 'star-tab', tabId: 't1' } });
+		await flush();
+		hostReports({ id: 't1', name: 'Main', starred: false });
+		await flush();
+		expect(stars).toEqual([true, false]);
+		expect(tabOf().starred).toBe(false);
+	});
+
+	it('keeps a rename when an earlier rename to the same name ends its wait (CodeRabbit on #2179)', async () => {
+		vi.useFakeTimers();
+		await setUp('hosted');
+		const rename = async (name: string) => {
+			updateAiTab('row', 't1', (tab) => ({ ...tab, name }));
+			renameHostedTab(useSessionStore.getState().sessions[0], 't1', name);
+			await flush();
+		};
+		const wait = (ms: number) =>
+			act(async () => {
+				await vi.advanceTimersByTimeAsync(ms);
+			});
+		await rename('A');
+		await wait(HOST_TAB_EDIT_ECHO_MS / 2);
+		await rename('B');
+		await wait(HOST_TAB_EDIT_ECHO_MS / 4);
+		await rename('A');
+		// The first rename's wait ends; the third is still on its way.
+		await wait(HOST_TAB_EDIT_ECHO_MS / 4 + 1);
+		expect(tabOf().name).toBe('A');
+		expect(names).not.toContain('Main');
+	});
+
+	it('draws a name saved in Rename Tab over an auto-name still waiting for its report (Greptile on #2179)', async () => {
+		await setUp('hosted');
+		updateAiTab('row', 't1', (tab) => ({ ...tab, name: 'Auto' }));
+		renameHostedTab(useSessionStore.getState().sessions[0], 't1', 'Auto');
+		await flush();
+		// What the Rename Tab modal does: the host first, then the name here.
+		const saved = await renameHostedTabSettled(
+			useSessionStore.getState().sessions[0],
+			't1',
+			'Mine'
+		);
+		expect(saved).toEqual({ saved: true });
+		updateAiTab('row', 't1', (tab) => ({ ...tab, name: 'Mine' }));
+		await flush();
+		hostReports({ id: 't1', name: 'Mine' });
+		await flush();
+		expect(tabOf().name).toBe('Mine');
+		expect(names).toEqual(['Auto', 'Mine']);
 	});
 
 	it('keeps a later edit when an earlier one settles', async () => {
