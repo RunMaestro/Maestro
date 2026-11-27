@@ -270,8 +270,11 @@ describe('peerMirrorStore', () => {
 				.getState()
 				.applyPush(push('gpu', { type: 'agent.history', agentId: 'b1' }));
 			expect(versions()['gpu:b1']).toBe(2);
+			const announced = usePeerMirrorStore.getState();
 			usePeerMirrorStore.getState().noteHostHistoryEntry('gpu', 'b1');
 			expect(versions()['gpu:b1']).toBe(2);
+			// No change is no new state, so no listener runs (CodeRabbit on #2176).
+			expect(usePeerMirrorStore.getState()).toBe(announced);
 			// A connection that could not resume may reach an older build: the find bumps again.
 			usePeerMirrorStore.getState().applyPush(push('gpu', { type: 'peer.stale' }));
 			expect(versions()['gpu:b1']).toBe(3);

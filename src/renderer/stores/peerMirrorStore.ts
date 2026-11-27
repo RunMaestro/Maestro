@@ -431,6 +431,6 @@ export const usePeerMirrorStore = create<PeerMirrorState>()((set, get) => ({
 		set((state) =>
 			state.peers[peerId] && !state.historyAnnounced[peerId]
 				? bumpHistory(state, peerId, [agentId])
-				: {}
+				: state
 		),
 }));

@@ -869,6 +869,44 @@ describe('PeerMirrorService', () => {
 			expect(historyPushes()).toHaveLength(3);
 		});
 
+		// CodeRabbit on #2176: a push still waiting after a resync would tell the windows the build
+		// it reached announces its writes, which an older build never does.
+		it('drops a History push still waiting when the peer goes stale, and merges the next write anew', async () => {
+			const timers: Array<() => void> = [];
+			const clearTimer = vi.fn();
+			const a = fakeHost('a');
+			const h = harness(
+				[remoteOf('a')],
+				{ a },
+				{
+					setTimer: (cb) => {
+						timers.push(cb);
+						return timers.length;
+					},
+					clearTimer,
+				}
+			);
+			const historyPushes = () => h.pushes.filter((p) => p.event.type === 'agent.history');
+			h.service.start();
+			await settle();
+			timers.splice(0);
+			a.emit({ type: 'history.changed', agentId: 'a-a1' });
+			expect(timers).toHaveLength(1);
+			h.service.reloadAfterWake();
+			await settle();
+			expect(h.types('a')).toContain('peer.stale');
+			expect(clearTimer).toHaveBeenCalledWith(1);
+			// Even a timer that runs anyway sends nothing.
+			const waiting = timers.splice(0);
+			waiting.forEach((cb) => cb());
+			expect(historyPushes()).toEqual([]);
+			a.emit({ type: 'history.changed', agentId: 'a-a1' });
+			timers.splice(0).forEach((cb) => cb());
+			expect(historyPushes()).toEqual([
+				{ peerId: 'a', event: { type: 'agent.history', agentId: 'a-a1' } },
+			]);
+		});
+
 		it('sends no merged History push for a peer dropped or a service stopped during the wait', async () => {
 			const a = fakeHost('a');
 			const b = fakeHost('b');

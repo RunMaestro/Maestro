@@ -45,6 +45,7 @@ import {
 	clearTabStale,
 	createMirroredPeer,
 	markAllTabsStale,
+	MIRROR_HISTORY_PUSH_MERGE_MS,
 	replacePeerAgents,
 	setAgentQueue,
 	withReadQueueImages,
@@ -114,12 +115,7 @@ export const MIRROR_IDLE_REDIAL_MAX_MS = 5 * 60_000;
  * nothing, so its list is read again this soon. A host that says it keeps the list until it does.
  */
 export const MIRROR_UNANNOUNCED_HISTORY_TTL_MS = 5_000;
-/**
- * How long the `agent.history` pushes of one agent are merged into one: a desktop host sends one
- * History write as `history:entryAdded` plus the two to four `fs.watch` events macOS fires for it,
- * and each push makes an open History panel read the host's whole list again (L34).
- */
-export const MIRROR_HISTORY_PUSH_MERGE_MS = 150;
+export { MIRROR_HISTORY_PUSH_MERGE_MS };
 
 export interface PeerMirrorServiceDeps {
 	/** The stored SSH remotes. Read on every reconcile; nothing is cached. */
@@ -212,7 +208,7 @@ interface PeerEntry {
 	 * The agents whose `agent.history` push waits out `MIRROR_HISTORY_PUSH_MERGE_MS`, with its
 	 * timer: more History writes meanwhile join that one push.
 	 */
-	historyPushes?: Map<string, unknown>;
+	historyPushes?: Map<string, { timer: unknown }>;
 }
 
 export class PeerMirrorService {
@@ -887,8 +883,13 @@ export class PeerMirrorService {
 			} else if (event.type === 'peer.stale' || event.type === 'peer.agents') {
 				this.forgetTranscripts(entry);
 				this.forgetHistory(entry);
-				// A connection that could not resume may have reached another build of the host.
-				if (event.type === 'peer.stale') delete entry.announcesHistory;
+				// A connection that could not resume may have reached another build of the host. A
+				// History push still waiting would tell the windows that build announces its writes;
+				// the stale push already makes every open panel read again.
+				if (event.type === 'peer.stale') {
+					delete entry.announcesHistory;
+					this.cancelHistoryPushes(entry);
+				}
 			}
 			this.emit(entry, event);
 		}
@@ -927,15 +928,24 @@ export class PeerMirrorService {
 		if (pushes.has(agentId)) return;
 		const setTimer =
 			this.deps.setTimer ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
-		pushes.set(
-			agentId,
-			setTimer(() => {
-				pushes.delete(agentId);
-				if (entry.dropped || this.stopped) return;
-				this.forgetHistory(entry, agentId);
-				this.emit(entry, { type: 'agent.history', agentId });
-			}, MIRROR_HISTORY_PUSH_MERGE_MS)
-		);
+		const wait: { timer: unknown } = { timer: null };
+		pushes.set(agentId, wait);
+		wait.timer = setTimer(() => {
+			// Cancelled meanwhile (a resync, a drop): another push may be waiting in its place.
+			if (pushes.get(agentId) !== wait) return;
+			pushes.delete(agentId);
+			if (entry.dropped || this.stopped) return;
+			this.forgetHistory(entry, agentId);
+			this.emit(entry, { type: 'agent.history', agentId });
+		}, MIRROR_HISTORY_PUSH_MERGE_MS);
+	}
+
+	/** Drop the History pushes still waiting out their merge, and their timers. */
+	private cancelHistoryPushes(entry: PeerEntry): void {
+		const clearTimer =
+			this.deps.clearTimer ?? ((handle: unknown) => clearTimeout(handle as NodeJS.Timeout));
+		for (const wait of entry.historyPushes?.values() ?? []) clearTimer(wait.timer);
+		entry.historyPushes?.clear();
 	}
 
 	private armTurnTimer(): void {
@@ -999,10 +1009,7 @@ export class PeerMirrorService {
 
 	private async detach(entry: PeerEntry): Promise<void> {
 		entry.dropped = true;
-		for (const timer of entry.historyPushes?.values() ?? []) {
-			(this.deps.clearTimer ?? ((handle) => clearTimeout(handle as NodeJS.Timeout)))(timer);
-		}
-		entry.historyPushes?.clear();
+		this.cancelHistoryPushes(entry);
 		for (const waiter of [...entry.linkWaiters]) waiter();
 		for (const unsubscribe of entry.unsubscribes) unsubscribe();
 		entry.unsubscribes = [];
