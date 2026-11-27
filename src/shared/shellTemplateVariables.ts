@@ -483,9 +483,10 @@ class ShellQuoteTracker {
 				return;
 			}
 			if (ch === '\\') {
+				// Keep a pending `$(` opener: if the next character is a newline, the shell
+				// removes the pair and the opener carries on (`$` `(` `\`-newline `(` is `$((`).
+				// Any other escaped character clears it, in the branch above.
 				this.escaped = true;
-				this.pendingDollar = false;
-				this.pendingDollarParen = false;
 			} else if (ch === '$') {
 				this.pendingDollar = true;
 				this.pendingDollarParen = false;
@@ -507,8 +508,6 @@ class ShellQuoteTracker {
 		if (!heredoc.quoted && this.escaped) {
 			this.line = this.line.slice(0, -1);
 			this.escaped = false;
-			this.pendingDollar = false;
-			this.pendingDollarParen = false;
 			return;
 		}
 		this.finishHeredocLine(heredoc);

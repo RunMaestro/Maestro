@@ -325,13 +325,14 @@ export const LAUNCHABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Scripts, ClickOnce references/manifests, and App Installer packages Windows
+ * Scripts, Windows Script Host control files, ClickOnce references/manifests, and App Installer packages Windows
  * runs or installs on open. Launchable only on Windows: other systems open a
  * `.js` in an editor.
  */
 const WINDOWS_LAUNCHABLE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
 	'js',
 	'jse',
+	'wsh',
 	'appref-ms',
 	'application',
 	'appinstaller',

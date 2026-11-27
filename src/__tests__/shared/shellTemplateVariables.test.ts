@@ -281,6 +281,14 @@ describe('substituteShellTemplateVariables', () => {
 			['double-quoted "$(( ... ))"', 'echo "$(( {{CUE_GH_TITLE}} + 1 ))"'],
 			['Bash (( ... )) command', 'if (( {{CUE_GH_TITLE}} > 0 )); then echo ok; fi'],
 			['unquoted heredoc $(( ... ))', 'cat <<EOF\n$(( {{CUE_GH_TITLE}} + 1 ))\nEOF'],
+			[
+				'unquoted heredoc $( then a backslash-newline then (',
+				'cat <<EOF\n$(\\\n( {{CUE_GH_TITLE}} + 1 ))\nEOF',
+			],
+			[
+				'unquoted heredoc $ then a backslash-newline then ((',
+				'cat <<EOF\n$\\\n(( {{CUE_GH_TITLE}} + 1 ))\nEOF',
+			],
 		])('refuses a placeholder inside %s', (_label, template) => {
 			expect(() => substituteShellTemplateVariables(template, titled('a[$(id)]'))).toThrow(
 				ShellTemplateError
@@ -288,6 +296,14 @@ describe('substituteShellTemplateVariables', () => {
 			expect(() => substituteShellTemplateVariables(template, titled('a[$(id)]'))).toThrow(
 				/shell arithmetic expression/
 			);
+		});
+
+		it('keeps an escaped paren ordinary: $\\( is not an arithmetic opener', () => {
+			const result = substituteShellTemplateVariables(
+				'cat <<EOF\n$\\(( {{CUE_GH_TITLE}}\nEOF',
+				titled('hello')
+			);
+			expect(result.command).toContain(`\${${TITLE}}`);
 		});
 
 		it('does not treat << inside $(( ... )) or (( ... )) as a heredoc', () => {

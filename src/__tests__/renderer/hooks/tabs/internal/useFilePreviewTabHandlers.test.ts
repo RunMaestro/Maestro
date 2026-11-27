@@ -1103,6 +1103,52 @@ describe('useFilePreviewTabHandlers', () => {
 				navigationIndex: 0,
 			});
 		});
+		it('drops a pending history read once the tab is replaced and returns to the path it began on', async () => {
+			setupDraftOnB({
+				editContent: undefined,
+				editContentPath: undefined,
+				navigationHistory: [
+					{ path: '/repo/a.ts', name: 'a' },
+					{ path: '/repo/b.ts', name: 'b' },
+				],
+				navigationIndex: 1,
+			});
+			let resolveA!: (value: string | null) => void;
+			vi.mocked(window.maestro.fs.readFile).mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveA = resolve;
+				})
+			);
+			const { result } = renderHook(() => useFilePreviewTabHandlers());
+
+			let navA!: Promise<void>;
+			act(() => {
+				navA = result.current.handleFileTabNavigateToIndex(0);
+			});
+			// The user opens another file in the tab, then B again: the tab shows B, as it did
+			// when the history read began.
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/repo/c.ts', name: 'c.ts', content: 'c' },
+					{ openInNewTab: false }
+				);
+			});
+			act(() => {
+				result.current.handleOpenFileTab(
+					{ path: '/repo/b.ts', name: 'b.ts', content: 'b newest' },
+					{ openInNewTab: false }
+				);
+			});
+
+			await act(async () => {
+				resolveA('a stale');
+				await navA;
+			});
+			expect(getSession().filePreviewTabs[0]).toMatchObject({
+				path: '/repo/b.ts',
+				content: 'b newest',
+			});
+		});
 	});
 
 	// -----------------------------------------------------------------------

@@ -157,6 +157,7 @@ describe('isLaunchableFile', () => {
 			'C:\\Users\\me\\run.js',
 			'C:\\Users\\me\\run.jse',
 			'C:\\Users\\me\\Launch.appref-ms',
+			'C:\\Users\\me\\Launch.wsh',
 			'C:\\Users\\me\\Setup.application',
 			'C:\\Users\\me\\App.appinstaller',
 			'C:\\Users\\me\\App.msixbundle',

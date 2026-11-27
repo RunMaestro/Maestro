@@ -185,6 +185,14 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 					const currentTab = s.filePreviewTabs.find((tab) => tab.id === currentTabId);
 					const { extension, nameWithoutExtension } = getFileNameParts(file.name);
 
+					// A replacement is the user's latest choice for this tab: a history read still
+					// in flight must not land after it and put the older entry back. The marker
+					// only ever counts up, so running this twice is harmless.
+					historyNavRequestRef.current.set(
+						currentTabId,
+						(historyNavRequestRef.current.get(currentTabId) ?? 0) + 1
+					);
+
 					const updatedTabs = s.filePreviewTabs.map((tab) => {
 						if (tab.id !== currentTabId) return tab;
 
