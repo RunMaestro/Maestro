@@ -198,6 +198,42 @@ describe('runPeerAgentAction', () => {
 		}
 	});
 
+	// Parity M27: a desktop host's Stop names the queue items whose turns it ended; one that names
+	// nothing has queue frames that can trail its answer, and the answer says so.
+	it("answers the queue items every tab's Stop named, or that a desktop host named nothing (M27)", async () => {
+		const { client, asClient } = fakeClient();
+		const host = vi.fn(() => ({ kind: 'desktop' as const, label: 'desktop' }));
+		(client as Record<string, unknown>).connection = { host };
+		client.turns.interrupt.mockImplementation(async (_agentId: string, tabId: string) =>
+			ok({ stopped: true, stoppedItemIds: tabId === 't1' ? ['q-1'] : [] })
+		);
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'interrupt' })).toEqual(
+			ok({
+				kind: 'interrupt',
+				targetTabIds: ['t1', 't3'],
+				stoppedTabIds: ['t1', 't3'],
+				stoppedItemIds: ['q-1'],
+			})
+		);
+		// One tab's answer names nothing: the Stop is unnamed, never half named.
+		client.turns.interrupt.mockImplementation(async (_agentId: string, tabId: string) =>
+			ok(tabId === 't1' ? { stopped: true, stoppedItemIds: ['q-1'] } : { stopped: true })
+		);
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'interrupt' })).toEqual(
+			ok({
+				kind: 'interrupt',
+				targetTabIds: ['t1', 't3'],
+				stoppedTabIds: ['t1', 't3'],
+				queueFramesTrail: true,
+			})
+		);
+		// A headless host's frames reach the client before its answer: nothing to say.
+		host.mockReturnValue({ kind: 'headless' as never, label: 'headless' });
+		expect(await runPeerAgentAction(asClient, agent, { kind: 'interrupt' })).toEqual(
+			ok({ kind: 'interrupt', targetTabIds: ['t1', 't3'], stoppedTabIds: ['t1', 't3'] })
+		);
+	});
+
 	it('stops only the named tab, busy or not', async () => {
 		const { client, asClient } = fakeClient();
 		expect(await runPeerAgentAction(asClient, agent, { kind: 'interrupt', tabId: 't2' })).toEqual(

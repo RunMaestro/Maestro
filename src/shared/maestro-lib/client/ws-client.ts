@@ -56,6 +56,7 @@ import { validateGroupAppearance } from '../../groupAppearance';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../webLogin';
 import { parseWireAskerKey } from '../../crossAgentTypes';
 import { parseWireClosedTabs } from '../../closedTabHistory';
+import { INTERRUPT_TURN_REPLY_TIMEOUT_MS, parseStoppedItemIds } from '../../turnInterrupt';
 import type { ClosedTabSummary } from '../../closedTabCommands';
 import type { AgentError, HistoryEntry, SshRemoteConfig } from '../../types';
 import {
@@ -2064,13 +2065,33 @@ class WsMaestroClient implements MaestroClient {
 	private async turnsInterrupt(
 		agentId: string,
 		tabId: string
-	): Promise<ClientResult<{ stopped: boolean }>> {
+	): Promise<ClientResult<{ stopped: boolean; stoppedItemIds?: string[] }>> {
 		const gate = this.requireConnected('turns.interrupt');
 		if (gate) return gate;
 		const state = this.turnStates.get(this.turnKey(agentId, tabId));
 		const previous = state?.interruptRequested ?? false;
 		// Record the request BEFORE asking: the exit can arrive ahead of the reply.
 		if (state?.running) state.interruptRequested = true;
+
+		// A desktop host runs its own Stop (`interruptTurn()`, as `maestro-cli interrupt` does), which
+		// names the queue item whose turn it ended: its queue frames trail its writes, so only this
+		// answer says which waiting message was the stopped turn (M27). A host that cannot (headless,
+		// which has no `interrupt_turn`, or one too old) takes the process signal below.
+		if (this.hostInfo?.kind === 'desktop') {
+			const named = await this.send(
+				'turns.interrupt',
+				{ type: 'interrupt_turn', sessionId: agentId, tabId },
+				'interrupt_turn_result',
+				{ timeoutMs: INTERRUPT_TURN_REPLY_TIMEOUT_MS }
+			);
+			if (named.ok && named.value.success === true) {
+				const stopped =
+					Array.isArray(named.value.stoppedTabIds) && named.value.stoppedTabIds.includes(tabId);
+				if (!stopped && state) state.interruptRequested = previous;
+				const stoppedItemIds = parseStoppedItemIds(named.value.stoppedItemIds);
+				return ok({ stopped, ...(stoppedItemIds ? { stoppedItemIds } : {}) });
+			}
+		}
 
 		let stopped = false;
 		const first = await this.invoke<boolean>('turns.interrupt', 'process:interrupt', [

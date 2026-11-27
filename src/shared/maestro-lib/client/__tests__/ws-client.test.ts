@@ -1153,6 +1153,35 @@ describe('createWsMaestroClient', () => {
 			});
 		});
 
+		it("stops a desktop host's tab through the host's own Stop, which names the queue item it ended (M27)", async () => {
+			bridge.typed.set(
+				'interrupt_turn',
+				reply('interrupt_turn_result', {
+					success: true,
+					stoppedTabIds: [A1_TAB],
+					// Only bounded strings are kept: anything else off the wire goes.
+					stoppedItemIds: ['q-9', 7, 'x'.repeat(201)],
+				})
+			);
+			expect(await client.turns.interrupt(A1, A1_TAB)).toEqual({
+				ok: true,
+				value: { stopped: true, stoppedItemIds: ['q-9'] },
+			});
+			expect(bridge.sent('interrupt_turn')).toMatchObject([{ sessionId: A1, tabId: A1_TAB }]);
+			expect(bridge.invoked('process:interrupt')).toEqual([]);
+		});
+
+		it('takes the process signal from a desktop host too old for its own Stop, and names nothing (M27)', async () => {
+			// No responder: the host echoes `interrupt_turn`, as a build without it does.
+			bridge.invokes.set('process:interrupt', (args) => args[0] === PID);
+			expect(await client.turns.interrupt(A1, A1_TAB)).toEqual({
+				ok: true,
+				value: { stopped: true },
+			});
+			expect(bridge.sent('interrupt_turn')).toHaveLength(1);
+			expect(bridge.invoked('process:interrupt').map((m) => m.args)).toEqual([[PID]]);
+		});
+
 		it('lists and removes queued items', async () => {
 			bridge.typed.set(
 				'list_queue',

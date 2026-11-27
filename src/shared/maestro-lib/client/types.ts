@@ -752,8 +752,16 @@ export type TurnEvent =
 export interface TurnsApi {
 	/** CH-2, CH-4. Runs now when the agent is idle; otherwise queues behind its current turn. */
 	send(agentId: string, tabId: string, input: TurnInput): Promise<ClientResult<TurnSendReceipt>>;
-	/** CH-4. Stop the tab's running turn. `stopped: false` when nothing was running. */
-	interrupt(agentId: string, tabId: string): Promise<ClientResult<{ stopped: boolean }>>;
+	/**
+	 * CH-4. Stop the tab's running turn. `stopped: false` when nothing was running.
+	 * `stoppedItemIds`: the host's queue items whose turn the stop ended, when the host names
+	 * them (a desktop host of this build, whose queue frames can trail its answer); absent when
+	 * it does not.
+	 */
+	interrupt(
+		agentId: string,
+		tabId: string
+	): Promise<ClientResult<{ stopped: boolean; stoppedItemIds?: string[] }>>;
 	readonly queue: {
 		list(agentId: string): Promise<ClientResult<QueuedTurn[]>>;
 		remove(agentId: string, itemId: string): Promise<ClientResult<{ removed: boolean }>>;

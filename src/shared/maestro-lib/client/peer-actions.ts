@@ -171,22 +171,40 @@ async function queueReadBeforeStop(
 	}
 }
 
+/**
+ * What a Stop's answer tells the client about the host's queue at the Stop, for the consults of
+ * waiting messages the Stop may have ended (M25, M27).
+ */
+export interface HostStopAnswer {
+	/**
+	 * The host's queue item ids still waiting, read from the host just before it was told to stop
+	 * (its live queue, on a desktop host too): one waiting here waited through the Stop, one gone
+	 * had started or gone before it (M25). Absent when the read failed.
+	 */
+	waitingAtStop?: string[];
+	/**
+	 * The host's queue items whose turns the Stop ended, named by the host in the same tick as
+	 * its stop (a desktop host of this build). Present, maybe empty, only when the host names
+	 * them: then a waiting message not named was not the stopped turn (M27).
+	 */
+	stoppedItemIds?: string[];
+	/**
+	 * The host named nothing and its queue frames can arrive after its answer (an older desktop
+	 * host, whose frames trail its writes): a message still listed may have been the stopped turn.
+	 */
+	queueFramesTrail?: true;
+}
+
 /** What the host answered, per action. */
 export type PeerAgentActionResult =
 	| { kind: 'send'; receipt: TurnSendReceipt }
-	| {
+	| ({
 			kind: 'interrupt';
 			/** The tabs the action asked the host to stop. */
 			targetTabIds: string[];
 			/** The tabs the host reports it stopped. */
 			stoppedTabIds: string[];
-			/**
-			 * The host's queue item ids still waiting, read from the host just before it was told
-			 * to stop (its live queue, on a desktop host too): one waiting here waited through the
-			 * Stop, one gone had started or gone before it (M25). Absent when the read failed.
-			 */
-			waitingAtStop?: string[];
-	  }
+	  } & HostStopAnswer)
 	| { kind: 'new-tab'; tabId: string }
 	| { kind: 'rename-tab'; tabId: string }
 	| { kind: 'star-tab'; tabId: string; starred: boolean }
@@ -318,11 +336,18 @@ export async function runPeerAgentAction(
 			// Bounded: a slow read never holds up the Stop, it only leaves the answer without it.
 			const waiting = targetTabIds.length ? await queueReadBeforeStop(client, agent.id) : undefined;
 			const stoppedTabIds: string[] = [];
+			// Named by every tab's answer, or by none: one tab the host could not name for leaves the
+			// Stop unnamed, so no waiting message is cleared on a partial answer.
+			let stoppedItemIds: string[] | undefined = [];
 			for (const tabId of targetTabIds) {
 				const stopped = await client.turns.interrupt(agent.id, tabId);
 				if (!stopped.ok) return stopped;
 				if (stopped.value.stopped) stoppedTabIds.push(tabId);
+				stoppedItemIds = stopped.value.stoppedItemIds
+					? stoppedItemIds && [...stoppedItemIds, ...stopped.value.stoppedItemIds]
+					: undefined;
 			}
+			const named = targetTabIds.length > 0 && stoppedItemIds;
 			return {
 				ok: true,
 				value: {
@@ -330,6 +355,10 @@ export async function runPeerAgentAction(
 					targetTabIds,
 					stoppedTabIds,
 					...(waiting?.ok ? { waitingAtStop: waiting.value.map((item) => item.itemId) } : {}),
+					...(named ? { stoppedItemIds: [...new Set(named)] } : {}),
+					...(!named && client.connection?.host()?.kind === 'desktop'
+						? { queueFramesTrail: true as const }
+						: {}),
 				},
 			};
 		}

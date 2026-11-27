@@ -24,7 +24,7 @@ import { joinPath } from '../../shared/formatters';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { DEFAULT_TAB_DEFAULTS } from '../../shared/maestro-lib/agents/rules';
 import { parseMaestroBuiltinCommand } from '../../shared/maestroBuiltinCommands';
-import type { AutoRunControl } from '../../shared/maestro-lib/client/peer-actions';
+import type { AutoRunControl, HostStopAnswer } from '../../shared/maestro-lib/client/peer-actions';
 import type {
 	TabPatch,
 	TurnOverrides,
@@ -472,7 +472,7 @@ export async function sendHostedTurn(
 export async function interruptHostedTurn(
 	session: Pick<Session, 'liftedTo'>,
 	tabId?: string
-): Promise<{ waitingAtStop?: string[] } | undefined> {
+): Promise<HostStopAnswer | undefined> {
 	const target = hostedTargetOf(session);
 	return target ? interruptMirroredAgent(target.peerId, target.agentId, tabId) : undefined;
 }

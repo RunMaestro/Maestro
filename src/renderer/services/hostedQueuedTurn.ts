@@ -86,6 +86,7 @@ import { hostTabTurnStartedAt } from '../utils/hostedSession';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import { appendAgentNotes } from '../../shared/maestro-lib/turns/prompt';
 import { queueExitOf } from '../../shared/maestro-lib/client/peer-mirror';
+import type { HostStopAnswer } from '../../shared/maestro-lib/client/peer-actions';
 import { queuedItemNamingText } from './tabAutoNaming';
 
 /**
@@ -534,9 +535,11 @@ const mentionsAwaitingHostStart = new Map<
 		 * the Stop yet, so a start seen now ran before the host stopped anything, and was the turn
 		 * Stop ended. After the answer it stays only for one the host's queue never listed (an older
 		 * desktop host lists none): then `turnStartedAt`, the turn Stop ended (the host's clock),
-		 * tells its own later turn from the stopped one.
+		 * tells its own later turn from the stopped one. `untilNamed`: the host named nothing and its
+		 * queue frames trail its answer (an older desktop host), so a frame that still lists it may
+		 * predate the Stop: only a frame that names its exit settles it (M27).
 		 */
-		stop?: { pending: boolean; turnStartedAt?: number; by: HostStopToken };
+		stop?: { pending: boolean; turnStartedAt?: number; by: HostStopToken; untilNamed?: boolean };
 	}
 >();
 
@@ -690,23 +693,29 @@ export function dropStoppedHostStartMentions(
 
 /**
  * The host answered the Stop `stop` (or could not be told it): settle each consult that Stop left
- * waiting for that answer (`stop.pending`), and no other. Its frames before the answer are here, so the
- * mirror shows the host's queue as it stood when the host stopped the turn. One whose start the
- * host named, or whose own user entry is on the tab, was the turn Stop ended: it goes, with the
- * note. One the queue lists waited through the Stop: it consults when it starts, as before. One
- * the queue listed and no longer lists left it before the host stopped anything: it goes. One the
- * queue never listed (an older desktop host sends no queue frames) stays, and consults only when
- * its own turn is seen running after Stop (`fireHostStartedMentions()`): Stop never loses it.
+ * waiting for that answer (`stop.pending`), and no other. One the host named as a turn its Stop
+ * ended (`stoppedItemIds`), whose start the host named, or whose own user entry is on the tab, was
+ * the turn Stop ended: it goes, with the note. One the host's list read at the Stop no longer
+ * holds left the queue before the host stopped anything: it goes. One the host did not name, when
+ * the host names the turns it stops, waited through the Stop: it consults when it starts. So does
+ * one the host's list holds, when the host's frames reach this window before its answer (a
+ * headless host). A desktop host that names nothing has frames that trail its answer, so a listed
+ * message may still have been the stopped turn: it keeps its Stop mark until a frame names its exit
+ * (M27). One the queue never listed (an older desktop host sends no queue frames) stays marked,
+ * and consults only when its own turn is seen running after Stop (`fireHostStartedMentions()`):
+ * Stop never loses it.
  */
 export function settleStoppedHostStartMentions(
 	stop: HostStopToken,
 	/**
-	 * The host's own queue (its waiting item ids), read just before it was told to stop. It rules
+	 * What the host's answer said of its queue at the Stop. `waitingAtStop` rules over the mirror
 	 * where given: a desktop host's queue frames trail its writes by seconds (Greptile on #2160),
 	 * so the mirror may still list a message that had started, or not yet list one that waits.
 	 */
-	waitingAtStop?: readonly string[]
+	answer: HostStopAnswer = {}
 ): void {
+	const { waitingAtStop, stoppedItemIds, queueFramesTrail } = answer;
+	const namedStops = stoppedItemIds ? new Set(stoppedItemIds) : undefined;
 	const { sessionId } = stop;
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const target = session ? hostedTargetOf(session) : undefined;
@@ -723,6 +732,7 @@ export function settleStoppedHostStartMentions(
 		const tabId = waiting.item.tabId || session?.activeTabId;
 		const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
 		const ran =
+			namedStops?.has(hostItemId) === true ||
 			queueExitOf(exits, hostItemId) === 'started' ||
 			(!!tab &&
 				hostRanMessage(tab.logs, waiting.afterEntryId, waitingMessage(hostItemId, waiting)));
@@ -732,11 +742,21 @@ export function settleStoppedHostStartMentions(
 			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 			continue;
 		}
-		// The host's own list holds it: it waited through the Stop. Listed only by the mirror (the
-		// read failed or was late), it may still be the stopped turn whose frames trail: it stays
-		// marked, and consults only once its own turn is seen running after Stop (CodeRabbit on #2160).
-		if (listed.has(hostItemId) && waitingAtStop) waiting.stop = undefined;
-		else waiting.stop = { ...waiting.stop, pending: false };
+		// The host named the turns its Stop ended, and not this one; or the host's own list holds it
+		// and no frame of the host can arrive after its answer: it waited through the Stop.
+		if (namedStops || (listed.has(hostItemId) && waitingAtStop && !queueFramesTrail)) {
+			waiting.stop = undefined;
+			continue;
+		}
+		// Listed only by the mirror (the read failed or was late), or by a host whose frames trail
+		// its answer: it may still be the stopped turn, whose start frame is on its way. It stays
+		// marked, and consults only once its own turn is seen running after Stop (CodeRabbit on
+		// #2160); a frame that merely lists it again does not clear the mark (M27).
+		waiting.stop = {
+			...waiting.stop,
+			pending: false,
+			...(queueFramesTrail ? { untilNamed: true } : {}),
+		};
 	}
 }
 
@@ -819,7 +839,11 @@ export function fireHostStartedMentions(
 				// Listed again (its first frame came late): its gone time starts over, and a Stop it
 				// waited through no longer stands between it and its start.
 				waiting.goneAt = undefined;
-				if (waiting.stop && !waiting.stop.pending) waiting.stop = undefined;
+				// A host whose frames trail its answer may list it in a frame written before the Stop,
+				// so only a named exit settles that mark (M27).
+				if (waiting.stop && !waiting.stop.pending && !waiting.stop.untilNamed) {
+					waiting.stop = undefined;
+				}
 				if (!waiting.aheadKnown) {
 					waiting.aheadKnown = true;
 					waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;

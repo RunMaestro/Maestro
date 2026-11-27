@@ -34,7 +34,8 @@ vi.mock('../../../renderer/services/hostedQueuedTurn', async (importOriginal) =>
 });
 vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../renderer/services/peerMirror')>()),
-	interruptMirroredAgent: vi.fn(async () => undefined),
+	// A desktop host of this build: it names the queue items its Stop ended (none here).
+	interruptMirroredAgent: vi.fn(async () => ({ stoppedItemIds: [] as string[] })),
 }));
 
 import { interruptTurn, registerTurnInterruptDeps } from '../../../renderer/services/turnInterrupt';
@@ -187,6 +188,7 @@ describe('interruptTurn: one tab', () => {
 			wasBusy: true,
 			interrupted: true,
 			stoppedTabIds: ['tab-b'],
+			stoppedItemIds: [],
 			exited: false,
 		});
 		expect(tab('tab-b').state).toBe('idle');
@@ -231,6 +233,56 @@ describe('interruptTurn: one tab', () => {
 		expect(agent().executionQueue).toEqual([queued]);
 		expect(processQueuedItem).not.toHaveBeenCalled();
 	});
+});
+
+// Parity M27: a Stop names the queue items whose turns it ended, read in the same tick as the
+// signal, so a Federation client of a desktop host knows which waiting message was the stopped
+// turn while the host's queue frames still trail.
+describe('interruptTurn: the queue items a Stop ended (M27)', () => {
+	it.each(AGENT_MODES)(
+		'%s: names the queue item the stopped tab ran, and no item for a turn sent from the composer',
+		async (mode) => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			processApi.interrupt.mockResolvedValue(true);
+			processApi.getActiveProcesses.mockResolvedValue([]);
+			crossAgentApi.cancel.mockResolvedValue({ canceled: 0 });
+			if (mode === 'hosted') {
+				// The host's own Stop names it (this build's desktop host, `interrupt_turn`).
+				vi.mocked(interruptMirroredAgent).mockResolvedValueOnce({ stoppedItemIds: ['q-9'] });
+			}
+			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession(mode);
+			seedAgent({
+				sshRemoteId,
+				sessionSshRemoteConfig,
+				liftedTo,
+				aiTabs: [
+					createMockAITab({
+						id: 'tab-a',
+						state: 'busy',
+						logs: [{ id: 'l1', timestamp: 1, source: 'user', text: 'go' }],
+					}),
+					createMockAITab({
+						id: 'tab-b',
+						state: 'busy',
+						logs: [
+							{ id: 'l0', timestamp: 1, source: 'user', text: 'first', queuedItemId: 'q-1' },
+							{ id: 'l2', timestamp: 2, source: 'user', text: 'second', queuedItemId: 'q-9' },
+						],
+					}),
+				],
+			});
+
+			const named = await interruptTurn('agent-1', { tabId: 'tab-b' });
+			expect(named).toMatchObject({ success: true, stoppedTabIds: ['tab-b'] });
+			expect(named.stoppedItemIds).toEqual(['q-9']);
+
+			if (mode === 'hosted') {
+				vi.mocked(interruptMirroredAgent).mockResolvedValueOnce({ stoppedItemIds: [] });
+			}
+			const composed = await interruptTurn('agent-1', { tabId: 'tab-a' });
+			expect(composed.stoppedItemIds).toEqual([]);
+		}
+	);
 });
 
 describe('interruptTurn: queued work after a whole-agent stop', () => {
@@ -453,6 +505,7 @@ describe('interruptTurn: an Auto Run task turn, which runs on no tab', () => {
 			wasBusy: true,
 			interrupted: true,
 			stoppedTabIds: [],
+			stoppedItemIds: [],
 			exited: false,
 		});
 		expect(ssh).toEqual(local);
@@ -512,6 +565,7 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 			wasBusy: true,
 			interrupted: true,
 			stoppedTabIds: ['tab-a', 'tab-b'],
+			stoppedItemIds: [],
 			exited: false,
 		});
 		expect(ssh).toEqual(local);
@@ -579,7 +633,7 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 			);
 			// With the host's own list at the Stop, when the host gave it.
 			expect(vi.mocked(settleStoppedHostStartMentions).mock.calls[0][1]).toEqual(
-				outcome === 'answers' ? ['w1'] : undefined
+				outcome === 'answers' ? { waitingAtStop: ['w1'] } : undefined
 			);
 		}
 	);
