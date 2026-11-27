@@ -254,7 +254,7 @@ export function syncHostedAgents(): void {
 		dropStaleAutoRuns(new Set());
 		pruneHostStartedMentions(new Set());
 		pruneHostedLinkLoss(new Set());
-		pruneHostedTabBooks([]);
+		pruneHostedTabBooks(useSessionStore.getState().sessions);
 		hostConnected.clear();
 		releaseHostedAgents();
 		return;
@@ -268,7 +268,7 @@ export function syncHostedAgents(): void {
 	);
 	if (!usePeerMirrorStore.getState().enabled) {
 		pruneHostedLinkLoss(new Set());
-		pruneHostedTabBooks([]);
+		pruneHostedTabBooks(useSessionStore.getState().sessions);
 		hostConnected.clear();
 		return;
 	}

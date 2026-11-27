@@ -520,16 +520,27 @@ export function nextPendingHostTabRetryAt(sessions: readonly Session[]): number 
 
 /**
  * Forget what the pending-tab path keeps for a tab, an agent or a peer that is gone (R28): a copy's
- * host tab and a failed try once the tab here is closed, and a close owed to a host tab once this
- * machine no longer holds that hosted agent (deleted, moved back, or its peer removed). The sync
- * calls it with every record, after each pass.
+ * host tab and a failed try once the tab here is closed, and a close owed to a host tab once no
+ * record points at that hosted agent, or the mirror says the agent is gone (its peer removed, or a
+ * synced peer no longer lists it). A mirror switched off, or a peer not read yet, says nothing, so
+ * an owed close is kept until the host can be told (CodeRabbit on #2164). The sync calls it with
+ * every record, after each pass.
  */
 export function pruneHostedTabBooks(sessions: readonly Session[]): void {
+	const mirror = usePeerMirrorStore.getState();
 	const agents = new Set<string>();
 	const tabs = new Set<string>();
 	for (const session of sessions) {
-		const target = hostedTargetOf(session);
-		if (!target?.agent) continue;
+		const pointer = readLiftedTo(session.liftedTo);
+		if (!pointer) continue;
+		const peer = mirror.peers[pointer.peer];
+		const goneOnHost =
+			mirror.enabled &&
+			(!peer ||
+				(peer.lastSyncAt !== undefined &&
+					!peer.agents.some((agent) => agent.id === pointer.agentId)));
+		if (goneOnHost) continue;
+		const target: HostedTarget = { peerId: pointer.peer, agentId: pointer.agentId };
 		agents.add(hostTabKey(target, ''));
 		for (const tab of session.aiTabs) tabs.add(hostTabKey(target, tab.id));
 	}

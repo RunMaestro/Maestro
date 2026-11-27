@@ -292,6 +292,46 @@ describe('New Tab while the link is down (R15)', () => {
 		expect(__hostedTabBookSizesForTests().copies).toBe(0);
 	});
 
+	it('keeps a close owed to a host tab while the mirror is off, and closes the tab once the host lists it (CodeRabbit on #2164)', async () => {
+		pruneHostedTabBooks([]);
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		hydrateHost(['t1'], 'connected');
+		let answer!: (value: unknown) => void;
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+			action.kind === 'new-tab'
+				? new Promise((resolve) => (answer = resolve))
+				: { ok: true, result: { kind: action.kind, tabId } }
+		);
+		createPendingHostTabs(current());
+		const before = current();
+		useSessionStore.setState({ sessions: [closeTab(before, tabId)!.session] });
+		closeHostedTab(before, tabId);
+		answer({ ok: false, error: 'The host did not answer in time.', code: 'timeout' });
+		await flush();
+
+		// The mirror is switched off: it says nothing about the agent, and the record still points at it.
+		usePeerMirrorStore.getState().reset();
+		pruneHostedTabBooks(useSessionStore.getState().sessions);
+		expect(__hostedTabBookSizesForTests().closesOwed).toBe(1);
+
+		// Back on, the host lists the tab: never drawn, and closed there.
+		hydrateHost(['t1', tabId], 'connected');
+		pruneHostedTabBooks(useSessionStore.getState().sessions);
+		expect(closingHostTabIds(hostedTargetOf(current())!, current()).has(tabId)).toBe(true);
+		createPendingHostTabs(current());
+		await flush();
+		expect(
+			act$.mock.calls
+				.filter(([, , action]) => action?.kind === 'close-tab')
+				.map(([, , a]) => a.tabId)
+		).toEqual([tabId]);
+	});
+
 	it.each(['agent', 'peer'] as const)(
 		'forgets a close owed to a host tab once the %s is gone (R28)',
 		async (gone) => {
