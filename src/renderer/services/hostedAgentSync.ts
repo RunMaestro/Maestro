@@ -78,9 +78,10 @@ import {
 	type HostLink,
 } from './hostedLinkLoss';
 import { retryConnectionOutagesNow } from '../stores/retryStore';
+import { hostedTabsHandingOver, onHostedTabLineChanged } from '../utils/hostedTabLine';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
-function hostedInput(session: { liftedTo?: unknown; aiTabs: Session['aiTabs'] }):
+function hostedInput(session: { id: string; liftedTo?: unknown; aiTabs: Session['aiTabs'] }):
 	| {
 			peerId: string;
 			agentId: string;
@@ -121,6 +122,7 @@ function hostedInput(session: { liftedTo?: unknown; aiTabs: Session['aiTabs'] })
 			liveTurns: peer.liveTurns,
 			queue: peer.queues[agent.id],
 			closing: closingHostTabIds({ peerId: pointer.peer, agentId: agent.id, agent }, session),
+			handingOver: hostedTabsHandingOver(session.id),
 		},
 	};
 }
@@ -386,6 +388,8 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 	const offOutages = useSshOutageStore.subscribe((state, prev) => {
 		if (state.outages !== prev.outages) schedule();
 	});
+	// A turn on its way to the host is drawn busy until the host has it (`hostedTabsHandingOver()`).
+	const offLines = onHostedTabLineChanged(schedule);
 	const offSettings = useSettingsStore.subscribe((state, prev) => {
 		if (state.federationHostedAgents !== prev.federationHostedAgents) schedule();
 	});
@@ -400,6 +404,7 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 		if (recheck !== undefined) clearTimeout(recheck);
 		recheck = undefined;
 		offMirror();
+		offLines();
 		offOutages();
 		offSettings();
 		offSessions();

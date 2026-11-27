@@ -64,6 +64,11 @@ export interface HostedProjectionInput {
 	 * draws the host's real state again, and the error clears (`source: 'host-link'`).
 	 */
 	linkLost?: AgentError;
+	/**
+	 * Tabs with a turn this machine is handing to the host now (`hostedTabsHandingOver()`), each
+	 * with when it left here: drawn busy, as a local tab is from the moment its queue takes the turn.
+	 */
+	handingOver?: ReadonlyMap<string, number>;
 	/** Tabs whose turn was stopped here while the host could not be told: drawn idle until it can. */
 	endedHere?: ReadonlySet<string>;
 	/**
@@ -461,11 +466,16 @@ function projectTab(
 	liveTurn: LiveTurn | undefined,
 	watched: boolean,
 	hostSeenAt: number | undefined,
-	link: { lost?: AgentError; endedHere: boolean; kept: boolean }
+	link: { lost?: AgentError; endedHere: boolean; kept: boolean },
+	nextWaitingSince?: number
 ): AITab {
 	// A turn the host last reported running that nobody here can follow or finish ends here.
 	const cut = host.state === 'busy' && link.lost !== undefined;
-	const busy = host.state === 'busy' && !cut && !link.endedHere;
+	// The tab's next message waits in the host's queue for the tab itself (a History synopsis still
+	// holds its session, its previous process is still exiting): the hand-over, which a local tab
+	// draws busy from the moment its queue takes the message (U2).
+	const handingOver = nextWaitingSince !== undefined && link.lost === undefined;
+	const busy = (host.state === 'busy' || handingOver) && !cut && !link.endedHere;
 	// A kept cut has the retry card for its note, and the kept message's error for its own.
 	const noted = cut && !link.kept;
 	const logs =
@@ -479,7 +489,7 @@ function projectTab(
 				})
 			: merged;
 	const thinkingStartTime = busy
-		? (hostTabTurnStartedAt(host, liveTurn) ?? local.thinkingStartTime)
+		? (hostTabTurnStartedAt(host, liveTurn) ?? local.thinkingStartTime ?? nextWaitingSince)
 		: undefined;
 	const name = host.name ?? null;
 	const agentSessionId = host.agentSessionId ?? local.agentSessionId ?? null;
@@ -590,6 +600,19 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 			: []
 	);
 
+	// When each tab's next turn started its hand-over: on its way from here, or waiting in the host's
+	// queue for that tab alone. While no turn of the agent runs on the host, a ready message there
+	// waits only for its own tab. One that waits behind another tab's turn reads queued, as a local
+	// tab's queued message does (a local drain takes nothing while the agent is busy).
+	const nextWaitingSince = new Map<string, number>();
+	if (!hostTabs.some((tab) => tab.state === 'busy')) {
+		for (const [tabId, since] of input.handingOver ?? []) nextWaitingSince.set(tabId, since);
+		for (const waiting of input.queue ?? []) {
+			if (waiting.paused || nextWaitingSince.has(waiting.tabId)) continue;
+			nextWaitingSince.set(waiting.tabId, waiting.queuedAt);
+		}
+	}
+
 	const aiTabs: AITab[] = [];
 	for (const local of session.aiTabs) {
 		if (dropped.has(local.id)) {
@@ -627,7 +650,8 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 				lost: input.linkLost,
 				endedHere: input.endedHere?.has(local.id) === true,
 				kept: input.keptCuts?.has(local.id) === true,
-			}
+			},
+			nextWaitingSince.get(local.id)
 		);
 		// Its first report is the host's blank tab: the name and pills given here stay, and go to
 		// the host with the answer to its creation (`createPendingHostTab()`).

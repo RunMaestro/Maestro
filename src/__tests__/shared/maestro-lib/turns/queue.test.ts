@@ -749,6 +749,42 @@ describe('createExecutionQueue interrupt', () => {
 		expect(turns.map((t) => t.item.id)).toEqual(['a', 'b']);
 	});
 
+	describe("a tab's next message that waits only for the tab (U2: the hand-over)", () => {
+		it('Stop ends it as it starts, and the message behind it runs after', async () => {
+			// The tab's History synopsis holds its session: the tab runs nothing, its message waits.
+			const held = new Set(['t1']);
+			const h = harness({ retryHeld: held });
+			h.queue.submit(item('next', 't1'));
+			h.queue.submit(item('after', 't1'));
+			await h.flush();
+			expect(h.startOrder).toEqual([]);
+
+			expect(h.queue.interruptNext('t1')).toBe('next');
+			held.delete('t1');
+			h.queue.drain();
+			await h.flush();
+
+			expect(h.turnFor('next').interrupted).toBe(true);
+			expect(h.startOrder).toEqual(['next', 'after']);
+			expect(h.turnFor('after').interrupted).toBe(false);
+		});
+
+		it('names nothing while the tab or another tab runs a turn, or when only held messages wait', async () => {
+			const h = harness();
+			h.queue.submit(item('a', 't1'));
+			h.queue.submit(item('b', 't2'));
+			await h.flush();
+			// t1 runs a turn: Stop is `interrupt`, and t2's message waits behind another tab's turn.
+			expect(h.queue.interruptNext('t1')).toBeUndefined();
+			expect(h.queue.interruptNext('t2')).toBeUndefined();
+
+			const idle = harness({ retryHeld: new Set(['t1']) });
+			idle.queue.submit(item('held', 't1', { paused: true }));
+			await idle.flush();
+			expect(idle.queue.interruptNext('t1')).toBeUndefined();
+		});
+	});
+
 	it('interrupts only the named tab', async () => {
 		const h = harness();
 		h.queue.submit(item('a', 't1', { readOnly: true }));

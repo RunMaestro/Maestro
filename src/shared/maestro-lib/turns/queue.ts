@@ -305,6 +305,15 @@ export interface ExecutionQueue<T extends QueueItem> {
 	busyTabIds(): string[];
 	/** Stop the running turn of a tab, or of every tab. Queued items start as the turns end. */
 	interrupt(tabId?: string): void;
+	/**
+	 * Stop a tab's next message as it starts: the Stop of a tab that runs no turn while that
+	 * message waits for the tab alone (no turn of the agent runs; a synopsis still holds the tab's
+	 * session, or its last process is still exiting). A local tab already runs that message in the
+	 * same moment, and Stop ends it; this one starts as it would and is stopped at once, so its
+	 * transcript reads the same, and the messages behind it run as they would. Returns its id, or
+	 * undefined when the tab runs a turn, another tab does, or nothing ready waits for it.
+	 */
+	interruptNext(tabId: string): string | undefined;
 	/** Hold or release an item. Returns false when no waiting item has that id. */
 	setPaused(id: string, paused: boolean): boolean;
 	/** Take a waiting item out. Returns false when it is not waiting (it may already be running). */
@@ -542,6 +551,16 @@ export function createExecutionQueue<T extends QueueItem>(
 			for (const [id, entry] of starting) {
 				if (tabId === undefined || id === tabId) entry.interruptRequested = true;
 			}
+		},
+
+		interruptNext(tabId) {
+			if (busyTurns().length > 0) return undefined;
+			const entry = entries.find(
+				(e) => e.state === 'queued' && e.item.tabId === tabId && !e.item.paused
+			);
+			if (!entry) return undefined;
+			entry.interruptRequested = true;
+			return entry.item.id;
 		},
 
 		setPaused(id, paused) {

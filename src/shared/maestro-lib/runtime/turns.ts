@@ -1160,7 +1160,13 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 
 		interrupt: async (agentId, tabId) => {
 			const queue = queues.get(agentId);
-			if (!queue?.isTabBusy(tabId)) return ok({ stopped: false });
+			if (!queue?.isTabBusy(tabId)) {
+				// The hand-over: the tab's next message waits only for the tab (its last turn's History
+				// synopsis holds the session), and a client draws the tab busy through it (U2). Stop
+				// ends that message as it starts, as a local Stop ends it in the same moment.
+				const next = queue?.interruptNext(tabId);
+				return ok(next ? { stopped: true, stoppedItemIds: [next] } : { stopped: false });
+			}
 			queue.interrupt(tabId);
 			return ok({ stopped: true });
 		},

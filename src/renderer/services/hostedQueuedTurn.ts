@@ -507,7 +507,7 @@ function forwardToHost(
 	// it, and a consult it fires holds the tab before the line is let go (U1).
 	const lineTabId = item.tabId || session.activeTabId;
 	const lineHolder = `send:${item.id}`;
-	holdHostedTabLine(sessionId, lineTabId, lineHolder);
+	holdHostedTabLine(sessionId, lineTabId, lineHolder, { handingOver: true });
 	const settle = () => {
 		if (sendsInFlight.get(item.id) === send) sendsInFlight.delete(item.id);
 		releaseHostedTabLine(sessionId, lineTabId, lineHolder);
