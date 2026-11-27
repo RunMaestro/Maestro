@@ -802,6 +802,38 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(queue()).toHaveLength(0);
 	});
 
+	// Parity R37: a local turn that ends on a rate limit or an overload is retried by that error's
+	// rule. A hosted turn that ended on one while this machine was disconnected is the same.
+	const OVERLOADED: LogEntry = {
+		id: 'e1',
+		timestamp: 20,
+		source: 'error',
+		text: 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+		turnEnded: true,
+	};
+
+	it("retries a cut turn that ended on its own retryable error by that error's rule, into its entry (R37)", async () => {
+		cut();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		await hostBack('idle', [QUESTION, OVERLOADED]);
+		// Not "already had this message": the retry of the error holds it, counting down.
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toMatchObject({
+			status: 'scheduled',
+			lastMessage: OVERLOADED.text,
+		});
+		expect(queue().map((item) => item.hostEntryId)).toEqual(['u1']);
+		expect(toastMock).not.toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Not sent again' })
+		);
+		// The retry fires: sent once, into the same entry, never judged "already ran" again.
+		retryNow('row', 't1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
 	it('sends the kept message when only a LATER message of the tab was answered: its own turn died (R23)', async () => {
 		cut();
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
@@ -1257,6 +1289,30 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		expect(sends()).toHaveLength(1);
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
 		expect(toastMock).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Not sent' }));
+	});
+
+	it('retries a kept message whose turn ended on its own retryable error after a restart (R37)', async () => {
+		relaunch('idle', [
+			QUESTION,
+			{
+				id: 'e1',
+				timestamp: 20,
+				source: 'error',
+				text: 'API Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+				turnEnded: true,
+			},
+		]);
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toMatchObject({ status: 'scheduled' });
+		expect(queue().map((item) => item.id)).toEqual(['k1']);
+		retryNow('row', 't1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
 	});
 
 	it('takes the host saying the message already ran as "already ran"', async () => {

@@ -4104,12 +4104,31 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
 			});
 
-			// Parity R31: a turn that ended on the provider's own error ran once.
-			it('answers "already ran" when the entry\'s turn ended on a provider error', async () => {
+			// Parity R37: a turn that ended on the provider's own error is retried by that error's rule
+			// (the client's retry sends it): the resend runs. A turn the person stopped never runs again.
+			it("runs the resend when the entry's turn ended on a provider error", async () => {
 				bridgeRead.invokeAsBridge.mockResolvedValue({
 					logs: [
 						QUESTION,
-						{ id: 'e1', timestamp: 2, source: 'error', text: 'The provider failed.' },
+						{
+							id: 'e1',
+							timestamp: 2,
+							source: 'error',
+							text: 'API Error: 529 overloaded',
+							turnEnded: true,
+						},
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			it('answers "already ran" when the entry\'s turn was stopped by the person', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{ id: 's1', timestamp: 2, source: 'system', text: 'Canceled by user', turnEnded: true },
 					],
 				});
 				resend();

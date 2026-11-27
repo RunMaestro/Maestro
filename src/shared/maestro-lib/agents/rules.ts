@@ -860,16 +860,31 @@ export function turnEndedAfter(
 }
 
 /**
- * Whether `logs` hold the user message `entry` with the end of its own turn after it
- * (`turnEndedAfter()`): that message already ran, so a resend of it must not run again.
+ * How the turn of the user message `entry` in `logs` ended (`turnFateAfter()`), or undefined when
+ * `logs` do not hold it.
+ */
+export function userEntryFate(
+	logs: readonly unknown[],
+	entry: SentUserEntry,
+	hostKind?: TranscriptHostKind
+): TurnFate | undefined {
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
+	return at === -1 ? undefined : turnFateAfter(logs, at, hostKind);
+}
+
+/**
+ * Whether `logs` hold the user message `entry` whose own turn answered it or was stopped by the
+ * person: that message already ran, so a resend of it must not run again. A turn that ended on its
+ * own error is not: its resend is the retry of that error, sent by the error's own rule as a local
+ * agent's is (a client routes it through its retry), and it runs into the same entry.
  */
 export function userEntryAnswered(
 	logs: readonly unknown[],
 	entry: SentUserEntry,
 	hostKind?: TranscriptHostKind
 ): boolean {
-	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
-	return at !== -1 && turnEndedAfter(logs, at, hostKind);
+	const fate = userEntryFate(logs, entry, hostKind);
+	return fate === 'answered' || fate === 'stopped';
 }
 
 /**

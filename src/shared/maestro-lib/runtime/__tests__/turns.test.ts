@@ -1596,10 +1596,37 @@ describe('runtime turns', () => {
 				expect(argvFiles).toHaveLength(1);
 			});
 
-			// Parity R31: the turn ended on the provider's own error. It ran once; the error is its end.
-			it('answers "already ran" for the resend of a message whose turn ended on a provider error', async () => {
-				const FAILED = { id: 'e1', timestamp: 2, source: 'error', text: 'The provider failed.' };
+			// Parity R37: the turn ended on the provider's own error. Its resend is the retry of that
+			// error (the sender retries it by the error's rule, as a local agent does): it runs, into the
+			// same entry. A turn the person stopped never runs again.
+			it('runs the resend of a message whose turn ended on a provider error, into its entry', async () => {
+				const FAILED = {
+					id: 'e1',
+					timestamp: 2,
+					source: 'error',
+					text: 'API Error: 529 overloaded',
+					turnEnded: true,
+				};
 				const runtime = await start([cutTab([QUESTION, FAILED])]);
+				const turn = watch(runtime);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).not.toEqual({ status: 'answered' });
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+				const entries = await transcript(runtime);
+				expect(entries.filter((entry) => entry.source === 'user').map((e) => e.id)).toEqual(['u1']);
+			});
+
+			it('answers "already ran" for the resend of a message whose turn the person stopped', async () => {
+				const STOPPED = {
+					id: 's1',
+					timestamp: 2,
+					source: 'system',
+					text: 'Canceled by user',
+					turnEnded: true,
+				};
+				const runtime = await start([cutTab([QUESTION, STOPPED])]);
 				expect(
 					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
 				).toEqual({ status: 'answered' });

@@ -26,8 +26,8 @@
 
 import {
 	isSameUserEntry,
-	turnEndedAfter,
-	userEntryAnswered,
+	turnFateAfter,
+	userEntryFate,
 	type TranscriptHostKind,
 } from '../../shared/maestro-lib/agents/rules';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
@@ -36,9 +36,15 @@ import {
 	type PeerMirrorConnection,
 } from '../../shared/maestro-lib/client/peer-mirror';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
+import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import { notifyToast } from '../stores/notificationStore';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
-import { getRetryEntry, retryNow, settleRetryOnHost } from '../stores/retryStore';
+import {
+	getRetryEntry,
+	retryNow,
+	scheduleRetryForError,
+	settleRetryOnHost,
+} from '../stores/retryStore';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { useSshOutageStore } from '../stores/sshOutageStore';
 import type { AgentError, LogEntry, QueuedItem, Session } from '../types';
@@ -132,9 +138,63 @@ interface CutTurn {
  * How a cut turn's kept message goes on: `send` (the turn died with the host), `answered` (the
  * host still runs it or finished it: never sent again), `tab-gone` or `entry-gone` (the host no
  * longer has the tab, or the message after a clear: not sent there, and parked held for the user
- * to send again), or `unknown` (the host's transcript could not be read: kept for the next try).
+ * to send again), `errored` (the turn ended on its own error there: retried by that error's own
+ * rule, `routeErroredTurn()`, and the retry holds the message), or `unknown` (the host's transcript
+ * could not be read: kept for the next try).
  */
-export type CutTurnFate = 'send' | 'answered' | 'tab-gone' | 'entry-gone' | 'unknown';
+export type CutTurnFate = 'send' | 'answered' | 'errored' | 'tab-gone' | 'entry-gone' | 'unknown';
+
+/**
+ * Kept messages whose turn ended on its own retryable error on the host, by `sessionId:tabId`: the
+ * entry id. Their retry (`routeErroredTurn()`) sends them, into the same entry, without asking the
+ * host's transcript again, which still ends on that error. Taken by the send it lets through.
+ */
+const erroredResends = new Map<string, string>();
+
+/**
+ * The error a host recorded for the turn of the user message at `at`: the first error entry of
+ * that turn, as its structured error when the host kept one.
+ */
+function turnErrorAfter(
+	sessionId: string,
+	entries: readonly LogEntryRecord[],
+	at: number
+): AgentError | undefined {
+	for (let i = at + 1; i < entries.length; i += 1) {
+		const entry = entries[i];
+		if (entry.source === 'user' && entry.steered !== true) return undefined;
+		if (entry.source !== 'error') continue;
+		if (entry.agentError) return entry.agentError as AgentError;
+		const session = selectSessionById(sessionId)(useSessionStore.getState());
+		return {
+			type: 'unknown',
+			message: entry.text,
+			recoverable: true,
+			agentId: session?.toolType ?? 'claude-code',
+			sessionId,
+			timestamp: entry.timestamp,
+		};
+	}
+	return undefined;
+}
+
+/**
+ * A kept message whose turn ended on its own error on the host goes on as a local turn that ends
+ * on that error does: `scheduleRetryForError()` decides by the error's own rule, holding the
+ * message under its retry, and the retry sends it into the same entry. Answers whether a retry
+ * took it; one that did not (not retryable, Agent Resilience off) leaves the error standing, drawn
+ * from the host's transcript, and nothing is sent.
+ */
+function routeErroredTurn(
+	sessionId: string,
+	tabId: string,
+	entryId: string,
+	error: AgentError | undefined
+): boolean {
+	if (!error || !scheduleRetryForError(sessionId, tabId, error)) return false;
+	erroredResends.set(cutKey(sessionId, tabId), entryId);
+	return true;
+}
 
 /**
  * The fate of a message the host's tab does not hold (`at` is -1): past the tail this machine
@@ -351,9 +411,14 @@ export function cutTurnFate(
 ): Promise<CutTurnFate> | null {
 	if (!item.hostEntryId || !connected) return null;
 	const key = cutKey(sessionId, item.tabId);
+	// The retry of a turn that ended on its own error there (`routeErroredTurn()`): sent now.
+	if (erroredResends.get(key) === item.hostEntryId) {
+		erroredResends.delete(key);
+		return null;
+	}
 	const cut = cutTurns.get(key);
 	if (!cut || cut.stopped || cut.message?.id !== item.hostEntryId) {
-		return readKeptEntryFate(host, { ...item, hostEntryId: item.hostEntryId });
+		return readKeptEntryFate(sessionId, host, { ...item, hostEntryId: item.hostEntryId });
 	}
 	// Edited while it was kept: the user's own message now, sent as one whatever the turn did.
 	if (!sameAsCut(item, cut)) return null;
@@ -382,12 +447,14 @@ export function cutTurnFate(
 
 /**
  * How a kept message the host already wrote down goes on, read from the host's tab (no cut on
- * record for it). Running there now with it as its message, or its own turn answered (an answer
- * before the next user message): `answered`, never sent again. Not answered and not running:
- * `send`. The tab closed there, or the message gone from it: `tab-gone` / `entry-gone`, never
- * sent into it. The tab could not be read: `unknown`, kept for the next try.
+ * record for it). Running there now with it as its message, or its own turn answered or stopped:
+ * `answered`, never sent again. Ended on its own error: `errored`, retried by that error's rule
+ * (`routeErroredTurn()`; `answered` when no retry takes it). Not ended and not running: `send`.
+ * The tab closed there, or the message gone from it: `tab-gone` / `entry-gone`, never sent into
+ * it. The tab could not be read: `unknown`, kept for the next try.
  */
 async function readKeptEntryFate(
+	sessionId: string,
 	host: HostAgentRef,
 	item: Pick<QueuedItem, 'tabId' | 'text' | 'images'> & { hostEntryId: string }
 ): Promise<CutTurnFate> {
@@ -414,9 +481,14 @@ async function readKeptEntryFate(
 	// Edited while it was kept: the user's own message now, sent as one (the host gives it an entry
 	// of its own, since it no longer matches the one it names).
 	if (!isSameUserEntry(slot.entries[at], entry)) return 'send';
-	if (userEntryAnswered(slot.entries, entry, transcriptHostKind(host.peerId))) return 'answered';
+	const fate = userEntryFate(slot.entries, entry, transcriptHostKind(host.peerId));
+	if (fate === 'answered' || fate === 'stopped') return 'answered';
 	const newestUser = lastUserMessage(slot.entries as LogEntry[]);
 	if (hostTab.state === 'busy' && newestUser?.id === entry.id) return 'answered';
+	if (fate === 'errored') {
+		const error = turnErrorAfter(sessionId, slot.entries, at);
+		return routeErroredTurn(sessionId, item.tabId, entry.id, error) ? 'errored' : 'answered';
+	}
 	return 'send';
 }
 
@@ -533,7 +605,21 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 	// Its own turn ended (stamped, or an answer before the next user message on a host too old to
 	// stamp, `turnFateAfter()`); an answer to a LATER message is that one's, and this turn died. A
 	// desktop host's streamed text with no end stamp is a turn it lost.
-	if (turnEndedAfter(slot.entries, at, transcriptHostKind(link.peerId))) {
+	const fate = turnFateAfter(slot.entries, at, transcriptHostKind(link.peerId));
+	// Ended on its own error: retried by that error's rule, as a local turn that ends on it is.
+	if (
+		fate === 'errored' &&
+		routeErroredTurn(
+			cut.sessionId,
+			cut.tabId,
+			messageId,
+			turnErrorAfter(cut.sessionId, slot.entries, at)
+		)
+	) {
+		answerWaiters(cut, 'errored');
+		return;
+	}
+	if (fate !== 'unended') {
 		settleKeptCut(cut);
 		return;
 	}
@@ -689,6 +775,7 @@ export function pruneHostedLinkLoss(hostedIds: ReadonlySet<string>): void {
 		answerWaiters(cut, 'unknown');
 	}
 	for (const key of [...stoppedTurns.keys()]) if (gone(key)) stoppedTurns.delete(key);
+	for (const key of [...erroredResends.keys()]) if (gone(key)) erroredResends.delete(key);
 	for (const id of [...linkErrors.keys()]) if (!hostedIds.has(id)) linkErrors.delete(id);
 	for (const id of [...endedHere.keys()]) if (!hostedIds.has(id)) endedHere.delete(id);
 }
@@ -699,5 +786,6 @@ export function __resetHostedLinkLossForTests(): void {
 	linkErrors.clear();
 	cutTurns.clear();
 	stoppedTurns.clear();
+	erroredResends.clear();
 	endedHere.clear();
 }

@@ -507,6 +507,8 @@ function forwardToHost(
 					notHostedAgain(sessionId, item, index, retryOutage);
 					return null;
 				}
+				// Ended on its own error there: the retry of that error holds it now, and sends it.
+				if (decided === 'errored') return null;
 				if (decided === 'tab-gone' || decided === 'entry-gone') {
 					notHostedAgain(
 						sessionId,
