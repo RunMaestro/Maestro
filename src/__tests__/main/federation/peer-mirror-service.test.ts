@@ -582,6 +582,30 @@ describe('PeerMirrorService', () => {
 			]);
 		});
 
+		it("gives an item a raced change said kept its images the read's images (M26, Greptile on #2160)", async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			let answer!: (value: { ok: true; value: QueuedTurn[] }) => void;
+			a.queueList.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+			// A resync reads the queue; a desktop host's change lands meanwhile, sending no images for
+			// an item it sent them for before this mirror attached.
+			a.emit({ type: 'snapshot', agents: [agent('a-a1')], groups: [] });
+			a.emit({
+				type: 'queue.changed',
+				agentId: 'a-a1',
+				items: [{ ...waiting('img'), imagesKept: true }, waiting('new')],
+				namesExits: true,
+			});
+			const images = ['data:image/png;base64,AAAA'];
+			answer({ ok: true, value: [{ ...waiting('img'), images }] });
+			await settle();
+			expect(h.service.snapshot().peers[0].queues).toEqual({
+				'a-a1': [{ ...waiting('img'), images }, waiting('new')],
+			});
+		});
+
 		it('keeps what it held when a read fails', async () => {
 			const a = fakeHost('a');
 			a.setQueue('a-a1', [waiting('q1')]);

@@ -17,6 +17,7 @@ import {
 	replacePeerAgents,
 	setAgentAutoRun,
 	setAgentQueue,
+	withReadQueueImages,
 	setPeerConnection,
 	summarizePeer,
 	type MirrorPeerSummary,
@@ -207,11 +208,28 @@ describe('host queues', () => {
 			{ ...waiting('q1'), imagesKept: true },
 			{ ...waiting('q2'), imagesKept: true },
 		]);
-		// q2 has none held: it keeps none, and the flag never reaches a window.
-		expect(step.peer.queues).toEqual({ a1: [withImages, waiting('q2')] });
+		// q2 has none held: it keeps the flag, so a raced read can still give them.
+		const unresolved = { ...waiting('q2'), imagesKept: true as const };
+		expect(step.peer.queues).toEqual({ a1: [withImages, unresolved] });
 		expect(step.push).toEqual([
-			{ type: 'agent.queue', agentId: 'a1', items: [withImages, waiting('q2')] },
+			{ type: 'agent.queue', agentId: 'a1', items: [withImages, unresolved] },
 		]);
+		// The next change keeps q1's images again from what it holds.
+		const again = setAgentQueue(step.peer, 'a1', [{ ...waiting('q1'), imagesKept: true }]);
+		expect(again.peer.queues).toEqual({ a1: [withImages] });
+	});
+
+	it("withReadQueueImages gives an unresolved kept item the read's images, and nothing else (M26)", () => {
+		const images = ['data:image/png;base64,AAAA'];
+		const kept = [{ ...waiting('q1'), imagesKept: true as const }, waiting('q2')];
+		expect(
+			withReadQueueImages(kept, [
+				{ ...waiting('q1'), images },
+				{ ...waiting('q2'), images },
+			])
+		).toEqual([{ ...waiting('q1'), images }, waiting('q2')]);
+		// Nothing to give: the same list.
+		expect(withReadQueueImages(kept, [waiting('q1')])).toBe(kept);
 	});
 
 	it('an empty list drops the entry and still pushes, so a window clears its cards', () => {

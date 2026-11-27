@@ -265,7 +265,8 @@ export function queueExitOf(
 /**
  * A queue list with each `imagesKept` item given the images held for its id (M26): a desktop host
  * sends an item's images once, and after that says they are unchanged. An item held with none
- * keeps none (the next whole read of the queue brings them).
+ * keeps the flag, so a read of the queue that the change raced can still give them
+ * (`withReadQueueImages()`).
  */
 function withKeptQueueImages(
 	items: QueuedTurn[],
@@ -273,11 +274,35 @@ function withKeptQueueImages(
 ): QueuedTurn[] {
 	if (!items.some((item) => item.imagesKept)) return items;
 	const held = new Map((had ?? []).map((item) => [item.itemId, item.images]));
-	return items.map(({ imagesKept, ...item }) => {
-		if (!imagesKept) return item;
-		const images = held.get(item.itemId);
-		return images?.length ? { ...item, images } : item;
+	return items.map((item) => {
+		const images = item.imagesKept ? held.get(item.itemId) : undefined;
+		return images?.length ? { ...withoutKeptFlag(item), images } : item;
 	});
+}
+
+function withoutKeptFlag({ imagesKept: _kept, ...item }: QueuedTurn): QueuedTurn {
+	return item;
+}
+
+/**
+ * The held queue `kept` with the images a read of the queue gave each item still waiting for them
+ * (`imagesKept` with none held: a change that said "unchanged" reached a mirror whose first read
+ * of the queue had not landed). The same list when there is nothing to give. Used when a change
+ * raced the read and its newer list is kept over the read's (Greptile on #2160).
+ */
+export function withReadQueueImages(
+	kept: readonly QueuedTurn[],
+	read: readonly QueuedTurn[]
+): readonly QueuedTurn[] {
+	const fromRead = new Map(read.map((item) => [item.itemId, item.images]));
+	let changed = false;
+	const next = kept.map((item) => {
+		const images = item.imagesKept ? fromRead.get(item.itemId) : undefined;
+		if (!images?.length) return item;
+		changed = true;
+		return { ...withoutKeptFlag(item), images };
+	});
+	return changed ? next : kept;
 }
 
 /**
