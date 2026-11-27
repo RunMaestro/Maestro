@@ -248,6 +248,51 @@ describe('U3: the "Synopsis" toast after a plain turn', () => {
 		}));
 		await sendHostedTurn(row(), 't1', 'hello again', []);
 		expect(historyPage).not.toHaveBeenCalled();
+
+		// A tab with no choice of its own saves, by the host's rule (CodeRabbit on #2166).
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => ({ ...t, saveToHistory: undefined })),
+			})),
+		}));
+		await sendHostedTurn(row(), 't1', 'and once more', []);
+		expect(historyPage).toHaveBeenCalledTimes(1);
+	});
+
+	it("hosted: with the tab's provider session not known, no entry is taken (CodeRabbit on #2166)", async () => {
+		const session = createModeSession('hosted', {
+			id: 'row',
+			name: 'Docs',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', name: 'Main', agentSessionId: null })],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id, groups: [] });
+		// The host has not mirrored this tab.
+		const { peer } = replacePeerAgents(
+			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+			[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [] }],
+			[],
+			1
+		);
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1');
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS);
+		hostEntries.push(entry('another-tab', 140, { agentSessionId: 's9' }));
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 3);
+		expect(toasts()).toEqual([]);
+	});
+
+	it('hosted: an entry the first read already held, saved after the turn started, is still its own (CodeRabbit on #2166)', async () => {
+		seed('hosted');
+		// A turn and its synopsis that both ended before the watch's first read.
+		hostEntries.push(entry('turn', 140));
+		hostTab('busy', 100);
+		watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1');
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		hostTab('idle');
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		expect(toasts().map((toast) => toast.message)).toEqual([SUMMARY]);
 	});
 
 	it("hosted: another tab's entry is not this tab's", async () => {

@@ -769,6 +769,14 @@ describe('createExecutionQueue interrupt', () => {
 			expect(h.turnFor('after').interrupted).toBe(false);
 		});
 
+		it("names no write an Auto Run's working-tree hold keeps (CodeRabbit on #2166)", async () => {
+			const h = harness({ holdsTree: { on: true } });
+			h.queue.submit(item('write', 't1'));
+			await h.flush();
+			expect(h.startOrder).toEqual([]);
+			expect(h.queue.interruptNext('t1')).toBeUndefined();
+		});
+
 		it('names nothing while the tab or another tab runs a turn, or when only held messages wait', async () => {
 			const h = harness();
 			h.queue.submit(item('a', 't1'));

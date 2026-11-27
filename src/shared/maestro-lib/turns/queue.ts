@@ -555,8 +555,14 @@ export function createExecutionQueue<T extends QueueItem>(
 
 		interruptNext(tabId) {
 			if (busyTurns().length > 0) return undefined;
+			// A write an Auto Run's working-tree hold keeps waits for that hold, not for its tab: it is
+			// no hand-over (CodeRabbit on #2166).
 			const entry = entries.find(
-				(e) => e.state === 'queued' && e.item.tabId === tabId && !e.item.paused
+				(e) =>
+					e.state === 'queued' &&
+					e.item.tabId === tabId &&
+					!e.item.paused &&
+					!blockedByTreeHold(e.item, view())
 			);
 			if (!entry) return undefined;
 			entry.interruptRequested = true;

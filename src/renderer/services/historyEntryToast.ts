@@ -226,6 +226,8 @@ export function watchHostedTurnSynopsis(
 	let runStartedAt: number | undefined;
 	/** When this window first saw the tab free after the turn (this machine's clock). */
 	let idleSince: number | undefined;
+	/** The tab's provider session as last seen: the entry must be this conversation's. */
+	let tabSessionId: string | undefined;
 
 	const watch = {
 		key: `${sessionId}\u0000${tabId}`,
@@ -270,6 +272,9 @@ export function watchHostedTurnSynopsis(
 			return;
 		}
 		const { peer, tab, waiting } = hostTab();
+		if (typeof tab?.agentSessionId === 'string' && tab.agentSessionId) {
+			tabSessionId = tab.agentSessionId;
+		}
 		const running = tab?.state === 'busy' || !!peer?.liveTurns?.[key];
 		if (running) {
 			if (typeof tab?.thinkingStartTime === 'number') {
@@ -293,16 +298,29 @@ export function watchHostedTurnSynopsis(
 		void readPage().then((entries) => {
 			reading = false;
 			if (done || !entries) return;
-			const agentSessionId = hostTab().tab?.agentSessionId;
+			// Whose entry it must be: the tab's provider session, as the host or this record knows it.
+			// Not known yet (the tab is not mirrored now): wait, rather than take another tab's entry.
+			const agentSessionId =
+				hostTab().tab?.agentSessionId ||
+				tabSessionId ||
+				selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
+					(candidate) => candidate.id === tabId
+				)?.agentSessionId ||
+				undefined;
+			if (!agentSessionId) return;
+			// Saved after the turn started (host clock): the turn's own, even if the first read already
+			// held it (a turn and its synopsis that ended before that read).
+			const savedSinceRun = (candidate: HistoryEntry) =>
+				runStartedAt !== undefined && candidate.timestamp >= runStartedAt;
 			const entry = entries.find(
 				(candidate) =>
 					typeof candidate.id === 'string' &&
-					!baseline!.has(candidate.id) &&
+					(!baseline!.has(candidate.id) || savedSinceRun(candidate)) &&
 					!toastedSynopsisEntries.has(candidate.id) &&
 					typeof candidate.summary === 'string' &&
 					candidate.summary.trim() !== '' &&
 					watch.covers(candidate) &&
-					(!agentSessionId || candidate.agentSessionId === agentSessionId)
+					candidate.agentSessionId === agentSessionId
 			);
 			if (!entry) return;
 			toastedSynopsisEntries.add(entry.id);

@@ -22,6 +22,7 @@ import {
 	loadCrossAgentConsultPrompts,
 	settleConsultHold,
 } from '../../../renderer/services/crossAgentConsultHold';
+import { pruneHostStartedMentions } from '../../../renderer/services/hostedQueuedTurn';
 import { enqueuePromptForTab } from '../../../renderer/services/queuedPrompt';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -284,6 +285,38 @@ describe('U1: two queued mentions run in the same order in every mode', () => {
 			'hold',
 			'twin-2',
 		]);
+	});
+
+	it('hosted: a consult waiting for its turn on the host holds its tab, and lets go of that tab, whatever tab is active then (CodeRabbit on #2166)', async () => {
+		act$.mockImplementation(async (_peer: unknown, _agent: unknown, action: { kind: string }) =>
+			action?.kind === 'send'
+				? {
+						ok: true,
+						result: {
+							kind: 'send',
+							receipt: { status: 'queued', itemId: 'h9', position: 1, queueLength: 1 },
+						},
+					}
+				: { ok: true, result: {} }
+		);
+		seed('hosted', []);
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((s) =>
+				s.id === 'row' ? { ...s, aiTabs: [...s.aiTabs, createMockAITab({ id: 't2' })] } : s
+			),
+		}));
+		// The host queued it behind another turn: its consult waits for it to start, holding t1.
+		await useAgentStore.getState().processQueuedItem('row', twin('waits'), drainDeps);
+		await flush();
+		expect(hostedTabHoldsLine('row', 't1')).toBe(true);
+
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((s) => (s.id === 'row' ? { ...s, activeTabId: 't2' } : s)),
+		}));
+		// The agent is no longer followed on that host: the consult is let go.
+		pruneHostStartedMentions(new Set());
+		expect(hostedTabHoldsLine('row', 't1')).toBe(false);
+		expect(hostedTabHoldsLine('row', 't2')).toBe(false);
 	});
 
 	it('hosted: a message queued from outside the composer waits behind a turn on its way', async () => {

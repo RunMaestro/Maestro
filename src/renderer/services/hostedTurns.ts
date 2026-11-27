@@ -772,7 +772,8 @@ export async function sendHostedTurn(
 	}
 	// A turn that saves to History raises the "Synopsis" toast here once the host saved its entry,
 	// as a local turn's exit synopsis raises it in the window that runs it (U3).
-	const savesToHistory = (opts.overrides?.saveToHistory ?? tab?.saveToHistory) === true;
+	// The host's rule: only an explicit "off" records nothing (`createTurnRecorder()`).
+	const savesToHistory = (opts.overrides?.saveToHistory ?? tab?.saveToHistory) !== false;
 	if (
 		savesToHistory &&
 		hostTabId &&

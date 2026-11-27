@@ -606,6 +606,8 @@ const mentionsAwaitingHostStart = new Map<
 		sessionId: string;
 		item: QueuedItem;
 		mention: CrossAgentMentionPlan;
+		/** The tab whose line it holds (`awaitHostStart()`), fixed when it began to wait. */
+		lineTabId?: string;
 		seenQueued: boolean;
 		/**
 		 * `turnStartedAt` is recorded: the first sync that saw the item waiting set it, and no later
@@ -724,15 +726,19 @@ function hostTurnAhead(
  */
 function awaitingLineTab(waiting: AwaitingHostStart): string {
 	return (
-		waiting.item.tabId ||
-		selectSessionById(waiting.sessionId)(useSessionStore.getState())?.activeTabId ||
-		''
+		waiting.lineTabId ??
+		(waiting.item.tabId ||
+			selectSessionById(waiting.sessionId)(useSessionStore.getState())?.activeTabId ||
+			'')
 	);
 }
 
 function awaitHostStart(hostItemId: string, waiting: AwaitingHostStart): void {
+	// The tab whose line it holds is fixed now: the active tab may change while it waits, and the
+	// release must reach the holder it took (CodeRabbit on #2166).
+	waiting.lineTabId = awaitingLineTab(waiting);
 	mentionsAwaitingHostStart.set(hostItemId, waiting);
-	holdHostedTabLine(waiting.sessionId, awaitingLineTab(waiting), `start:${hostItemId}`);
+	holdHostedTabLine(waiting.sessionId, waiting.lineTabId, `start:${hostItemId}`);
 	for (const [oldestId, oldest] of mentionsAwaitingHostStart) {
 		if (mentionsAwaitingHostStart.size <= MAX_HOST_START_MENTIONS) break;
 		letGoOfHostStart(oldestId, oldest, 'too many messages wait on the host for their turn.');

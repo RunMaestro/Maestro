@@ -97,6 +97,21 @@ describe('U2: the tab stays busy through the hand-over to the next queued messag
 		expect(row.state).toBe('busy');
 	});
 
+	it("hosted: the hand-over's own start time, not the turn before it (CodeRabbit on #2166)", () => {
+		const after = idleRow('hosted');
+		const row = projectHostedSession(
+			{
+				...after,
+				// The turn before it, as the last projection drew it.
+				aiTabs: after.aiTabs.map((tab) =>
+					tab.id === 't1' ? { ...tab, state: 'busy', thinkingStartTime: 100 } : tab
+				),
+			},
+			{ agent: host(), queue: [waiting()] }
+		);
+		expect(row.aiTabs[0].thinkingStartTime).toBe(500);
+	});
+
 	it('hosted: a held message on the host is no hand-over: the tab reads idle', () => {
 		const row = projectHostedSession(idleRow('hosted'), {
 			agent: host(),

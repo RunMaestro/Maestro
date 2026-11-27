@@ -489,7 +489,7 @@ function projectTab(
 				})
 			: merged;
 	const thinkingStartTime = busy
-		? (hostTabTurnStartedAt(host, liveTurn) ?? local.thinkingStartTime ?? nextWaitingSince)
+		? (hostTabTurnStartedAt(host, liveTurn) ?? nextWaitingSince ?? local.thinkingStartTime)
 		: undefined;
 	const name = host.name ?? null;
 	const agentSessionId = host.agentSessionId ?? local.agentSessionId ?? null;
