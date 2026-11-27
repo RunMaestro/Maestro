@@ -1867,6 +1867,41 @@ describe('createWsMaestroClient', () => {
 				await vi.waitFor(() => expect(bridge.sent('list_queue')).toHaveLength(2));
 			});
 
+			it('never lets a queue read answered after the agent was removed restore what it held (CodeRabbit on #2162)', async () => {
+				await connect();
+				let held: unknown;
+				bridge.typed.set('list_queue', (message) => {
+					if (held === undefined) {
+						held = message.requestId;
+						return 'silent';
+					}
+					return {
+						type: 'list_queue_result',
+						success: true,
+						queues: [{ sessionId: A1, items: [item], queueSeq: 1 }],
+					};
+				});
+				const pending = client.turns.queue.list(A1);
+				await vi.waitFor(() => expect(bridge.sent('list_queue')).toHaveLength(1));
+				bridge.push({ type: 'session_removed', sessionId: A1 });
+				// The old answer lands after the removal, at seq 9.
+				bridge.push({
+					type: 'list_queue_result',
+					success: true,
+					queues: [{ sessionId: A1, items: [item], queueSeq: 9 }],
+					requestId: held,
+				});
+				await pending;
+				// The agent comes back; its first change (seq 1) does not fit, so the queue is read whole.
+				bridge.push({
+					type: 'queue_changed',
+					sessionId: A1,
+					changes: { seq: 1, base: 0, order: ['q1'], changed: [] },
+				});
+				await vi.waitFor(() => expect(bridge.sent('list_queue')).toHaveLength(2));
+				await vi.waitFor(() => expect(queueEvents()).toHaveLength(1));
+			});
+
 			it('never applies a change from a frame it cannot read, and keeps reading whole frames', async () => {
 				await connect();
 				bridge.push({

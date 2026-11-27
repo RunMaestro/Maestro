@@ -419,6 +419,11 @@ class WsMaestroClient implements MaestroClient {
 	 * received (CodeRabbit on #2162). Bounded: past it the chain breaks and the next change reads
 	 * the queue again.
 	 */
+	/**
+	 * Per agent, bumped when the host removes it: a queue read answered after that never restores
+	 * what it held, nor emits it (CodeRabbit on #2162).
+	 */
+	private readonly queueGenerations = new Map<string, number>();
 	private readonly queueGapReads = new Map<
 		string,
 		{
@@ -2291,7 +2296,10 @@ class WsMaestroClient implements MaestroClient {
 	private readQueueAfterGap(agentId: string, attempt: number): void {
 		this.heldQueues.delete(agentId);
 		this.queueGapReads.set(agentId, { later: [], overflowed: false });
+		const generation = this.queueGenerations.get(agentId) ?? 0;
 		void this.queueList(agentId).then((read) => {
+			// The agent was removed while the read was out: its answer is for an agent gone.
+			if ((this.queueGenerations.get(agentId) ?? 0) !== generation) return;
 			const { later, overflowed } = this.queueGapReads.get(agentId) ?? {
 				later: [],
 				overflowed: false,
@@ -2314,13 +2322,19 @@ class WsMaestroClient implements MaestroClient {
 		});
 	}
 
-	/** An agent the host no longer has: its mirror record and its held queue go (M29). */
+	/**
+	 * An agent the host no longer has: its mirror record, its held queue and any gap read go (M29),
+	 * and a read still out for it is answered into nothing.
+	 */
 	private removeAgent(agentId: string): void {
+		this.queueGenerations.set(agentId, (this.queueGenerations.get(agentId) ?? 0) + 1);
 		this.heldQueues.delete(agentId);
+		this.queueGapReads.delete(agentId);
 		this.emitAll(this.mirror.remove(agentId));
 	}
 
 	private async queueList(agentId: string): Promise<ClientResult<QueuedTurn[]>> {
+		const generation = this.queueGenerations.get(agentId) ?? 0;
 		const sent = await this.send(
 			'turns.queue.list',
 			// The images ride along as data URLs, so a hosted card draws them as a local one does.
@@ -2336,7 +2350,8 @@ class WsMaestroClient implements MaestroClient {
 		// A desktop host's answer says which changes frame it is at (M28): the next change applies
 		// over it. A list a newer frame already gave is kept.
 		const queueSeq = isObject(mine) ? mine.queueSeq : undefined;
-		if (Number.isSafeInteger(queueSeq) && (queueSeq as number) >= 0) {
+		const current = (this.queueGenerations.get(agentId) ?? 0) === generation;
+		if (current && Number.isSafeInteger(queueSeq) && (queueSeq as number) >= 0) {
 			const held = this.heldQueues.get(agentId);
 			if (!held || held.seq <= (queueSeq as number)) {
 				this.heldQueues.set(agentId, { seq: queueSeq as number, items });
