@@ -213,7 +213,17 @@ export function watchHostedTurnSynopsis(
 	sessionId: string,
 	target: { peerId: string; agentId: string },
 	tabId: string,
-	opts: { pollMs?: number; idleMs?: number; maxMs?: number; now?: () => number } = {}
+	opts: {
+		/**
+		 * The host's queue item that stands for the turn (a `queued` receipt): the watch waits for it
+		 * to start. Absent (a `started` receipt): the turn the tab runs now is this one.
+		 */
+		queuedItemId?: string;
+		pollMs?: number;
+		idleMs?: number;
+		maxMs?: number;
+		now?: () => number;
+	} = {}
 ): () => void {
 	const now = opts.now ?? Date.now;
 	const key = liveTurnKey(target.agentId, tabId);
@@ -263,10 +273,11 @@ export function watchHostedTurnSynopsis(
 		return {
 			peer,
 			tab: agent?.aiTabs?.find((candidate) => candidate.id === tabId),
-			// A held message never starts a turn: it is no turn still to come (CodeRabbit on #2166).
-			waiting: (peer?.queues?.[target.agentId] ?? []).some(
-				(item) => item.tabId === tabId && !item.paused
-			),
+			// This turn's own message still waits in the host's queue. Another message waiting there
+			// is a later turn, never this one (CodeRabbit on #2166).
+			waiting:
+				opts.queuedItemId !== undefined &&
+				(peer?.queues?.[target.agentId] ?? []).some((item) => item.itemId === opts.queuedItemId),
 		};
 	};
 

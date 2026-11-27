@@ -295,6 +295,57 @@ describe('U3: the "Synopsis" toast after a plain turn', () => {
 		expect(toasts().map((toast) => toast.message)).toEqual([SUMMARY]);
 	});
 
+	const queueOnHost = (items: Array<{ itemId: string; paused?: boolean }>) =>
+		usePeerMirrorStore.setState((state) => ({
+			peers: {
+				...state.peers,
+				box: {
+					...state.peers.box,
+					queues: {
+						h1: items.map((item) => ({
+							itemId: item.itemId,
+							tabId: 't1',
+							queuedAt: 150,
+							kind: 'message' as const,
+							text: 'later',
+							paused: item.paused === true,
+						})),
+					},
+				},
+			},
+		}));
+
+	it('hosted: a turn that started keeps its own start while another message waits on the tab (CodeRabbit on #2166)', async () => {
+		seed('hosted');
+		hostTab('busy', 100);
+		queueOnHost([{ itemId: 'b' }]);
+		watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1');
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		hostTab('idle');
+		hostEntries.push(entry('turn', 140));
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 3);
+		expect(toasts().map((toast) => toast.message)).toEqual([SUMMARY]);
+	});
+
+	it('hosted: a queued turn waits for its own host item, not the turn ahead of it', async () => {
+		seed('hosted');
+		// The turn ahead runs; this turn's item waits on the host.
+		hostTab('busy', 100);
+		queueOnHost([{ itemId: 'mine' }]);
+		watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1', {
+			queuedItemId: 'mine',
+		});
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		// The turn ahead ends; this one starts, runs, and ends with its synopsis saved.
+		queueOnHost([]);
+		hostTab('busy', 300);
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		hostTab('idle');
+		hostEntries.push(entry('mine', 340, { summary: 'my turn' }));
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 3);
+		expect(toasts().map((toast) => toast.message)).toEqual(['my turn']);
+	});
+
 	it('hosted: a held message on the tab does not stop the watch from reading (CodeRabbit on #2166)', async () => {
 		seed('hosted');
 		hostTab('busy', 100);

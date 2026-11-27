@@ -826,7 +826,12 @@ export async function sendHostedTurn(
 		hostTabId &&
 		(receipt?.status === 'started' || receipt?.status === 'queued')
 	) {
-		watchHostedTurnSynopsis(session.id, target, hostTabId);
+		watchHostedTurnSynopsis(
+			session.id,
+			target,
+			hostTabId,
+			receipt.status === 'queued' ? { queuedItemId: receipt.itemId } : {}
+		);
 	}
 	// The tab the message landed in: a kept tab's message opened a new host tab above.
 	if (ranNow && opts.nameFrom && hostTabId) {
