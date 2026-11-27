@@ -18,13 +18,11 @@ import type { Session, SessionState, UsageStats, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { canAppendToLogEntry } from '../../utils/logEntries';
 import { isAiTabHidden } from '../../utils/unifiedTabOrderUtils';
+import { STREAM_FLUSH_INTERVAL_MS } from '../../../shared/streamFlushInterval';
 
-// Default flush interval in milliseconds. 200ms is the sweet spot we landed on:
-// - 150ms collided with high-throughput streams (jitter from setInterval drift
-//   produced visible micro-stutters during peak agent output)
-// - 250ms is perceptibly laggy for users typing in the input area
-// - 200ms keeps streaming smooth without measurable input latency
-export const DEFAULT_BATCH_FLUSH_INTERVAL = 200;
+// Default flush interval in milliseconds: the one cadence every streaming reply is drawn at, a
+// hosted tab's too (see `STREAM_FLUSH_INTERVAL_MS` for why 200ms).
+export const DEFAULT_BATCH_FLUSH_INTERVAL = STREAM_FLUSH_INTERVAL_MS;
 
 /**
  * Merge the context-window half of a usage delta into the existing stats.
