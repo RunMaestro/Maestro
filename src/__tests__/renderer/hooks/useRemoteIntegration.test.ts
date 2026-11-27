@@ -6169,6 +6169,64 @@ describe('useRemoteIntegration', () => {
 			}
 		);
 
+		// CodeRabbit on #2171: a tab the CLI or a browser closed is reopened where it was closed, on
+		// its host for a hosted agent (the window's reopen), so its conversation goes on in that
+		// host tab, never a second one.
+		it.each(AGENT_MODES)(
+			'%s: a remote reopen brings the closed tab back where it lives',
+			async (mode) => {
+				const session = {
+					...seed(mode),
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+				};
+				const { peer } = replacePeerAgents(
+					createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+					[
+						{
+							id: 'h1',
+							name: 'Docs',
+							toolType: 'claude-code',
+							aiTabs: [{ id: 'tab-1' }, { id: 'tab-2' }],
+						},
+					],
+					[],
+					1
+				);
+				usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+				act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+					action.kind === 'reopen-tab'
+						? { ok: true, result: { kind: 'reopen-tab', tabId: 'tab-2' } }
+						: { ok: true, result: { kind: action.kind } }
+				);
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				await act(async () => {
+					onRemoteCloseTabHandler?.('session-1', 'tab-2', 'chan-close');
+				});
+				await act(async () => {
+					onRemoteReopenTabHandler?.('session-1', 'tab-2', 'chan-reopen');
+				});
+				await waitFor(() =>
+					expect(mockProcess.sendRemoteReopenTabResponse).toHaveBeenCalledWith('chan-reopen', {
+						tabId: expect.any(String),
+					})
+				);
+				const answered = mockProcess.sendRemoteReopenTabResponse.mock.calls.find(
+					([channel]) => channel === 'chan-reopen'
+				)![1] as { tabId: string };
+				// Back as a tab of the agent, under the id the caller hears (the host's own on a host).
+				expect(
+					useSessionStore.getState().sessions[0].aiTabs.some((tab) => tab.id === answered.tabId)
+				).toBe(true);
+				if (mode === 'hosted') expect(answered.tabId).toBe('tab-2');
+				const hostReopens = act$.mock.calls.filter(([, , action]) => action?.kind === 'reopen-tab');
+				expect(hostReopens).toEqual(
+					mode === 'hosted' ? [['box', 'h1', { kind: 'reopen-tab', tabId: 'tab-2' }]] : []
+				);
+				act$.mockReset();
+			}
+		);
+
 		// Parity R57: a close this machine refuses leaves the tab open on the host as well, so the CLI's
 		// "not closed" is true in both places.
 		it.each(AGENT_MODES)(

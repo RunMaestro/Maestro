@@ -55,7 +55,10 @@ import {
 import { hostedTabHoldsLine } from '../../utils/hostedTabLine';
 import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
-import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
+import {
+	reopenHostedClosedEntry,
+	runRemoteClosedTabCommand,
+} from '../../services/closedTabCommands';
 import { runRemoteMessagePinCommand } from '../../services/messagePins';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { answerSteeringCommand } from '../../services/autoRunSteering';
@@ -1169,6 +1172,39 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		const unsubscribeReopenTab = window.maestro.process.onRemoteReopenTab(
 			(sessionId: string, tabId: string, responseChannel: string) => {
+				// A hosted agent's AI tab closed on its host too (R42): it reopens there, as the
+				// window's reopen does (`reopenHostedClosedEntry()`), so its conversation goes on in
+				// that host tab, never a second one. A host that cannot reopen it says so in a toast,
+				// the entry stays closed, and the caller hears null (CodeRabbit on #2171).
+				const current = selectSessionById(sessionId)(useSessionStore.getState());
+				const hostedEntry =
+					current && hostedTargetOf(current)
+						? current.unifiedClosedTabHistory?.find(
+								(entry) => entry.type === 'ai' && entry.tab.id === tabId
+							)
+						: undefined;
+				if (current && hostedEntry) {
+					void reopenHostedClosedEntry(current, hostedEntry)
+						.then((hosted) => {
+							if (hosted) {
+								updateSessionWith(sessionId, (session) => ({
+									...session,
+									closedTabHistory: session.closedTabHistory.filter(
+										(entry) => entry.tab.id !== tabId
+									),
+								}));
+							}
+							window.maestro.process.sendRemoteReopenTabResponse(
+								responseChannel,
+								hosted ? { tabId: hosted.tabId } : null
+							);
+						})
+						.catch((error) => {
+							logger.error('[useRemoteIntegration] Hosted reopen failed', undefined, error);
+							window.maestro.process.sendRemoteReopenTabResponse(responseChannel, null);
+						});
+					return;
+				}
 				let reopened: { tabId: string } | null = null;
 				try {
 					updateSessionWith(sessionId, (session) => {
