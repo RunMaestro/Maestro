@@ -624,6 +624,15 @@ export interface QueuedTurn {
 	/** The host paused the queue on this item. */
 	paused: boolean;
 	/**
+	 * The item waits for its own tab alone (the hand-over, `handOverItem()`): it starts the moment
+	 * the tab's own hold ends, so a client draws the tab busy and a Stop there ends it as it starts.
+	 * False: it waits for something else (or a desktop host, which starts it in the moment the turn
+	 * before ends). Absent: an older host that does not say (`hostQueueHandOver()`).
+	 */
+	handOver?: boolean;
+	/** With `handOver`: since when it waits that way. */
+	handOverSince?: number;
+	/**
 	 * Model and effort captured when it was queued (an absent field: the agent's default applies).
 	 * Absent when the host did not say, so the card and the editor fall back to the tab's own.
 	 */

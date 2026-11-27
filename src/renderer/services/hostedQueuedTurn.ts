@@ -61,6 +61,7 @@ import {
 import {
 	applyQueuedItemAbort,
 	applyQueuedItemRelease,
+	isRunnableQueueItem,
 	queuedItemOwnerTabId,
 	recoverQueuedItem,
 } from '../utils/executionQueue';
@@ -96,6 +97,11 @@ import { appendAgentNotes } from '../../shared/maestro-lib/turns/prompt';
 import { queueExitOf } from '../../shared/maestro-lib/client/peer-mirror';
 import type { HostStopAnswer } from '../../shared/maestro-lib/client/peer-actions';
 import { queuedItemNamingText } from './tabAutoNaming';
+import {
+	holdHostedTabLine,
+	hostedTabHoldsLine,
+	releaseHostedTabLine,
+} from '../utils/hostedTabLine';
 
 /**
  * Items on their way to a host, each with the host's receipt to come (null: refused, and the item
@@ -535,8 +541,14 @@ function forwardToHost(
 				return null;
 			});
 	sendsInFlight.set(item.id, send);
+	// The tab holds its line until the host answered: nothing queued behind this turn goes ahead of
+	// it, and a consult it fires holds the tab before the line is let go (U1).
+	const lineTabId = item.tabId || session.activeTabId;
+	const lineHolder = `send:${item.id}`;
+	holdHostedTabLine(sessionId, lineTabId, lineHolder, { handingOver: true });
 	const settle = () => {
 		if (sendsInFlight.get(item.id) === send) sendsInFlight.delete(item.id);
+		releaseHostedTabLine(sessionId, lineTabId, lineHolder);
 	};
 	send.then(settle, settle);
 	return send;
@@ -632,6 +644,8 @@ const mentionsAwaitingHostStart = new Map<
 		sessionId: string;
 		item: QueuedItem;
 		mention: CrossAgentMentionPlan;
+		/** The tab whose line it holds (`awaitHostStart()`), fixed when it began to wait. */
+		lineTabId?: string;
 		seenQueued: boolean;
 		/**
 		 * `turnStartedAt` is recorded: the first sync that saw the item waiting set it, and no later
@@ -743,12 +757,36 @@ function hostTurnAhead(
 	return { busy: true, startedAt: hostTabTurnStartedAt(host, liveTurn), queueReads };
 }
 
+/**
+ * The tab a waiting consult holds the line of: a turn queued behind its message must not reach the
+ * host before the consult has started and put its hold here, or the host would start it the moment
+ * the message's own turn ended (U1).
+ */
+function awaitingLineTab(waiting: AwaitingHostStart): string {
+	return (
+		waiting.lineTabId ??
+		(waiting.item.tabId ||
+			selectSessionById(waiting.sessionId)(useSessionStore.getState())?.activeTabId ||
+			'')
+	);
+}
+
 function awaitHostStart(hostItemId: string, waiting: AwaitingHostStart): void {
+	// The tab whose line it holds is fixed now: the active tab may change while it waits, and the
+	// release must reach the holder it took (CodeRabbit on #2166).
+	waiting.lineTabId = awaitingLineTab(waiting);
 	mentionsAwaitingHostStart.set(hostItemId, waiting);
+	holdHostedTabLine(waiting.sessionId, waiting.lineTabId, `start:${hostItemId}`);
 	for (const [oldestId, oldest] of mentionsAwaitingHostStart) {
 		if (mentionsAwaitingHostStart.size <= MAX_HOST_START_MENTIONS) break;
 		letGoOfHostStart(oldestId, oldest, 'too many messages wait on the host for their turn.');
 	}
+}
+
+/** A consult no longer waits for its turn to start: it fired, or it was let go. */
+function stopAwaitingHostStart(hostItemId: string, waiting: AwaitingHostStart): void {
+	mentionsAwaitingHostStart.delete(hostItemId);
+	releaseHostedTabLine(waiting.sessionId, awaitingLineTab(waiting), `start:${hostItemId}`);
 }
 
 /**
@@ -756,7 +794,7 @@ function awaitHostStart(hostItemId: string, waiting: AwaitingHostStart): void {
  * that cannot run says it. Nothing is written when the agent is gone.
  */
 function letGoOfHostStart(hostItemId: string, waiting: AwaitingHostStart, why: string): void {
-	mentionsAwaitingHostStart.delete(hostItemId);
+	stopAwaitingHostStart(hostItemId, waiting);
 	const session = selectSessionById(waiting.sessionId)(useSessionStore.getState());
 	const tabId = waiting.item.tabId || session?.activeTabId;
 	if (!session || !tabId || !session.aiTabs.some((tab) => tab.id === tabId)) return;
@@ -1072,6 +1110,8 @@ export function fireHostStartedMentions(
 				noteLateMention(session.id, tabId, resolveConsultTargets(waiting.mention.targetSessionIds));
 			}
 		}
+		// The consult's hold goes on the tab before its line is let go, so nothing overtakes it.
+		const lineTabId = awaitingLineTab(waiting);
 		mentionsAwaitingHostStart.delete(hostItemId);
 		dispatchCrossAgentMentions(
 			waiting.mention,
@@ -1080,6 +1120,7 @@ export function fireHostStartedMentions(
 			tabId,
 			waiting.item.images
 		);
+		releaseHostedTabLine(waiting.sessionId, lineTabId, `start:${hostItemId}`);
 	}
 }
 
@@ -1103,6 +1144,30 @@ export function nextHostStartDeadline(now = Date.now()): number | undefined {
 }
 
 /**
+ * Whether this machine holds a line for `tabId` ahead of a new message: a turn of that tab on its
+ * way to the host or a consult waiting for its turn there (`hostedTabHoldsLine()`), a consult's
+ * hold, or a message for that tab still waiting in this queue ahead of `itemId` (all of them when
+ * `itemId` is not queued yet). A held card is no line, as in a local agent's queue. Such a message
+ * waits behind the line, as it would for a local agent, so the host never runs it first (U1).
+ */
+export function hostedTabHasLocalLine(
+	session: Pick<Session, 'id' | 'activeTabId' | 'executionQueue'>,
+	tabId: string | undefined,
+	itemId?: string
+): boolean {
+	const lineTabId = tabId || session.activeTabId;
+	if (hostedTabHoldsLine(session.id, lineTabId)) return true;
+	const queue = session.executionQueue ?? [];
+	const own = itemId ? queue.findIndex((queued) => queued.id === itemId) : -1;
+	const ahead = own >= 0 ? queue.slice(0, own) : queue;
+	return ahead.some(
+		(queued) =>
+			(queued.tabId || session.activeTabId) === lineTabId &&
+			(!!queued.awaitingConsult || !!queued.pendingAdmissionId || isRunnableQueueItem(queued))
+	);
+}
+
+/**
  * Take `itemId` out of a hosted agent's queue on this machine and send it to the host. The take
  * and the check are one store update, so no drain runs it here too. Answers whether it was handed
  * over (false: the agent is not hosted, or the item is not one this machine holds for it).
@@ -1116,6 +1181,10 @@ export function handQueuedItemToHost(sessionId: string, itemId: string): boolean
 	if (getRetryEntry(sessionId, item.tabId)) return false;
 	// A message that mentions another agent waits here for the drain, which consults as it sends.
 	if (item.crossAgentMention) return false;
+	// The tab holds a line here (a turn on its way, a consult's hold, a message waiting ahead of
+	// this one): this one waits behind it for the drain, as it would for a local agent, so the host
+	// never runs it ahead of a turn that is not finished yet (U1).
+	if (hostedTabHasLocalLine(session, item.tabId, item.id)) return false;
 	type Taken = { item: QueuedItem; index: number };
 	let taken: Taken | null = null;
 	updateSessionWith(sessionId, (s) => {

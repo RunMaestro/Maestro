@@ -210,7 +210,7 @@ function parseQueueExit(raw: unknown): QueueExit | undefined {
  * The waiting messages of one agent, from `list_queue`'s item shape: the desktop bridge's reply
  * and a headless host's `queue_changed` frame (`queuedTurnsToWire`) both carry it.
  */
-function parseQueuedTurns(raw: unknown): QueuedTurn[] {
+export function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 	const items = Array.isArray(raw) ? raw : [];
 	return items.filter(isObject).map((item): QueuedTurn => {
 		const command = asString(item.command);
@@ -224,6 +224,11 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 			kind: item.type === 'command' ? 'command' : 'message',
 			text: asString(item.text) ?? (command ? (args ? `${command} ${args}` : command) : ''),
 			paused: item.paused === true,
+			// Off the wire: a boolean and a finite time, or nothing (an older host says neither).
+			...(typeof item.handOver === 'boolean' ? { handOver: item.handOver } : {}),
+			...(item.handOver === true && Number.isFinite(item.handOverSince)
+				? { handOverSince: item.handOverSince as number }
+				: {}),
 			...(turnSettings ? { turnSettings } : {}),
 			...(images ? { images } : {}),
 			// The host sent this item's images before: the mirror keeps the ones it holds (M26).

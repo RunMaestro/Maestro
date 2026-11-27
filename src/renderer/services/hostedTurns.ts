@@ -71,7 +71,11 @@ import {
 	type MirrorSteeringAnswer,
 } from './peerMirror';
 import { requestTabAutoNameForMessage } from './tabAutoNaming';
-import { hostedTranscriptBaseline, watchHostedHistoryCommand } from './historyEntryToast';
+import {
+	hostedTranscriptBaseline,
+	watchHostedHistoryCommand,
+	watchHostedTurnSynopsis,
+} from './historyEntryToast';
 
 export interface HostedTarget {
 	peerId: string;
@@ -812,6 +816,22 @@ export async function sendHostedTurn(
 	// No baseline (the read before the send failed): no toast rather than an earlier run's.
 	if (historyCommand && historyBaseline && receipt?.status === 'ran' && hostTabId) {
 		watchHostedHistoryCommand(session.id, target, hostTabId, { baseline: historyBaseline });
+	}
+	// A turn that saves to History raises the "Synopsis" toast here once the host saved its entry,
+	// as a local turn's exit synopsis raises it in the window that runs it (U3).
+	// The host's rule: only an explicit "off" records nothing (`createTurnRecorder()`).
+	const savesToHistory = (opts.overrides?.saveToHistory ?? tab?.saveToHistory) !== false;
+	if (
+		savesToHistory &&
+		hostTabId &&
+		(receipt?.status === 'started' || receipt?.status === 'queued')
+	) {
+		watchHostedTurnSynopsis(
+			session.id,
+			target,
+			hostTabId,
+			receipt.status === 'queued' ? { queuedItemId: receipt.itemId } : {}
+		);
 	}
 	// The tab the message landed in: a kept tab's message opened a new host tab above.
 	if (ranNow && opts.nameFrom && hostTabId) {

@@ -36,9 +36,16 @@ describe('toQueuedItemSnapshot', () => {
 			type: 'message',
 			text: 'hi',
 			paused: false,
+			handOver: false,
 			images: ['ref'],
 		});
 		expect(toQueuedItemSnapshot(message('q2', 'hi', { images: [] }))).not.toHaveProperty('images');
+	});
+
+	it('says every desktop item waits for more than its tab alone: no hand-over (U6)', () => {
+		// A desktop starts a tab's next message in the moment the turn before ends, so a client never
+		// draws a tab busy from a desktop host's queue, where its Stop would do nothing.
+		expect(toQueuedItemSnapshot(message('q1', 'hi')).handOver).toBe(false);
 	});
 });
 

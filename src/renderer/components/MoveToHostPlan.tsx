@@ -17,10 +17,11 @@ import {
 	Server,
 } from 'lucide-react';
 import type { Theme } from '../types';
-import type {
-	LiftPlanStay,
-	LiftPlanSummary,
-	LiftPlanTab,
+import {
+	formatHostTabMerge,
+	type LiftPlanStay,
+	type LiftPlanSummary,
+	type LiftPlanTab,
 } from '../../shared/maestro-lib/agents/lift-plan';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { StatCardGrid } from './widgets';
@@ -114,6 +115,8 @@ export function MoveToHostPlan({ theme, summary }: { theme: Theme; summary: Lift
 	const shownTabs = showAllTabs ? tabs : tabs.slice(0, VISIBLE_TABS);
 	const hiddenTabCount = tabs.length - shownTabs.length;
 	const stayRows = groupLiftStays(summary.stays);
+	// A lift that replaces the copy an earlier Move Back left says what its tabs become (U4).
+	const hostTabMerge = summary.replaces ? formatHostTabMerge(summary.tabMerge) : undefined;
 	const meta = [
 		getAgentDisplayName(summary.agent.provider),
 		summary.model,
@@ -191,6 +194,15 @@ export function MoveToHostPlan({ theme, summary }: { theme: Theme; summary: Lift
 			{summary.env.secretsSent.length > 0 && (
 				<div className="text-xs select-text" style={{ color: theme.colors.warning }}>
 					Secret env vars that move: {summary.env.secretsSent.join(', ')}
+				</div>
+			)}
+			{hostTabMerge && (
+				<div
+					className="text-xs select-text"
+					style={{ color: theme.colors.textDim }}
+					data-testid="move-to-host-tab-merge"
+				>
+					{hostTabMerge}
 				</div>
 			)}
 

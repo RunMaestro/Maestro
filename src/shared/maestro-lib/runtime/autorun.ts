@@ -130,6 +130,11 @@ export interface RuntimeAutoRunOptions {
 	deps?: Partial<RuntimeTurnDeps>;
 	/** A run ended: whatever it held back (queued chat messages) may start now. */
 	onRunEnded?(agentId: string): void;
+	/**
+	 * A run began holding the agent's working tree: a message waiting for its tab alone now waits
+	 * for the run too, so it is no hand-over, and a Stop armed for it in the gap is let go (U9).
+	 */
+	onRunStarted?(agentId: string): void;
 	/** Test seam: the stats writer. Default: the library recorder over the host's SQLite loader. */
 	statsRecorder?: StatsRecorder;
 	/** The runtime's one History writer (it shares each entry with the project). Default: a plain one. */
@@ -591,6 +596,7 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 		runs.set(run.agentId, run);
 		// A new run begins with no notes, as the desktop's does.
 		steering.startRun(run.agentId);
+		options.onRunStarted?.(run.agentId);
 		run.done = (async () => {
 			publish(run);
 			let outcome: AutoRunOutcome | undefined;

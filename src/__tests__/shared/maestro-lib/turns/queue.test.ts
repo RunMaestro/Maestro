@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	COLLISION_MAX_ATTEMPTS,
 	DEFAULT_COLLISION_RECHECK_MS,
+	HAND_OVER_MAX_MS,
 	TurnCollisionError,
 	chooseNext,
 	collisionBackoffMs,
@@ -37,7 +38,9 @@ interface Turn {
 }
 
 /** A queue whose turns last until the test ends them. `failures` scripts `start` per item id. */
-function harness(options: { retryHeld?: Set<string>; holdsTree?: { on: boolean } } = {}) {
+function harness(
+	options: { retryHeld?: Set<string>; holdsTree?: { on: boolean }; clock?: { now: number } } = {}
+) {
 	const turns: Turn[] = [];
 	const events: QueueEvent<Item>[] = [];
 	const failures = new Map<string, Error[]>();
@@ -69,6 +72,7 @@ function harness(options: { retryHeld?: Set<string>; holdsTree?: { on: boolean }
 		},
 		isRetryHeld: (tabId) => options.retryHeld?.has(tabId) ?? false,
 		holdsTree: () => options.holdsTree?.on ?? false,
+		...(options.clock ? { now: () => options.clock!.now } : {}),
 		onEvent: (event) => events.push(event),
 		schedule: (run, ms) => {
 			delays.push(ms);
@@ -747,6 +751,194 @@ describe('createExecutionQueue interrupt', () => {
 		turns[0].end();
 		for (let i = 0; i < 10; i += 1) await Promise.resolve();
 		expect(turns.map((t) => t.item.id)).toEqual(['a', 'b']);
+	});
+
+	describe("a tab's next message that waits only for the tab (U2: the hand-over)", () => {
+		it('Stop ends it as it starts, and the message behind it runs after', async () => {
+			// The tab's History synopsis holds its session: the tab runs nothing, its message waits.
+			const held = new Set(['t1']);
+			const h = harness({ retryHeld: held });
+			h.queue.submit(item('next', 't1'));
+			h.queue.submit(item('after', 't1'));
+			await h.flush();
+			expect(h.startOrder).toEqual([]);
+
+			expect(h.queue.interruptNext('t1')).toBe('next');
+			held.delete('t1');
+			h.queue.drain();
+			await h.flush();
+
+			expect(h.turnFor('next').interrupted).toBe(true);
+			expect(h.startOrder).toEqual(['next', 'after']);
+			expect(h.turnFor('after').interrupted).toBe(false);
+		});
+
+		it('names no message behind a held head, nor one behind another tab (CodeRabbit on #2166)', async () => {
+			const tree = { on: true };
+			const h = harness({ holdsTree: tree });
+			h.queue.submit(item('write', 't1'));
+			h.queue.submit(item('read', 't1', { readOnly: true }));
+			await h.flush();
+			expect(h.queue.interruptNext('t1')).toBeUndefined();
+
+			const two = harness({ retryHeld: new Set(['t1', 't2']) });
+			two.queue.submit(item('first', 't1'));
+			two.queue.submit(item('second', 't2'));
+			await two.flush();
+			expect(two.queue.interruptNext('t2')).toBeUndefined();
+			expect(two.queue.interruptNext('t1')).toBe('first');
+		});
+
+		it("names no write an Auto Run's working-tree hold keeps (CodeRabbit on #2166)", async () => {
+			const h = harness({ holdsTree: { on: true } });
+			h.queue.submit(item('write', 't1'));
+			await h.flush();
+			expect(h.startOrder).toEqual([]);
+			expect(h.queue.interruptNext('t1')).toBeUndefined();
+		});
+
+		it('names nothing while the tab or another tab runs a turn, or when only held messages wait', async () => {
+			const h = harness();
+			h.queue.submit(item('a', 't1'));
+			h.queue.submit(item('b', 't2'));
+			await h.flush();
+			// t1 runs a turn: Stop is `interrupt`, and t2's message waits behind another tab's turn.
+			expect(h.queue.interruptNext('t1')).toBeUndefined();
+			expect(h.queue.interruptNext('t2')).toBeUndefined();
+
+			const idle = harness({ retryHeld: new Set(['t1']) });
+			idle.queue.submit(item('held', 't1', { paused: true }));
+			await idle.flush();
+			expect(idle.queue.interruptNext('t1')).toBeUndefined();
+		});
+	});
+
+	describe('U5: a Stop never ends a turn that starts after the gap it was pressed in', () => {
+		it('a message an Auto Run holds is left alone, and runs whole when the run ends', async () => {
+			const tree = { on: true };
+			const h = harness({ holdsTree: tree });
+			h.queue.submit(item('later', 't1'));
+			await h.flush();
+			// Stop on the idle tab (or `maestro-cli interrupt`): a local Stop leaves it queued.
+			expect(h.queue.interruptNext('t1')).toBeUndefined();
+			expect(h.queue.handOver()).toBeUndefined();
+			tree.on = false;
+			h.queue.drain();
+			await h.flush();
+			expect(h.startOrder).toEqual(['later']);
+			expect(h.turnFor('later').interrupted).toBe(false);
+		});
+
+		it('a Stop armed in the hand-over is let go once the message waits for something else', async () => {
+			const held = new Set(['t1']);
+			const tree = { on: false };
+			const h = harness({ retryHeld: held, holdsTree: tree });
+			h.queue.submit(item('next', 't1'));
+			await h.flush();
+			expect(h.queue.interruptNext('t1')).toBe('next');
+			// An Auto Run takes the tree before the synopsis lets go: the gap is over.
+			tree.on = true;
+			held.delete('t1');
+			h.queue.drain();
+			await h.flush();
+			expect(h.queue.handOver()).toBeUndefined();
+			// Hours later the run ends and the message starts: whole, not stopped.
+			tree.on = false;
+			h.queue.drain();
+			await h.flush();
+			expect(h.startOrder).toEqual(['next']);
+			expect(h.turnFor('next').interrupted).toBe(false);
+		});
+
+		it('a Stop armed in the hand-over is let go by a short Auto Run, when its start looks again (U9)', async () => {
+			const held = new Set(['t1']);
+			const tree = { on: false };
+			const h = harness({ retryHeld: held, holdsTree: tree });
+			h.queue.submit(item('next', 't1'));
+			await h.flush();
+			expect(h.queue.interruptNext('t1')).toBe('next');
+			// The run starts holding the tree, and the host looks again (`onRunStarted`): the client
+			// is told the message is no hand-over any more.
+			const before = h.events.length;
+			tree.on = true;
+			h.queue.drain();
+			expect(h.queue.handOver()).toBeUndefined();
+			expect(h.events.slice(before)).toEqual([
+				expect.objectContaining({ type: 'updated', item: expect.objectContaining({ id: 'next' }) }),
+			]);
+			// A run so short the synopsis still holds the tab when it ends.
+			tree.on = false;
+			h.queue.drain();
+			held.delete('t1');
+			h.queue.drain();
+			await h.flush();
+			expect(h.startOrder).toEqual(['next']);
+			expect(h.turnFor('next').interrupted).toBe(false);
+		});
+
+		it('a Stop armed in the hand-over is let go when the message is held, then resumed', async () => {
+			const held = new Set(['t1']);
+			const h = harness({ retryHeld: held });
+			h.queue.submit(item('next', 't1'));
+			await h.flush();
+			expect(h.queue.interruptNext('t1')).toBe('next');
+			h.queue.setPaused('next', true);
+			held.delete('t1');
+			h.queue.setPaused('next', false);
+			await h.flush();
+			expect(h.startOrder).toEqual(['next']);
+			expect(h.turnFor('next').interrupted).toBe(false);
+		});
+
+		it('past HAND_OVER_MAX_MS the message is no hand-over, and a Stop armed before does nothing', async () => {
+			const clock = { now: 1_000 };
+			const held = new Set(['t1']);
+			const h = harness({ retryHeld: held, clock });
+			h.queue.submit(item('next', 't1'));
+			await h.flush();
+			expect(h.queue.handOver()).toEqual({ itemId: 'next', tabId: 't1', since: 1_000 });
+			expect(h.queue.interruptNext('t1')).toBe('next');
+
+			clock.now = 1_000 + HAND_OVER_MAX_MS;
+			expect(h.queue.handOver()).toBeUndefined();
+			expect(h.queue.interruptNext('t1')).toBeUndefined();
+			held.delete('t1');
+			h.queue.drain();
+			await h.flush();
+			expect(h.turnFor('next').interrupted).toBe(false);
+		});
+
+		it('a Stop armed in the hand-over is let go when a forced or read-only send starts first (CodeRabbit on #2166)', async () => {
+			const held = new Set(['t1']);
+			const h = harness({ retryHeld: held });
+			h.queue.submit(item('next', 't1', { readOnly: true }));
+			await h.flush();
+			expect(h.queue.interruptNext('t1')).toBe('next');
+			// A forced send on another tab starts at once, before the hand-over's message; while it
+			// is still starting, the hold lifts and the read-only message starts beside it.
+			h.queue.submit(item('peek', 't2', { forceParallel: true }));
+			held.delete('t1');
+			h.queue.drain();
+			await h.flush();
+			expect(h.startOrder).toEqual(['peek', 'next']);
+			expect(h.turnFor('next').interrupted).toBe(false);
+		});
+
+		it('tells the listener when the hand-over begins, with no event of its own', async () => {
+			const held = new Set<string>();
+			const h = harness({ retryHeld: held });
+			h.queue.submit(item('first', 't1'));
+			h.queue.submit(item('next', 't1'));
+			await h.flush();
+			expect(h.queue.handOver()).toBeUndefined();
+			// The turn ends and a synopsis holds the tab: the message now waits for the tab alone.
+			held.add('t1');
+			h.events.length = 0;
+			h.turnFor('first').end();
+			await h.flush();
+			expect(h.queue.handOver()?.itemId).toBe('next');
+			expect(h.events.map((event) => event.type)).toEqual(['ended', 'updated']);
+		});
 	});
 
 	it('interrupts only the named tab', async () => {

@@ -79,9 +79,16 @@ import {
 	type HostLink,
 } from './hostedLinkLoss';
 import { retryConnectionOutagesNow } from '../stores/retryStore';
+import {
+	hostedTabsHandingOver,
+	hostHandOverClock,
+	nextHostHandOverDeadline,
+	onHostedTabLineChanged,
+	pruneHostHandOvers,
+} from '../utils/hostedTabLine';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
-function hostedInput(session: { liftedTo?: unknown; aiTabs: Session['aiTabs'] }):
+function hostedInput(session: { id: string; liftedTo?: unknown; aiTabs: Session['aiTabs'] }):
 	| {
 			peerId: string;
 			agentId: string;
@@ -101,6 +108,7 @@ function hostedInput(session: { liftedTo?: unknown; aiTabs: Session['aiTabs'] })
 	const peer = mirror.peers[pointer.peer];
 	const agent = peer?.agents.find((candidate) => candidate.id === pointer.agentId);
 	if (!peer || !agent) return undefined;
+	const now = Date.now();
 	return {
 		peerId: pointer.peer,
 		agentId: agent.id,
@@ -122,6 +130,9 @@ function hostedInput(session: { liftedTo?: unknown; aiTabs: Session['aiTabs'] })
 			liveTurns: peer.liveTurns,
 			queue: peer.queues[agent.id],
 			closing: closingHostTabIds({ peerId: pointer.peer, agentId: agent.id, agent }, session),
+			handingOver: hostedTabsHandingOver(session.id),
+			now,
+			handOverClock: hostHandOverClock(session.id, now),
 		},
 	};
 }
@@ -254,6 +265,7 @@ export function syncHostedAgents(): void {
 		dropStaleAutoRuns(new Set());
 		pruneHostStartedMentions(new Set());
 		pruneHostedLinkLoss(new Set());
+		pruneHostHandOvers(new Set());
 		pruneHostedTabBooks(useSessionStore.getState().sessions);
 		hostConnected.clear();
 		releaseHostedAgents();
@@ -268,6 +280,7 @@ export function syncHostedAgents(): void {
 	);
 	if (!usePeerMirrorStore.getState().enabled) {
 		pruneHostedLinkLoss(new Set());
+		pruneHostHandOvers(new Set());
 		pruneHostedTabBooks(useSessionStore.getState().sessions);
 		hostConnected.clear();
 		return;
@@ -346,6 +359,8 @@ export function syncHostedAgents(): void {
 	dropStaleAutoRuns(hostedIds);
 	// A deleted agent, one moved back, or one whose peer was removed lets go of its cut turns.
 	pruneHostedLinkLoss(hostedIds);
+	// ...and of the host-queue hand-overs, whose limits arm the recheck (U6).
+	pruneHostHandOvers(hostedIds);
 	// ...and of what the pending-tab path keeps for its tabs (R28).
 	pruneHostedTabBooks(sessions);
 	for (const id of hostConnected.keys()) if (!hostedIds.has(id)) hostConnected.delete(id);
@@ -369,6 +384,8 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 			nextHostedHandoffDeadline(useSessionStore.getState().sessions),
 			// A pending tab whose making failed is asked again when its wait ends (R15).
 			nextPendingHostTabRetryAt(useSessionStore.getState().sessions),
+			// A host-queue hand-over past its limit reads queued, with no change from the host (U6).
+			nextHostHandOverDeadline(),
 		].filter((at): at is number => at !== undefined);
 		if (deadlines.length === 0) return;
 		const delay = Math.max(0, Math.min(...deadlines) - Date.now()) + 1;
@@ -391,6 +408,8 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 	const offOutages = useSshOutageStore.subscribe((state, prev) => {
 		if (state.outages !== prev.outages) schedule();
 	});
+	// A turn on its way to the host is drawn busy until the host has it (`hostedTabsHandingOver()`).
+	const offLines = onHostedTabLineChanged(schedule);
 	const offSettings = useSettingsStore.subscribe((state, prev) => {
 		if (state.federationHostedAgents !== prev.federationHostedAgents) schedule();
 	});
@@ -405,6 +424,7 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 		if (recheck !== undefined) clearTimeout(recheck);
 		recheck = undefined;
 		offMirror();
+		offLines();
 		offOutages();
 		offSettings();
 		offSessions();

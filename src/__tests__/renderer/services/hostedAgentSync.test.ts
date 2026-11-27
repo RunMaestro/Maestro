@@ -22,6 +22,7 @@ import {
 import { resetStores } from '../../helpers';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
+import { nextHostHandOverDeadline } from '../../../renderer/utils/hostedTabLine';
 
 const toastMock = vi.hoisted(() => vi.fn());
 vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
@@ -90,6 +91,52 @@ describe('hostedAgentSync', () => {
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs.map((e) => e.text)).toEqual([
 			'from the host',
 		]);
+	});
+
+	it('forgets a hand-over of an agent it no longer draws, so its limit never re-arms the recheck (CodeRabbit on #2166)', () => {
+		// The host's own time for the hand-over: now, so its limit is still running (U9).
+		const since = Date.now();
+		const withHandOver = () =>
+			usePeerMirrorStore.setState((state) => ({
+				peers: {
+					...state.peers,
+					box: {
+						...state.peers.box,
+						queues: {
+							h1: [
+								{
+									itemId: 'next',
+									tabId: 't1',
+									queuedAt: since,
+									kind: 'message' as const,
+									text: 'next',
+									paused: false,
+									handOver: true,
+									handOverSince: since,
+								},
+							],
+						},
+					},
+				},
+			}));
+		useSessionStore.setState({ sessions: [row()], activeSessionId: 'someone-else' });
+		hydrateHost('idle');
+		withHandOver();
+		syncHostedAgents();
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].state).toBe('busy');
+		expect(nextHostHandOverDeadline()).toBeDefined();
+		// Hosting is turned off: the sync draws nothing, and the limit no longer counts.
+		useSettingsStore.setState({ federationHostedAgents: false });
+		syncHostedAgents();
+		expect(nextHostHandOverDeadline()).toBeUndefined();
+
+		// The agent is deleted while its hand-over waits.
+		useSettingsStore.setState({ federationHostedAgents: true });
+		syncHostedAgents();
+		expect(nextHostHandOverDeadline()).toBeDefined();
+		useSessionStore.setState({ sessions: [] });
+		syncHostedAgents();
+		expect(nextHostHandOverDeadline()).toBeUndefined();
 	});
 
 	it('does not read a tab nobody looks at', () => {
