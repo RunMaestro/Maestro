@@ -228,9 +228,6 @@ function routeErroredTurn(
 	const waiting = getRetryEntry(sessionId, tabId);
 	if (waiting && waiting.heldItemId !== item?.id) return 'not-held';
 	if (!error) return 'not-retried';
-	if (item && !waiting) {
-		noteDirectDispatch(sessionId, item, { keepMention: !!item.crossAgentMention });
-	}
 	// The lost link's retry holds the copy: that outage is over (the host is back), and the
 	// provider error is a new one, so its backoff starts at its own first attempt, under its own
 	// card. Handed over in one write (`freshOutage`), so a dispatch callback parked on the link's
@@ -239,6 +236,12 @@ function routeErroredTurn(
 		? { freshOutage: { settledByHost: true, hostRetry: 'here' as const } }
 		: undefined;
 	if (!wouldRecoverError(sessionId, tabId, error, handover)) return 'not-retried';
+	// The prompt the retry resends, recorded only once a retry or compaction will take the error:
+	// one left behind for an error no retry takes (a login) could be resent for a later error of
+	// this tab, as the wrong message (R46).
+	if (item && !waiting) {
+		noteDirectDispatch(sessionId, item, { keepMention: !!item.crossAgentMention });
+	}
 	// Raised through the error listener, as a local turn's error is (and as `keepTurnForHost()`
 	// raises a refused send): it schedules the retry and writes the transcript anchor its card is
 	// drawn from (countdown, Try now, Stop), never a retry with no card (R44).

@@ -1758,6 +1758,35 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		);
 	});
 
+	// Parity R46: an error no retry takes records no prompt for the tab. One left behind would be
+	// resent by the retry of a LATER error on this tab, as the wrong message.
+	it('records no prompt for an error no retry takes, so a later error resends nothing stale (R46)', async () => {
+		relaunch('idle', [
+			QUESTION,
+			{
+				id: 'e1',
+				timestamp: 20,
+				source: 'error',
+				text: 'Invalid API key. Please run /login.',
+				turnEnded: true,
+			},
+		]);
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(queue()).toEqual([expect.objectContaining({ id: 'k1', paused: true })]);
+		// A later turn of this tab fails on an overload: no prompt of the held copy to resend.
+		expect(
+			scheduleRetryForError('row', 't1', {
+				type: 'rate_limited',
+				message: 'API Error: 529 Overloaded',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: 30,
+			})
+		).toBe(false);
+	});
+
 	// CodeRabbit on #2167: the link drops while the tab's read is out. The busy tab held now is the
 	// report from before the drop: nothing is decided from it, and the message stays kept.
 	it('decides nothing from a busy tab when the link dropped during the read', async () => {
