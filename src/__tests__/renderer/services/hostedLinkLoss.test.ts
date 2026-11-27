@@ -51,7 +51,9 @@ import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import type { PeerMirrorConnection } from '../../../shared/maestro-lib/client/peer-mirror';
 import {
 	createMirroredPeer,
+	type MirroredPeer,
 	replacePeerAgents,
+	setPeerConnection,
 } from '../../../shared/maestro-lib/client/peer-mirror';
 import type { SshReachabilityEvent } from '../../../shared/sshConnection';
 import { createModeSession, resetStores } from '../../helpers';
@@ -120,7 +122,16 @@ function peerWith(
 		[],
 		1
 	);
-	return { ...peer, connection };
+	// As the mirror sets it: a link that is down forgets that the host reported since.
+	return setPeerConnection(peer, connection).peer;
+}
+
+/**
+ * `peer` as the mirror holds it once the link came back and before the host's first report since:
+ * connected, still the agents it listed before the link went down (R35).
+ */
+function reconnectedBeforeReport(peer: MirroredPeer): MirroredPeer {
+	return setPeerConnection(setPeerConnection(peer, 'reconnecting').peer, 'connected').peer;
 }
 
 /** Replace the host's report without dropping the transcripts read so far. */
@@ -1158,6 +1169,52 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 				message: 'The host already had this message, so it was not sent again.',
 			})
 		);
+	});
+
+	// Parity R35: the host crashed mid-turn and the user reloaded the window. The mirror in main
+	// still holds the report from before the crash and says connected before the restarted host's
+	// snapshot lands.
+	it('decides from the restarted host after a reload, never its busy report from before the crash (R35)', async () => {
+		relaunch('busy', [QUESTION]);
+		usePeerMirrorStore.getState().hydrate([reconnectedBeforeReport(peerWith('busy', 'connected'))]);
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(toastMock).not.toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: 'The host already had this message, so it was not sent again.',
+			})
+		);
+		// The restarted host's snapshot: the tab is idle, and its turn died with the host.
+		usePeerMirrorStore.getState().applyPush({
+			peerId: 'box',
+			event: { type: 'peer.agents', agents: peerWith('idle', 'connected').agents, groups: [] },
+		});
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	it('never says the tab is gone from an agent list not in yet after a reload (R35)', async () => {
+		relaunch('idle', [QUESTION]);
+		const before = peerWith('idle', 'connected');
+		usePeerMirrorStore.getState().hydrate([reconnectedBeforeReport({ ...before, agents: [] })]);
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(toastMock).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Not sent' }));
+		usePeerMirrorStore.getState().applyPush({
+			peerId: 'box',
+			event: { type: 'peer.agents', agents: before.agents, groups: [] },
+		});
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+		expect(toastMock).not.toHaveBeenCalledWith(expect.objectContaining({ title: 'Not sent' }));
 	});
 
 	it('takes the host saying the message already ran as "already ran"', async () => {

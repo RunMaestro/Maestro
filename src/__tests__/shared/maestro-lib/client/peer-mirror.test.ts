@@ -10,6 +10,7 @@ import {
 	clearTabStale,
 	createMirroredPeer,
 	findMirrorPeer,
+	hostReportIsCurrent,
 	markAllTabsStale,
 	MAX_MIRRORED_QUEUE_EXITS,
 	queueExitOf,
@@ -370,6 +371,39 @@ describe('peer helpers', () => {
 			agentCount: 0,
 			lastSyncAt: 500,
 		});
+	});
+
+	it('holds the report as current only once the host listed its agents since the link was down (R35)', () => {
+		const listed = setPeerConnection(peerWith([agent('a1')]), 'connected').peer;
+		expect(hostReportIsCurrent(listed)).toBe(true);
+		// The link drops: the agents held are the report from before, kept to draw them dimmed.
+		const down = setPeerConnection(listed, 'reconnecting');
+		expect(hostReportIsCurrent(down.peer)).toBe(false);
+		expect(down.push).toEqual([
+			{ type: 'peer.state', peer: expect.not.objectContaining({ reportedSinceLink: true }) },
+		]);
+		// Connected again (a restarted host attaches before its snapshot): still not current.
+		const back = applyPeerEvent(
+			down.peer,
+			{ type: 'host.connected', host: { kind: 'headless', label: 'h' }, resumed: false },
+			ctx()
+		).peer;
+		expect(back.connection).toBe('connected');
+		expect(hostReportIsCurrent(back)).toBe(false);
+		// Its snapshot lands: current, and every window is told so.
+		const snapshot = applyPeerEvent(
+			back,
+			{ type: 'snapshot', agents: [agent('a1')], groups: [] },
+			ctx()
+		);
+		expect(hostReportIsCurrent(snapshot.peer)).toBe(true);
+		expect(snapshot.push).toContainEqual({
+			type: 'peer.state',
+			peer: expect.objectContaining({ reportedSinceLink: true }),
+		});
+		// A state that is already down forgets the report even with nothing else changed.
+		const lostListed = { ...setPeerConnection(listed, 'lost').peer, reportedSinceLink: true };
+		expect(hostReportIsCurrent(setPeerConnection(lostListed, 'lost').peer)).toBe(false);
 	});
 
 	it('markAllTabsStale then clearTabStale leaves only the other tabs stale', () => {

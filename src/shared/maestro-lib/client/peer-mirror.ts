@@ -70,6 +70,23 @@ export interface MirroredPeer {
 	staleTabs: Record<string, true>;
 	/** When the agent list was last replaced whole, epoch ms. */
 	lastSyncAt?: number;
+	/**
+	 * The host listed its agents whole (a snapshot, or a list read) since the link was last down.
+	 * Until then the agents held are the host's report from before (kept to draw them dimmed): a
+	 * host that restarted is connected before its first snapshot lands, and a tab it last reported
+	 * busy, or an agent list still empty, says nothing about the host now (`hostReportIsCurrent()`).
+	 */
+	reportedSinceLink?: boolean;
+}
+
+/**
+ * Whether `peer`'s agents are the host's report as it is now: connected, and listed whole since the
+ * link was last down. A decision that trusts a tab's state or the agent list waits for this.
+ */
+export function hostReportIsCurrent(
+	peer: Pick<MirroredPeer, 'connection' | 'reportedSinceLink'>
+): boolean {
+	return peer.connection === 'connected' && peer.reportedSinceLink === true;
 }
 
 /** A peer as `maestro-cli federation peers` and the Left Bar header show it. */
@@ -81,6 +98,8 @@ export interface MirrorPeerSummary {
 	error?: string;
 	agentCount: number;
 	lastSyncAt?: number;
+	/** `MirroredPeer.reportedSinceLink`, carried so every window judges the report the same. */
+	reportedSinceLink?: boolean;
 }
 
 /** A change a window applies to its own copy of a peer. */
@@ -167,6 +186,7 @@ export function summarizePeer(peer: MirroredPeer): MirrorPeerSummary {
 		...(peer.error ? { error: peer.error } : {}),
 		agentCount: peer.agents.length,
 		...(peer.lastSyncAt !== undefined ? { lastSyncAt: peer.lastSyncAt } : {}),
+		...(peer.reportedSinceLink ? { reportedSinceLink: true } : {}),
 	};
 }
 
@@ -209,16 +229,23 @@ function stateStep(peer: MirroredPeer): MirrorStep {
 	return { peer, push: [{ type: 'peer.state', peer: summarizePeer(peer) }] };
 }
 
-/** Set the connection. A change that changes nothing pushes nothing. */
+/**
+ * Set the connection. A change that changes nothing pushes nothing. Any state but connected means
+ * the link is down: the host's next whole list is the first report since (`reportedSinceLink`).
+ */
 export function setPeerConnection(
 	peer: MirroredPeer,
 	connection: PeerMirrorConnection,
 	error?: string
 ): MirrorStep {
-	if (peer.connection === connection && peer.error === error) return { peer, push: [] };
+	const forgetsReport = connection !== 'connected' && peer.reportedSinceLink === true;
+	if (peer.connection === connection && peer.error === error && !forgetsReport) {
+		return { peer, push: [] };
+	}
 	const next: MirroredPeer = { ...peer, connection };
 	if (error) next.error = error;
 	else delete next.error;
+	if (forgetsReport) delete next.reportedSinceLink;
 	return stateStep(next);
 }
 
@@ -414,6 +441,8 @@ export function replacePeerAgents(
 		autoRuns: pruneByAgent(peer.autoRuns, agents),
 		staleTabs: pruneByTabs(peer.staleTabs, keys),
 		lastSyncAt: now,
+		// Only a live link lists the agents: this is the host's report as it is now.
+		reportedSinceLink: true,
 	};
 	return {
 		peer: next,

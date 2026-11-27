@@ -30,7 +30,10 @@ import {
 	userEntryAnswered,
 } from '../../shared/maestro-lib/agents/rules';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
-import type { PeerMirrorConnection } from '../../shared/maestro-lib/client/peer-mirror';
+import {
+	hostReportIsCurrent,
+	type PeerMirrorConnection,
+} from '../../shared/maestro-lib/client/peer-mirror';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import { notifyToast } from '../stores/notificationStore';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
@@ -111,13 +114,10 @@ interface CutTurn {
 	 */
 	awaitingRead?: boolean;
 	/**
-	 * The host's record of the agent as it last reported it before the link was lost: the report
-	 * that drew this tab running. Until a newer one lands, its busy tab says nothing about the turn
-	 * now: a host that restarted sends its first report after the reconnect, and can answer a
-	 * transcript read before it.
+	 * The host is connected, and the decision waits for its first report since the link was down
+	 * (`hostReportIsCurrent()`): until then the mirror holds the report that drew this tab running,
+	 * and a host that restarted can answer a transcript read before its snapshot lands.
 	 */
-	report?: AgentRecord;
-	/** The tab's read is in, and the decision waits for the host's first report since the cut. */
 	awaitingReport?: boolean;
 	/** The user stopped this turn here while the host could not be told: never sent again. */
 	stopped?: boolean;
@@ -218,7 +218,6 @@ export function noteHostedTurnsCut(session: Session, link: HostLink, lost?: Agen
 			sessionId: session.id,
 			tabId: hostTab.id,
 			remoteName: link.remoteName,
-			report: link.agent,
 			...(stoppedHere(key, message?.id) ? { stopped: true } : {}),
 			...(message
 				? {
@@ -294,6 +293,36 @@ function sameAsCut(item: Pick<QueuedItem, 'text' | 'images'>, cut: CutTurn): boo
 type HostAgentRef = Pick<HostLink, 'peerId' | 'agentId'>;
 
 /**
+ * Whether the mirror holds the host's report as it is now (`hostReportIsCurrent()`): a tab's state
+ * and the agent list decide a cut turn's fate only then, never the report from before the link was
+ * lost, which the mirror keeps through a disconnect and a window reload.
+ */
+function hostReportCurrent(peerId: string): boolean {
+	const peer = usePeerMirrorStore.getState().peers[peerId];
+	return !!peer && hostReportIsCurrent(peer);
+}
+
+/**
+ * Wait, at most `timeoutMs`, for the host's report as it is now. False when none came: the caller
+ * keeps the message for the next try, never deciding from the old report.
+ */
+function awaitCurrentHostReport(peerId: string, timeoutMs: number): Promise<boolean> {
+	if (hostReportCurrent(peerId)) return Promise.resolve(true);
+	return new Promise((resolve) => {
+		const finish = (current: boolean) => {
+			clearTimeout(timer);
+			unsubscribe();
+			resolve(current);
+		};
+		const unsubscribe = usePeerMirrorStore.subscribe((state) => {
+			const peer = state.peers[peerId];
+			if (peer && hostReportIsCurrent(peer)) finish(true);
+		});
+		const timer = setTimeout(() => finish(false), timeoutMs);
+	});
+}
+
+/**
  * Whether the resend of `item` must wait for the host to say how the turn it repeats ended, and if
  * so, that answer. Null: send now (not the message of a turn the host already wrote down, or the
  * host is not connected, so the send is refused and the message stays kept).
@@ -350,6 +379,9 @@ async function readKeptEntryFate(
 	host: HostAgentRef,
 	item: Pick<QueuedItem, 'tabId' | 'text' | 'images'> & { hostEntryId: string }
 ): Promise<CutTurnFate> {
+	// After a reload the mirror can say connected while it still holds the host's report from
+	// before a crash (the tab busy, or no agents yet): decided only from a report since the link.
+	if (!(await awaitCurrentHostReport(host.peerId, CUT_TURN_FATE_WAIT_MS))) return 'unknown';
 	await readMirrorTranscript(host.peerId, host.agentId, item.tabId);
 	const mirror = usePeerMirrorStore.getState();
 	const hostTab = mirror.peers[host.peerId]?.agents
@@ -446,10 +478,10 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 		(candidate) => candidate.id === link.agentId
 	);
 	const hostTab = agent?.aiTabs?.find((tab) => tab.id === cut.tabId);
-	// Still the report that drew the turn running: its busy is the turn as it was before the link
-	// was lost, not proof that it runs now. The decision waits for the host's next report, which
-	// starts one read (`settleCutHostedTurns()`).
-	if (hostTab?.state === 'busy' && agent === cut.report && !cut.stopped) {
+	// Not yet the host's report since the link was down: a busy tab is the turn as it was before,
+	// and a missing one may be a list not in yet. The decision waits for that report, which starts
+	// one read (`settleCutHostedTurns()`).
+	if (!hostReportCurrent(link.peerId)) {
 		cut.awaitingReport = true;
 		return;
 	}
@@ -518,8 +550,10 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
  * read once, and the host's report after it decides (`decideCutTurn()`).
  */
 export function settleCutHostedTurns(sessionId: string, link: HostLink): void {
-	// A stopped turn the host reports idle (or no longer lists) is over: its stop is settled.
-	for (const key of [...stoppedTurns.keys()]) {
+	const current = hostReportCurrent(link.peerId);
+	// A stopped turn the host reports idle (or no longer lists) is over: its stop is settled. Only
+	// the host's report since the link was down says so.
+	for (const key of current ? [...stoppedTurns.keys()] : []) {
 		if (!key.startsWith(`${sessionId}:`)) continue;
 		const tabId = key.slice(sessionId.length + 1);
 		const hostTab = link.agent.aiTabs?.find((tab) => tab.id === tabId);
@@ -531,9 +565,12 @@ export function settleCutHostedTurns(sessionId: string, link: HostLink): void {
 			cutTurns.delete(key);
 			continue;
 		}
+		if (!current) {
+			// Still the report from before the cut: nothing to decide from, and no read started.
+			cut.awaitingReport = true;
+			continue;
+		}
 		if (cut.awaitingReport) {
-			// Still the report from before the cut: nothing new to decide from, and no read started.
-			if (link.agent === cut.report) continue;
 			cut.awaitingReport = false;
 		} else if (cut.awaitingRead) {
 			// Decided by the tab's next read that lands: never by another read started here.
