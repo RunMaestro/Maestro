@@ -13,6 +13,9 @@ import {
 	type TemplateContext,
 } from '../../../utils/templateVariables';
 import { createGenericErrorMessage } from './wizardErrorDetection';
+import type { AdditionalDirectory } from '../../../../shared/types';
+import { formatAdditionalDirectoriesForPrompt } from '../../../../shared/additionalDirectories';
+import { resolveWizardReadableDirectories, wizardReadableDirectories } from './wizardPrompts';
 
 let cachedPhaseGenDocPrompt: string | null = null;
 let phaseGeneratorPromptsLoaded = false;
@@ -62,6 +65,8 @@ export interface GenerationConfig {
 	};
 	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
 	claudeTokenSource?: ClaudeTokenSourceFields;
+	/** Extra folders granted on the Directory screen ("Add Different Folder") */
+	additionalDirectories?: AdditionalDirectory[];
 }
 
 /**
@@ -357,7 +362,8 @@ export const wizardDebugLogger = new WizardDebugLogger();
  * - Name files as Phase-XX-Description.md
  */
 export function generateDocumentGenerationPrompt(config: GenerationConfig): string {
-	const { projectName, directoryPath, conversationHistory, subfolder } = config;
+	const { projectName, directoryPath, conversationHistory, subfolder, additionalDirectories } =
+		config;
 	const projectDisplay = projectName || 'this project';
 
 	// Build conversation summary
@@ -394,6 +400,14 @@ export function generateDocumentGenerationPrompt(config: GenerationConfig): stri
 
 	// Substitute any remaining template variables using the central function
 	prompt = substituteTemplateVariables(prompt, templateContext);
+
+	// The plan was discussed against these folders; keep them readable here too.
+	const additionalDirsSection = formatAdditionalDirectoriesForPrompt(
+		wizardReadableDirectories(additionalDirectories)
+	);
+	if (additionalDirsSection) {
+		prompt += `\n\n${additionalDirsSection}\n`;
+	}
 
 	return prompt;
 }
@@ -680,8 +694,18 @@ class PhaseGenerator {
 				argsCount: agent.args?.length || 0,
 			});
 
+			// Resolve the extra folders once, so the prompt and the native grant
+			// flags name the same paths.
+			const runConfig: GenerationConfig = {
+				...config,
+				additionalDirectories: await resolveWizardReadableDirectories(
+					config.additionalDirectories,
+					config.sshRemoteConfig
+				),
+			};
+
 			// Generate the prompt
-			const prompt = generateDocumentGenerationPrompt(config);
+			const prompt = generateDocumentGenerationPrompt(runConfig);
 			wizardDebugLogger.log('info', 'Document generation prompt created', {
 				promptLength: prompt.length,
 				promptPreview: prompt.slice(0, 200),
@@ -691,7 +715,7 @@ class PhaseGenerator {
 
 			// Spawn the agent and wait for completion
 			wizardDebugLogger.log('info', 'Starting agent run');
-			const result = await this.runAgent(agent, config, prompt, callbacks);
+			const result = await this.runAgent(agent, runConfig, prompt, callbacks);
 
 			if (!result.success) {
 				wizardDebugLogger.log('error', 'Agent run failed', {
@@ -1185,6 +1209,9 @@ class PhaseGenerator {
 					sessionCustomModel: config.model,
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: config.sshRemoteConfig,
+					// Native read grants for the Directory screen's extra folders,
+					// already resolved by generateDocuments.
+					sessionAdditionalDirectories: config.additionalDirectories,
 					...getClaudeTokenSourceFields(config.claudeTokenSource),
 				})
 				.then(() => {

@@ -11,6 +11,12 @@ import {
 	type TemplateContext,
 } from '../../../utils/templateVariables';
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
+import type { AdditionalDirectory } from '../../../../shared/types';
+import {
+	formatAdditionalDirectoriesForPrompt,
+	normalizeAdditionalDirectories,
+} from '../../../../shared/additionalDirectories';
+import { resolveHomeDir } from '../../../utils/homeDir';
 
 let cachedWizardSystemPrompt: string | null = null;
 let cachedWizardSystemContinuationPrompt: string | null = null;
@@ -110,6 +116,8 @@ export interface SystemPromptConfig {
 	historyFilePath?: string;
 	/** Conductor profile (user's About Me from settings) */
 	conductorProfile?: string;
+	/** Extra folders granted on the Directory screen ("Add Different Folder") */
+	additionalDirectories?: AdditionalDirectory[];
 }
 
 /**
@@ -174,6 +182,7 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 		autoRunFolderPath,
 		historyFilePath,
 		conductorProfile,
+		additionalDirectories,
 	} = config;
 	const projectName = agentName || 'this project';
 
@@ -223,7 +232,55 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 	// Substitute any remaining template variables using the central function
 	prompt = substituteTemplateVariables(prompt, templateContext);
 
+	// Name the extra folders explicitly. Without this block the agent knows only
+	// its working directory and cannot find a reference project by name.
+	const additionalDirsSection = formatAdditionalDirectoriesForPrompt(
+		wizardReadableDirectories(additionalDirectories)
+	);
+	if (additionalDirsSection) {
+		prompt += `\n\n${additionalDirsSection}\n`;
+	}
+
 	return prompt + existingDocsSection;
+}
+
+/**
+ * The folders granted on the wizard's Directory screen, as the wizard may use
+ * them during planning and document generation.
+ *
+ * The wizard writes only to the Auto Run folder, so each readable grant is
+ * handed over as read-only and write-only grants are dropped. The result feeds
+ * both the system-prompt block and the provider's native grant flags
+ * (`sessionAdditionalDirectories`, e.g. Claude's `--add-dir`).
+ */
+export function wizardReadableDirectories(
+	dirs: AdditionalDirectory[] | undefined,
+	homeDir?: string
+): AdditionalDirectory[] | undefined {
+	const readable = normalizeAdditionalDirectories(dirs, homeDir)
+		?.filter((dir) => dir.read)
+		.map((dir) => ({ ...dir, write: false }));
+	return readable?.length ? readable : undefined;
+}
+
+/**
+ * `wizardReadableDirectories` with `~` expanded on the machine the wizard's
+ * agent runs on. Call it once per run and hand the result to both the prompt
+ * and the spawn, so the two always name the same paths.
+ *
+ * Locally this waits for the home directory rather than reading the cache,
+ * which is still empty if nothing has asked for it yet in this session. Over
+ * SSH `~` means the remote's home, which this machine does not know, so the
+ * path is left as typed instead of being rewritten to a local home that does
+ * not exist on the remote.
+ */
+export async function resolveWizardReadableDirectories(
+	dirs: AdditionalDirectory[] | undefined,
+	sshRemoteConfig?: { enabled: boolean }
+): Promise<AdditionalDirectory[] | undefined> {
+	if (!dirs?.length) return undefined;
+	const homeDir = sshRemoteConfig?.enabled ? undefined : await resolveHomeDir();
+	return wizardReadableDirectories(dirs, homeDir);
 }
 
 /**

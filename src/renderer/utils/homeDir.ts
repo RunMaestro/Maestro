@@ -30,3 +30,13 @@ export function getHomeDirAsync(): Promise<string> | undefined {
 	getHomeDir();
 	return homeDirPromise;
 }
+
+/**
+ * The home directory, waiting for the IPC fetch when the cache is still empty.
+ * Use this instead of `getHomeDir()` wherever a `~` path is about to be
+ * expanded for real: the sync read returns undefined until something has
+ * warmed the cache, and an unexpanded `~` then leaks into a spawn.
+ */
+export async function resolveHomeDir(): Promise<string | undefined> {
+	return getHomeDir() ?? (await getHomeDirAsync());
+}

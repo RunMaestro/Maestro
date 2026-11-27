@@ -831,6 +831,17 @@ describe('ssh-command-builder', () => {
 			expect(result.remoteCommandLine).not.toContain('export PATH=');
 		});
 
+		it('expands a home-relative grant on the remote instead of quoting a literal ~', async () => {
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'claude',
+				args: ['--print', '--add-dir', '~/reference', '--add-dir', '/opt/shared'],
+			});
+
+			expect(result.remoteCommandLine).toBe(
+				`claude '--print' '--add-dir' "$HOME/reference" '--add-dir' '/opt/shared'`
+			);
+		});
+
 		it('includes PATH setup in stdin script', async () => {
 			const result = await buildSshCommandWithStdin(baseConfig, {
 				command: 'opencode',

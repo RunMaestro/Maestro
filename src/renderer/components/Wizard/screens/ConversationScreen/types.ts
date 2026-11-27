@@ -56,6 +56,7 @@ export type WizardConversationState = Pick<
 	| 'existingDocsChoice'
 	| 'plannerModel'
 	| 'sessionSshRemoteConfig'
+	| 'additionalDirectories'
 	| 'enableMaestroP'
 	| 'maestroPMode'
 	| 'maestroPPath'

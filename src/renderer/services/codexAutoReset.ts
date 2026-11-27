@@ -42,7 +42,7 @@ import { shouldAutoSpendCredit } from '../../shared/codexResetCredits';
 import { effectiveAgentCustomEnvVars, resolveAgentAccountKey } from '../../shared/providerProfiles';
 import { useCodexResetCreditsStore } from '../stores/codexResetCreditsStore';
 import { notifyToast } from '../stores/notificationStore';
-import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
+import { resolveHomeDir } from '../utils/homeDir';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = '[CodexAutoReset]';
@@ -115,7 +115,7 @@ export async function maybeAutoResetCodexUsage(
 	// outage must not both get through.
 	markHandled(outageKey);
 
-	const homeDir = getHomeDir() ?? (await getHomeDirAsync());
+	const homeDir = await resolveHomeDir();
 	// The provider-level set is NOT optional here. An agent with no overrides of
 	// its own still runs against whatever CODEX_HOME Settings -> Agents declares,
 	// so skipping this layer resolves to the default `~/.codex` and would reset
