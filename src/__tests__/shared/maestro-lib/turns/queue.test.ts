@@ -882,6 +882,22 @@ describe('createExecutionQueue interrupt', () => {
 			expect(h.turnFor('next').interrupted).toBe(false);
 		});
 
+		it('a Stop armed in the hand-over is let go when a forced or read-only send starts first (CodeRabbit on #2166)', async () => {
+			const held = new Set(['t1']);
+			const h = harness({ retryHeld: held });
+			h.queue.submit(item('next', 't1', { readOnly: true }));
+			await h.flush();
+			expect(h.queue.interruptNext('t1')).toBe('next');
+			// A forced send on another tab starts at once, before the hand-over's message; while it
+			// is still starting, the hold lifts and the read-only message starts beside it.
+			h.queue.submit(item('peek', 't2', { forceParallel: true }));
+			held.delete('t1');
+			h.queue.drain();
+			await h.flush();
+			expect(h.startOrder).toEqual(['peek', 'next']);
+			expect(h.turnFor('next').interrupted).toBe(false);
+		});
+
 		it('tells the listener when the hand-over begins, with no event of its own', async () => {
 			const held = new Set<string>();
 			const h = harness({ retryHeld: held });

@@ -12,6 +12,7 @@
  */
 
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
+import { queueExitOf } from '../../shared/maestro-lib/client/peer-mirror';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import { readHistoryCommandOutcome } from '../../shared/maestroBuiltinCommandText';
 import { notifyToast } from '../stores/notificationStore';
@@ -301,6 +302,18 @@ export function watchHostedTurnSynopsis(
 		// Still waiting in the host's queue: the turn has not run yet, and a turn running now is the
 		// one ahead of it.
 		if (waiting && runStartedAt === undefined) return;
+		if (opts.queuedItemId !== undefined && runStartedAt === undefined) {
+			// Gone from the queue: a host that names how items leave it says whether this one started.
+			// Removed, it never runs: nothing to raise. Not named yet, a turn the tab runs now is not
+			// proof it is this one (another client's turn, CodeRabbit on #2166).
+			const exits = peer?.queueExits?.[target.agentId];
+			const exit = queueExitOf(exits, opts.queuedItemId);
+			if (exit === 'removed') {
+				watch.stop();
+				return;
+			}
+			if (exits && exit !== 'started') return;
+		}
 		const running = tab?.state === 'busy' || !!peer?.liveTurns?.[key];
 		if (running) {
 			const started =

@@ -6,6 +6,7 @@
  * which a browser bundle cannot load). `lift-return.ts` re-exports everything here.
  */
 
+import { collapseWhitespace } from '../../stringUtils';
 import type { AITabRecord } from '../store/records';
 import { readLiftedTo, type LiftedToPointer } from './lift-pointer';
 
@@ -24,6 +25,47 @@ export interface ReturnedFromHost {
 /** The host copy a move back left behind, or undefined when the field is absent or malformed. */
 export function readLeftOnHost(record: { leftOnHost?: unknown }): LiftedToPointer | undefined {
 	return readLiftedTo(record.leftOnHost);
+}
+
+/**
+ * A transcript's conversation, one key per turn: the person's message and the reply to it (every
+ * reply entry up to the next message, joined, whitespace collapsed). Notes, tools, and thinking are
+ * left out, and so are entry ids, so two copies of one conversation read the same on both sides
+ * even when each side wrote its own notes or stored the entries under other ids.
+ */
+export function conversationTurns(logs: unknown): string[] {
+	const turns: string[] = [];
+	let user: string | undefined;
+	let reply: string[] = [];
+	const close = () => {
+		if (user !== undefined) turns.push(`${user}\u0000${collapseWhitespace(reply.join(' '))}`);
+	};
+	for (const entry of Array.isArray(logs) ? logs : []) {
+		if (!entry || typeof entry !== 'object') continue;
+		const { source, text } = entry as { source?: unknown; text?: unknown };
+		const body = typeof text === 'string' ? text : '';
+		if (source === 'user') {
+			close();
+			user = collapseWhitespace(body);
+			reply = [];
+		} else if ((source === 'ai' || source === 'stdout') && user !== undefined) {
+			reply.push(body);
+		}
+	}
+	close();
+	return turns;
+}
+
+/**
+ * Of two transcripts of one tab, the one that went further: more turns of its conversation
+ * (`conversationTurns()`), else more entries, else the host's. Counting entries alone would let a
+ * side with more notes win over a side with one more turn.
+ */
+export function furtherTranscript<T>(hostLogs: T[], localLogs: T[]): T[] {
+	const hostTurns = conversationTurns(hostLogs).length;
+	const localTurns = conversationTurns(localLogs).length;
+	if (hostTurns !== localTurns) return hostTurns > localTurns ? hostLogs : localLogs;
+	return hostLogs.length >= localLogs.length ? hostLogs : localLogs;
 }
 
 /** A host tab as a local tab record: the fields a local tab needs, idle, with its transcript. */
@@ -50,8 +92,9 @@ function asLocalTab(tab: AITabRecord): AITabRecord {
 
 /**
  * The local record once the agent is back: no `liftedTo`, `hostedOptOut` set, and the host's tabs
- * merged in by tab id. A tab both sides have takes the host's transcript (the conversation went on
- * there) unless the host's is shorter, plus its name, star, and provider session. A host tab this
+ * merged in by tab id. A tab both sides have takes the transcript that went further
+ * (`furtherTranscript()`: the host's, where the conversation went on there), plus the host's name,
+ * star, and provider session. A host tab this
  * machine lacks is appended. Local tabs the host closed stay. Pure.
  */
 export function withReturnedFromHost<T extends Record<string, unknown>>(
@@ -70,7 +113,7 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 			agentSessionId: host.agentSessionId ?? local.agentSessionId ?? null,
 			name: host.name ?? local.name ?? null,
 			starred: host.starred === true,
-			logs: hostLogs.length >= localLogs.length ? hostLogs : localLogs,
+			logs: furtherTranscript(hostLogs, localLogs),
 			...(host.usageStats ? { usageStats: host.usageStats } : {}),
 			state: 'idle',
 		};

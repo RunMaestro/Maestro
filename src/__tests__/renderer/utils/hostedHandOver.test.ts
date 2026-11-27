@@ -247,11 +247,16 @@ describe('U6: a tab reads busy only while its message waits for that tab alone',
 				handOverClock: clock(now),
 			});
 		expect(at(10_000).aiTabs[0].state).toBe('busy');
-		expect(nextHostHandOverDeadline(10_000)).toBe(10_000 + HAND_OVER_MAX_MS);
+		expect(nextHostHandOverDeadline()).toBe(10_000 + HAND_OVER_MAX_MS);
 		expect(at(10_000 + HAND_OVER_MAX_MS - 1).aiTabs[0].state).toBe('busy');
+		// Drawn busy a moment before the limit: the recheck is still armed, whatever the clock reads
+		// by the time the sync asks (CodeRabbit on #2166).
+		expect(nextHostHandOverDeadline()).toBe(10_000 + HAND_OVER_MAX_MS);
 		const after = at(10_000 + HAND_OVER_MAX_MS);
 		expect(after.aiTabs[0].state).toBe('idle');
 		expect(after.executionQueue.map((item) => item.id)).toEqual(['h-next']);
+		// Drawn as over: no recheck is armed for it again.
+		expect(nextHostHandOverDeadline()).toBeUndefined();
 	});
 
 	it('hosted: an older host that says nothing has its next message drawn busy for UNNAMED_HAND_OVER_MS, then queued', () => {

@@ -100,7 +100,10 @@ export function onHostedTabLineChanged(listener: () => void): () => void {
  * when it counts: this machine's clock, since a host's may differ. One per agent, the one the
  * host's queue shows now.
  */
-const handOversSeen = new Map<string, { itemId: string; at: number; until: number }>();
+const handOversSeen = new Map<
+	string,
+	{ itemId: string; at: number; until: number; checkedAt: number }
+>();
 
 /** The clock `projectHostedSession()` reads a host-queue hand-over's time limit from. */
 export interface HandOverClock {
@@ -115,8 +118,11 @@ export function hostHandOverClock(sessionId: string, now: number): HandOverClock
 	return {
 		seenAt(itemId, limitMs) {
 			const seen = handOversSeen.get(sessionId);
-			if (seen?.itemId === itemId) return seen.at;
-			handOversSeen.set(sessionId, { itemId, at: now, until: now + limitMs });
+			if (seen?.itemId === itemId) {
+				seen.checkedAt = Math.max(seen.checkedAt, now);
+				return seen.at;
+			}
+			handOversSeen.set(sessionId, { itemId, at: now, until: now + limitMs, checkedAt: now });
 			return now;
 		},
 		clear() {
@@ -126,13 +132,16 @@ export function hostHandOverClock(sessionId: string, now: number): HandOverClock
 }
 
 /**
- * The soonest moment after `now` a host-queue hand-over runs out of time: the projection must look
- * again then, with no change from the host to run it.
+ * The soonest moment a host-queue hand-over runs out of time that the projection has not yet drawn
+ * as run out: it must look again then, with no change from the host to run it. Measured from the
+ * clock the projection last read, so a limit that ends between that read and this call is still
+ * armed (as a recheck due now), and one the projection already drew as over is not (CodeRabbit on
+ * #2166).
  */
-export function nextHostHandOverDeadline(now: number): number | undefined {
+export function nextHostHandOverDeadline(): number | undefined {
 	let soonest: number | undefined;
-	for (const { until } of handOversSeen.values()) {
-		if (until > now && (soonest === undefined || until < soonest)) soonest = until;
+	for (const { until, checkedAt } of handOversSeen.values()) {
+		if (until > checkedAt && (soonest === undefined || until < soonest)) soonest = until;
 	}
 	return soonest;
 }

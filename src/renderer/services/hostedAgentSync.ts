@@ -380,7 +380,7 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 			// A pending tab whose making failed is asked again when its wait ends (R15).
 			nextPendingHostTabRetryAt(useSessionStore.getState().sessions),
 			// A host-queue hand-over past its limit reads queued, with no change from the host (U6).
-			nextHostHandOverDeadline(Date.now()),
+			nextHostHandOverDeadline(),
 		].filter((at): at is number => at !== undefined);
 		if (deadlines.length === 0) return;
 		const delay = Math.max(0, Math.min(...deadlines) - Date.now()) + 1;

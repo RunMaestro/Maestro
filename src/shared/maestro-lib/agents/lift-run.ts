@@ -31,7 +31,7 @@ import { staleCopyMismatch } from './import-plan';
 import { formatHostTabMerge, liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
 import type { LiftPlan, LiftPlanSummary } from './lift-plan';
 import { peerAgentRef, runningTurnWhere, type LiftedToPointer } from './lift-pointer';
-import { readLeftOnHost, withReturnedFromHost } from './lift-return-record';
+import { conversationTurns, readLeftOnHost, withReturnedFromHost } from './lift-return-record';
 import { liftFollowUpPatch } from './lift-settings-sync';
 import type { AITabRecord } from '../store/records';
 import { truncateAtWordBoundary } from '../../formatters';
@@ -301,17 +301,18 @@ function userTurns(tab: AITabRecord): string[] {
 }
 
 /**
- * Whether two transcripts of one tab are one conversation, one side only longer: one's entries
- * start the other's, or, where the two sides wrote their own notes (a Move Back note, a link
- * note) or gave entries other ids, one's user turns start the other's. Both sides having a turn
- * the other lacks means both went on after the Move Back: two conversations.
+ * Whether two transcripts of one tab are one conversation, one side only further on: one's entries
+ * start the other's, or, where the two sides wrote their own notes (a Move Back note, a link note)
+ * or stored entries under other ids, one's turns (each message with its reply,
+ * `conversationTurns()`) start the other's. Both sides having a turn the other lacks, or the same
+ * message answered differently, means both went on after the Move Back: two conversations.
  */
 function isOneConversation(local: AITabRecord, host: AITabRecord): boolean {
 	const hostIds = entryIds(host);
 	const localIds = entryIds(local);
 	if (startsWith(localIds, hostIds) || startsWith(hostIds, localIds)) return true;
-	const hostTurns = userTurns(host);
-	const localTurns = userTurns(local);
+	const hostTurns = conversationTurns(host.logs);
+	const localTurns = conversationTurns(local.logs);
 	return startsWith(localTurns, hostTurns) || startsWith(hostTurns, localTurns);
 }
 
@@ -365,30 +366,53 @@ export function keepDivergentHostTabs(
 		}
 	}
 	const taken = new Set([...localTabs, ...hostTabs].map((tab) => tab.id));
-	// A local tab takes at most one host tab: a second host tab of it is its own.
+	const freshId = (base: string) => {
+		let id = `${base}-host`;
+		for (let n = 2; taken.has(id); n++) id = `${base}-host-${n}`;
+		taken.add(id);
+		return id;
+	};
+	// Which local tab each host tab is: its own id first, then its provider session. A local tab
+	// takes at most one host tab; a second host tab of the same conversation is a copy of its own.
+	const localOf = new Map<AITabRecord, AITabRecord>();
 	const claimed = new Set<string>();
+	for (const host of hostTabs) {
+		const local = localById.get(host.id);
+		if (local) {
+			localOf.set(host, local);
+			claimed.add(local.id);
+		}
+	}
+	const extra = new Set<AITabRecord>();
+	for (const host of hostTabs) {
+		if (localOf.has(host) || !host.agentSessionId) continue;
+		const local = localBySession.get(host.agentSessionId);
+		if (!local) continue;
+		localOf.set(host, local);
+		if (claimed.has(local.id)) extra.add(host);
+		else claimed.add(local.id);
+	}
 	const result: HostTabMerge = { tabs: [], merged: 0, copies: 0, added: 0 };
 	for (const host of hostTabs) {
-		const byId = localById.get(host.id);
-		const bySession = host.agentSessionId ? localBySession.get(host.agentSessionId) : undefined;
-		const local = byId ?? (bySession && !localById.has(host.id) ? bySession : undefined);
-		const named = host.name ? host : { ...host, name: firstMessageTabName(host) ?? host.name };
-		if (!local || claimed.has(local.id)) {
-			if (!local) result.added += 1;
-			result.tabs.push(named);
+		const local = localOf.get(host);
+		if (!local) {
+			result.added += 1;
+			result.tabs.push(
+				host.name ? host : { ...host, name: firstMessageTabName(host) ?? host.name }
+			);
 			continue;
 		}
-		claimed.add(local.id);
-		if (isOneConversation(local, host)) {
+		if (!extra.has(host) && isOneConversation(local, host)) {
 			result.merged += 1;
 			result.tabs.push(local.id === host.id ? host : { ...host, id: local.id });
 			continue;
 		}
 		result.copies += 1;
-		let id = `${host.id}-host`;
-		for (let n = 2; taken.has(id); n++) id = `${host.id}-host-${n}`;
-		taken.add(id);
-		result.tabs.push({ ...host, id, name: `${host.name || local.name || 'Tab'} (on the host)` });
+		result.tabs.push({
+			...host,
+			id: freshId(host.id),
+			name: `${host.name || local.name || 'Tab'} (on the host)`,
+		});
 	}
 	return result;
 }

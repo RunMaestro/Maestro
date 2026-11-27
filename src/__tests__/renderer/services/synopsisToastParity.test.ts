@@ -295,12 +295,16 @@ describe('U3: the "Synopsis" toast after a plain turn', () => {
 		expect(toasts().map((toast) => toast.message)).toEqual([SUMMARY]);
 	});
 
-	const queueOnHost = (items: Array<{ itemId: string; paused?: boolean }>) =>
+	const queueOnHost = (
+		items: Array<{ itemId: string; paused?: boolean }>,
+		exits?: Array<{ itemId: string; exit: 'started' | 'removed' }>
+	) =>
 		usePeerMirrorStore.setState((state) => ({
 			peers: {
 				...state.peers,
 				box: {
 					...state.peers.box,
+					...(exits ? { queueExits: { h1: exits } } : {}),
 					queues: {
 						h1: items.map((item) => ({
 							itemId: item.itemId,
@@ -361,6 +365,41 @@ describe('U3: the "Synopsis" toast after a plain turn', () => {
 		hostEntries.push(entry('theirs', 400, { summary: 'their turn' }));
 		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 4);
 		expect(toasts()).toEqual([]);
+	});
+
+	it('hosted: a queued turn the host names removed raises nothing, even when another client runs a turn on the tab (CodeRabbit on #2166)', async () => {
+		seed('hosted');
+		hostTab('idle');
+		queueOnHost([{ itemId: 'mine' }], []);
+		watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1', {
+			queuedItemId: 'mine',
+		});
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		// Removed from the host's queue; another client's turn runs on the tab and saves its entry.
+		hostTab('busy', 300);
+		queueOnHost([], [{ itemId: 'mine', exit: 'removed' }]);
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		hostTab('idle');
+		hostEntries.push(entry('theirs', 340, { summary: 'their turn' }));
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 4);
+		expect(toasts()).toEqual([]);
+	});
+
+	it('hosted: a queued turn the host names started raises its toast once its entry is saved', async () => {
+		seed('hosted');
+		hostTab('busy', 100);
+		queueOnHost([{ itemId: 'mine' }], []);
+		watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1', {
+			queuedItemId: 'mine',
+		});
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		hostTab('busy', 300);
+		queueOnHost([], [{ itemId: 'mine', exit: 'started' }]);
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		hostTab('idle');
+		hostEntries.push(entry('mine', 340, { summary: 'my turn' }));
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 3);
+		expect(toasts().map((toast) => toast.message)).toEqual(['my turn']);
 	});
 
 	it('hosted: a held message on the tab does not stop the watch from reading (CodeRabbit on #2166)', async () => {

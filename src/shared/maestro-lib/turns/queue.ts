@@ -521,6 +521,9 @@ export function createExecutionQueue<T extends QueueItem>(
 		const { item } = entry;
 		entry.state = 'starting';
 		starting.set(item.tabId, entry);
+		// Another message starting first ends the gap of a hand-over still waiting: a Stop armed for
+		// it is let go (a forced or read-only send, CodeRabbit on #2166). Its own start keeps it.
+		refreshHandOver();
 
 		let handle: QueuedTurnHandle;
 		try {
