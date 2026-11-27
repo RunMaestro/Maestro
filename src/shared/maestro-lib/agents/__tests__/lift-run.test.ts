@@ -400,6 +400,12 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 		agentSessionId: session,
 		logs,
 	});
+	/** The record once the host's tabs merge in, as `runLift()` builds it (told each tab's side). */
+	const mergedRecord = (local: unknown[], merge: ReturnType<typeof keepDivergentHostTabs>) =>
+		withReturnedFromHost(
+			{ aiTabs: local },
+			{ tabs: merge.tabs, transcriptSides: merge.transcriptSides }
+		);
 	/** The note a Move Back writes on this machine's copy of a tab, which the host never had. */
 	const movedBackNote = (id: string): Entry => ({
 		id: `${id}-note`,
@@ -418,11 +424,11 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 			.map((t, n) => tab(t.id, `s${n}`, conversation(`host${n}`, [`ask ${n}`])));
 		const merge = keepDivergentHostTabs(local, host);
 		expect(merge).toMatchObject({ merged: 11, copies: 0, added: 0 });
-		const record = withReturnedFromHost({ aiTabs: local }, { tabs: merge.tabs });
+		const record = mergedRecord(local, merge);
 		const tabs = record.aiTabs as Array<{ id: string; name: string; logs: Entry[] }>;
 		expect(tabs).toHaveLength(21);
 		expect(tabs.some((t) => t.name.endsWith('(on the host)'))).toBe(false);
-		// The longer side wins: the local transcript, with its note.
+		// The side that holds the other wins: the local transcript, with its note.
 		expect(tabs[0].logs.map((entry) => entry.id)).toEqual(['local0-u0', 'local0-a0', 't0-note']);
 	});
 
@@ -442,7 +448,7 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 		expect(merge.tabs).toEqual([
 			expect.objectContaining({ id: 't1-host', name: 'Chat (on the host)' }),
 		]);
-		const record = withReturnedFromHost({ aiTabs: local }, { tabs: merge.tabs });
+		const record = mergedRecord(local, merge);
 		expect((record.aiTabs as unknown[]).length).toBe(2);
 	});
 
@@ -458,7 +464,7 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 		expect(named.tabs[0].name).toBe('Mine');
 	});
 
-	it('the side one turn further wins, though the other holds more notes (CodeRabbit on #2166)', () => {
+	it('a side one turn further and a side with notes the other lacks stay two tabs, neither losing an entry (U10)', () => {
 		const local = [
 			tab('t1', 's1', [
 				...conversation('l', ['one']),
@@ -469,10 +475,81 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 		];
 		const host = [tab('t1', 's1', conversation('h', ['one', 'two']))];
 		const merge = keepDivergentHostTabs(local, host);
-		expect(merge).toMatchObject({ merged: 1, copies: 0 });
-		const record = withReturnedFromHost({ aiTabs: local }, { tabs: merge.tabs });
-		const [only] = record.aiTabs as Array<{ logs: Entry[] }>;
-		expect(only.logs.map((entry) => entry.text)).toEqual(['one', 're: one', 'two', 're: two']);
+		expect(merge).toMatchObject({ merged: 0, copies: 1 });
+		const tabs = mergedRecord(local, merge).aiTabs as Array<{ logs: Entry[] }>;
+		expect(tabs.map((t) => t.logs.map((entry) => entry.id))).toEqual([
+			['l-u0', 'l-a0', 'n1-note', 'n2-note', 'n3-note'],
+			['h-u0', 'h-a0', 'h-u1', 'h-a1'],
+		]);
+	});
+
+	it('a side with more entries never wins over turns the other went on with: count is not containment (U10)', () => {
+		// Locally "one" was answered, then "two" and "three" were sent after the Move Back (7 entries).
+		const local = [
+			tab('t1', 's1', [...conversation('l', ['one', 'two', 'three']), movedBackNote('t1')]),
+		];
+		// The host stored "one" with its tool steps as entries of their own (10 entries).
+		const toolSteps: Entry[] = Array.from({ length: 8 }, (_, n) => ({
+			id: `h-tool${n}`,
+			timestamp: 0.5,
+			source: 'tool',
+			text: `step ${n}`,
+		}));
+		const [userOne, answerOne] = conversation('h', ['one']);
+		const host = [tab('t1', 's1', [userOne, ...toolSteps, answerOne])];
+		expect(local[0].logs).toHaveLength(7);
+		expect(host[0].logs).toHaveLength(10);
+		const merge = keepDivergentHostTabs(local, host);
+		expect(merge).toMatchObject({ merged: 0, copies: 1, added: 0 });
+		const tabs = mergedRecord(local, merge).aiTabs as Array<{ logs: Entry[] }>;
+		expect(tabs).toHaveLength(2);
+		expect(tabs[0].logs.map((entry) => entry.text)).toEqual(
+			expect.arrayContaining(['two', 'three'])
+		);
+		expect(tabs[1].logs.filter((entry) => entry.source === 'tool')).toHaveLength(8);
+	});
+
+	it('the merge keeps the side it is told holds the other, never recounting (U10)', () => {
+		// The same conversation under other entry ids: each side holds the other. The local side is
+		// kept, so what points at its entries (a pin) still finds them.
+		const local = [tab('t1', 's1', conversation('l', ['one', 'two']))];
+		const host = [tab('t1', 's1', conversation('h', ['one', 'two']))];
+		const merge = keepDivergentHostTabs(local, host);
+		expect(merge).toMatchObject({ merged: 1, copies: 0, transcriptSides: { t1: 'local' } });
+		const [only] = mergedRecord(local, merge).aiTabs as Array<{ logs: Entry[] }>;
+		expect(only.logs.map((entry) => entry.id)).toEqual(['l-u0', 'l-a0', 'l-u1', 'l-a1']);
+		// The host side, when it holds the local one and went further.
+		const further = keepDivergentHostTabs(local, [
+			tab('t1', 's1', conversation('h', ['one', 'two', 'three'])),
+		]);
+		expect(further.transcriptSides).toEqual({ t1: 'host' });
+		const [longer] = mergedRecord(local, further).aiTabs as Array<{ logs: Entry[] }>;
+		expect(longer.logs).toHaveLength(6);
+	});
+
+	it('two different "continue" turns with the same reply are two conversations (U11)', () => {
+		const went = (prefix: string, at: number): Entry[] => [
+			...conversation(prefix, ['one']),
+			{ id: `${prefix}-c`, timestamp: at, source: 'user', text: 'continue' },
+			{ id: `${prefix}-r`, timestamp: at + 1, source: 'ai', text: 'Done.' },
+		];
+		const local = [tab('t1', 's1', went('l', 50))];
+		const merge = keepDivergentHostTabs(local, [tab('t1', 's1', went('h', 70))]);
+		expect(merge).toMatchObject({ merged: 0, copies: 1 });
+		expect((mergedRecord(local, merge).aiTabs as unknown[]).length).toBe(2);
+	});
+
+	it('two image-only messages with other images are two conversations (U11)', () => {
+		const sent = (prefix: string, image: string) => [
+			...conversation(prefix, ['one']),
+			{ id: `${prefix}-i`, timestamp: 50, source: 'user', text: '', images: [image] },
+			{ id: `${prefix}-r`, timestamp: 51, source: 'ai', text: 'Looks fine.' },
+		];
+		const local = [tab('t1', 's1', sent('l', 'data:image/png;base64,AAAA') as Entry[])];
+		const merge = keepDivergentHostTabs(local, [
+			tab('t1', 's1', sent('h', 'data:image/png;base64,BBBB') as Entry[]),
+		]);
+		expect(merge).toMatchObject({ merged: 0, copies: 1 });
 	});
 
 	it('the same message answered differently on each side is two conversations (CodeRabbit on #2166)', () => {
@@ -486,10 +563,7 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 			[tab('t1', 's1', answered('h', 'Done there.'))]
 		);
 		expect(merge).toMatchObject({ merged: 0, copies: 1 });
-		const record = withReturnedFromHost(
-			{ aiTabs: [tab('t1', 's1', answered('l', 'Done here.'))] },
-			{ tabs: merge.tabs }
-		);
+		const record = mergedRecord([tab('t1', 's1', answered('l', 'Done here.'))], merge);
 		expect((record.aiTabs as unknown[]).length).toBe(2);
 	});
 
@@ -502,7 +576,7 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 		const merge = keepDivergentHostTabs(local, host);
 		expect(merge.tabs.map((t) => t.id)).toEqual(['h9-host', 't1']);
 		expect(merge).toMatchObject({ merged: 1, copies: 1, added: 0 });
-		const record = withReturnedFromHost({ aiTabs: local }, { tabs: merge.tabs });
+		const record = mergedRecord(local, merge);
 		const tabs = record.aiTabs as Array<{ id: string; logs: Entry[] }>;
 		expect(tabs.map((t) => t.id)).toEqual(['t1', 'h9-host']);
 		expect(tabs[1].logs.map((entry) => entry.text)).toContain('two');

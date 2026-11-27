@@ -31,7 +31,12 @@ import { staleCopyMismatch } from './import-plan';
 import { formatHostTabMerge, liftRefusal, liftSshRemoteId, planAgentLift } from './lift-plan';
 import type { LiftPlan, LiftPlanSummary } from './lift-plan';
 import { peerAgentRef, runningTurnWhere, type LiftedToPointer } from './lift-pointer';
-import { conversationTurns, readLeftOnHost, withReturnedFromHost } from './lift-return-record';
+import {
+	containingTranscript,
+	readLeftOnHost,
+	withReturnedFromHost,
+	type TranscriptSide,
+} from './lift-return-record';
 import { liftFollowUpPatch } from './lift-settings-sync';
 import type { AITabRecord } from '../store/records';
 import { truncateAtWordBoundary } from '../../formatters';
@@ -267,6 +272,7 @@ async function readStaleHostCopy(
 	const activeTabId = activeIndex >= 0 ? hostTabs.tabs[activeIndex].id : hostActive;
 	const merged = withReturnedFromHost(agent as unknown as Record<string, unknown>, {
 		tabs: hostTabs.tabs,
+		transcriptSides: hostTabs.transcriptSides,
 		...(activeTabId ? { activeTabId } : {}),
 	}) as unknown as AgentRecord;
 	return {
@@ -275,18 +281,6 @@ async function readStaleHostCopy(
 		merged,
 		tabMerge: { merged: hostTabs.merged, copies: hostTabs.copies, added: hostTabs.added },
 	};
-}
-
-/** The ids of a transcript's entries, in order. */
-function entryIds(tab: AITabRecord): unknown[] {
-	return (Array.isArray(tab.logs) ? tab.logs : []).map((entry) =>
-		entry && typeof entry === 'object' ? (entry as { id?: unknown }).id : undefined
-	);
-}
-
-/** Whether `head` is `all`'s first entries, by entry id. */
-function startsWith(all: readonly unknown[], head: readonly unknown[]): boolean {
-	return head.length <= all.length && head.every((id, index) => all[index] === id);
 }
 
 /** The text of a transcript's user messages, in order: the turns of its conversation. */
@@ -298,22 +292,6 @@ function userTurns(tab: AITabRecord): string[] {
 		if (source === 'user') turns.push(typeof text === 'string' ? text : '');
 	}
 	return turns;
-}
-
-/**
- * Whether two transcripts of one tab are one conversation, one side only further on: one's entries
- * start the other's, or, where the two sides wrote their own notes (a Move Back note, a link note)
- * or stored entries under other ids, one's turns (each message with its reply,
- * `conversationTurns()`) start the other's. Both sides having a turn the other lacks, or the same
- * message answered differently, means both went on after the Move Back: two conversations.
- */
-function isOneConversation(local: AITabRecord, host: AITabRecord): boolean {
-	const hostIds = entryIds(host);
-	const localIds = entryIds(local);
-	if (startsWith(localIds, hostIds) || startsWith(hostIds, localIds)) return true;
-	const hostTurns = conversationTurns(host.logs);
-	const localTurns = conversationTurns(local.logs);
-	return startsWith(localTurns, hostTurns) || startsWith(hostTurns, localTurns);
 }
 
 /** The longest name a host tab is given from its first message. */
@@ -344,14 +322,20 @@ export interface HostTabMerge {
 	copies: number;
 	/** Host tabs this machine never had (a conversation started on the host copy). */
 	added: number;
+	/**
+	 * For each merged tab, by its (local) id, the side whose transcript holds the other's: what
+	 * `withReturnedFromHost()` keeps (`ReturnedFromHost.transcriptSides`).
+	 */
+	transcriptSides: Record<string, TranscriptSide>;
 }
 
 /**
- * The host copy's tabs, ready to merge into the local agent (`withReturnedFromHost()`, which keeps
- * the longer of two transcripts of one tab). A host tab is the local tab with its id, else the one
- * that resumes its provider session: one conversation, so one tab (U4). After a Move Back while
- * the host was down, both sides may have gone on in it (`isOneConversation()` says no): the host's
- * tab comes in as a tab of its own, "(on the host)", so neither side's entries are dropped. A host
+ * The host copy's tabs, ready to merge into the local agent (`withReturnedFromHost()`). A host tab
+ * is the local tab with its id, else the one that resumes its provider session. It is one
+ * conversation, so one tab (U4), only when one transcript holds the other entry for entry
+ * (`containingTranscript()`); that side's transcript is kept (`transcriptSides`), so a merge never
+ * drops an entry. After a Move Back while the host was down, both sides may have gone on in it:
+ * the host's tab comes in as a tab of its own, "(on the host)", so neither side's entries are lost. A host
  * tab with no name is named from its first message, never left to read as its session id.
  */
 export function keepDivergentHostTabs(
@@ -392,7 +376,13 @@ export function keepDivergentHostTabs(
 		if (claimed.has(local.id)) extra.add(host);
 		else claimed.add(local.id);
 	}
-	const result: HostTabMerge = { tabs: [], merged: 0, copies: 0, added: 0 };
+	const result: HostTabMerge = {
+		tabs: [],
+		merged: 0,
+		copies: 0,
+		added: 0,
+		transcriptSides: Object.create(null) as Record<string, TranscriptSide>,
+	};
 	for (const host of hostTabs) {
 		const local = localOf.get(host);
 		if (!local) {
@@ -402,8 +392,10 @@ export function keepDivergentHostTabs(
 			);
 			continue;
 		}
-		if (!extra.has(host) && isOneConversation(local, host)) {
+		const side = extra.has(host) ? undefined : containingTranscript(host.logs, local.logs);
+		if (side) {
 			result.merged += 1;
+			result.transcriptSides[local.id] = side;
 			result.tabs.push(local.id === host.id ? host : { ...host, id: local.id });
 			continue;
 		}

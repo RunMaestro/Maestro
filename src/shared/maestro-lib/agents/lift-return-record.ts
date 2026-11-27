@@ -6,6 +6,7 @@
  * which a browser bundle cannot load). `lift-return.ts` re-exports everything here.
  */
 
+import { canonicalJson } from '../../canonicalJson';
 import { collapseWhitespace } from '../../stringUtils';
 import type { AITabRecord } from '../store/records';
 import { readLiftedTo, type LiftedToPointer } from './lift-pointer';
@@ -20,7 +21,17 @@ export interface ReturnedFromHost {
 	 * replaces that copy instead of being refused for its name (`runLift()`).
 	 */
 	leftOnHost?: LiftedToPointer;
+	/**
+	 * A stale-copy merge (`keepDivergentHostTabs()`): for each tab both sides have, by tab id, the
+	 * side whose transcript (`containingTranscript()`) the tab keeps, never recounted here. Without
+	 * an entry (a Move Back), the tab takes the transcript that went further (`furtherTranscript()`)
+	 * and the host's name, star and provider session.
+	 */
+	transcriptSides?: Record<string, TranscriptSide>;
 }
+
+/** Which copy of a tab's transcript a merge keeps. */
+export type TranscriptSide = 'host' | 'local';
 
 /** The host copy a move back left behind, or undefined when the field is absent or malformed. */
 export function readLeftOnHost(record: { leftOnHost?: unknown }): LiftedToPointer | undefined {
@@ -68,6 +79,70 @@ export function furtherTranscript<T>(hostLogs: T[], localLogs: T[]): T[] {
 	return hostLogs.length >= localLogs.length ? hostLogs : localLogs;
 }
 
+/** The id of a transcript entry, or undefined when it has none. */
+function entryId(entry: unknown): string | undefined {
+	if (!entry || typeof entry !== 'object') return undefined;
+	const id = (entry as { id?: unknown }).id;
+	return typeof id === 'string' && id ? id : undefined;
+}
+
+/**
+ * What an entry says, to tell two copies of one entry stored under other ids: its source, text,
+ * timestamp and images. Undefined when the entry is not a JSON object (a value from the host is
+ * untrusted), so it matches nothing.
+ */
+function entrySignature(entry: unknown): string | undefined {
+	if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined;
+	const { source, text, timestamp, images } = entry as Record<string, unknown>;
+	try {
+		return canonicalJson({ source, text, timestamp, images });
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * Whether `outer` holds every entry of `inner`, in order: entry for entry, by entry id, and where
+ * the ids differ by what the entry says (`entrySignature()`). `outer` may hold more entries
+ * anywhere (a note one side wrote, a turn it went on with).
+ */
+export function transcriptContains(outer: unknown, inner: unknown): boolean {
+	const outerLogs = Array.isArray(outer) ? outer : [];
+	const innerLogs = Array.isArray(inner) ? inner : [];
+	const outerIds = outerLogs.map(entryId);
+	const outerSignatures = outerLogs.map(entrySignature);
+	let at = 0;
+	for (const entry of innerLogs) {
+		const id = entryId(entry);
+		const signature = entrySignature(entry);
+		while (
+			at < outerLogs.length &&
+			!(id !== undefined && outerIds[at] === id) &&
+			!(signature !== undefined && outerSignatures[at] === signature)
+		) {
+			at++;
+		}
+		if (at === outerLogs.length) return false;
+		at++;
+	}
+	return true;
+}
+
+/**
+ * Of two transcripts of one tab, the side that holds the other entry for entry
+ * (`transcriptContains()`): the local side when both do (the same transcript), undefined when each
+ * holds an entry the other lacks. Undefined means both sides went on: two conversations, never one
+ * tab, since keeping either transcript would drop the other's entries.
+ */
+export function containingTranscript(
+	hostLogs: unknown,
+	localLogs: unknown
+): TranscriptSide | undefined {
+	if (transcriptContains(localLogs, hostLogs)) return 'local';
+	if (transcriptContains(hostLogs, localLogs)) return 'host';
+	return undefined;
+}
+
 /** A host tab as a local tab record: the fields a local tab needs, idle, with its transcript. */
 function asLocalTab(tab: AITabRecord): AITabRecord {
 	const {
@@ -91,11 +166,28 @@ function asLocalTab(tab: AITabRecord): AITabRecord {
 }
 
 /**
+ * A tab of a stale-copy merge (`ReturnedFromHost.transcriptSides`): the transcript of the side that
+ * holds the other's, as the caller says, never recounted here.
+ */
+function keepLocalTab(local: AITabRecord, host: AITabRecord, side: TranscriptSide): AITabRecord {
+	const winner = side === 'host' ? host : local;
+	return {
+		...local,
+		agentSessionId: host.agentSessionId ?? local.agentSessionId ?? null,
+		name: host.name ?? local.name ?? null,
+		starred: host.starred === true,
+		logs: Array.isArray(winner.logs) ? winner.logs : [],
+		...(host.usageStats ? { usageStats: host.usageStats } : {}),
+		state: 'idle',
+	};
+}
+
+/**
  * The local record once the agent is back: no `liftedTo`, `hostedOptOut` set, and the host's tabs
  * merged in by tab id. A tab both sides have takes the transcript that went further
  * (`furtherTranscript()`: the host's, where the conversation went on there), plus the host's name,
- * star, and provider session. A host tab this
- * machine lacks is appended. Local tabs the host closed stay. Pure.
+ * star, and provider session; a stale-copy merge says per tab which transcript to keep
+ * (`transcriptSides`, `keepLocalTab()`). A host tab this machine lacks is appended. Local tabs the host closed stay. Pure.
  */
 export function withReturnedFromHost<T extends Record<string, unknown>>(
 	record: T,
@@ -103,11 +195,15 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 ): T {
 	const localTabs = (Array.isArray(record.aiTabs) ? record.aiTabs : []) as AITabRecord[];
 	const hostById = new Map(returned.tabs.map((tab) => [tab.id, tab]));
+	const sides = returned.transcriptSides;
 	const merged: AITabRecord[] = localTabs.map((local) => {
 		const host = hostById.get(local.id);
 		if (!host) return local;
 		const hostLogs = Array.isArray(host.logs) ? host.logs : [];
 		const localLogs = Array.isArray(local.logs) ? local.logs : [];
+		const side =
+			sides && Object.prototype.hasOwnProperty.call(sides, local.id) ? sides[local.id] : undefined;
+		if (side === 'host' || side === 'local') return keepLocalTab(local, host, side);
 		return {
 			...local,
 			agentSessionId: host.agentSessionId ?? local.agentSessionId ?? null,
