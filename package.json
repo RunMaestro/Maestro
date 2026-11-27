@@ -109,7 +109,8 @@
 			"node_modules/@napi-rs/keyring/**/*",
 			"node_modules/@napi-rs/keyring-*/*",
 			"node_modules/bindings/**/*",
-			"node_modules/file-uri-to-path/**/*"
+			"node_modules/file-uri-to-path/**/*",
+			"dist/web-desktop/**/*"
 		],
 		"mac": {
 			"category": "public.app-category.developer-tools",
