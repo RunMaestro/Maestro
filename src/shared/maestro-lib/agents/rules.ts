@@ -933,7 +933,9 @@ export function turnEndedAfter(
  * Whether the turn of the user message at `at` in `logs` is held by the host's OWN automatic retry
  * (a desktop host's Agent Resilience): its latest entry of note is that retry's card
  * (`LogEntryRecord.retryOutageId`), with no answer or error after it before the next user message.
- * Such a turn's message is the host's to send again; a client that kept a copy sends nothing.
+ * Such a turn's message is the host's to send again; a client that kept a copy sends nothing. A
+ * card the user stopped on the host (`retryStopped`) holds nothing: the message waits paused in
+ * the host's queue, and is the user's to send (R45).
  */
 export function hostRetriesTurn(logs: readonly unknown[], at: number): boolean {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
@@ -941,8 +943,9 @@ export function hostRetriesTurn(logs: readonly unknown[], at: number): boolean {
 	for (let next = at + 1; next < entries.length; next += 1) {
 		const entry = entries[next];
 		if (isUserTurnStart(entry)) break;
-		if (typeof entry?.retryOutageId === 'string' && entry.retryOutageId) retrying = true;
-		else if (
+		if (typeof entry?.retryOutageId === 'string' && entry.retryOutageId) {
+			retrying = entry.retryStopped !== true;
+		} else if (
 			entry?.source === 'stdout' ||
 			entry?.source === 'ai' ||
 			entry?.source === 'error' ||

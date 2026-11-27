@@ -60,7 +60,7 @@ import {
 } from '../services/contextCompaction';
 import { dropRecoveredOutageNotices } from '../utils/logEntries';
 import { logger } from '../utils/logger';
-import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
+import { useSessionStore, selectSessionById, updateAiTab, updateSessionWith } from './sessionStore';
 import { notifyToast } from './notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
 import type { AgentError, QueuedItem } from '../types';
@@ -1903,6 +1903,20 @@ export function stopRetriesForAgent(sessionId: string, tabId?: string): number {
  * Stamp an outage record as resolved so its transcript card freezes into a final
  * "recovered" / "stopped" summary. No-op if the record is already gone.
  */
+/** Stamp `retryStopped` on the transcript entry that anchors the card of `outageId`, if any. */
+function markRetryCardStopped(sessionId: string, tabId: string, outageId: string): void {
+	const tab = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
+		(candidate) => candidate.id === tabId
+	);
+	if (!tab?.logs.some((entry) => entry.retryOutageId === outageId && !entry.retryStopped)) return;
+	updateAiTab(sessionId, tabId, (current) => ({
+		...current,
+		logs: current.logs.map((entry) =>
+			entry.retryOutageId === outageId ? { ...entry, retryStopped: true } : entry
+		),
+	}));
+}
+
 function resolveOutage(
 	outageId: string,
 	status: Exclude<OutageStatus, 'active'>,
@@ -1912,6 +1926,9 @@ function resolveOutage(
 	if (!record || record.status !== 'active') return;
 	const resolvedAt = Date.now();
 	useRetryStore.getState().patchOutage(outageId, { status, resolvedAt, failureMessage });
+	// Stopped: the card's own entry says so, so a client reading this tab from another machine
+	// knows the retry no longer holds the message (`hostRetriesTurn()`, R45).
+	if (status === 'stopped') markRetryCardStopped(record.sessionId, record.tabId, outageId);
 	// A failed resend did fire, so it counts like a recovered one below; the
 	// dashboard has no separate outcome for it and files it with the stopped.
 	const resendFired = status !== 'stopped';

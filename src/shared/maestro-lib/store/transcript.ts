@@ -95,6 +95,11 @@ export interface LogEntryRecord extends UnknownFields {
 	 * reading a hosted tab tells from it that the host retries the message itself (`hostRetriesTurn()`).
 	 */
 	retryOutageId?: string;
+	/**
+	 * The retry card's outage was stopped by the user (its Stop): the retry no longer holds the
+	 * message, which waits paused. `hostRetriesTurn()` reads a stopped card as no retry (R45).
+	 */
+	retryStopped?: boolean;
 	/** A custom AI command (`/commit`) this user message invoked. */
 	aiCommand?: { command: string; description: string };
 	metadata?: UnknownFields & {

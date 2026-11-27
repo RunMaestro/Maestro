@@ -930,6 +930,22 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(hostSettledText(outage)).toBe(HOST_RETRIES_TEXT);
 	});
 
+	// Parity R45: the user stopped the host's own retry ON the host: its card says so, and the
+	// message waits paused in the host's queue. This machine no longer says the host retries it,
+	// and sends nothing (the host has the message).
+	it('never says the host retries a message whose host retry was stopped there (R45)', async () => {
+		cut();
+		const outageId = getRetryEntry('row', 't1')!.outageId;
+		await hostBack('idle', [QUESTION, { ...HOST_RETRY_CARD, retryStopped: true }]);
+		retryNow('row', 't1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		const outage = useRetryStore.getState().outages[outageId];
+		expect(outage?.hostRetry).not.toBe('host');
+		expect(hostSettledText(outage)).not.toBe(HOST_RETRIES_TEXT);
+	});
+
 	it("starts a provider error's backoff at its first attempt after a long outage (R41)", async () => {
 		cut();
 		const linkRetry = getRetryEntry('row', 't1')!;

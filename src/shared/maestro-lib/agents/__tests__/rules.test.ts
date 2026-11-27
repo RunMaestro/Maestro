@@ -1501,6 +1501,8 @@ describe('hostRetriesTurn', () => {
 		['no card, an error of its own', [u1, error], false],
 		["a card in a LATER message's turn", [u1, answer, u2, card], false],
 		['a steer into the turn after the card', [u1, card, { ...u2, steered: true }], true],
+		// Parity R45: the user stopped the host's own retry there; the message waits paused.
+		['the host retry card stopped on the host', [u1, { ...card, retryStopped: true }], false],
 	])('%s', (_what, logs, retries) => {
 		expect(hostRetriesTurn(logs, 0)).toBe(retries);
 		// The shared reader of the turn's end reads the stamped card as ended, never errored.
