@@ -1104,7 +1104,8 @@ interface MaestroAPI {
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl,
 				turnOverrides?: import('../shared/maestro-lib/client/types').TurnOverrides,
-				agentText?: import('../shared/maestro-lib/client/types').TurnAgentText
+				agentText?: import('../shared/maestro-lib/client/types').TurnAgentText,
+				entryId?: string
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (

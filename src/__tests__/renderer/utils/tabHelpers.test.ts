@@ -6423,6 +6423,56 @@ describe('tabHelpers', () => {
 	});
 
 	describe('markTabRunningQueuedItem', () => {
+		// Parity R26: on a desktop host, a Federation client's message takes the id it named
+		// (`TurnInput.entryId`), read as a headless host reads it.
+		describe('the entry id a Federation client named (R26)', () => {
+			const queued = (text: string, entryId = 'kept-1'): QueuedItem => ({
+				id: 'q-kept',
+				tabId: 't1',
+				type: 'message',
+				text,
+				timestamp: 1,
+				entryId,
+			});
+
+			it('writes the user entry under that id', () => {
+				const tab = createMockTab({ id: 't1', state: 'idle', logs: [] });
+				const result = markTabRunningQueuedItem(
+					tab,
+					queued('continue'),
+					createMockSession({ aiTabs: [tab] })
+				);
+				expect(result.state).toBe('busy');
+				expect(result.logs).toHaveLength(1);
+				expect(result.logs[0]).toMatchObject({ id: 'kept-1', source: 'user', text: 'continue' });
+			});
+
+			it('writes no second entry when the tab already holds this message under that id', () => {
+				const held = { id: 'kept-1', timestamp: 1, source: 'user' as const, text: 'continue' };
+				const tab = createMockTab({ id: 't1', state: 'idle', logs: [held] });
+				const result = markTabRunningQueuedItem(
+					tab,
+					queued('continue'),
+					createMockSession({ aiTabs: [tab] })
+				);
+				expect(result.state).toBe('busy');
+				expect(result.logs).toEqual([held]);
+			});
+
+			it('gives the message its own id when that id names another entry', () => {
+				const other = { id: 'kept-1', timestamp: 1, source: 'ai' as const, text: 'an answer' };
+				const tab = createMockTab({ id: 't1', state: 'idle', logs: [other] });
+				const result = markTabRunningQueuedItem(
+					tab,
+					queued('continue'),
+					createMockSession({ aiTabs: [tab] })
+				);
+				expect(result.logs).toHaveLength(2);
+				expect(result.logs[1]).toMatchObject({ source: 'user', text: 'continue' });
+				expect(result.logs[1].id).not.toBe('kept-1');
+			});
+		});
+
 		it.each([undefined, ''])(
 			'records a boundary for an image-only message with text=%s',
 			(text) => {

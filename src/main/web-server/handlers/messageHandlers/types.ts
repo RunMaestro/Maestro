@@ -260,7 +260,9 @@ export interface MessageHandlerCallbacks {
 		dispatchCallback?: boolean,
 		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl,
 		turnOverrides?: import('../../../../shared/maestro-lib/client/types').TurnOverrides,
-		agentText?: import('../../../../shared/maestro-lib/client/types').TurnAgentText
+		agentText?: import('../../../../shared/maestro-lib/client/types').TurnAgentText,
+		/** The id a Federation client named for the message's entry (`TurnInput.entryId`). */
+		entryId?: string
 	) => Promise<EnqueueCommandResult>;
 	confirmQueueItem?: import('../../../stores/queue-item-receipt').ConfirmQueueItem;
 	releaseQueueItem?: import('../../../stores/queue-item-receipt').ReleaseQueueItem;

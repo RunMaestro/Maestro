@@ -1581,7 +1581,8 @@ export class WebServer {
 				dispatchCallback?: boolean,
 				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl,
 				turnOverrides?: import('../../shared/maestro-lib/client/types').TurnOverrides,
-				agentText?: import('../../shared/maestro-lib/client/types').TurnAgentText
+				agentText?: import('../../shared/maestro-lib/client/types').TurnAgentText,
+				entryId?: string
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1595,7 +1596,8 @@ export class WebServer {
 					dispatchCallback,
 					control,
 					turnOverrides,
-					agentText
+					agentText,
+					entryId
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>

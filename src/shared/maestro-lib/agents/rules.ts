@@ -43,6 +43,7 @@ import type {
 	GroupCreateInput,
 	TabPatch,
 } from '../client/types';
+import { readTurnEntryId } from '../client/types';
 import type {
 	AgentRecord,
 	AgentSshRecord,
@@ -753,6 +754,28 @@ export function isSameUserEntry(candidate: unknown, entry: SentUserEntry): boole
 		held.length === sent.length &&
 		held.every((image, i) => image === sent[i])
 	);
+}
+
+/**
+ * The entry id a message may take (`TurnInput.entryId`): one the tab does not hold yet, or the user
+ * entry of this same message (a resend: the same text and images), which then stands for it. An id
+ * that names another entry is dropped, and the message gets a new one: a send never hides or
+ * replaces what is there. Asked when the turn starts, against the entry it writes: a command's
+ * expanded prompt, and a message edited or merged while it waited. Both host kinds read it: a
+ * headless host's turn start and a desktop host's queued message (`markTabRunningQueuedItem()`).
+ */
+export function turnEntryIdFor(
+	tab: { logs?: unknown } | undefined,
+	raw: unknown,
+	text: string,
+	images: readonly string[] | undefined
+): string | undefined {
+	const entryId = readTurnEntryId(raw);
+	if (!entryId) return undefined;
+	const logs = Array.isArray(tab?.logs) ? (tab.logs as LogEntryRecord[]) : [];
+	const existing = logs.find((entry) => entry?.id === entryId);
+	if (!existing) return entryId;
+	return isSameUserEntry(existing, { id: entryId, text, images }) ? entryId : undefined;
 }
 
 /** The transcript sources that say a turn ended: its answer, or its own error. */

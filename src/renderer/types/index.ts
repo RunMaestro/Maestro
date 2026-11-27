@@ -629,6 +629,12 @@ export interface QueuedItem {
 	 * it (`TurnInput.entryId`) so a host that takes the id writes the same entry, drawn once.
 	 */
 	keptEntryId?: string;
+	/**
+	 * On a desktop HOST: the id a Federation client named for this message (`TurnInput.entryId`).
+	 * Its user entry takes that id when it runs (`markTabRunningQueuedItem()`), or is the entry
+	 * the tab already holds under it, as a headless host writes it, so the client draws it once.
+	 */
+	entryId?: string;
 	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
 	pendingAdmissionId?: string;
 	/** Host-journaled release revision. Pending ID remains provenance and a

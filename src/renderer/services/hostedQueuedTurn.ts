@@ -417,9 +417,10 @@ function forwardToHost(
 			...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
 			...(item.agentContext ? { agentContext: item.agentContext } : {}),
 			...(agentNotes ? { agentNotes } : {}),
-			// The entry the message already is: the host writes no second one.
-			...(item.hostEntryId || item.keptEntryId
-				? { entryId: item.hostEntryId ?? item.keptEntryId }
+			// The entry the message already is: the host writes no second one. On a host of its own
+			// (`entryId`), the id its sender named rides on to the next host.
+			...(item.hostEntryId || item.keptEntryId || item.entryId
+				? { entryId: item.hostEntryId ?? item.keptEntryId ?? item.entryId }
 				: {}),
 			// A held item is the user's to send; only one on its way now is kept for a retry.
 			...(item.paused === true

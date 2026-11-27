@@ -25,7 +25,7 @@ import {
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
 import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
-import { DEFAULT_TAB_DEFAULTS } from '../../../shared/maestro-lib/agents/rules';
+import { DEFAULT_TAB_DEFAULTS, turnEntryIdFor } from '../../../shared/maestro-lib/agents/rules';
 import type { MessagePin } from '../../../shared/messagePins';
 import { collectGroupMemberTabKeys } from '../../../shared/tabStripMembership';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
@@ -923,8 +923,12 @@ export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
 	const next = markTabRunningTurn(tab, item, session);
 	if (item.type === 'message' && (item.text || item.images?.length)) {
+		// The id a Federation client named for it (`TurnInput.entryId`), read as a headless host
+		// reads it: a resend of a message this tab already holds is that entry, written once.
+		const entryId = turnEntryIdFor(tab, item.entryId, item.text ?? '', item.images);
+		if (entryId && tab.logs.some((entry) => entry.id === entryId)) return next;
 		const logEntry: LogEntry = {
-			id: generateId(),
+			id: entryId ?? generateId(),
 			timestamp: next.thinkingStartTime ?? Date.now(),
 			source: 'user',
 			text: item.text ?? '',

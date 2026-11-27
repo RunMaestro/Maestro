@@ -694,7 +694,9 @@ export type EnqueueCommandCallback = (
 	 */
 	turnOverrides?: TurnOverrides,
 	/** A Federation client's agent-only text for this turn (`TurnInput.agentContext`, `agentNotes`). */
-	agentText?: TurnAgentText
+	agentText?: TurnAgentText,
+	/** The id a Federation client named for the message's entry (`TurnInput.entryId`). */
+	entryId?: string
 ) => Promise<EnqueueCommandResult>;
 /** A single queued item, mirrored from the renderer's executionQueue (`src/shared/queueSnapshot.ts`). */
 export type { QueuedItemSnapshot };

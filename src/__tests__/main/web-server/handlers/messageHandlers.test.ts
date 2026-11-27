@@ -4131,6 +4131,44 @@ describe('WebSocketMessageHandler', () => {
 				resend();
 				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
 			});
+
+			// Parity R26: the desktop host writes the message under the id the client named, as a
+			// headless host does, so the client's kept bubble is replaced by id, never by its words.
+			it('hands the entry id to the renderer after the agent-only text slot (R26)', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({ logs: [] });
+				resend();
+				await vi.waitFor(() =>
+					expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+						'session-1',
+						'Summarize the docs',
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						'u1'
+					)
+				);
+			});
+
+			it('sends no entry id slot for an id it cannot take (R26)', async () => {
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: 'Mine',
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					background: true,
+					entryId: 'not an id!',
+				});
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(vi.mocked(callbacks.enqueueCommand).mock.calls[0]).toHaveLength(8);
+			});
 		});
 
 		it.each([
