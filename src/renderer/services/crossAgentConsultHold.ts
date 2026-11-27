@@ -65,7 +65,10 @@ import type {
 } from '../types';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { getTabDisplayName } from '../utils/tabHelpers';
-import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
+import {
+	captureQueuedTurnSettings,
+	queuedSettingsFromOtherProvider,
+} from '../utils/providerTabSessions';
 import {
 	queuedItemRunsReadOnly,
 	type QueuedTurnOverrideFields,
@@ -187,7 +190,8 @@ export function consultHoldReleasedText(replies: ConsultHoldReply[], deferred = 
 export type ConsultHoldSettings = Pick<
 	QueuedTurnOverrideFields,
 	'readOnlyMode' | 'turnReadOnly' | 'turnSettings' | 'turnSaveToHistory'
->;
+> &
+	Partial<Pick<QueuedItem, 'id'>>;
 
 /**
  * Build the hold item for one source tab. `settings` are the queued message's own (a drain);
@@ -210,7 +214,12 @@ export function buildConsultHoldItem(opts: {
 		text: consultHoldWaitingText(targets, !!deferred),
 		tabName: getTabDisplayName(tab, session.agentSessionId),
 		readOnlyMode: queuedItemRunsReadOnly(settings, tab),
-		turnSettings: settings?.turnSettings ?? captureQueuedTurnSettings(tab, session),
+		// The hold has an id of its own, so the provider-translation rule is applied here, by the
+		// queued message's id: settings frozen on a provider the agent left give way to the tab's.
+		turnSettings:
+			settings?.turnSettings && !queuedSettingsFromOtherProvider(settings, session)
+				? settings.turnSettings
+				: captureQueuedTurnSettings(tab, session),
 		...(typeof settings?.turnReadOnly === 'boolean' && { turnReadOnly: settings.turnReadOnly }),
 		...(typeof settings?.turnSaveToHistory === 'boolean' && {
 			turnSaveToHistory: settings.turnSaveToHistory,

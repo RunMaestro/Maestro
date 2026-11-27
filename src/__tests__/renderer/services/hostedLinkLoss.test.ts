@@ -29,6 +29,7 @@ import {
 	sendTakenItemToHost,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { interruptTurn } from '../../../renderer/services/turnInterrupt';
+import { registerContextCompactionSpawner } from '../../../renderer/services/contextCompaction';
 import { TURN_CANCELED_NOTE } from '../../../shared/maestro-lib/store/transcript';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
@@ -1002,6 +1003,42 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		await flush();
 		expect(sends()).toHaveLength(0);
 		expect(queue()).toHaveLength(0);
+	});
+
+	// Bot review on #2171 (R49): a hosted agent's provider session lives on its host, and the
+	// hidden compaction turn spawns here, where a hosted launch is refused. A cut turn that ended on
+	// the context limit is never handed to a compaction that cannot land (which would drop the kept
+	// message): it is held with its error, the same as any error no retry takes.
+	it('holds a kept message whose turn hit the context limit, never dropped by a compaction (R49)', async () => {
+		registerContextCompactionSpawner(vi.fn(async () => ({ success: true })));
+		updateSessionWith('row', (s) => ({
+			...s,
+			aiTabs: s.aiTabs.map((t) => ({ ...t, agentSessionId: 'claude-session-1' })),
+		}));
+		cut();
+		await hostBack('idle', [
+			QUESTION,
+			{
+				id: 'e1',
+				timestamp: 20,
+				source: 'error',
+				text: 'Prompt is too long',
+				agentError: {
+					type: 'token_exhaustion',
+					message: 'Prompt is too long',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: 20,
+				},
+				turnEnded: true,
+			},
+		]);
+		registerContextCompactionSpawner(null);
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')?.compaction).toBeUndefined();
+		expect(queue()).toEqual([
+			expect.objectContaining({ text: QUESTION.text, paused: true, hostEntryId: undefined }),
+		]);
 	});
 
 	// Parity R51: a steer the agent could not fold in ran as a turn of its own after the first one
