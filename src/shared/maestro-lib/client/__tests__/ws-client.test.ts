@@ -333,6 +333,26 @@ describe('createWsMaestroClient', () => {
 				if (plain.ok) expect(plain.input).not.toHaveProperty('replacesAgentId');
 			});
 
+			// Parity R50: a held queued message stays held across the wire, to both host kinds.
+			it('carries a held queued message held to the host (R50)', async () => {
+				bridge.typed.set(
+					'import_agent',
+					reply('import_agent_result', { sessionId: 'h', queued: 2 })
+				);
+				await client.agents.import({
+					...input,
+					queue: [
+						{ tabId: input.tabs[0].id, text: 'ready' },
+						{ tabId: input.tabs[0].id, text: 'held', held: true },
+					],
+				});
+				const read = importInputFromMessage(bridge.sent('import_agent')[0] as never);
+				expect(read.ok && read.input.queue).toEqual([
+					{ tabId: input.tabs[0].id, text: 'ready' },
+					{ tabId: input.tabs[0].id, text: 'held', held: true },
+				]);
+			});
+
 			it('passes on the notices for queued messages the host did not accept', async () => {
 				bridge.typed.set(
 					'import_agent',
@@ -1037,6 +1057,24 @@ describe('createWsMaestroClient', () => {
 				agentContext: 'Replies:\nBackend: fine.',
 			});
 			expect(sent[2]).toMatchObject({ command: 'look', agentNotes: 'Consulting Backend.' });
+		});
+
+		// Parity R57: what the host does beyond the base protocol, for a lift to ask before it plans.
+		it('answers the host capabilities it knows, asking once per connection (R57)', async () => {
+			bridge.typed.set(
+				'host_capabilities',
+				reply('host_capabilities_result', { capabilities: ['import-held', 'later-thing'] })
+			);
+			expect(await client.connection.capabilities?.()).toEqual({
+				ok: true,
+				value: ['import-held'],
+			});
+			await client.connection.capabilities?.();
+			expect(bridge.sent('host_capabilities')).toHaveLength(1);
+		});
+
+		it('answers no capabilities for a host that echoes the ask (R57)', async () => {
+			expect(await client.connection.capabilities?.()).toEqual({ ok: true, value: [] });
 		});
 
 		it('gives a host too old to know the fields the text in the message, never a turn without it (M16)', async () => {

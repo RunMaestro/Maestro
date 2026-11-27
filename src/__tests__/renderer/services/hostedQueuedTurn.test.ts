@@ -17,10 +17,14 @@ vi.mock('../../../renderer/hooks/agent/useCrossAgentDispatch', async (importOrig
 import {
 	handQueuedItemToHost,
 	isQueuedItemForHost,
+	queuedItemHostOverrides,
 	queuedItemHostText,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { enqueuePromptForTab } from '../../../renderer/services/queuedPrompt';
-import { loadCrossAgentConsultPrompts } from '../../../renderer/services/crossAgentConsultHold';
+import {
+	loadCrossAgentConsultPrompts,
+	settleConsultHold,
+} from '../../../renderer/services/crossAgentConsultHold';
 import {
 	dropMentionHandoffs,
 	followHostedHandoffs,
@@ -48,7 +52,7 @@ import {
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
 import { parseSessionId } from '../../../renderer/utils/sessionIdParser';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { LogEntry, QueuedItem } from '../../../renderer/types';
 import type { QueueExit } from '../../../shared/maestro-lib/client/types';
@@ -333,6 +337,39 @@ describe('hostedQueuedTurn', () => {
 // Parity M7: a hosted agent's `@mention` consults from this machine, as a local agent's does (the
 // mentioned agent is in this machine's roster). The drain fires it as the turn goes to the host;
 // the turn carries the agent-only notes and a released consult's replies there.
+// Parity R51: a queued message's read-only choice reaches the host by the one rule every dispatch
+// path asks (`queuedItemRunsReadOnly()`): a sender's own `turnReadOnly` decides when present.
+describe('queuedItemHostOverrides (R51)', () => {
+	const item = (fields: Partial<QueuedItem>) => queuedMessage(fields);
+
+	it.each([
+		[
+			'the sender chose writable, the chip was read-only',
+			{ turnReadOnly: false, readOnlyMode: true },
+			false,
+		],
+		['the sender chose read-only', { turnReadOnly: true }, true],
+		['read-only when queued', { readOnlyMode: true }, true],
+		// CodeRabbit on #2171: writable when queued is no choice; the host tab's read-only state
+		// decides, as a local drain lets the tab's lock it further.
+		['writable when queued', { readOnlyMode: false }, undefined],
+	] as const)('%s', (_name, fields, readOnly) => {
+		expect(queuedItemHostOverrides(item(fields))?.readOnly).toBe(readOnly);
+	});
+
+	it('leaves read-only to the host tab when the message made no choice', () => {
+		expect(queuedItemHostOverrides(item({}))).toBeUndefined();
+	});
+
+	// Parity R55: the save to History choice the message was queued with goes too (one shared rule
+	// with a Move to Host's queue, `queuedTurnOverrides()`).
+	it('sends the save to History choice the message was queued with (R55)', () => {
+		expect(queuedItemHostOverrides(item({ turnSaveToHistory: false }))).toEqual({
+			saveToHistory: false,
+		});
+	});
+});
+
 describe('hostedQueuedTurn: @mentions (M7)', () => {
 	const drainDeps = {
 		conductorProfile: '',
@@ -553,6 +590,84 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			expect(queue().map((queued) => queued.awaitingConsult?.deferred?.message)).toEqual([
 				'ask @Backend about the cache first',
 			]);
+		});
+
+		// Parity R48: settings are codified at send. A consult-first message queued read-only on its
+		// own model runs that way once the replies are in, whatever the tab is set to by then: the
+		// hold and the turn it releases into carry the message's settings, in every mode (hosted:
+		// with the host down, the hold is built here).
+		it.each(AGENT_MODES)(
+			'%s: a consult-first message runs on the settings it was queued with (R48)',
+			async (mode) => {
+				const session = seedWithBackend(mode);
+				// The tab now: writable, on another model.
+				updateSessionWith('row', (s) => ({
+					...s,
+					aiTabs: s.aiTabs.map((tab) => ({
+						...tab,
+						readOnlyMode: false,
+						customModel: 'tab-model',
+						customEffort: 'low',
+					})),
+				}));
+				expect(session.id).toBe('row');
+				if (mode === 'hosted') setConnection('lost');
+				// As the composer queues it: addressed at the mention first (`crossAgentOnly`).
+				const item = queuedMessage({
+					text: 'ask @Backend about the cache first',
+					crossAgentMention: true,
+					crossAgentOnly: true,
+					mentionRouting: 'consult-first',
+					readOnlyMode: true,
+					turnSettings: { model: 'queued-model', effort: 'high' },
+				});
+				await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+				await flush();
+
+				const hold = queue().find((queued) => queued.awaitingConsult?.deferred);
+				expect(hold).toMatchObject({
+					readOnlyMode: true,
+					turnSettings: { model: 'queued-model', effort: 'high' },
+				});
+				settleConsultHold({
+					sourceSessionId: 'row',
+					sourceTabId: 't1',
+					targetSessionId: 'backend',
+					text: 'the cache is fine',
+				});
+				const released = queue().find((queued) => queued.id === hold!.id);
+				expect(released?.awaitingConsult).toBeUndefined();
+				expect(released).toMatchObject({
+					readOnlyMode: true,
+					turnSettings: { model: 'queued-model', effort: 'high' },
+				});
+			}
+		);
+
+		// Parity R48: the host refused the send as not connected, and the consult-first hold is built
+		// then (`consultFirstWhileHostDown`): it carries the message's settings, not the tab's.
+		it('hosted: a consult-first message the host could not take keeps its settings on the hold (R48)', async () => {
+			seedWithBackend('hosted');
+			updateSessionWith('row', (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((tab) => ({ ...tab, readOnlyMode: false, customModel: 'tab-model' })),
+			}));
+			setConnection('lost');
+			const item = queuedMessage({
+				text: 'ask @Backend about the cache first',
+				crossAgentMention: true,
+				mentionRouting: 'consult-first',
+				readOnlyMode: true,
+				turnSettings: { model: 'queued-model' },
+			});
+			await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+			await flush();
+
+			expect(sends()).toHaveLength(0);
+			expect(queue().find((queued) => queued.awaitingConsult?.deferred)).toMatchObject({
+				readOnlyMode: true,
+				turnSettings: { model: 'queued-model' },
+			});
 		});
 
 		it('hosted: a kept hand-off keeps its mention and is armed when the host takes the turn', async () => {

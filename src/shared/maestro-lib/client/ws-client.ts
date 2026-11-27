@@ -140,6 +140,7 @@ import type {
 	TurnSendReceipt,
 	Unsubscribe,
 	WsMaestroClientOptions,
+	HostCapability,
 } from './types';
 import {
 	normalizeOriginHost,
@@ -410,10 +411,10 @@ class WsMaestroClient implements MaestroClient {
 	private state: ConnectionState = 'idle';
 	private hostInfo: HostInfo | undefined;
 	/**
-	 * Whether the attached host puts a turn's agent-only text into its prompt (`host_capabilities`),
-	 * asked once per connection: a reconnect may reach an upgraded host.
+	 * What the attached host does beyond the base protocol (`host_capabilities`), asked once per
+	 * connection: a reconnect may reach an upgraded host.
 	 */
-	private agentTextSupport: Promise<ClientResult<boolean>> | undefined;
+	private capabilitySupport: Promise<ClientResult<HostCapability[]>> | undefined;
 	/**
 	 * Per agent, its desktop host queue as this client last resolved it, and the `seq` of the
 	 * changes frame (or the queue read's `queueSeq`) that list is at (M28). Dropped with the socket.
@@ -484,6 +485,8 @@ class WsMaestroClient implements MaestroClient {
 		close: async (): Promise<void> => this.closePublic(),
 		state: (): ConnectionState => this.state,
 		host: (): HostInfo | undefined => (this.state === 'connected' ? this.hostInfo : undefined),
+		capabilities: (): Promise<ClientResult<HostCapability[]>> =>
+			this.hostCapabilities('connection.capabilities'),
 	};
 
 	readonly agents = {
@@ -1038,7 +1041,7 @@ class WsMaestroClient implements MaestroClient {
 		this.conn = conn;
 		this.attempt = undefined;
 		this.hostInfo = host;
-		this.agentTextSupport = undefined;
+		this.capabilitySupport = undefined;
 		this.state = 'connected';
 		if (snapshot) this.mirror.replace(snapshot.agents, snapshot.groups);
 		this.startTimers();
@@ -2258,23 +2261,30 @@ class WsMaestroClient implements MaestroClient {
 	 * Whether the host puts a turn's `agentContext` and `agentNotes` into the prompt. A host that
 	 * echoes `host_capabilities` (an older build) does not; a failed ask is not remembered.
 	 */
-	private hostAppliesAgentText(): Promise<ClientResult<boolean>> {
-		if (!this.agentTextSupport) {
+	private async hostAppliesAgentText(): Promise<ClientResult<boolean>> {
+		const capabilities = await this.hostCapabilities('turns.send');
+		return capabilities.ok ? ok(capabilities.value.includes('turn-agent-text')) : capabilities;
+	}
+
+	/**
+	 * What the attached host does beyond the base protocol. A host that echoes `host_capabilities`
+	 * (an older build) has none; a failed ask is not remembered.
+	 */
+	private hostCapabilities(method: ClientMethod): Promise<ClientResult<HostCapability[]>> {
+		if (!this.capabilitySupport) {
 			const asked = this.send<Reply>(
-				'turns.send',
+				method,
 				{ type: 'host_capabilities' },
 				'host_capabilities_result'
-			).then((reply): ClientResult<boolean> => {
-				if (reply.ok) {
-					return ok(parseHostCapabilities(reply.value.capabilities).includes('turn-agent-text'));
-				}
-				if (reply.error.code === 'unsupported') return ok(false);
-				if (this.agentTextSupport === asked) this.agentTextSupport = undefined;
+			).then((reply): ClientResult<HostCapability[]> => {
+				if (reply.ok) return ok(parseHostCapabilities(reply.value.capabilities));
+				if (reply.error.code === 'unsupported') return ok([]);
+				if (this.capabilitySupport === asked) this.capabilitySupport = undefined;
 				return reply;
 			});
-			this.agentTextSupport = asked;
+			this.capabilitySupport = asked;
 		}
-		return this.agentTextSupport;
+		return this.capabilitySupport;
 	}
 
 	/**

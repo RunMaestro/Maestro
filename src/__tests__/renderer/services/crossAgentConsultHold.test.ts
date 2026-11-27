@@ -290,6 +290,63 @@ describe('consult-first hold', () => {
 			'Backend replied. Answer the message with what came back.'
 		);
 	});
+
+	// Parity R48: settings are codified at send. A queued message's own settings win over the
+	// tab's, and the turn the hold releases into keeps them.
+	it("runs on the queued message's settings, not the tab's, through the release (R48)", () => {
+		const session = sourceSession();
+		const tab = { ...session.aiTabs[0], readOnlyMode: false, customModel: 'tab-model' };
+		const hold = buildConsultHoldItem({
+			session,
+			tab,
+			targets: [BACKEND],
+			deferred: { message: 'm' },
+			settings: {
+				readOnlyMode: true,
+				turnSettings: { model: 'queued-model', effort: 'high' },
+				turnSaveToHistory: false,
+			},
+		});
+		expect(hold).toMatchObject({
+			readOnlyMode: true,
+			turnSettings: { model: 'queued-model', effort: 'high' },
+			turnSaveToHistory: false,
+		});
+		const [released] = settleConsultInQueue(
+			[hold],
+			{
+				sourceSessionId: session.id,
+				sourceTabId: tab.id,
+				targetSessionId: BACKEND.targetSessionId,
+				text: 'x',
+			},
+			'{{CONSULT_REPLIES}}'
+		);
+		expect(released).toMatchObject({
+			readOnlyMode: true,
+			turnSettings: { model: 'queued-model', effort: 'high' },
+			turnSaveToHistory: false,
+		});
+		// Queued on a provider the agent was translated off since: its model is not this provider's,
+		// so the tab's settings decide, as the drain's own codification does (CodeRabbit on #2171).
+		const translated = sourceSession({
+			toolType: 'claude-code',
+			providerTranslationQueuedOrigins: { q1: 'codex' },
+		});
+		expect(
+			buildConsultHoldItem({
+				session: translated,
+				tab,
+				targets: [BACKEND],
+				settings: { id: 'q1', readOnlyMode: true, turnSettings: { model: 'gpt-5' } },
+			})
+		).toMatchObject({ readOnlyMode: true, turnSettings: { model: 'tab-model' } });
+		// No queued settings (a message sent at once): the tab's, as before.
+		expect(buildConsultHoldItem({ session, tab, targets: [BACKEND] })).toMatchObject({
+			readOnlyMode: false,
+			turnSettings: { model: 'tab-model' },
+		});
+	});
 });
 
 describe('hand-off note', () => {

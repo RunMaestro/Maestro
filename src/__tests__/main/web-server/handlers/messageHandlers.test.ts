@@ -4352,7 +4352,7 @@ describe('WebSocketMessageHandler', () => {
 					type: 'host_capabilities_result',
 					requestId: 'r1',
 					success: true,
-					capabilities: ['turn-agent-text'],
+					capabilities: ['turn-agent-text', 'import-held'],
 				})
 			);
 		});

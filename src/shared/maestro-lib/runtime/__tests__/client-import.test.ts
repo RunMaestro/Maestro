@@ -74,6 +74,44 @@ describe('agents.import (in-process)', () => {
 		]);
 	});
 
+	// Parity R50: a message the person held stays held on the host: it is sent held (paused).
+	it('queues a held message held on the headless host, and a ready one ready (R50)', async () => {
+		const { client, sends } = clientWith({ ok: true, value: { agentId: 'new' } }, () => ({
+			ok: true,
+			value: { status: 'queued' } as TurnSendReceipt,
+		}));
+		await client.agents.import({
+			...input,
+			queue: [
+				{ tabId: 't1', text: 'ready' },
+				{ tabId: 't1', text: 'held', held: true },
+			],
+		});
+		expect(sends.map(({ turn }) => turn)).toEqual([
+			{ text: 'ready' },
+			{ text: 'held', held: true },
+		]);
+	});
+
+	// Parity R55: a queued message runs on the settings it was queued with, not the host tab's.
+	it('sends a queued message with the settings it was queued with (R55)', async () => {
+		const { client, sends } = clientWith({ ok: true, value: { agentId: 'new' } }, () => ({
+			ok: true,
+			value: { status: 'queued' } as TurnSendReceipt,
+		}));
+		await client.agents.import({
+			...input,
+			queue: [
+				{ tabId: 't1', text: 'frozen', overrides: { model: 'opus', readOnly: true } },
+				{ tabId: 't1', text: 'plain' },
+			],
+		});
+		expect(sends.map(({ turn }) => turn)).toEqual([
+			{ text: 'frozen', overrides: { model: 'opus', readOnly: true } },
+			{ text: 'plain' },
+		]);
+	});
+
 	it('reports a queued message the turn service refuses, and keeps the import', async () => {
 		const { client } = clientWith({ ok: true, value: { agentId: 'new' } }, (_a, _t, turn) =>
 			turn.text === 'two'

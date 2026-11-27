@@ -29,6 +29,7 @@ import {
 	sendTakenItemToHost,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { interruptTurn } from '../../../renderer/services/turnInterrupt';
+import { registerContextCompactionSpawner } from '../../../renderer/services/contextCompaction';
 import { TURN_CANCELED_NOTE } from '../../../shared/maestro-lib/store/transcript';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
@@ -46,9 +47,10 @@ import {
 	scheduleRetryForError,
 	stopRetriesForAgent,
 	useRetryStore,
+	type RaisedErrorRetry,
 } from '../../../renderer/stores/retryStore';
 import { parseSessionId } from '../../../renderer/utils/sessionIdParser';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { isSshTransportError, useSshOutageStore } from '../../../renderer/stores/sshOutageStore';
 import type { AgentError, LogEntry, Session } from '../../../renderer/types';
@@ -482,6 +484,49 @@ describe('a turn cut by a lost link (Agent Resilience off: the cut draws its not
 		await flush();
 		expect(raised).toEqual([]);
 	});
+
+	// Parity R54: no copy was kept at the cut (the link loss has no retry here) and no retry waits,
+	// so there is no prompt to resend. The turn's own error (a retryable quota limit) is drawn once,
+	// from the host's transcript; raising it here would add a second error entry and the error
+	// state, then hold the message as well.
+	it('draws a cut turn that ended on its own error once, and raises nothing with no prompt to resend (R54)', async () => {
+		const QUOTA: LogEntry = {
+			id: 'e1',
+			timestamp: 20,
+			source: 'error',
+			text: 'Claude AI usage limit reached|1755500000',
+			turnEnded: true,
+		};
+		expect(
+			classifyRetryableError({ type: 'unknown', message: QUOTA.text, recoverable: true })
+		).toBe('token-exhaustion');
+		hostReports('busy', 'reconnecting');
+		confirmOutage();
+		syncHostedAgents();
+		expect(record().executionQueue).toEqual([]);
+
+		transcript.mockResolvedValue([QUESTION, QUOTA]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		hostReports('idle', 'connected');
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+
+		expect(raised).toEqual([]);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		// The turn's own error, once (the link card beside it is the cut's, as on an SSH tab).
+		const turnErrors = tab().logs.filter(
+			(entry) => entry.source === 'error' && entry.agentError?.source !== 'host-link'
+		);
+		expect(turnErrors).toEqual([expect.objectContaining({ id: 'e1' })]);
+		expect(record().state).not.toBe('error');
+		// Held for the user to send again, with a toast saying why (no retry card stands for it).
+		expect(record().executionQueue).toEqual([
+			expect.objectContaining({ text: QUESTION.text, paused: true }),
+		]);
+		expect(toastMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Not sent' }));
+	});
 });
 
 describe('projectHostedSession with the link lost', () => {
@@ -559,10 +604,11 @@ describe('projectHostedSession with the link lost', () => {
 });
 
 /** What the agent-error listener does with a retryable error: hand it to Agent Resilience. */
-function listenerStandIn(processSessionId: string, error: AgentError) {
+/** The error listener's retry part, as `useAgentErrorListener` runs it (with the raised options). */
+function listenerStandIn(processSessionId: string, error: AgentError, retry?: RaisedErrorRetry) {
 	raised.push({ processSessionId, error });
 	const parsed = parseSessionId(processSessionId);
-	scheduleRetryForError(parsed.baseSessionId, parsed.tabId as string, error);
+	scheduleRetryForError(parsed.baseSessionId, parsed.tabId as string, error, retry);
 }
 
 describe('a turn cut by a lost link is kept under the retry card, drawn once (R13)', () => {
@@ -886,6 +932,21 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
 	});
 
+	// Parity R44: the error's retry is raised through the error listener, as a local turn's error
+	// is, so the listener writes the anchor its card is drawn from (countdown, Try now, Stop).
+	it("raises a cut turn's provider error through the error listener, which draws its card (R44)", async () => {
+		cut();
+		raised.length = 0;
+		await hostBack('idle', [QUESTION, OVERLOADED]);
+		expect(raised).toEqual([
+			{
+				processSessionId: 'row-ai-t1',
+				error: expect.objectContaining({ message: OVERLOADED.text }),
+			},
+		]);
+		expect(getRetryEntry('row', 't1')).toMatchObject({ status: 'scheduled', attempt: 0 });
+	});
+
 	// Parity R41: one side owns a retry. A desktop host whose own Agent Resilience took the error
 	// writes its retry card in the turn and sends the message itself: nothing is sent from here.
 	const HOST_RETRY_CARD: LogEntry = {
@@ -910,6 +971,88 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		const outage = useRetryStore.getState().outages[outageId];
 		expect(outage).toMatchObject({ settledByHost: true, hostRetry: 'host' });
 		expect(hostSettledText(outage)).toBe(HOST_RETRIES_TEXT);
+	});
+
+	// Parity R45: the user stopped the host's own retry ON the host: its card says so, and the
+	// message waits paused in the host's queue. This machine no longer says the host retries it,
+	// and sends nothing (the host has the message).
+	it('never says the host retries a message whose host retry was stopped there (R45)', async () => {
+		cut();
+		const outageId = getRetryEntry('row', 't1')!.outageId;
+		await hostBack('idle', [QUESTION, { ...HOST_RETRY_CARD, retryStopped: true }]);
+		retryNow('row', 't1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		const outage = useRetryStore.getState().outages[outageId];
+		expect(outage?.hostRetry).not.toBe('host');
+		expect(hostSettledText(outage)).not.toBe(HOST_RETRIES_TEXT);
+	});
+
+	// Parity R56: the host's agent list says whether its own retry holds the tab's failed turn. A
+	// desktop host that restarted lost its retry (it lives in memory) but kept the card in the
+	// transcript and the failed message at the head of its queue: this machine no longer says the
+	// host retries it, and sends nothing (the host's queue has the message), as after a Stop there
+	// (R45). One whose retry still runs is left to it (R41).
+	function hostBackReporting(retryPending: boolean) {
+		transcript.mockResolvedValue([QUESTION, HOST_RETRY_CARD]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		const peer = peerWith('idle', 'connected');
+		usePeerMirrorStore.setState((current) => ({
+			peers: {
+				...current.peers,
+				box: {
+					...peer,
+					hostKind: 'desktop',
+					agents: peer.agents.map((agent) => ({
+						...agent,
+						aiTabs: agent.aiTabs?.map((hostTab) => ({ ...hostTab, retryPending })),
+					})),
+				},
+			},
+		}));
+	}
+
+	it.each([
+		['still runs', true, true],
+		['was lost to a restart of the host', false, false],
+	] as const)(
+		'says the host retries the cut turn only while the host reports its retry %s (R56)',
+		async (_how, retryPending, hostRetries) => {
+			cut();
+			const outageId = getRetryEntry('row', 't1')!.outageId;
+			hostBackReporting(retryPending);
+			syncHostedAgents();
+			await flush();
+			syncHostedAgents();
+			await flush();
+			retryNow('row', 't1');
+			await flush();
+			await flush();
+			expect(sends()).toHaveLength(0);
+			const outage = useRetryStore.getState().outages[outageId];
+			expect(outage?.hostRetry === 'host').toBe(hostRetries);
+			expect(hostSettledText(outage) === HOST_RETRIES_TEXT).toBe(hostRetries);
+		}
+	);
+
+	// CodeRabbit on #2171: the host's turn wrote a provider error line, then its retry card, and the
+	// user stopped that retry on the host. The error does not make the turn "errored" for this
+	// machine's own retry: the host's queue holds the message, paused, so nothing is retried here.
+	it('never retries here a cut turn whose host retry card was stopped after a provider error', async () => {
+		cut();
+		raised.length = 0;
+		await hostBack('idle', [
+			QUESTION,
+			{ id: 'p1', timestamp: 15, source: 'error', text: 'API Error: 529 Overloaded' },
+			{ ...HOST_RETRY_CARD, retryStopped: true },
+		]);
+		retryNow('row', 't1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(raised).toEqual([]);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
 	});
 
 	it("starts a provider error's backoff at its first attempt after a long outage (R41)", async () => {
@@ -961,6 +1104,235 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		]);
 	});
 
+	// Parity R47: a message steered into the cut turn is part of that turn, not a later one. A
+	// desktop host still running it holds the cut message, its streamed text (no end stamp yet) and
+	// the steer: the turn still runs there, so the kept copy is never sent again.
+	it('never resends a cut turn a desktop host still runs after a steer joined it (R47)', async () => {
+		cut();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		transcript.mockResolvedValue([
+			QUESTION,
+			{ id: 'o1', timestamp: 15, source: 'stdout', text: 'The docs s' },
+			{ id: 's1', timestamp: 18, source: 'user', text: 'Also the README', steered: true },
+		]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...peerWith('busy', 'connected'), hostKind: 'desktop' } },
+		}));
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		retryNow('row', 't1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(queue()).toHaveLength(0);
+	});
+
+	// Bot review on #2171 (R49): a hosted agent's provider session lives on its host, and the
+	// hidden compaction turn spawns here, where a hosted launch is refused. A cut turn that ended on
+	// the context limit is never handed to a compaction that cannot land (which would drop the kept
+	// message): it is held with its error, the same as any error no retry takes.
+	it('holds a kept message whose turn hit the context limit, never dropped by a compaction (R49)', async () => {
+		registerContextCompactionSpawner(vi.fn(async () => ({ success: true })));
+		updateSessionWith('row', (s) => ({
+			...s,
+			aiTabs: s.aiTabs.map((t) => ({ ...t, agentSessionId: 'claude-session-1' })),
+		}));
+		cut();
+		await hostBack('idle', [
+			QUESTION,
+			{
+				id: 'e1',
+				timestamp: 20,
+				source: 'error',
+				text: 'Prompt is too long',
+				agentError: {
+					type: 'token_exhaustion',
+					message: 'Prompt is too long',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: 20,
+				},
+				turnEnded: true,
+			},
+		]);
+		registerContextCompactionSpawner(null);
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')?.compaction).toBeUndefined();
+		expect(queue()).toEqual([
+			expect.objectContaining({ text: QUESTION.text, paused: true, hostEntryId: undefined }),
+		]);
+	});
+
+	// Parity R51: a steer the agent could not fold in ran as a turn of its own after the first one
+	// ended (`steerState: 'queued'`). The link is cut during that follow-up: it is the cut turn, so
+	// its message is the one kept and sent again once it died with the host, never the first one.
+	it("keeps the queued steer's message when the link is cut during its follow-up (R51)", async () => {
+		// As a host writes them: the steer joins while the first turn runs, before its end.
+		const PARTIAL: LogEntry = { id: 'a0', timestamp: 11, source: 'stdout', text: 'The docs' };
+		const STEER: LogEntry = {
+			id: 'b1',
+			timestamp: 12,
+			source: 'user',
+			text: 'Also the README',
+			steered: true,
+			steerState: 'queued',
+		};
+		const ANSWER: LogEntry = {
+			id: 'a1',
+			timestamp: 13,
+			source: 'stdout',
+			text: ' say...',
+			turnEnded: true,
+		};
+		updateSessionWith('row', (s) => ({
+			...s,
+			aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [QUESTION, PARTIAL, STEER, ANSWER] })),
+		}));
+		cut();
+		expect(queue().map((item) => item.hostEntryId)).toEqual(['b1']);
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		transcript.mockResolvedValue([
+			QUESTION,
+			PARTIAL,
+			STEER,
+			ANSWER,
+			{ id: 'o2', timestamp: 16, source: 'stdout', text: 'The READ' },
+		]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...peerWith('idle', 'connected'), hostKind: 'desktop' } },
+		}));
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		expect(sends().map(([, , action]) => action.entryId)).toEqual(['b1']);
+		expect(sends()[0][2]).toMatchObject({ text: STEER.text });
+	});
+
+	// Parity R53: the steer rule never fires early. A queued steer is written, and its verdict
+	// stamped, while the turn it was sent into still runs; its own turn starts only after that turn's
+	// end. Both host kinds: a headless host writes the first turn's answer only at its end.
+	const R53_STEER: LogEntry = {
+		id: 'b1',
+		timestamp: 12,
+		source: 'user',
+		text: 'Also the README',
+		steered: true,
+		steerState: 'queued',
+	};
+	const R53_PARTIAL: LogEntry = { id: 'a0', timestamp: 11, source: 'stdout', text: 'The docs' };
+	const R53_ANSWER: LogEntry = {
+		id: 'a1',
+		timestamp: 13,
+		source: 'stdout',
+		text: 'The docs say...',
+		turnEnded: true,
+	};
+	async function r53HostBack(hostKind: 'desktop' | 'headless', entries: LogEntry[]) {
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		transcript.mockResolvedValue(entries);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...peerWith('idle', 'connected'), hostKind } },
+		}));
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+	}
+
+	// (b) Cut during the first turn, with the steer stamped queued but its turn not begun: the first
+	// message is the cut one, kept and sent again once; the steer stays in the transcript behind it,
+	// never sent in its place.
+	it.each([
+		['desktop', [QUESTION, R53_PARTIAL, R53_STEER]],
+		['headless', [QUESTION, R53_STEER]],
+	] as const)(
+		'keeps the first message when the link is cut before a queued steer began, on a %s host (R53)',
+		async (hostKind, entries) => {
+			updateSessionWith('row', (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [...entries] })),
+			}));
+			cut();
+			expect(queue().map((item) => item.hostEntryId)).toEqual(['u1']);
+			await r53HostBack(hostKind, [...entries]);
+			expect(sends().map(([, , action]) => action.entryId)).toEqual(['u1']);
+			expect(sends()[0][2]).toMatchObject({ text: QUESTION.text });
+			expect(tab().logs.find((entry) => entry.id === 'b1')).toMatchObject({
+				steered: true,
+				steerState: 'queued',
+			});
+		}
+	);
+
+	// (c) on a headless host: the first turn ended (its answer and stamp after the steer), and the
+	// link is cut during the steer's follow-up: the steer is kept and sent, the first never again.
+	it("keeps the queued steer's message when the link is cut during its follow-up on a headless host (R53)", async () => {
+		const entries = [QUESTION, R53_STEER, R53_ANSWER];
+		updateSessionWith('row', (s) => ({
+			...s,
+			aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [...entries] })),
+		}));
+		cut();
+		expect(queue().map((item) => item.hostEntryId)).toEqual(['b1']);
+		await r53HostBack('headless', [...entries]);
+		expect(sends().map(([, , action]) => action.entryId)).toEqual(['b1']);
+	});
+
+	// CodeRabbit on #2171: a headless host starts the steer's follow-up as a turn of its own, so the
+	// turn's start is later than the steer's entry (written during the turn before). The cut still
+	// keeps the steer; a steer whose own turn ended is a previous turn's, and keeps nothing.
+	it.each([
+		['its follow-up runs', [QUESTION, R53_STEER, R53_ANSWER], ['b1']],
+		[
+			'its follow-up ended and a later turn runs',
+			[
+				QUESTION,
+				R53_STEER,
+				R53_ANSWER,
+				{ id: 'a2', timestamp: 16, source: 'stdout', text: 'The README...', turnEnded: true },
+			],
+			[],
+		],
+	] as const)(
+		'keeps a queued steer whose turn started after its entry only while %s',
+		(_how, entries, kept) => {
+			updateSessionWith('row', (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [...entries] })),
+			}));
+			hostReports('busy', 'reconnecting', 20);
+			confirmOutage();
+			syncHostedAgents();
+			expect(queue().map((item) => item.hostEntryId)).toEqual(kept);
+		}
+	);
+
+	// (a) The first turn finished with the steer inside it, and the steer's follow-up finished too,
+	// while the link was down: both read ended, and nothing is sent again.
+	it.each(['desktop', 'headless'] as const)(
+		'sends nothing for a turn and its queued steer that both finished while cut, on a %s host (R53)',
+		async (hostKind) => {
+			updateSessionWith('row', (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [QUESTION, R53_STEER] })),
+			}));
+			cut();
+			await r53HostBack(hostKind, [
+				QUESTION,
+				R53_STEER,
+				R53_ANSWER,
+				{ id: 'a2', timestamp: 16, source: 'stdout', text: 'The README...', turnEnded: true },
+			]);
+			expect(sends()).toHaveLength(0);
+		}
+	);
+
 	// CodeRabbit on #2167: the retry of an errored turn was stopped. A later send of the same entry
 	// asks the host's transcript again, never going straight out on the stale record.
 	it('asks the host again for an errored entry once its retry was stopped (R37)', async () => {
@@ -986,6 +1358,26 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		await act(async () => {
 			await fate;
 		});
+	});
+
+	// Parity R43: Stop, then Force Send. A local agent's Force Send sends at once; so does a hosted
+	// one whose turn ended on its own error: no new countdown of that error's retry.
+	it('sends at once on Force Send after Stop, never a new countdown (R43)', async () => {
+		cut();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		await hostBack('idle', [QUESTION, OVERLOADED]);
+		expect(getRetryEntry('row', 't1')?.status).toBe('scheduled');
+		stopRetriesForAgent('row', 't1');
+		const parked = queue().find((item) => item.hostEntryId === 'u1')!;
+		expect(parked.paused).toBe(true);
+
+		await act(async () => {
+			await sendTakenItemToHost('row', parked);
+		});
+		await flush();
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
 	});
 
 	// CodeRabbit on #2167: a retry ran into the same entry and failed again, differently. The LAST
@@ -1359,11 +1751,15 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'started' } } });
 		maestro.federation = { transcript, act: act$ };
 		registerDispatchDepsProvider(() => ({}) as never);
+		// The error listener, as the relaunched app has it: an errored turn's retry is raised there.
+		raised.length = 0;
+		registerAgentErrorSurfacer(listenerStandIn);
 	});
 
 	afterEach(() => {
 		delete maestro.federation;
 		registerDispatchDepsProvider(null);
+		registerAgentErrorSurfacer(null);
 	});
 
 	/** The relaunched state: the host connected with its tab `state`, the kept copy in the queue. */
@@ -1398,6 +1794,23 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 				message: 'The host already had this message, so it was not sent again.',
 			})
 		);
+	});
+
+	// Parity R47: a steer joined the turn; the desktop host still runs it (no end stamp yet).
+	it('never sends the kept message again while a desktop host runs its turn with a steer in it (R47)', async () => {
+		relaunch('busy', [
+			QUESTION,
+			{ id: 'o1', timestamp: 15, source: 'stdout', text: 'The docs s' },
+			{ id: 's1', timestamp: 18, source: 'user', text: 'Also the README', steered: true },
+		]);
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...current.peers.box, hostKind: 'desktop' } },
+		}));
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(queue()).toHaveLength(0);
 	});
 
 	it('sends the kept message, naming its entry, when the turn died with the host', async () => {
@@ -1555,6 +1968,48 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		);
 	});
 
+	// CodeRabbit on #2171: after a reload, the same stopped host retry card after a provider error.
+	// Nothing is retried from here on its own; the user's Force Send of the copy still goes.
+	const STOPPED_AFTER_ERROR: LogEntry[] = [
+		QUESTION,
+		{ id: 'p1', timestamp: 15, source: 'error', text: 'API Error: 529 Overloaded' },
+		{
+			id: 'r1',
+			timestamp: 20,
+			source: 'system',
+			text: 'API Error: 529 Overloaded',
+			retryOutageId: 'host-outage',
+			retryStopped: true,
+			turnEnded: true,
+		},
+	];
+
+	it('never retries a kept copy on its own after a reload when its host retry card was stopped', async () => {
+		relaunch('idle', STOPPED_AFTER_ERROR);
+		raised.length = 0;
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(raised).toEqual([]);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+	});
+
+	it("sends a kept copy on the user's Force Send when its host retry card was stopped", async () => {
+		relaunch('idle', STOPPED_AFTER_ERROR);
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		// Parked held (as a Stop here leaves it), so the send is the user's own.
+		const kept = { ...queue().find((item) => item.id === 'k1')!, paused: true };
+		updateSessionWith('row', (s) => ({ ...s, executionQueue: [kept] }));
+		await act(async () => {
+			await sendTakenItemToHost('row', kept);
+		});
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
 	it('takes the host saying its own retry holds the message as "the host retries it" (R41)', async () => {
 		relaunch('idle', [QUESTION]);
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'retrying' } } });
@@ -1591,6 +2046,35 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		expect(toastMock).not.toHaveBeenCalledWith(
 			expect.objectContaining({ title: 'Not sent again' })
 		);
+	});
+
+	// Parity R46: an error no retry takes records no prompt for the tab. One left behind would be
+	// resent by the retry of a LATER error on this tab, as the wrong message.
+	it('records no prompt for an error no retry takes, so a later error resends nothing stale (R46)', async () => {
+		relaunch('idle', [
+			QUESTION,
+			{
+				id: 'e1',
+				timestamp: 20,
+				source: 'error',
+				text: 'Invalid API key. Please run /login.',
+				turnEnded: true,
+			},
+		]);
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(queue()).toEqual([expect.objectContaining({ id: 'k1', paused: true })]);
+		// A later turn of this tab fails on an overload: no prompt of the held copy to resend.
+		expect(
+			scheduleRetryForError('row', 't1', {
+				type: 'rate_limited',
+				message: 'API Error: 529 Overloaded',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: 30,
+			})
+		).toBe(false);
 	});
 
 	// CodeRabbit on #2167: the link drops while the tab's read is out. The busy tab held now is the

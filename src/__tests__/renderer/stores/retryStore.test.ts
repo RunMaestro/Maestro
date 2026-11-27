@@ -44,7 +44,11 @@ import {
 } from '../../../renderer/services/contextCompaction';
 import { getContextCompactionBlocker } from '../../../shared/contextCompaction';
 import { logger } from '../../../renderer/utils/logger';
-import { useSessionStore, updateSessionWith } from '../../../renderer/stores/sessionStore';
+import {
+	useSessionStore,
+	updateAiTab,
+	updateSessionWith,
+} from '../../../renderer/stores/sessionStore';
 import { settleTabThinkingState } from '../../../renderer/utils/tabHelpers';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
@@ -751,6 +755,44 @@ describe('cancel and settle transitions', () => {
 		vi.advanceTimersByTime(availabilityDelayMs(0));
 		expect(processQueuedItem).toHaveBeenCalledTimes(1);
 		expect(processQueuedItem.mock.calls[0][0]).toBe('stopB');
+	});
+
+	// Parity R45: a stopped card says so on its own transcript entry, so a client that reads this
+	// tab from another machine (a hosted agent's desktop host) knows no retry holds the message.
+	it.each(AGENT_MODES)('%s: Stop marks the card it ends as stopped (R45)', (mode) => {
+		useSessionStore.setState({
+			sessions: [
+				createModeSession(mode, {
+					id: 'stopCard',
+					aiTabs: [
+						createMockAITab({
+							id: 't1',
+							logs: [
+								{ id: 'u1', timestamp: 1, source: 'user', text: 'hi' },
+								{ id: 'old', timestamp: 2, source: 'system', text: 'x', retryOutageId: 'other' },
+							],
+						}),
+					],
+				}),
+			],
+		} as any);
+		seedSnapshot('stopCard', 't1');
+		scheduleRetryForError('stopCard', 't1', overload());
+		const outageId = getRetryEntry('stopCard', 't1')!.outageId;
+		updateAiTab('stopCard', 't1', (tab) => ({
+			...tab,
+			logs: [
+				...tab.logs,
+				{ id: 'card', timestamp: 3, source: 'system', text: 'Overloaded', retryOutageId: outageId },
+			],
+		}));
+
+		stopRetriesForAgent('stopCard');
+
+		const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(logs.find((entry) => entry.id === 'card')?.retryStopped).toBe(true);
+		// Another outage's card is left alone.
+		expect(logs.find((entry) => entry.id === 'old')?.retryStopped).toBeUndefined();
 	});
 
 	// `maestro-cli interrupt --tab` stops one turn: the agent's other tabs keep

@@ -60,7 +60,7 @@ import {
 } from '../services/contextCompaction';
 import { dropRecoveredOutageNotices } from '../utils/logEntries';
 import { logger } from '../utils/logger';
-import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
+import { useSessionStore, selectSessionById, updateAiTab, updateSessionWith } from './sessionStore';
 import { notifyToast } from './notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
 import type { AgentError, QueuedItem } from '../types';
@@ -504,24 +504,42 @@ export function noteDirectDispatch(
  * that knows how is the listener that swallowed it. Handing the error back
  * avoids a second, drifting copy of that logic here.
  */
-let agentErrorSurfacer: ((processSessionId: string, error: AgentError) => void) | null = null;
+/**
+ * How the retry of a raised error goes on (`scheduleRetryForError()`'s options): `freshOutage`
+ * when the error replaces the retry the tab holds now.
+ */
+export interface RaisedErrorRetry {
+	freshOutage?: Partial<OutageRecord>;
+}
+
+/** The listener that owns error UI; the third argument only ever comes from `raiseAgentError()`. */
+export type AgentErrorSurfacer = (
+	processSessionId: string,
+	error: AgentError,
+	retry?: RaisedErrorRetry
+) => void;
+
+let agentErrorSurfacer: AgentErrorSurfacer | null = null;
 
 /** Wire the handler a failed recovery hands its original error back to. */
-export function registerAgentErrorSurfacer(
-	fn: ((processSessionId: string, error: AgentError) => void) | null
-): void {
+export function registerAgentErrorSurfacer(fn: AgentErrorSurfacer | null): void {
 	agentErrorSurfacer = fn;
 }
 
 /**
  * Raise an agent error through the listener that owns error UI, as though the turn's process had
  * reported it on `processSessionId`. For a failure that happened before any process existed here:
- * a hosted agent's send its host could not take. The same retry, transcript card and outage
- * surfacing follow as for a spawned turn. False when no listener is registered.
+ * a hosted agent's send its host could not take, or a hosted turn that ended on an error while
+ * this machine was away. The same retry, transcript card and outage surfacing follow as for a
+ * spawned turn; `retry` goes to the retry it schedules. False when no listener is registered.
  */
-export function raiseAgentError(processSessionId: string, error: AgentError): boolean {
+export function raiseAgentError(
+	processSessionId: string,
+	error: AgentError,
+	retry?: RaisedErrorRetry
+): boolean {
 	if (!agentErrorSurfacer) return false;
-	agentErrorSurfacer(processSessionId, error);
+	agentErrorSurfacer(processSessionId, error, retry);
 	return true;
 }
 
@@ -745,6 +763,24 @@ export function wouldAutoRetry(sessionId: string, error: ClassifiableError): boo
 }
 
 /**
+ * Whether `scheduleRetryForError()` would take `error` on this tab, given the prompt to resend:
+ * a compaction of the tab's context, or an automatic retry. `opts.freshOutage` as it takes it.
+ * Nothing is scheduled. A caller that raises an error only when a retry will stand for it (and
+ * records the prompt only then) asks this first.
+ */
+export function wouldRecoverError(
+	sessionId: string,
+	tabId: string,
+	error: AgentError,
+	opts?: { freshOutage?: Partial<OutageRecord> }
+): boolean {
+	return (
+		compactionWouldTake(sessionId, tabId, error, opts?.freshOutage ?? null) ||
+		wouldAutoRetry(sessionId, error)
+	);
+}
+
+/**
  * Try to take over an agent error with an automatic retry. Returns `true` if a
  * retry was scheduled (the caller should then suppress the error modal), or
  * `false` if the error is not auto-retryable / resilience is off / we have no
@@ -766,8 +802,11 @@ export function scheduleRetryForError(
 		freshOutage?: Partial<OutageRecord>;
 	}
 ): boolean {
-	// An Auto Run task is not compacted: the batch owns that turn and its error.
-	if (!opts?.batch && scheduleContextCompaction(sessionId, tabId, error)) return true;
+	// An Auto Run task is not compacted: the batch owns that turn and its error. A retry this
+	// error replaces (`freshOutage`: the lost link's, once the host is back) is no recovery of
+	// this turn's context, so compaction is considered as if it were not there (R49).
+	if (!opts?.batch && scheduleContextCompaction(sessionId, tabId, error, opts?.freshOutage ?? null))
+		return true;
 
 	const strategy = resolveStrategy(sessionId, error);
 	if (!strategy) return false;
@@ -791,12 +830,7 @@ export function scheduleRetryForError(
 	// record and no card, so counting from its attempt would schedule a retry
 	// the transcript never shows.
 	const prior = useRetryStore.getState().retries[key];
-	if (prior && !prior.compaction && opts?.freshOutage) {
-		useRetryStore.getState().patchOutage(prior.outageId, opts.freshOutage);
-		resolveOutage(prior.outageId, 'recovered');
-		stopProviderWatch(key);
-		clearTabAgentError(sessionId, tabId, prior.lastMessage);
-	}
+	if (prior && !prior.compaction && opts?.freshOutage) endReplacedOutage(prior, opts.freshOutage);
 	const existing = prior?.compaction || opts?.freshOutage ? undefined : prior;
 	// Continue the existing backoff when a resend failed again; otherwise start
 	// at attempt 0. `existing.attempt` was the attempt we just tried, so +1.
@@ -1204,30 +1238,19 @@ const COMPACTION_EXIT_WAIT_MS = 30 * 1000;
  * process that just failed still has that session open until it exits, so the
  * work waits for `noteFailedTurnExited`.
  */
-function scheduleContextCompaction(sessionId: string, tabId: string, error: AgentError): boolean {
+function scheduleContextCompaction(
+	sessionId: string,
+	tabId: string,
+	error: AgentError,
+	replacing: Partial<OutageRecord> | null
+): boolean {
 	if (error.type !== 'token_exhaustion') return false;
 
 	const key = keyFor(sessionId, tabId);
-	// One recovery per failed turn. An entry already here is another outage's, or
-	// this compaction's own resend refused again - and compacting a second time
-	// would loop on a prompt that cannot fit.
-	if (useRetryStore.getState().retries[key]) return false;
-
+	const prior = useRetryStore.getState().retries[key];
 	const snapshot = snapshots.get(key);
 	if (!snapshot) return false;
-	// A provider whose recovery is an unqualified required feature (Grok) is
-	// declined by name: no entry, no pill, no hidden turn, no resend. The original
-	// error surfaces exactly as before, and nothing reads the decline as success.
-	const blocker = getTabContextCompactionBlocker(sessionId, tabId);
-	if (blocker) {
-		logger.warn('[retry] Context limit hit; compaction is a required-feature blocker', undefined, {
-			key,
-			feature: blocker.feature,
-			parityRows: blocker.parityRows,
-		});
-		return false;
-	}
-	if (!canCompactTabContext(sessionId, tabId)) return false;
+	if (!compactionWouldTake(sessionId, tabId, error, replacing, { logBlocker: true })) return false;
 
 	// The turn that failed WAS a compaction the user asked for.
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
@@ -1250,12 +1273,67 @@ function scheduleContextCompaction(sessionId: string, tabId: string, error: Agen
 		heldItemId: snapshot.item.id,
 		compaction: { pill: recordContextCompaction(sessionId, tabId), error, compacted: false },
 	};
+	// The outage this replaces ends as recovered with its card's words, as a fresh outage's does.
+	if (prior && replacing && !prior.compaction) endReplacedOutage(prior, replacing);
 	useRetryStore.getState().setEntry(key, entry);
 	holdFailedItemInQueue(sessionId, tabId, snapshot.item);
 
 	logger.info('[retry] Context limit hit; compacting before resend', undefined, { key });
 	armCompactionExitTimer(key);
 	return true;
+}
+
+/**
+ * Whether a compaction would take `error` on this tab (the prompt to resend aside): a context
+ * limit, no other recovery of this turn under way, a provider with a qualified compaction, and a
+ * tab that can compact. One recovery per failed turn: an entry already here is another outage's,
+ * or this compaction's own resend refused again, and compacting a second time would loop on a
+ * prompt that cannot fit. The exception is a retry this error replaces (`replacing`, the caller's
+ * `freshOutage`): an outage that is over, never a compaction, so this turn has had no recovery of
+ * its context yet (R49).
+ */
+function compactionWouldTake(
+	sessionId: string,
+	tabId: string,
+	error: AgentError,
+	replacing: Partial<OutageRecord> | null,
+	{ logBlocker = false }: { logBlocker?: boolean } = {}
+): boolean {
+	if (error.type !== 'token_exhaustion') return false;
+	const key = keyFor(sessionId, tabId);
+	const prior = useRetryStore.getState().retries[key];
+	if (prior && (prior.compaction || !replacing)) return false;
+	// A provider whose recovery is an unqualified required feature (Grok) is
+	// declined by name: no entry, no pill, no hidden turn, no resend. The original
+	// error surfaces exactly as before, and nothing reads the decline as success.
+	const blocker = getTabContextCompactionBlocker(sessionId, tabId);
+	if (blocker) {
+		if (logBlocker) {
+			logger.warn(
+				'[retry] Context limit hit; compaction is a required-feature blocker',
+				undefined,
+				{
+					key,
+					feature: blocker.feature,
+					parityRows: blocker.parityRows,
+				}
+			);
+		}
+		return false;
+	}
+	return canCompactTabContext(sessionId, tabId);
+}
+
+/**
+ * End the outage of a retry a new error replaces (`scheduleRetryForError()`'s `freshOutage`): its
+ * record takes `patch` (its card's words) and is recovered, its provider watch stops, and its error
+ * leaves the tab. The caller writes the new entry over it in one write of the retry map.
+ */
+function endReplacedOutage(prior: RetryEntry, patch: Partial<OutageRecord>): void {
+	useRetryStore.getState().patchOutage(prior.outageId, patch);
+	resolveOutage(prior.outageId, 'recovered');
+	stopProviderWatch(prior.key);
+	clearTabAgentError(prior.sessionId, prior.tabId, prior.lastMessage);
 }
 
 function armCompactionExitTimer(key: string): void {
@@ -1825,6 +1903,20 @@ export function stopRetriesForAgent(sessionId: string, tabId?: string): number {
  * Stamp an outage record as resolved so its transcript card freezes into a final
  * "recovered" / "stopped" summary. No-op if the record is already gone.
  */
+/** Stamp `retryStopped` on the transcript entry that anchors the card of `outageId`, if any. */
+function markRetryCardStopped(sessionId: string, tabId: string, outageId: string): void {
+	const tab = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
+		(candidate) => candidate.id === tabId
+	);
+	if (!tab?.logs.some((entry) => entry.retryOutageId === outageId && !entry.retryStopped)) return;
+	updateAiTab(sessionId, tabId, (current) => ({
+		...current,
+		logs: current.logs.map((entry) =>
+			entry.retryOutageId === outageId ? { ...entry, retryStopped: true } : entry
+		),
+	}));
+}
+
 function resolveOutage(
 	outageId: string,
 	status: Exclude<OutageStatus, 'active'>,
@@ -1834,6 +1926,9 @@ function resolveOutage(
 	if (!record || record.status !== 'active') return;
 	const resolvedAt = Date.now();
 	useRetryStore.getState().patchOutage(outageId, { status, resolvedAt, failureMessage });
+	// Stopped: the card's own entry says so, so a client reading this tab from another machine
+	// knows the retry no longer holds the message (`hostRetriesTurn()`, R45).
+	if (status === 'stopped') markRetryCardStopped(record.sessionId, record.tabId, outageId);
 	// A failed resend did fire, so it counts like a recovered one below; the
 	// dashboard has no separate outcome for it and files it with the stopped.
 	const resendFired = status !== 'stopped';

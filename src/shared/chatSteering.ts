@@ -220,6 +220,11 @@ export type SteeringVerdict =
  */
 export type SteerBubbleState = 'pending' | Extract<SteeringVerdict, 'absorbed' | 'queued'>;
 
+/** Whether `value` is a steered bubble's state, as a transcript from another machine carries it. */
+export function isSteerBubbleState(value: unknown): value is SteerBubbleState {
+	return value === 'pending' || value === 'absorbed' || value === 'queued';
+}
+
 /** Why an injection was refused. Each maps to a different thing to tell the user. */
 export type SteeringRefusal =
 	| 'not-running' // no turn in flight; this is an ordinary message, not a steer

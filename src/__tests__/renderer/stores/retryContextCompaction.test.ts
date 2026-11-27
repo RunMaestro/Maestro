@@ -323,4 +323,53 @@ describe('automatic context compaction', () => {
 		expect(scheduleRetryForError(SESSION, TAB, contextLimitError(), { batch: true })).toBe(false);
 		expect(pill()).toBeUndefined();
 	});
+	// Parity R49: a kept message waited under the lost link's retry; once the link is back its turn
+	// ends on the context limit. That error replaces the link's retry (`freshOutage`), which was no
+	// recovery of this turn's context: the tab compacts as it would with no retry entry, never a
+	// token-exhaustion retry replaying the same over-limit prompt.
+	it('compacts when the context limit replaces a lost-link retry (R49)', () => {
+		deferredCompaction();
+		noteDispatch(SESSION, queuedItem('turn-1', 'how are we looking?'), deps);
+		const linkDown: AgentError = {
+			type: 'network_error',
+			message: 'Not connected to peer box (lost).',
+			recoverable: true,
+			timestamp: NOW,
+			agentId: 'claude-code',
+		} as AgentError;
+		expect(scheduleRetryForError(SESSION, TAB, linkDown)).toBe(true);
+		const linkRetry = getRetryEntry(SESSION, TAB)!;
+		expect(linkRetry.compaction).toBeUndefined();
+
+		expect(
+			scheduleRetryForError(SESSION, TAB, contextLimitError(), {
+				freshOutage: { settledByHost: true },
+			})
+		).toBe(true);
+		expect(isAwaitingContextCompaction(SESSION, TAB)).toBe(true);
+		expect(getRetryEntry(SESSION, TAB)?.strategy).toBe('context-compaction');
+		expect(pill()).toEqual({ status: 'pending' });
+		// The link's card ends recovered, with the words its caller gave it.
+		expect(useRetryStore.getState().outages[linkRetry.outageId]).toMatchObject({
+			status: 'recovered',
+			settledByHost: true,
+		});
+		expect(session().executionQueue.map((i) => i.id)).toEqual(['turn-1']);
+	});
+
+	it('still never compacts over a retry the context-limit error does not replace (R49)', () => {
+		deferredCompaction();
+		noteDispatch(SESSION, queuedItem('turn-1', 'how are we looking?'), deps);
+		const linkDown = {
+			type: 'network_error',
+			message: 'Not connected to peer box (lost).',
+			recoverable: true,
+			timestamp: NOW,
+			agentId: 'claude-code',
+		} as AgentError;
+		scheduleRetryForError(SESSION, TAB, linkDown);
+		scheduleRetryForError(SESSION, TAB, contextLimitError());
+		expect(isAwaitingContextCompaction(SESSION, TAB)).toBe(false);
+		expect(pill()).toBeUndefined();
+	});
 });

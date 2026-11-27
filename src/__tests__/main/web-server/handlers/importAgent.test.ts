@@ -25,6 +25,7 @@ import type {
 	WebClient,
 	WebClientMessage,
 } from '../../../../main/web-server/handlers/messageHandlers/types';
+import type { TurnOverrides } from '../../../../shared/maestro-lib/client/types';
 
 let send: ReturnType<typeof vi.fn>;
 let enqueueCommand: ReturnType<typeof vi.fn>;
@@ -83,10 +84,58 @@ describe('handleImportAgent', () => {
 		run(wire);
 		await flush();
 		const { enqueue } = buildDesktopAgentImportDeps.mock.results[0].value as {
-			enqueue: (a: string, t: string, text: string, images?: string[]) => Promise<unknown>;
+			enqueue: (
+				a: string,
+				t: string,
+				text: string,
+				images?: string[],
+				held?: boolean,
+				overrides?: TurnOverrides
+			) => Promise<unknown>;
 		};
 		await enqueue('a', 'tA', 'go on', ['img']);
-		expect(enqueueCommand).toHaveBeenCalledWith('a', 'go on', 'ai', 'tA', ['img'], true);
+		expect(enqueueCommand).toHaveBeenCalledWith('a', 'go on', 'ai', 'tA', ['img'], true, false);
+		// Parity R50: a message held where it came from is queued held (Queue Held).
+		await enqueue('a', 'tA', 'later', undefined, true);
+		expect(enqueueCommand).toHaveBeenLastCalledWith(
+			'a',
+			'later',
+			'ai',
+			'tA',
+			undefined,
+			true,
+			true
+		);
+		// Parity R55: the settings it was queued with ride in the bridge's overrides slot.
+		await enqueue('a', 'tA', 'frozen', undefined, false, { model: 'opus', readOnly: true });
+		expect(enqueueCommand).toHaveBeenLastCalledWith(
+			'a',
+			'frozen',
+			'ai',
+			'tA',
+			undefined,
+			true,
+			false,
+			undefined,
+			undefined,
+			undefined,
+			{ model: 'opus', readOnly: true }
+		);
+	});
+
+	// Parity R55: the host checks a queued message's settings as it checks any client's overrides.
+	it('reads a queued message settings off the wire, checked', async () => {
+		importAgentIntoDesktop.mockResolvedValue({ ok: true, receipt: { agentId: 'a', queued: 1 } });
+		run({
+			...wire,
+			queue: [
+				{ tabId: 'tA', text: 'go on', overrides: { model: ' opus ', readOnly: 'yes', effort: '' } },
+			],
+		});
+		await flush();
+		expect(importAgentIntoDesktop.mock.calls[0][0].queue).toEqual([
+			{ tabId: 'tA', text: 'go on', overrides: { model: 'opus' } },
+		]);
 	});
 
 	it('hands the import the live process table, never the stored busy state (T7)', async () => {

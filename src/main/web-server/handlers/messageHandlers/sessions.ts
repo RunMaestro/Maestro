@@ -18,7 +18,12 @@ import {
 } from '../../../federation/import-agent';
 import { captureException } from '../../../utils/sentry';
 import type { CreateSessionConfig } from '../../types';
-import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import type {
+	WebClient,
+	WebClientMessage,
+	MessageHandlerCallbacks,
+	MessageHandlerContext,
+} from './types';
 
 /**
  * Known agent types for validation - derived from the canonical AGENT_IDS list.
@@ -177,10 +182,31 @@ export function handleImportAgent(
 		reply({ success: false, error: parsed.error });
 		return;
 	}
-	const enqueue: DesktopAgentImportDeps['enqueue'] = (agentId, tabId, text, images) =>
-		ctx.callbacks.enqueueCommand
-			? ctx.callbacks.enqueueCommand(agentId, text, 'ai', tabId, images, true)
-			: Promise.resolve({ success: false, error: 'Enqueue not configured' });
+	const enqueue: DesktopAgentImportDeps['enqueue'] = (
+		agentId,
+		tabId,
+		text,
+		images,
+		held,
+		overrides
+	) => {
+		if (!ctx.callbacks.enqueueCommand) {
+			return Promise.resolve({ success: false, error: 'Enqueue not configured' });
+		}
+		const args: Parameters<MessageHandlerCallbacks['enqueueCommand']> = [
+			agentId,
+			text,
+			'ai',
+			tabId,
+			images,
+			true,
+			held === true,
+		];
+		// The settings it was queued with ride in the overrides slot, after the routing,
+		// dispatch-callback and admission slots this path leaves empty (R55).
+		if (overrides) args.push(undefined, undefined, undefined, overrides);
+		return ctx.callbacks.enqueueCommand(...args);
+	};
 
 	// The live process table: a replaced copy is read busy from it and stopped on it.
 	const processTable = ctx.callbacks.getDebugPackageDeps?.()?.getProcessManager() ?? null;

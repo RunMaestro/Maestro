@@ -80,6 +80,7 @@ export type ClientMethod =
 	| 'connection.discover'
 	| 'connection.connect'
 	| 'connection.reconnect'
+	| 'connection.capabilities'
 	| 'agents.list'
 	| 'agents.get'
 	| 'agents.create'
@@ -182,6 +183,11 @@ export interface ConnectionApi {
 	state(): ConnectionState;
 	/** The attached host, or undefined while not connected. */
 	host(): HostInfo | undefined;
+	/**
+	 * What the attached host does beyond the base protocol (`host_capabilities`). An older host
+	 * that echoes the request has none. Optional: a client without it is taken to know none.
+	 */
+	capabilities?(): Promise<ClientResult<HostCapability[]>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +256,17 @@ export interface AgentImportQueuedMessage {
 	text: string;
 	/** Images as data URLs. */
 	images?: string[];
+	/**
+	 * Held by the person (paused in the queue it moved from): it waits paused on the host too,
+	 * until someone resumes it (`TurnInput.held`). A host older than this field queues it ready.
+	 */
+	held?: boolean;
+	/**
+	 * The choices it froze when it was queued (model, effort, read-only, save to History), so it
+	 * runs on the host as it would have here (`TurnInput.overrides`). The host checks them
+	 * (`normalizeTurnOverrides()`). A host older than this field runs it on the host tab's settings.
+	 */
+	overrides?: TurnOverrides;
 }
 
 /**
@@ -544,11 +561,13 @@ export type TurnAgentText = Pick<TurnInput, 'agentContext' | 'agentNotes'>;
  * What a host does beyond the base protocol, as its reply to `host_capabilities` names it. A host
  * that echoes the request (an older build) has none of them.
  * - `turn-agent-text`: it puts a turn's `agentContext` and `agentNotes` into the prompt.
+ * - `import-held`: an imported agent's held queued message (`AgentImportQueuedMessage.held`)
+ *   waits paused there; a host without it runs that message at once (R57).
  */
-export type HostCapability = 'turn-agent-text';
+export type HostCapability = 'turn-agent-text' | 'import-held';
 
 /** Every capability a host of this build has: both host kinds answer `host_capabilities` with it. */
-export const HOST_CAPABILITIES: readonly HostCapability[] = ['turn-agent-text'];
+export const HOST_CAPABILITIES: readonly HostCapability[] = ['turn-agent-text', 'import-held'];
 
 /** The capabilities a host's `host_capabilities_result` names; anything this build does not know goes. */
 export function parseHostCapabilities(raw: unknown): HostCapability[] {

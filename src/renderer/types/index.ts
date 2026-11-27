@@ -393,6 +393,9 @@ export interface LogEntry {
 	// card collapses all subsequent auto-retry attempts into a single live stat
 	// readout (attempt count, elapsed, next-retry countdown, Retry now / Stop).
 	retryOutageId?: string;
+	// The outage of that card was stopped by the user: its retry no longer holds the message,
+	// which waits paused. A Federation client reads a stopped card as no retry of the host's own.
+	retryStopped?: boolean;
 	// Command mode: anchors the live output card for a `!command` the user ran
 	// from the AI composer. The command never reaches the agent - Maestro runs
 	// it directly and streams stdout/stderr into `text`. See

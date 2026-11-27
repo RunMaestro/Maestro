@@ -229,6 +229,84 @@ describe('runReturnFromHost', () => {
 		}
 	});
 
+	// Parity R50: a message the person held on the host comes home held, with the agent; one
+	// waiting to run is still refused (it would run on both sides, or be lost).
+	it('brings a held host message home held, and still refuses one waiting to run (R50)', async () => {
+		const heldItem = {
+			itemId: 'h1',
+			tabId: 'tab-1',
+			queuedAt: 7,
+			kind: 'message',
+			text: 'later',
+			paused: true,
+			turnSettings: { model: 'opus' },
+		};
+		const d = deps(hostedAgent(), hostClient({ queue: ok([heldItem]) }));
+		await runReturnFromHost('agent-1', {}, d.value);
+		const returned = d.restore.mock.calls[0][1];
+		expect(returned.heldQueue).toEqual([
+			{
+				id: 'h1',
+				tabId: 'tab-1',
+				timestamp: 7,
+				kind: 'message',
+				text: 'later',
+				turnSettings: { model: 'opus' },
+			},
+		]);
+		const restored = withReturnedFromHost(
+			hostedAgent({ executionQueue: [] } as Partial<AgentRecord>) as unknown as Record<
+				string,
+				unknown
+			>,
+			readReturnedFromHost(JSON.parse(JSON.stringify(returned)))!
+		);
+		expect(restored.executionQueue).toEqual([
+			{
+				id: 'h1',
+				timestamp: 7,
+				tabId: 'tab-1',
+				type: 'message',
+				text: 'later',
+				turnSettings: { model: 'opus' },
+				paused: true,
+			},
+		]);
+
+		// Held for a tab the host does not list (a hidden tab): it would be lost, so nothing changes.
+		const hidden = deps(
+			hostedAgent(),
+			hostClient({ queue: ok([{ ...heldItem, tabId: 'tab-hidden' }]) })
+		);
+		await expect(runReturnFromHost('agent-1', {}, hidden.value)).rejects.toMatchObject({
+			code: 'RETURN_QUEUED',
+		});
+		expect(hidden.restore).not.toHaveBeenCalled();
+
+		// Resumed on the host by another client while the tabs were read: nothing changes.
+		const raced = hostClient({ queue: ok([heldItem]) });
+		raced.turns.queue.list
+			.mockResolvedValueOnce(ok([heldItem]))
+			.mockResolvedValueOnce(ok([{ ...heldItem, paused: false }]));
+		const racedDeps = deps(hostedAgent(), raced);
+		await expect(runReturnFromHost('agent-1', {}, racedDeps.value)).rejects.toMatchObject({
+			code: 'RETURN_QUEUED',
+		});
+		expect(racedDeps.restore).not.toHaveBeenCalled();
+		expect(raced.agents.remove).not.toHaveBeenCalled();
+
+		for (const [queue, options] of [
+			[[heldItem, { ...heldItem, itemId: 'r1', paused: false }], {}],
+			[[heldItem], { keepHostCopy: true }],
+		] as const) {
+			const refused = deps(hostedAgent(), hostClient({ queue: ok(queue) }));
+			await expect(runReturnFromHost('agent-1', options, refused.value)).rejects.toMatchObject({
+				code: 'RETURN_QUEUED',
+			});
+			expect(refused.restore).not.toHaveBeenCalled();
+		}
+	});
+
 	it('comes back with this machine copy when the host no longer has the agent', async () => {
 		const client = hostClient({ agent: fail('not-found') });
 		const d = deps(hostedAgent(), client);

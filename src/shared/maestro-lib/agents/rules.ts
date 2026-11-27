@@ -829,9 +829,88 @@ export function markTurnEnded<T extends object>(
 	return entries as T[];
 }
 
-/** Whether `entry` starts a user turn of its own: a message steered into the running turn does not. */
-export function isUserTurnStart(entry: Partial<LogEntryRecord> | null | undefined): boolean {
-	return entry?.source === 'user' && entry.steered !== true;
+/**
+ * Whether `entry` starts a user turn of its own: a message steered into the running turn does
+ * not, unless the agent ran it as a turn of its own after that one (`steerState: 'queued'`, the
+ * steer it could not fold in: its follow-up is its own turn, with its own end). Such a steer is
+ * written while the turn it was steered into still runs, so its turn begins only after that
+ * turn's end stamp: read a turn's entries with `userTurnSpan()`, never by this alone.
+ */
+export function isUserTurnStart(
+	entry: Pick<Partial<LogEntryRecord>, 'source' | 'steered' | 'steerState'> | null | undefined
+): boolean {
+	return entry?.source === 'user' && (entry.steered !== true || queuedSteer(entry));
+}
+
+function queuedSteer(
+	entry: Pick<Partial<LogEntryRecord>, 'source' | 'steered' | 'steerState'> | null | undefined
+): boolean {
+	return entry?.source === 'user' && entry.steered === true && entry.steerState === 'queued';
+}
+
+/**
+ * The entries of the turn of the user message at `at` in `logs`, `from` (inclusive) to `to`
+ * (exclusive), or null when that turn has not begun. The one reader of where a turn's entries end
+ * (R51; CodeRabbit on #2171):
+ *
+ * - A turn runs to the next message the person sent. A message steered into it is part of it.
+ * - A steer the agent ran as a turn of its own (`steerState: 'queued'`) is written while the turn
+ *   it was steered into still runs: that turn runs on past it to its next end stamp, and the
+ *   steer's own turn begins right after that stamp (null while it has not). The stamp may sit on
+ *   the steer itself (it was that turn's last entry): it is that turn's end, never the steer's.
+ */
+export function userTurnSpan(
+	logs: readonly unknown[],
+	at: number
+): { from: number; to: number } | null {
+	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	let from = at + 1;
+	if (queuedSteer(entries[at])) {
+		const parentEnd = steerParentEnd(entries, at);
+		if (parentEnd === 'running') return null;
+		if (typeof parentEnd === 'number') from = parentEnd + 1;
+	}
+	for (let i = from; i < entries.length; i += 1) {
+		const entry = entries[i];
+		if (entry?.source === 'user' && entry.steered !== true) return { from, to: i };
+		if (!queuedSteer(entry)) continue;
+		const parentEnd = steerParentEnd(entries, i);
+		// This turn had ended when the steer was written: the steer starts its own turn there.
+		if (parentEnd === 'before') return { from, to: i };
+		// This turn's end landed on the steer.
+		if (parentEnd === 'on') return { from, to: i + 1 };
+		// This turn ran past the steer to its stamp.
+		if (typeof parentEnd === 'number') return { from, to: parentEnd + 1 };
+	}
+	return { from, to: entries.length };
+}
+
+/**
+ * Where the turn a queued steer at `at` was steered into ended, relative to the steer: `before`
+ * (it had ended when the steer was written: its last entry before the steer is stamped), the
+ * index of its stamp after the steer (it ran on past the steer, the usual order), `on` (its end
+ * landed on the steer, its last entry then), or `running` (no end yet). A stamp on the steer is
+ * always that turn's end: a later stamp is the steer's own turn's, so it never moves the earlier
+ * turn's boundary (CodeRabbit on #2171).
+ */
+function steerParentEnd(
+	entries: readonly (Partial<LogEntryRecord> | null)[],
+	at: number
+): 'before' | 'on' | 'running' | number {
+	for (let i = at - 1; i >= 0; i -= 1) {
+		const entry = entries[i];
+		// A note this machine or the host writes is about a turn, never part of one.
+		if (entry?.source === 'system' && entry.turnEnded !== true) continue;
+		if (entry?.turnEnded === true) return 'before';
+		break;
+	}
+	if (entries[at]?.turnEnded === true) return 'on';
+	for (let i = at + 1; i < entries.length; i += 1) {
+		const entry = entries[i];
+		if (entry?.source === 'user' && entry.steered !== true) break;
+		if (entry?.turnEnded === true && !queuedSteer(entry)) return i;
+	}
+	return 'running';
 }
 
 /**
@@ -854,10 +933,15 @@ export function turnFateAfter(
 	hostKind: TranscriptHostKind = 'headless'
 ): TurnFate {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
-	let ended: TurnFate | undefined = entries[at]?.turnEnded === true ? 'answered' : undefined;
+	// A queued steer's stamp is the end of the turn it was steered into when that turn's end
+	// landed on it (`steerParentEnd()`), never its own then.
+	const ownStamp =
+		entries[at]?.turnEnded === true &&
+		!(queuedSteer(entries[at]) && steerParentEnd(entries, at) === 'on');
+	let ended: TurnFate | undefined = ownStamp ? 'answered' : undefined;
 	// The message itself stamped as ended after every entry of its turn: an attempt that answered
 	// with nothing that stays, after the attempts before it (`markTurnEnded()` with `endedAt`).
-	const emptyEndAt = entries[at]?.turnEndedAt;
+	const emptyEndAt = ownStamp ? entries[at]?.turnEndedAt : undefined;
 	let latestAt = Number.NEGATIVE_INFINITY;
 	// When the last stamped end was, and whether anything of a later attempt came after it: a retry's
 	// thinking or tool card after an end is that retry running (or lost), never the earlier end.
@@ -870,12 +954,17 @@ export function turnFateAfter(
 	let errored = false;
 	let stopped = false;
 	let output = false;
-	let next = at + 1;
-	for (; next < entries.length; next += 1) {
+	// A queued steer whose turn has not begun has nothing of its own yet.
+	const span = userTurnSpan(entries, at);
+	if (!span) return 'unended';
+	let next = span.from;
+	for (; next < span.to; next += 1) {
 		const entry = entries[next];
-		if (isUserTurnStart(entry)) break;
+		// A queued steer is not this turn's output; a stamp on it still ends this turn's attempt
+		// when this turn's end landed on it (its span then ends there).
+		if (queuedSteer(entry) && !(entry?.turnEnded === true && next === span.to - 1)) continue;
 		// What an attempt wrote, for the empty end on the message: never a note about the turn.
-		if (typeof entry?.timestamp === 'number' && entry.source !== 'system') {
+		if (typeof entry?.timestamp === 'number' && entry.source !== 'system' && !queuedSteer(entry)) {
 			latestAt = Math.max(latestAt, entry.timestamp);
 		}
 		// Only what a provider writes starts a later attempt: a thinking or tool card here (text and
@@ -907,7 +996,7 @@ export function turnFateAfter(
 	if (errored) return 'errored';
 	if (stopped) return 'stopped';
 	if (!output) return pending ? 'unended' : (ended ?? 'unended');
-	return hostKind === 'headless' || next < entries.length ? 'answered' : 'unended';
+	return hostKind === 'headless' || span.to < entries.length ? 'answered' : 'unended';
 }
 
 /** Whether the turn of the user message at `at` in `logs` ended (`turnFateAfter()`). */
@@ -920,34 +1009,64 @@ export function turnEndedAfter(
 }
 
 /**
- * How the turn of the user message `entry` in `logs` ended (`turnFateAfter()`), or undefined when
- * `logs` do not hold it.
- */
-/**
  * Whether the turn of the user message at `at` in `logs` is held by the host's OWN automatic retry
  * (a desktop host's Agent Resilience): its latest entry of note is that retry's card
  * (`LogEntryRecord.retryOutageId`), with no answer or error after it before the next user message.
- * Such a turn's message is the host's to send again; a client that kept a copy sends nothing.
+ * Such a turn's message is the host's to send again; a client that kept a copy sends nothing. A
+ * card the user stopped on the host (`retryStopped`) holds nothing: the message waits paused in
+ * the host's queue, and is the user's to send (R45).
+ *
+ * `reported` is the host tab's own word on whether its retry holds a failed turn right now
+ * (`AITabRecord.retryPending`): when the host says, a card with no retry behind it (one lost to a
+ * restart of the host) holds nothing. Undefined for a host that does not report it: the card
+ * alone decides (R56).
  */
-export function hostRetriesTurn(logs: readonly unknown[], at: number): boolean {
+export function hostRetriesTurn(logs: readonly unknown[], at: number, reported?: boolean): boolean {
+	if (reported === false) return false;
+	const card = standingRetryCard(logs, at);
+	return !!card && card.retryStopped !== true;
+}
+
+/**
+ * Whether the turn of the user message at `at` in `logs` ended on the host's OWN retry card, still
+ * the turn's last word (no answer, error, or Stop note after it), whether that retry still runs or
+ * not (stopped there, or lost to a restart of the host). The host's retry put the message back in
+ * the host's queue, where it waits: a client's kept copy is not retried automatically from here.
+ * A deliberate Force Send of the copy still goes (CodeRabbit on #2171).
+ */
+export function hostRetryCardStands(logs: readonly unknown[], at: number): boolean {
+	return standingRetryCard(logs, at) !== undefined;
+}
+
+/** The host retry card that is the turn's last word (`hostRetriesTurn()`), or undefined. */
+function standingRetryCard(
+	logs: readonly unknown[],
+	at: number
+): Partial<LogEntryRecord> | undefined {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
-	let retrying = false;
-	for (let next = at + 1; next < entries.length; next += 1) {
+	let card: Partial<LogEntryRecord> | undefined;
+	const span = userTurnSpan(entries, at);
+	if (!span) return undefined;
+	for (let next = span.from; next < span.to; next += 1) {
 		const entry = entries[next];
-		if (isUserTurnStart(entry)) break;
-		if (typeof entry?.retryOutageId === 'string' && entry.retryOutageId) retrying = true;
-		else if (
+		if (typeof entry?.retryOutageId === 'string' && entry.retryOutageId) {
+			card = entry;
+		} else if (
 			entry?.source === 'stdout' ||
 			entry?.source === 'ai' ||
 			entry?.source === 'error' ||
 			(entry?.source === 'system' && entry.text === TURN_CANCELED_NOTE)
 		) {
-			retrying = false;
+			card = undefined;
 		}
 	}
-	return retrying;
+	return card;
 }
 
+/**
+ * How the turn of the user message `entry` in `logs` ended (`turnFateAfter()`), or undefined when
+ * `logs` do not hold it.
+ */
 export function userEntryFate(
 	logs: readonly unknown[],
 	entry: SentUserEntry,
@@ -991,9 +1110,8 @@ export function tabRunsUserEntry(
 	if (running.itemId !== undefined) {
 		return (logs[at] as LogEntryRecord).queuedItemId === running.itemId;
 	}
-	for (let i = logs.length - 1; i > at; i -= 1) {
-		if (isUserTurnStart(logs[i] as Partial<LogEntryRecord> | null)) return false;
-	}
+	// A later turn began after this one: the tab runs that one, not this.
+	if (userTurnSpan(logs, at)?.to !== logs.length) return false;
 	// The running turn began with this message, not after it: a turn that writes no message of its
 	// own (a command) started later is not this one (CodeRabbit on #2167). A desktop writes the
 	// message at the turn's start, on the same clock (`markTabRunningQueuedItem()`).

@@ -151,11 +151,21 @@ export function inlineImageList(images: readonly string[]): {
 
 /** A transcript entry with its images inlined (`inlineImageList`). The same object when it has none. */
 export function withInlineEntryImages<T extends { images?: unknown }>(entry: T): T {
-	if (!Array.isArray(entry.images) || entry.images.length === 0) return entry;
-	const { inline } = inlineImageList(
+	return inlineEntryImages(entry).entry;
+}
+
+/**
+ * `withInlineEntryImages()`, with how many of the entry's images this machine's store could not
+ * read (they are left out of the copy): for a caller that must say what does not move.
+ */
+export function inlineEntryImages<T extends { images?: unknown }>(
+	entry: T
+): { entry: T; unresolved: number } {
+	if (!Array.isArray(entry.images) || entry.images.length === 0) return { entry, unresolved: 0 };
+	const { inline, unresolved } = inlineImageList(
 		entry.images.filter((image): image is string => typeof image === 'string')
 	);
-	return { ...entry, images: inline };
+	return { entry: { ...entry, images: inline }, unresolved };
 }
 
 export function buildImagePromptPrefix(tempPaths: string[]): string {

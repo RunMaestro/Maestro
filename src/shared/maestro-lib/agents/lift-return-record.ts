@@ -31,6 +31,38 @@ export interface ReturnedFromHost {
 	 * host's name, star and provider session.
 	 */
 	transcriptSides?: Record<string, TranscriptSide>;
+	/**
+	 * Messages the person held in the host's queue (paused there): they come home held, at the end
+	 * of this machine's queue, and wait until the person resumes them (R50).
+	 */
+	heldQueue?: ReturnedHeldItem[];
+}
+
+/** One message held in the host's queue, as it joins this machine's queue on a Move Back. */
+export interface ReturnedHeldItem {
+	/** The host's queue item id: the local item keeps it. */
+	id: string;
+	tabId: string;
+	timestamp: number;
+	kind: 'message' | 'command';
+	/** The message, or the command line of a slash command. */
+	text: string;
+	images?: string[];
+	turnSettings?: { model?: string; effort?: string };
+}
+
+/** A held host item as a local queue item: paused, so it waits for the person. */
+function asHeldQueueItem(item: ReturnedHeldItem): Record<string, unknown> {
+	return {
+		id: item.id,
+		timestamp: item.timestamp,
+		tabId: item.tabId,
+		type: item.kind,
+		...(item.kind === 'command' ? { command: item.text } : { text: item.text }),
+		...(item.images && item.images.length > 0 ? { images: item.images } : {}),
+		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
+		paused: true,
+	};
 }
 
 /** Which copy of a tab's transcript a merge keeps. */
@@ -341,8 +373,15 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 			: record.activeTabId;
 
 	const { liftedTo: _liftedTo, leftOnHost: _leftOnHost, ...rest } = record;
+	const localQueue = Array.isArray(record.executionQueue) ? record.executionQueue : [];
+	const held = (returned.heldQueue ?? []).filter(
+		(item) =>
+			aiTabs.some((tab) => tab.id === item.tabId) &&
+			!localQueue.some((queued) => (queued as { id?: unknown })?.id === item.id)
+	);
 	return {
 		...rest,
+		...(held.length > 0 ? { executionQueue: [...localQueue, ...held.map(asHeldQueueItem)] } : {}),
 		aiTabs,
 		...(order ? { unifiedTabOrder: order } : {}),
 		...(activeTabId !== undefined ? { activeTabId } : {}),
@@ -357,7 +396,12 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
  */
 export function readReturnedFromHost(value: unknown): ReturnedFromHost | undefined {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-	const raw = value as { tabs?: unknown; activeTabId?: unknown; leftOnHost?: unknown };
+	const raw = value as {
+		tabs?: unknown;
+		activeTabId?: unknown;
+		leftOnHost?: unknown;
+		heldQueue?: unknown;
+	};
 	if (!Array.isArray(raw.tabs)) return undefined;
 	const tabs: AITabRecord[] = [];
 	for (const tab of raw.tabs) {
@@ -367,12 +411,47 @@ export function readReturnedFromHost(value: unknown): ReturnedFromHost | undefin
 		tabs.push(tab as AITabRecord);
 	}
 	const leftOnHost = readLiftedTo(raw.leftOnHost);
+	const heldQueue = Array.isArray(raw.heldQueue)
+		? raw.heldQueue.map(readReturnedHeldItem).filter((item) => item !== undefined)
+		: [];
 	return {
 		tabs,
 		...(typeof raw.activeTabId === 'string' && raw.activeTabId
 			? { activeTabId: raw.activeTabId }
 			: {}),
 		...(leftOnHost ? { leftOnHost } : {}),
+		...(heldQueue.length > 0 ? { heldQueue } : {}),
+	};
+}
+
+/** One held item that crossed a process boundary, or undefined when it is malformed. */
+function readReturnedHeldItem(value: unknown): ReturnedHeldItem | undefined {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	if (typeof raw.id !== 'string' || !raw.id || typeof raw.tabId !== 'string' || !raw.tabId) {
+		return undefined;
+	}
+	if (raw.kind !== 'message' && raw.kind !== 'command') return undefined;
+	if (typeof raw.text !== 'string') return undefined;
+	const images = Array.isArray(raw.images)
+		? raw.images.filter((image): image is string => typeof image === 'string')
+		: [];
+	const settings = raw.turnSettings as { model?: unknown; effort?: unknown } | undefined;
+	const turnSettings =
+		settings && typeof settings === 'object'
+			? {
+					...(typeof settings.model === 'string' ? { model: settings.model } : {}),
+					...(typeof settings.effort === 'string' ? { effort: settings.effort } : {}),
+				}
+			: undefined;
+	return {
+		id: raw.id,
+		tabId: raw.tabId,
+		timestamp: typeof raw.timestamp === 'number' ? raw.timestamp : 0,
+		kind: raw.kind,
+		text: raw.text,
+		...(images.length > 0 ? { images } : {}),
+		...(turnSettings ? { turnSettings } : {}),
 	};
 }
 

@@ -76,7 +76,7 @@ import { logger } from '../host';
 import { admitTurnImages, turnImageBoundsError } from '../launch/image-delivery';
 import { inlineImageList, withInlineEntryImages } from '../launch/image-refs';
 import type { SessionImageStore } from '../store/session-images';
-import type { LogEntryRecord } from '../store/transcript';
+import { transcriptOf, type LogEntryRecord } from '../store/transcript';
 import { agentIdCanReadImages } from '../providers/capabilities';
 import { getAgentDisplayName } from '../../agentMetadata';
 import { steeringSocketPathFor } from '../../chatSteeringSocket';
@@ -452,6 +452,21 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				return;
 			}
 			announceEntry(agentId, tabId, entry);
+		},
+		stampSteerState: async (agentId, tabId, entryId, state) => {
+			const written = await repository.stampSteerState(agentId, tabId, entryId, state);
+			if (!written.ok) {
+				logger.warn(
+					`A steer's outcome was not written to its transcript entry: ${written.error.message}`,
+					LOG_CONTEXT
+				);
+				return;
+			}
+			// Clients hear it as a local bubble's outcome is drawn: mid-turn the entry takes its own
+			// place in the live turn; on an idle tab they read the tab again (CodeRabbit on #2171).
+			const tab = repository.getTab(agentId, tabId);
+			const stamped = tab ? transcriptOf(tab).find((entry) => entry.id === entryId) : undefined;
+			if (stamped) announceEntry(agentId, tabId, stamped);
 		},
 		newId: () => ctx.newId(),
 		now: () => deps.now(),

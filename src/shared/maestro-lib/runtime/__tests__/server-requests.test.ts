@@ -997,7 +997,7 @@ describe('host_capabilities (M16)', () => {
 		expect(await host.handle({ type: 'host_capabilities' })).toEqual({
 			type: 'host_capabilities_result',
 			success: true,
-			capabilities: ['turn-agent-text'],
+			capabilities: ['turn-agent-text', 'import-held'],
 		});
 	});
 });

@@ -8,6 +8,7 @@ import type { Group } from '../../../shared/types';
 import { asThinkingMode } from '../../../shared/types';
 import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
 import { isAgentBusy, isAiTabProcessActive } from '../../utils/agent-busy';
+import { isAiTabRetryPending } from '../../utils/ai-tab-retry-state';
 import { isImageRef, resolveToDataUrlSync } from '../../storage/session-image-store';
 import { findStoredAiTab } from '../../stores/deferred-session-content';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
@@ -87,6 +88,10 @@ export function registerSessionCallbacks(
 					createdAt: tab.createdAt,
 					state: tab.state || 'idle',
 					thinkingStartTime: tab.thinkingStartTime || null,
+					// Whether this desktop's own retry holds the tab's failed turn: a Federation client
+					// reads it, not the transcript's retry card alone, which outlives a retry lost to a
+					// restart (R56).
+					retryPending: isAiTabRetryPending(s.id, tab.id),
 					hasUnread: tab.hasUnread ?? false,
 				})) || [];
 

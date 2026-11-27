@@ -619,6 +619,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				{
 					routingOverride: item.mentionRouting,
 					planText: withoutDesignPickPageText(item.text, item.designPickPageText),
+					// The hold, and the turn it releases into, run on what the message was queued with.
+					settings: item,
 				}
 			);
 
@@ -704,7 +706,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					session,
 					targetTab.id,
 					item.images,
-					{ dispatchId: item.pendingAdmissionId!, generation: prepared.generation, starts }
+					{
+						managedQueue: {
+							dispatchId: item.pendingAdmissionId!,
+							generation: prepared.generation,
+							starts,
+						},
+					}
 				);
 				await Promise.all(starts);
 				if (prepared.routing === 'only' || prepared.routing === 'consult-first') return true; // no local AgentRun, retry snapshot or spawn

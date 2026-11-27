@@ -37,7 +37,7 @@ import {
 } from '../../../../shared/maestro-lib/client/types';
 import {
 	isSameUserEntry,
-	isUserTurnStart,
+	userTurnSpan,
 	tabRunsUserEntry,
 	userEntryAnswered,
 	type SentUserEntry,
@@ -45,7 +45,6 @@ import {
 import { invokeAsBridge } from '../bridgeHandlers';
 import { resolveToDataUrl } from '../../../storage/session-image-store';
 import type { QueuedItemSnapshot, QueueSessionSnapshot } from '../../types';
-import type { LogEntryRecord } from '../../../../shared/maestro-lib/store/transcript';
 import { queueChangesSeqs } from '../../queue-change-frames';
 
 /**
@@ -862,7 +861,7 @@ async function desktopTabAnswered(
 		if (
 			isAiTabRetryPending(sessionId, tabId) &&
 			isSameUserEntry(comparable[at], asSent) &&
-			!comparable.slice(at + 1).some((later) => isUserTurnStart(later as LogEntryRecord | null))
+			userTurnSpan(comparable, at)?.to === comparable.length
 		) {
 			return 'retrying';
 		}

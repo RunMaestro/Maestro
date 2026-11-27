@@ -44,6 +44,7 @@ import {
 	useSessionStore,
 } from '../stores/sessionStore';
 import { generateId } from '../utils/ids';
+import { queuedTurnOverrides } from '../../shared/queuedTurnSettings';
 import { notifyToast } from '../stores/notificationStore';
 import {
 	clearRetryIfSettled,
@@ -346,17 +347,13 @@ export function queuedItemMentionPlan(
 }
 
 /**
- * The choices an item froze when it was queued (`turnSettings`, `readOnlyMode`), as the host's
- * per-turn overrides, so a change to the tab while it waits does not change how it runs. Undefined
- * when it froze none (the tab's live choices decide, as the local drain falls back).
+ * The choices an item froze when it was queued (`turnSettings`, read-only, save to History), as the
+ * host's per-turn overrides, so a change to the tab while it waits does not change how it runs.
+ * Undefined when it froze none (the tab's live choices decide, as the local drain falls back). The
+ * one shared rule (`queuedTurnOverrides()`), which a Move to Host's queue reads too (R55).
  */
 export function queuedItemHostOverrides(item: QueuedItem): TurnOverrides | undefined {
-	const overrides: TurnOverrides = {
-		...(item.turnSettings?.model ? { model: item.turnSettings.model } : {}),
-		...(item.turnSettings?.effort ? { effort: item.turnSettings.effort } : {}),
-		...(typeof item.readOnlyMode === 'boolean' ? { readOnly: item.readOnlyMode } : {}),
-	};
-	return Object.keys(overrides).length > 0 ? overrides : undefined;
+	return queuedTurnOverrides(item);
 }
 
 /**
@@ -416,7 +413,9 @@ function consultWhileHostDown(
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tabId = item.tabId || session?.activeTabId;
 	if (!session || !tabId) return item;
-	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images, {
+		settings: item,
+	});
 	return {
 		...item,
 		crossAgentMention: undefined,
@@ -439,16 +438,23 @@ function consultFirstWhileHostDown(
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tabId = item.tabId || session?.activeTabId;
 	if (!session || !tabId) return false;
-	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images, {
+		settings: item,
+	});
 	return true;
 }
 
-/** Send one item that is no longer in this queue to the host. Resolves the host's receipt. */
+/**
+ * Send one item that is no longer in this queue to the host. Resolves the host's receipt.
+ * `userSent`: the user sent a held copy themselves (Force Send), so it goes now, as a local
+ * agent's Force Send does, never into a new countdown (R43).
+ */
 function forwardToHost(
 	sessionId: string,
 	item: QueuedItem,
 	index: number,
-	mention: CrossAgentMentionPlan | null = null
+	mention: CrossAgentMentionPlan | null = null,
+	{ userSent = false }: { userSent?: boolean } = {}
 ): Promise<TurnSendReceipt | null> {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const target = hostedTargetOf(session);
@@ -541,7 +547,10 @@ function forwardToHost(
 	// The message of a turn a lost link cut goes again only once the host says that turn died: it
 	// may have run on, or finished (`cutTurnFate()`). Never sent twice.
 	const connected = usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';
-	const fate = cutTurnFate(sessionId, item, target, connected);
+	// A held copy sent by hand while no retry owns it (Stop ended that retry): the user's send.
+	const fate = cutTurnFate(sessionId, item, target, connected, {
+		userSent: userSent && retryOutage === undefined,
+	});
 	const send = !fate
 		? sendToHost()
 		: fate.then((decided) => {
@@ -654,7 +663,9 @@ function fireMentionsForHostTurn(
 		deferHostedHandoff(sessionId, tabId, () => {
 			const current = selectSessionById(sessionId)(useSessionStore.getState());
 			if (!current) return;
-			dispatchCrossAgentMentions(mention, item.text ?? '', current, tabId, item.images);
+			dispatchCrossAgentMentions(mention, item.text ?? '', current, tabId, item.images, {
+				settings: item,
+			});
 			markHandoffSentToHost(
 				sessionId,
 				tabId,
@@ -666,7 +677,9 @@ function fireMentionsForHostTurn(
 		});
 		return;
 	}
-	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images, {
+		settings: item,
+	});
 	if (mention.routing === 'handoff') {
 		markHandoffSentToHost(
 			sessionId,
@@ -1169,7 +1182,8 @@ export function fireHostStartedMentions(
 			waiting.item.text ?? '',
 			session,
 			tabId,
-			waiting.item.images
+			waiting.item.images,
+			{ settings: waiting.item }
 		);
 		releaseHostedTabLine(waiting.sessionId, lineTabId, `start:${hostItemId}`);
 	}
@@ -1271,7 +1285,9 @@ export async function sendTakenItemToHost(sessionId: string, item: QueuedItem): 
 		updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, queuedItemOwnerTabId(s, item)));
 		const tabId = item.tabId || session.activeTabId;
 		if (mention && tabId) {
-			dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+			dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images, {
+				settings: item,
+			});
 		}
 		return true;
 	}
@@ -1280,6 +1296,8 @@ export async function sendTakenItemToHost(sessionId: string, item: QueuedItem): 
 	// A drain never takes a held item, so a held one here was sent on purpose (Force Send on a
 	// card the host refused earlier, or a retry). It runs now: sending it held would park it on
 	// the host and take its card away from the user who just asked for it to go.
-	await forwardToHost(sessionId, { ...item, paused: false }, 0, mention);
+	await forwardToHost(sessionId, { ...item, paused: false }, 0, mention, {
+		userSent: item.paused === true,
+	});
 	return true;
 }
