@@ -451,23 +451,27 @@ export function mergeHostedLogs(
  */
 function withRowKeysKept(next: LogEntry[], local: readonly LogEntry[]): LogEntry[] {
 	if (local.length === 0) return next;
-	const nextIds = new Set(next.map((entry) => entry.id));
+	const nextAt = new Map(next.map((entry, i) => [entry.id, i]));
 	const localById = new Map(local.map((entry) => [entry.id, entry]));
-	// The live rows this pass takes off the screen, by source, oldest first.
-	const leaving = new Map<string, LogEntry[]>();
+	// The live rows this pass takes off the screen, oldest first, each with where its turn begins
+	// in `next` (its message): only a saved entry after that is its copy, so an older answer with
+	// the same words that a wider read brings in never takes the key (CodeRabbit on #2173).
+	const leaving: Array<{ row: LogEntry; after: number }> = [];
+	let turnAt = -1;
 	for (const entry of local) {
-		if (!entry.hostLive || nextIds.has(entry.id)) continue;
-		leaving.set(entry.source, [...(leaving.get(entry.source) ?? []), entry]);
+		if (entry.source === 'user') turnAt = nextAt.get(entry.id) ?? Number.POSITIVE_INFINITY;
+		if (entry.hostLive && !nextAt.has(entry.id)) leaving.push({ row: entry, after: turnAt });
 	}
 	let changed = false;
-	const out = next.map((entry) => {
+	const out = next.map((entry, i) => {
 		const before = localById.get(entry.id);
 		let rowKey = before?.rowKey;
 		if (!before && !entry.hostLive) {
-			const rows = leaving.get(entry.source);
-			const at = rows?.findIndex((row) => row.text === entry.text) ?? -1;
-			if (rows && at >= 0) {
-				const [row] = rows.splice(at, 1);
+			const at = leaving.findIndex(
+				({ row, after }) => i > after && row.source === entry.source && row.text === entry.text
+			);
+			if (at >= 0) {
+				const [{ row }] = leaving.splice(at, 1);
 				rowKey = row.rowKey ?? row.id;
 			}
 		}

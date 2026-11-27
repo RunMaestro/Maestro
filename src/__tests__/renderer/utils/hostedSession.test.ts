@@ -932,3 +932,34 @@ describe('a hosted reply drawn once (L30)', () => {
 		expect(saved[1].rowKey).toBeUndefined();
 	});
 });
+
+// CodeRabbit on #2173: a wider read that brings in an older answer with the same words.
+describe('a hosted reply drawn once, with an older answer in the read (L30)', () => {
+	const answer = (id: string, text = 'Done'): LogEntryRecord => ({
+		id,
+		timestamp: 3,
+		source: 'stdout',
+		text,
+	});
+
+	it("gives the key to the saved copy in the live row's own turn, not to an older answer", () => {
+		const asked = { ...record('u2'), timestamp: 2 };
+		const streaming = mergeHostedLogs([], [asked], [answer('live-1')]);
+		const saved = mergeHostedLogs(
+			streaming,
+			[
+				{ ...record('u1'), timestamp: 0 },
+				{ ...answer('older'), timestamp: 1 },
+				asked,
+				answer('saved'),
+			],
+			undefined
+		);
+		expect(saved.map((entry) => [entry.id, entry.rowKey])).toEqual([
+			['u1', undefined],
+			['older', undefined],
+			['u2', undefined],
+			['saved', 'live-1'],
+		]);
+	});
+});
