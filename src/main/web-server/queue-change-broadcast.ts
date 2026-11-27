@@ -70,6 +70,12 @@ async function framedItems(
 		items.map((item) => (kept.has(item.id) ? withoutImages(item) : item)),
 		true
 	);
+	// An item with an image that could not be read is not recorded as sent: its next frame tries
+	// all of its images again (CodeRabbit on #2160).
+	inlined.forEach((item, index) => {
+		const wanted = items[index].images?.length ?? 0;
+		if (!kept.has(item.id) && (item.images?.length ?? 0) < wanted) after.delete(item.id);
+	});
 	// Recorded once the images are in hand: a change whose images could not be read sends no frame,
 	// and its items' images go again with the next one.
 	if (after.size > 0) sentImages.set(agentId, after);
@@ -78,7 +84,9 @@ async function framedItems(
 		isKept ? { ...withoutImages(item), imagesKept: true } : item;
 	return {
 		first: inlined.map((item) => keptMark(item, kept.has(item.id))),
-		later: items.map((item) => keptMark(item, after.has(item.id))),
+		// The first frame sent them: the change's later frames keep them, except an item whose
+		// images were not all read, which rides as the first frame read it.
+		later: inlined.map((item) => keptMark(item, after.has(item.id))),
 	};
 }
 

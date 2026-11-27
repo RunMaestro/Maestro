@@ -195,6 +195,35 @@ describe('broadcastDesktopQueueChanges (M23, M26)', () => {
 		]);
 	});
 
+	it('sends an image that could not be read again with the next frame, never as kept (CodeRabbit on #2160)', async () => {
+		const waits = message('u1', { images: ['ref-1', 'ref-2'] });
+		// The first read finds only one of the two files.
+		withQueueItemImages.mockImplementationOnce(async (items: Array<{ images?: string[] }>) =>
+			items.map((item) =>
+				item.images ? { ...item, images: ['data:image/png;base64,AAAA'] } : item
+			)
+		);
+		broadcastDesktopQueueChanges(
+			server(1),
+			[{ id: 'm26u', executionQueue: [] }],
+			[{ id: 'm26u', executionQueue: [waits] }]
+		);
+		await settled();
+		broadcastDesktopQueueChanges(
+			server(1),
+			[{ id: 'm26u', executionQueue: [waits] }],
+			[{ id: 'm26u', executionQueue: [waits, message('u2')] }]
+		);
+		await settled();
+		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame.items[0])).toEqual([
+			{ ...message('u1'), images: ['data:image/png;base64,AAAA'] },
+			{
+				...message('u1'),
+				images: ['data:image/png;base64,AAAA', 'data:image/png;base64,AAAA'],
+			},
+		]);
+	});
+
 	it('names the start of a message whose tab was snoozed since it started (M26)', async () => {
 		const card = { logs: [{ source: 'user', queuedItemId: 's1' }] };
 		broadcastDesktopQueueChanges(
