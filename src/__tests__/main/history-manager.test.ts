@@ -871,6 +871,31 @@ describe('HistoryManager', () => {
 			).rejects.toThrow('ENOSPC');
 		});
 
+		it('writes an id twice in one batch only once (CodeRabbit on #2181)', async () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === sessionFile);
+			mockReadFileSync.mockReturnValue(createJsonlFileData([createMockEntry({ id: 'here' })]));
+			const added = await manager.importEntries('session-1', [
+				createMockEntry({ id: 'a' }),
+				createMockEntry({ id: 'a' }),
+			]);
+			expect(added).toBe(1);
+			expect(parseJsonlWrite(mockAppendFileSync.mock.calls[0][1]).map((e) => e.id)).toEqual(['a']);
+		});
+
+		it('throws on a History file it cannot read instead of reading it as empty (CodeRabbit on #2181)', async () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === sessionFile);
+			mockReadFileSync.mockImplementation(() => {
+				throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+			});
+			await expect(
+				manager.importEntries('session-1', [createMockEntry({ id: 'a' })])
+			).rejects.toThrow('EACCES');
+			await expect(manager.getEntriesStrict('session-1')).rejects.toThrow('EACCES');
+			// The best-effort read the panel's other callers use still answers.
+			expect(await manager.getEntries('session-1')).toEqual([]);
+			expect(mockAppendFileSync).not.toHaveBeenCalled();
+		});
+
 		it('throws when the legacy file cannot be migrated first, where addEntry only warns (L44)', async () => {
 			// No .jsonl yet, and the legacy .json is there but unreadable: appending would start a
 			// .jsonl holding only these entries, and the reads would stop listing the rest.

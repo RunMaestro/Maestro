@@ -581,6 +581,21 @@ describe('a Move Back from a host that does not send History (L43)', () => {
 		expect(result.notices?.join(' ')).toContain('build-box:host-1');
 	});
 
+	it('refuses a held message on the host, which would then be held on both sides (CodeRabbit on #2181)', async () => {
+		const client = hostClient({
+			history: fail('unsupported', 'The desktop does not serve history.list.'),
+			queue: ok([
+				{ itemId: 'h1', tabId: 'tab-1', queuedAt: 7, kind: 'message', text: 'later', paused: true },
+			]),
+		});
+		const d = deps(hostedAgent(), client);
+		await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+			code: 'RETURN_QUEUED',
+		});
+		expect(d.restore).not.toHaveBeenCalled();
+		expect(client.agents.remove).not.toHaveBeenCalled();
+	});
+
 	it('its dry run says the copy there is kept', async () => {
 		const d = deps(hostedAgent(), unsupported());
 		const result = await runReturnFromHost('agent-1', { dryRun: true }, d.value);

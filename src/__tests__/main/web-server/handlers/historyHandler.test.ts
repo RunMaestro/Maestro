@@ -127,6 +127,16 @@ describe('History messages on a desktop host (L43)', () => {
 		expect((one.entries as HistoryEntry[]).map((e) => e.id)).toEqual(['new']);
 	});
 
+	it('answers a History file it cannot read as a failure, never as an empty History (CodeRabbit on #2181)', async () => {
+		vi.spyOn(manager, 'getEntriesStrict').mockRejectedValueOnce(
+			Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+		);
+		const reply = await ask(handler, client, { type: 'get_history', sessionId: 'host-agent' });
+		expect(reply).toMatchObject({ type: 'get_history_result', success: false });
+		expect(String(reply.error)).toContain('EACCES');
+		expect(reply.entries).toBeUndefined();
+	});
+
 	it('refuses an agent the host does not have, by name', async () => {
 		const reply = await ask(handler, client, { type: 'get_history', sessionId: 'nobody' });
 		expect(reply).toMatchObject({ type: 'get_history_result', success: false });

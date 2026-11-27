@@ -498,12 +498,22 @@ export function parseHistoryJsonl(raw: string): ParsedHistoryJsonl {
 }
 
 /**
- * Keep only the newest `limit` entries from a file-order (oldest-first) array.
- * Used by rotation; returns the input untouched when it already fits.
+ * Keep only the newest `limit` entries, by time, oldest first. Used by rotation; returns the input
+ * untouched when it already fits.
+ *
+ * Newest by `timestamp`, not by file position: a file is oldest-first as each turn appends, but a
+ * Federation move brings a host's entries home by appending them (`HistoryManager.importEntries()`),
+ * and those can be OLDER than the entries already at the file's end. Keeping the file's tail would
+ * then drop newer entries and keep older ones. Entries with the same time keep their file order.
  */
 export function trimHistoryEntriesToLimit(entries: HistoryEntry[], limit: number): HistoryEntry[] {
 	if (limit < 1 || entries.length <= limit) return entries;
-	return entries.slice(entries.length - limit);
+	const time = (entry: HistoryEntry) => (Number.isFinite(entry.timestamp) ? entry.timestamp : 0);
+	const byTime = entries
+		.map((entry, index) => ({ entry, index }))
+		.sort((a, b) => time(a.entry) - time(b.entry) || a.index - b.index)
+		.map(({ entry }) => entry);
+	return byTime.slice(byTime.length - limit);
 }
 
 // ─── Legacy single-object format ────────────────────────────────────────────

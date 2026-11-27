@@ -75,7 +75,9 @@ export async function handleGetHistory(
 			: undefined;
 	let own: HistoryEntry[];
 	try {
-		own = await getHistoryManager().getEntries(agent.id);
+		// Strict: a file that is there and cannot be read is a failure, never an empty History (a
+		// Move Back would remove the host copy after an empty answer).
+		own = await getHistoryManager().getEntriesStrict(agent.id);
 	} catch (error) {
 		logger.warn(`get_history: the History of ${agent.id} was not read`, LOG_CONTEXT, {
 			error: errorText(error),

@@ -435,7 +435,10 @@ export class HistoryManager {
 	 * `.json` session on first touch. Internal: callers that face the rest of
 	 * the app want newest-first, which is what `getEntries` returns.
 	 */
-	private async readEntriesInFileOrder(sessionId: string): Promise<HistoryEntry[]> {
+	private async readEntriesInFileOrder(
+		sessionId: string,
+		options: { strict?: boolean } = {}
+	): Promise<HistoryEntry[]> {
 		const filePath = this.getSessionFilePath(sessionId);
 		let raw: string;
 		try {
@@ -443,6 +446,7 @@ export class HistoryManager {
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
 			if (code !== 'ENOENT') {
+				if (options.strict) throw error;
 				logger.warn(`Failed to read history for session ${sessionId}: ${error}`, LOG_CONTEXT);
 				captureException(error, { operation: 'history:read', sessionId });
 				return [];
@@ -452,6 +456,7 @@ export class HistoryManager {
 			try {
 				return (await this.migrateSessionToJsonl(sessionId)) ?? [];
 			} catch (migrateError) {
+				if (options.strict) throw migrateError;
 				logger.warn(
 					`Failed to migrate history for session ${sessionId}: ${migrateError}`,
 					LOG_CONTEXT
@@ -479,6 +484,17 @@ export class HistoryManager {
 			}
 		}
 		return entries;
+	}
+
+	/**
+	 * `getEntries`, but a file that is there and cannot be read (EACCES, EIO), or a legacy file that
+	 * cannot be migrated, THROWS instead of reading as no History. For a caller that acts on the
+	 * answer (a Federation move removes a host copy after it, a client takes an empty list as the
+	 * truth): an agent that has no History yet still reads `[]`.
+	 */
+	async getEntriesStrict(sessionId: string): Promise<HistoryEntry[]> {
+		const entries = await this.readEntriesInFileOrder(sessionId, { strict: true });
+		return normalizeHistoryEntries(entries.reverse());
 	}
 
 	/**
@@ -577,8 +593,15 @@ export class HistoryManager {
 			// Strict: a legacy `.json` that cannot be migrated would sit beside a new `.jsonl` holding
 			// only these entries, and the reads would no longer list the rest.
 			await this.ensureJsonlFile(sessionId, { strict: true });
-			const here = new Set((await this.readEntriesInFileOrder(sessionId)).map((e) => e.id));
-			const fresh = entries.filter((entry) => !here.has(entry.id));
+			const here = new Set(
+				(await this.readEntriesInFileOrder(sessionId, { strict: true })).map((e) => e.id)
+			);
+			// Each id once: one already in the file, or twice in this batch, is written once.
+			const fresh = entries.filter((entry) => {
+				if (here.has(entry.id)) return false;
+				here.add(entry.id);
+				return true;
+			});
 			if (fresh.length === 0) return 0;
 			await fsp.appendFile(
 				this.getSessionFilePath(sessionId),

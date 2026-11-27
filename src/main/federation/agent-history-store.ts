@@ -21,7 +21,7 @@ const MAX_CACHED_AGENTS = 16;
 export function desktopAgentHistoryStore(
 	manager: Pick<
 		HistoryManager,
-		'getEntries' | 'getFileStamp' | 'importEntries' | 'deleteEntry' | 'updateEntry'
+		'getEntriesStrict' | 'getFileStamp' | 'importEntries' | 'deleteEntry' | 'updateEntry'
 	>
 ): AgentHistoryStore {
 	const cache = new Map<string, { stamp: string; entries: HistoryEntry[] }>();
@@ -32,7 +32,8 @@ export function desktopAgentHistoryStore(
 			const stamp = await manager.getFileStamp(agentId);
 			const held = cache.get(agentId);
 			if (stamp && held?.stamp === stamp) return [...held.entries];
-			const entries = await manager.getEntries(agentId);
+			// Strict: a file that cannot be read must not read as "no History" to a move or a panel.
+			const entries = await manager.getEntriesStrict(agentId);
 			cache.delete(agentId);
 			if (stamp) {
 				cache.set(agentId, { stamp, entries });

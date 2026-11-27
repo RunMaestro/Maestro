@@ -20,7 +20,7 @@ const entry = (id: string, timestamp: number, extra: Partial<HistoryEntry> = {})
 describe('desktopAgentHistoryStore', () => {
 	it("goes through the desktop's HistoryManager, appending through its checked import", async () => {
 		const manager = {
-			getEntries: vi.fn(async () => [entry('a', 1)]),
+			getEntriesStrict: vi.fn(async () => [entry('a', 1)]),
 			getFileStamp: vi.fn(async () => null),
 			importEntries: vi.fn(async () => 1),
 			deleteEntry: vi.fn(async () => true),
@@ -40,7 +40,7 @@ describe('desktopAgentHistoryStore', () => {
 		let stamp: string | null = '1:100';
 		let held = [entry('a', 1)];
 		const manager = {
-			getEntries: vi.fn(async () => [...held]),
+			getEntriesStrict: vi.fn(async () => [...held]),
 			getFileStamp: vi.fn(async () => stamp),
 			importEntries: vi.fn(async (_id: string, entries: readonly HistoryEntry[]) => {
 				held = [...entries, ...held];
@@ -54,26 +54,26 @@ describe('desktopAgentHistoryStore', () => {
 		expect(await store.read('l')).toEqual([entry('a', 1)]);
 		expect(await store.read('l')).toEqual([entry('a', 1)]);
 		// The panel's next page, graph, and bar jump read the file once between writes.
-		expect(manager.getEntries).toHaveBeenCalledTimes(1);
+		expect(manager.getEntriesStrict).toHaveBeenCalledTimes(1);
 
 		// Another process (the CLI) wrote the file: its stamp changed, so it is read again.
 		stamp = '1:150';
 		held = [entry('cli', 3), ...held];
 		expect((await store.read('l')).map((e) => e.id)).toEqual(['cli', 'a']);
-		expect(manager.getEntries).toHaveBeenCalledTimes(2);
+		expect(manager.getEntriesStrict).toHaveBeenCalledTimes(2);
 
 		// A write through the store drops the list, so a read-back sees the write.
 		await store.append('l', [entry('b', 2)]);
 		expect((await store.read('l')).map((e) => e.id)).toEqual(['b', 'cli', 'a']);
-		expect(manager.getEntries).toHaveBeenCalledTimes(3);
+		expect(manager.getEntriesStrict).toHaveBeenCalledTimes(3);
 		await store.update?.('l', 'a', { validated: true });
 		await store.read('l');
-		expect(manager.getEntries).toHaveBeenCalledTimes(4);
+		expect(manager.getEntriesStrict).toHaveBeenCalledTimes(4);
 
 		// No file to stamp (a legacy file not migrated yet): never kept.
 		stamp = null;
 		await store.read('l');
 		await store.read('l');
-		expect(manager.getEntries).toHaveBeenCalledTimes(6);
+		expect(manager.getEntriesStrict).toHaveBeenCalledTimes(6);
 	});
 });

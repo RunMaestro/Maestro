@@ -275,6 +275,14 @@ export async function runReturnFromHost(
 					`Could not move "${agent.name}" back: ${error instanceof Error ? error.message : String(error)}. Nothing changed.`
 				);
 			}
+			// The host keeps its copy then, so a held message would be held on both sides and could
+			// run twice: refused, as with the copy kept on request (CodeRabbit on #2181).
+			if (historyStaysOnHost && heldQueue.length > 0) {
+				throw new LiftRunError(
+					'RETURN_QUEUED',
+					`"${agent.name}" has ${heldQueue.length} held message(s) on its host, and the host keeps its copy (it does not send an agent's History). Nothing changed; send or remove them there, then move it back.`
+				);
+			}
 			returned = {
 				tabs: withLogs,
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
