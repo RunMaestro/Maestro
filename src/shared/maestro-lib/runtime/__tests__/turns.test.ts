@@ -1659,10 +1659,11 @@ describe('runtime turns', () => {
 				hold = false;
 				value(await runtime.turns.interrupt('a1', 't1'));
 				await turn.outcome(2);
-				await new Promise((resolve) => setTimeout(resolve, 50));
+				// Long enough for the second resend to have started a third run, were it to run.
+				await new Promise((resolve) => setTimeout(resolve, 250));
 				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
-				const answers = (await transcript(runtime)).filter((entry) => entry.source === 'stdout');
-				expect(answers).toHaveLength(1);
+				// One run for the other message, one for this one: never a second for this one.
+				expect(turn.outcomes()).toHaveLength(2);
 				expect(argvFiles).toHaveLength(2);
 			});
 
