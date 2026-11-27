@@ -332,6 +332,27 @@ describe('broadcastDesktopQueueChanges (M23, M28)', () => {
 		]);
 	});
 
+	// Parity M29: an agent's frame state outlived the agent.
+	it('forgets the frames of an agent that is gone from the stored list, also with no client attached (M29)', async () => {
+		broadcastDesktopQueueChanges(
+			server(1, 1),
+			[{ id: 'm29g', executionQueue: [] }],
+			[{ id: 'm29g', executionQueue: [message('g1')] }]
+		);
+		await settled();
+		expect(queueChangesSeq('m29g')).toBe(1);
+		broadcastDesktopQueueChanges(
+			server(0),
+			[
+				{ id: 'm29g', executionQueue: [message('g1')] },
+				{ id: 'kept', executionQueue: [] },
+			],
+			[{ id: 'kept', executionQueue: [] }]
+		);
+		await settled();
+		expect(queueChangesSeq('m29g')).toBe(0);
+	});
+
 	it('sends nothing with no client attached, or no queue changed', async () => {
 		broadcastDesktopQueueChanges(
 			server(0),

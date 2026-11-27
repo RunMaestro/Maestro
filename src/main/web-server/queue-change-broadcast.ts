@@ -27,7 +27,7 @@ import {
 } from '../../shared/queueSnapshot';
 import { captureException } from '../utils/sentry';
 import { withQueueItemImages } from './handlers/messageHandlers/queue';
-import { framedQueue, recordFramedQueue } from './queue-change-frames';
+import { forgetFramedQueue, framedQueue, recordFramedQueue } from './queue-change-frames';
 
 /** Which clients the CLI secret admitted a frame is for: those that read changes, or the rest. */
 export type CliAudience = 'queue-changes' | 'whole-queue';
@@ -103,6 +103,13 @@ export function broadcastDesktopQueueChanges(
 	previous: readonly QueueDiffAgent[],
 	next: readonly QueueDiffAgent[]
 ): void {
+	// An agent gone from the stored list (deleted, or moved off this desktop) keeps no frame state,
+	// once the frames it still had on their way are out (M29).
+	const stillStored = new Set(next.map((agent) => agent.id));
+	for (const agent of previous) {
+		if (stillStored.has(agent.id)) continue;
+		void frameOrder.enqueue(agent.id, async () => forgetFramedQueue(agent.id));
+	}
 	if (!server || server.getWebClientCount() === 0) return;
 	for (const change of desktopQueueChanges(previous, next)) {
 		// Each proven exit rides a frame that names it. A change that also lost an item it cannot

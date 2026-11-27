@@ -1731,6 +1731,31 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
 				});
 
+				it("an earlier Stop with no answer keeps its doubt through a later Stop's answer that names nothing (CodeRabbit on #2160)", async () => {
+					const id = `m27o-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const first = dropStoppedHostStartMentions('row', ['t1']);
+					const second = dropStoppedHostStartMentions('row', ['t1']);
+					mirrorHostQueue([id], []);
+					// The first Stop gets no answer; the second names no queued turn.
+					settleStoppedHostStartMentions(first);
+					settleStoppedHostStartMentions(second, { waitingAtStop: [id], stoppedItemIds: [] });
+					// A stale frame still lists it; then its late start, with the stopped turn ended.
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					hostSays(id, text, { queued: false, logs: true });
+					fireHostStartedMentions(row(), [started(id)], now, 0, {
+						read: vi.fn(),
+						isCurrent: () => true,
+					});
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
 				it('a Stop with no answer keeps a listed message marked through a stale frame, and its late start asks nothing (CodeRabbit on #2160)', async () => {
 					const id = `m27f-${routing}`;
 					const text = await drainQueued(id, routing);

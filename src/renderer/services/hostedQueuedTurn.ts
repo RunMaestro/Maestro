@@ -843,7 +843,13 @@ export function settleStoppedHostStartMentions(
 		if (!waiting.stop?.pending || !waiting.stop.by.includes(stop)) continue;
 		const stillToAnswer = waiting.stop.by.filter((token) => token !== stop);
 		if (stillToAnswer.length > 0) {
-			waiting.stop = { ...waiting.stop, by: stillToAnswer };
+			// This Stop could not say whether it ended the message's turn: that doubt outlives the
+			// answers still due, which speak only for their own Stops (CodeRabbit on #2160).
+			waiting.stop = {
+				...waiting.stop,
+				by: stillToAnswer,
+				...(queueFramesTrail ? { untilNamed: true } : {}),
+			};
 			continue;
 		}
 		const tabId = waiting.item.tabId || session?.activeTabId;
@@ -859,8 +865,13 @@ export function settleStoppedHostStartMentions(
 			continue;
 		}
 		// The host named the turns its Stop ended, and not this one; or the host's own list holds it
-		// and no frame of the host can arrive after its answer: it waited through the Stop.
-		if (namedStops || (listed.has(hostItemId) && waitingAtStop && !queueFramesTrail)) {
+		// and no frame of the host can arrive after its answer: it waited through the Stop. Unless an
+		// earlier Stop that marked it could not say (its doubt stands until a frame names the exit).
+		const doubted = waiting.stop.untilNamed === true;
+		if (
+			!doubted &&
+			(namedStops || (listed.has(hostItemId) && waitingAtStop && !queueFramesTrail))
+		) {
 			waiting.stop = undefined;
 			continue;
 		}
@@ -872,7 +883,7 @@ export function settleStoppedHostStartMentions(
 			...waiting.stop,
 			pending: false,
 			by: [],
-			...(queueFramesTrail ? { untilNamed: true } : {}),
+			...(queueFramesTrail || doubted ? { untilNamed: true } : {}),
 		};
 	}
 }
