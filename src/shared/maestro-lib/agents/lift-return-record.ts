@@ -7,6 +7,7 @@
  */
 
 import { canonicalJson } from '../../canonicalJson';
+import { sessionImageRefSha256 } from '../../sessionImageRefs';
 import { collapseWhitespace } from '../../stringUtils';
 import type { AITabRecord } from '../store/records';
 import { readLiftedTo, type LiftedToPointer } from './lift-pointer';
@@ -43,8 +44,9 @@ export function readLeftOnHost(record: { leftOnHost?: unknown }): LiftedToPointe
 /**
  * A transcript's conversation, one key per turn: the person's message and the reply to it (every
  * reply entry up to the next message, joined, whitespace collapsed). Notes, tools, and thinking are
- * left out, and so are entry ids, so two copies of one conversation read the same on both sides
- * even when each side wrote its own notes or stored the entries under other ids.
+ * left out, and so are entry ids. Used only by `furtherTranscript()`, so only by a plain Move Back
+ * (the host reached, its tabs coming home); a stale-copy merge never counts turns, it is told which
+ * side holds the other (`containingTranscript()`, `ReturnedFromHost.transcriptSides`).
  */
 export function conversationTurns(logs: unknown): string[] {
 	const turns: string[] = [];
@@ -72,7 +74,10 @@ export function conversationTurns(logs: unknown): string[] {
 /**
  * Of two transcripts of one tab, the one that went further: more turns of its conversation
  * (`conversationTurns()`), else more entries, else the host's. Counting entries alone would let a
- * side with more notes win over a side with one more turn.
+ * side with more notes win over a side with one more turn. Only a plain Move Back asks this (a tab
+ * with no `transcriptSides` entry), where the host held the agent last; a stale-copy merge, whose
+ * two sides may both have gone on, keeps the side `containingTranscript()` names instead, since a
+ * count can drop the other side's turns.
  */
 export function furtherTranscript<T>(hostLogs: T[], localLogs: T[]): T[] {
 	const hostTurns = conversationTurns(hostLogs).length;
@@ -88,10 +93,23 @@ function entryId(entry: unknown): string | undefined {
 	return typeof id === 'string' && id ? id : undefined;
 }
 
+/**
+ * How a transcript match reads an image. One pasted image is a `maestro-image://` ref on this
+ * machine and a data URL in a headless host's transcript read (M10): `imageKey` answers the same
+ * key for both (`sessionImageContentSha256()`, which needs Node, so the caller passes it). Without
+ * one, a ref is keyed by the sha256 its name carries and anything else by itself.
+ */
+export interface TranscriptMatchOptions {
+	imageKey?: (image: unknown) => string | null | undefined;
+}
+
 /** What a transcript entry is matched by (`holdsEntry()`). */
 interface EntryKey {
 	id: string | undefined;
-	/** Its source, text, timestamp and images: one entry stored under other ids. */
+	/**
+	 * Its source, text, timestamp and images: one entry stored under other ids. Undefined without a
+	 * numeric timestamp: two short replies ("yes") with no time of their own are not one entry.
+	 */
 	signature: string | undefined;
 	/** Its source and images: what one entry under one id keeps while its text grows. */
 	frame: string | undefined;
@@ -107,14 +125,24 @@ function canonicalOrUndefined(value: unknown): string | undefined {
 	}
 }
 
-function entryKey(entry: unknown): EntryKey {
+/** An entry's images by content (`TranscriptMatchOptions.imageKey`), never by the string. */
+function imageKeys(images: unknown, options: TranscriptMatchOptions): unknown {
+	if (!Array.isArray(images)) return images;
+	return images.map((image) => options.imageKey?.(image) ?? sessionImageRefSha256(image) ?? image);
+}
+
+function entryKey(entry: unknown, options: TranscriptMatchOptions): EntryKey {
 	if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
 		return { id: undefined, signature: undefined, frame: undefined, text: undefined };
 	}
-	const { source, text, timestamp, images } = entry as Record<string, unknown>;
+	const { source, text, timestamp } = entry as Record<string, unknown>;
+	const images = imageKeys((entry as Record<string, unknown>).images, options);
 	return {
 		id: entryId(entry),
-		signature: canonicalOrUndefined({ source, text, timestamp, images }),
+		signature:
+			typeof timestamp === 'number' && Number.isFinite(timestamp)
+				? canonicalOrUndefined({ source, text, timestamp, images })
+				: undefined,
 		frame: canonicalOrUndefined({ source, images }),
 		text,
 	};
@@ -142,12 +170,16 @@ function holdsEntry(outer: EntryKey, inner: EntryKey): boolean {
  * or undefined when an entry of `inner` is not there. `outer` may hold more entries anywhere (a
  * note one side wrote, a turn it went on with).
  */
-function matchTranscript(outer: unknown, inner: unknown): number[] | undefined {
-	const outerKeys = (Array.isArray(outer) ? outer : []).map(entryKey);
+function matchTranscript(
+	outer: unknown,
+	inner: unknown,
+	options: TranscriptMatchOptions
+): number[] | undefined {
+	const outerKeys = (Array.isArray(outer) ? outer : []).map((entry) => entryKey(entry, options));
 	const at: number[] = [];
 	let next = 0;
 	for (const entry of Array.isArray(inner) ? inner : []) {
-		const key = entryKey(entry);
+		const key = entryKey(entry, options);
 		while (next < outerKeys.length && !holdsEntry(outerKeys[next], key)) next++;
 		if (next === outerKeys.length) return undefined;
 		at.push(next++);
@@ -156,8 +188,12 @@ function matchTranscript(outer: unknown, inner: unknown): number[] | undefined {
 }
 
 /** Whether `outer` holds every entry of `inner`, in order, entry for entry (`matchTranscript()`). */
-export function transcriptContains(outer: unknown, inner: unknown): boolean {
-	return matchTranscript(outer, inner) !== undefined;
+export function transcriptContains(
+	outer: unknown,
+	inner: unknown,
+	options: TranscriptMatchOptions = {}
+): boolean {
+	return matchTranscript(outer, inner, options) !== undefined;
 }
 
 /**
@@ -168,10 +204,11 @@ export function transcriptContains(outer: unknown, inner: unknown): boolean {
  */
 export function containingTranscript(
 	hostLogs: unknown,
-	localLogs: unknown
+	localLogs: unknown,
+	options: TranscriptMatchOptions = {}
 ): TranscriptSide | undefined {
-	if (transcriptContains(localLogs, hostLogs)) return 'local';
-	if (transcriptContains(hostLogs, localLogs)) return 'host';
+	if (transcriptContains(localLogs, hostLogs, options)) return 'local';
+	if (transcriptContains(hostLogs, localLogs, options)) return 'host';
 	return undefined;
 }
 
@@ -202,12 +239,16 @@ function asLocalTab(tab: AITabRecord): AITabRecord {
  * that the host stored under another id names the host's id, so it still finds its row. Undefined
  * when nothing moves.
  */
-function pinsOnHostEntries(local: AITabRecord, host: AITabRecord): unknown[] | undefined {
+function pinsOnHostEntries(
+	local: AITabRecord,
+	host: AITabRecord,
+	options: TranscriptMatchOptions
+): unknown[] | undefined {
 	const pins = (local as { pinnedMessages?: unknown }).pinnedMessages;
 	if (!Array.isArray(pins) || pins.length === 0) return undefined;
 	const localLogs = Array.isArray(local.logs) ? local.logs : [];
 	const hostLogs = Array.isArray(host.logs) ? host.logs : [];
-	const at = matchTranscript(hostLogs, localLogs);
+	const at = matchTranscript(hostLogs, localLogs, options);
 	if (!at) return undefined;
 	const hostIdOf = new Map<string, string>();
 	localLogs.forEach((entry, index) => {
@@ -228,11 +269,16 @@ function pinsOnHostEntries(local: AITabRecord, host: AITabRecord): unknown[] | u
  * transcript, usage stats and provider session of the side that holds the other's transcript
  * (that session is the one the transcript went on in), starred when either side starred it.
  */
-function keepLocalTab(local: AITabRecord, host: AITabRecord, side: TranscriptSide): AITabRecord {
+function keepLocalTab(
+	local: AITabRecord,
+	host: AITabRecord,
+	side: TranscriptSide,
+	options: TranscriptMatchOptions
+): AITabRecord {
 	const winner = side === 'host' ? host : local;
 	const other = side === 'host' ? local : host;
 	const { usageStats: _usageStats, ...rest } = local;
-	const pins = side === 'host' ? pinsOnHostEntries(local, host) : undefined;
+	const pins = side === 'host' ? pinsOnHostEntries(local, host, options) : undefined;
 	return {
 		...rest,
 		...(pins ? { pinnedMessages: pins } : {}),
@@ -250,11 +296,14 @@ function keepLocalTab(local: AITabRecord, host: AITabRecord, side: TranscriptSid
  * merged in by tab id. A tab both sides have takes the transcript that went further
  * (`furtherTranscript()`: the host's, where the conversation went on there), plus the host's name,
  * star, and provider session; a stale-copy merge says per tab which transcript to keep
- * (`transcriptSides`, `keepLocalTab()`). A host tab this machine lacks is appended. Local tabs the host closed stay. Pure.
+ * (`transcriptSides`, `keepLocalTab()`, matching entries for the pins with `options`, as the
+ * caller matched the transcripts). A host tab this machine lacks is appended. Local tabs the host
+ * closed stay. Pure.
  */
 export function withReturnedFromHost<T extends Record<string, unknown>>(
 	record: T,
-	returned: ReturnedFromHost
+	returned: ReturnedFromHost,
+	options: TranscriptMatchOptions = {}
 ): T {
 	const localTabs = (Array.isArray(record.aiTabs) ? record.aiTabs : []) as AITabRecord[];
 	const hostById = new Map(returned.tabs.map((tab) => [tab.id, tab]));
@@ -266,7 +315,7 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 		const localLogs = Array.isArray(local.logs) ? local.logs : [];
 		const side =
 			sides && Object.prototype.hasOwnProperty.call(sides, local.id) ? sides[local.id] : undefined;
-		if (side === 'host' || side === 'local') return keepLocalTab(local, host, side);
+		if (side === 'host' || side === 'local') return keepLocalTab(local, host, side, options);
 		return {
 			...local,
 			agentSessionId: host.agentSessionId ?? local.agentSessionId ?? null,
