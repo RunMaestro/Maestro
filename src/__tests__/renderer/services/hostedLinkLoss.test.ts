@@ -740,6 +740,40 @@ describe('projectHostedSession with the link lost', () => {
 		).toEqual(['u1', 'k1', 'o1', 'tool-1', 'o2']);
 	});
 
+	// CodeRabbit on #2177: a host clock a few seconds ahead of this one still draws the cut turn's
+	// message and reply above the retry card the cut raised here.
+	it('draws the cut rows above the retry card when the host clock runs ahead (R59)', () => {
+		const card: LogEntry = {
+			id: 'card',
+			timestamp: 50,
+			source: 'system',
+			text: 'Connection lost',
+			retryOutageId: 'o1',
+		};
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'on', logs: [card] })],
+		});
+		const liveTurns = {
+			[liveTurnKey('h1', 't1')]: {
+				startedAt: 100,
+				busy: true,
+				entries: [
+					{ ...QUESTION, timestamp: 100 },
+					{ id: 'o1', timestamp: 101, source: 'stdout', text: 'Partial' },
+				],
+			},
+		} as never;
+		const during = projectHostedSession(local, {
+			agent,
+			liveTurns,
+			linkLost,
+			keptCuts: new Set(['t1']),
+		});
+		expect(during.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'o1', 'card']);
+	});
+
 	it('never draws reasoning as a reply row at the cut (R58)', () => {
 		const local = createModeSession('hosted', {
 			id: 'row',

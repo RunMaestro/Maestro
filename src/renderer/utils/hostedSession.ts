@@ -167,9 +167,17 @@ function cutTurnLogs(
 	return next;
 }
 
-/** `logs` with `entry` before the first entry written after it. */
+/**
+ * `logs` with a host row `entry` before the first entry written after it. A card or note this
+ * machine wrote (the retry card, the link note) counts as after a host row written up to
+ * `HOST_COPY_CLOCK_SKEW_MS` later by the host's clock: a host clock ahead of this one never puts
+ * the cut turn's rows below the card the cut raised (CodeRabbit on #2177).
+ */
 function insertByTime(logs: LogEntry[], entry: LogEntry): LogEntry[] {
-	const at = logs.findIndex((other) => other.timestamp > entry.timestamp);
+	const at = logs.findIndex((other) => {
+		const ownNote = other.retryOutageId !== undefined || other.agentError?.source === 'host-link';
+		return other.timestamp + (ownNote ? HOST_COPY_CLOCK_SKEW_MS : 0) > entry.timestamp;
+	});
 	return at === -1 ? [...logs, entry] : [...logs.slice(0, at), entry, ...logs.slice(at)];
 }
 
