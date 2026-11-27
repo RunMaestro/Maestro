@@ -283,4 +283,5 @@ A set prints the new preset and the one it replaced (`Was:`), so a script can pu
 
 - Design Mode only reads the element or the region you pick. It adds nothing to your message box until you press **Add to Message**, and nothing reaches the agent until you send the message yourself or press **Queue**, which sends that one pick as its own message.
 - The page cannot start a pick or put text into your message. Picks come only from your own clicks and key presses on Maestro's overlay, or from `maestro-cli browser-pick` run on your machine, never from anything the page does. While you hold `Space`, your clicks go to the page, as in any browser tab, and none of them picks an element.
+- A page in a browser tab is denied every web permission (camera, microphone, location, notifications and the like) except copying to the clipboard and going full screen.
 - Design Mode is not available in the web interface, where browser tabs open in your own browser.

@@ -7,12 +7,26 @@
  * resolve as if typed in a terminal. cwd is the owning session's project root.
  * Output, exit code, and timeout handling mirror the agent executor so chained
  * `agent.completed` subscriptions can read shell stdout via {{CUE_SOURCE_OUTPUT}}.
+ *
+ * Template values never become shell syntax: they ride in environment
+ * variables and each placeholder becomes a quoted expansion
+ * (`substituteShellTemplateVariables`), because many of them carry text a
+ * stranger wrote (a pull request title, a comment, a webhook body).
  */
 
 import { spawn, type ChildProcess } from 'child_process';
 import type { CueEvent, CueRunResult, CueRunStatus, CueSubscription } from './cue-types';
 import type { AgentSshRemoteConfig, SessionInfo } from '../../shared/types';
-import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
+import {
+	findCueUntrustedTemplateVariables,
+	substituteTemplateVariables,
+	type TemplateContext,
+} from '../../shared/templateVariables';
+import {
+	ShellTemplateError,
+	substituteShellTemplateVariables,
+} from '../../shared/shellTemplateVariables';
+import { isWindows } from '../../shared/platformDetection';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { captureException, captureMessage } from '../utils/sentry';
 import {
@@ -104,7 +118,41 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 	}
 
 	templateContext.cue = buildCueTemplateContext(event, subscription, runId);
-	const substitutedCommand = substituteTemplateVariables(trimmed, templateContext);
+
+	const runsOnRemote = !!(sshRemoteConfig?.enabled && sshStore);
+	let substitutedCommand: string;
+	/** The template values, under the names `substitutedCommand` expands. */
+	let templateEnv: Record<string, string> = {};
+	if (!runsOnRemote && isWindows()) {
+		// Passing values as variables needs a POSIX shell. cmd.exe expands
+		// `%NAME%` before it parses the line, and no quoting holds outside text
+		// there, so a local Windows command keeps the plain substitution and
+		// refuses the variables that carry text from GitHub, a webhook, a task
+		// file or a plugin.
+		const untrusted = findCueUntrustedTemplateVariables([trimmed]);
+		if (untrusted.length > 0) {
+			const names = untrusted.map((entry) => `{{${entry.variable}}}`).join(', ');
+			const message =
+				`Cue subscription "${subscription.name}" not started: a local Windows shell command ` +
+				`cannot safely quote text from outside this machine, and this one uses ${names}. ` +
+				`Use a prompt instead, or run the command on an SSH remote.`;
+			onLog('error', `[CUE] ${message}`);
+			return failedResult(message);
+		}
+		substitutedCommand = substituteTemplateVariables(trimmed, templateContext);
+	} else {
+		try {
+			({ command: substitutedCommand, env: templateEnv } = substituteShellTemplateVariables(
+				trimmed,
+				templateContext
+			));
+		} catch (err) {
+			if (!(err instanceof ShellTemplateError)) throw err;
+			const message = `Cue subscription "${subscription.name}" not started: ${err.message}`;
+			onLog('error', `[CUE] ${message}`);
+			return failedResult(message);
+		}
+	}
 
 	onLog(
 		'cue',
@@ -123,7 +171,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 	const inheritedEnv = isServerModeActive(isServerMode)
 		? filterServerProcessEnv(process.env)
 		: process.env;
-	let spawnEnv: Record<string, string> = { ...inheritedEnv } as Record<string, string>;
+	let spawnEnv = { ...inheritedEnv, ...templateEnv } as Record<string, string>;
 	let useLocalShell = true;
 	/** The remote this run goes through, for the reachability tracker. */
 	let sshRemoteId: string | undefined;
@@ -136,6 +184,9 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 					command: 'bash',
 					args: ['-c', substitutedCommand],
 					cwd: projectRoot,
+					// Exported on the remote command line, each value single-quoted,
+					// in front of `bash -c`.
+					customEnvVars: templateEnv,
 				},
 				sshRemoteConfig,
 				sshStore

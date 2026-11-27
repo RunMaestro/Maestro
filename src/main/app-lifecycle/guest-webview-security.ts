@@ -1,5 +1,5 @@
 import path from 'path';
-import { Menu, shell, clipboard, type BrowserWindow } from 'electron';
+import { Menu, shell, clipboard, session, type BrowserWindow } from 'electron';
 import { logger } from '../utils/logger';
 import { isAllowedBrowserTabPartition } from '../../shared/browserTabPartition';
 import {
@@ -99,6 +99,74 @@ function hardenBrowserTabWebPreferences(webPreferences: BrowserTabWebPreferences
 	webPreferences.sandbox = true;
 	webPreferences.webSecurity = true;
 	webPreferences.allowRunningInsecureContent = false;
+}
+
+// The only web permissions a browser-tab page gets: clipboard writes (copy
+// buttons) and fullscreen (video players). Every other kind is denied, named
+// or not: camera and microphone (`media`), geolocation, notifications, MIDI,
+// HID / serial / USB, display capture, launching OS apps (`openExternal`),
+// idle detection, storage access, window management, keyboard and pointer
+// lock, clipboard reads, the File System Access API, and any kind Electron
+// adds later.
+const BROWSER_TAB_ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set([
+	'clipboard-sanitized-write',
+	'fullscreen',
+]);
+
+/** What asked for a permission. Electron names no webContents for some checks. */
+export type PermissionRequester = { getType?: () => string } | null;
+
+/**
+ * Whether a browser-tab session grants `permission` to `requester`. An allowed kind goes only to the
+ * tab's own `<webview>` guest: the offscreen relay page that shares the session (browser-pages.ts) and a
+ * check that names no webContents get nothing.
+ */
+export function isBrowserTabPermissionGranted(
+	requester: PermissionRequester,
+	permission: string
+): boolean {
+	return BROWSER_TAB_ALLOWED_PERMISSIONS.has(permission) && requester?.getType?.() === 'webview';
+}
+
+/** The part of an Electron Session the browser-tab permission policy is installed on (structural). */
+export interface BrowserTabPermissionSession {
+	setPermissionRequestHandler(
+		handler: (
+			requester: PermissionRequester,
+			permission: string,
+			callback: (granted: boolean) => void
+		) => void
+	): void;
+	setPermissionCheckHandler(
+		handler: (requester: PermissionRequester, permission: string) => boolean
+	): void;
+}
+
+const hardenedBrowserTabSessions = new WeakSet<BrowserTabPermissionSession>();
+
+/**
+ * Install {@link isBrowserTabPermissionGranted} on a browser-tab session as its permission request AND
+ * check handler. Electron grants every permission on a session with no handler. Only the first call for
+ * a session installs anything (it returns false after that), so the webview attach gate and the
+ * offscreen relay page can both call it without replacing each other's handler.
+ */
+export function hardenBrowserTabSession(ses: BrowserTabPermissionSession): boolean {
+	if (hardenedBrowserTabSessions.has(ses)) return false;
+	hardenedBrowserTabSessions.add(ses);
+	ses.setPermissionRequestHandler((requester, permission, callback) => {
+		const granted = isBrowserTabPermissionGranted(requester, permission);
+		if (!granted) {
+			logger.warn(`Blocked browser-tab permission request: ${permission}`, 'Window', {
+				permission,
+				type: requester?.getType?.() ?? 'unknown',
+			});
+		}
+		callback(granted);
+	});
+	ses.setPermissionCheckHandler((requester, permission) =>
+		isBrowserTabPermissionGranted(requester, permission)
+	);
+	return true;
 }
 
 function attachBrowserTabGuestSecurity(guestContents: BrowserTabGuestContents): void {
@@ -419,7 +487,8 @@ function attachBrowserTabContextMenu(
 
 /**
  * Restrict renderer-created webviews to the three sanctioned surfaces:
- * browser tabs (persist:maestro-browser-session-*), plugin panels
+ * browser tabs (persist:maestro-browser-session-* and maestro-ephemeral-*,
+ * whose sessions get {@link hardenBrowserTabSession}), plugin panels
  * (plugin:<id>, hardened by the plugin panel host), and DataviewJS guests
  * (dataview-guest:<hash>, hardened by the Dataview guest host). Anything else
  * is blocked before the guest exists.
@@ -489,7 +558,11 @@ export function attachGuestWebviewSecurity(
 				src,
 				partition,
 			});
+			return;
 		}
+		// Only a partition that passed the gate gets a session, and it gets the
+		// permission policy before the guest exists, so no page on it can ask first.
+		hardenBrowserTabSession(session.fromPartition(partition));
 	});
 
 	browserWindow.webContents.on('did-attach-webview', (_event, guestContents) => {

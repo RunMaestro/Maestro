@@ -356,3 +356,109 @@ describe('validateCueBundle - chain references', () => {
 		expect(codes(result.errors)).toEqual(['unknown-agent']);
 	});
 });
+
+describe('validateCueBundle - paths no bundle may write', () => {
+	/** Files the bundle lists in its manifest, so the path is the only thing wrong with them. */
+	const withFiles =
+		(...paths: string[]) =>
+		(files: Map<string, string>) => {
+			for (const entry of paths) files.set(entry, 'payload');
+		};
+
+	it('refuses a hook planted under .git', async () => {
+		const result = await validate({ files: withFiles('workspaces/proj/.git/hooks/pre-commit') });
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual([
+			expect.objectContaining({
+				code: 'git-metadata-path',
+				file: 'workspaces/proj/.git/hooks/pre-commit',
+			}),
+		]);
+	});
+
+	it('refuses a .GIT folder in any case, at any depth', async () => {
+		const result = await validate({ files: withFiles('workspaces/proj/sub/.GIT/config') });
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual([
+			expect.objectContaining({
+				code: 'git-metadata-path',
+				file: 'workspaces/proj/sub/.GIT/config',
+			}),
+		]);
+	});
+
+	it.each([
+		['a trailing dot, which Windows drops', 'workspaces/proj/.git./config'],
+		['a trailing space, which Windows drops', 'workspaces/proj/.git /config'],
+		['an NTFS stream name', 'workspaces/proj/.git::$INDEX_ALLOCATION/config'],
+		['the NTFS short name', 'workspaces/proj/GIT~1/config'],
+		['backslash separators', 'workspaces/proj/sub\\.git\\hooks\\post-checkout'],
+		['an Auto Run folder outside the workspace', 'autorun/agent-a/.git/hooks/pre-commit'],
+		['a skill folder', 'workspaces/proj/.claude/skills/review/.git/hooks/pre-commit'],
+	])('refuses a .git folder with %s', async (_label, entry) => {
+		const result = await validate({ files: withFiles(entry) });
+		expect(result.valid).toBe(false);
+		expect(codes(result.errors)).toContain('git-metadata-path');
+	});
+
+	it('passes a bundle with a normal Cue file, prompt and Auto Run document', async () => {
+		const result = await validate({
+			files: withFiles(
+				'workspaces/proj/.maestro/prompts/extra.md',
+				'workspaces/proj/.maestro/playbooks/nightly.md',
+				'workspaces/proj/.maestro/playbooks/sub/doc.md',
+				'workspaces/proj/.github/workflows/ci.yml',
+				'workspaces/proj/.gitignore',
+				'workspaces/proj/docs/maestro-notes.md'
+			),
+		});
+		expect(result.errors).toEqual([]);
+		expect(result.valid).toBe(true);
+	});
+
+	it.each([
+		['a cue.yaml no workspace declares', 'workspaces/other/.maestro/cue.yaml'],
+		['a cue.yaml in a folder below the project root', 'workspaces/proj/sub/.maestro/cue.yaml'],
+		['a cue.yaml under another case', 'workspaces/proj/.MAESTRO/cue.yaml'],
+		['a cue.yaml under a trailing dot', 'workspaces/proj/.maestro./cue.yaml'],
+		['a cue.yaml under the NTFS short name', 'workspaces/proj/MAESTR~1/cue.yaml'],
+		[
+			'a cue.yaml in a .maestro folder nested in an owned one',
+			'workspaces/proj/.maestro/prompts/.maestro/cue.yaml',
+		],
+		['a script', 'workspaces/proj/.maestro/scripts/run.sh'],
+		['shared history', 'workspaces/proj/.maestro/history/history-x.jsonl'],
+		['a file named like an owned folder', 'workspaces/proj/.maestro/prompts'],
+		['a folder that only starts like an owned one', 'workspaces/proj/.maestro/prompts.d/x.md'],
+		['an owned folder in another case', 'workspaces/proj/.maestro/Prompts/x.md'],
+		['a .maestro folder outside the workspaces', 'autorun/agent-a/.maestro/cue.yaml'],
+	])('refuses %s under .maestro', async (_label, entry) => {
+		const result = await validate({ files: withFiles(entry) });
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual([
+			expect.objectContaining({ code: 'maestro-path-not-owned', file: entry }),
+		]);
+	});
+
+	it('names the folders a bundle may use in the .maestro message', async () => {
+		const result = await validate({ files: withFiles('workspaces/proj/.maestro/scripts/run.sh') });
+		expect(result.errors[0].message).toContain('prompts/');
+		expect(result.errors[0].message).toContain('playbooks/');
+	});
+
+	it('still reports an unlisted .git entry as both unlisted and git metadata', async () => {
+		const result = await validate({ unlisted: { 'workspaces/proj/.git/hooks/pre-commit': 'x' } });
+		expect(codes(result.errors).sort()).toEqual(['git-metadata-path', 'unlisted-file']);
+	});
+
+	it('refuses an undeclared legacy maestro-cue.yaml at a workspace root', async () => {
+		const result = await validate({ files: withFiles('workspaces/proj/maestro-cue.yaml') });
+		expect(result.valid).toBe(false);
+		expect(result.errors).toEqual([
+			expect.objectContaining({
+				code: 'legacy-cue-config-path',
+				file: 'workspaces/proj/maestro-cue.yaml',
+			}),
+		]);
+	});
+});

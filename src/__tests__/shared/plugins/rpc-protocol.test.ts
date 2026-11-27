@@ -87,4 +87,32 @@ describe('P0 host RPC contract additions', () => {
 		expect(extractTarget('storage.sql', { query: 'select 1' })).toBeUndefined();
 		expect(extractTarget('background.register', { id: 'svc' })).toBeUndefined();
 	});
+
+	// RC-F05: a local file has no hostname, so it used to give no target and the
+	// unscoped grant covered every file on disk. The whole canonical file: URL is
+	// a target that only a file: scope covers.
+	it('extracts the whole canonical file: URL for shell.openExternal on a local file', () => {
+		const target = (url: string) => extractTarget('shell.openExternal', { url });
+		expect(target('file:///Applications/Calculator.app')).toBe(
+			'file:///Applications/Calculator.app'
+		);
+		expect(target('FILE://localhost/Applications/Calculator.app')).toBe(
+			'file:///Applications/Calculator.app'
+		);
+		expect(target('file:/Users/me/Downloads/Setup.pkg')).toBe(
+			'file:///Users/me/Downloads/Setup.pkg'
+		);
+		expect(target('file:///Users/me/Reports/../../../Applications/Calculator.app')).toBe(
+			'file:///Applications/Calculator.app'
+		);
+		expect(target('file://fileserver/share/setup.exe')).toBe('file://fileserver/share/setup.exe');
+	});
+
+	it('keeps the hostname target for other shell.openExternal URLs', () => {
+		const target = (url: string) => extractTarget('shell.openExternal', { url });
+		expect(target('https://github.com/acme/app/pull/1')).toBe('github.com');
+		expect(target('mailto:someone@example.com')).toBeUndefined();
+		expect(target('not a url')).toBeUndefined();
+		expect(extractTarget('shell.openExternal', {})).toBeUndefined();
+	});
 });

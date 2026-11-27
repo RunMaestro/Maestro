@@ -310,8 +310,10 @@ Response format:
 Remove orphaned playbooks for deleted sessions.
 
 ```bash
-maestro-cli clean playbooks [--dry-run] [--json]
+maestro-cli clean playbooks [--dry-run] [--force] [--json]
 ```
+
+A playbook is an orphan when its agent is not in the list `readSessions()` returns, so the command refuses (exit 1, nothing removed, `--dry-run` included) when that list cannot be believed: no agents at all (`--force` overrides this one), or a custom Storage Location the bootstrap file names that `resolveSyncDir()` fell back from, which `getSyncDirFallbackReason()` in `src/cli/services/storage.ts` reports (`--force` does not override this one). A command that deletes on the agent list must make the same check.
 
 ### `create-agent <name>`
 

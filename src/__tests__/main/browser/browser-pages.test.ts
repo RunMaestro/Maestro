@@ -80,9 +80,11 @@ vi.mock('electron', () => ({
 }));
 vi.mock('../../../main/app-lifecycle/guest-webview-security', () => ({
 	attachBrowserPageSecurity: vi.fn(),
+	hardenBrowserTabSession: vi.fn(),
 	isAllowedBrowserTabUrl: (url: string) => url.startsWith('https://'),
 }));
 
+import { hardenBrowserTabSession } from '../../../main/app-lifecycle/guest-webview-security';
 import {
 	closeBrowserRelayClient,
 	registerBrowserRelayHandlers,
@@ -285,6 +287,30 @@ describe('shared host browser page', () => {
 		await hostInput;
 		expect(await result).toMatchObject({ message: expect.stringContaining('lease expired') });
 		expect(send.mock.calls).toEqual([['Input.insertText', { text: 'host' }]]);
+	});
+
+	it('puts an offscreen page under the browser-tab permission policy of its tab session (RC-F10)', async () => {
+		vi.mocked(hardenBrowserTabSession).mockClear();
+		await invoke(
+			'browser:pageOpen',
+			{ sender: owner.webContents },
+			target,
+			'host-view',
+			nativeSize
+		);
+
+		const { session } = ipc.windows[0].webContents as unknown as {
+			session: {
+				setPermissionRequestHandler: ReturnType<typeof vi.fn>;
+				setPermissionCheckHandler: ReturnType<typeof vi.fn>;
+			};
+		};
+		expect(hardenBrowserTabSession).toHaveBeenCalledTimes(1);
+		expect(hardenBrowserTabSession).toHaveBeenCalledWith(session);
+		// The page installs no handler of its own, which would replace the one the
+		// tab's webview shares on this session.
+		expect(session.setPermissionRequestHandler).not.toHaveBeenCalled();
+		expect(session.setPermissionCheckHandler).not.toHaveBeenCalled();
 	});
 
 	it('closes a live page and treats a page that is already gone as closed (MAESTRO-17P)', async () => {

@@ -80,6 +80,32 @@ function stripTrailingSeparators(filePath: string): string {
 }
 
 /**
+ * Resolve symlinks through the nearest existing ancestor (sync), so a path that is not created yet resolves
+ * to where it would land. `p` unchanged when nothing on it resolves.
+ *
+ * It calls `fs.realpathSync.native`, never the JS `fs.realpathSync`: only the native one returns the on-disk
+ * case on macOS, where the file system is case-insensitive. The main process's real-path containment
+ * helpers (`src/main/utils/real-path-containment.ts`) and the memory-folder check in
+ * `src/shared/maestro-lib/translation/memory.ts` both judge a path through it.
+ */
+export function realpathThroughAncestor(p: string): string {
+	let current = p;
+	const rest: string[] = [];
+	for (let i = 0; i < 64; i++) {
+		try {
+			const real = fs.realpathSync.native(current);
+			return rest.length > 0 ? path.join(real, ...rest.reverse()) : real;
+		} catch {
+			const parent = path.dirname(current);
+			if (parent === current) return p;
+			rest.push(path.basename(current));
+			current = parent;
+		}
+	}
+	return p;
+}
+
+/**
  * Split a version string into its numeric part and optional pre-release suffix.
  *
  * @param version - Cleaned version string (no 'v' prefix), e.g., "0.15.0-rc.1"

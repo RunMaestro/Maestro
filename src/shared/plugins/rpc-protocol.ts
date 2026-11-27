@@ -289,7 +289,7 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 		case 'shell.openExternal': {
 			const url = typeof p.url === 'string' ? p.url : undefined;
 			if (!url) return undefined;
-			return hostnameOf(url);
+			return openExternalTargetOf(url);
 		}
 		case 'transcripts.read':
 		case 'transcripts.append':
@@ -324,4 +324,23 @@ function hostnameOf(url: string): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * Scope target of a URL a plugin asks the OS to open: the hostname, or for a
+ * `file:` URL the whole URL in canonical form (`file:///abs/path`). A local
+ * file has no hostname, so it used to give no target, and the broad
+ * (unscoped) grant then let a plugin open any file on disk, apps and scripts
+ * included. Only a grant that names a `file:` scope covers a `file:` target
+ * (`isPermitted`).
+ */
+function openExternalTargetOf(url: string): string | undefined {
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return undefined;
+	}
+	if (parsed.protocol === 'file:') return parsed.href;
+	return parsed.hostname || undefined;
 }

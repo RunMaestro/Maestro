@@ -34,7 +34,7 @@
  * ```
  */
 
-import React, { useRef, useEffect, ReactNode, useCallback } from 'react';
+import React, { useRef, useEffect, useLayoutEffect, ReactNode, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { GhostIconButton } from './GhostIconButton';
@@ -494,6 +494,30 @@ export interface ModalFooterProps {
 	confirmButtonRef?: React.RefObject<HTMLButtonElement>;
 	/** Ref to attach to cancel button for focus management */
 	cancelButtonRef?: React.RefObject<HTMLButtonElement>;
+	/**
+	 * Answer only a key press that began after the footer mounted. An Enter or
+	 * Space keydown that auto-repeats, or that the platform stamped before the
+	 * mount, is swallowed along with its default action (the click a button
+	 * makes of Enter, and of Space on release), and a handled Enter cancels its
+	 * own default so one press answers once. For a dialog that can appear under
+	 * the user's fingers, such as an approval queue, where a held Enter would
+	 * otherwise answer each dialog as it mounts. Defaults to false.
+	 */
+	ignoreHeldKeys?: boolean;
+}
+
+/** Keys that press a focused button. */
+const BUTTON_ACTIVATION_KEYS = new Set(['Enter', ' ']);
+
+/**
+ * Whether a keydown belongs to a press that began before `mountedAt` (a
+ * `performance.now()` reading): an auto-repeat of a held key, or a press the
+ * platform stamped earlier. A browser keeps `Event.timeStamp` on the same
+ * clock. It is read off the native event because React substitutes
+ * `Date.now()` for a zero stamp.
+ */
+function isHeldKeyPress(e: React.KeyboardEvent, mountedAt: number): boolean {
+	return e.repeat || e.nativeEvent.timeStamp < mountedAt;
 }
 
 /**
@@ -533,11 +557,30 @@ export function ModalFooter({
 	confirmClassName = '',
 	confirmButtonRef,
 	cancelButtonRef,
+	ignoreHeldKeys = false,
 }: ModalFooterProps) {
+	// When the footer mounted, for `ignoreHeldKeys`. Set in a layout effect: no
+	// key can reach the buttons before the commit it runs in. Until then every
+	// press reads as held, so the guard fails closed.
+	const mountedAtRef = useRef(Number.POSITIVE_INFINITY);
+	useLayoutEffect(() => {
+		mountedAtRef.current = performance.now();
+	}, []);
+
 	// Stop Enter key propagation to prevent parent handlers from triggering after modal closes
 	const handleKeyDown = (e: React.KeyboardEvent, action: () => void) => {
+		if (
+			ignoreHeldKeys &&
+			BUTTON_ACTIVATION_KEYS.has(e.key) &&
+			isHeldKeyPress(e, mountedAtRef.current)
+		) {
+			e.preventDefault();
+			e.stopPropagation();
+			return;
+		}
 		if (e.key === 'Enter') {
 			e.stopPropagation();
+			if (ignoreHeldKeys) e.preventDefault();
 			action();
 		}
 	};

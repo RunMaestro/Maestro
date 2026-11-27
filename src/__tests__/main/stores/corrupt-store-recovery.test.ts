@@ -118,6 +118,39 @@ describe('createStoreDeserializer', () => {
 		expect(fs.readFileSync(path.join(tempDir, preserved[0]), 'utf-8')).toBe(torn);
 	});
 
+	it('preserves both sidecars when two corruptions happen within the same second', () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date(2026, 8, 22, 7, 15, 30));
+		try {
+			const deserialize = createStoreDeserializer(storePath);
+			fs.writeFileSync(storePath, 'first-corrupt', 'utf-8');
+			expect(deserialize('first-corrupt')).toEqual({});
+
+			fs.writeFileSync(storePath, 'second-corrupt', 'utf-8');
+			expect(deserialize('second-corrupt')).toEqual({});
+
+			const preserved = sidecars();
+			expect(preserved).toEqual([
+				'maestro-sessions.corrupt-20260922-071530-2.json',
+				'maestro-sessions.corrupt-20260922-071530.json',
+			]);
+			expect(
+				fs.readFileSync(
+					path.join(tempDir, 'maestro-sessions.corrupt-20260922-071530.json'),
+					'utf-8'
+				)
+			).toBe('first-corrupt');
+			expect(
+				fs.readFileSync(
+					path.join(tempDir, 'maestro-sessions.corrupt-20260922-071530-2.json'),
+					'utf-8'
+				)
+			).toBe('second-corrupt');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('rethrows anything that is not a parse failure', () => {
 		const deserialize = createStoreDeserializer(storePath);
 		const exploding = {

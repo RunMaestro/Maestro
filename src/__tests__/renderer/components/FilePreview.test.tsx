@@ -1350,6 +1350,58 @@ describe('FilePreview', () => {
 			const textarea = screen.getByRole('textbox');
 			expect(textarea).toHaveValue('preserved content');
 		});
+
+		// What Back used to do: the parent hands the SAME mounted preview another file.
+		// The content effect skips an EMPTY file, so the first file's typed text stayed
+		// on screen as unsaved changes, and Cmd+S wrote it over the file just opened.
+		it('does not carry text typed in one file over to the next, even an empty one', () => {
+			const onSave = vi.fn().mockResolvedValue(true);
+			const fileA = { name: 'a.md', content: 'text of a', path: '/test/a.md' };
+			const fileB = { name: 'b.md', content: '', path: '/test/b.md' };
+			const props = {
+				...defaultProps,
+				markdownEditMode: true,
+				onSave,
+				onEditContentChange: vi.fn(),
+			};
+			const { rerender } = render(<FilePreview {...props} file={fileA} />);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'unsaved edit of a' } });
+			// The file tab keeps the draft and hands it back down.
+			rerender(<FilePreview {...props} file={fileA} externalEditContent="unsaved edit of a" />);
+			expect(screen.getByRole('textbox')).toHaveValue('unsaved edit of a');
+
+			// Back, once the user agreed to drop the edits: another path, no draft.
+			rerender(<FilePreview {...props} file={fileB} externalEditContent={undefined} />);
+
+			const textarea = screen.getByRole('textbox');
+			expect(textarea).toHaveValue('');
+			fireEvent.keyDown(textarea, { key: 's', metaKey: true });
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('shows the next file, not the previous file text, when that file has content', () => {
+			const fileA = { name: 'a.md', content: 'text of a', path: '/test/a.md' };
+			const fileB = { name: 'b.md', content: 'text of b', path: '/test/b.md' };
+			const props = { ...defaultProps, markdownEditMode: true };
+			const { rerender } = render(<FilePreview {...props} file={fileA} />);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'unsaved edit of a' } });
+
+			rerender(<FilePreview {...props} file={fileB} />);
+
+			expect(screen.getByRole('textbox')).toHaveValue('text of b');
+		});
+
+		it('keeps text typed in a file while that file stays on screen', () => {
+			const fileA = { name: 'a.md', content: 'text of a', path: '/test/a.md' };
+			const props = { ...defaultProps, markdownEditMode: true };
+			const { rerender } = render(<FilePreview {...props} file={fileA} />);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'unsaved edit of a' } });
+
+			// A re-render for any other reason (a new `file` object, same path and bytes).
+			rerender(<FilePreview {...props} file={{ ...fileA }} />);
+
+			expect(screen.getByRole('textbox')).toHaveValue('unsaved edit of a');
+		});
 	});
 
 	describe('table of contents', () => {

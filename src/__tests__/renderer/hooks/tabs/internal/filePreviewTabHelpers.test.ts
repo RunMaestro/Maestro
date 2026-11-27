@@ -2,11 +2,102 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildFileTabDisplayNames,
 	buildReplacementNavigationHistory,
+	draftWrittenElsewhere,
 	getFileNameParts,
+	nextEditContentPath,
 } from '../../../../../renderer/hooks/tabs/internal/filePreviewTabHelpers';
 import { createMockFileTab } from './testUtils';
 
 describe('filePreviewTabHelpers', () => {
+	describe('nextEditContentPath', () => {
+		it('names the tab file on the first edit of a draft', () => {
+			const tab = createMockFileTab({ path: '/repo/a.ts', editContent: undefined });
+
+			expect(nextEditContentPath(tab, 'first edit')).toBe('/repo/a.ts');
+		});
+
+		it('keeps that name on later edits, even after the tab path has moved', () => {
+			// The tab shows b.ts now, but the draft was typed for a.ts.
+			const tab = createMockFileTab({
+				path: '/repo/b.ts',
+				editContent: 'draft',
+				editContentPath: '/repo/a.ts',
+			});
+
+			expect(nextEditContentPath(tab, 'draft, more')).toBe('/repo/a.ts');
+		});
+
+		it('names the tab file for a draft that predates the stamp', () => {
+			const tab = createMockFileTab({ path: '/repo/a.ts', editContent: 'old draft' });
+
+			expect(nextEditContentPath(tab, 'old draft, more')).toBe('/repo/a.ts');
+		});
+
+		it('names nothing once the draft is cleared', () => {
+			const tab = createMockFileTab({
+				path: '/repo/a.ts',
+				editContent: 'draft',
+				editContentPath: '/repo/a.ts',
+			});
+
+			expect(nextEditContentPath(tab, undefined)).toBeUndefined();
+		});
+
+		it('starts a new draft on a new file after the old one was cleared', () => {
+			// A stale name left behind by a cleared draft must not outlive it.
+			const tab = createMockFileTab({
+				path: '/repo/b.ts',
+				editContent: undefined,
+				editContentPath: '/repo/a.ts',
+			});
+
+			expect(nextEditContentPath(tab, 'fresh')).toBe('/repo/b.ts');
+		});
+
+		it('names an untitled tab by its empty path', () => {
+			const tab = createMockFileTab({ path: '', editContent: '' });
+
+			expect(nextEditContentPath(tab, 'hello')).toBe('');
+		});
+	});
+
+	describe('draftWrittenElsewhere', () => {
+		it('names the file a draft was typed for when a save would write another', () => {
+			const tab = createMockFileTab({ editContent: 'draft', editContentPath: '/repo/a.ts' });
+
+			expect(draftWrittenElsewhere(tab, '/repo/b.ts')).toBe('/repo/a.ts');
+		});
+
+		it('allows a save over the file the draft was typed for', () => {
+			const tab = createMockFileTab({ editContent: 'draft', editContentPath: '/repo/a.ts' });
+
+			expect(draftWrittenElsewhere(tab, '/repo/a.ts')).toBeUndefined();
+		});
+
+		it('allows a save when the tab holds no draft, whatever name is left behind', () => {
+			const tab = createMockFileTab({ editContent: undefined, editContentPath: '/repo/a.ts' });
+
+			expect(draftWrittenElsewhere(tab, '/repo/b.ts')).toBeUndefined();
+		});
+
+		it('trusts a draft that predates the stamp', () => {
+			const tab = createMockFileTab({ editContent: 'old draft', editContentPath: undefined });
+
+			expect(draftWrittenElsewhere(tab, '/repo/b.ts')).toBeUndefined();
+		});
+
+		it('allows a save when the tab cannot be found', () => {
+			expect(draftWrittenElsewhere(undefined, '/repo/b.ts')).toBeUndefined();
+		});
+
+		it('treats an untitled draft as written for no file on disk', () => {
+			const tab = createMockFileTab({ editContent: 'draft', editContentPath: '' });
+
+			expect(draftWrittenElsewhere(tab, '')).toBeUndefined();
+			expect(draftWrittenElsewhere(tab, '/repo/b.ts')).toBe('');
+		});
+	});
+
 	describe('getFileNameParts', () => {
 		it('splits a normal filename into name and extension', () => {
 			expect(getFileNameParts('index.test.ts')).toEqual({

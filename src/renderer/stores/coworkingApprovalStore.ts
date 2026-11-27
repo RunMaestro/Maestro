@@ -21,6 +21,13 @@ export interface CoworkingApprovalRequest {
 	sessionId: string;
 	title: string;
 	message: string;
+	/**
+	 * Free-form text the op carries (the script an eval runs, the text a type
+	 * enters). The dialog shows it in full, in a scrollable block of its own.
+	 */
+	detail?: string;
+	/** Open with Deny focused instead of Allow, so a stray Enter declines. */
+	focusDeny?: boolean;
 	/** Settles the awaiting op: true = allow, false = decline/cancel. */
 	resolve: (approved: boolean) => void;
 }
@@ -47,12 +54,7 @@ export const useCoworkingApprovalStore = create<CoworkingApprovalState>((set, ge
  *  that long, so a belatedly-approved action can't execute after the caller's
  *  round-trip has already timed out. */
 export function requestCoworkingApproval(
-	input: {
-		agentId: string;
-		sessionId: string;
-		title: string;
-		message: string;
-	},
+	input: Omit<CoworkingApprovalRequest, 'id' | 'resolve'>,
 	timeoutMs?: number
 ): Promise<boolean> {
 	const { promise, resolve } = Promise.withResolvers<boolean>();

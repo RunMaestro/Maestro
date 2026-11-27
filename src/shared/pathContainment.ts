@@ -57,3 +57,45 @@ export function normalizeRootRelativePath(relativePath: string): string | null {
 export function isPathInsideRoot(relativePath: string): boolean {
 	return normalizeRootRelativePath(relativePath) !== null;
 }
+
+/**
+ * HFS+ skips format characters (zero-width joiners, bidi controls, the byte order mark) when it compares
+ * names, as git's `next_hfs_char()` does, so a `.git` with one inside is still `.git` there. All of them
+ * are in category Cf, which also covers a few more that no file system skips: folding those too only
+ * widens what is detected.
+ */
+const FORMAT_CHARACTERS = /\p{Cf}/gu;
+
+/**
+ * One path segment reduced to the name a file system may open it as, for DETECTING a name that no spelling
+ * may reach. Dropped: the format characters HFS+ skips, an NTFS stream suffix (`.git::$INDEX_ALLOCATION` is
+ * the folder `.git`), and trailing dots and spaces (Windows opens `.git.` and `.git ` as `.git`). Case is
+ * folded by an upper-case round trip, which also joins U+017F (long s) to `s` the way APFS does.
+ *
+ * It folds on EVERY platform, because the file that carries an untrusted path is read on one machine and
+ * written on another. That is also why it must never ACCEPT a name: on Linux `Prompts` and `prompts` are two
+ * folders. For comparing two real paths on the running platform use `foldPathCase()` in
+ * `src/main/utils/real-path-containment.ts`.
+ */
+export function foldPathSegment(segment: string): string {
+	return segment
+		.replace(FORMAT_CHARACTERS, '')
+		.replace(/:[\s\S]*$/, '')
+		.replace(/[. ]+$/, '')
+		.toUpperCase()
+		.toLowerCase();
+}
+
+/**
+ * Whether any segment of `relativePath` would open as a repository's `.git` folder: `.git` in any case, with
+ * trailing dots or spaces, as an NTFS stream, with a zero-width code point inside, or as its NTFS short name
+ * `git~1`. These are the spellings git itself refuses to check out. A file written under such a segment can
+ * be a hook that runs on the project's next git command, so a path an outsider supplies must not contain one.
+ * Both `/` and `\` separate segments, as in {@link normalizeRootRelativePath}.
+ */
+export function hasGitMetadataSegment(relativePath: string): boolean {
+	return relativePath.split(/[/\\]/).some((segment) => {
+		const name = foldPathSegment(segment);
+		return name === '.git' || name === 'git~1';
+	});
+}

@@ -15,6 +15,7 @@
 import type { PluginManifest } from './plugin-manifest';
 import type { PluginCapability } from './permissions';
 import { serializedJsonByteLength } from '../jsonUtils';
+import { isStrictCssColor } from '../cssColor';
 
 /**
  * Maximum UTF-8 size of one host view's serialized BlockView data. This pure
@@ -37,8 +38,9 @@ export const MAX_PANEL_POST_BYTES = 64 * 1024;
  */
 export { serializedJsonByteLength };
 
-/** A theme a plugin adds to the theme picker. Colors are validated loosely
- * (a string map) here; the renderer maps them onto its ThemeColors shape. */
+/** A theme a plugin adds to the theme picker. Every color value passed
+ * `isStrictCssColor()` (a value that fails is dropped with an error); keys are
+ * not checked here, the renderer maps them onto its ThemeColors shape. */
 export interface ThemeContribution {
 	/** Namespaced id: `<pluginId>/<localId>`. */
 	id: string;
@@ -751,12 +753,22 @@ function parseTheme(pluginId: string, raw: unknown, errors: string[]): ThemeCont
 		errors.push(`[${pluginId}] theme "${localId}" is missing a colors object`);
 		return null;
 	}
+	// Theme colors end up in CSS text (`<style>` blocks), so a value that is not a
+	// plain color could close its rule and add rules of its own. One bad value
+	// drops only that key (the base palette fills it), never the whole theme.
 	const colors: Record<string, string> = {};
 	for (const [k, v] of Object.entries(raw.colors)) {
-		if (typeof v === 'string') colors[k] = v;
+		if (typeof v !== 'string') continue;
+		if (isStrictCssColor(v)) {
+			colors[k] = v;
+		} else {
+			errors.push(
+				`[${pluginId}] theme "${localId}" color "${k}" must be a hex, rgb(), hsl() or named CSS color; it was dropped`
+			);
+		}
 	}
 	if (Object.keys(colors).length === 0) {
-		errors.push(`[${pluginId}] theme "${localId}" has no string colors`);
+		errors.push(`[${pluginId}] theme "${localId}" has no valid colors`);
 		return null;
 	}
 	return {

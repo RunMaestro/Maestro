@@ -360,4 +360,94 @@ describe('Modal', () => {
 			expect(screen.getByRole('button', { name: 'Remove' }).className).toContain('py-1.5');
 		});
 	});
+
+	describe('ModalFooter ignoreHeldKeys', () => {
+		/**
+		 * A dialog that appears under the user's fingers (an approval queue) must
+		 * not take an answer from a key held down before it mounted. A focused
+		 * button turns Enter into a click on keypress and Space into a click on
+		 * release, so a swallowed keydown must cancel its default too: the
+		 * `false` from `fireEvent.keyDown` is that cancellation.
+		 */
+		function renderFooter(overrides: Partial<React.ComponentProps<typeof ModalFooter>> = {}) {
+			const onCancel = vi.fn();
+			const onConfirm = vi.fn();
+			render(
+				<ModalFooter
+					theme={mockTheme}
+					onCancel={onCancel}
+					onConfirm={onConfirm}
+					cancelLabel="Deny"
+					confirmLabel="Allow"
+					ignoreHeldKeys
+					{...overrides}
+				/>
+			);
+			return {
+				onCancel,
+				onConfirm,
+				allow: screen.getByRole('button', { name: 'Allow' }),
+				deny: screen.getByRole('button', { name: 'Deny' }),
+			};
+		}
+
+		/** Dispatch a keydown the platform stamped at `timeStamp` (performance clock). */
+		function keyDownStampedAt(target: HTMLElement, key: string, timeStamp: number): boolean {
+			const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+			Object.defineProperty(event, 'timeStamp', { value: timeStamp });
+			return target.dispatchEvent(event);
+		}
+
+		it('answers a fresh Enter once and cancels its default, so no click follows', () => {
+			const { allow, onConfirm } = renderFooter();
+
+			expect(fireEvent.keyDown(allow, { key: 'Enter' })).toBe(false);
+			expect(onConfirm).toHaveBeenCalledTimes(1);
+		});
+
+		it('swallows an auto-repeat Enter on either button', () => {
+			const { allow, deny, onConfirm, onCancel } = renderFooter();
+
+			expect(fireEvent.keyDown(allow, { key: 'Enter', repeat: true })).toBe(false);
+			expect(fireEvent.keyDown(deny, { key: 'Enter', repeat: true })).toBe(false);
+			expect(onConfirm).not.toHaveBeenCalled();
+			expect(onCancel).not.toHaveBeenCalled();
+		});
+
+		it('cancels an auto-repeat Space, so a held space bar never presses the button', () => {
+			const { allow, onConfirm } = renderFooter();
+
+			expect(fireEvent.keyDown(allow, { key: ' ', repeat: true })).toBe(false);
+			expect(onConfirm).not.toHaveBeenCalled();
+		});
+
+		it('leaves a fresh Space to the button, which clicks on release', () => {
+			const { allow } = renderFooter();
+
+			expect(fireEvent.keyDown(allow, { key: ' ' })).toBe(true);
+		});
+
+		it('swallows an Enter the platform stamped before the footer mounted', () => {
+			const { allow, onConfirm } = renderFooter();
+
+			// Stamped at the time origin: pressed long before this footer existed,
+			// even though the event reaches the button only now.
+			expect(keyDownStampedAt(allow, 'Enter', 0)).toBe(false);
+			expect(onConfirm).not.toHaveBeenCalled();
+		});
+
+		it('leaves other keys alone', () => {
+			const { allow, onConfirm } = renderFooter();
+
+			expect(fireEvent.keyDown(allow, { key: 'Tab', repeat: true })).toBe(true);
+			expect(onConfirm).not.toHaveBeenCalled();
+		});
+
+		it('is off by default: a repeat Enter still confirms, as before', () => {
+			const { allow, onConfirm } = renderFooter({ ignoreHeldKeys: undefined });
+
+			expect(fireEvent.keyDown(allow, { key: 'Enter', repeat: true })).toBe(true);
+			expect(onConfirm).toHaveBeenCalledTimes(1);
+		});
+	});
 });
