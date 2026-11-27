@@ -769,6 +769,22 @@ describe('createExecutionQueue interrupt', () => {
 			expect(h.turnFor('after').interrupted).toBe(false);
 		});
 
+		it('names no message behind a held head, nor one behind another tab (CodeRabbit on #2166)', async () => {
+			const tree = { on: true };
+			const h = harness({ holdsTree: tree });
+			h.queue.submit(item('write', 't1'));
+			h.queue.submit(item('read', 't1', { readOnly: true }));
+			await h.flush();
+			expect(h.queue.interruptNext('t1')).toBeUndefined();
+
+			const two = harness({ retryHeld: new Set(['t1', 't2']) });
+			two.queue.submit(item('first', 't1'));
+			two.queue.submit(item('second', 't2'));
+			await two.flush();
+			expect(two.queue.interruptNext('t2')).toBeUndefined();
+			expect(two.queue.interruptNext('t1')).toBe('first');
+		});
+
 		it("names no write an Auto Run's working-tree hold keeps (CodeRabbit on #2166)", async () => {
 			const h = harness({ holdsTree: { on: true } });
 			h.queue.submit(item('write', 't1'));

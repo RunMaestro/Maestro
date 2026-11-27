@@ -555,16 +555,13 @@ export function createExecutionQueue<T extends QueueItem>(
 
 		interruptNext(tabId) {
 			if (busyTurns().length > 0) return undefined;
-			// A write an Auto Run's working-tree hold keeps waits for that hold, not for its tab: it is
-			// no hand-over (CodeRabbit on #2166).
-			const entry = entries.find(
-				(e) =>
-					e.state === 'queued' &&
-					e.item.tabId === tabId &&
-					!e.item.paused &&
-					!blockedByTreeHold(e.item, view())
-			);
-			if (!entry) return undefined;
+			// Only the message that starts next: the queue's first ready one, on this tab. One behind
+			// another message, or a write an Auto Run's working-tree hold keeps, waits for that, not
+			// for its tab alone: no hand-over (CodeRabbit on #2166).
+			const entry = entries.find((e) => e.state === 'queued' && !e.item.paused);
+			if (!entry || entry.item.tabId !== tabId || blockedByTreeHold(entry.item, view())) {
+				return undefined;
+			}
 			entry.interruptRequested = true;
 			return entry.item.id;
 		},

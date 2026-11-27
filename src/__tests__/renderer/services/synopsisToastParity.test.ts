@@ -295,6 +295,53 @@ describe('U3: the "Synopsis" toast after a plain turn', () => {
 		expect(toasts().map((toast) => toast.message)).toEqual([SUMMARY]);
 	});
 
+	it('hosted: a held message on the tab does not stop the watch from reading (CodeRabbit on #2166)', async () => {
+		seed('hosted');
+		hostTab('busy', 100);
+		watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1');
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS);
+		hostTab('idle');
+		usePeerMirrorStore.setState((state) => ({
+			peers: {
+				...state.peers,
+				box: {
+					...state.peers.box,
+					queues: {
+						h1: [
+							{
+								itemId: 'held',
+								tabId: 't1',
+								queuedAt: 150,
+								kind: 'message' as const,
+								text: 'later',
+								paused: true,
+							},
+						],
+					},
+				},
+			},
+		}));
+		hostEntries.push(entry('turn', 140));
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 3);
+		expect(toasts().map((toast) => toast.message)).toEqual([SUMMARY]);
+	});
+
+	it("hosted: a later turn's entry is not this turn's (CodeRabbit on #2166)", async () => {
+		seed('hosted');
+		hostTab('busy', 100);
+		watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1');
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS);
+		// This turn ends and writes nothing; another client's turn runs, and its synopsis saves.
+		hostTab('idle');
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		hostTab('busy', 300);
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+		hostTab('idle');
+		hostEntries.push(entry('later', 320, { summary: 'the other turn' }));
+		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 3);
+		expect(toasts()).toEqual([]);
+	});
+
 	it("hosted: another tab's entry is not this tab's", async () => {
 		seed('hosted');
 		hostTab('busy', 100);

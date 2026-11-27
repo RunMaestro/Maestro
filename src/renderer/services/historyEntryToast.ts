@@ -228,10 +228,14 @@ export function watchHostedTurnSynopsis(
 	let idleSince: number | undefined;
 	/** The tab's provider session as last seen: the entry must be this conversation's. */
 	let tabSessionId: string | undefined;
+	/** When a later turn of the tab started (host clock): its entry is that turn's, not this one's. */
+	let laterRunStartedAt: number | undefined;
 
 	const watch = {
 		key: `${sessionId}\u0000${tabId}`,
-		covers: (entry: HistoryEntry) => runStartedAt === undefined || entry.timestamp >= runStartedAt,
+		covers: (entry: HistoryEntry) =>
+			(runStartedAt === undefined || entry.timestamp >= runStartedAt) &&
+			(laterRunStartedAt === undefined || entry.timestamp < laterRunStartedAt),
 		stop: () => {
 			if (done) return;
 			done = true;
@@ -259,7 +263,10 @@ export function watchHostedTurnSynopsis(
 		return {
 			peer,
 			tab: agent?.aiTabs?.find((candidate) => candidate.id === tabId),
-			waiting: (peer?.queues?.[target.agentId] ?? []).some((item) => item.tabId === tabId),
+			// A held message never starts a turn: it is no turn still to come (CodeRabbit on #2166).
+			waiting: (peer?.queues?.[target.agentId] ?? []).some(
+				(item) => item.tabId === tabId && !item.paused
+			),
 		};
 	};
 
@@ -275,15 +282,21 @@ export function watchHostedTurnSynopsis(
 		if (typeof tab?.agentSessionId === 'string' && tab.agentSessionId) {
 			tabSessionId = tab.agentSessionId;
 		}
+		// Still waiting in the host's queue: the turn has not run yet, and a turn running now is the
+		// one ahead of it.
+		if (waiting && runStartedAt === undefined) return;
 		const running = tab?.state === 'busy' || !!peer?.liveTurns?.[key];
 		if (running) {
-			if (typeof tab?.thinkingStartTime === 'number') {
-				runStartedAt ??= tab.thinkingStartTime;
+			const started =
+				typeof tab?.thinkingStartTime === 'number' ? tab.thinkingStartTime : undefined;
+			if (runStartedAt === undefined) runStartedAt = started;
+			else if (idleSince !== undefined && started !== undefined && started !== runStartedAt) {
+				// The tab ran this turn, went free, and now runs another (CodeRabbit on #2166).
+				laterRunStartedAt ??= started;
 			}
 			idleSince = undefined;
 			return;
 		}
-		// Still waiting in the host's queue: the turn has not run yet.
 		if (waiting) return;
 		idleSince ??= at;
 		if (at - idleSince > (opts.idleMs ?? HOSTED_SYNOPSIS_IDLE_MS)) {

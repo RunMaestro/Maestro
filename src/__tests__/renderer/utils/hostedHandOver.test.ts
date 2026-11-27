@@ -112,6 +112,15 @@ describe('U2: the tab stays busy through the hand-over to the next queued messag
 		expect(row.aiTabs[0].thinkingStartTime).toBe(500);
 	});
 
+	it("hosted: only the host queue's next message is a hand-over; one behind it reads queued", () => {
+		const row = projectHostedSession(idleRow('hosted'), {
+			agent: host('idle', 'idle'),
+			queue: [waiting({ itemId: 'a', tabId: 't2', queuedAt: 400 }), waiting()],
+		});
+		expect(row.aiTabs.find((t) => t.id === 't2')!.state).toBe('busy');
+		expect(row.aiTabs.find((t) => t.id === 't1')!.state).toBe('idle');
+	});
+
 	it('hosted: a held message on the host is no hand-over: the tab reads idle', () => {
 		const row = projectHostedSession(idleRow('hosted'), {
 			agent: host(),

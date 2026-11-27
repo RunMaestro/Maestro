@@ -658,10 +658,9 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 	const nextWaitingSince = new Map<string, number>();
 	if (!hostTabs.some((tab) => tab.state === 'busy')) {
 		for (const [tabId, since] of input.handingOver ?? []) nextWaitingSince.set(tabId, since);
-		for (const waiting of input.queue ?? []) {
-			if (waiting.paused || nextWaitingSince.has(waiting.tabId)) continue;
-			nextWaitingSince.set(waiting.tabId, waiting.queuedAt);
-		}
+		// Only the host queue's first ready message starts next; one behind it waits for that turn.
+		const next = (input.queue ?? []).find((waiting) => !waiting.paused);
+		if (next && !nextWaitingSince.has(next.tabId)) nextWaitingSince.set(next.tabId, next.queuedAt);
 	}
 
 	const aiTabs: AITab[] = [];
