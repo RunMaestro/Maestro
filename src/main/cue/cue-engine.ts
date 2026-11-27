@@ -67,7 +67,11 @@ import { createCueSessionRuntimeService } from './cue-session-runtime-service';
 import type { CueSessionRuntimeService, SessionInitReason } from './cue-session-runtime-service';
 import { createCueSessionRegistry, type CueSessionRegistry } from './cue-session-registry';
 import type { SessionState } from './cue-session-state';
-import { createCueRecoveryService, type CueRecoveryService } from './cue-recovery-service';
+import {
+	createCueRecoveryService,
+	ORPHANED_RUN_MESSAGE,
+	type CueRecoveryService,
+} from './cue-recovery-service';
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
 import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './cue-metrics';
 import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
@@ -168,6 +172,12 @@ export class CueEngine {
 	private activityLog: CueActivityLog = createCueActivityLog();
 	/** Consecutive failed runs per (agent, subscription). See cue-failure-streak.ts. */
 	private failureStreaks: CueFailureStreakTracker = createCueFailureStreakTracker();
+	/**
+	 * Runs the engine-start sweep settled as `failed` because the PREVIOUS
+	 * engine died mid-run. Set by hydrateActivityLogFromDb, read once by
+	 * seedFailureStreaks: a quit or crash is not the subscription failing.
+	 */
+	private orphanedRunIds = new Set<string>();
 	private registry: CueSessionRegistry;
 	private fanInTracker!: CueFanInTracker;
 	private runManager!: CueRunManager;
@@ -1486,14 +1496,6 @@ export class CueEngine {
 			});
 	}
 
-	/**
-	 * Load recent cue_events from sqlite and seed the in-memory activity log.
-	 * stdout/stderr/exitCode are not persisted, so the rehydrated entries show
-	 * the metadata + status + timing only - sufficient for the activity panel.
-	 * Orphaned `running` rows (from a prior app crash before the run could
-	 * finalize) are surfaced as `failed` so the UI doesn't render them as a
-	 * 0ms success.
-	 */
 	/** The failure-alert threshold in force for one agent's cue.yaml. */
 	private failureAlertThresholdFor(sessionId: string): number {
 		return resolveFailureAlertThreshold(this.registry.get(sessionId)?.config.settings);
@@ -1532,22 +1534,39 @@ export class CueEngine {
 	/**
 	 * Rebuild failure streaks from the activity log hydrated at start, so a
 	 * subscription that was failing before a restart still reads as failing
-	 * (and is not announced a second time).
+	 * (and is not announced a second time). Runs orphaned by a previous engine
+	 * exit are skipped, like `stopped` runs: they neither count nor reset.
 	 */
 	private seedFailureStreaks(): void {
 		try {
-			this.failureStreaks.seed(this.activityLog.getAll(), (sessionId) =>
-				this.failureAlertThresholdFor(sessionId)
+			const orphaned = this.orphanedRunIds;
+			this.failureStreaks.seed(
+				this.activityLog.getAll().filter((run) => !orphaned.has(run.runId)),
+				(sessionId) => this.failureAlertThresholdFor(sessionId)
 			);
 		} catch (err) {
 			captureException(err, { operation: 'cue:failureStreakSeed' });
+		} finally {
+			this.orphanedRunIds = new Set();
 		}
 	}
 
+	/**
+	 * Load recent cue_events from sqlite and seed the in-memory activity log.
+	 * stdout/stderr/exitCode are not persisted, so the rehydrated entries show
+	 * the metadata + status + timing only - sufficient for the activity panel.
+	 * Orphaned `running` rows (from a prior app crash before the run could
+	 * finalize) are surfaced as `failed` so the UI doesn't render them as a
+	 * 0ms success.
+	 */
 	private hydrateActivityLogFromDb(): void {
+		this.orphanedRunIds = new Set();
 		try {
 			const records = getRecentCueEvents(0, 1000);
 			if (records.length === 0) return;
+			for (const record of records) {
+				if (record.errorMessage === ORPHANED_RUN_MESSAGE) this.orphanedRunIds.add(record.id);
+			}
 			const sessionNamesById = new Map(this.deps.getSessions().map((s) => [s.id, s.name]));
 			// getRecentCueEvents returns newest-first; reverse so the ring buffer
 			// ends up with oldest at the front and newest at the back, matching

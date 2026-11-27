@@ -16,6 +16,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as yaml from 'js-yaml';
 import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
+import type { CueEventRecord } from '../../../main/cue/cue-db';
+import { ORPHANED_RUN_MESSAGE } from '../../../main/cue/cue-recovery-service';
 
 // Mock the yaml loader
 const mockLoadCueConfig = vi.fn<(projectRoot: string) => CueConfig | null>();
@@ -70,10 +72,12 @@ vi.mock('../../../main/cue/cue-task-scanner', async () => {
 const mockInitCueDb = vi.fn();
 const mockCloseCueDb = vi.fn();
 const mockPruneCueEvents = vi.fn();
+const mockGetRecentCueEvents = vi.fn<(...args: unknown[]) => CueEventRecord[]>(() => []);
 vi.mock('../../../main/cue/cue-db', () => ({
 	initCueDb: (...args: unknown[]) => mockInitCueDb(...args),
 	closeCueDb: () => mockCloseCueDb(),
 	pruneCueEvents: (...args: unknown[]) => mockPruneCueEvents(...args),
+	getRecentCueEvents: (...args: unknown[]) => mockGetRecentCueEvents(...args),
 	failOrphanedRunningEvents: () => 0,
 	isCueDbReady: () => true,
 	recordCueEvent: vi.fn(),
@@ -4005,6 +4009,50 @@ describe('CueEngine', () => {
 
 			engine.removeSession('session-1');
 			expect(engine.getFailureStreaks()).toEqual([]);
+			engine.stop();
+		});
+
+		it('re-seeds streaks from cue_events on start, skipping runs orphaned by an engine exit', async () => {
+			mockLoadCueConfig.mockReturnValue(triggerConfig());
+			const failedRow = (id: string, at: number, errorMessage: string): CueEventRecord => ({
+				id,
+				type: 'cli.trigger',
+				triggerName: 'sms-poll',
+				sessionId: 'session-1',
+				subscriptionName: 'sms-poll',
+				status: 'failed',
+				createdAt: at,
+				completedAt: at + 5,
+				payload: null,
+				errorMessage,
+			});
+			// Newest first, as getRecentCueEvents returns them. The newest row is
+			// one the start-up sweep settled because the previous engine died.
+			mockGetRecentCueEvents.mockReturnValueOnce([
+				failedRow('orphan', 3_000, ORPHANED_RUN_MESSAGE),
+				failedRow('real-2', 2_000, 'exit 1'),
+				failedRow('real-1', 1_000, 'exit 1'),
+			]);
+			const deps = createMockDeps({ onCueRun: scriptedRuns(['failed']) });
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			// Two real failures, not three: the orphan neither counts nor resets.
+			expect(engine.getFailureStreaks()).toEqual([
+				expect.objectContaining({
+					subscriptionName: 'sms-poll',
+					consecutiveFailures: 2,
+					failing: false,
+				}),
+			]);
+			expect(streakPayloads(deps, 'subscriptionFailing')).toHaveLength(0);
+
+			// The next real failure is the third, so it alerts.
+			await runTimes(engine, 1);
+			const alerts = streakPayloads(deps, 'subscriptionFailing');
+			expect(alerts).toHaveLength(1);
+			expect(alerts[0]).toMatchObject({ consecutiveFailures: 3 });
+
 			engine.stop();
 		});
 
