@@ -1618,7 +1618,7 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote new tab under a requested id (R15)', () => {
-		it('takes the id a Federation client drew the tab under, and its own when that id is taken', () => {
+		it('takes the id a Federation client drew the tab under, and makes no second tab when that id is taken (R25)', () => {
 			const session = createMockSession({ id: 'session-1' });
 			const takenId = session.aiTabs[0].id;
 			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
@@ -1630,15 +1630,23 @@ describe('useRemoteIntegration', () => {
 				tabId: 'drawn-here-1',
 			});
 
+			const count = useSessionStore.getState().sessions[0].aiTabs.length;
+			// The same request again (its answer was lost), and an id a tab already has: the tab
+			// under that id is answered, and no second tab is made.
 			act(() => {
-				onRemoteNewTabHandler?.('session-1', 'chan-2', true, takenId);
+				onRemoteNewTabHandler?.('session-1', 'chan-2', true, 'drawn-here-1');
+				onRemoteNewTabHandler?.('session-1', 'chan-3', true, takenId);
 			});
 			const tabs = useSessionStore.getState().sessions[0].aiTabs;
+			expect(tabs).toHaveLength(count);
 			expect(tabs.filter((tab) => tab.id === takenId)).toHaveLength(1);
-			const answered = vi
-				.mocked(mockProcess.sendRemoteNewTabResponse)
-				.mock.calls.find(([channel]) => channel === 'chan-2')?.[1] as { tabId: string };
-			expect(answered.tabId).not.toBe(takenId);
+			expect(tabs.filter((tab) => tab.id === 'drawn-here-1')).toHaveLength(1);
+			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('chan-2', {
+				tabId: 'drawn-here-1',
+			});
+			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('chan-3', {
+				tabId: takenId,
+			});
 		});
 	});
 

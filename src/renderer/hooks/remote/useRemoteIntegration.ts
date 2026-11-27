@@ -731,14 +731,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 				flushSync(() => {
 					updateSessionWith(sessionId, (s) => {
+						// A Federation client draws the tab under a fresh id before it asks (R15), so a
+						// tab already under that id is the one this same request made (its answer was
+						// lost): answer it, make no second one (R25).
+						if (tabId && s.aiTabs.some((tab) => tab.id === tabId)) {
+							newTabId = tabId;
+							return s;
+						}
 						// Use createTab helper. `activate: false` appends the tab without
 						// touching any active-* id, so it shows up in the tab bar the way
 						// a browser opens a background tab. A Federation client's id for a tab it
-						// already drew (R15) is taken when no tab has it.
-						const requested =
-							tabId && !s.aiTabs.some((tab) => tab.id === tabId) ? tabId : undefined;
+						// already drew (R15) is taken.
 						const result = createTab(s, {
-							...(requested ? { id: requested } : {}),
+							...(tabId ? { id: tabId } : {}),
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
 							activate: !background,

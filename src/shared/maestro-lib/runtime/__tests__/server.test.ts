@@ -201,17 +201,24 @@ describe('runtime server', () => {
 		expect(value(await runtime.tabs.list('a1')).map((candidate) => candidate.id)).toEqual(['t1']);
 	});
 
-	it('creates a tab under the id the client asks for, and its own when that id is taken (R15)', async () => {
+	it('creates a tab under the id the client asks for, and makes no second tab when that id is taken (R15, R25)', async () => {
 		value(await client.connection.connect());
 		const asked = value(await client.tabs.create('a1', { tabId: 'drawn-here-1' }));
 		expect(asked.tabId).toBe('drawn-here-1');
 		expect(value(await runtime.tabs.list('a1')).map((tab) => tab.id)).toContain('drawn-here-1');
-		// Taken (or not an id): the host answers its own id, and never replaces a tab.
+		const count = value(await runtime.tabs.list('a1')).length;
+		// The same request again (its answer was lost): the tab it made, never a second one.
+		const again = value(await client.tabs.create('a1', { tabId: 'drawn-here-1' }));
+		expect(again.tabId).toBe('drawn-here-1');
 		const taken = value(await client.tabs.create('a1', { tabId: 't1' }));
-		expect(taken.tabId).not.toBe('t1');
+		expect(taken.tabId).toBe('t1');
+		const listed = value(await runtime.tabs.list('a1'));
+		expect(listed).toHaveLength(count);
+		expect(listed.filter((tab) => tab.id === 't1')).toHaveLength(1);
+		expect(listed.filter((tab) => tab.id === 'drawn-here-1')).toHaveLength(1);
+		// Not an id: the host answers its own.
 		const bad = value(await client.tabs.create('a1', { tabId: 'no spaces/allowed' }));
 		expect(bad.tabId).not.toBe('no spaces/allowed');
-		expect(value(await runtime.tabs.list('a1')).filter((tab) => tab.id === 't1')).toHaveLength(1);
 	});
 
 	it('answers settings and providers', async () => {

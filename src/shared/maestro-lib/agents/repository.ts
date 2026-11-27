@@ -1059,12 +1059,14 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		return run(method, async () => {
 			const agent = findAgent(agentId);
 			if (!agent) return noAgent(method, agentId);
-			const { agent: next, tab } = addTabRecord(
-				agent,
-				ctx,
-				await readTabDefaults(),
-				readRequestedTabId(requestedId)
-			);
+			const requested = readRequestedTabId(requestedId);
+			// A client draws the tab under a fresh id before it asks (R15), so a tab already under
+			// that id is the one this same request made (its answer was lost): answer it, make no
+			// second one (R25).
+			if (requested && (agent.aiTabs ?? []).some((existing) => existing.id === requested)) {
+				return { ok: true, plan: { value: { tabId: requested }, events: [] } };
+			}
+			const { agent: next, tab } = addTabRecord(agent, ctx, await readTabDefaults(), requested);
 			return {
 				ok: true,
 				plan: {
