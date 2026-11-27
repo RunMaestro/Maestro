@@ -272,6 +272,22 @@ export function findLeafByTabRef(
 	return null;
 }
 
+/**
+ * `layout` with every leaf that shows `from` showing `to` instead (a tab whose id changed). The
+ * same reference back when no leaf shows `from`.
+ */
+export function retargetLeafTab(
+	layout: PanelLayoutNode,
+	from: UnifiedTabRef,
+	to: UnifiedTabRef
+): PanelLayoutNode {
+	if (layout.kind === 'leaf') return sameTabRef(layout.tab, from) ? { ...layout, tab: to } : layout;
+	const children = layout.children.map((child) => retargetLeafTab(child, from, to));
+	return children.every((child, i) => child === layout.children[i])
+		? layout
+		: { ...layout, children };
+}
+
 /** Find the leaf whose node id is `leafId`, or null if none matches. */
 export function findLeafById(layout: PanelLayoutNode, leafId: string): PanelLayoutNode | null {
 	if (layout.kind === 'leaf') {

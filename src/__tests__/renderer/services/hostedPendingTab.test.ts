@@ -302,4 +302,80 @@ describe('New Tab while the link is down (R15)', () => {
 		const rename = act$.mock.calls.find(([, , action]) => action?.kind === 'rename-tab')?.[2];
 		expect(rename).toMatchObject({ tabId, name: 'Notes' });
 	});
+
+	it('keeps a tile on the tab when an older host gives it its own id (CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		const layout = {
+			kind: 'split' as const,
+			id: 'split-1',
+			direction: 'row' as const,
+			sizes: [50, 50],
+			children: [
+				{ kind: 'leaf' as const, id: 'leaf-1', tab: { type: 'ai' as const, id: 't1' } },
+				{ kind: 'leaf' as const, id: 'leaf-2', tab: { type: 'ai' as const, id: tabId } },
+			],
+		};
+		useSessionStore.setState({
+			sessions: [
+				{
+					...current(),
+					tabGroups: [{ id: 'g1', name: 'Pair', layout, focusedPaneId: 'leaf-2', createdAt: 1 }],
+				},
+			],
+		});
+		hydrateHost(['t1'], 'connected');
+		act$.mockResolvedValue({ ok: true, result: { kind: 'new-tab', tabId: 'host-own' } });
+
+		createPendingHostTabs(current());
+		await flush();
+
+		const [group] = current().tabGroups;
+		const leaves = group.layout.kind === 'split' ? group.layout.children : [];
+		expect(leaves.map((leaf) => (leaf.kind === 'leaf' ? leaf.tab.id : null))).toEqual([
+			't1',
+			'host-own',
+		]);
+	});
+
+	it('gives the host the pills the tab has when the host answers, not when it was asked (CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session, { fields: { showThinking: 'on' } })) as string;
+		});
+		hydrateHost(['t1'], 'connected');
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) => {
+			if (action.kind === 'new-tab') {
+				// The user turns thinking off while the host makes the tab, then its report lands.
+				useSessionStore.setState({
+					sessions: [
+						{
+							...current(),
+							aiTabs: current().aiTabs.map((tab) =>
+								tab.id === tabId ? { ...tab, showThinking: 'off' as const } : tab
+							),
+						},
+					],
+				});
+				useSessionStore.setState({
+					sessions: [projectHostedSession(current(), { agent: hostAgent(['t1', tabId]) })],
+				});
+				return { ok: true, result: { kind: 'new-tab', tabId } };
+			}
+			return { ok: true, result: { kind: action.kind, tabId } };
+		});
+
+		createPendingHostTabs(current());
+		await flush();
+
+		const patch = act$.mock.calls.find(([, , action]) => action?.kind === 'update-tab')?.[2];
+		expect(patch).toMatchObject({ tabId, patch: { thinking: 'off' } });
+		expect(current().aiTabs.find((tab) => tab.id === tabId)?.showThinking).toBe('off');
+	});
 });

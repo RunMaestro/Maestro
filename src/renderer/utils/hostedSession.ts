@@ -217,6 +217,9 @@ function sameMetadata(a: LogEntry['metadata'], b: LogEntry['metadata']): boolean
  * this tab already drew before (an earlier message with the same words), and never before the send
  * (a message another client sent with the same words), so a kept bubble waits for its own copy.
  */
+/** How far the host's clock may run behind this one when its copy of a kept message is matched. */
+const KEPT_COPY_CLOCK_SKEW_MS = 60_000;
+
 function withoutKeptCopies(
 	older: LogEntry[],
 	host: readonly LogEntry[],
@@ -230,7 +233,11 @@ function withoutKeptCopies(
 		if (!entry.keptForHost || entry.keptSentAt === undefined) return true;
 		const at = copies.findIndex(
 			(copy) =>
-				copy.text === entry.text && (copy.images?.length ?? 0) === (entry.images?.length ?? 0)
+				copy.text === entry.text &&
+				(copy.images?.length ?? 0) === (entry.images?.length ?? 0) &&
+				// Written after the bubble (allowing for the two clocks): an older message the host
+				// read in now, with the same words, is not this one.
+				copy.timestamp >= entry.timestamp - KEPT_COPY_CLOCK_SKEW_MS
 		);
 		if (at === -1) return true;
 		copies.splice(at, 1);
@@ -569,7 +576,7 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 		}
 		// The host made a tab opened here while it was down: from now on it is the host's.
 		const reported = local.pendingHostTab ? { ...local, pendingHostTab: undefined } : local;
-		const next = projectTab(
+		const projected = projectTab(
 			reported,
 			host,
 			logsFor(local.id, local.logs ?? []),
@@ -582,6 +589,16 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 				kept: input.keptCuts?.has(local.id) === true,
 			}
 		);
+		// Its first report is the host's blank tab: the name and pills given here stay, and go to
+		// the host with the answer to its creation (`createPendingHostTab()`).
+		const next = local.pendingHostTab
+			? {
+					...projected,
+					name: local.name ?? projected.name,
+					saveToHistory: local.saveToHistory,
+					showThinking: local.showThinking,
+				}
+			: projected;
 		if (next !== local) changed = true;
 		aiTabs.push(next);
 	}

@@ -103,6 +103,7 @@ describe('mergeHostedLogs', () => {
 		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true, keptSentAt: 6 });
 		const live = mergeHostedLogs([local('h1'), bubble], [record('h1')], [record('k1', 'hello')]);
 		const drawn = live.find((e) => e.id === 'k1');
+		expect(drawn).toMatchObject({ id: 'k1', text: 'hello', source: 'user' });
 		expect(drawn?.keptForHost).toBeUndefined();
 		expect(drawn?.keptSentAt).toBeUndefined();
 	});
@@ -116,6 +117,23 @@ describe('mergeHostedLogs', () => {
 			undefined
 		);
 		expect(merged.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y1', 'k1']);
+	});
+
+	it('never takes an older host message with the same words, read in now, for a sent kept message (CodeRabbit on #2161)', () => {
+		const sentAt = 10 * 60_000;
+		const bubble = local('k1', {
+			text: 'continue',
+			timestamp: sentAt,
+			keptForHost: true,
+			keptSentAt: sentAt,
+		});
+		// The reconnect reads a longer window: a "continue" from an hour before is new to the tab.
+		const merged = mergeHostedLogs(
+			[local('h1'), bubble],
+			[record('h1'), { ...record('old', 'continue'), timestamp: sentAt - 3_600_000 }],
+			undefined
+		);
+		expect(merged.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['old', 'k1']);
 	});
 
 	it('draws a kept message once when the host writes it under its own id (R14)', () => {

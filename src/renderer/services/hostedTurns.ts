@@ -49,6 +49,7 @@ import { closeTab, insertAiTabAtUnifiedIndex, setActiveTab } from '../utils/tabH
 import { generateId } from '../utils/ids';
 import { getRetryEntry } from '../stores/retryStore';
 import { insertAfterActiveInUnifiedTabOrder } from '../utils/unifiedTabOrderUtils';
+import { retargetLeafTab } from '../utils/panelLayout';
 import {
 	actOnMirroredAgent,
 	actOnMirroredAgentQuietly,
@@ -371,9 +372,12 @@ export function createPendingHostTab(
 		void actOnMirroredAgent(target.peerId, target.agentId, {
 			kind: 'update-tab',
 			tabId: hostTabId,
+			// What the tab holds now: a change made while the host made it is the one that counts
+			// (the host's first report keeps a pending tab's own name and pills, projectHostedSession()).
 			patch: {
-				saveToHistory: asked?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory,
-				thinking: asked?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking,
+				saveToHistory:
+					local?.saveToHistory ?? asked?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory,
+				thinking: local?.showThinking ?? asked?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking,
 			},
 		});
 		// A name given here while it waited goes too: the host's update takes the name from there.
@@ -420,6 +424,15 @@ function adoptHostTabId(sessionId: string, tabId: string, hostTabId: string): st
 				.filter((ref) => !(ref.type === 'ai' && ref.id === hostTabId))
 				.map((ref) => (ref.type === 'ai' && ref.id === tabId ? { ...ref, id: hostTabId } : ref)),
 			activeTabId: session.activeTabId === tabId ? hostTabId : session.activeTabId,
+			// A tile that shows the tab keeps showing it under its new id.
+			tabGroups: (session.tabGroups ?? []).map((group) => {
+				const layout = retargetLeafTab(
+					group.layout,
+					{ type: 'ai', id: tabId },
+					{ type: 'ai', id: hostTabId }
+				);
+				return layout === group.layout ? group : { ...group, layout };
+			}),
 		};
 	});
 	return adopted;
