@@ -719,6 +719,20 @@ export function renameTabRecord(tab: AITabRecord, name: string): AITabRecord {
 	return { ...tab, name: trimmed ? trimmed : null, isGeneratingName: false };
 }
 
+/**
+ * Why a tab cannot take a star, or null when it can. A star marks a conversation, so a tab with no
+ * provider session yet has nothing to star: the tab strip offers no star for it, and every other
+ * path (the toggle shortcut, `maestro-cli tab star`, a Federation host) refuses with this reason,
+ * the same for a local, an SSH, and a hosted agent. Unstarring is never refused.
+ */
+export function tabStarRefusal(
+	tab: { agentSessionId?: string | null },
+	starred: boolean
+): string | null {
+	if (!starred || tab.agentSessionId) return null;
+	return 'This tab has no conversation yet, so it cannot be starred';
+}
+
 /** What starting a turn on a tab writes: the message, whose provider owns the turn, and a consumed merge. */
 export interface TurnBegin {
 	/** Runtime attempt identity, independent of the provider session ID. */

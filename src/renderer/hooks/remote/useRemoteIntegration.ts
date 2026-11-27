@@ -1390,14 +1390,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		);
 		// Handle remote star tab from web interface
 		const unsubscribeStarTab = window.maestro.process.onRemoteStarTab(
-			(sessionId: string, tabId: string, starred: boolean) => {
-				const session = sessionsRef.current.find((s) => s.id === sessionId);
-				const tab = session?.aiTabs.find((t) => t.id === tabId);
-				if (!session || !tab?.agentSessionId) return;
-
-				// The desktop star's own write: a hosted agent's host gets it too, so the
-				// next sync does not draw the tab unstarred again.
-				setTabStarred(sessionId, tabId, starred);
+			(sessionId: string, tabId: string, starred: boolean, responseChannel: string) => {
+				// The desktop star's own write, answered with what it did: a hosted agent's host
+				// gets it too, and a tab with no conversation yet is refused with the reason in
+				// every mode.
+				window.maestro.process.sendRemoteStarTabResponse(
+					responseChannel,
+					setTabStarred(sessionId, tabId, starred)
+				);
 			}
 		);
 

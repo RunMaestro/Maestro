@@ -346,10 +346,11 @@ export function handleStarTab(
 
 	ctx.callbacks
 		.starTab(sessionId, tabId, !!starred)
-		.then((success) => {
+		.then((result) => {
 			ctx.send(client, {
 				type: 'star_tab_result',
-				success,
+				success: result.success,
+				...(result.error ? { error: result.error } : {}),
 				sessionId,
 				tabId,
 				starred,

@@ -32,6 +32,7 @@ import {
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
+import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { getActiveTab } from '../../utils/tabHelpers';
 import { collectNamingPrompt, requestTabAutoName } from '../../services/tabAutoNaming';
 import {
@@ -597,8 +598,10 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		const tab = getActiveTab(session);
 		if (!tab) return;
 
-		// The one star write: provider session, a hosted agent's host, and the tab here.
-		setTabStarred(session.id, tab.id, !tab.starred);
+		// The one star write: provider session, a hosted agent's host, and the tab here. A tab
+		// with no conversation yet is refused, the same in every mode; say why.
+		const result = setTabStarred(session.id, tab.id, !tab.starred);
+		if (!result.success) notifyCenterFlash({ color: 'yellow', message: result.error });
 	}, []);
 
 	const toggleTabUnread = useCallback(() => {

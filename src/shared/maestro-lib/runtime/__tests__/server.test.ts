@@ -193,6 +193,12 @@ describe('runtime server', () => {
 
 		const { tabId } = value(await client.tabs.create('a1'));
 		value(await client.tabs.rename('a1', tabId, 'Notes'));
+		// A star marks a conversation: a client hears the refusal until the tab has one (L40).
+		const refused = await client.tabs.star('a1', tabId, true);
+		expect(refused.ok ? undefined : refused.error.message).toBe(
+			'This tab has no conversation yet, so it cannot be starred'
+		);
+		value(await client.tabs.update('a1', tabId, { agentSessionId: 'sess-notes' }));
 		value(await client.tabs.star('a1', tabId, true));
 		value(await client.tabs.update('a1', tabId, { readOnly: true }));
 		const tab = value(await runtime.tabs.list('a1')).find((candidate) => candidate.id === tabId);

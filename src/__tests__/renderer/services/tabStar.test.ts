@@ -1,7 +1,8 @@
 /**
  * Tests for `services/tabStar.ts`: every control that stars a tab (the tab strip's star, the toggle
  * shortcut, `maestro-cli tab star`) writes the tab and the provider session the same way in every
- * mode, and a hosted agent's host gets the star too, so the next sync does not unstar the tab.
+ * mode, and a hosted agent's host gets the star too, so the next sync does not unstar the tab. A tab
+ * with no conversation yet is refused with one reason in every mode (ninth live pass, L40).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -69,13 +70,13 @@ describe('tabStar', () => {
 			act$.mockClear();
 			(window.maestro.claude.updateSessionStarred as ReturnType<typeof vi.fn>).mockClear();
 			seed(mode);
-			const found = setTabStarred('row', 't1', true);
-			return { found, starred: tab().starred, provider: providerStar(), host: hostCalls() };
+			const result = setTabStarred('row', 't1', true);
+			return { result, starred: tab().starred, provider: providerStar(), host: hostCalls() };
 		});
-		expect(outcomes.map(({ found, starred }) => [found, starred])).toEqual([
-			[true, true],
-			[true, true],
-			[true, true],
+		expect(outcomes.map(({ result, starred }) => [result, starred])).toEqual([
+			[{ success: true }, true],
+			[{ success: true }, true],
+			[{ success: true }, true],
 		]);
 		for (const { provider } of outcomes) expect(provider).toEqual([['/proj', 'sess-1', true]]);
 		expect(outcomes[0].host).toEqual([]);
@@ -94,17 +95,42 @@ describe('tabStar', () => {
 		]);
 	});
 
-	it('stars a tab with no provider session here and on the host, with no provider write', () => {
-		seed('hosted', null);
-		expect(setTabStarred('row', 't1', true)).toBe(true);
-		expect(tab().starred).toBe(true);
-		expect(providerStar()).toEqual([]);
-		expect(hostCalls()).toEqual([{ kind: 'star-tab', tabId: 't1', starred: true }]);
+	it('refuses to star a tab with no conversation yet with one reason in every mode, and writes nothing (mode parity, L40)', () => {
+		// Eighth live pass: `maestro-cli tab star` on a sessionless hosted tab answered "Starred"
+		// and changed nothing, while a local tab answered "Tab not found". The tab strip offers no
+		// star for such a tab; every other path now refuses it the same way.
+		const outcomes = AGENT_MODES.map((mode) => {
+			act$.mockClear();
+			(window.maestro.claude.updateSessionStarred as ReturnType<typeof vi.fn>).mockClear();
+			seed(mode, null);
+			const result = setTabStarred('row', 't1', true);
+			return { result, starred: tab().starred, provider: providerStar(), host: hostCalls() };
+		});
+		for (const outcome of outcomes) {
+			expect(outcome).toEqual({
+				result: {
+					success: false,
+					error: 'This tab has no conversation yet, so it cannot be starred',
+				},
+				starred: false,
+				provider: [],
+				host: [],
+			});
+		}
+	});
+
+	it.each(AGENT_MODES)('%s: unstarring a tab with no conversation yet is allowed', (mode) => {
+		seed(mode, null);
+		expect(setTabStarred('row', 't1', false)).toEqual({ success: true });
+		expect(tab().starred).toBe(false);
 	});
 
 	it('leaves a tab that is not there alone and tells no host', () => {
 		seed('hosted');
-		expect(setTabStarred('row', 'missing', true)).toBe(false);
+		expect(setTabStarred('row', 'missing', true)).toEqual({
+			success: false,
+			error: 'Tab not found: missing',
+		});
 		expect(tab().starred).toBe(false);
 		expect(act$).not.toHaveBeenCalled();
 		expect(providerStar()).toEqual([]);

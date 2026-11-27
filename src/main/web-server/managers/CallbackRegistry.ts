@@ -36,6 +36,7 @@ import type {
 	ReopenTabCallback,
 	RenameTabCallback,
 	RenameTabResult,
+	StarTabResult,
 	StarTabCallback,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
@@ -603,8 +604,8 @@ export class CallbackRegistry {
 		return this.callbacks.renameTab(sessionId, tabId, newName);
 	}
 
-	async starTab(sessionId: string, tabId: string, starred: boolean): Promise<boolean> {
-		if (!this.callbacks.starTab) return false;
+	async starTab(sessionId: string, tabId: string, starred: boolean): Promise<StarTabResult> {
+		if (!this.callbacks.starTab) return { success: false, error: 'Tab starring not configured' };
 		return this.callbacks.starTab(sessionId, tabId, starred);
 	}
 

@@ -72,7 +72,11 @@ import {
 } from '../../../shared/groupAppearance';
 import { isCodexTransport } from '../../../shared/codexTransport';
 import { isHarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
-import { TAB_EDITABLE_KEYS, withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import {
+	TAB_EDITABLE_KEYS,
+	tabStarRefusal,
+	withAgentInGroup,
+} from '../../../shared/maestro-lib/agents/rules';
 import { setTabThinkingMode } from '../../services/tabThinkingMode';
 import { starHostedTab, updateHostedTab } from '../../services/hostedTurns';
 import { liftBusyReason, readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
@@ -1994,10 +1998,31 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
-			if (!session.aiTabs?.some((t) => t.id === targetTabId)) {
+			const targetTab = session.aiTabs?.find((t) => t.id === targetTabId);
+			if (!targetTab) {
 				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 					success: false,
 					error: 'Tab not found',
+				});
+				return;
+			}
+			// A star marks a conversation: the same rule as the tab strip and `tab star`.
+			const starRefusal =
+				typeof tabPatch.starred === 'boolean'
+					? tabStarRefusal(
+							{
+								agentSessionId:
+									typeof tabPatch.agentSessionId === 'string'
+										? tabPatch.agentSessionId
+										: targetTab.agentSessionId,
+							},
+							tabPatch.starred
+						)
+					: null;
+			if (starRefusal) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: starRefusal,
 				});
 				return;
 			}

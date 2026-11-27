@@ -714,7 +714,15 @@ describe('agent repository', () => {
 		});
 
 		it('stars to a value, so a retry is harmless', async () => {
-			const repo = await setup({ sessions: twoAgents() });
+			const repo = await setup({
+				sessions: {
+					sessions: [
+						seedAgent('a1', 'Alpha', {
+							aiTabs: [tab('a1-t1'), tab('a1-t2', { agentSessionId: 'sess-2' })],
+						}),
+					],
+				},
+			});
 			value(await repo.starTab('a1', 'a1-t2', true));
 			events.length = 0;
 			value(await repo.starTab('a1', 'a1-t2', true));
@@ -722,6 +730,18 @@ describe('agent repository', () => {
 			expect(readSessions().sessions[0].aiTabs[1].starred).toBe(true);
 			value(await repo.starTab('a1', 'a1-t2', false));
 			expect(readSessions().sessions[0].aiTabs[1].starred).toBe(false);
+		});
+
+		it('refuses to star a tab with no conversation yet, as the desktop does, and writes nothing (L40)', async () => {
+			const repo = await setup({ sessions: twoAgents() });
+			const before = fs.readFileSync(paths.sessionsFile, 'utf-8');
+			const error = errorOf(await repo.starTab('a1', 'a1-t2', true));
+			expect(error.code).toBe('rejected');
+			expect(error.message).toBe('This tab has no conversation yet, so it cannot be starred');
+			expect(fs.readFileSync(paths.sessionsFile, 'utf-8')).toBe(before);
+			expect(events).toEqual([]);
+			// Unstarring is never refused.
+			value(await repo.starTab('a1', 'a1-t2', false));
 		});
 
 		it('updates composer settings, clears on null, and refuses a bad value as a whole', async () => {

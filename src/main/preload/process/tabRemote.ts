@@ -121,12 +121,30 @@ export function createTabRemoteApi() {
 		 * Subscribe to remote star tab from web interface
 		 */
 		onRemoteStarTab: (
-			callback: (sessionId: string, tabId: string, starred: boolean) => void
+			callback: (
+				sessionId: string,
+				tabId: string,
+				starred: boolean,
+				responseChannel: string
+			) => void
 		): (() => void) => {
-			const handler = (_: unknown, sessionId: string, tabId: string, starred: boolean) =>
-				callback(sessionId, tabId, starred);
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				tabId: string,
+				starred: boolean,
+				responseChannel: string
+			) => callback(sessionId, tabId, starred, responseChannel);
 			ipcRenderer.on('remote:starTab', handler);
 			return () => ipcRenderer.removeListener('remote:starTab', handler);
+		},
+
+		/** Reply with what a remote star did: done, or refused with the reason. */
+		sendRemoteStarTabResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
 		},
 
 		/**

@@ -472,11 +472,24 @@ export type RenameTabCallback = (
 	tabId: string,
 	newName: string
 ) => Promise<boolean | RenameTabResult>;
+/** A star's answer from the window that owns the tab: done, or refused with the reason. */
+export type StarTabResult = Pick<RenameTabResult, 'success' | 'error'>;
+
+/** Read a window's star answer; anything else is a refusal with a reason, never a success. */
+export function normalizeStarTabResult(result: unknown): StarTabResult {
+	if (result && typeof result === 'object') {
+		const candidate = result as { success?: unknown; error?: unknown };
+		if (candidate.success === true) return { success: true };
+		if (typeof candidate.error === 'string') return { success: false, error: candidate.error };
+	}
+	return { success: false, error: 'The desktop did not star the tab' };
+}
+
 export type StarTabCallback = (
 	sessionId: string,
 	tabId: string,
 	starred: boolean
-) => Promise<boolean>;
+) => Promise<StarTabResult>;
 /**
  * One snooze verb, forwarded to the renderer - which owns the authoritative
  * snooze state - and answered with whatever it did. Resolves rather than

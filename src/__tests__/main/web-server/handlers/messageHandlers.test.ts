@@ -190,7 +190,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		newTab: vi.fn().mockResolvedValue({ tabId: 'new-tab-123' }),
 		closeTab: vi.fn().mockResolvedValue(true),
 		renameTab: vi.fn().mockResolvedValue(true),
-		starTab: vi.fn().mockResolvedValue(true),
+		starTab: vi.fn().mockResolvedValue({ success: true }),
 		reorderTab: vi.fn().mockResolvedValue(true),
 		toggleBookmark: vi.fn().mockResolvedValue(true),
 		openFileTab: vi.fn().mockResolvedValue(true),
@@ -1666,6 +1666,43 @@ describe('WebSocketMessageHandler', () => {
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
+		});
+	});
+
+	describe('Star Tab (Web → Desktop)', () => {
+		it('answers the star with success', async () => {
+			handler.handleMessage(client, {
+				type: 'star_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				starred: true,
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({ type: 'star_tab_result', success: true, starred: true });
+			expect(response).not.toHaveProperty('error');
+		});
+
+		it("carries the window's refusal reason to the caller (L40)", async () => {
+			(callbacks.starTab as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+				success: false,
+				error: 'This tab has no conversation yet, so it cannot be starred',
+			});
+			handler.handleMessage(client, {
+				type: 'star_tab',
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				starred: true,
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'star_tab_result',
+				success: false,
+				error: 'This tab has no conversation yet, so it cannot be starred',
+			});
 		});
 	});
 
