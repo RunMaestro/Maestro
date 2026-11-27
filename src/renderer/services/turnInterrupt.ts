@@ -168,7 +168,7 @@ export async function interruptTurn(
 		const cutTabs = cutHostedTurnTabs(sessionId, scopeTabId);
 		const stopHere = [...new Set([...hostBusy, ...cutTabs])];
 		// A consult whose message may be a turn Stop ends goes with it, also before any await.
-		dropStoppedHostStartMentions(sessionId, stopHere);
+		const hostStop = dropStoppedHostStartMentions(sessionId, stopHere);
 		const hostNotTold = !!peer && peer.connection !== 'connected' && stopHere.length > 0;
 		try {
 			if (hostNotTold) {
@@ -180,7 +180,7 @@ export async function interruptTurn(
 			}
 		} finally {
 			// The host answered (or was not told): what it reported before then ran before the stop.
-			settleStoppedHostStartMentions(sessionId);
+			settleStoppedHostStartMentions(hostStop);
 		}
 		const consults = await cancelConsults(sessionId, scopeTabId);
 		const consultsCanceled = consults.canceled;

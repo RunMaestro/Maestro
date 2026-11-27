@@ -568,7 +568,10 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 				vi.mocked(interruptMirroredAgent).mock.invocationCallOrder[0]
 			);
 			expect(settledBeforeAnswer).toBe(false);
-			expect(settleStoppedHostStartMentions).toHaveBeenCalledWith('agent-1');
+			// The settle is this Stop's own: the token its drop handed back.
+			expect(settleStoppedHostStartMentions).toHaveBeenCalledWith(
+				vi.mocked(dropStoppedHostStartMentions).mock.results[0].value
+			);
 		}
 	);
 

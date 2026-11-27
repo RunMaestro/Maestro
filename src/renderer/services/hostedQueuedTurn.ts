@@ -438,9 +438,15 @@ const mentionsAwaitingHostStart = new Map<
 		 * desktop host lists none): then `turnStartedAt`, the turn Stop ended (the host's clock),
 		 * tells its own later turn from the stopped one.
 		 */
-		stop?: { pending: boolean; turnStartedAt?: number };
+		stop?: { pending: boolean; turnStartedAt?: number; by: HostStopToken };
 	}
 >();
+
+/**
+ * One Stop of a hosted agent (`dropStoppedHostStartMentions()`): its settle settles only the
+ * consults it left waiting, never those of another Stop still waiting for its own answer.
+ */
+export type HostStopToken = { readonly sessionId: string };
 
 type AwaitingHostStart = typeof mentionsAwaitingHostStart extends Map<string, infer V> ? V : never;
 
@@ -524,8 +530,9 @@ export function pruneHostStartedMentions(hostedSessionIds: ReadonlySet<string>):
 export function dropStoppedHostStartMentions(
 	sessionId: string,
 	stoppedTabIds: readonly string[]
-): void {
-	if (stoppedTabIds.length === 0) return;
+): HostStopToken {
+	const token: HostStopToken = { sessionId };
+	if (stoppedTabIds.length === 0) return token;
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const stillWaiting = new Set(
 		(session?.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
@@ -546,16 +553,18 @@ export function dropStoppedHostStartMentions(
 		const running = hostTurnAhead(sessionId, tabId);
 		waiting.stop = {
 			pending: true,
+			by: token,
 			...(running.busy && running.startedAt !== undefined
 				? { turnStartedAt: running.startedAt }
 				: {}),
 		};
 	}
+	return token;
 }
 
 /**
- * The host answered the Stop of `sessionId` (or could not be told it): settle each consult Stop
- * left waiting for that answer (`stop.pending`). Its frames before the answer are here, so the
+ * The host answered the Stop `stop` (or could not be told it): settle each consult that Stop left
+ * waiting for that answer (`stop.pending`), and no other. Its frames before the answer are here, so the
  * mirror shows the host's queue as it stood when the host stopped the turn. One whose start the
  * host named, or whose own user entry is on the tab, was the turn Stop ended: it goes, with the
  * note. One the queue lists waited through the Stop: it consults when it starts, as before. One
@@ -563,7 +572,8 @@ export function dropStoppedHostStartMentions(
  * queue never listed (an older desktop host sends no queue frames) stays, and consults only when
  * its own turn is seen running after Stop (`fireHostStartedMentions()`): Stop never loses it.
  */
-export function settleStoppedHostStartMentions(sessionId: string): void {
+export function settleStoppedHostStartMentions(stop: HostStopToken): void {
+	const { sessionId } = stop;
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const target = session ? hostedTargetOf(session) : undefined;
 	const peer = target ? usePeerMirrorStore.getState().peers[target.peerId] : undefined;
@@ -572,7 +582,10 @@ export function settleStoppedHostStartMentions(sessionId: string): void {
 	);
 	const exits = target ? peer?.queueExits?.[target.agentId] : undefined;
 	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
-		if (waiting.sessionId !== sessionId || !waiting.stop?.pending) continue;
+		// Only the consults this Stop left waiting: another Stop's wait for its own answer stays.
+		if (waiting.sessionId !== sessionId || !waiting.stop?.pending || waiting.stop.by !== stop) {
+			continue;
+		}
 		const tabId = waiting.item.tabId || session?.activeTabId;
 		const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
 		const ran =
