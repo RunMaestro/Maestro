@@ -5964,6 +5964,79 @@ describe('useRemoteIntegration', () => {
 				? hostSends().map(([, , action]) => ({ command: action.text, tabId: action.tabId }))
 				: remoteCommands(spy);
 
+		// Parity R42: `maestro-cli tab new --agent <id>` makes one tab, the one its id names, in
+		// every mode; for a hosted agent through the window's New Tab service, so the host is asked
+		// once and the printed id is the host's tab (usable in later `--tab` calls).
+		it.each(AGENT_MODES)(
+			'%s: maestro-cli tab new makes one tab and answers its id (R42)',
+			async (mode) => {
+				const session = seed(mode);
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				await act(async () => {
+					onRemoteNewTabHandler?.('session-1', 'chan-new', true);
+				});
+				await waitFor(() =>
+					expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('chan-new', {
+						tabId: expect.any(String),
+					})
+				);
+				const answered = mockProcess.sendRemoteNewTabResponse.mock.calls.find(
+					([channel]) => channel === 'chan-new'
+				)![1] as { tabId: string };
+				const tabs = useSessionStore.getState().sessions[0].aiTabs;
+				expect({
+					tabs: tabs.length,
+					answeredIsATab: tabs.some((tab) => tab.id === answered.tabId),
+					// A background create leaves the visible tab alone.
+					active: useSessionStore.getState().sessions[0].activeTabId,
+				}).toEqual({ tabs: 2, answeredIsATab: true, active: 'tab-1' });
+				const hostAsks = act$.mock.calls.filter(([, , action]) => action?.kind === 'new-tab');
+				expect(hostAsks).toHaveLength(mode === 'hosted' ? 1 : 0);
+				if (mode === 'hosted') expect(answered.tabId).toBe('host-tab');
+			}
+		);
+
+		// Parity R42: `maestro-cli tab close --agent <id>` closes the tab as the window's close
+		// does: for a hosted agent on its host too, so the host sync does not bring it back.
+		it.each(AGENT_MODES)(
+			'%s: maestro-cli tab close closes the tab where it lives (R42)',
+			async (mode) => {
+				const session = {
+					...seed(mode),
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+				};
+				const { peer } = replacePeerAgents(
+					createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+					[
+						{
+							id: 'h1',
+							name: 'Docs',
+							toolType: 'claude-code',
+							aiTabs: [{ id: 'tab-1' }, { id: 'tab-2' }],
+						},
+					],
+					[],
+					1
+				);
+				usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+				act$.mockResolvedValue({ ok: true, result: { kind: 'close-tab' } });
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				await act(async () => {
+					onRemoteCloseTabHandler?.('session-1', 'tab-2', 'chan-close');
+				});
+				expect(mockProcess.sendRemoteCloseTabResponse).toHaveBeenCalledWith('chan-close', true);
+				expect(useSessionStore.getState().sessions[0].aiTabs.map((tab) => tab.id)).toEqual([
+					'tab-1',
+				]);
+				const hostCloses = act$.mock.calls.filter(([, , action]) => action?.kind === 'close-tab');
+				expect(hostCloses).toEqual(
+					mode === 'hosted' ? [['box', 'h1', { kind: 'close-tab', tabId: 'tab-2' }]] : []
+				);
+			}
+		);
+
 		it.each(AGENT_MODES)('%s: an idle tab runs a dispatched message now', async (mode) => {
 			const session = seed(mode);
 			const spy = vi.spyOn(window, 'dispatchEvent');

@@ -44,7 +44,13 @@ import type { TurnAgentText, TurnOverrides } from '../../../shared/maestro-lib/c
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSideQuestion } from '../../services/sideQuestion';
 import { runMaestroBuiltinCommand } from '../../services/maestroBuiltinCommands';
-import { hostedTargetOf, openHostedTab, sendHostedTurn } from '../../services/hostedTurns';
+import {
+	closeHostedTab,
+	hostedTargetOf,
+	openHostedTab,
+	openHostedTabOrHere,
+	sendHostedTurn,
+} from '../../services/hostedTurns';
 import { hostedTabHoldsLine } from '../../utils/hostedTabLine';
 import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
@@ -728,6 +734,31 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote new tab from web interface
 		const unsubscribeNewTab = window.maestro.process.onRemoteNewTab(
 			(sessionId: string, responseChannel: string, background?: boolean, tabId?: string) => {
+				// A hosted agent's AI tabs live on its host: `maestro-cli tab new` makes the tab
+				// through the service the window's New Tab calls (`openHostedTabOrHere()`), on the
+				// host and here, with the same defaults, so the id it prints names one tab on both
+				// sides (R42). A Federation client's request (`tabId`) names a tab of this machine.
+				const hostedSession = tabId
+					? undefined
+					: selectSessionById(sessionId)(useSessionStore.getState());
+				if (hostedSession && hostedTargetOf(hostedSession)) {
+					void openHostedTabOrHere(hostedSession, {
+						fields: { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking },
+						...(background ? { background: true } : {}),
+					})
+						.catch(() => null)
+						.then((hostedTabId) => {
+							if (hostedTabId && !background) {
+								setActiveSessionId(sessionId);
+								noteDesktopAiTabSelection(sessionId, hostedTabId);
+							}
+							window.maestro.process.sendRemoteNewTabResponse(
+								responseChannel,
+								hostedTabId ? { tabId: hostedTabId } : null
+							);
+						});
+					return;
+				}
 				let newTabId: string | null = null;
 
 				flushSync(() => {
@@ -1104,6 +1135,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				let closed = false;
 				let closedSession: Session | undefined;
 				try {
+					// A hosted agent's tab closes on its host too, as the window's close does
+					// (`closeHostedTab()`, a no-op for any other agent), so the host sync does not
+					// bring it back (R42).
+					const before = selectSessionById(sessionId)(useSessionStore.getState());
+					if (before?.aiTabs.some((t) => t.id === tabId)) closeHostedTab(before, tabId);
 					updateSessionWith(sessionId, (s) => {
 						const tab = s.aiTabs.find((t) => t.id === tabId);
 						if (!tab) return s;
