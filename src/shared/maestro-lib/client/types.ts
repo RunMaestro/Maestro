@@ -603,6 +603,12 @@ export type TurnSendReceipt =
 	 * track of (a cut link, a restart) reads this as "already ran". An older host never says it.
 	 */
 	| { status: 'answered' }
+	/**
+	 * The send named a message whose turn ended on an error the host retries itself (a desktop
+	 * host's Agent Resilience holds it, `TurnInput.entryId`): the host's own retry sends it, so
+	 * nothing ran now and the sender keeps no copy of its own. An older host never says it.
+	 */
+	| { status: 'retrying' }
 	/** The agent was busy; the message waits in the host's execution queue (CH-4). */
 	| {
 			status: 'queued';

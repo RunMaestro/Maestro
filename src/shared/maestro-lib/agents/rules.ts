@@ -829,8 +829,8 @@ export function markTurnEnded<T extends object>(
 	return entries as T[];
 }
 
-function isUserTurnStart(entry: Partial<LogEntryRecord> | null | undefined): boolean {
-	// A message steered into the running turn is part of that turn, not a turn of its own.
+/** Whether `entry` starts a user turn of its own: a message steered into the running turn does not. */
+export function isUserTurnStart(entry: Partial<LogEntryRecord> | null | undefined): boolean {
 	return entry?.source === 'user' && entry.steered !== true;
 }
 
@@ -923,6 +923,31 @@ export function turnEndedAfter(
  * How the turn of the user message `entry` in `logs` ended (`turnFateAfter()`), or undefined when
  * `logs` do not hold it.
  */
+/**
+ * Whether the turn of the user message at `at` in `logs` is held by the host's OWN automatic retry
+ * (a desktop host's Agent Resilience): its latest entry of note is that retry's card
+ * (`LogEntryRecord.retryOutageId`), with no answer or error after it before the next user message.
+ * Such a turn's message is the host's to send again; a client that kept a copy sends nothing.
+ */
+export function hostRetriesTurn(logs: readonly unknown[], at: number): boolean {
+	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	let retrying = false;
+	for (let next = at + 1; next < entries.length; next += 1) {
+		const entry = entries[next];
+		if (isUserTurnStart(entry)) break;
+		if (typeof entry?.retryOutageId === 'string' && entry.retryOutageId) retrying = true;
+		else if (
+			entry?.source === 'stdout' ||
+			entry?.source === 'ai' ||
+			entry?.source === 'error' ||
+			(entry?.source === 'system' && entry.text === TURN_CANCELED_NOTE)
+		) {
+			retrying = false;
+		}
+	}
+	return retrying;
+}
+
 export function userEntryFate(
 	logs: readonly unknown[],
 	entry: SentUserEntry,

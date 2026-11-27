@@ -16,6 +16,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ipcMain } from 'electron';
 import { registerTabsHandlers } from '../../../../main/ipc/handlers/tabs';
 import { getDispatchCallbackRegistry } from '../../../../main/dispatch-callbacks';
+import {
+	isAiTabRetryPending,
+	resetAiTabRetryStateForTests,
+} from '../../../../main/utils/ai-tab-retry-state';
 
 vi.mock('electron', () => ({
 	ipcMain: {
@@ -115,6 +119,31 @@ describe('tabs:aiTabRetryState', () => {
 			['agent-1', 'tab-7', true],
 			['agent-1', 'tab-7', false],
 		]);
+	});
+
+	// Parity R41: a Federation client's resend of a message this desktop's own retry holds is
+	// refused, read from the same notification.
+	it("records the tab's retry state for main to read, and a closed tab forgets it", () => {
+		resetAiTabRetryStateForTests();
+		listener({}, 'agent-1', 'tab-7', true);
+		expect(isAiTabRetryPending('agent-1', 'tab-7')).toBe(true);
+		expect(isAiTabRetryPending('agent-1', 'tab-8')).toBe(false);
+		listener({}, 'agent-1', 'tab-7', false);
+		expect(isAiTabRetryPending('agent-1', 'tab-7')).toBe(false);
+		listener({}, 'agent-1', 'tab-7', true);
+		const closed = vi
+			.mocked(ipcMain.on)
+			.mock.calls.find(([channel]) => channel === 'tabs:aiTabClosed')?.[1] as unknown as (
+			event: unknown,
+			agentId: unknown,
+			tabId: unknown
+		) => void;
+		vi.mocked(getDispatchCallbackRegistry).mockReturnValue({
+			noteRetryState,
+			cancelForTab: vi.fn(() => 0),
+		} as unknown as ReturnType<typeof getDispatchCallbackRegistry>);
+		closed({}, 'agent-1', 'tab-7');
+		expect(isAiTabRetryPending('agent-1', 'tab-7')).toBe(false);
 	});
 
 	it('ignores a malformed notification', () => {

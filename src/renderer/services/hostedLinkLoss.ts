@@ -25,6 +25,7 @@
  */
 
 import {
+	hostRetriesTurn,
 	isSameUserEntry,
 	turnFateAfter,
 	userEntryFate,
@@ -42,10 +43,11 @@ import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import {
 	getRetryEntry,
 	noteDirectDispatch,
+	notOnHostText,
 	retryNow,
 	scheduleRetryForError,
-	notOnHostText,
 	settleRetryOnHost,
+	wouldAutoRetry,
 	type HeldOnHost,
 } from '../stores/retryStore';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
@@ -144,12 +146,14 @@ interface CutTurn {
  * to send again), `errored` (the turn ended on its own error there: retried by that error's own
  * rule, `routeErroredTurn()`, and the retry holds the message), `{ error }` (it ended on its own
  * error there and no retry takes it: never answered, the message is parked held with that error
- * for the user to send again), or `unknown` (the host's transcript could not be read: kept for the
- * next try).
+ * for the user to send again), `host-retries` (it ended on an error the host's own Agent
+ * Resilience retries, `hostRetriesTurn()`: the host sends it, so nothing is sent from here), or
+ * `unknown` (the host's transcript could not be read: kept for the next try).
  */
 export type CutTurnFate =
 	| 'send'
 	| 'answered'
+	| 'host-retries'
 	| 'errored'
 	| 'tab-gone'
 	| 'entry-gone'
@@ -224,6 +228,12 @@ function routeErroredTurn(
 	if (!error) return 'not-retried';
 	if (item && !waiting) {
 		noteDirectDispatch(sessionId, item, { keepMention: !!item.crossAgentMention });
+	}
+	// The lost link's retry holds the copy: that outage is over (the host is back), and the
+	// provider error is a new one, so its backoff starts at its own first attempt, under its own
+	// card. Ended only when that error's retry will take the copy (the held copy stays for it).
+	if (waiting && wouldAutoRetry(sessionId, error)) {
+		settleRetryOnHost(sessionId, tabId, 'errored');
 	}
 	if (!scheduleRetryForError(sessionId, tabId, error)) return 'not-retried';
 	erroredResends.set(cutKey(sessionId, tabId), entryId);
@@ -566,6 +576,8 @@ async function readKeptEntryFate(
 	// Edited while it was kept: the user's own message now, sent as one (the host gives it an entry
 	// of its own, since it no longer matches the one it names).
 	if (!isSameUserEntry(slot.entries[at], entry)) return 'send';
+	// The host's own retry holds it (a desktop host's Agent Resilience): the host sends it.
+	if (hostRetriesTurn(slot.entries, at)) return 'host-retries';
 	const fate = userEntryFate(slot.entries, entry, transcriptHostKind(host.peerId));
 	if (fate === 'answered' || fate === 'stopped') return 'answered';
 	const newestUser = lastUserMessage(slot.entries as LogEntry[]);
@@ -580,7 +592,7 @@ async function readKeptEntryFate(
 }
 
 /**
- * A kept cut message is not owed: the host had it. Its copy leaves the queue and nothing is sent,
+ * A kept cut message is not owed: the host had it, or its own retry holds it (`host-retries`). Its copy leaves the queue and nothing is sent,
  * whether its retry counts down or it waits behind another message's retry (that one is left
  * alone). A copy the user edited while it was kept is their own message now: it stays, no longer
  * named as the host's entry, and goes as one.
@@ -592,12 +604,12 @@ async function readKeptEntryFate(
  */
 function settleKeptCut(
 	cut: CutTurn,
-	fate: 'answered' | 'tab-gone' | 'entry-gone' | { error: string } = 'answered'
+	fate: 'answered' | 'host-retries' | 'tab-gone' | 'entry-gone' | { error: string } = 'answered'
 ): void {
 	answerWaiters(cut, fate);
 	const keptId = cut.keptItemId;
 	if (!keptId) return;
-	if (fate !== 'answered') {
+	if (fate !== 'answered' && fate !== 'host-retries') {
 		if (getRetryEntry(cut.sessionId, cut.tabId)?.heldItemId === keptId) {
 			settleRetryOnHost(cut.sessionId, cut.tabId, heldOnHostFor(fate));
 		}
@@ -624,7 +636,7 @@ function settleKeptCut(
 		return;
 	}
 	if (holdsIt) {
-		settleRetryOnHost(cut.sessionId, cut.tabId);
+		settleRetryOnHost(cut.sessionId, cut.tabId, fate === 'host-retries' ? fate : undefined);
 		return;
 	}
 	if (queued) {
@@ -723,6 +735,12 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 	// Its own turn ended (stamped, or an answer before the next user message on a host too old to
 	// stamp, `turnFateAfter()`); an answer to a LATER message is that one's, and this turn died. A
 	// desktop host's streamed text with no end stamp is a turn it lost.
+	// The host's own retry holds it (a desktop host's Agent Resilience): one side owns the retry,
+	// and it is the host, so nothing is sent or retried from here.
+	if (hostRetriesTurn(slot.entries, at)) {
+		settleKeptCut(cut, 'host-retries');
+		return;
+	}
 	const fate = turnFateAfter(slot.entries, at, transcriptHostKind(link.peerId));
 	// Ended on its own error: retried by that error's rule, as a local turn that ends on it is.
 	if (fate === 'errored') {

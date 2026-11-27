@@ -9,6 +9,7 @@
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
 import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
+import { isAiTabRetryPending } from '../../../utils/ai-tab-retry-state';
 import {
 	armDispatchCallback,
 	readAutoRunCallbackRequest,
@@ -35,6 +36,8 @@ import {
 	type TurnAgentText,
 } from '../../../../shared/maestro-lib/client/types';
 import {
+	isSameUserEntry,
+	isUserTurnStart,
 	tabRunsUserEntry,
 	userEntryAnswered,
 	type SentUserEntry,
@@ -42,6 +45,7 @@ import {
 import { invokeAsBridge } from '../bridgeHandlers';
 import { resolveToDataUrl } from '../../../storage/session-image-store';
 import type { QueuedItemSnapshot, QueueSessionSnapshot } from '../../types';
+import type { LogEntryRecord } from '../../../../shared/maestro-lib/store/transcript';
 import { queueChangesSeqs } from '../../queue-change-frames';
 
 /**
@@ -368,7 +372,10 @@ export function handleEnqueueCommand(
 				sessionId,
 				tabId: requestedTabId,
 				queued: false,
+				// `retrying`: this desktop's own Agent Resilience holds the message and sends it
+				// (`TurnSendReceipt` `retrying`). `answered` too, for a client too old to know it.
 				answered: true,
+				...(answered === 'retrying' ? { retrying: true } : {}),
 				requestId: message.requestId,
 			});
 		});
@@ -805,7 +812,10 @@ export function handleSendQueueItemNow(
 /**
  * Whether this desktop's tab holds the user message `entry` that already ran: its turn answered or
  * stopped, or running right now (`tabRunsUserEntry()`, as a headless host refuses it: a resend that
- * arrives while the turn still runs would otherwise queue and run it a second time). Read as a
+ * arrives while the turn still runs would otherwise queue and run it a second time). `retrying`:
+ * its turn ended on an error this desktop's own Agent Resilience holds for a resend
+ * (`isAiTabRetryPending()`, the tab's newest message): that retry sends it, so a client's resend
+ * would run it twice. One side owns a retry, and here it is this desktop. Read as a
  * bridge client reads the tab (the owning window's live transcript and its runtime state). Images
  * are compared as data URLs: the tab keeps its own as store refs, the client sends the bytes. A
  * read that fails answers false: the client already read the host's tab before it sent, and a
@@ -815,7 +825,7 @@ async function desktopTabAnswered(
 	sessionId: string,
 	tabId: string,
 	entry: SentUserEntry
-): Promise<boolean> {
+): Promise<boolean | 'retrying'> {
 	try {
 		const read = (await invokeAsBridge('sessions:getDeferredContent', sessionId, tabId, false)) as
 			| {
@@ -849,6 +859,13 @@ async function desktopTabAnswered(
 			(snapshot) => snapshot.tabId === tabId
 		)?.runtime;
 		const startedAt = runtime?.thinkingStartTime;
+		if (
+			isAiTabRetryPending(sessionId, tabId) &&
+			isSameUserEntry(comparable[at], asSent) &&
+			!comparable.slice(at + 1).some((later) => isUserTurnStart(later as LogEntryRecord | null))
+		) {
+			return 'retrying';
+		}
 		// This desktop writes streamed text as it arrives: only its end stamp says the turn ended.
 		return (
 			userEntryAnswered(comparable, asSent, 'desktop') ||

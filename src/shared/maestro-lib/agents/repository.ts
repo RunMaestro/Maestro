@@ -97,6 +97,7 @@ import {
 	groupsWithout,
 	mergeSshPatch,
 	normalizeGroupName,
+	markTurnEnded,
 	recordTabSession,
 	relocateAgentPaths,
 	sshRecordOf,
@@ -246,6 +247,18 @@ export interface AgentRepository {
 		agentId: string,
 		tabId: string,
 		entry: LogEntryRecord,
+		guard?: TabWriteGuard
+	): Promise<ClientResult<void>>;
+	/**
+	 * Stamp a turn's end on the entry `entryId` (`markTurnEnded()`) as that entry is when the write
+	 * runs, so a change made to it since the turn began (the delivered tick) is kept. Nothing is
+	 * written when the tab no longer holds it.
+	 */
+	stampTurnEnded(
+		agentId: string,
+		tabId: string,
+		entryId: string,
+		endedAt: number,
 		guard?: TabWriteGuard
 	): Promise<ClientResult<void>>;
 	/**
@@ -1178,6 +1191,26 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 			guard
 		);
 
+	const stampTurnEnded = (
+		agentId: string,
+		tabId: string,
+		entryId: string,
+		endedAt: number,
+		guard?: TabWriteGuard
+	) =>
+		rewriteTab(
+			agentId,
+			tabId,
+			(tab) => {
+				const logs = Array.isArray(tab.logs) ? (tab.logs as LogEntryRecord[]) : [];
+				const at = logs.findIndex((existing) => existing?.id === entryId);
+				if (at === -1) return tab;
+				const stamped = markTurnEnded([logs[at]], 0, endedAt)[0];
+				return { ...tab, logs: logs.map((existing, i) => (i === at ? stamped : existing)) };
+			},
+			guard
+		);
+
 	const beginTurn = (agentId: string, tabId: string, begin: TurnBegin, guard?: TabWriteGuard) =>
 		rewriteTab(agentId, tabId, (tab) => beginTurnRecord(tab, begin), guard);
 
@@ -1390,6 +1423,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		updateTab,
 		appendTranscript,
 		replaceTranscriptEntry,
+		stampTurnEnded,
 		beginTurn,
 		recordTabSession: recordSession,
 		openConsultTab,

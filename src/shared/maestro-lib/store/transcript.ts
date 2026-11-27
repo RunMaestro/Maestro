@@ -81,6 +81,12 @@ export interface LogEntryRecord extends UnknownFields {
 	 * (a retry into the same entry that answered empty), epoch ms (`markTurnEnded()`).
 	 */
 	turnEndedAt?: number;
+	/**
+	 * A desktop's Agent Resilience card: the turn's error was taken over by that desktop's own
+	 * automatic retry, and this is the id of its outage (`RetryStatusCard`). A Federation client
+	 * reading a hosted tab tells from it that the host retries the message itself (`hostRetriesTurn()`).
+	 */
+	retryOutageId?: string;
 	/** A custom AI command (`/commit`) this user message invoked. */
 	aiCommand?: { command: string; description: string };
 	metadata?: UnknownFields & {

@@ -123,6 +123,24 @@ describe('RetryStatusCard', () => {
 		expect(screen.queryByText(/already had this message/)).not.toBeInTheDocument();
 	});
 
+	it.each([
+		['host', /the host retries itself/],
+		['here', /that error's own retry takes the message from here/],
+	] as const)('says which side retries the kept message (%s, R41)', (hostRetry, words) => {
+		setOutage({
+			cause: 'connection',
+			status: 'recovered',
+			settledByHost: true,
+			hostRetry,
+			attempts: 0,
+			startedAt: NOW,
+			resolvedAt: NOW + 5_000,
+		});
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+		expect(screen.getByText(words)).toBeInTheDocument();
+		expect(screen.queryByText(/already had this message/)).not.toBeInTheDocument();
+	});
+
 	it('says the link was still down when a connection retry is stopped (R6)', () => {
 		setOutage({ cause: 'connection', status: 'stopped', attempts: 2, resolvedAt: NOW + 1 });
 		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);

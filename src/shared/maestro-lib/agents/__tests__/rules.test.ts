@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	activeAgentAfterRemoval,
 	addTabRecord,
+	hostRetriesTurn,
 	markTurnEnded,
 	tabRunsUserEntry,
 	turnFateAfter,
@@ -41,6 +42,7 @@ import {
 	type RuleContext,
 } from '../rules';
 import type { AgentRecord, GroupRecord } from '../../store/records';
+import { TURN_CANCELED_NOTE } from '../../store/transcript';
 import type { NativeSessionBinding, ProviderTabSession } from '../providerSwap';
 
 function makeContext(): RuleContext {
@@ -1421,6 +1423,47 @@ describe('turnFateAfter', () => {
 		expect(once).toEqual([u1, { ...partial, turnEnded: true }]);
 		expect(markTurnEnded(once)).toBe(once);
 		expect(markTurnEnded([])).toEqual([]);
+	});
+});
+
+// Parity R41: one side owns a retry. A desktop host's own Agent Resilience writes its retry card
+// (`retryOutageId`) in the turn; a client that kept a copy sends nothing while it stands.
+describe('hostRetriesTurn', () => {
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
+	const card = {
+		id: 'r1',
+		timestamp: 2,
+		source: 'system',
+		text: 'Rate limited',
+		retryOutageId: 'o1',
+		turnEnded: true,
+	};
+	const answer = { id: 'a1', timestamp: 3, source: 'ai', text: 'The docs say...', turnEnded: true };
+	const error = {
+		id: 'e1',
+		timestamp: 3,
+		source: 'error',
+		text: 'Invalid API key',
+		turnEnded: true,
+	};
+	const u2 = { id: 'u2', timestamp: 4, source: 'user', text: 'And the tests?' };
+
+	it.each([
+		['the host retry card is the last word', [u1, card], true],
+		['the host retry answered after its card', [u1, card, answer], false],
+		['a later error after the card', [u1, card, error], false],
+		[
+			'the Stop note after the card',
+			[u1, card, { id: 's1', timestamp: 3, source: 'system', text: TURN_CANCELED_NOTE }],
+			false,
+		],
+		['no card, an error of its own', [u1, error], false],
+		["a card in a LATER message's turn", [u1, answer, u2, card], false],
+		['a steer into the turn after the card', [u1, card, { ...u2, steered: true }], true],
+	])('%s', (_what, logs, retries) => {
+		expect(hostRetriesTurn(logs, 0)).toBe(retries);
+		// The shared reader of the turn's end reads the stamped card as ended, never errored.
+		if (retries) expect(turnFateAfter(logs, 0, 'desktop')).not.toBe('errored');
 	});
 });
 

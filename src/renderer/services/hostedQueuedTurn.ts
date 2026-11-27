@@ -54,6 +54,7 @@ import {
 	settleRetryOnHost,
 	useRetryStore,
 	HOST_HAD_MESSAGE_TEXT,
+	HOST_RETRIES_TEXT,
 	notOnHostText,
 	type HeldOnHost,
 	wouldAutoRetry,
@@ -374,20 +375,26 @@ function notHostedAgain(
 	item: QueuedItem,
 	index: number,
 	retryOutage: string | undefined,
-	notOnHost?: HeldOnHost
+	notOnHost?: HeldOnHost | 'host-retries'
 ): void {
 	const owned =
 		retryOutage !== undefined && getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
 	if (owned) settleRetryOnHost(sessionId, item.tabId, notOnHost);
-	if (notOnHost) holdRefusedItem(sessionId, { ...item, hostEntryId: undefined }, index);
+	// The host's own retry holds it (`host-retries`): it is the host's to send, as one it had.
+	const held = notOnHost === 'host-retries' ? undefined : notOnHost;
+	if (held) holdRefusedItem(sessionId, { ...item, hostEntryId: undefined }, index);
 	// Its retry's card says it (settled here, or already by the cut's own read): told once.
 	if (owned || (retryOutage && useRetryStore.getState().outages[retryOutage]?.settledByHost)) {
 		return;
 	}
 	notifyToast({
 		color: 'theme',
-		title: notOnHost ? 'Not sent' : 'Not sent again',
-		message: notOnHost ? notOnHostText(notOnHost) : HOST_HAD_MESSAGE_TEXT,
+		title: held ? 'Not sent' : 'Not sent again',
+		message: held
+			? notOnHostText(held)
+			: notOnHost === 'host-retries'
+				? HOST_RETRIES_TEXT
+				: HOST_HAD_MESSAGE_TEXT,
 	});
 }
 
@@ -480,6 +487,11 @@ function forwardToHost(
 					notHostedAgain(sessionId, item, index, retryOutage);
 					return null;
 				}
+				if (receipt?.status === 'retrying') {
+					// The host's own retry holds this message (its Agent Resilience): it sends it.
+					notHostedAgain(sessionId, item, index, retryOutage, 'host-retries');
+					return null;
+				}
 				if (receipt) {
 					// The host took a resend: the outage it was kept through is over.
 					clearRetryIfSettled(sessionId, item.tabId);
@@ -510,8 +522,14 @@ function forwardToHost(
 				const stillOwned =
 					retryOutage !== undefined &&
 					getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
-				if (decided === 'answered') {
-					notHostedAgain(sessionId, item, index, retryOutage);
+				if (decided === 'answered' || decided === 'host-retries') {
+					notHostedAgain(
+						sessionId,
+						item,
+						index,
+						retryOutage,
+						decided === 'host-retries' ? decided : undefined
+					);
 					return null;
 				}
 				// Ended on its own error there: the retry of that error holds it now, and sends it.

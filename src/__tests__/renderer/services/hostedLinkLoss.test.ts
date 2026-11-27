@@ -34,6 +34,9 @@ import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
 	getRetryEntry,
 	heldOnHostOf,
+	hostSettledText,
+	HOST_RETRIES_TEXT,
+	HOST_TURN_ERRORED_TEXT,
 	noteDirectDispatch,
 	notOnHostText,
 	registerAgentErrorSurfacer,
@@ -883,6 +886,53 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
 	});
 
+	// Parity R41: one side owns a retry. A desktop host whose own Agent Resilience took the error
+	// writes its retry card in the turn and sends the message itself: nothing is sent from here.
+	const HOST_RETRY_CARD: LogEntry = {
+		id: 'r1',
+		timestamp: 20,
+		source: 'system',
+		text: 'API Error: 529 Overloaded',
+		retryOutageId: 'host-outage',
+		turnEnded: true,
+	};
+
+	it('leaves the retry to a desktop host whose own Agent Resilience holds the cut turn (R41)', async () => {
+		cut();
+		const outageId = getRetryEntry('row', 't1')!.outageId;
+		await hostBack('idle', [QUESTION, HOST_RETRY_CARD]);
+		retryNow('row', 't1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		expect(queue()).toHaveLength(0);
+		const outage = useRetryStore.getState().outages[outageId];
+		expect(outage).toMatchObject({ settledByHost: true, hostRetry: 'host' });
+		expect(hostSettledText(outage)).toBe(HOST_RETRIES_TEXT);
+	});
+
+	it("starts a provider error's backoff at its first attempt after a long outage (R41)", async () => {
+		cut();
+		const linkRetry = getRetryEntry('row', 't1')!;
+		// The link stayed down through several retries.
+		useRetryStore.getState().setEntry(linkRetry.key, { ...linkRetry, attempt: 5 });
+		await hostBack('idle', [QUESTION, OVERLOADED]);
+		const errorRetry = getRetryEntry('row', 't1')!;
+		expect(errorRetry).toMatchObject({
+			status: 'scheduled',
+			attempt: 0,
+			lastMessage: OVERLOADED.text,
+		});
+		expect(errorRetry.outageId).not.toBe(linkRetry.outageId);
+		expect(errorRetry.heldItemId).toBe(linkRetry.heldItemId);
+		// The link's card ends saying the error's own retry takes it from here.
+		const linkOutage = useRetryStore.getState().outages[linkRetry.outageId];
+		expect(linkOutage).toMatchObject({ status: 'recovered', hostRetry: 'here' });
+		expect(hostSettledText(linkOutage)).toBe(HOST_TURN_ERRORED_TEXT);
+		expect(queue().map((item) => item.hostEntryId)).toEqual(['u1']);
+	});
+
 	// CodeRabbit on #2167: the retry of an errored turn was stopped. A later send of the same entry
 	// asks the host's transcript again, never going straight out on the stale record.
 	it('asks the host again for an errored entry once its retry was stopped (R37)', async () => {
@@ -1452,6 +1502,42 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		await flush();
 		expect(sends()).toHaveLength(1);
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	it("sends nothing after a restart when the desktop host's own retry holds the message (R41)", async () => {
+		relaunch('idle', [
+			QUESTION,
+			{
+				id: 'r1',
+				timestamp: 20,
+				source: 'system',
+				text: 'API Error: 529 Overloaded',
+				retryOutageId: 'host-outage',
+				turnEnded: true,
+			},
+		]);
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		expect(queue()).toHaveLength(0);
+		expect(toastMock).toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Not sent again', message: HOST_RETRIES_TEXT })
+		);
+	});
+
+	it('takes the host saying its own retry holds the message as "the host retries it" (R41)', async () => {
+		relaunch('idle', [QUESTION]);
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'retrying' } } });
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(queue()).toHaveLength(0);
+		expect(toastMock).toHaveBeenCalledWith(
+			expect.objectContaining({ title: 'Not sent again', message: HOST_RETRIES_TEXT })
+		);
 	});
 
 	// Parity R40: after a reload no retry holds a prompt to resend. A rate-limited kept message

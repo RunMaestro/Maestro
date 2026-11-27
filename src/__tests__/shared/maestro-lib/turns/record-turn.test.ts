@@ -238,6 +238,42 @@ describe('turn records', () => {
 		expect(turnFateAfter(transcriptOf(repository.getTab('a1', 't1')!), 0)).toBe('answered');
 	});
 
+	// Parity R41 (b): the end goes on the message as it is when the stamp is written, never on a
+	// copy read when recording began, which would undo a change made to it since (the delivered
+	// tick).
+	it('stamps the message as it is at write time, keeping a change made since the turn began (R41)', async () => {
+		const message = { id: 'u1', timestamp: 1, source: 'user' as const, text: 'fix the login bug' };
+		seed({}, { logs: [{ ...message, delivered: false }] });
+		const { repository } = await recorder();
+		const records = createTurnRecorder({
+			paths,
+			repository: {
+				...repository,
+				// The message is marked delivered while the turn's own entries are written.
+				appendTranscript: async (...args: Parameters<typeof repository.appendTranscript>) => {
+					const appended = await repository.appendTranscript(...args);
+					await repository.replaceTranscriptEntry('a1', 't1', { ...message, delivered: true });
+					return appended;
+				},
+			},
+			loadSqlite: () => {
+				throw new Error('unused');
+			},
+			context: context(),
+			statsRecorder,
+		});
+		await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(transcriptOf(repository.getTab('a1', 't1')!)).toEqual([
+			{ ...message, delivered: true, turnEnded: true, turnEndedAt: 1_700_000_004_200 },
+		]);
+	});
+
 	// CodeRabbit on #2167: a stamp that could not be written is reported, never a silent success.
 	it('reports the transcript failed when the end stamp on the message could not be written', async () => {
 		seed({}, { logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug' }] });

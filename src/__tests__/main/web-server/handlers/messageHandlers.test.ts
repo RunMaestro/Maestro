@@ -12,6 +12,10 @@ vi.mock(
 	async () => await import('../../../helpers/pluginScan')
 );
 import {
+	noteAiTabRetryPending,
+	resetAiTabRetryStateForTests,
+} from '../../../../main/utils/ai-tab-retry-state';
+import {
 	recordFramedQueue,
 	resetQueueChangeFrames,
 } from '../../../../main/web-server/queue-change-frames';
@@ -4142,6 +4146,57 @@ describe('WebSocketMessageHandler', () => {
 				} else {
 					await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
 					expect(lastSend()).not.toHaveProperty('answered');
+				}
+			});
+
+			// Parity R41: one side owns a retry. When this desktop's own Agent Resilience holds the
+			// tab's failed turn for a resend, a client's resend of that message would run it twice:
+			// it is refused as "the host retries it" (`answered` too, for an older client).
+			it.each([
+				['holds a retry of the turn', true, true],
+				['holds no retry', false, false],
+			])(
+				'answers "the host retries it" only when the tab %s (R41)',
+				async (_how, pending, retrying) => {
+					noteAiTabRetryPending('session-1', 'tab-1', pending);
+					bridgeRead.invokeAsBridge.mockResolvedValue({
+						logs: [
+							QUESTION,
+							{ id: 'e1', timestamp: 2, source: 'error', text: 'API Error: 529', turnEnded: true },
+						],
+					});
+					resend();
+					try {
+						if (retrying) {
+							await vi.waitFor(() =>
+								expect(lastSend()).toMatchObject({ answered: true, retrying: true, queued: false })
+							);
+							expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+						} else {
+							await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+							expect(lastSend()).not.toHaveProperty('retrying');
+						}
+					} finally {
+						resetAiTabRetryStateForTests();
+					}
+				}
+			);
+
+			it("runs a resend of an earlier message while the tab's retry holds a later one (R41)", async () => {
+				noteAiTabRetryPending('session-1', 'tab-1', true);
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{ id: 'e1', timestamp: 2, source: 'error', text: 'API Error: 529', turnEnded: true },
+						{ id: 'u2', timestamp: 3, source: 'user', text: 'Next' },
+					],
+				});
+				resend();
+				try {
+					await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+					expect(lastSend()).not.toHaveProperty('retrying');
+				} finally {
+					resetAiTabRetryStateForTests();
 				}
 			});
 

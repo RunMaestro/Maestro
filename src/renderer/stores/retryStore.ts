@@ -201,6 +201,12 @@ export interface OutageRecord {
 	 * text. Nothing was sent, and the message stays held in the queue to send again.
 	 */
 	hostError?: string;
+	/**
+	 * Set with `settledByHost` when the kept message was not sent because of a retry: the host's
+	 * own Agent Resilience holds it and sends it itself (`host`), or its turn ended on a provider
+	 * error there and this machine's retry of that error takes it from here (`here`, a new card).
+	 */
+	hostRetry?: 'host' | 'here';
 }
 
 /** See `OutageRecord.cause`. */
@@ -214,6 +220,29 @@ export type NotOnHost = 'tab' | 'message';
  * (`NotOnHost`), or its own turn ended there on an error no retry takes (`{ error }`).
  */
 export type HeldOnHost = NotOnHost | { error: string };
+
+/**
+ * Why a kept message's retry ends on the host's word (`settleRetryOnHost()`): held for the user
+ * (`HeldOnHost`), the host's own retry sends it (`host-retries`), or its turn ended on a provider
+ * error there whose own retry here takes it (`errored`).
+ */
+export type HostSettle = HeldOnHost | 'host-retries' | 'errored';
+
+/** What the card and the toast say when a kept message was not sent: the host retries it itself. */
+export const HOST_RETRIES_TEXT =
+	'Its turn on the host ended on an error the host retries itself, so it was not sent again from here.';
+
+/** What the card says when a kept message's turn ended on a provider error retried from here. */
+export const HOST_TURN_ERRORED_TEXT =
+	"Its turn on the host ended on an error; that error's own retry takes the message from here.";
+
+/** What a settled-by-host outage card says (`OutageRecord.settledByHost`). */
+export function hostSettledText(outage: OutageRecord): string {
+	if (outage.hostRetry === 'host') return HOST_RETRIES_TEXT;
+	if (outage.hostRetry === 'here') return HOST_TURN_ERRORED_TEXT;
+	const held = heldOnHostOf(outage);
+	return held ? notOnHostText(held) : HOST_HAD_MESSAGE_TEXT;
+}
 
 /** The reason an outage record holds its kept message for the user, if it does. */
 export function heldOnHostOf(outage: OutageRecord): HeldOnHost | undefined {
@@ -1862,7 +1891,7 @@ export function noteRetryProgress(sessionId: string, tabId: string): void {
 export function settleRetryOnHost(
 	sessionId: string,
 	tabId: string,
-	notOnHost?: HeldOnHost
+	notOnHost?: HostSettle
 ): boolean {
 	const key = keyFor(sessionId, tabId);
 	const entry = useRetryStore.getState().retries[key];
@@ -1871,14 +1900,22 @@ export function settleRetryOnHost(
 		key,
 		notOnHost,
 	});
-	if (entry.heldItemId && !notOnHost) releaseHeldItemFromQueue(sessionId, entry.heldItemId);
+	// Released when the host holds it (it had it, or its own retry sends it); kept for the caller
+	// to park when the user sends it again, or for the retry of its error here.
+	if (entry.heldItemId && (!notOnHost || notOnHost === 'host-retries')) {
+		releaseHeldItemFromQueue(sessionId, entry.heldItemId);
+	}
 	useRetryStore.getState().patchOutage(entry.outageId, {
 		settledByHost: true,
 		...(typeof notOnHost === 'object'
 			? { hostError: notOnHost.error }
-			: notOnHost
-				? { notOnHost }
-				: {}),
+			: notOnHost === 'host-retries'
+				? { hostRetry: 'host' as const }
+				: notOnHost === 'errored'
+					? { hostRetry: 'here' as const }
+					: notOnHost
+						? { notOnHost }
+						: {}),
 	});
 	resolveOutage(entry.outageId, 'recovered');
 	removeEntry(key);

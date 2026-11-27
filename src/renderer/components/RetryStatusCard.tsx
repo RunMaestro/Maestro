@@ -24,9 +24,7 @@ import {
 	useRetryStatus,
 	retryNow,
 	cancelRetry,
-	HOST_HAD_MESSAGE_TEXT,
-	heldOnHostOf,
-	notOnHostText,
+	hostSettledText,
 } from '../stores/retryStore';
 import { formatDurationHuman } from '../../shared/formatters';
 import { describeQuotaWindow } from '../../shared/quotaLimitDetail';
@@ -137,7 +135,6 @@ export function RetryStatusCard({
 		// `attempts` counts reschedules, so the resend that got through is not in
 		// it (the same correction `resolveOutage` makes for the Usage Dashboard).
 		const sentCount = retryCount + 1;
-		const heldOnHost = heldOnHostOf(outage);
 		const headline = connectionLost
 			? 'Connection restored.'
 			: outage.strategy === 'availability'
@@ -160,9 +157,7 @@ export function RetryStatusCard({
 					<span className="font-medium">{headline}</span>{' '}
 					<span style={{ color: theme.colors.textDim }}>
 						{connectionLost && outage.settledByHost
-							? heldOnHost
-								? notOnHostText(heldOnHost)
-								: HOST_HAD_MESSAGE_TEXT
+							? hostSettledText(outage)
 							: connectionLost
 								? `Sent after ${retries}${over}, once the link was back.`
 								: `${strategyLabel} cleared after ${retries}${over}.`}
