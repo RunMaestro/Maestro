@@ -42,6 +42,7 @@ export function matchesFilter(event: MaestroEvent, filter: EventFilter | undefin
 		case 'queue.changed':
 		case 'autorun':
 		case 'autorun.ended':
+		case 'history.changed':
 			return event.agentId === filter.agentId;
 		default:
 			return true;

@@ -347,6 +347,8 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		repository,
 		fence,
 		...(options.sharedHistory ? { shared: options.sharedHistory } : {}),
+		// A synopsis is written after its turn's end: a client that read the History then reads again.
+		onChanged: (agentId) => bus.emit({ type: 'history.changed', agentId }),
 	});
 	const historyWriter = history.writer;
 

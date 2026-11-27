@@ -294,6 +294,9 @@ export function reducePeerMirrorPush(state: PeerMirrorData, push: MirrorPush): P
 			);
 		case 'agent.autorun':
 			return settlePeer(state, peerId, setAgentAutoRun(peer, event.agentId, event.state).peer);
+		case 'agent.history':
+			// The host wrote the agent's History after the fact (a synopsis): an open panel reads again.
+			return existing ? bumpHistory(state, peerId, [event.agentId]) : state;
 		case 'tab.stale': {
 			if (!existing) return state;
 			const key = liveTurnKey(event.agentId, event.tabId);

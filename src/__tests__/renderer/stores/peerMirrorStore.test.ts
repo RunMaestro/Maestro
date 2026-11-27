@@ -243,6 +243,19 @@ describe('peerMirrorStore', () => {
 			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1 });
 		});
 
+		// L31: the host wrote a synopsis after the turn's end; an open History panel reads again.
+		it('bumps one agent when its host says it wrote the History (agent.history)', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1'), agent('a2')])]);
+			store.applyPush(push('buildbox', { type: 'agent.history', agentId: 'a1' }));
+			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1 });
+			// A peer this window does not hold yet: nothing to bump.
+			usePeerMirrorStore
+				.getState()
+				.applyPush(push('gpu', { type: 'agent.history', agentId: 'b1' }));
+			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1 });
+		});
+
 		it('bumps every agent of the peer on peer.stale and on peer.agents', () => {
 			const store = usePeerMirrorStore.getState();
 			store.hydrate([

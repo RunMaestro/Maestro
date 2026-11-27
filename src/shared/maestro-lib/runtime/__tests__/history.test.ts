@@ -340,4 +340,39 @@ describe('createRuntimeHistory', () => {
 			expect(readShared(SHARED.label).map((e) => e.id)).toEqual(['e1']);
 		});
 	});
+
+	// L31: a synopsis is written after its turn's end, so a client that read the History at the
+	// end holds a list without it until the runtime says the History changed.
+	describe('onChanged', () => {
+		it('says each write that changed the agent History: an append, a remove, an update', async () => {
+			addAgent('a1');
+			const changed: string[] = [];
+			const history = make({ onChanged: (agentId) => changed.push(agentId) });
+			await history.writer.append('a1', entry('e1', 1));
+			expect(changed).toEqual(['a1']);
+			expect(await history.api.update('a1', 'e1', { validated: true })).toEqual({
+				ok: true,
+				value: { updated: true },
+			});
+			expect(await history.api.remove('a1', 'e1')).toEqual({ ok: true, value: { removed: true } });
+			expect(changed).toEqual(['a1', 'a1', 'a1']);
+		});
+
+		it('says nothing for an edit that changed nothing or was refused', async () => {
+			addAgent('a1');
+			writeOwn('a1', [entry('e1', 1)]);
+			const changed: string[] = [];
+			const history = make({ onChanged: (agentId) => changed.push(agentId) });
+			expect(await history.api.remove('a1', 'missing')).toEqual({
+				ok: true,
+				value: { removed: false },
+			});
+			const fenced = make({
+				onChanged: (agentId) => changed.push(agentId),
+				fence: () => ({ ok: false, reason: 'Taken over.' }),
+			});
+			expect((await fenced.writer.append('a1', entry('e2', 2))).ok).toBe(false);
+			expect(changed).toEqual([]);
+		});
+	});
 });

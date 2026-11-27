@@ -1158,6 +1158,14 @@ export type MaestroEvent =
 	 */
 	| { type: 'autorun.ended'; agentId: string; at: number; outcome: AutoRunOutcome }
 	/**
+	 * The host wrote the agent's History: a turn's entry (a synopsis is written after its turn
+	 * ends), a Delete, or a Validate. A client that holds the agent's History reads it again. A
+	 * desktop host says it as its History files change (`history:externalChange`), a headless host
+	 * as its writer writes (the same frame); an older headless host does not say it, so a client
+	 * keeps a list read from a host that never said it only briefly.
+	 */
+	| { type: 'history.changed'; agentId: string }
+	/**
 	 * Something happened in a group chat. Fold it with `reduceGroupChat`. A `gap`
 	 * follows a connection that could not resume: re-read the chats you hold.
 	 */

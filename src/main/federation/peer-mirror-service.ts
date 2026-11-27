@@ -108,6 +108,12 @@ export const MIRROR_REPROBE_INTERVAL_MS = 15 * 60_000;
  * explicit act (Check Now, a send, Move to Host) dials at once and starts the wait over.
  */
 export const MIRROR_IDLE_REDIAL_MAX_MS = 5 * 60_000;
+/**
+ * How long a History read is kept for a host that has not said it writes History
+ * (`history.changed`): an older host writes a turn's synopsis after the turn's end and says
+ * nothing, so its list is read again this soon. A host that says it keeps the list until it does.
+ */
+export const MIRROR_UNANNOUNCED_HISTORY_TTL_MS = 5_000;
 
 export interface PeerMirrorServiceDeps {
 	/** The stored SSH remotes. Read on every reconcile; nothing is cached. */
@@ -191,6 +197,11 @@ interface PeerEntry {
 	queueVersions: Map<string, number>;
 	/** Actions waiting for a reconnect in progress; called when the connection settles or the entry drops. */
 	linkWaiters: Set<() => void>;
+	/**
+	 * The host said it wrote an agent's History (`history.changed`) since the connection came up, so
+	 * it says every write: its History reads are kept until it does. Unset for an older host.
+	 */
+	announcesHistory?: true;
 }
 
 export class PeerMirrorService {
@@ -209,10 +220,15 @@ export class PeerMirrorService {
 	private turnTimer: unknown = null;
 	private readonly transcriptCache = new Map<string, LogEntryRecord[]>();
 	/**
-	 * Each mirrored agent's History as the host last sent it, by `peerId` NUL `agentId`. Dropped
-	 * when a turn of the agent ends, and for the whole peer on a reload, so the next read is fresh.
+	 * Each mirrored agent's History as the host last sent it, by `peerId` NUL `agentId`, with when it
+	 * was read. Dropped when the host says it wrote the agent's History, when a turn of the agent
+	 * ends, and for the whole peer on a reload, so the next read is fresh; a read from a host that
+	 * never said it is kept `MIRROR_UNANNOUNCED_HISTORY_TTL_MS` only.
 	 */
-	private readonly historyCache = new Map<string, Promise<HistoryEntry[]>>();
+	private readonly historyCache = new Map<
+		string,
+		{ read: Promise<HistoryEntry[]>; readAt: number }
+	>();
 	private unwatchRemotes: (() => void) | null = null;
 	private reprobeTimer: ReturnType<typeof setTimeout> | null = null;
 	private started = false;
@@ -362,25 +378,33 @@ export class PeerMirrorService {
 
 	/**
 	 * A mirrored agent's History, newest first: what the host recorded and the shared History of
-	 * the agent's project (`client.history.list`). Read once and kept until a turn of the agent
-	 * ends or the peer reloads; the History panel pages and filters it (`peer-history.ts`). A peer
-	 * that is not attached is an error that names it.
+	 * the agent's project (`client.history.list`). Read once and kept until the host says it wrote
+	 * the agent's History, a turn of the agent ends, or the peer reloads; from a host that never says
+	 * it, a few seconds only (its synopsis lands after the turn's end). The History panel pages and
+	 * filters it (`peer-history.ts`). A peer that is not attached is an error that names it.
 	 */
 	async history(peerId: string, agentId: string): Promise<HistoryEntry[]> {
-		const { client } = this.historyClient(peerId);
+		const { entry, client } = this.historyClient(peerId);
 		const key = `${peerId}\u0000${agentId}`;
 		const cached = this.historyCache.get(key);
-		if (cached) return cached;
+		const now = this.ctx.now();
+		if (
+			cached &&
+			(entry.announcesHistory || now - cached.readAt < MIRROR_UNANNOUNCED_HISTORY_TTL_MS)
+		) {
+			return cached.read;
+		}
 		const read = (async () => {
 			const listed = await client.history.list(agentId);
 			if (!listed.ok) throw new Error(`Peer "${peerId}": ${listed.error.message}`);
 			// A turn sent from here carries this machine's name (`originHost`); it reads as local.
 			return withOwnHostAsLocal(listed.value, this.deps.originHost ?? os.hostname());
 		})();
-		this.historyCache.set(key, read);
+		const held = { read, readAt: now };
+		this.historyCache.set(key, held);
 		// A failed read is not kept: the next open asks again.
 		read.catch(() => {
-			if (this.historyCache.get(key) === read) this.historyCache.delete(key);
+			if (this.historyCache.get(key) === held) this.historyCache.delete(key);
 		});
 		return read;
 	}
@@ -841,11 +865,17 @@ export class PeerMirrorService {
 				this.forgetTranscript(entry, event.agentId, event.tabId);
 				// A turn ended: it wrote a History entry on the host.
 				this.forgetHistory(entry, event.agentId);
+			} else if (event.type === 'agent.history') {
+				// The host wrote it, often a synopsis after the turn's end: the next read is fresh.
+				entry.announcesHistory = true;
+				this.forgetHistory(entry, event.agentId);
 			} else if (event.type === 'agent.removed') {
 				this.forgetHistory(entry, event.agentId);
 			} else if (event.type === 'peer.stale' || event.type === 'peer.agents') {
 				this.forgetTranscripts(entry);
 				this.forgetHistory(entry);
+				// A connection that could not resume may have reached another build of the host.
+				if (event.type === 'peer.stale') delete entry.announcesHistory;
 			}
 			this.emit(entry, event);
 		}

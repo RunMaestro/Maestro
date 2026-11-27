@@ -54,6 +54,11 @@ export interface RuntimeHistoryOptions {
 	maxEntries?: number;
 	/** Is this process still the data directory's writer? Asked before every write. */
 	fence?: () => DataDirVerdict;
+	/**
+	 * Called once an agent's own History changed: an entry was appended, removed, or updated. The
+	 * runtime says it to its clients (`history.changed`), so one that holds the list reads it again.
+	 */
+	onChanged?(agentId: string): void;
 }
 
 export interface RuntimeHistory {
@@ -186,11 +191,25 @@ export function createRuntimeHistory(options: RuntimeHistoryOptions): RuntimeHis
 		}
 	}
 
-	const writer = createHistoryWriter({
+	const written = createHistoryWriter({
 		paths,
 		...(options.fence ? { fence: options.fence } : {}),
-		onAppended: share,
+		onAppended: (agentId, entry) => {
+			share(agentId, entry);
+			options.onChanged?.(agentId);
+		},
 	});
+	/** An edit that changed the agent's own History is said, as an append is. */
+	const said = (agentId: string, result: HistoryEditResult): HistoryEditResult => {
+		if (result.ok && result.changed) options.onChanged?.(agentId);
+		return result;
+	};
+	const writer: HistoryWriter = {
+		...written,
+		remove: async (agentId, entryId) => said(agentId, await written.remove(agentId, entryId)),
+		update: async (agentId, entryId, updates) =>
+			said(agentId, await written.update(agentId, entryId, updates)),
+	};
 
 	return { api, share, writer };
 }
