@@ -26,7 +26,9 @@
  * the host: a leading mention (`crossAgentOnly`) consults and sends nothing, a parallel consult
  * holds the tab as it does locally, a hand-off is armed for when the host's turn ends. The turn
  * carries the agent-only notes and a released consult's replies (`agentContext`) to the host, so
- * its transcript shows what a local one shows. A host that refuses the turn consults nobody.
+ * its transcript shows what a local one shows. A host that refuses the turn consults nobody. A
+ * host that is down (nothing was sent, the message is kept) consults at once, here, as an SSH
+ * agent's dispatch consults before its spawn fails, and the kept message carries the notes.
  */
 
 import type { AgentError, LogEntry, QueuedItem, Session } from '../types';
@@ -211,13 +213,14 @@ function queueBehind(sessionId: string, item: QueuedItem): void {
  *
  * Answers whether the message is kept. False (Agent Resilience off for the agent, or no listener):
  * the caller keeps it its own way. `opts.onlyIfRetried` raises nothing at all when no retry would
- * take the message (the caller draws the failure its own way instead).
+ * take the message (the caller draws the failure its own way instead). `opts.keepMention` keeps
+ * the item's `@mention` on the resend, for a mention that has not run yet (a hand-off).
  */
 export function keepTurnForHost(
 	sessionId: string,
 	item: QueuedItem,
 	message: string,
-	opts: { onlyIfRetried?: boolean } = {}
+	opts: { onlyIfRetried?: boolean; keepMention?: boolean } = {}
 ): boolean {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	if (!session) return false;
@@ -242,7 +245,7 @@ export function keepTurnForHost(
 		updateAiTab(sessionId, item.tabId, (tab) => ({ ...tab, logs: [...tab.logs, bubble] }));
 	}
 	// The prompt the retry resends. A resend of this same item keeps its snapshot.
-	noteDirectDispatch(sessionId, kept);
+	noteDirectDispatch(sessionId, kept, { keepMention: opts.keepMention });
 	const raised = raiseAgentError(`${sessionId}-ai-${item.tabId}`, error);
 	const held = raised && getRetryEntry(sessionId, item.tabId)?.heldItemId === item.id;
 	if (bubble && !held) {
@@ -381,6 +384,33 @@ function notHostedAgain(
 	});
 }
 
+/**
+ * A message whose host is down runs its `@mention` here at once, as an SSH agent's dispatch
+ * consults before its spawn fails: the consult runs from this machine and needs no host. The item
+ * comes back carrying the consult's notes (`agentNotes`) and no longer its mention, so its resend
+ * (the retry, Force Send after a Stop, or the parked copy after a restart) consults nobody again.
+ * A hand-off is left as it is: it consults nobody until the host's turn ends, and is armed when
+ * the host takes that turn.
+ */
+function consultWhileHostDown(
+	sessionId: string,
+	item: QueuedItem,
+	mention: CrossAgentMentionPlan | null,
+	agentNotes: string | undefined
+): QueuedItem {
+	if (!mention || mention.routing === 'handoff') return item;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tabId = item.tabId || session?.activeTabId;
+	if (!session || !tabId) return item;
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	return {
+		...item,
+		crossAgentMention: undefined,
+		mentionRouting: undefined,
+		...(agentNotes ? { agentNotes } : {}),
+	};
+}
+
 /** Send one item that is no longer in this queue to the host. Resolves the host's receipt. */
 function forwardToHost(
 	sessionId: string,
@@ -404,6 +434,9 @@ function forwardToHost(
 		item.agentNotes && mentionNotes
 			? appendAgentNotes(item.agentNotes, mentionNotes)
 			: (item.agentNotes ?? mentionNotes);
+	// The item as it stands now: once a host that is down made the consult run here, it carries the
+	// consult's notes and no longer its mention, so no resend, Stop, or restart consults again.
+	let current = item;
 	// The model, effort, and read-only it was queued with, as the local drain runs it on them.
 	const overrides = queuedItemHostOverrides(item);
 	// The retry this resend belongs to: a Stop while it waits ends that retry, and then nothing goes.
@@ -427,7 +460,10 @@ function forwardToHost(
 				? {}
 				: {
 						onHostUnavailable: (message: string) => {
-							kept = keepTurnForHost(sessionId, item, message);
+							current = consultWhileHostDown(sessionId, item, mention, agentNotes);
+							kept = keepTurnForHost(sessionId, current, message, {
+								keepMention: !!current.crossAgentMention,
+							});
 						},
 					}),
 		}).then(
@@ -446,13 +482,13 @@ function forwardToHost(
 					// is not handed over (CodeRabbit on #2161), and a resend ends its outage here.
 					markKeptBubble(sessionId, item, false);
 					failInFlightRetry(sessionId, item.tabId, 'The host did not take the message.');
-					holdRefusedItem(sessionId, item, index);
+					holdRefusedItem(sessionId, current, index);
 				}
 				return receipt;
 			},
 			(error: unknown) => {
 				failInFlightRetry(sessionId, item.tabId, 'The message could not be sent to the host.');
-				holdRefusedItem(sessionId, item, index);
+				holdRefusedItem(sessionId, current, index);
 				throw error;
 			}
 		);

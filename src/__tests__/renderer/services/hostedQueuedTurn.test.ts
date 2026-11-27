@@ -40,6 +40,14 @@ import {
 } from '../../../renderer/services/hostedQueuedTurn';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	getRetryEntry,
+	registerAgentErrorSurfacer,
+	registerDispatchDepsProvider,
+	scheduleRetryForError,
+	useRetryStore,
+} from '../../../renderer/stores/retryStore';
+import { parseSessionId } from '../../../renderer/utils/sessionIdParser';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { LogEntry, QueuedItem } from '../../../renderer/types';
@@ -433,6 +441,122 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 		expect(queue()).toHaveLength(1);
 		expect(queue()[0]).toMatchObject({ id: 'q1', paused: true, crossAgentMention: true });
+	});
+
+	// R32: a mention in a message kept while the link is down runs its consult at once, from this
+	// machine, as an SSH agent's dispatch consults before its spawn fails; once, across the retry.
+	describe('a mention kept while the link is down (R32)', () => {
+		const setConnection = (connection: 'connected' | 'lost') => {
+			const peer = usePeerMirrorStore.getState().peers.box;
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection }]);
+		};
+		const keptItem = () => queue().find((queued) => queued.id === 'q1')!;
+		const parallel = () =>
+			queuedMessage({
+				text: 'look into the cache with @Backend',
+				crossAgentMention: true,
+				mentionRouting: 'parallel',
+			});
+
+		beforeEach(() => {
+			useRetryStore.setState({ retries: {}, outages: {} });
+			registerAgentErrorSurfacer((processSessionId, error) => {
+				const parsed = parseSessionId(processSessionId);
+				scheduleRetryForError(parsed.baseSessionId, parsed.tabId as string, error);
+			});
+			registerDispatchDepsProvider(() => ({}) as never);
+		});
+
+		afterEach(() => {
+			registerAgentErrorSurfacer(null);
+			registerDispatchDepsProvider(null);
+			useRetryStore.setState({ retries: {}, outages: {} });
+		});
+
+		it.each(['ssh', 'hosted'] as const)(
+			'%s: consults the mentioned agent at once, from this machine',
+			async (mode) => {
+				seedWithBackend(mode);
+				if (mode === 'hosted') setConnection('lost');
+				// An SSH turn fails after its consult ran (its spawn cannot reach the remote); here the
+				// spawn step has no agent config and throws, which stands in for that failure.
+				await useAgentStore
+					.getState()
+					.processQueuedItem('row', parallel(), drainDeps)
+					.catch(() => undefined);
+				await flush();
+
+				expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				expect(sendCrossAgentRequest.mock.calls[0][0]).toMatchObject({
+					sourceSessionId: 'row',
+					sourceTabId: 't1',
+					targetSessionId: 'backend',
+				});
+			}
+		);
+
+		it('hosted: the kept message carries the consult notes and goes once the host is back, consulting nobody again', async () => {
+			seedWithBackend('hosted');
+			setConnection('lost');
+			await useAgentStore.getState().processQueuedItem('row', parallel(), drainDeps);
+			await flush();
+
+			expect(sends()).toHaveLength(0);
+			expect(getRetryEntry('row', 't1')).toMatchObject({ heldItemId: 'q1' });
+			// The kept message first, then the hold its consult's replies release into, as for SSH.
+			expect(queue().map((queued) => [queued.id === 'q1', !!queued.awaitingConsult])).toEqual([
+				[true, false],
+				[false, true],
+			]);
+			// What persists (a restart) and what Force Send after a Stop takes: no mention, the notes.
+			expect(keptItem()).toMatchObject({ agentNotes: 'Consulting Backend: do not finish yet.' });
+			expect(keptItem().crossAgentMention).toBeUndefined();
+
+			// Refused again: still no second consult.
+			await useAgentStore.getState().processQueuedItem('row', keptItem(), drainDeps);
+			await flush();
+			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+
+			setConnection('connected');
+			const entry = getRetryEntry('row', 't1')!;
+			useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+			await useAgentStore.getState().processQueuedItem('row', keptItem(), drainDeps);
+			await flush();
+
+			expect(sends()).toHaveLength(1);
+			expect(sends()[0][2]).toMatchObject({
+				kind: 'send',
+				text: 'look into the cache with @Backend',
+				agentNotes: 'Consulting Backend: do not finish yet.',
+			});
+			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		});
+
+		it('hosted: a kept hand-off keeps its mention and is armed when the host takes the turn', async () => {
+			seedWithBackend('hosted');
+			setConnection('lost');
+			const item = queuedMessage({
+				text: 'look into the cache, then tell @Backend',
+				crossAgentMention: true,
+				mentionRouting: 'handoff',
+			});
+			await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+			await flush();
+
+			// Nobody is consulted before the turn has an answer, as for SSH.
+			expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+			expect(keptItem()).toMatchObject({ crossAgentMention: true, mentionRouting: 'handoff' });
+
+			setConnection('connected');
+			const entry = getRetryEntry('row', 't1')!;
+			useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+			await useAgentStore.getState().processQueuedItem('row', keptItem(), drainDeps);
+			await flush();
+
+			expect(sends()).toHaveLength(1);
+			expect(sends()[0][2].agentNotes).toBe('Your answer goes to Backend.');
+			expect(row().aiTabs[0].pendingMentionHandoff?.hostTurn).toMatchObject({ stage: 'sent' });
+		});
 	});
 
 	it("hosted: a released consult's replies ride to the host as agent-only context", async () => {

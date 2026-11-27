@@ -417,9 +417,14 @@ export function getDispatchDeps(): ProcessQueuedItemDeps | null {
  *
  * `crossAgentMention` is stripped for the same reason `processQueuedItem` strips
  * it: the consult already fired with the original send, and a replay must not
- * fan it out a second time.
+ * fan it out a second time. `opts.keepMention` keeps it for a send whose mention has NOT run yet
+ * (a hosted hand-off kept while its host was down: it is armed only once the host takes the turn).
  */
-export function noteDirectDispatch(sessionId: string, item: QueuedItem): void {
+export function noteDirectDispatch(
+	sessionId: string,
+	item: QueuedItem,
+	opts: { keepMention?: boolean } = {}
+): void {
 	if (!dispatchDepsProvider) {
 		logger.warn('[retry] No dispatch deps provider registered; prompt not snapshotted', undefined, {
 			sessionId,
@@ -427,7 +432,11 @@ export function noteDirectDispatch(sessionId: string, item: QueuedItem): void {
 		});
 		return;
 	}
-	noteDispatch(sessionId, { ...item, crossAgentMention: undefined }, dispatchDepsProvider());
+	noteDispatch(
+		sessionId,
+		opts.keepMention ? item : { ...item, crossAgentMention: undefined },
+		dispatchDepsProvider()
+	);
 }
 
 /**
