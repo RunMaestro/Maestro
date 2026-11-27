@@ -732,12 +732,15 @@ describe('agent repository', () => {
 			expect(readSessions().sessions[0].aiTabs[1].starred).toBe(false);
 		});
 
-		it('refuses to star a tab with no conversation yet, as the desktop does, and writes nothing (L40)', async () => {
+		it('refuses to star a tab with no provider session yet, as the desktop does, and writes nothing (L40, L45 d)', async () => {
 			const repo = await setup({ sessions: twoAgents() });
 			const before = fs.readFileSync(paths.sessionsFile, 'utf-8');
 			const error = errorOf(await repo.starTab('a1', 'a1-t2', true));
 			expect(error.code).toBe('rejected');
-			expect(error.message).toBe('This tab has no conversation yet, so it cannot be starred');
+			// The tab has messages: the reason names the provider session that is missing.
+			expect(error.message).toBe(
+				"This tab's provider has not reported a session for it yet, so it cannot be starred"
+			);
 			expect(fs.readFileSync(paths.sessionsFile, 'utf-8')).toBe(before);
 			expect(events).toEqual([]);
 			// Unstarring is never refused.

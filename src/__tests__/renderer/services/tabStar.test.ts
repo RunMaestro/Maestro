@@ -119,6 +119,45 @@ describe('tabStar', () => {
 		}
 	});
 
+	it('says the provider session is what is missing for a tab with messages but none, in every mode (L45 d)', () => {
+		// The tab strip's menu offered no star for a tab without a provider session before L40 too
+		// (`TabBar`: `onStar` only with `agentSessionId`); the star is kept with that session. The
+		// reason now names what is missing instead of saying there is no conversation.
+		const outcomes = AGENT_MODES.map((mode) => {
+			act$.mockClear();
+			const session = createModeSession(mode, {
+				id: 'row',
+				projectRoot: '/proj',
+				activeTabId: 't1',
+				aiTabs: [
+					createMockAITab({
+						id: 't1',
+						agentSessionId: null,
+						starred: false,
+						logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'hi' }],
+					}),
+				],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			return {
+				result: setTabStarred('row', 't1', true),
+				starred: tab().starred,
+				host: hostCalls(),
+			};
+		});
+		for (const outcome of outcomes) {
+			expect(outcome).toEqual({
+				result: {
+					success: false,
+					error:
+						"This tab's provider has not reported a session for it yet, so it cannot be starred",
+				},
+				starred: false,
+				host: [],
+			});
+		}
+	});
+
 	it.each(AGENT_MODES)('%s: unstarring a tab with no conversation yet is allowed', (mode) => {
 		seed(mode, null);
 		expect(setTabStarred('row', 't1', false)).toEqual({ success: true });

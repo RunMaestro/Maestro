@@ -146,7 +146,7 @@ describe('tab thinking from the CLI (T6)', () => {
 	);
 
 	it.each(AGENT_MODES)(
-		'%s: a star on a tab with no conversation yet is refused with the reason (L40)',
+		'%s: a star on a tab with no provider session yet is refused with the reason (L40)',
 		async (mode) => {
 			seed(mode, null);
 			mount();
@@ -154,11 +154,45 @@ describe('tab thinking from the CLI (T6)', () => {
 			await vi.waitFor(() =>
 				expect(respond).toHaveBeenCalledWith('ch', {
 					success: false,
-					error: 'This tab has no conversation yet, so it cannot be starred',
+					error:
+						"This tab's provider has not reported a session for it yet, so it cannot be starred",
 				})
 			);
 			expect(tab().starred).toBe(false);
 			expect(hostCalls()).toEqual([]);
+		}
+	);
+
+	it.each(AGENT_MODES)(
+		'%s: a patch that clears the provider session cannot star the tab (CodeRabbit on #2181)',
+		async (mode) => {
+			seed(mode);
+			mount();
+			patchTab({ agentSessionId: null, starred: true });
+			await vi.waitFor(() =>
+				expect(respond).toHaveBeenCalledWith('ch', {
+					success: false,
+					error:
+						"This tab's provider has not reported a session for it yet, so it cannot be starred",
+				})
+			);
+			expect(tab().starred).toBe(false);
+			expect(tab().agentSessionId).toBe('sess-1');
+			expect(hostCalls()).toEqual([]);
+		}
+	);
+
+	it.each(AGENT_MODES)(
+		'%s: a patch that sets a provider session and a star sends the session to the host first (CodeRabbit on #2181)',
+		async (mode) => {
+			seed(mode, null);
+			mount();
+			patchTab({ agentSessionId: 'sess-9', starred: true });
+			await vi.waitFor(() => expect(respond).toHaveBeenCalledWith('ch', { success: true }));
+			expect(tab()).toMatchObject({ agentSessionId: 'sess-9', starred: true });
+			expect(hostCalls().map((call) => (call as { kind: string }).kind)).toEqual(
+				mode === 'hosted' ? ['update-tab', 'star-tab'] : []
+			);
 		}
 	);
 });
