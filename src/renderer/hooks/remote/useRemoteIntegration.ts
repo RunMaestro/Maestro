@@ -49,6 +49,7 @@ import {
 	hostedTargetOf,
 	openHostedTab,
 	openHostedTabOrHere,
+	renameHostedTabSettled,
 	sendHostedTurn,
 } from '../../services/hostedTurns';
 import { hostedTabHoldsLine } from '../../utils/hostedTabLine';
@@ -71,7 +72,7 @@ import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGau
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
-import { persistTabStarred } from '../../utils/starredSessions';
+import { setTabStarred } from '../../services/tabStar';
 import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { messagesToLogEntries } from '../../components/AgentSessionsBrowser/utils/messagesToLogEntries';
@@ -1214,6 +1215,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const tab = session.aiTabs.find((t) => t.id === tabId);
 					if (!tab) return { success: false, error: `Tab not found: ${tabId}` };
 
+					// A hosted agent's tab is renamed on its host first, as the Rename Tab modal
+					// does (`useSessionLifecycle`): the tab is drawn from the host's record, so a
+					// name kept only here is gone on the next sync. A name the host refuses
+					// changes nothing here and answers the caller with the host's reason.
+					const onHost = renameHostedTabSettled(session, tabId, target);
+					if (onHost) {
+						const outcome = await onHost;
+						if (!outcome.saved) return { success: false, error: outcome.reason };
+					}
+
 					const isGrokTab =
 						session.toolType === 'grok' || resolveTurnProvider(tab, session) === 'grok';
 					// Keep Grok's label in the persisted Maestro tab, including turns
@@ -1346,11 +1357,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				const tab = session?.aiTabs.find((t) => t.id === tabId);
 				if (!session || !tab?.agentSessionId) return;
 
-				// Persist starred state and broadcast the change (same logic as
-				// desktop handleTabStar) so the Left Bar's starred cache refreshes.
-				persistTabStarred(session, tab, starred);
-
-				updateAiTab(sessionId, tabId, (t) => ({ ...t, starred }));
+				// The desktop star's own write: a hosted agent's host gets it too, so the
+				// next sync does not draw the tab unstarred again.
+				setTabStarred(sessionId, tabId, starred);
 			}
 		);
 
