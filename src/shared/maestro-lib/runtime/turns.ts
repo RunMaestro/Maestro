@@ -88,6 +88,7 @@ import {
 	joinMergedQueueText,
 	TurnCollisionError,
 	type ExecutionQueue,
+	type HandOver,
 	type QueueEvent,
 	type QueueItem,
 	type QueuedTurnHandle,
@@ -248,7 +249,8 @@ class TurnStartRefusal extends Error {
 }
 
 /** A waiting message as a client sees it (`turns.queue.list`, `queue.changed`). */
-function toQueuedTurn(item: TurnItem): QueuedTurn {
+function toQueuedTurn(item: TurnItem, handOver: HandOver | undefined): QueuedTurn {
+	const isHandOver = handOver?.itemId === item.id;
 	return {
 		itemId: item.id,
 		tabId: item.tabId,
@@ -256,6 +258,10 @@ function toQueuedTurn(item: TurnItem): QueuedTurn {
 		kind: 'message',
 		text: item.text,
 		paused: item.paused === true,
+		// Whether it waits for its tab alone (U6): every item says, so a client tells this host from
+		// an older one that says nothing.
+		handOver: isHandOver,
+		...(isHandOver ? { handOverSince: handOver.since } : {}),
 		turnSettings: parseQueuedTurnSettings(item.turnSettings) ?? {},
 		// The images ride along, so a hosted card draws them as a local card does. The item holds
 		// store refs, which name this machine's disk: the client gets the bytes (M10).
@@ -927,11 +933,13 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	 * tab's state, and never takes a start still in flight for a removal.
 	 */
 	function emitQueue(agentId: string, exit?: QueueExit): void {
-		const items = queues.get(agentId)?.items() ?? [];
+		const queue = queues.get(agentId);
+		const items = queue?.items() ?? [];
+		const handOver = queue?.handOver();
 		bus.emit({
 			type: 'queue.changed',
 			agentId,
-			items: items.map(toQueuedTurn),
+			items: items.map((item) => toQueuedTurn(item, handOver)),
 			namesExits: true,
 			...(exit ? { exit } : {}),
 		});
@@ -995,6 +1003,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				holdsTree: () => options.autoRunHolds?.(agentId) ?? false,
 				...(deps.recheckMs !== undefined ? { recheckMs: deps.recheckMs } : {}),
 				...(deps.schedule ? { schedule: deps.schedule } : {}),
+				now: deps.now,
 			});
 			queues.set(agentId, queue);
 		}
@@ -1176,7 +1185,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				if (!repository.getAgent(agentId)) {
 					return fail('turns.queue.list', 'not-found', `No agent ${agentId}.`);
 				}
-				return ok((queues.get(agentId)?.items() ?? []).map(toQueuedTurn));
+				const queue = queues.get(agentId);
+				const handOver = queue?.handOver();
+				return ok((queue?.items() ?? []).map((item) => toQueuedTurn(item, handOver)));
 			},
 			remove: async (agentId, itemId) => {
 				if (!repository.getAgent(agentId)) {

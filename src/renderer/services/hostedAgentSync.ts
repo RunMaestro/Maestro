@@ -79,7 +79,12 @@ import {
 	type HostLink,
 } from './hostedLinkLoss';
 import { retryConnectionOutagesNow } from '../stores/retryStore';
-import { hostedTabsHandingOver, onHostedTabLineChanged } from '../utils/hostedTabLine';
+import {
+	hostedTabsHandingOver,
+	hostHandOverClock,
+	nextHostHandOverDeadline,
+	onHostedTabLineChanged,
+} from '../utils/hostedTabLine';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
 function hostedInput(session: { id: string; liftedTo?: unknown; aiTabs: Session['aiTabs'] }):
@@ -102,6 +107,7 @@ function hostedInput(session: { id: string; liftedTo?: unknown; aiTabs: Session[
 	const peer = mirror.peers[pointer.peer];
 	const agent = peer?.agents.find((candidate) => candidate.id === pointer.agentId);
 	if (!peer || !agent) return undefined;
+	const now = Date.now();
 	return {
 		peerId: pointer.peer,
 		agentId: agent.id,
@@ -124,6 +130,8 @@ function hostedInput(session: { id: string; liftedTo?: unknown; aiTabs: Session[
 			queue: peer.queues[agent.id],
 			closing: closingHostTabIds({ peerId: pointer.peer, agentId: agent.id, agent }, session),
 			handingOver: hostedTabsHandingOver(session.id),
+			now,
+			handOverClock: hostHandOverClock(session.id, now),
 		},
 	};
 }
@@ -371,6 +379,8 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 			nextHostedHandoffDeadline(useSessionStore.getState().sessions),
 			// A pending tab whose making failed is asked again when its wait ends (R15).
 			nextPendingHostTabRetryAt(useSessionStore.getState().sessions),
+			// A host-queue hand-over past its limit reads queued, with no change from the host (U6).
+			nextHostHandOverDeadline(Date.now()),
 		].filter((at): at is number => at !== undefined);
 		if (deadlines.length === 0) return;
 		const delay = Math.max(0, Math.min(...deadlines) - Date.now()) + 1;

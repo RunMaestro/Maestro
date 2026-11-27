@@ -22,12 +22,15 @@ import {
 	resetQueueChangeFrames,
 } from '../../../main/web-server/queue-change-frames';
 
+// `handOver: false` is what every desktop item says on the wire (`toQueuedItemSnapshot()`, U6), so
+// an item reads the same going in and coming out.
 const message = (id: string, extra: Record<string, unknown> = {}) => ({
 	id,
 	timestamp: 1,
 	tabId: 't1',
 	type: 'message' as const,
 	text: id,
+	handOver: false as const,
 	...extra,
 });
 

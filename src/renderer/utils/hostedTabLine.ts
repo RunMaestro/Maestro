@@ -95,7 +95,50 @@ export function onHostedTabLineChanged(listener: () => void): () => void {
 	};
 }
 
-/** Test only: forget every line. */
+/**
+ * When this machine first saw an agent's host-queue hand-over (`hostQueueHandOver()`), and until
+ * when it counts: this machine's clock, since a host's may differ. One per agent, the one the
+ * host's queue shows now.
+ */
+const handOversSeen = new Map<string, { itemId: string; at: number; until: number }>();
+
+/** The clock `projectHostedSession()` reads a host-queue hand-over's time limit from. */
+export interface HandOverClock {
+	/** When the hand-over of `itemId` was first seen here; the first call starts its limit. */
+	seenAt(itemId: string, limitMs: number): number;
+	/** No hand-over now: the next one starts its own limit. */
+	clear(): void;
+}
+
+/** `sessionId`'s hand-over clock, read at `now`. */
+export function hostHandOverClock(sessionId: string, now: number): HandOverClock {
+	return {
+		seenAt(itemId, limitMs) {
+			const seen = handOversSeen.get(sessionId);
+			if (seen?.itemId === itemId) return seen.at;
+			handOversSeen.set(sessionId, { itemId, at: now, until: now + limitMs });
+			return now;
+		},
+		clear() {
+			handOversSeen.delete(sessionId);
+		},
+	};
+}
+
+/**
+ * The soonest moment after `now` a host-queue hand-over runs out of time: the projection must look
+ * again then, with no change from the host to run it.
+ */
+export function nextHostHandOverDeadline(now: number): number | undefined {
+	let soonest: number | undefined;
+	for (const { until } of handOversSeen.values()) {
+		if (until > now && (soonest === undefined || until < soonest)) soonest = until;
+	}
+	return soonest;
+}
+
+/** Test only: forget every line and every hand-over seen. */
 export function resetHostedTabLinesForTest(): void {
 	lines.clear();
+	handOversSeen.clear();
 }
