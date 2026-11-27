@@ -715,7 +715,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteNewTab: (
-			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
+			callback: (
+				sessionId: string,
+				responseChannel: string,
+				background?: boolean,
+				tabId?: string
+			) => void
 		) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
 		onRemoteCloseTab: (
@@ -1099,7 +1104,8 @@ interface MaestroAPI {
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl,
 				turnOverrides?: import('../shared/maestro-lib/client/types').TurnOverrides,
-				agentText?: import('../shared/maestro-lib/client/types').TurnAgentText
+				agentText?: import('../shared/maestro-lib/client/types').TurnAgentText,
+				entryId?: string
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (

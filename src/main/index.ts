@@ -84,7 +84,12 @@ import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
-import { createFederationRuntime, getPeerMirrorService, onMirrorPush } from './federation';
+import {
+	createFederationRuntime,
+	getPeerMirrorService,
+	noteHostedAgentsChanged,
+	onMirrorPush,
+} from './federation';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
@@ -677,6 +682,17 @@ capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeS
 // A forced model discovery pushes the fresh list to every open model picker.
 setModelsRefreshedBroadcaster(safeSend);
 
+/**
+ * Whether an agent on this machine runs on the Maestro host behind `peerId` (a hosted agent, with
+ * hosted agents on). The one predicate the host outage and the mirror's redial pace both read.
+ */
+const hostsAgentsOn = (peerId: string): boolean => {
+	const hostedEnabled = store.get(HOSTED_AGENTS_SETTING, false) === true;
+	if (!hostedEnabled) return false;
+	const sessions = sessionsStore.get('sessions', []) as Array<{ liftedTo?: unknown }>;
+	return sessions.some((session) => readLiftedTo(session?.liftedTo)?.peer === peerId);
+};
+
 // One dialog per unreachable SSH remote, in every window and web client, fed by
 // every path that runs ssh (agent turns, remote-fs, remote git, shell commands).
 configureSshReachability({
@@ -686,12 +702,7 @@ configureSshReachability({
 	hasLiveTransport: (remoteId) => getPeerMirrorService()?.isRemoteConnected(remoteId) ?? false,
 	// A hosted agent's host that stops answering is an outage of its remote, told through the
 	// same dialog. Only a host one of this machine's agents runs on counts.
-	hostsAgents: (peerId) => {
-		const hostedEnabled = store.get(HOSTED_AGENTS_SETTING, false) === true;
-		if (!hostedEnabled) return false;
-		const sessions = sessionsStore.get('sessions', []) as Array<{ liftedTo?: unknown }>;
-		return sessions.some((session) => readLiftedTo(session?.liftedTo)?.peer === peerId);
-	},
+	hostsAgents: hostsAgentsOn,
 	reconnectHost: async (remoteId) => {
 		const result = await getPeerMirrorService()?.reconnectRemote(remoteId);
 		return result?.ok ?? false;
@@ -3965,8 +3976,12 @@ app
 			readRemotes: () => (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[],
 			watchRemotes: (onChange) => store.onDidChange('sshRemotes', () => onChange()),
 			safeSend,
+			// A host nothing here is hosted on redials slowly while it stays down.
+			hostsAgents: hostsAgentsOn,
 		});
 		federation.start();
+		// Hosted agents switched on or off: the host outages and the redial pace follow at once.
+		store.onDidChange(HOSTED_AGENTS_SETTING, () => noteHostedAgentsChanged());
 		app.on('will-quit', () => federation.stop());
 
 		// Install the application menu (File / Edit / View / Window on macOS,

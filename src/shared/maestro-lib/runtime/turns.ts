@@ -39,8 +39,8 @@ import type { AgentRepository, TabWriteGuard } from '../agents/repository';
 import { matchesNativeSessionBinding, type NativeSessionBinding } from '../agents/providerSwap';
 import {
 	DEFAULT_RULE_CONTEXT,
-	isSameUserEntry,
 	recordTabSession,
+	turnEntryIdFor,
 	userEntryAnswered,
 	type RuleContext,
 	type TabSessionUpdate,
@@ -235,27 +235,6 @@ interface TurnItem extends QueueItem {
 }
 
 type Verdict = { ok: true } | { ok: false; message: string };
-
-/**
- * The entry id a message may take (`TurnInput.entryId`): one the tab does not hold yet, or the user
- * entry of this same message (a resend: the same text and images), which then stands for it. An id
- * that names another entry is dropped, and the message gets a new one: a send never hides or
- * replaces what is there. Asked when the turn starts, against the entry it writes: a command's
- * expanded prompt, and a message edited or merged while it waited.
- */
-function turnEntryIdFor(
-	tab: { logs?: unknown } | undefined,
-	raw: unknown,
-	text: string,
-	images: readonly string[] | undefined
-): string | undefined {
-	const entryId = readTurnEntryId(raw);
-	if (!entryId) return undefined;
-	const logs = Array.isArray(tab?.logs) ? (tab.logs as LogEntryRecord[]) : [];
-	const existing = logs.find((entry) => entry?.id === entryId);
-	if (!existing) return entryId;
-	return isSameUserEntry(existing, { id: entryId, text, images }) ? entryId : undefined;
-}
 
 /** A start the provider layer refused before anything ran, with its reason. */
 class TurnStartRefusal extends Error {

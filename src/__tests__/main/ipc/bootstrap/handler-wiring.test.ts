@@ -194,10 +194,12 @@ describe('IPC handler wiring parity', () => {
 
 	it('uses the composed post-flush Pianola consumer in the live bootstrap', () => {
 		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf8'));
-		expect(source).toContain(
-			'onSessionsPersisted: pianolaPersistenceConsumer(deps.getPianolaSupervisor)'
+		// Parity R17: wrapped so a Move Back drops its host outage at once (`withHostedAgentsNote()`).
+		expect(source).toMatch(
+			/onSessionsPersisted: withHostedAgentsNote\(\s*pianolaPersistenceConsumer\(deps\.getPianolaSupervisor\),\s*noteHostedAgentsChanged\s*\)/
 		);
 		expect(source).toContain("from './pianola-persistence'");
+		expect(source).toContain("from './sessions-persisted'");
 	});
 
 	it('registers the same plugin create/delete implementation as the adapter composition', () => {

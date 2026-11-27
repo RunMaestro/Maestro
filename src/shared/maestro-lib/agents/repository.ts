@@ -42,6 +42,7 @@ import type {
 	MaestroEvent,
 	TabPatch,
 } from '../client/types';
+import { readRequestedTabId } from '../client/types';
 import { valuesEqual } from '../client/mirror';
 import type { EventBus } from '../client/event-bus';
 import { listAutoRunDocuments } from '../autorun/documents';
@@ -213,7 +214,7 @@ export interface AgentRepository {
 	removeGroup(groupId: string): Promise<ClientResult<void>>;
 	moveAgentToGroup(agentId: string, groupId: string | null): Promise<ClientResult<void>>;
 
-	createTab(agentId: string): Promise<ClientResult<{ tabId: string }>>;
+	createTab(agentId: string, requestedId?: string): Promise<ClientResult<{ tabId: string }>>;
 	renameTab(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
 	closeTab(agentId: string, tabId: string): Promise<ClientResult<void>>;
 	/** The agent's closed-tab archive as summaries, newest first (`closed_tab_command` list). */
@@ -1050,12 +1051,22 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		});
 	}
 
-	function createTab(agentId: string): Promise<ClientResult<{ tabId: string }>> {
+	function createTab(
+		agentId: string,
+		requestedId?: string
+	): Promise<ClientResult<{ tabId: string }>> {
 		const method: ClientMethod = 'tabs.create';
 		return run(method, async () => {
 			const agent = findAgent(agentId);
 			if (!agent) return noAgent(method, agentId);
-			const { agent: next, tab } = addTabRecord(agent, ctx, await readTabDefaults());
+			const requested = readRequestedTabId(requestedId);
+			// A client draws the tab under a fresh id before it asks (R15), so a tab already under
+			// that id is the one this same request made (its answer was lost): answer it, make no
+			// second one (R25).
+			if (requested && (agent.aiTabs ?? []).some((existing) => existing.id === requested)) {
+				return { ok: true, plan: { value: { tabId: requested }, events: [] } };
+			}
+			const { agent: next, tab } = addTabRecord(agent, ctx, await readTabDefaults(), requested);
 			return {
 				ok: true,
 				plan: {

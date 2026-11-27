@@ -45,18 +45,29 @@ import {
 import type { AITab, ModalSaveOutcome, Session, UnifiedTabRef } from '../types';
 import { mirrorTab } from '../utils/peerMirrorView';
 import { appendBlockToDraft } from '../utils/quoteSelection';
-import { insertAiTabAtUnifiedIndex, setActiveTab } from '../utils/tabHelpers';
+import { closeTab, insertAiTabAtUnifiedIndex, setActiveTab } from '../utils/tabHelpers';
+import { generateId } from '../utils/ids';
+import { getRetryEntry } from '../stores/retryStore';
 import { insertAfterActiveInUnifiedTabOrder } from '../utils/unifiedTabOrderUtils';
+import {
+	collectLeafTabRefs,
+	normalizeTabGroups,
+	removeLeafByTabRef,
+	retargetLeafTab,
+} from '../utils/panelLayout';
 import {
 	actOnMirroredAgent,
 	actOnMirroredAgentQuietly,
+	callMirroredAgentAction,
 	closeMirrorTab,
 	interruptMirroredAgent,
 	renameMirrorTab,
 	reopenMirrorClosedTab,
 	sendToMirroredTab,
+	settleMirroredAnswer,
 	starMirrorTab,
 	steerMirrorAutoRun,
+	type MirroredActionAnswer,
 	type MirrorSteeringAnswer,
 } from './peerMirror';
 import { requestTabAutoNameForMessage } from './tabAutoNaming';
@@ -268,6 +279,269 @@ export async function openHostedTab(
 }
 
 /**
+ * New Tab on a hosted agent, as a local or SSH agent's New Tab: the tab opens at once. With the
+ * host connected it is made there (`openHostedTab()`). With the host not connected it opens here
+ * under an id drawn here (`AITab.pendingHostTab`), and is made on the host under that same id when
+ * the link is back (`createPendingHostTabs()`) or at its first send, whichever comes first, so a
+ * message typed in it is kept like any other. The tab's id, or null when the host refused.
+ */
+export async function openHostedTabOrHere(
+	session: Pick<Session, 'id' | 'liftedTo'>,
+	placement: HostedTabPlacement = {}
+): Promise<string | null> {
+	const target = hostedTargetOf(session);
+	if (!target) return null;
+	if (usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected') {
+		return openHostedTab(session, placement);
+	}
+	const tabId = generateId();
+	const saveToHistory = placement.fields?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory;
+	const showThinking = placement.fields?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking;
+	focusHostTab(
+		session.id,
+		tabId,
+		{
+			...placement,
+			fields: { ...placement.fields, saveToHistory, showThinking, pendingHostTab: true },
+		},
+		'new'
+	);
+	return tabId;
+}
+
+/** Pending tabs being made on the host now, by `peer/agent/tab`: one request per tab. */
+const pendingTabCreations = new Map<string, Promise<string | null>>();
+/**
+ * Pending tabs closed here while the host was making them, by `peer/agent/tab`: the host's tab is
+ * closed as soon as it answers, and is never drawn back meanwhile (`closingHostTabIds()`).
+ */
+const closedWhilePending = new Set<string>();
+/** Pending tabs asked of the host whose answer has not come yet, by `peer/agent/tab`. */
+const awaitingHostAnswer = new Set<string>();
+/**
+ * Pending tabs closed here whose making the host may have done though its answer was lost (a
+ * timeout, a dropped link), by `peer/agent/tab`: closed on the host once it lists the tab
+ * (`createPendingHostTabs()`), and never drawn meanwhile (`closingHostTabIds()`).
+ */
+const closeWhenListed = new Set<string>();
+
+/** Whether a refused action may still have been done by the host (its answer was lost). */
+function mayHaveBeenDone(answer: MirroredActionAnswer | null): boolean {
+	if (!answer || answer.ok || answer.notSent) return false;
+	return (
+		answer.unknown === true ||
+		answer.code === undefined ||
+		answer.code === 'host-lost' ||
+		answer.code === 'timeout' ||
+		answer.code === 'host-unavailable'
+	);
+}
+/**
+ * The host tab an older host made under its own id for a pending tab that stays a copy here (a kept
+ * message or a retry is keyed on the copy), by the copy's `peer/agent/tab`: the copy's sends go into
+ * that tab (`sendHostedTurn()`), never into yet another one.
+ */
+const copyHostTabs = new Map<string, string>();
+/** When making a pending tab last failed, by `peer/agent/tab`: the link-back path waits a while. */
+const pendingTabFailedAt = new Map<string, number>();
+/** How long the link-back path waits after a failed try before it asks the host again. */
+export const PENDING_HOST_TAB_RETRY_MS = 30_000;
+
+/**
+ * Make a tab opened here while the host was down (`openHostedTabOrHere()`) on the host, under the
+ * id it already has, so its draft, its kept message and its retry stay on it. The host's update
+ * then draws it as any host tab (`projectHostedSession()` clears `pendingHostTab`). An older host
+ * that answers its own id: the tab here takes that id when nothing on this machine is keyed on it
+ * yet (no retry, nothing queued for it); otherwise it stays a copy kept here, and its first send
+ * goes to a new host tab as a copy from before the move does. The host's tab id, or null.
+ *
+ * `quiet`: no red toast on a refusal (the link-back path, which tries again later).
+ */
+export function createPendingHostTab(
+	sessionId: string,
+	tabId: string,
+	opts: { quiet?: boolean } = {}
+): Promise<string | null> {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const target = hostedTargetOf(session);
+	if (!session || !target) return Promise.resolve(null);
+	const key = hostTabKey(target, tabId);
+	const inFlight = pendingTabCreations.get(key);
+	if (inFlight) return inFlight;
+	// The tab as it is when it is asked for: the host's report of it can land before the answer
+	// (the client reads the agents again first) and draw the host's blank name and pills over it.
+	const asked = session.aiTabs.find((candidate) => candidate.id === tabId);
+	const action = { kind: 'new-tab', tabId } as const;
+	awaitingHostAnswer.add(key);
+	const created = callMirroredAgentAction(target.peerId, target.agentId, action).then((answer) => {
+		awaitingHostAnswer.delete(key);
+		const result = opts.quiet
+			? answer?.ok
+				? answer.result
+				: null
+			: settleMirroredAnswer(action, answer);
+		// Closed here while the host made it: told through `closeHostedTab()`, marked by the sync
+		// (`closingHostTabIds()`), or gone from the record by any other path (the record itself still
+		// here), so the host's tab is closed too.
+		const record = selectSessionById(sessionId)(useSessionStore.getState());
+		const goneHere = !!record && !record.aiTabs.some((candidate) => candidate.id === tabId);
+		const closedHere = closedWhilePending.delete(key) || goneHere;
+		if (result?.kind !== 'new-tab') {
+			// The host may have made it though its answer was lost: closed there once it lists it.
+			if (closedHere && mayHaveBeenDone(answer)) closeWhenListed.add(key);
+			if (!closedHere) pendingTabFailedAt.set(key, Date.now());
+			return null;
+		}
+		pendingTabFailedAt.delete(key);
+		openedHostTabs.add(hostTabKey(target, result.tabId));
+		if (closedHere) {
+			// Closed here while it was being made: closed on the host too, and never drawn back.
+			if (result.tabId !== tabId) {
+				updateSessionWith(sessionId, (current) =>
+					current.aiTabs.some((candidate) => candidate.id === result.tabId)
+						? (closeTab(current, result.tabId)?.session ?? current)
+						: current
+				);
+			}
+			closeHostedTab(session, result.tabId);
+			return null;
+		}
+		const adopted = adoptHostTabId(sessionId, tabId, result.tabId);
+		if (!adopted) copyHostTabs.set(key, result.tabId);
+		// The host's tab takes what the tab here holds: the adopted tab, or the copy that kept its id
+		// (CodeRabbit on #2161), so its pills and name are the user's, not the host's defaults.
+		const hostTabId = adopted ?? result.tabId;
+		const local = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
+			(candidate) => candidate.id === (adopted ?? tabId)
+		);
+		void actOnMirroredAgent(target.peerId, target.agentId, {
+			kind: 'update-tab',
+			tabId: hostTabId,
+			// What the tab holds now: a change made while the host made it is the one that counts
+			// (the host's first report keeps a pending tab's own name and pills, projectHostedSession()).
+			patch: {
+				saveToHistory:
+					local?.saveToHistory ?? asked?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory,
+				thinking: local?.showThinking ?? asked?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking,
+			},
+		});
+		// A name given here while it waited goes too: the host's update takes the name from there.
+		const name = local?.name || asked?.name;
+		if (name) void renameMirrorTab(target.peerId, target.agentId, hostTabId, name);
+		return hostTabId;
+	});
+	pendingTabCreations.set(key, created);
+	const settle = () => {
+		if (pendingTabCreations.get(key) === created) pendingTabCreations.delete(key);
+	};
+	created.then(settle, settle);
+	return created;
+}
+
+/**
+ * The id a pending tab has once the host made it: its own when the host took it. Otherwise (an
+ * older host) the host's, when nothing here is keyed on the tab yet; else undefined, and the tab
+ * stays a copy kept here (no longer pending).
+ */
+function adoptHostTabId(sessionId: string, tabId: string, hostTabId: string): string | undefined {
+	if (hostTabId === tabId) return tabId;
+	let adopted: string | undefined;
+	updateSessionWith(sessionId, (session) => {
+		const keyed =
+			getRetryEntry(sessionId, tabId) !== undefined ||
+			(session.executionQueue ?? []).some((item) => item.tabId === tabId);
+		// The host's report can land first and draw the host's tab beside this one: when this one
+		// takes the host's id, it is that tab (its draft and settings kept), so the copy goes.
+		const others = keyed ? session.aiTabs : session.aiTabs.filter((tab) => tab.id !== hostTabId);
+		const tabs = others.map((tab) =>
+			tab.id !== tabId
+				? tab
+				: keyed
+					? { ...tab, pendingHostTab: undefined }
+					: { ...tab, id: hostTabId, pendingHostTab: undefined }
+		);
+		if (keyed) return { ...session, aiTabs: tabs };
+		adopted = hostTabId;
+		const from = { type: 'ai' as const, id: tabId };
+		const to = { type: 'ai' as const, id: hostTabId };
+		// The drawn copy goes, its tile too, so the host's id is in one leaf at most: this tab's.
+		const tabGroups = (session.tabGroups ?? []).flatMap((group) => {
+			const inTile = collectLeafTabRefs(group.layout).some(
+				(ref) => ref.type === 'ai' && ref.id === hostTabId
+			);
+			const without = inTile ? removeLeafByTabRef(group.layout, to) : group.layout;
+			if (!without) return [];
+			const layout = retargetLeafTab(without, from, to);
+			return layout === group.layout ? [group] : [{ ...group, layout }];
+		});
+		return normalizeTabGroups({
+			...session,
+			aiTabs: tabs,
+			unifiedTabOrder: (session.unifiedTabOrder ?? [])
+				.filter((ref) => !(ref.type === 'ai' && ref.id === hostTabId))
+				.map((ref) => (ref.type === 'ai' && ref.id === tabId ? { ...ref, id: hostTabId } : ref)),
+			activeTabId: session.activeTabId === tabId ? hostTabId : session.activeTabId,
+			// A tile that shows the tab keeps showing it under its new id.
+			tabGroups,
+		});
+	});
+	return adopted;
+}
+
+/** Whether this record's tab `tabId` is the one the host made (`adoptHostTabId()` took its id). */
+function hostTabAdopted(sessionId: string, tabId: string): boolean {
+	return !!selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.some(
+		(tab) => tab.id === tabId
+	);
+}
+
+/**
+ * When the soonest pending tab whose making failed may be asked of its host again (its last try
+ * plus `PENDING_HOST_TAB_RETRY_MS`), among records whose host is connected: the sync arms a recheck
+ * for it, so the tab is made without waiting for another change (CodeRabbit on #2161). A host that
+ * is down has no deadline, so an expired one cannot spin while it stays down.
+ */
+export function nextPendingHostTabRetryAt(sessions: readonly Session[]): number | undefined {
+	let soonest: number | undefined;
+	for (const session of sessions) {
+		const target = hostedTargetOf(session);
+		if (!target) continue;
+		if (usePeerMirrorStore.getState().peers[target.peerId]?.connection !== 'connected') continue;
+		for (const tab of session.aiTabs) {
+			if (!tab.pendingHostTab) continue;
+			const failedAt = pendingTabFailedAt.get(hostTabKey(target, tab.id));
+			if (failedAt === undefined) continue;
+			const at = failedAt + PENDING_HOST_TAB_RETRY_MS;
+			if (soonest === undefined || at < soonest) soonest = at;
+		}
+	}
+	return soonest;
+}
+
+/**
+ * The link to the host is back: make every pending tab of `session` on the host. A tab whose last
+ * try failed waits `PENDING_HOST_TAB_RETRY_MS`, so a host that refuses is not asked on every sync.
+ */
+export function createPendingHostTabs(session: Session): void {
+	const target = hostedTargetOf(session);
+	if (!target) return;
+	// A tab closed here whose making the host may have done: closed there once it lists it.
+	for (const tab of target.agent?.aiTabs ?? []) {
+		const key = hostTabKey(target, tab.id);
+		if (!closeWhenListed.delete(key)) continue;
+		openedHostTabs.add(key);
+		closeHostedTab(session, tab.id);
+	}
+	const now = Date.now();
+	for (const tab of session.aiTabs) {
+		if (!tab.pendingHostTab || isHostTab(target, tab.id)) continue;
+		const failedAt = pendingTabFailedAt.get(hostTabKey(target, tab.id));
+		if (failedAt !== undefined && now - failedAt < PENDING_HOST_TAB_RETRY_MS) continue;
+		void createPendingHostTab(session.id, tab.id, { quiet: true });
+	}
+}
+
+/**
  * Reopen a closed tab of a hosted agent on its host (Cmd+Shift+T, Quick Chat), as a local agent
  * reopens one here: the conversation continues on the host. The newest, or the one closed as
  * `tabId`. It shows here at once and the host's update fills it; `placement.background` keeps the
@@ -389,7 +663,8 @@ export async function sendHostedTurn(
 	if (!target.agent || (opts.onHostUnavailable && connection !== 'connected')) {
 		// Nothing is sent to a host that is not connected, including the steps ahead of the send
 		// (a new host tab, merged context): the caller keeps the message for a retry, or it is told.
-		const message = `${session.name} runs on peer "${target.peerId}", which is not connected${connection ? ` (${connection})` : ''}. Nothing was sent.`;
+		// Worded as the outage dialog names the cause (`SshUnreachableModal`).
+		const message = `Can't reach the Maestro host on "${target.peerId}"${connection ? ` (${connection})` : ''}. Nothing was sent.`;
 		if (opts.onHostUnavailable) {
 			opts.onHostUnavailable(message);
 			return null;
@@ -399,7 +674,37 @@ export async function sendHostedTurn(
 	}
 	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
 	let hostTabId = tabId;
-	if (!isHostTab(target, tabId)) {
+	// The id of this machine's tab the message came from: the pending tab's own, or the host's once
+	// this record's tab took it (an older host, nothing keyed on the tab). Its merged context is
+	// read and spent there (CodeRabbit on #2161).
+	let localTabId = tabId;
+	if (tab?.pendingHostTab && tabId && !isHostTab(target, tabId)) {
+		// A tab opened here while the host was not connected: made on the host now, under its id.
+		hostTabId = (await createPendingHostTab(session.id, tabId)) ?? undefined;
+		if (!hostTabId) return null;
+		const tabsNow = selectSessionById(session.id)(useSessionStore.getState())?.aiTabs ?? [];
+		if (!tabsNow.some((candidate) => candidate.id === tabId)) localTabId = hostTabId;
+		if (hostTabId !== tabId && !hostTabAdopted(session.id, hostTabId)) {
+			// An older host gave it its own id while this tab holds a kept message: a copy here.
+			notifyToast({
+				color: 'theme',
+				title: 'Sent in a new tab',
+				message: `The Maestro host on ${target.peerId} made that tab under its own id, so the message continues in a new tab there.`,
+			});
+		}
+	}
+	// The copy of a pending tab an older host made under its own id (the link-back path made it):
+	// its message goes into that host tab, as the first send would have.
+	const madeForCopy = tabId ? copyHostTabs.get(hostTabKey(target, tabId)) : undefined;
+	if (!isHostTab(target, hostTabId) && madeForCopy && isHostTab(target, madeForCopy)) {
+		hostTabId = madeForCopy;
+		notifyToast({
+			color: 'theme',
+			title: 'Sent in a new tab',
+			message: `The Maestro host on ${target.peerId} made that tab under its own id, so the message continues in a new tab there.`,
+		});
+	}
+	if (!isHostTab(target, hostTabId)) {
 		hostTabId = (await openHostedTab(session)) ?? undefined;
 		if (!hostTabId) return null;
 		notifyToast({
@@ -414,7 +719,7 @@ export async function sendHostedTurn(
 	// Read from the store, not the caller's snapshot: a send that waited behind an earlier one of
 	// this tab must not hand over context that send already spent.
 	const liveTab = selectSessionById(session.id)(useSessionStore.getState())?.aiTabs.find(
-		(candidate) => candidate.id === tabId
+		(candidate) => candidate.id === localTabId
 	);
 	const mergedContext = (liveTab ?? tab)?.pendingMergedContext;
 	if (mergedContext) {
@@ -450,8 +755,8 @@ export async function sendHostedTurn(
 	// keeps it, so the retry hands it over again (the host's copy is overwritten, not doubled).
 	// A message the host had already answered ran nothing now: nothing was spent, nothing to name.
 	const ranNow = receipt !== null && receipt.status !== 'answered';
-	if (ranNow && mergedContext && tabId) {
-		updateAiTab(session.id, tabId, (candidate) =>
+	if (ranNow && mergedContext && localTabId) {
+		updateAiTab(session.id, localTabId, (candidate) =>
 			candidate.pendingMergedContext === mergedContext
 				? { ...candidate, pendingMergedContext: undefined }
 				: candidate
@@ -487,8 +792,20 @@ const closingHostTabs = new Set<string>();
  * The tabs of `target` closed here that the host still lists. A close the host has reported (it no
  * longer lists the tab) is settled and forgotten here.
  */
-export function closingHostTabIds(target: HostedTarget): Set<string> {
+export function closingHostTabIds(
+	target: HostedTarget,
+	local?: Pick<Session, 'aiTabs'>
+): Set<string> {
 	const prefix = `${target.peerId}/${target.agentId}/`;
+	// A pending tab the host is making that left this record by a path that never told the host:
+	// marked closed now, before the host's report of it could draw it back.
+	if (local) {
+		for (const key of awaitingHostAnswer) {
+			if (!key.startsWith(prefix)) continue;
+			const tabId = key.slice(prefix.length);
+			if (!local.aiTabs.some((tab) => tab.id === tabId)) closedWhilePending.add(key);
+		}
+	}
 	const listed = new Set((target.agent?.aiTabs ?? []).map((tab) => tab.id));
 	const closing = new Set<string>();
 	for (const key of [...closingHostTabs]) {
@@ -496,6 +813,10 @@ export function closingHostTabIds(target: HostedTarget): Set<string> {
 		const tabId = key.slice(prefix.length);
 		if (target.agent && !listed.has(tabId)) closingHostTabs.delete(key);
 		else closing.add(tabId);
+	}
+	// A pending tab closed while the host makes it (or may have made it): never drawn when listed.
+	for (const key of [...closedWhilePending, ...closeWhenListed]) {
+		if (key.startsWith(prefix)) closing.add(key.slice(prefix.length));
 	}
 	return closing;
 }
@@ -507,8 +828,13 @@ export function closingHostTabIds(target: HostedTarget): Set<string> {
  */
 export function closeHostedTab(session: Pick<Session, 'liftedTo'>, tabId: string): void {
 	const target = hostedTargetOf(session);
-	if (!target || !isHostTab(target, tabId)) return;
+	if (!target) return;
 	const key = hostTabKey(target, tabId);
+	if (!isHostTab(target, tabId)) {
+		// A tab opened here while the host was down, being made there now: closed once it is.
+		if (pendingTabCreations.has(key)) closedWhilePending.add(key);
+		return;
+	}
 	openedHostTabs.delete(key);
 	closingHostTabs.add(key);
 	void closeMirrorTab(target.peerId, target.agentId, tabId).then((closed) => {

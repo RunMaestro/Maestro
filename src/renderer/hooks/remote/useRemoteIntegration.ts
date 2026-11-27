@@ -726,15 +726,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		// Handle remote new tab from web interface
 		const unsubscribeNewTab = window.maestro.process.onRemoteNewTab(
-			(sessionId: string, responseChannel: string, background?: boolean) => {
+			(sessionId: string, responseChannel: string, background?: boolean, tabId?: string) => {
 				let newTabId: string | null = null;
 
 				flushSync(() => {
 					updateSessionWith(sessionId, (s) => {
+						// A Federation client draws the tab under a fresh id before it asks (R15), so a
+						// tab already under that id is the one this same request made (its answer was
+						// lost): answer it, make no second one (R25).
+						if (tabId && s.aiTabs.some((tab) => tab.id === tabId)) {
+							newTabId = tabId;
+							return s;
+						}
 						// Use createTab helper. `activate: false` appends the tab without
 						// touching any active-* id, so it shows up in the tab bar the way
-						// a browser opens a background tab.
+						// a browser opens a background tab. A Federation client's id for a tab it
+						// already drew (R15) is taken.
 						const result = createTab(s, {
+							...(tabId ? { id: tabId } : {}),
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
 							activate: !background,
@@ -1440,12 +1449,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				turnOverrides?: TurnOverrides,
 				// A Federation sender's agent-only text for this turn: a consult's replies ahead of the
 				// message, the `@mention` notes behind it. It rides on the queued item, never drawn.
-				agentText?: TurnAgentText
+				agentText?: TurnAgentText,
+				// The id a Federation sender named for the message's entry (`TurnInput.entryId`): the
+				// user entry takes it when the item runs, as a headless host writes it.
+				entryId?: string
 			) => {
 				const withAgentText = (item: QueuedItem): QueuedItem => ({
 					...item,
 					...(agentText?.agentContext ? { agentContext: agentText.agentContext } : {}),
 					...(agentText?.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
+					...(entryId ? { entryId } : {}),
 				});
 				const reply = (result: {
 					success: boolean;
@@ -1574,6 +1587,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						const receipt = await sendHostedTurn(session, resolvedTabId, command, images ?? [], {
 							held,
 							overrides: turnOverrides,
+							...(entryId ? { entryId } : {}),
 							...(agentText?.agentContext ? { agentContext: agentText.agentContext } : {}),
 							...(agentText?.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
 						});
@@ -1626,9 +1640,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// path do. A provider's own `/compact` stays a message, as typed.
 					const isUserSlashCommand = matchQueuedSlashCommand(session, command) !== null;
 					// The plain remote-command path spawns on the live tab's settings and the bare text, so
-					// a message carrying the sender's own chips or agent-only text goes through the queue
-					// instead and is sent at once from there (Force Send): the queued item carries them.
-					if ((turnOverrides || agentText) && targetTab.state !== 'busy' && !lineForTab && !held) {
+					// a message carrying the sender's own chips, agent-only text or entry id goes through the
+					// queue instead and is sent at once from there (Force Send): the queued item carries them.
+					if (
+						(turnOverrides || agentText || entryId) &&
+						targetTab.state !== 'busy' &&
+						!lineForTab &&
+						!held
+					) {
 						const item = withAgentText(
 							withQueuedTurnOverrides(
 								buildQueuedMessageItem({

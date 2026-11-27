@@ -25,7 +25,7 @@ import {
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
 import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
-import { DEFAULT_TAB_DEFAULTS } from '../../../shared/maestro-lib/agents/rules';
+import { DEFAULT_TAB_DEFAULTS, turnEntryIdFor } from '../../../shared/maestro-lib/agents/rules';
 import type { MessagePin } from '../../../shared/messagePins';
 import { collectGroupMemberTabKeys } from '../../../shared/tabStripMembership';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
@@ -923,8 +923,12 @@ export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
 	const next = markTabRunningTurn(tab, item, session);
 	if (item.type === 'message' && (item.text || item.images?.length)) {
+		// The id a Federation client named for it (`TurnInput.entryId`), read as a headless host
+		// reads it: a resend of a message this tab already holds is that entry, written once.
+		const entryId = turnEntryIdFor(tab, item.entryId, item.text ?? '', item.images);
+		if (entryId && tab.logs.some((entry) => entry.id === entryId)) return next;
 		const logEntry: LogEntry = {
-			id: generateId(),
+			id: entryId ?? generateId(),
 			timestamp: next.thinkingStartTime ?? Date.now(),
 			source: 'user',
 			text: item.text ?? '',
@@ -937,6 +941,17 @@ export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: 
 			...(item.readOnlyMode && { readOnly: true }),
 			...(item.turnSaveToHistory !== undefined && { saveToHistory: item.turnSaveToHistory }),
 		};
+		// The bubble drawn for it while it was kept for a host (`QueuedItem.keptEntryId`), still here
+		// after a Move Back: the message runs here now, and that bubble becomes its entry, drawn once.
+		const keptAt = item.keptEntryId
+			? tab.logs.findIndex((entry) => entry.id === item.keptEntryId && entry.keptForHost)
+			: -1;
+		if (keptAt !== -1) {
+			const logs = [...tab.logs];
+			logs[keptAt] = { ...logEntry, id: tab.logs[keptAt].id };
+			next.logs = logs;
+			return next;
+		}
 		next.logs = [...tab.logs, logEntry];
 	}
 	return next;

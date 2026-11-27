@@ -573,9 +573,15 @@ export class CallbackRegistry {
 		return this.callbacks.selectTab(sessionId, tabId);
 	}
 
-	async newTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
+	async newTab(
+		sessionId: string,
+		background?: boolean,
+		tabId?: string
+	): Promise<{ tabId: string } | null> {
 		if (!this.callbacks.newTab) return null;
-		return this.callbacks.newTab(sessionId, background);
+		return tabId
+			? this.callbacks.newTab(sessionId, background, tabId)
+			: this.callbacks.newTab(sessionId, background);
 	}
 
 	async closeTab(sessionId: string, tabId: string): Promise<boolean> {
@@ -814,7 +820,8 @@ export class CallbackRegistry {
 		dispatchCallback?: boolean,
 		control?: PianolaQueueControl,
 		turnOverrides?: TurnOverrides,
-		agentText?: TurnAgentText
+		agentText?: TurnAgentText,
+		entryId?: string
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		const args: Parameters<EnqueueCommandCallback> = [
@@ -829,8 +836,9 @@ export class CallbackRegistry {
 			dispatchCallback,
 			control,
 		];
-		if (turnOverrides || agentText) args.push(turnOverrides);
-		if (agentText) args.push(agentText);
+		if (turnOverrides || agentText || entryId) args.push(turnOverrides);
+		if (agentText || entryId) args.push(agentText);
+		if (entryId) args.push(entryId);
 		return this.callbacks.enqueueCommand(...args);
 	}
 

@@ -147,6 +147,7 @@ import {
 	parseHostCapabilities,
 	parseQueuedTurnImages,
 	parseQueuedTurnSettings,
+	readRequestedTabId,
 	readTurnEntryId,
 } from './types';
 import { withTurnAgentText } from '../turns/prompt';
@@ -493,7 +494,7 @@ class WsMaestroClient implements MaestroClient {
 			const tabs = this.mirror.visibleTabs(agentId);
 			return tabs ? ok(tabs) : this.fail('tabs.list', 'not-found', `No agent ${agentId}`);
 		},
-		create: (agentId: string) => this.tabsCreate(agentId),
+		create: (agentId: string, opts?: { tabId?: string }) => this.tabsCreate(agentId, opts),
 		rename: (agentId: string, tabId: string, name: string) => this.tabsRename(agentId, tabId, name),
 		close: (agentId: string, tabId: string) => this.tabsClose(agentId, tabId),
 		closed: (agentId: string) => this.tabsClosed(agentId),
@@ -1933,10 +1934,19 @@ class WsMaestroClient implements MaestroClient {
 	// Tabs
 	// =======================================================================
 
-	private async tabsCreate(agentId: string): Promise<ClientResult<{ tabId: string }>> {
+	private async tabsCreate(
+		agentId: string,
+		opts?: { tabId?: string }
+	): Promise<ClientResult<{ tabId: string }>> {
+		const requested = readRequestedTabId(opts?.tabId);
 		const sent = await this.send(
 			'tabs.create',
-			{ type: 'new_tab', sessionId: agentId, background: true },
+			{
+				type: 'new_tab',
+				sessionId: agentId,
+				background: true,
+				...(requested ? { tabId: requested } : {}),
+			},
 			'new_tab_result'
 		);
 		if (!sent.ok) return sent;

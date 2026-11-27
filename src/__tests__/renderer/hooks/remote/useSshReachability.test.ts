@@ -6,11 +6,27 @@ vi.mock('../../../../renderer/contexts/WindowContext', () => ({
 }));
 
 const notifyToast = vi.fn();
-vi.mock('../../../../renderer/stores/notificationStore', () => ({
+vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) => ({
+	...(await importOriginal<object>()),
 	notifyToast: (...args: unknown[]) => notifyToast(...args),
 }));
 
+const retryConnectionOutagesNow = vi.fn(
+	(_ids: ReadonlySet<string>, _except?: (sessionId: string, tabId: string) => boolean) => 0
+);
+vi.mock('../../../../renderer/stores/retryStore', async (importOriginal) => ({
+	...(await importOriginal<object>()),
+	retryConnectionOutagesNow: (
+		ids: ReadonlySet<string>,
+		except?: (sessionId: string, tabId: string) => boolean
+	) => retryConnectionOutagesNow(ids, except),
+}));
+
 import { useSshReachability } from '../../../../renderer/hooks/remote/useSshReachability';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { cutTurnUndecided } from '../../../../renderer/services/hostedLinkLoss';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { createModeSession } from '../../../helpers';
 import { useSshOutageStore } from '../../../../renderer/stores/sshOutageStore';
 import type { SshReachabilityEvent } from '../../../../shared/sshConnection';
 
@@ -33,6 +49,7 @@ let federationReset: (() => void) | undefined;
 
 beforeEach(() => {
 	notifyToast.mockReset();
+	retryConnectionOutagesNow.mockClear();
 	useSshOutageStore.setState({ outages: {} });
 	(window as any).maestro = {
 		...((window as any).maestro || {}),
@@ -133,5 +150,47 @@ describe('useSshReachability', () => {
 
 		unmount();
 		expect(federationReset).toBeUndefined();
+	});
+
+	// Parity R18: the link coming back fires the retries kept for it at once, for the agents the
+	// outage stopped: every agent on the remote for ssh, the hosted ones for its host.
+	describe('fires the kept retries when the link is back (R18)', () => {
+		const ids = () => [...(retryConnectionOutagesNow.mock.calls.at(-1)?.[0] ?? [])].sort();
+
+		beforeEach(() => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			useSessionStore.setState({
+				sessions: [
+					createModeSession('local', { id: 'local-1' }),
+					createModeSession('ssh', { id: 'ssh-1' }),
+					createModeSession('hosted', { id: 'hosted-1' }),
+				],
+			});
+		});
+
+		it('for every agent on the remote when ssh is reachable again', () => {
+			renderHook(() => useSshReachability());
+			push(down);
+			push(up);
+			expect(retryConnectionOutagesNow).toHaveBeenCalledTimes(1);
+			expect(ids()).toEqual(['hosted-1', 'ssh-1']);
+			// A hosted tab whose cut turn the host has yet to settle fires from that decision
+			// (CodeRabbit on #2161).
+			expect(retryConnectionOutagesNow.mock.calls[0][1]).toBe(cutTurnUndecided);
+		});
+
+		it('for the hosted agents when their host is reachable again', () => {
+			renderHook(() => useSshReachability());
+			push({ ...down, cause: 'host' });
+			push({ ...up, cause: 'host' });
+			expect(ids()).toEqual(['hosted-1']);
+		});
+
+		it('for nothing when an outage is only cleared', () => {
+			renderHook(() => useSshReachability());
+			push({ ...down, cause: 'host' });
+			push({ ...up, cause: 'host', cleared: true });
+			expect(retryConnectionOutagesNow).not.toHaveBeenCalled();
+		});
 	});
 });
