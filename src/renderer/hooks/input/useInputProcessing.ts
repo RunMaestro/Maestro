@@ -69,6 +69,8 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
 import { hostedTargetOf, sendHostedTurn } from '../../services/hostedTurns';
+import { inHostTabOrder, keepTurnForHost } from '../../services/hostedQueuedTurn';
+import { hostedTabHoldsLine } from '../../utils/hostedTabLine';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -490,6 +492,35 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// `let` because Design Mode chips add their screenshots below.
 			let effectiveImages = options?.images ?? (isComposerSubmit ? stagedImages : []);
 			const usingOverrideImages = options?.images !== undefined;
+			/**
+			 * Clear, on the tab a submit came from, only the draft fields that are still the ones it
+			 * sent: text typed or images staged since belong to the next message. For a composer that
+			 * now shows another agent or tab, whose draft was flushed to the tab it came from.
+			 */
+			const clearSubmittedDraftOnTab = (
+				sessionId: string,
+				tabId: string | undefined,
+				images: readonly string[]
+			) => {
+				updateSessionWith(sessionId, (session) => ({
+					...session,
+					aiTabs: session.aiTabs.map((tab) => {
+						if (tab.id !== tabId) return tab;
+						const clearText = tab.inputValue === inputValueAtSubmit;
+						const staged = tab.stagedImages ?? [];
+						const clearImages =
+							!usingOverrideImages &&
+							staged.length === images.length &&
+							staged.every((image, index) => image === images[index]);
+						if (!clearText && !clearImages) return tab;
+						return {
+							...tab,
+							...(clearText ? { inputValue: '' } : {}),
+							...(clearImages ? { stagedImages: [] } : {}),
+						};
+					}),
+				}));
+			};
 			// Design Mode chips staged on the tab this submit sends from. Like the
 			// staged images, only a composer submit in AI mode takes them, and not
 			// when the caller hands in attachments of its own. Read from the live
@@ -658,12 +689,16 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const tabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
 				return onPlanCrossAgentMentions(planText, activeSession, tabId) !== null;
 			};
-			// This machine holds a line for the tab (a consult's hold, a mention waiting its turn):
-			// the message waits behind it, as it would for a local agent, instead of overtaking it.
+			// This machine holds a line for the tab (a turn on its way to the host, a consult's hold,
+			// a mention waiting its turn): the message waits behind it, as it would for a local agent,
+			// instead of overtaking it.
 			const hostedTabHasLocalLine = (): boolean => {
 				const tabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
-				return (activeSession.executionQueue ?? []).some(
-					(item) => item.tabId === tabId && !item.hostQueued
+				return (
+					hostedTabHoldsLine(activeSession.id, tabId) ||
+					(activeSession.executionQueue ?? []).some(
+						(item) => item.tabId === tabId && !item.hostQueued
+					)
 				);
 			};
 			if (
@@ -705,14 +740,58 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const releaseSubmit = isComposerSubmit
 					? holdComposerSubmit(hostedKey, hostedSubmit)
 					: undefined;
-				let receipt: Awaited<ReturnType<typeof sendHostedTurn>> = null;
+				// Cast so TS does not narrow them to their initial values: the ordered task assigns both.
+				let receipt = null as Awaited<ReturnType<typeof sendHostedTurn>>;
+				// A host that is not connected sends nothing; the message is then kept for an automatic
+				// retry, as an SSH agent's is when its link is down (`keepTurnForHost()`).
+				let kept = false as boolean;
+				const hostedTab = activeSession.aiTabs.find((tab) => tab.id === targetTabId);
+				const keepForHost = (message: string) => {
+					if (!hostedTab || options?.hold === true) return false;
+					const item = buildQueuedMessageItem({
+						session: activeSession,
+						tab: hostedTab,
+						text: hostedText,
+						images: hostedImages,
+						planMentions: false,
+					});
+					return keepTurnForHost(activeSession.id, item, message);
+				};
 				try {
-					receipt = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
-						held: options?.hold === true,
-						// Named from what the user typed, as a local send is (chips only: their blocks).
-						...(composerSendNamesTab(text, customAICommands, activeSession)
-							? { nameFrom: { text: text.trim() ? text : hostedText } }
-							: {}),
+					// One send per tab at a time, so messages reach the host, or are kept, in typed order.
+					await inHostTabOrder(hostedKey, async () => {
+						// An earlier message of this tab still waits for its retry: this one waits behind it.
+						if (hostedTab && hasPendingRetry(activeSession.id, hostedTab.id)) {
+							kept = keepForHost(
+								'An earlier message on this tab is waiting for the host to come back.'
+							);
+							if (!kept) {
+								notifyToast({
+									color: 'red',
+									title: 'Message not sent',
+									message:
+										'An earlier message on this tab is waiting for the host to come back. Nothing was sent.',
+								});
+							}
+							return;
+						}
+						let unavailable: string | undefined;
+						receipt = await sendHostedTurn(activeSession, targetTabId, hostedText, hostedImages, {
+							held: options?.hold === true,
+							// Named from what the user typed, as a local send is (chips only: their blocks).
+							...(composerSendNamesTab(text, customAICommands, activeSession)
+								? { nameFrom: { text: text.trim() ? text : hostedText } }
+								: {}),
+							onHostUnavailable: (message) => {
+								unavailable = message;
+							},
+						});
+						if (!receipt && unavailable !== undefined) {
+							kept = keepForHost(unavailable);
+							if (!kept && (!hostedTab || options?.hold === true)) {
+								notifyToast({ color: 'red', title: 'Message not sent', message: unavailable });
+							}
+						}
 					});
 				} finally {
 					releaseSubmit?.();
@@ -722,15 +801,26 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				if (options?.steer && receipt?.status === 'queued' && targetTabId) {
 					void steerHostedSentMessage(activeSession, targetTabId, receipt.itemId);
 				}
-				if (receipt && isComposerSubmit) {
-					setInputValue('');
-					if (!usingOverrideImages) setStagedImages([]);
+				if ((receipt || kept) && isComposerSubmit) {
+					// The host round trip is a window the user may type the next message in: clear only
+					// what this submit took.
 					clearSentDesignPicks();
-					syncAiInputToSession('', syncTarget);
-					if (inputRef.current) inputRef.current.style.height = 'auto';
+					const selected = selectActiveSession(useSessionStore.getState());
+					if (selected?.id === activeSession.id && getActiveTab(selected)?.id === targetTabId) {
+						if (getInputValue() === inputValueAtSubmit) {
+							setInputValue('');
+							syncAiInputToSession('', syncTarget);
+							if (inputRef.current) inputRef.current.style.height = 'auto';
+						}
+						if (!usingOverrideImages && stagedImagesRef.current === effectiveImages) {
+							setStagedImages([]);
+						}
+					} else {
+						clearSubmittedDraftOnTab(activeSession.id, targetTabId, effectiveImages);
+					}
 				}
 				// Up arrow recalls it, as it recalls a message a local send took.
-				if (receipt) {
+				if (receipt || kept) {
 					updateSessionWith(activeSession.id, (s) => {
 						const aiCommandHistory = withRecallEntry(s.aiCommandHistory, text);
 						return aiCommandHistory.length === (s.aiCommandHistory?.length ?? 0)
@@ -870,9 +960,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							activeSession.id,
 							activeTab?.id || activeSession.activeTabId
 						);
+						// A hosted tab whose turn is on its way to the host, or whose consult waits for
+						// its turn there, holds its line here: the command waits behind it, as a
+						// message does (`hostedTabHoldsLine()`).
+						const hostedLineHoldsTab = hostedTabHoldsLine(
+							activeSession.id,
+							activeTab?.id || activeSession.activeTabId
+						);
 						const sessionIsIdle =
 							!options?.hold &&
 							!retryHoldsTab &&
+							!hostedLineHoldsTab &&
 							(forceParallel
 								? activeTab?.state !== 'busy'
 								: activeSession.state !== 'busy' && !isAutoRunActive);
@@ -1035,24 +1133,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				if (!isWebDesktop() || currentMode !== 'ai' || !isComposerSubmit) return;
 				// Switching owners flushes the original draft. Clear only the submitted
 				// fields there, without cancelling or stamping the new owner's composer.
-				updateSessionWith(activeSession.id, (session) => ({
-					...session,
-					aiTabs: session.aiTabs.map((tab) => {
-						if (tab.id !== targetTabId) return tab;
-						const clearText = tab.inputValue === inputValueAtSubmit;
-						const images = tab.stagedImages ?? [];
-						const clearImages =
-							!usingOverrideImages &&
-							images.length === submitted.images.length &&
-							images.every((image, index) => image === submitted.images[index]);
-						if (!clearText && !clearImages) return tab;
-						return {
-							...tab,
-							...(clearText ? { inputValue: '' } : {}),
-							...(clearImages ? { stagedImages: [] } : {}),
-						};
-					}),
-				}));
+				clearSubmittedDraftOnTab(activeSession.id, targetTabId, submitted.images);
 			};
 			const probeForSubmit = async (tabId: string | undefined) => {
 				const releaseSubmit = isComposerSubmit

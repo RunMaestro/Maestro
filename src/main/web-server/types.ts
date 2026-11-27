@@ -1,6 +1,11 @@
+import type { QueuedItemSnapshot } from '../../shared/queueSnapshot';
 import type { PianolaQueueControl } from '../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
-import type { QueuedTurnEdit, TurnOverrides } from '../../shared/maestro-lib/client/types';
+import type {
+	QueuedTurnEdit,
+	TurnAgentText,
+	TurnOverrides,
+} from '../../shared/maestro-lib/client/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -261,6 +266,11 @@ export interface WebClient {
 	subscribedSessionId?: string;
 	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
 	cliAuthenticated?: boolean;
+	/**
+	 * The upgrade said this client reads queue changes (`QUEUE_CHANGES_QUERY_PARAM`, M28): its
+	 * `queue_changed` frames carry the change only. Read only for a client the CLI secret admitted.
+	 */
+	readsQueueChanges?: boolean;
 	/** Revalidate the upgrade session/current login policy before commands and delivery. */
 	isAuthorized?: (context?: import('./auth/web-login-policy').WebLoginPolicyContext) => boolean;
 	/**
@@ -375,7 +385,21 @@ export type ExecuteCommandCallback = (
 	/** Throw on a missing/malformed receipt instead of reporting a rejection. */
 	requireDeliveryReceipt?: boolean,
 	pianolaDispatchId?: string
-) => Promise<boolean>;
+) => Promise<ExecuteCommandOutcome>;
+
+/**
+ * An accepted command that did not start: a hosted agent's Federation host put it in its
+ * execution queue behind the running turn (a host has no `--force`). Truthy, so a caller that only
+ * asks "accepted?" reads it as accepted; `send_command` answers it as `queued` with the item.
+ */
+export interface ExecuteCommandQueued {
+	queued: true;
+	itemId: string;
+	queuePosition: number;
+}
+
+/** `true`: accepted; `false`: refused; an object: accepted and queued (`ExecuteCommandQueued`). */
+export type ExecuteCommandOutcome = boolean | ExecuteCommandQueued;
 
 /**
  * Stop a running turn through the renderer's `interruptTurn()`: the whole agent,
@@ -413,7 +437,9 @@ export type SelectSessionCallback = (
 export type SelectTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export type NewTabCallback = (
 	sessionId: string,
-	background?: boolean
+	background?: boolean,
+	/** The id the tab takes when no tab of the agent has it (a Federation client's, R15). */
+	tabId?: string
 ) => Promise<{ tabId: string } | null>;
 export type ReopenTabCallback = (
 	sessionId: string,
@@ -666,32 +692,14 @@ export type EnqueueCommandCallback = (
 	 * The sender's own tab chips for this one message (`TurnInput.overrides`, Federation): the
 	 * queued item runs under them. Never written to the tab.
 	 */
-	turnOverrides?: TurnOverrides
+	turnOverrides?: TurnOverrides,
+	/** A Federation client's agent-only text for this turn (`TurnInput.agentContext`, `agentNotes`). */
+	agentText?: TurnAgentText,
+	/** The id a Federation client named for the message's entry (`TurnInput.entryId`). */
+	entryId?: string
 ) => Promise<EnqueueCommandResult>;
-/**
- * A single queued item, mirrored from the renderer's executionQueue for CLI
- * inspection (`maestro-cli queue list`). Tracks the renderer QueuedItem shape.
- */
-export interface QueuedItemSnapshot {
-	id: string;
-	timestamp: number;
-	tabId: string;
-	type: 'message' | 'command';
-	text?: string;
-	command?: string;
-	commandArgs?: string;
-	tabName?: string;
-	paused?: boolean;
-	/** The `@mention` routing picked for this item (strip or `dispatch --routing`). */
-	mentionRouting?: MentionRouting;
-	/** Model and effort captured when it was queued. */
-	turnSettings?: { model?: string; effort?: string };
-	/**
-	 * The images it was queued with: store refs from the renderer; data URLs on the wire when the
-	 * client asked for them (`list_queue` `inlineImages`), and left out otherwise.
-	 */
-	images?: string[];
-}
+/** A single queued item, mirrored from the renderer's executionQueue (`src/shared/queueSnapshot.ts`). */
+export type { QueuedItemSnapshot };
 /**
  * Per-session queue snapshot returned by the list_queue round-trip. Carries the
  * session state alongside the queued items so `maestro-cli queue list` can show

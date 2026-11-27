@@ -558,15 +558,62 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		return [...matched].reverse();
 	}, [feed, query]);
 
+	// The agent the Steer draft was typed for, and the draft, as the effects below last saw them.
+	const draftRef = useRef({ sessionId: panelSessionId, draft: steerDraft });
+
 	// Steering is only on offer while a run this client owns is in flight, so a
 	// run that ends with the composer open must put it away rather than leave a
 	// Send button that can no longer deliver anything.
 	useEffect(() => {
 		if (!canSteer) {
+			// What was typed is the operator's: kept under its agent (`returnDraft()`) for the next
+			// run that can be steered, and cleared once here, so moving to another agent in the same
+			// commit does not park it twice.
+			const typed = draftRef.current;
+			if (typed.sessionId && typed.draft.trim()) {
+				useAutoRunSteeringStore.getState().returnDraft(typed.sessionId, typed.draft);
+			}
+			draftRef.current = { ...typed, draft: '' };
 			setBarMode('buttons');
 			setSteerDraft('');
 		}
 	}, [canSteer]);
+
+	// The draft belongs to the agent it was typed for: when the panel moves to another agent, it
+	// is parked under the one it left (as a returned note, which the effect below takes back when
+	// the panel shows that agent again), so a note typed for one run can never be sent to another.
+	useEffect(() => {
+		const parked = draftRef.current;
+		draftRef.current = { sessionId: panelSessionId, draft: steerDraft };
+		if (parked.sessionId === panelSessionId) return;
+		if (parked.sessionId && parked.draft.trim()) {
+			useAutoRunSteeringStore.getState().returnDraft(parked.sessionId, parked.draft);
+		}
+		// Cleared here too, for the effect below, which runs in this same commit.
+		draftRef.current = { sessionId: panelSessionId, draft: '' };
+		setSteerDraft('');
+		setBarMode('buttons');
+	}, [panelSessionId, steerDraft]);
+
+	// A note that never reached the run (a hosted agent's host refused it, or was out of reach)
+	// comes back into the box, as a local refusal keeps the draft there: the text is the
+	// operator's, and the box had already cleared by the time the host answered. Only what fits
+	// beside the draft is taken; the rest waits for room, so nothing typed is cut.
+	const returnedDrafts = useAutoRunSteeringStore((st) =>
+		panelSessionId ? st.returnedDrafts[panelSessionId] : undefined
+	);
+	useEffect(() => {
+		if (!panelSessionId || !returnedDrafts?.length || !canSteer) return;
+		// The draft as the parking effect above left it (this commit's `steerDraft` may be the
+		// draft of the agent the panel just left).
+		const current = draftRef.current.draft;
+		const draft = current.trim() ? current : '';
+		const room = MAX_STEERING_NOTE_LENGTH - (draft ? draft.length + 2 : 0);
+		const taken = useAutoRunSteeringStore.getState().takeReturnedDrafts(panelSessionId, room);
+		if (taken.length === 0) return;
+		setSteerDraft([...taken, ...(draft ? [draft] : [])].join('\n\n'));
+		setBarMode('steer');
+	}, [panelSessionId, returnedDrafts, canSteer, steerDraft]);
 
 	// Hand the caret to whichever input a button just opened. The panel registers
 	// a PASSIVE layer, so nothing else does; without this the operator clicks

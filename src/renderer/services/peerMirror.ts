@@ -18,6 +18,7 @@ import {
 	type TurnSendReceipt,
 } from '../../shared/maestro-lib/client/types';
 import type {
+	HostStopAnswer,
 	PeerAgentAction,
 	PeerAgentActionKind,
 	PeerAgentActionResult,
@@ -73,6 +74,20 @@ export async function reconnectPeer(peerId: string): Promise<void> {
 	}
 	if (error) {
 		notifyToast({ color: 'red', title: `Could not reconnect to ${peerId}`, message: error });
+	}
+}
+
+/**
+ * Ask the peer's host for its whole agent list again, quietly (`federation reconnect` with no
+ * toast): for a decision that waits on the host's report since the link came back, when none came
+ * on its own (a resumed attach sends no snapshot). A failure says nothing here: the caller keeps
+ * waiting, and its own bound decides.
+ */
+export async function requestPeerReport(peerId: string): Promise<void> {
+	try {
+		await window.maestro?.federation?.reconnect(peerId);
+	} catch {
+		// The connection state already says why; the caller's wait ends on its own bound.
 	}
 }
 
@@ -138,7 +153,14 @@ export async function actOnMirroredAgent(
 	agentId: string,
 	action: PeerAgentAction
 ): Promise<PeerAgentActionResult | null> {
-	const answer = await callMirroredAgentAction(peerId, agentId, action);
+	return settleMirroredAnswer(action, await callMirroredAgentAction(peerId, agentId, action));
+}
+
+/** An action's answer as `actOnMirroredAgent()` reports it: the result, or a red toast and null. */
+export function settleMirroredAnswer(
+	action: PeerAgentAction,
+	answer: MirroredActionAnswer | null
+): PeerAgentActionResult | null {
 	if (!answer) return null;
 	if (answer.ok) return answer.result;
 	notifyToast({
@@ -176,10 +198,27 @@ function mirroredActionError(answer: Extract<MirroredActionAnswer, { ok: false }
 }
 
 /**
+ * Whether an answer says the peer was not connected, so nothing reached the host: the one refusal
+ * a caller may send again without any risk of the host running it twice. Only the service's own
+ * refusal before it handed the action to the client counts (`notSent`); a send whose receipt was
+ * lost (`unknown`), or a client closed while a send was pending, never does.
+ */
+export function isHostUnavailableAnswer(answer: MirroredActionAnswer | null): boolean {
+	return (
+		!!answer &&
+		!answer.ok &&
+		answer.notSent === true &&
+		answer.code === 'host-unavailable' &&
+		!answer.unknown
+	);
+}
+
+/**
  * Send what the person typed to one mirrored tab, with this conductor's own tab choices for that
  * one turn. The host's receipt when it took it (ran, queued, or held), null when it did not.
  * `held` is Queue Held: the host queues it paused, even on an idle tab, as a local Queue Held does.
- * `agentText` is the agent-only context and notes an `@mention` adds to this one turn.
+ * `agentText` is the agent-only context and notes an `@mention` adds to this one turn, and the
+ * transcript entry the message already is (`entryId`, a resend drawn once).
  */
 export async function sendToMirroredTab(
 	peerId: string,
@@ -189,10 +228,16 @@ export async function sendToMirroredTab(
 	overrides?: TurnOverrides,
 	images?: readonly string[],
 	held?: boolean,
-	agentText: Pick<TurnInput, 'agentContext' | 'agentNotes'> = {}
+	agentText: Pick<TurnInput, 'agentContext' | 'agentNotes' | 'entryId'> = {},
+	/**
+	 * Takes a refusal that sent nothing because the peer is not connected
+	 * (`isHostUnavailableAnswer()`), instead of the red toast: the caller keeps the message for a
+	 * retry. Answers null, as any refusal does.
+	 */
+	onHostUnavailable?: (message: string) => void
 ): Promise<TurnSendReceipt | null> {
 	const clean = normalizeTurnOverrides(overrides);
-	const result = await actOnMirroredAgent(peerId, agentId, {
+	const action: PeerAgentAction = {
 		kind: 'send',
 		tabId,
 		text,
@@ -201,7 +246,14 @@ export async function sendToMirroredTab(
 		...(held === true ? { held: true } : {}),
 		...(agentText.agentContext ? { agentContext: agentText.agentContext } : {}),
 		...(agentText.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
-	});
+		...(agentText.entryId ? { entryId: agentText.entryId } : {}),
+	};
+	const answer = await callMirroredAgentAction(peerId, agentId, action);
+	if (onHostUnavailable && answer && !answer.ok && isHostUnavailableAnswer(answer)) {
+		onHostUnavailable(answer.error);
+		return null;
+	}
+	const result = settleMirroredAnswer(action, answer);
 	return result?.kind === 'send' ? result.receipt : null;
 }
 
@@ -210,12 +262,20 @@ export async function interruptMirroredAgent(
 	peerId: string,
 	agentId: string,
 	tabId?: string
-): Promise<void> {
-	await actOnMirroredAgent(
+): Promise<HostStopAnswer | undefined> {
+	const result = await actOnMirroredAgent(
 		peerId,
 		agentId,
 		tabId ? { kind: 'interrupt', tabId } : { kind: 'interrupt' }
 	);
+	if (result?.kind !== 'interrupt') return undefined;
+	// What the host said of its queue at the Stop (M25, M27), for the consults it may have ended.
+	const { waitingAtStop, stoppedItemIds, queueFramesTrail } = result;
+	return {
+		...(waitingAtStop ? { waitingAtStop } : {}),
+		...(stoppedItemIds ? { stoppedItemIds } : {}),
+		...(queueFramesTrail ? { queueFramesTrail } : {}),
+	};
 }
 
 /** Rename a mirrored tab on its host. An empty name clears it. */
@@ -400,24 +460,40 @@ export async function steerMirrorQueuedItem(
 }
 
 /**
- * The Thought Stream's Steer on a mirrored agent's run (send, list, cancel, dismiss). The host's
- * answer as is, a refusal included (`success: false`, no toast: the caller says it where the user
- * looked). Null when the host could not be reached (a red toast, unless `quiet`).
+ * What a host said to one steering command: its result (a refusal is `success: false` in it), or
+ * why it gave none. `unsupported`: the host does not know the op (an older host), so asking it
+ * again cannot help. `unknown`: the command may have reached the host before the answer was lost.
+ */
+export type MirrorSteeringAnswer =
+	| { ok: true; result: SteeringCommandResult }
+	| { ok: false; error: string; unsupported: boolean; unknown?: boolean };
+
+/**
+ * The Thought Stream's Steer on a mirrored agent's run (send, list, cancel, dismiss), with no
+ * toast: the caller says a failure where the user looked, and keeps what the user typed.
  */
 export async function steerMirrorAutoRun(
 	peerId: string,
 	agentId: string,
-	input: SteeringCommandInput,
-	options: { quiet?: boolean } = {}
-): Promise<SteeringCommandResult | null> {
-	const action = { kind: 'steer-auto-run' as const, input };
-	// `quiet`: a background read, whose failure is not news (the next one tries again).
-	if (options.quiet) {
-		const answer = await callMirroredAgentAction(peerId, agentId, action);
-		return answer?.ok && answer.result.kind === 'steer-auto-run' ? answer.result.result : null;
+	input: SteeringCommandInput
+): Promise<MirrorSteeringAnswer> {
+	const answer = await callMirroredAgentAction(peerId, agentId, { kind: 'steer-auto-run', input });
+	if (!answer) return { ok: false, error: HOST_NO_ANSWER_REASON, unsupported: false };
+	if (!answer.ok) {
+		return {
+			ok: false,
+			error: mirroredActionError(answer),
+			unsupported: answer.code === 'unsupported',
+			// A connection lost, or a call timed out, after the command left: the host may have it.
+			...(answer.unknown || answer.code === 'host-lost' || answer.code === 'timeout'
+				? { unknown: true }
+				: {}),
+		};
 	}
-	const result = await actOnMirroredAgent(peerId, agentId, action);
-	return result?.kind === 'steer-auto-run' ? result.result : null;
+	if (answer.result.kind !== 'steer-auto-run' || !answer.result.result) {
+		return { ok: false, error: HOST_NO_ANSWER_REASON, unsupported: false };
+	}
+	return { ok: true, result: answer.result.result };
 }
 
 /**

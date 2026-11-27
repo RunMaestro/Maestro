@@ -182,7 +182,9 @@ export function handleImportAgent(
 			? ctx.callbacks.enqueueCommand(agentId, text, 'ai', tabId, images, true)
 			: Promise.resolve({ success: false, error: 'Enqueue not configured' });
 
-	importAgentIntoDesktop(parsed.input, buildDesktopAgentImportDeps(enqueue))
+	// The live process table: a replaced copy is read busy from it and stopped on it.
+	const processTable = ctx.callbacks.getDebugPackageDeps?.()?.getProcessManager() ?? null;
+	importAgentIntoDesktop(parsed.input, buildDesktopAgentImportDeps(enqueue, processTable))
 		.then((result) => {
 			if (!result.ok) {
 				reply({

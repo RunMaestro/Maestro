@@ -13,6 +13,10 @@ import { createWsMaestroClient } from '../../shared/maestro-lib/client/ws-client
 import type { MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
 import type { SshRemoteConfig } from '../../shared/types';
 import { captureException } from '../utils/sentry';
+import {
+	forgetAllHostConnections,
+	noteHostedAgentsChanged as noteHostOutagesChanged,
+} from '../ssh-reachability';
 import type { SafeSendFn } from '../utils/safe-send';
 import { PeerMirrorService, type PeerMirrorServiceDeps } from './peer-mirror-service';
 import type { AutoFederationCoordinator } from './auto-federation';
@@ -58,6 +62,8 @@ export interface FederationRuntimeDeps {
 	watchRemotes(onChange: () => void): () => void;
 	/** The all-windows push. */
 	safeSend: SafeSendFn;
+	/** Whether an agent on this machine is hosted on `peerId` (`PeerMirrorServiceDeps.hostsAgents`). */
+	hostsAgents?(peerId: string): boolean;
 	/** Test seam: build the service from these deps instead of the real forward and client. */
 	overrides?: Partial<PeerMirrorServiceDeps>;
 }
@@ -75,6 +81,7 @@ export function buildPeerMirrorServiceDeps(deps: FederationRuntimeDeps): PeerMir
 		},
 		reset: () => deps.safeSend(FEDERATION_RESET_CHANNEL),
 		onError: (error, operation) => void captureException(error, { operation }),
+		...(deps.hostsAgents ? { hostsAgents: deps.hostsAgents } : {}),
 		...deps.overrides,
 	};
 }
@@ -100,11 +107,22 @@ export function createFederationRuntime(deps: FederationRuntimeDeps): Federation
 		stop: () => {
 			const running = service;
 			service = null;
+			// The mirror reports no host from here on: an outage it raised must not outlive it.
+			if (running) forgetAllHostConnections();
 			void running
 				?.stop()
 				.catch((error) => void captureException(error, { operation: 'federation:stop' }));
 		},
 	};
+}
+
+/**
+ * What this machine hosts may have changed (a sessions write, the hosted agents setting): the host
+ * outages and the mirror's redial pace follow it at once (`noteHostedAgentsChanged()` on each).
+ */
+export function noteHostedAgentsChanged(): void {
+	noteHostOutagesChanged();
+	service?.noteHostedAgentsChanged();
 }
 
 /** Test seam. */

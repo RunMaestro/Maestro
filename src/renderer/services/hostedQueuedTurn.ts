@@ -16,7 +16,9 @@
  * A slash command goes as the typed text (`/commit args`); the host resolves it, as it does for a
  * typed one. A held item goes held (the host queues it paused). A host that refuses (it is down,
  * or the tab is gone) has already said so in a toast; the item comes back into this queue held,
- * in the place it left, so nothing is lost and Resume sends it again.
+ * in the place it left, so nothing is lost and Resume sends it again. A host that is not connected
+ * (nothing was sent) is the one exception: the item is kept for an automatic retry, as an SSH
+ * agent's turn is when its link is down (`keepTurnForHost()`).
  *
  * An `@mention` runs HERE, as a local agent's does: the mentioned agent is in this machine's
  * roster, not the host's. A queued message that mentions one waits in this queue for its turn
@@ -24,18 +26,47 @@
  * the host: a leading mention (`crossAgentOnly`) consults and sends nothing, a parallel consult
  * holds the tab as it does locally, a hand-off is armed for when the host's turn ends. The turn
  * carries the agent-only notes and a released consult's replies (`agentContext`) to the host, so
- * its transcript shows what a local one shows. A host that refuses the turn consults nobody.
+ * its transcript shows what a local one shows. A host that refuses the turn consults nobody. A
+ * host that is down (nothing was sent, the message is kept) consults at once, here, as an SSH
+ * agent's dispatch consults before its spawn fails, and the kept message carries the notes.
  */
 
-import type { QueuedItem, Session } from '../types';
-import type { TurnOverrides, TurnSendReceipt } from '../../shared/maestro-lib/client/types';
-import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
+import type { AgentError, LogEntry, QueuedItem, Session } from '../types';
+import type {
+	QueueExit,
+	TurnOverrides,
+	TurnSendReceipt,
+} from '../../shared/maestro-lib/client/types';
+import {
+	selectSessionById,
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../stores/sessionStore';
+import { generateId } from '../utils/ids';
+import { notifyToast } from '../stores/notificationStore';
+import {
+	clearRetryIfSettled,
+	failInFlightRetry,
+	getRetryEntry,
+	noteDirectDispatch,
+	raiseAgentError,
+	settleRetryOnHost,
+	useRetryStore,
+	HOST_HAD_MESSAGE_TEXT,
+	HOST_RETRIES_TEXT,
+	notOnHostText,
+	type HeldOnHost,
+	wouldAutoRetry,
+} from '../stores/retryStore';
 import {
 	applyQueuedItemAbort,
 	applyQueuedItemRelease,
+	isRunnableQueueItem,
 	queuedItemOwnerTabId,
 	recoverQueuedItem,
 } from '../utils/executionQueue';
+import { getSessionSshRemoteId } from '../utils/sessionHelpers';
 import { withoutDesignPickPageText } from '../utils/designModePicker';
 import {
 	dispatchCrossAgentMentions,
@@ -48,10 +79,30 @@ import {
 	deferHostedHandoff,
 	handoffSendBoundary,
 	hasDeferredHostedHandoff,
+	HOST_QUEUE_START_GRACE_MS,
+	hostRanMessage,
+	judgeUnnamedHostStart,
 	markHandoffSentToHost,
+	noteLateMention,
+	noteSkippedMention,
+	type HostedMessageRef,
+	type HostedTranscriptAccess,
 } from './crossAgentHandoff';
+import { resolveConsultTargets } from './crossAgentConsultHold';
+import { cutTurnFate } from './hostedLinkLoss';
 import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
+import { usePeerMirrorStore } from '../stores/peerMirrorStore';
+import { hostTabTurnStartedAt } from '../utils/hostedSession';
+import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
+import { appendAgentNotes } from '../../shared/maestro-lib/turns/prompt';
+import { queueExitOf } from '../../shared/maestro-lib/client/peer-mirror';
+import type { HostStopAnswer } from '../../shared/maestro-lib/client/peer-actions';
 import { queuedItemNamingText } from './tabAutoNaming';
+import {
+	holdHostedTabLine,
+	hostedTabHoldsLine,
+	releaseHostedTabLine,
+} from '../utils/hostedTabLine';
 
 /**
  * Items on their way to a host, each with the host's receipt to come (null: refused, and the item
@@ -109,6 +160,175 @@ function holdRefusedItem(sessionId: string, item: QueuedItem, index: number): vo
 }
 
 /**
+ * The error a send its host could not take is raised as: the `network_error` an SSH agent's turn
+ * reports when ssh cannot reach its remote, on the same remote, so the same retry and the same
+ * outage dialog follow.
+ */
+function hostUnavailableError(session: Session, message: string): AgentError {
+	const sshRemoteId = getSessionSshRemoteId(session);
+	return {
+		type: 'network_error',
+		message,
+		recoverable: true,
+		agentId: session.toolType,
+		sessionId: session.id,
+		timestamp: Date.now(),
+		...(sshRemoteId ? { sshRemoteId } : {}),
+	};
+}
+
+/** Hosted sends per tab, chained so each settles (sent, kept, or refused) before the next starts. */
+const tabSendChains = new Map<string, Promise<void>>();
+
+/**
+ * Run a hosted send for one tab after every earlier one of that tab has settled. A message whose
+ * images take longer to hand over must not lose its place to one typed after it: when the host is
+ * down, the first refusal to land becomes the kept head, so refusals must land in typed order.
+ */
+export function inHostTabOrder<T>(key: string, task: () => Promise<T>): Promise<T> {
+	const prior = tabSendChains.get(key) ?? Promise.resolve();
+	const run = prior.then(task);
+	const tail = run.then(
+		() => undefined,
+		() => undefined
+	);
+	tabSendChains.set(key, tail);
+	void tail.then(() => {
+		if (tabSendChains.get(key) === tail) tabSendChains.delete(key);
+	});
+	return run;
+}
+
+/** Put `item` at the end of this agent's queue, waiting (not held), unless it is already there. */
+function queueBehind(sessionId: string, item: QueuedItem): void {
+	updateSessionWith(sessionId, (session) => {
+		const queue = session.executionQueue ?? [];
+		if (queue.some((queued) => queued.id === item.id)) return session;
+		return { ...session, executionQueue: [...queue, recoverQueuedItem(item)] };
+	});
+}
+
+/**
+ * Keep a message the host could not take because it was not connected (nothing was sent), the way
+ * an SSH agent's message is kept when its link is down: the failure is raised as that turn's
+ * error (`raiseAgentError()`), so Agent Resilience parks it at the head of its tab's queue with the
+ * auto-retry card, retries it with the same backoff, and sends it when the host is back. Its
+ * resend comes back through `forwardToHost()`, so a second refusal continues the same outage.
+ *
+ * A message sent while an earlier one of the same tab waits for its retry queues behind it, so
+ * the two reach the host in the order they were typed.
+ *
+ * Answers whether the message is kept. False (Agent Resilience off for the agent, or no listener):
+ * the caller keeps it its own way. `opts.onlyIfRetried` raises nothing at all when no retry would
+ * take the message (the caller draws the failure its own way instead). `opts.keepMention` keeps
+ * the item's `@mention` on the resend, for a mention that has not run yet (a hand-off).
+ */
+export function keepTurnForHost(
+	sessionId: string,
+	item: QueuedItem,
+	message: string,
+	opts: { onlyIfRetried?: boolean; keepMention?: boolean } = {}
+): boolean {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	if (!session) return false;
+	// Worded as kept only when a retry will hold it: with Agent Resilience off nothing resends it.
+	const refusal = hostUnavailableError(session, message);
+	const retried = wouldAutoRetry(sessionId, refusal);
+	if (opts.onlyIfRetried && !retried) return false;
+	const error = retried ? { ...refusal, message: keptForHostText(message) } : refusal;
+	const waiting = getRetryEntry(sessionId, item.tabId);
+	if (waiting && waiting.heldItemId !== item.id) {
+		queueBehind(sessionId, item);
+		return true;
+	}
+	// The message's bubble, above the retry card, as an SSH agent's send draws it before its link
+	// fails: once, for a message the host never had (a cut turn's is the host's own entry).
+	const resend = waiting?.heldItemId === item.id;
+	const bubble = resend ? null : keptBubbleFor(item);
+	const kept = bubble ? { ...item, keptEntryId: bubble.id } : item;
+	// Refused again: the host did not get it, so no host message may stand in for its bubble.
+	if (resend) markKeptBubble(sessionId, item, false);
+	if (bubble) {
+		updateAiTab(sessionId, item.tabId, (tab) => ({ ...tab, logs: [...tab.logs, bubble] }));
+	}
+	// The prompt the retry resends. A resend of this same item keeps its snapshot.
+	noteDirectDispatch(sessionId, kept, { keepMention: opts.keepMention });
+	const raised = raiseAgentError(`${sessionId}-ai-${item.tabId}`, error);
+	const held = raised && getRetryEntry(sessionId, item.tabId)?.heldItemId === item.id;
+	if (bubble && !held) {
+		// Not kept: the caller keeps the draft or says it was not sent, so no bubble stays behind.
+		updateAiTab(sessionId, item.tabId, (tab) => ({
+			...tab,
+			logs: tab.logs.filter((entry) => entry.id !== bubble.id),
+		}));
+	}
+	if (!raised) {
+		// No listener to report it: say so here, as the refusal's own toast would have.
+		notifyToast({ color: 'red', title: 'Message not sent', message });
+		return false;
+	}
+	return held;
+}
+
+/**
+ * Mark a kept message's bubble as handed to the host now (`sending`), or not: only a bubble this
+ * machine sent may be replaced by the host's copy of it (`mergeHostedLogs()`), so a message another
+ * client sent with the same words never takes its place. A send also brings the bubble to the
+ * words and images it carries, so a message edited while it waited is drawn as it was sent.
+ */
+function markKeptBubble(sessionId: string, item: QueuedItem, sending: boolean): void {
+	const bubbleId = item.keptEntryId;
+	if (!bubbleId) return;
+	updateAiTab(sessionId, item.tabId, (tab) => {
+		const at = tab.logs.findIndex((entry) => entry.id === bubbleId && entry.keptForHost);
+		if (at === -1) return tab;
+		const bubble = tab.logs[at];
+		const next: LogEntry = sending
+			? {
+					...bubble,
+					keptSentAt: Date.now(),
+					text: item.text ?? '',
+					images: item.images?.length ? item.images : undefined,
+				}
+			: { ...bubble, keptSentAt: undefined };
+		if (!sending && bubble.keptSentAt === undefined) return tab;
+		const logs = [...tab.logs];
+		logs[at] = next;
+		return { ...tab, logs };
+	});
+}
+
+/** The bubble a kept message draws, or null when it has one already or is not a message. */
+function keptBubbleFor(item: QueuedItem): LogEntry | null {
+	if (item.type !== 'message' || item.hostEntryId || item.keptEntryId) return null;
+	if (!item.text && !item.images?.length) return null;
+	return {
+		id: generateId(),
+		timestamp: Date.now(),
+		source: 'user',
+		text: item.text ?? '',
+		...(item.images?.length ? { images: item.images } : {}),
+		...(item.readOnlyMode ? { readOnly: true } : {}),
+		keptForHost: true,
+	};
+}
+
+const NOTHING_SENT = /\s*Nothing was sent\.\s*/g;
+const KEPT_FOR_HOST = 'Your message is kept and sent when the host answers.';
+
+/**
+ * The words of the error a kept message raises: the cause, then that the message is kept, as an
+ * SSH agent's strip names its cause while its message waits under the retry card. A refusal's
+ * "Nothing was sent." is true but reads as a lost message, so it is replaced. A reason that
+ * already says the message is kept is used as it is.
+ */
+export function keptForHostText(reason: string): string {
+	if (/\bkept\b/.test(reason)) return reason;
+	const cause = reason.replace(NOTHING_SENT, ' ').trim();
+	return cause ? `${cause} ${KEPT_FOR_HOST}` : KEPT_FOR_HOST;
+}
+
+/**
  * The `@mentions` a queued message names, resolved now as the local drain resolves them: from the
  * text without its Design Mode chips' page text, with the routing the user picked. Null when it
  * names nobody (or was not queued as a mention).
@@ -139,6 +359,90 @@ export function queuedItemHostOverrides(item: QueuedItem): TurnOverrides | undef
 	return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
 
+/**
+ * The host already had a message this machine kept (a turn its link or a restart lost track of):
+ * nothing is sent or held. The resend's own retry ends saying so (`settleRetryOnHost()`); one a
+ * later message started after a Stop is that message's, and is left alone. A send no retry owns
+ * (Force Send of a copy parked by Stop) says it with a toast, so it never vanishes unexplained.
+ *
+ * With `notOnHost` the host no longer has the tab or the message the copy named (closed, or
+ * cleared), or the copy's own turn ended there on an error no retry takes (`{ error }`): nothing
+ * is sent there, and the copy is parked held, no longer naming that entry, so the user can send it
+ * again as a new message. The card or the toast says which.
+ */
+function notHostedAgain(
+	sessionId: string,
+	item: QueuedItem,
+	index: number,
+	retryOutage: string | undefined,
+	notOnHost?: HeldOnHost | 'host-retries'
+): void {
+	const owned =
+		retryOutage !== undefined && getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
+	if (owned) settleRetryOnHost(sessionId, item.tabId, notOnHost);
+	// The host's own retry holds it (`host-retries`): it is the host's to send, as one it had.
+	const held = notOnHost === 'host-retries' ? undefined : notOnHost;
+	if (held) holdRefusedItem(sessionId, { ...item, hostEntryId: undefined }, index);
+	// Its retry's card says it (settled here, or already by the cut's own read): told once.
+	if (owned || (retryOutage && useRetryStore.getState().outages[retryOutage]?.settledByHost)) {
+		return;
+	}
+	notifyToast({
+		color: 'theme',
+		title: held ? 'Not sent' : 'Not sent again',
+		message: held
+			? notOnHostText(held)
+			: notOnHost === 'host-retries'
+				? HOST_RETRIES_TEXT
+				: HOST_HAD_MESSAGE_TEXT,
+	});
+}
+
+/**
+ * A message whose host is down runs its `@mention` here at once, as an SSH agent's dispatch
+ * consults before its spawn fails: the consult runs from this machine and needs no host. The item
+ * comes back carrying the consult's notes (`agentNotes`) and no longer its mention, so its resend
+ * (the retry, Force Send after a Stop, or the parked copy after a restart) consults nobody again.
+ * A hand-off is left as it is: it consults nobody until the host's turn ends, and is armed when
+ * the host takes that turn.
+ */
+function consultWhileHostDown(
+	sessionId: string,
+	item: QueuedItem,
+	mention: CrossAgentMentionPlan | null,
+	agentNotes: string | undefined
+): QueuedItem {
+	if (!mention || mention.routing === 'handoff') return item;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tabId = item.tabId || session?.activeTabId;
+	if (!session || !tabId) return item;
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	return {
+		...item,
+		crossAgentMention: undefined,
+		mentionRouting: undefined,
+		...(agentNotes ? { agentNotes } : {}),
+	};
+}
+
+/**
+ * A consult-first message whose host is down consults here at once, as a local or SSH drain does,
+ * and waits on the consult's hold with the message: the hold releases it, with the replies, as a
+ * plain message, so it is sent once. Answers whether it went to that hold.
+ */
+function consultFirstWhileHostDown(
+	sessionId: string,
+	item: QueuedItem,
+	mention: CrossAgentMentionPlan | null
+): boolean {
+	if (mention?.routing !== 'consult-first') return false;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tabId = item.tabId || session?.activeTabId;
+	if (!session || !tabId) return false;
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	return true;
+}
+
 /** Send one item that is no longer in this queue to the host. Resolves the host's receipt. */
 function forwardToHost(
 	sessionId: string,
@@ -147,36 +451,155 @@ function forwardToHost(
 	mention: CrossAgentMentionPlan | null = null
 ): Promise<TurnSendReceipt | null> {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
-	if (!session || !hostedTargetOf(session)) {
+	const target = hostedTargetOf(session);
+	if (!session || !target) {
 		holdRefusedItem(sessionId, item, index);
 		return Promise.resolve(null);
 	}
 	// Named from the message as the local drain names a tab it runs (`queuedItemNamingText()`).
 	const namingText = queuedItemNamingText(item);
-	// What the consult will tell the turn, before it fires: a refused turn consults nobody.
-	const agentNotes = mention ? mentionTurnNotes(previewMentionDispatch(mention)) : undefined;
+	let kept = false;
+	// What the consult will tell the turn, before it fires: a refused turn consults nobody. Notes
+	// the item already carries (a Federation sender's) go first.
+	const mentionNotes = mention ? mentionTurnNotes(previewMentionDispatch(mention)) : undefined;
+	const agentNotes =
+		item.agentNotes && mentionNotes
+			? appendAgentNotes(item.agentNotes, mentionNotes)
+			: (item.agentNotes ?? mentionNotes);
+	// The item as it stands now: once a host that is down made the consult run here, it carries the
+	// consult's notes and no longer its mention, so no resend, Stop, or restart consults again.
+	let current = item;
 	// The model, effort, and read-only it was queued with, as the local drain runs it on them.
 	const overrides = queuedItemHostOverrides(item);
-	const send = sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
-		held: item.paused === true,
-		...(overrides ? { overrides } : {}),
-		...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
-		...(item.agentContext ? { agentContext: item.agentContext } : {}),
-		...(agentNotes ? { agentNotes } : {}),
-	}).then(
-		(receipt) => {
-			if (!receipt) holdRefusedItem(sessionId, item, index);
-			else if (mention) fireMentionsForHostTurn(sessionId, item, mention, receipt);
-			return receipt;
-		},
-		(error: unknown) => {
-			holdRefusedItem(sessionId, item, index);
-			throw error;
-		}
-	);
+	// The retry this resend belongs to: a Stop while it waits ends that retry, and then nothing goes.
+	const retry = getRetryEntry(sessionId, item.tabId);
+	const retryOutage = retry?.heldItemId === item.id ? retry.outageId : undefined;
+	const sendToHost = () => {
+		markKeptBubble(sessionId, item, true);
+		return sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
+			held: item.paused === true,
+			...(overrides ? { overrides } : {}),
+			...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
+			...(item.agentContext ? { agentContext: item.agentContext } : {}),
+			...(agentNotes ? { agentNotes } : {}),
+			// The entry the message already is: the host writes no second one. On a host of its own
+			// (`entryId`), the id its sender named rides on to the next host.
+			...(item.hostEntryId || item.keptEntryId || item.entryId
+				? { entryId: item.hostEntryId ?? item.keptEntryId ?? item.entryId }
+				: {}),
+			// A held item is the user's to send; only one on its way now is kept for a retry.
+			...(item.paused === true
+				? {}
+				: {
+						onHostUnavailable: (message: string) => {
+							// Consult first: its hold, which the consult places with the message, owns the
+							// send and releases it once the replies are in (then kept for the host, if it is
+							// still down). A retry kept here as well would send it before the replies and
+							// again after them (CodeRabbit on #2167).
+							if (consultFirstWhileHostDown(sessionId, item, mention)) {
+								kept = true;
+								return;
+							}
+							current = consultWhileHostDown(sessionId, item, mention, agentNotes);
+							kept = keepTurnForHost(sessionId, current, message, {
+								keepMention: !!current.crossAgentMention,
+							});
+						},
+					}),
+		}).then(
+			(receipt) => {
+				if (receipt?.status === 'answered') {
+					// The host had already answered this message: it ran once, and nothing ran now.
+					notHostedAgain(sessionId, item, index, retryOutage);
+					return null;
+				}
+				if (receipt?.status === 'retrying') {
+					// The host's own retry holds this message (its Agent Resilience): it sends it.
+					notHostedAgain(sessionId, item, index, retryOutage, 'host-retries');
+					return null;
+				}
+				if (receipt) {
+					// The host took a resend: the outage it was kept through is over.
+					clearRetryIfSettled(sessionId, item.tabId);
+					if (mention) fireMentionsForHostTurn(sessionId, item, mention, receipt);
+				} else if (!kept) {
+					// Refused for another reason (already toasted): nothing reached the host, so the bubble
+					// is not handed over (CodeRabbit on #2161), and a resend ends its outage here.
+					markKeptBubble(sessionId, item, false);
+					failInFlightRetry(sessionId, item.tabId, 'The host did not take the message.');
+					holdRefusedItem(sessionId, current, index);
+				}
+				return receipt;
+			},
+			(error: unknown) => {
+				failInFlightRetry(sessionId, item.tabId, 'The message could not be sent to the host.');
+				holdRefusedItem(sessionId, current, index);
+				throw error;
+			}
+		);
+	};
+	// The message of a turn a lost link cut goes again only once the host says that turn died: it
+	// may have run on, or finished (`cutTurnFate()`). Never sent twice.
+	const connected = usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';
+	const fate = cutTurnFate(sessionId, item, target, connected);
+	const send = !fate
+		? sendToHost()
+		: fate.then((decided) => {
+				const stillOwned =
+					retryOutage !== undefined &&
+					getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
+				if (decided === 'answered' || decided === 'host-retries') {
+					notHostedAgain(
+						sessionId,
+						item,
+						index,
+						retryOutage,
+						decided === 'host-retries' ? decided : undefined
+					);
+					return null;
+				}
+				// Ended on its own error there: the retry of that error holds it now, and sends it.
+				if (decided === 'errored') return null;
+				// Ended on its own error there, and no retry takes it: held with that error, never
+				// dropped as answered.
+				if (typeof decided === 'object') {
+					notHostedAgain(sessionId, item, index, retryOutage, decided);
+					return null;
+				}
+				if (decided === 'tab-gone' || decided === 'entry-gone') {
+					notHostedAgain(
+						sessionId,
+						item,
+						index,
+						retryOutage,
+						decided === 'tab-gone' ? 'tab' : 'message'
+					);
+					return null;
+				}
+				if (retryOutage && !stillOwned) {
+					// Stopped while it waited: parked held, one click from Force Send, as Stop parks it.
+					holdRefusedItem(sessionId, item, index);
+					return null;
+				}
+				if (decided === 'send') return sendToHost();
+				// The host could not say (its transcript did not load): kept for the next try.
+				kept = keepTurnForHost(
+					sessionId,
+					item,
+					`The Maestro host on "${target.peerId}" could not say yet how the cut turn ended. Your message is kept and sent once it can.`
+				);
+				if (!kept) holdRefusedItem(sessionId, item, index);
+				return null;
+			});
 	sendsInFlight.set(item.id, send);
+	// The tab holds its line until the host answered: nothing queued behind this turn goes ahead of
+	// it, and a consult it fires holds the tab before the line is let go (U1).
+	const lineTabId = item.tabId || session.activeTabId;
+	const lineHolder = `send:${item.id}`;
+	holdHostedTabLine(sessionId, lineTabId, lineHolder, { handingOver: true });
 	const settle = () => {
 		if (sendsInFlight.get(item.id) === send) sendsInFlight.delete(item.id);
+		releaseHostedTabLine(sessionId, lineTabId, lineHolder);
 	};
 	send.then(settle, settle);
 	return send;
@@ -196,19 +619,29 @@ function fireMentionsForHostTurn(
 	// A turn the host queued behind another is not this agent's turn yet: its consult waits for
 	// it to start (`fireHostStartedMentions()`). A hand-off consults nobody until the turn ends.
 	if (receipt.status === 'queued' && mention.routing !== 'handoff') {
-		// The turn it waits behind is read from the host's tab while it is seen queued.
-		mentionsAwaitingHostStart.set(receipt.itemId, {
+		// The turn it waits behind is the one the host's tab runs now, as the host told it (never
+		// this machine's clock, and never this tab, which the drain just marked and released). A
+		// tab the host shows idle is read again when the item is seen queued.
+		const ahead = hostTurnAhead(sessionId, item.tabId);
+		const queuedOn = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
+			(tab) => tab.id === item.tabId
+		);
+		awaitHostStart(receipt.itemId, {
 			sessionId,
 			item,
 			mention,
 			seenQueued: false,
 			queuedAt: Date.now(),
+			readsAtSeen: ahead.queueReads,
+			afterEntryId: handoffSendBoundary(queuedOn?.logs ?? []),
+			...(ahead.busy ? { aheadKnown: true, turnStartedAt: ahead.startedAt } : {}),
 		});
 		return;
 	}
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tabId = item.tabId || session?.activeTabId;
 	if (!session || !tabId) return;
+	const queueReads = hostTurnAhead(sessionId, tabId).queueReads;
 	// A tab holds one hand-off. While one is armed, this one waits (with the send boundary it has
 	// now) until that one released with its own turn's answer, as a local tab's next turn runs
 	// only after its exit released the last one. Neither replaces nor releases the other early.
@@ -222,13 +655,38 @@ function fireMentionsForHostTurn(
 			const current = selectSessionById(sessionId)(useSessionStore.getState());
 			if (!current) return;
 			dispatchCrossAgentMentions(mention, item.text ?? '', current, tabId, item.images);
-			markHandoffSentToHost(sessionId, tabId, receipt, boundary);
+			markHandoffSentToHost(
+				sessionId,
+				tabId,
+				receipt,
+				boundary,
+				queueReads,
+				item.images?.length ?? 0
+			);
 		});
 		return;
 	}
 	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
-	if (mention.routing === 'handoff') markHandoffSentToHost(sessionId, tabId, receipt);
+	if (mention.routing === 'handoff') {
+		markHandoffSentToHost(
+			sessionId,
+			tabId,
+			receipt,
+			undefined,
+			queueReads,
+			item.images?.length ?? 0
+		);
+	}
 }
+
+/**
+ * How long a consult waits for its turn to start while the host's queue does not show it (a desktop
+ * host, whose queue is not mirrored, or an item that left the queue before its first frame came).
+ */
+export const HOST_START_MENTION_TTL_MS = 12 * 60 * 60 * 1000;
+
+/** The most consults that wait for host starts at once; past it the oldest is let go, with a note. */
+export const MAX_HOST_START_MENTIONS = 100;
 
 /** Consults of turns the host queued, by the host's queue item id, until that item starts. */
 const mentionsAwaitingHostStart = new Map<
@@ -237,21 +695,359 @@ const mentionsAwaitingHostStart = new Map<
 		sessionId: string;
 		item: QueuedItem;
 		mention: CrossAgentMentionPlan;
+		/** The tab whose line it holds (`awaitHostStart()`), fixed when it began to wait. */
+		lineTabId?: string;
 		seenQueued: boolean;
+		/**
+		 * `turnStartedAt` is recorded: the first sync that saw the item waiting set it, and no later
+		 * sync overwrites it (that sync may already show the item's own turn, when its tab state
+		 * came before its queue change).
+		 */
+		aheadKnown?: boolean;
 		/** When the turn the host queued it behind started (the tab's `thinkingStartTime` then). */
 		turnStartedAt?: number;
-		/** When the host's receipt said it was queued. */
+		/**
+		 * When it left the host queue with no start seen, from a host that does not name its starts
+		 * (this machine's clock): its message may show within `HOST_QUEUE_START_GRACE_MS`; after it,
+		 * only the tab's saved transcript can still show it ran (`judgeUnnamedHostStart()`).
+		 */
+		goneAt?: number;
+		/** When the host's receipt said it was queued (this machine's clock; only for the time limit). */
 		queuedAt: number;
+		/** When the host's queue last showed it (this machine's clock): the time limit runs from here. */
+		lastSeenQueuedAt?: number;
+		/**
+		 * The mirror's count of whole host-queue reads when it was last seen waiting (or at the
+		 * receipt). A read since then may have missed its named exit, so it is judged by the tab.
+		 */
+		readsAtSeen?: number;
+		/**
+		 * The send boundary at the receipt (`handoffSendBoundary()`): an unnamed start is its own only
+		 * when the host wrote its message's user entry after it (`judgeUnnamedHostStart()`).
+		 */
+		afterEntryId?: string;
+		/**
+		 * Stop ended a turn of its tab while it waited (M25). `pending`: the host has not answered
+		 * the Stop yet, so a start seen now ran before the host stopped anything, and was the turn
+		 * Stop ended. After the answer it stays only for one the host's queue never listed (an older
+		 * desktop host lists none): then `turnStartedAt`, the turn Stop ended (the host's clock),
+		 * tells its own later turn from the stopped one. `by`: the Stops still to answer that marked
+		 * it (it stays pending until each has), so a later Stop never settles what an earlier one's
+		 * answer would name (CodeRabbit on #2160). `untilNamed`: the host named nothing and its queue
+		 * frames may trail its answer (an older desktop host, or no answer came), so a frame that
+		 * still lists it may predate the Stop: only a frame that names its exit settles it (M27).
+		 */
+		stop?: {
+			pending: boolean;
+			turnStartedAt?: number;
+			by: HostStopToken[];
+			untilNamed?: boolean;
+		};
 	}
 >();
 
 /**
- * Fire the consults of turns the host queued once they start: the item is not in the host's queue
- * and its tab reads busy with a turn that is not the one it was queued behind (it was seen queued,
- * or the tab's turn started at another time). One seen queued that left while the tab is idle was
- * taken out of the host's queue, so nobody is consulted for it.
+ * One Stop of a hosted agent (`dropStoppedHostStartMentions()`): its settle settles only the
+ * consults it left waiting, never those of another Stop still waiting for its own answer.
  */
-export function fireHostStartedMentions(session: Session): void {
+export type HostStopToken = { readonly sessionId: string };
+
+type AwaitingHostStart = typeof mentionsAwaitingHostStart extends Map<string, infer V> ? V : never;
+
+/** The entries of a tab's latest turn: from its last user entry on (none when it has none). */
+function latestUserTurn(logs: readonly LogEntry[]): LogEntry[] {
+	for (let index = logs.length - 1; index >= 0; index--) {
+		if (logs[index].source === 'user') return logs.slice(index);
+	}
+	return [];
+}
+
+/**
+ * Whether `tab` runs the waiting message's own turn, later than the one a Stop ended: the host
+ * answered that Stop, the tab is busy with a turn that started at another time, and that turn is
+ * the message's own (its entry is the tab's latest user entry). A stopped message's entry read back
+ * while another message's turn runs is no start of its own (CodeRabbit on #2160).
+ */
+function isOwnLaterTurn(
+	tab: Pick<Session['aiTabs'][number], 'state' | 'thinkingStartTime' | 'logs'>,
+	hostItemId: string,
+	waiting: AwaitingHostStart,
+	stop: NonNullable<AwaitingHostStart['stop']>
+): boolean {
+	return (
+		!stop.pending &&
+		tab.state === 'busy' &&
+		tab.thinkingStartTime !== stop.turnStartedAt &&
+		hostRanMessage(latestUserTurn(tab.logs), undefined, waitingMessage(hostItemId, waiting))
+	);
+}
+
+/** A waiting consult's message, as the host's user entry for it is matched. */
+function waitingMessage(hostItemId: string, waiting: AwaitingHostStart): HostedMessageRef {
+	return {
+		itemId: hostItemId,
+		text: waiting.item.text,
+		imageCount: waiting.item.images?.length ?? 0,
+	};
+}
+
+/**
+ * Whether the host's own record of `tabId` reads busy now, and when that turn started; and how
+ * many whole reads of the agent's host queue the mirror has taken (`MirroredPeer.queueReads`).
+ */
+function hostTurnAhead(
+	sessionId: string,
+	tabId: string
+): { busy: boolean; startedAt?: number; queueReads: number } {
+	const target = hostedTargetOf(selectSessionById(sessionId)(useSessionStore.getState()));
+	const peer = target ? usePeerMirrorStore.getState().peers[target.peerId] : undefined;
+	const queueReads = (target && peer?.queueReads?.[target.agentId]) || 0;
+	const host = target?.agent?.aiTabs?.find((tab) => tab.id === tabId);
+	if (!target || host?.state !== 'busy') return { busy: false, queueReads };
+	const liveTurn = peer?.liveTurns[liveTurnKey(target.agentId, tabId)];
+	return { busy: true, startedAt: hostTabTurnStartedAt(host, liveTurn), queueReads };
+}
+
+/**
+ * The tab a waiting consult holds the line of: a turn queued behind its message must not reach the
+ * host before the consult has started and put its hold here, or the host would start it the moment
+ * the message's own turn ended (U1).
+ */
+function awaitingLineTab(waiting: AwaitingHostStart): string {
+	return (
+		waiting.lineTabId ??
+		(waiting.item.tabId ||
+			selectSessionById(waiting.sessionId)(useSessionStore.getState())?.activeTabId ||
+			'')
+	);
+}
+
+function awaitHostStart(hostItemId: string, waiting: AwaitingHostStart): void {
+	// The tab whose line it holds is fixed now: the active tab may change while it waits, and the
+	// release must reach the holder it took (CodeRabbit on #2166).
+	waiting.lineTabId = awaitingLineTab(waiting);
+	mentionsAwaitingHostStart.set(hostItemId, waiting);
+	holdHostedTabLine(waiting.sessionId, waiting.lineTabId, `start:${hostItemId}`);
+	for (const [oldestId, oldest] of mentionsAwaitingHostStart) {
+		if (mentionsAwaitingHostStart.size <= MAX_HOST_START_MENTIONS) break;
+		letGoOfHostStart(oldestId, oldest, 'too many messages wait on the host for their turn.');
+	}
+}
+
+/** A consult no longer waits for its turn to start: it fired, or it was let go. */
+function stopAwaitingHostStart(hostItemId: string, waiting: AwaitingHostStart): void {
+	mentionsAwaitingHostStart.delete(hostItemId);
+	releaseHostedTabLine(waiting.sessionId, awaitingLineTab(waiting), `start:${hostItemId}`);
+}
+
+/**
+ * Stop waiting for a consult's turn without consulting, and say so on the tab, as a local mention
+ * that cannot run says it. Nothing is written when the agent is gone.
+ */
+function letGoOfHostStart(hostItemId: string, waiting: AwaitingHostStart, why: string): void {
+	stopAwaitingHostStart(hostItemId, waiting);
+	const session = selectSessionById(waiting.sessionId)(useSessionStore.getState());
+	const tabId = waiting.item.tabId || session?.activeTabId;
+	if (!session || !tabId || !session.aiTabs.some((tab) => tab.id === tabId)) return;
+	noteSkippedMention(
+		session.id,
+		tabId,
+		resolveConsultTargets(waiting.mention.targetSessionIds),
+		why,
+		'consult'
+	);
+}
+
+/**
+ * Let go of the consults of agents this window no longer follows on a host: deleted, moved back,
+ * or with hosted agents switched off. Called on every hosted sync with the ids still hosted.
+ */
+export function pruneHostStartedMentions(hostedSessionIds: ReadonlySet<string>): void {
+	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
+		if (hostedSessionIds.has(waiting.sessionId)) continue;
+		letGoOfHostStart(hostItemId, waiting, 'the agent no longer runs on that host.');
+	}
+}
+
+/**
+ * Stop ended the turns of `stoppedTabIds` (those it told the host to stop, or ended here). A
+ * consult of one of those tabs whose message is the turn Stop ended goes, with a note, so nothing
+ * consults after Stop (M24): one whose own user entry is on the tab, and one the host's queue
+ * listed and no longer lists (it left the queue before Stop: it started, or went).
+ *
+ * Every other consult of those tabs waits for the host's answer to the Stop (`stop.pending`,
+ * settled by `settleStoppedHostStartMentions()`), because the host's frames may still be on their
+ * way: a start the host reports before its answer ran before it stopped anything, so that message
+ * was the turn Stop ended, and its consult goes then (M25). That covers a message still listed
+ * when Stop lands, whose "started" frame comes after it, and one queued behind the turn Stop ends.
+ * A consult of a tab Stop did not end is not touched: its message runs later and consults when it
+ * starts, as a local queued message does after Stop.
+ */
+export function dropStoppedHostStartMentions(
+	sessionId: string,
+	stoppedTabIds: readonly string[]
+): HostStopToken {
+	const token: HostStopToken = { sessionId };
+	if (stoppedTabIds.length === 0) return token;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const stillWaiting = new Set(
+		(session?.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
+	);
+	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
+		if (waiting.sessionId !== sessionId) continue;
+		const tabId = waiting.item.tabId || session?.activeTabId;
+		if (!tabId || !stoppedTabIds.includes(tabId)) continue;
+		const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
+		const ran =
+			!!tab && hostRanMessage(tab.logs, waiting.afterEntryId, waitingMessage(hostItemId, waiting));
+		if (ran || (waiting.seenQueued && !stillWaiting.has(hostItemId))) {
+			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+			continue;
+		}
+		// The host's own record: the local tab may read idle between the drain's release and the
+		// next sync while the host runs the turn Stop ends.
+		const running = hostTurnAhead(sessionId, tabId);
+		const earlier = waiting.stop;
+		waiting.stop = {
+			pending: true,
+			// An earlier Stop still to answer keeps its say: this one joins it.
+			by: earlier?.pending ? [...earlier.by, token] : [token],
+			...(running.busy && running.startedAt !== undefined
+				? { turnStartedAt: running.startedAt }
+				: earlier?.turnStartedAt !== undefined
+					? { turnStartedAt: earlier.turnStartedAt }
+					: {}),
+			...(earlier?.untilNamed ? { untilNamed: true } : {}),
+		};
+	}
+	return token;
+}
+
+/**
+ * The host answered the Stop `stop` (or could not be told it): settle each consult that Stop left
+ * waiting for that answer (`stop.pending`), and no other. One the host named as a turn its Stop
+ * ended (`stoppedItemIds`), whose start the host named, or whose own user entry is on the tab, was
+ * the turn Stop ended: it goes, with the note. One the host's list read at the Stop no longer
+ * holds left the queue before the host stopped anything: it goes. One the host did not name, when
+ * the host names the turns it stops, waited through the Stop: it consults when it starts. So does
+ * one the host's list holds, when the host's frames reach this window before its answer (a
+ * headless host). A desktop host that names nothing has frames that trail its answer, so a listed
+ * message may still have been the stopped turn: it keeps its Stop mark until a frame names its exit
+ * (M27). One the queue never listed (an older desktop host sends no queue frames) stays marked,
+ * and consults only when its own turn is seen running after Stop (`fireHostStartedMentions()`):
+ * Stop never loses it.
+ */
+export function settleStoppedHostStartMentions(
+	stop: HostStopToken,
+	/**
+	 * What the host's answer said of its queue at the Stop. `waitingAtStop` rules over the mirror
+	 * where given: a desktop host's queue frames trail its writes by seconds (Greptile on #2160),
+	 * so the mirror may still list a message that had started, or not yet list one that waits.
+	 * Undefined when no answer came (the host could not be told, or the Stop failed): its frames
+	 * may still trail, as a host's that names nothing (CodeRabbit on #2160).
+	 */
+	answer?: HostStopAnswer
+): void {
+	const { waitingAtStop, stoppedItemIds } = answer ?? {};
+	const queueFramesTrail = !answer || answer.queueFramesTrail === true;
+	const namedStops = stoppedItemIds ? new Set(stoppedItemIds) : undefined;
+	const { sessionId } = stop;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const target = session ? hostedTargetOf(session) : undefined;
+	const peer = target ? usePeerMirrorStore.getState().peers[target.peerId] : undefined;
+	const listed = new Set(
+		waitingAtStop ?? ((target && peer?.queues[target.agentId]) || []).map((queued) => queued.itemId)
+	);
+	const exits = target ? peer?.queueExits?.[target.agentId] : undefined;
+	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
+		if (waiting.sessionId !== sessionId) continue;
+		// The host says this Stop ended its turn: it goes, whichever Stop marked it last.
+		if (namedStops?.has(hostItemId)) {
+			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+			continue;
+		}
+		// Only the consults this Stop left waiting: another Stop's wait for its own answer stays.
+		if (!waiting.stop?.pending || !waiting.stop.by.includes(stop)) continue;
+		const stillToAnswer = waiting.stop.by.filter((token) => token !== stop);
+		if (stillToAnswer.length > 0) {
+			// This Stop could not say whether it ended the message's turn: that doubt outlives the
+			// answers still due, which speak only for their own Stops (CodeRabbit on #2160).
+			waiting.stop = {
+				...waiting.stop,
+				by: stillToAnswer,
+				...(queueFramesTrail ? { untilNamed: true } : {}),
+			};
+			continue;
+		}
+		const tabId = waiting.item.tabId || session?.activeTabId;
+		const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
+		const ran =
+			queueExitOf(exits, hostItemId) === 'started' ||
+			(!!tab &&
+				hostRanMessage(tab.logs, waiting.afterEntryId, waitingMessage(hostItemId, waiting)));
+		// Gone from the host's own list read at the Stop: it started or went before the host stopped.
+		const leftBeforeStop = !listed.has(hostItemId) && (waiting.seenQueued || !!waitingAtStop);
+		if (ran || leftBeforeStop) {
+			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+			continue;
+		}
+		// The host named the turns its Stop ended, and not this one; or the host's own list holds it
+		// and no frame of the host can arrive after its answer: it waited through the Stop. Unless an
+		// earlier Stop that marked it could not say (its doubt stands until a frame names the exit).
+		const doubted = waiting.stop.untilNamed === true;
+		if (
+			!doubted &&
+			(namedStops || (listed.has(hostItemId) && waitingAtStop && !queueFramesTrail))
+		) {
+			waiting.stop = undefined;
+			continue;
+		}
+		// Listed only by the mirror (the read failed or was late), or by a host whose frames trail
+		// its answer: it may still be the stopped turn, whose start frame is on its way. It stays
+		// marked, and consults only once its own turn is seen running after Stop (CodeRabbit on
+		// #2160); a frame that merely lists it again does not clear the mark (M27).
+		waiting.stop = {
+			...waiting.stop,
+			pending: false,
+			by: [],
+			...(queueFramesTrail || doubted ? { untilNamed: true } : {}),
+		};
+	}
+}
+
+/**
+ * Fire the consults of turns the host queued once they start.
+ *
+ * A host that names how each item leaves its queue (`hostExits`, the mirror's `queueExits`) says
+ * so in the same message that takes it out: a start fires, a removal is let go, and an item gone
+ * from the list without a name is still on its way (its start is in flight), so it waits. Nothing
+ * is read from the tab's state, except after a whole read of the queue since the item was last
+ * seen waiting (`hostReads`, a reconnect): the exit named while this window was not attached is
+ * missing, so that item is judged by the rules below.
+ *
+ * An older host, headless or desktop, names none. Then the item started when it is not in
+ * the host's queue and the host wrote its own message's user entry on the tab after the send
+ * boundary (`judgeUnnamedHostStart()`): live as its turn starts, or in the saved transcript, read
+ * once the tab is idle, when it ran while this window was not attached. A turn of another message
+ * never counts. One that left the queue waits `HOST_QUEUE_START_GRACE_MS` for its entry (time, not
+ * syncs: this window's own writes run the sync again in between), then counts as removed when the
+ * tab still runs the turn it was queued behind (recorded once, in the host's clock) or is idle with
+ * a current transcript that does not show it; while the tab runs another turn, that turn's end and
+ * saved transcript decide.
+ *
+ * A consult that is let go without running (removed, or not in the host's queue for
+ * `HOST_START_MENTION_TTL_MS` since it was last seen there) leaves the note a local mention that
+ * cannot run leaves.
+ */
+export function fireHostStartedMentions(
+	session: Session,
+	hostExits?: readonly QueueExit[],
+	now = Date.now(),
+	/** The mirror's count of whole reads of this agent's host queue (`MirroredPeer.queueReads`). */
+	hostReads = 0,
+	/** The tabs' saved transcripts: an unnamed start is confirmed by its message in them. */
+	transcript: HostedTranscriptAccess = { read: () => {}, isCurrent: () => false }
+): void {
 	if (mentionsAwaitingHostStart.size === 0) return;
 	const hostQueued = new Set(
 		(session.executionQueue ?? []).filter((item) => item.hostQueued).map((item) => item.id)
@@ -260,24 +1056,113 @@ export function fireHostStartedMentions(session: Session): void {
 		if (waiting.sessionId !== session.id) continue;
 		const tabId = waiting.item.tabId || session.activeTabId;
 		const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
-		if (hostQueued.has(hostItemId)) {
-			// While it waits, the turn ahead is whatever the host's tab runs now.
-			waiting.seenQueued = true;
-			waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
+		const exit = queueExitOf(hostExits, hostItemId);
+		// A start the host reported before it answered a Stop of this tab ran before the host stopped
+		// anything: it was the turn Stop ended, so nothing is asked (M25).
+		if (exit === 'started' && waiting.stop?.pending) {
+			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 			continue;
 		}
-		// Its turn, not the one it waited behind: a removal while that turn runs consults nobody.
-		// Never seen waiting (its queue frame had not come): only a turn that started after the
-		// receipt can be it, not the one running when the host queued it.
-		const started =
-			tab?.state === 'busy' &&
-			(waiting.seenQueued
-				? tab.thinkingStartTime !== waiting.turnStartedAt
-				: (tab.thinkingStartTime ?? 0) >= waiting.queuedAt);
-		if (!started) {
-			if (waiting.seenQueued) mentionsAwaitingHostStart.delete(hostItemId);
-			continue;
+		// A named start of one a Stop left marked (no list from the host said it waited): it is its
+		// own later turn once the tab runs it; ran and ended unseen (or never ran again) is the
+		// stopped turn; until either shows, it waits for the next sync.
+		if (exit === 'started' && waiting.stop && tab) {
+			if (!isOwnLaterTurn(tab, hostItemId, waiting, waiting.stop)) {
+				const ranHere = hostRanMessage(
+					tab.logs,
+					waiting.afterEntryId,
+					waitingMessage(hostItemId, waiting)
+				);
+				if (ranHere && tab.state !== 'busy') {
+					letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+				} else if (!ranHere && tab.state !== 'busy' && tabId && !transcript.isCurrent(tabId)) {
+					// Idle with no entry of its own drawn: its saved transcript says whether it ran.
+					transcript.read(tabId);
+				}
+				continue;
+			}
 		}
+		if (exit !== 'started') {
+			if (exit === 'removed') {
+				letGoOfHostStart(hostItemId, waiting, 'the message was removed before it ran.');
+				continue;
+			}
+			if (hostQueued.has(hostItemId)) {
+				waiting.seenQueued = true;
+				waiting.lastSeenQueuedAt = now;
+				waiting.readsAtSeen = hostReads;
+				// Listed again (its first frame came late): its gone time starts over, and a Stop it
+				// waited through no longer stands between it and its start.
+				waiting.goneAt = undefined;
+				// A host whose frames trail its answer may list it in a frame written before the Stop,
+				// so only a named exit settles that mark (M27).
+				if (waiting.stop && !waiting.stop.pending && !waiting.stop.untilNamed) {
+					waiting.stop = undefined;
+				}
+				if (!waiting.aheadKnown) {
+					waiting.aheadKnown = true;
+					waiting.turnStartedAt = tab?.state === 'busy' ? tab.thinkingStartTime : undefined;
+				}
+				continue;
+			}
+			// Not in the host's queue for longer than any turn runs: let it go, and say so.
+			if (now - (waiting.lastSeenQueuedAt ?? waiting.queuedAt) > HOST_START_MENTION_TTL_MS) {
+				letGoOfHostStart(hostItemId, waiting, 'its message never started on the host.');
+				continue;
+			}
+			// Named exits: gone without a name, its start (or its first frame) is still coming.
+			// Unless the queue was read whole since it was last seen waiting (a reconnect): a start
+			// named while this window was not attached never comes, so the tab decides. And unless it
+			// was never seen waiting (it joined and left between two of the host's frames): no name
+			// may ever come for it, so its own entry on the tab decides (CodeRabbit on #2154).
+			if (hostExits && waiting.seenQueued && hostReads <= (waiting.readsAtSeen ?? 0)) continue;
+			// Unnamed: it ran only when the host wrote its own message on the tab (live as it starts,
+			// or in the saved transcript after it ran while this window was not attached). Another
+			// message's turn is never its start.
+			const verdict = judgeUnnamedHostStart(
+				tab,
+				{
+					afterEntryId: waiting.afterEntryId,
+					message: waitingMessage(hostItemId, waiting),
+					seenQueued: waiting.seenQueued,
+					aheadKnown: !!waiting.aheadKnown,
+					turnStartedAt: waiting.turnStartedAt,
+					goneAt: waiting.goneAt,
+				},
+				now,
+				!!tabId && transcript.isCurrent(tabId)
+			);
+			if (verdict === 'removed') {
+				letGoOfHostStart(hostItemId, waiting, 'the message was removed before it ran.');
+				continue;
+			}
+			if (verdict !== 'started') {
+				// Gone, also when never listed: a turn that started and ended between two syncs leaves
+				// no frame, and its saved transcript is read once the grace is over (M20).
+				if (verdict === 'left') waiting.goneAt = now;
+				if (verdict === 'read' && tabId) transcript.read(tabId);
+				continue;
+			}
+			// Its own entry, with a Stop of its tab in between. Before the host answered the Stop, or
+			// after it for one no queue listed: it is its own later turn only while the tab runs a
+			// turn that is not the one Stop ended, and that running turn is its own (its entry is the
+			// tab's latest user entry): a stopped message's entry read back while another message's
+			// turn runs is no start of its own (CodeRabbit on #2160). Otherwise it was the stopped
+			// turn (M25).
+			if (waiting.stop) {
+				if (!tab || !isOwnLaterTurn(tab, hostItemId, waiting, waiting.stop)) {
+					letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+					continue;
+				}
+			}
+			// Its own entry is in the saved transcript and the tab no longer runs it: the turn ran
+			// without the consult beside it. Late is better than never: consult now, and say so.
+			if (tab && tab.state !== 'busy' && tabId) {
+				noteLateMention(session.id, tabId, resolveConsultTargets(waiting.mention.targetSessionIds));
+			}
+		}
+		// The consult's hold goes on the tab before its line is let go, so nothing overtakes it.
+		const lineTabId = awaitingLineTab(waiting);
 		mentionsAwaitingHostStart.delete(hostItemId);
 		dispatchCrossAgentMentions(
 			waiting.mention,
@@ -286,7 +1171,51 @@ export function fireHostStartedMentions(session: Session): void {
 			tabId,
 			waiting.item.images
 		);
+		releaseHostedTabLine(waiting.sessionId, lineTabId, `start:${hostItemId}`);
 	}
+}
+
+/**
+ * The soonest time a waiting consult's limit runs out (its start grace after it left the host
+ * queue, or its time limit), when no change from the host may come to run the sync. Undefined when
+ * nothing waits. A grace that has run out is not a deadline again: the sync it armed has judged
+ * it, and only a change from the host (or the time limit) can move it on, so it never re-arms a
+ * timer that fires at once, sync after sync (Greptile and CodeRabbit on #2154).
+ */
+export function nextHostStartDeadline(now = Date.now()): number | undefined {
+	let soonest: number | undefined;
+	for (const waiting of mentionsAwaitingHostStart.values()) {
+		const ttl = (waiting.lastSeenQueuedAt ?? waiting.queuedAt) + HOST_START_MENTION_TTL_MS;
+		const grace =
+			waiting.goneAt === undefined ? undefined : waiting.goneAt + HOST_QUEUE_START_GRACE_MS;
+		const deadline = grace !== undefined && grace >= now ? Math.min(ttl, grace) : ttl;
+		if (soonest === undefined || deadline < soonest) soonest = deadline;
+	}
+	return soonest;
+}
+
+/**
+ * Whether this machine holds a line for `tabId` ahead of a new message: a turn of that tab on its
+ * way to the host or a consult waiting for its turn there (`hostedTabHoldsLine()`), a consult's
+ * hold, or a message for that tab still waiting in this queue ahead of `itemId` (all of them when
+ * `itemId` is not queued yet). A held card is no line, as in a local agent's queue. Such a message
+ * waits behind the line, as it would for a local agent, so the host never runs it first (U1).
+ */
+export function hostedTabHasLocalLine(
+	session: Pick<Session, 'id' | 'activeTabId' | 'executionQueue'>,
+	tabId: string | undefined,
+	itemId?: string
+): boolean {
+	const lineTabId = tabId || session.activeTabId;
+	if (hostedTabHoldsLine(session.id, lineTabId)) return true;
+	const queue = session.executionQueue ?? [];
+	const own = itemId ? queue.findIndex((queued) => queued.id === itemId) : -1;
+	const ahead = own >= 0 ? queue.slice(0, own) : queue;
+	return ahead.some(
+		(queued) =>
+			(queued.tabId || session.activeTabId) === lineTabId &&
+			(!!queued.awaitingConsult || !!queued.pendingAdmissionId || isRunnableQueueItem(queued))
+	);
 }
 
 /**
@@ -298,8 +1227,15 @@ export function handQueuedItemToHost(sessionId: string, itemId: string): boolean
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const item = session?.executionQueue?.find((queued) => queued.id === itemId);
 	if (!session || !item || !isQueuedItemForHost(session, item)) return false;
+	// An earlier message of this tab waits for its retry: this one waits behind it, and the drain
+	// sends it once the retry went through, so the host gets them in the order they were queued.
+	if (getRetryEntry(sessionId, item.tabId)) return false;
 	// A message that mentions another agent waits here for the drain, which consults as it sends.
 	if (item.crossAgentMention) return false;
+	// The tab holds a line here (a turn on its way, a consult's hold, a message waiting ahead of
+	// this one): this one waits behind it for the drain, as it would for a local agent, so the host
+	// never runs it ahead of a turn that is not finished yet (U1).
+	if (hostedTabHasLocalLine(session, item.tabId, item.id)) return false;
 	type Taken = { item: QueuedItem; index: number };
 	let taken: Taken | null = null;
 	updateSessionWith(sessionId, (s) => {

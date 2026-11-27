@@ -57,6 +57,331 @@ const hostedRow = (aiTabs = [createMockAITab({ id: 't1', logs: [local('old')] })
 	});
 
 describe('mergeHostedLogs', () => {
+	// Parity R8: a local turn appends to one entry and leaves the others' identity alone, so only
+	// that row renders again. A hosted turn's pass builds new objects for the live tail (and the
+	// delivered tick); every entry that draws the same keeps the object it had.
+	it('keeps the object of every entry that draws the same while a live reply grows (R8)', () => {
+		const saved = [
+			record('u1', 'question'),
+			{ ...record('a0'), source: 'stdout', text: 'earlier' },
+		];
+		const tool = {
+			id: 'tool1',
+			timestamp: 2,
+			source: 'tool',
+			text: 'Read',
+			metadata: { toolState: { status: 'completed', input: { file: 'a.ts' } } },
+		} as unknown as LogEntryRecord;
+		const reply = (text: string): LogEntryRecord => ({
+			id: 'live1',
+			timestamp: 3,
+			source: 'stdout',
+			text,
+		});
+		const first = mergeHostedLogs([], saved, [tool, reply('line 1\n')]);
+		const second = mergeHostedLogs(first, saved, [tool, reply('line 1\nline 2\n')]);
+		expect(second).not.toBe(first);
+		// The saved entries and the finished tool card are the same objects: their rows do not render.
+		expect(second.slice(0, 3).every((entry, i) => entry === first[i])).toBe(true);
+		// Only the growing reply is new.
+		expect(second[3]).not.toBe(first[3]);
+		expect(second[3].text).toBe('line 1\nline 2\n');
+	});
+
+	it('takes the new text of a saved entry the host rewrote in place (M22)', () => {
+		const pending = { ...record('p1'), source: 'system', text: 'Generating history synopsis...' };
+		const first = mergeHostedLogs([], [pending], undefined);
+		const settled = mergeHostedLogs(
+			first,
+			[{ ...pending, text: 'Synopsis saved to history: x' }],
+			undefined
+		);
+		expect(settled).not.toBe(first);
+		expect(settled.map((entry) => entry.text)).toEqual(['Synopsis saved to history: x']);
+	});
+
+	it('settles a saved line the host rewrote while a turn runs on its tab, from the live entry (CodeRabbit on #2154)', () => {
+		const pending = { ...record('p1'), source: 'system', text: 'Generating history synopsis...' };
+		const first = mergeHostedLogs([], [pending], undefined);
+		// The busy tab's live turn carries the rewrite under the saved line's id; the saved
+		// transcript is read again only when the turn ends.
+		const settled = mergeHostedLogs(
+			first,
+			[pending],
+			[{ ...pending, text: 'Synopsis saved to history: x' }, record('a1')]
+		);
+		expect(settled.map((entry) => entry.text)).toEqual(['Synopsis saved to history: x', 'a1']);
+		expect(settled.filter((entry) => entry.id === 'p1')).toHaveLength(1);
+		expect(settled[0].hostLive).toBeUndefined();
+	});
+
+	it('draws a kept message once when the host writes it under the same id (R14)', () => {
+		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true });
+		const before = [local('h1'), bubble];
+		// While it waits: the host does not have it, the bubble stays.
+		expect(mergeHostedLogs(before, [record('h1')], undefined).map((e) => e.id)).toEqual([
+			'h1',
+			'k1',
+		]);
+		// Sent, and the host took the id: its live entry and then its saved one are that bubble.
+		const live = mergeHostedLogs(before, [record('h1')], [record('k1', 'hello'), record('a1')]);
+		expect(live.filter((e) => e.source === 'user' && e.text === 'hello')).toHaveLength(1);
+		const saved = mergeHostedLogs(live, [record('h1'), record('k1', 'hello')], undefined);
+		expect(saved.filter((e) => e.text === 'hello').map((e) => e.id)).toEqual(['k1']);
+	});
+
+	it('makes a kept message the host one once the host runs it under that id (Greptile on #2161)', () => {
+		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true, keptSentAt: 6 });
+		const live = mergeHostedLogs([local('h1'), bubble], [record('h1')], [record('k1', 'hello')]);
+		const drawn = live.find((e) => e.id === 'k1');
+		expect(drawn).toMatchObject({ id: 'k1', text: 'hello', source: 'user' });
+		expect(drawn?.keptForHost).toBeUndefined();
+		expect(drawn?.keptSentAt).toBeUndefined();
+	});
+
+	it('never takes a host message with the same words for a kept message this machine has not sent (Greptile on #2161)', () => {
+		const bubble = local('k1', { text: 'continue', timestamp: 5, keptForHost: true });
+		// Another client sent "continue" while this one still waits for its retry.
+		const merged = mergeHostedLogs(
+			[local('h1'), bubble],
+			[record('h1'), record('y1', 'continue')],
+			undefined
+		);
+		expect(merged.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y1', 'k1']);
+	});
+
+	it('never takes an older host message with the same words, read in now, for a sent kept message (CodeRabbit on #2161)', () => {
+		const sentAt = 10 * 60_000;
+		const bubble = local('k1', {
+			text: 'continue',
+			timestamp: sentAt,
+			keptForHost: true,
+			keptSentAt: sentAt,
+		});
+		// The reconnect reads a longer window: a "continue" from an hour before is new to the tab.
+		const merged = mergeHostedLogs(
+			[local('h1'), bubble],
+			[record('h1'), { ...record('old', 'continue'), timestamp: sentAt - 3_600_000 }],
+			undefined
+		);
+		expect(merged.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['old', 'k1']);
+	});
+
+	it('draws a kept message once when the host writes it under its own id (R14)', () => {
+		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true, keptSentAt: 6 });
+		const before = [local('h1'), bubble];
+		// The host writes its copy when it takes the message: after the bubble was typed.
+		const copy = { ...record('y1', 'hello'), timestamp: 7 };
+		const live = mergeHostedLogs(before, [record('h1')], [copy, record('a1')]);
+		expect(live.filter((e) => e.text === 'hello').map((e) => e.id)).toEqual(['y1']);
+		const saved = mergeHostedLogs(live, [record('h1'), copy], undefined);
+		expect(saved.filter((e) => e.text === 'hello').map((e) => e.id)).toEqual(['y1']);
+	});
+
+	// Parity R28: the old rule let a host entry from up to 60 s BEFORE the bubble match it.
+	it('never takes a host message with the same words written before the bubble, even seconds before (R28)', () => {
+		const typedAt = 10 * 60_000;
+		const bubble = local('k1', {
+			text: 'continue',
+			timestamp: typedAt,
+			keptForHost: true,
+			keptSentAt: typedAt + 30_000,
+		});
+		// Another client's "continue" from 20 s before this one was typed, never drawn here.
+		const earlier = { ...record('y0', 'continue'), timestamp: typedAt - 20_000 };
+		const waiting = mergeHostedLogs([local('h1'), bubble], [record('h1'), earlier], undefined);
+		expect(waiting.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y0', 'k1']);
+		// The host's own copy, written at the send, takes the bubble's place.
+		const copy = { ...record('y1', 'continue'), timestamp: typedAt + 30_000 };
+		const taken = mergeHostedLogs(waiting, [record('h1'), earlier, copy], undefined);
+		expect(taken.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y0', 'y1']);
+	});
+
+	// Parity R30: an older desktop host whose clock runs 3 s behind, a 1 s blip, and a retry the
+	// moment the link is back stamps its copy before the bubble. It must still be drawn once.
+	it('draws a kept message once when a host clock 3 s behind stamps its copy before the bubble, after a 1 s outage (R30)', () => {
+		const typedAt = 10 * 60_000;
+		const bubble = local('k1', {
+			text: 'continue',
+			timestamp: typedAt,
+			keptForHost: true,
+			keptSentAt: typedAt + 1_000,
+		});
+		// Taken 1 s after it was typed, by a clock 3 s behind this one.
+		const copy = { ...record('y1', 'continue'), timestamp: typedAt + 1_000 - 3_000 };
+		const live = mergeHostedLogs([local('h1'), bubble], [record('h1')], [copy, record('a1')]);
+		expect(live.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y1']);
+		const saved = mergeHostedLogs(live, [record('h1'), copy], undefined);
+		expect(saved.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y1']);
+		// Not yet handed over: the same copy never takes the bubble (the earlier protection holds).
+		const unsent = mergeHostedLogs(
+			[local('h1'), { ...bubble, keptSentAt: undefined }],
+			[record('h1'), copy],
+			undefined
+		);
+		expect(unsent.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y1', 'k1']);
+	});
+
+	it('keeps a kept bubble when the host holds a message with the same words from 10 s before it, never drawn here (R30)', () => {
+		const typedAt = 10 * 60_000;
+		const bubble = local('k1', {
+			text: 'continue',
+			timestamp: typedAt,
+			keptForHost: true,
+			keptSentAt: typedAt + 1_000,
+		});
+		const earlier = { ...record('y0', 'continue'), timestamp: typedAt - 10_000 };
+		const merged = mergeHostedLogs([local('h1'), bubble], [record('h1'), earlier], undefined);
+		expect(merged.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y0', 'k1']);
+		expect(merged.find((e) => e.id === 'k1')?.keptForHost).toBe(true);
+	});
+
+	it('never takes a host message with the same words written before the send, even after the bubble (CodeRabbit on #2164)', () => {
+		const typedAt = 10 * 60_000;
+		const sentAt = typedAt + 60_000;
+		const bubble = local('k1', {
+			text: 'continue',
+			timestamp: typedAt,
+			keptForHost: true,
+			keptSentAt: sentAt,
+		});
+		// Another client's "continue" while this one waited 60 s for the link, never drawn here.
+		const between = { ...record('y0', 'continue'), timestamp: typedAt + 30_000 };
+		const waiting = mergeHostedLogs([local('h1'), bubble], [record('h1'), between], undefined);
+		expect(waiting.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['k1', 'y0']);
+		// The host's own copy, stamped by a clock 3 s behind at the send, takes the bubble's place,
+		// and is drawn there: nothing on the tab moves when the host takes it (R33).
+		const copy = { ...record('y1', 'continue'), timestamp: sentAt - 3_000 };
+		const taken = mergeHostedLogs(waiting, [record('h1'), between, copy], undefined);
+		expect(taken.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y1', 'y0']);
+	});
+
+	// Parity R33: an SSH agent's kept message stays where it was typed, above its retry card, and the
+	// card turns into "Connection restored" in place, so the note is below the message. The host
+	// stamps its copy when it takes the resend, after the card: it must still be drawn above it.
+	describe('draws the host copy of a kept message above its retry card, as SSH does (R33)', () => {
+		// The SSH tab: the message, the card raised as its turn failed, the answer after the resend.
+		const sshOrder = ['h1', 'msg', 'card', 'a1'];
+		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true, keptSentAt: 20 });
+		const card = local('card', { source: 'system', timestamp: 6, retryOutageId: 'o1' });
+		const answer = { ...record('a1'), source: 'ai' as const, timestamp: 21 };
+		const kept = [local('h1'), bubble, card];
+		const order = (logs: LogEntry[], copyId: string) =>
+			logs.map((e) => (e.id === copyId ? 'msg' : e.id));
+
+		it('a desktop host that writes the copy under its own id: live, saved, and on every later pass', () => {
+			const copy = { ...record('y1', 'hello'), timestamp: 20 };
+			const live = mergeHostedLogs(kept, [record('h1')], [copy, answer]);
+			expect(order(live, 'y1')).toEqual(sshOrder);
+			const saved = mergeHostedLogs(live, [record('h1'), copy, answer], undefined);
+			expect(order(saved, 'y1')).toEqual(sshOrder);
+			expect(mergeHostedLogs(saved, [record('h1'), copy, answer], undefined)).toBe(saved);
+		});
+
+		it('a host that takes the sent id: live, then saved', () => {
+			const copy = { ...record('k1', 'hello'), timestamp: 20 };
+			const live = mergeHostedLogs(kept, [record('h1')], [copy, answer]);
+			expect(order(live, 'k1')).toEqual(sshOrder);
+			const saved = mergeHostedLogs(live, [record('h1'), copy, answer], undefined);
+			expect(order(saved, 'k1')).toEqual(sshOrder);
+			expect(mergeHostedLogs(saved, [record('h1'), copy, answer], undefined)).toBe(saved);
+		});
+
+		// CodeRabbit on #2167: the copy, the bubble and the card stamped at the same time (the clock
+		// skew allowed makes it reachable): the copy still takes the bubble's place, above the card.
+		it('draws the copy above the card when the copy, the bubble and the card share a time', () => {
+			const sameBubble = local('k1', {
+				text: 'hello',
+				timestamp: 5,
+				keptForHost: true,
+				keptSentAt: 5,
+			});
+			const sameCard = local('card', { source: 'system', timestamp: 5, retryOutageId: 'o1' });
+			const copy = { ...record('k1', 'hello'), timestamp: 5 };
+			const saved = mergeHostedLogs(
+				[local('h1'), sameBubble, sameCard],
+				[record('h1'), copy, answer],
+				undefined
+			);
+			expect(order(saved, 'k1')).toEqual(sshOrder);
+		});
+
+		// CodeRabbit on #2167: a host clock behind this one stamps the copy before the bubble. The
+		// copy keeps the bubble's place below a note drawn before it, and stays above its answer.
+		it('keeps the bubble place when the host clock is behind, above the copy answer', () => {
+			const late = local('k1', {
+				text: 'hello',
+				timestamp: 10_000,
+				keptForHost: true,
+				keptSentAt: 11_000,
+			});
+			const note = local('note', { source: 'system', timestamp: 9_000 });
+			const copy = { ...record('y1', 'hello'), timestamp: 8_000 };
+			const merged = mergeHostedLogs([local('h1'), note, late], [record('h1'), copy], undefined);
+			expect(merged.map((e) => e.id)).toEqual(['h1', 'note', 'y1']);
+			const reply = { ...record('a9'), source: 'ai' as const, timestamp: 8_500 };
+			const answered = mergeHostedLogs(
+				[local('h1'), note, late],
+				[record('h1'), copy, reply],
+				undefined
+			);
+			const ids = answered.map((e) => e.id);
+			expect(ids.indexOf('y1')).toBeLessThan(ids.indexOf('a9'));
+		});
+
+		it('a turn that ended before any live frame: saved at once', () => {
+			const copy = { ...record('k1', 'hello'), timestamp: 20 };
+			const saved = mergeHostedLogs(kept, [record('h1'), copy, answer], undefined);
+			expect(order(saved, 'k1')).toEqual(sshOrder);
+		});
+
+		// CodeRabbit on #2167: the delivered tick is read in the order the host recorded the turns,
+		// before the copy moves above another client's message.
+		it('ticks the moved copy by its own answer, not by the turn of a message it moved above', () => {
+			const copy = { ...record('y1', 'hello'), timestamp: 20 };
+			const other = { ...record('y0', 'meanwhile'), timestamp: 10 };
+			const otherAnswer = { ...record('b0'), source: 'ai' as const, timestamp: 11 };
+			const merged = mergeHostedLogs(
+				kept,
+				[record('h1'), other, otherAnswer, copy, answer],
+				undefined
+			);
+			expect(merged.map((e) => e.id)).toEqual(['h1', 'y1', 'card', 'y0', 'b0', 'a1']);
+			expect(merged.find((e) => e.id === 'y1')?.delivered).toBe(true);
+			expect(merged.find((e) => e.id === 'y0')?.delivered).toBe(true);
+			// Not answered yet: an answer to an earlier message, recorded before it, never ticks it.
+			const early = { ...record('b9'), source: 'ai' as const, timestamp: 8 };
+			const waiting = mergeHostedLogs(
+				kept,
+				[record('h1'), early, other, otherAnswer, copy],
+				undefined
+			);
+			expect(waiting.map((e) => e.id)).toEqual(['h1', 'y1', 'card', 'b9', 'y0', 'b0']);
+			expect(waiting.find((e) => e.id === 'y1')?.delivered).toBeFalsy();
+		});
+
+		it('leaves a message that was never kept at the time the host gave it', () => {
+			const sent = local('m1', { text: 'hi', timestamp: 5 });
+			const copy = { ...record('m1', 'hi'), timestamp: 20 };
+			const merged = mergeHostedLogs([local('h1'), sent, card], [record('h1'), copy], undefined);
+			expect(merged.map((e) => [e.id, e.timestamp])).toEqual([
+				['h1', 1],
+				['card', 6],
+				['m1', 20],
+			]);
+		});
+	});
+
+	it('keeps a kept bubble when the host holds only an earlier message with the same words (R14)', () => {
+		// "hello" was sent and drawn before the link dropped; the kept "hello" is a second one.
+		const before = [
+			local('h1', { text: 'hello' }),
+			local('k1', { text: 'hello', timestamp: 5, keptForHost: true }),
+		];
+		const merged = mergeHostedLogs(before, [record('h1', 'hello')], undefined);
+		expect(merged.map((e) => e.id)).toEqual(['h1', 'k1']);
+	});
+
 	it('keeps local entries the host read window does not hold, ahead of the host entries', () => {
 		const merged = mergeHostedLogs([local('a'), local('b')], [record('b'), record('c')], undefined);
 		expect(merged.map((entry) => entry.id)).toEqual(['a', 'b', 'c']);

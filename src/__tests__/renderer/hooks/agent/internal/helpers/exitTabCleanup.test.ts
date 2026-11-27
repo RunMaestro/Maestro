@@ -5,6 +5,7 @@ import {
 	cleanupExitedTabLogs,
 } from '../../../../../../renderer/hooks/agent/internal/helpers/exitTabCleanup';
 import type { LogEntry } from '../../../../../../renderer/types';
+import { turnFateAfter } from '../../../../../../shared/maestro-lib/agents/rules';
 import { buildHiddenProgressLogId } from '../../../../../../renderer/utils/hiddenProgress';
 
 function log(partial: Partial<LogEntry> & { id: string }): LogEntry {
@@ -79,6 +80,44 @@ describe('exitTabCleanup helpers', () => {
 			const logs = [log({ id: hiddenId, source: 'system' }), log({ id: 'a', source: 'thinking' })];
 			const out = cleanupExitedTabLogs(logs, 'tab-1', { showThinking: 'sticky' });
 			expect(out.map((l) => l.id)).toEqual(['a']);
+		});
+
+		// Parity R36: a desktop host stamps the end of the turn whose process exited, so a client
+		// asking whether a message ran tells an ended turn from one the host lost mid-stream.
+		it("stamps the turn's end on the last entry kept, once", () => {
+			const logs = [
+				log({ id: 'u', source: 'user' }),
+				log({ id: 'b', source: 'stdout' }),
+				log({ id: 'c', source: 'thinking' }),
+			];
+			const out = cleanupExitedTabLogs(logs, 'tab-1', { showThinking: 'on' });
+			expect(out.map((l) => [l.id, l.turnEnded === true])).toEqual([
+				['u', false],
+				['b', true],
+			]);
+			// A second exit with nothing new keeps the turn answered.
+			const again = cleanupExitedTabLogs(out, 'tab-1', { showThinking: 'on' });
+			expect(turnFateAfter(again, 0, 'desktop')).toBe('answered');
+		});
+
+		// CodeRabbit on #2167: a sticky turn that ended on a tool card keeps its stamp on an entry a
+		// later exit in 'on' mode (which drops every thinking and tool card) does not remove.
+		it('keeps an earlier turn stamped when a later exit drops its thinking and tool cards', () => {
+			const sticky = cleanupExitedTabLogs(
+				[log({ id: 'u1', source: 'user' }), log({ id: 't1', source: 'tool' })],
+				'tab-1',
+				{ showThinking: 'sticky' }
+			);
+			const later = cleanupExitedTabLogs(
+				[...sticky, log({ id: 'u2', source: 'user' }), log({ id: 'a2', source: 'stdout' })],
+				'tab-1',
+				{ showThinking: 'on' }
+			);
+			expect(later.map((l) => [l.id, l.turnEnded === true])).toEqual([
+				['u1', true],
+				['u2', false],
+				['a2', true],
+			]);
 		});
 	});
 });

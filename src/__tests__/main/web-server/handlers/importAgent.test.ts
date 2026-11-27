@@ -8,10 +8,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const importAgentIntoDesktop = vi.fn();
-const buildDesktopAgentImportDeps = vi.fn((enqueue: unknown) => ({ enqueue }));
+const buildDesktopAgentImportDeps = vi.fn((enqueue: unknown, processTable: unknown) => ({
+	enqueue,
+	processTable,
+}));
 vi.mock('../../../../main/federation/import-agent', () => ({
 	importAgentIntoDesktop: (...args: unknown[]) => importAgentIntoDesktop(...args),
-	buildDesktopAgentImportDeps: (enqueue: unknown) => buildDesktopAgentImportDeps(enqueue),
+	buildDesktopAgentImportDeps: (enqueue: unknown, processTable: unknown) =>
+		buildDesktopAgentImportDeps(enqueue, processTable),
 }));
 vi.mock('../../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
@@ -25,9 +29,13 @@ import type {
 let send: ReturnType<typeof vi.fn>;
 let enqueueCommand: ReturnType<typeof vi.fn>;
 
-function run(message: Record<string, unknown>): void {
+function run(message: Record<string, unknown>, callbacks: Record<string, unknown> = {}): void {
 	handleImportAgent(
-		{ send, sendError: vi.fn(), callbacks: { enqueueCommand } } as unknown as MessageHandlerContext,
+		{
+			send,
+			sendError: vi.fn(),
+			callbacks: { enqueueCommand, ...callbacks },
+		} as unknown as MessageHandlerContext,
 		{} as WebClient,
 		{ type: 'import_agent', requestId: 'r1', ...message } as WebClientMessage
 	);
@@ -79,6 +87,19 @@ describe('handleImportAgent', () => {
 		};
 		await enqueue('a', 'tA', 'go on', ['img']);
 		expect(enqueueCommand).toHaveBeenCalledWith('a', 'go on', 'ai', 'tA', ['img'], true);
+	});
+
+	it('hands the import the live process table, never the stored busy state (T7)', async () => {
+		importAgentIntoDesktop.mockResolvedValue({ ok: true, receipt: { agentId: 'a', queued: 0 } });
+		const processManager = { get: vi.fn(), kill: vi.fn(), closeAgent: vi.fn() };
+		const getSessions = vi.fn(() => []);
+		run(wire, {
+			getSessions,
+			getDebugPackageDeps: () => ({ getProcessManager: () => processManager }),
+		});
+		await flush();
+		expect(buildDesktopAgentImportDeps.mock.calls[0][1]).toBe(processManager);
+		expect(getSessions).not.toHaveBeenCalled();
 	});
 
 	it('refuses a tab without an id before importing anything', async () => {

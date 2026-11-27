@@ -1,10 +1,24 @@
 const hostPaths = vi.hoisted(() => ({ userData: '' }));
 vi.mock('electron', () => ({ app: { getPath: () => hostPaths.userData } }));
 
+const bridgeRead = vi.hoisted(() => ({ invokeAsBridge: vi.fn() }));
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/web-server/handlers/bridgeHandlers')>()),
+	invokeAsBridge: bridgeRead.invokeAsBridge,
+}));
+
 vi.mock(
 	'../../../../main/plugins/plugin-scan',
 	async () => await import('../../../helpers/pluginScan')
 );
+import {
+	noteAiTabRetryPending,
+	resetAiTabRetryStateForTests,
+} from '../../../../main/utils/ai-tab-retry-state';
+import {
+	recordFramedQueue,
+	resetQueueChangeFrames,
+} from '../../../../main/web-server/queue-change-frames';
 import { MAESTRO_PUBLISHER_KEYS } from '../../../../shared/plugins/publisher-keys';
 import { RELAY_PUBLISHER_KEY } from '../../../../shared/plugins/relay-identity';
 /**
@@ -1006,6 +1020,38 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.error).toContain('mid-turn');
 		});
 
+		// M19: a hosted agent's host has no `--force`; the CLI must print queued, not delivered.
+		it('answers a command a hosted agent host queued as a queued command_result with its item', async () => {
+			(callbacks.executeCommand as any).mockResolvedValue({
+				queued: true,
+				itemId: 'q-7',
+				queuePosition: 2,
+			});
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'test',
+				inputMode: 'ai',
+				tabId: 'busy-tab',
+				force: true,
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'command_result',
+				success: true,
+				queued: true,
+				itemId: 'q-7',
+				queuePosition: 2,
+				tabId: 'busy-tab',
+				requestId: 'req-1',
+			});
+			expect(response.error).toBeUndefined();
+		});
+
 		it('omits tabId from command_result on the no-tabId path so callers do not chain to a stale snapshot', async () => {
 			// The server's `activeTabId` snapshot can diverge from the renderer's
 			// actual write target if the user switches tabs between IPC send and
@@ -1535,6 +1581,27 @@ describe('WebSocketMessageHandler', () => {
 
 			await vi.waitFor(() => {
 				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', true);
+			});
+		});
+
+		it('asks for the tab under the id a Federation client sent, and ignores one that is not an id (R15)', async () => {
+			handler.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+				background: true,
+				tabId: 'drawn-here-1',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', true, 'drawn-here-1');
+			});
+			(callbacks.newTab as any).mockClear();
+			handler.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+				tabId: '../not an id',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', false);
 			});
 		});
 
@@ -3966,6 +4033,330 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it("forwards a Federation sender's agent-only text after the overrides slot, read as the headless host reads it (M16)", async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Mine',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+				agentContext: 'Replies:\nBackend: the cache is fine.',
+				agentNotes: '   ',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Mine',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					{ agentContext: 'Replies:\nBackend: the cache is fine.' }
+				);
+			});
+		});
+
+		// Parity R19: the resend of a message this tab already answered (the client lost track of
+		// the turn: a cut link, a restart) never runs again, as a headless host refuses it.
+		describe('the resend of a message the tab already answered (entryId, R19)', () => {
+			const QUESTION = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize the docs' };
+			const resend = (text = 'Summarize the docs') =>
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: text,
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					background: true,
+					entryId: 'u1',
+					requestId: 'r1',
+				});
+
+			afterEach(() => bridgeRead.invokeAsBridge.mockReset());
+
+			it('answers "already ran" and queues nothing when an answer follows the entry', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						// This desktop stamps a turn's end when its process exits (R36).
+						{ id: 'a1', timestamp: 2, source: 'ai', text: 'The docs say...', turnEnded: true },
+					],
+				});
+				resend();
+				await vi.waitFor(() =>
+					expect(lastSend()).toMatchObject({
+						type: 'enqueue_command_result',
+						success: true,
+						queued: false,
+						answered: true,
+						tabId: 'tab-1',
+					})
+				);
+				expect(bridgeRead.invokeAsBridge).toHaveBeenCalledWith(
+					'sessions:getDeferredContent',
+					'session-1',
+					'tab-1',
+					false
+				);
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			});
+
+			// Parity R37: a turn that ended on the provider's own error is retried by that error's rule
+			// (the client's retry sends it): the resend runs. A turn the person stopped never runs again.
+			it("runs the resend when the entry's turn ended on a provider error", async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{
+							id: 'e1',
+							timestamp: 2,
+							source: 'error',
+							text: 'API Error: 529 overloaded',
+							turnEnded: true,
+						},
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			// Parity R38: a resend that arrives while this desktop still runs the message's turn (its
+			// sender lost the link and cannot see that) is the message running: never queued to run
+			// a second time, as a headless host refuses it.
+			it.each([
+				['runs it right now', 'busy', true],
+				['is idle (the turn died with the host)', 'idle', false],
+			])('answers "already ran" only when the tab %s (R38)', async (_how, state, answered) => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }],
+					transcriptSnapshots: [{ sessionId: 'session-1', tabId: 'tab-1', runtime: { state } }],
+				});
+				resend();
+				if (answered) {
+					await vi.waitFor(() => expect(lastSend()).toMatchObject({ answered: true }));
+					expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+				} else {
+					await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+					expect(lastSend()).not.toHaveProperty('answered');
+				}
+			});
+
+			// Parity R41: one side owns a retry. When this desktop's own Agent Resilience holds the
+			// tab's failed turn for a resend, a client's resend of that message would run it twice:
+			// it is refused as "the host retries it" (`answered` too, for an older client).
+			it.each([
+				['holds a retry of the turn', true, true],
+				['holds no retry', false, false],
+			])(
+				'answers "the host retries it" only when the tab %s (R41)',
+				async (_how, pending, retrying) => {
+					noteAiTabRetryPending('session-1', 'tab-1', pending);
+					bridgeRead.invokeAsBridge.mockResolvedValue({
+						logs: [
+							QUESTION,
+							{ id: 'e1', timestamp: 2, source: 'error', text: 'API Error: 529', turnEnded: true },
+						],
+					});
+					resend();
+					try {
+						if (retrying) {
+							await vi.waitFor(() =>
+								expect(lastSend()).toMatchObject({ answered: true, retrying: true, queued: false })
+							);
+							expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+						} else {
+							await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+							expect(lastSend()).not.toHaveProperty('retrying');
+						}
+					} finally {
+						resetAiTabRetryStateForTests();
+					}
+				}
+			);
+
+			it("runs a resend of an earlier message while the tab's retry holds a later one (R41)", async () => {
+				noteAiTabRetryPending('session-1', 'tab-1', true);
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{ id: 'e1', timestamp: 2, source: 'error', text: 'API Error: 529', turnEnded: true },
+						{ id: 'u2', timestamp: 3, source: 'user', text: 'Next' },
+					],
+				});
+				resend();
+				try {
+					await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+					expect(lastSend()).not.toHaveProperty('retrying');
+				} finally {
+					resetAiTabRetryStateForTests();
+				}
+			});
+
+			// CodeRabbit on #2167: a busy tab whose turn began after the message (a command that writes
+			// no message of its own) is not running this message: the resend runs.
+			it('runs the resend when the tab is busy with a turn that began after the message', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }],
+					transcriptSnapshots: [
+						{
+							sessionId: 'session-1',
+							tabId: 'tab-1',
+							runtime: { state: 'busy', thinkingStartTime: 600_000 },
+						},
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			it('answers "already ran" when the entry\'s turn was stopped by the person', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{ id: 's1', timestamp: 2, source: 'system', text: 'Canceled by user', turnEnded: true },
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(lastSend()).toMatchObject({ answered: true }));
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			});
+
+			it.each([
+				['the turn died before an answer', { logs: [QUESTION] }, 'Summarize the docs'],
+				// Parity R36: this desktop writes streamed text as it arrives, so text with no end stamp
+				// is a turn that died with the host part way through, never an answer.
+				[
+					'the turn streamed some text and died with the host (no end stamp, R36)',
+					{
+						logs: [
+							{ id: 'u0', timestamp: 0, source: 'user', text: 'Hello' },
+							{ id: 'a0', timestamp: 0, source: 'ai', text: 'Hi', turnEnded: true },
+							QUESTION,
+							{ id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' },
+						],
+					},
+					'Summarize the docs',
+				],
+				[
+					'the turn streamed some text and died, on a host too old to stamp (R36)',
+					{ logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }] },
+					'Summarize the docs',
+				],
+				// Parity R23: a2 answers the later u2, never u1, whose own turn died.
+				[
+					'only a later message was answered',
+					{
+						logs: [
+							QUESTION,
+							{ id: 'u2', timestamp: 3, source: 'user', text: 'And the tests?' },
+							{ id: 'a2', timestamp: 4, source: 'ai', text: 'The tests...' },
+						],
+					},
+					'Summarize the docs',
+				],
+				[
+					'the message was edited while it was kept',
+					{ logs: [QUESTION, { id: 'a1', timestamp: 2, source: 'ai', text: 'ok' }] },
+					'Summarize the docs, briefly',
+				],
+			])('runs the message when %s', async (_why, read, text) => {
+				bridgeRead.invokeAsBridge.mockResolvedValue(read);
+				resend(text);
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			it('runs the message when the tab cannot be read: the client read the host first', async () => {
+				bridgeRead.invokeAsBridge.mockRejectedValue(new Error('no owner'));
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+			});
+
+			// Parity R26: the desktop host writes the message under the id the client named, as a
+			// headless host does, so the client's kept bubble is replaced by id, never by its words.
+			it('hands the entry id to the renderer after the agent-only text slot (R26)', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({ logs: [] });
+				resend();
+				await vi.waitFor(() =>
+					expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+						'session-1',
+						'Summarize the docs',
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						'u1'
+					)
+				);
+			});
+
+			it('sends no entry id slot for an id it cannot take (R26)', async () => {
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: 'Mine',
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					background: true,
+					entryId: 'not an id!',
+				});
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(vi.mocked(callbacks.enqueueCommand).mock.calls[0]).toHaveLength(8);
+			});
+		});
+
+		it.each([
+			[{ agentContext: 42 }, 'agentContext must be text.'],
+			[{ agentNotes: 'x'.repeat(1_000_001) }, 'agentNotes is longer than 1000000 characters.'],
+		])(
+			'refuses agent-only text it cannot take, and queues nothing (M16)',
+			async (fields, error) => {
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: 'Mine',
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					...fields,
+				});
+				await vi.waitFor(() =>
+					expect(lastSend()).toMatchObject({
+						type: 'enqueue_command_result',
+						success: false,
+						error,
+					})
+				);
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			}
+		);
+
+		it('names what it does beyond the base protocol, as the headless host does (M16)', async () => {
+			handler.handleMessage(client, { type: 'host_capabilities', requestId: 'r1' });
+			await vi.waitFor(() =>
+				expect(lastSend()).toMatchObject({
+					type: 'host_capabilities_result',
+					requestId: 'r1',
+					success: true,
+					capabilities: ['turn-agent-text'],
+				})
+			);
+		});
+
 		it('forwards sessionId/command/tab/background to the callback and replies with queue info', async () => {
 			handler.handleMessage(client, {
 				type: 'enqueue_command',
@@ -4135,6 +4526,50 @@ describe('WebSocketMessageHandler', () => {
 				expect(response.success).toBe(true);
 				expect(Array.isArray(response.queues)).toBe(true);
 			});
+		});
+
+		// Parity M28: a client that reads queue changes applies the next one over this answer.
+		it('answers each queue with the seq of the last changes frame sent for it (M28)', async () => {
+			resetQueueChangeFrames();
+			recordFramedQueue('session-1', { seq: 4, items: new Map() });
+			vi.mocked(callbacks.listQueue).mockResolvedValue({
+				success: true,
+				queues: [
+					{ sessionId: 'session-1', name: 'A', state: 'idle', items: [] },
+					{ sessionId: 'session-2', name: 'B', state: 'idle', items: [] },
+				],
+			});
+			handler.handleMessage(client, { type: 'list_queue' });
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.queues).toMatchObject([
+					{ sessionId: 'session-1', queueSeq: 4 },
+					{ sessionId: 'session-2', queueSeq: 0 },
+				]);
+			});
+			resetQueueChangeFrames();
+		});
+
+		// Parity M29: a frame sent while the read was out labelled the older list with its newer seq.
+		it('names the seq taken before it read the queues, never one a frame sent meanwhile (M29)', async () => {
+			resetQueueChangeFrames();
+			recordFramedQueue('session-1', { seq: 4, items: new Map() });
+			vi.mocked(callbacks.listQueue).mockImplementation(async () => {
+				// A change lands while the renderer answers.
+				recordFramedQueue('session-1', { seq: 5, items: new Map() });
+				return {
+					success: true,
+					queues: [{ sessionId: 'session-1', name: 'A', state: 'idle', items: [] }],
+				};
+			});
+			handler.handleMessage(client, { type: 'list_queue', sessionId: 'session-1' });
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.queues).toMatchObject([{ sessionId: 'session-1', queueSeq: 4 }]);
+			});
+			resetQueueChangeFrames();
 		});
 
 		it('passes undefined when no sessionId is provided (all agents)', async () => {

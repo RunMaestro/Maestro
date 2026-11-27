@@ -686,8 +686,14 @@ interface MaestroAPI {
 		) => () => void;
 		/** Answer a `remote:executeCommand` receipt channel. `accepted: true`
 		 *  means the command reached the spawn/queue logic, not that it
-		 *  completed. Drives the CLI's `dispatch` success flag. */
-		sendRemoteCommandReceipt: (receiptChannel: string, accepted: boolean, reason?: string) => void;
+		 *  completed. Drives the CLI's `dispatch` success flag. `queued`: a hosted
+		 *  agent's host queued it behind the running turn. */
+		sendRemoteCommandReceipt: (
+			receiptChannel: string,
+			accepted: boolean,
+			reason?: string,
+			queued?: { itemId: string; position: number }
+		) => void;
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => void
 		) => () => void;
@@ -709,7 +715,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteNewTab: (
-			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
+			callback: (
+				sessionId: string,
+				responseChannel: string,
+				background?: boolean,
+				tabId?: string
+			) => void
 		) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
 		onRemoteCloseTab: (
@@ -1091,7 +1102,10 @@ interface MaestroAPI {
 				held?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
 				dispatchCallback?: boolean,
-				control?: PianolaQueueControl
+				control?: PianolaQueueControl,
+				turnOverrides?: import('../shared/maestro-lib/client/types').TurnOverrides,
+				agentText?: import('../shared/maestro-lib/client/types').TurnAgentText,
+				entryId?: string
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (

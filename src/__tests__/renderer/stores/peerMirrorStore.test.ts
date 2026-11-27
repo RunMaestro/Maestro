@@ -315,6 +315,58 @@ describe('peerMirrorStore', () => {
 			expect(slot.stale).toBe(true);
 		});
 
+		// Parity R8: the ended turn's live copy goes once a read that began after the turn ended
+		// lands, even when another stale mark came while it ran; otherwise the reply is drawn
+		// twice (the live copy and the host's), the doubled DOM the soak measured.
+		it('a read that began after the turn ended ends the carryover, even when marked stale again (R8)', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1')])]);
+			const key = liveTurnKey('a1', 't1');
+			const turn = (event: Record<string, unknown>) =>
+				usePeerMirrorStore
+					.getState()
+					.applyPush(
+						push('buildbox', { type: 'turn', agentId: 'a1', tabId: 't1', event } as never)
+					);
+			turn({ kind: 'text', at: 1, text: 'a long reply' });
+			turn({ kind: 'outcome', at: 2, outcome: 'completed', exitCode: 0 });
+			expect(usePeerMirrorStore.getState().transcripts.buildbox[key].carryover).toHaveLength(1);
+
+			const version = usePeerMirrorStore.getState().beginTranscriptRead('buildbox', 'a1', 't1');
+			// Another stale mark while the read runs (the agent was updated after its turn).
+			usePeerMirrorStore.getState().applyPush(push('buildbox', { type: 'peer.stale' }));
+			usePeerMirrorStore
+				.getState()
+				.finishTranscriptRead(
+					'buildbox',
+					'a1',
+					't1',
+					[{ id: 'host-a1', timestamp: 2, source: 'stdout', text: 'a long reply' }],
+					version
+				);
+			const slot = usePeerMirrorStore.getState().transcripts.buildbox[key];
+			expect(slot.stale).toBe(true);
+			expect(slot.carryover).toBeUndefined();
+			expect(slot.entries.map((entry) => entry.id)).toEqual(['host-a1']);
+		});
+
+		it('a read that began before the turn ended keeps the carryover (R8)', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1')])]);
+			const key = liveTurnKey('a1', 't1');
+			const version = store.beginTranscriptRead('buildbox', 'a1', 't1');
+			const turn = (event: Record<string, unknown>) =>
+				usePeerMirrorStore
+					.getState()
+					.applyPush(
+						push('buildbox', { type: 'turn', agentId: 'a1', tabId: 't1', event } as never)
+					);
+			turn({ kind: 'text', at: 1, text: 'a long reply' });
+			turn({ kind: 'outcome', at: 2, outcome: 'completed', exitCode: 0 });
+			usePeerMirrorStore.getState().finishTranscriptRead('buildbox', 'a1', 't1', [], version);
+			expect(usePeerMirrorStore.getState().transcripts.buildbox[key].carryover).toHaveLength(1);
+		});
+
 		it('a read with no stale mark in between clears staleness and the carryover', () => {
 			const store = usePeerMirrorStore.getState();
 			store.hydrate([peerWith('buildbox', [agent('a1')])]);

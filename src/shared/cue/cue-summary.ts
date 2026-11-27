@@ -10,7 +10,7 @@
  */
 
 import { stripMarkdown } from '../markdown';
-import { stripAnsiCodes } from '../stringUtils';
+import { collapseWhitespace, stripAnsiCodes } from '../stringUtils';
 import type { CueEvent, CueEventType, CueRunResult } from './contracts';
 
 /**
@@ -253,10 +253,6 @@ export function extractCueOutputExcerpt(
 	}
 
 	return result || clipExcerpt(text, maxChars);
-}
-
-function collapseWhitespace(text: string): string {
-	return text.replace(/\s+/g, ' ').trim();
 }
 
 /**

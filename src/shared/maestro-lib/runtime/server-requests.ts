@@ -38,7 +38,14 @@ import type {
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../client/types';
-import { normalizeOriginHost, normalizeTurnOverrides, parseQueuedTurnEdit } from '../client/types';
+import {
+	HOST_CAPABILITIES,
+	normalizeOriginHost,
+	normalizeTurnOverrides,
+	parseQueuedTurnEdit,
+	readRequestedTabId,
+	readTurnEntryId,
+} from '../client/types';
 import {
 	groupChatToWire,
 	queuedTurnsToWire,
@@ -319,6 +326,10 @@ function imagesOf(message: Request): string[] | undefined {
  */
 function receiptFields(receipt: TurnSendReceipt): Frame {
 	if (receipt.status === 'ran') return { queued: false, ran: true };
+	// The message it named already ran (`entryId`): nothing began, and the sender must not wait.
+	if (receipt.status === 'answered') return { queued: false, answered: true };
+	// The host's own retry holds it: `answered` too, for a client too old to know `retrying`.
+	if (receipt.status === 'retrying') return { queued: false, answered: true, retrying: true };
 	return receipt.status === 'queued'
 		? {
 				queued: true,
@@ -439,6 +450,10 @@ export function importInputFromMessage(
 			tabs: tabs as AgentImportTab[],
 			...(str(message.activeTabId) ? { activeTabId: str(message.activeTabId) } : {}),
 			...(queue.length > 0 ? { queue: queue as AgentImportQueuedMessage[] } : {}),
+			...(str(message.replacesAgentId) ? { replacesAgentId: str(message.replacesAgentId) } : {}),
+			...(str(message.liftedFromAgentId)
+				? { liftedFromAgentId: str(message.liftedFromAgentId) }
+				: {}),
 		},
 	};
 }
@@ -507,8 +522,12 @@ function turnOverridesOf(message: Request): { overrides?: TurnOverrides } {
  * The agent-only text a desktop's `@mention` adds to this one turn (`TurnInput.agentContext`,
  * `agentNotes`), passed through as sent: the runtime checks it and refuses a send it cannot take.
  */
-function turnAgentTextOf(message: Request): Pick<TurnInput, 'agentContext' | 'agentNotes'> {
+function turnAgentTextOf(
+	message: Request
+): Pick<TurnInput, 'agentContext' | 'agentNotes' | 'entryId'> {
+	const entryId = readTurnEntryId(message.entryId);
 	return {
+		...(entryId ? { entryId } : {}),
 		...(message.agentContext !== undefined
 			? { agentContext: message.agentContext as TurnInput['agentContext'] }
 			: {}),
@@ -667,9 +686,13 @@ export function createRequestHandler(
 
 			// -- tabs -------------------------------------------------------
 			case 'new_tab':
-				return outcome('new_tab_result', await client.tabs.create(sessionId(message)), (value) => ({
-					tabId: value.tabId,
-				}));
+				return outcome(
+					'new_tab_result',
+					await client.tabs.create(sessionId(message), {
+						tabId: readRequestedTabId(message.tabId),
+					}),
+					(value) => ({ tabId: value.tabId })
+				);
 			case 'rename_tab':
 				return outcome(
 					'rename_tab_result',
@@ -816,6 +839,13 @@ export function createRequestHandler(
 					(value) => ({ updated: value.updated })
 				);
 			}
+			// What this host does beyond the base protocol; an older host echoes the request.
+			case 'host_capabilities':
+				return {
+					type: 'host_capabilities_result',
+					success: true,
+					capabilities: [...HOST_CAPABILITIES],
+				};
 			case 'list_queue': {
 				const agentId = sessionId(message);
 				const result = await client.turns.queue.list(agentId);

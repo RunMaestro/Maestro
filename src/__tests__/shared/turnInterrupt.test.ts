@@ -5,9 +5,11 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	MAX_STOPPED_ITEM_IDS,
 	interruptTurnFailure,
 	isTurnProcessInScope,
 	parseInterruptTurnResult,
+	parseStoppedItemIds,
 } from '../../shared/turnInterrupt';
 
 describe('isTurnProcessInScope', () => {
@@ -65,6 +67,21 @@ describe('parseInterruptTurnResult', () => {
 			// Main sets this from its own process table, never from the renderer.
 			exited: false,
 		});
+	});
+
+	it('keeps the queue items the stop names, bounded, and adds none to a reply without them (M27)', () => {
+		const named = parseInterruptTurnResult(
+			{ success: true, stoppedTabIds: ['t'], stoppedItemIds: ['q-1', 4, '', 'q-2'] },
+			'agent-1',
+			't'
+		);
+		expect(named.stoppedItemIds).toEqual(['q-1', 'q-2']);
+		const older = parseInterruptTurnResult({ success: true, stoppedTabIds: ['t'] }, 'agent-1', 't');
+		expect(older).not.toHaveProperty('stoppedItemIds');
+		const many = Array.from({ length: MAX_STOPPED_ITEM_IDS + 5 }, (_, i) => `q-${i}`);
+		expect(parseStoppedItemIds(many)).toHaveLength(MAX_STOPPED_ITEM_IDS);
+		expect(parseStoppedItemIds(['x'.repeat(201)])).toEqual([]);
+		expect(parseStoppedItemIds('q-1')).toBeUndefined();
 	});
 
 	it('keeps a known failure code and drops an unknown one', () => {

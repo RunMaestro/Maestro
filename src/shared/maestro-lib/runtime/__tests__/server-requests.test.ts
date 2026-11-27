@@ -991,6 +991,17 @@ describe('get_history', () => {
 	});
 });
 
+describe('host_capabilities (M16)', () => {
+	it('names what this host does beyond the base protocol, as a desktop host does', async () => {
+		const host = recordingClient();
+		expect(await host.handle({ type: 'host_capabilities' })).toEqual({
+			type: 'host_capabilities_result',
+			success: true,
+			capabilities: ['turn-agent-text'],
+		});
+	});
+});
+
 describe('delete_history_entry and update_history_entry', () => {
 	it('deletes an entry and answers whether one was removed', async () => {
 		const host = recordingClient();

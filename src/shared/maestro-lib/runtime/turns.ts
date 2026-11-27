@@ -39,7 +39,12 @@ import type { AgentRepository, TabWriteGuard } from '../agents/repository';
 import { matchesNativeSessionBinding, type NativeSessionBinding } from '../agents/providerSwap';
 import {
 	DEFAULT_RULE_CONTEXT,
+	isSameUserEntry,
 	recordTabSession,
+	turnEntryIdFor,
+	tabRunsUserEntry,
+	userEntryAnswered,
+	userEntryFate,
 	type RuleContext,
 	type TabSessionUpdate,
 } from '../agents/rules';
@@ -52,6 +57,7 @@ import type {
 	ClientMethod,
 	ClientResult,
 	QueuedTurn,
+	QueueExit,
 	TurnEvent,
 	TurnInput,
 	TurnOverrides,
@@ -64,6 +70,7 @@ import {
 	normalizeTurnOverrides,
 	parseQueuedTurnSettings,
 	readTurnAgentText,
+	readTurnEntryId,
 } from '../client/types';
 import { logger } from '../host';
 import { admitTurnImages, turnImageBoundsError } from '../launch/image-delivery';
@@ -84,6 +91,7 @@ import {
 	joinMergedQueueText,
 	TurnCollisionError,
 	type ExecutionQueue,
+	type HandOver,
 	type QueueEvent,
 	type QueueItem,
 	type QueuedTurnHandle,
@@ -184,7 +192,7 @@ export const MAX_WAITING_TURNS_PER_AGENT = 100;
 
 export interface RuntimeTurns {
 	readonly api: TurnsApi;
-	/** Look at an agent's queue again, for a hold that cleared (an Auto Run ended). */
+	/** Look at an agent's queue again, for a hold that cleared or began (an Auto Run ended or started). */
 	drain(agentId: string): void;
 	/** `/btw` side questions about this host's tabs, which `consults.ask` hands over (M6). */
 	readonly sideQuestions: Pick<RuntimeSideQuestions, 'ask'>;
@@ -223,6 +231,11 @@ interface TurnItem extends QueueItem {
 	agentContext?: string;
 	/** Agent-only notes behind `text` when it runs (`TurnInput.agentNotes`). */
 	agentNotes?: string;
+	/**
+	 * The id its transcript entry takes (`TurnInput.entryId`). When the tab already holds that entry
+	 * (a resend of a message the host wrote down before its turn died), no second one is written.
+	 */
+	entryId?: string;
 }
 
 type Verdict = { ok: true } | { ok: false; message: string };
@@ -239,7 +252,8 @@ class TurnStartRefusal extends Error {
 }
 
 /** A waiting message as a client sees it (`turns.queue.list`, `queue.changed`). */
-function toQueuedTurn(item: TurnItem): QueuedTurn {
+function toQueuedTurn(item: TurnItem, handOver: HandOver | undefined): QueuedTurn {
+	const isHandOver = handOver?.itemId === item.id;
 	return {
 		itemId: item.id,
 		tabId: item.tabId,
@@ -247,6 +261,10 @@ function toQueuedTurn(item: TurnItem): QueuedTurn {
 		kind: 'message',
 		text: item.text,
 		paused: item.paused === true,
+		// Whether it waits for its tab alone (U6): every item says, so a client tells this host from
+		// an older one that says nothing.
+		handOver: isHandOver,
+		...(isHandOver ? { handOverSince: handOver.since } : {}),
 		turnSettings: parseQueuedTurnSettings(item.turnSettings) ?? {},
 		// The images ride along, so a hosted card draws them as a local card does. The item holds
 		// store refs, which name this machine's disk: the client gets the bytes (M10).
@@ -273,6 +291,17 @@ function fail<T = never>(
 
 function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Whether a turn event belongs in the cards a sticky tab keeps (`RecordedTurn.streamed`): a
+ * thinking or tool event, or the first answer text after a thinking block, which closes that block
+ * as the live tail closes it (so two blocks split by the answer stay two cards).
+ */
+function keepsCards(event: TurnEvent, streamed: LiveTurn | undefined): boolean {
+	if (event.kind === 'thinking' || event.kind === 'tool') return true;
+	if (event.kind !== 'text' || !streamed) return false;
+	return streamed.entries[streamed.entries.length - 1]?.source === 'thinking';
 }
 
 function noLoader(): never {
@@ -431,6 +460,10 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	const verdicts = new Map<string, (verdict: Verdict) => void>();
 
 	/** Send one turn event to every client; answers it as sent, stamped. */
+	/** Whether the tab keeps its thinking and tool cards past the turn's end, read as it is now. */
+	const isStickyTab = (agentId: string, tabId: string): boolean =>
+		repository.getTab(agentId, tabId)?.showThinking === 'sticky';
+
 	const emitTurn = (agentId: string, tabId: string, event: UnstampedTurnEvent): TurnEvent => {
 		const stamped = { ...event, at: deps.now() } as TurnEvent;
 		bus.emit({ type: 'turn', agentId, tabId, event: stamped });
@@ -440,6 +473,30 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	// -----------------------------------------------------------------------
 	// Starting one turn (the queue's `start`)
 	// -----------------------------------------------------------------------
+
+	/**
+	 * For each message (agent, tab, entry id) a copy of which this host started since it came up,
+	 * the item id of that copy, so a resend of it that waited meanwhile is known (`startItem`). Kept
+	 * while that copy runs or another copy of the message waits, however many other turns start
+	 * (CodeRabbit on #2167); let go once neither holds (`releaseStartedEntry()`).
+	 */
+	const startedEntries = new Map<string, string>();
+	const startedEntryKey = (agentId: string, tabId: string, entryId: string) =>
+		`${agentId}\u0000${tabId}\u0000${entryId}`;
+	const startedEntryKeyOf = (agentId: string, item: TurnItem) =>
+		startedEntryKey(agentId, item.tabId, item.entryId ?? '');
+	const releaseStartedEntry = (agentId: string, item: TurnItem) => {
+		if (!item.entryId) return;
+		const key = startedEntryKey(agentId, item.tabId, item.entryId);
+		const ranBy = startedEntries.get(key);
+		if (ranBy === undefined) return;
+		const queue = queues.get(agentId);
+		if (queue?.busyItemId(item.tabId) === ranBy) return;
+		const waits = queue
+			?.items()
+			.some((queued) => queued.tabId === item.tabId && queued.entryId === item.entryId);
+		if (!waits) startedEntries.delete(key);
+	};
 
 	async function startItem(agentId: string, item: TurnItem): Promise<QueuedTurnHandle> {
 		const record = repository.getAgent(agentId);
@@ -452,6 +509,31 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// session: a timing collision, not a verdict on the item.
 		if (registry.isBusy(agentId, item.tabId) || synopsisHolds.has(waiterKey(agentId, item.tabId))) {
 			throw new TurnCollisionError();
+		}
+		// A resend that waited here while an earlier copy of the same message started on this host
+		// (it could not be told apart when it came: that turn was still starting, or not begun yet).
+		// The message ran once, from that copy, and never runs again (CodeRabbit on #2167). Only a
+		// copy started since this host came up counts: the turn a crash cut is run again.
+		if (item.entryId) {
+			const key = startedEntryKey(agentId, item.tabId, item.entryId);
+			const sent = { id: item.entryId, text: item.text, images: item.images ?? [] };
+			const logs = (Array.isArray(tabRecord.logs) ? tabRecord.logs : []) as LogEntryRecord[];
+			const ranBy = logs.find((entry) => isSameUserEntry(entry, sent))?.queuedItemId;
+			// A copy that ended on its own error is not one that ran: its retry runs into the entry,
+			// as `send()` admits it (`userEntryAnswered()`; CodeRabbit on #2167).
+			if (
+				ranBy &&
+				ranBy !== item.id &&
+				startedEntries.get(key) === ranBy &&
+				userEntryFate(logs, sent) !== 'errored'
+			) {
+				return { done: Promise.resolve(), interrupt: () => undefined };
+			}
+			// A copy edited while it waited is another message: it gets an entry of its own
+			// (`turnEntryIdFor()`), so it never stands for the copy that started this entry, and a
+			// later copy of the original is still known as run (CodeRabbit on #2167).
+			const held = logs.find((entry) => entry?.id === item.entryId);
+			if (!held || isSameUserEntry(held, sent)) startedEntries.set(key, item.id);
 		}
 
 		const agent = toTurnAgent(record);
@@ -614,7 +696,22 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		try {
 			// The message is now sent: write it down, and spend a merge it carried.
 			const startedAt = deps.now();
-			const userEntry = buildUserTranscriptEntry(turn.entry, startedAt, ctx);
+			// Stamped with the queue item it ran from, as the desktop stamps a queued message's card
+			// (`markTabRunningQueuedItem()`): a client that queued it finds its turn by that id.
+			const built: LogEntryRecord = {
+				...buildUserTranscriptEntry(turn.entry, startedAt, ctx),
+				queuedItemId: item.id,
+			};
+			// Asked again now: an edit or a merge while it waited makes it another message.
+			const entryId = item.entryId
+				? turnEntryIdFor(
+						repository.getTab(agentId, item.tabId),
+						item.entryId,
+						built.text,
+						built.images
+					)
+				: undefined;
+			const userEntry: LogEntryRecord = entryId ? { ...built, id: entryId } : built;
 			const begun = await repository.beginTurn(
 				agentId,
 				item.tabId,
@@ -643,6 +740,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				scope,
 				expected,
 				writeGuard,
+				userEntryId: userEntry.id,
 				...(item.originHost ? { originHost: item.originHost } : {}),
 				...(item.overrides?.saveToHistory !== undefined
 					? { saveToHistory: item.overrides.saveToHistory }
@@ -671,11 +769,14 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		scope: RecordedTurn['scope'];
 		expected: NonNullable<TabSessionUpdate['expected']>;
 		writeGuard?: TabWriteGuard;
+		/** The id of the message's transcript entry `beginTurn` wrote. */
+		userEntryId: string;
 		originHost?: string;
 		/** The sender's save-to-History chip for this turn (`TurnOverrides.saveToHistory`). */
 		saveToHistory?: boolean;
 	}): Promise<void> {
 		const { agentId, tabId, turn, run, startedAt, expected, writeGuard, originHost } = input;
+		const { userEntryId } = input;
 		const { saveToHistory } = input;
 		const provider = turn.settings.provider;
 		const mapper = createTurnEventMapper({
@@ -698,9 +799,12 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		let observedSession: string | undefined;
 		let identityFailure: string | undefined;
 		let sessionWrite: Promise<void> = Promise.resolve();
-		// The turn as a client's live tail draws it, from the very events sent: a 'sticky' tab keeps
-		// its thinking and tool cards in the transcript once the turn ends (`RecordedTurn.streamed`).
+		// The cards a 'sticky' tab keeps in the transcript once the turn ends (`RecordedTurn.streamed`),
+		// folded as a client's live tail folds them from the very events sent. Only thinking and tool
+		// events are folded, and only while the tab is sticky: no other tab keeps them, and the answer
+		// is recorded from `completed`. Any other tab only notes that a tool ran (the History gate).
 		let streamed: LiveTurn | undefined;
+		let ranTool = false;
 		const foldContext = { newId: () => ctx.newId() };
 
 		/** Preserve an allocated ID even during cancellation; a different ID is never a resume. */
@@ -775,8 +879,11 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 						if (provider !== 'grok') noteSession(event.providerSessionId);
 						if (identityFailure) continue;
 					}
-					streamed =
-						foldLiveTurn(streamed, emitTurn(agentId, tabId, event), foldContext) ?? streamed;
+					const sent = emitTurn(agentId, tabId, event);
+					if (sent.kind === 'tool') ranTool = true;
+					if (keepsCards(sent, streamed) && isStickyTab(agentId, tabId)) {
+						streamed = foldLiveTurn(streamed, sent, foldContext) ?? streamed;
+					}
 				}
 			}
 		} catch (error) {
@@ -810,7 +917,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				startedAt,
 				endedAt,
 				userEntryWritten: true,
+				userEntryId,
 				...(streamed ? { streamed: streamed.entries } : {}),
+				ranTool,
 				scope,
 				nativeSessionBinding,
 				writeGuard: provider === 'grok' ? () => !identityFailure && writeGuard!() : undefined,
@@ -875,16 +984,35 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 	// Queues
 	// -----------------------------------------------------------------------
 
-	/** Tell every listener what now waits for the agent: the whole list, in order. */
-	function emitQueue(agentId: string): void {
-		const items = queues.get(agentId)?.items() ?? [];
-		bus.emit({ type: 'queue.changed', agentId, items: items.map(toQueuedTurn) });
+	/**
+	 * Tell every listener what now waits for the agent: the whole list, in order. A change that takes
+	 * an item out names how it left (started or removed), so a client never infers it from the
+	 * tab's state, and never takes a start still in flight for a removal.
+	 */
+	function emitQueue(agentId: string, exit?: QueueExit): void {
+		const queue = queues.get(agentId);
+		const items = queue?.items() ?? [];
+		const handOver = queue?.handOver();
+		bus.emit({
+			type: 'queue.changed',
+			agentId,
+			items: items.map((item) => toQueuedTurn(item, handOver)),
+			namesExits: true,
+			...(exit ? { exit } : {}),
+		});
 	}
 
 	function onQueueEvent(agentId: string, event: QueueEvent<TurnItem>): void {
 		// Every event but a turn's end, and a start that never waited, changes what waits.
 		if (event.type !== 'ended' && !(event.type === 'started' && event.direct)) {
-			emitQueue(agentId);
+			emitQueue(
+				agentId,
+				event.type === 'started'
+					? { itemId: event.item.id, exit: 'started' }
+					: event.type === 'removed'
+						? { itemId: event.item.id, exit: 'removed' }
+						: undefined
+			);
 		}
 		switch (event.type) {
 			case 'started':
@@ -893,8 +1021,16 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				break;
 			case 'ended':
 				wakeIdleWaiters(agentId, event.item.tabId);
+				releaseStartedEntry(agentId, event.item);
+				break;
+			case 'removed':
+				releaseStartedEntry(agentId, event.item);
 				break;
 			case 'dispatch-failed': {
+				// The copy that set the record did not start: a later copy may run the message.
+				if (startedEntries.get(startedEntryKeyOf(agentId, event.item)) === event.item.id) {
+					startedEntries.delete(startedEntryKeyOf(agentId, event.item));
+				}
 				if (event.held) {
 					logger.warn(`A turn could not start: ${event.error.message}`, LOG_CONTEXT);
 					emitTurn(agentId, event.item.tabId, {
@@ -932,6 +1068,7 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				holdsTree: () => options.autoRunHolds?.(agentId) ?? false,
 				...(deps.recheckMs !== undefined ? { recheckMs: deps.recheckMs } : {}),
 				...(deps.schedule ? { schedule: deps.schedule } : {}),
+				now: deps.now,
 			});
 			queues.set(agentId, queue);
 		}
@@ -1030,6 +1167,28 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const kept = await keepImages(admitted.images);
 		if (!kept.ok) return fail(method, 'failed', kept.error);
 		const images = kept.images;
+		// Read again: a turn may have begun on the tab while the images were kept (CodeRabbit on #2167).
+		const currentTab = repository.getTab(agentId, tabId);
+		if (!currentTab) return fail(method, 'not-found', `No tab ${tabId}.`);
+		// The resend of a message whose turn already answered (its sender lost the link, or quit, while
+		// it ran): it ran once, and never runs again. The sender reads `answered` as "already ran".
+		// The same for the message of the turn running on the tab now (the entry it wrote names the
+		// running item): a sender whose link dropped cannot see that it still runs (parity R31). The
+		// item the queue runs or starts on the tab must be the turn the tab record names: a turn that
+		// is starting before it wrote its own id leaves the record naming the one before it.
+		const entryId = readTurnEntryId(input.entryId);
+		const tabLogs = (Array.isArray(currentTab.logs) ? currentTab.logs : []) as LogEntryRecord[];
+		const sentEntry = { id: entryId ?? '', text, images };
+		const busyItemId = queues.get(agentId)?.busyItemId(tabId);
+		const runsNow =
+			!!entryId &&
+			tabRunsUserEntry(tabLogs, sentEntry, {
+				busy: !!busyItemId && busyItemId === currentTab.runtimeTurnId,
+				itemId: busyItemId,
+			});
+		if (entryId && (runsNow || userEntryAnswered(tabLogs, sentEntry))) {
+			return ok({ status: 'answered' });
+		}
 
 		const item: TurnItem = {
 			id: ctx.newId(),
@@ -1052,6 +1211,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (overrides) item.overrides = overrides;
 		if (agentContext.value) item.agentContext = agentContext.value;
 		if (agentNotes.value) item.agentNotes = agentNotes.value;
+		// Whether it stands for an entry the tab holds is decided against the entry the turn writes (a
+		// command's expanded prompt, an edit while it waited).
+		if (entryId) item.entryId = entryId;
 
 		const queue = queueFor(agentId);
 		const attempt = new Promise<Verdict>((resolve) => verdicts.set(item.id, resolve));
@@ -1081,7 +1243,13 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 
 		interrupt: async (agentId, tabId) => {
 			const queue = queues.get(agentId);
-			if (!queue?.isTabBusy(tabId)) return ok({ stopped: false });
+			if (!queue?.isTabBusy(tabId)) {
+				// The hand-over: the tab's next message waits only for the tab (its last turn's History
+				// synopsis holds the session), and a client draws the tab busy through it (U2). Stop
+				// ends that message as it starts, as a local Stop ends it in the same moment.
+				const next = queue?.interruptNext(tabId);
+				return ok(next ? { stopped: true, stoppedItemIds: [next] } : { stopped: false });
+			}
 			queue.interrupt(tabId);
 			return ok({ stopped: true });
 		},
@@ -1091,7 +1259,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 				if (!repository.getAgent(agentId)) {
 					return fail('turns.queue.list', 'not-found', `No agent ${agentId}.`);
 				}
-				return ok((queues.get(agentId)?.items() ?? []).map(toQueuedTurn));
+				const queue = queues.get(agentId);
+				const handOver = queue?.handOver();
+				return ok((queue?.items() ?? []).map((item) => toQueuedTurn(item, handOver)));
 			},
 			remove: async (agentId, itemId) => {
 				if (!repository.getAgent(agentId)) {

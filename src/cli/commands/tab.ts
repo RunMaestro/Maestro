@@ -57,7 +57,7 @@ import {
 	type TabContextOpResult,
 } from '../../shared/tabContextOps';
 import { formatError, formatSuccess } from '../output/formatter';
-import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
+import { asThinkingMode, nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { formatRelativeTime } from '../../shared/formatters';
@@ -497,6 +497,23 @@ export async function tabThinking(
 	mode: ThinkingMode | 'cycle',
 	options: TabMutateOptions
 ): Promise<void> {
+	// `--agent peer:agent` sets the mode on the host's tab, which runs the turn (its sibling verbs
+	// route the same way). `cycle` reads the host's current mode.
+	const peerTarget = peerTabTarget(options.agent);
+	if (peerTarget) {
+		let next: ThinkingMode | undefined;
+		return peerTabAction(
+			peerTarget,
+			options.json,
+			(agent) => {
+				const tab = pickHostTab(agent.aiTabs ?? [], tabId, agent.activeTabId);
+				next = mode === 'cycle' ? nextThinkingMode(asThinkingMode(tab.showThinking)) : mode;
+				return { kind: 'update-tab', tabId: tab.id, patch: { thinking: next } };
+			},
+			(result) =>
+				`Thinking for tab ${'tabId' in result ? result.tabId : tabId} is now ${next ?? mode}`
+		);
+	}
 	let entry: DesktopTabEntry;
 	try {
 		entry = await resolveTabEntry(tabId, options.agent);

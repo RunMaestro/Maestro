@@ -17,7 +17,7 @@ import type {
 	EnqueueCommandFailureReason,
 } from '../types';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
-import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import type { TurnAgentText, TurnOverrides } from '../../../shared/maestro-lib/client/types';
 
 /** Known machine-readable enqueue failure causes, in the order the renderer's
  *  `remote:enqueueCommand` handler can produce them. */
@@ -79,7 +79,9 @@ export function registerQueueCallbacks(
 			mentionRouting?: MentionRouting,
 			dispatchCallback?: boolean,
 			control?: PianolaQueueControl,
-			turnOverrides?: TurnOverrides
+			turnOverrides?: TurnOverrides,
+			agentText?: TurnAgentText,
+			entryId?: string
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -132,9 +134,13 @@ export function registerQueueCallbacks(
 					held,
 					mentionRouting,
 					dispatchCallback,
-					// Positional: the overrides follow `control`, which is then sent as undefined.
-					...(control || turnOverrides ? [control] : []),
-					...(turnOverrides ? [turnOverrides] : [])
+					// Positional: the overrides follow `control`, and the agent-only text follows the
+					// overrides, and the entry id follows the agent-only text; a slot before a sent one
+					// is sent as undefined.
+					...(control || turnOverrides || agentText || entryId ? [control] : []),
+					...(turnOverrides || agentText || entryId ? [turnOverrides] : []),
+					...(agentText || entryId ? [agentText] : []),
+					...(entryId ? [entryId] : [])
 				);
 
 				const timeoutId = setTimeout(() => {

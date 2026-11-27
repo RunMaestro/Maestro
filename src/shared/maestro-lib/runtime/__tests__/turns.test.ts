@@ -24,7 +24,7 @@ import {
 import { nativeAccountRef } from '../../../agentAccountDir';
 import * as repositories from '../../agents/repository';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
-import type { ClientResult, QueuedTurn, TurnEvent } from '../../client/types';
+import type { ClientResult, QueuedTurn, QueueExit, TurnEvent } from '../../client/types';
 import { MAX_TURN_AGENT_TEXT_CHARS } from '../../client/types';
 import type { HistoryEntry } from '../../../types';
 import { parseSynopsis } from '../../../synopsis';
@@ -46,6 +46,13 @@ import {
 import { RUNTIME_LOCK_FILE_NAME } from '../data-dir-lock';
 import { MAX_WAITING_TURNS_PER_AGENT } from '../turns';
 import type { WatchDirectory } from '../settings-watch';
+import { foldLiveTurn } from '../../client/live-turn';
+
+// Passes through: a test counts what the host folds for the transcript (P12).
+vi.mock('../../client/live-turn', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../client/live-turn')>();
+	return { ...actual, foldLiveTurn: vi.fn(actual.foldLiveTurn) };
+});
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
 const BUNDLED_PROMPTS = path.resolve(__dirname, '../../../../prompts');
@@ -378,9 +385,11 @@ describe('runtime turns', () => {
 		});
 
 		// P7: a 'sticky' tab keeps the turn's thinking and tool cards past the turn's end, as a local
-		// tab's exit cleanup does; an 'on' tab drops them (`logsKeptAtTurnEnd()`).
+		// tab's exit cleanup does; an 'on' tab drops them (`logsKeptAtTurnEnd()`). T2: a Claude reply
+		// is a thinking chunk too (`partialTextRoute()`), so a sticky tab keeps its copy, as a local
+		// and an SSH tab do.
 		it.each([
-			['sticky', ['user', 'thinking', 'tool', 'stdout']],
+			['sticky', ['user', 'thinking', 'tool', 'thinking', 'stdout']],
 			['on', ['user', 'stdout']],
 		])(
 			'keeps what a %s tab keeps of the thinking and tool cards',
@@ -423,10 +432,55 @@ describe('runtime turns', () => {
 				if (showThinking === 'sticky') {
 					expect(entries[1].text).toBe('Plan it.');
 					expect(entries[2]).toMatchObject({ source: 'tool', text: 'Read' });
+					expect(entries[3]).toMatchObject({ source: 'thinking', text: 'Done.' });
 				}
 				expect(entries.at(-1)?.text).toBe('Done.');
 			}
 		);
+
+		// P12: the host folds the cards only a sticky tab keeps, never the answer text, and nothing
+		// for any other tab. T2: each Claude text partial is a thinking chunk (`partialTextRoute()`),
+		// said once, so the chunks of one block stay one card; the result's answer closes the block.
+		it.each([
+			['sticky', ['thinking', 'thinking', 'thinking', 'tool', 'thinking', 'thinking', 'text']],
+			['on', []],
+			['off', []],
+		])('folds only what a %s tab keeps past the turn', async (showThinking, folded) => {
+			const line = (obj: unknown) => JSON.stringify(obj) + '\n';
+			const session = 'sess-fold-1';
+			const say = (content: unknown[]) =>
+				line({ type: 'assistant', message: { role: 'assistant', content } });
+			recordings['claude-code'] = writeFakeTurn(work, {
+				chunks: [
+					line({ type: 'system', subtype: 'init', session_id: session }),
+					say([{ type: 'thinking', thinking: 'Plan it.' }]),
+					say([{ type: 'text', text: 'Reading. ' }]),
+					say([{ type: 'text', text: 'Still reading. ' }]),
+					say([{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: {} }]),
+					say([{ type: 'thinking', thinking: 'Now answer.' }]),
+					say([{ type: 'text', text: 'Done.' }]),
+					line({ type: 'result', result: 'Done.', session_id: session }),
+				],
+				close: { code: 0, signal: null },
+			});
+			const runtime = await start([
+				seedAgent({
+					aiTabs: [{ id: 't1', agentSessionId: null, name: null, logs: [], showThinking }],
+				}),
+			]);
+			vi.mocked(foldLiveTurn).mockClear();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'read it' }));
+			await turn.outcome();
+
+			expect(vi.mocked(foldLiveTurn).mock.calls.map(([, event]) => event.kind)).toEqual(folded);
+			const sources = (await transcript(runtime)).map((entry) => entry.source);
+			expect(sources).toEqual(
+				showThinking === 'sticky'
+					? ['user', 'thinking', 'tool', 'thinking', 'stdout']
+					: ['user', 'stdout']
+			);
+		});
 
 		describe('History host and shared History', () => {
 			const SHARED = { sharedHistory: { label: 'box.host', hostname: 'box' } };
@@ -852,12 +906,16 @@ describe('runtime turns', () => {
 				expect(value(await runtime.turns.send('a1', 't1', { text: '/history' }))).toEqual({
 					status: 'ran',
 				});
-				await settle(runtime, 4);
+				await vi.waitFor(
+					async () => expect((await transcript(runtime)).at(-1)?.text).toMatch(/^Synopsis saved/),
+					{ timeout: 8_000 }
+				);
 
+				// One line per run, as on the desktop: the outcome replaced the progress line (M22).
 				const lines = await transcriptLines(runtime);
-				expect(lines[2]).toEqual(['system', HISTORY_COMMAND_TEXT.pending]);
-				expect(lines[3][0]).toBe('system');
-				expect(lines[3][1]).toMatch(/^Synopsis saved to history: /);
+				expect(lines).toHaveLength(3);
+				expect(lines[2][0]).toBe('system');
+				expect(lines[2][1]).toMatch(/^Synopsis saved to history: /);
 				// The synopsis resumed the tab's own conversation.
 				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
 				expect(argv).toContain(CAPTURED_CLAUDE_CODE_SESSION_ID);
@@ -866,7 +924,7 @@ describe('runtime turns', () => {
 					(entry) => entry.type === 'AUTO'
 				);
 				expect(auto).toHaveLength(1);
-				expect(lines[3][1]).toBe(HISTORY_COMMAND_TEXT.saved(auto[0].summary));
+				expect(lines[2][1]).toBe(HISTORY_COMMAND_TEXT.saved(auto[0].summary));
 			});
 
 			it('never runs two writers on one provider session: /history twice and a send take turns', async () => {
@@ -957,9 +1015,16 @@ describe('runtime turns', () => {
 				value(await runtime.turns.interrupt('a1', 't1'));
 				await turn.outcome();
 				await vi.waitFor(() => expect(argvFiles).toHaveLength(2), { timeout: 8_000 });
+				// The outcome takes the progress line's place, where /history was typed (M22).
 				await vi.waitFor(
-					async () => expect((await transcript(runtime)).at(-1)?.text).toMatch(/^Synopsis saved/),
+					async () =>
+						expect(
+							(await transcript(runtime)).some((entry) => /^Synopsis saved/.test(entry.text))
+						).toBe(true),
 					{ timeout: 8_000 }
+				);
+				expect((await transcript(runtime)).map((entry) => entry.text)).not.toContain(
+					HISTORY_COMMAND_TEXT.pending
 				);
 				const argv = JSON.parse(fs.readFileSync(argvFiles[1], 'utf-8')) as string[];
 				expect(argv).toContain(CAPTURED_CLAUDE_CODE_SESSION_ID);
@@ -980,7 +1045,6 @@ describe('runtime turns', () => {
 				await vi.waitFor(
 					async () =>
 						expect((await transcript(runtime)).map((entry) => entry.text)).toEqual([
-							HISTORY_COMMAND_TEXT.pending,
 							HISTORY_COMMAND_TEXT.failed,
 						]),
 					{ timeout: 8_000 }
@@ -1385,6 +1449,64 @@ describe('runtime turns', () => {
 			expect(changes[1]).toEqual([]);
 		});
 
+		it('names how each item leaves the queue: a start or a removal, on that change only (M14)', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			const changes: Array<{ items: QueuedTurn[]; exit?: QueueExit; namesExits?: true }> = [];
+			runtime.events.subscribe(
+				(event) => {
+					if (event.type === 'queue.changed') {
+						changes.push({
+							items: event.items,
+							...(event.exit ? { exit: event.exit } : {}),
+							...(event.namesExits ? { namesExits: event.namesExits } : {}),
+						});
+					}
+				},
+				{ types: ['queue.changed'], agentId: 'a1' }
+			);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+			hold = false;
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'second' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+			const removed = value(await runtime.turns.send('a1', 't1', { text: 'third' }));
+			if (removed.status !== 'queued') throw new Error('expected queued');
+			value(await runtime.turns.queue.remove('a1', removed.itemId));
+
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome(2);
+			// Added, added (no exit), the removal of `third`, then the start of `second`.
+			expect(changes.map((change) => change.exit)).toEqual([
+				undefined,
+				undefined,
+				{ itemId: removed.itemId, exit: 'removed' },
+				{ itemId: queued.itemId, exit: 'started' },
+			]);
+			expect(changes.every((change) => change.namesExits === true)).toBe(true);
+			expect(changes[3].items).toEqual([]);
+		});
+
+		it('stamps each user entry with the queue item it ran from, so a client that queued it finds its turn by id (M23)', async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'same text' }));
+			await turn.started();
+			hold = false;
+			// The same text twice: only the id tells the two turns apart.
+			const queued = value(await runtime.turns.send('a1', 't1', { text: 'same text' }));
+			if (queued.status !== 'queued') throw new Error('expected queued');
+			value(await runtime.turns.interrupt('a1', 't1'));
+			await turn.outcome(2);
+			const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+			expect(users).toHaveLength(2);
+			expect(users[0].queuedItemId).toEqual(expect.any(String));
+			expect(users[0].queuedItemId).not.toBe(queued.itemId);
+			expect(users[1].queuedItemId).toBe(queued.itemId);
+		});
+
 		it('holds and releases a waiting message, and says when none has that id', async () => {
 			hold = true;
 			const runtime = await start();
@@ -1427,6 +1549,348 @@ describe('runtime turns', () => {
 			value(await runtime.turns.queue.remove('a1', queued.itemId));
 			value(await runtime.turns.interrupt('a1', 't1'));
 			await turn.outcome();
+		});
+
+		// Parity R13: the resend of a message a lost link cut names the entry the host already
+		// wrote for it, so the message is one entry in the transcript, as an SSH resend is.
+		describe('the entry a message already is (entryId, R13)', () => {
+			const cutTab = (logs: unknown[]) =>
+				seedAgent({ aiTabs: [{ id: 't1', agentSessionId: null, name: null, logs }] });
+			const QUESTION = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize the docs' };
+
+			it('writes no second entry for the resend of a message the tab already holds', async () => {
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.outcome();
+				const entries = await transcript(runtime);
+				expect(entries.filter((entry) => entry.source === 'user')).toEqual([
+					expect.objectContaining({ id: 'u1', text: 'Summarize the docs' }),
+				]);
+				expect(entries.some((entry) => entry.source !== 'user')).toBe(true);
+				expect(turn.events.find((event) => event.kind === 'user')).toMatchObject({
+					entry: { id: 'u1' },
+				});
+			});
+
+			// Parity R19: the resend of a message whose turn already answered (its sender lost the
+			// link or restarted while it ran) never runs again; the sender is told it already ran.
+			it('answers "already ran" and starts nothing for the resend of a message the tab answered', async () => {
+				const ANSWER = { id: 'a1', timestamp: 2, source: 'stdout', text: 'The docs say...' };
+				const runtime = await start([cutTab([QUESTION, ANSWER])]);
+				const turn = watch(runtime);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(argvFiles).toHaveLength(0);
+				expect(turn.events).toEqual([]);
+				expect((await transcript(runtime)).map((entry) => entry.id)).toEqual(['u1', 'a1']);
+				// Another message that names the entry (edited while kept) runs, as its own entry.
+				value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'Summarize the docs, briefly',
+						entryId: 'u1',
+					})
+				);
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
+			// Parity R37: the turn ended on the provider's own error. Its resend is the retry of that
+			// error (the sender retries it by the error's rule, as a local agent does): it runs, into the
+			// same entry. A turn the person stopped never runs again.
+			it('runs the resend of a message whose turn ended on a provider error, into its entry', async () => {
+				const FAILED = {
+					id: 'e1',
+					timestamp: 2,
+					source: 'error',
+					text: 'API Error: 529 overloaded',
+					turnEnded: true,
+				};
+				const runtime = await start([cutTab([QUESTION, FAILED])]);
+				const turn = watch(runtime);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).not.toEqual({ status: 'answered' });
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+				const entries = await transcript(runtime);
+				expect(entries.filter((entry) => entry.source === 'user').map((e) => e.id)).toEqual(['u1']);
+			});
+
+			it('answers "already ran" for the resend of a message whose turn the person stopped', async () => {
+				const STOPPED = {
+					id: 's1',
+					timestamp: 2,
+					source: 'system',
+					text: 'Canceled by user',
+					turnEnded: true,
+				};
+				const runtime = await start([cutTab([QUESTION, STOPPED])]);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(argvFiles).toHaveLength(0);
+			});
+
+			// Parity R31: the sender lost the link while the turn ran, and the turn still runs here.
+			it('answers "already ran" for the resend of the message the tab is running now', async () => {
+				hold = true;
+				const runtime = await start([cutTab([])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.started();
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
+			// Greptile on #2167: the message's saved entry is reused by a recovery turn (the host
+			// restarted with it unanswered). A resend while that turn runs is the message it runs.
+			it('answers "already ran" for the resend of a saved message its recovery turn is running', async () => {
+				hold = true;
+				const runtime = await start([cutTab([{ ...QUESTION, queuedItemId: 'old-turn' }])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.started();
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
+			/** How many provider turns ran a message with these words (a History synopsis is not one). */
+			const runsOf = (text: string) =>
+				launched.filter((turn) => (turn as { entry?: { text?: string } }).entry?.text === text)
+					.length;
+
+			// CodeRabbit on #2167: two resends of a message that wait behind another turn. The first
+			// runs it; the second, when its turn comes, never runs the message again.
+			it('never runs a waiting resend of a message an earlier copy ran while it waited', async () => {
+				hold = true;
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Something else first' }));
+				await turn.started();
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				expect(value(await runtime.turns.send('a1', 't1', resend))).toMatchObject({
+					status: 'queued',
+				});
+				expect(value(await runtime.turns.send('a1', 't1', resend))).toMatchObject({
+					status: 'queued',
+				});
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(2);
+				// Long enough for the second resend to have started a third run, were it to run.
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				// One run for the other message, one for this one: never a second for this one.
+				expect(turn.outcomes()).toHaveLength(2);
+				expect(runsOf('Summarize the docs')).toBe(1);
+			});
+
+			// CodeRabbit on #2167: copy A of a message ends on its own error while a held copy C still
+			// waits. The retry of that error is admitted (an errored turn is not answered) and must run
+			// into the entry, not be dropped as a copy of a message that already ran.
+			it('runs the retry of a copy that ended on its own error while a held copy waits', async () => {
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				// C waits, held; A runs at once and ends on its own error.
+				value(await runtime.turns.send('a1', 't1', { ...resend, held: true }));
+				const answers = recordings['claude-code'];
+				recordings['claude-code'] = writeFakeTurn(work, {
+					chunks: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-x' }) + '\n'],
+					close: { code: 1, signal: null },
+				});
+				value(await runtime.turns.send('a1', 't1', resend));
+				await turn.outcome(1);
+				expect(
+					(await transcript(runtime)).map((entry) => [entry.source, !!entry.turnEnded])
+				).toEqual([
+					['user', false],
+					['error', true],
+				]);
+				recordings['claude-code'] = answers;
+				// The retry of that error: admitted, and it runs into the entry.
+				expect(value(await runtime.turns.send('a1', 't1', resend))).not.toEqual({
+					status: 'answered',
+				});
+				await turn.outcome(2);
+				expect(runsOf('Summarize the docs')).toBe(2);
+			});
+
+			// CodeRabbit on #2167: copies A, B and C of a message wait behind another turn, and B is
+			// edited. A runs the message; B is another message now and runs as its own entry; C, when
+			// its turn comes, is still known as the message A ran.
+			it('never runs a later copy of a message again after an edited copy ran between them', async () => {
+				hold = true;
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Something else first' }));
+				await turn.started();
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				value(await runtime.turns.send('a1', 't1', resend));
+				const edited = value(await runtime.turns.send('a1', 't1', resend)) as { itemId: string };
+				value(await runtime.turns.send('a1', 't1', resend));
+				value(
+					await runtime.turns.queue.edit('a1', edited.itemId, {
+						text: 'Summarize the docs, briefly',
+					})
+				);
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(3);
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				expect(runsOf('Summarize the docs')).toBe(1);
+				expect(runsOf('Summarize the docs, briefly')).toBe(1);
+				expect(turn.outcomes()).toHaveLength(3);
+			});
+
+			// CodeRabbit on #2167: a held copy keeps the record of the copy that ran, through other
+			// turns, and still never runs the message when it is resumed.
+			it('never runs a held resend of a message an earlier copy ran, resumed after other turns', async () => {
+				hold = true;
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Something else first' }));
+				await turn.started();
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				value(await runtime.turns.send('a1', 't1', resend));
+				const held = value(await runtime.turns.send('a1', 't1', { ...resend, held: true }));
+				value(await runtime.turns.send('a1', 't1', { text: 'And then this' }));
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(3);
+				expect(runsOf('Summarize the docs')).toBe(1);
+				const heldId = (held as { itemId?: string }).itemId as string;
+				value(await runtime.turns.queue.setPaused('a1', heldId, false));
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				expect(turn.outcomes()).toHaveLength(3);
+				expect(runsOf('Summarize the docs')).toBe(1);
+			});
+
+			// Parity R23: an answer after a LATER message is that message's. The resend of a message
+			// whose own turn died runs, though the tab holds an answer further down.
+			it('runs the resend of a message when only a later message of the tab was answered', async () => {
+				const LATER = { id: 'u2', timestamp: 3, source: 'user', text: 'And the tests?' };
+				const LATER_ANSWER = { id: 'a2', timestamp: 4, source: 'stdout', text: 'The tests...' };
+				const runtime = await start([cutTab([QUESTION, LATER, LATER_ANSWER])]);
+				const turn = watch(runtime);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).not.toEqual({ status: 'answered' });
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
+			it('gives a new message the id it names', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello', entryId: 'drawn-1' }));
+				await turn.outcome();
+				expect((await transcript(runtime))[0]).toMatchObject({
+					id: 'drawn-1',
+					source: 'user',
+					text: 'hello',
+				});
+			});
+
+			it.each([
+				['another message', { id: 'u1', timestamp: 1, source: 'user', text: 'something else' }],
+				['an answer', { id: 'u1', timestamp: 1, source: 'ai', text: 'The docs say' }],
+			])(
+				'never hides or replaces %s whose id it names: the message gets its own entry',
+				async (_what, held) => {
+					const runtime = await start([cutTab([held])]);
+					const turn = watch(runtime);
+					value(
+						await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' })
+					);
+					await turn.outcome();
+					const entries = await transcript(runtime);
+					expect(entries[0]).toMatchObject(held);
+					const sent = entries.filter((entry) => entry.text === 'Summarize the docs');
+					expect(sent).toHaveLength(1);
+					expect(sent[0].id).not.toBe('u1');
+				}
+			);
+
+			it('gives a message edited while it waited its own entry, keeping the one it repeated', async () => {
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				const held = value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'Summarize the docs',
+						entryId: 'u1',
+						held: true,
+					})
+				);
+				if (held.status !== 'queued') throw new Error('expected queued');
+				value(
+					await runtime.turns.queue.edit('a1', held.itemId, { text: 'Summarize the docs, briefly' })
+				);
+				value(await runtime.turns.queue.setPaused('a1', held.itemId, false));
+				await turn.outcome();
+				const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(users.map((entry) => entry.text)).toEqual([
+					'Summarize the docs',
+					'Summarize the docs, briefly',
+				]);
+				expect(users[1].id).not.toBe('u1');
+			});
+
+			it('writes no second entry for the resend of a command, whose entry is its expanded prompt', async () => {
+				const runtime = await start([
+					seedAgent({
+						agentCommands: [{ command: '/review', prompt: 'Review the changes' }],
+						aiTabs: [{ id: 't1', agentSessionId: null, name: null, logs: [] }],
+					} as never),
+				]);
+				const first = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: '/review' }));
+				await first.outcome();
+				const [written] = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(written.text).not.toBe('/review');
+
+				const again = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: '/review', entryId: written.id }));
+				await again.outcome();
+				const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(users.map((entry) => entry.id)).toEqual([written.id]);
+			});
+
+			it('starts the turn with a new entry when the entry its id names holds malformed images', async () => {
+				const runtime = await start([cutTab([{ ...QUESTION, images: '' }])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.outcome();
+				const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(users).toHaveLength(2);
+				expect(users[1].id).not.toBe('u1');
+			});
+
+			it('ignores an id it cannot take', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(
+					await runtime.turns.send('a1', 't1', { text: 'hello', entryId: 'no spaces/allowed' })
+				);
+				await turn.outcome();
+				expect((await transcript(runtime))[0].id).not.toBe('no spaces/allowed');
+			});
 		});
 
 		// Parity M7: a hosted agent's `@mention` runs on the desktop that sent it, and the turn

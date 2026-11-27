@@ -66,6 +66,88 @@ describe('RetryStatusCard', () => {
 		expect(screen.getByRole('button', { name: /Stop/ })).toBeInTheDocument();
 	});
 
+	it('names the connection, never "Service overloaded", while the link is down (R6)', () => {
+		setOutage({ cause: 'connection', lastMessage: 'SSH connection failed: Connection refused' });
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+		expect(screen.getByText('Connection lost')).toBeInTheDocument();
+		expect(screen.queryByText(/Service overloaded/)).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /Try now/ })).toBeEnabled();
+	});
+
+	it('says the message was sent once the link was back, not that an overload cleared (R6)', () => {
+		setOutage({
+			cause: 'connection',
+			status: 'recovered',
+			attempts: 0,
+			startedAt: NOW,
+			resolvedAt: NOW + 5_000,
+		});
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+		expect(screen.getByText('Connection restored.')).toBeInTheDocument();
+		expect(
+			screen.getByText('Sent after 1 retry over 5s, once the link was back.')
+		).toBeInTheDocument();
+		expect(screen.queryByText(/overloaded/i)).not.toBeInTheDocument();
+	});
+
+	it('says the host already had the message when it was not sent again (R13)', () => {
+		setOutage({
+			cause: 'connection',
+			status: 'recovered',
+			settledByHost: true,
+			attempts: 0,
+			startedAt: NOW,
+			resolvedAt: NOW + 5_000,
+		});
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+		expect(screen.getByText('Connection restored.')).toBeInTheDocument();
+		expect(
+			screen.getByText('The host already had this message, so it was not sent again.')
+		).toBeInTheDocument();
+		expect(screen.queryByText(/Sent after/)).not.toBeInTheDocument();
+	});
+
+	it('says the host turn ended on an error no retry takes, and the message is held (R40)', () => {
+		setOutage({
+			cause: 'connection',
+			status: 'recovered',
+			settledByHost: true,
+			hostError: 'Invalid API key. Please run /login.',
+			attempts: 0,
+			startedAt: NOW,
+			resolvedAt: NOW + 5_000,
+		});
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+		expect(screen.getByText(/Invalid API key\. Please run \/login\./)).toBeInTheDocument();
+		expect(screen.getByText(/held in the queue for you to send again/)).toBeInTheDocument();
+		expect(screen.queryByText(/already had this message/)).not.toBeInTheDocument();
+	});
+
+	it.each([
+		['host', /the host retries itself/],
+		['here', /that error's own retry takes the message from here/],
+	] as const)('says which side retries the kept message (%s, R41)', (hostRetry, words) => {
+		setOutage({
+			cause: 'connection',
+			status: 'recovered',
+			settledByHost: true,
+			hostRetry,
+			attempts: 0,
+			startedAt: NOW,
+			resolvedAt: NOW + 5_000,
+		});
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+		expect(screen.getByText(words)).toBeInTheDocument();
+		expect(screen.queryByText(/already had this message/)).not.toBeInTheDocument();
+	});
+
+	it('says the link was still down when a connection retry is stopped (R6)', () => {
+		setOutage({ cause: 'connection', status: 'stopped', attempts: 2, resolvedAt: NOW + 1 });
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+		expect(screen.getByText(/The link was still down after 2 retries\./)).toBeInTheDocument();
+		expect(screen.queryByText(/overloaded/i)).not.toBeInTheDocument();
+	});
+
 	it('disables "Try now" and shows "now…" once the timer has fired', () => {
 		setOutage({ nextRetryAt: NOW - 1_000 });
 		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);

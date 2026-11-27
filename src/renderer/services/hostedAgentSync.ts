@@ -22,9 +22,11 @@
  */
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
+import type { QueueExit } from '../../shared/maestro-lib/client/types';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
+import type { Session } from '../types';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import {
 	captureToolActivity,
@@ -33,6 +35,7 @@ import {
 } from '../stores/thoughtStreamStore';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useSshOutageStore } from '../stores/sshOutageStore';
 import {
 	projectHostedSession,
 	releaseHostedSession,
@@ -41,21 +44,62 @@ import {
 import { applyAutoRunMirrorFrame } from '../hooks/batch/useAutoRunStateMirror';
 import { useBatchStore } from '../stores/batchStore';
 import { mirroredRunCompleteInfo, notifyAutoRunComplete } from './autoRunCompletion';
-import { followHostedHandoffs } from './crossAgentHandoff';
-import { fireHostStartedMentions } from './hostedQueuedTurn';
-import { closingHostTabIds, hostingEnabled } from './hostedTurns';
-import { clearPendingSteeringNotes, refreshHostedSteering } from './autoRunSteering';
+import {
+	followHostedHandoffs,
+	nextHostedHandoffDeadline,
+	type HostedTranscriptAccess,
+} from './crossAgentHandoff';
+import {
+	fireHostStartedMentions,
+	nextHostStartDeadline,
+	pruneHostStartedMentions,
+} from './hostedQueuedTurn';
+import {
+	closingHostTabIds,
+	createPendingHostTabs,
+	hostingEnabled,
+	nextPendingHostTabRetryAt,
+	pruneHostedTabBooks,
+} from './hostedTurns';
+import {
+	clearPendingSteeringNotes,
+	forgetHostedSteering,
+	refreshHostedSteering,
+} from './autoRunSteering';
 import { useAutoRunSteeringStore } from '../stores/autoRunSteeringStore';
 import { readMirrorTranscript } from './peerMirror';
+import {
+	hostLinkLostError,
+	hostedTurnsEndedHere,
+	hostedCutsKept,
+	noteHostedTurnsCut,
+	pruneHostedLinkLoss,
+	settleCutHostedTurns,
+	cutTurnUndecided,
+	type HostLink,
+} from './hostedLinkLoss';
+import { retryConnectionOutagesNow } from '../stores/retryStore';
+import {
+	hostedTabsHandingOver,
+	hostHandOverClock,
+	nextHostHandOverDeadline,
+	onHostedTabLineChanged,
+	pruneHostHandOvers,
+} from '../utils/hostedTabLine';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
-function hostedInput(session: { liftedTo?: unknown }):
+function hostedInput(session: { id: string; liftedTo?: unknown; aiTabs: Session['aiTabs'] }):
 	| {
 			peerId: string;
 			agentId: string;
 			input: HostedProjectionInput;
 			connected: boolean;
+			link: HostLink;
 			autoRun: AutoRunBroadcastState | null;
+			/** How the host queue items that last left it left, when the host names that. */
+			queueExits: readonly QueueExit[] | undefined;
+			/** How many whole reads of the host queue the mirror took since its host named exits. */
+			queueReads: number;
 	  }
 	| undefined {
 	const pointer = readLiftedTo(session.liftedTo);
@@ -64,17 +108,31 @@ function hostedInput(session: { liftedTo?: unknown }):
 	const peer = mirror.peers[pointer.peer];
 	const agent = peer?.agents.find((candidate) => candidate.id === pointer.agentId);
 	if (!peer || !agent) return undefined;
+	const now = Date.now();
 	return {
 		peerId: pointer.peer,
 		agentId: agent.id,
 		connected: peer.connection === 'connected',
+		link: {
+			peerId: pointer.peer,
+			agentId: agent.id,
+			remoteId: peer.remoteId,
+			remoteName: peer.name,
+			connection: peer.connection,
+			agent,
+		},
 		autoRun: peer.autoRuns?.[agent.id] ?? null,
+		queueExits: peer.queueExits?.[agent.id],
+		queueReads: peer.queueReads?.[agent.id] ?? 0,
 		input: {
 			agent,
 			transcripts: mirror.transcripts[pointer.peer],
 			liveTurns: peer.liveTurns,
 			queue: peer.queues[agent.id],
-			closing: closingHostTabIds({ peerId: pointer.peer, agentId: agent.id, agent }),
+			closing: closingHostTabIds({ peerId: pointer.peer, agentId: agent.id, agent }, session),
+			handingOver: hostedTabsHandingOver(session.id),
+			now,
+			handOverClock: hostHandOverClock(session.id, now),
 		},
 	};
 }
@@ -114,7 +172,7 @@ function syncHostedAutoRun(
 		// task's reply before its last frame, so a reply still to come is read now.
 		clearPendingSteeringNotes(sessionId);
 		if (connected && awaitsHostSteering(sessionId)) void refreshHostedSteering(sessionId);
-		steeringPositions.delete(sessionId);
+		forgetHostedRun(sessionId);
 	} else if (connected && frame?.isRunning) {
 		// First seen (a new window, a reload, another client's note), or the run moved to another
 		// task: what the host holds may have changed. Read it again.
@@ -157,6 +215,31 @@ function dropStaleAutoRuns(hostedIds: ReadonlySet<string>): void {
 		if (hostedIds.has(sessionId)) continue;
 		if (appliedAutoRuns.get(sessionId) !== null) applyAutoRunMirrorFrame(sessionId, null);
 		appliedAutoRuns.delete(sessionId);
+		forgetHostedRun(sessionId);
+	}
+}
+
+/** Drop what the sync and the steering service keep for a hosted run that ended or left. */
+function forgetHostedRun(sessionId: string): void {
+	steeringPositions.delete(sessionId);
+	forgetHostedSteering(sessionId);
+}
+
+/** Whether each hosted record's host was connected at the last sync, by record id. */
+const hostConnected = new Map<string, boolean>();
+
+/**
+ * A hosted record's host connected again: a message kept for it while the link was down goes now,
+ * not at the end of its backoff, as an SSH agent's goes when its remote is reachable again
+ * (`retryConnectionOutagesNow()`). Called once per sync per record.
+ */
+function noteHostConnected(sessionId: string, connected: boolean): void {
+	const was = hostConnected.get(sessionId);
+	hostConnected.set(sessionId, connected);
+	// Not known to be up before (disconnected, or not seen since it left the hosted set): the link
+	// is back as far as a kept message can tell (CodeRabbit on #2161).
+	if (connected && was !== true) {
+		retryConnectionOutagesNow(new Set([sessionId]), cutTurnUndecided);
 	}
 }
 
@@ -180,12 +263,28 @@ function releaseHostedAgents(): void {
 export function syncHostedAgents(): void {
 	if (!hostingEnabled()) {
 		dropStaleAutoRuns(new Set());
+		pruneHostStartedMentions(new Set());
+		pruneHostedLinkLoss(new Set());
+		pruneHostHandOvers(new Set());
+		pruneHostedTabBooks(useSessionStore.getState().sessions);
+		hostConnected.clear();
 		releaseHostedAgents();
 		return;
 	}
 	released.clear();
-	if (!usePeerMirrorStore.getState().enabled) return;
 	const { sessions, activeSessionId } = useSessionStore.getState();
+	// A record still points at a host while the mirror reconnects: only a deleted or moved-back
+	// agent lets go of the consults it waits to fire.
+	pruneHostStartedMentions(
+		new Set(sessions.filter((s) => readLiftedTo(s.liftedTo)).map((s) => s.id))
+	);
+	if (!usePeerMirrorStore.getState().enabled) {
+		pruneHostedLinkLoss(new Set());
+		pruneHostHandOvers(new Set());
+		pruneHostedTabBooks(useSessionStore.getState().sessions);
+		hostConnected.clear();
+		return;
+	}
 	const hostedIds = new Set<string>();
 	for (const session of sessions) {
 		const hosted = hostedInput(session);
@@ -197,23 +296,37 @@ export function syncHostedAgents(): void {
 			hosted.autoRun,
 			hosted.connected
 		);
+		// A lost link ends the turns the host last reported running, as a cut SSH link does; once
+		// the host is back, how each one ended is read from the host.
+		const linkLost = hostLinkLostError(session, hosted.link);
+		if (linkLost) noteHostedTurnsCut(session, hosted.link, linkLost);
+		else if (hosted.connected) settleCutHostedTurns(session.id, hosted.link);
+		// A tab opened here while the host was down is made there once the link is back (R15).
+		if (hosted.connected) createPendingHostTabs(session);
+		// The host is back: a kept message's retry fires now (R18).
+		noteHostConnected(session.id, hosted.connected);
+		const endedHere = hostedTurnsEndedHere(session.id, hosted.connected);
+		const keptCuts = linkLost ? hostedCutsKept(session.id) : undefined;
 		// The unread rule reads whether this agent is the one on screen, as a local tab's does.
-		const input = { ...hosted.input, viewing: session.id === activeSessionId };
+		const input: HostedProjectionInput = {
+			...hosted.input,
+			viewing: session.id === activeSessionId,
+			...(linkLost ? { linkLost } : {}),
+			...(endedHere ? { endedHere } : {}),
+			...(keptCuts ? { keptCuts } : {}),
+		};
 		const next = projectHostedSession(session, input);
 		if (next !== session) {
 			updateSessionWith(session.id, (current) =>
 				current === session ? next : projectHostedSession(current, input)
 			);
 		}
-		// A consult of a turn the host queued fires as that turn starts.
-		fireHostStartedMentions(next);
-		// A hand-off armed on a turn the host runs releases when the host's turn ends, with the
-		// answer the host saved: a background tab's transcript is read for it.
+		// A background tab's saved transcript, read when a turn's own entries are not here yet.
 		const slotOf = (tabId: string) =>
 			usePeerMirrorStore.getState().transcripts[hosted.peerId]?.[
 				liveTurnKey(hosted.agentId, tabId)
 			];
-		followHostedHandoffs(next, {
+		const transcript: HostedTranscriptAccess = {
 			// The rule the shown tab's read follows: never while one is out, never again after one
 			// failed (the next stale mark or reconnect asks again), so a failing host is not polled.
 			read: (tabId) => {
@@ -227,7 +340,12 @@ export function syncHostedAgents(): void {
 				const slot = slotOf(tabId);
 				return !!slot?.loaded && !slot.stale && !slot.loading && !slot.error;
 			},
-		});
+		};
+		// A consult of a turn the host queued fires as that turn starts.
+		fireHostStartedMentions(next, hosted.queueExits, Date.now(), hosted.queueReads, transcript);
+		// A hand-off armed on a turn the host runs releases when the host's turn ends, with the
+		// answer the host saved.
+		followHostedHandoffs(next, transcript, hosted.queueExits, Date.now(), hosted.queueReads);
 		if (session.id !== activeSessionId || !hosted.connected) continue;
 		const tabId = next.activeTabId;
 		if (!hosted.input.agent.aiTabs?.some((tab) => tab.id === tabId)) continue;
@@ -239,6 +357,13 @@ export function syncHostedAgents(): void {
 		if (needsRead) void readMirrorTranscript(hosted.peerId, hosted.agentId, tabId);
 	}
 	dropStaleAutoRuns(hostedIds);
+	// A deleted agent, one moved back, or one whose peer was removed lets go of its cut turns.
+	pruneHostedLinkLoss(hostedIds);
+	// ...and of the host-queue hand-overs, whose limits arm the recheck (U6).
+	pruneHostHandOvers(hostedIds);
+	// ...and of what the pending-tab path keeps for its tabs (R28).
+	pruneHostedTabBooks(sessions);
+	for (const id of hostConnected.keys()) if (!hostedIds.has(id)) hostConnected.delete(id);
 }
 
 /**
@@ -248,15 +373,43 @@ export function syncHostedAgents(): void {
 export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {}): () => void {
 	announcesRunEnds = options.announcesRunEnds === true;
 	let scheduled = false;
+	// A consult or hand-off waiting on a host start runs out of time with no change from the host
+	// to run the sync (a quiet host, an idle user): one timer runs it again at the soonest limit.
+	let recheck: ReturnType<typeof setTimeout> | undefined;
+	const armRecheck = () => {
+		if (recheck !== undefined) clearTimeout(recheck);
+		recheck = undefined;
+		const deadlines = [
+			nextHostStartDeadline(),
+			nextHostedHandoffDeadline(useSessionStore.getState().sessions),
+			// A pending tab whose making failed is asked again when its wait ends (R15).
+			nextPendingHostTabRetryAt(useSessionStore.getState().sessions),
+			// A host-queue hand-over past its limit reads queued, with no change from the host (U6).
+			nextHostHandOverDeadline(),
+		].filter((at): at is number => at !== undefined);
+		if (deadlines.length === 0) return;
+		const delay = Math.max(0, Math.min(...deadlines) - Date.now()) + 1;
+		recheck = setTimeout(() => {
+			recheck = undefined;
+			schedule();
+		}, delay);
+	};
 	const schedule = () => {
 		if (scheduled) return;
 		scheduled = true;
 		queueMicrotask(() => {
 			scheduled = false;
 			syncHostedAgents();
+			armRecheck();
 		});
 	};
 	const offMirror = usePeerMirrorStore.subscribe(schedule);
+	// An outage confirmed or cleared changes how a hosted turn is drawn (`hostLinkLostError()`).
+	const offOutages = useSshOutageStore.subscribe((state, prev) => {
+		if (state.outages !== prev.outages) schedule();
+	});
+	// A turn on its way to the host is drawn busy until the host has it (`hostedTabsHandingOver()`).
+	const offLines = onHostedTabLineChanged(schedule);
 	const offSettings = useSettingsStore.subscribe((state, prev) => {
 		if (state.federationHostedAgents !== prev.federationHostedAgents) schedule();
 	});
@@ -268,7 +421,11 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 	schedule();
 	return () => {
 		announcesRunEnds = false;
+		if (recheck !== undefined) clearTimeout(recheck);
+		recheck = undefined;
 		offMirror();
+		offLines();
+		offOutages();
 		offSettings();
 		offSessions();
 	};

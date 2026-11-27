@@ -45,6 +45,7 @@ import {
 } from '../../stores/retryStore';
 import { queueIsHeldByRetry } from './internal/helpers/exitDequeue';
 import { logger } from '../../utils/logger';
+import { onHostedTabLineChanged } from '../../utils/hostedTabLine';
 import { useOwnedSideEffectGate } from './internal/useOwnedSessionGate';
 
 // ============================================================================
@@ -404,6 +405,18 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 		}, 500);
 		return () => clearTimeout(startupTimerId);
 	}, [sessionsLoaded]);
+
+	// A hosted tab that let go of its line (its turn reached the host, or a consult's turn started
+	// there) can take its next item now. Nothing in the store has to change for that, so the drain
+	// is told directly rather than waiting out its recheck poll. A line taken changes nothing here:
+	// the pass finds the tab busy.
+	useEffect(
+		() =>
+			onHostedTabLineChanged(() => {
+				if (sessionsLoaded && startupRecoveryComplete.current) drainIdleQueuesRef.current();
+			}),
+		[sessionsLoaded]
+	);
 
 	// Runtime queue recovery: process queued items when sessions transition to idle
 	// while items remain in the queue. This handles cases where onExit skipped queue

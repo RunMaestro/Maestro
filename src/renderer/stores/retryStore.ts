@@ -65,6 +65,7 @@ import { notifyToast } from './notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
 import type { AgentError, QueuedItem } from '../types';
 import { registerBatchResumer, getBatchResumer } from '../services/batchResumer';
+import { isSshTransportError } from './sshOutageStore';
 
 // ============================================================================
 // Types
@@ -175,6 +176,96 @@ export interface OutageRecord {
 	 * that forward no quota object.
 	 */
 	quota?: QuotaLimitDetail;
+	/**
+	 * What failed, when it was not the provider: `connection` when the turn never reached the
+	 * agent because its link was down (ssh could not reach the remote, or the hosted agent's
+	 * Maestro host could not be reached). Same backoff as `availability`; the card names the link
+	 * instead of "Service overloaded". Undefined for a provider outage.
+	 */
+	cause?: OutageCause;
+	/**
+	 * The kept message was not sent again because the hosted agent's host already had it: the turn
+	 * a lost link cut was still running there, or had finished (`settleRetryOnHost()`). The card
+	 * says so instead of "Sent after n retries".
+	 */
+	settledByHost?: boolean;
+	/**
+	 * Set with `settledByHost` when the kept message was not sent because the host no longer has
+	 * what it named: its tab was closed there (`tab`), or the message is gone from that tab (a
+	 * clear, `message`). Nothing was sent, and the message stays held in the queue to send again.
+	 */
+	notOnHost?: NotOnHost;
+	/**
+	 * Set with `settledByHost` when the kept message was not sent because its own turn ended on an
+	 * error on the host that no retry takes (an auth failure, or Agent Resilience off): that error's
+	 * text. Nothing was sent, and the message stays held in the queue to send again.
+	 */
+	hostError?: string;
+	/**
+	 * Set with `settledByHost` when the kept message was not sent because of a retry: the host's
+	 * own Agent Resilience holds it and sends it itself (`host`), or its turn ended on a provider
+	 * error there and this machine's retry of that error takes it from here (`here`, a new card,
+	 * `scheduleRetryForError()`'s `freshOutage`).
+	 */
+	hostRetry?: 'host' | 'here';
+}
+
+/** See `OutageRecord.cause`. */
+export type OutageCause = 'connection';
+
+/** See `OutageRecord.notOnHost`. */
+export type NotOnHost = 'tab' | 'message';
+
+/**
+ * Why a kept message is held for the user instead of sent: the host no longer has what it named
+ * (`NotOnHost`), or its own turn ended there on an error no retry takes (`{ error }`).
+ */
+export type HeldOnHost = NotOnHost | { error: string };
+
+/**
+ * Why a kept message's retry ends on the host's word (`settleRetryOnHost()`): held for the user
+ * (`HeldOnHost`), or the host's own retry sends it (`host-retries`).
+ */
+export type HostSettle = HeldOnHost | 'host-retries';
+
+/** What the card and the toast say when a kept message was not sent: the host retries it itself. */
+export const HOST_RETRIES_TEXT =
+	'Its turn on the host ended on an error the host retries itself, so it was not sent again from here.';
+
+/** What the card says when a kept message's turn ended on a provider error retried from here. */
+export const HOST_TURN_ERRORED_TEXT =
+	"Its turn on the host ended on an error; that error's own retry takes the message from here.";
+
+/** What a settled-by-host outage card says (`OutageRecord.settledByHost`). */
+export function hostSettledText(outage: OutageRecord): string {
+	if (outage.hostRetry === 'host') return HOST_RETRIES_TEXT;
+	if (outage.hostRetry === 'here') return HOST_TURN_ERRORED_TEXT;
+	const held = heldOnHostOf(outage);
+	return held ? notOnHostText(held) : HOST_HAD_MESSAGE_TEXT;
+}
+
+/** The reason an outage record holds its kept message for the user, if it does. */
+export function heldOnHostOf(outage: OutageRecord): HeldOnHost | undefined {
+	return outage.hostError !== undefined ? { error: outage.hostError } : outage.notOnHost;
+}
+
+/** What the card and the toast say when a kept message was not sent: the host had it. */
+export const HOST_HAD_MESSAGE_TEXT = 'The host already had this message, so it was not sent again.';
+
+/** What the card and the toast say when a kept message was not sent: the host lost what it named. */
+export function notOnHostText(notOnHost: HeldOnHost): string {
+	if (typeof notOnHost === 'object') {
+		const error = notOnHost.error.trim();
+		return `Its turn on the host ended on an error${error ? ` (${error})` : ''} that is not retried, so the message was not sent again. It is held in the queue for you to send again.`;
+	}
+	return notOnHost === 'tab'
+		? 'Its tab is no longer on the host, so the message was not sent. It is held in the queue for you to send again.'
+		: 'The message is no longer on the host (its tab was cleared), so it was not sent. It is held in the queue for you to send again.';
+}
+
+/** The cause an outage card names for `error`: the link (SSH or hosted host), or the provider. */
+export function outageCauseOf(error: AgentError): OutageCause | undefined {
+	return isSshTransportError(error) ? 'connection' : undefined;
 }
 
 interface DispatchSnapshot {
@@ -278,6 +369,11 @@ export function resetPersistedSnapshotsForTests(): void {
 	persistedSnapshots = null;
 }
 
+/** Forget every prompt snapshot held in memory, as a reload does, between unit tests. */
+export function resetDispatchSnapshotsForTests(): void {
+	snapshots.clear();
+}
+
 async function loadPersistedSnapshots(): Promise<Record<string, PersistedSnapshot>> {
 	if (persistedSnapshots) return persistedSnapshots;
 	try {
@@ -376,9 +472,14 @@ export function getDispatchDeps(): ProcessQueuedItemDeps | null {
  *
  * `crossAgentMention` is stripped for the same reason `processQueuedItem` strips
  * it: the consult already fired with the original send, and a replay must not
- * fan it out a second time.
+ * fan it out a second time. `opts.keepMention` keeps it for a send whose mention has NOT run yet
+ * (a hosted hand-off kept while its host was down: it is armed only once the host takes the turn).
  */
-export function noteDirectDispatch(sessionId: string, item: QueuedItem): void {
+export function noteDirectDispatch(
+	sessionId: string,
+	item: QueuedItem,
+	opts: { keepMention?: boolean } = {}
+): void {
 	if (!dispatchDepsProvider) {
 		logger.warn('[retry] No dispatch deps provider registered; prompt not snapshotted', undefined, {
 			sessionId,
@@ -386,7 +487,11 @@ export function noteDirectDispatch(sessionId: string, item: QueuedItem): void {
 		});
 		return;
 	}
-	noteDispatch(sessionId, { ...item, crossAgentMention: undefined }, dispatchDepsProvider());
+	noteDispatch(
+		sessionId,
+		opts.keepMention ? item : { ...item, crossAgentMention: undefined },
+		dispatchDepsProvider()
+	);
 }
 
 /**
@@ -406,6 +511,18 @@ export function registerAgentErrorSurfacer(
 	fn: ((processSessionId: string, error: AgentError) => void) | null
 ): void {
 	agentErrorSurfacer = fn;
+}
+
+/**
+ * Raise an agent error through the listener that owns error UI, as though the turn's process had
+ * reported it on `processSessionId`. For a failure that happened before any process existed here:
+ * a hosted agent's send its host could not take. The same retry, transcript card and outage
+ * surfacing follow as for a spawned turn. False when no listener is registered.
+ */
+export function raiseAgentError(processSessionId: string, error: AgentError): boolean {
+	if (!agentErrorSurfacer) return false;
+	agentErrorSurfacer(processSessionId, error);
+	return true;
 }
 
 function keyFor(sessionId: string, tabId: string): string {
@@ -619,6 +736,15 @@ function resolveStrategy(sessionId: string, error: ClassifiableError): RetryStra
 }
 
 /**
+ * Whether `error` on this agent would be taken over by an automatic retry (the error is retryable
+ * and the agent's resilience toggle for it is on), without scheduling anything. A caller that keeps
+ * a message only when the retry card will stand for it asks this first.
+ */
+export function wouldAutoRetry(sessionId: string, error: ClassifiableError): boolean {
+	return resolveStrategy(sessionId, error) !== null;
+}
+
+/**
  * Try to take over an agent error with an automatic retry. Returns `true` if a
  * retry was scheduled (the caller should then suppress the error modal), or
  * `false` if the error is not auto-retryable / resilience is off / we have no
@@ -628,7 +754,17 @@ export function scheduleRetryForError(
 	sessionId: string,
 	tabId: string,
 	error: AgentError,
-	opts?: { batch?: boolean }
+	opts?: {
+		batch?: boolean;
+		/**
+		 * The tab's retry still holds the message, but its outage is over and `error` is a new one:
+		 * the old outage ends as recovered with this patch on its record (its card's words), and
+		 * the new one starts at its first attempt, under its own card. One write of the retry map,
+		 * so main never hears the tab's retry dropped in between (a dispatch callback parked on
+		 * that retry keeps waiting for the resend).
+		 */
+		freshOutage?: Partial<OutageRecord>;
+	}
 ): boolean {
 	// An Auto Run task is not compacted: the batch owns that turn and its error.
 	if (!opts?.batch && scheduleContextCompaction(sessionId, tabId, error)) return true;
@@ -655,7 +791,13 @@ export function scheduleRetryForError(
 	// record and no card, so counting from its attempt would schedule a retry
 	// the transcript never shows.
 	const prior = useRetryStore.getState().retries[key];
-	const existing = prior?.compaction ? undefined : prior;
+	if (prior && !prior.compaction && opts?.freshOutage) {
+		useRetryStore.getState().patchOutage(prior.outageId, opts.freshOutage);
+		resolveOutage(prior.outageId, 'recovered');
+		stopProviderWatch(key);
+		clearTabAgentError(sessionId, tabId, prior.lastMessage);
+	}
+	const existing = prior?.compaction || opts?.freshOutage ? undefined : prior;
 	// Continue the existing backoff when a resend failed again; otherwise start
 	// at attempt 0. `existing.attempt` was the attempt we just tried, so +1.
 	const attempt = existing ? existing.attempt + 1 : 0;
@@ -721,6 +863,7 @@ export function scheduleRetryForError(
 		// and a card still naming the first window sends the user to wait out a
 		// reset that already happened.
 		quota: parseQuotaLimitDetail(error.parsedJson),
+		cause: outageCauseOf(error),
 	});
 
 	const delay = Math.max(0, nextRetryAt - now);
@@ -1311,6 +1454,32 @@ export function retryNow(sessionId: string, tabId: string): void {
 }
 
 /**
+ * The link came back (an SSH remote reachable again, a hosted agent's host connected again): every
+ * retry waiting out a connection outage (`OutageRecord.cause`) on one of `sessionIds` fires now,
+ * not at the end of its backoff, as Try Now would. A provider outage keeps its countdown, and only
+ * a `'scheduled'` entry fires (`retryNow()`). `except` keeps a tab's retry on its countdown (a
+ * hosted tab whose cut turn the host has yet to settle fires from that decision). Returns how many
+ * fired.
+ */
+export function retryConnectionOutagesNow(
+	sessionIds: ReadonlySet<string>,
+	except?: (sessionId: string, tabId: string) => boolean
+): number {
+	if (sessionIds.size === 0) return 0;
+	const { retries, outages } = useRetryStore.getState();
+	let fired = 0;
+	for (const entry of Object.values(retries)) {
+		if (!sessionIds.has(entry.sessionId) || entry.status !== 'scheduled') continue;
+		if (outages[entry.outageId]?.cause !== 'connection') continue;
+		if (except?.(entry.sessionId, entry.tabId)) continue;
+		retryNow(entry.sessionId, entry.tabId);
+		fired += 1;
+	}
+	if (fired > 0) logger.info('[retry] Link is back; retrying now', undefined, { fired });
+	return fired;
+}
+
+/**
  * Replay the turns an agent lost to expired credentials, after the user has
  * re-authenticated the provider.
  *
@@ -1720,6 +1889,52 @@ export function clearRetryIfSettled(sessionId: string, tabId: string): void {
  */
 export function noteRetryProgress(sessionId: string, tabId: string): void {
 	recoverInFlightRetry(sessionId, tabId, 'Resend is producing output; outage recovered');
+}
+
+/**
+ * End this tab's outage because the message it keeps is not owed any more: a hosted agent's host
+ * already had it (the turn a lost link cut was still running there, or had finished). Nothing is
+ * sent again: the held copy leaves the queue, the retry ends as recovered with the card saying the
+ * host had it (`OutageRecord.settledByHost`), and the tab's retryable error clears. Works whether
+ * the retry is still counting down or its resend is waiting for this answer. Answers whether there
+ * was an outage to end.
+ *
+ * With `notOnHost` the host no longer has the tab or the message the kept copy named, or the
+ * copy's own turn ended there on an error no retry takes: nothing is sent either, but the copy is
+ * NOT released. The caller parks it held, so the user can send it again, and the card says what
+ * happened (`OutageRecord.notOnHost`, `OutageRecord.hostError`).
+ */
+export function settleRetryOnHost(
+	sessionId: string,
+	tabId: string,
+	notOnHost?: HostSettle
+): boolean {
+	const key = keyFor(sessionId, tabId);
+	const entry = useRetryStore.getState().retries[key];
+	if (!entry) return false;
+	logger.info('[retry] The host already had the kept message; not sending it again', undefined, {
+		key,
+		notOnHost,
+	});
+	// Released when the host holds it (it had it, or its own retry sends it); kept for the caller
+	// to park when the user sends it again, or for the retry of its error here.
+	if (entry.heldItemId && (!notOnHost || notOnHost === 'host-retries')) {
+		releaseHeldItemFromQueue(sessionId, entry.heldItemId);
+	}
+	useRetryStore.getState().patchOutage(entry.outageId, {
+		settledByHost: true,
+		...(typeof notOnHost === 'object'
+			? { hostError: notOnHost.error }
+			: notOnHost === 'host-retries'
+				? { hostRetry: 'host' as const }
+				: notOnHost
+					? { notOnHost }
+					: {}),
+	});
+	resolveOutage(entry.outageId, 'recovered');
+	removeEntry(key);
+	clearTabAgentError(sessionId, tabId, entry.lastMessage);
+	return true;
 }
 
 /**

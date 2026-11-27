@@ -54,7 +54,12 @@ import type {
 	TurnOverrides,
 	TurnSendReceipt,
 } from './types';
-import { parseQueuedTurnEdit, readTurnAgentText } from './types';
+import {
+	parseQueuedTurnEdit,
+	readRequestedTabId,
+	readTurnAgentText,
+	readTurnEntryId,
+} from './types';
 
 /** One thing to do to a peer's agent. */
 export type PeerAgentAction =
@@ -76,10 +81,16 @@ export type PeerAgentAction =
 			agentContext?: string;
 			/** Agent-only notes behind the message (`TurnInput.agentNotes`). */
 			agentNotes?: string;
+			/** The id the host gives the message's transcript entry (`TurnInput.entryId`). */
+			entryId?: string;
 	  }
 	/** Stop a tab's turn; without `tabId`, every busy tab of the agent (the Stop pill). */
 	| { kind: 'interrupt'; tabId?: string }
-	| { kind: 'new-tab' }
+	/**
+	 * `tabId`: the id this client already drew the tab under (R15); the host takes it when no tab
+	 * of the agent has it, else answers its own id. An older host ignores it.
+	 */
+	| { kind: 'new-tab'; tabId?: string }
 	/** An empty name clears it, so the tab shows its session id label again. */
 	| { kind: 'rename-tab'; tabId: string; name: string }
 	| { kind: 'star-tab'; tabId: string; starred: boolean }
@@ -148,16 +159,61 @@ const AUTO_RUN_CONTROLS: readonly AutoRunControl[] = ['stop', 'resume', 'skip', 
 
 export type PeerAgentActionKind = PeerAgentAction['kind'];
 
+/** How long a Stop waits for its read of the host queue before it stops without it. */
+export const STOP_QUEUE_READ_MS = 1_500;
+
+async function queueReadBeforeStop(
+	client: MaestroClient,
+	agentId: string
+): Promise<Awaited<ReturnType<MaestroClient['turns']['queue']['list']>> | undefined> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<undefined>((resolve) => {
+		timer = setTimeout(() => resolve(undefined), STOP_QUEUE_READ_MS);
+	});
+	try {
+		return await Promise.race([client.turns.queue.list(agentId), late]);
+	} catch {
+		// A read that fails never fails the Stop: the answer goes without the list.
+		return undefined;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/**
+ * What a Stop's answer tells the client about the host's queue at the Stop, for the consults of
+ * waiting messages the Stop may have ended (M25, M27).
+ */
+export interface HostStopAnswer {
+	/**
+	 * The host's queue item ids still waiting, read from the host just before it was told to stop
+	 * (its live queue, on a desktop host too): one waiting here waited through the Stop, one gone
+	 * had started or gone before it (M25). Absent when the read failed.
+	 */
+	waitingAtStop?: string[];
+	/**
+	 * The host's queue items whose turns the Stop ended, named by the host in the same tick as
+	 * its stop (a desktop host of this build). Present, maybe empty, only when the host names
+	 * them: then a waiting message not named was not the stopped turn (M27).
+	 */
+	stoppedItemIds?: string[];
+	/**
+	 * The host named nothing and its queue frames can arrive after its answer (an older desktop
+	 * host, whose frames trail its writes): a message still listed may have been the stopped turn.
+	 */
+	queueFramesTrail?: true;
+}
+
 /** What the host answered, per action. */
 export type PeerAgentActionResult =
 	| { kind: 'send'; receipt: TurnSendReceipt }
-	| {
+	| ({
 			kind: 'interrupt';
 			/** The tabs the action asked the host to stop. */
 			targetTabIds: string[];
 			/** The tabs the host reports it stopped. */
 			stoppedTabIds: string[];
-	  }
+	  } & HostStopAnswer)
 	| { kind: 'new-tab'; tabId: string }
 	| { kind: 'rename-tab'; tabId: string }
 	| { kind: 'star-tab'; tabId: string; starred: boolean }
@@ -276,6 +332,7 @@ export async function runPeerAgentAction(
 				...(action.held === true ? { held: true } : {}),
 				...(action.agentContext ? { agentContext: action.agentContext } : {}),
 				...(action.agentNotes ? { agentNotes: action.agentNotes } : {}),
+				...(action.entryId ? { entryId: action.entryId } : {}),
 			});
 			return sent.ok ? { ok: true, value: { kind: 'send', receipt: sent.value } } : sent;
 		}
@@ -283,16 +340,41 @@ export async function runPeerAgentAction(
 			const targetTabIds = action.tabId
 				? [action.tabId]
 				: (agent.aiTabs ?? []).filter((tab) => tab.state === 'busy').map((tab) => tab.id);
+			// The host's own queue as it stands just before the Stop: a desktop host's queue frames
+			// trail its writes by seconds, so only this read says which message the Stop ended (M25).
+			// Bounded: a slow read never holds up the Stop, it only leaves the answer without it.
+			const waiting = targetTabIds.length ? await queueReadBeforeStop(client, agent.id) : undefined;
 			const stoppedTabIds: string[] = [];
+			// Named by every tab's answer, or by none: one tab the host could not name for leaves the
+			// Stop unnamed, so no waiting message is cleared on a partial answer.
+			let stoppedItemIds: string[] | undefined = [];
 			for (const tabId of targetTabIds) {
 				const stopped = await client.turns.interrupt(agent.id, tabId);
 				if (!stopped.ok) return stopped;
 				if (stopped.value.stopped) stoppedTabIds.push(tabId);
+				stoppedItemIds = stopped.value.stoppedItemIds
+					? stoppedItemIds && [...stoppedItemIds, ...stopped.value.stoppedItemIds]
+					: undefined;
 			}
-			return { ok: true, value: { kind: 'interrupt', targetTabIds, stoppedTabIds } };
+			const named = targetTabIds.length > 0 && stoppedItemIds;
+			return {
+				ok: true,
+				value: {
+					kind: 'interrupt',
+					targetTabIds,
+					stoppedTabIds,
+					...(waiting?.ok ? { waitingAtStop: waiting.value.map((item) => item.itemId) } : {}),
+					...(named ? { stoppedItemIds: [...new Set(named)] } : {}),
+					...(!named && client.connection?.host?.()?.kind === 'desktop'
+						? { queueFramesTrail: true as const }
+						: {}),
+				},
+			};
 		}
 		case 'new-tab': {
-			const created = await client.tabs.create(agent.id);
+			const created = action.tabId
+				? await client.tabs.create(agent.id, { tabId: action.tabId })
+				: await client.tabs.create(agent.id);
 			return created.ok
 				? { ok: true, value: { kind: 'new-tab', tabId: created.value.tabId } }
 				: created;
@@ -543,6 +625,7 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 			if (!agentContext.ok) throw new Error(agentContext.error);
 			const agentNotes = readTurnAgentText(value.agentNotes, 'agentNotes');
 			if (!agentNotes.ok) throw new Error(agentNotes.error);
+			const entryId = readTurnEntryId(value.entryId);
 			return {
 				kind,
 				tabId: tabId(),
@@ -553,12 +636,15 @@ export function parsePeerAgentAction(raw: unknown): PeerAgentAction {
 				...(value.held === true ? { held: true } : {}),
 				...(agentContext.value ? { agentContext: agentContext.value } : {}),
 				...(agentNotes.value ? { agentNotes: agentNotes.value } : {}),
+				...(entryId ? { entryId } : {}),
 			};
 		}
 		case 'interrupt':
 			return value.tabId === undefined ? { kind } : { kind, tabId: tabId() };
-		case 'new-tab':
-			return { kind };
+		case 'new-tab': {
+			const requested = readRequestedTabId(value.tabId);
+			return requested ? { kind, tabId: requested } : { kind };
+		}
 		case 'rename-tab':
 			if (typeof value.name !== 'string') throw new Error('Missing tab name');
 			return { kind, tabId: tabId(), name: value.name.trim() };

@@ -15,7 +15,12 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveSshRemoteId: vi.fn((id: string) => id),
 }));
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { lift, withLiftPointer, type LiftDeps } from '../../../cli/commands/lift';
+import { getSyncDir } from '../../../cli/services/storage';
+import { createSessionImageStore } from '../../../shared/maestro-lib/store/session-images';
 import { ExitCode } from '../../../cli/exit-codes';
 import { PeerResolveError, type PeerConnection } from '../../../cli/services/peer-resolver';
 import { MaestroNotRunningError } from '../../../cli/services/maestro-not-running';
@@ -321,7 +326,7 @@ describe('lift', () => {
 			connection
 		);
 		await lift('agent-1', { json: true }, deps);
-		expect(String(lastJson().error)).toContain('maestro-cli remove-agent host-1');
+		expect(String(lastJson().error)).toContain('maestro-cli remove-agent build-box:host-1');
 	});
 
 	it('reports a host refusal and sets no pointer', async () => {
@@ -341,6 +346,55 @@ describe('lift', () => {
 		const { deps } = depsWith(sshAgent());
 		await lift('agent-1', {}, deps);
 		expect(logs.join('\n')).toContain('send to build-box:host-1');
+	});
+});
+
+describe('lift with a pasted image in a transcript', () => {
+	const PNG =
+		'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFklEQVQIW2P8z8DwnwEIGBmhAkwMAAAJ3gEB1d1+1wAAAABJRU5ErkJggg==';
+	let dataDir: string;
+
+	beforeEach(() => {
+		dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lift-images-'));
+		vi.mocked(getSyncDir).mockReturnValue(dataDir);
+	});
+
+	afterEach(() => {
+		vi.mocked(getSyncDir).mockReturnValue('/tmp/maestro');
+		fs.rmSync(dataDir, { recursive: true, force: true });
+	});
+
+	it('reads the image from the data dir store and sends the host the picture', async () => {
+		// The desktop stores a pasted image under <data dir>/session-images and keeps only its ref.
+		const desktopStore = createSessionImageStore(() => {
+			const dir = path.join(dataDir, 'session-images');
+			fs.mkdirSync(dir, { recursive: true });
+			return dir;
+		});
+		const ref = await desktopStore.storeInlineImage(PNG);
+		expect(ref.startsWith('maestro-image://')).toBe(true);
+		const agent = sshAgent({
+			aiTabs: [
+				{
+					id: 'tab-1',
+					name: 'Main',
+					agentSessionId: 'sess-1',
+					logs: [{ id: 'l1', timestamp: 1, source: 'user', text: 'look', images: [ref] }],
+				},
+			],
+		});
+		const { deps, importAgent } = depsWith(agent);
+		await lift('agent-1', { json: true }, deps);
+		expect(lastJson()).toMatchObject({ success: true });
+		expect(importAgent).toHaveBeenCalledWith(
+			expect.objectContaining({
+				tabs: [
+					expect.objectContaining({
+						logs: [expect.objectContaining({ text: 'look', images: [PNG] })],
+					}),
+				],
+			})
+		);
 	});
 });
 

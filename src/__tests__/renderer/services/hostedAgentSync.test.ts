@@ -6,6 +6,10 @@
 import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startHostedAgentSync, syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
+import {
+	HOST_QUEUE_START_GRACE_MS,
+	resetHostEntryClaims,
+} from '../../../renderer/services/crossAgentHandoff';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -18,6 +22,7 @@ import {
 import { resetStores } from '../../helpers';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
+import { nextHostHandOverDeadline } from '../../../renderer/utils/hostedTabLine';
 
 const toastMock = vi.hoisted(() => vi.fn());
 vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => ({
@@ -57,6 +62,9 @@ const row = () =>
 
 const flush = () => act(async () => undefined);
 
+// A host entry matched to one message in a test is never held for another test's message.
+beforeEach(() => resetHostEntryClaims());
+
 describe('hostedAgentSync', () => {
 	beforeEach(() => {
 		resetStores(usePeerMirrorStore, useSessionStore);
@@ -83,6 +91,52 @@ describe('hostedAgentSync', () => {
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].logs.map((e) => e.text)).toEqual([
 			'from the host',
 		]);
+	});
+
+	it('forgets a hand-over of an agent it no longer draws, so its limit never re-arms the recheck (CodeRabbit on #2166)', () => {
+		// The host's own time for the hand-over: now, so its limit is still running (U9).
+		const since = Date.now();
+		const withHandOver = () =>
+			usePeerMirrorStore.setState((state) => ({
+				peers: {
+					...state.peers,
+					box: {
+						...state.peers.box,
+						queues: {
+							h1: [
+								{
+									itemId: 'next',
+									tabId: 't1',
+									queuedAt: since,
+									kind: 'message' as const,
+									text: 'next',
+									paused: false,
+									handOver: true,
+									handOverSince: since,
+								},
+							],
+						},
+					},
+				},
+			}));
+		useSessionStore.setState({ sessions: [row()], activeSessionId: 'someone-else' });
+		hydrateHost('idle');
+		withHandOver();
+		syncHostedAgents();
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].state).toBe('busy');
+		expect(nextHostHandOverDeadline()).toBeDefined();
+		// Hosting is turned off: the sync draws nothing, and the limit no longer counts.
+		useSettingsStore.setState({ federationHostedAgents: false });
+		syncHostedAgents();
+		expect(nextHostHandOverDeadline()).toBeUndefined();
+
+		// The agent is deleted while its hand-over waits.
+		useSettingsStore.setState({ federationHostedAgents: true });
+		syncHostedAgents();
+		expect(nextHostHandOverDeadline()).toBeDefined();
+		useSessionStore.setState({ sessions: [] });
+		syncHostedAgents();
+		expect(nextHostHandOverDeadline()).toBeUndefined();
 	});
 
 	it('does not read a tab nobody looks at', () => {
@@ -114,6 +168,47 @@ describe('hostedAgentSync', () => {
 		act(() => hydrateHost('idle'));
 		await flush();
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].state).toBe('busy');
+	});
+
+	// A quiet host sends nothing to run the sync, so the start grace of a hand-off that left the
+	// host queue runs out on a timer, not on the next unrelated change (CodeRabbit on #2148).
+	it('drops a hand-off whose start grace ran out with no change from the host', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+		try {
+			const tab = createMockAITab({
+				id: 't1',
+				logs: [],
+				pendingMentionHandoff: {
+					targets: [{ targetSessionId: 'backend', targetAgentName: 'Backend' }],
+					message: 'then tell @Backend',
+					hostTurn: {
+						stage: 'sent',
+						queueItemId: 'gone',
+						seenQueued: true,
+						turnStartedAt: 100,
+						goneAt: Date.now(),
+					},
+				},
+			});
+			useSessionStore.setState({
+				sessions: [{ ...row(), aiTabs: [tab] }],
+				activeSessionId: 'other',
+			});
+			hydrateHost('idle');
+			const stop = startHostedAgentSync();
+			await flush();
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].pendingMentionHandoff).toBeDefined();
+			await act(async () => {
+				vi.advanceTimersByTime(HOST_QUEUE_START_GRACE_MS + 2);
+			});
+			await flush();
+			const after = useSessionStore.getState().sessions[0].aiTabs[0];
+			expect(after.pendingMentionHandoff).toBeUndefined();
+			expect(after.logs.some((log) => log.text.includes('removed before it ran'))).toBe(true);
+			stop();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('with hosted agents off, folds nothing in and releases each record once', () => {
@@ -229,6 +324,29 @@ describe('hostedAgentSync', () => {
 			useSessionStore.setState({ sessions: [{ ...row(), liftedTo: undefined }] });
 			syncHostedAgents();
 			expect(useBatchStore.getState().batchRunStates.row).toBeUndefined();
+		});
+
+		it('reads the steering again when a record hosted again shows the run it left (P11)', async () => {
+			const act = vi.fn(async () => ({
+				ok: true,
+				result: {
+					kind: 'steer-auto-run',
+					result: { success: true, steerable: true, pending: [], deliveries: [] },
+				},
+			}));
+			maestro.federation = { transcript, act };
+			pushRun(frame(1));
+			syncHostedAgents();
+			await flush();
+			expect(act).toHaveBeenCalledTimes(1);
+
+			// The record stops being hosted mid-run, then is hosted again at the same place.
+			useSessionStore.setState({ sessions: [{ ...row(), liftedTo: undefined }] });
+			syncHostedAgents();
+			useSessionStore.setState({ sessions: [row()] });
+			syncHostedAgents();
+			await flush();
+			expect(act).toHaveBeenCalledTimes(2);
 		});
 
 		describe('the end of the host run', () => {

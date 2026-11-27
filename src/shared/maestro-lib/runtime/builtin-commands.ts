@@ -45,6 +45,7 @@ import type { MaestroPaths } from '../paths/resolve';
 import { estimateContextUsage } from '../parsers/usage-aggregator';
 import { createPromptLoaderFor } from '../prompts/load';
 import type { AgentRecord, AITabRecord } from '../store/records';
+import { historyEntryTabName } from '../store/tab-display';
 import type { LogEntryRecord } from '../store/transcript';
 import type { HistoryWriter } from '../turns/history';
 import type { TurnSummaryHandoff } from '../turns/record-turn';
@@ -143,22 +144,33 @@ export function createRuntimeBuiltinCommands(
 		return loader?.get(PROMPT_IDS.AUTORUN_SYNOPSIS) ?? '';
 	};
 
+	/**
+	 * Write a line to the tab and tell clients. `replacing`: the progress line this command wrote
+	 * earlier, whose text this one takes over (same id and time), as the desktop's `/history`
+	 * replaces "Generating history synopsis..." with its outcome instead of adding a second line.
+	 */
 	async function write(
 		agentId: string,
 		tabId: string,
 		source: 'system' | 'user',
-		text: string
-	): Promise<void> {
-		const entry: LogEntryRecord = { id: rules.newId(), timestamp: deps.now(), source, text };
-		const written = await repository.appendTranscript(agentId, tabId, [entry]);
+		text: string,
+		replacing?: LogEntryRecord
+	): Promise<LogEntryRecord | undefined> {
+		const entry: LogEntryRecord = replacing
+			? { ...replacing, text }
+			: { id: rules.newId(), timestamp: deps.now(), source, text };
+		const written = replacing
+			? await repository.replaceTranscriptEntry(agentId, tabId, entry)
+			: await repository.appendTranscript(agentId, tabId, [entry]);
 		if (!written.ok) {
 			logger.warn(
 				`A command's transcript entry was not written: ${written.error.message}`,
 				LOG_CONTEXT
 			);
-			return;
+			return undefined;
 		}
 		options.transcriptChanged(agentId, tabId, entry);
+		return entry;
 	}
 
 	/**
@@ -280,7 +292,9 @@ export function createRuntimeBuiltinCommands(
 			await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.noSession);
 			return;
 		}
-		await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.pending);
+		const pending = await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.pending);
+		// The outcome replaces the progress line, as on the desktop: one line per run (M22).
+		const settle = (text: string) => write(agentId, tabId, 'system', text, pending);
 		try {
 			const outcome = await synopsize(agentId, tabId, {
 				settings: (record, current) => ({
@@ -310,19 +324,16 @@ export function createRuntimeBuiltinCommands(
 				}),
 			});
 			if (outcome.kind === 'no-session') {
-				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.noSession);
+				await settle(HISTORY_COMMAND_TEXT.noSession);
 			} else if (outcome.kind === 'failed') {
-				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.failed);
+				await settle(HISTORY_COMMAND_TEXT.failed);
 			} else if (outcome.kind === 'nothing') {
-				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.nothingToReport);
+				await settle(HISTORY_COMMAND_TEXT.nothingToReport);
 			} else if (outcome.kind === 'written') {
-				await write(agentId, tabId, 'system', HISTORY_COMMAND_TEXT.saved(outcome.shortSummary));
+				await settle(HISTORY_COMMAND_TEXT.saved(outcome.shortSummary));
 			}
 		} catch (error) {
-			await write(
-				agentId,
-				tabId,
-				'system',
+			await settle(
 				HISTORY_COMMAND_TEXT.error(error instanceof Error ? error.message : String(error))
 			);
 		}
@@ -351,8 +362,16 @@ export function createRuntimeBuiltinCommands(
 				...(entry.agentSessionId ? { resumeSessionId: entry.agentSessionId } : {}),
 				buildEntry: (synopsis) => {
 					const { usageStats: _turnUsage, contextUsage: _turnContext, ...turnFields } = entry;
+					// The tab's name as it is now: a hosted tab is named by its client once the host took
+					// the message, so the name can land while the turn runs. A local tab is named
+					// as its message is sent and reads it at exit (`historyEntryTabName()` on both).
+					const sessionName = historyEntryTabName(
+						repository.getTab(agentId, tabId) ?? synopsis.tab,
+						synopsis.agentSessionId
+					);
 					return {
 						...turnFields,
+						...(sessionName ? { sessionName } : {}),
 						timestamp: synopsis.synopsisTime,
 						summary: synopsis.shortSummary,
 						fullResponse: synopsis.fullSynopsis,

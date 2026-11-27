@@ -19,19 +19,25 @@
  */
 
 import { hostedTargetOf, interruptHostedTurn } from './hostedTurns';
+import { cutHostedTurnTabs, endHostedTurnsHere, markHostedTurnsStopped } from './hostedLinkLoss';
+import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { TURN_CANCELED_NOTE } from '../../shared/maestro-lib/store/transcript';
+import type { HostStopAnswer } from '../../shared/maestro-lib/client/peer-actions';
 import type { AITab, LogEntry, QueuedItem, Session, SessionState } from '../types';
 import { useSessionStore, selectSessionById, updateSessionWith } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
 import { cancelContextCompaction, stopRetriesForAgent } from '../stores/retryStore';
 import { dropMentionHandoffs } from './crossAgentHandoff';
+import { dropStoppedHostStartMentions, settleStoppedHostStartMentions } from './hostedQueuedTurn';
 import { cancelHostedConsults } from '../hooks/agent/useCrossAgentDispatch';
+import { useCrossAgentInFlightStore } from '../stores/crossAgentInFlightStore';
 import { generateId } from '../utils/ids';
 import {
 	getActiveTab,
 	getBusyTabs,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
+	runningQueuedItemIds,
 	syncAgentStateToTabs,
 } from '../utils/tabHelpers';
 import { takeNextRunnableQueueItem } from '../utils/executionQueue';
@@ -95,6 +101,18 @@ export const FORCE_KILL_PROMPT =
 	'Failed to interrupt the process gracefully. Would you like to force kill it?\n\n' +
 	'Warning: This may cause data loss or leave the process in an inconsistent state.';
 
+/** The queue item ids of the turns `tabIds` of the agent run now (`runningQueuedItemIds()`). */
+function queuedItemsOfRunningTurns(sessionId: string, tabIds: readonly string[]): string[] {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tabs = [...(session?.aiTabs ?? []), ...(session?.orphanedThinkingTabs ?? [])];
+	const ids = new Set<string>();
+	for (const tab of tabs) {
+		if (!tabIds.includes(tab.id)) continue;
+		for (const itemId of runningQueuedItemIds(tab)) ids.add(itemId);
+	}
+	return [...ids];
+}
+
 /**
  * Stop a running turn on an agent, or on one of its tabs.
  *
@@ -130,6 +148,15 @@ export async function interruptTurn(
 	}
 	const scopeTabId = tabId ?? undefined;
 
+	// Ended first and synchronously, before any await, so no retry timer can
+	// resend the stopped prompt while the stop is still running: for a hosted
+	// agent too, whose message kept while its host was down waits on the same
+	// retry. A compaction is part of the turn being stopped: ending it first makes
+	// the kill below read as a cancel, not a failed compaction, and releases the
+	// prompt it held.
+	const recoveriesEnded =
+		cancelContextCompaction(sessionId, scopeTabId) + stopRetriesForAgent(sessionId, scopeTabId);
+
 	// A hosted agent's turns run on its Federation host: Stop goes there. A terminal command is
 	// this machine's own (it runs over SSH from here), so it keeps the local path below.
 	const terminalCommand =
@@ -149,33 +176,66 @@ export async function interruptTurn(
 		// armed for the turn, the same as below. The hand-off goes first, before any await, so a
 		// host update that lands meanwhile cannot release it.
 		dropMentionHandoffs(sessionId, scopeTabId);
-		if (forward) await interruptHostedTurn(session, scopeTabId);
-		const consultsCanceled = await cancelConsults(sessionId, scopeTabId);
-		const wasBusy = forward || consultsCanceled > 0;
+		const peer = usePeerMirrorStore.getState().peers[hostedTargetOf(session)?.peerId ?? ''];
+		// A turn the lost link cut is drawn idle here while the host may still run it, or may not
+		// have: Stop ends it too, so it is never sent again when the host is back.
+		const cutTabs = cutHostedTurnTabs(sessionId, scopeTabId);
+		const stopHere = [...new Set([...hostBusy, ...cutTabs])];
+		// A consult whose message may be a turn Stop ends goes with it, also before any await.
+		const hostStop = dropStoppedHostStartMentions(sessionId, stopHere);
+		const hostNotTold = !!peer && peer.connection !== 'connected' && stopHere.length > 0;
+		let hostAnswer: HostStopAnswer | undefined;
+		try {
+			if (hostNotTold) {
+				// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
+				endHostedTurnsHere(sessionId, stopHere, peer.name);
+			} else {
+				markHostedTurnsStopped(sessionId, cutTabs, peer?.name ?? '');
+				if (forward) hostAnswer = await interruptHostedTurn(session, scopeTabId);
+			}
+		} finally {
+			// The host answered (or was not told): what it reported before then ran before the stop.
+			settleStoppedHostStartMentions(hostStop, hostAnswer);
+		}
+		const consults = await cancelConsults(sessionId, scopeTabId);
+		const consultsCanceled = consults.canceled;
+		// The host writes no note where it did not stop a turn, so those tabs get the one a local
+		// Stop writes, through the same settle: every tab Stop ended here because the host could not
+		// be told (CodeRabbit on #2154), and each tab whose consult ended here when the host did not
+		// stop its turn (a mention with no turn yet, or one held for its reply). A tab the host
+		// stopped ends on the host's own.
+		const noteTabIds = new Set(hostNotTold ? stopHere : []);
+		if (consultsCanceled > 0) {
+			const consultTabs = canceledNoteTabIds(session, scopedTab?.id, consults.tabIds, false);
+			for (const noteTabId of consultTabs) {
+				if (hostNotTold || !stopHere.includes(noteTabId)) noteTabIds.add(noteTabId);
+			}
+		}
+		if (noteTabIds.size > 0) {
+			settleStoppedTabs(sessionId, noteTabIds, systemLog(TURN_CANCELED_NOTE));
+		}
+		const wasBusy = forward || stopHere.length > 0 || recoveriesEnded > 0 || consultsCanceled > 0;
 		return {
 			success: true,
 			sessionId,
 			tabId,
 			wasBusy,
 			interrupted: wasBusy,
-			stoppedTabIds: hostBusy,
+			stoppedTabIds: stopHere,
+			// The host's own word on the queue items its Stop ended, as a local Stop names them.
+			...(hostAnswer?.stoppedItemIds ? { stoppedItemIds: hostAnswer.stoppedItemIds } : {}),
 			exited: false,
 		};
 	}
 
-	// Ended first and synchronously, before any await, so no retry timer can
-	// resend the stopped prompt while the stop is still running. A compaction is
-	// part of the turn being stopped: ending it first makes the kill below read
-	// as a cancel, not a failed compaction, and releases the prompt it held. A
-	// hand-off armed for the turn must not fire when it stops: Stop means stop.
-	const recoveriesEnded =
-		cancelContextCompaction(sessionId, scopeTabId) + stopRetriesForAgent(sessionId, scopeTabId);
+	// A hand-off armed for the turn must not fire when it stops: Stop means stop.
 	dropMentionHandoffs(sessionId, scopeTabId);
 
 	// A `@mention` fans the turn out to one `cross-agent-*` process per target,
 	// none carrying this agent's id, so only main's consult registry reaches
 	// them. Left running they stream answers into a conversation already stopped.
-	const consultsCanceled = await cancelConsults(sessionId, scopeTabId);
+	const consults = await cancelConsults(sessionId, scopeTabId);
+	const consultsCanceled = consults.canceled;
 
 	const busyTabIds = scopedTab
 		? scopedTab.state === 'busy'
@@ -212,6 +272,7 @@ export async function interruptTurn(
 		};
 	}
 	const stoppedTabIds = [...new Set([...busyTabIds, ...liveTabIds])];
+	let stoppedItemIds: string[] = [];
 	const done = (interrupted: boolean): InterruptTurnResult => ({
 		success: true,
 		sessionId,
@@ -219,6 +280,7 @@ export async function interruptTurn(
 		wasBusy: true,
 		interrupted,
 		stoppedTabIds,
+		stoppedItemIds,
 		exited: false,
 	});
 
@@ -242,13 +304,18 @@ export async function interruptTurn(
 		}
 	}
 
-	const aiInScope = stoppedTabIds.length > 0 || recoveriesEnded > 0 || consultsCanceled > 0;
+	const endedTurn = stoppedTabIds.length > 0 || recoveriesEnded > 0;
+	const aiInScope = endedTurn || consultsCanceled > 0;
 	const settle = (note: LogEntry, startQueued: boolean) => {
 		if (!aiInScope) return;
-		if (scopedTab) settleStoppedTab(sessionId, scopedTab.id, note);
-		else settleStoppedAgent(sessionId, note, startQueued);
+		if (scopedTab) settleStoppedTabs(sessionId, [scopedTab.id], note);
+		else settleStoppedAgent(sessionId, note, startQueued, consults.tabIds, endedTurn);
 	};
 
+	// The queue items whose turns this Stop ends, read in the same tick as the signal goes out, so
+	// no drain can start another one in between: a Federation client of this desktop learns which
+	// of its waiting messages was the stopped turn, where this host's queue frames trail (M27).
+	stoppedItemIds = queuedItemsOfRunningTurns(sessionId, stoppedTabIds);
 	const results = await Promise.allSettled(
 		targets.map((id) => window.maestro.process.interrupt(id))
 	);
@@ -307,9 +374,22 @@ export async function interruptTurn(
 /**
  * End the `@mention` consults this machine runs for the agent's tab (or every tab): the
  * `cross-agent-*` processes main holds, and the waits on consults of hosted agents. Answers how
- * many it ended.
+ * many it ended, and the asking tabs of those it saw running (read before the cancel clears them;
+ * a consult whose send has not resolved yet is counted but has no tab here).
  */
-async function cancelConsults(sessionId: string, scopeTabId: string | undefined): Promise<number> {
+async function cancelConsults(
+	sessionId: string,
+	scopeTabId: string | undefined
+): Promise<{ canceled: number; tabIds: ReadonlySet<string> }> {
+	const tabIds = new Set(
+		Object.values(useCrossAgentInFlightStore.getState().requests)
+			.filter(
+				(request) =>
+					request.sourceSessionId === sessionId &&
+					(!scopeTabId || request.sourceTabId === scopeTabId)
+			)
+			.map((request) => request.sourceTabId)
+	);
 	let canceled = 0;
 	try {
 		({ canceled } = await window.maestro.crossAgent.cancel(sessionId, scopeTabId));
@@ -317,7 +397,25 @@ async function cancelConsults(sessionId: string, scopeTabId: string | undefined)
 		logger.warn('[turnInterrupt] Failed to cancel cross-agent consults:', undefined, crossAgentErr);
 	}
 	// A consult of a hosted agent runs on its host, so no process here holds it: end the wait.
-	return canceled + cancelHostedConsults(sessionId, scopeTabId);
+	return { canceled: canceled + cancelHostedConsults(sessionId, scopeTabId), tabIds };
+}
+
+/**
+ * Where Stop's "Canceled by user" line goes, in every mode: the stopped tab; for the whole agent,
+ * each tab whose consult Stop ended, and the active tab when Stop ended a turn there (`endedTurn`)
+ * or a consult whose tab is not known. Only tabs the agent has.
+ */
+function canceledNoteTabIds(
+	session: Session,
+	scopedTabId: string | undefined,
+	consultTabIds: ReadonlySet<string>,
+	endedTurn: boolean
+): Set<string> {
+	if (scopedTabId) return new Set([scopedTabId]);
+	const tabs = new Set([...consultTabIds].filter((id) => session.aiTabs.some((t) => t.id === id)));
+	const activeTabId = getActiveTab(session)?.id;
+	if (activeTabId && (endedTurn || tabs.size === 0)) tabs.add(activeTabId);
+	return tabs;
 }
 
 async function collectInterruptTargets(
@@ -376,26 +474,28 @@ function idleStoppedTab(tab: AITab, note?: LogEntry): AITab {
 }
 
 /**
- * One tab's turn stopped: idle that tab and recompute the agent from what is
- * still running. The queue is left to the exit listener and the idle drain,
- * exactly as when a turn ends on its own. An orphan is only signalled: the
- * exit listener retires it.
+ * Tabs Stop ended (one for a tab stop; a hosted agent's tabs whose turn or consult ended here):
+ * idle each, with `note`, and recompute the agent from what is still running. The queue is left
+ * to the exit listener and the idle drain, exactly as when a turn ends on its own. An orphan is
+ * only signalled: the exit listener retires it.
  */
-function settleStoppedTab(sessionId: string, tabId: string, note: LogEntry): void {
+function settleStoppedTabs(sessionId: string, tabIds: Iterable<string>, note: LogEntry): void {
+	const ids = new Set(tabIds);
 	updateSessionWith(sessionId, (s) => {
-		if (!s.aiTabs.some((t) => t.id === tabId)) return s;
+		if (!s.aiTabs.some((t) => ids.has(t.id))) return s;
 		return syncAgentStateToTabs({
 			...s,
-			aiTabs: s.aiTabs.map((t) => (t.id === tabId ? idleStoppedTab(t, note) : t)),
+			aiTabs: s.aiTabs.map((t) => (ids.has(t.id) ? idleStoppedTab(t, note) : t)),
 		});
 	});
 }
 
 /**
  * The whole agent stopped. When a runnable queued item waits, its tab is
- * marked running and the item is dispatched; every other busy tab goes idle
- * with `note`. Otherwise the active tab and every busy tab go idle, with
- * `note` on the active tab.
+ * marked running and the item is dispatched; every other busy tab, and each
+ * tab whose consult Stop ended, goes idle with `note`. Otherwise the active
+ * tab, every busy tab and the consults' tabs go idle, with `note` where
+ * `canceledNoteTabIds()` puts it.
  *
  * The dispatch RACES the stopped process: the signal has only been sent, so
  * the child usually still owns its process key and the spawn is refused.
@@ -404,7 +504,15 @@ function settleStoppedTab(sessionId: string, tabId: string, note: LogEntry): voi
  * registered the queue is not touched at all, so nothing is taken out of it
  * that nobody would send; the exit listener drains it instead.
  */
-function settleStoppedAgent(sessionId: string, note: LogEntry, startQueued: boolean): void {
+function settleStoppedAgent(
+	sessionId: string,
+	note: LogEntry,
+	startQueued: boolean,
+	/** The tabs whose consults Stop ended: each gets `note`. */
+	consultTabIds: ReadonlySet<string>,
+	/** Stop ended a turn (not only consults): the active tab gets `note` too. */
+	endedTurn: boolean
+): void {
 	const dispatch =
 		startQueued && turnInterruptDeps?.ownsQueue(sessionId)
 			? turnInterruptDeps.processQueuedItem
@@ -439,8 +547,14 @@ function settleStoppedAgent(sessionId: string, note: LogEntry, startQueued: bool
 				...s,
 				...busyFields,
 				aiTabs: s.aiTabs.map((tab) => {
-					if (tab.id === target.tabId) return markTabRunningQueuedItem(tab, nextItem, s);
-					return tab.state === 'busy' ? idleStoppedTab(tab, note) : tab;
+					// The next message runs on a tab whose consult Stop ended: the line first.
+					if (tab.id === target.tabId) {
+						const settled = consultTabIds.has(tab.id) ? idleStoppedTab(tab, note) : tab;
+						return markTabRunningQueuedItem(settled, nextItem, s);
+					}
+					return tab.state === 'busy' || consultTabIds.has(tab.id)
+						? idleStoppedTab(tab, note)
+						: tab;
 				}),
 				...(updatedOrphans !== s.orphanedThinkingTabs && {
 					orphanedThinkingTabs: updatedOrphans,
@@ -449,14 +563,15 @@ function settleStoppedAgent(sessionId: string, note: LogEntry, startQueued: bool
 		}
 
 		const activeTabId = getActiveTab(s)?.id;
+		const noteTabIds = canceledNoteTabIds(s, undefined, consultTabIds, endedTurn);
 		return {
 			...s,
 			state: 'idle',
 			busySource: undefined,
 			thinkingStartTime: undefined,
 			aiTabs: s.aiTabs.map((tab) =>
-				tab.id === activeTabId || tab.state === 'busy'
-					? idleStoppedTab(tab, tab.id === activeTabId ? note : undefined)
+				tab.id === activeTabId || tab.state === 'busy' || noteTabIds.has(tab.id)
+					? idleStoppedTab(tab, noteTabIds.has(tab.id) ? note : undefined)
 					: tab
 			),
 		};

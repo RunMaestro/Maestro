@@ -291,6 +291,22 @@ describe('parseBatchFrame', () => {
 		).toEqual({ kind: 'tool', toolName: 'Read', state: { status: 'completed' } });
 	});
 
+	it('carries no tool output: only what the Thought Stream reads (P10)', () => {
+		const output = 'x'.repeat(100_000);
+		const frame = parseBatchFrame('process:tool-execution', [
+			PROCESS,
+			{
+				toolName: 'Bash',
+				state: { status: 'completed', input: { command: 'cat big.log' }, exit_code: 0, output },
+			},
+		])?.frame;
+		expect(frame).toEqual({
+			kind: 'tool',
+			toolName: 'Bash',
+			state: { status: 'completed', input: { command: 'cat big.log' }, exit_code: 0 },
+		});
+	});
+
 	it('carries a reasoning chunk, cut to a bound', () => {
 		expect(parseBatchFrame('process:thinking-chunk', [PROCESS, 'hmm'])?.frame).toEqual({
 			kind: 'thinking',

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	answerSteeringCommand,
 	cancelSteeringNote,
+	forgetHostedSteering,
 	refreshHostedSteering,
 	steeringBlocker,
 	submitSteeringNote,
@@ -17,6 +18,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { BatchRunState } from '../../../renderer/types';
 import { AGENT_MODES, createModeSession, type AgentMode } from '../../helpers/mockSession';
+import { MAX_PENDING_STEERING_NOTES } from '../../../shared/autorunSteering';
 
 const SID = 'agent-1';
 
@@ -51,6 +53,8 @@ const act = vi.fn(async (_peer: string, _agent: string, action: any) => {
 	};
 });
 
+const hostAnswer = act.getMockImplementation()!;
+
 /** The run as each mode's window holds it: a hosted run is the host's, drawn as a mirror. */
 function runFor(mode: AgentMode): BatchRunState {
 	return { isRunning: true, ...(mode === 'hosted' ? { mirrored: true } : {}) } as BatchRunState;
@@ -59,7 +63,7 @@ function runFor(mode: AgentMode): BatchRunState {
 function setUp(mode: AgentMode) {
 	useSessionStore.setState({ sessions: [createModeSession(mode, { id: SID })] });
 	useBatchStore.setState({ batchRunStates: { [SID]: runFor(mode) } } as never);
-	useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
+	useAutoRunSteeringStore.setState({ notes: {}, delivered: {}, returnedDrafts: {} });
 }
 
 /** Wait until every host conversation the service started has answered. */
@@ -69,7 +73,9 @@ beforeEach(() => {
 	hostPending = [];
 	hostRefuses = null;
 	listFails = false;
-	act.mockClear();
+	act.mockReset();
+	act.mockImplementation(hostAnswer);
+	forgetHostedSteering(SID);
 	(window as any).maestro = { ...((window as any).maestro || {}), federation: { act } };
 	useSettingsStore.setState({ federationHostedAgents: true });
 });
@@ -222,5 +228,331 @@ describe('Auto Run Steer across modes (P5)', () => {
 		submitSteeringNote({ sessionId: SID, text: 'local note', announce: false });
 		await settled();
 		expect(act).not.toHaveBeenCalled();
+	});
+});
+
+describe('a note the run never got keeps its text (P9)', () => {
+	const returned = () => useAutoRunSteeringStore.getState().returnedDrafts[SID];
+	const pending = () => (useAutoRunSteeringStore.getState().notes[SID] ?? []).map((n) => n.text);
+
+	it('keeps the text of a refused note in all three modes', async () => {
+		const results = [];
+		for (const mode of AGENT_MODES) {
+			setUp(mode);
+			useAutoRunSteeringStore.setState({ returnedDrafts: {} });
+			// Local and SSH refuse at the pending cap (the panel keeps its draft); the host refuses.
+			if (mode === 'hosted') hostRefuses = 'No Auto Run is active on this agent';
+			else {
+				for (let i = 0; i < MAX_PENDING_STEERING_NOTES; i++) {
+					useAutoRunSteeringStore.getState().addNote(SID, `earlier ${i}`);
+				}
+			}
+			const before = pending().filter((text) => text === 'Prefer the fixtures');
+			const note = submitSteeringNote({
+				sessionId: SID,
+				text: 'Prefer the fixtures',
+				announce: false,
+			});
+			await settled();
+			results.push({
+				waiting: pending().filter((text) => text === 'Prefer the fixtures'),
+				kept: note === null || (returned() ?? []).includes('Prefer the fixtures'),
+				before,
+			});
+			hostRefuses = null;
+		}
+		const [local, ssh, hosted] = results;
+		expect(local).toEqual({ waiting: [], kept: true, before: [] });
+		expect(ssh).toEqual(local);
+		expect(hosted).toEqual(local);
+	});
+
+	it('treats a host out of reach as a refusal: the note is not shown as waiting', async () => {
+		setUp('hosted');
+		act.mockImplementation(async () => ({
+			ok: false,
+			error: 'The host is not connected',
+			code: 'host-unavailable',
+		}));
+		submitSteeringNote({ sessionId: SID, text: 'Use the v3 endpoint', announce: false });
+		await settled();
+		expect(pending()).toEqual([]);
+		expect(returned()).toEqual(['Use the v3 endpoint']);
+		expect(
+			await answerSteeringCommand({ action: 'send', sessionId: SID, text: 'From the CLI' })
+		).toEqual({ success: false, error: 'The host is not connected' });
+	});
+
+	it('keeps no copy when the host list shows a send of unknown outcome landed', async () => {
+		setUp('hosted');
+		const answer = act.getMockImplementation()!;
+		act.mockImplementationOnce(async (peer: string, agent: string, action: any) => {
+			await answer(peer, agent, action);
+			return { ok: false, error: 'The connection dropped.', unknown: true };
+		});
+		submitSteeringNote({ sessionId: SID, text: 'Maybe sent', announce: false });
+		await settled();
+		expect(pending()).toEqual(['Maybe sent']);
+		expect(returned()).toBeUndefined();
+	});
+
+	it('keeps no copy when a task took a send of unknown outcome before the list (review)', async () => {
+		setUp('hosted');
+		let deliveries: unknown[] = [];
+		act.mockImplementation(async (_peer: string, _agent: string, action: any) => {
+			if (action.input.action === 'send') {
+				// The host took it and a task took it at once; the answer was lost on the way back.
+				deliveries = [
+					{
+						deliveryId: 'd1',
+						notes: [{ id: 'host-9', text: action.input.text, timestamp: 7 }],
+					},
+				];
+				return { ok: false, error: 'The connection dropped.', unknown: true };
+			}
+			return {
+				ok: true,
+				result: {
+					kind: 'steer-auto-run',
+					result: { success: true, steerable: true, pending: [], deliveries },
+				},
+			};
+		});
+		submitSteeringNote({ sessionId: SID, text: 'Taken at once', announce: false });
+		await settled();
+		expect(returned()).toBeUndefined();
+		expect(useAutoRunSteeringStore.getState().delivered[SID]?.map((n) => n.text)).toEqual([
+			'Taken at once',
+		]);
+	});
+
+	it('hands back a refused send even when the host holds a note with the same text (review)', async () => {
+		setUp('hosted');
+		hostPending = [{ id: 'host-0', text: 'Repeat the checks', timestamp: 1 }];
+		hostRefuses = 'Too many notes are waiting';
+		submitSteeringNote({ sessionId: SID, text: 'Repeat the checks', announce: false });
+		await settled();
+		expect(returned()).toEqual(['Repeat the checks']);
+	});
+
+	it('leaves a note alone when the agent stops being hosted while the host answers a list (review)', async () => {
+		setUp('hosted');
+		hostPending = [{ id: 'host-1', text: 'On the host', timestamp: 1 }];
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		act.mockImplementationOnce(async (peer: string, agent: string, action: any) => {
+			await held;
+			return hostAnswer(peer, agent, action);
+		});
+		const reading = refreshHostedSteering(SID);
+		await vi.waitFor(() => expect(act).toHaveBeenCalled());
+		// Moved back mid-read: the run is this window's own again, and so are its notes.
+		setUp('ssh');
+		submitSteeringNote({ sessionId: SID, text: 'Local again', announce: false });
+		release();
+		await reading;
+		expect(pending()).toEqual(['Local again']);
+	});
+
+	it('keeps a lost-answer send waiting until a list the host answers settles it (review)', async () => {
+		setUp('hosted');
+		let listsFail = true;
+		act.mockImplementation(async (peer: string, agent: string, action: any) => {
+			if (action.input.action === 'send') {
+				return { ok: false, error: 'The connection dropped.', unknown: true };
+			}
+			if (listsFail) return { ok: false, error: 'The host is down' };
+			return hostAnswer(peer, agent, action);
+		});
+		submitSteeringNote({ sessionId: SID, text: 'Lost on the way', announce: false });
+		await settled();
+		// No list yet: neither waiting on the host for sure nor refused, so it stays as it is.
+		expect(pending()).toEqual(['Lost on the way']);
+		expect(returned()).toBeUndefined();
+		await settled();
+		expect(pending()).toEqual(['Lost on the way']);
+
+		// The host answers a list without it: it never landed, so the text comes back.
+		listsFail = false;
+		await settled();
+		expect(pending()).toEqual([]);
+		expect(returned()).toEqual(['Lost on the way']);
+	});
+
+	it('applies no list from a host the agent moved away from while it answered (review)', async () => {
+		setUp('hosted');
+		hostPending = [{ id: 'host-1', text: 'On the first host', timestamp: 1 }];
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		act.mockImplementationOnce(async (peer: string, agent: string, action: any) => {
+			await held;
+			return hostAnswer(peer, agent, action);
+		});
+		const reading = refreshHostedSteering(SID);
+		await vi.waitFor(() => expect(act).toHaveBeenCalled());
+		const [moved] = useSessionStore.getState().sessions;
+		useSessionStore.setState({
+			sessions: [{ ...moved, liftedTo: { peer: 'other-box', agentId: 'h9', at: 2 } }],
+		});
+		release();
+		await reading;
+		expect(pending()).toEqual([]);
+	});
+
+	it('stops reading the list from a host that does not know the op', async () => {
+		setUp('hosted');
+		act.mockImplementation(async () => ({
+			ok: false,
+			error: 'The host is too old.',
+			code: 'unsupported',
+		}));
+		submitSteeringNote({ sessionId: SID, text: 'Old host', announce: false });
+		await settled();
+		expect(returned()).toEqual(['Old host']);
+		const calls = act.mock.calls.length;
+		for (let i = 0; i < 5; i++) await refreshHostedSteering(SID);
+		expect(act.mock.calls.length).toBe(calls);
+	});
+});
+
+describe("what this window keeps about a host's steering ends with the run (P11)", () => {
+	it("names a note by this window's id once the run's ids are forgotten", async () => {
+		setUp('hosted');
+		const note = submitSteeringNote({ sessionId: SID, text: 'Earlier run', announce: false });
+		await settled();
+		forgetHostedSteering(SID);
+		act.mockClear();
+		cancelSteeringNote(SID, note!.id);
+		await settled();
+		expect(act).toHaveBeenCalledWith('box', 'h1', {
+			kind: 'steer-auto-run',
+			input: { action: 'cancel', noteId: note!.id },
+		});
+	});
+
+	it('asks a host that did not know the op again in the next run', async () => {
+		setUp('hosted');
+		act.mockImplementation(async () => ({
+			ok: false,
+			error: 'The host is too old.',
+			code: 'unsupported',
+		}));
+		await refreshHostedSteering(SID);
+		const calls = act.mock.calls.length;
+		await refreshHostedSteering(SID);
+		expect(act.mock.calls.length).toBe(calls);
+		forgetHostedSteering(SID);
+		await refreshHostedSteering(SID);
+		expect(act.mock.calls.length).toBe(calls + 1);
+	});
+});
+
+describe('a hosted steering answer that comes back too late (review, round three)', () => {
+	const returned = () => useAutoRunSteeringStore.getState().returnedDrafts[SID];
+	const pending = () => (useAutoRunSteeringStore.getState().notes[SID] ?? []).map((n) => n.text);
+	/** Hold the next send until `release()`, then answer it with `answer`. */
+	function holdSend(answer: () => unknown) {
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		act.mockImplementation(async (peer: string, agent: string, action: any) => {
+			if (action.input.action === 'send') {
+				await held;
+				return answer();
+			}
+			return hostAnswer(peer, agent, action);
+		});
+		return () => release();
+	}
+
+	it('applies no older-host mark from a run already forgotten, and hands the note back', async () => {
+		setUp('hosted');
+		const release = holdSend(() => ({ ok: false, error: 'Too old.', code: 'unsupported' }));
+		submitSteeringNote({ sessionId: SID, text: 'Sent to the old run', announce: false });
+		await vi.waitFor(() => expect(act).toHaveBeenCalled());
+		forgetHostedSteering(SID);
+		release();
+		await settled();
+		expect(returned()).toEqual(['Sent to the old run']);
+		// The mark was not set: this run's list is still read.
+		const calls = act.mock.calls.length;
+		await refreshHostedSteering(SID);
+		expect(act.mock.calls.length).toBe(calls + 1);
+	});
+
+	it('treats a connection lost after the send as an unknown outcome, not a refusal', async () => {
+		setUp('hosted');
+		listFails = true;
+		act.mockImplementation(async (peer: string, agent: string, action: any) =>
+			action.input.action === 'send'
+				? { ok: false, error: 'The host connection was lost.', code: 'host-lost' }
+				: hostAnswer(peer, agent, action)
+		);
+		submitSteeringNote({ sessionId: SID, text: 'Maybe there', announce: false });
+		await settled();
+		expect(pending()).toEqual(['Maybe there']);
+		expect(returned()).toBeUndefined();
+	});
+
+	it('drops the waiting copy of a lost-answer send when the run is forgotten, keeping its text', async () => {
+		setUp('hosted');
+		listFails = true;
+		act.mockImplementation(async (peer: string, agent: string, action: any) =>
+			action.input.action === 'send'
+				? { ok: false, error: 'The connection dropped.', unknown: true }
+				: hostAnswer(peer, agent, action)
+		);
+		submitSteeringNote({ sessionId: SID, text: 'Unsettled', announce: false });
+		await settled();
+		forgetHostedSteering(SID);
+		expect(pending()).toEqual([]);
+		expect(returned()).toEqual(['Unsettled']);
+	});
+
+	it('takes back a lost-answer send on the host by its id once a list finds it', async () => {
+		setUp('hosted');
+		listFails = true;
+		act.mockImplementation(async (peer: string, agent: string, action: any) => {
+			if (action.input.action === 'send') {
+				await hostAnswer(peer, agent, action);
+				return { ok: false, error: 'The connection dropped.', unknown: true };
+			}
+			return hostAnswer(peer, agent, action);
+		});
+		const note = submitSteeringNote({ sessionId: SID, text: 'Never mind', announce: false });
+		await settled();
+		cancelSteeringNote(SID, note!.id);
+		await settled();
+		listFails = false;
+		await settled();
+		await settled();
+		expect(act).toHaveBeenCalledWith('box', 'h1', {
+			kind: 'steer-auto-run',
+			input: { action: 'cancel', noteId: 'host-1' },
+		});
+		expect(hostPending).toEqual([]);
+		expect(returned()).toBeUndefined();
+	});
+
+	it('hands nothing back for a lost-answer send taken back that never landed', async () => {
+		setUp('hosted');
+		listFails = true;
+		act.mockImplementation(async (peer: string, agent: string, action: any) =>
+			action.input.action === 'send'
+				? { ok: false, error: 'The connection dropped.', unknown: true }
+				: hostAnswer(peer, agent, action)
+		);
+		const note = submitSteeringNote({ sessionId: SID, text: 'Not wanted', announce: false });
+		await settled();
+		cancelSteeringNote(SID, note!.id);
+		listFails = false;
+		await settled();
+		expect(pending()).toEqual([]);
+		expect(returned()).toBeUndefined();
 	});
 });

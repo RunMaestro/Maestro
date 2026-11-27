@@ -56,6 +56,8 @@ import { validateGroupAppearance } from '../../groupAppearance';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../webLogin';
 import { parseWireAskerKey } from '../../crossAgentTypes';
 import { parseWireClosedTabs } from '../../closedTabHistory';
+import { INTERRUPT_TURN_REPLY_TIMEOUT_MS, parseStoppedItemIds } from '../../turnInterrupt';
+import { QUEUE_CHANGES_QUERY_PARAM } from '../../queueSnapshot';
 import type { ClosedTabSummary } from '../../closedTabCommands';
 import type { AgentError, HistoryEntry, SshRemoteConfig } from '../../types';
 import {
@@ -128,6 +130,7 @@ import type {
 	MaestroEvent,
 	ProviderInfo,
 	QueuedTurn,
+	QueueExit,
 	QueuedTurnEdit,
 	SettingsChange,
 	TabPatch,
@@ -141,9 +144,13 @@ import type {
 import {
 	normalizeOriginHost,
 	normalizeTurnOverrides,
+	parseHostCapabilities,
 	parseQueuedTurnImages,
 	parseQueuedTurnSettings,
+	readRequestedTabId,
+	readTurnEntryId,
 } from './types';
+import { withTurnAgentText } from '../turns/prompt';
 
 const LOG_CONTEXT = '[WsMaestroClient]';
 
@@ -167,6 +174,9 @@ const POST_OUTCOME_REFRESH_MS = 2_500;
 /** The longest group chat name. Agent names have their own limit (`MAX_AGENT_NAME_LENGTH`). */
 const MAX_CHAT_NAME_LENGTH = 100;
 
+/** The longest queue item id read off a host's `queue_changed` frame (the host's ids are UUIDs). */
+const MAX_QUEUE_ITEM_ID_CHARS = 200;
+
 const TOO_OLD_MESSAGE = 'The running Maestro is too old for this request; update the desktop app.';
 
 /** The least time an `import_agent` gets: it carries every transcript the agent has. */
@@ -188,11 +198,19 @@ function asString(value: unknown): string | undefined {
 	return typeof value === 'string' ? value : undefined;
 }
 
+/** A `queue_changed` frame's `exit`, or undefined when it is not one this client can read. */
+function parseQueueExit(raw: unknown): QueueExit | undefined {
+	if (!isObject(raw)) return undefined;
+	const itemId = asString(raw.itemId);
+	if (!itemId || itemId.length > MAX_QUEUE_ITEM_ID_CHARS) return undefined;
+	return raw.exit === 'started' || raw.exit === 'removed' ? { itemId, exit: raw.exit } : undefined;
+}
+
 /**
  * The waiting messages of one agent, from `list_queue`'s item shape: the desktop bridge's reply
  * and a headless host's `queue_changed` frame (`queuedTurnsToWire`) both carry it.
  */
-function parseQueuedTurns(raw: unknown): QueuedTurn[] {
+export function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 	const items = Array.isArray(raw) ? raw : [];
 	return items.filter(isObject).map((item): QueuedTurn => {
 		const command = asString(item.command);
@@ -206,10 +224,73 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 			kind: item.type === 'command' ? 'command' : 'message',
 			text: asString(item.text) ?? (command ? (args ? `${command} ${args}` : command) : ''),
 			paused: item.paused === true,
+			// Off the wire: a boolean and a finite time, or nothing (an older host says neither).
+			...(typeof item.handOver === 'boolean' ? { handOver: item.handOver } : {}),
+			...(item.handOver === true && Number.isFinite(item.handOverSince)
+				? { handOverSince: item.handOverSince as number }
+				: {}),
 			...(turnSettings ? { turnSettings } : {}),
 			...(images ? { images } : {}),
+			// The host sent this item's images before: the mirror keeps the ones it holds (M26).
+			...(!images && item.imagesKept === true ? { imagesKept: true as const } : {}),
 		};
 	});
+}
+
+/** The most item ids a desktop host's queue changes frame may list (a host caps its queue at 100). */
+const MAX_QUEUE_CHANGES_ORDER = 1_000;
+
+/** The most changes of one agent kept while its whole read is out; past it the queue is read again. */
+const MAX_QUEUE_CHANGES_WHILE_READING = 100;
+
+/** The most whole reads in a row one gap may take when changes keep outrunning the kept ones. */
+const MAX_QUEUE_GAP_READS = 3;
+
+/** A desktop host's queue change (`QueueChangesFrame`, M28), read off the wire. */
+interface QueueChanges {
+	seq: number;
+	base: number;
+	order: string[];
+	changed: QueuedTurn[];
+}
+
+/** A `queue_changed` frame's `changes`, or undefined when it is not one this client can read. */
+function parseQueueChanges(raw: unknown): QueueChanges | undefined {
+	if (!isObject(raw) || !Array.isArray(raw.order) || !Array.isArray(raw.changed)) return undefined;
+	const { seq, base } = raw;
+	if (!Number.isSafeInteger(seq) || !Number.isSafeInteger(base)) return undefined;
+	if ((seq as number) <= (base as number) || (base as number) < 0) return undefined;
+	if (raw.order.length > MAX_QUEUE_CHANGES_ORDER) return undefined;
+	const order = raw.order.filter(
+		(id): id is string =>
+			typeof id === 'string' && id.length > 0 && id.length <= MAX_QUEUE_ITEM_ID_CHARS
+	);
+	if (order.length !== raw.order.length) return undefined;
+	return {
+		seq: seq as number,
+		base: base as number,
+		order,
+		changed: parseQueuedTurns(raw.changed),
+	};
+}
+
+/**
+ * The list `changes` makes of `held` (the list of the frame it changes): each id in order, from the
+ * change when it carries the item, else as held. Undefined when an id is in neither.
+ */
+function applyQueueChanges(
+	held: readonly QueuedTurn[],
+	changes: QueueChanges
+): QueuedTurn[] | undefined {
+	const byId = new Map(held.map((item) => [item.itemId, item]));
+	for (const item of changes.changed) byId.set(item.itemId, item);
+	const items: QueuedTurn[] = [];
+	for (const id of changes.order) {
+		const item = byId.get(id);
+		if (!item) return undefined;
+		items.push(item);
+	}
+	return items;
 }
 
 /**
@@ -311,6 +392,10 @@ class WsMaestroClient implements MaestroClient {
 	private readonly requestTimeoutMs: number;
 	private readonly reconnectInitialMs: number;
 	private readonly reconnectMaxMs: number;
+	/** The reconnect attempt dialing right now, so a second one joins it. */
+	private reconnectInFlight:
+		| Promise<ClientResult<{ host: HostInfo; resumed: boolean }>>
+		| undefined;
 	private readonly heartbeatIntervalMs: number;
 	private readonly heartbeatTimeoutMs: number;
 	private readonly reconcileIntervalMs: number;
@@ -324,6 +409,35 @@ class WsMaestroClient implements MaestroClient {
 
 	private state: ConnectionState = 'idle';
 	private hostInfo: HostInfo | undefined;
+	/**
+	 * Whether the attached host puts a turn's agent-only text into its prompt (`host_capabilities`),
+	 * asked once per connection: a reconnect may reach an upgraded host.
+	 */
+	private agentTextSupport: Promise<ClientResult<boolean>> | undefined;
+	/**
+	 * Per agent, its desktop host queue as this client last resolved it, and the `seq` of the
+	 * changes frame (or the queue read's `queueSeq`) that list is at (M28). Dropped with the socket.
+	 */
+	private readonly heldQueues = new Map<string, { seq: number; items: QueuedTurn[] }>();
+	/**
+	 * Agents whose changes wait for a whole read, with the changes that came while it was out, in
+	 * order: they are applied over its answer, so the list emitted last is at the newest change
+	 * received (CodeRabbit on #2162). Bounded: past it the chain breaks and the next change reads
+	 * the queue again.
+	 */
+	/**
+	 * Per agent, bumped when the host removes it: a queue read answered after that never restores
+	 * what it held, nor emits it (CodeRabbit on #2162).
+	 */
+	private readonly queueGenerations = new Map<string, number>();
+	private readonly queueGapReads = new Map<
+		string,
+		{
+			later: Array<{ changes: QueueChanges; named: { namesExits?: true; exit?: QueueExit } }>;
+			/** A change came past the bound: the replay ends short of it, so the queue is read again. */
+			overflowed: boolean;
+		}
+	>();
 	private conn: BridgeConnection | undefined;
 	private attempt: Attempt | undefined;
 	private connecting: Promise<ClientResult<HostInfo>> | undefined;
@@ -403,7 +517,7 @@ class WsMaestroClient implements MaestroClient {
 			const tabs = this.mirror.visibleTabs(agentId);
 			return tabs ? ok(tabs) : this.fail('tabs.list', 'not-found', `No agent ${agentId}`);
 		},
-		create: (agentId: string) => this.tabsCreate(agentId),
+		create: (agentId: string, opts?: { tabId?: string }) => this.tabsCreate(agentId, opts),
 		rename: (agentId: string, tabId: string, name: string) => this.tabsRename(agentId, tabId, name),
 		close: (agentId: string, tabId: string) => this.tabsClose(agentId, tabId),
 		closed: (agentId: string) => this.tabsClosed(agentId),
@@ -843,11 +957,15 @@ class WsMaestroClient implements MaestroClient {
 				settle(result);
 			},
 		};
-		const query = resume && this.epoch ? { since: this.lastSeq, epoch: this.epoch } : undefined;
+		// This client reads a desktop host's queue changes (M28); resume says where it left off.
+		const query = {
+			[QUEUE_CHANGES_QUERY_PARAM]: 1,
+			...(resume && this.epoch ? { since: this.lastSeq, epoch: this.epoch } : {}),
+		};
 		const conn = new BridgeConnection({
 			...(endpoint ? { endpoint } : { userDataDir: this.options.userDataDir }),
 			strictReplies: true,
-			...(query ? { query } : {}),
+			query,
 			WebSocketImpl: this.options.WebSocketImpl,
 			onFrame: (frame) => this.onFrame(attempt, conn, frame),
 			onClose: (code, reason) => this.onSocketClose(attempt, conn, code, reason),
@@ -920,6 +1038,7 @@ class WsMaestroClient implements MaestroClient {
 		this.conn = conn;
 		this.attempt = undefined;
 		this.hostInfo = host;
+		this.agentTextSupport = undefined;
 		this.state = 'connected';
 		if (snapshot) this.mirror.replace(snapshot.agents, snapshot.groups);
 		this.startTimers();
@@ -1000,6 +1119,9 @@ class WsMaestroClient implements MaestroClient {
 			return;
 		}
 		if (this.conn !== conn) return;
+		// A list held from this socket's frames: the next socket's frames may not change it.
+		this.heldQueues.clear();
+		this.queueGapReads.clear();
 		this.handleDrop(
 			code === WEB_LOGIN_WS_CLOSE_CODE
 				? 'The Maestro desktop closed the connection (login required).'
@@ -1023,7 +1145,7 @@ class WsMaestroClient implements MaestroClient {
 			}
 			case 'session_removed': {
 				const id = asString(frame.sessionId);
-				if (id) this.emitAll(this.mirror.remove(id));
+				if (id) this.removeAgent(id);
 				break;
 			}
 			case 'session_state_change': {
@@ -1069,10 +1191,28 @@ class WsMaestroClient implements MaestroClient {
 				break;
 			}
 			case 'queue_changed': {
-				// A headless host's own frame: the desktop sends none (see `queue.changed`).
+				// A host's queue change: a headless host's, and a desktop's (`broadcastDesktopQueueChanges()`).
 				const agentId = asString(frame.sessionId);
-				if (!agentId || !Array.isArray(frame.items)) break;
-				this.emit({ type: 'queue.changed', agentId, items: parseQueuedTurns(frame.items) });
+				if (!agentId) break;
+				// How an item left, from a host that names it (an older one sends neither field).
+				const exit = parseQueueExit(frame.exit);
+				const named = {
+					...(frame.namesExits === true ? { namesExits: true as const } : {}),
+					...(exit ? { exit } : {}),
+				};
+				// A desktop host's change only, for this client that said it reads changes (M28).
+				const changes = parseQueueChanges(frame.changes);
+				if (changes) {
+					this.onQueueChanges(agentId, changes, named);
+					break;
+				}
+				if (!Array.isArray(frame.items)) break;
+				this.emit({
+					type: 'queue.changed',
+					agentId,
+					items: parseQueuedTurns(frame.items),
+					...named,
+				});
 				break;
 			}
 			case 'autorun_ended': {
@@ -1124,7 +1264,7 @@ class WsMaestroClient implements MaestroClient {
 				}
 				if (Array.isArray(payload.removedIds)) {
 					for (const id of payload.removedIds) {
-						if (typeof id === 'string') this.emitAll(this.mirror.remove(id));
+						if (typeof id === 'string') this.removeAgent(id);
 					}
 				}
 				return;
@@ -1409,7 +1549,22 @@ class WsMaestroClient implements MaestroClient {
 		this.reconnectTimer = undefined;
 	}
 
-	private async tryReconnect(
+	/**
+	 * One reconnect attempt at a time: a caller's `reconnect()` while the backoff's own attempt is
+	 * dialing joins that attempt instead of opening a second socket beside it.
+	 */
+	private tryReconnect(
+		method: 'connection.reconnect'
+	): Promise<ClientResult<{ host: HostInfo; resumed: boolean }>> {
+		if (this.reconnectInFlight) return this.reconnectInFlight;
+		const attempt = this.tryReconnectOnce(method).finally(() => {
+			if (this.reconnectInFlight === attempt) this.reconnectInFlight = undefined;
+		});
+		this.reconnectInFlight = attempt;
+		return attempt;
+	}
+
+	private async tryReconnectOnce(
 		method: 'connection.reconnect'
 	): Promise<ClientResult<{ host: HostInfo; resumed: boolean }>> {
 		if (this.closedByCaller) return this.fail(method, 'host-unavailable', 'The client was closed.');
@@ -1450,11 +1605,29 @@ class WsMaestroClient implements MaestroClient {
 	// =======================================================================
 
 	private async agentsGet(agentId: string): Promise<ClientResult<AgentRecord>> {
-		const boot = await this.invoke<unknown>('agents.get', 'sessions:getBootstrap');
+		// The stored records read idle mid-turn (the desktop persists every state as idle), so the
+		// bridge's `get_sessions` projection, which reads the live process table (`isAgentBusy()`),
+		// is folded over them: a caller asking "is it running a turn?" gets the live answer.
+		const requestedAt = this.now();
+		const [boot, live] = await Promise.all([
+			this.invoke<unknown>('agents.get', 'sessions:getBootstrap'),
+			this.send<Reply>('agents.get', { type: 'get_sessions' }, 'sessions_list', {
+				matchByType: true,
+			}),
+		]);
 		if (!boot.ok) return boot;
 		const all = agentsOf({ sessions: Array.isArray(boot.value) ? boot.value : [] });
 		this.emitAll(this.mirror.syncAgents(all));
-		const found = all.find((agent) => agent.id === agentId);
+		if (!all.some((agent) => agent.id === agentId)) {
+			return this.fail('agents.get', 'not-found', `No agent ${agentId}`);
+		}
+		if (live.ok && Array.isArray(live.value.sessions)) {
+			// The reconcile poll's own fold (section 6.3), so the mirror reads the same either way.
+			this.emitAll(
+				this.mirror.reconcile(live.value.sessions as ProjectedAgent[], requestedAt).events
+			);
+		}
+		const found = this.mirror.getAgent(agentId) ?? all.find((agent) => agent.id === agentId);
 		return found ? ok(found) : this.fail('agents.get', 'not-found', `No agent ${agentId}`);
 	}
 
@@ -1487,6 +1660,8 @@ class WsMaestroClient implements MaestroClient {
 			tabs: input.tabs.map(importTabWireFields),
 			...(input.activeTabId ? { activeTabId: input.activeTabId } : {}),
 			...(input.queue && input.queue.length > 0 ? { queue: input.queue } : {}),
+			...(input.replacesAgentId ? { replacesAgentId: input.replacesAgentId } : {}),
+			...(input.liftedFromAgentId ? { liftedFromAgentId: input.liftedFromAgentId } : {}),
 		};
 		// A long transcript is a large frame: give it the time a large frame takes.
 		const sent = await this.send('agents.import', message, 'import_agent_result', {
@@ -1782,10 +1957,19 @@ class WsMaestroClient implements MaestroClient {
 	// Tabs
 	// =======================================================================
 
-	private async tabsCreate(agentId: string): Promise<ClientResult<{ tabId: string }>> {
+	private async tabsCreate(
+		agentId: string,
+		opts?: { tabId?: string }
+	): Promise<ClientResult<{ tabId: string }>> {
+		const requested = readRequestedTabId(opts?.tabId);
 		const sent = await this.send(
 			'tabs.create',
-			{ type: 'new_tab', sessionId: agentId, background: true },
+			{
+				type: 'new_tab',
+				sessionId: agentId,
+				background: true,
+				...(requested ? { tabId: requested } : {}),
+			},
 			'new_tab_result'
 		);
 		if (!sent.ok) return sent;
@@ -1917,8 +2101,21 @@ class WsMaestroClient implements MaestroClient {
 		const turnOverrides = normalizeTurnOverrides(input.overrides);
 		if (turnOverrides) message.turnOverrides = turnOverrides;
 		if (input.held === true) message.held = true;
-		if (input.agentContext) message.agentContext = input.agentContext;
-		if (input.agentNotes) message.agentNotes = input.agentNotes;
+		if (input.agentContext || input.agentNotes) {
+			// A host too old to take the two fields would drop them, and the turn would answer
+			// without a consult's replies. It gets them in the message instead, as an SSH turn's
+			// prompt is built on this side (its transcript then shows them in the bubble).
+			const applies = await this.hostAppliesAgentText();
+			if (!applies.ok) return applies;
+			if (applies.value) {
+				if (input.agentContext) message.agentContext = input.agentContext;
+				if (input.agentNotes) message.agentNotes = input.agentNotes;
+			} else {
+				message.command = withTurnAgentText(input.text, input);
+			}
+		}
+		const entryId = readTurnEntryId(input.entryId);
+		if (entryId) message.entryId = entryId;
 
 		const sent = await this.send('turns.send', message, 'enqueue_command_result');
 		if (!sent.ok)
@@ -1972,6 +2169,11 @@ class WsMaestroClient implements MaestroClient {
 		}
 		// One of Maestro's own commands: the host ran it, and no turn will end, so none begins here.
 		if (reply.ran === true) return ok({ status: 'ran' });
+		// The host's own retry holds the message it named (`TurnSendReceipt` `retrying`): nothing
+		// began. Checked first: the host also says `answered` for a client too old to know it.
+		if (reply.retrying === true) return ok({ status: 'retrying' });
+		// The message it named already ran on the host (`TurnSendReceipt` `answered`): nothing began.
+		if (reply.answered === true) return ok({ status: 'answered' });
 		this.beginTurn(agentId, asString(reply.tabId) ?? tabId);
 		return ok({ status: 'started' });
 	}
@@ -1979,13 +2181,51 @@ class WsMaestroClient implements MaestroClient {
 	private async turnsInterrupt(
 		agentId: string,
 		tabId: string
-	): Promise<ClientResult<{ stopped: boolean }>> {
+	): Promise<ClientResult<{ stopped: boolean; stoppedItemIds?: string[] }>> {
 		const gate = this.requireConnected('turns.interrupt');
 		if (gate) return gate;
 		const state = this.turnStates.get(this.turnKey(agentId, tabId));
 		const previous = state?.interruptRequested ?? false;
 		// Record the request BEFORE asking: the exit can arrive ahead of the reply.
 		if (state?.running) state.interruptRequested = true;
+
+		// A desktop host runs its own Stop (`interruptTurn()`, as `maestro-cli interrupt` does), which
+		// names the queue item whose turn it ended: its queue frames trail its writes, so only this
+		// answer says which waiting message was the stopped turn (M27). A host that cannot (headless,
+		// which has no `interrupt_turn`, or one too old) takes the process signal below.
+		if (this.hostInfo?.kind === 'desktop') {
+			const named = await this.send(
+				'turns.interrupt',
+				{ type: 'interrupt_turn', sessionId: agentId, tabId },
+				'interrupt_turn_result',
+				{ timeoutMs: INTERRUPT_TURN_REPLY_TIMEOUT_MS }
+			);
+			if (named.ok && named.value.success === true) {
+				const stopped =
+					Array.isArray(named.value.stoppedTabIds) && named.value.stoppedTabIds.includes(tabId);
+				if (!stopped && state) state.interruptRequested = previous;
+				const stoppedItemIds = parseStoppedItemIds(named.value.stoppedItemIds);
+				return ok({ stopped, ...(stoppedItemIds ? { stoppedItemIds } : {}) });
+			}
+			// The process signal only where the host's own Stop sent none: a host without it, or a
+			// desktop with no window that owns the agent. Any other failure may come after the host
+			// stopped the turn and started the next one on this tab, which a signal to the tab's
+			// process would then stop (CodeRabbit on #2160): that failure is the answer.
+			const code = named.ok ? asString(named.value.code) : undefined;
+			const signalSent = named.ok
+				? code !== 'RENDERER_UNAVAILABLE'
+				: named.error.code !== 'unsupported';
+			if (signalSent) {
+				if (state) state.interruptRequested = previous;
+				if (!named.ok) return named;
+				if (code === 'AGENT_NOT_FOUND' || code === 'TAB_NOT_FOUND') return ok({ stopped: false });
+				return this.fail(
+					'turns.interrupt',
+					'failed',
+					asString(named.value.error) ?? 'The Maestro desktop could not stop the turn.'
+				);
+			}
+		}
 
 		let stopped = false;
 		const first = await this.invoke<boolean>('turns.interrupt', 'process:interrupt', [
@@ -2006,7 +2246,113 @@ class WsMaestroClient implements MaestroClient {
 		return ok({ stopped });
 	}
 
+	/**
+	 * Whether the host puts a turn's `agentContext` and `agentNotes` into the prompt. A host that
+	 * echoes `host_capabilities` (an older build) does not; a failed ask is not remembered.
+	 */
+	private hostAppliesAgentText(): Promise<ClientResult<boolean>> {
+		if (!this.agentTextSupport) {
+			const asked = this.send<Reply>(
+				'turns.send',
+				{ type: 'host_capabilities' },
+				'host_capabilities_result'
+			).then((reply): ClientResult<boolean> => {
+				if (reply.ok) {
+					return ok(parseHostCapabilities(reply.value.capabilities).includes('turn-agent-text'));
+				}
+				if (reply.error.code === 'unsupported') return ok(false);
+				if (this.agentTextSupport === asked) this.agentTextSupport = undefined;
+				return reply;
+			});
+			this.agentTextSupport = asked;
+		}
+		return this.agentTextSupport;
+	}
+
+	/**
+	 * A desktop host's queue change (M28): applied over the list this client holds when that list is
+	 * the one it changes (its `base`), and emitted as the whole list, as every host's frame is. Any
+	 * other list (a frame missed, a socket new since) reads the queue whole instead, once, and that
+	 * answer goes out as a whole read (no `namesExits`), so the mirror counts the gap and judges
+	 * what waits by the tab, as after a reconnect. The changes that come while the read is out are
+	 * kept and applied over its answer, from the `seq` it names on (CodeRabbit on #2162).
+	 */
+	private onQueueChanges(
+		agentId: string,
+		changes: QueueChanges,
+		named: { namesExits?: true; exit?: QueueExit }
+	): void {
+		const waiting = this.queueGapReads.get(agentId);
+		if (waiting) {
+			if (waiting.later.length < MAX_QUEUE_CHANGES_WHILE_READING) {
+				waiting.later.push({ changes, named });
+			} else {
+				waiting.overflowed = true;
+			}
+			return;
+		}
+		const held = this.heldQueues.get(agentId);
+		// A change the list held already includes (a read answered at or past it): nothing to do.
+		if (held && changes.seq <= held.seq) return;
+		const items = held?.seq === changes.base ? applyQueueChanges(held.items, changes) : undefined;
+		if (items) {
+			this.heldQueues.set(agentId, { seq: changes.seq, items });
+			this.emit({ type: 'queue.changed', agentId, items, ...named });
+			return;
+		}
+		this.readQueueAfterGap(agentId, 1);
+	}
+
+	/**
+	 * The whole read a change that did not fit asked for. A read sent after that change answers at
+	 * or past it (the host takes its `queueSeq` as it starts the read, M29); every change sent
+	 * while it was out chains from that `seq`, and is applied over the answer in order. When more
+	 * changes came than are kept, the queue is read again once the replay is done (CodeRabbit on
+	 * #2162), at most `MAX_QUEUE_GAP_READS` times in a row; past that the list is not held as
+	 * current, so the next change reads it again.
+	 */
+	private readQueueAfterGap(agentId: string, attempt: number): void {
+		this.heldQueues.delete(agentId);
+		this.queueGapReads.set(agentId, { later: [], overflowed: false });
+		const generation = this.queueGenerations.get(agentId) ?? 0;
+		void this.queueList(agentId).then((read) => {
+			// The agent was removed while the read was out: its answer is for an agent gone.
+			if ((this.queueGenerations.get(agentId) ?? 0) !== generation) return;
+			const { later, overflowed } = this.queueGapReads.get(agentId) ?? {
+				later: [],
+				overflowed: false,
+			};
+			this.queueGapReads.delete(agentId);
+			// A failed read leaves the mirror as it was; the next change tries again.
+			if (!read.ok) return;
+			// The newest list this client holds: a queue read meanwhile may have been newer.
+			this.emit({
+				type: 'queue.changed',
+				agentId,
+				items: this.heldQueues.get(agentId)?.items ?? read.value,
+			});
+			// An answer with no `seq` (a host before M28 sends no changes) has nothing to chain from.
+			if (!this.heldQueues.has(agentId)) return;
+			for (const { changes, named } of later) this.onQueueChanges(agentId, changes, named);
+			if (!overflowed || this.queueGapReads.has(agentId)) return;
+			if (attempt < MAX_QUEUE_GAP_READS) this.readQueueAfterGap(agentId, attempt + 1);
+			else this.heldQueues.delete(agentId);
+		});
+	}
+
+	/**
+	 * An agent the host no longer has: its mirror record, its held queue and any gap read go (M29),
+	 * and a read still out for it is answered into nothing.
+	 */
+	private removeAgent(agentId: string): void {
+		this.queueGenerations.set(agentId, (this.queueGenerations.get(agentId) ?? 0) + 1);
+		this.heldQueues.delete(agentId);
+		this.queueGapReads.delete(agentId);
+		this.emitAll(this.mirror.remove(agentId));
+	}
+
 	private async queueList(agentId: string): Promise<ClientResult<QueuedTurn[]>> {
+		const generation = this.queueGenerations.get(agentId) ?? 0;
 		const sent = await this.send(
 			'turns.queue.list',
 			// The images ride along as data URLs, so a hosted card draws them as a local one does.
@@ -2018,7 +2364,18 @@ class WsMaestroClient implements MaestroClient {
 		if (!checked.ok) return checked;
 		const queues = Array.isArray(sent.value.queues) ? sent.value.queues : [];
 		const mine = queues.find((queue) => isObject(queue) && queue.sessionId === agentId);
-		return ok(parseQueuedTurns(isObject(mine) ? mine.items : undefined));
+		const items = parseQueuedTurns(isObject(mine) ? mine.items : undefined);
+		// A desktop host's answer says which changes frame it is at (M28): the next change applies
+		// over it. A list a newer frame already gave is kept.
+		const queueSeq = isObject(mine) ? mine.queueSeq : undefined;
+		const current = (this.queueGenerations.get(agentId) ?? 0) === generation;
+		if (current && Number.isSafeInteger(queueSeq) && (queueSeq as number) >= 0) {
+			const held = this.heldQueues.get(agentId);
+			if (!held || held.seq <= (queueSeq as number)) {
+				this.heldQueues.set(agentId, { seq: queueSeq as number, items });
+			}
+		}
+		return ok(items);
 	}
 
 	private async queueRemove(

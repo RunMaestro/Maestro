@@ -108,6 +108,8 @@ export interface ExecutionQueueOptions<T extends QueueItem> {
 	recheckMs?: number;
 	/** Test seam for the recheck timer. Returns its canceller. */
 	schedule?(run: () => void, ms: number): () => void;
+	/** Test seam for the clock the hand-over reads (`handOver()`). Default `Date.now`. */
+	now?(): number;
 }
 
 /** A turn that is running, as the decisions see it. */
@@ -130,6 +132,14 @@ export interface QueueView<T extends QueueItem> {
 function blockedByTreeHold(item: QueueItem, view: { holdsTree?: boolean }): boolean {
 	return view.holdsTree === true && !item.readOnly && !item.forceParallel;
 }
+
+/**
+ * The longest a waiting message counts as a hand-over (`handOverItem()`): the tab's own hold (a
+ * History synopsis, its last process exiting) normally ends in seconds. Past it the message is
+ * drawn queued, and a Stop armed for it is let go, so a hold that never ends cannot keep a tab
+ * reading busy or kill a turn that starts much later.
+ */
+export const HAND_OVER_MAX_MS = 30_000;
 
 /** The first back-off after a collision; it doubles per collision of the same item (1 s, 2 s, 4 s, ...). */
 export const DEFAULT_COLLISION_RECHECK_MS = 1000;
@@ -295,16 +305,54 @@ export function chooseNext<T extends QueueItem>(
 	return { action: 'wait', item: head };
 }
 
+/**
+ * The waiting message that waits for its own tab alone, the hand-over: the queue's next runnable
+ * message while no turn of the agent runs or starts and no Auto Run holds the tree for it. Only
+ * its tab's own hold keeps it (a History synopsis holds the session, the tab's last process is
+ * still exiting), so it starts the moment that ends, as a local tab's next message starts in the
+ * moment its turn ends. A message behind another one, or behind a turn of another tab, is not
+ * one: it waits for that. Undefined when no message waits that way.
+ */
+export function handOverItem<T extends QueueItem>(view: QueueView<T>): T | undefined {
+	if (view.busy.length > 0) return undefined;
+	const head = nextRunnable(view.queued);
+	if (!head || blockedByTreeHold(head, view)) return undefined;
+	return head;
+}
+
+/** The hand-over as the queue tracks it: its message, and since when it waits that way. */
+export interface HandOver {
+	itemId: string;
+	tabId: string;
+	since: number;
+}
+
 export interface ExecutionQueue<T extends QueueItem> {
 	/** Run the item now or queue it, by `decideSubmit`. The turn starts asynchronously. */
 	submit(item: T): { queued: boolean };
 	/** The items waiting, in order. An item being started is not waiting. */
 	items(): readonly T[];
 	isTabBusy(tabId: string): boolean;
+	/** The id of the item whose turn runs or starts on a tab now, or undefined when none does. */
+	busyItemId(tabId: string): string | undefined;
 	/** Tabs with a turn running or starting. */
 	busyTabIds(): string[];
 	/** Stop the running turn of a tab, or of every tab. Queued items start as the turns end. */
 	interrupt(tabId?: string): void;
+	/**
+	 * Stop a tab's next message as it starts: the Stop of a tab that runs no turn while that
+	 * message waits for the tab alone (no turn of the agent runs; a synopsis still holds the tab's
+	 * session, or its last process is still exiting). A local tab already runs that message in the
+	 * same moment, and Stop ends it; this one starts as it would and is stopped at once, so its
+	 * transcript reads the same, and the messages behind it run as they would. Returns its id, or
+	 * undefined when the tab's next message is no hand-over (`handOver()`): the tab runs a turn,
+	 * another tab does, an Auto Run holds the tree, another message starts first, or the hand-over
+	 * ran past `HAND_OVER_MAX_MS`. The mark is let go when the message stops being the hand-over,
+	 * so a Stop never ends a turn that starts after the gap it was pressed in.
+	 */
+	interruptNext(tabId: string): string | undefined;
+	/** The hand-over now (`handOverItem()`), or undefined: none, or it ran past `HAND_OVER_MAX_MS`. */
+	handOver(): HandOver | undefined;
 	/** Hold or release an item. Returns false when no waiting item has that id. */
 	setPaused(id: string, paused: boolean): boolean;
 	/** Take a waiting item out. Returns false when it is not waiting (it may already be running). */
@@ -353,6 +401,11 @@ interface Entry<T extends QueueItem> {
 	state: 'queued' | 'starting';
 	/** Stop was requested while `start` was still pending. */
 	interruptRequested?: boolean;
+	/**
+	 * Stop was pressed in the hand-over (`interruptNext()`): the turn ends as it starts, if it
+	 * starts as the same hand-over within `HAND_OVER_MAX_MS`. Let go when it stops being one.
+	 */
+	stopAtStart?: boolean;
 }
 
 interface ActiveTurn<T extends QueueItem> {
@@ -384,6 +437,9 @@ export function createExecutionQueue<T extends QueueItem>(
 	 */
 	const collisions = new Map<string, { count: number; cancel?: () => void }>();
 	let disposed = false;
+	const now = options.now ?? Date.now;
+	/** The hand-over (`handOverItem()`) and since when, kept up by `refreshHandOver()`. */
+	let handOver: HandOver | undefined;
 
 	// A throwing listener must not break a dispatch half way: the item would be left starting.
 	const emit = (event: QueueEvent<T>): void => {
@@ -419,6 +475,28 @@ export function createExecutionQueue<T extends QueueItem>(
 		collisions.delete(id);
 	};
 
+	/** Is `itemId` the hand-over, inside its time limit? */
+	const isLiveHandOver = (itemId: string): boolean =>
+		handOver?.itemId === itemId && now() - handOver.since < HAND_OVER_MAX_MS;
+
+	/**
+	 * Look at the hand-over again, after anything that can change it. A message that stops being it
+	 * (it started, another one goes first, it was held or removed, a turn or the tree hold came in)
+	 * loses a Stop armed for it. A change tells the listener as the item's `updated` when no event of
+	 * its own does (the turn before it ended, a hold changed), so a client draws the tab as it is.
+	 */
+	const refreshHandOver = (): void => {
+		const entry = handOver && entries.find((e) => e.item.id === handOver?.itemId);
+		// A start in flight is still the hand-over: a collision puts it back in its place.
+		if (entry?.state === 'starting') return;
+		const next = handOverItem(view());
+		if (next?.id === handOver?.itemId) return;
+		if (entry) entry.stopAtStart = false;
+		handOver = next ? { itemId: next.id, tabId: next.tabId, since: now() } : undefined;
+		const told = next ?? entry?.item;
+		if (told && !disposed) emit({ type: 'updated', item: told });
+	};
+
 	/** Is the item waiting out a collision? Only an edge that proves the old process gone skips it. */
 	const coolingDown = (id: string): boolean => collisions.get(id)?.cancel !== undefined;
 
@@ -445,6 +523,9 @@ export function createExecutionQueue<T extends QueueItem>(
 		const { item } = entry;
 		entry.state = 'starting';
 		starting.set(item.tabId, entry);
+		// Another message starting first ends the gap of a hand-over still waiting: a Stop armed for
+		// it is let go (a forced or read-only send, CodeRabbit on #2166). Its own start keeps it.
+		refreshHandOver();
 
 		let handle: QueuedTurnHandle;
 		try {
@@ -467,7 +548,9 @@ export function createExecutionQueue<T extends QueueItem>(
 			emit({ type: 'dispatch-failed', item: entry.item, error, held: !collision });
 			if (collision) {
 				// Draining now would pick the same head and collide again, in a loop. The item's
-				// recheck retries it, or a turn that ends first.
+				// recheck retries it, or a turn that ends first. Back in its place, it is still the
+				// hand-over, unless the queue changed while it was starting.
+				refreshHandOver();
 				notifyIfSettled();
 			} else {
 				notifyIfSettled();
@@ -481,8 +564,10 @@ export function createExecutionQueue<T extends QueueItem>(
 		const index = entries.indexOf(entry);
 		if (index !== -1) entries.splice(index, 1);
 		active.set(item.tabId, { item, handle });
+		const stopAtStart = entry.stopAtStart === true && isLiveHandOver(item.id);
 		emit({ type: 'started', item, direct });
-		if (entry.interruptRequested) handle.interrupt();
+		refreshHandOver();
+		if (entry.interruptRequested || stopAtStart) handle.interrupt();
 
 		void Promise.resolve(handle.done)
 			.catch(() => undefined)
@@ -498,15 +583,16 @@ export function createExecutionQueue<T extends QueueItem>(
 		if (disposed) return;
 		for (;;) {
 			const decision = chooseNext(view(), exitingTabId);
-			if (decision.action !== 'dispatch') return;
+			if (decision.action !== 'dispatch') break;
 			const entry = entries.find((e) => e.item === decision.item);
-			if (!entry) return;
+			if (!entry) break;
 			// The head collided a moment ago and its back-off has not run out. A turn that just
 			// ended is the old process going, so that edge retries at once; any other waits for
 			// the recheck, or it would dispatch into the same refusal on every change to the queue.
-			if (exitingTabId === undefined && coolingDown(entry.item.id)) return;
+			if (exitingTabId === undefined && coolingDown(entry.item.id)) break;
 			void dispatch(entry, false);
 		}
+		refreshHandOver();
 	}
 
 	return {
@@ -531,6 +617,10 @@ export function createExecutionQueue<T extends QueueItem>(
 			return active.has(tabId) || starting.has(tabId);
 		},
 
+		busyItemId(tabId) {
+			return active.get(tabId)?.item.id ?? starting.get(tabId)?.item.id;
+		},
+
 		busyTabIds() {
 			return busyTurns().map((turn) => turn.tabId);
 		},
@@ -544,6 +634,22 @@ export function createExecutionQueue<T extends QueueItem>(
 			}
 		},
 
+		interruptNext(tabId) {
+			refreshHandOver();
+			// Only the hand-over: the message that starts the moment this tab's own hold ends. One
+			// that waits for anything else (another message, another tab's turn, the tree hold) is
+			// left alone, as a local Stop leaves a queued message alone (U5).
+			const id = handOver?.tabId === tabId ? handOver.itemId : undefined;
+			const entry = id && isLiveHandOver(id) ? entries.find((e) => e.item.id === id) : undefined;
+			if (!entry || entry.state !== 'queued') return undefined;
+			entry.stopAtStart = true;
+			return entry.item.id;
+		},
+
+		handOver() {
+			return handOver && isLiveHandOver(handOver.itemId) ? { ...handOver } : undefined;
+		},
+
 		setPaused(id, paused) {
 			const entry = entries.find((e) => e.state === 'queued' && e.item.id === id);
 			if (!entry) return false;
@@ -551,6 +657,7 @@ export function createExecutionQueue<T extends QueueItem>(
 			entry.item = { ...entry.item, paused };
 			emit({ type: 'updated', item: entry.item });
 			if (!paused) drain();
+			else refreshHandOver();
 			return true;
 		},
 
@@ -582,6 +689,7 @@ export function createExecutionQueue<T extends QueueItem>(
 			upperEntry.item = { ...combine(upperEntry.item, lowerEntry.item), id: upperEntry.item.id };
 			emit({ type: 'removed', item: lowerEntry.item });
 			emit({ type: 'updated', item: upperEntry.item });
+			refreshHandOver();
 			return upperEntry.item.id;
 		},
 
@@ -590,6 +698,7 @@ export function createExecutionQueue<T extends QueueItem>(
 			if (!entry) return false;
 			entry.item = { ...change(entry.item), id: entry.item.id };
 			emit({ type: 'updated', item: entry.item });
+			refreshHandOver();
 			return true;
 		},
 

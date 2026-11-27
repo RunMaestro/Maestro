@@ -97,4 +97,22 @@ describe('MoveToHostPlan', () => {
 		);
 		expect(screen.getByText('starts fresh')).toBeTruthy();
 	});
+
+	it("says how many of the earlier copy's tabs merge and how many stay as copies (U4)", () => {
+		const { rerender } = render(
+			<MoveToHostPlan
+				theme={theme}
+				summary={summaryWith({
+					replaces: 'pedtome:old',
+					tabMerge: { merged: 11, copies: 1, added: 1 },
+				})}
+			/>
+		);
+		expect(screen.getByTestId('move-to-host-tab-merge').textContent).toBe(
+			'The host copy\'s tabs: 11 tabs merge into the tab of the same conversation; 1 tab stays as a copy named "(on the host)" (both sides went on after the Move Back); 1 tab comes in that only the host had.'
+		);
+		// A plain lift replaces no copy and says nothing about one.
+		rerender(<MoveToHostPlan theme={theme} summary={summaryWith()} />);
+		expect(screen.queryByTestId('move-to-host-tab-merge')).toBeNull();
+	});
 });

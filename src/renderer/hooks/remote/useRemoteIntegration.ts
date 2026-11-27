@@ -40,11 +40,17 @@ import {
 	moveQueuedItemSettled,
 } from '../../services/queuedPrompt';
 import { withQueuedTurnOverrides } from '../../../shared/queuedTurnSettings';
-import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import type { TurnAgentText, TurnOverrides } from '../../../shared/maestro-lib/client/types';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSideQuestion } from '../../services/sideQuestion';
 import { runMaestroBuiltinCommand } from '../../services/maestroBuiltinCommands';
-import { hostedTargetOf, openHostedTab, sendHostedTurn } from '../../services/hostedTurns';
+import {
+	hostedTargetOf,
+	openHostedTab,
+	renameHostedTabSettled,
+	sendHostedTurn,
+} from '../../services/hostedTurns';
+import { hostedTabHoldsLine } from '../../utils/hostedTabLine';
 import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
@@ -64,7 +70,7 @@ import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGau
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
-import { persistTabStarred } from '../../utils/starredSessions';
+import { setTabStarred } from '../../services/tabStar';
 import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { messagesToLogEntries } from '../../components/AgentSessionsBrowser/utils/messagesToLogEntries';
@@ -109,6 +115,7 @@ import { loadAllSettings } from '../../stores/settingsStore';
 import { useRemoteGroupChat } from './useRemoteGroupChat';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { getGrokSlashCommandRefusal } from '../../slashCommands';
+import { toQueuedItemSnapshot } from '../../../shared/queueSnapshot';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -725,15 +732,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		// Handle remote new tab from web interface
 		const unsubscribeNewTab = window.maestro.process.onRemoteNewTab(
-			(sessionId: string, responseChannel: string, background?: boolean) => {
+			(sessionId: string, responseChannel: string, background?: boolean, tabId?: string) => {
 				let newTabId: string | null = null;
 
 				flushSync(() => {
 					updateSessionWith(sessionId, (s) => {
+						// A Federation client draws the tab under a fresh id before it asks (R15), so a
+						// tab already under that id is the one this same request made (its answer was
+						// lost): answer it, make no second one (R25).
+						if (tabId && s.aiTabs.some((tab) => tab.id === tabId)) {
+							newTabId = tabId;
+							return s;
+						}
 						// Use createTab helper. `activate: false` appends the tab without
 						// touching any active-* id, so it shows up in the tab bar the way
-						// a browser opens a background tab.
+						// a browser opens a background tab. A Federation client's id for a tab it
+						// already drew (R15) is taken.
 						const result = createTab(s, {
+							...(tabId ? { id: tabId } : {}),
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
 							activate: !background,
@@ -1167,6 +1183,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const tab = session.aiTabs.find((t) => t.id === tabId);
 					if (!tab) return { success: false, error: `Tab not found: ${tabId}` };
 
+					// A hosted agent's tab is renamed on its host first, as the Rename Tab modal
+					// does (`useSessionLifecycle`): the tab is drawn from the host's record, so a
+					// name kept only here is gone on the next sync. A name the host refuses
+					// changes nothing here and answers the caller with the host's reason.
+					const onHost = renameHostedTabSettled(session, tabId, target);
+					if (onHost) {
+						const outcome = await onHost;
+						if (!outcome.saved) return { success: false, error: outcome.reason };
+					}
+
 					const isGrokTab =
 						session.toolType === 'grok' || resolveTurnProvider(tab, session) === 'grok';
 					// Keep Grok's label in the persisted Maestro tab, including turns
@@ -1299,11 +1325,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				const tab = session?.aiTabs.find((t) => t.id === tabId);
 				if (!session || !tab?.agentSessionId) return;
 
-				// Persist starred state and broadcast the change (same logic as
-				// desktop handleTabStar) so the Left Bar's starred cache refreshes.
-				persistTabStarred(session, tab, starred);
-
-				updateAiTab(sessionId, tabId, (t) => ({ ...t, starred }));
+				// The desktop star's own write: a hosted agent's host gets it too, so the
+				// next sync does not draw the tab unstarred again.
+				setTabStarred(sessionId, tabId, starred);
 			}
 		);
 
@@ -1436,8 +1460,20 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// A Federation sender's own tab chips for this one message (`TurnInput.overrides`).
 				// The model, effort, and read-only ride on the queued item; save-to-History has no
 				// per-item field here, so the tab's own chip decides it.
-				turnOverrides?: TurnOverrides
+				turnOverrides?: TurnOverrides,
+				// A Federation sender's agent-only text for this turn: a consult's replies ahead of the
+				// message, the `@mention` notes behind it. It rides on the queued item, never drawn.
+				agentText?: TurnAgentText,
+				// The id a Federation sender named for the message's entry (`TurnInput.entryId`): the
+				// user entry takes it when the item runs, as a headless host writes it.
+				entryId?: string
 			) => {
+				const withAgentText = (item: QueuedItem): QueuedItem => ({
+					...item,
+					...(agentText?.agentContext ? { agentContext: agentText.agentContext } : {}),
+					...(agentText?.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
+					...(entryId ? { entryId } : {}),
+				});
 				const reply = (result: {
 					success: boolean;
 					tabId?: string;
@@ -1519,23 +1555,29 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// (`sendTakenItemToHost()`). Never the text alone with the mention dropped.
 					// This machine holds a line for the tab (a consult's hold, a mention waiting its turn):
 					// a plain follow-up waits behind it too, as it does for a local agent.
-					const hostedLocalLine = (session.executionQueue ?? []).some(
-						(queued) => queued.tabId === resolvedTabId && !queued.hostQueued
-					);
+					// A turn of the tab on its way to the host, or a consult waiting for its turn there,
+					// holds the line too (`hostedTabHoldsLine()`).
+					const hostedLocalLine =
+						hostedTabHoldsLine(sessionId, resolvedTabId) ||
+						(session.executionQueue ?? []).some(
+							(queued) => queued.tabId === resolvedTabId && !queued.hostQueued
+						);
 					if (
 						hostedTargetOf(session) &&
 						(hostedLocalLine || planCrossAgentMentions(command, sessionId, mentionRouting))
 					) {
 						const item: QueuedItem = {
-							...withQueuedTurnOverrides(
-								buildQueuedMessageItem({
-									session,
-									tab: targetTab,
-									text: command,
-									images,
-									mentionRouting,
-								}),
-								turnOverrides
+							...withAgentText(
+								withQueuedTurnOverrides(
+									buildQueuedMessageItem({
+										session,
+										tab: targetTab,
+										text: command,
+										images,
+										mentionRouting,
+									}),
+									turnOverrides
+								)
 							),
 							...(held && { paused: true }),
 						};
@@ -1563,6 +1605,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						const receipt = await sendHostedTurn(session, resolvedTabId, command, images ?? [], {
 							held,
 							overrides: turnOverrides,
+							...(entryId ? { entryId } : {}),
+							...(agentText?.agentContext ? { agentContext: agentText.agentContext } : {}),
+							...(agentText?.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
 						});
 						if (!receipt) {
 							reply({ success: false, tabId: resolvedTabId, error: 'The host did not take it' });
@@ -1612,20 +1657,27 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// as a command, so the drain expands it, as the composer and the plain remote-command
 					// path do. A provider's own `/compact` stays a message, as typed.
 					const isUserSlashCommand = matchQueuedSlashCommand(session, command) !== null;
-					// The plain remote-command path spawns on the live tab's settings, so a message
-					// carrying the sender's own chips goes through the queue instead and is sent at
-					// once from there (Force Send): the queued item is what carries them.
-					if (turnOverrides && targetTab.state !== 'busy' && !lineForTab && !held) {
-						const item = withQueuedTurnOverrides(
-							buildQueuedMessageItem({
-								session,
-								tab: targetTab,
-								text: command,
-								images,
-								mentionRouting,
-								slashCommand: isUserSlashCommand,
-							}),
-							turnOverrides
+					// The plain remote-command path spawns on the live tab's settings and the bare text, so
+					// a message carrying the sender's own chips, agent-only text or entry id goes through the
+					// queue instead and is sent at once from there (Force Send): the queued item carries them.
+					if (
+						(turnOverrides || agentText || entryId) &&
+						targetTab.state !== 'busy' &&
+						!lineForTab &&
+						!held
+					) {
+						const item = withAgentText(
+							withQueuedTurnOverrides(
+								buildQueuedMessageItem({
+									session,
+									tab: targetTab,
+									text: command,
+									images,
+									mentionRouting,
+									slashCommand: isUserSlashCommand,
+								}),
+								turnOverrides
+							)
 						);
 						if (!background) {
 							setActiveSessionId(sessionId);
@@ -1678,16 +1730,18 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// here) and the model/effort capture that keeps a queued turn running
 					// under the settings it was queued with.
 					const queuedItem: QueuedItem = {
-						...withQueuedTurnOverrides(
-							buildQueuedMessageItem({
-								session,
-								tab: targetTab,
-								text: command,
-								images,
-								mentionRouting,
-								slashCommand: isUserSlashCommand,
-							}),
-							turnOverrides
+						...withAgentText(
+							withQueuedTurnOverrides(
+								buildQueuedMessageItem({
+									session,
+									tab: targetTab,
+									text: command,
+									images,
+									mentionRouting,
+									slashCommand: isUserSlashCommand,
+								}),
+								turnOverrides
+							)
 						),
 						...(held && { paused: true }),
 						...(dispatchCallback && { dispatchCallback: true }),
@@ -1737,22 +1791,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						sessionId: s.id,
 						name: s.name,
 						state: s.state,
-						items: (s.executionQueue ?? []).map((item) => ({
-							id: item.id,
-							timestamp: item.timestamp,
-							tabId: item.tabId,
-							type: item.type,
-							...(item.text !== undefined ? { text: item.text } : {}),
-							...(item.command !== undefined ? { command: item.command } : {}),
-							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
-							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
-							...(item.paused !== undefined ? { paused: item.paused } : {}),
-							...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
-							// A client's hosted queued card draws the model and effort it runs with.
-							...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
-							// Store refs as held: main inlines them only for a client that asks.
-							...(item.images?.length ? { images: item.images } : {}),
-						})),
+						items: (s.executionQueue ?? []).map(toQueuedItemSnapshot),
 					}));
 					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
 						success: true,

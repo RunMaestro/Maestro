@@ -43,6 +43,16 @@ vi.mock('../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
+// The rollback guard looks the target release up on GitHub; tests decide the
+// verdict instead of hitting the network.
+const mockRollbackTargetRefusal =
+	vi.fn<(tag: string, currentVersion: string) => Promise<string | null>>();
+vi.mock('../../main/update-checker', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../main/update-checker')>()),
+	rollbackTargetRefusal: (tag: string, currentVersion: string) =>
+		mockRollbackTargetRefusal(tag, currentVersion),
+}));
+
 // electron-updater is loaded via dynamic `require` inside auto-updater.ts to
 // defer electron.app access - that bypasses vitest's module mocker. We use the
 // __setAutoUpdaterForTesting escape hatch instead.
@@ -308,6 +318,8 @@ describe('main/auto-updater', () => {
 			mockAutoUpdater.downloadUpdate.mockReset();
 			mockAutoUpdater.setFeedURL.mockReset();
 			mockAutoUpdater.allowDowngrade = false;
+			mockRollbackTargetRefusal.mockReset();
+			mockRollbackTargetRefusal.mockResolvedValue(null);
 		});
 
 		afterEach(() => {
@@ -377,6 +389,25 @@ describe('main/auto-updater', () => {
 			expect(result.error).toContain('is not an earlier release');
 			expect(mockAutoUpdater.setFeedURL).not.toHaveBeenCalled();
 			expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled();
+			expect(mockRollbackTargetRefusal).not.toHaveBeenCalled();
+		});
+
+		it('refuses a release the rollback rules reject, before anything downloads', async () => {
+			mockRollbackTargetRefusal.mockResolvedValue(
+				'v1.0.3 predates Windows code signing, and the installed Maestro only installs signed builds'
+			);
+
+			const handler = await getRollbackHandler();
+			const result = (await handler({}, '1.0.3')) as { success: boolean; error: string };
+
+			expect(mockRollbackTargetRefusal).toHaveBeenCalledWith('v1.0.3', '1.0.4');
+			expect(result).toEqual({
+				success: false,
+				error:
+					'v1.0.3 predates Windows code signing, and the installed Maestro only installs signed builds',
+			});
+			expect(mockAutoUpdater.setFeedURL).not.toHaveBeenCalled();
+			expect(mockAutoUpdater.downloadUpdate).not.toHaveBeenCalled();
 		});
 	});
 });

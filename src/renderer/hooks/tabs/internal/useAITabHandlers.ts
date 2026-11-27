@@ -10,17 +10,17 @@ import {
 } from '../../../stores/sessionStore';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
-import { persistTabStarred, snapshotClosedTabTranscript } from '../../../utils/starredSessions';
+import { snapshotClosedTabTranscript } from '../../../utils/starredSessions';
 import { persistTabPins } from '../../../services/messagePins';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { requestDesktopTabClose, requestDesktopTabCloses } from '../../../services/desktopTabClose';
+import { cycleTabThinkingMode } from '../../../services/tabThinkingMode';
 import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
 import {
 	addAiTabToUnifiedHistory,
 	aiTabFocusFields,
 	closeTab,
 	createTab,
-	cycleShowThinkingFields,
 	getActiveTab,
 	getInitialRenameValue,
 	getRepairedUnifiedTabOrder,
@@ -33,12 +33,8 @@ import {
 	visibleAiTabs,
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
-import {
-	closeHostedTab,
-	hostedTargetOf,
-	openHostedTab,
-	starHostedTab,
-} from '../../../services/hostedTurns';
+import { closeHostedTab, hostedTargetOf, openHostedTabOrHere } from '../../../services/hostedTurns';
+import { setTabStarred } from '../../../services/tabStar';
 
 /** Manage AI tabs, delegating browser inventory changes to the owning desktop. */
 export function useAITabHandlers(
@@ -52,13 +48,13 @@ export function useAITabHandlers(
 		if (!activeSessionId) return;
 
 		// A hosted agent's AI tabs live on its host: the host makes the tab, and it shows here
-		// at once (`openHostedTab()`) with the same defaults a local new tab starts with; the host
-		// sync fills it in.
+		// at once (`openHostedTabOrHere()`) with the same defaults a local new tab starts with; the
+		// host sync fills it in. With the host down it opens here and is made there later (R15).
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!isWebDesktop() && hostedTargetOf(activeSession)) {
 			inputRef?.current?.focus();
 			if (activeSession) {
-				void openHostedTab(activeSession, {
+				void openHostedTabOrHere(activeSession, {
 					fields: { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking },
 				});
 			}
@@ -350,9 +346,7 @@ export function useAITabHandlers(
 		const tabToStar = session.aiTabs.find((t) => t.id === tabId);
 		if (!tabToStar?.agentSessionId) return;
 
-		persistTabStarred(session, tabToStar, starred);
-		starHostedTab(session, tabId, starred);
-		updateAiTab(session.id, tabId, (t) => ({ ...t, starred }));
+		setTabStarred(session.id, tabId, starred);
 	}, []);
 
 	const handleTabMarkUnread = useCallback((tabId: string) => {
@@ -387,10 +381,7 @@ export function useAITabHandlers(
 		if (!session) return;
 		const currentActiveTab = getActiveTab(session);
 		if (!currentActiveTab) return;
-		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
-			...tab,
-			...cycleShowThinkingFields(tab),
-		}));
+		cycleTabThinkingMode(session.id, currentActiveTab.id);
 	}, []);
 
 	const handleToggleTabEnterToSend = useCallback(() => {

@@ -19,6 +19,7 @@ import {
 	usageCostUsd,
 } from '../../../shared/maestro-lib/streaming/usage-totals';
 import { TurnCapture } from '../../../shared/maestro-lib/run/turn-capture';
+import { partialTextRoute } from '../../../shared/maestro-lib/turns/turn-events';
 import {
 	subagentDisplayParentOf,
 	subagentToolCallOf,
@@ -982,39 +983,14 @@ export class StdoutHandler {
 
 		// Handle streaming text events (OpenCode, Codex reasoning, Grok thought/text)
 		if (event.type === 'text' && event.isPartial && event.text) {
-			// Thinking panel routing:
-			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
-			//   and flush once at exit).
-			// - Grok / Codex / OpenCode / OMP / Antigravity: only isReasoning deltas →
-			//   thinking-chunk. These stream the final answer as partial `text`
-			//   WITHOUT isReasoning; dumping those into the thinking panel makes the
-			//   wizard look finished while tools still run (Grok emits no tool events
-			//   on the stream), and in sticky mode left every agy answer printed twice.
-			//   Antigravity's real thinking arrives separately, as `reasoningText`
-			//   (emitted above).
-			// - Claude Code + Factory Droid: forward ALL partials. Claude's assistant
-			//   text arrives as partials with isReasoning undefined; that live preview
-			//   is exactly what drives the thinking display during a turn, and the
-			//   renderer replaces it with the final `result` (useBatchedSessionUpdates
-			//   drops non-sticky thinking/tool logs when assistant stdout arrives,
-			//   cleanupExitedTabLogs on exit). Gating Claude on isReasoning silenced the
-			//   inline thinking display for every ordinary (non-extended-thinking) turn.
-			const toolType = managedProcess.toolType;
-			if (toolType !== 'copilot-cli') {
-				const requiresReasoningTag =
-					toolType === 'grok' ||
-					toolType === 'codex' ||
-					toolType === 'opencode' ||
-					toolType === 'kilo' ||
-					toolType === 'omp' ||
-					toolType === 'antigravity';
-				if (!requiresReasoningTag || event.isReasoning) {
-					this.emitter.emit('thinking-chunk', sessionId, event.text);
-				}
+			// One rule with a Federation host's turn mapper (`partialTextRoute()`): which partials
+			// are a thinking chunk, and which are answer text. Reasoning is internal thinking, never
+			// in the final response text: only message content goes into streamedText.
+			const route = partialTextRoute(managedProcess.toolType, event.isReasoning);
+			if (route.thinking) {
+				this.emitter.emit('thinking-chunk', sessionId, event.text);
 			}
-			// Reasoning content is internal thinking - don't include it in the
-			// final response text. Only message content should be in streamedText.
-			if (!event.isReasoning) {
+			if (route.answer) {
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
 				if (managedProcess.toolType === 'grok') {
 					managedProcess.resultEmitted = true;

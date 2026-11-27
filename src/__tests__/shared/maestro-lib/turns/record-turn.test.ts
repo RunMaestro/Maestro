@@ -26,6 +26,7 @@ import { HistoryManager } from '../../../../main/history-manager';
 import { createAgentRepository } from '../../../../shared/maestro-lib/agents/repository';
 import {
 	DEFAULT_TAB_DEFAULTS,
+	turnFateAfter,
 	type RuleContext,
 } from '../../../../shared/maestro-lib/agents/rules';
 import { createEventBus } from '../../../../shared/maestro-lib/client/event-bus';
@@ -181,11 +182,127 @@ describe('turn records', () => {
 				text: 'Fixed the login bug in the session handler. Tests pass.',
 				turnModel: 'opus',
 				turnEffort: 'high',
+				// The turn's end, as every host stamps it (R36), with its time.
+				turnEnded: true,
+				turnEndedAt: 1_700_000_004_200,
 			},
 		]);
 		// The desktop reads the same file.
 		const onDisk = JSON.parse(fs.readFileSync(paths.sessionsFile, 'utf-8'));
 		expect(onDisk.sessions[0].aiTabs[0].logs).toHaveLength(2);
+	});
+
+	// Parity R36: a turn that wrote nothing of its own still says it ended, on its message.
+	it("stamps the end on the message's entry when the turn wrote nothing of its own (R36)", async () => {
+		seed({}, { logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug' }] });
+		const { recorder: records, repository } = await recorder();
+		await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(transcriptOf(repository.getTab('a1', 't1')!)).toEqual([
+			{
+				id: 'u1',
+				timestamp: 1,
+				source: 'user',
+				text: 'fix the login bug',
+				turnEnded: true,
+				turnEndedAt: 1_700_000_004_200,
+			},
+		]);
+	});
+
+	// CodeRabbit on #2167: a retry into the same entry that answers empty, after an attempt that
+	// ended on its error, is the last attempt: the message reads answered, never errored again.
+	it('reads an empty retry after an errored attempt as answered (R37)', async () => {
+		seed(
+			{},
+			{
+				logs: [
+					{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug' },
+					{ id: 'e1', timestamp: 2, source: 'error', text: 'Overloaded', turnEnded: true },
+				],
+			}
+		);
+		const { recorder: records, repository } = await recorder();
+		await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(turnFateAfter(transcriptOf(repository.getTab('a1', 't1')!), 0)).toBe('answered');
+	});
+
+	// Parity R41 (b): the end goes on the message as it is when the stamp is written, never on a
+	// copy read when recording began, which would undo a change made to it since (the delivered
+	// tick).
+	it('stamps the message as it is at write time, keeping a change made since the turn began (R41)', async () => {
+		const message = { id: 'u1', timestamp: 1, source: 'user' as const, text: 'fix the login bug' };
+		seed({}, { logs: [{ ...message, delivered: false }] });
+		const { repository } = await recorder();
+		const records = createTurnRecorder({
+			paths,
+			repository: {
+				...repository,
+				// The message is marked delivered while the turn's own entries are written.
+				appendTranscript: async (...args: Parameters<typeof repository.appendTranscript>) => {
+					const appended = await repository.appendTranscript(...args);
+					await repository.replaceTranscriptEntry('a1', 't1', { ...message, delivered: true });
+					return appended;
+				},
+			},
+			loadSqlite: () => {
+				throw new Error('unused');
+			},
+			context: context(),
+			statsRecorder,
+		});
+		await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(transcriptOf(repository.getTab('a1', 't1')!)).toEqual([
+			{ ...message, delivered: true, turnEnded: true, turnEndedAt: 1_700_000_004_200 },
+		]);
+	});
+
+	// CodeRabbit on #2167: a stamp that could not be written is reported, never a silent success.
+	it('reports the transcript failed when the end stamp on the message could not be written', async () => {
+		seed({}, { logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug' }] });
+		const { repository } = await recorder();
+		const records = createTurnRecorder({
+			paths,
+			repository: {
+				getAgent: repository.getAgent,
+				getTab: repository.getTab,
+				appendTranscript: repository.appendTranscript,
+				replaceTranscriptEntry: async () => ({
+					ok: false as const,
+					error: { code: 'rejected' as const, message: 'fenced', method: 'tabs.update' as const },
+				}),
+			},
+			loadSqlite: () => {
+				throw new Error('unused');
+			},
+			context: context(),
+			statsRecorder,
+		});
+		const result = await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(result.transcript).toMatchObject({ ok: false, error: { message: 'fenced' } });
 	});
 
 	it('records usage under the provider the turn was sent to, not the one the agent has now', async () => {
@@ -803,6 +920,19 @@ describe('turn records', () => {
 			expect(entries.map((e) => e.source)).toEqual(['stdout']);
 		});
 
+		it.each([
+			['answered', {}, 'stdout'],
+			['crashed', { outcome: 'crashed' as const, answerText: '' }, 'error'],
+			['stopped', { outcome: 'interrupted' as const, answerText: '' }, 'system'],
+		])("stamps the turn's end on its last entry when it %s (R36)", (_how, completed, last) => {
+			const entries = buildTurnTranscript(
+				turn({ userEntryWritten: true, completed: { ...turn().completed, ...completed } }),
+				ctx
+			);
+			expect(entries.at(-1)).toMatchObject({ source: last, turnEnded: true });
+			expect(entries.slice(0, -1).some((entry) => entry.turnEnded)).toBe(false);
+		});
+
 		it('builds the same user entry the recorder would, from the same inputs', () => {
 			const sent = { text: 'fix it', readOnly: true as const };
 			const entry = buildUserTranscriptEntry(sent, 42, ctx);
@@ -883,6 +1013,24 @@ describe('turn records', () => {
 			);
 			expect(summarize).toHaveBeenCalledTimes(handed ? 1 : 0);
 			expect(result.history).toMatchObject(handed ? { ok: true } : { reason: 'not-recorded' });
+		});
+
+		it('summarizes a tool turn whose cards the host did not fold (P12)', async () => {
+			seed({}, { showThinking: 'on' });
+			const summarize = vi.fn();
+			const { recorder: records } = await recorder({ summarize });
+			const result = await records.recordTurn(turn({ ranTool: true }));
+			expect(summarize).toHaveBeenCalledTimes(1);
+			expect(result.history).toMatchObject({ ok: true });
+		});
+
+		it('summarizes a tool turn whose thinking was folded and whose tool was not (review)', async () => {
+			seed({}, { showThinking: 'on' });
+			const summarize = vi.fn();
+			const { recorder: records } = await recorder({ summarize });
+			const thought = { id: 'th1', timestamp: 1, source: 'thinking', text: 'Plan it.' } as const;
+			await records.recordTurn(turn({ streamed: [thought], ranTool: true }));
+			expect(summarize).toHaveBeenCalledTimes(1);
 		});
 
 		it('summarizes no turn that ran in no provider session, as the desktop does not', async () => {

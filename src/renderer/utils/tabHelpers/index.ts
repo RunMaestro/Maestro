@@ -25,7 +25,7 @@ import {
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
 import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
-import { DEFAULT_TAB_DEFAULTS } from '../../../shared/maestro-lib/agents/rules';
+import { DEFAULT_TAB_DEFAULTS, turnEntryIdFor } from '../../../shared/maestro-lib/agents/rules';
 import type { MessagePin } from '../../../shared/messagePins';
 import { collectGroupMemberTabKeys } from '../../../shared/tabStripMembership';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
@@ -51,6 +51,7 @@ import {
 	rehydrateBrowserTab,
 } from '../browserTabPersistence';
 import { getLiveDraft } from '../liveDraftStore';
+import { hostedTabHoldsLine } from '../hostedTabLine';
 import { codifyQueuedTurnSettings } from '../providerTabSessions';
 import {
 	aiTabFocusFields,
@@ -60,7 +61,6 @@ import {
 	toggleReadOnlyModeFields,
 	permissionModeFields,
 	nextPermissionMode,
-	cycleShowThinkingFields,
 	setShowThinkingFields,
 } from './focusFields';
 import {
@@ -90,7 +90,6 @@ export {
 	toggleReadOnlyModeFields,
 	permissionModeFields,
 	nextPermissionMode,
-	cycleShowThinkingFields,
 	setShowThinkingFields,
 };
 export { groupFocusFields, resolveFocusedPaneTabRef, findGroupPaneForTab };
@@ -893,10 +892,16 @@ export function resolveQueuedItemTarget(
  * ("Agent process already running for session ...-ai-<tabId>", MAESTRO-ZS). Every
  * drain path checks this first and leaves the item queued; the busy tab's own exit
  * drains it.
+ *
+ * A hosted agent's tab is also busy while it holds its line here (`hostedTabHoldsLine()`):
+ * a turn on its way to the host, or a consult waiting for its turn to start there. The tab
+ * reads the host's state, idle until the host's first frame of that turn, and the next
+ * item must not overtake it (U1).
  */
 export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 'tabId'>): boolean {
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) return false;
+	if (hostedTabHoldsLine(session.id, target.tabId)) return true;
 	const tab =
 		session.aiTabs?.find((candidate) => candidate.id === target.tabId) ??
 		session.orphanedThinkingTabs?.find((candidate) => candidate.id === target.tabId);
@@ -925,8 +930,12 @@ export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
 	const next = markTabRunningTurn(tab, item, session);
 	if (item.type === 'message' && (item.text || item.images?.length)) {
+		// The id a Federation client named for it (`TurnInput.entryId`), read as a headless host
+		// reads it: a resend of a message this tab already holds is that entry, written once.
+		const entryId = turnEntryIdFor(tab, item.entryId, item.text ?? '', item.images);
+		if (entryId && tab.logs.some((entry) => entry.id === entryId)) return next;
 		const logEntry: LogEntry = {
-			id: generateId(),
+			id: entryId ?? generateId(),
 			timestamp: next.thinkingStartTime ?? Date.now(),
 			source: 'user',
 			text: item.text ?? '',
@@ -939,9 +948,44 @@ export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: 
 			...(item.readOnlyMode && { readOnly: true }),
 			...(item.turnSaveToHistory !== undefined && { saveToHistory: item.turnSaveToHistory }),
 		};
+		// The bubble drawn for it while it was kept for a host (`QueuedItem.keptEntryId`), still here
+		// after a Move Back: the message runs here now, and that bubble becomes its entry, drawn once.
+		const keptAt = item.keptEntryId
+			? tab.logs.findIndex((entry) => entry.id === item.keptEntryId && entry.keptForHost)
+			: -1;
+		if (keptAt !== -1) {
+			const logs = [...tab.logs];
+			logs[keptAt] = { ...logEntry, id: tab.logs[keptAt].id };
+			next.logs = logs;
+			return next;
+		}
 		next.logs = [...tab.logs, logEntry];
 	}
 	return next;
+}
+
+/**
+ * The queue items a busy tab's running work came from, by the `queuedItemId`
+ * {@link markTabRunningQueuedItem} stamped on their user entries: the latest user
+ * entry that started a turn, and each steer after it that the agent took as input of
+ * its own (`steered`, `steerState: 'queued'`). Such a steer waits inside the turn while
+ * that turn runs, then runs as the turn's follow-up in the same busy stretch, and the
+ * tab records no start between the two, so a Stop in that stretch ends both (Greptile
+ * and CodeRabbit on #2162). A steer the turn absorbed is part of it and named by none.
+ * Empty for an idle tab and for a turn sent straight from the composer (no id).
+ */
+export function runningQueuedItemIds(tab: Pick<AITab, 'state' | 'logs'>): string[] {
+	if (tab.state !== 'busy') return [];
+	const steers: string[] = [];
+	for (let index = tab.logs.length - 1; index >= 0; index--) {
+		const entry = tab.logs[index];
+		if (entry.source !== 'user') continue;
+		if (!entry.steered) {
+			return entry.queuedItemId ? [entry.queuedItemId, ...steers] : steers;
+		}
+		if (entry.steerState === 'queued' && entry.queuedItemId) steers.unshift(entry.queuedItemId);
+	}
+	return steers;
 }
 
 /**

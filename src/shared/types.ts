@@ -393,6 +393,10 @@ export interface SessionInfo {
 	 * through `readLiftedTo()` / `liftedSendRefusal()` in `src/shared/maestro-lib/agents/lift-pointer.ts`.
 	 */
 	liftedTo?: LiftedToPointer;
+	/** Federation: the host's copy a move back left behind. Read it through `readLeftOnHost()`. */
+	leftOnHost?: LiftedToPointer;
+	/** Federation, on a host: the id of the agent this record was lifted from (`planAgentImport()`). */
+	liftedFromAgentId?: string;
 }
 
 /**
@@ -997,8 +1001,12 @@ export interface AgentError {
 	/** The category of error */
 	type: AgentErrorType;
 
-	/** Set only when the host supervisor terminates the turn; overrides a successful process exit. */
-	source?: 'host-supervision';
+	/**
+	 * `host-supervision`: set only when the host supervisor terminates the turn; overrides a
+	 * successful process exit. `host-link`: a hosted turn drawn ended here because the link to its
+	 * Federation host was lost; it clears when the host reports again.
+	 */
+	source?: 'host-supervision' | 'host-link';
 
 	/** Human-readable error message for display */
 	message: string;

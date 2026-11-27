@@ -47,6 +47,7 @@ import {
 	markAllTabsStale,
 	replacePeerAgents,
 	setAgentQueue,
+	withReadQueueImages,
 	setPeerConnection,
 	summarizePeer,
 	type MirrorContext,
@@ -78,18 +79,35 @@ import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import type { HistoryEntry } from '../../shared/types';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { ProjectTokenUsage, ProjectTokenUsageProject } from '../../shared/projectTokenUsage';
+import { STREAM_FLUSH_INTERVAL_MS } from '../../shared/streamFlushInterval';
 
-/** Per-tab turn pushes are batched this long, so a fast stream is not one IPC per chunk. */
-export const MIRROR_TURN_COALESCE_MS = 50;
+/**
+ * Per-tab turn pushes are batched this long, so a fast stream is not one IPC per chunk: the cadence
+ * a local tab flushes its output at, so a hosted reply renders (and commits) as often as a local
+ * one, not four times as often (R34).
+ */
+export const MIRROR_TURN_COALESCE_MS = STREAM_FLUSH_INTERVAL_MS;
 /** Transcripts served, kept for a second read of the same tab (another window, a re-open). */
 export const MIRROR_TRANSCRIPT_CACHE_SIZE = 20;
 /** Entries a transcript read returns when the caller does not say. */
 export const MIRROR_TRANSCRIPT_DEFAULT_TAIL = 500;
 /**
+ * How long an action waits for a peer that is reconnecting right now (the host came back, the
+ * client has not attached yet) before it is refused. A peer that is down, or whose discovery found
+ * no host, is refused at once.
+ */
+export const MIRROR_ACT_RECONNECT_WAIT_MS = 10_000;
+/**
  * How often a remote that answered with no host is probed again, so a host started there some
  * other way (a service manager, `remote-host start`, a reboot) shows up without a click.
  */
 export const MIRROR_REPROBE_INTERVAL_MS = 15 * 60_000;
+/**
+ * The redial ceiling of a host that went down while nothing on this machine is hosted on it (or
+ * hosted agents are off): the forward's wait doubles up to this instead of its usual 30 s. An
+ * explicit act (Check Now, a send, Move to Host) dials at once and starts the wait over.
+ */
+export const MIRROR_IDLE_REDIAL_MAX_MS = 5 * 60_000;
 
 export interface PeerMirrorServiceDeps {
 	/** The stored SSH remotes. Read on every reconcile; nothing is cached. */
@@ -113,6 +131,12 @@ export interface PeerMirrorServiceDeps {
 	clearTimer?(handle: unknown): void;
 	/** Re-probe interval for remotes with no host. Default `MIRROR_REPROBE_INTERVAL_MS`; 0 turns it off. */
 	reprobeIntervalMs?: number;
+	/**
+	 * Whether an agent on this machine runs on the host `peerId` (a hosted agent, with hosted agents
+	 * on): the one predicate the outage tracker reads. A host it says no to redials slowly while it
+	 * stays down (`MIRROR_IDLE_REDIAL_MAX_MS`). Absent: every host redials at the forward's own pace.
+	 */
+	hostsAgents?(peerId: string): boolean;
 }
 
 /** What `snapshot()` answers: every peer with its agents and live turns. */
@@ -137,6 +161,12 @@ export type PeerActionAnswer =
 			error: string;
 			unknown?: boolean;
 			code?: ClientErrorCode;
+			/**
+			 * The service refused before handing anything to the client: the peer was not connected.
+			 * The one refusal a caller may retry without any risk of the host running it twice. A
+			 * client-level `host-unavailable` (a client closed while a send was pending) never sets it.
+			 */
+			notSent?: true;
 			/** `update-agent` only: the fields the host applied before it refused the rest. */
 			appliedFields?: AgentPatchField[];
 	  };
@@ -159,6 +189,8 @@ interface PeerEntry {
 	 * overwrite it with an older answer.
 	 */
 	queueVersions: Map<string, number>;
+	/** Actions waiting for a reconnect in progress; called when the connection settles or the entry drops. */
+	linkWaiters: Set<() => void>;
 }
 
 export class PeerMirrorService {
@@ -231,6 +263,7 @@ export class PeerMirrorService {
 				unsubscribes: [],
 				dropped: false,
 				queueVersions: new Map(),
+				linkWaiters: new Set(),
 			};
 			this.entries.set(remote.id, created);
 			this.emit(created, { type: 'peer.state', peer: summarizePeer(created.state) });
@@ -246,6 +279,35 @@ export class PeerMirrorService {
 	isRemoteConnected(remoteId: string): boolean {
 		const entry = this.entries.get(remoteId);
 		return !!entry && !entry.dropped && entry.state.connection === 'connected';
+	}
+
+	/**
+	 * What this machine hosts changed (an agent moved to or back from a host, hosted agents switched
+	 * on or off): each held forward takes its redial pace again. A host that now runs an agent of
+	 * this machine and waits out a slow redial dials at once.
+	 */
+	noteHostedAgentsChanged(): void {
+		for (const entry of this.entries.values()) this.applyRedialPace(entry);
+	}
+
+	/**
+	 * Restart a held forward that is down, skipping its backoff (an explicit act on the peer).
+	 * Returns true when it did.
+	 */
+	private redialNow(entry: PeerEntry): boolean {
+		const lease = entry.connection?.lease;
+		const forward = lease?.state().status;
+		if (!lease || (forward !== 'down' && forward !== 'stopped')) return false;
+		lease.restart();
+		return true;
+	}
+
+	/** The forward's redial ceiling for this peer: slow while nothing here is hosted on it. */
+	private applyRedialPace(entry: PeerEntry): void {
+		const lease = entry.connection?.lease;
+		if (!lease || entry.dropped || !this.deps.hostsAgents) return;
+		const idle = !this.deps.hostsAgents(entry.state.peerId);
+		lease.setBackoffCeiling?.(idle ? MIRROR_IDLE_REDIAL_MAX_MS : undefined);
 	}
 
 	/** Every mirrored peer, in stored order. The same answer the CLI's `federation peers` prints. */
@@ -387,8 +449,10 @@ export class PeerMirrorService {
 	/**
 	 * Drive a mirrored agent (FED-SSH-06): send, Stop, new tab, rename or star a tab, change the
 	 * agent's or a tab's settings, through the
-	 * same `runPeerAgentAction()` the CLI's `peer:agent` verbs run. Never queued: a peer that is not
-	 * connected right now answers an error at once, and nothing is held for a reconnect. The host's
+	 * same `runPeerAgentAction()` the CLI's `peer:agent` verbs run. Never queued: a peer that is
+	 * reconnecting right now is asked to try at once and waited for, up to
+	 * `MIRROR_ACT_RECONNECT_WAIT_MS`; any other peer that is not connected answers an error at once
+	 * (`notSent`), and nothing is held for a later reconnect. The host's
 	 * own events then update the mirror (a new tab, a rename, the turn's stream).
 	 */
 	async act(peerId: string, agentId: string, action: PeerAgentAction): Promise<PeerActionAnswer> {
@@ -398,13 +462,20 @@ export class PeerMirrorService {
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		}
+		// A send (or any act, an auto-retry too) on a peer whose forward waits out a backoff: dial now
+		// and start the wait over, as Check Now does, and wait for that dial as for a reconnect in
+		// progress (bounded by `MIRROR_ACT_RECONNECT_WAIT_MS`), never failing ahead of it.
+		if (this.redialNow(entry)) {
+			this.commit(entry, setPeerConnection(entry.state, 'reconnecting', entry.state.error));
+		}
+		const failure = await this.awaitReconnect(entry);
 		const client = entry.connection?.client;
-		if (!client || entry.state.connection !== 'connected') {
-			const reason = entry.state.error ? ` ${entry.state.error}` : '';
+		if (entry.dropped || !client || entry.state.connection !== 'connected') {
 			return {
 				ok: false,
 				code: 'host-unavailable',
-				error: `Not connected to peer "${peerId}" (${entry.state.connection}). Nothing was sent.${reason}`,
+				notSent: true,
+				error: notConnectedMessage(entry.state, 'Nothing was sent.', failure),
 			};
 		}
 		const agent = entry.state.agents.find((candidate) => candidate.id === agentId);
@@ -440,10 +511,7 @@ export class PeerMirrorService {
 		}
 		const client = entry.connection?.client;
 		if (!client || entry.state.connection !== 'connected') {
-			const reason = entry.state.error ? ` ${entry.state.error}` : '';
-			throw new Error(
-				`Not connected to peer "${entry.state.peerId}" (${entry.state.connection}). Nothing moved.${reason}`
-			);
+			throw new Error(notConnectedMessage(entry.state, 'Nothing moved.'));
 		}
 		return { peer: entry.state.peerId, client };
 	}
@@ -459,9 +527,7 @@ export class PeerMirrorService {
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		}
-		const lease = entry.connection?.lease;
-		const forward = lease?.state().status;
-		if (lease && (forward === 'down' || forward === 'stopped')) lease.restart();
+		this.redialNow(entry);
 		await this.enqueue(entry.remote.id, () => this.reload(entry));
 		const summary = summarizePeer(entry.state);
 		return summary.connection === 'connected'
@@ -557,6 +623,46 @@ export class PeerMirrorService {
 		this.reprobeTimer.unref?.();
 	}
 
+	/**
+	 * Wait, bounded by `MIRROR_ACT_RECONNECT_WAIT_MS`, for a peer that is connecting or reconnecting
+	 * right now, and ask a held client to try at once rather than at its next backoff step. Returns
+	 * the reason a reconnect tried here failed (what discovery found), if one did.
+	 */
+	private async awaitReconnect(entry: PeerEntry): Promise<string | undefined> {
+		if (!isLinkInProgress(entry.state.connection) || entry.dropped) return undefined;
+		const done = Promise.withResolvers<void>();
+		const waiter = () => done.resolve();
+		entry.linkWaiters.add(waiter);
+		const timer = setTimeout(waiter, MIRROR_ACT_RECONNECT_WAIT_MS);
+		timer.unref?.();
+		let failure: string | undefined;
+		const client = entry.connection?.client;
+		const tried = client?.connection.reconnect().then(
+			(result) => {
+				if (entry.dropped || this.stopped) return;
+				if (!result.ok) {
+					failure = result.error.message;
+				} else if (
+					entry.connection?.client === client &&
+					client.connection.state() === 'connected'
+				) {
+					// The client reports `host.connected` itself; make sure the state says so.
+					this.commit(entry, setPeerConnection(entry.state, 'connected'));
+				}
+			},
+			(error: unknown) => {
+				failure = error instanceof Error ? error.message : String(error);
+			}
+		);
+		try {
+			await Promise.race(tried ? [done.promise, tried] : [done.promise]);
+		} finally {
+			clearTimeout(timer);
+			entry.linkWaiters.delete(waiter);
+		}
+		return failure;
+	}
+
 	private entryForPeer(peerId: string): PeerEntry {
 		for (const entry of this.entries.values()) {
 			if (entry.state.peerId === peerId) return entry;
@@ -621,6 +727,7 @@ export class PeerMirrorService {
 		}
 		entry.connection = opened;
 		entry.unsubscribes = unsubscribes;
+		this.applyRedialPace(entry);
 		// The client reports `host.connected` from inside `connect()`; make sure the state says so.
 		this.commit(entry, setPeerConnection(entry.state, 'connected'));
 		// The snapshot that came with the attach carries no queues: read what waits.
@@ -678,8 +785,23 @@ export class PeerMirrorService {
 		});
 		for (const { agentId, version, read } of await Promise.all(reads)) {
 			if (entry.dropped || this.stopped) return;
-			// A `queue.changed` landed while the read was out: it is newer than this answer.
-			if (!read.ok || (entry.queueVersions.get(agentId) ?? 0) !== version) continue;
+			if (!read.ok) continue;
+			if ((entry.queueVersions.get(agentId) ?? 0) !== version) {
+				// A `queue.changed` landed while the read was out: its list is newer than this answer,
+				// so keep it. The read still covered a stretch whose named exits this mirror may have
+				// missed (a start while the link was down), and that change names only its own exit:
+				// commit the kept list as a whole read, so the gap is counted (`queueReads`) here and in
+				// every window, and an item last seen waiting is judged by the tab's state (M19). A host
+				// that names no exits has no gap to count.
+				// The kept list also takes the read's images for an item the change said were unchanged
+				// while this mirror held none (M26).
+				const held = entry.state.queues[agentId] ?? [];
+				const kept = withReadQueueImages(held, read.value);
+				if (entry.state.queueExits?.[agentId] || kept !== held) {
+					this.commit(entry, setAgentQueue(entry.state, agentId, [...kept]));
+				}
+				continue;
+			}
 			this.commit(entry, setAgentQueue(entry.state, agentId, read.value));
 		}
 	}
@@ -711,6 +833,9 @@ export class PeerMirrorService {
 	/** Take the reducer's result: keep the state, drop stale cache lines, and push the changes. */
 	private commit(entry: PeerEntry, step: MirrorStep): void {
 		entry.state = step.peer;
+		if (entry.linkWaiters.size > 0 && !isLinkInProgress(entry.state.connection)) {
+			for (const waiter of [...entry.linkWaiters]) waiter();
+		}
 		for (const event of step.push) {
 			if (event.type === 'tab.stale') {
 				this.forgetTranscript(entry, event.agentId, event.tabId);
@@ -809,6 +934,7 @@ export class PeerMirrorService {
 
 	private async detach(entry: PeerEntry): Promise<void> {
 		entry.dropped = true;
+		for (const waiter of [...entry.linkWaiters]) waiter();
 		for (const unsubscribe of entry.unsubscribes) unsubscribe();
 		entry.unsubscribes = [];
 		const connection = entry.connection;
@@ -819,4 +945,23 @@ export class PeerMirrorService {
 			this.deps.onError?.(error, 'federation:release');
 		}
 	}
+}
+
+/** A connect or a reconnect is under way: an action waits for it rather than failing. */
+function isLinkInProgress(connection: MirroredPeer['connection']): boolean {
+	return connection === 'connecting' || connection === 'reconnecting';
+}
+
+/**
+ * Why an action on a peer that is not connected was refused. A reconnect still under way says so,
+ * never the last discovery's error (it found no host before the host came back); a reconnect tried
+ * here that failed gives what it found; otherwise the peer's own state and error.
+ */
+function notConnectedMessage(peer: MirroredPeer, outcome: string, failure?: string): string {
+	if (failure) return `Could not reconnect to peer "${peer.peerId}". ${outcome} ${failure}`;
+	if (isLinkInProgress(peer.connection)) {
+		return `Still ${peer.connection} to peer "${peer.peerId}". ${outcome}`;
+	}
+	const reason = peer.error ? ` ${peer.error}` : '';
+	return `Not connected to peer "${peer.peerId}" (${peer.connection}). ${outcome}${reason}`;
 }

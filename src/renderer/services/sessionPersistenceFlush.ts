@@ -47,3 +47,21 @@ export function registerSessionPersistenceFlush(fn: SessionPersistenceFlush | nu
 export function flushSessionPersistenceNow(latestSessions?: Session[]): Promise<void> {
 	return flush ? flush(latestSessions) : Promise.resolve();
 }
+
+type BatchedOutputFlush = () => void;
+let flushOutput: BatchedOutputFlush | null = null;
+
+/** Wire App's batched output updater (`useBatchedSessionUpdates().flushNow`). `null` on teardown. */
+export function registerBatchedOutputFlush(fn: BatchedOutputFlush | null): void {
+	flushOutput = fn;
+}
+
+/**
+ * Land agent output still held in the output batch (up to `DEFAULT_BATCH_FLUSH_INTERVAL`) into the
+ * store now. A reader that answers another machine from the store calls it first: a host's turn
+ * end reaches a Federation client before this window's exit listener flushes, so a transcript
+ * read begun at that end would miss the reply (R29). A no-op when nothing is registered.
+ */
+export function flushBatchedOutputNow(): void {
+	flushOutput?.();
+}

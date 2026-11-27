@@ -244,6 +244,22 @@ export interface LogEntry {
 	 * only: every host sync drops these and rebuilds them (`projectHostedSession()`).
 	 */
 	hostLive?: boolean;
+	/**
+	 * A hosted agent's message kept on this machine for its host while the link is down
+	 * (`keepTurnForHost()`), drawn here as an SSH agent's send draws its message. The host's own
+	 * entry for it replaces it once the host has it (`mergeHostedLogs()`).
+	 */
+	keptForHost?: boolean;
+	/**
+	 * When this machine handed a kept message (`keptForHost`) to its host. Only then may a host
+	 * message with the same words be taken as its copy; cleared when the host refused it again.
+	 */
+	keptSentAt?: number;
+	/**
+	 * The time a kept message's bubble was drawn: the host's entry that replaced it is drawn there,
+	 * above the retry card, as an SSH agent's kept message is, not at the host's later time.
+	 */
+	keptPlace?: number;
 	// One union shared with the on-disk record (`LogEntryRecord`) every client reads.
 	source: LogEntrySource;
 	text: string;
@@ -264,6 +280,12 @@ export interface LogEntry {
 	// applyQueuedItemDispatchFailure) instead of matching on text, which would
 	// also delete an identical message the user really did send earlier.
 	queuedItemId?: string;
+	// The turn this entry belongs to ended here: stamped on a tab's last entry when its turn's
+	// process exits (`markTurnEnded()`), so a Federation client asking whether a message ran tells
+	// a turn that ended from one its host lost mid-stream (`turnFateAfter()`).
+	turnEnded?: boolean;
+	// On a user message: when its turn's latest attempt ended with nothing of its own that stays
+	turnEndedAt?: number;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
 	// For user messages - the sender's own save to History choice for this turn (Federation
@@ -539,8 +561,23 @@ export interface MentionHandoff {
 		afterEntryId?: string;
 		/** The host's queue frame showed `queueItemId` waiting. */
 		seenQueued?: boolean;
-		/** The start time of the turn it was queued behind (the tab's `thinkingStartTime`). */
+		/**
+		 * The start time of the turn it was queued behind (the tab's `thinkingStartTime` when it was
+		 * first seen waiting; never overwritten).
+		 */
 		turnStartedAt?: number;
+		/**
+		 * When it left the host queue with no start seen (this machine's clock, compared only with
+		 * it): past `HOST_QUEUE_START_GRACE_MS` it counts as removed.
+		 */
+		goneAt?: number;
+		/**
+		 * The mirror's count of whole host-queue reads when it was last seen waiting (or sent). A
+		 * read since then (a reconnect) may have missed its named exit: the tab's state decides.
+		 */
+		readsAtSeen?: number;
+		/** How many images the message carried (absent: none): an image-only message is matched by it. */
+		imageCount?: number;
 	};
 }
 
@@ -585,6 +622,30 @@ export interface QueuedItem {
 	 * never run here. Remove and Hold / Resume act on the host.
 	 */
 	hostQueued?: boolean;
+	/**
+	 * A host queue item whose images this window does not hold yet: an older desktop host said they
+	 * were unchanged (`imagesKept`) before this window read them (M28). Its card draws none, so an
+	 * Edit must not save it without them.
+	 */
+	hostImagesPending?: boolean;
+	/**
+	 * A hosted agent's message that is already an entry in its host's transcript (or drawn here):
+	 * the send names it (`TurnInput.entryId`), so the message is drawn once. Set on the message of a
+	 * turn a lost link cut, kept for a resend (`noteHostedTurnsCut()`).
+	 */
+	hostEntryId?: string;
+	/**
+	 * The bubble this machine drew for a hosted agent's message it kept while the host was not
+	 * connected (`LogEntry.keptForHost`). Unlike `hostEntryId`, the host never had it: the send names
+	 * it (`TurnInput.entryId`) so a host that takes the id writes the same entry, drawn once.
+	 */
+	keptEntryId?: string;
+	/**
+	 * On a desktop HOST: the id a Federation client named for this message (`TurnInput.entryId`).
+	 * Its user entry takes that id when it runs (`markTabRunningQueuedItem()`), or is the entry
+	 * the tab already holds under it, as a headless host writes it, so the client draws it once.
+	 */
+	entryId?: string;
 	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
 	pendingAdmissionId?: string;
 	/** Host-journaled release revision. Pending ID remains provenance and a
@@ -631,6 +692,10 @@ export interface QueuedItem {
 	// transcript. Carries a consult's replies verbatim without repeating them in
 	// the user bubble, where they are already shown as the consult's own reply.
 	agentContext?: string;
+	// Agent-only notes appended BEHIND the prompt at spawn and never rendered (a Federation
+	// sender's `@mention` notes: a consult is running, the answer is handed off), as the drain
+	// appends a mention's own notes (`TurnInput.agentNotes`).
+	agentNotes?: string;
 	// A `dispatch --notify-on-complete` wake that main queued because this tab was
 	// mid-turn: another agent reporting back, not the user's message. It runs as
 	// its own turn when the tab goes idle and is never steered into the running
@@ -988,6 +1053,13 @@ export interface AITab {
 	 * hosting) is a conversation kept from before the move, and stays.
 	 */
 	hostSeenAt?: number;
+	/**
+	 * On a hosted agent's tab: opened here while its host was not connected
+	 * (`openHostedTabOrHere()`), and not yet made on the host. It is made there under this id when
+	 * the link is back or at its first send (`createPendingHostTab()`); the host's first report of
+	 * it clears the flag.
+	 */
+	pendingHostTab?: boolean;
 	/**
 	 * Set on a tab Quick Chat created (the hotkey-summoned floating chat window,
 	 * see src/shared/quickChat.ts). An ephemeral Quick Chat tab is also `hidden`
@@ -1694,6 +1766,12 @@ export interface Session {
 	// Federation: moved back from its host by the person (Move Back from Host, `maestro-cli
 	// unlift`). Automatic Federation leaves it an SSH agent; Move to Host clears it.
 	hostedOptOut?: boolean;
+	// Federation: the host's copy a Move Back left behind (the host was down). The next Move to
+	// Host of this agent replaces it instead of being refused for its name.
+	leftOnHost?: LiftedToPointer;
+	// Federation, on a host: the id of the agent this record was lifted from. A later Move to Host
+	// of that agent may replace this record (`planAgentImport()`).
+	liftedFromAgentId?: string;
 
 	// Inline wizard state for /wizard command
 	// Keeps per-session/per-tab wizard state for creating or iterating on Auto Run documents

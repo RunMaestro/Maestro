@@ -144,6 +144,29 @@ describe('autoRunSteeringStore', () => {
 		expect(useAutoRunSteeringStore.getState().delivered[SESSION]).toBeUndefined();
 	});
 
+	it('keeps a returned note through a new run start until the Steer box takes it (review)', () => {
+		useAutoRunSteeringStore.setState({ returnedDrafts: {} });
+		useAutoRunSteeringStore.getState().addNote(SESSION, 'pending');
+		useAutoRunSteeringStore.getState().returnDraft(SESSION, 'refused after the run ended');
+		useAutoRunSteeringStore.getState().clearNotes(SESSION);
+		expect(useAutoRunSteeringStore.getState().takeReturnedDrafts(SESSION, 4_000)).toEqual([
+			'refused after the run ended',
+		]);
+		expect(useAutoRunSteeringStore.getState().returnedDrafts[SESSION]).toBeUndefined();
+	});
+
+	it('takes only the returned notes that fit, oldest first, and keeps the rest', () => {
+		useAutoRunSteeringStore.setState({ returnedDrafts: {} });
+		const store = useAutoRunSteeringStore.getState();
+		store.returnDraft(SESSION, 'a'.repeat(3_000));
+		store.returnDraft(SESSION, 'b'.repeat(3_000));
+		expect(useAutoRunSteeringStore.getState().takeReturnedDrafts(SESSION, 4_000)).toEqual([
+			'a'.repeat(3_000),
+		]);
+		expect(useAutoRunSteeringStore.getState().takeReturnedDrafts(SESSION, 100)).toEqual([]);
+		expect(useAutoRunSteeringStore.getState().returnedDrafts[SESSION]).toEqual(['b'.repeat(3_000)]);
+	});
+
 	it('clearPendingNotes keeps the delivered record, since a reply lands as the run ends', () => {
 		const taken = useAutoRunSteeringStore.getState().addNote(SESSION, 'stop after this doc')!;
 		useAutoRunSteeringStore.getState().takeNotes(SESSION);

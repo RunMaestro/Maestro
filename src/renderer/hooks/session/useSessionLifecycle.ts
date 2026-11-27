@@ -45,7 +45,7 @@ import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
-import { persistTabStarred } from '../../utils/starredSessions';
+import { setTabStarred } from '../../services/tabStar';
 import { flushGroupsToDisk } from '../../services/groupPersistence';
 import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
@@ -597,17 +597,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		const tab = getActiveTab(session);
 		if (!tab) return;
 
-		const newStarred = !tab.starred;
-		updateSessionWith(session.id, (s) => {
-			// Persist starred status to session metadata (async) and broadcast the
-			// change so the Left Bar's starred-sessions cache refreshes. Uses
-			// projectRoot (not cwd) for consistent session storage access.
-			persistTabStarred(s, tab, newStarred);
-			return {
-				...s,
-				aiTabs: s.aiTabs.map((t) => (t.id === tab.id ? { ...t, starred: newStarred } : t)),
-			};
-		});
+		// The one star write: provider session, a hosted agent's host, and the tab here.
+		setTabStarred(session.id, tab.id, !tab.starred);
 	}, []);
 
 	const toggleTabUnread = useCallback(() => {

@@ -116,26 +116,33 @@ export function liftedOwnerOfProcess<T extends { id: string; liftedTo?: unknown 
 	);
 }
 
-/**
- * Why a turn of this agent is running, or null. The agent's own state and every tab's state count,
- * hidden consult tabs included: a consult answering on one of them is a running turn too.
- */
-export function liftBusyReason(agent: {
+/** The live state a host or the desktop's bridge sends for an agent, as far as a running turn reads. */
+export interface RunningTurnProbe {
 	name?: string;
 	state?: string;
 	aiTabs?: readonly { id: string; name?: string | null; state?: string }[];
-}): string | null {
+}
+
+/**
+ * Where a turn of this agent runs now ("tab \"Main\"", "tab t1", or "" for the agent as a whole),
+ * or null when none does. The agent's own state and every tab's state count, hidden consult tabs
+ * included: a consult answering on one of them is a running turn too.
+ */
+export function runningTurnWhere(agent: RunningTurnProbe): string | null {
 	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
 	const busyTab = tabs.find((tab) => tab?.state === 'busy');
+	if (busyTab) return busyTab.name ? `tab "${busyTab.name}"` : `tab ${busyTab.id}`;
+	return agent.state === 'busy' ? '' : null;
+}
+
+/** Why a turn of this agent is running, or null: the refusal a lift shows. */
+export function liftBusyReason(agent: RunningTurnProbe): string | null {
+	const where = runningTurnWhere(agent);
+	if (where === null) return null;
 	const who = agent.name ? `"${agent.name}"` : 'The agent';
-	if (busyTab) {
-		const tab = busyTab.name ? `tab "${busyTab.name}"` : `tab ${busyTab.id}`;
-		return `${who} is running a turn in ${tab}. A running turn cannot move: wait for it to finish, or stop it, then lift again.`;
-	}
-	if (agent.state === 'busy') {
-		return `${who} is busy. A running turn cannot move: wait for it to finish, or stop it, then lift again.`;
-	}
-	return null;
+	return where
+		? `${who} is running a turn in ${where}. A running turn cannot move: wait for it to finish, or stop it, then lift again.`
+		: `${who} is busy. A running turn cannot move: wait for it to finish, or stop it, then lift again.`;
 }
 
 /**

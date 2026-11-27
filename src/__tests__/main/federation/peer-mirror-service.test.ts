@@ -9,11 +9,14 @@
 import * as os from 'os';
 import { describe, expect, it, vi } from 'vitest';
 import {
+	MIRROR_ACT_RECONNECT_WAIT_MS,
+	MIRROR_IDLE_REDIAL_MAX_MS,
 	MIRROR_TURN_COALESCE_MS,
 	PeerMirrorService,
 	type PeerMirrorServiceDeps,
 } from '../../../main/federation/peer-mirror-service';
 import type { MirrorPush } from '../../../shared/maestro-lib/client/peer-mirror';
+import { STREAM_FLUSH_INTERVAL_MS } from '../../../shared/streamFlushInterval';
 import {
 	SshForwardError,
 	type SshForwardLease,
@@ -344,7 +347,8 @@ describe('PeerMirrorService', () => {
 				},
 			},
 		]);
-		expect(MIRROR_TURN_COALESCE_MS).toBe(50);
+		// The cadence a local tab flushes its output at (R34).
+		expect(MIRROR_TURN_COALESCE_MS).toBe(STREAM_FLUSH_INTERVAL_MS);
 
 		// A non-turn push flushes the buffered turn first, so order holds.
 		h.pushes.length = 0;
@@ -357,6 +361,42 @@ describe('PeerMirrorService', () => {
 		a.emit({ type: 'agent.removed', agentId: 'a-a1' });
 		expect(h.pushes.map((p) => p.event.type)).toEqual(['turn', 'agent.removed', 'peer.state']);
 		expect(h.service.snapshot().peers[0].agents).toEqual([]);
+	});
+
+	// Parity R34: a hosted reply rendered four times as often as a local one (pushes every 50 ms
+	// against a local flush every 200 ms), so its tab made more React commits per turn. The same
+	// streamed reply now reaches a window as many times as a local tab flushes its output.
+	it('pushes a streaming reply as often as a local tab flushes its output (R34)', async () => {
+		vi.useFakeTimers();
+		try {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a }, { setTimer: (cb, ms) => setTimeout(cb, ms) });
+			h.service.start();
+			await settle();
+			h.pushes.length = 0;
+			// A 4 s reply, one chunk every 10 ms.
+			const streamMs = 4_000;
+			for (let at = 0; at < streamMs; at += 10) {
+				a.emit({
+					type: 'turn',
+					agentId: 'a-a1',
+					tabId: 't1',
+					event: { kind: 'text', at, text: 'x' },
+				});
+				vi.advanceTimersByTime(10);
+			}
+			const turnPushes = h.pushes.filter((p) => p.event.type === 'turn');
+			// The flushes a local tab's output batch makes over the same 4 s.
+			expect(turnPushes).toHaveLength(streamMs / STREAM_FLUSH_INTERVAL_MS);
+			const text = turnPushes
+				.map((p) =>
+					p.event.type === 'turn' && p.event.event.kind === 'text' ? p.event.event.text : ''
+				)
+				.join('');
+			expect(text).toBe('x'.repeat(streamMs / 10));
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('keeps the last known agents when the host or the forward drops', async () => {
@@ -441,6 +481,60 @@ describe('PeerMirrorService', () => {
 		expect(a.lease.restart).toHaveBeenCalledTimes(1);
 		expect(result).toMatchObject({ ok: true, peer: { peerId: 'a', connection: 'connected' } });
 		expect(await h.service.reconnect('nope')).toMatchObject({ ok: false });
+	});
+
+	// Parity R16: a host nothing here is hosted on redials slowly while it stays down; one that runs
+	// an agent of this machine keeps the forward's own pace, and an explicit act dials at once.
+	describe('redial pace (R16)', () => {
+		const withCeiling = (host: FakeHost) => {
+			const setBackoffCeiling = vi.fn();
+			(host.lease as unknown as Record<string, unknown>).setBackoffCeiling = setBackoffCeiling;
+			return setBackoffCeiling;
+		};
+
+		it('slows the redial of a host nothing here is hosted on, and keeps the pace of one that is', async () => {
+			const a = fakeHost('a');
+			const b = fakeHost('b');
+			const ceilingA = withCeiling(a);
+			const ceilingB = withCeiling(b);
+			const h = harness(
+				[remoteOf('a'), remoteOf('b')],
+				{ a, b },
+				{
+					hostsAgents: (peerId) => peerId === 'b',
+				}
+			);
+			h.service.start();
+			await settle();
+			expect(ceilingA).toHaveBeenLastCalledWith(MIRROR_IDLE_REDIAL_MAX_MS);
+			expect(ceilingB).toHaveBeenLastCalledWith(undefined);
+		});
+
+		it('takes the pace again when what this machine hosts changes', async () => {
+			const a = fakeHost('a');
+			const ceiling = withCeiling(a);
+			let hosted = false;
+			const h = harness([remoteOf('a')], { a }, { hostsAgents: () => hosted });
+			h.service.start();
+			await settle();
+			expect(ceiling).toHaveBeenLastCalledWith(MIRROR_IDLE_REDIAL_MAX_MS);
+			hosted = true;
+			h.service.noteHostedAgentsChanged();
+			expect(ceiling).toHaveBeenLastCalledWith(undefined);
+			hosted = false;
+			h.service.noteHostedAgentsChanged();
+			expect(ceiling).toHaveBeenLastCalledWith(MIRROR_IDLE_REDIAL_MAX_MS);
+		});
+
+		it('leaves the pace alone without the predicate', async () => {
+			const a = fakeHost('a');
+			const ceiling = withCeiling(a);
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			h.service.noteHostedAgentsChanged();
+			expect(ceiling).not.toHaveBeenCalled();
+		});
 	});
 
 	it('drops a remote that is deleted or opted out, and mirrors a newly opted-in one', async () => {
@@ -540,6 +634,69 @@ describe('PeerMirrorService', () => {
 			answer({ ok: true, value: [waiting('old')] });
 			await settle();
 			expect(h.service.snapshot().peers[0].queues).toEqual({ 'a-a1': [waiting('new')] });
+		});
+
+		it('counts a whole read whose answer a newer queue.changed replaced, as the gap it covered (M19)', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			// A host that names exits: A (with an @mention) and B wait.
+			a.emit({
+				type: 'queue.changed',
+				agentId: 'a-a1',
+				items: [waiting('A'), waiting('B')],
+				namesExits: true,
+			});
+			expect(h.service.snapshot().peers[0].queueReads?.['a-a1']).toBeUndefined();
+			// The link drops; A starts unseen. The reconnect reads the queue whole, and while that
+			// read is out B starts too: that change names only B.
+			let answer!: (value: { ok: true; value: QueuedTurn[] }) => void;
+			a.queueList.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+			a.emit({ type: 'snapshot', agents: [agent('a-a1')], groups: [] });
+			a.emit({
+				type: 'queue.changed',
+				agentId: 'a-a1',
+				items: [],
+				exit: { itemId: 'B', exit: 'started' },
+				namesExits: true,
+			});
+			h.pushes.splice(0);
+			answer({ ok: true, value: [waiting('B')] });
+			await settle();
+			const peer = h.service.snapshot().peers[0];
+			// The newer list stands, B's named start is kept, and the read is counted.
+			expect(peer.queues).toEqual({});
+			expect(peer.queueExits?.['a-a1']).toEqual([{ itemId: 'B', exit: 'started' }]);
+			expect(peer.queueReads?.['a-a1']).toBe(1);
+			// Every window counts it too: the push is a whole read (no `namesExits`).
+			expect(h.pushes.map((p) => p.event)).toEqual([
+				{ type: 'agent.queue', agentId: 'a-a1', items: [] },
+			]);
+		});
+
+		it("gives an item a raced change said kept its images the read's images (M26, Greptile on #2160)", async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			let answer!: (value: { ok: true; value: QueuedTurn[] }) => void;
+			a.queueList.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+			// A resync reads the queue; a desktop host's change lands meanwhile, sending no images for
+			// an item it sent them for before this mirror attached.
+			a.emit({ type: 'snapshot', agents: [agent('a-a1')], groups: [] });
+			a.emit({
+				type: 'queue.changed',
+				agentId: 'a-a1',
+				items: [{ ...waiting('img'), imagesKept: true }, waiting('new')],
+				namesExits: true,
+			});
+			const images = ['data:image/png;base64,AAAA'];
+			answer({ ok: true, value: [{ ...waiting('img'), images }] });
+			await settle();
+			expect(h.service.snapshot().peers[0].queues).toEqual({
+				'a-a1': [{ ...waiting('img'), images }, waiting('new')],
+			});
 		});
 
 		it('keeps what it held when a read fails', async () => {
@@ -760,6 +917,60 @@ describe('PeerMirrorService', () => {
 			return { turns, tabs };
 		}
 
+		// Parity R16 and R18: an act (an auto-retry's send too) on a peer whose forward waits out a
+		// backoff dials at once and waits for that dial, as for a reconnect in progress.
+		describe('on a peer whose forward is down (R16, R18)', () => {
+			const down: SshForwardState = {
+				status: 'down',
+				error: new Error('ssh: connect refused'),
+				attempt: 3,
+				retryInMs: 240_000,
+			};
+			async function downedPeer() {
+				const a = fakeHost('a');
+				const h = harness([remoteOf('a')], { a }, { hostsAgents: () => false });
+				const { turns } = withInput(a);
+				h.service.start();
+				await settle();
+				(a.lease as unknown as { state: () => SshForwardState }).state = () => down;
+				a.setState('disconnected' as ConnectionState);
+				a.emitLease(down);
+				expect(h.service.peers()[0].connection).toBe('lost');
+				return { a, h, turns };
+			}
+
+			it('dials at once and sends once the dial attaches', async () => {
+				const { a, h, turns } = await downedPeer();
+				const answer = await h.service.act('a', 'a-a1', {
+					kind: 'send',
+					tabId: 't1',
+					text: 'hi',
+				} as never);
+				expect(a.lease.restart).toHaveBeenCalledTimes(1);
+				expect(a.reconnect).toHaveBeenCalled();
+				expect(turns.send).toHaveBeenCalledTimes(1);
+				expect(answer).toMatchObject({ ok: true });
+				expect(h.service.peers()[0].connection).toBe('connected');
+			});
+
+			it('refuses with what the dial found when it fails, and sends nothing', async () => {
+				const { a, h, turns } = await downedPeer();
+				a.reconnect.mockResolvedValueOnce({
+					ok: false,
+					error: { code: 'not-running', message: 'No maestro-cli host is running.' },
+				});
+				const answer = await h.service.act('a', 'a-a1', {
+					kind: 'send',
+					tabId: 't1',
+					text: 'hi',
+				} as never);
+				expect(a.lease.restart).toHaveBeenCalledTimes(1);
+				expect(turns.send).not.toHaveBeenCalled();
+				expect(answer).toMatchObject({ ok: false, notSent: true });
+				expect((answer as { error: string }).error).toContain('No maestro-cli host is running.');
+			});
+		});
+
 		it('runs each action on the held client of a connected peer', async () => {
 			const a = fakeHost('a');
 			const h = harness([remoteOf('a')], { a });
@@ -832,11 +1043,93 @@ describe('PeerMirrorService', () => {
 			await settle();
 			a.emit({ type: 'host.lost', reason: 'socket closed' });
 			const answer = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
-			expect(answer).toMatchObject({ ok: false, code: 'host-unavailable' });
+			// `notSent`: refused before the client saw it, so a caller may keep it for a retry.
+			expect(answer).toMatchObject({ ok: false, code: 'host-unavailable', notSent: true });
 			expect(answer.ok ? '' : answer.error).toContain('Nothing was sent');
 			// Back up: the refused message is not delivered late.
 			a.emit({ type: 'host.connected', host: { kind: 'headless', label: 'h' }, resumed: true });
 			await settle();
+			expect(turns.send).not.toHaveBeenCalled();
+		});
+
+		/** The host came back after discovery found none: the client is reconnecting, the old error kept. */
+		function reconnectingAfterNoHost(a: FakeHost): void {
+			a.emitLease({
+				status: 'down',
+				error: new SshForwardError('not-running', 'No maestro-cli host is running on a.'),
+				attempt: 1,
+				retryInMs: 1000,
+			});
+			a.emit({ type: 'host.reconnecting', attempt: 1, delayMs: 15_000 });
+		}
+
+		it('waits for a reconnect in progress and sends once the host is back (R3)', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			const { turns } = withInput(a);
+			h.service.start();
+			await settle();
+			reconnectingAfterNoHost(a);
+			expect(h.service.peers()[0].connection).toBe('reconnecting');
+			a.reconnect.mockImplementationOnce(async () => {
+				a.setState('connected');
+				a.emit({ type: 'host.connected', host: { kind: 'headless', label: 'h' }, resumed: true });
+				return { ok: true, value: {} };
+			});
+			const answer = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+			expect(answer).toEqual({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+			// Asked to try at once, not at the client's next backoff step; sent exactly once.
+			expect(a.reconnect).toHaveBeenCalledTimes(1);
+			expect(turns.send).toHaveBeenCalledTimes(1);
+		});
+
+		it('says the reconnect is still under way, never the old no-host error, when the wait runs out (R3)', async () => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			try {
+				const a = fakeHost('a');
+				const h = harness([remoteOf('a')], { a });
+				const { turns } = withInput(a);
+				h.service.start();
+				await settle();
+				reconnectingAfterNoHost(a);
+				a.reconnect.mockImplementationOnce(() => new Promise(() => undefined));
+				const pending = h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+				await settle();
+				vi.advanceTimersByTime(MIRROR_ACT_RECONNECT_WAIT_MS);
+				const answer = await pending;
+				expect(answer).toMatchObject({ ok: false, code: 'host-unavailable', notSent: true });
+				const error = answer.ok ? '' : answer.error;
+				expect(error).toBe('Still reconnecting to peer "a". Nothing was sent.');
+				expect(error).not.toContain('No maestro-cli host is running');
+				expect(turns.send).not.toHaveBeenCalled();
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('gives what discovery found when the reconnect tried for the send fails (R3)', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a });
+			const { turns } = withInput(a);
+			h.service.start();
+			await settle();
+			reconnectingAfterNoHost(a);
+			a.reconnect.mockResolvedValueOnce({
+				ok: false,
+				error: {
+					code: 'host-unavailable',
+					message: 'No maestro-cli host is running on a.',
+					method: 'connection.reconnect',
+				},
+			} as never);
+			const answer = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+			expect(answer).toMatchObject({ ok: false, code: 'host-unavailable', notSent: true });
+			expect(answer.ok ? '' : answer.error).toBe(
+				'Could not reconnect to peer "a". Nothing was sent. No maestro-cli host is running on a.'
+			);
 			expect(turns.send).not.toHaveBeenCalled();
 		});
 

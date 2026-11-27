@@ -83,7 +83,12 @@ import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
-import { createFederationRuntime, getPeerMirrorService } from './federation';
+import {
+	createFederationRuntime,
+	getPeerMirrorService,
+	noteHostedAgentsChanged,
+	onMirrorPush,
+} from './federation';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
@@ -222,6 +227,7 @@ import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude
 import {
 	ensureCliServer,
 	flushRemoteCopyWriteBack,
+	pendingRemoteCopyWrites,
 	startCliDiscoveryWatchdog,
 	stopCliDiscoveryWatchdog,
 } from './ipc/handlers';
@@ -296,7 +302,8 @@ import { planWindowRestore, pickFocusWindowSpec } from './window-state-persisten
 import type { WindowState as SharedWindowState } from '../shared/window-types';
 import { setupAgentRunCapture } from './agent-run/setup-capture-listener';
 import { setAgentRunSink } from './agent-run/broadcast';
-import { configureSshReachability } from './ssh-reachability';
+import { configureSshReachability, forgetHostPeer, noteHostConnection } from './ssh-reachability';
+import { HOSTED_AGENTS_SETTING, readLiftedTo } from '../shared/maestro-lib/agents/lift-pointer';
 import { sshRemoteManager } from './ssh-remote-manager';
 import { startAgentRunStoreWatcher } from './agent-run/store-watcher';
 import { setupAgentRunRecovery } from './agent-run/setup-recovery';
@@ -675,6 +682,17 @@ capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeS
 // A forced model discovery pushes the fresh list to every open model picker.
 setModelsRefreshedBroadcaster(safeSend);
 
+/**
+ * Whether an agent on this machine runs on the Maestro host behind `peerId` (a hosted agent, with
+ * hosted agents on). The one predicate the host outage and the mirror's redial pace both read.
+ */
+const hostsAgentsOn = (peerId: string): boolean => {
+	const hostedEnabled = store.get(HOSTED_AGENTS_SETTING, false) === true;
+	if (!hostedEnabled) return false;
+	const sessions = sessionsStore.get('sessions', []) as Array<{ liftedTo?: unknown }>;
+	return sessions.some((session) => readLiftedTo(session?.liftedTo)?.peer === peerId);
+};
+
 // One dialog per unreachable SSH remote, in every window and web client, fed by
 // every path that runs ssh (agent turns, remote-fs, remote git, shell commands).
 configureSshReachability({
@@ -682,6 +700,26 @@ configureSshReachability({
 	probe: (remote) => sshRemoteManager.probeReachability(remote),
 	emit: (event) => safeSend('ssh-remote:reachability', event),
 	hasLiveTransport: (remoteId) => getPeerMirrorService()?.isRemoteConnected(remoteId) ?? false,
+	// A hosted agent's host that stops answering is an outage of its remote, told through the
+	// same dialog. Only a host one of this machine's agents runs on counts.
+	hostsAgents: hostsAgentsOn,
+	reconnectHost: async (remoteId) => {
+		const result = await getPeerMirrorService()?.reconnectRemote(remoteId);
+		return result?.ok ?? false;
+	},
+});
+onMirrorPush(({ peerId, event }) => {
+	if (event.type === 'peer.state') {
+		noteHostConnection({
+			remoteId: event.peer.remoteId,
+			peerId: event.peer.peerId,
+			name: event.peer.name,
+			connection: event.peer.connection,
+			...(event.peer.error ? { error: event.peer.error } : {}),
+		});
+	} else if (event.type === 'peer.removed') {
+		forgetHostPeer(peerId);
+	}
 });
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
@@ -3944,8 +3982,12 @@ app
 			readRemotes: () => (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[],
 			watchRemotes: (onChange) => store.onDidChange('sshRemotes', () => onChange()),
 			safeSend,
+			// A host nothing here is hosted on redials slowly while it stays down.
+			hostsAgents: hostsAgentsOn,
 		});
 		federation.start();
+		// Hosted agents switched on or off: the host outages and the redial pace follow at once.
+		store.onDidChange(HOSTED_AGENTS_SETTING, () => noteHostedAgentsChanged());
 		app.on('will-quit', () => federation.stop());
 
 		// Install the application menu (File / Edit / View / Window on macOS,
@@ -4150,6 +4192,7 @@ quitHandler = createQuitHandler({
 	tunnelManager,
 	closeStatsDB,
 	flushPendingRemoteWrites: flushRemoteCopyWriteBack,
+	listPendingRemoteWrites: pendingRemoteCopyWrites,
 	stopCliWatcher: () => {
 		cliWatcher.stop();
 		// Tear down the discovery-file watchdog so it doesn't try to rewrite

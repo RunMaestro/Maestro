@@ -24,7 +24,6 @@
  * is never handed to a caller.
  */
 
-import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import { workingDirectoryChangeBlocker } from '../../agentWorkingDirectory';
@@ -43,12 +42,14 @@ import type {
 	MaestroEvent,
 	TabPatch,
 } from '../client/types';
+import { readRequestedTabId } from '../client/types';
 import { valuesEqual } from '../client/mirror';
 import type { EventBus } from '../client/event-bus';
 import { listAutoRunDocuments } from '../autorun/documents';
 import { logger } from '../host';
 import { unusableCwdReason } from '../launch/cwd';
 import { planAgentImport } from './import-plan';
+import { removeAgentFiles } from './removal-files';
 import type { MaestroPaths } from '../paths/resolve';
 import { hasInlineSessionImages, type SessionImageStore } from '../store/session-images';
 import type { DataDirVerdict } from '../runtime/data-dir-lock';
@@ -71,13 +72,7 @@ import type {
 } from '../store/records';
 import { agentsOf, groupsOf, optionalArrayShape, visibleAiTabsOf } from '../store/read-stores';
 import type { LogEntryRecord } from '../store/transcript';
-import {
-	archiveClosedTab,
-	closedTabsFile,
-	readClosedTabs,
-	removeClosedTabArchive,
-	takeClosedTab,
-} from './closed-tabs';
+import { archiveClosedTab, closedTabsFile, readClosedTabs, takeClosedTab } from './closed-tabs';
 import type { ClosedTabSummary } from '../../closedTabCommands';
 import { getTabDisplayName } from '../store/tab-display';
 import {
@@ -102,6 +97,7 @@ import {
 	groupsWithout,
 	mergeSshPatch,
 	normalizeGroupName,
+	markTurnEnded,
 	recordTabSession,
 	relocateAgentPaths,
 	sshRecordOf,
@@ -219,7 +215,7 @@ export interface AgentRepository {
 	removeGroup(groupId: string): Promise<ClientResult<void>>;
 	moveAgentToGroup(agentId: string, groupId: string | null): Promise<ClientResult<void>>;
 
-	createTab(agentId: string): Promise<ClientResult<{ tabId: string }>>;
+	createTab(agentId: string, requestedId?: string): Promise<ClientResult<{ tabId: string }>>;
 	renameTab(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
 	closeTab(agentId: string, tabId: string): Promise<ClientResult<void>>;
 	/** The agent's closed-tab archive as summaries, newest first (`closed_tab_command` list). */
@@ -240,6 +236,29 @@ export interface AgentRepository {
 		agentId: string,
 		tabId: string,
 		entries: readonly LogEntryRecord[],
+		guard?: TabWriteGuard
+	): Promise<ClientResult<void>>;
+	/**
+	 * Settle a progress line this host wrote itself (`/history`'s "Generating history synopsis..."):
+	 * the entry with `entry.id` takes `entry`'s place, as the desktop's handler replaces its line's
+	 * text. Appended when the tab no longer holds it. Never touches any other entry.
+	 */
+	replaceTranscriptEntry(
+		agentId: string,
+		tabId: string,
+		entry: LogEntryRecord,
+		guard?: TabWriteGuard
+	): Promise<ClientResult<void>>;
+	/**
+	 * Stamp a turn's end on the entry `entryId` (`markTurnEnded()`) as that entry is when the write
+	 * runs, so a change made to it since the turn began (the delivered tick) is kept. Nothing is
+	 * written when the tab no longer holds it.
+	 */
+	stampTurnEnded(
+		agentId: string,
+		tabId: string,
+		entryId: string,
+		endedAt: number,
 		guard?: TabWriteGuard
 	): Promise<ClientResult<void>>;
 	/**
@@ -347,11 +366,6 @@ function isAgentEntry(entry: unknown): entry is AgentRecord {
 		typeof candidate.name === 'string' &&
 		typeof candidate.toolType === 'string'
 	);
-}
-
-/** An id that is safe to use as a file name under a folder: no separator can climb out of it. */
-function isSafeFileId(id: string): boolean {
-	return id.length > 0 && !/[\\/]/.test(id) && id !== '.' && id !== '..';
 }
 
 const DEFAULT_SESSIONS: SessionsDocument = { sessions: [] };
@@ -661,16 +675,34 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				checkCwd,
 			});
 			if (!planned.ok) return failure(method, planned.code, planned.message);
-			const { agent } = planned;
+			const { agent, replaces } = planned;
+			if (replaces && processes.isBusy(replaces)) {
+				return failure(
+					method,
+					'rejected',
+					`The copy this import replaces (${replaces}) is running a turn. Wait for it to finish, or stop it, then move again.`
+				);
+			}
+			// The agent's earlier copy goes in the same write the new record lands in, cleaned up
+			// as a removal cleans it up (`removalSteps()`).
+			const entries = sessionsDoc.sessions ?? [];
+			const kept = replaces
+				? entries.filter((entry) => !(isAgentEntry(entry) && entry.id === replaces))
+				: entries;
+			const removal = replaces ? removalSteps(replaces) : undefined;
+			const next: SessionsDocument = { ...sessionsDoc, sessions: [...kept, agent] };
+			// The selection follows the agent onto its new record, as it would stay on it.
+			if (replaces && sessionsDoc.activeSessionId === replaces) next.activeSessionId = agent.id;
 			return {
 				ok: true,
 				plan: {
 					value: { agentId: agent.id },
-					sessions: {
-						...sessionsDoc,
-						sessions: [...(sessionsDoc.sessions ?? []), agent],
-					},
-					events: [{ type: 'agent.added', agent: project(agent) }],
+					sessions: next,
+					...(removal ? { before: removal.before, after: removal.after } : {}),
+					events: [
+						...(replaces ? [{ type: 'agent.removed' as const, agentId: replaces }] : []),
+						{ type: 'agent.added', agent: project(agent) },
+					],
 				},
 			};
 		});
@@ -875,21 +907,21 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				plan: {
 					value: undefined,
 					sessions: next,
-					// Every process of the agent, every tab's, not only the legacy `-ai` id (G6).
-					before: () => processes.stopAgent(agentId),
-					// Kept: History, the provider's own session files, the working directory (AG-5).
-					after: async () => {
-						if (isSafeFileId(agentId)) {
-							await fs.rm(path.join(paths.userDataDir, 'playbooks', `${agentId}.json`), {
-								force: true,
-							});
-						}
-						await removeClosedTabArchive(paths.syncDir, agentId);
-					},
+					...removalSteps(agentId),
 					events: [{ type: 'agent.removed', agentId }],
 				},
 			};
 		});
+	}
+
+	/** What removing an agent does besides dropping its record: one rule for a remove and a replace. */
+	function removalSteps(agentId: string) {
+		return {
+			// Every process of the agent, every tab's, not only the legacy `-ai` id (G6).
+			before: () => processes.stopAgent(agentId),
+			// Its playbooks and closed-tab archive; History and the working directory stay (AG-5).
+			after: () => removeAgentFiles(paths, agentId),
+		};
 	}
 
 	// -----------------------------------------------------------------------
@@ -1032,12 +1064,22 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		});
 	}
 
-	function createTab(agentId: string): Promise<ClientResult<{ tabId: string }>> {
+	function createTab(
+		agentId: string,
+		requestedId?: string
+	): Promise<ClientResult<{ tabId: string }>> {
 		const method: ClientMethod = 'tabs.create';
 		return run(method, async () => {
 			const agent = findAgent(agentId);
 			if (!agent) return noAgent(method, agentId);
-			const { agent: next, tab } = addTabRecord(agent, ctx, await readTabDefaults());
+			const requested = readRequestedTabId(requestedId);
+			// A client draws the tab under a fresh id before it asks (R15), so a tab already under
+			// that id is the one this same request made (its answer was lost): answer it, make no
+			// second one (R25).
+			if (requested && (agent.aiTabs ?? []).some((existing) => existing.id === requested)) {
+				return { ok: true, plan: { value: { tabId: requested }, events: [] } };
+			}
+			const { agent: next, tab } = addTabRecord(agent, ctx, await readTabDefaults(), requested);
 			return {
 				ok: true,
 				plan: {
@@ -1120,6 +1162,52 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 				entries.length === 0
 					? tab
 					: { ...tab, logs: [...(Array.isArray(tab.logs) ? tab.logs : []), ...entries] },
+			guard
+		);
+
+	const replaceTranscriptEntry = (
+		agentId: string,
+		tabId: string,
+		entry: LogEntryRecord,
+		guard?: TabWriteGuard
+	) =>
+		rewriteTab(
+			agentId,
+			tabId,
+			(tab) => {
+				const logs = Array.isArray(tab.logs) ? tab.logs : [];
+				const at = logs.findIndex(
+					(existing) =>
+						!!existing &&
+						typeof existing === 'object' &&
+						(existing as { id?: unknown }).id === entry.id
+				);
+				return {
+					...tab,
+					logs:
+						at === -1 ? [...logs, entry] : logs.map((existing, i) => (i === at ? entry : existing)),
+				};
+			},
+			guard
+		);
+
+	const stampTurnEnded = (
+		agentId: string,
+		tabId: string,
+		entryId: string,
+		endedAt: number,
+		guard?: TabWriteGuard
+	) =>
+		rewriteTab(
+			agentId,
+			tabId,
+			(tab) => {
+				const logs = Array.isArray(tab.logs) ? (tab.logs as LogEntryRecord[]) : [];
+				const at = logs.findIndex((existing) => existing?.id === entryId);
+				if (at === -1) return tab;
+				const stamped = markTurnEnded([logs[at]], 0, endedAt)[0];
+				return { ...tab, logs: logs.map((existing, i) => (i === at ? stamped : existing)) };
+			},
 			guard
 		);
 
@@ -1334,6 +1422,8 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		starTab,
 		updateTab,
 		appendTranscript,
+		replaceTranscriptEntry,
+		stampTurnEnded,
 		beginTurn,
 		recordTabSession: recordSession,
 		openConsultTab,

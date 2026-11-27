@@ -1,6 +1,10 @@
 import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
-import type { QueuedTurnEdit, TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import type {
+	QueuedTurnEdit,
+	TurnAgentText,
+	TurnOverrides,
+} from '../../../shared/maestro-lib/client/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
  *
@@ -22,6 +26,7 @@ import type {
 	GetSessionDetailCallback,
 	WriteToSessionCallback,
 	ExecuteCommandCallback,
+	ExecuteCommandOutcome,
 	InterruptSessionCallback,
 	SwitchModeCallback,
 	SelectSessionCallback,
@@ -518,7 +523,7 @@ export class CallbackRegistry {
 		mentionRouting?: MentionRouting,
 		requireDeliveryReceipt?: boolean,
 		pianolaDispatchId?: string
-	): Promise<boolean> {
+	): Promise<ExecuteCommandOutcome> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
 			sessionId,
@@ -568,9 +573,15 @@ export class CallbackRegistry {
 		return this.callbacks.selectTab(sessionId, tabId);
 	}
 
-	async newTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
+	async newTab(
+		sessionId: string,
+		background?: boolean,
+		tabId?: string
+	): Promise<{ tabId: string } | null> {
 		if (!this.callbacks.newTab) return null;
-		return this.callbacks.newTab(sessionId, background);
+		return tabId
+			? this.callbacks.newTab(sessionId, background, tabId)
+			: this.callbacks.newTab(sessionId, background);
 	}
 
 	async closeTab(sessionId: string, tabId: string): Promise<boolean> {
@@ -808,7 +819,9 @@ export class CallbackRegistry {
 		mentionRouting?: MentionRouting,
 		dispatchCallback?: boolean,
 		control?: PianolaQueueControl,
-		turnOverrides?: TurnOverrides
+		turnOverrides?: TurnOverrides,
+		agentText?: TurnAgentText,
+		entryId?: string
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		const args: Parameters<EnqueueCommandCallback> = [
@@ -823,7 +836,9 @@ export class CallbackRegistry {
 			dispatchCallback,
 			control,
 		];
-		if (turnOverrides) args.push(turnOverrides);
+		if (turnOverrides || agentText || entryId) args.push(turnOverrides);
+		if (agentText || entryId) args.push(agentText);
+		if (entryId) args.push(entryId);
 		return this.callbacks.enqueueCommand(...args);
 	}
 

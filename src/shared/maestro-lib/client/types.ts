@@ -263,6 +263,18 @@ export interface AgentImportInput {
 	/** The tab the person was looking at. Absent, or not one of `tabs`: the first tab. */
 	activeTabId?: string;
 	queue?: AgentImportQueuedMessage[];
+	/**
+	 * The id of this agent's earlier copy on the host, left there by a Move Back while the host was
+	 * down. The host replaces that copy with this import in one write: its name and directory do
+	 * not refuse the import. A host that does not know the field refuses on the name as before.
+	 */
+	replacesAgentId?: string;
+	/**
+	 * The id of the agent this import moves, on the machine it moves from. The host stores it on
+	 * the record (`liftedFromAgentId`) and replaces a copy (`replacesAgentId`) only when that copy
+	 * carries the same id and the same name: a wrong `replacesAgentId` never removes another agent.
+	 */
+	liftedFromAgentId?: string;
 }
 
 export interface AgentImportReceipt {
@@ -398,7 +410,12 @@ export interface TranscriptOptions {
 export interface TabsApi {
 	/** CH-1. The AI tabs a person sees, in strip order. Hidden consult tabs are left out. */
 	list(agentId: string): Promise<ClientResult<AITabRecord[]>>;
-	create(agentId: string): Promise<ClientResult<{ tabId: string }>>;
+	/**
+	 * `opts.tabId`: the id the new tab takes, when no tab of the agent has it (a client that drew
+	 * the tab while the host was not connected, R15), so nothing it keyed on the tab moves. A host
+	 * that does not know the field, or finds the id taken, answers its own id.
+	 */
+	create(agentId: string, opts?: { tabId?: string }): Promise<ClientResult<{ tabId: string }>>;
 	/** An empty name clears it, so the tab shows its session id label again. */
 	rename(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
 	/** The tab moves to the host's closed-tab history. */
@@ -473,7 +490,23 @@ export interface TurnInput {
 	 * answer is handed off). Never drawn in the transcript. A host that does not know it ignores it.
 	 */
 	agentNotes?: string;
+	/**
+	 * The id the host gives this message's transcript entry (`readTurnEntryId()`). The resend of a
+	 * message the host already wrote down (a turn cut by a lost link that died with the host) names
+	 * that entry, so the message stays one entry: the host writes no second one. A message drawn on
+	 * the sender before it reached the host names the entry drawn there, so the host's copy stands
+	 * in for it. A host that does not know the field ignores it, and writes a new entry.
+	 */
+	entryId?: string;
 }
+
+/** A `TurnInput.entryId` the host can take: an id of letters, digits, `-` and `_`, 1 to 128 long. */
+export function readTurnEntryId(value: unknown): string | undefined {
+	return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : undefined;
+}
+
+/** A requested tab id (`TabsApi.create` `tabId`): the same shape as a `TurnInput.entryId`. */
+export const readRequestedTabId = readTurnEntryId;
 
 /** The most characters `TurnInput.agentContext` or `agentNotes` may hold, each. */
 export const MAX_TURN_AGENT_TEXT_CHARS = 1_000_000;
@@ -496,6 +529,31 @@ export function readTurnAgentText(
 		};
 	}
 	return value.trim() ? { ok: true, value } : { ok: true };
+}
+
+/** How a waiting item left a host's queue, as a host that names it says (`queue.changed`). */
+export interface QueueExit {
+	itemId: string;
+	exit: 'started' | 'removed';
+}
+
+/** A turn's agent-only text (`TurnInput.agentContext`, `agentNotes`), as one value. */
+export type TurnAgentText = Pick<TurnInput, 'agentContext' | 'agentNotes'>;
+
+/**
+ * What a host does beyond the base protocol, as its reply to `host_capabilities` names it. A host
+ * that echoes the request (an older build) has none of them.
+ * - `turn-agent-text`: it puts a turn's `agentContext` and `agentNotes` into the prompt.
+ */
+export type HostCapability = 'turn-agent-text';
+
+/** Every capability a host of this build has: both host kinds answer `host_capabilities` with it. */
+export const HOST_CAPABILITIES: readonly HostCapability[] = ['turn-agent-text'];
+
+/** The capabilities a host's `host_capabilities_result` names; anything this build does not know goes. */
+export function parseHostCapabilities(raw: unknown): HostCapability[] {
+	if (!Array.isArray(raw)) return [];
+	return HOST_CAPABILITIES.filter((capability) => raw.includes(capability));
 }
 
 /** One sender's own tab choices, applied to this one turn only; never stored on the host tab. */
@@ -539,6 +597,18 @@ export type TurnSendReceipt =
 	 * turn started: what it writes reaches the tab's transcript.
 	 */
 	| { status: 'ran' }
+	/**
+	 * The send named a message the tab already holds with an answer after it (`TurnInput.entryId`,
+	 * `userEntryAnswered()`): it ran once, so nothing ran now. The resend of a turn its sender lost
+	 * track of (a cut link, a restart) reads this as "already ran". An older host never says it.
+	 */
+	| { status: 'answered' }
+	/**
+	 * The send named a message whose turn ended on an error the host retries itself (a desktop
+	 * host's Agent Resilience holds it, `TurnInput.entryId`): the host's own retry sends it, so
+	 * nothing ran now and the sender keeps no copy of its own. An older host never says it.
+	 */
+	| { status: 'retrying' }
 	/** The agent was busy; the message waits in the host's execution queue (CH-4). */
 	| {
 			status: 'queued';
@@ -560,6 +630,15 @@ export interface QueuedTurn {
 	/** The host paused the queue on this item. */
 	paused: boolean;
 	/**
+	 * The item waits for its own tab alone (the hand-over, `handOverItem()`): it starts the moment
+	 * the tab's own hold ends, so a client draws the tab busy and a Stop there ends it as it starts.
+	 * False: it waits for something else (or a desktop host, which starts it in the moment the turn
+	 * before ends). Absent: an older host that does not say (`hostQueueHandOver()`).
+	 */
+	handOver?: boolean;
+	/** With `handOver`: since when it waits that way. */
+	handOverSince?: number;
+	/**
 	 * Model and effort captured when it was queued (an absent field: the agent's default applies).
 	 * Absent when the host did not say, so the card and the editor fall back to the tab's own.
 	 */
@@ -569,6 +648,12 @@ export interface QueuedTurn {
 	 * leave), so the card draws the thumbnails and its editor opens with them. Absent: none.
 	 */
 	images?: string[];
+	/**
+	 * A desktop host's `queue_changed` sent no images for this item because they are the ones it
+	 * sent before for it (M26): the reader keeps the images it holds for the item id
+	 * (`setAgentQueue()`). Never set together with `images`.
+	 */
+	imagesKept?: true;
 }
 
 /**
@@ -690,8 +775,16 @@ export type TurnEvent =
 export interface TurnsApi {
 	/** CH-2, CH-4. Runs now when the agent is idle; otherwise queues behind its current turn. */
 	send(agentId: string, tabId: string, input: TurnInput): Promise<ClientResult<TurnSendReceipt>>;
-	/** CH-4. Stop the tab's running turn. `stopped: false` when nothing was running. */
-	interrupt(agentId: string, tabId: string): Promise<ClientResult<{ stopped: boolean }>>;
+	/**
+	 * CH-4. Stop the tab's running turn. `stopped: false` when nothing was running.
+	 * `stoppedItemIds`: the host's queue items whose turn the stop ended, when the host names
+	 * them (a desktop host of this build, whose queue frames can trail its answer); absent when
+	 * it does not.
+	 */
+	interrupt(
+		agentId: string,
+		tabId: string
+	): Promise<ClientResult<{ stopped: boolean; stoppedItemIds?: string[] }>>;
 	readonly queue: {
 		list(agentId: string): Promise<ClientResult<QueuedTurn[]>>;
 		remove(agentId: string, itemId: string): Promise<ClientResult<{ removed: boolean }>>;
@@ -1034,11 +1127,24 @@ export type MaestroEvent =
 	| { type: 'turn'; agentId: string; tabId: string; event: TurnEvent }
 	/**
 	 * The agent's execution queue changed (a message waits, starts, is removed, held, or released).
-	 * Carries every waiting item, in order, so a listener replaces what it held. Only a host whose
-	 * runtime owns the queue says this: the desktop's bridge does not, so a client attached to a
-	 * desktop reads the queue with `turns.queue.list` instead.
+	 * Carries every waiting item, in order, so a listener replaces what it held. A headless host
+	 * says it as its runtime's queue changes; a desktop says it as its stored agents are written
+	 * (`broadcastDesktopQueueChanges()`), and an older desktop not at all, so a client reads the
+	 * queue with `turns.queue.list` on attach.
 	 */
-	| { type: 'queue.changed'; agentId: string; items: QueuedTurn[] }
+	| {
+			type: 'queue.changed';
+			agentId: string;
+			items: QueuedTurn[];
+			/** How the item this change took out of the queue left it: its turn started, or it went. */
+			exit?: QueueExit;
+			/**
+			 * This host names every item that leaves its queue (`exit`), so one that is gone from a
+			 * list without a name is still on its way (its start is in flight). An older headless
+			 * host, and an older desktop host, do not say it.
+			 */
+			namesExits?: true;
+	  }
 	/**
 	 * A run's progress, from the host's `autorun_state` and the run's own
 	 * process stream (its output and usage). Fold them with `reduceAutoRun`.

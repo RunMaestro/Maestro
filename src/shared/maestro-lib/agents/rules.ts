@@ -43,6 +43,7 @@ import type {
 	GroupCreateInput,
 	TabPatch,
 } from '../client/types';
+import { readTurnEntryId } from '../client/types';
 import type {
 	AgentRecord,
 	AgentSshRecord,
@@ -51,7 +52,7 @@ import type {
 	GroupRecord,
 	TabRefRecord,
 } from '../store/records';
-import type { LogEntryRecord } from '../store/transcript';
+import { TURN_CANCELED_NOTE, type LogEntryRecord } from '../store/transcript';
 import { switchTabProvider } from '../translation/session';
 import {
 	matchesNativeSessionBinding,
@@ -355,9 +356,13 @@ export function insertAfterActiveInUnifiedTabOrder(
 export function addTabRecord(
 	agent: AgentRecord,
 	ctx: RuleContext,
-	defaults: TabDefaults
+	defaults: TabDefaults,
+	requestedId?: string
 ): { agent: AgentRecord; tab: AITabRecord } {
 	const tab = buildTabRecord(ctx, defaults);
+	// The id a client already drew the tab under, when no tab of the agent has it (R15).
+	const taken = (agent.aiTabs ?? []).some((existing) => existing.id === requestedId);
+	if (requestedId && !taken) tab.id = requestedId;
 	const next: AgentRecord = {
 		...agent,
 		aiTabs: [...(Array.isArray(agent.aiTabs) ? agent.aiTabs : []), tab],
@@ -726,6 +731,305 @@ export interface TurnBegin {
 	consumedMergedContext: boolean;
 }
 
+/** A user message as a resend names it (`TurnInput.entryId`): its entry id, text, and images. */
+export interface SentUserEntry {
+	id: string;
+	text: string;
+	images?: readonly string[];
+}
+
+/**
+ * Whether `candidate` is the user message `entry`: the same id, a user entry, and the same text and
+ * images. A resend of it is that entry. A stored entry is not checked on load: a malformed
+ * `images` reads as another message. An id alone never matches.
+ */
+export function isSameUserEntry(candidate: unknown, entry: SentUserEntry): boolean {
+	const existing = candidate as Partial<LogEntryRecord> | null;
+	if (!existing || existing.id !== entry.id || existing.source !== 'user') return false;
+	if (existing.images !== undefined && !Array.isArray(existing.images)) return false;
+	const held = existing.images ?? [];
+	const sent = entry.images ?? [];
+	return (
+		existing.text === entry.text &&
+		held.length === sent.length &&
+		held.every((image, i) => image === sent[i])
+	);
+}
+
+/**
+ * The entry id a message may take (`TurnInput.entryId`): one the tab does not hold yet, or the user
+ * entry of this same message (a resend: the same text and images), which then stands for it. An id
+ * that names another entry is dropped, and the message gets a new one: a send never hides or
+ * replaces what is there. Asked when the turn starts, against the entry it writes: a command's
+ * expanded prompt, and a message edited or merged while it waited. Both host kinds read it: a
+ * headless host's turn start and a desktop host's queued message (`markTabRunningQueuedItem()`).
+ */
+export function turnEntryIdFor(
+	tab: { logs?: unknown } | undefined,
+	raw: unknown,
+	text: string,
+	images: readonly string[] | undefined
+): string | undefined {
+	const entryId = readTurnEntryId(raw);
+	if (!entryId) return undefined;
+	const logs = Array.isArray(tab?.logs) ? (tab.logs as LogEntryRecord[]) : [];
+	const existing = logs.find((entry) => entry?.id === entryId);
+	if (!existing) return entryId;
+	return isSameUserEntry(existing, { id: entryId, text, images }) ? entryId : undefined;
+}
+
+/**
+ * How the turn of one user message ended, as its host's transcript records it: `answered`, ended on
+ * its own error (`errored`), stopped by the person (`stopped`), or `unended`: still running, or
+ * lost with a host that died mid-turn.
+ */
+export type TurnFate = 'answered' | 'errored' | 'stopped' | 'unended';
+
+/**
+ * Which kind of host wrote a transcript: what the entries of a turn with no end stamp mean
+ * (`turnFateAfter()`). A headless host writes a turn's answer only when the turn ends; a desktop
+ * host writes streamed text as it arrives.
+ */
+export type TranscriptHostKind = 'headless' | 'desktop';
+
+/**
+ * The one writer of a turn's end stamp (`LogEntryRecord.turnEnded`): `entries` with the last of
+ * them stamped. Every host calls it when a turn ends (answered, on its own error, or stopped):
+ * a headless host on the entries the turn appends, a desktop host on the tab's logs when the
+ * turn's process exits. With no entry from `from` on, nothing is stamped (the same array).
+ */
+export function markTurnEnded<T extends object>(
+	entries: readonly T[],
+	from = 0,
+	endedAt?: number
+): T[] {
+	const stampAt = (i: number): T[] => {
+		const next = [...entries];
+		// Timed, so the reader tells a card of this attempt written after its last text from one of
+		// a retry that came after the end (`turnFateAfter()`).
+		next[i] = {
+			...entries[i],
+			turnEnded: true,
+			...(endedAt !== undefined ? { turnEndedAt: endedAt } : {}),
+		};
+		return next;
+	};
+	for (let i = entries.length - 1; i >= Math.max(from, 0); i -= 1) {
+		const entry = entries[i] as Partial<LogEntryRecord>;
+		// Thinking and tool cards are dropped by a later exit in a tab that does not keep them
+		// (`logsKeptAtTurnEnd()`): the stamp goes on an entry that stays (CodeRabbit on #2167).
+		if (entry.source === 'thinking' || entry.source === 'tool') continue;
+		if (entry.turnEnded !== true) return stampAt(i);
+		// Already stamped: this attempt wrote nothing that stays (a retry into the same entry that
+		// answered empty). With `endedAt`, its message at `from` records the end, timed after the
+		// attempt before it, so the reader takes this attempt as the last (CodeRabbit on #2167).
+		if (endedAt === undefined || from < 0 || from >= entries.length) return entries as T[];
+		return stampAt(from);
+	}
+	return entries as T[];
+}
+
+/** Whether `entry` starts a user turn of its own: a message steered into the running turn does not. */
+export function isUserTurnStart(entry: Partial<LogEntryRecord> | null | undefined): boolean {
+	return entry?.source === 'user' && entry.steered !== true;
+}
+
+/**
+ * The one reader of how the turn of the user message at `at` in `logs` ended. Its entries run to
+ * the next user message (a steer into it is part of it): an answer after a LATER message is that
+ * message's, never this one's.
+ *
+ * Each stamp (`markTurnEnded()`, on any of them or on the message itself) ends one attempt: a
+ * retry runs into the same entry, so the LAST attempt says how the message stands (CodeRabbit on
+ * #2167). An ended attempt is what its entries say: its own error, the Stop note, or else
+ * answered. Entries after the last stamp are an attempt with no end yet (or the turn of a host too
+ * old to stamp): an error or the Stop note says how it ended; otherwise a headless host's text is
+ * its answer (it writes the answer only when the turn ends, stamped or not, so a turn written
+ * before the host stamped still reads answered), and a desktop host's text is a turn it lost
+ * unless a later message started after it. With nothing after the last stamp, that stamp decides.
+ */
+export function turnFateAfter(
+	logs: readonly unknown[],
+	at: number,
+	hostKind: TranscriptHostKind = 'headless'
+): TurnFate {
+	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	let ended: TurnFate | undefined = entries[at]?.turnEnded === true ? 'answered' : undefined;
+	// The message itself stamped as ended after every entry of its turn: an attempt that answered
+	// with nothing that stays, after the attempts before it (`markTurnEnded()` with `endedAt`).
+	const emptyEndAt = entries[at]?.turnEndedAt;
+	let latestAt = Number.NEGATIVE_INFINITY;
+	// When the last stamped end was, and whether anything of a later attempt came after it: a retry's
+	// thinking or tool card after an end is that retry running (or lost), never the earlier end.
+	let lastEndAt =
+		ended !== undefined
+			? (entries[at]?.turnEndedAt ?? entries[at]?.timestamp ?? Number.NEGATIVE_INFINITY)
+			: Number.NEGATIVE_INFINITY;
+	let pending = false;
+	// What the attempt being read says so far; each stamp ends one, and the next starts clean.
+	let errored = false;
+	let stopped = false;
+	let output = false;
+	let next = at + 1;
+	for (; next < entries.length; next += 1) {
+		const entry = entries[next];
+		if (isUserTurnStart(entry)) break;
+		// What an attempt wrote, for the empty end on the message: never a note about the turn.
+		if (typeof entry?.timestamp === 'number' && entry.source !== 'system') {
+			latestAt = Math.max(latestAt, entry.timestamp);
+		}
+		// Only what a provider writes starts a later attempt: a thinking or tool card here (text and
+		// errors set their own flags). A note this machine or the host writes after a turn (a
+		// steering note, a retry card) is about a turn, never an attempt (CodeRabbit on #2167).
+		if (
+			ended !== undefined &&
+			entry?.turnEnded !== true &&
+			(entry?.source === 'thinking' || entry?.source === 'tool') &&
+			!(typeof entry.timestamp === 'number' && entry.timestamp <= lastEndAt)
+		) {
+			pending = true;
+		}
+		if (entry?.source === 'error') errored = true;
+		else if (entry?.source === 'system' && entry.text === TURN_CANCELED_NOTE) stopped = true;
+		else if (entry?.source === 'stdout' || entry?.source === 'ai') output = true;
+		if (entry?.turnEnded === true) {
+			ended = errored ? 'errored' : stopped ? 'stopped' : 'answered';
+			errored = stopped = output = pending = false;
+			lastEndAt =
+				typeof entry.turnEndedAt === 'number'
+					? entry.turnEndedAt
+					: typeof entry.timestamp === 'number'
+						? entry.timestamp
+						: Number.NEGATIVE_INFINITY;
+		}
+	}
+	if (typeof emptyEndAt === 'number' && emptyEndAt >= latestAt) return 'answered';
+	if (errored) return 'errored';
+	if (stopped) return 'stopped';
+	if (!output) return pending ? 'unended' : (ended ?? 'unended');
+	return hostKind === 'headless' || next < entries.length ? 'answered' : 'unended';
+}
+
+/** Whether the turn of the user message at `at` in `logs` ended (`turnFateAfter()`). */
+export function turnEndedAfter(
+	logs: readonly unknown[],
+	at: number,
+	hostKind?: TranscriptHostKind
+): boolean {
+	return turnFateAfter(logs, at, hostKind) !== 'unended';
+}
+
+/**
+ * How the turn of the user message `entry` in `logs` ended (`turnFateAfter()`), or undefined when
+ * `logs` do not hold it.
+ */
+/**
+ * Whether the turn of the user message at `at` in `logs` is held by the host's OWN automatic retry
+ * (a desktop host's Agent Resilience): its latest entry of note is that retry's card
+ * (`LogEntryRecord.retryOutageId`), with no answer or error after it before the next user message.
+ * Such a turn's message is the host's to send again; a client that kept a copy sends nothing.
+ */
+export function hostRetriesTurn(logs: readonly unknown[], at: number): boolean {
+	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	let retrying = false;
+	for (let next = at + 1; next < entries.length; next += 1) {
+		const entry = entries[next];
+		if (isUserTurnStart(entry)) break;
+		if (typeof entry?.retryOutageId === 'string' && entry.retryOutageId) retrying = true;
+		else if (
+			entry?.source === 'stdout' ||
+			entry?.source === 'ai' ||
+			entry?.source === 'error' ||
+			(entry?.source === 'system' && entry.text === TURN_CANCELED_NOTE)
+		) {
+			retrying = false;
+		}
+	}
+	return retrying;
+}
+
+export function userEntryFate(
+	logs: readonly unknown[],
+	entry: SentUserEntry,
+	hostKind?: TranscriptHostKind
+): TurnFate | undefined {
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
+	return at === -1 ? undefined : turnFateAfter(logs, at, hostKind);
+}
+
+/**
+ * Whether `logs` hold the user message `entry` whose own turn answered it or was stopped by the
+ * person: that message already ran, so a resend of it must not run again. A turn that ended on its
+ * own error is not: its resend is the retry of that error, sent by the error's own rule as a local
+ * agent's is (a client routes it through its retry), and it runs into the same entry.
+ */
+export function userEntryAnswered(
+	logs: readonly unknown[],
+	entry: SentUserEntry,
+	hostKind?: TranscriptHostKind
+): boolean {
+	const fate = userEntryFate(logs, entry, hostKind);
+	return fate === 'answered' || fate === 'stopped';
+}
+
+/**
+ * Whether a tab runs the turn of the user message `entry` right now: a resend that arrives then is
+ * the message running (its sender lost the link and cannot see it), and never runs a second time.
+ * Both host kinds ask it before they take a resend. `running.busy`: the tab runs a turn. With
+ * `running.itemId` (a headless host knows the item its queue runs on the tab), the entry must name
+ * that item; without it (a desktop host), the entry must be the tab's newest turn start, its turn
+ * not ended.
+ */
+export function tabRunsUserEntry(
+	logs: readonly unknown[],
+	entry: SentUserEntry,
+	running: { busy: boolean; itemId?: string; startedAt?: number }
+): boolean {
+	if (!running.busy) return false;
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
+	if (at === -1) return false;
+	if (running.itemId !== undefined) {
+		return (logs[at] as LogEntryRecord).queuedItemId === running.itemId;
+	}
+	for (let i = logs.length - 1; i > at; i -= 1) {
+		if (isUserTurnStart(logs[i] as Partial<LogEntryRecord> | null)) return false;
+	}
+	// The running turn began with this message, not after it: a turn that writes no message of its
+	// own (a command) started later is not this one (CodeRabbit on #2167). A desktop writes the
+	// message at the turn's start, on the same clock (`markTabRunningQueuedItem()`).
+	const written = (logs[at] as LogEntryRecord).timestamp;
+	if (
+		running.startedAt !== undefined &&
+		typeof written === 'number' &&
+		written < running.startedAt - RUNNING_ENTRY_START_SLACK_MS
+	) {
+		return false;
+	}
+	return turnFateAfter(logs, at, 'desktop') === 'unended';
+}
+
+/** How far before a running turn's start its message may be written (`tabRunsUserEntry()`). */
+export const RUNNING_ENTRY_START_SLACK_MS = 2_000;
+
+/**
+ * `logs` with the message a turn starts on. A resend of a message the transcript already holds
+ * (`TurnInput.entryId`: the same id, and the same user message, text and images) is that entry:
+ * the transcript stays as it is, except that the entry now names the turn that runs it
+ * (`queuedItemId`), so a resend while that turn runs is known as the message it runs (R31). An id
+ * alone never drops a message.
+ */
+function withUserEntry(logs: readonly unknown[], entry: LogEntryRecord): unknown[] {
+	const sent: SentUserEntry = { id: entry.id, text: entry.text, images: entry.images };
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, sent));
+	if (at === -1) return [...logs, entry];
+	const held = logs[at] as LogEntryRecord;
+	if (entry.queuedItemId === undefined || held.queuedItemId === entry.queuedItemId)
+		return [...logs];
+	const next = [...logs];
+	next[at] = { ...held, queuedItemId: entry.queuedItemId };
+	return next;
+}
+
 /**
  * A tab with a turn started on it: the message is in the transcript (so a crash cannot cost the
  * person what they typed), `turnProvider` names who owns the turn's late events, and a merged
@@ -738,7 +1042,7 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 		...base,
 		turnProvider: begin.provider,
 		runtimeTurnId: begin.turnId,
-		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), begin.userEntry],
+		logs: withUserEntry(Array.isArray(tab.logs) ? tab.logs : [], begin.userEntry),
 	};
 }
 

@@ -155,6 +155,42 @@ export interface LiftPlanSummary {
 	/** Queued messages that move, by queue item id, in queue order. */
 	queued: string[];
 	stays: LiftPlanStay[];
+	/**
+	 * `peer:agentId` of the copy an earlier Move Back left on this host, which this lift replaces
+	 * (`runLift()`). Absent for a plain lift.
+	 */
+	replaces?: string;
+	/**
+	 * With `replaces`: what the copy's tabs become (`keepDivergentHostTabs()`). `merged` tabs are a
+	 * local tab's conversation and merge into it; `copies` went on on both sides and stay as their
+	 * own "(on the host)" tab; `added` only the host had.
+	 */
+	tabMerge?: { merged: number; copies: number; added: number };
+}
+
+/**
+ * What the host copy's tabs become in the agent that moves, in one sentence (the plan the user
+ * confirms), naming only the parts that hold a tab; undefined when the plan does not say or the
+ * copy has no tab.
+ */
+export function formatHostTabMerge(merge: LiftPlanSummary['tabMerge']): string | undefined {
+	if (!merge) return undefined;
+	const tabs = (n: number, one: string, many: string) =>
+		`${n} tab${n === 1 ? '' : 's'} ${n === 1 ? one : many}`;
+	const parts: string[] = [];
+	if (merge.merged > 0) {
+		parts.push(tabs(merge.merged, 'merges', 'merge') + ' into the tab of the same conversation');
+	}
+	if (merge.copies > 0) {
+		parts.push(
+			tabs(merge.copies, 'stays', 'stay') +
+				' as a copy named "(on the host)" (both sides went on after the Move Back)'
+		);
+	}
+	if (merge.added > 0)
+		parts.push(tabs(merge.added, 'comes', 'come') + ' in that only the host had');
+	if (parts.length === 0) return undefined;
+	return `The host copy's tabs: ${parts.join('; ')}.`;
 }
 
 export interface LiftPlan {
@@ -346,6 +382,8 @@ export function planAgentLift(input: PlanAgentLiftInput): LiftPlan {
 		tabs: importTabs,
 		...(activeTabId ? { activeTabId } : {}),
 		...(queue.length > 0 ? { queue } : {}),
+		// The host stores it, and replaces a copy a Move Back left only when it carries this id.
+		liftedFromAgentId: agent.id,
 	};
 
 	const summary: LiftPlanSummary = {

@@ -14,11 +14,8 @@ import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/
 import { useGroupChatStore, selectActiveGroupChatStagedImages } from '../../stores/groupChatStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useComposerInputStore } from '../../stores/composerInputStore';
-import {
-	cycleShowThinkingFields,
-	getActiveTab,
-	toggleReadOnlyModeFields,
-} from '../../utils/tabHelpers';
+import { getActiveTab, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
+import { cycleTabThinkingMode } from '../../services/tabThinkingMode';
 import {
 	REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL,
 	canModeratorReadImages,
@@ -186,10 +183,7 @@ export function usePromptComposerHandlers(
 		if (!activeSession) return;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return;
-		updateAiTab(activeSession.id, activeTab.id, (tab) => ({
-			...tab,
-			...cycleShowThinkingFields(tab),
-		}));
+		cycleTabThinkingMode(activeSession.id, activeTab.id);
 	}, []);
 
 	const handlePromptToggleEnterToSend = useCallback(

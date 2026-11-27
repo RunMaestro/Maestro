@@ -22,6 +22,7 @@
  */
 
 import { stripMarkdown } from './markdown';
+import { collapseWhitespace } from './stringUtils';
 
 /** Entry sources a pin may point at: the person's messages and agent replies. */
 export const PINNABLE_SOURCES = ['user', 'stdout'] as const;
@@ -83,10 +84,6 @@ export function isPinnableSource(source: unknown): source is PinnableSource {
 /** Whether `row` can be pinned: a message or reply with some text. */
 export function isPinnableRow(row: PinnableRow): boolean {
 	return isPinnableSource(row.source) && row.text.trim().length > 0;
-}
-
-function collapseWhitespace(text: string): string {
-	return text.replace(/\s+/g, ' ').trim();
 }
 
 function clip(text: string, max: number): string {

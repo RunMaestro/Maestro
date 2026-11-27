@@ -33,14 +33,23 @@ export function createTabRemoteApi() {
 		 * Subscribe to remote new tab from web interface
 		 */
 		onRemoteNewTab: (
-			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
+			callback: (
+				sessionId: string,
+				responseChannel: string,
+				background?: boolean,
+				tabId?: string
+			) => void
 		): (() => void) => {
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				responseChannel: string,
-				background?: boolean
-			) => callback(sessionId, responseChannel, background === true);
+				background?: boolean,
+				tabId?: string
+			) =>
+				typeof tabId === 'string'
+					? callback(sessionId, responseChannel, background === true, tabId)
+					: callback(sessionId, responseChannel, background === true);
 			ipcRenderer.on('remote:newTab', handler);
 			return () => ipcRenderer.removeListener('remote:newTab', handler);
 		},

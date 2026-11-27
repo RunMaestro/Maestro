@@ -132,6 +132,31 @@ describe('historyEntryToast', () => {
 		}
 	);
 
+	it('raises one toast when the saved line lands in a read the host marked stale meanwhile (M22)', async () => {
+		hydrateHost();
+		const session = createModeSession('hosted', { id: 'row', name: 'Docs', activeTabId: 't1' });
+		useSessionStore.setState({ sessions: [session] });
+		await sendHostedTurn(session, 't1', '/history', []);
+		// The pending line, then the saved one, each with its own stale mark: the second lands while
+		// the read of the first is out, so that read finishes holding the saved line, still stale.
+		let answer: (entries: LogEntryRecord[]) => void = () => {};
+		transcript$.mockImplementationOnce(
+			() => new Promise<LogEntryRecord[]>((resolve) => (answer = resolve))
+		);
+		hostWroteTab();
+		await vi.waitFor(() => expect(transcript$).toHaveBeenCalledTimes(2));
+		hostWroteTab();
+		const both = [
+			line('p1', HISTORY_COMMAND_TEXT.pending),
+			line('p2', HISTORY_COMMAND_TEXT.saved('Fixed the parser')),
+		];
+		hostTabHolds(both);
+		answer(both);
+		await vi.waitFor(() => expect(toastOf()).toHaveLength(1));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(toastOf()).toHaveLength(1);
+	});
+
 	it('raises no toast for a hosted /history that had nothing to report, and stops watching', async () => {
 		hydrateHost();
 		const session = createModeSession('hosted', { id: 'row', name: 'Docs', activeTabId: 't1' });

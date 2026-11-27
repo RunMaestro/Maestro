@@ -1,4 +1,5 @@
 import type { QueuedTurnEdit } from '../../shared/maestro-lib/client/types';
+import type { CliAudience } from './queue-change-broadcast';
 import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
 import { pianolaScopeSnapshotFromDesktop } from '../../shared/pianola/pianola-scope-cycle';
 import type {
@@ -1401,8 +1402,14 @@ export class WebServer {
 			},
 			getBridgeEpoch: () => this.broadcastService.bridgeEpoch,
 			getBridgeSeq: () => this.broadcastService.getBridgeSeq(),
-			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId) =>
-				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId),
+			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId, cli, queueChanges) =>
+				this.broadcastService.resumeBridgeClient(
+					epoch,
+					lastSeq,
+					subscribedSessionId,
+					cli,
+					queueChanges
+				),
 		});
 		this.wsRoute.registerRoute(this.server);
 		registerLiteConnectionRoutes(this.server, {
@@ -1489,8 +1496,8 @@ export class WebServer {
 				this.callbackRegistry.selectSession(sessionId, tabId, focus),
 			selectTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.selectTab(sessionId, tabId),
-			newTab: async (sessionId: string, background?: boolean) =>
-				this.callbackRegistry.newTab(sessionId, background),
+			newTab: async (sessionId: string, background?: boolean, tabId?: string) =>
+				this.callbackRegistry.newTab(sessionId, background, tabId),
 			closeTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.closeTab(sessionId, tabId),
 			renameTab: async (sessionId: string, tabId: string, newName: string) =>
@@ -1573,7 +1580,9 @@ export class WebServer {
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
 				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl,
-				turnOverrides?: import('../../shared/maestro-lib/client/types').TurnOverrides
+				turnOverrides?: import('../../shared/maestro-lib/client/types').TurnOverrides,
+				agentText?: import('../../shared/maestro-lib/client/types').TurnAgentText,
+				entryId?: string
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1586,7 +1595,9 @@ export class WebServer {
 					mentionRouting,
 					dispatchCallback,
 					control,
-					turnOverrides
+					turnOverrides,
+					agentText,
+					entryId
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
@@ -1824,6 +1835,16 @@ export class WebServer {
 
 	broadcastToAll(message: object): void {
 		this.broadcastService.broadcastToAll(message);
+	}
+
+	/** To the clients admitted by the CLI secret only (`BroadcastService.broadcastToCliClients`). */
+	broadcastToCliClients(message: object, audience?: CliAudience): void {
+		this.broadcastService.broadcastToCliClients(message, audience);
+	}
+
+	/** How many open clients the CLI secret admitted read queue changes, and how many do not. */
+	getCliClientCounts(): Record<CliAudience, number> {
+		return this.broadcastService.getCliClientCounts();
 	}
 
 	broadcastSessionStateChange(

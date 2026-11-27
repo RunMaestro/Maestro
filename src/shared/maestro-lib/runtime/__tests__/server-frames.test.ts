@@ -379,10 +379,36 @@ describe('queue frames', () => {
 			type: 'queue_changed',
 			sessionId: 'a1',
 			items: wire,
+			namesExits: true,
 		});
 		expect(
 			framesForEvent({ type: 'queue.changed', agentId: 'a1', items: [] }, createFrameState())
-		).toEqual([{ type: 'queue_changed', sessionId: 'a1', items: [] }]);
+		).toEqual([{ type: 'queue_changed', sessionId: 'a1', items: [], namesExits: true }]);
+	});
+
+	it('names how an item left the queue: started or removed (M14)', () => {
+		for (const exit of ['started', 'removed'] as const) {
+			expect(
+				framesForEvent(
+					{
+						type: 'queue.changed',
+						agentId: 'a1',
+						items: [],
+						namesExits: true,
+						exit: { itemId: 'q1', exit },
+					},
+					createFrameState()
+				)
+			).toEqual([
+				{
+					type: 'queue_changed',
+					sessionId: 'a1',
+					items: [],
+					namesExits: true,
+					exit: { itemId: 'q1', exit },
+				},
+			]);
+		}
 	});
 });
 

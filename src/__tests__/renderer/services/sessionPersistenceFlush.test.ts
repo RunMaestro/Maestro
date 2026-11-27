@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
+	flushBatchedOutputNow,
 	flushSessionPersistenceNow,
+	registerBatchedOutputFlush,
 	registerSessionPersistenceFlush,
 } from '../../../renderer/services/sessionPersistenceFlush';
 import type { Session } from '../../../renderer/types';
@@ -29,5 +31,15 @@ describe('sessionPersistenceFlush', () => {
 		release();
 		await pending;
 		expect(done).toBe(true);
+	});
+
+	it('lands the batched output through the registered flush, and does nothing once it is gone (R29)', () => {
+		const flush = vi.fn();
+		registerBatchedOutputFlush(flush);
+		flushBatchedOutputNow();
+		expect(flush).toHaveBeenCalledTimes(1);
+		registerBatchedOutputFlush(null);
+		expect(() => flushBatchedOutputNow()).not.toThrow();
+		expect(flush).toHaveBeenCalledTimes(1);
 	});
 });
