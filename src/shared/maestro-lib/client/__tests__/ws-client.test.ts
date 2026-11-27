@@ -125,8 +125,9 @@ describe('createWsMaestroClient', () => {
 			const result = await client.connection.connect();
 			expect(result).toMatchObject({ ok: true, value: { label: `desktop pid ${process.pid}` } });
 			expect(bridge.connections[0].headers['x-maestro-cli-secret']).toBe(CLI_SECRET);
-			// No sessionId: a subscription would narrow session_output and user_input.
-			expect(bridge.connections[0].url).toBe(`/${TOKEN}/ws`);
+			// No sessionId: a subscription would narrow session_output and user_input. It says it reads
+			// a desktop host's queue changes (M28).
+			expect(bridge.connections[0].url).toBe(`/${TOKEN}/ws?queueChanges=1`);
 			expect(client.connection.state()).toBe('connected');
 			expect(client.connection.host()?.label).toBe(`desktop pid ${process.pid}`);
 		});
@@ -1153,6 +1154,70 @@ describe('createWsMaestroClient', () => {
 			});
 		});
 
+		it("stops a desktop host's tab through the host's own Stop, which names the queue item it ended (M27)", async () => {
+			bridge.typed.set(
+				'interrupt_turn',
+				reply('interrupt_turn_result', {
+					success: true,
+					stoppedTabIds: [A1_TAB],
+					// Only bounded strings are kept: anything else off the wire goes.
+					stoppedItemIds: ['q-9', 7, 'x'.repeat(201)],
+				})
+			);
+			expect(await client.turns.interrupt(A1, A1_TAB)).toEqual({
+				ok: true,
+				value: { stopped: true, stoppedItemIds: ['q-9'] },
+			});
+			expect(bridge.sent('interrupt_turn')).toMatchObject([{ sessionId: A1, tabId: A1_TAB }]);
+			expect(bridge.invoked('process:interrupt')).toEqual([]);
+		});
+
+		it('takes the process signal from a desktop host too old for its own Stop, and names nothing (M27)', async () => {
+			// No responder: the host echoes `interrupt_turn`, as a build without it does.
+			bridge.invokes.set('process:interrupt', (args) => args[0] === PID);
+			expect(await client.turns.interrupt(A1, A1_TAB)).toEqual({
+				ok: true,
+				value: { stopped: true },
+			});
+			expect(bridge.sent('interrupt_turn')).toHaveLength(1);
+			expect(bridge.invoked('process:interrupt').map((m) => m.args)).toEqual([[PID]]);
+		});
+
+		it("never signals the tab's process after a desktop host's own Stop failed once it may have signalled (CodeRabbit on #2160)", async () => {
+			bridge.invokes.set('process:interrupt', () => true);
+			bridge.typed.set(
+				'interrupt_turn',
+				reply('interrupt_turn_result', {
+					success: false,
+					code: 'RENDERER_TIMEOUT',
+					error: 'The Maestro window did not answer the interrupt in time',
+				})
+			);
+			expect(await client.turns.interrupt(A1, A1_TAB)).toMatchObject({
+				ok: false,
+				error: { message: 'The Maestro window did not answer the interrupt in time' },
+			});
+			bridge.typed.set(
+				'interrupt_turn',
+				reply('interrupt_turn_result', { success: false, code: 'TAB_NOT_FOUND' })
+			);
+			expect(await client.turns.interrupt(A1, A1_TAB)).toEqual({
+				ok: true,
+				value: { stopped: false },
+			});
+			expect(bridge.invoked('process:interrupt')).toEqual([]);
+			// No window owns the agent: nothing was signalled, so the process signal goes.
+			bridge.typed.set(
+				'interrupt_turn',
+				reply('interrupt_turn_result', { success: false, code: 'RENDERER_UNAVAILABLE' })
+			);
+			expect(await client.turns.interrupt(A1, A1_TAB)).toEqual({
+				ok: true,
+				value: { stopped: true },
+			});
+			expect(bridge.invoked('process:interrupt')).toHaveLength(1);
+		});
+
 		it('lists and removes queued items', async () => {
 			bridge.typed.set(
 				'list_queue',
@@ -1589,6 +1654,133 @@ describe('createWsMaestroClient', () => {
 				},
 				{ type: 'queue.changed', agentId: A1, items: [] },
 			]);
+		});
+
+		it("reads a desktop host's imagesKept on an item with no images, and never beside images (M26)", async () => {
+			await connect();
+			const item = { id: 'q1', timestamp: 5, tabId: A1_TAB, type: 'message', text: 'next' };
+			bridge.push({
+				type: 'queue_changed',
+				sessionId: A1,
+				items: [
+					{ ...item, imagesKept: true },
+					{ ...item, id: 'q2', imagesKept: true, images: ['data:image/png;base64,AAAA'] },
+					{ ...item, id: 'q3', imagesKept: 'yes' },
+				],
+			});
+			await vi.waitFor(() =>
+				expect(events.filter((event) => event.type === 'queue.changed')).toHaveLength(1)
+			);
+			const read = { tabId: A1_TAB, queuedAt: 5, kind: 'message', text: 'next', paused: false };
+			expect(events.find((event) => event.type === 'queue.changed')).toEqual({
+				type: 'queue.changed',
+				agentId: A1,
+				items: [
+					{ itemId: 'q1', ...read, imagesKept: true },
+					{ itemId: 'q2', ...read, images: ['data:image/png;base64,AAAA'] },
+					{ itemId: 'q3', ...read },
+				],
+			});
+		});
+
+		describe("a desktop host's queue changes (M28)", () => {
+			const item = { id: 'q1', timestamp: 5, tabId: A1_TAB, type: 'message', text: 'next' };
+			const read = { tabId: A1_TAB, queuedAt: 5, kind: 'message', text: 'next', paused: false };
+			const image = 'data:image/png;base64,AAAA';
+			const queueEvents = () => events.filter((event) => event.type === 'queue.changed');
+			const listAt = (queueSeq: number, items: object[]) =>
+				reply('list_queue_result', { queues: [{ sessionId: A1, items, queueSeq }] });
+
+			it('applies a change over the queue it read, keeping the images it holds, and emits the whole list', async () => {
+				await connect();
+				bridge.typed.set('list_queue', listAt(3, [{ ...item, images: [image] }]));
+				await client.turns.queue.list(A1);
+				bridge.push({
+					type: 'queue_changed',
+					sessionId: A1,
+					namesExits: true,
+					changes: { seq: 4, base: 3, order: ['q1', 'q2'], changed: [{ ...item, id: 'q2' }] },
+				});
+				await vi.waitFor(() => expect(queueEvents()).toHaveLength(1));
+				expect(queueEvents()[0]).toEqual({
+					type: 'queue.changed',
+					agentId: A1,
+					items: [
+						{ itemId: 'q1', ...read, images: [image] },
+						{ itemId: 'q2', ...read },
+					],
+					namesExits: true,
+				});
+				// The next change chains from it.
+				bridge.push({
+					type: 'queue_changed',
+					sessionId: A1,
+					namesExits: true,
+					exit: { itemId: 'q1', exit: 'started' },
+					changes: { seq: 5, base: 4, order: ['q2'], changed: [] },
+				});
+				await vi.waitFor(() => expect(queueEvents()).toHaveLength(2));
+				expect(queueEvents()[1]).toMatchObject({
+					items: [{ itemId: 'q2' }],
+					exit: { itemId: 'q1', exit: 'started' },
+				});
+				expect(bridge.sent('list_queue')).toHaveLength(1);
+			});
+
+			it('reads the queue whole once for a change that does not fit what it holds, and emits that read as a whole read', async () => {
+				await connect();
+				bridge.typed.set('list_queue', listAt(8, [{ ...item, images: [image] }]));
+				// A change this client cannot apply (it never read the queue), then another before the read.
+				const change = (seq: number) => ({
+					type: 'queue_changed',
+					sessionId: A1,
+					namesExits: true,
+					changes: { seq, base: seq - 1, order: ['q1'], changed: [] },
+				});
+				bridge.push(change(7));
+				bridge.push(change(8));
+				await vi.waitFor(() => expect(queueEvents()).toHaveLength(1));
+				// A whole read: no namesExits, so the mirror counts the gap.
+				expect(queueEvents()[0]).toEqual({
+					type: 'queue.changed',
+					agentId: A1,
+					items: [{ itemId: 'q1', ...read, images: [image] }],
+				});
+				expect(bridge.sent('list_queue')).toHaveLength(1);
+				expect(bridge.sent('list_queue')[0]).toMatchObject({ inlineImages: true });
+				// The read answered seq 8: the next change chains from it.
+				bridge.push(change(9));
+				await vi.waitFor(() => expect(queueEvents()).toHaveLength(2));
+				expect(queueEvents()[1]).toMatchObject({ namesExits: true, items: [{ itemId: 'q1' }] });
+				expect(bridge.sent('list_queue')).toHaveLength(1);
+			});
+
+			it('reads again when its read answers older than a change that came while it was out', async () => {
+				await connect();
+				bridge.typed.set('list_queue', listAt(1, [item]));
+				const change = (seq: number) => ({
+					type: 'queue_changed',
+					sessionId: A1,
+					changes: { seq, base: seq - 1, order: ['q1'], changed: [] },
+				});
+				bridge.push(change(5));
+				bridge.push(change(6));
+				await vi.waitFor(() => expect(queueEvents()).toHaveLength(1));
+				expect(bridge.sent('list_queue')).toHaveLength(2);
+			});
+
+			it('never applies a change from a frame it cannot read, and keeps reading whole frames', async () => {
+				await connect();
+				bridge.push({
+					type: 'queue_changed',
+					sessionId: A1,
+					changes: { seq: 2, base: 2, order: ['q1'], changed: [] },
+				});
+				bridge.push({ type: 'queue_changed', sessionId: A1, items: [item] });
+				await vi.waitFor(() => expect(queueEvents()).toHaveLength(1));
+				expect(queueEvents()[0]).toMatchObject({ items: [{ itemId: 'q1' }] });
+				expect(bridge.sent('list_queue')).toHaveLength(0);
+			});
 		});
 
 		it('reads how an item left the queue, and that the host names every exit (M14)', async () => {

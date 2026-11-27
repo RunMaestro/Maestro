@@ -18,6 +18,7 @@ import {
 	type TurnSendReceipt,
 } from '../../shared/maestro-lib/client/types';
 import type {
+	HostStopAnswer,
 	PeerAgentAction,
 	PeerAgentActionKind,
 	PeerAgentActionResult,
@@ -247,12 +248,20 @@ export async function interruptMirroredAgent(
 	peerId: string,
 	agentId: string,
 	tabId?: string
-): Promise<void> {
-	await actOnMirroredAgent(
+): Promise<HostStopAnswer | undefined> {
+	const result = await actOnMirroredAgent(
 		peerId,
 		agentId,
 		tabId ? { kind: 'interrupt', tabId } : { kind: 'interrupt' }
 	);
+	if (result?.kind !== 'interrupt') return undefined;
+	// What the host said of its queue at the Stop (M25, M27), for the consults it may have ended.
+	const { waitingAtStop, stoppedItemIds, queueFramesTrail } = result;
+	return {
+		...(waitingAtStop ? { waitingAtStop } : {}),
+		...(stoppedItemIds ? { stoppedItemIds } : {}),
+		...(queueFramesTrail ? { queueFramesTrail } : {}),
+	};
 }
 
 /** Rename a mirrored tab on its host. An empty name clears it. */

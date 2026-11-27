@@ -207,6 +207,8 @@ export function mirrorQueuedItem(item: QueuedTurn): QueuedItem {
 		...(item.paused ? { paused: true } : {}),
 		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
 		...(item.images?.length ? { images: [...item.images] } : {}),
+		// Images an older desktop host said were unchanged before this window held them (M28).
+		...(item.imagesKept && !item.images?.length ? { hostImagesPending: true } : {}),
 	};
 	if (item.kind === 'command') {
 		const line = item.text.trim();

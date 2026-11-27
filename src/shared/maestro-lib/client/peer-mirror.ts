@@ -263,19 +263,64 @@ export function queueExitOf(
 }
 
 /**
+ * A queue list with each `imagesKept` item given the images held for its id (M26): a desktop host
+ * sends an item's images once, and after that says they are unchanged. An item held with none
+ * keeps the flag, so a read of the queue that the change raced can still give them
+ * (`withReadQueueImages()`).
+ */
+function withKeptQueueImages(
+	items: QueuedTurn[],
+	had: readonly QueuedTurn[] | undefined
+): QueuedTurn[] {
+	if (!items.some((item) => item.imagesKept)) return items;
+	const held = new Map((had ?? []).map((item) => [item.itemId, item.images]));
+	return items.map((item) => {
+		const images = item.imagesKept ? held.get(item.itemId) : undefined;
+		return images?.length ? { ...withoutKeptFlag(item), images } : item;
+	});
+}
+
+function withoutKeptFlag({ imagesKept: _kept, ...item }: QueuedTurn): QueuedTurn {
+	return item;
+}
+
+/**
+ * The held queue `kept` with the images a read of the queue gave each item still waiting for them
+ * (`imagesKept` with none held: a change that said "unchanged" reached a mirror whose first read
+ * of the queue had not landed). The same list when there is nothing to give. Used when a change
+ * raced the read and its newer list is kept over the read's (Greptile on #2160).
+ */
+export function withReadQueueImages(
+	kept: readonly QueuedTurn[],
+	read: readonly QueuedTurn[]
+): readonly QueuedTurn[] {
+	const fromRead = new Map(read.map((item) => [item.itemId, item.images]));
+	let changed = false;
+	const next = kept.map((item) => {
+		const images = item.imagesKept ? fromRead.get(item.itemId) : undefined;
+		if (!images?.length) return item;
+		changed = true;
+		return { ...withoutKeptFlag(item), images };
+	});
+	return changed ? next : kept;
+}
+
+/**
  * Replace what waits in one agent's host queue (a `queue.changed`, or a read of the queue after a
  * reconnect or a wake). An agent the peer does not have is ignored; an empty list drops the entry.
  * A change that names how an item left (`exits.exit`) adds it to the agent's recent exits; a read
- * of the queue names none and leaves them as they are.
+ * of the queue names none and leaves them as they are. An `imagesKept` item takes the images held
+ * for it (`withKeptQueueImages()`).
  */
 export function setAgentQueue(
 	peer: MirroredPeer,
 	agentId: string,
-	items: QueuedTurn[],
+	listed: QueuedTurn[],
 	exits: { exit?: QueueExit; namesExits?: boolean } = {}
 ): MirrorStep {
 	if (!peer.agents.some((agent) => agent.id === agentId)) return { peer, push: [] };
 	const had = peer.queues[agentId];
+	const items = withKeptQueueImages(listed, had);
 	const knewExits = peer.queueExits?.[agentId];
 	const namesExits = exits.namesExits === true;
 	// A whole read of a queue whose host names exits: the exits named meanwhile may be missing.

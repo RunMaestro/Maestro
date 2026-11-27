@@ -36,6 +36,7 @@ import {
 	HOST_START_MENTION_TTL_MS,
 	nextHostStartDeadline,
 	pruneHostStartedMentions,
+	settleStoppedHostStartMentions,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -80,6 +81,32 @@ function hydrateHost(busySince?: number) {
 		1
 	);
 	usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+}
+
+/** What the mirror holds of the host's queue for `h1` now: the items waiting, and the exits named. */
+function mirrorHostQueue(itemIds: string[], exits?: QueueExit[]) {
+	usePeerMirrorStore.setState((state) => {
+		const peer = state.peers.box;
+		return {
+			peers: {
+				...state.peers,
+				box: {
+					...peer,
+					queues: {
+						h1: itemIds.map((itemId) => ({
+							itemId,
+							tabId: 't1',
+							queuedAt: 1,
+							kind: 'message' as const,
+							text: 'look into the cache with @Backend',
+							paused: false,
+						})),
+					},
+					...(exits ? { queueExits: { h1: exits } } : {}),
+				},
+			},
+		};
+	});
 }
 
 function seed(mode: AgentMode, executionQueue: QueuedItem[] = []) {
@@ -1392,23 +1419,27 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 				const lateNote =
 					'Backend was asked after the turn ran: the host did not say when the message started.';
 
-				it('one the host queue never listed (a desktop host): Stop lets it go, and its saved entry fires nothing', async () => {
+				it('one the host queue never listed (an older desktop host): its saved entry, never seen running after Stop, fires nothing', async () => {
 					const id = `m24-${routing}`;
 					const text = await drainQueued(id, routing);
 					const now = Date.now();
 					const late = now + HOST_QUEUE_START_GRACE_MS + 1;
 					// The host runs it: no queue frame ever listed it, and its user entry is not drawn yet.
 					hostSays(id, text, { queued: false, busy: 200 });
+					hydrateHost(200);
 					fireHostStartedMentions(row(), undefined, now);
-					dropStoppedHostStartMentions('row', ['t1']);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					// No queue frame shows it: Stop keeps it, as it may still wait (M25).
+					settleStoppedHostStartMentions(stop);
 					const notes = () => row().aiTabs[0].logs.map((entry) => entry.text);
-					expect(notes().filter((entry) => entry === stoppedNote)).toHaveLength(1);
+					expect(notes()).not.toContain(stoppedNote);
 					// The stopped turn's saved transcript holds its message: before M24 it consulted here.
 					hostSays(id, text, { queued: false, logs: true });
 					const current = { read: vi.fn(), isCurrent: () => true };
 					fireHostStartedMentions(row(), undefined, late, 0, current);
 					fireHostStartedMentions(row(), [started(id)], late, 1, current);
 					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(notes().filter((entry) => entry === stoppedNote)).toHaveLength(1);
 					expect(notes()).not.toContain(lateNote);
 				});
 
@@ -1423,6 +1454,360 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 					dropStoppedHostStartMentions('row', ['t1']);
 					// The start's name lands after Stop: it ran as the stopped turn, so nothing is asked.
 					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it('an older desktop host (no queue frames): a message queued after attach keeps its consult through a Stop of another turn, and consults once when it runs (M25)', async () => {
+					const id = `m25d-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					// The tab runs another message's turn: no queue frame ever lists this one.
+					hostSays(id, text, { queued: false, busy: 200 });
+					hydrateHost(200);
+					fireHostStartedMentions(row(), undefined, now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					settleStoppedHostStartMentions(stop);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
+					// The host starts it after Stop: its own entry, on a turn that is not the stopped one.
+					hostSays(id, text, { queued: false, busy: 300, ran: true });
+					hydrateHost(300);
+					fireHostStartedMentions(row(), undefined, now);
+					fireHostStartedMentions(row(), undefined, now);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
+				});
+
+				it('an older desktop host: one whose own entry is on the tab when Stop lands was the stopped turn (M25)', async () => {
+					const id = `m25e-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: false, busy: 200 });
+					hydrateHost(200);
+					fireHostStartedMentions(row(), undefined, now);
+					// Its entry lands as Stop does, before any sync judged it.
+					hostSays(id, text, { queued: false, busy: 200, ran: true });
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					settleStoppedHostStartMentions(stop);
+					fireHostStartedMentions(row(), undefined, now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(
+						row()
+							.aiTabs[0].logs.map((entry) => entry.text)
+							.filter((entry) => entry === stoppedNote)
+					).toHaveLength(1);
+				});
+
+				it('an older desktop host: its entry seen while the tab still runs the stopped turn fires nothing (M25)', async () => {
+					const id = `m25s-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: false, busy: 200 });
+					hydrateHost(200);
+					fireHostStartedMentions(row(), undefined, now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					settleStoppedHostStartMentions(stop);
+					// The host's stopped turn was its own: its entry shows on the turn Stop ended.
+					hostSays(id, text, { queued: false, busy: 200, ran: true });
+					fireHostStartedMentions(row(), undefined, now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it('a host that names its starts: a message still listed when Stop lands, whose start comes before the host answers, was the stopped turn (M25)', async () => {
+					const id = `m25n-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					// The host already runs it; its queue frame is still on the way when Stop lands.
+					hostSays(id, text, { queued: true, busy: 200 });
+					hydrateHost(200);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
+					hostSays(id, text, { queued: false, busy: 200 });
+					fireHostStartedMentions(row(), [started(id)], now);
+					settleStoppedHostStartMentions(stop);
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it('a host that names its starts: a start the mirror holds when the host answers, with no sync since, goes at the answer (M25)', async () => {
+					const id = `m25a-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					// The host named the start before it answered the Stop; no sync ran in between. The
+					// mirror still lists it, so only the named exit lets it go (CodeRabbit on #2160).
+					mirrorHostQueue([id], [started(id)]);
+					settleStoppedHostStartMentions(stop);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+					hostSays(id, text, { queued: false, busy: 300, ran: true });
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				});
+
+				it('a host that names its starts: a message the host still lists when it answers the Stop consults once when it starts after it (M25)', async () => {
+					const id = `m25l-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					mirrorHostQueue([id], []);
+					// The host's own list, read just before the Stop, holds it.
+					settleStoppedHostStartMentions(stop, { waitingAtStop: [id] });
+					// The host starts it after its answer: the named start fires, even before the tab
+					// reads busy with it.
+					hostSays(id, text, { queued: false });
+					fireHostStartedMentions(row(), [started(id)], now);
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
+				});
+
+				it('no list from the host (its read failed): one only the mirror lists consults once its own turn runs after Stop, not on the named start alone (CodeRabbit on #2160)', async () => {
+					const id = `m25x-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					mirrorHostQueue([id], []);
+					settleStoppedHostStartMentions(stop);
+					// A named start with the tab idle: it may be the stopped turn's late frame.
+					hostSays(id, text, { queued: false });
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					// Its own turn runs after Stop.
+					hostSays(id, text, { queued: false, busy: 300, ran: true });
+					fireHostStartedMentions(row(), [started(id)], now);
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+				});
+
+				it('no list from the host: a late named start of the stopped turn, with its entry on an idle tab, asks nothing (CodeRabbit on #2160)', async () => {
+					const id = `m25y-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					mirrorHostQueue([id], []);
+					settleStoppedHostStartMentions(stop);
+					hostSays(id, text, { queued: false, logs: true });
+					fireHostStartedMentions(row(), [started(id)], now, 0, {
+						read: vi.fn(),
+						isCurrent: () => true,
+					});
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it('another Stop that settles first leaves this Stop waiting for its own answer (Greptile on #2160)', async () => {
+					const id = `m25t-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					const first = dropStoppedHostStartMentions('row', ['t1']);
+					// A Stop of another tab (no request to the host) settles while the first one waits,
+					// and the mirror still lists the message.
+					mirrorHostQueue([id], []);
+					settleStoppedHostStartMentions(dropStoppedHostStartMentions('row', ['another-tab']));
+					// The first Stop's host reports, before its answer, that the message had started.
+					hostSays(id, text, { queued: false, busy: 100 });
+					fireHostStartedMentions(row(), [started(id)], now);
+					settleStoppedHostStartMentions(first);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it("a desktop host whose queue frames trail its writes: the host's own list at the Stop says the message had started (Greptile on #2160)", async () => {
+					const id = `m25q-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					// The mirror still lists it (the host's frame is seconds behind); the host's own read
+					// just before the Stop did not: it was the turn the Stop ended.
+					mirrorHostQueue([id], []);
+					settleStoppedHostStartMentions(stop, { waitingAtStop: [] });
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+					// The late frame names the start: nothing is asked.
+					hostSays(id, text, { queued: false, busy: 100 });
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				});
+
+				it('a desktop host that names the turns its Stop ended: the answer first, the started frame after, asks nothing (M27)', async () => {
+					const id = `m27n-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					// The host started it between its queue read and its Stop: the read still lists it, and
+					// its "started" frame is still on its way. The answer names it as the turn it stopped.
+					mirrorHostQueue([id], []);
+					settleStoppedHostStartMentions(stop, { waitingAtStop: [id], stoppedItemIds: [id] });
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+					// The late frame names the start, with the turn still drawn running: nothing is asked.
+					hostSays(id, text, { queued: false, busy: 200, ran: true });
+					fireHostStartedMentions(row(), [started(id)], now);
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				});
+
+				it('a desktop host that names the turns its Stop ended, not this one: it waited through the Stop, and consults once when it starts (M27)', async () => {
+					const id = `m27w-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					mirrorHostQueue([id], []);
+					// No list from the host (its read was late), but it named the turn it stopped.
+					settleStoppedHostStartMentions(stop, { stoppedItemIds: ['the-turn-ahead'] });
+					hostSays(id, text, { queued: false });
+					fireHostStartedMentions(row(), [started(id)], now);
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
+				});
+
+				it('a desktop host that names nothing, whose frames trail its answer: a listed message keeps its Stop mark through a stale frame, and its late start asks nothing (M27)', async () => {
+					const id = `m27t-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					mirrorHostQueue([id], []);
+					// The answer first: its read lists the message, which may have started just after it.
+					settleStoppedHostStartMentions(stop, { waitingAtStop: [id], queueFramesTrail: true });
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
+					// A frame written before the Stop still lists it: no word on its exit yet.
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					// Then the started frame, with the stopped turn ended on the tab: nothing is asked.
+					hostSays(id, text, { queued: false, logs: true });
+					fireHostStartedMentions(row(), [started(id)], now, 0, {
+						read: vi.fn(),
+						isCurrent: () => true,
+					});
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it("a later Stop's answer that names nothing keeps the mark an earlier Stop set until that one answers (CodeRabbit on #2160)", async () => {
+					const id = `m27s-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const first = dropStoppedHostStartMentions('row', ['t1']);
+					const second = dropStoppedHostStartMentions('row', ['t1']);
+					mirrorHostQueue([id], []);
+					// The second Stop answers first: it ended no queued turn.
+					settleStoppedHostStartMentions(second, { waitingAtStop: [id], stoppedItemIds: [] });
+					// The first Stop's started frame lands before its answer: still the stopped turn.
+					hostSays(id, text, { queued: false, busy: 200, ran: true });
+					fireHostStartedMentions(row(), [started(id)], now);
+					settleStoppedHostStartMentions(first, { waitingAtStop: [id], stoppedItemIds: [id] });
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it('a Stop with no answer keeps a listed message marked through a stale frame, and its late start asks nothing (CodeRabbit on #2160)', async () => {
+					const id = `m27f-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					mirrorHostQueue([id], []);
+					// The Stop failed partway: no answer.
+					settleStoppedHostStartMentions(stop);
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					hostSays(id, text, { queued: false, logs: true });
+					fireHostStartedMentions(row(), [started(id)], now, 0, {
+						read: vi.fn(),
+						isCurrent: () => true,
+					});
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it("the host's own list at the Stop still holds it: it waited through the Stop, and consults once when it starts (M25)", async () => {
+					const id = `m25r-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					// An older desktop host: no frame ever lists it, but its queue read does.
+					hostSays(id, text, { queued: false, busy: 200 });
+					hydrateHost(200);
+					fireHostStartedMentions(row(), undefined, now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					settleStoppedHostStartMentions(stop, { waitingAtStop: [id] });
+					// It starts after the Stop and ends between two syncs: seen only in the saved transcript.
+					hostSays(id, text, { queued: false, logs: true });
+					fireHostStartedMentions(row(), undefined, now, 0, {
+						read: vi.fn(),
+						isCurrent: () => true,
+					});
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
+				});
+
+				it("a stopped message's entry read back while another message's turn runs is no start of its own (CodeRabbit on #2160)", async () => {
+					const id = `m25o-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: false, busy: 200 });
+					hydrateHost(200);
+					fireHostStartedMentions(row(), undefined, now);
+					// No list from the host: no queue ever listed it, so it is kept.
+					settleStoppedHostStartMentions(dropStoppedHostStartMentions('row', ['t1']));
+					// Its own (stopped) entry shows up, while the tab runs another message's turn.
+					useSessionStore.setState((current) => ({
+						sessions: current.sessions.map((session) =>
+							session.id === 'row'
+								? {
+										...session,
+										aiTabs: session.aiTabs.map((tab) => ({
+											...tab,
+											state: 'busy' as const,
+											thinkingStartTime: 300,
+											logs: [
+												{ id: 'u', timestamp: 1, source: 'user' as const, text },
+												{ id: 'a', timestamp: 2, source: 'ai' as const, text: 'Stopped.' },
+												{
+													id: 'u2',
+													timestamp: 4,
+													source: 'user' as const,
+													text: 'another message',
+												},
+											],
+										})),
+									}
+								: session
+						),
+					}));
+					fireHostStartedMentions(row(), undefined, now);
 					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
 					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
 				});
@@ -1445,9 +1830,10 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 					const text = await drainQueued(id, routing);
 					const now = Date.now();
 					// Stop lands before any queue frame listed the message: the tab runs the turn ahead.
-					dropStoppedHostStartMentions('row', ['t1']);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					settleStoppedHostStartMentions(stop);
 					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
-					// Its own turn starts after Stop.
+					// Its own turn starts after Stop, and after the host answered it.
 					hostSays(id, text, { queued: false, busy: 300, ran: true });
 					fireHostStartedMentions(row(), [started(id)], now);
 					fireHostStartedMentions(row(), [started(id)], now);
@@ -1807,7 +2193,10 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			await queueOnHost('m15-waits', 100);
 			busy(100, 'm15-waits');
 			fireHostStartedMentions(row());
-			dropStoppedHostStartMentions('row', ['t1']);
+			const stop = dropStoppedHostStartMentions('row', ['t1']);
+			// The host answers the Stop with the message still in its queue.
+			mirrorHostQueue(['m15-waits']);
+			settleStoppedHostStartMentions(stop);
 			busy(300, undefined, true);
 			fireHostStartedMentions(row());
 			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
