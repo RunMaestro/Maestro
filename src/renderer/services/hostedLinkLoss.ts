@@ -53,7 +53,12 @@ import {
 	wouldRecoverError,
 	type HeldOnHost,
 } from '../stores/retryStore';
-import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
+import {
+	selectSessionById,
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../stores/sessionStore';
 import { useSshOutageStore } from '../stores/sshOutageStore';
 import type { AgentError, LogEntry, QueuedItem, Session } from '../types';
 import { sameImages } from '../utils/hostedSession';
@@ -692,6 +697,27 @@ function settleKeptCut(
 }
 
 /**
+ * The host answered the cut turn itself (it ran on, or finished while only the link was down): its
+ * answer is the reply (`decideCutTurn()`), so this machine's copy of what streamed before the cut (`cutReply`, R58)
+ * would draw its start twice. Only the copies in this cut's turn go; one from an earlier cut stays.
+ */
+function dropCutReplies(cut: CutTurn): void {
+	updateAiTab(cut.sessionId, cut.tabId, (tab) => {
+		const logs = tab.logs ?? [];
+		const from = cut.message ? logs.findIndex((entry) => entry.id === cut.message!.id) : -1;
+		let to = logs.length;
+		for (let i = from + 1; i < logs.length; i += 1) {
+			if (logs[i].source === 'user' && !logs[i].steered && !logs[i].keptForHost) {
+				to = i;
+				break;
+			}
+		}
+		const next = logs.filter((entry, i) => !(entry.cutReply && i > from && i < to));
+		return next.length === logs.length ? tab : { ...tab, logs: next };
+	});
+}
+
+/**
  * A cut turn whose message was not kept (no retry stood for it) ended on its own error on the host,
  * and no retry takes that error: the message is put in the queue held, for the user to send again
  * (`settleKeptCut()` parks it), and a toast says why, since no retry card does.
@@ -769,6 +795,8 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 		!cut.message
 	) {
 		cutTurns.delete(key);
+		// Running on there: its live tail draws what streamed before the cut again.
+		if (hostTab.state === 'busy' && !runsLater) dropCutReplies(cut);
 		settleKeptCut(cut);
 		return;
 	}
@@ -823,6 +851,7 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 		return;
 	}
 	if (fate !== 'unended') {
+		if (fate === 'answered') dropCutReplies(cut);
 		settleKeptCut(cut);
 		return;
 	}

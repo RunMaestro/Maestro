@@ -3283,7 +3283,8 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			);
 
 			// Factory Droid has no isReasoning split; keep live thinking-panel partials
-			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Hello from droid');
+			// Flagged as answer text too (R58).
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Hello from droid', true);
 			expect(proc.streamedText).toBe('Hello from droid');
 		});
 	});
@@ -3612,7 +3613,7 @@ describe('StdoutHandler - single JSON parse per line', () => {
 
 			// Live preview streams to the thinking panel...
 			expect(thinkingSpy).toHaveBeenCalledTimes(1);
-			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Here is my answer');
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Here is my answer', true);
 			// ...and the same text still accumulates for the final result emit.
 			expect(proc.streamedText).toBe('Here is my answer');
 		});

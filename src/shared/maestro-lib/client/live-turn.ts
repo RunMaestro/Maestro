@@ -24,6 +24,13 @@ export interface LiveTurn {
 	busy: boolean;
 	/** The latest usage report, as received. Not a total. */
 	usage?: UsageStats;
+	/**
+	 * The answer text the turn streamed as thinking chunks so far (`TurnEvent` `answer`): what a
+	 * desktop holds as the turn's streamed answer, and draws as its reply when the turn is cut (R58).
+	 */
+	answerText?: string;
+	/** When the first of `answerText` arrived, epoch ms. */
+	answerAt?: number;
 }
 
 export interface LiveTurnContext {
@@ -162,6 +169,12 @@ export function foldLiveTurn(
 			return {
 				...next,
 				entries: appendStream(next.entries, 'thinking', event.text, event.at, ctx),
+				...(event.answer === true
+					? {
+							answerText: (next.answerText ?? '') + event.text,
+							answerAt: next.answerAt ?? event.at,
+						}
+					: {}),
 			};
 		}
 		case 'tool': {
@@ -189,7 +202,7 @@ export function foldLiveTurn(
 
 /**
  * Merge a burst of one tab's turn events for one push: consecutive `text` events become one, and
- * so do consecutive `thinking` events. Order is kept, and every other event passes as is, so
+ * so do consecutive `thinking` events of the same kind (answer text or reasoning). Order is kept, and every other event passes as is, so
  * folding the result gives the same entries, with the same text, as folding the burst.
  */
 export function coalesceTurnEvents(events: readonly TurnEvent[]): TurnEvent[] {
@@ -200,7 +213,11 @@ export function coalesceTurnEvents(events: readonly TurnEvent[]): TurnEvent[] {
 			last &&
 			(event.kind === 'text' || event.kind === 'thinking') &&
 			(last.kind === 'text' || last.kind === 'thinking') &&
-			last.kind === event.kind
+			last.kind === event.kind &&
+			// Answer text and reasoning stay apart (R58).
+			(last.kind !== 'thinking' ||
+				event.kind !== 'thinking' ||
+				(last.answer === true) === (event.answer === true))
 		) {
 			out[out.length - 1] = { ...last, text: last.text + event.text };
 			continue;

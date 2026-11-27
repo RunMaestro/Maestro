@@ -393,7 +393,8 @@ export interface ProcessManagerEvents {
 	'token-speed': (sessionId: string, agentType: string, sample: TokenSpeedSample) => void;
 	'session-id': (sessionId: string, agentSessionId: string) => void;
 	'agent-error': (sessionId: string, error: AgentError) => void;
-	'thinking-chunk': (sessionId: string, text: string) => void;
+	/** `answer`: the chunk is also answer text (Claude streams its reply as thinking). */
+	'thinking-chunk': (sessionId: string, text: string, answer?: boolean) => void;
 	/** One parsed output line, as the parser built it and before anything
 	 *  interprets it. Fires once per line, and only while something is
 	 *  subscribed (see `utils/parsedEvent.ts`). */

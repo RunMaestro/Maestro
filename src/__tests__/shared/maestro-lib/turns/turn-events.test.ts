@@ -34,13 +34,13 @@ describe('createTurnEventMapper', () => {
 		// answer is the result's, as the desktop draws it.
 		expect(out).toEqual([
 			{ kind: 'session', providerSessionId: 'S1' },
-			{ kind: 'thinking', text: 'Paris' },
+			{ kind: 'thinking', text: 'Paris', answer: true },
 			{ kind: 'text', text: 'Paris' },
 		]);
 		const partialOnly = run([{ type: 'text', text: 'Paris', isPartial: true }], {
 			agentId: 'claude-code',
 		}).out;
-		expect(partialOnly).toEqual([{ kind: 'thinking', text: 'Paris' }]);
+		expect(partialOnly).toEqual([{ kind: 'thinking', text: 'Paris', answer: true }]);
 	});
 
 	it('reads a provider that never streams from its result', () => {

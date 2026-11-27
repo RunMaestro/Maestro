@@ -50,7 +50,11 @@ import {
 	type RaisedErrorRetry,
 } from '../../../renderer/stores/retryStore';
 import { parseSessionId } from '../../../renderer/utils/sessionIdParser';
-import { updateSessionWith, useSessionStore } from '../../../renderer/stores/sessionStore';
+import {
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { isSshTransportError, useSshOutageStore } from '../../../renderer/stores/sshOutageStore';
 import type { AgentError, LogEntry, Session } from '../../../renderer/types';
@@ -80,6 +84,14 @@ const act$ = vi.fn();
 const flush = () => act(async () => undefined);
 
 const QUESTION: LogEntry = { id: 'u1', timestamp: 10, source: 'user', text: 'Summarize the docs' };
+/** This machine's copy of the reply text a cut turn streamed (R58). */
+const PARTIAL_REPLY: LogEntry = {
+	id: 'host-cut-reply-t1-11',
+	timestamp: 12,
+	source: 'stdout',
+	text: 'Partial reply',
+	cutReply: true,
+};
 /** A message the user sent on the same tab after QUESTION, and its answer. */
 const LATER_MESSAGE: LogEntry = { id: 'u2', timestamp: 30, source: 'user', text: 'And the tests?' };
 const LATER_ANSWER: LogEntry = { id: 'a2', timestamp: 40, source: 'ai', text: 'The tests...' };
@@ -581,6 +593,69 @@ describe('projectHostedSession with the link lost', () => {
 		});
 		expect(twice.aiTabs[0].logs.find((entry) => entry.id === 'live1')?.text).toBe('partial answer');
 		expect(twice.aiTabs[0].logs.at(-1)?.id).toBe('host-link-t1-u1');
+	});
+
+	// Parity R58: the reply text a turn streamed before the cut is drawn as an SSH turn's is: a
+	// reply row (an SSH desktop flushes the streamed answer as data when the process ends), never a
+	// thinking row, and it stays above the resend's answer.
+	it('draws the reply text streamed before the cut as a reply row that stays, as SSH does (R58)', () => {
+		const partial = 'Partial reply before the cut.';
+		// What an SSH tab holds after its link is cut mid-reply: the message, then the reply text.
+		const sshKinds = ['user', 'stdout'];
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'on', logs: [QUESTION] })],
+		});
+		const liveTurns = {
+			[liveTurnKey('h1', 't1')]: {
+				startedAt: 11,
+				busy: true,
+				entries: [{ id: 'live1', timestamp: 12, source: 'thinking', text: partial }],
+				answerText: partial,
+				answerAt: 12,
+			},
+		} as never;
+		const during = projectHostedSession(local, { agent, liveTurns, linkLost });
+		const rows = during.aiTabs[0].logs.filter((entry) => entry.agentError?.source !== 'host-link');
+		expect(rows.map((entry) => entry.source)).toEqual(sshKinds);
+		expect(rows[1]).toMatchObject({ source: 'stdout', text: partial, cutReply: true });
+		expect(rows[1].hostLive).toBeUndefined();
+		// Settles: the next pass makes no second copy.
+		expect(projectHostedSession(during, { agent, liveTurns, linkLost })).toBe(during);
+
+		// The host is back: no live tail, its transcript holds the resend's answer.
+		const back = projectHostedSession(during, {
+			agent: peerWith('idle', 'connected').agents[0],
+			transcripts: {
+				[liveTurnKey('h1', 't1')]: {
+					loaded: true,
+					entries: [QUESTION, { id: 'a1', timestamp: 90, source: 'ai', text: 'The docs say...' }],
+				},
+			} as never,
+		});
+		expect(
+			back.aiTabs[0].logs
+				.filter((entry) => entry.agentError?.source !== 'host-link')
+				.map((entry) => entry.text)
+		).toEqual([QUESTION.text, partial, 'The docs say...']);
+	});
+
+	it('never draws reasoning as a reply row at the cut (R58)', () => {
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'on', logs: [QUESTION] })],
+		});
+		const liveTurns = {
+			[liveTurnKey('h1', 't1')]: {
+				startedAt: 11,
+				busy: true,
+				entries: [{ id: 'live1', timestamp: 12, source: 'thinking', text: 'Let me think' }],
+			},
+		} as never;
+		const during = projectHostedSession(local, { agent, liveTurns, linkLost });
+		expect(during.aiTabs[0].logs.map((entry) => entry.source)).toEqual(['user', 'error']);
 	});
 
 	it('keeps one note when the turn message lands after the cut was drawn (a late transcript read)', () => {
@@ -1443,11 +1518,17 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 
 	it('sends the kept message when only a LATER message of the tab was answered: its own turn died (R23)', async () => {
 		cut();
+		// Died with the host: what streamed before the cut stays, as an SSH turn's does (R58).
+		updateAiTab('row', 't1', (current) => ({
+			...current,
+			logs: [...current.logs, { ...PARTIAL_REPLY }],
+		}));
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
 		// The answer a2 is u2's: u1's turn died with the host, so u1 never ran.
 		await hostBack('idle', [QUESTION, LATER_MESSAGE, LATER_ANSWER]);
 		expect(sends()).toHaveLength(1);
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+		expect(tab().logs.filter((entry) => entry.cutReply)).toEqual([PARTIAL_REPLY]);
 	});
 
 	it('holds the kept message, unsent, and says the message is gone when the host tab was cleared (R23)', async () => {
@@ -1476,8 +1557,14 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		['is still running on the host', 'busy' as const, [QUESTION]],
 	])('never sends the kept message again when the turn %s', async (_how, state, entries) => {
 		cut();
+		// This machine's copy of what streamed before the cut (R58): the host's own answer draws it.
+		updateAiTab('row', 't1', (current) => ({
+			...current,
+			logs: [...current.logs, { ...PARTIAL_REPLY }],
+		}));
 		const outageId = getRetryEntry('row', 't1')!.outageId;
 		await hostBack(state, entries);
+		expect(tab().logs.some((entry) => entry.cutReply)).toBe(false);
 		expect(sends()).toHaveLength(0);
 		expect(getRetryEntry('row', 't1')).toBeUndefined();
 		expect(queue()).toHaveLength(0);

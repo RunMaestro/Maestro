@@ -52,6 +52,26 @@ describe('foldLiveTurn', () => {
 		]);
 	});
 
+	// Parity R58: the answer a provider streams as thinking is held apart from its reasoning, so a
+	// cut turn's reply row shows the answer only, as a desktop's flushed `streamedText` does.
+	it('holds the answer streamed as thinking apart from reasoning, coalesced or not (R58)', () => {
+		const events: TurnEvent[] = [
+			{ kind: 'thinking', at: 1, text: 'Let me look. ' },
+			{ kind: 'thinking', at: 2, text: 'Partial ', answer: true },
+			{ kind: 'thinking', at: 3, text: 'reply.', answer: true },
+			{ kind: 'thinking', at: 4, text: ' Hmm.' },
+		];
+		for (const folded of [foldAll(events), foldAll(coalesceTurnEvents(events))]) {
+			expect(folded).toMatchObject({ answerText: 'Partial reply.', answerAt: 2 });
+			expect(folded?.entries.map((e) => [e.source, e.text])).toEqual([
+				['thinking', 'Let me look. Partial reply. Hmm.'],
+			]);
+		}
+		expect(
+			coalesceTurnEvents(events).map((event) => event.kind === 'thinking' && event.answer === true)
+		).toEqual([false, true, false]);
+	});
+
 	it('draws an answer even when it equals the thinking before it', () => {
 		const turn = foldAll([
 			{ kind: 'thinking', at: 1, text: '42' },
@@ -94,7 +114,8 @@ describe('foldLiveTurn', () => {
 		];
 		const events = parsed.flatMap((event) => mapper.map(event));
 		expect(events).toEqual([
-			{ kind: 'thinking', text: 'Looking.' },
+			// Flagged as answer text too (R58): a client still draws it as thinking only.
+			{ kind: 'thinking', text: 'Looking.', answer: true },
 			{ kind: 'text', text: 'Looking.' },
 		]);
 	});

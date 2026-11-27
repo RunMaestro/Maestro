@@ -241,7 +241,16 @@ function turnFrames(agentId: string, tabId: string, event: TurnEvent, state: Fra
 		case 'session':
 			return [bridgeEvent('process:session-id', processId, event.providerSessionId)];
 		case 'thinking':
-			return [bridgeEvent('process:thinking-chunk', processId, event.text)];
+			// A third argument, `true`, when the chunk is also answer text (R58); the desktop's own
+			// `process:thinking-chunk` carries it the same way.
+			return [
+				bridgeEvent(
+					'process:thinking-chunk',
+					processId,
+					event.text,
+					...(event.answer === true ? [true] : [])
+				),
+			];
 		case 'text':
 			return [bridgeEvent('process:data', processId, event.text)];
 		case 'tool':

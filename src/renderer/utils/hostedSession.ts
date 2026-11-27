@@ -30,7 +30,7 @@ import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/records';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import { HAND_OVER_MAX_MS } from '../../shared/maestro-lib/turns/queue';
-import { logsShownMidTurn, type AgentError } from '../../shared/types';
+import { logsKeptAtTurnEnd, logsShownMidTurn, type AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem, Session, UnifiedTabRef } from '../types';
 import { mirrorLogEntry, mirrorQueuedItem, mirrorTab, mirrorUsageStats } from './peerMirrorView';
 import { isAiTabHidden } from './unifiedTabOrderUtils';
@@ -114,6 +114,59 @@ export function hostLinkNoteId(
 		if (logs[i].source === 'user' && !logs[i].keptForHost) return `${prefix}${logs[i].id}`;
 	}
 	return `${prefix}${error.timestamp}`;
+}
+
+/**
+ * The reply rows a turn cut by a lost link leaves, as an SSH turn's do when its link is cut: the
+ * answer text it streamed (`text` events, and the answer it streamed as thinking chunks, which a
+ * desktop flushes as the reply when the process ends with no result), as this machine's own
+ * entries (`cutReply`), so they stay once the turn's live tail is gone and after the resend's
+ * answer lands (R58). Thinking and tool cards go by the tab's Thinking mode, as at a local exit.
+ */
+function cutTurnLogs(
+	tabId: string,
+	local: LogEntry[],
+	live: LiveTurn,
+	thinking: AITab['showThinking']
+): { local: LogEntry[]; tail: LogEntryRecord[] } {
+	const replies: LogEntry[] = live.entries
+		.filter((record) => record.source === 'stdout')
+		.map((record) => ({ ...mirrorLogEntry(record), cutReply: true }));
+	if (live.answerText && replies.length === 0) {
+		replies.push({
+			id: `host-cut-reply-${tabId}-${live.startedAt}`,
+			timestamp: live.answerAt ?? live.startedAt,
+			source: 'stdout',
+			text: live.answerText,
+			cutReply: true,
+		});
+	}
+	// Drawn live until now (`hostLive`): the live row gives way to this machine's copy. A copy
+	// already made follows its live row's text while that row still moves on.
+	const copies = new Map(
+		local.filter((entry) => entry.cutReply).map((entry) => [entry.id, entry] as const)
+	);
+	const moved = new Map(
+		replies
+			.filter((entry) => copies.has(entry.id) && copies.get(entry.id)!.text !== entry.text)
+			.map((entry) => [entry.id, entry.text] as const)
+	);
+	const added = replies.filter((entry) => !copies.has(entry.id));
+	const addedIds = new Set(added.map((entry) => entry.id));
+	const changed = added.length > 0 || moved.size > 0;
+	return {
+		local: changed
+			? [
+					...local
+						.filter((entry) => !(entry.hostLive && addedIds.has(entry.id)))
+						.map((entry) =>
+							moved.has(entry.id) ? { ...entry, text: moved.get(entry.id)! } : entry
+						),
+					...added,
+				]
+			: local,
+		tail: logsKeptAtTurnEnd(live.entries, thinking).filter((record) => record.source !== 'stdout'),
+	};
 }
 
 /**
@@ -815,14 +868,20 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 	}
 	// The live tail shows what a local turn shows under the tab's Thinking mode: with it off, no
 	// thinking row (Claude's reply streams as thinking chunks too), so the reply is drawn once.
+	// A turn cut by the lost link ended here: its tail is drawn as a local turn's at its end.
 	const logsFor = (
 		tabId: string,
 		local: LogEntry[],
-		thinking: AITab['showThinking']
+		thinking: AITab['showThinking'],
+		cut = false
 	): LogEntry[] => {
 		const key = liveTurnKey(agent.id, tabId);
 		const slot = input.transcripts?.[key];
 		const live = input.liveTurns?.[key];
+		if (cut && live) {
+			const ended = cutTurnLogs(tabId, local, live, thinking);
+			return mergeHostedLogs(ended.local, slot?.loaded ? slot.entries : undefined, ended.tail);
+		}
 		const tail = live?.entries ?? slot?.carryover;
 		return mergeHostedLogs(
 			local,
@@ -895,7 +954,12 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 		const projected = projectTab(
 			reported,
 			host,
-			logsFor(local.id, local.logs ?? [], local.showThinking),
+			logsFor(
+				local.id,
+				local.logs ?? [],
+				local.showThinking,
+				host.state === 'busy' && input.linkLost !== undefined
+			),
 			input.liveTurns?.[liveTurnKey(agent.id, local.id)],
 			input.viewing === true && local.id === session.activeTabId,
 			hostingAt ?? local.hostSeenAt,
