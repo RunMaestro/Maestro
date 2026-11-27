@@ -1493,6 +1493,25 @@ describe('isUserTurnStart', () => {
 		expect(turnFateAfter(answeredB, 2, 'desktop')).toBe('answered');
 	});
 
+	// CodeRabbit on #2171: the earlier turn's end may be written before the steer (the turn exited
+	// while the steer's socket answer was on its way): the steer then starts its turn at once.
+	it("starts the steer's turn at once when the earlier turn had ended before it was written", () => {
+		const logs = [u1, { ...partialA, turnEnded: true }, steer, { ...partialB, turnEnded: true }];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 2 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 3, to: 4 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('answered');
+	});
+
+	// CodeRabbit on #2171: a kept queued steer resent into its own entry, whose turn wrote nothing,
+	// is stamped on that entry; the earlier turn's end is a later stamp, so this one is its own.
+	it('reads a stamp on a resent steer as its own when the earlier turn ended after it', () => {
+		const logs = [u1, partialA, { ...steer, turnEnded: true }, endA];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 4 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('answered');
+	});
+
 	it("has the steer's turn not begun while the turn it was sent into still runs", () => {
 		const logs = [u1, partialA, steer];
 		expect(userTurnSpan(logs, 2)).toBeNull();

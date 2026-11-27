@@ -865,22 +865,50 @@ export function userTurnSpan(
 ): { from: number; to: number } | null {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
 	let from = at + 1;
-	if (queuedSteer(entries[at]) && entries[at]?.turnEnded !== true) {
-		const end = entries.findIndex((entry, i) => i > at && entry?.turnEnded === true);
-		if (end === -1) return null;
-		from = end + 1;
+	if (queuedSteer(entries[at])) {
+		const parentEnd = steerParentEnd(entries, at);
+		if (parentEnd === 'running') return null;
+		if (typeof parentEnd === 'number') from = parentEnd + 1;
 	}
-	let steerWaits = false;
 	for (let i = from; i < entries.length; i += 1) {
 		const entry = entries[i];
 		if (entry?.source === 'user' && entry.steered !== true) return { from, to: i };
-		if (queuedSteer(entry)) {
-			// Stamped: the end of this turn landed on the steer.
-			if (entry?.turnEnded === true) return { from, to: i + 1 };
-			steerWaits = true;
-		} else if (steerWaits && entry?.turnEnded === true) return { from, to: i + 1 };
+		if (!queuedSteer(entry)) continue;
+		const parentEnd = steerParentEnd(entries, i);
+		// This turn had ended when the steer was written: the steer starts its own turn there.
+		if (parentEnd === 'before') return { from, to: i };
+		// This turn's end landed on the steer.
+		if (parentEnd === 'on') return { from, to: i + 1 };
+		// This turn ran past the steer to its stamp.
+		if (typeof parentEnd === 'number') return { from, to: parentEnd + 1 };
 	}
 	return { from, to: entries.length };
+}
+
+/**
+ * Where the turn a queued steer at `at` was steered into ended, relative to the steer: `before`
+ * (it had ended when the steer was written: its last entry before the steer is stamped), the
+ * index of its stamp after the steer (it ran on past the steer, the usual order), `on` (its end
+ * landed on the steer, its last entry then), or `running` (no end yet). A stamp on the steer
+ * with a later stamp after it is the steer's own (its resend into the same entry), never `on`.
+ */
+function steerParentEnd(
+	entries: readonly (Partial<LogEntryRecord> | null)[],
+	at: number
+): 'before' | 'on' | 'running' | number {
+	for (let i = at - 1; i >= 0; i -= 1) {
+		const entry = entries[i];
+		// A note this machine or the host writes is about a turn, never part of one.
+		if (entry?.source === 'system' && entry.turnEnded !== true) continue;
+		if (entry?.turnEnded === true) return 'before';
+		break;
+	}
+	for (let i = at + 1; i < entries.length; i += 1) {
+		const entry = entries[i];
+		if (entry?.source === 'user' && entry.steered !== true) break;
+		if (entry?.turnEnded === true && !queuedSteer(entry)) return i;
+	}
+	return entries[at]?.turnEnded === true ? 'on' : 'running';
 }
 
 /**
@@ -903,8 +931,11 @@ export function turnFateAfter(
 	hostKind: TranscriptHostKind = 'headless'
 ): TurnFate {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
-	// A queued steer's own stamp is the end of the turn it was steered into, never its own.
-	const ownStamp = entries[at]?.turnEnded === true && !queuedSteer(entries[at]);
+	// A queued steer's stamp is the end of the turn it was steered into when that turn's end
+	// landed on it (`steerParentEnd()`), never its own then.
+	const ownStamp =
+		entries[at]?.turnEnded === true &&
+		!(queuedSteer(entries[at]) && steerParentEnd(entries, at) === 'on');
 	let ended: TurnFate | undefined = ownStamp ? 'answered' : undefined;
 	// The message itself stamped as ended after every entry of its turn: an attempt that answered
 	// with nothing that stays, after the attempts before it (`markTurnEnded()` with `endedAt`).
@@ -927,8 +958,9 @@ export function turnFateAfter(
 	let next = span.from;
 	for (; next < span.to; next += 1) {
 		const entry = entries[next];
-		// A queued steer is not this turn's output; a stamp on it still ends this turn's attempt.
-		if (queuedSteer(entry) && entry?.turnEnded !== true) continue;
+		// A queued steer is not this turn's output; a stamp on it still ends this turn's attempt
+		// when this turn's end landed on it (its span then ends there).
+		if (queuedSteer(entry) && !(entry?.turnEnded === true && next === span.to - 1)) continue;
 		// What an attempt wrote, for the empty end on the message: never a note about the turn.
 		if (typeof entry?.timestamp === 'number' && entry.source !== 'system' && !queuedSteer(entry)) {
 			latestAt = Math.max(latestAt, entry.timestamp);
