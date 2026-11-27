@@ -249,10 +249,127 @@ describe('mergeHostedLogs', () => {
 		const between = { ...record('y0', 'continue'), timestamp: typedAt + 30_000 };
 		const waiting = mergeHostedLogs([local('h1'), bubble], [record('h1'), between], undefined);
 		expect(waiting.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['k1', 'y0']);
-		// The host's own copy, stamped by a clock 3 s behind at the send, takes the bubble's place.
+		// The host's own copy, stamped by a clock 3 s behind at the send, takes the bubble's place,
+		// and is drawn there: nothing on the tab moves when the host takes it (R33).
 		const copy = { ...record('y1', 'continue'), timestamp: sentAt - 3_000 };
 		const taken = mergeHostedLogs(waiting, [record('h1'), between, copy], undefined);
-		expect(taken.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y0', 'y1']);
+		expect(taken.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y1', 'y0']);
+	});
+
+	// Parity R33: an SSH agent's kept message stays where it was typed, above its retry card, and the
+	// card turns into "Connection restored" in place, so the note is below the message. The host
+	// stamps its copy when it takes the resend, after the card: it must still be drawn above it.
+	describe('draws the host copy of a kept message above its retry card, as SSH does (R33)', () => {
+		// The SSH tab: the message, the card raised as its turn failed, the answer after the resend.
+		const sshOrder = ['h1', 'msg', 'card', 'a1'];
+		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true, keptSentAt: 20 });
+		const card = local('card', { source: 'system', timestamp: 6, retryOutageId: 'o1' });
+		const answer = { ...record('a1'), source: 'ai' as const, timestamp: 21 };
+		const kept = [local('h1'), bubble, card];
+		const order = (logs: LogEntry[], copyId: string) =>
+			logs.map((e) => (e.id === copyId ? 'msg' : e.id));
+
+		it('a desktop host that writes the copy under its own id: live, saved, and on every later pass', () => {
+			const copy = { ...record('y1', 'hello'), timestamp: 20 };
+			const live = mergeHostedLogs(kept, [record('h1')], [copy, answer]);
+			expect(order(live, 'y1')).toEqual(sshOrder);
+			const saved = mergeHostedLogs(live, [record('h1'), copy, answer], undefined);
+			expect(order(saved, 'y1')).toEqual(sshOrder);
+			expect(mergeHostedLogs(saved, [record('h1'), copy, answer], undefined)).toBe(saved);
+		});
+
+		it('a host that takes the sent id: live, then saved', () => {
+			const copy = { ...record('k1', 'hello'), timestamp: 20 };
+			const live = mergeHostedLogs(kept, [record('h1')], [copy, answer]);
+			expect(order(live, 'k1')).toEqual(sshOrder);
+			const saved = mergeHostedLogs(live, [record('h1'), copy, answer], undefined);
+			expect(order(saved, 'k1')).toEqual(sshOrder);
+			expect(mergeHostedLogs(saved, [record('h1'), copy, answer], undefined)).toBe(saved);
+		});
+
+		// CodeRabbit on #2167: the copy, the bubble and the card stamped at the same time (the clock
+		// skew allowed makes it reachable): the copy still takes the bubble's place, above the card.
+		it('draws the copy above the card when the copy, the bubble and the card share a time', () => {
+			const sameBubble = local('k1', {
+				text: 'hello',
+				timestamp: 5,
+				keptForHost: true,
+				keptSentAt: 5,
+			});
+			const sameCard = local('card', { source: 'system', timestamp: 5, retryOutageId: 'o1' });
+			const copy = { ...record('k1', 'hello'), timestamp: 5 };
+			const saved = mergeHostedLogs(
+				[local('h1'), sameBubble, sameCard],
+				[record('h1'), copy, answer],
+				undefined
+			);
+			expect(order(saved, 'k1')).toEqual(sshOrder);
+		});
+
+		// CodeRabbit on #2167: a host clock behind this one stamps the copy before the bubble. The
+		// copy keeps the bubble's place below a note drawn before it, and stays above its answer.
+		it('keeps the bubble place when the host clock is behind, above the copy answer', () => {
+			const late = local('k1', {
+				text: 'hello',
+				timestamp: 10_000,
+				keptForHost: true,
+				keptSentAt: 11_000,
+			});
+			const note = local('note', { source: 'system', timestamp: 9_000 });
+			const copy = { ...record('y1', 'hello'), timestamp: 8_000 };
+			const merged = mergeHostedLogs([local('h1'), note, late], [record('h1'), copy], undefined);
+			expect(merged.map((e) => e.id)).toEqual(['h1', 'note', 'y1']);
+			const reply = { ...record('a9'), source: 'ai' as const, timestamp: 8_500 };
+			const answered = mergeHostedLogs(
+				[local('h1'), note, late],
+				[record('h1'), copy, reply],
+				undefined
+			);
+			const ids = answered.map((e) => e.id);
+			expect(ids.indexOf('y1')).toBeLessThan(ids.indexOf('a9'));
+		});
+
+		it('a turn that ended before any live frame: saved at once', () => {
+			const copy = { ...record('k1', 'hello'), timestamp: 20 };
+			const saved = mergeHostedLogs(kept, [record('h1'), copy, answer], undefined);
+			expect(order(saved, 'k1')).toEqual(sshOrder);
+		});
+
+		// CodeRabbit on #2167: the delivered tick is read in the order the host recorded the turns,
+		// before the copy moves above another client's message.
+		it('ticks the moved copy by its own answer, not by the turn of a message it moved above', () => {
+			const copy = { ...record('y1', 'hello'), timestamp: 20 };
+			const other = { ...record('y0', 'meanwhile'), timestamp: 10 };
+			const otherAnswer = { ...record('b0'), source: 'ai' as const, timestamp: 11 };
+			const merged = mergeHostedLogs(
+				kept,
+				[record('h1'), other, otherAnswer, copy, answer],
+				undefined
+			);
+			expect(merged.map((e) => e.id)).toEqual(['h1', 'y1', 'card', 'y0', 'b0', 'a1']);
+			expect(merged.find((e) => e.id === 'y1')?.delivered).toBe(true);
+			expect(merged.find((e) => e.id === 'y0')?.delivered).toBe(true);
+			// Not answered yet: an answer to an earlier message, recorded before it, never ticks it.
+			const early = { ...record('b9'), source: 'ai' as const, timestamp: 8 };
+			const waiting = mergeHostedLogs(
+				kept,
+				[record('h1'), early, other, otherAnswer, copy],
+				undefined
+			);
+			expect(waiting.map((e) => e.id)).toEqual(['h1', 'y1', 'card', 'b9', 'y0', 'b0']);
+			expect(waiting.find((e) => e.id === 'y1')?.delivered).toBeFalsy();
+		});
+
+		it('leaves a message that was never kept at the time the host gave it', () => {
+			const sent = local('m1', { text: 'hi', timestamp: 5 });
+			const copy = { ...record('m1', 'hi'), timestamp: 20 };
+			const merged = mergeHostedLogs([local('h1'), sent, card], [record('h1'), copy], undefined);
+			expect(merged.map((e) => [e.id, e.timestamp])).toEqual([
+				['h1', 1],
+				['card', 6],
+				['m1', 20],
+			]);
+		});
 	});
 
 	it('keeps a kept bubble when the host holds only an earlier message with the same words (R14)', () => {

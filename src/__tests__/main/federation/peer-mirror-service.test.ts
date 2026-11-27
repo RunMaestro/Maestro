@@ -16,6 +16,7 @@ import {
 	type PeerMirrorServiceDeps,
 } from '../../../main/federation/peer-mirror-service';
 import type { MirrorPush } from '../../../shared/maestro-lib/client/peer-mirror';
+import { STREAM_FLUSH_INTERVAL_MS } from '../../../shared/streamFlushInterval';
 import {
 	SshForwardError,
 	type SshForwardLease,
@@ -346,7 +347,8 @@ describe('PeerMirrorService', () => {
 				},
 			},
 		]);
-		expect(MIRROR_TURN_COALESCE_MS).toBe(50);
+		// The cadence a local tab flushes its output at (R34).
+		expect(MIRROR_TURN_COALESCE_MS).toBe(STREAM_FLUSH_INTERVAL_MS);
 
 		// A non-turn push flushes the buffered turn first, so order holds.
 		h.pushes.length = 0;
@@ -359,6 +361,42 @@ describe('PeerMirrorService', () => {
 		a.emit({ type: 'agent.removed', agentId: 'a-a1' });
 		expect(h.pushes.map((p) => p.event.type)).toEqual(['turn', 'agent.removed', 'peer.state']);
 		expect(h.service.snapshot().peers[0].agents).toEqual([]);
+	});
+
+	// Parity R34: a hosted reply rendered four times as often as a local one (pushes every 50 ms
+	// against a local flush every 200 ms), so its tab made more React commits per turn. The same
+	// streamed reply now reaches a window as many times as a local tab flushes its output.
+	it('pushes a streaming reply as often as a local tab flushes its output (R34)', async () => {
+		vi.useFakeTimers();
+		try {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a }, { setTimer: (cb, ms) => setTimeout(cb, ms) });
+			h.service.start();
+			await settle();
+			h.pushes.length = 0;
+			// A 4 s reply, one chunk every 10 ms.
+			const streamMs = 4_000;
+			for (let at = 0; at < streamMs; at += 10) {
+				a.emit({
+					type: 'turn',
+					agentId: 'a-a1',
+					tabId: 't1',
+					event: { kind: 'text', at, text: 'x' },
+				});
+				vi.advanceTimersByTime(10);
+			}
+			const turnPushes = h.pushes.filter((p) => p.event.type === 'turn');
+			// The flushes a local tab's output batch makes over the same 4 s.
+			expect(turnPushes).toHaveLength(streamMs / STREAM_FLUSH_INTERVAL_MS);
+			const text = turnPushes
+				.map((p) =>
+					p.event.type === 'turn' && p.event.event.kind === 'text' ? p.event.event.text : ''
+				)
+				.join('');
+			expect(text).toBe('x'.repeat(streamMs / 10));
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('keeps the last known agents when the host or the forward drops', async () => {

@@ -24,8 +24,7 @@ import {
 	useRetryStatus,
 	retryNow,
 	cancelRetry,
-	HOST_HAD_MESSAGE_TEXT,
-	notOnHostText,
+	hostSettledText,
 } from '../stores/retryStore';
 import { formatDurationHuman } from '../../shared/formatters';
 import { describeQuotaWindow } from '../../shared/quotaLimitDetail';
@@ -158,9 +157,7 @@ export function RetryStatusCard({
 					<span className="font-medium">{headline}</span>{' '}
 					<span style={{ color: theme.colors.textDim }}>
 						{connectionLost && outage.settledByHost
-							? outage.notOnHost
-								? notOnHostText(outage.notOnHost)
-								: HOST_HAD_MESSAGE_TEXT
+							? hostSettledText(outage)
 							: connectionLost
 								? `Sent after ${retries}${over}, once the link was back.`
 								: `${strategyLabel} cleared after ${retries}${over}.`}

@@ -77,6 +77,20 @@ export async function reconnectPeer(peerId: string): Promise<void> {
 	}
 }
 
+/**
+ * Ask the peer's host for its whole agent list again, quietly (`federation reconnect` with no
+ * toast): for a decision that waits on the host's report since the link came back, when none came
+ * on its own (a resumed attach sends no snapshot). A failure says nothing here: the caller keeps
+ * waiting, and its own bound decides.
+ */
+export async function requestPeerReport(peerId: string): Promise<void> {
+	try {
+		await window.maestro?.federation?.reconnect(peerId);
+	} catch {
+		// The connection state already says why; the caller's wait ends on its own bound.
+	}
+}
+
 /** The toast title for a failed action, by kind. */
 const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	send: 'Message not sent',
