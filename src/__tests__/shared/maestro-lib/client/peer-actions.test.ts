@@ -517,9 +517,15 @@ describe('runPeerAgentAction', () => {
 
 describe('parsePeerAgentAction', () => {
 	it('keeps only the fields each kind takes', () => {
-		expect(parsePeerAgentAction({ kind: 'new-tab', tabId: 'ignored' })).toEqual({
+		// A new tab takes the id the client drew it under (R15), and nothing that is not an id.
+		expect(parsePeerAgentAction({ kind: 'new-tab', tabId: 'drawn-here', name: 'x' })).toEqual({
+			kind: 'new-tab',
+			tabId: 'drawn-here',
+		});
+		expect(parsePeerAgentAction({ kind: 'new-tab', tabId: '../not an id' })).toEqual({
 			kind: 'new-tab',
 		});
+		expect(parsePeerAgentAction({ kind: 'new-tab' })).toEqual({ kind: 'new-tab' });
 		expect(parsePeerAgentAction({ kind: 'interrupt' })).toEqual({ kind: 'interrupt' });
 		expect(parsePeerAgentAction({ kind: 'interrupt', tabId: 't1' })).toEqual({
 			kind: 'interrupt',
