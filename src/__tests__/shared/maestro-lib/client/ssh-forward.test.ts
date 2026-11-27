@@ -641,6 +641,21 @@ describe('SshForwardManager', () => {
 		await second.release();
 	});
 
+	// Greptile on #2161: an act restarts a downed forward and asks the client to reconnect at
+	// once; the client's endpoint is `ready()`, which must wait for that dial, not reject.
+	it('restart() of a downed forward makes ready() wait for the new dial', async () => {
+		const h = harness([new Error('ssh down'), running(4001)]);
+		const lease = h.manager.acquire(remote);
+		await expect(lease.ready()).rejects.toThrow('ssh down');
+
+		lease.restart();
+		expect(lease.state()).toEqual({ status: 'starting' });
+		const ready = lease.ready();
+		await settle();
+		await expect(ready).resolves.toMatchObject({ remotePort: 4001 });
+		await lease.release();
+	});
+
 	it('restart() skips a pending backoff', async () => {
 		const h = harness([new Error('ssh down'), running(4001)]);
 		const lease = h.manager.acquire(remote);

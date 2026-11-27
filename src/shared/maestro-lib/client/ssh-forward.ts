@@ -481,6 +481,9 @@ class RemoteForward {
 		if (this.stopped) return;
 		this.clearRetry();
 		this.attempts = 0;
+		// A forward waiting out a backoff dials now: it reads `starting` at once, so a `ready()`
+		// asked right after this waits for that dial instead of rejecting with the last error.
+		if (this.current.status === 'down') this.setState({ status: 'starting' });
 		this.start();
 	}
 
