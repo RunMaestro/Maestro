@@ -201,6 +201,19 @@ describe('runtime server', () => {
 		expect(value(await runtime.tabs.list('a1')).map((candidate) => candidate.id)).toEqual(['t1']);
 	});
 
+	it('creates a tab under the id the client asks for, and its own when that id is taken (R15)', async () => {
+		value(await client.connection.connect());
+		const asked = value(await client.tabs.create('a1', { tabId: 'drawn-here-1' }));
+		expect(asked.tabId).toBe('drawn-here-1');
+		expect(value(await runtime.tabs.list('a1')).map((tab) => tab.id)).toContain('drawn-here-1');
+		// Taken (or not an id): the host answers its own id, and never replaces a tab.
+		const taken = value(await client.tabs.create('a1', { tabId: 't1' }));
+		expect(taken.tabId).not.toBe('t1');
+		const bad = value(await client.tabs.create('a1', { tabId: 'no spaces/allowed' }));
+		expect(bad.tabId).not.toBe('no spaces/allowed');
+		expect(value(await runtime.tabs.list('a1')).filter((tab) => tab.id === 't1')).toHaveLength(1);
+	});
+
 	it('answers settings and providers', async () => {
 		fs.writeFileSync(
 			path.join(dir, 'maestro-settings.json'),

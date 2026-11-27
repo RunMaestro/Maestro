@@ -432,7 +432,9 @@ export type SelectSessionCallback = (
 export type SelectTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export type NewTabCallback = (
 	sessionId: string,
-	background?: boolean
+	background?: boolean,
+	/** The id the tab takes when no tab of the agent has it (a Federation client's, R15). */
+	tabId?: string
 ) => Promise<{ tabId: string } | null>;
 export type ReopenTabCallback = (
 	sessionId: string,

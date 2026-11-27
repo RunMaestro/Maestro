@@ -1576,6 +1576,27 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('asks for the tab under the id a Federation client sent, and ignores one that is not an id (R15)', async () => {
+			handler.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+				background: true,
+				tabId: 'drawn-here-1',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', true, 'drawn-here-1');
+			});
+			(callbacks.newTab as any).mockClear();
+			handler.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+				tabId: '../not an id',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', false);
+			});
+		});
+
 		it('should reject new tab with missing sessionId', () => {
 			handler.handleMessage(client, {
 				type: 'new_tab',

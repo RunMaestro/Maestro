@@ -1489,8 +1489,8 @@ export class WebServer {
 				this.callbackRegistry.selectSession(sessionId, tabId, focus),
 			selectTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.selectTab(sessionId, tabId),
-			newTab: async (sessionId: string, background?: boolean) =>
-				this.callbackRegistry.newTab(sessionId, background),
+			newTab: async (sessionId: string, background?: boolean, tabId?: string) =>
+				this.callbackRegistry.newTab(sessionId, background, tabId),
 			closeTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.closeTab(sessionId, tabId),
 			renameTab: async (sessionId: string, tabId: string, newName: string) =>

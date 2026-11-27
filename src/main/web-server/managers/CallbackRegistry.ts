@@ -573,9 +573,15 @@ export class CallbackRegistry {
 		return this.callbacks.selectTab(sessionId, tabId);
 	}
 
-	async newTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
+	async newTab(
+		sessionId: string,
+		background?: boolean,
+		tabId?: string
+	): Promise<{ tabId: string } | null> {
 		if (!this.callbacks.newTab) return null;
-		return this.callbacks.newTab(sessionId, background);
+		return tabId
+			? this.callbacks.newTab(sessionId, background, tabId)
+			: this.callbacks.newTab(sessionId, background);
 	}
 
 	async closeTab(sessionId: string, tabId: string): Promise<boolean> {

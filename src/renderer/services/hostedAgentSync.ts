@@ -53,7 +53,7 @@ import {
 	nextHostStartDeadline,
 	pruneHostStartedMentions,
 } from './hostedQueuedTurn';
-import { closingHostTabIds, hostingEnabled } from './hostedTurns';
+import { closingHostTabIds, createPendingHostTabs, hostingEnabled } from './hostedTurns';
 import {
 	clearPendingSteeringNotes,
 	forgetHostedSteering,
@@ -257,6 +257,8 @@ export function syncHostedAgents(): void {
 		const linkLost = hostLinkLostError(session, hosted.link);
 		if (linkLost) noteHostedTurnsCut(session, hosted.link, linkLost);
 		else if (hosted.connected) settleCutHostedTurns(session.id, hosted.link);
+		// A tab opened here while the host was down is made there once the link is back (R15).
+		if (hosted.connected) createPendingHostTabs(session);
 		const endedHere = hostedTurnsEndedHere(session.id, hosted.connected);
 		const keptCuts = linkLost ? hostedCutsKept(session.id) : undefined;
 		// The unread rule reads whether this agent is the one on screen, as a local tab's does.

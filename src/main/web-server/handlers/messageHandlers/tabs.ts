@@ -1,4 +1,5 @@
 import { planMentions } from '../../../../shared/maestro-lib/mentions/roster';
+import { readRequestedTabId } from '../../../../shared/maestro-lib/client/types';
 /**
  * Tabs domain WebSocket message handlers.
  *
@@ -203,8 +204,12 @@ export function handleNewTab(
 		return;
 	}
 
-	ctx.callbacks
-		.newTab(sessionId, background)
+	// A Federation client's id for the tab it already drew (R15), when it sent one.
+	const requestedTabId = readRequestedTabId(message.tabId);
+	(requestedTabId
+		? ctx.callbacks.newTab(sessionId, background, requestedTabId)
+		: ctx.callbacks.newTab(sessionId, background)
+	)
 		.then((result) => {
 			ctx.send(client, {
 				type: 'new_tab_result',

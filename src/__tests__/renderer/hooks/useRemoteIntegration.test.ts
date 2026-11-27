@@ -131,7 +131,7 @@ describe('useRemoteIntegration', () => {
 		  ) => void)
 		| undefined;
 	let onRemoteNewTabHandler:
-		| ((sessionId: string, responseChannel: string, background?: boolean) => void)
+		| ((sessionId: string, responseChannel: string, background?: boolean, tabId?: string) => void)
 		| undefined;
 	let onRemoteCloseTabHandler:
 		| ((sessionId: string, tabId: string, responseChannel: string) => void)
@@ -1614,6 +1614,31 @@ describe('useRemoteIntegration', () => {
 			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('response-channel-1', {
 				tabId: createdTab?.id,
 			});
+		});
+	});
+
+	describe('remote new tab under a requested id (R15)', () => {
+		it('takes the id a Federation client drew the tab under, and its own when that id is taken', () => {
+			const session = createMockSession({ id: 'session-1' });
+			const takenId = session.aiTabs[0].id;
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteNewTabHandler?.('session-1', 'chan-1', true, 'drawn-here-1');
+			});
+			expect(mockProcess.sendRemoteNewTabResponse).toHaveBeenCalledWith('chan-1', {
+				tabId: 'drawn-here-1',
+			});
+
+			act(() => {
+				onRemoteNewTabHandler?.('session-1', 'chan-2', true, takenId);
+			});
+			const tabs = useSessionStore.getState().sessions[0].aiTabs;
+			expect(tabs.filter((tab) => tab.id === takenId)).toHaveLength(1);
+			const answered = vi
+				.mocked(mockProcess.sendRemoteNewTabResponse)
+				.mock.calls.find(([channel]) => channel === 'chan-2')?.[1] as { tabId: string };
+			expect(answered.tabId).not.toBe(takenId);
 		});
 	});
 

@@ -410,7 +410,12 @@ export interface TranscriptOptions {
 export interface TabsApi {
 	/** CH-1. The AI tabs a person sees, in strip order. Hidden consult tabs are left out. */
 	list(agentId: string): Promise<ClientResult<AITabRecord[]>>;
-	create(agentId: string): Promise<ClientResult<{ tabId: string }>>;
+	/**
+	 * `opts.tabId`: the id the new tab takes, when no tab of the agent has it (a client that drew
+	 * the tab while the host was not connected, R15), so nothing it keyed on the tab moves. A host
+	 * that does not know the field, or finds the id taken, answers its own id.
+	 */
+	create(agentId: string, opts?: { tabId?: string }): Promise<ClientResult<{ tabId: string }>>;
 	/** An empty name clears it, so the tab shows its session id label again. */
 	rename(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
 	/** The tab moves to the host's closed-tab history. */
@@ -499,6 +504,9 @@ export interface TurnInput {
 export function readTurnEntryId(value: unknown): string | undefined {
 	return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : undefined;
 }
+
+/** A requested tab id (`TabsApi.create` `tabId`): the same shape as a `TurnInput.entryId`. */
+export const readRequestedTabId = readTurnEntryId;
 
 /** The most characters `TurnInput.agentContext` or `agentNotes` may hold, each. */
 export const MAX_TURN_AGENT_TEXT_CHARS = 1_000_000;

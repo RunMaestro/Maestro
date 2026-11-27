@@ -1026,6 +1026,13 @@ export interface AITab {
 	 */
 	hostSeenAt?: number;
 	/**
+	 * On a hosted agent's tab: opened here while its host was not connected
+	 * (`openHostedTabOrHere()`), and not yet made on the host. It is made there under this id when
+	 * the link is back or at its first send (`createPendingHostTab()`); the host's first report of
+	 * it clears the flag.
+	 */
+	pendingHostTab?: boolean;
+	/**
 	 * Set on a tab Quick Chat created (the hotkey-summoned floating chat window,
 	 * see src/shared/quickChat.ts). An ephemeral Quick Chat tab is also `hidden`
 	 * and is deleted when the next chat starts; a kept one is an ordinary tab.

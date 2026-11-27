@@ -726,15 +726,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		// Handle remote new tab from web interface
 		const unsubscribeNewTab = window.maestro.process.onRemoteNewTab(
-			(sessionId: string, responseChannel: string, background?: boolean) => {
+			(sessionId: string, responseChannel: string, background?: boolean, tabId?: string) => {
 				let newTabId: string | null = null;
 
 				flushSync(() => {
 					updateSessionWith(sessionId, (s) => {
 						// Use createTab helper. `activate: false` appends the tab without
 						// touching any active-* id, so it shows up in the tab bar the way
-						// a browser opens a background tab.
+						// a browser opens a background tab. A Federation client's id for a tab it
+						// already drew (R15) is taken when no tab has it.
+						const requested =
+							tabId && !s.aiTabs.some((tab) => tab.id === tabId) ? tabId : undefined;
 						const result = createTab(s, {
+							...(requested ? { id: requested } : {}),
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
 							activate: !background,

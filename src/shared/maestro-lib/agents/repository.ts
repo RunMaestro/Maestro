@@ -42,6 +42,7 @@ import type {
 	MaestroEvent,
 	TabPatch,
 } from '../client/types';
+import { readRequestedTabId } from '../client/types';
 import { valuesEqual } from '../client/mirror';
 import type { EventBus } from '../client/event-bus';
 import { listAutoRunDocuments } from '../autorun/documents';
@@ -213,7 +214,7 @@ export interface AgentRepository {
 	removeGroup(groupId: string): Promise<ClientResult<void>>;
 	moveAgentToGroup(agentId: string, groupId: string | null): Promise<ClientResult<void>>;
 
-	createTab(agentId: string): Promise<ClientResult<{ tabId: string }>>;
+	createTab(agentId: string, requestedId?: string): Promise<ClientResult<{ tabId: string }>>;
 	renameTab(agentId: string, tabId: string, name: string): Promise<ClientResult<void>>;
 	closeTab(agentId: string, tabId: string): Promise<ClientResult<void>>;
 	/** The agent's closed-tab archive as summaries, newest first (`closed_tab_command` list). */
@@ -1050,12 +1051,20 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		});
 	}
 
-	function createTab(agentId: string): Promise<ClientResult<{ tabId: string }>> {
+	function createTab(
+		agentId: string,
+		requestedId?: string
+	): Promise<ClientResult<{ tabId: string }>> {
 		const method: ClientMethod = 'tabs.create';
 		return run(method, async () => {
 			const agent = findAgent(agentId);
 			if (!agent) return noAgent(method, agentId);
-			const { agent: next, tab } = addTabRecord(agent, ctx, await readTabDefaults());
+			const { agent: next, tab } = addTabRecord(
+				agent,
+				ctx,
+				await readTabDefaults(),
+				readRequestedTabId(requestedId)
+			);
 			return {
 				ok: true,
 				plan: {

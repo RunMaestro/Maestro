@@ -158,7 +158,11 @@ export interface MessageHandlerCallbacks {
 	) => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
 	selectTab: (sessionId: string, tabId: string) => Promise<boolean>;
-	newTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
+	newTab: (
+		sessionId: string,
+		background?: boolean,
+		tabId?: string
+	) => Promise<{ tabId: string } | null>;
 	closeTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	renameTab: (
 		sessionId: string,

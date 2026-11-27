@@ -46,6 +46,8 @@ import type { AITab, ModalSaveOutcome, Session, UnifiedTabRef } from '../types';
 import { mirrorTab } from '../utils/peerMirrorView';
 import { appendBlockToDraft } from '../utils/quoteSelection';
 import { insertAiTabAtUnifiedIndex, setActiveTab } from '../utils/tabHelpers';
+import { generateId } from '../utils/ids';
+import { getRetryEntry } from '../stores/retryStore';
 import { insertAfterActiveInUnifiedTabOrder } from '../utils/unifiedTabOrderUtils';
 import {
 	actOnMirroredAgent,
@@ -268,6 +270,160 @@ export async function openHostedTab(
 }
 
 /**
+ * New Tab on a hosted agent, as a local or SSH agent's New Tab: the tab opens at once. With the
+ * host connected it is made there (`openHostedTab()`). With the host not connected it opens here
+ * under an id drawn here (`AITab.pendingHostTab`), and is made on the host under that same id when
+ * the link is back (`createPendingHostTabs()`) or at its first send, whichever comes first, so a
+ * message typed in it is kept like any other. The tab's id, or null when the host refused.
+ */
+export async function openHostedTabOrHere(
+	session: Pick<Session, 'id' | 'liftedTo'>,
+	placement: HostedTabPlacement = {}
+): Promise<string | null> {
+	const target = hostedTargetOf(session);
+	if (!target) return null;
+	if (usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected') {
+		return openHostedTab(session, placement);
+	}
+	const tabId = generateId();
+	const saveToHistory = placement.fields?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory;
+	const showThinking = placement.fields?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking;
+	focusHostTab(
+		session.id,
+		tabId,
+		{
+			...placement,
+			fields: { ...placement.fields, saveToHistory, showThinking, pendingHostTab: true },
+		},
+		'new'
+	);
+	return tabId;
+}
+
+/** Pending tabs being made on the host now, by `peer/agent/tab`: one request per tab. */
+const pendingTabCreations = new Map<string, Promise<string | null>>();
+/** When making a pending tab last failed, by `peer/agent/tab`: the link-back path waits a while. */
+const pendingTabFailedAt = new Map<string, number>();
+/** How long the link-back path waits after a failed try before it asks the host again. */
+export const PENDING_HOST_TAB_RETRY_MS = 30_000;
+
+/**
+ * Make a tab opened here while the host was down (`openHostedTabOrHere()`) on the host, under the
+ * id it already has, so its draft, its kept message and its retry stay on it. The host's update
+ * then draws it as any host tab (`projectHostedSession()` clears `pendingHostTab`). An older host
+ * that answers its own id: the tab here takes that id when nothing on this machine is keyed on it
+ * yet (no retry, nothing queued for it); otherwise it stays a copy kept here, and its first send
+ * goes to a new host tab as a copy from before the move does. The host's tab id, or null.
+ *
+ * `quiet`: no red toast on a refusal (the link-back path, which tries again later).
+ */
+export function createPendingHostTab(
+	sessionId: string,
+	tabId: string,
+	opts: { quiet?: boolean } = {}
+): Promise<string | null> {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const target = hostedTargetOf(session);
+	if (!session || !target) return Promise.resolve(null);
+	const key = hostTabKey(target, tabId);
+	const inFlight = pendingTabCreations.get(key);
+	if (inFlight) return inFlight;
+	const action = { kind: 'new-tab', tabId } as const;
+	const created = (
+		opts.quiet
+			? actOnMirroredAgentQuietly(target.peerId, target.agentId, action).then((answer) =>
+					'result' in answer ? answer.result : null
+				)
+			: actOnMirroredAgent(target.peerId, target.agentId, action)
+	).then((result) => {
+		if (result?.kind !== 'new-tab') {
+			pendingTabFailedAt.set(key, Date.now());
+			return null;
+		}
+		pendingTabFailedAt.delete(key);
+		openedHostTabs.add(hostTabKey(target, result.tabId));
+		const hostTabId = adoptHostTabId(sessionId, tabId, result.tabId);
+		if (!hostTabId) return result.tabId;
+		const local = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
+			(candidate) => candidate.id === hostTabId
+		);
+		void actOnMirroredAgent(target.peerId, target.agentId, {
+			kind: 'update-tab',
+			tabId: hostTabId,
+			patch: {
+				saveToHistory: local?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory,
+				thinking: local?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking,
+			},
+		});
+		// A name given here while it waited goes too: the host's update takes the name from there.
+		if (local?.name) void renameMirrorTab(target.peerId, target.agentId, hostTabId, local.name);
+		return hostTabId;
+	});
+	pendingTabCreations.set(key, created);
+	const settle = () => {
+		if (pendingTabCreations.get(key) === created) pendingTabCreations.delete(key);
+	};
+	created.then(settle, settle);
+	return created;
+}
+
+/**
+ * The id a pending tab has once the host made it: its own when the host took it. Otherwise (an
+ * older host) the host's, when nothing here is keyed on the tab yet; else undefined, and the tab
+ * stays a copy kept here (no longer pending).
+ */
+function adoptHostTabId(sessionId: string, tabId: string, hostTabId: string): string | undefined {
+	if (hostTabId === tabId) return tabId;
+	let adopted: string | undefined;
+	updateSessionWith(sessionId, (session) => {
+		const keyed =
+			getRetryEntry(sessionId, tabId) !== undefined ||
+			(session.executionQueue ?? []).some((item) => item.tabId === tabId);
+		const tabs = session.aiTabs.map((tab) =>
+			tab.id !== tabId
+				? tab
+				: keyed
+					? { ...tab, pendingHostTab: undefined }
+					: { ...tab, id: hostTabId, pendingHostTab: undefined }
+		);
+		if (keyed) return { ...session, aiTabs: tabs };
+		adopted = hostTabId;
+		return {
+			...session,
+			aiTabs: tabs,
+			unifiedTabOrder: (session.unifiedTabOrder ?? []).map((ref) =>
+				ref.type === 'ai' && ref.id === tabId ? { ...ref, id: hostTabId } : ref
+			),
+			activeTabId: session.activeTabId === tabId ? hostTabId : session.activeTabId,
+		};
+	});
+	return adopted;
+}
+
+/** Whether this record's tab `tabId` is the one the host made (`adoptHostTabId()` took its id). */
+function hostTabAdopted(sessionId: string, tabId: string): boolean {
+	return !!selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.some(
+		(tab) => tab.id === tabId
+	);
+}
+
+/**
+ * The link to the host is back: make every pending tab of `session` on the host. A tab whose last
+ * try failed waits `PENDING_HOST_TAB_RETRY_MS`, so a host that refuses is not asked on every sync.
+ */
+export function createPendingHostTabs(session: Session): void {
+	const target = hostedTargetOf(session);
+	if (!target) return;
+	const now = Date.now();
+	for (const tab of session.aiTabs) {
+		if (!tab.pendingHostTab || isHostTab(target, tab.id)) continue;
+		const failedAt = pendingTabFailedAt.get(hostTabKey(target, tab.id));
+		if (failedAt !== undefined && now - failedAt < PENDING_HOST_TAB_RETRY_MS) continue;
+		void createPendingHostTab(session.id, tab.id, { quiet: true });
+	}
+}
+
+/**
  * Reopen a closed tab of a hosted agent on its host (Cmd+Shift+T, Quick Chat), as a local agent
  * reopens one here: the conversation continues on the host. The newest, or the one closed as
  * `tabId`. It shows here at once and the host's update fills it; `placement.background` keeps the
@@ -400,7 +556,20 @@ export async function sendHostedTurn(
 	}
 	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
 	let hostTabId = tabId;
-	if (!isHostTab(target, tabId)) {
+	if (tab?.pendingHostTab && tabId && !isHostTab(target, tabId)) {
+		// A tab opened here while the host was not connected: made on the host now, under its id.
+		hostTabId = (await createPendingHostTab(session.id, tabId)) ?? undefined;
+		if (!hostTabId) return null;
+		if (hostTabId !== tabId && !hostTabAdopted(session.id, hostTabId)) {
+			// An older host gave it its own id while this tab holds a kept message: a copy here.
+			notifyToast({
+				color: 'theme',
+				title: 'Sent in a new tab',
+				message: `The Maestro host on ${target.peerId} made that tab under its own id, so the message continues in a new tab there.`,
+			});
+		}
+	}
+	if (!isHostTab(target, hostTabId)) {
 		hostTabId = (await openHostedTab(session)) ?? undefined;
 		if (!hostTabId) return null;
 		notifyToast({

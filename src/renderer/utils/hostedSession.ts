@@ -517,7 +517,9 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 	const localIds = new Set(session.aiTabs.map((tab) => tab.id));
 	// An added agent starts with one blank local tab; once the host has a tab to show it is only
 	// noise. A tab the host lists (a hidden one too) is the host's, never this placeholder.
+	// A tab opened here while the host was down waits to be made there (`pendingHostTab`): kept.
 	const isBlankLocalOnly = (tab: AITab) =>
+		!tab.pendingHostTab &&
 		!hostListed.has(tab.id) &&
 		!tab.agentSessionId &&
 		(tab.logs?.length ?? 0) === 0 &&
@@ -553,8 +555,10 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 			} else aiTabs.push(local);
 			continue;
 		}
+		// The host made a tab opened here while it was down: from now on it is the host's.
+		const reported = local.pendingHostTab ? { ...local, pendingHostTab: undefined } : local;
 		const next = projectTab(
-			local,
+			reported,
 			host,
 			logsFor(local.id, local.logs ?? []),
 			input.liveTurns?.[liveTurnKey(agent.id, local.id)],

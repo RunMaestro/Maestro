@@ -355,9 +355,13 @@ export function insertAfterActiveInUnifiedTabOrder(
 export function addTabRecord(
 	agent: AgentRecord,
 	ctx: RuleContext,
-	defaults: TabDefaults
+	defaults: TabDefaults,
+	requestedId?: string
 ): { agent: AgentRecord; tab: AITabRecord } {
 	const tab = buildTabRecord(ctx, defaults);
+	// The id a client already drew the tab under, when no tab of the agent has it (R15).
+	const taken = (agent.aiTabs ?? []).some((existing) => existing.id === requestedId);
+	if (requestedId && !taken) tab.id = requestedId;
 	const next: AgentRecord = {
 		...agent,
 		aiTabs: [...(Array.isArray(agent.aiTabs) ? agent.aiTabs : []), tab],
