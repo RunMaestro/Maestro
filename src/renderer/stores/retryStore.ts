@@ -766,8 +766,11 @@ export function scheduleRetryForError(
 		freshOutage?: Partial<OutageRecord>;
 	}
 ): boolean {
-	// An Auto Run task is not compacted: the batch owns that turn and its error.
-	if (!opts?.batch && scheduleContextCompaction(sessionId, tabId, error)) return true;
+	// An Auto Run task is not compacted: the batch owns that turn and its error. A retry this
+	// error replaces (`freshOutage`: the lost link's, once the host is back) is no recovery of
+	// this turn's context, so compaction is considered as if it were not there (R49).
+	if (!opts?.batch && scheduleContextCompaction(sessionId, tabId, error, opts?.freshOutage ?? null))
+		return true;
 
 	const strategy = resolveStrategy(sessionId, error);
 	if (!strategy) return false;
@@ -791,12 +794,7 @@ export function scheduleRetryForError(
 	// record and no card, so counting from its attempt would schedule a retry
 	// the transcript never shows.
 	const prior = useRetryStore.getState().retries[key];
-	if (prior && !prior.compaction && opts?.freshOutage) {
-		useRetryStore.getState().patchOutage(prior.outageId, opts.freshOutage);
-		resolveOutage(prior.outageId, 'recovered');
-		stopProviderWatch(key);
-		clearTabAgentError(sessionId, tabId, prior.lastMessage);
-	}
+	if (prior && !prior.compaction && opts?.freshOutage) endReplacedOutage(prior, opts.freshOutage);
 	const existing = prior?.compaction || opts?.freshOutage ? undefined : prior;
 	// Continue the existing backoff when a resend failed again; otherwise start
 	// at attempt 0. `existing.attempt` was the attempt we just tried, so +1.
@@ -1204,14 +1202,23 @@ const COMPACTION_EXIT_WAIT_MS = 30 * 1000;
  * process that just failed still has that session open until it exits, so the
  * work waits for `noteFailedTurnExited`.
  */
-function scheduleContextCompaction(sessionId: string, tabId: string, error: AgentError): boolean {
+function scheduleContextCompaction(
+	sessionId: string,
+	tabId: string,
+	error: AgentError,
+	replacing: Partial<OutageRecord> | null
+): boolean {
 	if (error.type !== 'token_exhaustion') return false;
 
 	const key = keyFor(sessionId, tabId);
 	// One recovery per failed turn. An entry already here is another outage's, or
 	// this compaction's own resend refused again - and compacting a second time
-	// would loop on a prompt that cannot fit.
-	if (useRetryStore.getState().retries[key]) return false;
+	// would loop on a prompt that cannot fit. The exception is a retry this error
+	// replaces (`replacing`, the caller's `freshOutage`): an outage that is over,
+	// never a compaction, so this turn has had no recovery of its context yet.
+	const prior = useRetryStore.getState().retries[key];
+	const replaced = !!prior && !prior.compaction && !!replacing;
+	if (prior && !replaced) return false;
 
 	const snapshot = snapshots.get(key);
 	if (!snapshot) return false;
@@ -1250,12 +1257,26 @@ function scheduleContextCompaction(sessionId: string, tabId: string, error: Agen
 		heldItemId: snapshot.item.id,
 		compaction: { pill: recordContextCompaction(sessionId, tabId), error, compacted: false },
 	};
+	// The outage this replaces ends as recovered with its card's words, as a fresh outage's does.
+	if (replaced) endReplacedOutage(prior, replacing);
 	useRetryStore.getState().setEntry(key, entry);
 	holdFailedItemInQueue(sessionId, tabId, snapshot.item);
 
 	logger.info('[retry] Context limit hit; compacting before resend', undefined, { key });
 	armCompactionExitTimer(key);
 	return true;
+}
+
+/**
+ * End the outage of a retry a new error replaces (`scheduleRetryForError()`'s `freshOutage`): its
+ * record takes `patch` (its card's words) and is recovered, its provider watch stops, and its error
+ * leaves the tab. The caller writes the new entry over it in one write of the retry map.
+ */
+function endReplacedOutage(prior: RetryEntry, patch: Partial<OutageRecord>): void {
+	useRetryStore.getState().patchOutage(prior.outageId, patch);
+	resolveOutage(prior.outageId, 'recovered');
+	stopProviderWatch(prior.key);
+	clearTabAgentError(prior.sessionId, prior.tabId, prior.lastMessage);
 }
 
 function armCompactionExitTimer(key: string): void {
