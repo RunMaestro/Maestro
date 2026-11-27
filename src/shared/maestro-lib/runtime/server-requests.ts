@@ -413,11 +413,14 @@ function importQueueItemFromWire(entry: unknown): AgentImportQueuedMessage | und
 	const tabId = str(item?.tabId);
 	if (!item || !tabId) return undefined;
 	const images = imagesOf(item);
+	// The choices it was queued with, checked as any client's per-turn overrides are (R55).
+	const overrides = normalizeTurnOverrides(item.overrides);
 	return {
 		tabId,
 		text: typeof item.text === 'string' ? item.text : '',
 		...(images ? { images } : {}),
 		...(item.held === true ? { held: true } : {}),
+		...(overrides ? { overrides } : {}),
 	};
 }
 

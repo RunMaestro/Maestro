@@ -358,6 +358,14 @@ describe('queuedItemHostOverrides (R51)', () => {
 	it('leaves read-only to the host tab when the message made no choice', () => {
 		expect(queuedItemHostOverrides(item({}))).toBeUndefined();
 	});
+
+	// Parity R55: the save to History choice the message was queued with goes too (one shared rule
+	// with a Move to Host's queue, `queuedTurnOverrides()`).
+	it('sends the save to History choice the message was queued with (R55)', () => {
+		expect(queuedItemHostOverrides(item({ turnSaveToHistory: false }))).toEqual({
+			saveToHistory: false,
+		});
+	});
 });
 
 describe('hostedQueuedTurn: @mentions (M7)', () => {

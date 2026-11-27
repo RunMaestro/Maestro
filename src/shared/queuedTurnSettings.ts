@@ -97,3 +97,29 @@ export function queuedItemRunsReadOnly(
 		item?.readOnlyMode === true || tab?.readOnlyMode === true || tab?.permissionMode === 'readonly'
 	);
 }
+
+/**
+ * The choices a queued item froze when it was queued, as per-turn overrides for a host
+ * (`TurnInput.overrides`): its model and effort, its read-only choice (by
+ * {@link queuedItemRunsReadOnly}, sent only when the item made one), and its save to History
+ * choice. The inverse of {@link withQueuedTurnOverrides}. Undefined when it froze none, so the
+ * host tab's own chips decide, as a local drain falls back to the tab's.
+ */
+export function queuedTurnOverrides(
+	item: Pick<
+		QueuedTurnOverrideFields,
+		'turnSettings' | 'readOnlyMode' | 'turnReadOnly' | 'turnSaveToHistory'
+	>
+): TurnOverrides | undefined {
+	const choseReadOnly =
+		typeof item.turnReadOnly === 'boolean' || typeof item.readOnlyMode === 'boolean';
+	const overrides: TurnOverrides = {
+		...(item.turnSettings?.model ? { model: item.turnSettings.model } : {}),
+		...(item.turnSettings?.effort ? { effort: item.turnSettings.effort } : {}),
+		...(choseReadOnly ? { readOnly: queuedItemRunsReadOnly(item, undefined) } : {}),
+		...(typeof item.turnSaveToHistory === 'boolean'
+			? { saveToHistory: item.turnSaveToHistory }
+			: {}),
+	};
+	return Object.keys(overrides).length > 0 ? overrides : undefined;
+}

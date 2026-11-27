@@ -163,6 +163,8 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 				...(item.images && item.images.length > 0 ? { images: item.images } : {}),
 				// Held where it came from: it waits paused here too (R50).
 				...(item.held === true ? { held: true } : {}),
+				// The settings it was queued with, not the tab's (R55).
+				...(item.overrides ? { overrides: item.overrides } : {}),
 			});
 			if (sent.ok) queued += 1;
 			else

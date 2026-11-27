@@ -44,7 +44,7 @@ import {
 	useSessionStore,
 } from '../stores/sessionStore';
 import { generateId } from '../utils/ids';
-import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
+import { queuedTurnOverrides } from '../../shared/queuedTurnSettings';
 import { notifyToast } from '../stores/notificationStore';
 import {
 	clearRetryIfSettled,
@@ -347,21 +347,13 @@ export function queuedItemMentionPlan(
 }
 
 /**
- * The choices an item froze when it was queued (`turnSettings`, `readOnlyMode`), as the host's
- * per-turn overrides, so a change to the tab while it waits does not change how it runs. Undefined
- * when it froze none (the tab's live choices decide, as the local drain falls back).
+ * The choices an item froze when it was queued (`turnSettings`, read-only, save to History), as the
+ * host's per-turn overrides, so a change to the tab while it waits does not change how it runs.
+ * Undefined when it froze none (the tab's live choices decide, as the local drain falls back). The
+ * one shared rule (`queuedTurnOverrides()`), which a Move to Host's queue reads too (R55).
  */
 export function queuedItemHostOverrides(item: QueuedItem): TurnOverrides | undefined {
-	// Read-only by the one rule every dispatch path asks (a sender's own `turnReadOnly` first),
-	// sent only when the item made a choice: none leaves the host tab's own chip to decide.
-	const choseReadOnly =
-		typeof item.turnReadOnly === 'boolean' || typeof item.readOnlyMode === 'boolean';
-	const overrides: TurnOverrides = {
-		...(item.turnSettings?.model ? { model: item.turnSettings.model } : {}),
-		...(item.turnSettings?.effort ? { effort: item.turnSettings.effort } : {}),
-		...(choseReadOnly ? { readOnly: queuedItemRunsReadOnly(item, undefined) } : {}),
-	};
-	return Object.keys(overrides).length > 0 ? overrides : undefined;
+	return queuedTurnOverrides(item);
 }
 
 /**

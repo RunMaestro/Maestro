@@ -255,6 +255,12 @@ export interface AgentImportQueuedMessage {
 	 * until someone resumes it (`TurnInput.held`). A host older than this field queues it ready.
 	 */
 	held?: boolean;
+	/**
+	 * The choices it froze when it was queued (model, effort, read-only, save to History), so it
+	 * runs on the host as it would have here (`TurnInput.overrides`). The host checks them
+	 * (`normalizeTurnOverrides()`). A host older than this field runs it on the host tab's settings.
+	 */
+	overrides?: TurnOverrides;
 }
 
 /**

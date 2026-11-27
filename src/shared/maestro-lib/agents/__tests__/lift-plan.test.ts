@@ -230,6 +230,58 @@ describe('planAgentLift', () => {
 		]);
 	});
 
+	// Parity R55: settings are codified at send. A queued message moves with the model, effort,
+	// read-only and save to History choices it was queued with, so the host runs it on them.
+	it('moves a queued message with the settings it was queued with (R55)', () => {
+		const plan = planAgentLift({
+			agent: sshAgent({
+				executionQueue: [
+					{
+						id: 'q1',
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'frozen',
+						turnSettings: { model: 'opus', effort: 'high' },
+						readOnlyMode: true,
+						turnSaveToHistory: false,
+					},
+					// The sender's own read-only choice decides over the item's flag.
+					{
+						id: 'q2',
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'writable',
+						readOnlyMode: true,
+						turnReadOnly: false,
+					},
+					{ id: 'q3', tabId: 'tab-1', type: 'message', text: 'no choice' },
+					// A malformed stored value is not sent.
+					{
+						id: 'q4',
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'bad',
+						turnSettings: { model: 7 },
+						turnSaveToHistory: 'yes',
+					},
+				],
+			}),
+			remote,
+			peer: 'build-box',
+			withEnv: false,
+		});
+		expect(plan.input.queue).toEqual([
+			{
+				tabId: 'tab-1',
+				text: 'frozen',
+				overrides: { model: 'opus', effort: 'high', readOnly: true, saveToHistory: false },
+			},
+			{ tabId: 'tab-1', text: 'writable', overrides: { readOnly: false } },
+			{ tabId: 'tab-1', text: 'no choice' },
+			{ tabId: 'tab-1', text: 'bad' },
+		]);
+	});
+
 	describe('with an image store registered', () => {
 		const STORED = 'maestro-image://store/abc.png';
 		const STORED_DATA = `data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`;

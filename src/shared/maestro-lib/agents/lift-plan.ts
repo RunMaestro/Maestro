@@ -19,7 +19,13 @@
 
 import { asThinkingMode, type SshRemoteConfig, type UsageStats } from '../../types';
 import { isPathAtOrUnderRoot } from '../../worktreePaths';
-import type { AgentImportInput, AgentImportQueuedMessage, AgentImportTab } from '../client/types';
+import type {
+	AgentImportInput,
+	AgentImportQueuedMessage,
+	AgentImportTab,
+	TurnOverrides,
+} from '../client/types';
+import { queuedTurnOverrides } from '../../queuedTurnSettings';
 import { aiTabsOf, visibleAiTabsOf } from '../store/read-stores';
 import type { AgentRecord, AITabRecord } from '../store/records';
 import { transcriptOf } from '../store/transcript';
@@ -270,6 +276,30 @@ interface StoredQueueItem {
 	images?: unknown;
 	command?: unknown;
 	paused?: unknown;
+	turnSettings?: unknown;
+	readOnlyMode?: unknown;
+	turnReadOnly?: unknown;
+	turnSaveToHistory?: unknown;
+}
+
+/** The choices a stored queued item froze when it was queued, as a host's per-turn overrides. */
+function storedQueueItemOverrides(item: StoredQueueItem): TurnOverrides | undefined {
+	const settings =
+		item.turnSettings && typeof item.turnSettings === 'object'
+			? (item.turnSettings as { model?: unknown; effort?: unknown })
+			: undefined;
+	const bool = (value: unknown) => (typeof value === 'boolean' ? value : undefined);
+	return queuedTurnOverrides({
+		turnSettings: settings
+			? {
+					...(typeof settings.model === 'string' ? { model: settings.model } : {}),
+					...(typeof settings.effort === 'string' ? { effort: settings.effort } : {}),
+				}
+			: undefined,
+		readOnlyMode: bool(item.readOnlyMode),
+		turnReadOnly: bool(item.turnReadOnly),
+		turnSaveToHistory: bool(item.turnSaveToHistory),
+	});
 }
 
 /** Queued messages that move, and the queue entries that stay with the reason. */
@@ -317,12 +347,16 @@ function planQueue(
 				reason: `${unresolved} image(s) on this queued message could not be read from this machine's image store and do not move.`,
 			});
 		}
+		const overrides = storedQueueItemOverrides(item);
 		queue.push({
 			tabId: item.tabId,
 			text: item.text,
 			...(inline.length > 0 ? { images: inline } : {}),
 			// A message the person held stays held on the host, until they resume it (R50).
 			...(item.paused === true ? { held: true } : {}),
+			// The model, effort, read-only and save to History choices it was queued with: settings
+			// are codified at send, so it runs on the host as it would have here (R55).
+			...(overrides ? { overrides } : {}),
 		});
 		moved.push(id);
 	}
