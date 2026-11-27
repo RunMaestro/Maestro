@@ -209,19 +209,26 @@ function sameMetadata(a: LogEntry['metadata'], b: LogEntry['metadata']): boolean
 }
 
 /**
+ * How far before a kept bubble a host copy of it may be stamped and still be its copy: a host clock
+ * behind this one by up to this much (R30). A few seconds, so an earlier message with the same words
+ * is never taken for it.
+ */
+export const HOST_COPY_CLOCK_SKEW_MS = 5_000;
+
+/**
  * `older` without the bubbles of kept messages (`LogEntry.keptForHost`) the host now has. A host
  * that takes the sent `entryId` writes the same id, and the bubble is replaced by id above. One
  * that does not (a desktop host) writes the message under its own id: once this machine handed the
  * message over (`keptSentAt`), the first user entry new to this tab with the same text and the
  * same number of images replaces one bubble. Each host entry replaces at most one. Never an entry
  * this tab already drew before (an earlier message with the same words), never before the send
- * (a message another client sent with the same words), and never a host entry written before the
- * bubble itself (R28): the host writes its copy after the message was typed, so an earlier message
- * with the same words, read in now, is not this one. A kept bubble waits for its own copy. The
- * mirror holds no reading of the host's clock, so no skew is allowed: the time a message was kept
- * (from the bubble to its send) is what absorbs a host clock that runs behind this one.
+ * (a message another client sent with the same words), and never a host entry written more than
+ * `HOST_COPY_CLOCK_SKEW_MS` before the bubble itself (R28, R30): the host writes its copy after the
+ * message was typed, so an earlier message with the same words, read in now, is not this one. The
+ * mirror holds no reading of the host's clock, so the bound absorbs a host clock that runs behind
+ * this one when the message was kept for less time than the clock is off (a short blip, a retry
+ * the moment the link is back). A kept bubble waits for its own copy.
  */
-
 function withoutKeptCopies(
 	older: LogEntry[],
 	host: readonly LogEntry[],
@@ -237,9 +244,9 @@ function withoutKeptCopies(
 			(copy) =>
 				copy.text === entry.text &&
 				(copy.images?.length ?? 0) === (entry.images?.length ?? 0) &&
-				// Written at or after the bubble: an older message the host read in now, with the same
-				// words, is not this one (R28).
-				copy.timestamp >= entry.timestamp
+				// Written at or after the bubble, give or take a host clock behind this one: an older
+				// message the host read in now, with the same words, is not this one (R28, R30).
+				copy.timestamp >= entry.timestamp - HOST_COPY_CLOCK_SKEW_MS
 		);
 		if (at === -1) return true;
 		copies.splice(at, 1);
