@@ -203,6 +203,29 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 		expect(localHistory.appends).toHaveLength(1);
 	});
 
+	it('(c) reads the queue again after the History came home, just before the import (CodeRabbit on #2181)', async () => {
+		const order: string[] = [];
+		const append = localHistory.append;
+		localHistory.append = async (agentId, entries) => {
+			order.push('history');
+			await append(agentId, entries);
+		};
+		const agent = localAgent('agent-1', true);
+		await runLift(
+			'agent-1',
+			{},
+			{
+				...deps(agent),
+				readAgents: () => {
+					order.push('queue');
+					return [agent];
+				},
+			}
+		);
+		expect(order.indexOf('history')).toBeGreaterThan(-1);
+		expect(order.lastIndexOf('queue')).toBeGreaterThan(order.indexOf('history'));
+	});
+
 	it('(c) a dry run counts the History and writes nothing (L39)', async () => {
 		const result = await runLift('agent-1', { dryRun: true }, deps(localAgent('agent-1', true)));
 		expect(result.plan.history).toEqual({ here: 1, comesHome: 2 });

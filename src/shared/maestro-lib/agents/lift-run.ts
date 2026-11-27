@@ -615,12 +615,6 @@ export async function runLift(
 		onPlan(plan);
 		if (options.dryRun) return { plan: plan.summary, dryRun: true };
 
-		// The queue moves as it was planned: a message held, resumed, or removed since the plan was
-		// read would move in its old state (a held one running on the host). Read it again just
-		// before the import; any change refuses with nothing changed (CodeRabbit on #2171).
-		const queueChanged = movedQueueChange(planned, deps.readAgents(), plan.movedQueueItemIds);
-		if (queueChanged) throw new LiftRunError('LIFT_QUEUE_CHANGED', queueChanged);
-
 		// The replaced copy's History comes home before the import replaces the copy on the host.
 		if (stale) {
 			try {
@@ -632,6 +626,13 @@ export async function runLift(
 				);
 			}
 		}
+
+		// The queue moves as it was planned: a message held, resumed, or removed since the plan was
+		// read would move in its old state (a held one running on the host). Read it again just
+		// before the import, after the replaced copy's History came home (that History is the agent's
+		// own, filed once by id); any change refuses with nothing moved (CodeRabbit on #2171, #2181).
+		const queueChanged = movedQueueChange(planned, deps.readAgents(), plan.movedQueueItemIds);
+		if (queueChanged) throw new LiftRunError('LIFT_QUEUE_CHANGED', queueChanged);
 
 		const imported = await connection.client.agents.import(plan.input);
 		if (!imported.ok) {
