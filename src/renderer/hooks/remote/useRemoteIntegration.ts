@@ -1136,11 +1136,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				let closed = false;
 				let closedSession: Session | undefined;
 				try {
-					// A hosted agent's tab closes on its host too, as the window's close does
-					// (`closeHostedTab()`, a no-op for any other agent), so the host sync does not
-					// bring it back (R42).
 					const before = selectSessionById(sessionId)(useSessionStore.getState());
-					if (before?.aiTabs.some((t) => t.id === tabId)) closeHostedTab(before, tabId);
 					updateSessionWith(sessionId, (s) => {
 						const tab = s.aiTabs.find((t) => t.id === tabId);
 						if (!tab) return s;
@@ -1157,6 +1153,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						closedSession = updated;
 						return updated;
 					});
+					// A hosted agent's tab closes on its host too, as the window's close does
+					// (`closeHostedTab()`, a no-op for any other agent), so the host sync does not
+					// bring it back (R42). Only once the close here was allowed: a refused one leaves
+					// the tab open in both places, never gone on the host while the CLI says not
+					// closed (R57).
+					if (closed && before) closeHostedTab(before, tabId);
 					// Do not leave a confirmed close waiting for the 500ms inventory poll.
 					if (closedSession) broadcastTabInventory(closedSession);
 				} finally {

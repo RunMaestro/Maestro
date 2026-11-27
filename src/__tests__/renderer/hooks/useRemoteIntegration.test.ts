@@ -38,6 +38,7 @@ import {
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useQueueProcessing } from '../../../renderer/hooks/agent/useQueueProcessing';
 import { buildUnifiedTabs } from '../../../renderer/utils/tabHelpers';
+import * as tabHelpers from '../../../renderer/utils/tabHelpers';
 import { captureException } from '../../../renderer/utils/sentry';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
@@ -6165,6 +6166,46 @@ describe('useRemoteIntegration', () => {
 				expect(hostCloses).toEqual(
 					mode === 'hosted' ? [['box', 'h1', { kind: 'close-tab', tabId: 'tab-2' }]] : []
 				);
+			}
+		);
+
+		// Parity R57: a close this machine refuses leaves the tab open on the host as well, so the CLI's
+		// "not closed" is true in both places.
+		it.each(AGENT_MODES)(
+			'%s: maestro-cli tab close the window refuses closes nothing on the host (R57)',
+			async (mode) => {
+				const session = {
+					...seed(mode),
+					aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2' })],
+				};
+				const { peer } = replacePeerAgents(
+					createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+					[
+						{
+							id: 'h1',
+							name: 'Docs',
+							toolType: 'claude-code',
+							aiTabs: [{ id: 'tab-1' }, { id: 'tab-2' }],
+						},
+					],
+					[],
+					1
+				);
+				usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+				act$.mockResolvedValue({ ok: true, result: { kind: 'close-tab' } });
+				const refuse = vi.spyOn(tabHelpers, 'closeTab').mockReturnValue(null);
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				await act(async () => {
+					onRemoteCloseTabHandler?.('session-1', 'tab-2', 'chan-close');
+				});
+				refuse.mockRestore();
+				expect(mockProcess.sendRemoteCloseTabResponse).toHaveBeenCalledWith('chan-close', false);
+				expect(useSessionStore.getState().sessions[0].aiTabs.map((tab) => tab.id)).toEqual([
+					'tab-1',
+					'tab-2',
+				]);
+				expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'close-tab')).toEqual([]);
 			}
 		);
 
