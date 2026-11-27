@@ -25,7 +25,11 @@ import * as path from 'path';
 
 import { parseBase64DataUrl } from '../../dataUrl';
 import { getImageMimeType } from '../../gitUtils';
-import { SESSION_IMAGE_REF_PREFIX, sessionImageRefBasename } from '../../sessionImageRefs';
+import {
+	SESSION_IMAGE_REF_PREFIX,
+	sessionImageRefBasename,
+	sessionImageRefSha256,
+} from '../../sessionImageRefs';
 import { logger } from '../host';
 import { atomicWriteFile } from './atomic-write';
 
@@ -59,6 +63,21 @@ function stripRefQuery(ref: string): string {
 	const fragment = ref.indexOf('#');
 	const cut = query === -1 ? fragment : fragment === -1 ? query : Math.min(query, fragment);
 	return cut === -1 ? ref : ref.slice(0, cut);
+}
+
+/**
+ * The sha256 of an image's bytes, whether it is a `maestro-image://` ref (the hash its name
+ * carries, no read) or an inline data URL (the hash of its decoded bytes), or null for anything
+ * else. One pasted image is a ref on one machine and a data URL on the wire (a headless host's
+ * transcript read), so two copies of it are compared by this, never by the string.
+ */
+export function sessionImageContentSha256(value: unknown): string | null {
+	if (typeof value !== 'string') return null;
+	const fromRef = sessionImageRefSha256(stripRefQuery(value));
+	if (fromRef) return fromRef;
+	const parsed = isInlineImageDataUrl(value) ? parseImageDataUrl(value) : null;
+	if (!parsed) return null;
+	return crypto.createHash('sha256').update(Buffer.from(parsed.base64, 'base64')).digest('hex');
 }
 
 export interface SessionImageStore {

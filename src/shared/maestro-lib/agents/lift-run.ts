@@ -35,10 +35,12 @@ import {
 	containingTranscript,
 	readLeftOnHost,
 	withReturnedFromHost,
+	type TranscriptMatchOptions,
 	type TranscriptSide,
 } from './lift-return-record';
 import { liftFollowUpPatch } from './lift-settings-sync';
 import type { AITabRecord } from '../store/records';
+import { sessionImageContentSha256 } from '../store/session-images';
 import { truncateAtWordBoundary } from '../../formatters';
 import { stripMarkdown } from '../../markdown';
 
@@ -270,11 +272,15 @@ async function readStaleHostCopy(
 	const hostActive = hostCopy.value.activeTabId;
 	const activeIndex = hostActive ? withLogs.findIndex((tab) => tab.id === hostActive) : -1;
 	const activeTabId = activeIndex >= 0 ? hostTabs.tabs[activeIndex].id : hostActive;
-	const merged = withReturnedFromHost(agent as unknown as Record<string, unknown>, {
-		tabs: hostTabs.tabs,
-		transcriptSides: hostTabs.transcriptSides,
-		...(activeTabId ? { activeTabId } : {}),
-	}) as unknown as AgentRecord;
+	const merged = withReturnedFromHost(
+		agent as unknown as Record<string, unknown>,
+		{
+			tabs: hostTabs.tabs,
+			transcriptSides: hostTabs.transcriptSides,
+			...(activeTabId ? { activeTabId } : {}),
+		},
+		TRANSCRIPT_MATCH
+	) as unknown as AgentRecord;
 	return {
 		pointer,
 		ref,
@@ -282,6 +288,14 @@ async function readStaleHostCopy(
 		tabMerge: { merged: hostTabs.merged, copies: hostTabs.copies, added: hostTabs.added },
 	};
 }
+
+/**
+ * How a stale-copy merge matches two transcripts: images by the sha256 of their bytes. This
+ * machine keeps a pasted image as a `maestro-image://` ref; a headless host's transcript read sends
+ * it as a data URL (M10) and a desktop host as a ref into its own store: one image, three strings,
+ * one hash (U16).
+ */
+const TRANSCRIPT_MATCH: TranscriptMatchOptions = { imageKey: sessionImageContentSha256 };
 
 /** The text of a transcript's user messages, in order: the turns of its conversation. */
 function userTurns(tab: AITabRecord): string[] {
@@ -396,7 +410,9 @@ export function keepDivergentHostTabs(
 			result.tabs.push(id === host.id ? named : { ...named, id });
 			continue;
 		}
-		const side = extra.has(host) ? undefined : containingTranscript(host.logs, local.logs);
+		const side = extra.has(host)
+			? undefined
+			: containingTranscript(host.logs, local.logs, TRANSCRIPT_MATCH);
 		if (side) {
 			result.merged += 1;
 			result.transcriptSides[local.id] = side;
