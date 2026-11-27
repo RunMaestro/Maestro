@@ -192,6 +192,19 @@ export async function runReturnFromHost(
 				if (!transcript.ok) throw hostError(connection.peer, transcript.error);
 				withLogs.push({ ...tab, logs: transcript.value });
 			}
+			// A held message waits for a tab that comes home (one the host lists, or this machine
+			// has): one for a tab the host does not list (a hidden consult tab) would be dropped by
+			// the restore and lost with the host's copy. Refused, nothing changed (CodeRabbit on #2171).
+			const restorable = new Set([
+				...tabs.value.map((tab) => tab.id),
+				...(agent.aiTabs ?? []).map((tab) => tab.id),
+			]);
+			if (heldQueue.some((item) => !restorable.has(item.tabId))) {
+				throw new LiftRunError(
+					'RETURN_QUEUED',
+					`"${agent.name}" has a held message on its host for a tab that does not come back. Nothing changed; send or remove that message, then move it back.`
+				);
+			}
 			// The held messages come home only as they were listed: one another client resumed or
 			// sent on the host while the tabs were read could run there and come home held too
 			// (CodeRabbit on #2171). Read the queue again just before the restore; any change refuses

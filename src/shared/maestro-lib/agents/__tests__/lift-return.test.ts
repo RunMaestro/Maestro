@@ -273,6 +273,16 @@ describe('runReturnFromHost', () => {
 			},
 		]);
 
+		// Held for a tab the host does not list (a hidden tab): it would be lost, so nothing changes.
+		const hidden = deps(
+			hostedAgent(),
+			hostClient({ queue: ok([{ ...heldItem, tabId: 'tab-hidden' }]) })
+		);
+		await expect(runReturnFromHost('agent-1', {}, hidden.value)).rejects.toMatchObject({
+			code: 'RETURN_QUEUED',
+		});
+		expect(hidden.restore).not.toHaveBeenCalled();
+
 		// Resumed on the host by another client while the tabs were read: nothing changes.
 		const raced = hostClient({ queue: ok([heldItem]) });
 		raced.turns.queue.list

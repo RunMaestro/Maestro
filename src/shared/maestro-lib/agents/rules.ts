@@ -856,7 +856,8 @@ function queuedSteer(
  * - A turn runs to the next message the person sent. A message steered into it is part of it.
  * - A steer the agent ran as a turn of its own (`steerState: 'queued'`) is written while the turn
  *   it was steered into still runs: that turn runs on past it to its next end stamp, and the
- *   steer's own turn begins right after that stamp (null while it has not).
+ *   steer's own turn begins right after that stamp (null while it has not). The stamp may sit on
+ *   the steer itself (it was that turn's last entry): it is that turn's end, never the steer's.
  */
 export function userTurnSpan(
 	logs: readonly unknown[],
@@ -864,7 +865,7 @@ export function userTurnSpan(
 ): { from: number; to: number } | null {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
 	let from = at + 1;
-	if (queuedSteer(entries[at])) {
+	if (queuedSteer(entries[at]) && entries[at]?.turnEnded !== true) {
 		const end = entries.findIndex((entry, i) => i > at && entry?.turnEnded === true);
 		if (end === -1) return null;
 		from = end + 1;
@@ -873,8 +874,11 @@ export function userTurnSpan(
 	for (let i = from; i < entries.length; i += 1) {
 		const entry = entries[i];
 		if (entry?.source === 'user' && entry.steered !== true) return { from, to: i };
-		if (queuedSteer(entry)) steerWaits = true;
-		else if (steerWaits && entry?.turnEnded === true) return { from, to: i + 1 };
+		if (queuedSteer(entry)) {
+			// Stamped: the end of this turn landed on the steer.
+			if (entry?.turnEnded === true) return { from, to: i + 1 };
+			steerWaits = true;
+		} else if (steerWaits && entry?.turnEnded === true) return { from, to: i + 1 };
 	}
 	return { from, to: entries.length };
 }
@@ -899,10 +903,12 @@ export function turnFateAfter(
 	hostKind: TranscriptHostKind = 'headless'
 ): TurnFate {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
-	let ended: TurnFate | undefined = entries[at]?.turnEnded === true ? 'answered' : undefined;
+	// A queued steer's own stamp is the end of the turn it was steered into, never its own.
+	const ownStamp = entries[at]?.turnEnded === true && !queuedSteer(entries[at]);
+	let ended: TurnFate | undefined = ownStamp ? 'answered' : undefined;
 	// The message itself stamped as ended after every entry of its turn: an attempt that answered
 	// with nothing that stays, after the attempts before it (`markTurnEnded()` with `endedAt`).
-	const emptyEndAt = entries[at]?.turnEndedAt;
+	const emptyEndAt = ownStamp ? entries[at]?.turnEndedAt : undefined;
 	let latestAt = Number.NEGATIVE_INFINITY;
 	// When the last stamped end was, and whether anything of a later attempt came after it: a retry's
 	// thinking or tool card after an end is that retry running (or lost), never the earlier end.
@@ -921,9 +927,10 @@ export function turnFateAfter(
 	let next = span.from;
 	for (; next < span.to; next += 1) {
 		const entry = entries[next];
-		if (queuedSteer(entry)) continue;
+		// A queued steer is not this turn's output; a stamp on it still ends this turn's attempt.
+		if (queuedSteer(entry) && entry?.turnEnded !== true) continue;
 		// What an attempt wrote, for the empty end on the message: never a note about the turn.
-		if (typeof entry?.timestamp === 'number' && entry.source !== 'system') {
+		if (typeof entry?.timestamp === 'number' && entry.source !== 'system' && !queuedSteer(entry)) {
 			latestAt = Math.max(latestAt, entry.timestamp);
 		}
 		// Only what a provider writes starts a later attempt: a thinking or tool card here (text and

@@ -1482,6 +1482,17 @@ describe('isUserTurnStart', () => {
 		expect(turnFateAfter(answeredB, 2, 'desktop')).toBe('answered');
 	});
 
+	// CodeRabbit on #2171: the first turn's end stamp can land on the steer itself (its last entry).
+	it("reads a stamp on the steer as the end of the turn before it, never as the steer's", () => {
+		const logs = [u1, partialA, { ...steer, turnEnded: true }];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 3 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 3, to: 3 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('unended');
+		const answeredB = [...logs, { ...partialB, turnEnded: true }];
+		expect(turnFateAfter(answeredB, 2, 'desktop')).toBe('answered');
+	});
+
 	it("has the steer's turn not begun while the turn it was sent into still runs", () => {
 		const logs = [u1, partialA, steer];
 		expect(userTurnSpan(logs, 2)).toBeNull();
