@@ -36,7 +36,7 @@ import {
 import { extractExitPlanText } from './plan-mode';
 import { extractAskUserQuestionText } from './ask-user-question';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
-import { isPreTurnRow, isRowFromBeforeRun, rowTimestampMs } from './turn-start';
+import { isRowFromBeforeRun, provesTurnStarted, rowTimestampMs } from './turn-start';
 import { collectAssistantText, ReplyText } from './reply-text';
 import {
 	discoverSessionId,
@@ -871,11 +871,12 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			costState = cost;
 			return;
 		}
-		// Any transcript line means claude started the turn - cancel the
+		// A stamped row from this run means claude started the turn - cancel the
 		// first-byte timer before the init-gating buffer logic so a pre-init
-		// entry still counts as "first byte". A SessionStart hook row does not:
-		// claude writes it at boot, before it reads the prompt (see turn-start.ts).
-		if (!isPreTurnRow(entry)) markFirstEntrySeen();
+		// entry still counts as "first byte". A SessionStart hook row does not
+		// (claude writes it at boot), and neither does an unstamped bookkeeping
+		// row (it may be the previous claude's exit flush). See turn-start.ts.
+		if (provesTurnStarted(entry, startMs)) markFirstEntrySeen();
 		if (!initEmitted) {
 			if (entry && typeof entry === 'object') {
 				checkPromptEchoRow(entry as Record<string, unknown>);

@@ -49,3 +49,22 @@ export function isRowFromBeforeRun(entry: unknown, runStartedAt: number): boolea
 	const madeAt = rowTimestampMs(entry);
 	return madeAt !== null && madeAt < runStartedAt;
 }
+
+// A row with no timestamp never proves the turn started. claude writes its
+// bookkeeping rows (cost-state, tools-used, file-history-snapshot, last-prompt)
+// unstamped, and an exiting claude flushes them as a block. When the previous
+// turn's flush is ALL unstamped, no stale row precedes it to mark it stale, so
+// it reached the next turn as new and its tools-used row switched off the
+// first-byte timer and the Enter resubmit loop while that turn's prompt was
+// still parked in the editor. The 300s idle watchdog then failed the turn with
+// the prompt unsent (synopsis then user send, rc 1.1.1, 2026-11-27). Every row
+// a started turn writes (the prompt echo, attachments, replies) is stamped.
+
+/**
+ * True for a row that proves claude read this run's prompt: stamped at or
+ * after `runStartedAt` (epoch ms), and not a SessionStart row from boot.
+ */
+export function provesTurnStarted(entry: unknown, runStartedAt: number): boolean {
+	const madeAt = rowTimestampMs(entry);
+	return madeAt !== null && madeAt >= runStartedAt && !isPreTurnRow(entry);
+}

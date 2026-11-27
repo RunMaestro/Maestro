@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { isPreTurnRow, isRowFromBeforeRun, rowTimestampMs } from '../../maestro-p/turn-start';
+import {
+	isPreTurnRow,
+	isRowFromBeforeRun,
+	provesTurnStarted,
+	rowTimestampMs,
+} from '../../maestro-p/turn-start';
 
 describe('isPreTurnRow', () => {
 	it('treats the SessionStart hook result claude logs at resume as pre-turn', () => {
@@ -106,5 +111,60 @@ describe('rowTimestampMs', () => {
 	it('is null for rows claude writes without one', () => {
 		expect(rowTimestampMs({ type: 'file-history-snapshot' })).toBeNull();
 		expect(rowTimestampMs('row')).toBeNull();
+	});
+});
+
+describe('provesTurnStarted', () => {
+	const runStartedAt = Date.parse('2026-11-27T16:59:11.000Z');
+
+	it('counts the stamped prompt echo and reply made after the run started', () => {
+		expect(
+			provesTurnStarted(
+				{ type: 'user', timestamp: '2026-11-27T16:59:12.000Z', message: { content: 'hi' } },
+				runStartedAt
+			)
+		).toBe(true);
+		expect(
+			provesTurnStarted(
+				{ type: 'assistant', timestamp: '2026-11-27T16:59:11.000Z', message: { content: [] } },
+				runStartedAt
+			)
+		).toBe(true);
+	});
+
+	it("ignores a previous claude's all-unstamped exit flush", () => {
+		// The block a synopsis claude flushed after the next turn began tailing:
+		// none of it is stamped, and its tools-used row once stopped the Enter
+		// resubmit loop with the user's prompt still parked in the editor.
+		for (const row of [
+			{ type: 'cost-state' },
+			{ type: 'tools-used' },
+			{ type: 'file-history-snapshot' },
+			{ type: 'last-prompt', lastPrompt: 'Give a brief synopsis' },
+		]) {
+			expect(provesTurnStarted(row, runStartedAt)).toBe(false);
+		}
+	});
+
+	it('ignores stamped rows made before the run started', () => {
+		expect(
+			provesTurnStarted(
+				{ type: 'system', subtype: 'turn_duration', timestamp: '2026-11-27T16:59:10.453Z' },
+				runStartedAt
+			)
+		).toBe(false);
+	});
+
+	it('ignores the SessionStart rows claude writes at boot', () => {
+		expect(
+			provesTurnStarted(
+				{
+					type: 'attachment',
+					timestamp: '2026-11-27T16:59:12.000Z',
+					attachment: { type: 'hook_success', hookEvent: 'SessionStart' },
+				},
+				runStartedAt
+			)
+		).toBe(false);
 	});
 });
