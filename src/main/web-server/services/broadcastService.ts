@@ -73,7 +73,12 @@ type BridgeScope =
 	/** Subscribers of the session, plus unsubscribed (dashboard) clients. */
 	| { kind: 'session'; sessionId: string }
 	/** Subscribers of the session only: tool events are high-volume. */
-	| { kind: 'subscribers'; sessionId: string };
+	| { kind: 'subscribers'; sessionId: string }
+	/**
+	 * Clients admitted by the per-boot CLI secret only (`maestro-cli` and Federation clients): a
+	 * frame no browser reads, such as `queue_changed`, never reaches a phone over the tunnel.
+	 */
+	| { kind: 'cli' };
 
 interface ReplayFrame {
 	seq: number;
@@ -83,10 +88,16 @@ interface ReplayFrame {
 	scope: BridgeScope;
 }
 
-function frameReaches(scope: BridgeScope, subscribedSessionId: string | undefined): boolean {
+function frameReaches(
+	scope: BridgeScope,
+	subscribedSessionId: string | undefined,
+	cli: boolean
+): boolean {
 	switch (scope.kind) {
 		case 'all':
 			return true;
+		case 'cli':
+			return cli;
 		case 'session':
 			return !subscribedSessionId || subscribedSessionId === scope.sessionId;
 		case 'subscribers':
@@ -163,7 +174,7 @@ export class BroadcastService {
 			if (
 				client.socket.readyState === WebSocket.OPEN &&
 				client.isAuthorized?.(policy) !== false &&
-				frameReaches(frame.scope, client.subscribedSessionId)
+				frameReaches(frame.scope, client.subscribedSessionId, client.cliAuthenticated === true)
 			) {
 				delivered = sendBounded(client.socket, frame.data, frame.bytes) || delivered;
 			}
@@ -180,7 +191,9 @@ export class BroadcastService {
 	resumeBridgeClient(
 		epoch: string,
 		lastSeq: number,
-		subscribedSessionId?: string
+		subscribedSessionId?: string,
+		/** The client was admitted by the CLI secret: it was sent the `cli` frames too. */
+		cli = false
 	): string[] | null {
 		if (
 			epoch !== this.bridgeEpoch ||
@@ -194,7 +207,7 @@ export class BroadcastService {
 		const oldest = this.replayFrames[0]?.seq;
 		if (oldest === undefined || oldest > lastSeq + 1) return null;
 		return this.replayFrames
-			.filter((frame) => frame.seq > lastSeq && frameReaches(frame.scope, subscribedSessionId))
+			.filter((frame) => frame.seq > lastSeq && frameReaches(frame.scope, subscribedSessionId, cli))
 			.map((frame) => frame.data);
 	}
 
@@ -216,6 +229,12 @@ export class BroadcastService {
 	broadcastToAll(message: object): void {
 		if (!this.getWebClients) return;
 		this.deliver(this.stampForBridge(message, { kind: 'all' }));
+	}
+
+	/** Broadcast a message to the clients admitted by the CLI secret only (see the `cli` scope). */
+	broadcastToCliClients(message: object): void {
+		if (!this.getWebClients) return;
+		this.deliver(this.stampForBridge(message, { kind: 'cli' }));
 	}
 
 	/**

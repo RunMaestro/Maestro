@@ -199,6 +199,21 @@ describe('host queues', () => {
 		expect(next.peer.queues).toEqual({ a1: [waiting('q2')] });
 	});
 
+	// Parity M26: a desktop host sends an item's images once, then says they are unchanged.
+	it('an imagesKept item takes the images held for its id, and pushes them, so a card keeps its thumbnails (M26)', () => {
+		const withImages = { ...waiting('q1'), images: ['data:image/png;base64,AAAA'] };
+		const held = setAgentQueue(peerWith([agent('a1')]), 'a1', [withImages]).peer;
+		const step = setAgentQueue(held, 'a1', [
+			{ ...waiting('q1'), imagesKept: true },
+			{ ...waiting('q2'), imagesKept: true },
+		]);
+		// q2 has none held: it keeps none, and the flag never reaches a window.
+		expect(step.peer.queues).toEqual({ a1: [withImages, waiting('q2')] });
+		expect(step.push).toEqual([
+			{ type: 'agent.queue', agentId: 'a1', items: [withImages, waiting('q2')] },
+		]);
+	});
+
 	it('an empty list drops the entry and still pushes, so a window clears its cards', () => {
 		const held = setAgentQueue(peerWith([agent('a1')]), 'a1', [waiting('q1')]).peer;
 		const step = setAgentQueue(held, 'a1', []);

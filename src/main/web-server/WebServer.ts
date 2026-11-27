@@ -1401,8 +1401,8 @@ export class WebServer {
 			},
 			getBridgeEpoch: () => this.broadcastService.bridgeEpoch,
 			getBridgeSeq: () => this.broadcastService.getBridgeSeq(),
-			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId) =>
-				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId),
+			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId, cli) =>
+				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId, cli),
 		});
 		this.wsRoute.registerRoute(this.server);
 		registerLiteConnectionRoutes(this.server, {
@@ -1826,6 +1826,11 @@ export class WebServer {
 
 	broadcastToAll(message: object): void {
 		this.broadcastService.broadcastToAll(message);
+	}
+
+	/** To the clients admitted by the CLI secret only (`BroadcastService.broadcastToCliClients`). */
+	broadcastToCliClients(message: object): void {
+		this.broadcastService.broadcastToCliClients(message);
 	}
 
 	broadcastSessionStateChange(

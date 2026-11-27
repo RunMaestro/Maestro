@@ -67,6 +67,18 @@ export interface QueueDiffAgent {
 	orphanedThinkingTabs?: ReadonlyArray<{
 		logs?: ReadonlyArray<{ source?: string; queuedItemId?: string }>;
 	}>;
+	/**
+	 * Tabs held out of the tab bar by a snooze: an AI tab (`type: 'ai'`), or each AI pane of a
+	 * snoozed group. A message that started on a tab snoozed since still has its card there.
+	 */
+	snoozedTabs?: ReadonlyArray<{
+		type?: string;
+		tab?: { logs?: ReadonlyArray<{ source?: string; queuedItemId?: string }> };
+		members?: ReadonlyArray<{
+			type?: string;
+			tab?: { logs?: ReadonlyArray<{ source?: string; queuedItemId?: string }> };
+		}>;
+	}>;
 }
 
 /** One agent's queue after a write, and how each item the write took out of it left. */
@@ -84,7 +96,15 @@ export interface DesktopQueueChange {
 function wroteCardFor(agent: QueueDiffAgent, itemId: string): boolean {
 	const holds = (tab: { logs?: ReadonlyArray<{ source?: string; queuedItemId?: string }> }) =>
 		tab.logs?.some((log) => log.source === 'user' && log.queuedItemId === itemId) ?? false;
-	return (agent.aiTabs ?? []).some(holds) || (agent.orphanedThinkingTabs ?? []).some(holds);
+	// A snoozed AI tab, or an AI pane of a snoozed group, the same tab the drain wrote the card on.
+	const snoozed = (agent.snoozedTabs ?? []).flatMap((entry) =>
+		entry.type === 'group' ? (entry.members ?? []) : [entry]
+	);
+	return (
+		(agent.aiTabs ?? []).some(holds) ||
+		(agent.orphanedThinkingTabs ?? []).some(holds) ||
+		snoozed.some((entry) => entry.type === 'ai' && !!entry.tab && holds(entry.tab))
+	);
 }
 
 /**

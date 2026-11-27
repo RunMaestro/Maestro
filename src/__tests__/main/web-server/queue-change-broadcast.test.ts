@@ -28,12 +28,12 @@ const message = (id: string, extra: Record<string, unknown> = {}) => ({
 
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-describe('broadcastDesktopQueueChanges (M23)', () => {
-	const broadcastToAll = vi.fn();
-	const server = (clients: number) => ({ broadcastToAll, getWebClientCount: () => clients });
+describe('broadcastDesktopQueueChanges (M23, M26)', () => {
+	const broadcastToCliClients = vi.fn();
+	const server = (clients: number) => ({ broadcastToCliClients, getWebClientCount: () => clients });
 
 	beforeEach(() => {
-		broadcastToAll.mockReset();
+		broadcastToCliClients.mockReset();
 		withQueueItemImages.mockClear();
 	});
 
@@ -56,7 +56,7 @@ describe('broadcastDesktopQueueChanges (M23)', () => {
 		);
 		await settled();
 		const items = [{ ...message('waits'), images: ['data:image/png;base64,AAAA'] }];
-		expect(broadcastToAll.mock.calls.map(([frame]) => frame)).toEqual([
+		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame)).toEqual([
 			{
 				type: 'queue_changed',
 				sessionId: 'a1',
@@ -67,7 +67,8 @@ describe('broadcastDesktopQueueChanges (M23)', () => {
 			{
 				type: 'queue_changed',
 				sessionId: 'a1',
-				items,
+				// The frame before it sent the images (M26).
+				items: [{ ...message('waits'), imagesKept: true }],
 				namesExits: true,
 				exit: { itemId: 'gone', exit: 'removed' },
 			},
@@ -81,7 +82,7 @@ describe('broadcastDesktopQueueChanges (M23)', () => {
 			[{ id: 'a1', executionQueue: [message('q1')] }]
 		);
 		await settled();
-		expect(broadcastToAll).toHaveBeenCalledWith({
+		expect(broadcastToCliClients).toHaveBeenCalledWith({
 			type: 'queue_changed',
 			sessionId: 'a1',
 			items: [message('q1')],
@@ -96,7 +97,7 @@ describe('broadcastDesktopQueueChanges (M23)', () => {
 			[{ id: 'a1', executionQueue: [] }]
 		);
 		await settled();
-		expect(broadcastToAll).toHaveBeenCalledWith({
+		expect(broadcastToCliClients).toHaveBeenCalledWith({
 			type: 'queue_changed',
 			sessionId: 'a1',
 			items: [],
@@ -121,7 +122,7 @@ describe('broadcastDesktopQueueChanges (M23)', () => {
 			]
 		);
 		await settled();
-		expect(broadcastToAll.mock.calls.map(([frame]) => frame)).toEqual([
+		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame)).toEqual([
 			{
 				type: 'queue_changed',
 				sessionId: 'a1',
@@ -130,6 +131,96 @@ describe('broadcastDesktopQueueChanges (M23)', () => {
 				exit: { itemId: 'q1', exit: 'started' },
 			},
 			{ type: 'queue_changed', sessionId: 'a1', items: [] },
+		]);
+	});
+
+	// Parity M26: a queue change went to every web client with every item's images inlined again.
+	it("sends an item's images once: a later frame whose item keeps its images says imagesKept (M26)", async () => {
+		const waits = message('w1', { images: ['ref-1'] });
+		broadcastDesktopQueueChanges(
+			server(1),
+			[{ id: 'm26', executionQueue: [] }],
+			[{ id: 'm26', executionQueue: [waits] }]
+		);
+		await settled();
+		broadcastDesktopQueueChanges(
+			server(1),
+			[{ id: 'm26', executionQueue: [waits] }],
+			[{ id: 'm26', executionQueue: [waits, message('w2')] }]
+		);
+		await settled();
+		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame.items)).toEqual([
+			[{ ...message('w1'), images: ['data:image/png;base64,AAAA'] }],
+			[{ ...message('w1'), imagesKept: true }, message('w2')],
+		]);
+		expect(withQueueItemImages).toHaveBeenLastCalledWith([message('w1'), message('w2')], true);
+	});
+
+	it('sends the images again when an edit changes them, or the item left and came back (M26)', async () => {
+		const before = message('e1', { images: ['ref-1'] });
+		const edited = message('e1', { images: ['ref-1', 'ref-2'] });
+		broadcastDesktopQueueChanges(
+			server(1),
+			[{ id: 'm26e', executionQueue: [] }],
+			[{ id: 'm26e', executionQueue: [before] }]
+		);
+		await settled();
+		broadcastDesktopQueueChanges(
+			server(1),
+			[{ id: 'm26e', executionQueue: [before] }],
+			[{ id: 'm26e', executionQueue: [edited] }]
+		);
+		await settled();
+		broadcastDesktopQueueChanges(
+			server(1),
+			[{ id: 'm26e', executionQueue: [edited] }],
+			[{ id: 'm26e', executionQueue: [] }]
+		);
+		await settled();
+		broadcastDesktopQueueChanges(
+			server(1),
+			[{ id: 'm26e', executionQueue: [] }],
+			[{ id: 'm26e', executionQueue: [edited] }]
+		);
+		await settled();
+		const inlined = (count: number) => ({
+			...message('e1'),
+			images: Array.from({ length: count }, () => 'data:image/png;base64,AAAA'),
+		});
+		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame.items)).toEqual([
+			[inlined(1)],
+			[inlined(2)],
+			[],
+			[inlined(2)],
+		]);
+	});
+
+	it('names the start of a message whose tab was snoozed since it started (M26)', async () => {
+		const card = { logs: [{ source: 'user', queuedItemId: 's1' }] };
+		broadcastDesktopQueueChanges(
+			server(1),
+			[{ id: 'm26s', executionQueue: [message('s1'), message('g1')] }],
+			[
+				{
+					id: 'm26s',
+					executionQueue: [],
+					snoozedTabs: [
+						{ type: 'ai', tab: card },
+						{
+							type: 'group',
+							members: [
+								{ type: 'file', tab: { logs: [] } },
+								{ type: 'ai', tab: { logs: [{ source: 'user', queuedItemId: 'g1' }] } },
+							],
+						},
+					],
+				},
+			]
+		);
+		await settled();
+		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame.exit)).toEqual([
+			{ itemId: 's1', exit: 'started' },
+			{ itemId: 'g1', exit: 'started' },
 		]);
 	});
 
@@ -146,6 +237,6 @@ describe('broadcastDesktopQueueChanges (M23)', () => {
 		);
 		broadcastDesktopQueueChanges(null, [], [{ id: 'a1', executionQueue: [message('q1')] }]);
 		await settled();
-		expect(broadcastToAll).not.toHaveBeenCalled();
+		expect(broadcastToCliClients).not.toHaveBeenCalled();
 	});
 });

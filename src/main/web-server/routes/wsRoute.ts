@@ -94,7 +94,9 @@ export interface WsRouteCallbacks {
 	resumeBridgeClient?: (
 		epoch: string,
 		lastSeq: number,
-		subscribedSessionId?: string
+		subscribedSessionId?: string,
+		/** Admitted by the CLI secret: its replay includes the frames only such clients get. */
+		cli?: boolean
 	) => string[] | null;
 }
 
@@ -179,7 +181,12 @@ export class WsRoute {
 			const epochParam = url.searchParams.get('epoch');
 			const replay =
 				sinceParam !== null && epochParam !== null
-					? (this.callbacks.resumeBridgeClient?.(epochParam, Number(sinceParam), sessionId) ?? null)
+					? (this.callbacks.resumeBridgeClient?.(
+							epochParam,
+							Number(sinceParam),
+							sessionId,
+							auth.cli === true
+						) ?? null)
 					: null;
 
 			const client: WebClient = {

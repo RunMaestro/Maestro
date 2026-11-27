@@ -1568,6 +1568,33 @@ describe('createWsMaestroClient', () => {
 			]);
 		});
 
+		it("reads a desktop host's imagesKept on an item with no images, and never beside images (M26)", async () => {
+			await connect();
+			const item = { id: 'q1', timestamp: 5, tabId: A1_TAB, type: 'message', text: 'next' };
+			bridge.push({
+				type: 'queue_changed',
+				sessionId: A1,
+				items: [
+					{ ...item, imagesKept: true },
+					{ ...item, id: 'q2', imagesKept: true, images: ['data:image/png;base64,AAAA'] },
+					{ ...item, id: 'q3', imagesKept: 'yes' },
+				],
+			});
+			await vi.waitFor(() =>
+				expect(events.filter((event) => event.type === 'queue.changed')).toHaveLength(1)
+			);
+			const read = { tabId: A1_TAB, queuedAt: 5, kind: 'message', text: 'next', paused: false };
+			expect(events.find((event) => event.type === 'queue.changed')).toEqual({
+				type: 'queue.changed',
+				agentId: A1,
+				items: [
+					{ itemId: 'q1', ...read, imagesKept: true },
+					{ itemId: 'q2', ...read, images: ['data:image/png;base64,AAAA'] },
+					{ itemId: 'q3', ...read },
+				],
+			});
+		});
+
 		it('reads how an item left the queue, and that the host names every exit (M14)', async () => {
 			await connect();
 			bridge.push({

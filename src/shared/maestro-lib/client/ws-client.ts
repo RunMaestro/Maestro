@@ -222,6 +222,8 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 			paused: item.paused === true,
 			...(turnSettings ? { turnSettings } : {}),
 			...(images ? { images } : {}),
+			// The host sent this item's images before: the mirror keeps the ones it holds (M26).
+			...(!images && item.imagesKept === true ? { imagesKept: true as const } : {}),
 		};
 	});
 }

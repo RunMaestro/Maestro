@@ -818,7 +818,7 @@ describe('WsRoute bridge resume', () => {
 		const connection = createMockConnection();
 		route.handler(connection, resumeRequest('since=3&epoch=run-1'));
 
-		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, undefined);
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, undefined, false);
 		const frames = sentFrames(connection);
 		expect(frames[0]).toMatchObject({ type: 'connected', bridgeEpoch: 'run-1', resumed: true });
 		expect(frames[1]).toMatchObject({ type: 'bridge.event', seq: 4 });
@@ -832,7 +832,22 @@ describe('WsRoute bridge resume', () => {
 		const connection = createMockConnection();
 		route.handler(connection, resumeRequest('since=3&epoch=run-1&sessionId=session-a'));
 
-		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, 'session-a');
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, 'session-a', false);
+	});
+
+	// Parity M26: a client the CLI secret admitted was sent the CLI-only frames (`queue_changed`),
+	// so its replay holds them too.
+	it('tells the replay a client the CLI secret admitted is one, so it gets the CLI-only frames (M26)', () => {
+		const resumeBridgeClient = vi.fn().mockReturnValue([]);
+		const route = setup({ resumeBridgeClient, getBridgeEpoch: () => 'run-1' });
+
+		const connection = createMockConnection();
+		route.handler(connection, {
+			url: '/test-token/ws?since=3&epoch=run-1',
+			headers: { host: 'localhost:3000', [CLI_SECRET_HEADER]: getCliSecret() },
+		});
+
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-1', 3, undefined, true);
 	});
 
 	it('reports resumed=false when the gap cannot be replayed, and never asks without a since', () => {
@@ -845,7 +860,7 @@ describe('WsRoute bridge resume', () => {
 
 		const stale = createMockConnection();
 		route.handler(stale, resumeRequest('since=3&epoch=run-0'));
-		expect(resumeBridgeClient).toHaveBeenCalledWith('run-0', 3, undefined);
+		expect(resumeBridgeClient).toHaveBeenCalledWith('run-0', 3, undefined, false);
 		expect(sentFrames(stale)[0]).toMatchObject({ type: 'connected', resumed: false });
 
 		const fresh = createMockConnection();

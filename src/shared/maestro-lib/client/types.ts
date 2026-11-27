@@ -606,6 +606,12 @@ export interface QueuedTurn {
 	 * leave), so the card draws the thumbnails and its editor opens with them. Absent: none.
 	 */
 	images?: string[];
+	/**
+	 * A desktop host's `queue_changed` sent no images for this item because they are the ones it
+	 * sent before for it (M26): the reader keeps the images it holds for the item id
+	 * (`setAgentQueue()`). Never set together with `images`.
+	 */
+	imagesKept?: true;
 }
 
 /**
