@@ -360,14 +360,16 @@ export function keepDivergentHostTabs(
 	// takes at most one host tab; a second host tab of the same conversation is a copy of its own.
 	const localOf = new Map<AITabRecord, AITabRecord>();
 	const claimed = new Set<string>();
+	// A host that lists two tabs under one id (a value from the host is untrusted) gets the second
+	// as a copy, so no two tabs end with one id and neither overwrites the other.
+	const extra = new Set<AITabRecord>();
 	for (const host of hostTabs) {
 		const local = localById.get(host.id);
-		if (local) {
-			localOf.set(host, local);
-			claimed.add(local.id);
-		}
+		if (!local) continue;
+		localOf.set(host, local);
+		if (claimed.has(local.id)) extra.add(host);
+		else claimed.add(local.id);
 	}
-	const extra = new Set<AITabRecord>();
 	for (const host of hostTabs) {
 		if (localOf.has(host) || !host.agentSessionId) continue;
 		const local = localBySession.get(host.agentSessionId);
@@ -383,13 +385,15 @@ export function keepDivergentHostTabs(
 		added: 0,
 		transcriptSides: Object.create(null) as Record<string, TranscriptSide>,
 	};
+	const added = new Set<string>();
 	for (const host of hostTabs) {
 		const local = localOf.get(host);
 		if (!local) {
 			result.added += 1;
-			result.tabs.push(
-				host.name ? host : { ...host, name: firstMessageTabName(host) ?? host.name }
-			);
+			const named = host.name ? host : { ...host, name: firstMessageTabName(host) ?? host.name };
+			const id = added.has(host.id) ? freshId(host.id) : host.id;
+			added.add(id);
+			result.tabs.push(id === host.id ? named : { ...named, id });
 			continue;
 		}
 		const side = extra.has(host) ? undefined : containingTranscript(host.logs, local.logs);

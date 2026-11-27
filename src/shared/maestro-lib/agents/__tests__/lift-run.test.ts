@@ -582,6 +582,51 @@ describe('Move to Host again after an offline Move Back: one tab per conversatio
 		expect(tabs[1].logs.map((entry) => entry.text)).toContain('two');
 	});
 
+	/** The tabs after the merge: one per id, and as many as the plan's counts say. */
+	const expectCountsAddUp = (local: unknown[], merge: ReturnType<typeof keepDivergentHostTabs>) => {
+		const tabs = mergedRecord(local, merge).aiTabs as Array<{ id: string; logs: Entry[] }>;
+		expect(new Set(tabs.map((t) => t.id)).size).toBe(tabs.length);
+		expect(tabs).toHaveLength(local.length + merge.copies + merge.added);
+		expect(merge.merged + merge.copies + merge.added).toBe(merge.tabs.length);
+		return tabs;
+	};
+
+	it('a host tab whose local match is taken gets an id of its own and counts as a copy, in either order (U12)', () => {
+		const local = [tab('t1', 's1', conversation('l', ['one']))];
+		const sameSession = tab('h9', 's1', conversation('h9', ['one', 'two']));
+		const ownTab = tab('t1', 's1', conversation('h1', ['one']));
+		for (const host of [
+			[sameSession, ownTab],
+			[ownTab, sameSession],
+		]) {
+			const merge = keepDivergentHostTabs(local, host);
+			expect(merge).toMatchObject({ merged: 1, copies: 1, added: 0 });
+			const tabs = expectCountsAddUp(local, merge);
+			expect(tabs.map((t) => t.id)).toEqual(['t1', 'h9-host']);
+			expect(tabs[1].logs.map((entry) => entry.text)).toContain('two');
+		}
+	});
+
+	it('two host tabs under one id never end as two tabs with that id, and neither transcript is lost (U12)', () => {
+		const local = [tab('t1', 's1', conversation('l', ['one']))];
+		const merge = keepDivergentHostTabs(local, [
+			tab('t1', 's1', conversation('a', ['one'])),
+			tab('t1', 's1', conversation('b', ['one', 'two'])),
+		]);
+		expect(merge).toMatchObject({ merged: 1, copies: 1, added: 0 });
+		const tabs = expectCountsAddUp(local, merge);
+		expect(tabs.map((t) => t.id)).toEqual(['t1', 't1-host']);
+		expect(tabs[1].logs.map((entry) => entry.text)).toContain('two');
+
+		// The same for tabs only the host had.
+		const only = keepDivergentHostTabs(local, [
+			tab('h5', 's5', conversation('a', ['x'])),
+			tab('h5', 's6', conversation('b', ['y'])),
+		]);
+		expect(only).toMatchObject({ merged: 0, copies: 0, added: 2 });
+		expect(expectCountsAddUp(local, only).map((t) => t.id)).toEqual(['t1', 'h5', 'h5-host']);
+	});
+
 	it('the plan the user confirms says how many tabs merge and how many stay as copies', () => {
 		expect(formatHostTabMerge({ merged: 11, copies: 1, added: 1 })).toBe(
 			'The host copy\'s tabs: 11 tabs merge into the tab of the same conversation; 1 tab stays as a copy named "(on the host)" (both sides went on after the Move Back); 1 tab comes in that only the host had.'
