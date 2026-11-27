@@ -45,6 +45,25 @@ export interface HostedTranscript {
 	carryover?: LogEntryRecord[];
 }
 
+/** A tab's name or star changed here and sent to its host, which has not reported it yet. */
+export interface HostTabEdit {
+	name?: string;
+	starred?: boolean;
+}
+
+/** The host's tab with the edits it has not reported yet laid over it. */
+export function withHostTabEdit<T extends Pick<AITabRecord, 'name' | 'starred'>>(
+	host: T,
+	edit: HostTabEdit | undefined
+): T {
+	if (!edit) return host;
+	return {
+		...host,
+		...(edit.name !== undefined ? { name: edit.name } : {}),
+		...(edit.starred !== undefined ? { starred: edit.starred } : {}),
+	};
+}
+
 export interface HostedProjectionInput {
 	/** The host's record of the agent. */
 	agent: AgentRecord;
@@ -58,6 +77,11 @@ export interface HostedProjectionInput {
 	viewing?: boolean;
 	/** Tabs closed here whose close the host has not reported yet: never drawn back. */
 	closing?: ReadonlySet<string>;
+	/**
+	 * Name and star edits made here that the host has not reported yet, by tab id
+	 * (`hostTabEditsOf()`): drawn as edited, as a local tab draws its own edit at once.
+	 */
+	editing?: ReadonlyMap<string, HostTabEdit>;
 	/**
 	 * The link to the host is down (a confirmed outage of its remote, or a connection the mirror gave
 	 * up). The mirror keeps the host's last report through a disconnect, so a turn it last reported
@@ -872,7 +896,8 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 			changed = true;
 			continue;
 		}
-		const host = hostById.get(local.id);
+		const reportedHost = hostById.get(local.id);
+		const host = reportedHost && withHostTabEdit(reportedHost, input.editing?.get(local.id));
 		if (!host && hostListed.has(local.id)) {
 			// A tab the host lists as hidden: the host's, so marked as reported, and closed here when
 			// the host stops listing it.

@@ -24,13 +24,17 @@ import { joinPath } from '../../shared/formatters';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { DEFAULT_TAB_DEFAULTS } from '../../shared/maestro-lib/agents/rules';
 import { parseMaestroBuiltinCommand } from '../../shared/maestroBuiltinCommands';
-import type { AutoRunControl, HostStopAnswer } from '../../shared/maestro-lib/client/peer-actions';
+import type {
+	AutoRunControl,
+	HostStopAnswer,
+	PeerAgentAction,
+} from '../../shared/maestro-lib/client/peer-actions';
 import type {
 	TabPatch,
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../../shared/maestro-lib/client/types';
-import type { AgentRecord } from '../../shared/maestro-lib/store/records';
+import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/records';
 import type { BatchRunConfig } from '../../shared/types';
 import type { SteeringCommandInput } from '../../shared/autoRunSteeringCommands';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
@@ -44,6 +48,7 @@ import {
 } from '../stores/sessionStore';
 import type { AITab, ModalSaveOutcome, Session, UnifiedTabRef } from '../types';
 import { mirrorTab } from '../utils/peerMirrorView';
+import type { HostTabEdit } from '../utils/hostedSession';
 import { appendBlockToDraft } from '../utils/quoteSelection';
 import { closeTab, insertAiTabAtUnifiedIndex, setActiveTab } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
@@ -65,7 +70,6 @@ import {
 	reopenMirrorClosedTab,
 	sendToMirroredTab,
 	settleMirroredAnswer,
-	starMirrorTab,
 	steerMirrorAutoRun,
 	type MirroredActionAnswer,
 	type MirrorSteeringAnswer,
@@ -554,6 +558,9 @@ export function pruneHostedTabBooks(sessions: readonly Session[]): void {
 		if (!tabs.has(key)) pendingTabFailedAt.delete(key);
 	}
 	for (const key of [...closeWhenListed]) if (!agentHeld(key)) closeWhenListed.delete(key);
+	for (const key of [...pendingHostTabEdits.keys()]) {
+		if (!tabs.has(key)) pendingHostTabEdits.delete(key);
+	}
 }
 
 /** Test-only: how many entries the pending-tab path keeps, by book. */
@@ -561,11 +568,13 @@ export function __hostedTabBookSizesForTests(): {
 	copies: number;
 	failedTries: number;
 	closesOwed: number;
+	edits: number;
 } {
 	return {
 		copies: copyHostTabs.size,
 		failedTries: pendingTabFailedAt.size,
 		closesOwed: closeWhenListed.size,
+		edits: pendingHostTabEdits.size,
 	};
 }
 
@@ -912,6 +921,145 @@ export function closeHostedTab(session: Pick<Session, 'liftedTo'>, tabId: string
 	});
 }
 
+/** One field of a tab edited here and sent to its host, with the request that sent it. */
+interface PendingHostTabField<T> {
+	value: T;
+	/** The request that sent `value`: only its own answer or wait settles the field. */
+	token: number;
+	/** That request was answered: the host took it, so its report of `value` is the echo. */
+	answered: boolean;
+}
+
+interface PendingHostTabEdit {
+	name?: PendingHostTabField<string>;
+	starred?: PendingHostTabField<boolean>;
+}
+
+type HostTabEditField = keyof PendingHostTabEdit;
+
+/**
+ * Name and star edits sent to a host that it has not reported back yet, by `peer/agent/tab`. A
+ * local tab draws its own edit at once; a hosted tab's next sync drew the host's older value until
+ * the host's update landed, so a new name or star blinked back for a frame, each blink a commit of
+ * the whole window (L36). A field is kept until the host reports its value after taking its own
+ * request (a report before the answer may still be the value from before), the host refuses it
+ * (its value stands), or `HOST_TAB_EDIT_ECHO_MS` after the host took it (a host that never reports
+ * it must not hide a later change made elsewhere). A newer edit of the same field replaces an older
+ * one, and the older request's answer and wait leave the newer one alone.
+ */
+const pendingHostTabEdits = new Map<string, PendingHostTabEdit>();
+let lastHostTabEditToken = 0;
+
+/** How long an edit the host took is drawn while its update is on the way. */
+export const HOST_TAB_EDIT_ECHO_MS = 2000;
+
+const sameHostName = (a: string | null | undefined, b: string | null | undefined) =>
+	(a || null) === (b || null);
+
+function hostReportsField(
+	field: HostTabEditField,
+	value: string | boolean,
+	host: Pick<AITabRecord, 'name' | 'starred'> | undefined
+): boolean {
+	if (!host) return false;
+	return field === 'name'
+		? sameHostName(host.name, value as string)
+		: (host.starred === true) === value;
+}
+
+/**
+ * The edits of `target`'s tabs the host has not reported yet, by tab id, for the sync to draw
+ * (`HostedProjectionInput.editing`). An edit the host took and now reports is settled here.
+ */
+export function hostTabEditsOf(target: HostedTarget): Map<string, HostTabEdit> {
+	const prefix = `${target.peerId}/${target.agentId}/`;
+	const edits = new Map<string, HostTabEdit>();
+	for (const [key, pending] of [...pendingHostTabEdits]) {
+		if (!key.startsWith(prefix)) continue;
+		const tabId = key.slice(prefix.length);
+		const host = target.agent?.aiTabs?.find((tab) => tab.id === tabId);
+		const left: PendingHostTabEdit = { ...pending };
+		for (const field of ['name', 'starred'] as const) {
+			const entry = left[field];
+			if (entry?.answered && hostReportsField(field, entry.value, host)) delete left[field];
+		}
+		if (!left.name && !left.starred) {
+			pendingHostTabEdits.delete(key);
+			continue;
+		}
+		pendingHostTabEdits.set(key, left);
+		edits.set(tabId, {
+			...(left.name ? { name: left.name.value } : {}),
+			...(left.starred ? { starred: left.starred.value } : {}),
+		});
+	}
+	return edits;
+}
+
+/** Draw `value` for `field` of `key` until its request settles. Returns the request's token. */
+function holdHostTabField(
+	key: string,
+	field: HostTabEditField,
+	value: string | boolean,
+	answered: boolean
+): number {
+	const token = ++lastHostTabEditToken;
+	pendingHostTabEdits.set(key, {
+		...pendingHostTabEdits.get(key),
+		[field]: { value, token, answered },
+	});
+	return token;
+}
+
+/** Apply `change` to `field` of `key` when it still holds the request `token`, then wake the sync. */
+function settleHostTabField(
+	key: string,
+	field: HostTabEditField,
+	token: number,
+	change: 'answered' | 'drop'
+): void {
+	const pending = pendingHostTabEdits.get(key);
+	const entry = pending?.[field];
+	if (!pending || !entry || entry.token !== token) return;
+	const left: PendingHostTabEdit = { ...pending };
+	if (change === 'drop') delete left[field];
+	else Object.assign(left, { [field]: { ...entry, answered: true } });
+	if (!left.name && !left.starred) pendingHostTabEdits.delete(key);
+	else pendingHostTabEdits.set(key, left);
+	// The host may already report it, or its own value is drawn again: wake the sync.
+	usePeerMirrorStore.setState({});
+}
+
+/** End the field's wait `HOST_TAB_EDIT_ECHO_MS` after the host took the request `token`. */
+function endHostTabFieldWait(key: string, field: HostTabEditField, token: number): void {
+	setTimeout(() => settleHostTabField(key, field, token, 'drop'), HOST_TAB_EDIT_ECHO_MS);
+}
+
+/** The host took the request `token`: its report settles the field, or the wait ends it. */
+function hostTookTabField(key: string, field: HostTabEditField, token: number): void {
+	settleHostTabField(key, field, token, 'answered');
+	endHostTabFieldWait(key, field, token);
+}
+
+/** Send a tab's name or star to its host, and draw it as edited until the host reports it. */
+function sendHostTabEdit(
+	target: HostedTarget,
+	tabId: string,
+	field: HostTabEditField,
+	value: string | boolean
+): void {
+	const key = hostTabKey(target, tabId);
+	const token = holdHostTabField(key, field, value, false);
+	const action: PeerAgentAction =
+		field === 'name'
+			? { kind: 'rename-tab', tabId, name: value as string }
+			: { kind: 'star-tab', tabId, starred: value === true };
+	void actOnMirroredAgent(target.peerId, target.agentId, action).then((result) => {
+		if (result === null) settleHostTabField(key, field, token, 'drop');
+		else hostTookTabField(key, field, token);
+	});
+}
+
 /** Rename a host tab too. An empty name clears it. */
 export function renameHostedTab(
 	session: Pick<Session, 'liftedTo'> | null | undefined,
@@ -919,9 +1067,7 @@ export function renameHostedTab(
 	name: string
 ): void {
 	const target = hostedTargetOf(session);
-	if (target && isHostTab(target, tabId)) {
-		void renameMirrorTab(target.peerId, target.agentId, tabId, name);
-	}
+	if (target && isHostTab(target, tabId)) sendHostTabEdit(target, tabId, 'name', name);
 }
 
 /**
@@ -940,9 +1086,15 @@ export function renameHostedTabSettled(
 		kind: 'rename-tab',
 		tabId,
 		name,
-	}).then((answer) =>
-		'error' in answer ? { saved: false, reason: answer.error } : { saved: true }
-	);
+	}).then((answer) => {
+		if ('error' in answer) return { saved: false, reason: answer.error };
+		// The host took it: this name is drawn until the host reports it, over an auto-name still
+		// waiting for its own report.
+		// The caller writes the name here next, so the sync need not wake for it.
+		const key = hostTabKey(target, tabId);
+		endHostTabFieldWait(key, 'name', holdHostTabField(key, 'name', name, true));
+		return { saved: true };
+	});
 }
 
 /**
@@ -994,9 +1146,7 @@ export function starHostedTab(
 	starred: boolean
 ): void {
 	const target = hostedTargetOf(session);
-	if (target && isHostTab(target, tabId)) {
-		void starMirrorTab(target.peerId, target.agentId, tabId, starred);
-	}
+	if (target && isHostTab(target, tabId)) sendHostTabEdit(target, tabId, 'starred', starred);
 }
 
 /**

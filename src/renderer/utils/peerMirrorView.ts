@@ -262,8 +262,63 @@ export interface LiftableAgent {
  */
 export type AgentFederationStatus =
 	| { kind: 'local' }
-	| { kind: 'moved'; peerId: string; agentId: string; peer?: MirroredPeer }
-	| { kind: 'ssh'; remoteId: string; peer?: MirroredPeer; hostReady: boolean };
+	| { kind: 'moved'; peerId: string; agentId: string; peer?: FederationStatusPeer }
+	| { kind: 'ssh'; remoteId: string; peer?: FederationStatusPeer; hostReady: boolean };
+
+/**
+ * The part of a mirror entry a Federation status names: what the mode pill and Move to Host read.
+ * Not the agents, queues, or live turns, which change on every frame of a hosted turn: a status
+ * that held them would draw every mode pill again per frame with nothing on screen changed (L36).
+ */
+export type FederationStatusPeer = Pick<
+	MirroredPeer,
+	'peerId' | 'remoteId' | 'name' | 'connection' | 'error'
+>;
+
+function statusPeer(peer: MirroredPeer): FederationStatusPeer {
+	return {
+		peerId: peer.peerId,
+		remoteId: peer.remoteId,
+		name: peer.name,
+		connection: peer.connection,
+		...(peer.error !== undefined ? { error: peer.error } : {}),
+	};
+}
+
+function sameStatusPeer(a?: FederationStatusPeer, b?: FederationStatusPeer): boolean {
+	if (a === b) return true;
+	if (!a || !b) return false;
+	return (
+		a.peerId === b.peerId &&
+		a.remoteId === b.remoteId &&
+		a.name === b.name &&
+		a.connection === b.connection &&
+		a.error === b.error
+	);
+}
+
+/** Whether two statuses draw the same: the equality a status subscription re-renders on. */
+export function sameFederationStatus(a: AgentFederationStatus, b: AgentFederationStatus): boolean {
+	if (a === b) return true;
+	switch (a.kind) {
+		case 'local':
+			return b.kind === 'local';
+		case 'moved':
+			return (
+				b.kind === 'moved' &&
+				a.peerId === b.peerId &&
+				a.agentId === b.agentId &&
+				sameStatusPeer(a.peer, b.peer)
+			);
+		case 'ssh':
+			return (
+				b.kind === 'ssh' &&
+				a.remoteId === b.remoteId &&
+				a.hostReady === b.hostReady &&
+				sameStatusPeer(a.peer, b.peer)
+			);
+	}
+}
 
 export function agentFederationStatus(
 	agent: LiftableAgent,
@@ -276,7 +331,7 @@ export function agentFederationStatus(
 			kind: 'moved',
 			peerId: pointer.peer,
 			agentId: pointer.agentId,
-			...(peer ? { peer } : {}),
+			...(peer ? { peer: statusPeer(peer) } : {}),
 		};
 	}
 	const ssh = agent.sessionSshRemoteConfig;
@@ -285,7 +340,7 @@ export function agentFederationStatus(
 	return {
 		kind: 'ssh',
 		remoteId: ssh.remoteId,
-		...(peer ? { peer } : {}),
+		...(peer ? { peer: statusPeer(peer) } : {}),
 		hostReady: peer?.connection === 'connected',
 	};
 }
@@ -296,6 +351,6 @@ export function agentFederationStatus(
  */
 export function canMoveToHost(
 	status: AgentFederationStatus
-): status is Extract<AgentFederationStatus, { kind: 'ssh' }> & { peer: MirroredPeer } {
+): status is Extract<AgentFederationStatus, { kind: 'ssh' }> & { peer: FederationStatusPeer } {
 	return status.kind === 'ssh' && status.peer !== undefined;
 }

@@ -56,6 +56,7 @@ import {
 } from './hostedQueuedTurn';
 import {
 	closingHostTabIds,
+	hostTabEditsOf,
 	createPendingHostTabs,
 	hostingEnabled,
 	nextPendingHostTabRetryAt,
@@ -130,6 +131,7 @@ function hostedInput(session: { id: string; liftedTo?: unknown; aiTabs: Session[
 			liveTurns: peer.liveTurns,
 			queue: peer.queues[agent.id],
 			closing: closingHostTabIds({ peerId: pointer.peer, agentId: agent.id, agent }, session),
+			editing: hostTabEditsOf({ peerId: pointer.peer, agentId: agent.id, agent }),
 			handingOver: hostedTabsHandingOver(session.id),
 			now,
 			handOverClock: hostHandOverClock(session.id, now),

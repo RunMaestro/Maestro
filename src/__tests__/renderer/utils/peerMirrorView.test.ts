@@ -6,6 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+	applyPeerEvent,
 	createMirroredPeer,
 	replacePeerAgents,
 	type MirroredPeer,
@@ -19,6 +20,7 @@ import {
 	mirrorLogEntry,
 	mirrorQueuedItem,
 	mirrorTab,
+	sameFederationStatus,
 } from '../../../renderer/utils/peerMirrorView';
 
 const entry = (id: string, text: string, extra: Partial<LogEntryRecord> = {}): LogEntryRecord => ({
@@ -273,5 +275,38 @@ describe('Federation status of a local agent', () => {
 		expect(canMoveToHost(agentFederationStatus(ssh, []))).toBe(false);
 		expect(canMoveToHost({ kind: 'local' })).toBe(false);
 		expect(canMoveToHost({ kind: 'moved', peerId: 'build', agentId: 'a1' })).toBe(false);
+	});
+
+	it('names only the peer fields a status draws, so a turn frame leaves it the same (L36)', () => {
+		const hosted = { liftedTo: { peer: 'build', agentId: 'a1', at: 1 } };
+		const before = peer('connected', true);
+		const framed = applyPeerEvent(
+			before,
+			{ type: 'turn', agentId: 'a1', tabId: 't1', event: { kind: 'text', at: 1, text: 'hi' } },
+			{ now: () => 1, newId: () => 'id' }
+		).peer;
+		expect(framed).not.toBe(before);
+		for (const agent of [hosted, ssh]) {
+			const a = agentFederationStatus(agent, [before]);
+			const b = agentFederationStatus(agent, [framed]);
+			expect(a).not.toHaveProperty('peer.liveTurns');
+			expect(sameFederationStatus(a, b)).toBe(true);
+			expect(sameFederationStatus(a, agentFederationStatus(agent, [peer('host-down', true)]))).toBe(
+				false
+			);
+			expect(sameFederationStatus(a, agentFederationStatus(agent, []))).toBe(false);
+		}
+		expect(
+			sameFederationStatus(
+				agentFederationStatus({ ...hosted, liftedTo: { ...hosted.liftedTo, agentId: 'a2' } }, [
+					before,
+				]),
+				agentFederationStatus(hosted, [before])
+			)
+		).toBe(false);
+		expect(sameFederationStatus({ kind: 'local' }, { kind: 'local' })).toBe(true);
+		expect(sameFederationStatus({ kind: 'local' }, agentFederationStatus(ssh, [before]))).toBe(
+			false
+		);
 	});
 });

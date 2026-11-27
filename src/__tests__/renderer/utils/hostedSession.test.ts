@@ -963,3 +963,40 @@ describe('a hosted reply drawn once, with an older answer in the read (L30)', ()
 		]);
 	});
 });
+
+describe('a name or star edited here and not reported by the host yet (L36)', () => {
+	const synced = () =>
+		projectHostedSession(hostedRow(), {
+			agent: host({ aiTabs: [{ id: 't1', name: 'Main', agentSessionId: 's1', state: 'idle' }] }),
+		});
+
+	it('draws the edit and leaves the record alone, as a local tab keeps its own edit', () => {
+		const before = synced();
+		// The tab was renamed and starred here (the auto-name, the star button); the host still has
+		// the old values.
+		const edited = {
+			...before,
+			aiTabs: before.aiTabs.map((tab) => ({ ...tab, name: 'Named', starred: true })),
+		};
+		const input: HostedProjectionInput = {
+			agent: host({ aiTabs: [{ id: 't1', name: 'Main', agentSessionId: 's1', state: 'idle' }] }),
+			editing: new Map([['t1', { name: 'Named', starred: true }]]),
+		};
+		expect(projectHostedSession(edited, input)).toBe(edited);
+		// With no edit pending the host's values are drawn, as before.
+		const { editing: _editing, ...reported } = input;
+		const drawn = projectHostedSession(edited, reported);
+		expect(drawn.aiTabs[0]).toMatchObject({ name: 'Main', starred: false });
+	});
+
+	it("draws the host's value for a field the edit does not name", () => {
+		const before = synced();
+		const next = projectHostedSession(before, {
+			agent: host({
+				aiTabs: [{ id: 't1', name: 'Main', agentSessionId: 's1', state: 'idle', starred: true }],
+			}),
+			editing: new Map([['t1', { name: 'Main' }]]),
+		});
+		expect(next.aiTabs[0]).toMatchObject({ name: 'Main', starred: true });
+	});
+});
