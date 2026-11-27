@@ -18,7 +18,10 @@ import { getRepairedUnifiedTabOrder, settleAgentStateFromTabs } from '../../util
 import { getBaseSessionId } from '../../utils/sessionIdParser';
 import type { PendingPermissionSnapshot } from '../../../shared/pendingPermissions';
 import { isAiTabHidden } from '../../utils/unifiedTabOrderUtils';
-import { registerSessionTranscriptFlush } from '../../services/sessionPersistenceFlush';
+import {
+	flushBatchedOutputNow,
+	registerSessionTranscriptFlush,
+} from '../../services/sessionPersistenceFlush';
 
 const runtimeFields = [
 	'state',
@@ -331,6 +334,10 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 					if (!useSessionStore.getState().sessions.some((item) => item.id === sessionId))
 						await whenSessionsLoaded();
 					if (disposed || !ownsTranscript.current?.(sessionId)) return;
+					// The output batch first: a turn's end reaches the asking client before this
+					// window's exit listener lands its reply, so a read begun at that end would miss
+					// the reply and the client would drop its live copy for a blank (R29).
+					flushBatchedOutputNow();
 					const session = useSessionStore.getState().sessions.find((item) => item.id === sessionId);
 					const tab = session?.aiTabs.find((item) => item.id === tabId);
 					if (session && tab)

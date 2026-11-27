@@ -182,7 +182,10 @@ import {
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
 import { registerMaestroBuiltinCommandHandlers } from './services/maestroBuiltinCommands';
-import { registerSessionPersistenceFlush } from './services/sessionPersistenceFlush';
+import {
+	registerBatchedOutputFlush,
+	registerSessionPersistenceFlush,
+} from './services/sessionPersistenceFlush';
 import {
 	mergeQueuedItemIntoAbove,
 	removeQueuedItem,
@@ -636,6 +639,11 @@ function MaestroConsoleInner() {
 	const batchedUpdater = useBatchedSessionUpdates();
 	const batchedUpdaterRef = useRef(batchedUpdater);
 	batchedUpdaterRef.current = batchedUpdater;
+	// A transcript read answered for another machine lands the batched output first (R29).
+	useEffect(() => {
+		registerBatchedOutputFlush(() => batchedUpdaterRef.current.flushNow());
+		return () => registerBatchedOutputFlush(null);
+	}, []);
 
 	// setActiveSessionId wrapper - flushes batched updates before switching
 	const setActiveSessionIdFromContext = useCallback(

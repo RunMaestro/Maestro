@@ -169,6 +169,25 @@ function byTime(local: readonly LogEntry[], host: readonly LogEntry[]): LogEntry
 const ANSWER_SOURCES = new Set<LogEntry['source']>(['stdout', 'ai']);
 
 /**
+ * `entry` with its delivered tick set to `answered`, as one object per entry and value across
+ * merges: the host's saved entries are cached objects (`persistedView()`), and a new copy on every
+ * pass would miss `withDrawnEntriesKept()`'s cache and be compared again on every chunk of a
+ * streaming reply (R29). The stored record is never written.
+ */
+function withDelivered(entry: LogEntry, answered: boolean): LogEntry {
+	let variants = deliveredVariants.get(entry);
+	if (!variants) {
+		variants = {};
+		deliveredVariants.set(entry, variants);
+	}
+	const key = answered ? 'yes' : 'no';
+	return (variants[key] ??= { ...entry, delivered: answered });
+}
+
+/** The delivered-tick copies `withDelivered()` made of an entry, one per value. */
+const deliveredVariants = new WeakMap<LogEntry, { yes?: LogEntry; no?: LogEntry }>();
+
+/**
  * The host's user entries with "Message delivered" set by the rule a local tab follows: a local
  * send marks its message delivered when the agent's answer reaches the tab as data
  * (`markDelivered()`), which the main process emits when the provider reports its result, at the
@@ -187,7 +206,7 @@ function withAnswerDelivery(entries: LogEntry[], fromHost: ReadonlySet<string>):
 		const entry = entries[pendingUser];
 		if (fromHost.has(entry.id) && !!entry.delivered !== answered) {
 			out ??= [...entries];
-			out[pendingUser] = { ...entry, delivered: answered };
+			out[pendingUser] = withDelivered(entry, answered);
 		}
 	};
 	entries.forEach((entry, i) => {
@@ -209,17 +228,27 @@ function sameMetadata(a: LogEntry['metadata'], b: LogEntry['metadata']): boolean
 }
 
 /**
+ * How far before a kept bubble a host copy of it may be stamped and still be its copy: a host clock
+ * behind this one by up to this much (R30). A few seconds, so an earlier message with the same words
+ * is never taken for it.
+ */
+export const HOST_COPY_CLOCK_SKEW_MS = 5_000;
+
+/**
  * `older` without the bubbles of kept messages (`LogEntry.keptForHost`) the host now has. A host
  * that takes the sent `entryId` writes the same id, and the bubble is replaced by id above. One
  * that does not (a desktop host) writes the message under its own id: once this machine handed the
  * message over (`keptSentAt`), the first user entry new to this tab with the same text and the
  * same number of images replaces one bubble. Each host entry replaces at most one. Never an entry
- * this tab already drew before (an earlier message with the same words), and never before the send
- * (a message another client sent with the same words), so a kept bubble waits for its own copy.
+ * this tab already drew before (an earlier message with the same words), never before the send
+ * (a message another client sent with the same words), and never a host entry written more than
+ * `HOST_COPY_CLOCK_SKEW_MS` before the bubble or its last send (R28, R30): the host writes its copy
+ * when it takes the message, after this machine sent it (`keptSentAt` is set again on each send and
+ * cleared when the host refuses), so an earlier message with the same words, read in now, is not
+ * this one. The mirror holds no reading of the host's clock, so the bound absorbs a host clock
+ * that runs behind this one (an older desktop host, a retry the moment the link is back). A kept
+ * bubble waits for its own copy.
  */
-/** How far the host's clock may run behind this one when its copy of a kept message is matched. */
-const KEPT_COPY_CLOCK_SKEW_MS = 60_000;
-
 function withoutKeptCopies(
 	older: LogEntry[],
 	host: readonly LogEntry[],
@@ -231,13 +260,14 @@ function withoutKeptCopies(
 	if (copies.length === 0) return older;
 	return older.filter((entry) => {
 		if (!entry.keptForHost || entry.keptSentAt === undefined) return true;
+		const sentAt = entry.keptSentAt;
 		const at = copies.findIndex(
 			(copy) =>
 				copy.text === entry.text &&
 				(copy.images?.length ?? 0) === (entry.images?.length ?? 0) &&
-				// Written after the bubble (allowing for the two clocks): an older message the host
-				// read in now, with the same words, is not this one.
-				copy.timestamp >= entry.timestamp - KEPT_COPY_CLOCK_SKEW_MS
+				// Written at or after the bubble and its send, give or take a host clock behind this one:
+				// an older message the host read in now, with the same words, is not this one (R28, R30).
+				copy.timestamp >= Math.max(entry.timestamp, sentAt) - HOST_COPY_CLOCK_SKEW_MS
 		);
 		if (at === -1) return true;
 		copies.splice(at, 1);
@@ -317,20 +347,41 @@ function withDrawnEntriesKept(next: LogEntry[], local: readonly LogEntry[]): Log
 	let kept = 0;
 	const out = next.map((entry) => {
 		const before = prior.get(entry.id);
-		if (!before || before === entry || !drawsTheSame(before, entry)) return entry;
+		if (!before || before === entry) return entry;
+		// The same pair as an earlier pass: `persistedView()` hands back its cached objects, which
+		// are never the ones `local` kept, so without this every entry is compared on every chunk
+		// of a streaming reply (R29). Both objects are never changed in place.
+		if (keptLocalEntry.get(entry) !== before) {
+			if (!drawsTheSame(before, entry)) return entry;
+			keptLocalEntry.set(entry, before);
+		}
 		kept += 1;
 		return before;
 	});
 	return kept === 0 ? next : out;
 }
 
+/** The local entry a host entry object was found to draw the same as (`withDrawnEntriesKept()`). */
+const keptLocalEntry = new WeakMap<LogEntry, LogEntry>();
+
+/** Test-only: how many times `drawsTheSame()` compared two entries since the last reset. */
+let entryCompares = 0;
+export function __hostedEntryComparesForTests(reset = false): number {
+	const count = entryCompares;
+	if (reset) entryCompares = 0;
+	return count;
+}
+
 /** Whether two entries under one id draw the same: every field equal, nested ones by value. */
 function drawsTheSame(a: LogEntry, b: LogEntry): boolean {
+	entryCompares += 1;
 	const fields = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof LogEntry>;
 	for (const field of fields) {
 		const x = a[field];
 		const y = b[field];
+		// By identity first: a tool card's `metadata` is turned into a string only when it differs.
 		if (x === y) continue;
+		// String arrays only (`images`, `options`): compared item by item.
 		if (Array.isArray(x) && Array.isArray(y)) {
 			if (x.length !== y.length || x.some((value, i) => value !== y[i])) return false;
 			continue;
