@@ -561,7 +561,12 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 			const { sshRemoteId, sessionSshRemoteConfig, liftedTo } = createModeSession('hosted');
 			seedAgent({ sshRemoteId, sessionSshRemoteConfig, liftedTo });
 
-			await interruptTurn('agent-1', { tabId: 'tab-a' }).catch(() => undefined);
+			const stopped = interruptTurn('agent-1', { tabId: 'tab-a' });
+			if (outcome === 'answers') {
+				await expect(stopped).resolves.toMatchObject({ success: true });
+			} else {
+				await expect(stopped).rejects.toThrow('link down');
+			}
 
 			expect(dropStoppedHostStartMentions).toHaveBeenCalledWith('agent-1', ['tab-a']);
 			expect(vi.mocked(dropStoppedHostStartMentions).mock.invocationCallOrder[0]).toBeLessThan(
