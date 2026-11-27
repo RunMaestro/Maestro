@@ -84,6 +84,31 @@ export type CueLogPayload =
 	| { type: 'rateLimitBackoff'; triggerName: string; backoffMs: number }
 	| { type: 'githubPollError'; triggerName: string }
 	| { type: 'heartbeatFailure'; consecutiveFailures: number }
+	| {
+			/**
+			 * A subscription reached its failure-alert threshold of consecutive
+			 * failed runs on one agent (`escalated: false`), or ten times that
+			 * (`escalated: true`). Emitted at most twice per streak; the host
+			 * turns each into a red toast. See `cue-failure-streak.ts`.
+			 */
+			type: 'subscriptionFailing';
+			sessionId: string;
+			sessionName: string;
+			subscriptionName: string;
+			consecutiveFailures: number;
+			threshold: number;
+			escalated: boolean;
+			lastError?: string;
+	  }
+	| {
+			/** A run succeeded after the subscription had been reported failing. */
+			type: 'subscriptionRecovered';
+			sessionId: string;
+			sessionName: string;
+			subscriptionName: string;
+			/** Length of the streak that just ended. */
+			consecutiveFailures: number;
+	  }
 	| { type: 'zombieProcess'; pid: number; runId: string }
 	| {
 			type: 'pathTraversalBlocked';

@@ -1257,6 +1257,103 @@ export function getCueEventsForStats(
 	}));
 }
 
+/** One subscription's open failure streak as recorded in `cue_events`. */
+export interface CueFailureStreakRecord {
+	sessionId: string;
+	subscriptionName: string;
+	consecutiveFailures: number;
+	/** Epoch ms the first failure of the streak ended. */
+	firstFailedAt: number;
+	/** Epoch ms the newest failure ended. */
+	lastFailedAt: number;
+	lastStatus: 'failed' | 'timeout';
+	lastError: string | null;
+}
+
+/**
+ * Every open failure streak: per (agent, subscription), the `failed` /
+ * `timeout` runs that ended after that subscription's last `completed` run.
+ * Read once at engine start so a restart neither forgets a failing
+ * subscription nor re-alerts for it. Mirrors the live tracker in
+ * `cue-failure-streak.ts`:
+ * - Runs are ordered by when they ENDED, the order the live tracker sees
+ *   them in: a failure that started before a success but finished after it
+ *   still counts. A failure that ends in the same millisecond as the last
+ *   success cannot be ordered from the row (completed_at is all we have), so
+ *   it is kept: hiding a real failure is the bug this alert exists to stop.
+ * - `stopped` rows neither count nor reset (they are simply not selected).
+ * - Generated output-phase rows (`<name>:output` with `outputPromptPhase` in
+ *   the payload) are skipped: live tracking sees only the parent run, which
+ *   keeps its own status when the output phase fails. A subscription the user
+ *   named `x:output` is an ordinary run and is kept.
+ * - Rows carrying `orphanedMessage` (settled by the engine-start sweep because
+ *   the previous engine died mid-run) are skipped: a quit is not a failure.
+ *
+ * Unlike the activity log's 1000-row window, this covers the whole retention
+ * period, so a busy agent cannot push a failing subscription out of view.
+ * Returns `[]` when the DB is not initialized.
+ */
+export function getCueFailureStreakRecords(orphanedMessage: string): CueFailureStreakRecord[] {
+	if (!db) return [];
+	// CASE, not AND: SQLite does not promise to short-circuit AND, and
+	// json_extract raises on a malformed payload.
+	const rows = db
+		.prepare(
+			`WITH runs AS (
+			   SELECT rowid AS seq, session_id, subscription_name, status, error_message,
+			          COALESCE(completed_at, created_at) AS ended_at
+			   FROM cue_events
+			   WHERE CASE
+			           WHEN subscription_name LIKE '%:output' AND json_valid(payload)
+			             THEN COALESCE(json_extract(payload, '$.outputPromptPhase'), 0)
+			           ELSE 0
+			         END = 0
+			 ),
+			 last_ok AS (
+			   SELECT session_id, subscription_name, MAX(ended_at) AS ok_at
+			   FROM runs
+			   WHERE status = 'completed'
+			   GROUP BY session_id, subscription_name
+			 ),
+			 streak AS (
+			   SELECT r.session_id, r.subscription_name, r.status, r.error_message, r.ended_at,
+			          COUNT(*) OVER (PARTITION BY r.session_id, r.subscription_name) AS failures,
+			          MIN(r.ended_at) OVER (PARTITION BY r.session_id, r.subscription_name) AS first_at,
+			          ROW_NUMBER() OVER (
+			            PARTITION BY r.session_id, r.subscription_name
+			            ORDER BY r.ended_at DESC, r.seq DESC
+			          ) AS newest
+			   FROM runs r
+			   LEFT JOIN last_ok l
+			     ON l.session_id = r.session_id AND l.subscription_name = r.subscription_name
+			   WHERE r.status IN ('failed', 'timeout')
+			     AND (r.error_message IS NULL OR r.error_message <> ?)
+			     AND (l.ok_at IS NULL OR r.ended_at >= l.ok_at)
+			 )
+			 SELECT session_id, subscription_name, status, error_message, ended_at, failures, first_at
+			 FROM streak
+			 WHERE newest = 1`
+		)
+		.all(orphanedMessage) as Array<{
+		session_id: string;
+		subscription_name: string;
+		status: 'failed' | 'timeout';
+		error_message: string | null;
+		ended_at: number;
+		failures: number;
+		first_at: number;
+	}>;
+	return rows.map((row) => ({
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		consecutiveFailures: row.failures,
+		firstFailedAt: row.first_at,
+		lastFailedAt: row.ended_at,
+		lastStatus: row.status,
+		lastError: row.error_message,
+	}));
+}
+
 /**
  * Total Conductor time that Cue runs recorded in this database would have
  * credited, using the engine's live crediting rule (see cue-engine.ts): only

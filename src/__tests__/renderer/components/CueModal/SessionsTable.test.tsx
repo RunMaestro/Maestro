@@ -325,4 +325,55 @@ describe('SessionsTable', () => {
 		expect(screen.getByText('AgentOne')).toBeInTheDocument();
 		expect(screen.getByText('AgentTwo')).toBeInTheDocument();
 	});
+
+	// A subscription can fail every run while the row still reads Active.
+	describe('failing subscriptions', () => {
+		const failingStreak = (subscriptionName: string, consecutiveFailures: number) => ({
+			sessionId: 's1',
+			sessionName: 'Agent-1',
+			subscriptionName,
+			consecutiveFailures,
+			firstFailedAt: '2026-11-17T03:00:00.000Z',
+			lastFailedAt: '2026-11-17T10:00:00.000Z',
+			lastStatus: 'failed' as const,
+			lastError: 'No, exit',
+			alertThreshold: 3,
+			failing: true,
+		});
+
+		it('shows the agent as Failing, red, naming each failing subscription', () => {
+			const session = {
+				...makeSession('s1', 'Agent-1'),
+				failingSubscriptions: [failingStreak('sms-poll', 134), failingStreak('digest', 3)],
+			};
+			render(<SessionsTable {...makeProps({ sessions: [session] })} />);
+
+			const cell = screen.getByTestId('cue-session-failing');
+			expect(cell).toHaveTextContent('Failing: sms-poll (134×), digest (3×)');
+			expect(cell.getAttribute('title')).toBe(
+				'sms-poll: 134 failed runs in a row - last error: No, exit\ndigest: 3 failed runs in a row - last error: No, exit'
+			);
+			expect(screen.getByTestId('cue-status-dot-failing')).toHaveStyle({
+				backgroundColor: theme.colors.error,
+			});
+			expect(screen.queryByText('Active')).toBeNull();
+		});
+
+		it('shows Active again once no subscription is failing', () => {
+			render(<SessionsTable {...makeProps({ sessions: [makeSession('s1', 'Agent-1')] })} />);
+			expect(screen.getByText('Active')).toBeInTheDocument();
+			expect(screen.queryByTestId('cue-session-failing')).toBeNull();
+			expect(screen.getByTestId('cue-status-dot-active')).toBeInTheDocument();
+		});
+
+		it('keeps a paused agent Paused even with a leftover streak', () => {
+			const session = {
+				...makeSession('s1', 'Agent-1', false),
+				failingSubscriptions: [failingStreak('sms-poll', 5)],
+			};
+			render(<SessionsTable {...makeProps({ sessions: [session] })} />);
+			expect(screen.getByText('Paused')).toBeInTheDocument();
+			expect(screen.queryByTestId('cue-session-failing')).toBeNull();
+		});
+	});
 });

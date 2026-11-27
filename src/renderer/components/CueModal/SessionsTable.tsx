@@ -14,7 +14,7 @@ import {
 import { pipelinesForSession } from '../CuePipelineEditor/utils/pipelineMembership';
 import { StatusDot, PipelineDot } from './StatusDot';
 import { formatRelativeTime } from './cueModalUtils';
-import { triggerGroupKey } from '../../../shared/cue';
+import { describeFailureStreak, triggerGroupKey } from '../../../shared/cue';
 
 // Mirrors the engine's anchor-group key so Run Now fires exactly one
 // representative per (pipeline_name, trigger-config) pair - not one per
@@ -89,7 +89,17 @@ export function SessionsTable({
 			</thead>
 			<tbody>
 				{sessions.map((s) => {
-					const status = !s.enabled ? 'paused' : s.subscriptionCount > 0 ? 'active' : 'none';
+					const failing = s.enabled ? (s.failingSubscriptions ?? []) : [];
+					const status = !s.enabled
+						? 'paused'
+						: failing.length > 0
+							? 'failing'
+							: s.subscriptionCount > 0
+								? 'active'
+								: 'none';
+					const failingTitle = failing
+						.map((f) => `${f.subscriptionName}: ${describeFailureStreak(f)}`)
+						.join('\n');
 					const isFocused = !!focusSessionId && s.sessionId === focusSessionId;
 					return (
 						<tr
@@ -152,11 +162,30 @@ export function SessionsTable({
 								})()}
 							</td>
 							<td className="py-2">
-								<span className="flex items-center gap-1.5">
+								<span
+									className="flex items-center gap-1.5"
+									title={failingTitle || undefined}
+									data-testid={status === 'failing' ? 'cue-session-failing' : undefined}
+								>
 									<StatusDot status={status} theme={theme} />
-									<span style={{ color: theme.colors.textDim }}>
-										{status === 'active' ? 'Active' : status === 'paused' ? 'Paused' : 'No Config'}
-									</span>
+									{status === 'failing' ? (
+										// Name the subscriptions: "Failing" alone sends the user
+										// hunting through the YAML for which one broke.
+										<span className="min-w-0 truncate" style={{ color: theme.colors.error }}>
+											Failing:{' '}
+											{failing
+												.map((f) => `${f.subscriptionName} (${f.consecutiveFailures}×)`)
+												.join(', ')}
+										</span>
+									) : (
+										<span style={{ color: theme.colors.textDim }}>
+											{status === 'active'
+												? 'Active'
+												: status === 'paused'
+													? 'Paused'
+													: 'No Config'}
+										</span>
+									)}
 								</span>
 							</td>
 							<td className="py-2 text-right" style={{ color: theme.colors.textDim }}>

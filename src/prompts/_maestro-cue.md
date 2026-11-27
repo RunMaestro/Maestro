@@ -360,6 +360,8 @@ subscriptions:
 
 Pass `--source-agent-id {{AGENT_ID}}` so a subscription with `cli_output` can route its result back to you as a reply.
 
+`cue list --json` reports each subscription's `health`: `failing` once it failed `settings.failure_alert_threshold` runs in a row (default 3) on that agent, `ok` again after a run succeeds. A `failureStreak` object (count, first and last failure time, last error) appears from the first failure. Check it before you say a pipeline works.
+
 ### Authoring Guidance
 
 When a user asks you to add, modify, or debug a Cue subscription:

@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger';
 import type { CueSubscriptionInfo, CueActivityEntry } from '../types';
 import { composeCueSubscriptionId } from '../../../shared/cue/subscription-id';
 import { cueTurnSettingsOf } from '../../../shared/cue/turn-settings';
+import type { CueFailureStreak } from '../../../shared/cue/failure-streak';
 
 /** Display-formats a Cue subscription's schedule for `cue list`. Surfaces
  *  `schedule_times`, `interval_minutes`, and `schedule_days` in a single
@@ -47,6 +48,7 @@ export function registerCueCallbacks(
 		| 'getCueActivityLog'
 		| 'triggerCueSubscription'
 		| 'getCueSubscriptionTriggerStats'
+		| 'getCueFailureStreaks'
 	>
 ): void {
 	// Get Cue subscriptions - calls engine directly in the main process.
@@ -74,10 +76,17 @@ export function registerCueCallbacks(
 		for (const stat of deps.getCueSubscriptionTriggerStats?.() ?? []) {
 			triggerStats.set(`${stat.sessionId}\u0000${stat.subscriptionName}`, stat);
 		}
+		// Streaks are keyed the same way: the agent that RAN the subscription
+		// and its base name, so each fan-out target reports its own health.
+		const streaks = new Map<string, CueFailureStreak>();
+		for (const streak of deps.getCueFailureStreaks?.() ?? []) {
+			streaks.set(`${streak.sessionId}\u0000${streak.subscriptionName}`, streak);
+		}
 		const subs: CueSubscriptionInfo[] = [];
 		for (const session of filtered) {
 			for (const sub of session.subscriptions) {
 				const stat = triggerStats.get(`${session.sessionId}\u0000${sub.name}`);
+				const streak = streaks.get(`${session.sessionId}\u0000${sub.name}`);
 				subs.push({
 					// No stable per-subscription id in YAML; compose one from
 					// session + pipeline + name. Names are unique within a
@@ -101,6 +110,19 @@ export function registerCueCallbacks(
 					triggerCount: stat?.triggerCount ?? 0,
 					lastTriggered: stat?.lastTriggered,
 					...cueTurnSettingsOf(sub),
+					health: streak?.failing ? 'failing' : 'ok',
+					...(streak
+						? {
+								failureStreak: {
+									consecutiveFailures: streak.consecutiveFailures,
+									firstFailedAt: streak.firstFailedAt,
+									lastFailedAt: streak.lastFailedAt,
+									lastStatus: streak.lastStatus,
+									lastError: streak.lastError,
+									alertThreshold: streak.alertThreshold,
+								},
+							}
+						: {}),
 				});
 			}
 		}

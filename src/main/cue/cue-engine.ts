@@ -41,6 +41,16 @@ import {
 import { getCueRunLiveOutput } from './cue-executor';
 import { scanTaskFilesNow, buildTaskPendingPayload } from './cue-task-scanner';
 import { createCueActivityLog } from './cue-activity-log';
+import {
+	createCueFailureStreakTracker,
+	failureStreakPayload,
+	type CueFailureStreakTracker,
+} from './cue-failure-streak';
+import {
+	resolveFailureAlertThreshold,
+	type CueFailureStreak,
+} from '../../shared/cue/failure-streak';
+import { withoutPerRootCueSettings } from '../../shared/cue/contracts';
 import type { CueActivityLog } from './cue-activity-log';
 import { createCueHeartbeat } from './cue-heartbeat';
 import type { CueHeartbeat } from './cue-heartbeat';
@@ -58,11 +68,20 @@ import { createCueSessionRuntimeService } from './cue-session-runtime-service';
 import type { CueSessionRuntimeService, SessionInitReason } from './cue-session-runtime-service';
 import { createCueSessionRegistry, type CueSessionRegistry } from './cue-session-registry';
 import type { SessionState } from './cue-session-state';
-import { createCueRecoveryService, type CueRecoveryService } from './cue-recovery-service';
+import {
+	createCueRecoveryService,
+	ORPHANED_RUN_MESSAGE,
+	type CueRecoveryService,
+} from './cue-recovery-service';
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
 import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './cue-metrics';
 import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
-import { countCueEvents, getRecentCueEvents, type CueEventRecord } from './cue-db';
+import {
+	countCueEvents,
+	getCueFailureStreakRecords,
+	getRecentCueEvents,
+	type CueEventRecord,
+} from './cue-db';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { readCueConfigFile, writeCueConfigFile } from './config/cue-config-repository';
 import { removeSubscriptionFromYaml, type SelfDestructResult } from './cue-self-destruct';
@@ -157,6 +176,10 @@ export class CueEngine {
 	 * sessions that arrive after start() (the common case at boot). */
 	private startReason: 'system-boot' | null = null;
 	private activityLog: CueActivityLog = createCueActivityLog();
+	/** Consecutive failed runs per (agent, subscription). See cue-failure-streak.ts. */
+	private failureStreaks: CueFailureStreakTracker = createCueFailureStreakTracker((sessionId) =>
+		this.failureAlertThresholdFor(sessionId)
+	);
 	private registry: CueSessionRegistry;
 	private fanInTracker!: CueFanInTracker;
 	private runManager!: CueRunManager;
@@ -270,6 +293,7 @@ export class CueEngine {
 				}),
 			onRunCompleted: (sessionId, result, subscriptionName, chainDepth, chainRootId) => {
 				this.pushActivityLog(result);
+				this.recordFailureStreak(result);
 				this.safeEmitPluginEvent({
 					topic: 'cue.runFinished',
 					at: new Date().toISOString(),
@@ -502,6 +526,7 @@ export class CueEngine {
 				})),
 			getSessionStates: () => this.registry.snapshot(),
 			getActiveRunCount: (sessionId) => this.runManager.getActiveRunCount(sessionId),
+			getFailureStreaks: (sessionId) => this.failureStreaks.list(sessionId),
 			// Use the partitioned/detailed loader so an inactive session's
 			// dashboard view matches what the runtime will see when the engine
 			// initializes that session. The legacy `loadCueConfig` skips
@@ -608,6 +633,8 @@ export class CueEngine {
 		for (const session of sessions) {
 			this.sessionRuntimeService.initSession(session, { reason });
 		}
+		// After initSession, so each agent's own failure_alert_threshold is known.
+		this.seedFailureStreaks();
 
 		// Phase 12A - restore persisted queue entries AFTER sessions are
 		// initialized (so registry.get(...) has their configs / timeout). Each
@@ -675,6 +702,8 @@ export class CueEngine {
 
 		this.runManager.reset();
 		this.fanInTracker.reset();
+		// The next start() re-seeds from cue_events, so nothing is lost.
+		this.failureStreaks.clear();
 
 		// Stop heartbeat and close database via the recovery service.
 		this.heartbeat.stop();
@@ -723,6 +752,15 @@ export class CueEngine {
 	/** Teardown all subscriptions for a session */
 	removeSession(sessionId: string): void {
 		this.sessionRuntimeService.removeSession(sessionId);
+		this.failureStreaks.clearSession(sessionId);
+	}
+
+	/**
+	 * Every current consecutive-failure streak, including ones still below the
+	 * alert threshold (`failing: false`). Feeds `cue list`.
+	 */
+	getFailureStreaks(): CueFailureStreak[] {
+		return this.failureStreaks.list();
 	}
 
 	/** Returns status of all sessions with Cue configs */
@@ -1029,14 +1067,12 @@ export class CueEngine {
 	 * this state by inspecting the returned `writtenRoots` array.
 	 */
 	saveSettings(settings: import('./cue-types').CueSettings): { writtenRoots: string[] } {
-		// Strip `owner_agent_id` - it is a PER-ROOT field (it pins ownership to an
-		// agent that lives at one specific projectRoot) and must never propagate
-		// across roots. Merging it into every cue.yaml here is exactly how every
-		// single-agent project ended up with a bogus
-		// "settings.owner_agent_id ... does not match any agent" warning: one
-		// root's owner leaked through getSettings() and got broadcast to all.
-		// Each file keeps its OWN existing owner_agent_id via the merge below.
-		const { owner_agent_id: _perRootOwner, ...globalSettings } = settings;
+		// Strip the PER-ROOT fields (`owner_agent_id`, `failure_alert_threshold`):
+		// they must never propagate across roots. Merging `owner_agent_id` into
+		// every cue.yaml here is exactly how every single-agent project ended up
+		// with a bogus "settings.owner_agent_id ... does not match any agent"
+		// warning. Each file keeps its OWN existing values via the merge below.
+		const globalSettings = withoutPerRootCueSettings(settings);
 		// Dedupe by config root so two sessions sharing the same cue.yaml don't
 		// cause a double-write race. Prefer `configRoot` (config-from-ancestor
 		// case) over the session's own projectRoot.
@@ -1458,6 +1494,64 @@ export class CueEngine {
 					reason,
 				});
 			});
+	}
+
+	/** The failure-alert threshold in force for one agent's cue.yaml. */
+	private failureAlertThresholdFor(sessionId: string): number {
+		return resolveFailureAlertThreshold(this.registry.get(sessionId)?.config.settings);
+	}
+
+	/**
+	 * Fold a finished run into its failure streak and announce a transition.
+	 * Never throws: alert bookkeeping must not break chain propagation.
+	 */
+	private recordFailureStreak(result: CueRunResult): void {
+		try {
+			const transition = this.failureStreaks.record(result);
+			if (!transition) return;
+			const payload = failureStreakPayload(transition);
+			if (payload.type === 'subscriptionFailing') {
+				this.meteredOnLog(
+					'error',
+					`[CUE] "${payload.subscriptionName}" on "${payload.sessionName}" failed ${payload.consecutiveFailures} runs in a row`,
+					payload
+				);
+			} else {
+				this.meteredOnLog(
+					'info',
+					`[CUE] "${payload.subscriptionName}" on "${payload.sessionName}" recovered after ${payload.consecutiveFailures} failed runs`,
+					payload
+				);
+			}
+		} catch (err) {
+			captureException(err, { operation: 'cue:failureStreak', runId: result.runId });
+		}
+	}
+
+	/**
+	 * Rebuild failure streaks from `cue_events`, so a subscription that was
+	 * failing before a restart still reads as failing (and is not announced a
+	 * second time). Reads the DB, not the 1000-row activity log, so a busy
+	 * agent cannot push a failing subscription out of the window.
+	 */
+	private seedFailureStreaks(): void {
+		try {
+			const sessionNamesById = new Map(this.deps.getSessions().map((s) => [s.id, s.name]));
+			this.failureStreaks.seed(
+				getCueFailureStreakRecords(ORPHANED_RUN_MESSAGE).map((record) => ({
+					sessionId: record.sessionId,
+					sessionName: sessionNamesById.get(record.sessionId) ?? record.sessionId,
+					subscriptionName: record.subscriptionName,
+					consecutiveFailures: record.consecutiveFailures,
+					firstFailedAt: new Date(record.firstFailedAt).toISOString(),
+					lastFailedAt: new Date(record.lastFailedAt).toISOString(),
+					lastStatus: record.lastStatus,
+					lastError: record.lastError ?? undefined,
+				}))
+			);
+		} catch (err) {
+			captureException(err, { operation: 'cue:failureStreakSeed' });
+		}
 	}
 
 	/**

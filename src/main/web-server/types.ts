@@ -26,6 +26,7 @@ import type { UsageStats } from '../../shared/types';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import type { CueTurnSettings } from '../../shared/cue/turn-settings';
+import type { CueFailureStreak, CueSubscriptionHealth } from '../../shared/cue/failure-streak';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
@@ -1543,7 +1544,24 @@ export interface CueSubscriptionInfo {
 	tier?: CueTurnSettings['tier'];
 	model?: string;
 	effort?: CueTurnSettings['effort'];
+	/** `failing` once the subscription failed `failure_alert_threshold` runs in
+	 *  a row on this agent; back to `ok` when a run succeeds. */
+	health: CueSubscriptionHealth;
+	/** The current run of consecutive failures, present from the first failure
+	 *  (so a streak still below the threshold is visible too). */
+	failureStreak?: CueSubscriptionFailureStreakInfo;
 }
+
+/** `cue list` view of a {@link CueFailureStreak}. */
+export type CueSubscriptionFailureStreakInfo = Pick<
+	CueFailureStreak,
+	| 'consecutiveFailures'
+	| 'firstFailedAt'
+	| 'lastFailedAt'
+	| 'lastStatus'
+	| 'lastError'
+	| 'alertThreshold'
+>;
 
 /** Web-specific Cue activity log entry (simplified from engine types) */
 export interface CueActivityEntry {

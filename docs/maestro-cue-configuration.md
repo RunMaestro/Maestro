@@ -74,6 +74,7 @@ settings:
   timeout_on_fail: string # Default: 'break'. What to do on timeout: 'break' or 'continue'
   max_concurrent: number # Default: 1. Simultaneous runs (1-10)
   queue_size: number # Default: 512. Max queued events (0-10000; 0 disables buffering)
+  failure_alert_threshold: number # Default: 3. Failed runs in a row before a subscription reads as failing (0 turns it off)
   owner_agent_id: string # Optional. Pin this cue.yaml to a single agent (id or name). See "Sharing a workspace".
 ```
 
@@ -410,6 +411,23 @@ settings:
   queue_size: 1024 # Buffer up to 1024 events
 ```
 
+### failure_alert_threshold
+
+**Default:** `3` | **Type:** integer, 0-1000
+
+How many runs of one subscription must fail (or time out) in a row before Maestro tells you. When a subscription reaches this count on an agent:
+
+- A red toast names the subscription and the agent. It stays until you dismiss it.
+- The Cue dashboard shows that agent as **Failing** (red) and lists the failing subscriptions, and the agent's Cue icon in the Left Bar turns red.
+- `maestro-cli cue list` marks the subscription `[FAILING]`, and `cue list --json` reports `"health": "failing"` with a `failureStreak` object.
+
+One more toast fires if the streak reaches ten times the threshold. After that Maestro stays quiet until a run of that subscription succeeds, which clears the state and shows a short recovery toast. A run you stop by hand neither counts as a failure nor clears the streak. Set `0` to turn the alert off; failures are still counted in `cue list --json`.
+
+```yaml
+settings:
+  failure_alert_threshold: 5 # Tell me after 5 failed runs in a row
+```
+
 ## Validation
 
 The engine validates your YAML on every load. Common validation errors:
@@ -427,6 +445,7 @@ The engine validates your YAML on every load. Common validation errors:
 | `"source_session" is required`             | `agent.completed` events need the name of the source agent                                          |
 | `"max_concurrent" must be between 1-10`    | Keep concurrent runs within the allowed range                                                       |
 | `"queue_size" must be between 0-10000`     | Keep queue size within the allowed range                                                            |
+| `"failure_alert_threshold" must be 0-1000` | Use a whole number of failed runs; `0` turns the alert off                                          |
 | `filter key must be string/number/bool`    | Filter values only accept primitive types                                                           |
 
 The inline YAML editor in the Cue Modal shows validation errors in real-time as you type. A green **Valid YAML** indicator at the bottom confirms your config parses correctly.
