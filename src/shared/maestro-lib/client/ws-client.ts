@@ -1272,6 +1272,14 @@ class WsMaestroClient implements MaestroClient {
 			case 'settings:externalChange':
 				this.emit({ type: 'settings.changed', keys: 'unknown' });
 				return;
+			case 'history:externalChange':
+			case 'history:entryAdded': {
+				// A host wrote an agent's History. `externalChange` names the agent first, `entryAdded`
+				// (a desktop's renderer write) after the entry.
+				const agentId = asString(channel === 'history:entryAdded' ? args[1] : args[0]);
+				if (agentId) this.emit({ type: 'history.changed', agentId });
+				return;
+			}
 			case 'process:user-input': {
 				const input = parseUserInputFrame(args);
 				if (!input) return;

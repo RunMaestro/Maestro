@@ -748,7 +748,7 @@ export const TerminalOutput = memo(
 							const index = logStartIndex + visibleIndex;
 							return (
 								<LogItem
-									key={log.id}
+									key={log.rowKey ?? log.id}
 									log={log}
 									index={index}
 									isTerminal={isTerminal}

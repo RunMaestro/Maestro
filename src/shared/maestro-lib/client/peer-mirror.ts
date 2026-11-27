@@ -140,6 +140,8 @@ export type MirrorEvent =
 	| { type: 'agent.autorunActivity'; agentId: string; activity: AutoRunActivity }
 	/** Read this tab's transcript again on next open (now, when it is open). */
 	| { type: 'tab.stale'; agentId: string; tabId: string }
+	/** The host wrote the agent's History (`history.changed`): read it again. */
+	| { type: 'agent.history'; agentId: string }
 	/** Every tab is stale: the connection could not resume, or the desktop woke up. */
 	| { type: 'peer.stale' }
 	/** The peer is no longer mirrored: its remote was deleted or opted out. */
@@ -608,6 +610,9 @@ export function applyPeerEvent(
 			if (run.frame === undefined && run.state !== null) return { peer, push: [] };
 			return setAgentAutoRun(peer, event.agentId, run.frame ?? null);
 		}
+		case 'history.changed':
+			if (!peer.agents.some((agent) => agent.id === event.agentId)) return { peer, push: [] };
+			return { peer, push: [{ type: 'agent.history', agentId: event.agentId }] };
 		default:
 			return { peer, push: [] };
 	}

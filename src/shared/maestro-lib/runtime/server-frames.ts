@@ -399,6 +399,10 @@ export function framesForEvent(event: MaestroEvent, state: FrameState): Frame[] 
 			return autoRunFrames(event.agentId, event.event);
 		case 'autorun.ended':
 			return [autoRunEndedFrame(event.agentId, event.outcome)];
+		case 'history.changed':
+			// The frame a desktop's History watcher sends (`history:externalChange`), so a client reads
+			// both host kinds the same way.
+			return [bridgeEvent('history:externalChange', event.agentId)];
 		case 'groupChat':
 			return groupChatFrames(event.chatId, event.event);
 		default:
