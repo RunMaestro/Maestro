@@ -236,6 +236,25 @@ describe('mergeHostedLogs', () => {
 		expect(merged.find((e) => e.id === 'k1')?.keptForHost).toBe(true);
 	});
 
+	it('never takes a host message with the same words written before the send, even after the bubble (CodeRabbit on #2164)', () => {
+		const typedAt = 10 * 60_000;
+		const sentAt = typedAt + 60_000;
+		const bubble = local('k1', {
+			text: 'continue',
+			timestamp: typedAt,
+			keptForHost: true,
+			keptSentAt: sentAt,
+		});
+		// Another client's "continue" while this one waited 60 s for the link, never drawn here.
+		const between = { ...record('y0', 'continue'), timestamp: typedAt + 30_000 };
+		const waiting = mergeHostedLogs([local('h1'), bubble], [record('h1'), between], undefined);
+		expect(waiting.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['k1', 'y0']);
+		// The host's own copy, stamped by a clock 3 s behind at the send, takes the bubble's place.
+		const copy = { ...record('y1', 'continue'), timestamp: sentAt - 3_000 };
+		const taken = mergeHostedLogs(waiting, [record('h1'), between, copy], undefined);
+		expect(taken.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y0', 'y1']);
+	});
+
 	it('keeps a kept bubble when the host holds only an earlier message with the same words (R14)', () => {
 		// "hello" was sent and drawn before the link dropped; the kept "hello" is a second one.
 		const before = [

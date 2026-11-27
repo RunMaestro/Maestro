@@ -169,6 +169,25 @@ function byTime(local: readonly LogEntry[], host: readonly LogEntry[]): LogEntry
 const ANSWER_SOURCES = new Set<LogEntry['source']>(['stdout', 'ai']);
 
 /**
+ * `entry` with its delivered tick set to `answered`, as one object per entry and value across
+ * merges: the host's saved entries are cached objects (`persistedView()`), and a new copy on every
+ * pass would miss `withDrawnEntriesKept()`'s cache and be compared again on every chunk of a
+ * streaming reply (R29). The stored record is never written.
+ */
+function withDelivered(entry: LogEntry, answered: boolean): LogEntry {
+	let variants = deliveredVariants.get(entry);
+	if (!variants) {
+		variants = {};
+		deliveredVariants.set(entry, variants);
+	}
+	const key = answered ? 'yes' : 'no';
+	return (variants[key] ??= { ...entry, delivered: answered });
+}
+
+/** The delivered-tick copies `withDelivered()` made of an entry, one per value. */
+const deliveredVariants = new WeakMap<LogEntry, { yes?: LogEntry; no?: LogEntry }>();
+
+/**
  * The host's user entries with "Message delivered" set by the rule a local tab follows: a local
  * send marks its message delivered when the agent's answer reaches the tab as data
  * (`markDelivered()`), which the main process emits when the provider reports its result, at the
@@ -187,7 +206,7 @@ function withAnswerDelivery(entries: LogEntry[], fromHost: ReadonlySet<string>):
 		const entry = entries[pendingUser];
 		if (fromHost.has(entry.id) && !!entry.delivered !== answered) {
 			out ??= [...entries];
-			out[pendingUser] = { ...entry, delivered: answered };
+			out[pendingUser] = withDelivered(entry, answered);
 		}
 	};
 	entries.forEach((entry, i) => {
@@ -223,11 +242,12 @@ export const HOST_COPY_CLOCK_SKEW_MS = 5_000;
  * same number of images replaces one bubble. Each host entry replaces at most one. Never an entry
  * this tab already drew before (an earlier message with the same words), never before the send
  * (a message another client sent with the same words), and never a host entry written more than
- * `HOST_COPY_CLOCK_SKEW_MS` before the bubble itself (R28, R30): the host writes its copy after the
- * message was typed, so an earlier message with the same words, read in now, is not this one. The
- * mirror holds no reading of the host's clock, so the bound absorbs a host clock that runs behind
- * this one when the message was kept for less time than the clock is off (a short blip, a retry
- * the moment the link is back). A kept bubble waits for its own copy.
+ * `HOST_COPY_CLOCK_SKEW_MS` before the bubble or its last send (R28, R30): the host writes its copy
+ * when it takes the message, after this machine sent it (`keptSentAt` is set again on each send and
+ * cleared when the host refuses), so an earlier message with the same words, read in now, is not
+ * this one. The mirror holds no reading of the host's clock, so the bound absorbs a host clock
+ * that runs behind this one (an older desktop host, a retry the moment the link is back). A kept
+ * bubble waits for its own copy.
  */
 function withoutKeptCopies(
 	older: LogEntry[],
@@ -240,13 +260,14 @@ function withoutKeptCopies(
 	if (copies.length === 0) return older;
 	return older.filter((entry) => {
 		if (!entry.keptForHost || entry.keptSentAt === undefined) return true;
+		const sentAt = entry.keptSentAt;
 		const at = copies.findIndex(
 			(copy) =>
 				copy.text === entry.text &&
 				(copy.images?.length ?? 0) === (entry.images?.length ?? 0) &&
-				// Written at or after the bubble, give or take a host clock behind this one: an older
-				// message the host read in now, with the same words, is not this one (R28, R30).
-				copy.timestamp >= entry.timestamp - HOST_COPY_CLOCK_SKEW_MS
+				// Written at or after the bubble and its send, give or take a host clock behind this one:
+				// an older message the host read in now, with the same words, is not this one (R28, R30).
+				copy.timestamp >= Math.max(entry.timestamp, sentAt) - HOST_COPY_CLOCK_SKEW_MS
 		);
 		if (at === -1) return true;
 		copies.splice(at, 1);

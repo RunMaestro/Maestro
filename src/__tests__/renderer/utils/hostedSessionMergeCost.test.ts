@@ -24,10 +24,13 @@ const TRANSCRIPT = 4000;
 const CHUNKS = 40;
 
 /** A saved transcript: user messages, answers, and a tool card every fourth entry. */
-function savedTranscript(): LogEntryRecord[] {
+function savedTranscript(delivered: boolean | 'absent' = true): LogEntryRecord[] {
 	return Array.from({ length: TRANSCRIPT }, (_, i): LogEntryRecord => {
 		const base = { id: `e${i}`, timestamp: i + 1 };
-		if (i % 4 === 0) return { ...base, source: 'user', text: `ask ${i}`, delivered: true };
+		if (i % 4 === 0) {
+			const message = { ...base, source: 'user' as const, text: `ask ${i}` };
+			return delivered === 'absent' ? message : { ...message, delivered };
+		}
 		if (i % 4 === 3) {
 			return {
 				...base,
@@ -93,6 +96,30 @@ describe('a streaming hosted reply costs each chunk the same (R29)', () => {
 		expect(logs.slice(0, TRANSCRIPT).every((entry, i) => entry.id === `e${i}`)).toBe(true);
 		expect(logs[TRANSCRIPT].text).toContain(`chunk ${CHUNKS - 1}`);
 	});
+
+	// CodeRabbit on #2164: a host that stores no delivered flag (or false) has its tick inferred
+	// from the answer; the inferred entry must be one object across merges, or it misses the cache.
+	it.each([
+		['no stored flag', 'absent'],
+		['a stored false', false],
+	] as const)(
+		'keeps the per-chunk bound when the delivered tick is inferred (%s)',
+		(_label, flag) => {
+			const persisted = savedTranscript(flag);
+			let logs = mergeHostedLogs(heldHere(persisted), persisted, tailAt(1));
+			__hostedEntryComparesForTests(true);
+			vi.mocked(canonicalJson).mockClear();
+			const compares: number[] = [];
+			for (let chunk = 2; chunk <= CHUNKS; chunk += 1) {
+				logs = mergeHostedLogs(logs, persisted, tailAt(chunk));
+				compares.push(__hostedEntryComparesForTests(true));
+			}
+			expect(Math.max(...compares)).toBeLessThanOrEqual(2);
+			// The tick still shows on each answered message, and the stored record is not written.
+			expect(logs[0].delivered).toBe(true);
+			expect(persisted[0].delivered).toBe(flag === 'absent' ? undefined : flag);
+		}
+	);
 
 	it('still redraws a saved entry the host changed between chunks', () => {
 		const persisted = savedTranscript();
