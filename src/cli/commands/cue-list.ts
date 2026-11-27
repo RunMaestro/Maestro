@@ -65,7 +65,8 @@ export async function cueList(options: CueListOptions): Promise<void> {
 
 			for (const sub of subs) {
 				const failing = sub.health === 'failing';
-				const status = failing ? '!' : sub.enabled ? '✓' : '✗';
+				// Enabled state stays visible; `[FAILING]` reports health separately.
+				const status = sub.enabled ? '✓' : '✗';
 				const triggered = sub.lastTriggered
 					? `last: ${formatTimeAgo(sub.lastTriggered)}`
 					: 'never triggered';

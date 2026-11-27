@@ -227,6 +227,41 @@ describe('createCueFailureStreakTracker', () => {
 		expect(tracker.list()[0].consecutiveFailures).toBe(30);
 	});
 
+	it('judges a restored streak against the threshold its agent has when it next runs', () => {
+		// At boot the seed runs before agents register: the default (3) is all
+		// that is known. The agent's real threshold (10) arrives later.
+		let threshold = 3;
+		const tracker = createCueFailureStreakTracker(() => threshold);
+		tracker.seed([stored({ consecutiveFailures: 5 })]);
+		threshold = 10;
+
+		const transitions = [];
+		for (let i = 6; i <= 10; i++) transitions.push(tracker.record(run('failed')));
+		expect(transitions.filter(Boolean)).toEqual([
+			expect.objectContaining({
+				kind: 'failing',
+				streak: expect.objectContaining({ consecutiveFailures: 10 }),
+			}),
+		]);
+	});
+
+	it('announces no recovery once alerts are turned off', () => {
+		let threshold = 3;
+		const tracker = createCueFailureStreakTracker(() => threshold);
+		for (let i = 0; i < 3; i++) tracker.record(run('failed'));
+		threshold = 0;
+		expect(tracker.record(run('completed'))).toBeNull();
+		expect(tracker.list()).toEqual([]);
+	});
+
+	it('announces recovery for a restored streak that had alerted', () => {
+		const tracker = createCueFailureStreakTracker(() => 3);
+		tracker.seed([stored({ consecutiveFailures: 4 })]);
+		expect(tracker.record(run('completed'))).toMatchObject({ kind: 'recovered' });
+		tracker.seed([stored({ consecutiveFailures: 2 })]);
+		expect(tracker.record(run('completed'))).toBeNull();
+	});
+
 	it('returns copies, so callers cannot mutate tracker state', () => {
 		const tracker = createCueFailureStreakTracker(() => 3);
 		tracker.record(run('failed'));

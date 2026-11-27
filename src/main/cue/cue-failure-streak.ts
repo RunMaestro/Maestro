@@ -74,8 +74,13 @@ export interface CueFailureStreakTracker {
 
 interface StreakEntry {
 	streak: CueFailureStreakSeed;
-	/** 0 = none, 1 = threshold alert sent, 2 = escalation sent. */
-	alertsSent: number;
+	/**
+	 * 0 = none, 1 = threshold alert sent, 2 = escalation sent. `null` for a
+	 * streak restored at start and not yet judged: at boot the engine seeds
+	 * before agents register, so their thresholds are not known yet. The first
+	 * run of the subscription settles it (see {@link sentLevel}).
+	 */
+	alertsSent: number | null;
 }
 
 function streakKey(sessionId: string, subscriptionName: string): string {
@@ -93,6 +98,18 @@ function summarizeError(stderr: string | null | undefined): string | undefined {
 function alertLevelReached(count: number, threshold: number): number {
 	if (threshold <= 0 || count < threshold) return 0;
 	return count >= failureStreakEscalationThreshold(threshold) ? 2 : 1;
+}
+
+/**
+ * The alert level already sent for a streak. A restored streak counts every
+ * level its pre-restart count reached under the agent's threshold NOW, so the
+ * user is not told twice and a restart never skips a level they were not told.
+ */
+function sentLevel(entry: StreakEntry, threshold: number): number {
+	if (entry.alertsSent === null) {
+		entry.alertsSent = alertLevelReached(entry.streak.consecutiveFailures, threshold);
+	}
+	return entry.alertsSent;
 }
 
 function judged(streak: CueFailureStreakSeed, threshold: number): CueFailureStreak {
@@ -117,7 +134,8 @@ export function createCueFailureStreakTracker(
 				const ended = entries.get(key);
 				if (!ended) return null;
 				entries.delete(key);
-				return ended.alertsSent > 0
+				// No recovery news for a streak that never alerted, or once alerts are off.
+				return threshold > 0 && sentLevel(ended, threshold) > 0
 					? { kind: 'recovered', streak: judged(ended.streak, threshold) }
 					: null;
 			}
@@ -126,6 +144,8 @@ export function createCueFailureStreakTracker(
 			const at = run.endedAt || new Date().toISOString();
 			let entry = entries.get(key);
 			if (entry) {
+				// Settle a restored streak's sent level on its pre-restart count.
+				sentLevel(entry, threshold);
 				entry.streak.consecutiveFailures += 1;
 			} else {
 				entry = {
@@ -152,8 +172,9 @@ export function createCueFailureStreakTracker(
 			// One alert per level crossed, never repeated: a threshold raised past
 			// the count waits for the new level, one lowered below it fires next run.
 			const level = alertLevelReached(streak.consecutiveFailures, threshold);
-			if (level <= entry.alertsSent) return null;
-			const escalated = level === 2 && entry.alertsSent === 1;
+			const sent = sentLevel(entry, threshold);
+			if (level <= sent) return null;
+			const escalated = level === 2 && sent === 1;
 			entry.alertsSent = level;
 			return { kind: 'failing', escalated, streak: judged(streak, threshold) };
 		},
@@ -161,10 +182,9 @@ export function createCueFailureStreakTracker(
 		seed(streaks) {
 			entries.clear();
 			for (const seed of streaks) {
-				const streak = { ...seed, lastError: summarizeError(seed.lastError) };
 				entries.set(streakKey(seed.sessionId, seed.subscriptionName), {
-					streak,
-					alertsSent: alertLevelReached(streak.consecutiveFailures, thresholdFor(streak.sessionId)),
+					streak: { ...seed, lastError: summarizeError(seed.lastError) },
+					alertsSent: null,
 				});
 			}
 		},

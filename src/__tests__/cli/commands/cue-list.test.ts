@@ -90,8 +90,22 @@ describe('cueList command', () => {
 	it('marks a failing subscription in text output and describes its streak', async () => {
 		await cueList({});
 		const text = consoleSpy.mock.calls[0][0] as string;
-		expect(text).toContain('  !  sms-poll  [FAILING]');
+		expect(text).toContain('  ✓  sms-poll  [FAILING]');
 		expect(text).toContain('failing: 134 failed runs in a row - last error: No, exit');
+	});
+
+	it('keeps the disabled mark on a failing subscription', async () => {
+		vi.mocked(withMaestroClient).mockImplementation(async (fn) =>
+			fn({
+				sendCommand: vi.fn().mockResolvedValue({
+					type: 'cue_subscriptions',
+					subscriptions: [{ ...subscriptions[0], enabled: false }],
+				}),
+			} as any)
+		);
+		await cueList({});
+		const text = consoleSpy.mock.calls[0][0] as string;
+		expect(text).toContain('  ✗  sms-poll  [FAILING]');
 	});
 
 	it('shows a streak below the threshold without calling it failing', async () => {
