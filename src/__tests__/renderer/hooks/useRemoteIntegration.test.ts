@@ -5693,6 +5693,51 @@ describe('useRemoteIntegration', () => {
 			unmount();
 		});
 
+		it('skips an unchanged agent object but still sees a replaced one and a desktop selection', () => {
+			const tab = createMockTab({ name: 'Before' });
+			const session = createMockSession({
+				id: 'gated-session',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			const { unmount } = renderHook(() =>
+				useRemoteIntegration(createDeps({ sessions: [session], isLiveMode: true }))
+			);
+			vi.advanceTimersByTime(500);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenCalledTimes(1);
+
+			// Same object on every tick: nothing to send.
+			vi.advanceTimersByTime(1500);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenCalledTimes(1);
+
+			// The same object, but the user picked the tab on the desktop.
+			noteDesktopAiTabSelection(session.id, tab.id);
+			vi.advanceTimersByTime(500);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenCalledTimes(2);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+				session.id,
+				expect.any(Array),
+				tab.id,
+				true
+			);
+
+			// A replaced agent whose tab was renamed.
+			act(() =>
+				useSessionStore.setState({
+					sessions: [{ ...session, aiTabs: [{ ...tab, name: 'After' }] }],
+				})
+			);
+			vi.advanceTimersByTime(500);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenCalledTimes(3);
+			expect(mockWeb.broadcastTabsChange).toHaveBeenLastCalledWith(
+				session.id,
+				expect.arrayContaining([expect.objectContaining({ id: tab.id, name: 'After' })]),
+				tab.id,
+				false
+			);
+			unmount();
+		});
+
 		it('broadcasts tab changes to web clients when in live mode', () => {
 			const tab = createMockTab({ id: 'tab-1' });
 			const session = createMockSession({
