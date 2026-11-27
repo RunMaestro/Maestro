@@ -416,7 +416,9 @@ function consultWhileHostDown(
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tabId = item.tabId || session?.activeTabId;
 	if (!session || !tabId) return item;
-	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images, {
+		settings: item,
+	});
 	return {
 		...item,
 		crossAgentMention: undefined,
@@ -439,7 +441,9 @@ function consultFirstWhileHostDown(
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tabId = item.tabId || session?.activeTabId;
 	if (!session || !tabId) return false;
-	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images, {
+		settings: item,
+	});
 	return true;
 }
 
@@ -654,7 +658,9 @@ function fireMentionsForHostTurn(
 		deferHostedHandoff(sessionId, tabId, () => {
 			const current = selectSessionById(sessionId)(useSessionStore.getState());
 			if (!current) return;
-			dispatchCrossAgentMentions(mention, item.text ?? '', current, tabId, item.images);
+			dispatchCrossAgentMentions(mention, item.text ?? '', current, tabId, item.images, {
+				settings: item,
+			});
 			markHandoffSentToHost(
 				sessionId,
 				tabId,
@@ -666,7 +672,9 @@ function fireMentionsForHostTurn(
 		});
 		return;
 	}
-	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images, {
+		settings: item,
+	});
 	if (mention.routing === 'handoff') {
 		markHandoffSentToHost(
 			sessionId,
@@ -1169,7 +1177,8 @@ export function fireHostStartedMentions(
 			waiting.item.text ?? '',
 			session,
 			tabId,
-			waiting.item.images
+			waiting.item.images,
+			{ settings: waiting.item }
 		);
 		releaseHostedTabLine(waiting.sessionId, lineTabId, `start:${hostItemId}`);
 	}
@@ -1271,7 +1280,9 @@ export async function sendTakenItemToHost(sessionId: string, item: QueuedItem): 
 		updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, queuedItemOwnerTabId(s, item)));
 		const tabId = item.tabId || session.activeTabId;
 		if (mention && tabId) {
-			dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+			dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images, {
+				settings: item,
+			});
 		}
 		return true;
 	}

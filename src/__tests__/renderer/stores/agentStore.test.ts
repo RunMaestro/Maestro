@@ -1849,7 +1849,11 @@ describe('agentStore', () => {
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
 				undefined,
-				{ routingOverride: undefined, planText: 'now ask @Backend to review' }
+				{
+					routingOverride: undefined,
+					planText: 'now ask @Backend to review',
+					settings: expect.objectContaining({ text: 'now ask @Backend to review' }),
+				}
 			);
 			// The local turn still runs: a trailing mention does not suppress it.
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
@@ -1895,6 +1899,7 @@ describe('agentStore', () => {
 				{
 					routingOverride: 'parallel',
 					planText: 'fix it, then send the results to @Backend',
+					settings: expect.objectContaining({ mentionRouting: 'parallel' }),
 				}
 			);
 		});
@@ -1940,6 +1945,7 @@ describe('agentStore', () => {
 				{
 					routingOverride: undefined,
 					planText: '(Design Mode pick)\n\nask @Backend about it',
+					settings: expect.objectContaining({ type: 'message' }),
 				}
 			);
 		});
