@@ -548,6 +548,75 @@ describe('SessionList', () => {
 	// LIVE Mode Tests
 	// ============================================================================
 
+	describe('Starred Sessions section', () => {
+		const openItem = (overrides: Record<string, unknown> = {}) => ({
+			kind: 'open',
+			key: 'open:s1:t1',
+			displayName: 'Release notes',
+			agentName: 'Alpha',
+			parentSessionId: 's1',
+			tabId: 't1',
+			hasUnread: false,
+			...overrides,
+		});
+		const closedItem = {
+			kind: 'closed',
+			key: 'closed:s1:asid-closed',
+			displayName: 'Old chat',
+			agentName: 'Alpha',
+			parentSessionId: 's1',
+			agentId: 'claude-code',
+			agentSessionId: 'asid-closed',
+			projectPath: '/proj',
+			sessionName: 'Old chat',
+		};
+
+		beforeEach(() => {
+			useSettingsStore.setState({
+				showStarredSessionsSection: true,
+				starredSessionsCollapsed: false,
+			});
+		});
+
+		it('draws the unread dot only on an open row whose tab has an unread reply', () => {
+			render(
+				<SessionList
+					{...createDefaultProps({
+						starredItems: [
+							openItem({ hasUnread: true }),
+							openItem({ key: 'open:s1:t2', tabId: 't2', displayName: 'Read tab' }),
+							closedItem,
+						],
+					})}
+				/>
+			);
+
+			expect(screen.getAllByTestId('starred-unread-dot')).toHaveLength(1);
+			expect(screen.getByTitle('Release notes - Alpha (unread)')).toBeInTheDocument();
+		});
+
+		it('copies the tab deep link from an open row without activating it', async () => {
+			const mockClipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+			Object.assign(navigator, { clipboard: mockClipboard });
+			const activateStarredItem = vi.fn();
+			render(
+				<SessionList {...createDefaultProps({ starredItems: [openItem()], activateStarredItem })} />
+			);
+
+			fireEvent.click(screen.getByTestId('starred-copy-link'));
+
+			expect(mockClipboard.writeText).toHaveBeenCalledWith('maestro://session/s1/tab/t1');
+			expect(activateStarredItem).not.toHaveBeenCalled();
+		});
+
+		it('offers no copy link on a closed row (it has no tab to open)', () => {
+			render(<SessionList {...createDefaultProps({ starredItems: [closedItem] })} />);
+
+			expect(screen.getByText('Old chat')).toBeInTheDocument();
+			expect(screen.queryByTestId('starred-copy-link')).not.toBeInTheDocument();
+		});
+	});
+
 	describe('LIVE Mode', () => {
 		it('shows OFFLINE when live mode is disabled', () => {
 			useUIStore.setState({ leftSidebarOpen: true });

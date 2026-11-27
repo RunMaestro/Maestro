@@ -45,6 +45,8 @@ export type StarredItem =
 			agentName: string;
 			parentSessionId: string;
 			tabId: string;
+			/** The tab holds a reply the user has not seen (drawn as the agent-row red dot). */
+			hasUnread: boolean;
 	  }
 	| {
 			kind: 'closed';
@@ -104,7 +106,8 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 			.map((sess) => {
 				const tabs = (sess.aiTabs ?? [])
 					.map(
-						(t) => `${t.id}:${t.starred ? 1 : 0}:${t.agentSessionId ?? ''}:${getTabDisplayName(t)}`
+						(t) =>
+							`${t.id}:${t.starred ? 1 : 0}:${t.hasUnread ? 1 : 0}:${t.agentSessionId ?? ''}:${getTabDisplayName(t)}`
 					)
 					.join(',');
 				return `${sess.id}|${sess.name}|${sess.toolType}|${sess.projectRoot}|${tabs}`;
@@ -189,6 +192,7 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 					agentName: s.name,
 					parentSessionId: s.id,
 					tabId: t.id,
+					hasUnread: !!t.hasUnread,
 				});
 			}
 		}

@@ -102,7 +102,13 @@ describe('useStarredItems', () => {
 					id: 's1',
 					name: 'Alpha',
 					aiTabs: [
-						{ id: 't1', starred: true, agentSessionId: 'asid-1', name: 'Tab One' },
+						{
+							id: 't1',
+							starred: true,
+							hasUnread: true,
+							agentSessionId: 'asid-1',
+							name: 'Tab One',
+						},
 						{ id: 't2', starred: false, agentSessionId: 'asid-2', name: 'Not Starred' },
 					] as never,
 				}),
@@ -117,6 +123,7 @@ describe('useStarredItems', () => {
 			displayName: 'Tab One',
 			parentSessionId: 's1',
 			tabId: 't1',
+			hasUnread: true,
 		});
 	});
 
