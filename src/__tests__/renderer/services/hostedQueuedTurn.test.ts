@@ -1587,6 +1587,44 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
 				});
 
+				it("a desktop host whose queue frames trail its writes: the host's own list at the Stop says the message had started (Greptile on #2160)", async () => {
+					const id = `m25q-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					// The mirror still lists it (the host's frame is seconds behind); the host's own read
+					// just before the Stop did not: it was the turn the Stop ended.
+					mirrorHostQueue([id], []);
+					settleStoppedHostStartMentions(stop, []);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+					// The late frame names the start: nothing is asked.
+					hostSays(id, text, { queued: false, busy: 100 });
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+				});
+
+				it("the host's own list at the Stop still holds it: it waited through the Stop, and consults once when it starts (M25)", async () => {
+					const id = `m25r-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					// An older desktop host: no frame ever lists it, but its queue read does.
+					hostSays(id, text, { queued: false, busy: 200 });
+					hydrateHost(200);
+					fireHostStartedMentions(row(), undefined, now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					settleStoppedHostStartMentions(stop, [id]);
+					// It starts after the Stop and ends between two syncs: seen only in the saved transcript.
+					hostSays(id, text, { queued: false, logs: true });
+					fireHostStartedMentions(row(), undefined, now, 0, {
+						read: vi.fn(),
+						isCurrent: () => true,
+					});
+					expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
+				});
+
 				it('Stop on another tab keeps it', async () => {
 					const id = `m24t-${routing}`;
 					const text = await drainQueued(id, routing);

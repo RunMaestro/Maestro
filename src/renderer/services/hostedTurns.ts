@@ -467,9 +467,9 @@ export async function sendHostedTurn(
 export async function interruptHostedTurn(
 	session: Pick<Session, 'liftedTo'>,
 	tabId?: string
-): Promise<void> {
+): Promise<{ waitingAtStop?: string[] } | undefined> {
 	const target = hostedTargetOf(session);
-	if (target) await interruptMirroredAgent(target.peerId, target.agentId, tabId);
+	return target ? interruptMirroredAgent(target.peerId, target.agentId, tabId) : undefined;
 }
 
 /**

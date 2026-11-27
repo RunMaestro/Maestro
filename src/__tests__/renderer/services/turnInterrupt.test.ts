@@ -545,11 +545,11 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 	// Parity M25: a consult Stop may have ended waits for the host's answer to the Stop, because a
 	// start the host reported before it ran before the host stopped anything.
 	it.each([
-		['answers', async () => undefined],
+		['answers', async () => ({ waitingAtStop: ['w1'] })],
 		['fails', async () => Promise.reject(new Error('link down'))],
 	] as const)(
 		'hosted: Stop settles the consults it left waiting only once the host %s (M25)',
-		async (_outcome, answer) => {
+		async (outcome, answer) => {
 			useSettingsStore.setState({ federationHostedAgents: true });
 			vi.clearAllMocks();
 			crossAgentApi.cancel.mockResolvedValue({ canceled: 0 });
@@ -569,8 +569,12 @@ describe('interruptTurn: mode parity (local, SSH, hosted)', () => {
 			);
 			expect(settledBeforeAnswer).toBe(false);
 			// The settle is this Stop's own: the token its drop handed back.
-			expect(settleStoppedHostStartMentions).toHaveBeenCalledWith(
+			expect(vi.mocked(settleStoppedHostStartMentions).mock.calls[0][0]).toBe(
 				vi.mocked(dropStoppedHostStartMentions).mock.results[0].value
+			);
+			// With the host's own list at the Stop, when the host gave it.
+			expect(vi.mocked(settleStoppedHostStartMentions).mock.calls[0][1]).toEqual(
+				outcome === 'answers' ? ['w1'] : undefined
 			);
 		}
 	);

@@ -572,13 +572,21 @@ export function dropStoppedHostStartMentions(
  * queue never listed (an older desktop host sends no queue frames) stays, and consults only when
  * its own turn is seen running after Stop (`fireHostStartedMentions()`): Stop never loses it.
  */
-export function settleStoppedHostStartMentions(stop: HostStopToken): void {
+export function settleStoppedHostStartMentions(
+	stop: HostStopToken,
+	/**
+	 * The host's own queue (its waiting item ids), read just before it was told to stop. It rules
+	 * where given: a desktop host's queue frames trail its writes by seconds (Greptile on #2160),
+	 * so the mirror may still list a message that had started, or not yet list one that waits.
+	 */
+	waitingAtStop?: readonly string[]
+): void {
 	const { sessionId } = stop;
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const target = session ? hostedTargetOf(session) : undefined;
 	const peer = target ? usePeerMirrorStore.getState().peers[target.peerId] : undefined;
 	const listed = new Set(
-		((target && peer?.queues[target.agentId]) || []).map((queued) => queued.itemId)
+		waitingAtStop ?? ((target && peer?.queues[target.agentId]) || []).map((queued) => queued.itemId)
 	);
 	const exits = target ? peer?.queueExits?.[target.agentId] : undefined;
 	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
@@ -592,7 +600,9 @@ export function settleStoppedHostStartMentions(stop: HostStopToken): void {
 			queueExitOf(exits, hostItemId) === 'started' ||
 			(!!tab &&
 				hostRanMessage(tab.logs, waiting.afterEntryId, waitingMessage(hostItemId, waiting)));
-		if (ran || (!listed.has(hostItemId) && waiting.seenQueued)) {
+		// Gone from the host's own list read at the Stop: it started or went before the host stopped.
+		const leftBeforeStop = !listed.has(hostItemId) && (waiting.seenQueued || !!waitingAtStop);
+		if (ran || leftBeforeStop) {
 			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 			continue;
 		}

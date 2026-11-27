@@ -245,12 +245,16 @@ export async function interruptMirroredAgent(
 	peerId: string,
 	agentId: string,
 	tabId?: string
-): Promise<void> {
-	await actOnMirroredAgent(
+): Promise<{ waitingAtStop?: string[] } | undefined> {
+	const result = await actOnMirroredAgent(
 		peerId,
 		agentId,
 		tabId ? { kind: 'interrupt', tabId } : { kind: 'interrupt' }
 	);
+	// The host queue's waiting ids just before the Stop (M25), for the consults it may have ended.
+	return result?.kind === 'interrupt' && result.waitingAtStop
+		? { waitingAtStop: result.waitingAtStop }
+		: undefined;
 }
 
 /** Rename a mirrored tab on its host. An empty name clears it. */
