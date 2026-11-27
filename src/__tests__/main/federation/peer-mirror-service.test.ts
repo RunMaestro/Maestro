@@ -10,6 +10,7 @@ import * as os from 'os';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	MIRROR_ACT_RECONNECT_WAIT_MS,
+	MIRROR_IDLE_REDIAL_MAX_MS,
 	MIRROR_TURN_COALESCE_MS,
 	PeerMirrorService,
 	type PeerMirrorServiceDeps,
@@ -442,6 +443,82 @@ describe('PeerMirrorService', () => {
 		expect(a.lease.restart).toHaveBeenCalledTimes(1);
 		expect(result).toMatchObject({ ok: true, peer: { peerId: 'a', connection: 'connected' } });
 		expect(await h.service.reconnect('nope')).toMatchObject({ ok: false });
+	});
+
+	// Parity R16: a host nothing here is hosted on redials slowly while it stays down; one that runs
+	// an agent of this machine keeps the forward's own pace, and an explicit act dials at once.
+	describe('redial pace (R16)', () => {
+		const withCeiling = (host: FakeHost) => {
+			const setBackoffCeiling = vi.fn();
+			(host.lease as unknown as Record<string, unknown>).setBackoffCeiling = setBackoffCeiling;
+			return setBackoffCeiling;
+		};
+
+		it('slows the redial of a host nothing here is hosted on, and keeps the pace of one that is', async () => {
+			const a = fakeHost('a');
+			const b = fakeHost('b');
+			const ceilingA = withCeiling(a);
+			const ceilingB = withCeiling(b);
+			const h = harness(
+				[remoteOf('a'), remoteOf('b')],
+				{ a, b },
+				{
+					hostsAgents: (peerId) => peerId === 'b',
+				}
+			);
+			h.service.start();
+			await settle();
+			expect(ceilingA).toHaveBeenLastCalledWith(MIRROR_IDLE_REDIAL_MAX_MS);
+			expect(ceilingB).toHaveBeenLastCalledWith(undefined);
+		});
+
+		it('takes the pace again when what this machine hosts changes', async () => {
+			const a = fakeHost('a');
+			const ceiling = withCeiling(a);
+			let hosted = false;
+			const h = harness([remoteOf('a')], { a }, { hostsAgents: () => hosted });
+			h.service.start();
+			await settle();
+			expect(ceiling).toHaveBeenLastCalledWith(MIRROR_IDLE_REDIAL_MAX_MS);
+			hosted = true;
+			h.service.noteHostedAgentsChanged();
+			expect(ceiling).toHaveBeenLastCalledWith(undefined);
+			hosted = false;
+			h.service.noteHostedAgentsChanged();
+			expect(ceiling).toHaveBeenLastCalledWith(MIRROR_IDLE_REDIAL_MAX_MS);
+		});
+
+		it('leaves the pace alone without the predicate', async () => {
+			const a = fakeHost('a');
+			const ceiling = withCeiling(a);
+			const h = harness([remoteOf('a')], { a });
+			h.service.start();
+			await settle();
+			h.service.noteHostedAgentsChanged();
+			expect(ceiling).not.toHaveBeenCalled();
+		});
+
+		it('dials a downed forward at once on an act (a send), and still refuses it', async () => {
+			const a = fakeHost('a');
+			const h = harness([remoteOf('a')], { a }, { hostsAgents: () => false });
+			h.service.start();
+			await settle();
+			const down: SshForwardState = {
+				status: 'down',
+				error: new Error('ssh: connect refused'),
+				attempt: 3,
+				retryInMs: 240_000,
+			};
+			(a.lease as unknown as { state: () => SshForwardState }).state = () => down;
+			a.emitLease(down);
+			const answer = await h.service.act('a', 'a-a1', {
+				kind: 'send',
+				tabId: 't1',
+				text: 'hi',
+			} as never);
+			expect(a.lease.restart).toHaveBeenCalledTimes(1);
+			expect(answer).toMatchObject({ ok: false, notSent: true });
+		});
 	});
 
 	it('drops a remote that is deleted or opted out, and mirrors a newly opted-in one', async () => {

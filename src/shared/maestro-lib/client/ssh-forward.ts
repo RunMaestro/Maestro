@@ -131,6 +131,13 @@ export interface SshForwardLease {
 	onChange(listener: (state: SshForwardState) => void): () => void;
 	/** Stop the forward and start over with a fresh discovery now, skipping any backoff. */
 	restart(): void;
+	/**
+	 * The retry delay ceiling of this remote's forward while it stays down, in place of the
+	 * manager's `backoffMaxMs`: a longer one for a host nothing on this machine uses, so a host that
+	 * stays down is dialed less and less often. `undefined` is the manager's own again; a forward
+	 * waiting longer than that then dials at once. Optional: a caller's own lease may not have it.
+	 */
+	setBackoffCeiling?(ms: number | undefined): void;
 	/** Drop this lease. The forward stops with the last one. Safe to call twice. */
 	release(): Promise<void>;
 }
@@ -429,6 +436,8 @@ class RemoteForward {
 	private attempts = 0;
 	private upSince: number | undefined;
 	private stopped = false;
+	/** `SshForwardLease.setBackoffCeiling()`: the retry delay ceiling in place of `backoffMaxMs`. */
+	private ceilingMs: number | undefined;
 
 	constructor(
 		remote: SshRemoteConfig,
@@ -473,6 +482,21 @@ class RemoteForward {
 		this.clearRetry();
 		this.attempts = 0;
 		this.start();
+	}
+
+	setBackoffCeiling(ms: number | undefined): void {
+		const ceiling = ms !== undefined && Number.isFinite(ms) && ms > 0 ? ms : undefined;
+		if (ceiling === this.ceilingMs) return;
+		this.ceilingMs = ceiling;
+		// A wait longer than the new ceiling is cut short: the forward dials now.
+		const state = this.current;
+		if (state.status === 'down' && this.retryTimer && state.retryInMs > this.ceilingFor()) {
+			this.restart();
+		}
+	}
+
+	private ceilingFor(): number {
+		return this.ceilingMs ?? this.options.backoffMaxMs;
 	}
 
 	async stop(): Promise<void> {
@@ -532,10 +556,11 @@ class RemoteForward {
 	}
 
 	private backoffDelay(attempt: number): number {
-		const { backoffInitialMs, backoffMaxMs } = this.options;
-		const base = Math.min(backoffMaxMs, backoffInitialMs * 2 ** (attempt - 1));
+		const { backoffInitialMs } = this.options;
+		const ceiling = this.ceilingFor();
+		const base = Math.min(ceiling, backoffInitialMs * 2 ** (attempt - 1));
 		const jitter = 1 + (Math.random() * 0.4 - 0.2);
-		return Math.min(backoffMaxMs, Math.round(base * jitter));
+		return Math.min(ceiling, Math.round(base * jitter));
 	}
 
 	private fail(generation: number, error: Error): void {
@@ -765,6 +790,9 @@ export class SshForwardManager {
 			},
 			restart: () => {
 				if (!released) forward.restart();
+			},
+			setBackoffCeiling: (ms) => {
+				if (!released) forward.setBackoffCeiling(ms);
 			},
 			release: async () => {
 				if (released) return;

@@ -358,6 +358,18 @@ function dropHostOutageIfUnused(remoteId: string): boolean {
 	return true;
 }
 
+/**
+ * What this machine hosts changed (an agent moved back, `unlift --offline` included, or hosted
+ * agents were switched off): a host outage, or one waiting out its grace, whose host now runs no
+ * agent of this machine is dropped at once, as the 30 s re-check would drop it.
+ */
+export function noteHostedAgentsChanged(): void {
+	for (const remoteId of [...hostDown.keys()]) dropHostOutageIfUnused(remoteId);
+	for (const [remoteId, pending] of [...hostPending]) {
+		if (!deps?.hostsAgents?.(pending.report.peerId)) clearHostPending(remoteId);
+	}
+}
+
 function forgetHostConnection(remoteId: string): void {
 	lastHostReport.delete(remoteId);
 	clearHostPending(remoteId);

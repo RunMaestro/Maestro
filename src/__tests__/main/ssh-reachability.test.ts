@@ -13,6 +13,7 @@ import {
 	forgetHostPeer,
 	HOST_OUTAGE_CONFIRM_MS,
 	noteHostConnection,
+	noteHostedAgentsChanged,
 	type HostConnectionReport,
 	getUnreachableSshRemotes,
 	noteSshExit,
@@ -398,6 +399,49 @@ describe('ssh-reachability', () => {
 			await vi.advanceTimersByTimeAsync(0);
 			expect(emitted).toEqual([]);
 			expect(getUnreachableSshRemotes()).toEqual([]);
+		});
+
+		// Parity R17: a Move Back while the host is down (`unlift --offline`) drops the outage at
+		// once, never at the next 30 s re-check.
+		it('drops the host outage at once when the last hosted agent of that host moves back (R17)', async () => {
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(emitted).toHaveLength(1);
+			expect(emitted[0]).toMatchObject({ reachable: false, cause: 'host' });
+
+			hosts = false;
+			noteHostedAgentsChanged();
+			expect(getUnreachableSshRemotes()).toEqual([]);
+			expect(emitted[1]).toMatchObject({ reachable: true, cause: 'host', cleared: true });
+		});
+
+		it('keeps the host outage while an agent of this machine still runs there (R17)', async () => {
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			noteHostedAgentsChanged();
+			expect(getUnreachableSshRemotes()).toHaveLength(1);
+			expect(emitted).toHaveLength(1);
+		});
+
+		it('raises nothing for a host whose last hosted agent moved back during the grace (R17)', async () => {
+			noteHostConnection(report('lost'));
+			hosts = false;
+			noteHostedAgentsChanged();
+			hosts = true;
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS * 2);
+			expect(emitted).toEqual([]);
+		});
+
+		it('leaves an SSH outage of the remote alone (R17)', async () => {
+			probe.mockResolvedValue(DOWN);
+			noteHostConnection(report('lost'));
+			await vi.advanceTimersByTimeAsync(HOST_OUTAGE_CONFIRM_MS);
+			expect(getUnreachableSshRemotes()).toHaveLength(1);
+			hosts = false;
+			noteHostedAgentsChanged();
+			// The SSH outage names the remote, hosted or not: it stays until ssh answers.
+			expect(getUnreachableSshRemotes()).toHaveLength(1);
+			expect(getUnreachableSshRemotes()[0].cause).not.toBe('host');
 		});
 
 		it('drops every host outage when Federation stops, and never re-checks it again', async () => {

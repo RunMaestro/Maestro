@@ -537,6 +537,45 @@ describe('SshForwardManager', () => {
 		await lease.release();
 	});
 
+	// Parity R16: a host nothing on this machine uses is dialed less and less often while it stays
+	// down: the wait doubles past the manager's ceiling, up to the one the lease sets.
+	it('keeps doubling the delay up to a ceiling the lease raises (R16)', async () => {
+		const notRunning: RemoteHostDiscovery = { installed: true, running: false, launcher: 'path' };
+		const h = harness([notRunning]);
+		const lease = h.manager.acquire(remote);
+		lease.setBackoffCeiling?.(64_000);
+		await expect(lease.ready()).rejects.toMatchObject({ code: 'not-running' });
+
+		const delays: number[] = [];
+		for (let i = 0; i < 8; i++) {
+			const state = lease.state() as { retryInMs: number };
+			delays.push(state.retryInMs);
+			await vi.advanceTimersByTimeAsync(state.retryInMs);
+		}
+		expect(delays).toEqual([1000, 2000, 4000, 8000, 16_000, 32_000, 64_000, 64_000]);
+		await lease.release();
+	});
+
+	it('dials at once when the ceiling drops below the wait in progress (R16)', async () => {
+		const notRunning: RemoteHostDiscovery = { installed: true, running: false, launcher: 'path' };
+		const h = harness([notRunning]);
+		const lease = h.manager.acquire(remote);
+		lease.setBackoffCeiling?.(64_000);
+		await expect(lease.ready()).rejects.toMatchObject({ code: 'not-running' });
+		for (let i = 0; i < 5; i++) {
+			await vi.advanceTimersByTimeAsync((lease.state() as { retryInMs: number }).retryInMs);
+		}
+		expect(lease.state()).toMatchObject({ status: 'down', retryInMs: 32_000 });
+		const dials = h.discover.mock.calls.length;
+
+		// Something on this machine is hosted there now: the manager's own ceiling, and a dial now.
+		lease.setBackoffCeiling?.(undefined);
+		await settle();
+		expect(h.discover.mock.calls.length).toBe(dials + 1);
+		expect(lease.state()).toMatchObject({ status: 'down', attempt: 1, retryInMs: 1000 });
+		await lease.release();
+	});
+
 	it('reports a remote with no maestro-cli with the install fix', async () => {
 		const h = harness([{ installed: false, fix: 'Install Maestro on the remote.' }]);
 		const lease = h.manager.acquire(remote);

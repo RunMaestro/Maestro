@@ -97,6 +97,12 @@ export const MIRROR_ACT_RECONNECT_WAIT_MS = 10_000;
  * other way (a service manager, `remote-host start`, a reboot) shows up without a click.
  */
 export const MIRROR_REPROBE_INTERVAL_MS = 15 * 60_000;
+/**
+ * The redial ceiling of a host that went down while nothing on this machine is hosted on it (or
+ * hosted agents are off): the forward's wait doubles up to this instead of its usual 30 s. An
+ * explicit act (Check Now, a send, Move to Host) dials at once and starts the wait over.
+ */
+export const MIRROR_IDLE_REDIAL_MAX_MS = 5 * 60_000;
 
 export interface PeerMirrorServiceDeps {
 	/** The stored SSH remotes. Read on every reconcile; nothing is cached. */
@@ -120,6 +126,12 @@ export interface PeerMirrorServiceDeps {
 	clearTimer?(handle: unknown): void;
 	/** Re-probe interval for remotes with no host. Default `MIRROR_REPROBE_INTERVAL_MS`; 0 turns it off. */
 	reprobeIntervalMs?: number;
+	/**
+	 * Whether an agent on this machine runs on the host `peerId` (a hosted agent, with hosted agents
+	 * on): the one predicate the outage tracker reads. A host it says no to redials slowly while it
+	 * stays down (`MIRROR_IDLE_REDIAL_MAX_MS`). Absent: every host redials at the forward's own pace.
+	 */
+	hostsAgents?(peerId: string): boolean;
 }
 
 /** What `snapshot()` answers: every peer with its agents and live turns. */
@@ -262,6 +274,30 @@ export class PeerMirrorService {
 	isRemoteConnected(remoteId: string): boolean {
 		const entry = this.entries.get(remoteId);
 		return !!entry && !entry.dropped && entry.state.connection === 'connected';
+	}
+
+	/**
+	 * What this machine hosts changed (an agent moved to or back from a host, hosted agents switched
+	 * on or off): each held forward takes its redial pace again. A host that now runs an agent of
+	 * this machine and waits out a slow redial dials at once.
+	 */
+	noteHostedAgentsChanged(): void {
+		for (const entry of this.entries.values()) this.applyRedialPace(entry);
+	}
+
+	/** Restart a held forward that is down, skipping its backoff (an explicit act on the peer). */
+	private redialNow(entry: PeerEntry): void {
+		const lease = entry.connection?.lease;
+		const forward = lease?.state().status;
+		if (lease && (forward === 'down' || forward === 'stopped')) lease.restart();
+	}
+
+	/** The forward's redial ceiling for this peer: slow while nothing here is hosted on it. */
+	private applyRedialPace(entry: PeerEntry): void {
+		const lease = entry.connection?.lease;
+		if (!lease || entry.dropped || !this.deps.hostsAgents) return;
+		const idle = !this.deps.hostsAgents(entry.state.peerId);
+		lease.setBackoffCeiling?.(idle ? MIRROR_IDLE_REDIAL_MAX_MS : undefined);
 	}
 
 	/** Every mirrored peer, in stored order. The same answer the CLI's `federation peers` prints. */
@@ -416,6 +452,9 @@ export class PeerMirrorService {
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		}
+		// A send (or any act) on a peer whose forward waits out a backoff: dial now, and start the
+		// wait over, as Check Now does. The act itself is not held for it.
+		this.redialNow(entry);
 		const failure = await this.awaitReconnect(entry);
 		const client = entry.connection?.client;
 		if (entry.dropped || !client || entry.state.connection !== 'connected') {
@@ -475,9 +514,7 @@ export class PeerMirrorService {
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		}
-		const lease = entry.connection?.lease;
-		const forward = lease?.state().status;
-		if (lease && (forward === 'down' || forward === 'stopped')) lease.restart();
+		this.redialNow(entry);
 		await this.enqueue(entry.remote.id, () => this.reload(entry));
 		const summary = summarizePeer(entry.state);
 		return summary.connection === 'connected'
@@ -677,6 +714,7 @@ export class PeerMirrorService {
 		}
 		entry.connection = opened;
 		entry.unsubscribes = unsubscribes;
+		this.applyRedialPace(entry);
 		// The client reports `host.connected` from inside `connect()`; make sure the state says so.
 		this.commit(entry, setPeerConnection(entry.state, 'connected'));
 		// The snapshot that came with the attach carries no queues: read what waits.
