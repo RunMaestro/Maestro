@@ -389,7 +389,8 @@ export async function sendHostedTurn(
 	if (!target.agent || (opts.onHostUnavailable && connection !== 'connected')) {
 		// Nothing is sent to a host that is not connected, including the steps ahead of the send
 		// (a new host tab, merged context): the caller keeps the message for a retry, or it is told.
-		const message = `${session.name} runs on peer "${target.peerId}", which is not connected${connection ? ` (${connection})` : ''}. Nothing was sent.`;
+		// Worded as the outage dialog names the cause (`SshUnreachableModal`).
+		const message = `Can't reach the Maestro host on "${target.peerId}"${connection ? ` (${connection})` : ''}. Nothing was sent.`;
 		if (opts.onHostUnavailable) {
 			opts.onHostUnavailable(message);
 			return null;

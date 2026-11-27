@@ -176,10 +176,13 @@ function cutTurnMessage(
 	return message.timestamp >= turnStartedAt ? message : undefined;
 }
 
-/** The newest message the user sent in a tab: the one its running turn answers. */
+/**
+ * The newest message the user sent in a tab that its host has: the one its running turn answers.
+ * A kept message's bubble (`keptForHost`) never reached the host, so no turn there answers it.
+ */
 function lastUserMessage(logs: readonly LogEntry[] | undefined): LogEntry | undefined {
 	for (let i = (logs?.length ?? 0) - 1; i >= 0; i -= 1) {
-		if (logs![i].source === 'user') return logs![i];
+		if (logs![i].source === 'user' && !logs![i].keptForHost) return logs![i];
 	}
 	return undefined;
 }

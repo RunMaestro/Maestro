@@ -84,6 +84,40 @@ describe('mergeHostedLogs', () => {
 		expect(settled[0].hostLive).toBeUndefined();
 	});
 
+	it('draws a kept message once when the host writes it under the same id (R14)', () => {
+		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true });
+		const before = [local('h1'), bubble];
+		// While it waits: the host does not have it, the bubble stays.
+		expect(mergeHostedLogs(before, [record('h1')], undefined).map((e) => e.id)).toEqual([
+			'h1',
+			'k1',
+		]);
+		// Sent, and the host took the id: its live entry and then its saved one are that bubble.
+		const live = mergeHostedLogs(before, [record('h1')], [record('k1', 'hello'), record('a1')]);
+		expect(live.filter((e) => e.source === 'user' && e.text === 'hello')).toHaveLength(1);
+		const saved = mergeHostedLogs(live, [record('h1'), record('k1', 'hello')], undefined);
+		expect(saved.filter((e) => e.text === 'hello').map((e) => e.id)).toEqual(['k1']);
+	});
+
+	it('draws a kept message once when the host writes it under its own id (R14)', () => {
+		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true });
+		const before = [local('h1'), bubble];
+		const live = mergeHostedLogs(before, [record('h1')], [record('y1', 'hello'), record('a1')]);
+		expect(live.filter((e) => e.text === 'hello').map((e) => e.id)).toEqual(['y1']);
+		const saved = mergeHostedLogs(live, [record('h1'), record('y1', 'hello')], undefined);
+		expect(saved.filter((e) => e.text === 'hello').map((e) => e.id)).toEqual(['y1']);
+	});
+
+	it('keeps a kept bubble when the host holds only an earlier message with the same words (R14)', () => {
+		// "hello" was sent and drawn before the link dropped; the kept "hello" is a second one.
+		const before = [
+			local('h1', { text: 'hello' }),
+			local('k1', { text: 'hello', timestamp: 5, keptForHost: true }),
+		];
+		const merged = mergeHostedLogs(before, [record('h1', 'hello')], undefined);
+		expect(merged.map((e) => e.id)).toEqual(['h1', 'k1']);
+	});
+
 	it('keeps local entries the host read window does not hold, ahead of the host entries', () => {
 		const merged = mergeHostedLogs([local('a'), local('b')], [record('b'), record('c')], undefined);
 		expect(merged.map((entry) => entry.id)).toEqual(['a', 'b', 'c']);

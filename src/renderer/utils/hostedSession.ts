@@ -95,7 +95,8 @@ export function hostLinkNoteId(
 	);
 	if (drawn) return drawn.id;
 	for (let i = logs.length - 1; i >= 0; i -= 1) {
-		if (logs[i].source === 'user') return `${prefix}${logs[i].id}`;
+		// A kept message's bubble never reached the host: the cut turn answers the one before it.
+		if (logs[i].source === 'user' && !logs[i].keptForHost) return `${prefix}${logs[i].id}`;
 	}
 	return `${prefix}${error.timestamp}`;
 }
@@ -208,6 +209,35 @@ function sameMetadata(a: LogEntry['metadata'], b: LogEntry['metadata']): boolean
 }
 
 /**
+ * `older` without the bubbles of kept messages (`LogEntry.keptForHost`) the host now has. A host
+ * that takes the sent `entryId` writes the same id, and the bubble is replaced by id above. One
+ * that does not (a desktop host) writes the message under its own id: the first user entry new to
+ * this tab with the same text and the same number of images replaces one bubble. Each host entry
+ * replaces at most one. Never an entry this tab already drew before (an earlier message with the
+ * same words), so a kept bubble waits for its own copy.
+ */
+function withoutKeptCopies(
+	older: LogEntry[],
+	host: readonly LogEntry[],
+	local: readonly LogEntry[]
+): LogEntry[] {
+	if (!older.some((entry) => entry.keptForHost)) return older;
+	const drawn = new Set(local.map((entry) => entry.id));
+	const copies = host.filter((entry) => entry.source === 'user' && !drawn.has(entry.id));
+	if (copies.length === 0) return older;
+	return older.filter((entry) => {
+		if (!entry.keptForHost) return true;
+		const at = copies.findIndex(
+			(copy) =>
+				copy.text === entry.text && (copy.images?.length ?? 0) === (entry.images?.length ?? 0)
+		);
+		if (at === -1) return true;
+		copies.splice(at, 1);
+		return false;
+	});
+}
+
+/**
  * A tab's transcript with the host's folded in. `persisted` undefined (never read) keeps the local
  * entries; the live tail still shows. Returns `local` itself when nothing changed. A host user
  * entry shows "Message delivered" when the agent's answer to it arrived (`withAnswerDelivery()`).
@@ -236,7 +266,8 @@ export function mergeHostedLogs(
 		live.push({ ...mirrorLogEntry(record), hostLive: true });
 	}
 	const fromHost = new Set([...hostIds, ...live.map((entry) => entry.id)]);
-	const next = withAnswerDelivery([...byTime(older, hostEntries), ...live], fromHost);
+	const shown = withoutKeptCopies(older, [...hostEntries, ...live], local);
+	const next = withAnswerDelivery([...byTime(shown, hostEntries), ...live], fromHost);
 	if (sameIds(next, local)) {
 		// Same entries in the same order: keep the old array unless a live entry's text moved on,
 		// its tool card did, or a message's delivered tick did. `mirrorLogEntry()` builds a new

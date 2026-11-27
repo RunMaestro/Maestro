@@ -29,13 +29,19 @@
  * its transcript shows what a local one shows. A host that refuses the turn consults nobody.
  */
 
-import type { AgentError, QueuedItem, Session } from '../types';
+import type { AgentError, LogEntry, QueuedItem, Session } from '../types';
 import type {
 	QueueExit,
 	TurnOverrides,
 	TurnSendReceipt,
 } from '../../shared/maestro-lib/client/types';
-import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
+import {
+	selectSessionById,
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../stores/sessionStore';
+import { generateId } from '../utils/ids';
 import { notifyToast } from '../stores/notificationStore';
 import {
 	clearRetryIfSettled,
@@ -212,21 +218,67 @@ export function keepTurnForHost(
 ): boolean {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	if (!session) return false;
-	const error = hostUnavailableError(session, message);
+	const error = hostUnavailableError(session, keptForHostText(message));
 	if (opts.onlyIfRetried && !wouldAutoRetry(sessionId, error)) return false;
 	const waiting = getRetryEntry(sessionId, item.tabId);
 	if (waiting && waiting.heldItemId !== item.id) {
 		queueBehind(sessionId, item);
 		return true;
 	}
+	// The message's bubble, above the retry card, as an SSH agent's send draws it before its link
+	// fails: once, for a message the host never had (a cut turn's is the host's own entry).
+	const bubble = waiting?.heldItemId === item.id ? null : keptBubbleFor(item);
+	const kept = bubble ? { ...item, keptEntryId: bubble.id } : item;
+	if (bubble) {
+		updateAiTab(sessionId, item.tabId, (tab) => ({ ...tab, logs: [...tab.logs, bubble] }));
+	}
 	// The prompt the retry resends. A resend of this same item keeps its snapshot.
-	noteDirectDispatch(sessionId, item);
-	if (!raiseAgentError(`${sessionId}-ai-${item.tabId}`, error)) {
+	noteDirectDispatch(sessionId, kept);
+	const raised = raiseAgentError(`${sessionId}-ai-${item.tabId}`, error);
+	const held = raised && getRetryEntry(sessionId, item.tabId)?.heldItemId === item.id;
+	if (bubble && !held) {
+		// Not kept: the caller keeps the draft or says it was not sent, so no bubble stays behind.
+		updateAiTab(sessionId, item.tabId, (tab) => ({
+			...tab,
+			logs: tab.logs.filter((entry) => entry.id !== bubble.id),
+		}));
+	}
+	if (!raised) {
 		// No listener to report it: say so here, as the refusal's own toast would have.
 		notifyToast({ color: 'red', title: 'Message not sent', message });
 		return false;
 	}
-	return getRetryEntry(sessionId, item.tabId)?.heldItemId === item.id;
+	return held;
+}
+
+/** The bubble a kept message draws, or null when it has one already or is not a message. */
+function keptBubbleFor(item: QueuedItem): LogEntry | null {
+	if (item.type !== 'message' || item.hostEntryId || item.keptEntryId) return null;
+	if (!item.text && !item.images?.length) return null;
+	return {
+		id: generateId(),
+		timestamp: Date.now(),
+		source: 'user',
+		text: item.text ?? '',
+		...(item.images?.length ? { images: item.images } : {}),
+		...(item.readOnlyMode ? { readOnly: true } : {}),
+		keptForHost: true,
+	};
+}
+
+const NOTHING_SENT = /\s*Nothing was sent\.\s*/g;
+const KEPT_FOR_HOST = 'Your message is kept and sent when the host answers.';
+
+/**
+ * The words of the error a kept message raises: the cause, then that the message is kept, as an
+ * SSH agent's strip names its cause while its message waits under the retry card. A refusal's
+ * "Nothing was sent." is true but reads as a lost message, so it is replaced. A reason that
+ * already says the message is kept is used as it is.
+ */
+export function keptForHostText(reason: string): string {
+	if (/\bkept\b/.test(reason)) return reason;
+	const cause = reason.replace(NOTHING_SENT, ' ').trim();
+	return cause ? `${cause} ${KEPT_FOR_HOST}` : KEPT_FOR_HOST;
 }
 
 /**
@@ -328,7 +380,9 @@ function forwardToHost(
 			...(item.agentContext ? { agentContext: item.agentContext } : {}),
 			...(agentNotes ? { agentNotes } : {}),
 			// The entry the message already is: the host writes no second one.
-			...(item.hostEntryId ? { entryId: item.hostEntryId } : {}),
+			...(item.hostEntryId || item.keptEntryId
+				? { entryId: item.hostEntryId ?? item.keptEntryId }
+				: {}),
 			// A held item is the user's to send; only one on its way now is kept for a retry.
 			...(item.paused === true
 				? {}
