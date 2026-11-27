@@ -66,6 +66,7 @@ import {
 	callMirroredAgentAction,
 	closeMirrorTab,
 	interruptMirroredAgent,
+	reachPeerNow,
 	renameMirrorTab,
 	reopenMirrorClosedTab,
 	sendToMirroredTab,
@@ -302,6 +303,9 @@ export async function openHostedTabOrHere(
 	if (usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected') {
 		return openHostedTab(session, placement);
 	}
+	// An explicit act: a host started after the last probe is found now (R68), and the tab opened
+	// here is made there when the link comes up.
+	void reachPeerNow(target.peerId);
 	const tabId = generateId();
 	const saveToHistory = placement.fields?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory;
 	const showThinking = placement.fields?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking;
@@ -715,11 +719,19 @@ export async function sendHostedTurn(
 		agentNotes?: string;
 		/** The transcript entry the message already is (`QueuedItem.hostEntryId`): drawn once. */
 		entryId?: string;
+		/** The caller already ran discovery for this send (`reachPeerNow()`): not run again. */
+		reached?: boolean;
 	} = {}
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
-	const connection = usePeerMirrorStore.getState().peers[target.peerId]?.connection;
+	let connection = usePeerMirrorStore.getState().peers[target.peerId]?.connection;
+	// A send is an explicit act: a host that is not connected is probed again now (R68), so a host
+	// started after the last probe takes the message, as an SSH agent's next send dials.
+	if (target.agent && opts.onHostUnavailable && connection !== 'connected' && !opts.reached) {
+		if (await reachPeerNow(target.peerId)) connection = 'connected';
+		else connection = usePeerMirrorStore.getState().peers[target.peerId]?.connection;
+	}
 	if (!target.agent || (opts.onHostUnavailable && connection !== 'connected')) {
 		// Nothing is sent to a host that is not connected, including the steps ahead of the send
 		// (a new host tab, merged context): the caller keeps the message for a retry, or it is told.

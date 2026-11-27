@@ -92,6 +92,7 @@ import {
 import { resolveConsultTargets } from './crossAgentConsultHold';
 import { cutTurnFate } from './hostedLinkLoss';
 import { hostedTargetOf, sendHostedTurn } from './hostedTurns';
+import { reachPeerNow } from './peerMirror';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { hostTabTurnStartedAt } from '../utils/hostedSession';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
@@ -484,6 +485,8 @@ function forwardToHost(
 		markKeptBubble(sessionId, item, true);
 		return sendHostedTurn(session, item.tabId, queuedItemHostText(item), item.images ?? [], {
 			held: item.paused === true,
+			// Discovery ran for this resend already (below): not run again inside the send.
+			reached: true,
 			...(overrides ? { overrides } : {}),
 			...(namingText ? { nameFrom: { text: namingText, label: 'queue' } } : {}),
 			...(item.agentContext ? { agentContext: item.agentContext } : {}),
@@ -544,61 +547,85 @@ function forwardToHost(
 			}
 		);
 	};
-	// The message of a turn a lost link cut goes again only once the host says that turn died: it
-	// may have run on, or finished (`cutTurnFate()`). Never sent twice.
-	const connected = usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';
-	// A held copy sent by hand while no retry owns it (Stop ended that retry): the user's send.
-	const fate = cutTurnFate(sessionId, item, target, connected, {
-		userSent: userSent && retryOutage === undefined,
-	});
-	const send = !fate
-		? sendToHost()
-		: fate.then((decided) => {
-				const stillOwned =
-					retryOutage !== undefined &&
+	const decideAndSend = (): Promise<TurnSendReceipt | null> => {
+		// The message of a turn a lost link cut goes again only once the host says that turn died: it
+		// may have run on, or finished (`cutTurnFate()`). Never sent twice.
+		const connected =
+			usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected';
+		// A held copy sent by hand while no retry owns it (Stop ended that retry): the user's send.
+		const fate = cutTurnFate(sessionId, item, target, connected, {
+			userSent: userSent && retryOutage === undefined,
+		});
+		const send = !fate
+			? sendToHost()
+			: fate.then((decided) => {
+					const stillOwned =
+						retryOutage !== undefined &&
+						getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
+					if (decided === 'answered' || decided === 'host-retries') {
+						notHostedAgain(
+							sessionId,
+							item,
+							index,
+							retryOutage,
+							decided === 'host-retries' ? decided : undefined
+						);
+						return null;
+					}
+					// Ended on its own error there: the retry of that error holds it now, and sends it.
+					if (decided === 'errored') return null;
+					// Ended on its own error there, and no retry takes it: held with that error, never
+					// dropped as answered.
+					if (typeof decided === 'object') {
+						notHostedAgain(sessionId, item, index, retryOutage, decided);
+						return null;
+					}
+					if (decided === 'tab-gone' || decided === 'entry-gone') {
+						notHostedAgain(
+							sessionId,
+							item,
+							index,
+							retryOutage,
+							decided === 'tab-gone' ? 'tab' : 'message'
+						);
+						return null;
+					}
+					if (retryOutage && !stillOwned) {
+						// Stopped while it waited: parked held, one click from Force Send, as Stop parks it.
+						holdRefusedItem(sessionId, item, index);
+						return null;
+					}
+					if (decided === 'send') return sendToHost();
+					// The host could not say (its transcript did not load): kept for the next try.
+					kept = keepTurnForHost(
+						sessionId,
+						item,
+						`The Maestro host on "${target.peerId}" could not say yet how the cut turn ended. Your message is kept and sent once it can.`
+					);
+					if (!kept) holdRefusedItem(sessionId, item, index);
+					return null;
+				});
+		return send;
+	};
+	// A resend (Try now, an auto-retry, a drain) is an explicit act: a host that is not connected
+	// is probed again first (R68), so a host started after the last probe takes the message, and a
+	// cut turn's fate is then read from it before anything goes.
+	const reaching =
+		usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected'
+			? null
+			: reachPeerNow(target.peerId);
+	const send = !reaching
+		? decideAndSend()
+		: reaching.then(() => {
+				const owned =
+					retryOutage === undefined ||
 					getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
-				if (decided === 'answered' || decided === 'host-retries') {
-					notHostedAgain(
-						sessionId,
-						item,
-						index,
-						retryOutage,
-						decided === 'host-retries' ? decided : undefined
-					);
-					return null;
-				}
-				// Ended on its own error there: the retry of that error holds it now, and sends it.
-				if (decided === 'errored') return null;
-				// Ended on its own error there, and no retry takes it: held with that error, never
-				// dropped as answered.
-				if (typeof decided === 'object') {
-					notHostedAgain(sessionId, item, index, retryOutage, decided);
-					return null;
-				}
-				if (decided === 'tab-gone' || decided === 'entry-gone') {
-					notHostedAgain(
-						sessionId,
-						item,
-						index,
-						retryOutage,
-						decided === 'tab-gone' ? 'tab' : 'message'
-					);
-					return null;
-				}
-				if (retryOutage && !stillOwned) {
+				if (!owned) {
 					// Stopped while it waited: parked held, one click from Force Send, as Stop parks it.
 					holdRefusedItem(sessionId, item, index);
 					return null;
 				}
-				if (decided === 'send') return sendToHost();
-				// The host could not say (its transcript did not load): kept for the next try.
-				kept = keepTurnForHost(
-					sessionId,
-					item,
-					`The Maestro host on "${target.peerId}" could not say yet how the cut turn ended. Your message is kept and sent once it can.`
-				);
-				if (!kept) holdRefusedItem(sessionId, item, index);
-				return null;
+				return decideAndSend();
 			});
 	sendsInFlight.set(item.id, send);
 	// The tab holds its line until the host answered: nothing queued behind this turn goes ahead of

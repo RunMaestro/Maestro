@@ -21,8 +21,11 @@
  * - No tight retry loop of its own. Once attached, the client heartbeats, reconnects, and resyncs,
  *   and the lease restarts the forward; the service only records what they report. A remote that
  *   answered with no host (`not-installed`, `host-down`) or could not be reached is probed once,
- *   then again only after a wake, a change to the stored remotes, a reconnect, a host setup
- *   (`setupHostFromDesktop`), or the slow re-probe (`MIRROR_REPROBE_INTERVAL_MS`).
+ *   then again after a wake, a change to the stored remotes, a reconnect, a host setup
+ *   (`setupHostFromDesktop`), any act on one of its agents (`ensureLink()`: one probe in flight
+ *   per peer, the acts share it), or the background re-probe: every
+ *   `MIRROR_HOSTED_REPROBE_INTERVAL_MS` while an agent of this machine is hosted there, else every
+ *   `MIRROR_REPROBE_INTERVAL_MS`.
  *
  * Federation is opportunistic: every enabled SSH remote that has not opted out is probed, and only
  * the ones that run a host count as peers (`isPeerFederated()`). The mirror holds each host's whole
@@ -104,6 +107,12 @@ export const MIRROR_ACT_RECONNECT_WAIT_MS = 10_000;
  */
 export const MIRROR_REPROBE_INTERVAL_MS = 15 * 60_000;
 /**
+ * The re-probe pace of a remote with no host while an agent of this machine is hosted there: the
+ * pace a dropped forward redials at, so a host started after the first probe is found as soon as
+ * an SSH agent's next turn would reach its remote.
+ */
+export const MIRROR_HOSTED_REPROBE_INTERVAL_MS = 30_000;
+/**
  * The redial ceiling of a host that went down while nothing on this machine is hosted on it (or
  * hosted agents are off): the forward's wait doubles up to this instead of its usual 30 s. An
  * explicit act (Check Now, a send, Move to Host) dials at once and starts the wait over.
@@ -139,6 +148,11 @@ export interface PeerMirrorServiceDeps {
 	clearTimer?(handle: unknown): void;
 	/** Re-probe interval for remotes with no host. Default `MIRROR_REPROBE_INTERVAL_MS`; 0 turns it off. */
 	reprobeIntervalMs?: number;
+	/**
+	 * Re-probe interval for remotes with no host that an agent of this machine is hosted on
+	 * (`hostsAgents`). Default `MIRROR_HOSTED_REPROBE_INTERVAL_MS`; 0 turns it off.
+	 */
+	hostedReprobeIntervalMs?: number;
 	/**
 	 * Whether an agent on this machine runs on the host `peerId` (a hosted agent, with hosted agents
 	 * on): the one predicate the outage tracker reads. A host it says no to redials slowly while it
@@ -199,6 +213,8 @@ interface PeerEntry {
 	queueVersions: Map<string, number>;
 	/** Actions waiting for a reconnect in progress; called when the connection settles or the entry drops. */
 	linkWaiters: Set<() => void>;
+	/** The discovery an act started on a peer with no host attached; every act meanwhile shares it. */
+	probe?: Promise<void>;
 	/**
 	 * The host said it wrote an agent's History (`history.changed`) since the connection came up, so
 	 * it says every write: its History reads are kept until it does. Unset for an older host.
@@ -238,6 +254,7 @@ export class PeerMirrorService {
 	>();
 	private unwatchRemotes: (() => void) | null = null;
 	private reprobeTimer: ReturnType<typeof setTimeout> | null = null;
+	private hostedReprobeTimer: ReturnType<typeof setTimeout> | null = null;
 	private started = false;
 	private stopped = false;
 
@@ -493,13 +510,7 @@ export class PeerMirrorService {
 		} catch (error) {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		}
-		// A send (or any act, an auto-retry too) on a peer whose forward waits out a backoff: dial now
-		// and start the wait over, as Check Now does, and wait for that dial as for a reconnect in
-		// progress (bounded by `MIRROR_ACT_RECONNECT_WAIT_MS`), never failing ahead of it.
-		if (this.redialNow(entry)) {
-			this.commit(entry, setPeerConnection(entry.state, 'reconnecting', entry.state.error));
-		}
-		const failure = await this.awaitReconnect(entry);
+		const failure = await this.reachNow(entry);
 		const client = entry.connection?.client;
 		if (entry.dropped || !client || entry.state.connection !== 'connected') {
 			return {
@@ -526,6 +537,52 @@ export class PeerMirrorService {
 			};
 		}
 		return { ok: true, result: result.value };
+	}
+
+	/**
+	 * Reach the peer on `remoteId` now, for an explicit act that is not an agent action (Move to
+	 * Host, Move Back): redial a forward that is down, run discovery again on a remote that found no
+	 * host, and wait for either (bounded), as `act()` does. Never throws; `hostClient()` then lends
+	 * the client or names why there is none.
+	 */
+	async ensureLink(remoteId: string): Promise<void> {
+		const entry = this.entries.get(remoteId);
+		if (!entry || entry.dropped || this.stopped) return;
+		await this.reachNow(entry);
+	}
+
+	/**
+	 * Every explicit act on a peer (a send, Try now, Stop, a new tab, Move to Host, an auto-retry):
+	 * a forward that waits out a backoff dials now and starts the wait over, as Check Now does; a
+	 * remote whose discovery found no host (or could not be reached) is probed again now, one probe
+	 * in flight per peer that every act meanwhile shares. Either is waited for as a reconnect in
+	 * progress (bounded by `MIRROR_ACT_RECONNECT_WAIT_MS`), never failed ahead of. Returns what
+	 * `awaitReconnect()` does.
+	 */
+	private async reachNow(entry: PeerEntry): Promise<string | undefined> {
+		if (this.redialNow(entry)) {
+			this.commit(entry, setPeerConnection(entry.state, 'reconnecting', entry.state.error));
+		} else {
+			this.probeNow(entry);
+		}
+		return this.awaitReconnect(entry);
+	}
+
+	/**
+	 * Run discovery again, in the one queue, on a peer with no host attached and no connect under
+	 * way. The peer reads `connecting` from now, so the acts that follow wait for this probe rather
+	 * than start their own. Returns the probe in flight, if any.
+	 */
+	private probeNow(entry: PeerEntry): Promise<void> | undefined {
+		if (entry.probe) return entry.probe;
+		if (entry.dropped || this.stopped || entry.connection) return undefined;
+		if (isLinkInProgress(entry.state.connection)) return undefined;
+		this.commit(entry, setPeerConnection(entry.state, 'connecting', entry.state.error));
+		const probe = this.enqueue(entry.remote.id, () => this.reload(entry)).finally(() => {
+			if (entry.probe === probe) entry.probe = undefined;
+		});
+		entry.probe = probe;
+		return probe;
 	}
 
 	/**
@@ -559,7 +616,9 @@ export class PeerMirrorService {
 			return { ok: false, error: error instanceof Error ? error.message : String(error) };
 		}
 		this.redialNow(entry);
-		await this.enqueue(entry.remote.id, () => this.reload(entry));
+		// A remote with no host is probed as an act probes it (`probeNow()`), and a probe in flight
+		// is this reconnect's probe too: a burst of acts and reconnects shares one.
+		await (this.probeNow(entry) ?? this.enqueue(entry.remote.id, () => this.reload(entry)));
 		const summary = summarizePeer(entry.state);
 		return summary.connection === 'connected'
 			? { ok: true, peer: summary }
@@ -612,6 +671,10 @@ export class PeerMirrorService {
 			clearTimeout(this.reprobeTimer);
 			this.reprobeTimer = null;
 		}
+		if (this.hostedReprobeTimer !== null) {
+			clearTimeout(this.hostedReprobeTimer);
+			this.hostedReprobeTimer = null;
+		}
 		this.unwatchRemotes?.();
 		this.unwatchRemotes = null;
 		if (this.turnTimer !== null) {
@@ -632,26 +695,41 @@ export class PeerMirrorService {
 
 	// -------------------------------------------------------------------------
 
-	/** Probe again, in the one queue, every remote that answered with no host or was unreachable. */
-	private reprobeIdle(): void {
+	/**
+	 * Probe again, in the one queue, every remote that answered with no host or was unreachable;
+	 * with `hostedOnly`, only the ones an agent of this machine is hosted on.
+	 */
+	private reprobeIdle(hostedOnly = false): void {
 		if (!this.started || this.stopped) return;
 		for (const entry of this.entries.values()) {
 			const { connection } = entry.state;
-			if (entry.connection) continue;
+			if (entry.connection || entry.probe) continue;
 			if (connection === 'connecting' || connection === 'connected') continue;
+			if (hostedOnly && !this.deps.hostsAgents?.(entry.state.peerId)) continue;
 			void this.enqueue(entry.remote.id, () => this.reload(entry));
 		}
 	}
 
 	private scheduleReprobe(): void {
-		const interval = this.deps.reprobeIntervalMs ?? MIRROR_REPROBE_INTERVAL_MS;
+		this.scheduleReprobeTimer(false);
+		if (this.deps.hostsAgents) this.scheduleReprobeTimer(true);
+	}
+
+	/** The slow re-probe of every remote with no host, or the quick one of the hosted ones. */
+	private scheduleReprobeTimer(hostedOnly: boolean): void {
+		const interval = hostedOnly
+			? (this.deps.hostedReprobeIntervalMs ?? MIRROR_HOSTED_REPROBE_INTERVAL_MS)
+			: (this.deps.reprobeIntervalMs ?? MIRROR_REPROBE_INTERVAL_MS);
 		if (interval <= 0 || this.stopped) return;
-		this.reprobeTimer = setTimeout(() => {
-			this.reprobeTimer = null;
-			this.reprobeIdle();
-			this.scheduleReprobe();
+		const timer = setTimeout(() => {
+			if (hostedOnly) this.hostedReprobeTimer = null;
+			else this.reprobeTimer = null;
+			this.reprobeIdle(hostedOnly);
+			this.scheduleReprobeTimer(hostedOnly);
 		}, interval);
-		this.reprobeTimer.unref?.();
+		timer.unref?.();
+		if (hostedOnly) this.hostedReprobeTimer = timer;
+		else this.reprobeTimer = timer;
 	}
 
 	/**

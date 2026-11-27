@@ -26,6 +26,7 @@ import {
 	registerDispatchDepsProvider,
 	retryConnectionOutagesNow,
 	scheduleRetryForError,
+	stopRetriesForAgent,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
 import { syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
@@ -523,6 +524,119 @@ describe('a message sent while the link is down is kept for a retry', () => {
 		expect(getRetryEntry(session.id, 't1')).toBeUndefined();
 		expect(raised).toHaveLength(0);
 		expect(queue().map((queued) => [queued.id, queued.paused === true])).toEqual([['q1', true]]);
+	});
+
+	// Parity R68: a host that started after this app's first probe (discovery found no host) is
+	// found by the kept message's next resend (Try now, or the auto-retry), as an SSH agent's next
+	// send dials; it is never left to the slow re-probe.
+	describe('a host that started after the last probe (R68)', () => {
+		const reconnect$ = vi.fn();
+		function hostDown() {
+			const peer = usePeerMirrorStore.getState().peers.box;
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'host-down' }]);
+		}
+		/** The probe found the host: main pushes the peer connected, then answers. */
+		function probeFindsHost() {
+			reconnect$.mockImplementation(async () => {
+				hydrateHost();
+				return { ok: true };
+			});
+		}
+		beforeEach(() => {
+			reconnect$.mockReset();
+			maestro.federation = { act: act$, reconnect: reconnect$ };
+		});
+
+		it('is found by Try now: the resend probes again, then sends the kept message once', async () => {
+			const session = seed('hosted');
+			hostDown();
+			keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+			const entry = getRetryEntry(session.id, 't1')!;
+			useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+			probeFindsHost();
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+
+			await sendTakenItemToHost(session.id, message('m1', 'hello'));
+			await flush();
+
+			expect(reconnect$).toHaveBeenCalledTimes(1);
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(1);
+			expect(getRetryEntry(session.id, 't1')).toBeUndefined();
+			expect(useRetryStore.getState().outages[entry.outageId]?.status).toBe('recovered');
+		});
+
+		it('keeps the message for the next attempt when the probe still finds no host', async () => {
+			const session = seed('hosted');
+			hostDown();
+			keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+			const entry = getRetryEntry(session.id, 't1')!;
+			useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+			reconnect$.mockResolvedValue({ ok: false, error: 'No maestro-cli host is running on box.' });
+
+			await sendTakenItemToHost(session.id, message('m1', 'hello'));
+			await flush();
+
+			// One probe per attempt, nothing sent, the same outage on its next backoff step.
+			expect(reconnect$).toHaveBeenCalledTimes(1);
+			expect(act$).not.toHaveBeenCalled();
+			expect(getRetryEntry(session.id, 't1')).toMatchObject({
+				outageId: entry.outageId,
+				attempt: 1,
+				status: 'scheduled',
+			});
+		});
+
+		it('sends nothing when the user stops the retry while the probe runs', async () => {
+			const session = seed('hosted');
+			hostDown();
+			keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+			const entry = getRetryEntry(session.id, 't1')!;
+			useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+			let found!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						found = () => {
+							hydrateHost();
+							resolve({ ok: true });
+						};
+					})
+			);
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+
+			const sent = sendTakenItemToHost(session.id, message('m1', 'hello'));
+			await flush();
+			stopRetriesForAgent(session.id, 't1');
+			found();
+			await sent;
+			await flush();
+
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(0);
+		});
+
+		it('shares one probe among ten kept messages of the burst', async () => {
+			const session = seed('hosted');
+			hostDown();
+			let answer!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						answer = () => resolve({ ok: false });
+					})
+			);
+			const items = Array.from({ length: 10 }, (_, i) => message(`q${i}`, `m${i}`));
+			const sends = items.map((item) => sendTakenItemToHost(session.id, item));
+			await flush();
+			answer();
+			await Promise.all(sends);
+			expect(reconnect$).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	it('keeps the message without any host step while the mirror says the host is not connected', async () => {

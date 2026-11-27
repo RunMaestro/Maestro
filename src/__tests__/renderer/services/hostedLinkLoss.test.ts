@@ -407,6 +407,16 @@ describe('a turn cut by a lost link (Agent Resilience off: the cut draws its not
 		}
 	);
 
+	it('runs discovery again at once on a Stop the host could not be told of (R68)', async () => {
+		const reconnect = vi.fn(async () => ({ ok: false, error: 'No maestro-cli host is running.' }));
+		maestro.federation = { transcript, act: act$, reconnect };
+		hostReports('busy', 'reconnecting');
+		syncHostedAgents();
+		await interruptTurn('row', { tabId: 't1' });
+		expect(reconnect).toHaveBeenCalledWith('box');
+		expect(act$).not.toHaveBeenCalled();
+	});
+
 	it('never sends again a stopped turn the host still ran, cut again by a later outage', async () => {
 		hostReports('busy', 'reconnecting');
 		syncHostedAgents();

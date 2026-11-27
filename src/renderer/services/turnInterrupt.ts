@@ -19,6 +19,7 @@
  */
 
 import { hostedTargetOf, interruptHostedTurn } from './hostedTurns';
+import { reachPeerNow } from './peerMirror';
 import { cutHostedTurnTabs, endHostedTurnsHere, markHostedTurnsStopped } from './hostedLinkLoss';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { TURN_CANCELED_NOTE } from '../../shared/maestro-lib/store/transcript';
@@ -189,6 +190,9 @@ export async function interruptTurn(
 			if (hostNotTold) {
 				// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
 				endHostedTurnsHere(sessionId, stopHere, peer.name);
+				// Stop is an explicit act: a host started after the last probe is found now (R68),
+				// and the cut turns' fate is read from it once the link is up.
+				void reachPeerNow(peer.peerId);
 			} else {
 				markHostedTurnsStopped(sessionId, cutTabs, peer?.name ?? '');
 				if (forward) hostAnswer = await interruptHostedTurn(session, scopeTabId);

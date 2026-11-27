@@ -94,6 +94,7 @@ function fakeService() {
 		reconnect: vi.fn(async (peerId: string) => ({ ok: true, peer: { peerId } })),
 		act: vi.fn(async () => ({ ok: true, result: { kind: 'new-tab', tabId: 't9' } })),
 		importAgent,
+		ensureLink: vi.fn(async () => {}),
 		hostClient: vi.fn(() => ({
 			peer: 'build-box',
 			client: { agents: { import: importAgent, remove: vi.fn() } },
