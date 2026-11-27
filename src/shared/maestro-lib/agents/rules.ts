@@ -808,12 +808,20 @@ export function userEntryAnswered(logs: readonly unknown[], entry: SentUserEntry
 /**
  * `logs` with the message a turn starts on. A resend of a message the transcript already holds
  * (`TurnInput.entryId`: the same id, and the same user message, text and images) is that entry:
- * the transcript stays as it is. An id alone never drops a message.
+ * the transcript stays as it is, except that the entry now names the turn that runs it
+ * (`queuedItemId`), so a resend while that turn runs is known as the message it runs (R31). An id
+ * alone never drops a message.
  */
 function withUserEntry(logs: readonly unknown[], entry: LogEntryRecord): unknown[] {
 	const sent: SentUserEntry = { id: entry.id, text: entry.text, images: entry.images };
-	const held = logs.some((candidate) => isSameUserEntry(candidate, sent));
-	return held ? [...logs] : [...logs, entry];
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, sent));
+	if (at === -1) return [...logs, entry];
+	const held = logs[at] as LogEntryRecord;
+	if (entry.queuedItemId === undefined || held.queuedItemId === entry.queuedItemId)
+		return [...logs];
+	const next = [...logs];
+	next[at] = { ...held, queuedItemId: entry.queuedItemId };
+	return next;
 }
 
 /**

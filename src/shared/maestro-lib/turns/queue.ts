@@ -301,6 +301,8 @@ export interface ExecutionQueue<T extends QueueItem> {
 	/** The items waiting, in order. An item being started is not waiting. */
 	items(): readonly T[];
 	isTabBusy(tabId: string): boolean;
+	/** The id of the item whose turn runs or starts on a tab now, or undefined when none does. */
+	busyItemId(tabId: string): string | undefined;
 	/** Tabs with a turn running or starting. */
 	busyTabIds(): string[];
 	/** Stop the running turn of a tab, or of every tab. Queued items start as the turns end. */
@@ -529,6 +531,10 @@ export function createExecutionQueue<T extends QueueItem>(
 
 		isTabBusy(tabId) {
 			return active.has(tabId) || starting.has(tabId);
+		},
+
+		busyItemId(tabId) {
+			return active.get(tabId)?.item.id ?? starting.get(tabId)?.item.id;
 		},
 
 		busyTabIds() {
