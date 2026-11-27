@@ -142,7 +142,7 @@ export async function actOnMirroredAgent(
 }
 
 /** An action's answer as `actOnMirroredAgent()` reports it: the result, or a red toast and null. */
-function settleMirroredAnswer(
+export function settleMirroredAnswer(
 	action: PeerAgentAction,
 	answer: MirroredActionAnswer | null
 ): PeerAgentActionResult | null {

@@ -305,6 +305,114 @@ describe('New Tab while the link is down (R15)', () => {
 		expect(synced.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
 	});
 
+	it('keeps a pending tab that left the record closed when the report of the host lists it before the answer (CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		hydrateHost(['t1'], 'connected');
+		let answer!: (value: unknown) => void;
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+			action.kind === 'new-tab'
+				? new Promise((resolve) => (answer = resolve))
+				: { ok: true, result: { kind: action.kind, tabId } }
+		);
+
+		createPendingHostTabs(current());
+		// Gone here with no closeHostedTab() call, then the host reports the tab it made.
+		useSessionStore.setState({ sessions: [closeTab(current(), tabId)!.session] });
+		hydrateHost(['t1', tabId], 'connected');
+		const target = hostedTargetOf(current())!;
+		const synced = projectHostedSession(current(), {
+			agent: hostAgent(['t1', tabId]),
+			closing: closingHostTabIds(target, current()),
+		});
+		expect(synced.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+		useSessionStore.setState({ sessions: [synced] });
+
+		answer({ ok: true, result: { kind: 'new-tab', tabId } });
+		await flush();
+
+		const actions = act$.mock.calls.map(([, , action]) => action);
+		expect(actions.filter((action) => action?.kind === 'close-tab').map((a) => a.tabId)).toEqual([
+			tabId,
+		]);
+		expect(actions.some((action) => action?.kind === 'update-tab')).toBe(false);
+	});
+
+	it('closes a tab closed while being made on the host once it lists it, when the answer was lost (CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		hydrateHost(['t1'], 'connected');
+		let answer!: (value: unknown) => void;
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+			action.kind === 'new-tab'
+				? new Promise((resolve) => (answer = resolve))
+				: { ok: true, result: { kind: action.kind, tabId } }
+		);
+
+		createPendingHostTabs(current());
+		const before = current();
+		useSessionStore.setState({ sessions: [closeTab(before, tabId)!.session] });
+		closeHostedTab(before, tabId);
+
+		// The answer is lost: the host may have made the tab.
+		answer({ ok: false, error: 'The host did not answer in time.', code: 'timeout' });
+		await flush();
+		const closes = () =>
+			act$.mock.calls
+				.filter(([, , action]) => action?.kind === 'close-tab')
+				.map(([, , a]) => a.tabId);
+		expect(closes()).toEqual([]);
+
+		// The host lists it: never drawn, and closed there.
+		hydrateHost(['t1', tabId], 'connected');
+		const target = hostedTargetOf(current())!;
+		const synced = projectHostedSession(current(), {
+			agent: hostAgent(['t1', tabId]),
+			closing: closingHostTabIds(target, current()),
+		});
+		expect(synced.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+		createPendingHostTabs(current());
+		await flush();
+		expect(closes()).toEqual([tabId]);
+	});
+
+	it('closes nothing on the host when it refused to make a tab closed here (CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		hydrateHost(['t1'], 'connected');
+		let answer!: (value: unknown) => void;
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+			action.kind === 'new-tab'
+				? new Promise((resolve) => (answer = resolve))
+				: { ok: true, result: { kind: action.kind, tabId } }
+		);
+
+		createPendingHostTabs(current());
+		const before = current();
+		useSessionStore.setState({ sessions: [closeTab(before, tabId)!.session] });
+		closeHostedTab(before, tabId);
+		answer({ ok: false, error: 'No.', code: 'rejected' });
+		await flush();
+
+		hydrateHost(['t1'], 'connected');
+		createPendingHostTabs(current());
+		await flush();
+		expect(act$.mock.calls.some(([, , action]) => action?.kind === 'close-tab')).toBe(false);
+		expect(closingHostTabIds(hostedTargetOf(current())!, current()).has(tabId)).toBe(false);
+	});
+
 	it('gives the host the name the tab got while it waited, even when the report of the host lands first (CodeRabbit on #2161)', async () => {
 		const session = seed('hosted');
 		hydrateHost(['t1'], 'lost');

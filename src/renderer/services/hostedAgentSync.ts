@@ -26,6 +26,7 @@ import type { QueueExit } from '../../shared/maestro-lib/client/types';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
+import type { Session } from '../types';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import {
 	captureToolActivity,
@@ -72,7 +73,7 @@ import {
 } from './hostedLinkLoss';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
-function hostedInput(session: { liftedTo?: unknown }):
+function hostedInput(session: { liftedTo?: unknown; aiTabs: Session['aiTabs'] }):
 	| {
 			peerId: string;
 			agentId: string;
@@ -112,7 +113,7 @@ function hostedInput(session: { liftedTo?: unknown }):
 			transcripts: mirror.transcripts[pointer.peer],
 			liveTurns: peer.liveTurns,
 			queue: peer.queues[agent.id],
-			closing: closingHostTabIds({ peerId: pointer.peer, agentId: agent.id, agent }),
+			closing: closingHostTabIds({ peerId: pointer.peer, agentId: agent.id, agent }, session),
 		},
 	};
 }

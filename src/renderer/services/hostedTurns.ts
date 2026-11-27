@@ -58,13 +58,16 @@ import {
 import {
 	actOnMirroredAgent,
 	actOnMirroredAgentQuietly,
+	callMirroredAgentAction,
 	closeMirrorTab,
 	interruptMirroredAgent,
 	renameMirrorTab,
 	reopenMirrorClosedTab,
 	sendToMirroredTab,
+	settleMirroredAnswer,
 	starMirrorTab,
 	steerMirrorAutoRun,
+	type MirroredActionAnswer,
 	type MirrorSteeringAnswer,
 } from './peerMirror';
 import { requestTabAutoNameForMessage } from './tabAutoNaming';
@@ -313,6 +316,26 @@ const pendingTabCreations = new Map<string, Promise<string | null>>();
  * closed as soon as it answers, and is never drawn back meanwhile (`closingHostTabIds()`).
  */
 const closedWhilePending = new Set<string>();
+/** Pending tabs asked of the host whose answer has not come yet, by `peer/agent/tab`. */
+const awaitingHostAnswer = new Set<string>();
+/**
+ * Pending tabs closed here whose making the host may have done though its answer was lost (a
+ * timeout, a dropped link), by `peer/agent/tab`: closed on the host once it lists the tab
+ * (`createPendingHostTabs()`), and never drawn meanwhile (`closingHostTabIds()`).
+ */
+const closeWhenListed = new Set<string>();
+
+/** Whether a refused action may still have been done by the host (its answer was lost). */
+function mayHaveBeenDone(answer: MirroredActionAnswer | null): boolean {
+	if (!answer || answer.ok || answer.notSent) return false;
+	return (
+		answer.unknown === true ||
+		answer.code === undefined ||
+		answer.code === 'host-lost' ||
+		answer.code === 'timeout' ||
+		answer.code === 'host-unavailable'
+	);
+}
 /** When making a pending tab last failed, by `peer/agent/tab`: the link-back path waits a while. */
 const pendingTabFailedAt = new Map<string, number>();
 /** How long the link-back path waits after a failed try before it asks the host again. */
@@ -343,19 +366,23 @@ export function createPendingHostTab(
 	// (the client reads the agents again first) and draw the host's blank name and pills over it.
 	const asked = session.aiTabs.find((candidate) => candidate.id === tabId);
 	const action = { kind: 'new-tab', tabId } as const;
-	const created = (
-		opts.quiet
-			? actOnMirroredAgentQuietly(target.peerId, target.agentId, action).then((answer) =>
-					'result' in answer ? answer.result : null
-				)
-			: actOnMirroredAgent(target.peerId, target.agentId, action)
-	).then((result) => {
-		// Closed here while the host made it: told through `closeHostedTab()`, or gone from the
-		// record by any other path (the record itself still here), so the host's tab is closed too.
+	awaitingHostAnswer.add(key);
+	const created = callMirroredAgentAction(target.peerId, target.agentId, action).then((answer) => {
+		awaitingHostAnswer.delete(key);
+		const result = opts.quiet
+			? answer?.ok
+				? answer.result
+				: null
+			: settleMirroredAnswer(action, answer);
+		// Closed here while the host made it: told through `closeHostedTab()`, marked by the sync
+		// (`closingHostTabIds()`), or gone from the record by any other path (the record itself still
+		// here), so the host's tab is closed too.
 		const record = selectSessionById(sessionId)(useSessionStore.getState());
 		const goneHere = !!record && !record.aiTabs.some((candidate) => candidate.id === tabId);
 		const closedHere = closedWhilePending.delete(key) || goneHere;
 		if (result?.kind !== 'new-tab') {
+			// The host may have made it though its answer was lost: closed there once it lists it.
+			if (closedHere && mayHaveBeenDone(answer)) closeWhenListed.add(key);
 			if (!closedHere) pendingTabFailedAt.set(key, Date.now());
 			return null;
 		}
@@ -466,6 +493,13 @@ function hostTabAdopted(sessionId: string, tabId: string): boolean {
 export function createPendingHostTabs(session: Session): void {
 	const target = hostedTargetOf(session);
 	if (!target) return;
+	// A tab closed here whose making the host may have done: closed there once it lists it.
+	for (const tab of target.agent?.aiTabs ?? []) {
+		const key = hostTabKey(target, tab.id);
+		if (!closeWhenListed.delete(key)) continue;
+		openedHostTabs.add(key);
+		closeHostedTab(session, tab.id);
+	}
 	const now = Date.now();
 	for (const tab of session.aiTabs) {
 		if (!tab.pendingHostTab || isHostTab(target, tab.id)) continue;
@@ -709,8 +743,20 @@ const closingHostTabs = new Set<string>();
  * The tabs of `target` closed here that the host still lists. A close the host has reported (it no
  * longer lists the tab) is settled and forgotten here.
  */
-export function closingHostTabIds(target: HostedTarget): Set<string> {
+export function closingHostTabIds(
+	target: HostedTarget,
+	local?: Pick<Session, 'aiTabs'>
+): Set<string> {
 	const prefix = `${target.peerId}/${target.agentId}/`;
+	// A pending tab the host is making that left this record by a path that never told the host:
+	// marked closed now, before the host's report of it could draw it back.
+	if (local) {
+		for (const key of awaitingHostAnswer) {
+			if (!key.startsWith(prefix)) continue;
+			const tabId = key.slice(prefix.length);
+			if (!local.aiTabs.some((tab) => tab.id === tabId)) closedWhilePending.add(key);
+		}
+	}
 	const listed = new Set((target.agent?.aiTabs ?? []).map((tab) => tab.id));
 	const closing = new Set<string>();
 	for (const key of [...closingHostTabs]) {
@@ -719,8 +765,8 @@ export function closingHostTabIds(target: HostedTarget): Set<string> {
 		if (target.agent && !listed.has(tabId)) closingHostTabs.delete(key);
 		else closing.add(tabId);
 	}
-	// A pending tab closed while the host makes it: not listed yet, and never drawn when it is.
-	for (const key of closedWhilePending) {
+	// A pending tab closed while the host makes it (or may have made it): never drawn when listed.
+	for (const key of [...closedWhilePending, ...closeWhenListed]) {
 		if (key.startsWith(prefix)) closing.add(key.slice(prefix.length));
 	}
 	return closing;
