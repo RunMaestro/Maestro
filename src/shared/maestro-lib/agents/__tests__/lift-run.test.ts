@@ -235,6 +235,28 @@ describe('runLift', () => {
 		}
 	);
 
+	// CodeRabbit on #2171: a message held (or removed) while the move was planned would move in its
+	// old state, a held one running on the host. The queue is read again before the import.
+	it.each([
+		['held', [{ id: 'q1', tabId: 'tab-1', type: 'message', text: 'next', paused: true }]],
+		['removed', []],
+	])(
+		'refuses with nothing changed when a moved message was %s after the plan',
+		async (_how, queue) => {
+			const agent = sshAgent();
+			const { deps, importAgent } = depsWith(agent, {
+				readAgents: vi
+					.fn()
+					.mockReturnValueOnce([agent])
+					.mockReturnValue([{ ...agent, executionQueue: queue }]),
+			});
+			const error = await refusalOf(runLift('agent-1', {}, deps));
+			expect(error.code).toBe('LIFT_QUEUE_CHANGED');
+			expect(importAgent).not.toHaveBeenCalled();
+			expect(deps.setPointer).not.toHaveBeenCalled();
+		}
+	);
+
 	it('asks nothing about held messages when the queue holds none (R57)', async () => {
 		const conn = connectionWith();
 		const capabilitiesCall = vi.fn();

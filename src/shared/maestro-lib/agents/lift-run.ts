@@ -446,6 +446,33 @@ function withReplacement(
 	};
 }
 
+/**
+ * Why the moved queue items of `agent` no longer stand as planned in `latest` (the stored agents
+ * read again), or undefined when every one is still there with the same hold.
+ */
+function movedQueueChange(
+	agent: AgentRecord,
+	latest: AgentRecord[],
+	movedIds: readonly string[]
+): string | undefined {
+	if (movedIds.length === 0) return undefined;
+	const holdOf = (record: AgentRecord | undefined) => {
+		const holds = new Map<string, boolean>();
+		const queue = Array.isArray(record?.executionQueue) ? (record.executionQueue as unknown[]) : [];
+		for (const item of queue) {
+			if (!item || typeof item !== 'object') continue;
+			const { id, paused } = item as { id?: unknown; paused?: unknown };
+			if (typeof id === 'string') holds.set(id, paused === true);
+		}
+		return holds;
+	};
+	const before = holdOf(agent);
+	const now = holdOf(latest.find((record) => record.id === agent.id));
+	const changed = movedIds.filter((id) => !now.has(id) || now.get(id) !== before.get(id));
+	if (changed.length === 0) return undefined;
+	return `${changed.length} queued message(s) of "${agent.name}" were held, resumed, or removed while the move was planned. Nothing changed; move it again.`;
+}
+
 /** Whether the agent has a message the person held (paused) in its queue. */
 function hasHeldQueuedMessage(agent: AgentRecord): boolean {
 	const queue = Array.isArray(agent.executionQueue) ? (agent.executionQueue as unknown[]) : [];
@@ -536,6 +563,16 @@ export async function runLift(
 			: planFor(agent);
 		onPlan(plan);
 		if (options.dryRun) return { plan: plan.summary, dryRun: true };
+
+		// The queue moves as it was planned: a message held, resumed, or removed since the plan was
+		// read would move in its old state (a held one running on the host). Read it again just
+		// before the import; any change refuses with nothing changed (CodeRabbit on #2171).
+		const queueChanged = movedQueueChange(
+			stale ? stale.merged : agent,
+			deps.readAgents(),
+			plan.movedQueueItemIds
+		);
+		if (queueChanged) throw new LiftRunError('LIFT_QUEUE_CHANGED', queueChanged);
 
 		const imported = await connection.client.agents.import(plan.input);
 		if (!imported.ok) {
