@@ -6459,6 +6459,38 @@ describe('tabHelpers', () => {
 				expect(result.logs).toEqual([held]);
 			});
 
+			// The integrator's Move Back check on #2161: a message kept for a host while it was down,
+			// then the agent moved back, runs here and is drawn once, in its bubble's place.
+			it('takes over the bubble a message kept for a host drew, after a Move Back', () => {
+				const bubble = {
+					id: 'bubble-1',
+					timestamp: 1,
+					source: 'user' as const,
+					text: 'continue',
+					keptForHost: true,
+					keptSentAt: 5,
+				};
+				const tab = createMockTab({ id: 't1', state: 'idle', logs: [bubble] });
+				const item: QueuedItem = {
+					id: 'q-kept',
+					tabId: 't1',
+					type: 'message',
+					text: 'continue, briefly',
+					timestamp: 1,
+					keptEntryId: 'bubble-1',
+				};
+				const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
+				expect(result.logs).toHaveLength(1);
+				expect(result.logs[0]).toMatchObject({
+					id: 'bubble-1',
+					source: 'user',
+					text: 'continue, briefly',
+					queuedItemId: 'q-kept',
+				});
+				expect(result.logs[0].keptForHost).toBeUndefined();
+				expect(result.logs[0].keptSentAt).toBeUndefined();
+			});
+
 			it('gives the message its own id when that id names another entry', () => {
 				const other = { id: 'kept-1', timestamp: 1, source: 'ai' as const, text: 'an answer' };
 				const tab = createMockTab({ id: 't1', state: 'idle', logs: [other] });

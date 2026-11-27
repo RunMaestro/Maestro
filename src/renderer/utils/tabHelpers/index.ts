@@ -941,6 +941,17 @@ export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: 
 			...(item.readOnlyMode && { readOnly: true }),
 			...(item.turnSaveToHistory !== undefined && { saveToHistory: item.turnSaveToHistory }),
 		};
+		// The bubble drawn for it while it was kept for a host (`QueuedItem.keptEntryId`), still here
+		// after a Move Back: the message runs here now, and that bubble becomes its entry, drawn once.
+		const keptAt = item.keptEntryId
+			? tab.logs.findIndex((entry) => entry.id === item.keptEntryId && entry.keptForHost)
+			: -1;
+		if (keptAt !== -1) {
+			const logs = [...tab.logs];
+			logs[keptAt] = { ...logEntry, id: tab.logs[keptAt].id };
+			next.logs = logs;
+			return next;
+		}
 		next.logs = [...tab.logs, logEntry];
 	}
 	return next;
