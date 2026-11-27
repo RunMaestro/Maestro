@@ -33,6 +33,19 @@ describe('isPathWithin', () => {
 		expect(isPathWithin(path.join(`${root}2`, 'a.md'), root)).toBe(false);
 		expect(isPathWithin(path.resolve('/etc/passwd'), root)).toBe(false);
 	});
+
+	it('preserves exact case even for Windows-style paths (callers fold case via foldPathCase)', () => {
+		expect(isPathWithin('D:\\Users\\me\\MAESTRO\\secret.json', 'D:\\Users\\me\\Maestro')).toBe(
+			false
+		);
+		expect(isPathWithin('D:\\Users\\me\\Maestro\\secret.json', 'D:\\Users\\me\\Maestro')).toBe(
+			true
+		);
+	});
+
+	it('preserves literal backslashes in POSIX paths so a sibling is never treated as inside', () => {
+		expect(isPathWithin('/tmp/vault\\outside/secret.md', '/tmp/vault')).toBe(false);
+	});
 });
 
 describe('foldPathCase', () => {
@@ -96,6 +109,18 @@ describe.skipIf(process.platform === 'win32')('resolvePathInRealRoot', () => {
 		});
 		await expect(resolvePathInRealRoot(root, 'escape-dir/secret.md')).resolves.toMatchObject({
 			kind: 'outside',
+		});
+
+		// A POSIX sibling directory whose name contains a literal backslash (`vault\outside`)
+		// must not fold onto `vault/outside` and pass containment.
+		const backslashSibling = `${root}\\outside`;
+		fs.mkdirSync(backslashSibling, { recursive: true });
+		fs.writeFileSync(path.join(backslashSibling, 'secret.md'), 'secret');
+		const backslashLink = path.join(root, 'backslash-escape.md');
+		fs.symlinkSync(path.join(backslashSibling, 'secret.md'), backslashLink);
+		await expect(resolvePathInRealRoot(root, 'backslash-escape.md')).resolves.toEqual({
+			kind: 'outside',
+			realPath: path.join(backslashSibling, 'secret.md'),
 		});
 	});
 

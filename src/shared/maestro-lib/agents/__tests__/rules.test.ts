@@ -3,9 +3,12 @@ import {
 	activeAgentAfterRemoval,
 	addTabRecord,
 	hostRetriesTurn,
+	hostRetryCardStands,
 	markTurnEnded,
 	tabRunsUserEntry,
 	turnFateAfter,
+	isUserTurnStart,
+	userTurnSpan,
 	agentsMovingWithParent,
 	withAgentInGroup,
 	applyAgentConfigPatch,
@@ -1428,6 +1431,125 @@ describe('turnFateAfter', () => {
 
 // Parity R41: one side owns a retry. A desktop host's own Agent Resilience writes its retry card
 // (`retryOutageId`) in the turn; a client that kept a copy sends nothing while it stands.
+// Parity R51: a steer the agent ran as a turn of its own (`queued`) starts that turn; one it
+// folded in (`absorbed`), one with no verdict yet, or one from before the state was recorded does not.
+describe('isUserTurnStart', () => {
+	it.each([
+		['a message', { source: 'user' }, true],
+		[
+			'a steer run as its own follow-up turn',
+			{ source: 'user', steered: true, steerState: 'queued' },
+			true,
+		],
+		[
+			'a steer folded into the turn',
+			{ source: 'user', steered: true, steerState: 'absorbed' },
+			false,
+		],
+		[
+			'a steer with no verdict yet',
+			{ source: 'user', steered: true, steerState: 'pending' },
+			false,
+		],
+		['a steer from before the state was recorded', { source: 'user', steered: true }, false],
+		['an answer', { source: 'ai' }, false],
+	] as const)('%s', (_name, entry, starts) => {
+		expect(isUserTurnStart(entry)).toBe(starts);
+	});
+
+	// The steer is written while the turn it was sent into still runs, before that turn's answer
+	// ends (CodeRabbit on #2171): that turn reads its own answer, and the steer's turn begins after
+	// that answer's end stamp.
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
+	const partialA = { id: 'oa', timestamp: 2, source: 'stdout', text: 'The docs s' };
+	const steer = {
+		id: 'b',
+		timestamp: 3,
+		source: 'user',
+		text: 'And the README',
+		steered: true,
+		steerState: 'queued',
+	};
+	const endA = { id: 'ea', timestamp: 4, source: 'stdout', text: 'ay...', turnEnded: true };
+	const partialB = { id: 'ob', timestamp: 5, source: 'stdout', text: 'The READ' };
+
+	it('reads the first turn to its own end past a queued steer, and the steer from there', () => {
+		const logs = [u1, partialA, steer, endA, partialB];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 4 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 4, to: 5 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('unended');
+		const answeredB = [...logs.slice(0, 4), { ...partialB, turnEnded: true }];
+		expect(turnFateAfter(answeredB, 2, 'desktop')).toBe('answered');
+	});
+
+	// CodeRabbit on #2171: the first turn's end stamp can land on the steer itself (its last entry).
+	it("reads a stamp on the steer as the end of the turn before it, never as the steer's", () => {
+		const logs = [u1, partialA, { ...steer, turnEnded: true }];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 3 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 3, to: 3 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('unended');
+		const answeredB = [...logs, { ...partialB, turnEnded: true }];
+		expect(turnFateAfter(answeredB, 2, 'desktop')).toBe('answered');
+	});
+
+	// CodeRabbit on #2171: the earlier turn's end may be written before the steer (the turn exited
+	// while the steer's socket answer was on its way): the steer then starts its turn at once.
+	it("starts the steer's turn at once when the earlier turn had ended before it was written", () => {
+		const logs = [u1, { ...partialA, turnEnded: true }, steer, { ...partialB, turnEnded: true }];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 2 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 3, to: 4 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('answered');
+	});
+
+	// CodeRabbit on #2171: a stamp on the steer is the earlier turn's end, whatever follows: a later
+	// stamp is the steer's own turn's, and never moves that boundary.
+	it("keeps the earlier turn's end on the steer when the steer's own turn ends after it", () => {
+		const errorB = {
+			id: 'eb',
+			timestamp: 5,
+			source: 'error',
+			text: 'Rate limited',
+			turnEnded: true,
+		};
+		const logs = [u1, partialA, { ...steer, turnEnded: true }, errorB];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 3 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 3, to: 4 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('errored');
+		// The same for an answer after the steer: both turns read answered.
+		const answered = [u1, partialA, { ...steer, turnEnded: true }, endA];
+		expect(turnFateAfter(answered, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(answered, 2, 'desktop')).toBe('answered');
+	});
+
+	// Parity R53 (a): a headless host writes the first turn's answer and its end stamp only at the
+	// end, so both land AFTER the queued steer. A clean finish of the first turn reads ended, and the
+	// steer is the later turn, not begun until then.
+	it("reads a headless host's clean finish past a queued steer as ended, and the steer as the later turn (R53)", () => {
+		const running = [u1, steer];
+		expect(turnFateAfter(running, 0, 'headless')).toBe('unended');
+		expect(userTurnSpan(running, 1)).toBeNull();
+		const finishedA = [u1, steer, { ...endA, text: 'The docs say...' }];
+		expect(turnFateAfter(finishedA, 0, 'headless')).toBe('answered');
+		expect(userTurnSpan(finishedA, 1)).toEqual({ from: 3, to: 3 });
+		expect(turnFateAfter(finishedA, 1, 'headless')).toBe('unended');
+		const finishedB = [...finishedA, { ...partialB, turnEnded: true }];
+		expect(turnFateAfter(finishedB, 0, 'headless')).toBe('answered');
+		expect(turnFateAfter(finishedB, 1, 'headless')).toBe('answered');
+	});
+
+	it("has the steer's turn not begun while the turn it was sent into still runs", () => {
+		const logs = [u1, partialA, steer];
+		expect(userTurnSpan(logs, 2)).toBeNull();
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('unended');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('unended');
+		expect(hostRetriesTurn(logs, 2)).toBe(false);
+	});
+});
+
 describe('hostRetriesTurn', () => {
 	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
 	const card = {
@@ -1460,8 +1582,18 @@ describe('hostRetriesTurn', () => {
 		['no card, an error of its own', [u1, error], false],
 		["a card in a LATER message's turn", [u1, answer, u2, card], false],
 		['a steer into the turn after the card', [u1, card, { ...u2, steered: true }], true],
+		// Parity R45: the user stopped the host's own retry there; the message waits paused.
+		['the host retry card stopped on the host', [u1, { ...card, retryStopped: true }], false],
 	])('%s', (_what, logs, retries) => {
 		expect(hostRetriesTurn(logs, 0)).toBe(retries);
+		// Parity R56: a host that reports a pending retry reads the same; one that reports none
+		// holds nothing, whatever its card says (the retry went with a restart of the host).
+		expect(hostRetriesTurn(logs, 0, true)).toBe(retries);
+		expect(hostRetriesTurn(logs, 0, false)).toBe(false);
+		// The card is the turn's last word whether or not a retry still runs behind it.
+		expect(hostRetryCardStands(logs, 0)).toBe(
+			retries || _what === 'the host retry card stopped on the host'
+		);
 		// The shared reader of the turn's end reads the stamped card as ended, never errored.
 		if (retries) expect(turnFateAfter(logs, 0, 'desktop')).not.toBe('errored');
 	});

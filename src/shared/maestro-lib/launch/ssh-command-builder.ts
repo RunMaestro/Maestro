@@ -835,6 +835,7 @@ export async function buildSshCommand(
 		wrappedCommand: loggedWrappedCommand,
 		envKeys: Object.keys(mergedEnv),
 		sshPath,
+		sshArgs: args.slice(0, -1),
 		sshArgsCount: args.length,
 		// Full command for debugging - escape quotes for readability
 		fullCommand: `${sshPath} ${loggedArgs.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`,

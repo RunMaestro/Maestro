@@ -25,6 +25,7 @@ import * as path from 'path';
 import { isSecretEnvKey } from '../../../shared/agentEnvironment';
 import { containsCredentialToken, redactCredentialTokens } from '../../../shared/agent-run/redact';
 import { resolveClaudeMemoryPath } from '../../../shared/maestro-lib/translation/memory';
+import { hasGitMetadataSegment } from '../../../shared/pathContainment';
 import {
 	CUE_BUNDLE_CLAUDE_MEMORY_DIR,
 	type CueBundleClaudeAssetSelection,
@@ -480,7 +481,8 @@ function collectSkills(
 			.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 		for (const entry of entries) {
 			if (truncated) return;
-			if (entry.name === '.DS_Store') continue;
+			// A skill kept as a git clone has a `.git` of its own; git metadata never travels in a bundle.
+			if (entry.name === '.DS_Store' || hasGitMetadataSegment(entry.name)) continue;
 			const childRel = `${rel}/${entry.name}`;
 			if (entry.isSymbolicLink()) {
 				skippedLinks++;

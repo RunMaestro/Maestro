@@ -37,19 +37,26 @@ import { codifyTurnSettings } from '../../shared/queuedTurnSettings';
  * whatever provider the agent is on now, since its resume token and agent
  * binary belong to that provider.
  */
+/**
+ * Whether a queued item's frozen `turnSettings` belong to a provider the agent has since been
+ * translated off (`providerTranslationQueuedOrigins`): that model and effort are not the current
+ * provider's, so the live ones decide.
+ */
+export function queuedSettingsFromOtherProvider(
+	item: Partial<Pick<QueuedItem, 'id'>>,
+	session: Pick<Session, 'providerTranslationQueuedOrigins' | 'toolType'>
+): boolean {
+	const origin = item.id ? session.providerTranslationQueuedOrigins?.[item.id] : undefined;
+	return !!origin && origin !== session.toolType;
+}
+
 export function codifyQueuedTurnSettings(
 	item: Pick<QueuedItem, 'turnSettings'> & Partial<Pick<QueuedItem, 'id'>>,
 	tab: AITab | undefined,
 	session: Session
 ): Pick<AITab, 'turnProvider' | 'turnModel' | 'turnEffort'> {
 	const live = codifyTurnSettings(tab, session);
-	if (
-		!item.turnSettings ||
-		(item.id &&
-			session.providerTranslationQueuedOrigins?.[item.id] &&
-			session.providerTranslationQueuedOrigins[item.id] !== session.toolType)
-	)
-		return live;
+	if (!item.turnSettings || queuedSettingsFromOtherProvider(item, session)) return live;
 	return {
 		turnProvider: live.turnProvider,
 		turnModel: item.turnSettings.model,

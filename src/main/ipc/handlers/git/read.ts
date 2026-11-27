@@ -9,6 +9,7 @@ import {
 	countUncommittedChanges,
 	isImageFile,
 	getImageMimeType,
+	gitRefArgProblem,
 } from '../../../../shared/gitUtils';
 import { getRepoRootRemote } from '../../../utils/remote-git';
 import { LOG_CONTEXT, handlerOpts, readOnlyGitReply } from './shared';
@@ -45,7 +46,10 @@ export function registerReadHandlers(): void {
 		withIpcErrorLogging(
 			handlerOpts('diff'),
 			async (cwd: string, file?: string, sshRemoteId?: string, remoteCwd?: string) => {
-				const args = file ? ['diff', file] : ['diff'];
+				// `--` ends git's options, so the path stays a path even when it starts
+				// with `-`. Without it a bridge caller's `--output=<file>` made git write
+				// the diff to that file.
+				const args = file ? ['diff', '--', file] : ['diff'];
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 				const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
@@ -305,6 +309,8 @@ export function registerReadHandlers(): void {
 		withIpcErrorLogging(
 			handlerOpts('show'),
 			async (cwd: string, hash: string, sshRemoteId?: string, remoteCwd?: string) => {
+				const refProblem = gitRefArgProblem(hash, 'revision');
+				if (refProblem) return { stdout: '', stderr: refProblem };
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 				// Get the full diff for a specific commit
@@ -326,6 +332,10 @@ export function registerReadHandlers(): void {
 		withIpcErrorLogging(
 			handlerOpts('showFile'),
 			async (cwd: string, ref: string, filePath: string) => {
+				// The ref leads the `<ref>:<path>` argument, so a ref that starts with
+				// `-` would turn the whole argument into a git option.
+				const refProblem = gitRefArgProblem(ref, 'ref');
+				if (refProblem) return { error: refProblem };
 				// Use git show to get file content at specific ref
 				// We need to handle binary files differently
 				const ext = filePath.split('.').pop()?.toLowerCase() || '';

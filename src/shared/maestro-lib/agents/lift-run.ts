@@ -70,7 +70,8 @@ export function liftErrorCode(code: string): string {
 export interface LiftHostConnection {
 	/** The peer id the host is addressed by: the pointer names it. */
 	peer: string;
-	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'>;
+	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'> &
+		Partial<Pick<MaestroClient, 'connection'>>;
 	release(): Promise<void>;
 }
 
@@ -170,7 +171,9 @@ export function formatLiftPlan(summary: LiftPlanSummary, dryRun: boolean): strin
 					? `Hidden tab ${stay.ref}`
 					: stay.kind === 'auto-run-folder'
 						? `Auto Run folder ${stay.ref}`
-						: `Queue item ${stay.ref}`;
+						: stay.kind === 'transcript-image'
+							? `Images of tab ${stay.ref}`
+							: `Queue item ${stay.ref}`;
 		lines.push(`  ${what}: ${stay.reason}`);
 	}
 	return lines.join('\n');
@@ -444,6 +447,51 @@ function withReplacement(
 }
 
 /**
+ * Why the moved queue items of `agent` no longer stand as planned in `latest` (the stored agents
+ * read again), or undefined when every one is still there with the same hold.
+ */
+function movedQueueChange(
+	agent: AgentRecord,
+	latest: AgentRecord[],
+	movedIds: readonly string[]
+): string | undefined {
+	if (movedIds.length === 0) return undefined;
+	const holdOf = (record: AgentRecord | undefined) => {
+		const holds = new Map<string, boolean>();
+		const queue = Array.isArray(record?.executionQueue) ? (record.executionQueue as unknown[]) : [];
+		for (const item of queue) {
+			if (!item || typeof item !== 'object') continue;
+			const { id, paused } = item as { id?: unknown; paused?: unknown };
+			if (typeof id === 'string') holds.set(id, paused === true);
+		}
+		return holds;
+	};
+	const before = holdOf(agent);
+	const now = holdOf(latest.find((record) => record.id === agent.id));
+	const changed = movedIds.filter((id) => !now.has(id) || now.get(id) !== before.get(id));
+	if (changed.length === 0) return undefined;
+	return `${changed.length} queued message(s) of "${agent.name}" were held, resumed, or removed while the move was planned. Nothing changed; move it again.`;
+}
+
+/** Whether the agent has a message the person held (paused) in its queue. */
+function hasHeldQueuedMessage(agent: AgentRecord): boolean {
+	const queue = Array.isArray(agent.executionQueue) ? (agent.executionQueue as unknown[]) : [];
+	return queue.some(
+		(item) => !!item && typeof item === 'object' && (item as { paused?: unknown }).paused === true
+	);
+}
+
+/**
+ * Whether the host keeps a moved held message held (`import-held`). A host that cannot say (an
+ * older build, a failed ask, a client with no capabilities call) is taken not to: a held message
+ * is never run by mistake.
+ */
+async function hostKeepsHeldMessages(connection: LiftHostConnection): Promise<boolean> {
+	const asked = await connection.client.connection?.capabilities?.();
+	return asked?.ok === true && asked.value.includes('import-held');
+}
+
+/**
  * Every step of a lift, without printing. `onPlan` gets the plan once the host is reached, before
  * anything moves. Throws `LiftRunError`, or whatever `connect` / `hostCallError` throw.
  */
@@ -492,6 +540,7 @@ export async function runLift(
 	if (local) throw local;
 
 	const peer = peerIdFor(remote, remotes);
+	let hostKeepsHeld = true;
 	const planFor = (record: AgentRecord) =>
 		planAgentLift({
 			agent: record,
@@ -499,17 +548,31 @@ export async function runLift(
 			peer,
 			providerEnvVars: deps.providerEnvVars(record.toolType),
 			withEnv: options.withEnv === true,
+			hostKeepsHeld,
 		});
 
 	const connection = await deps.connect(remote, peer);
 	try {
 		const hostError = deps.hostCallError ?? defaultHostCallError;
+		// A held message moves held only to a host that keeps it held; an older one would run it at
+		// once, so it stays here, held, and the plan says so (R57).
+		if (hasHeldQueuedMessage(agent)) hostKeepsHeld = await hostKeepsHeldMessages(connection);
 		const stale = await readStaleHostCopy(agent, connection, hostError);
 		const plan = stale
 			? withReplacement(planFor(stale.merged), stale.ref, stale.pointer.agentId, stale.tabMerge)
 			: planFor(agent);
 		onPlan(plan);
 		if (options.dryRun) return { plan: plan.summary, dryRun: true };
+
+		// The queue moves as it was planned: a message held, resumed, or removed since the plan was
+		// read would move in its old state (a held one running on the host). Read it again just
+		// before the import; any change refuses with nothing changed (CodeRabbit on #2171).
+		const queueChanged = movedQueueChange(
+			stale ? stale.merged : agent,
+			deps.readAgents(),
+			plan.movedQueueItemIds
+		);
+		if (queueChanged) throw new LiftRunError('LIFT_QUEUE_CHANGED', queueChanged);
 
 		const imported = await connection.client.agents.import(plan.input);
 		if (!imported.ok) {

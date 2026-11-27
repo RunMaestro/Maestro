@@ -48,13 +48,20 @@ vi.mock('../../../../main/debug-package', () => ({
 	previewDebugPackage: vi.fn(),
 }));
 
-// Mock the profiling module (Chromium contentTracing state machine)
+// Mock the profiling module (Chromium contentTracing state machine). The trace
+// bundle check runs against the real file system in profiling/feedback-trace.test.ts.
 vi.mock('../../../../main/profiling', () => ({
 	startProfiling: vi.fn(),
 	stopProfiling: vi.fn(),
 	getProfilingStatus: vi.fn(),
 	setProfilingAutoStopHandler: vi.fn(),
 	finalizeCapture: vi.fn(),
+	checkFeedbackTraceBundle: vi.fn(),
+	recordFeedbackTraceBundle: vi.fn(),
+	forgetFeedbackTraceBundle: vi.fn(),
+	feedbackTraceBundlePath: vi.fn(
+		(timestamp: string) => `/Users/test/Desktop/maestro-profile-${timestamp}.zip`
+	),
 }));
 
 // Mock fs so temp-file cleanup (fs.promises.unlink) is observable
@@ -402,15 +409,24 @@ describe('debug IPC handlers', () => {
 
 			expect(dialog.showSaveDialog).not.toHaveBeenCalled();
 			expect(profiling.stopProfiling).toHaveBeenCalled();
+			// The bundle is named by the profiling module, from the capture timestamp,
+			// so it is a name the feedback trace check accepts.
+			expect(profiling.feedbackTraceBundlePath).toHaveBeenCalledWith(
+				expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/)
+			);
+			const bundlePath = vi.mocked(profiling.feedbackTraceBundlePath).mock.results[0].value;
 			// finalizeCapture now takes the whole stop outcome, so the bundle's
 			// metadata can record buffer pressure and whether the watchdog ended it.
 			expect(profiling.finalizeCapture).toHaveBeenCalledWith(
 				expect.stringContaining('maestro-trace-'),
-				expect.stringContaining('maestro-profile-'),
+				bundlePath,
 				expect.objectContaining({ durationMs: 1500, categories: ['devtools.timeline'] })
 			);
-			// Raw trace temp file is cleaned up after bundling.
+			// Raw trace temp file is cleaned up after bundling, and the bundle is registered.
 			expect(fs.promises.unlink).toHaveBeenCalledWith(expect.stringContaining('maestro-trace-'));
+			expect(profiling.recordFeedbackTraceBundle).toHaveBeenCalledWith(
+				'/Users/test/Desktop/maestro-profile-x.zip'
+			);
 			expect(result).toMatchObject({
 				success: true,
 				path: '/Users/test/Desktop/maestro-profile-x.zip',
@@ -422,24 +438,52 @@ describe('debug IPC handlers', () => {
 	});
 
 	describe('debug:discardTrace', () => {
-		it('deletes a temp maestro trace zip', async () => {
+		it('deletes the real path of a trace bundle that passes the check', async () => {
 			const handler = handlers.get('debug:discardTrace');
 			expect(handler).toBeDefined();
-			const target = '/Users/test/Desktop/maestro-profile-abc.zip';
+			const target = '/Users/test/Desktop/maestro-profile-2026-11-24T12-34-56.zip';
+			const realPath = '/private/Users/test/Desktop/maestro-profile-2026-11-24T12-34-56.zip';
+			vi.mocked(profiling.checkFeedbackTraceBundle).mockResolvedValue({ ok: true, realPath });
+
 			const result = await handler!({} as any, target);
 
-			expect(fs.promises.unlink).toHaveBeenCalledWith(target);
+			expect(profiling.checkFeedbackTraceBundle).toHaveBeenCalledWith(target);
+			expect(fs.promises.unlink).toHaveBeenCalledWith(realPath);
+			expect(fs.promises.unlink).toHaveBeenCalledTimes(1);
+			expect(profiling.forgetFeedbackTraceBundle).toHaveBeenCalledWith(realPath);
 			expect(result.success).toBe(true);
 		});
 
-		it('refuses paths outside the temp dir or with the wrong name', async () => {
+		it('deletes nothing when the path fails the check', async () => {
 			const handler = handlers.get('debug:discardTrace');
-			const bad = await handler!({} as any, '/etc/passwd');
-			const wrongName = await handler!({} as any, '/Users/test/Desktop/other.zip');
+			vi.mocked(profiling.checkFeedbackTraceBundle).mockResolvedValue({
+				ok: false,
+				reason: 'not in the folder Maestro writes traces to',
+			});
+			// A `..` path that a prefix check on the temp folder would have let through.
+			const climbing = '/Users/test/Desktop/../Documents/maestro-profile-2026-11-24T12-34-56.zip';
 
+			const bad = await handler!({} as any, '/etc/passwd');
+			const escaped = await handler!({} as any, climbing);
+
+			expect(profiling.checkFeedbackTraceBundle).toHaveBeenCalledWith(climbing);
 			expect(fs.promises.unlink).not.toHaveBeenCalled();
 			expect(bad.success).toBe(false);
-			expect(wrongName.success).toBe(false);
+			expect(escaped.success).toBe(false);
+		});
+
+		it('retains registration and reports failure when unlink fails with a non-ENOENT error', async () => {
+			const handler = handlers.get('debug:discardTrace');
+			const target = '/Users/test/Desktop/maestro-profile-2026-11-24T12-34-56.zip';
+			const realPath = '/private/Users/test/Desktop/maestro-profile-2026-11-24T12-34-56.zip';
+			vi.mocked(profiling.checkFeedbackTraceBundle).mockResolvedValue({ ok: true, realPath });
+			const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+			vi.mocked(fs.promises.unlink).mockRejectedValueOnce(eacces);
+
+			const result = await handler!({} as any, target);
+
+			expect(result.success).toBe(false);
+			expect(profiling.forgetFeedbackTraceBundle).not.toHaveBeenCalled();
 		});
 	});
 

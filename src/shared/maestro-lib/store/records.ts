@@ -63,6 +63,14 @@ export interface AITabRecord extends UnknownFields {
 	 * its live process registry on every record it sends (`withLiveTabState`); it is never stored.
 	 */
 	thinkingStartTime?: number;
+	/**
+	 * A desktop host's own Agent Resilience holds this tab's failed turn for a resend right now
+	 * (`isAiTabRetryPending()` on that host), as it reports it on every agent list it sends; never
+	 * stored. Absent: a host that does not report it (a headless host has no retry of its own, and
+	 * an older desktop host), so a reader falls back to the transcript's retry card
+	 * (`hostRetriesTurn()`, R56).
+	 */
+	retryPending?: boolean;
 	hasUnread?: boolean;
 	/** A consult tab not drawn in the tab strip (see `isAiTabHidden`). */
 	hidden?: boolean;

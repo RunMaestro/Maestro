@@ -393,6 +393,9 @@ export interface LogEntry {
 	// card collapses all subsequent auto-retry attempts into a single live stat
 	// readout (attempt count, elapsed, next-retry countdown, Retry now / Stop).
 	retryOutageId?: string;
+	// The outage of that card was stopped by the user: its retry no longer holds the message,
+	// which waits paused. A Federation client reads a stopped card as no retry of the host's own.
+	retryStopped?: boolean;
 	// Command mode: anchors the live output card for a `!command` the user ran
 	// from the AI composer. The command never reaches the agent - Maestro runs
 	// it directly and streams stdout/stderr into `text`. See
@@ -1178,6 +1181,10 @@ export interface FilePreviewTab {
 	searchQuery: string; // Preserved search query
 	editMode: boolean; // Whether tab was in edit mode
 	editContent: string | undefined; // Unsaved edit content (undefined if no pending changes)
+	// The file `editContent` was typed for. Written with the draft by `nextEditContentPath()` and
+	// read only while a draft exists: Save refuses to write a draft anywhere else. A draft saved
+	// before this field existed has none and is taken to belong to `path`.
+	editContentPath?: string;
 	createdAt: number; // Timestamp for ordering
 	// When the tab started showing its current path (ms). Differs from createdAt
 	// once an open replaces the file in this tab. The User Journey dwell time on

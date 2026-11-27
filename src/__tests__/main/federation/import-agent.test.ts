@@ -253,11 +253,48 @@ describe('importAgentIntoDesktop', () => {
 		expect(result.ok && result.receipt.queued).toBe(2);
 		const agentId = d.stored()[0].id;
 		expect(enqueue.mock.calls).toEqual([
-			[agentId, 'tA', 'first', undefined],
-			[agentId, 'tA', 'first', undefined],
-			[agentId, 'tA', 'second', ['data:image/png;base64,AA==']],
+			[agentId, 'tA', 'first', undefined, false, undefined],
+			[agentId, 'tA', 'first', undefined, false, undefined],
+			[agentId, 'tA', 'second', ['data:image/png;base64,AA=='], false, undefined],
 		]);
 		expect(d.sleep).toHaveBeenCalledTimes(1);
+	});
+
+	// Parity R50: a message the person held stays held on a desktop host: it is queued held.
+	it('queues a held message held, and a ready one ready (R50)', async () => {
+		const enqueue = vi.fn().mockResolvedValue({ success: true });
+		const d = deps({ enqueue });
+		await importAgentIntoDesktop(
+			input({
+				queue: [
+					{ tabId: 'tA', text: 'ready' },
+					{ tabId: 'tA', text: 'held', held: true },
+				],
+			}),
+			d
+		);
+		const agentId = d.stored()[0].id;
+		expect(enqueue.mock.calls).toEqual([
+			[agentId, 'tA', 'ready', undefined, false, undefined],
+			[agentId, 'tA', 'held', undefined, true, undefined],
+		]);
+	});
+
+	// Parity R55: a queued message is queued on a desktop host with the settings it was queued with.
+	it('queues a message with the settings it was queued with (R55)', async () => {
+		const enqueue = vi.fn().mockResolvedValue({ success: true });
+		const d = deps({ enqueue });
+		await importAgentIntoDesktop(
+			input({
+				queue: [
+					{ tabId: 'tA', text: 'frozen', overrides: { effort: 'low', saveToHistory: false } },
+				],
+			}),
+			d
+		);
+		expect(enqueue.mock.calls).toEqual([
+			[d.stored()[0].id, 'tA', 'frozen', undefined, false, { effort: 'low', saveToHistory: false }],
+		]);
 	});
 
 	it('reports a message still refused as a notice and keeps the agent', async () => {

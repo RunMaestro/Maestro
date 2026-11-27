@@ -21,6 +21,7 @@ import {
 import { getClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 import { selectSessionById, updateAiTab, useSessionStore } from '../stores/sessionStore';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
+import { hostedTargetOf } from './hostedTurns';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import type { AITab, LogEntry, Session, ToolType } from '../types';
@@ -95,6 +96,10 @@ export function canCompactTabContext(sessionId: string, tabId: string): boolean 
 	if (!hiddenTurnSpawner) return false;
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	if (!session || !getContextCompactCommand(session.toolType)) return false;
+	// A hosted agent's provider session lives on its host, and the hidden compaction turn spawns
+	// here, where a hosted agent's launch is refused: no compaction, so the message is held with
+	// its error (never dropped by a compaction that cannot land; bot review on #2171).
+	if (hostedTargetOf(session)) return false;
 	return !!findTab(session, tabId)?.agentSessionId;
 }
 

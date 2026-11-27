@@ -17,6 +17,7 @@
  * Pure: no file access. Safe to import from the renderer.
  */
 
+import type { SteerBubbleState } from '../../chatSteering';
 import type { AgentError } from '../../types';
 import type { AgentRecord, AITabRecord, SessionsDocument, UnknownFields } from './records';
 import { agentsOf, aiTabsOf } from './read-stores';
@@ -65,6 +66,13 @@ export interface LogEntryRecord extends UnknownFields {
 	/** A user message steered into the turn already running (`SteeredMessageHeader`). */
 	steered?: boolean;
 	/**
+	 * A steered message: what the agent did with it. `queued`: it could not fold it in and ran it
+	 * as a turn of its own after the one it was steered into (`isUserTurnStart()`); `absorbed`: it
+	 * took it into that turn; `pending`: no verdict yet. Absent on a steer written before the state
+	 * was recorded, read as joining the turn.
+	 */
+	steerState?: SteerBubbleState;
+	/**
 	 * A user message: the id of the queue item it ran from, on the host that ran it. A client that
 	 * queued the message knows that id from the host's receipt, so it finds this entry by identity,
 	 * never by text or position (two messages with the same text, or an image-only message).
@@ -87,6 +95,11 @@ export interface LogEntryRecord extends UnknownFields {
 	 * reading a hosted tab tells from it that the host retries the message itself (`hostRetriesTurn()`).
 	 */
 	retryOutageId?: string;
+	/**
+	 * The retry card's outage was stopped by the user (its Stop): the retry no longer holds the
+	 * message, which waits paused. `hostRetriesTurn()` reads a stopped card as no retry (R45).
+	 */
+	retryStopped?: boolean;
 	/** A custom AI command (`/commit`) this user message invoked. */
 	aiCommand?: { command: string; description: string };
 	metadata?: UnknownFields & {

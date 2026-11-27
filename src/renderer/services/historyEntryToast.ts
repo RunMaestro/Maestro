@@ -12,7 +12,10 @@
  */
 
 import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
-import { queueExitOf } from '../../shared/maestro-lib/client/peer-mirror';
+import {
+	MIRROR_HISTORY_PUSH_MERGE_MS,
+	queueExitOf,
+} from '../../shared/maestro-lib/client/peer-mirror';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
 import { readHistoryCommandOutcome } from '../../shared/maestroBuiltinCommandText';
 import { notifyToast } from '../stores/notificationStore';
@@ -178,6 +181,13 @@ const HOSTED_SYNOPSIS_FAST_MS = 10 * 1000;
 export const HOSTED_SYNOPSIS_IDLE_MS = 60 * 1000;
 /** The longest a watch lives, turn included: a turn that runs longer raises no toast. */
 export const HOSTED_SYNOPSIS_WATCH_MS = 60 * 60 * 1000;
+/**
+ * How long after it finds the entry a watch waits for the host's own `agent.history` push before
+ * it refreshes an open History panel itself: the mirror holds that push up to
+ * `MIRROR_HISTORY_PUSH_MERGE_MS`, then it crosses IPC. A host that announced meanwhile is not
+ * refreshed twice.
+ */
+export const HOSTED_HISTORY_ANNOUNCE_GRACE_MS = MIRROR_HISTORY_PUSH_MERGE_MS * 4;
 /** How many of the host's newest USER entries a watch reads. */
 const HOSTED_SYNOPSIS_PAGE = 20;
 
@@ -366,6 +376,13 @@ export function watchHostedTurnSynopsis(
 			);
 			if (!entry) return;
 			toastedSynopsisEntries.add(entry.id);
+			// An older host never says it wrote this entry: an open History panel reads again. A host
+			// that says so may be merging its push right now (its first write since the connection
+			// came up): wait for it, so the panel reads once.
+			setTimeout(
+				() => usePeerMirrorStore.getState().noteHostHistoryEntry(target.peerId, target.agentId),
+				HOSTED_HISTORY_ANNOUNCE_GRACE_MS
+			);
 			const current = selectSessionById(sessionId)(useSessionStore.getState());
 			if (!current) return;
 			const localTab = current.aiTabs.find((candidate) => candidate.id === tabId);

@@ -153,24 +153,32 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 						}}
 					>
 						{hasUnreadTabs && isLast && <CornerDot color={theme.colors.error} placement="right" />}
-						<div
-							className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity"
-							style={{
-								minWidth: '240px',
-								left: `${leftSidebarWidth + 8}px`,
-								top: tooltipPosition ? `${tooltipPosition.y}px` : undefined,
-								...elevatedSurfaceStyle(theme),
-							}}
-						>
-							<SessionTooltipContent
-								session={s}
-								theme={theme}
-								gitFileCount={getFileCount(s.id)}
-								isInBatch={isInBatch}
-								contextWarningYellowThreshold={contextWarningYellowThreshold}
-								contextWarningRedThreshold={contextWarningRedThreshold}
-							/>
-						</div>
+						{/* Mounted only while the pointer or focus is on this pill. A Nov 2026
+						    field trace caught every collapsed pill carrying its full tooltip
+						    hidden at opacity 0: one context bar per agent, each restarting its
+						    `transition-all` whenever that agent's usage moved (53 main-thread
+						    transitions in a minute nobody could see), and a full tooltip
+						    subtree re-rendered with every pill for no one to read. */}
+						{tooltipPosition && (
+							<div
+								className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity"
+								style={{
+									minWidth: '240px',
+									left: `${leftSidebarWidth + 8}px`,
+									top: `${tooltipPosition.y}px`,
+									...elevatedSurfaceStyle(theme),
+								}}
+							>
+								<SessionTooltipContent
+									session={s}
+									theme={theme}
+									gitFileCount={getFileCount(s.id)}
+									isInBatch={isInBatch}
+									contextWarningYellowThreshold={contextWarningYellowThreshold}
+									contextWarningRedThreshold={contextWarningRedThreshold}
+								/>
+							</div>
+						)}
 					</div>
 				);
 			})}

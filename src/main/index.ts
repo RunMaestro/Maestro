@@ -34,7 +34,6 @@ import {
 	powerMonitor,
 	protocol,
 	safeStorage,
-	shell,
 	ipcMain,
 	dialog,
 	type OpenExternalOptions,
@@ -54,6 +53,7 @@ import { readFile } from 'fs/promises';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
 import { ProcessManager } from './process-manager';
+import { isRetiredOnRendererCrash } from './process-manager/utils/rendererCrashCleanup';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { createAgentConfigLookup, customPathsFromAgentConfigs } from './agents/agent-config-lookup';
@@ -193,6 +193,7 @@ import {
 import { setSusFactorNotifier } from './cue/cue-susfactor';
 import { emitCueNotifyToast } from './cue/cue-notify-bridge';
 import { logger } from './utils/logger';
+import { openExternalUrl } from './utils/open-local-path';
 import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
@@ -1117,12 +1118,14 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		}
 	});
 
-	// Kill all managed processes before the renderer reloads after a crash.
-	// Without this, the new renderer restores sessions with pid:0 and spawns fresh
-	// PTYs, but only the *active* tab's old PTY gets killed (via spawn-before-kill).
-	// Non-active tabs' orphaned PTYs survive indefinitely, leaking PTY file descriptors.
+	// The main process owns AI tab turns across a renderer reload, and session
+	// restoration reattaches to them. Stop only what the crashed renderer owned:
+	// terminal PTYs, Auto Run tasks and synopses (see rendererCrashCleanup.ts).
 	mainWindow.webContents.on('render-process-gone', () => {
-		processManager?.killAll();
+		if (!processManager) return;
+		for (const proc of processManager.getAll()) {
+			if (isRetiredOnRendererCrash(proc)) processManager.kill(proc.sessionId, { sync: true });
+		}
 	});
 }
 
@@ -1497,7 +1500,11 @@ app
 		// the user having to toggle Live Mode to coax it back.
 		startCliDiscoveryWatchdog(cliServerDeps);
 
-		// Initialize core prompts from disk (must happen before features that use them)
+		// Initialize core prompts from disk (must happen before features that use them).
+		// A customizations file that is not valid JSON never reaches the catch below: the prompt
+		// manager moves it aside and starts from the bundled prompts. What does reach it is a
+		// missing BUNDLED prompt (a broken install, which a reinstall fixes) or a customizations
+		// file that cannot be read at all (permissions, disk).
 		try {
 			await initializePrompts();
 		} catch (error) {
@@ -3157,7 +3164,9 @@ app
 						logger.info(`shell.openExternal by plugin -> ${url} (demo no-op)`, '[PluginAudit]');
 						return;
 					}
-					await shell.openExternal(url, opts as OpenExternalOptions);
+					// A `file:` URL (the broker passes one only under a `file:` scope)
+					// opens like a clicked link: an app, script or installer is revealed.
+					await openExternalUrl(url, opts as OpenExternalOptions);
 				},
 				powerPreventSleep: (reason) => powerManager.addBlockReason(reason),
 				powerReleaseSleep: (reason) => powerManager.removeBlockReason(reason),

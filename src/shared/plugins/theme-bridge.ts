@@ -6,7 +6,12 @@
  * (13 required keys plus optional ANSI/selection entries). This module overlays
  * the plugin's colors onto a base palette (picked by mode) so a plugin can
  * supply just an accent or two and still produce a coherent, fully-populated
- * theme. Unknown color keys in the contribution are ignored.
+ * theme. Unknown color keys in the contribution are ignored, and so is any
+ * value that fails `isStrictCssColor()` (the base value stays): theme colors
+ * are written into `<style>` blocks, where a value such as
+ * `red;} * { background: url(...) }` would add CSS rules of its own.
+ * `collectContributions()` already drops those values with a plugin error;
+ * this is the second check, on the renderer side of the IPC boundary.
  *
  * Pure and bundle-safe (no fs, no Electron). The caller supplies the base
  * palettes, so this module does not depend on the built-in theme table.
@@ -14,6 +19,7 @@
 
 import type { Theme, ThemeColors } from '../theme-types';
 import type { ThemeContribution } from './contributions';
+import { isStrictCssColor } from '../cssColor';
 
 /**
  * Every key of ThemeColors. Used to filter a plugin's loose color map down to
@@ -57,8 +63,8 @@ const THEME_COLOR_KEYS: ReadonlyArray<keyof ThemeColors> = [
 const THEME_COLOR_KEY_SET = new Set<string>(THEME_COLOR_KEYS as readonly string[]);
 
 /**
- * Overlay a plugin theme's recognized colors onto a base palette and return a
- * complete Theme. The plugin's namespaced id becomes the Theme id (cast to
+ * Overlay a plugin theme's recognized, plain colors onto a base palette and
+ * return a complete Theme. The plugin's namespaced id becomes the Theme id (cast to
  * ThemeId - plugin ids live outside the built-in union but are valid at runtime,
  * mirroring how runtime agents extend AGENT_IDS).
  */
@@ -66,7 +72,7 @@ export function pluginThemeToTheme(contribution: ThemeContribution, base: ThemeC
 	const colors: ThemeColors = { ...base };
 	const writable = colors as unknown as Record<string, string>;
 	for (const [key, value] of Object.entries(contribution.colors)) {
-		if (typeof value === 'string' && THEME_COLOR_KEY_SET.has(key)) {
+		if (THEME_COLOR_KEY_SET.has(key) && isStrictCssColor(value)) {
 			writable[key] = value;
 		}
 	}

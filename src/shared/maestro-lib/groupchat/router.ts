@@ -71,6 +71,7 @@ import {
 import { extractFirstSentence, type GroupChatStore } from './storage';
 import { GROUP_CHAT_MODERATOR_NAME, resolveGroupChatTurnKey } from './turn-metrics';
 import type { GroupChatTurnMetrics } from './turn-metrics';
+import { maskEnvVarValues } from '../../agentEnvironment';
 import { mediaSubtype, parseBase64DataUrl } from '../../dataUrl';
 import type {
 	GroupChatAgentDirectory,
@@ -1442,8 +1443,25 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 				// Get the base args from the agent configuration
 				const args = [...agent.args];
 				const agentConfigValues = agents.providerConfig(chat.moderatorAgentId);
+				const loggedConfigValues = {
+					...agentConfigValues,
+					...(agentConfigValues.customEnvVars
+						? {
+								customEnvVars: maskEnvVarValues(
+									agentConfigValues.customEnvVars as Record<string, unknown>
+								),
+							}
+						: {}),
+					...(agentConfigValues.customEnvVarsDisabled
+						? {
+								customEnvVarsDisabled: maskEnvVarValues(
+									agentConfigValues.customEnvVarsDisabled as Record<string, unknown>
+								),
+							}
+						: {}),
+				};
 				logger.debug(
-					`[GroupChat:Debug] agentConfigValues for ${chat.moderatorAgentId}: ${JSON.stringify(agentConfigValues)}`
+					`[GroupChat:Debug] agentConfigValues for ${chat.moderatorAgentId}: ${JSON.stringify(loggedConfigValues)}`
 				);
 				const baseArgs = buildAgentArgs(agent, {
 					baseArgs: args,
@@ -2416,7 +2434,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 					);
 					logger.debug(`[GroupChat:Debug] Prompt length: ${participantPrompt.length}`);
 					logger.debug(
-						`[GroupChat:Debug] CustomEnvVars: ${JSON.stringify(configResolution.effectiveCustomEnvVars || {})}`
+						`[GroupChat:Debug] CustomEnvVars: ${JSON.stringify(maskEnvVarValues(configResolution.effectiveCustomEnvVars || {}))}`
 					);
 
 					const spawnResult = await launcher.runner.start({

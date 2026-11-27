@@ -48,6 +48,7 @@ import {
 	resolveConsultTargets,
 	withConsultPendingNote,
 	withHandoffPendingNote,
+	type ConsultHoldSettings,
 } from './crossAgentConsultHold';
 import { armMentionHandoff } from './crossAgentHandoff';
 
@@ -217,6 +218,11 @@ export function queuedMentionFields(
  *
  * Returns what the caller must tell the local turn: the parallel consult
  * targets (pending note) and the hand-off targets (hand-off note).
+ *
+ * `options.settings` are a queued message's own settings (codified at send):
+ * the hold, and the turn it releases into, run on them rather than on the
+ * tab's settings at dispatch time. `options.managedQueue` is the host-native
+ * queue barrier of a managed dispatch.
  */
 export function dispatchCrossAgentMentions(
 	plan: CrossAgentMentionPlan,
@@ -224,8 +230,12 @@ export function dispatchCrossAgentMentions(
 	sourceSession: Session,
 	sourceTabId: string,
 	images?: string[],
-	managedQueue?: { dispatchId: string; generation: string; starts: Promise<void>[] }
+	options: {
+		managedQueue?: { dispatchId: string; generation: string; starts: Promise<void>[] };
+		settings?: ConsultHoldSettings;
+	} = {}
 ): CrossAgentMentionDispatch {
+	const { managedQueue, settings } = options;
 	const targets = resolveConsultTargets(plan.targetSessionIds);
 	if (plan.routing === 'handoff') {
 		if (!managedQueue) armMentionHandoff(sourceSession.id, sourceTabId, { targets, message });
@@ -235,12 +245,18 @@ export function dispatchCrossAgentMentions(
 	// Hold BEFORE sending, so a consult that settles almost at once (a target
 	// that no longer exists) still finds the hold waiting to record it.
 	if (!managedQueue && plan.routing === 'parallel') {
-		holdTurnForConsults(sourceSession.id, sourceTabId, targets);
+		holdTurnForConsults(sourceSession.id, sourceTabId, targets, undefined, settings);
 	} else if (!managedQueue && plan.routing === 'consult-first') {
-		holdTurnForConsults(sourceSession.id, sourceTabId, targets, {
-			message,
-			...(images && images.length > 0 && { images: [...images] }),
-		});
+		holdTurnForConsults(
+			sourceSession.id,
+			sourceTabId,
+			targets,
+			{
+				message,
+				...(images && images.length > 0 && { images: [...images] }),
+			},
+			settings
+		);
 	}
 
 	const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
@@ -278,16 +294,23 @@ export function dispatchCrossAgentMentions(
  * holds text the user did not type (Design Mode chip blocks); the consult still
  * gets the whole `message`. `options.routingOverride` is a routing the user
  * picked when queuing it (`QueuedItem.mentionRouting`), which wins over wording.
+ * `options.settings` are the queued message's own settings, for its hold.
  */
 export function dispatchCrossAgentMentionsForMessage(
 	message: string,
 	sourceSession: Session,
 	sourceTabId: string,
 	images?: string[],
-	options: { routingOverride?: MentionRouting; planText?: string } = {}
+	options: {
+		routingOverride?: MentionRouting;
+		planText?: string;
+		settings?: ConsultHoldSettings;
+	} = {}
 ): CrossAgentMentionDispatch {
-	const { routingOverride, planText = message } = options;
+	const { routingOverride, planText = message, settings } = options;
 	const plan = planCrossAgentMentions(planText, sourceSession.id, routingOverride);
 	if (!plan) return NO_MENTION_DISPATCH;
-	return dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId, images);
+	return dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId, images, {
+		settings,
+	});
 }

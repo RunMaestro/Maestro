@@ -291,6 +291,14 @@ function pruneByAgent<T>(
 /** How many queue exits the mirror keeps per agent (`MirroredPeer.queueExits`). */
 export const MAX_MIRRORED_QUEUE_EXITS = 32;
 
+/**
+ * How long the desktop mirror merges the `agent.history` pushes of one agent into one: a desktop
+ * host sends one History write as `history:entryAdded` plus the two to four `fs.watch` events
+ * macOS fires for it, and each push makes an open History panel read the host's whole list again.
+ * A window that waits on such a push waits longer than this (L34).
+ */
+export const MIRROR_HISTORY_PUSH_MERGE_MS = 150;
+
 /** How `itemId` left its host's queue, when the host named it; undefined while not named. */
 export function queueExitOf(
 	exits: readonly QueueExit[] | undefined,

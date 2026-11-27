@@ -45,6 +45,7 @@ import {
 	clearTabStale,
 	createMirroredPeer,
 	markAllTabsStale,
+	MIRROR_HISTORY_PUSH_MERGE_MS,
 	replacePeerAgents,
 	setAgentQueue,
 	withReadQueueImages,
@@ -114,6 +115,7 @@ export const MIRROR_IDLE_REDIAL_MAX_MS = 5 * 60_000;
  * nothing, so its list is read again this soon. A host that says it keeps the list until it does.
  */
 export const MIRROR_UNANNOUNCED_HISTORY_TTL_MS = 5_000;
+export { MIRROR_HISTORY_PUSH_MERGE_MS };
 
 export interface PeerMirrorServiceDeps {
 	/** The stored SSH remotes. Read on every reconcile; nothing is cached. */
@@ -202,6 +204,11 @@ interface PeerEntry {
 	 * it says every write: its History reads are kept until it does. Unset for an older host.
 	 */
 	announcesHistory?: true;
+	/**
+	 * The agents whose `agent.history` push waits out `MIRROR_HISTORY_PUSH_MERGE_MS`, with its
+	 * timer: more History writes meanwhile join that one push.
+	 */
+	historyPushes?: Map<string, { timer: unknown }>;
 }
 
 export class PeerMirrorService {
@@ -869,13 +876,20 @@ export class PeerMirrorService {
 				// The host wrote it, often a synopsis after the turn's end: the next read is fresh.
 				entry.announcesHistory = true;
 				this.forgetHistory(entry, event.agentId);
+				this.mergeHistoryPush(entry, event.agentId);
+				continue;
 			} else if (event.type === 'agent.removed') {
 				this.forgetHistory(entry, event.agentId);
 			} else if (event.type === 'peer.stale' || event.type === 'peer.agents') {
 				this.forgetTranscripts(entry);
 				this.forgetHistory(entry);
-				// A connection that could not resume may have reached another build of the host.
-				if (event.type === 'peer.stale') delete entry.announcesHistory;
+				// A connection that could not resume may have reached another build of the host. A
+				// History push still waiting would tell the windows that build announces its writes;
+				// the stale push already makes every open panel read again.
+				if (event.type === 'peer.stale') {
+					delete entry.announcesHistory;
+					this.cancelHistoryPushes(entry);
+				}
 			}
 			this.emit(entry, event);
 		}
@@ -901,6 +915,37 @@ export class PeerMirrorService {
 		// Anything else goes out after the turn events before it, so a window sees them in order.
 		this.flushTurns();
 		this.deps.push({ peerId, event });
+	}
+
+	/**
+	 * Tell the windows an agent's History moved, once per burst of host writes: the first write
+	 * starts the wait, and the ones within `MIRROR_HISTORY_PUSH_MERGE_MS` join its push. Each write
+	 * already dropped the cached list; it is dropped once more as the push leaves, so a read taken
+	 * inside the burst is not what the panel's read gets.
+	 */
+	private mergeHistoryPush(entry: PeerEntry, agentId: string): void {
+		const pushes = (entry.historyPushes ??= new Map());
+		if (pushes.has(agentId)) return;
+		const setTimer =
+			this.deps.setTimer ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
+		const wait: { timer: unknown } = { timer: null };
+		pushes.set(agentId, wait);
+		wait.timer = setTimer(() => {
+			// Cancelled meanwhile (a resync, a drop): another push may be waiting in its place.
+			if (pushes.get(agentId) !== wait) return;
+			pushes.delete(agentId);
+			if (entry.dropped || this.stopped) return;
+			this.forgetHistory(entry, agentId);
+			this.emit(entry, { type: 'agent.history', agentId });
+		}, MIRROR_HISTORY_PUSH_MERGE_MS);
+	}
+
+	/** Drop the History pushes still waiting out their merge, and their timers. */
+	private cancelHistoryPushes(entry: PeerEntry): void {
+		const clearTimer =
+			this.deps.clearTimer ?? ((handle: unknown) => clearTimeout(handle as NodeJS.Timeout));
+		for (const wait of entry.historyPushes?.values() ?? []) clearTimer(wait.timer);
+		entry.historyPushes?.clear();
 	}
 
 	private armTurnTimer(): void {
@@ -964,6 +1009,7 @@ export class PeerMirrorService {
 
 	private async detach(entry: PeerEntry): Promise<void> {
 		entry.dropped = true;
+		this.cancelHistoryPushes(entry);
 		for (const waiter of [...entry.linkWaiters]) waiter();
 		for (const unsubscribe of entry.unsubscribes) unsubscribe();
 		entry.unsubscribes = [];

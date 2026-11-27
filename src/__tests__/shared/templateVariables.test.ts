@@ -979,6 +979,29 @@ describe('substituteTemplateVariables', () => {
 			expect(result.startsWith('Start')).toBe(true);
 			expect(result.endsWith('End')).toBe(true);
 		});
+
+		it('should hand each resolved value to renderValue, in order, with its span', () => {
+			const context = createTestContext({
+				session: createTestSession({ name: 'Test' }),
+			});
+			const calls: Array<[string, string, { start: number; end: number }]> = [];
+			const result = substituteTemplateVariables(
+				'a {{session_name}} {{UNKNOWN}} {{TOOL_TYPE}}',
+				context,
+				{
+					renderValue: (value, name, span) => {
+						calls.push([value, name, span]);
+						return `<${name}>`;
+					},
+				}
+			);
+			// Unknown placeholders never reach the renderer and stay literal.
+			expect(result).toBe('a <SESSION_NAME> {{UNKNOWN}} <TOOL_TYPE>');
+			expect(calls).toEqual([
+				['Test', 'SESSION_NAME', { start: 2, end: 18 }],
+				['claude-code', 'TOOL_TYPE', { start: 31, end: 44 }],
+			]);
+		});
 	});
 
 	describe('Cue Variables', () => {

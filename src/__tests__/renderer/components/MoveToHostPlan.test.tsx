@@ -40,6 +40,20 @@ function summaryWith(overrides: Partial<LiftPlanSummary> = {}): LiftPlanSummary 
 }
 
 describe('groupLiftStays', () => {
+	// Parity R57: a held message an older host would run at once stays here, and the dialog says why.
+	it('shows a held message that stays here as a queued message with its reason (R57)', () => {
+		const rows = groupLiftStays([
+			{ kind: 'queued-held', ref: 'q2', reason: 'The host runs a moved message at once.' },
+		]);
+		expect(rows).toEqual([
+			{
+				kind: 'queued-held',
+				title: '1 queued message',
+				detail: 'The host runs a moved message at once.',
+			},
+		]);
+	});
+
 	it('folds identical hidden tabs into one row and names secret keys', () => {
 		const rows = groupLiftStays([
 			{ kind: 'hidden-tab', ref: 'h1', reason: HIDDEN_REASON },
@@ -61,6 +75,23 @@ describe('groupLiftStays', () => {
 		]);
 		expect(rows.map((row) => row.title)).toEqual(['2 queued messages', '1 queued message']);
 		expect(rows[0].detail).toBe('Queued /x is a command.');
+	});
+});
+
+// Parity R52: transcript images that cannot move are one row, counted by image.
+describe('groupLiftStays: transcript images (R52)', () => {
+	it('counts the images of every tab whose transcript keeps some here', () => {
+		const rows = groupLiftStays([
+			{ kind: 'transcript-image', ref: 't1', count: 2, reason: '2 image(s) in "Main" stay.' },
+			{ kind: 'transcript-image', ref: 't2', count: 1, reason: '1 image(s) in "Notes" stay.' },
+		]);
+		expect(rows).toEqual([
+			{
+				kind: 'transcript-image',
+				title: '3 conversation images',
+				detail: '2 image(s) in "Main" stay. 1 image(s) in "Notes" stay.',
+			},
+		]);
 	});
 });
 

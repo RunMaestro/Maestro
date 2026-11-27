@@ -8,6 +8,7 @@ import type { SshRemoteConfig } from '../../../types';
 import { setMaestroLibImageRefResolver } from '../../host';
 import type { AgentRecord } from '../../store/records';
 import { liftRefusal, liftRemoteCwd, liftSshRemoteId, planAgentLift } from '../lift-plan';
+import { formatLiftPlan } from '../lift-run';
 
 const remote = { id: 'remote-1', name: 'build-box', federation: true } as SshRemoteConfig;
 
@@ -210,6 +211,106 @@ describe('planAgentLift', () => {
 		);
 	});
 
+	// Parity R50: a message the person held moves held, so the host does not run it.
+	it('moves a held queued message held, and a ready one ready (R50)', () => {
+		const plan = planAgentLift({
+			agent: sshAgent({
+				executionQueue: [
+					{ id: 'q1', tabId: 'tab-1', type: 'message', text: 'ready' },
+					{ id: 'q2', tabId: 'tab-1', type: 'message', text: 'held', paused: true },
+				],
+			}),
+			remote,
+			peer: 'build-box',
+			withEnv: false,
+		});
+		expect(plan.input.queue).toEqual([
+			{ tabId: 'tab-1', text: 'ready' },
+			{ tabId: 'tab-1', text: 'held', held: true },
+		]);
+	});
+
+	// Parity R57: a host too old to keep a moved message held would run it at once: the held one
+	// stays here, held, and the plan says so; the ready one moves.
+	it('keeps a held message here when the host does not keep it held, and says so (R57)', () => {
+		const plan = planAgentLift({
+			agent: sshAgent({
+				executionQueue: [
+					{ id: 'q1', tabId: 'tab-1', type: 'message', text: 'ready' },
+					{ id: 'q2', tabId: 'tab-1', type: 'message', text: 'held', paused: true },
+				],
+			}),
+			remote,
+			peer: 'build-box',
+			withEnv: false,
+			hostKeepsHeld: false,
+		});
+		expect(plan.input.queue).toEqual([{ tabId: 'tab-1', text: 'ready' }]);
+		expect(plan.movedQueueItemIds).toEqual(['q1']);
+		expect(plan.summary.stays).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ kind: 'queued-held', ref: 'q2', reason: expect.any(String) }),
+			])
+		);
+		expect(formatLiftPlan(plan.summary, true)).toContain('Queue item q2: The host runs a moved');
+	});
+
+	// Parity R55: settings are codified at send. A queued message moves with the model, effort,
+	// read-only and save to History choices it was queued with, so the host runs it on them.
+	it('moves a queued message with the settings it was queued with (R55)', () => {
+		const plan = planAgentLift({
+			agent: sshAgent({
+				executionQueue: [
+					{
+						id: 'q1',
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'frozen',
+						turnSettings: { model: 'opus', effort: 'high' },
+						readOnlyMode: true,
+						turnSaveToHistory: false,
+					},
+					// The sender's own read-only choice decides over the item's flag.
+					{
+						id: 'q2',
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'writable',
+						readOnlyMode: true,
+						turnReadOnly: false,
+					},
+					{ id: 'q3', tabId: 'tab-1', type: 'message', text: 'no choice' },
+					// Writable when queued is no choice: the host tab's read-only state decides, as a
+					// local drain lets the tab lock it further (CodeRabbit on #2171).
+					{ id: 'q5', tabId: 'tab-1', type: 'message', text: 'writable', readOnlyMode: false },
+					// A malformed stored value is not sent.
+					{
+						id: 'q4',
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'bad',
+						turnSettings: { model: 7 },
+						turnSaveToHistory: 'yes',
+					},
+				],
+			}),
+			remote,
+			peer: 'build-box',
+			withEnv: false,
+		});
+		expect(plan.input.queue).toEqual([
+			{
+				tabId: 'tab-1',
+				text: 'frozen',
+				overrides: { model: 'opus', effort: 'high', readOnly: true, saveToHistory: false },
+			},
+			{ tabId: 'tab-1', text: 'writable', overrides: { readOnly: false } },
+			{ tabId: 'tab-1', text: 'no choice' },
+			{ tabId: 'tab-1', text: 'writable' },
+			{ tabId: 'tab-1', text: 'bad' },
+		]);
+	});
+
 	describe('with an image store registered', () => {
 		const STORED = 'maestro-image://store/abc.png';
 		const STORED_DATA = `data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`;
@@ -268,6 +369,19 @@ describe('planAgentLift', () => {
 			const logs = plan.input.tabs[0].logs;
 			expect(logs[0].images).toEqual([STORED_DATA, 'data:image/png;base64,AA']);
 			expect(logs[1]).not.toHaveProperty('images');
+			// Parity R52: the plan the person confirms names the image that does not move, by tab.
+			expect(plan.summary.stays).toEqual(
+				expect.arrayContaining([
+					{
+						kind: 'transcript-image',
+						ref: 'tab-1',
+						count: 1,
+						reason:
+							'1 image(s) in the conversation "Main" (tab-1) could not be read from this machine\'s image store and do not move. They stay in this machine\'s copy.',
+					},
+				])
+			);
+			expect(formatLiftPlan(plan.summary, true)).toContain('Images of tab tab-1: 1 image(s)');
 		});
 	});
 

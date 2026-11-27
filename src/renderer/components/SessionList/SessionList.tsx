@@ -1656,7 +1656,12 @@ function SessionListInner(props: SessionListProps) {
 												: 'Click to enable web interface'
 										}
 									>
-										<Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
+										{/* Static on purpose. Live mode is a standing state that can stay on
+										    for days, so a pulse here never stops and keeps the window
+										    producing frames for as long as it is on (a Nov 2026 field trace
+										    logged ~75 animation invalidations a second on this one icon).
+										    The green badge already says "live". */}
+										<Radio className="w-3 h-3" />
 										{/* The badge is an indicator and the wordmark is the yield ahead of
 										    it: once the wordmark has been dropped the row already holds more
 										    width than the badge costs, so charging for it either way is what

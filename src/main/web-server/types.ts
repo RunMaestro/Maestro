@@ -113,6 +113,8 @@ export interface AITabData {
 	createdAt: number;
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
+	/** This desktop's own Agent Resilience holds the tab's failed turn for a resend (R56). */
+	retryPending?: boolean;
 	hasUnread?: boolean;
 }
 

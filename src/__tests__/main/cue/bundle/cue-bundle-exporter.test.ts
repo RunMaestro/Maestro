@@ -1165,6 +1165,16 @@ describe('exportCueBundle - Grok resources', () => {
 		expectNoCredentialBody(entries);
 	});
 
+	it("leaves a skill folder's own .git out of the bundle, so the bundle still imports", async () => {
+		seedGrok([{ id: 'agent-gee', name: 'Gee' }]);
+		write(path.join(grokRoot, '.grok/skills/triage/.git/hooks/pre-commit'), '#!/bin/sh\necho hi\n');
+		write(path.join(grokRoot, '.agents/skills/lint/.git/config'), '[core]\n');
+		const { entries } = await exportGrok({ agentId: 'agent-gee' });
+		expect([...entries.keys()].filter((name) => name.includes('/.git/'))).toEqual([]);
+		expect(entries.has('workspaces/app/.grok/skills/triage/run.sh')).toBe(true);
+		expect(entries.has('workspaces/app/.agents/skills/lint/SKILL.md')).toBe(true);
+	});
+
 	it('declares MCP secret names only, on the Grok agent and the requirements', async () => {
 		seedGrok([{ id: 'agent-gee', name: 'Gee' }]);
 		const { entries, manifest } = await exportGrok({ agentId: 'agent-gee' });

@@ -4352,7 +4352,7 @@ describe('WebSocketMessageHandler', () => {
 					type: 'host_capabilities_result',
 					requestId: 'r1',
 					success: true,
-					capabilities: ['turn-agent-text'],
+					capabilities: ['turn-agent-text', 'import-held'],
 				})
 			);
 		});
@@ -7879,6 +7879,22 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			await vi.waitFor(() => expect(lastResponse().type).toBe('feedback_submit_result'));
 			expect(vi.mocked(submitFeedbackConversation).mock.calls[0][1]).toEqual({ settingsStore: {} });
 			expect(lastResponse().issueUrl).toContain('/issues/1');
+		});
+
+		it('feedback_submit hands performanceTracePath to the shared service, which checks it', async () => {
+			// The bridge neither screens nor drops the path: the trace check lives in
+			// submitFeedbackConversation(), so this route and the IPC route share it.
+			const tracePath = '/Users/me/.ssh/id_rsa';
+			handler.handleMessage(client, {
+				type: 'feedback_submit',
+				requestId: 'sub-trace',
+				payload: { category: 'bug_report', performanceTracePath: tracePath },
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('sub-trace'));
+			expect(submitFeedbackConversation).toHaveBeenLastCalledWith(
+				expect.objectContaining({ performanceTracePath: tracePath }),
+				undefined
+			);
 		});
 
 		it('feedback_submit refuses more screenshots than the modal allows', async () => {

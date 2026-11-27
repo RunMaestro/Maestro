@@ -220,6 +220,11 @@ export type SteeringVerdict =
  */
 export type SteerBubbleState = 'pending' | Extract<SteeringVerdict, 'absorbed' | 'queued'>;
 
+/** Whether `value` is a steered bubble's state, as a transcript from another machine carries it. */
+export function isSteerBubbleState(value: unknown): value is SteerBubbleState {
+	return value === 'pending' || value === 'absorbed' || value === 'queued';
+}
+
 /** Why an injection was refused. Each maps to a different thing to tell the user. */
 export type SteeringRefusal =
 	| 'not-running' // no turn in flight; this is an ordinary message, not a steer
@@ -385,6 +390,30 @@ export const STEERING_TOO_LONG_DETAIL = `the message is over the ${STEERING_MAX_
  */
 export const STEERING_TURN_FINISHED_DETAIL =
 	'that turn has already finished, so there is nothing to steer';
+
+/**
+ * A refused steer as one sentence for a person, capitalized and ending in a period.
+ *
+ * A refusal's `detail` is a lowercase clause written to follow "refused: ", and a
+ * `blocking-dialog` detail is only the dialog's NAME ("a permission prompt", see
+ * `describeBlockingDialog` in src/maestro-p/steering-screen.ts). Pasted straight
+ * into a toast it read "a permission prompt It stays queued." Every surface that
+ * tells a person a steer was refused builds its sentence here; `fallback` is used
+ * when the refusal carries no detail.
+ */
+export function steerRefusalSentence(
+	result: Pick<QueueSteerResult, 'refusal' | 'detail'>,
+	fallback: string
+): string {
+	const detail = result.detail?.trim();
+	if (!detail) return fallback;
+	const clause =
+		result.refusal === 'blocking-dialog'
+			? `${detail} is waiting for an answer, so the message was not typed`
+			: detail;
+	const sentence = clause.charAt(0).toUpperCase() + clause.slice(1);
+	return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+}
 
 /**
  * The id of a well-formed steer frame whose ONLY fault is its size, else null.

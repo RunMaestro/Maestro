@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runExitSynopsis } from '../../../renderer/hooks/agent/internal/helpers/exitSynopsis';
 import {
+	HOSTED_HISTORY_ANNOUNCE_GRACE_MS,
 	HOSTED_SYNOPSIS_IDLE_MS,
 	HOSTED_SYNOPSIS_POLL_MS,
 	resetHostedSynopsisWatchesForTest,
@@ -25,6 +26,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { HistoryEntry } from '../../../renderer/types';
 import {
 	createMirroredPeer,
+	MIRROR_HISTORY_PUSH_MERGE_MS,
 	replacePeerAgents,
 } from '../../../shared/maestro-lib/client/peer-mirror';
 import { AGENT_MODES, createModeSession, resetStores, type AgentMode } from '../../helpers';
@@ -193,6 +195,45 @@ describe('U3: the "Synopsis" toast after a plain turn', () => {
 		await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 5);
 		expect(toasts()).toHaveLength(1);
 	});
+
+	// L34 (b): an older host never says it wrote the synopsis, so an open History panel had no
+	// reason to read again until the next turn. A host that says so may push its first write after
+	// the watch found the entry (Greptile on #2176): the panel still reads once.
+	it.each([
+		{ label: 'never says it wrote History', push: 'never' },
+		{ label: 'says so before the watch finds the entry', push: 'before' },
+		{ label: 'says so just after the watch found the entry', push: 'after' },
+	] as const)(
+		'hosted: a host that $label moves the History version once for the entry',
+		async ({ push }) => {
+			seed('hosted');
+			hostTab('busy', 100);
+			watchHostedTurnSynopsis('row', { peerId: 'box', agentId: 'h1' }, 't1');
+			await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+			hostTab('idle');
+			await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS * 2);
+			const version = () => usePeerMirrorStore.getState().historyVersions['box:h1'];
+			const before = version();
+			const announce = () =>
+				usePeerMirrorStore.getState().applyPush({
+					peerId: 'box',
+					event: { type: 'agent.history', agentId: 'h1' },
+				});
+			hostEntries.push(entry('turn', 140));
+			if (push === 'before') announce();
+			// Each poll tick reads the host; stop at the read that finds the entry.
+			for (let i = 0; i < 5 && toasts().length === 0; i++) {
+				await vi.advanceTimersByTimeAsync(HOSTED_SYNOPSIS_POLL_MS);
+			}
+			expect(toasts()).toHaveLength(1);
+			if (push === 'after') {
+				await vi.advanceTimersByTimeAsync(MIRROR_HISTORY_PUSH_MERGE_MS);
+				announce();
+			}
+			await vi.advanceTimersByTimeAsync(HOSTED_HISTORY_ANNOUNCE_GRACE_MS + HOSTED_SYNOPSIS_POLL_MS);
+			expect(version()).toBe(before + 1);
+		}
+	);
 
 	it('hosted: an entry saved before the turn started is not taken for its own', async () => {
 		seed('hosted');

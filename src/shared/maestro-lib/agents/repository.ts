@@ -72,6 +72,7 @@ import type {
 } from '../store/records';
 import { agentsOf, groupsOf, optionalArrayShape, visibleAiTabsOf } from '../store/read-stores';
 import type { LogEntryRecord } from '../store/transcript';
+import type { SteerBubbleState } from '../../chatSteering';
 import { archiveClosedTab, closedTabsFile, readClosedTabs, takeClosedTab } from './closed-tabs';
 import type { ClosedTabSummary } from '../../closedTabCommands';
 import { getTabDisplayName } from '../store/tab-display';
@@ -259,6 +260,18 @@ export interface AgentRepository {
 		tabId: string,
 		entryId: string,
 		endedAt: number,
+		guard?: TabWriteGuard
+	): Promise<ClientResult<void>>;
+	/**
+	 * Record what the agent did with a steered message (`steerState`) on its entry `entryId`, as
+	 * that entry is when the write runs. Nothing is written when the tab no longer holds it, or
+	 * the entry is not a steered message.
+	 */
+	stampSteerState(
+		agentId: string,
+		tabId: string,
+		entryId: string,
+		state: SteerBubbleState,
 		guard?: TabWriteGuard
 	): Promise<ClientResult<void>>;
 	/**
@@ -1211,6 +1224,26 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 			guard
 		);
 
+	const stampSteerState = (
+		agentId: string,
+		tabId: string,
+		entryId: string,
+		state: SteerBubbleState,
+		guard?: TabWriteGuard
+	) =>
+		rewriteTab(
+			agentId,
+			tabId,
+			(tab) => {
+				const logs = Array.isArray(tab.logs) ? (tab.logs as LogEntryRecord[]) : [];
+				const at = logs.findIndex((existing) => existing?.id === entryId);
+				if (at === -1 || logs[at].steered !== true || logs[at].steerState === state) return tab;
+				const stamped = { ...logs[at], steerState: state };
+				return { ...tab, logs: logs.map((existing, i) => (i === at ? stamped : existing)) };
+			},
+			guard
+		);
+
 	const beginTurn = (agentId: string, tabId: string, begin: TurnBegin, guard?: TabWriteGuard) =>
 		rewriteTab(agentId, tabId, (tab) => beginTurnRecord(tab, begin), guard);
 
@@ -1424,6 +1457,7 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		appendTranscript,
 		replaceTranscriptEntry,
 		stampTurnEnded,
+		stampSteerState,
 		beginTurn,
 		recordTabSession: recordSession,
 		openConsultTab,
