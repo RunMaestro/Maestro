@@ -267,6 +267,44 @@ describe('New Tab while the link is down (R15)', () => {
 		expect(synced.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
 	});
 
+	it('closes the tab on the host when it left the record while being made by a path that never told the host (R24)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		hydrateHost(['t1'], 'connected');
+		let answer!: (value: unknown) => void;
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+			action.kind === 'new-tab'
+				? new Promise((resolve) => (answer = resolve))
+				: { ok: true, result: { kind: action.kind, tabId } }
+		);
+
+		createPendingHostTabs(current());
+		// Gone here with no closeHostedTab() call.
+		useSessionStore.setState({ sessions: [closeTab(current(), tabId)!.session] });
+
+		answer({ ok: true, result: { kind: 'new-tab', tabId } });
+		await flush();
+
+		const actions = act$.mock.calls.map(([, , action]) => action);
+		expect(actions.filter((action) => action?.kind === 'close-tab').map((a) => a.tabId)).toEqual([
+			tabId,
+		]);
+		// No follow-up settings or name for a tab that is gone.
+		expect(actions.some((action) => action?.kind === 'update-tab')).toBe(false);
+		expect(actions.some((action) => action?.kind === 'rename-tab')).toBe(false);
+		// The host reports the tab it made before it reports the close.
+		hydrateHost(['t1', tabId], 'connected');
+		const synced = projectHostedSession(current(), {
+			agent: hostAgent(['t1', tabId]),
+			closing: closingHostTabIds(hostedTargetOf(current())!),
+		});
+		expect(synced.aiTabs.map((tab) => tab.id)).toEqual(['t1']);
+	});
+
 	it('gives the host the name the tab got while it waited, even when the report of the host lands first (CodeRabbit on #2161)', async () => {
 		const session = seed('hosted');
 		hydrateHost(['t1'], 'lost');

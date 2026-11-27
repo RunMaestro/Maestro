@@ -350,7 +350,11 @@ export function createPendingHostTab(
 				)
 			: actOnMirroredAgent(target.peerId, target.agentId, action)
 	).then((result) => {
-		const closedHere = closedWhilePending.delete(key);
+		// Closed here while the host made it: told through `closeHostedTab()`, or gone from the
+		// record by any other path (the record itself still here), so the host's tab is closed too.
+		const record = selectSessionById(sessionId)(useSessionStore.getState());
+		const goneHere = !!record && !record.aiTabs.some((candidate) => candidate.id === tabId);
+		const closedHere = closedWhilePending.delete(key) || goneHere;
 		if (result?.kind !== 'new-tab') {
 			if (!closedHere) pendingTabFailedAt.set(key, Date.now());
 			return null;
