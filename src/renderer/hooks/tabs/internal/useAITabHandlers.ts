@@ -10,7 +10,7 @@ import {
 } from '../../../stores/sessionStore';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
-import { persistTabStarred, snapshotClosedTabTranscript } from '../../../utils/starredSessions';
+import { snapshotClosedTabTranscript } from '../../../utils/starredSessions';
 import { persistTabPins } from '../../../services/messagePins';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { requestDesktopTabClose, requestDesktopTabCloses } from '../../../services/desktopTabClose';
@@ -33,12 +33,8 @@ import {
 	visibleAiTabs,
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
-import {
-	closeHostedTab,
-	hostedTargetOf,
-	openHostedTabOrHere,
-	starHostedTab,
-} from '../../../services/hostedTurns';
+import { closeHostedTab, hostedTargetOf, openHostedTabOrHere } from '../../../services/hostedTurns';
+import { setTabStarred } from '../../../services/tabStar';
 
 /** Manage AI tabs, delegating browser inventory changes to the owning desktop. */
 export function useAITabHandlers(
@@ -350,9 +346,7 @@ export function useAITabHandlers(
 		const tabToStar = session.aiTabs.find((t) => t.id === tabId);
 		if (!tabToStar?.agentSessionId) return;
 
-		persistTabStarred(session, tabToStar, starred);
-		starHostedTab(session, tabId, starred);
-		updateAiTab(session.id, tabId, (t) => ({ ...t, starred }));
+		setTabStarred(session.id, tabId, starred);
 	}, []);
 
 	const handleTabMarkUnread = useCallback((tabId: string) => {

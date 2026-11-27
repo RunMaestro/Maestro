@@ -5908,6 +5908,106 @@ describe('useRemoteIntegration', () => {
 		});
 	});
 
+	// `maestro-cli tab rename` and `tab star` act on the tab the same way in every mode, and a hosted
+	// agent's host gets them first, as the Rename Tab modal and the tab strip's star send them. The
+	// sixth live pass found both answered success on a hosted tab while the next sync drew the old
+	// name and no star again.
+	describe('mode parity: maestro-cli tab rename and star reach a hosted agent host', () => {
+		const act$ = vi.fn();
+		const hostCalls = () => act$.mock.calls.map(([, , action]) => action);
+
+		beforeEach(() => {
+			usePeerMirrorStore.setState(usePeerMirrorStore.getInitialState());
+			useSettingsStore.setState({ federationHostedAgents: true });
+			act$.mockReset();
+			act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) => ({
+				ok: true,
+				result: { kind: action.kind, tabId: 'tab-1' },
+			}));
+			const { peer } = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+				[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+				[],
+				1
+			);
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		});
+
+		afterEach(() => {
+			usePeerMirrorStore.setState(usePeerMirrorStore.getInitialState());
+			useSettingsStore.setState({ federationHostedAgents: false });
+		});
+
+		const seed = (mode: AgentMode) => {
+			const session = createMockSession({
+				...agentModeFields(mode),
+				id: 'session-1',
+				aiTabs: [
+					createMockTab({ id: 'tab-1', agentSessionId: 'sess-1', name: 'Old', starred: false }),
+				],
+				activeTabId: 'tab-1',
+			});
+			// `window.maestro` is rebuilt in the outer beforeEach; add the host link after it.
+			(window.maestro as unknown as Record<string, unknown>).federation = { act: act$ };
+			useSessionStore.setState({ sessions: [session] });
+			return session;
+		};
+		const storedTab = () => useSessionStore.getState().sessions[0].aiTabs[0];
+
+		it.each(AGENT_MODES)('%s: a rename names the tab and answers success', async (mode) => {
+			const session = seed(mode);
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New', 'rename-chan');
+			});
+
+			expect(storedTab().name).toBe('New');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenLastCalledWith('rename-chan', {
+				success: true,
+			});
+			expect(hostCalls()).toEqual(
+				mode === 'hosted' ? [{ kind: 'rename-tab', tabId: 'tab-1', name: 'New' }] : []
+			);
+		});
+
+		it('hosted: a name the host refuses changes nothing here and answers its reason', async () => {
+			act$.mockResolvedValue({ ok: false, error: 'The host refused the name.' });
+			const session = seed('hosted');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			await act(async () => {
+				await onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New', 'rename-chan');
+			});
+
+			expect(storedTab().name).toBe('Old');
+			expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenLastCalledWith('rename-chan', {
+				success: false,
+				error: 'The host refused the name.',
+			});
+		});
+
+		it.each(AGENT_MODES)('%s: a star stars the tab', async (mode) => {
+			const session = seed(mode);
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteStarTabHandler?.('session-1', 'tab-1', true);
+			});
+
+			expect(storedTab().starred).toBe(true);
+			expect(mockClaude.updateSessionStarred).toHaveBeenCalledWith(
+				session.projectRoot,
+				'sess-1',
+				true
+			);
+			expect(hostCalls()).toEqual(
+				mode === 'hosted' ? [{ kind: 'star-tab', tabId: 'tab-1', starred: true }] : []
+			);
+		});
+	});
+
 	// A send from a web or phone client, a CLI dispatch, and a new tab with a prompt reach the
 	// machine that runs the agent's turns, with the same answer in every mode. Local and SSH run
 	// here (the remote-command path spawns); a hosted agent's go to its host (`sendHostedTurn()`,
