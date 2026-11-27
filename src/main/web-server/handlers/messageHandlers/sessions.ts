@@ -177,9 +177,9 @@ export function handleImportAgent(
 		reply({ success: false, error: parsed.error });
 		return;
 	}
-	const enqueue: DesktopAgentImportDeps['enqueue'] = (agentId, tabId, text, images) =>
+	const enqueue: DesktopAgentImportDeps['enqueue'] = (agentId, tabId, text, images, held) =>
 		ctx.callbacks.enqueueCommand
-			? ctx.callbacks.enqueueCommand(agentId, text, 'ai', tabId, images, true)
+			? ctx.callbacks.enqueueCommand(agentId, text, 'ai', tabId, images, true, held === true)
 			: Promise.resolve({ success: false, error: 'Enqueue not configured' });
 
 	// The live process table: a replaced copy is read busy from it and stopped on it.

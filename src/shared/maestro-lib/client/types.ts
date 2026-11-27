@@ -250,6 +250,11 @@ export interface AgentImportQueuedMessage {
 	text: string;
 	/** Images as data URLs. */
 	images?: string[];
+	/**
+	 * Held by the person (paused in the queue it moved from): it waits paused on the host too,
+	 * until someone resumes it (`TurnInput.held`). A host older than this field queues it ready.
+	 */
+	held?: boolean;
 }
 
 /**

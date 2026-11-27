@@ -161,6 +161,8 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 			const sent = await deps.turns.send(agentId, item.tabId, {
 				text: item.text,
 				...(item.images && item.images.length > 0 ? { images: item.images } : {}),
+				// Held where it came from: it waits paused here too (R50).
+				...(item.held === true ? { held: true } : {}),
 			});
 			if (sent.ok) queued += 1;
 			else

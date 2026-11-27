@@ -417,6 +417,7 @@ function importQueueItemFromWire(entry: unknown): AgentImportQueuedMessage | und
 		tabId,
 		text: typeof item.text === 'string' ? item.text : '',
 		...(images ? { images } : {}),
+		...(item.held === true ? { held: true } : {}),
 	};
 }
 

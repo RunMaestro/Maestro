@@ -25,7 +25,7 @@ import type { ClientError, MaestroClient } from '../client/types';
 import type { AITabRecord, AgentRecord } from '../store/records';
 import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
 import { LiftRunError } from './lift-run';
-import type { ReturnedFromHost } from './lift-return-record';
+import type { ReturnedFromHost, ReturnedHeldItem } from './lift-return-record';
 
 export {
 	readLeftOnHost,
@@ -148,6 +148,7 @@ export async function runReturnFromHost(
 		const hostError = deps.hostCallError ?? defaultHostCallError;
 		const notices: string[] = [];
 		let returned: ReturnedFromHost = { tabs: [] };
+		let heldQueue: ReturnedHeldItem[] = [];
 		const hostAgent = await connection.client.agents.get(pointer.agentId);
 		const hostGone = !hostAgent.ok && hostAgent.error.code === 'not-found';
 		if (!hostAgent.ok && !hostGone) throw hostError(connection.peer, hostAgent.error);
@@ -162,12 +163,27 @@ export async function runReturnFromHost(
 			}
 			const queue = await connection.client.turns.queue.list(pointer.agentId);
 			if (!queue.ok) throw hostError(connection.peer, queue.error);
-			if (queue.value.length > 0) {
+			// A message the person held (paused) comes home held, with the agent (R50). One that
+			// waits to run would run there or here, or twice: refused. With the host's copy kept, a
+			// held one would be held on both: refused too.
+			const waiting = queue.value.filter(
+				(item) => item.paused !== true || options.keepHostCopy === true
+			);
+			if (waiting.length > 0) {
 				throw new LiftRunError(
 					'RETURN_QUEUED',
-					`${queue.value.length} message(s) still wait in "${agent.name}"'s queue on its host. Let them run or remove them, then move it back.`
+					`${waiting.length} message(s) still wait in "${agent.name}"'s queue on its host. Let them run or remove them, then move it back.`
 				);
 			}
+			heldQueue = queue.value.map((item) => ({
+				id: item.itemId,
+				tabId: item.tabId,
+				timestamp: item.queuedAt,
+				kind: item.kind,
+				text: item.text,
+				...(item.images && item.images.length > 0 ? { images: item.images } : {}),
+				...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
+			}));
 			const tabs = await connection.client.tabs.list(pointer.agentId);
 			if (!tabs.ok) throw hostError(connection.peer, tabs.error);
 			const withLogs: AITabRecord[] = [];
@@ -179,6 +195,7 @@ export async function runReturnFromHost(
 			returned = {
 				tabs: withLogs,
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
+				...(heldQueue.length > 0 ? { heldQueue } : {}),
 			};
 		} else {
 			notices.push(

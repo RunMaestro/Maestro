@@ -248,6 +248,7 @@ interface StoredQueueItem {
 	text?: unknown;
 	images?: unknown;
 	command?: unknown;
+	paused?: unknown;
 }
 
 /** Queued messages that move, and the queue entries that stay with the reason. */
@@ -299,6 +300,8 @@ function planQueue(
 			tabId: item.tabId,
 			text: item.text,
 			...(inline.length > 0 ? { images: inline } : {}),
+			// A message the person held stays held on the host, until they resume it (R50).
+			...(item.paused === true ? { held: true } : {}),
 		});
 		moved.push(id);
 	}

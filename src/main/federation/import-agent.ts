@@ -56,7 +56,9 @@ export interface DesktopAgentImportDeps {
 		agentId: string,
 		tabId: string,
 		text: string,
-		images: string[] | undefined
+		images: string[] | undefined,
+		/** Held where it came from: queued paused, until someone resumes it (R50). */
+		held?: boolean
 	): Promise<ImportEnqueueResult>;
 	checkCwd?: (cwd: string) => string | null;
 	sleep?: (ms: number) => Promise<void>;
@@ -193,7 +195,7 @@ export async function importAgentIntoDesktop(
 	for (const item of input.queue ?? []) {
 		let result: ImportEnqueueResult = { success: false };
 		for (let attempt = 1; attempt <= IMPORT_ENQUEUE_ATTEMPTS; attempt++) {
-			result = await deps.enqueue(agent.id, item.tabId, item.text, item.images);
+			result = await deps.enqueue(agent.id, item.tabId, item.text, item.images, item.held === true);
 			if (result.success || result.reason !== 'session-not-found') break;
 			if (attempt < IMPORT_ENQUEUE_ATTEMPTS) await sleep(IMPORT_ENQUEUE_RETRY_MS);
 		}

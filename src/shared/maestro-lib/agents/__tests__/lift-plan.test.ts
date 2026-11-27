@@ -210,6 +210,25 @@ describe('planAgentLift', () => {
 		);
 	});
 
+	// Parity R50: a message the person held moves held, so the host does not run it.
+	it('moves a held queued message held, and a ready one ready (R50)', () => {
+		const plan = planAgentLift({
+			agent: sshAgent({
+				executionQueue: [
+					{ id: 'q1', tabId: 'tab-1', type: 'message', text: 'ready' },
+					{ id: 'q2', tabId: 'tab-1', type: 'message', text: 'held', paused: true },
+				],
+			}),
+			remote,
+			peer: 'build-box',
+			withEnv: false,
+		});
+		expect(plan.input.queue).toEqual([
+			{ tabId: 'tab-1', text: 'ready' },
+			{ tabId: 'tab-1', text: 'held', held: true },
+		]);
+	});
+
 	describe('with an image store registered', () => {
 		const STORED = 'maestro-image://store/abc.png';
 		const STORED_DATA = `data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`;

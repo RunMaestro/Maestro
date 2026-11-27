@@ -83,10 +83,27 @@ describe('handleImportAgent', () => {
 		run(wire);
 		await flush();
 		const { enqueue } = buildDesktopAgentImportDeps.mock.results[0].value as {
-			enqueue: (a: string, t: string, text: string, images?: string[]) => Promise<unknown>;
+			enqueue: (
+				a: string,
+				t: string,
+				text: string,
+				images?: string[],
+				held?: boolean
+			) => Promise<unknown>;
 		};
 		await enqueue('a', 'tA', 'go on', ['img']);
-		expect(enqueueCommand).toHaveBeenCalledWith('a', 'go on', 'ai', 'tA', ['img'], true);
+		expect(enqueueCommand).toHaveBeenCalledWith('a', 'go on', 'ai', 'tA', ['img'], true, false);
+		// Parity R50: a message held where it came from is queued held (Queue Held).
+		await enqueue('a', 'tA', 'later', undefined, true);
+		expect(enqueueCommand).toHaveBeenLastCalledWith(
+			'a',
+			'later',
+			'ai',
+			'tA',
+			undefined,
+			true,
+			true
+		);
 	});
 
 	it('hands the import the live process table, never the stored busy state (T7)', async () => {
