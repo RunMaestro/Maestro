@@ -532,6 +532,29 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
 		});
 
+		// CodeRabbit on #2167: a consult-first message has one owner of its send, its consult's hold,
+		// as for SSH (the drain consults and waits). No retry is kept beside it: that would send it
+		// before the replies, and the hold would send it again after them.
+		it('hosted: a consult-first message waits on its consult hold, with no retry of its own', async () => {
+			seedWithBackend('hosted');
+			setConnection('lost');
+			const item = queuedMessage({
+				text: 'ask @Backend about the cache first',
+				crossAgentMention: true,
+				mentionRouting: 'consult-first',
+			});
+			await useAgentStore.getState().processQueuedItem('row', item, drainDeps);
+			await flush();
+
+			expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+			expect(sends()).toHaveLength(0);
+			expect(getRetryEntry('row', 't1')).toBeUndefined();
+			// The one copy of the message: on the hold, released with the replies as a plain message.
+			expect(queue().map((queued) => queued.awaitingConsult?.deferred?.message)).toEqual([
+				'ask @Backend about the cache first',
+			]);
+		});
+
 		it('hosted: a kept hand-off keeps its mention and is armed when the host takes the turn', async () => {
 			seedWithBackend('hosted');
 			setConnection('lost');

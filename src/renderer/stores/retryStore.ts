@@ -204,7 +204,8 @@ export interface OutageRecord {
 	/**
 	 * Set with `settledByHost` when the kept message was not sent because of a retry: the host's
 	 * own Agent Resilience holds it and sends it itself (`host`), or its turn ended on a provider
-	 * error there and this machine's retry of that error takes it from here (`here`, a new card).
+	 * error there and this machine's retry of that error takes it from here (`here`, a new card,
+	 * `scheduleRetryForError()`'s `freshOutage`).
 	 */
 	hostRetry?: 'host' | 'here';
 }
@@ -223,10 +224,9 @@ export type HeldOnHost = NotOnHost | { error: string };
 
 /**
  * Why a kept message's retry ends on the host's word (`settleRetryOnHost()`): held for the user
- * (`HeldOnHost`), the host's own retry sends it (`host-retries`), or its turn ended on a provider
- * error there whose own retry here takes it (`errored`).
+ * (`HeldOnHost`), or the host's own retry sends it (`host-retries`).
  */
-export type HostSettle = HeldOnHost | 'host-retries' | 'errored';
+export type HostSettle = HeldOnHost | 'host-retries';
 
 /** What the card and the toast say when a kept message was not sent: the host retries it itself. */
 export const HOST_RETRIES_TEXT =
@@ -754,7 +754,17 @@ export function scheduleRetryForError(
 	sessionId: string,
 	tabId: string,
 	error: AgentError,
-	opts?: { batch?: boolean }
+	opts?: {
+		batch?: boolean;
+		/**
+		 * The tab's retry still holds the message, but its outage is over and `error` is a new one:
+		 * the old outage ends as recovered with this patch on its record (its card's words), and
+		 * the new one starts at its first attempt, under its own card. One write of the retry map,
+		 * so main never hears the tab's retry dropped in between (a dispatch callback parked on
+		 * that retry keeps waiting for the resend).
+		 */
+		freshOutage?: Partial<OutageRecord>;
+	}
 ): boolean {
 	// An Auto Run task is not compacted: the batch owns that turn and its error.
 	if (!opts?.batch && scheduleContextCompaction(sessionId, tabId, error)) return true;
@@ -781,7 +791,13 @@ export function scheduleRetryForError(
 	// record and no card, so counting from its attempt would schedule a retry
 	// the transcript never shows.
 	const prior = useRetryStore.getState().retries[key];
-	const existing = prior?.compaction ? undefined : prior;
+	if (prior && !prior.compaction && opts?.freshOutage) {
+		useRetryStore.getState().patchOutage(prior.outageId, opts.freshOutage);
+		resolveOutage(prior.outageId, 'recovered');
+		stopProviderWatch(key);
+		clearTabAgentError(sessionId, tabId, prior.lastMessage);
+	}
+	const existing = prior?.compaction || opts?.freshOutage ? undefined : prior;
 	// Continue the existing backoff when a resend failed again; otherwise start
 	// at attempt 0. `existing.attempt` was the attempt we just tried, so +1.
 	const attempt = existing ? existing.attempt + 1 : 0;
@@ -1911,11 +1927,9 @@ export function settleRetryOnHost(
 			? { hostError: notOnHost.error }
 			: notOnHost === 'host-retries'
 				? { hostRetry: 'host' as const }
-				: notOnHost === 'errored'
-					? { hostRetry: 'here' as const }
-					: notOnHost
-						? { notOnHost }
-						: {}),
+				: notOnHost
+					? { notOnHost }
+					: {}),
 	});
 	resolveOutage(entry.outageId, 'recovered');
 	removeEntry(key);

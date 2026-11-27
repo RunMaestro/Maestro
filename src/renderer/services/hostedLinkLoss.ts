@@ -47,7 +47,6 @@ import {
 	retryNow,
 	scheduleRetryForError,
 	settleRetryOnHost,
-	wouldAutoRetry,
 	type HeldOnHost,
 } from '../stores/retryStore';
 import { selectSessionById, updateSessionWith, useSessionStore } from '../stores/sessionStore';
@@ -231,11 +230,12 @@ function routeErroredTurn(
 	}
 	// The lost link's retry holds the copy: that outage is over (the host is back), and the
 	// provider error is a new one, so its backoff starts at its own first attempt, under its own
-	// card. Ended only when that error's retry will take the copy (the held copy stays for it).
-	if (waiting && wouldAutoRetry(sessionId, error)) {
-		settleRetryOnHost(sessionId, tabId, 'errored');
-	}
-	if (!scheduleRetryForError(sessionId, tabId, error)) return 'not-retried';
+	// card. Handed over in one write (`freshOutage`), so a dispatch callback parked on the link's
+	// retry keeps waiting; ended only when that error's retry takes the copy.
+	const handover = waiting
+		? { freshOutage: { settledByHost: true, hostRetry: 'here' as const } }
+		: undefined;
+	if (!scheduleRetryForError(sessionId, tabId, error, handover)) return 'not-retried';
 	erroredResends.set(cutKey(sessionId, tabId), entryId);
 	return 'retried';
 }

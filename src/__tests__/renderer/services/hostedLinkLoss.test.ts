@@ -917,7 +917,14 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		const linkRetry = getRetryEntry('row', 't1')!;
 		// The link stayed down through several retries.
 		useRetryStore.getState().setEntry(linkRetry.key, { ...linkRetry, attempt: 5 });
+		// Main hears the tab's retry state on every write of the retry map (CodeRabbit on #2167):
+		// the handover never reports it dropped, or a dispatch callback parked on it would fail.
+		const notifyAiTabRetryState = vi.fn();
+		const tabs = maestro.tabs;
+		maestro.tabs = { ...(tabs as object), notifyAiTabRetryState };
 		await hostBack('idle', [QUESTION, OVERLOADED]);
+		maestro.tabs = tabs;
+		expect(notifyAiTabRetryState).not.toHaveBeenCalledWith('row', 't1', false);
 		const errorRetry = getRetryEntry('row', 't1')!;
 		expect(errorRetry).toMatchObject({
 			status: 'scheduled',

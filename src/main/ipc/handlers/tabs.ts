@@ -44,7 +44,7 @@ export function registerTabsHandlers(): void {
 	// retry of this tab's failed turn, false once that retry is gone.
 	ipcMain.on(
 		'tabs:aiTabRetryState',
-		(_event, agentId: unknown, tabId: unknown, pending: unknown) => {
+		(event, agentId: unknown, tabId: unknown, pending: unknown) => {
 			if (
 				typeof agentId !== 'string' ||
 				typeof tabId !== 'string' ||
@@ -55,7 +55,8 @@ export function registerTabsHandlers(): void {
 				logger.warn(`Ignoring malformed tabs:aiTabRetryState notification`, LOG_CONTEXT);
 				return;
 			}
-			noteAiTabRetryPending(agentId, tabId, pending);
+			// The renderer that holds the retry: a reload or crash of it ends its claims.
+			noteAiTabRetryPending(agentId, tabId, pending, event?.sender);
 			getDispatchCallbackRegistry()?.noteRetryState(agentId, tabId, pending);
 		}
 	);

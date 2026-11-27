@@ -425,6 +425,24 @@ function consultWhileHostDown(
 	};
 }
 
+/**
+ * A consult-first message whose host is down consults here at once, as a local or SSH drain does,
+ * and waits on the consult's hold with the message: the hold releases it, with the replies, as a
+ * plain message, so it is sent once. Answers whether it went to that hold.
+ */
+function consultFirstWhileHostDown(
+	sessionId: string,
+	item: QueuedItem,
+	mention: CrossAgentMentionPlan | null
+): boolean {
+	if (mention?.routing !== 'consult-first') return false;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tabId = item.tabId || session?.activeTabId;
+	if (!session || !tabId) return false;
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	return true;
+}
+
 /** Send one item that is no longer in this queue to the host. Resolves the host's receipt. */
 function forwardToHost(
 	sessionId: string,
@@ -474,6 +492,14 @@ function forwardToHost(
 				? {}
 				: {
 						onHostUnavailable: (message: string) => {
+							// Consult first: its hold, which the consult places with the message, owns the
+							// send and releases it once the replies are in (then kept for the host, if it is
+							// still down). A retry kept here as well would send it before the replies and
+							// again after them (CodeRabbit on #2167).
+							if (consultFirstWhileHostDown(sessionId, item, mention)) {
+								kept = true;
+								return;
+							}
 							current = consultWhileHostDown(sessionId, item, mention, agentNotes);
 							kept = keepTurnForHost(sessionId, current, message, {
 								keepMention: !!current.crossAgentMention,
