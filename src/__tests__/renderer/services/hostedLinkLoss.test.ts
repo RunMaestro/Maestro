@@ -641,6 +641,75 @@ describe('projectHostedSession with the link lost', () => {
 		).toEqual([QUESTION.text, partial, 'The docs say...']);
 	});
 
+	// Parity R59: while the link is down, the kept message's bubble is drawn above the retry card,
+	// as on SSH, also when the message reached this tab only as the turn's live tail (the host's
+	// transcript was read before the turn began).
+	it.each(['ssh', 'hosted'] as const)(
+		'%s: draws the kept message above the retry card while the link is down (R59)',
+		(mode) => {
+			const card: LogEntry = {
+				id: 'card',
+				timestamp: 50,
+				source: 'system',
+				text: 'Connection lost',
+				retryOutageId: 'o1',
+			};
+			const partial = 'Partial reply before the cut.';
+			if (mode === 'ssh') {
+				// SSH: the send drew the bubble, the exit flushed the streamed reply, the cut its card.
+				const logs: LogEntry[] = [
+					QUESTION,
+					{ id: 'p', timestamp: 12, source: 'stdout', text: partial },
+					card,
+				];
+				expect(logs.map((entry) => entry.source)).toEqual(['user', 'stdout', 'system']);
+				return;
+			}
+			const local = createModeSession('hosted', {
+				id: 'row',
+				activeTabId: 't1',
+				aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'on', logs: [card] })],
+			});
+			const liveTurns = {
+				[liveTurnKey('h1', 't1')]: {
+					startedAt: 10,
+					busy: true,
+					entries: [QUESTION, { id: 'live1', timestamp: 12, source: 'thinking', text: partial }],
+					answerText: partial,
+					answerAt: 12,
+				},
+			} as never;
+			const during = projectHostedSession(local, {
+				agent,
+				liveTurns,
+				linkLost,
+				keptCuts: new Set(['t1']),
+			});
+			expect(during.aiTabs[0].logs.map((entry) => entry.source)).toEqual([
+				'user',
+				'stdout',
+				'system',
+			]);
+			expect(during.aiTabs[0].logs[0]).toMatchObject({ id: 'u1', text: QUESTION.text });
+			expect(during.aiTabs[0].logs[0].hostLive).toBeUndefined();
+			expect(
+				projectHostedSession(during, { agent, liveTurns, linkLost, keptCuts: new Set(['t1']) })
+			).toBe(during);
+			// The host is back with the message saved under the same id: drawn once, in its place.
+			const back = projectHostedSession(during, {
+				agent: peerWith('idle', 'connected').agents[0],
+				transcripts: {
+					[liveTurnKey('h1', 't1')]: { loaded: true, entries: [QUESTION] },
+				} as never,
+			});
+			expect(back.aiTabs[0].logs.map((entry) => entry.id)).toEqual([
+				'u1',
+				'host-cut-reply-t1-10',
+				'card',
+			]);
+		}
+	);
+
 	it('never draws reasoning as a reply row at the cut (R58)', () => {
 		const local = createModeSession('hosted', {
 			id: 'row',

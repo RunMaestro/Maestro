@@ -117,11 +117,14 @@ export function hostLinkNoteId(
 }
 
 /**
- * The reply rows a turn cut by a lost link leaves, as an SSH turn's do when its link is cut: the
- * answer text it streamed (`text` events, and the answer it streamed as thinking chunks, which a
- * desktop flushes as the reply when the process ends with no result), as this machine's own
- * entries (`cutReply`), so they stay once the turn's live tail is gone and after the resend's
- * answer lands (R58). Thinking and tool cards go by the tab's Thinking mode, as at a local exit.
+ * The rows a turn cut by a lost link leaves, as an SSH turn's do when its link is cut, drawn in
+ * time order with this machine's own entries (the retry card the cut raised), never as a live tail
+ * after them (R59): the turn's message, and the answer text it streamed (`text` events, and the
+ * answer it streamed as thinking chunks, which a desktop flushes as the reply when the process
+ * ends with no result). They become this machine's own entries, so they stay once the turn's live
+ * tail is gone; the reply rows (`cutReply`) also after the resend's answer lands (R58), and the
+ * message until the host's transcript holds it under the same id. Thinking and tool cards go by
+ * the tab's Thinking mode, as at a local exit, and stay the live tail.
  */
 function cutTurnLogs(
 	tabId: string,
@@ -129,11 +132,15 @@ function cutTurnLogs(
 	live: LiveTurn,
 	thinking: AITab['showThinking']
 ): { local: LogEntry[]; tail: LogEntryRecord[] } {
-	const replies: LogEntry[] = live.entries
-		.filter((record) => record.source === 'stdout')
-		.map((record) => ({ ...mirrorLogEntry(record), cutReply: true }));
-	if (live.answerText && replies.length === 0) {
-		replies.push({
+	const rows: LogEntry[] = live.entries
+		.filter((record) => record.source === 'user' || record.source === 'stdout')
+		.map((record) =>
+			record.source === 'user'
+				? mirrorLogEntry(record)
+				: { ...mirrorLogEntry(record), cutReply: true }
+		);
+	if (live.answerText && !rows.some((entry) => entry.source === 'stdout')) {
+		rows.push({
 			id: `host-cut-reply-${tabId}-${live.startedAt}`,
 			timestamp: live.answerAt ?? live.startedAt,
 			source: 'stdout',
@@ -141,32 +148,34 @@ function cutTurnLogs(
 			cutReply: true,
 		});
 	}
-	// Drawn live until now (`hostLive`): the live row gives way to this machine's copy. A copy
-	// already made follows its live row's text while that row still moves on.
-	const copies = new Map(
-		local.filter((entry) => entry.cutReply).map((entry) => [entry.id, entry] as const)
+	// Drawn live until now (`hostLive`): the live row gives way to this machine's copy. A reply
+	// copy already made follows its live row's text while that row still moves on.
+	const held = new Map(
+		local.filter((entry) => !entry.hostLive).map((entry) => [entry.id, entry] as const)
 	);
 	const moved = new Map(
-		replies
-			.filter((entry) => copies.has(entry.id) && copies.get(entry.id)!.text !== entry.text)
+		rows
+			.filter((entry) => entry.cutReply && held.get(entry.id)?.cutReply)
+			.filter((entry) => held.get(entry.id)!.text !== entry.text)
 			.map((entry) => [entry.id, entry.text] as const)
 	);
-	const added = replies.filter((entry) => !copies.has(entry.id));
+	const added = rows.filter((entry) => !held.has(entry.id));
+	const tail = logsKeptAtTurnEnd(live.entries, thinking).filter(
+		(record) => record.source !== 'stdout' && record.source !== 'user'
+	);
+	if (added.length === 0 && moved.size === 0) return { local, tail };
 	const addedIds = new Set(added.map((entry) => entry.id));
-	const changed = added.length > 0 || moved.size > 0;
-	return {
-		local: changed
-			? [
-					...local
-						.filter((entry) => !(entry.hostLive && addedIds.has(entry.id)))
-						.map((entry) =>
-							moved.has(entry.id) ? { ...entry, text: moved.get(entry.id)! } : entry
-						),
-					...added,
-				]
-			: local,
-		tail: logsKeptAtTurnEnd(live.entries, thinking).filter((record) => record.source !== 'stdout'),
-	};
+	let next = local
+		.filter((entry) => !(entry.hostLive && addedIds.has(entry.id)))
+		.map((entry) => (moved.has(entry.id) ? { ...entry, text: moved.get(entry.id)! } : entry));
+	for (const entry of added) next = insertByTime(next, entry);
+	return { local: next, tail };
+}
+
+/** `logs` with `entry` before the first entry written after it. */
+function insertByTime(logs: LogEntry[], entry: LogEntry): LogEntry[] {
+	const at = logs.findIndex((other) => other.timestamp > entry.timestamp);
+	return at === -1 ? [...logs, entry] : [...logs.slice(0, at), entry, ...logs.slice(at)];
 }
 
 /**
