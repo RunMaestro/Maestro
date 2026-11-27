@@ -800,6 +800,29 @@ describe('parsePeerAgentAction', () => {
 		).toThrow('agentContext must be text.');
 	});
 
+	// Parity R13: the resend of a cut turn's message names the entry the host already wrote.
+	it('carries the entry a message already is to turns.send, and drops an id it cannot take', async () => {
+		const { client, asClient } = fakeClient();
+		await runPeerAgentAction(asClient, agent, {
+			kind: 'send',
+			tabId: 't2',
+			text: 'hi',
+			entryId: 'u1',
+		});
+		expect(client.turns.send).toHaveBeenLastCalledWith('a1', 't2', { text: 'hi', entryId: 'u1' });
+		expect(parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', entryId: 'u1' })).toEqual({
+			kind: 'send',
+			tabId: 't1',
+			text: 'hi',
+			entryId: 'u1',
+		});
+		for (const bad of ['', 'a b', 7, 'x'.repeat(129)]) {
+			expect(parsePeerAgentAction({ kind: 'send', tabId: 't1', text: 'hi', entryId: bad })).toEqual(
+				{ kind: 'send', tabId: 't1', text: 'hi' }
+			);
+		}
+	});
+
 	it('reads a send with turn overrides: checked fields kept, an empty set dropped', () => {
 		expect(
 			parsePeerAgentAction({

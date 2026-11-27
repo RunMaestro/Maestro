@@ -64,7 +64,9 @@ import { readMirrorTranscript } from './peerMirror';
 import {
 	hostLinkLostError,
 	hostedTurnsEndedHere,
+	hostedCutsKept,
 	noteHostedTurnsCut,
+	pruneHostedLinkLoss,
 	settleCutHostedTurns,
 	type HostLink,
 } from './hostedLinkLoss';
@@ -224,6 +226,7 @@ export function syncHostedAgents(): void {
 	if (!hostingEnabled()) {
 		dropStaleAutoRuns(new Set());
 		pruneHostStartedMentions(new Set());
+		pruneHostedLinkLoss(new Set());
 		releaseHostedAgents();
 		return;
 	}
@@ -234,7 +237,10 @@ export function syncHostedAgents(): void {
 	pruneHostStartedMentions(
 		new Set(sessions.filter((s) => readLiftedTo(s.liftedTo)).map((s) => s.id))
 	);
-	if (!usePeerMirrorStore.getState().enabled) return;
+	if (!usePeerMirrorStore.getState().enabled) {
+		pruneHostedLinkLoss(new Set());
+		return;
+	}
 	const hostedIds = new Set<string>();
 	for (const session of sessions) {
 		const hosted = hostedInput(session);
@@ -249,15 +255,17 @@ export function syncHostedAgents(): void {
 		// A lost link ends the turns the host last reported running, as a cut SSH link does; once
 		// the host is back, how each one ended is read from the host.
 		const linkLost = hostLinkLostError(session, hosted.link);
-		if (linkLost) noteHostedTurnsCut(session, hosted.link);
+		if (linkLost) noteHostedTurnsCut(session, hosted.link, linkLost);
 		else if (hosted.connected) settleCutHostedTurns(session.id, hosted.link);
 		const endedHere = hostedTurnsEndedHere(session.id, hosted.connected);
+		const keptCuts = linkLost ? hostedCutsKept(session.id) : undefined;
 		// The unread rule reads whether this agent is the one on screen, as a local tab's does.
 		const input: HostedProjectionInput = {
 			...hosted.input,
 			viewing: session.id === activeSessionId,
 			...(linkLost ? { linkLost } : {}),
 			...(endedHere ? { endedHere } : {}),
+			...(keptCuts ? { keptCuts } : {}),
 		};
 		const next = projectHostedSession(session, input);
 		if (next !== session) {
@@ -301,6 +309,8 @@ export function syncHostedAgents(): void {
 		if (needsRead) void readMirrorTranscript(hosted.peerId, hosted.agentId, tabId);
 	}
 	dropStaleAutoRuns(hostedIds);
+	// A deleted agent, one moved back, or one whose peer was removed lets go of its cut turns.
+	pruneHostedLinkLoss(hostedIds);
 }
 
 /**

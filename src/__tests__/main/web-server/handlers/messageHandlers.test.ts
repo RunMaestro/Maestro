@@ -1,6 +1,12 @@
 const hostPaths = vi.hoisted(() => ({ userData: '' }));
 vi.mock('electron', () => ({ app: { getPath: () => hostPaths.userData } }));
 
+const bridgeRead = vi.hoisted(() => ({ invokeAsBridge: vi.fn() }));
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/web-server/handlers/bridgeHandlers')>()),
+	invokeAsBridge: bridgeRead.invokeAsBridge,
+}));
+
 vi.mock(
 	'../../../../main/plugins/plugin-scan',
 	async () => await import('../../../helpers/pluginScan')
@@ -4025,6 +4031,80 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					{ agentContext: 'Replies:\nBackend: the cache is fine.' }
 				);
+			});
+		});
+
+		// Parity R19: the resend of a message this tab already answered (the client lost track of
+		// the turn: a cut link, a restart) never runs again, as a headless host refuses it.
+		describe('the resend of a message the tab already answered (entryId, R19)', () => {
+			const QUESTION = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize the docs' };
+			const resend = (text = 'Summarize the docs') =>
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: text,
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					background: true,
+					entryId: 'u1',
+					requestId: 'r1',
+				});
+
+			afterEach(() => bridgeRead.invokeAsBridge.mockReset());
+
+			it('answers "already ran" and queues nothing when an answer follows the entry', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [QUESTION, { id: 'a1', timestamp: 2, source: 'ai', text: 'The docs say...' }],
+				});
+				resend();
+				await vi.waitFor(() =>
+					expect(lastSend()).toMatchObject({
+						type: 'enqueue_command_result',
+						success: true,
+						queued: false,
+						answered: true,
+						tabId: 'tab-1',
+					})
+				);
+				expect(bridgeRead.invokeAsBridge).toHaveBeenCalledWith(
+					'sessions:getDeferredContent',
+					'session-1',
+					'tab-1',
+					false
+				);
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			});
+
+			it.each([
+				['the turn died before an answer', { logs: [QUESTION] }, 'Summarize the docs'],
+				// Parity R23: a2 answers the later u2, never u1, whose own turn died.
+				[
+					'only a later message was answered',
+					{
+						logs: [
+							QUESTION,
+							{ id: 'u2', timestamp: 3, source: 'user', text: 'And the tests?' },
+							{ id: 'a2', timestamp: 4, source: 'ai', text: 'The tests...' },
+						],
+					},
+					'Summarize the docs',
+				],
+				[
+					'the message was edited while it was kept',
+					{ logs: [QUESTION, { id: 'a1', timestamp: 2, source: 'ai', text: 'ok' }] },
+					'Summarize the docs, briefly',
+				],
+			])('runs the message when %s', async (_why, read, text) => {
+				bridgeRead.invokeAsBridge.mockResolvedValue(read);
+				resend(text);
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			it('runs the message when the tab cannot be read: the client read the host first', async () => {
+				bridgeRead.invokeAsBridge.mockRejectedValue(new Error('no owner'));
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
 			});
 		});
 

@@ -485,6 +485,19 @@ export interface TurnInput {
 	 * answer is handed off). Never drawn in the transcript. A host that does not know it ignores it.
 	 */
 	agentNotes?: string;
+	/**
+	 * The id the host gives this message's transcript entry (`readTurnEntryId()`). The resend of a
+	 * message the host already wrote down (a turn cut by a lost link that died with the host) names
+	 * that entry, so the message stays one entry: the host writes no second one. A message drawn on
+	 * the sender before it reached the host names the entry drawn there, so the host's copy stands
+	 * in for it. A host that does not know the field ignores it, and writes a new entry.
+	 */
+	entryId?: string;
+}
+
+/** A `TurnInput.entryId` the host can take: an id of letters, digits, `-` and `_`, 1 to 128 long. */
+export function readTurnEntryId(value: unknown): string | undefined {
+	return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : undefined;
 }
 
 /** The most characters `TurnInput.agentContext` or `agentNotes` may hold, each. */
@@ -576,6 +589,12 @@ export type TurnSendReceipt =
 	 * turn started: what it writes reaches the tab's transcript.
 	 */
 	| { status: 'ran' }
+	/**
+	 * The send named a message the tab already holds with an answer after it (`TurnInput.entryId`,
+	 * `userEntryAnswered()`): it ran once, so nothing ran now. The resend of a turn its sender lost
+	 * track of (a cut link, a restart) reads this as "already ran". An older host never says it.
+	 */
+	| { status: 'answered' }
 	/** The agent was busy; the message waits in the host's execution queue (CH-4). */
 	| {
 			status: 'queued';

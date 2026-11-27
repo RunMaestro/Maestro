@@ -39,7 +39,9 @@ import type { AgentRepository, TabWriteGuard } from '../agents/repository';
 import { matchesNativeSessionBinding, type NativeSessionBinding } from '../agents/providerSwap';
 import {
 	DEFAULT_RULE_CONTEXT,
+	isSameUserEntry,
 	recordTabSession,
+	userEntryAnswered,
 	type RuleContext,
 	type TabSessionUpdate,
 } from '../agents/rules';
@@ -65,6 +67,7 @@ import {
 	normalizeTurnOverrides,
 	parseQueuedTurnSettings,
 	readTurnAgentText,
+	readTurnEntryId,
 } from '../client/types';
 import { logger } from '../host';
 import { admitTurnImages, turnImageBoundsError } from '../launch/image-delivery';
@@ -224,9 +227,35 @@ interface TurnItem extends QueueItem {
 	agentContext?: string;
 	/** Agent-only notes behind `text` when it runs (`TurnInput.agentNotes`). */
 	agentNotes?: string;
+	/**
+	 * The id its transcript entry takes (`TurnInput.entryId`). When the tab already holds that entry
+	 * (a resend of a message the host wrote down before its turn died), no second one is written.
+	 */
+	entryId?: string;
 }
 
 type Verdict = { ok: true } | { ok: false; message: string };
+
+/**
+ * The entry id a message may take (`TurnInput.entryId`): one the tab does not hold yet, or the user
+ * entry of this same message (a resend: the same text and images), which then stands for it. An id
+ * that names another entry is dropped, and the message gets a new one: a send never hides or
+ * replaces what is there. Asked when the turn starts, against the entry it writes: a command's
+ * expanded prompt, and a message edited or merged while it waited.
+ */
+function turnEntryIdFor(
+	tab: { logs?: unknown } | undefined,
+	raw: unknown,
+	text: string,
+	images: readonly string[] | undefined
+): string | undefined {
+	const entryId = readTurnEntryId(raw);
+	if (!entryId) return undefined;
+	const logs = Array.isArray(tab?.logs) ? (tab.logs as LogEntryRecord[]) : [];
+	const existing = logs.find((entry) => entry?.id === entryId);
+	if (!existing) return entryId;
+	return isSameUserEntry(existing, { id: entryId, text, images }) ? entryId : undefined;
+}
 
 /** A start the provider layer refused before anything ran, with its reason. */
 class TurnStartRefusal extends Error {
@@ -632,10 +661,20 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			const startedAt = deps.now();
 			// Stamped with the queue item it ran from, as the desktop stamps a queued message's card
 			// (`markTabRunningQueuedItem()`): a client that queued it finds its turn by that id.
-			const userEntry: LogEntryRecord = {
+			const built: LogEntryRecord = {
 				...buildUserTranscriptEntry(turn.entry, startedAt, ctx),
 				queuedItemId: item.id,
 			};
+			// Asked again now: an edit or a merge while it waited makes it another message.
+			const entryId = item.entryId
+				? turnEntryIdFor(
+						repository.getTab(agentId, item.tabId),
+						item.entryId,
+						built.text,
+						built.images
+					)
+				: undefined;
+			const userEntry: LogEntryRecord = entryId ? { ...built, id: entryId } : built;
 			const begun = await repository.beginTurn(
 				agentId,
 				item.tabId,
@@ -1075,6 +1114,19 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const kept = await keepImages(admitted.images);
 		if (!kept.ok) return fail(method, 'failed', kept.error);
 		const images = kept.images;
+		// The resend of a message whose turn already answered (its sender lost the link, or quit, while
+		// it ran): it ran once, and never runs again. The sender reads `answered` as "already ran".
+		const entryId = readTurnEntryId(input.entryId);
+		if (
+			entryId &&
+			userEntryAnswered(Array.isArray(tabRecord.logs) ? tabRecord.logs : [], {
+				id: entryId,
+				text,
+				images,
+			})
+		) {
+			return ok({ status: 'answered' });
+		}
 
 		const item: TurnItem = {
 			id: ctx.newId(),
@@ -1097,6 +1149,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		if (overrides) item.overrides = overrides;
 		if (agentContext.value) item.agentContext = agentContext.value;
 		if (agentNotes.value) item.agentNotes = agentNotes.value;
+		// Whether it stands for an entry the tab holds is decided against the entry the turn writes (a
+		// command's expanded prompt, an edit while it waited).
+		if (entryId) item.entryId = entryId;
 
 		const queue = queueFor(agentId);
 		const attempt = new Promise<Verdict>((resolve) => verdicts.set(item.id, resolve));

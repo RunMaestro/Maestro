@@ -1551,6 +1551,162 @@ describe('runtime turns', () => {
 			await turn.outcome();
 		});
 
+		// Parity R13: the resend of a message a lost link cut names the entry the host already
+		// wrote for it, so the message is one entry in the transcript, as an SSH resend is.
+		describe('the entry a message already is (entryId, R13)', () => {
+			const cutTab = (logs: unknown[]) =>
+				seedAgent({ aiTabs: [{ id: 't1', agentSessionId: null, name: null, logs }] });
+			const QUESTION = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize the docs' };
+
+			it('writes no second entry for the resend of a message the tab already holds', async () => {
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.outcome();
+				const entries = await transcript(runtime);
+				expect(entries.filter((entry) => entry.source === 'user')).toEqual([
+					expect.objectContaining({ id: 'u1', text: 'Summarize the docs' }),
+				]);
+				expect(entries.some((entry) => entry.source !== 'user')).toBe(true);
+				expect(turn.events.find((event) => event.kind === 'user')).toMatchObject({
+					entry: { id: 'u1' },
+				});
+			});
+
+			// Parity R19: the resend of a message whose turn already answered (its sender lost the
+			// link or restarted while it ran) never runs again; the sender is told it already ran.
+			it('answers "already ran" and starts nothing for the resend of a message the tab answered', async () => {
+				const ANSWER = { id: 'a1', timestamp: 2, source: 'stdout', text: 'The docs say...' };
+				const runtime = await start([cutTab([QUESTION, ANSWER])]);
+				const turn = watch(runtime);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(argvFiles).toHaveLength(0);
+				expect(turn.events).toEqual([]);
+				expect((await transcript(runtime)).map((entry) => entry.id)).toEqual(['u1', 'a1']);
+				// Another message that names the entry (edited while kept) runs, as its own entry.
+				value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'Summarize the docs, briefly',
+						entryId: 'u1',
+					})
+				);
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
+			// Parity R23: an answer after a LATER message is that message's. The resend of a message
+			// whose own turn died runs, though the tab holds an answer further down.
+			it('runs the resend of a message when only a later message of the tab was answered', async () => {
+				const LATER = { id: 'u2', timestamp: 3, source: 'user', text: 'And the tests?' };
+				const LATER_ANSWER = { id: 'a2', timestamp: 4, source: 'stdout', text: 'The tests...' };
+				const runtime = await start([cutTab([QUESTION, LATER, LATER_ANSWER])]);
+				const turn = watch(runtime);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).not.toEqual({ status: 'answered' });
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
+			it('gives a new message the id it names', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'hello', entryId: 'drawn-1' }));
+				await turn.outcome();
+				expect((await transcript(runtime))[0]).toMatchObject({
+					id: 'drawn-1',
+					source: 'user',
+					text: 'hello',
+				});
+			});
+
+			it.each([
+				['another message', { id: 'u1', timestamp: 1, source: 'user', text: 'something else' }],
+				['an answer', { id: 'u1', timestamp: 1, source: 'ai', text: 'The docs say' }],
+			])(
+				'never hides or replaces %s whose id it names: the message gets its own entry',
+				async (_what, held) => {
+					const runtime = await start([cutTab([held])]);
+					const turn = watch(runtime);
+					value(
+						await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' })
+					);
+					await turn.outcome();
+					const entries = await transcript(runtime);
+					expect(entries[0]).toMatchObject(held);
+					const sent = entries.filter((entry) => entry.text === 'Summarize the docs');
+					expect(sent).toHaveLength(1);
+					expect(sent[0].id).not.toBe('u1');
+				}
+			);
+
+			it('gives a message edited while it waited its own entry, keeping the one it repeated', async () => {
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				const held = value(
+					await runtime.turns.send('a1', 't1', {
+						text: 'Summarize the docs',
+						entryId: 'u1',
+						held: true,
+					})
+				);
+				if (held.status !== 'queued') throw new Error('expected queued');
+				value(
+					await runtime.turns.queue.edit('a1', held.itemId, { text: 'Summarize the docs, briefly' })
+				);
+				value(await runtime.turns.queue.setPaused('a1', held.itemId, false));
+				await turn.outcome();
+				const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(users.map((entry) => entry.text)).toEqual([
+					'Summarize the docs',
+					'Summarize the docs, briefly',
+				]);
+				expect(users[1].id).not.toBe('u1');
+			});
+
+			it('writes no second entry for the resend of a command, whose entry is its expanded prompt', async () => {
+				const runtime = await start([
+					seedAgent({
+						agentCommands: [{ command: '/review', prompt: 'Review the changes' }],
+						aiTabs: [{ id: 't1', agentSessionId: null, name: null, logs: [] }],
+					} as never),
+				]);
+				const first = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: '/review' }));
+				await first.outcome();
+				const [written] = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(written.text).not.toBe('/review');
+
+				const again = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: '/review', entryId: written.id }));
+				await again.outcome();
+				const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(users.map((entry) => entry.id)).toEqual([written.id]);
+			});
+
+			it('starts the turn with a new entry when the entry its id names holds malformed images', async () => {
+				const runtime = await start([cutTab([{ ...QUESTION, images: '' }])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.outcome();
+				const users = (await transcript(runtime)).filter((entry) => entry.source === 'user');
+				expect(users).toHaveLength(2);
+				expect(users[1].id).not.toBe('u1');
+			});
+
+			it('ignores an id it cannot take', async () => {
+				const runtime = await start();
+				const turn = watch(runtime);
+				value(
+					await runtime.turns.send('a1', 't1', { text: 'hello', entryId: 'no spaces/allowed' })
+				);
+				await turn.outcome();
+				expect((await transcript(runtime))[0].id).not.toBe('no spaces/allowed');
+			});
+		});
+
 		// Parity M7: a hosted agent's `@mention` runs on the desktop that sent it, and the turn
 		// carries the mention's agent-only text here, as a local turn carries it.
 		describe('agent-only text from an @mention (M7)', () => {

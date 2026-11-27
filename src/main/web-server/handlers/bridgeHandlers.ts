@@ -352,6 +352,19 @@ export async function handleBridgeInvoke<
 	}
 }
 
+/**
+ * Call a registered `ipcMain` handler as a bridge client's call reaches it, from main code that
+ * serves a bridge client's request, so it reads what that client would read (a tab's live
+ * transcript from the window that owns it, `sessions:getDeferredContent`). Never for a channel a
+ * client could not call itself.
+ */
+export async function invokeAsBridge(channel: string, ...args: unknown[]): Promise<unknown> {
+	const handler = (ipcMain as unknown as IpcMainInternal)._invokeHandlers?.get(channel);
+	if (!handler || !isRemoteMethodAllowed(channel))
+		throw new Error(`No bridge handler for ${channel}`);
+	return handler(FAKE_EVENT, ...args);
+}
+
 export function isBridgeInvokeMessage(message: { type: string }): message is InvokeMessage {
 	return message.type === 'bridge.invoke';
 }
