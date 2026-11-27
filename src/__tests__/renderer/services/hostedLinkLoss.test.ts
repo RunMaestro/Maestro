@@ -20,6 +20,7 @@ import {
 	__resetHostedLinkLossForTests,
 	HOST_REPORT_REQUEST_MS,
 	cutHostedTurnTabs,
+	cutTurnFate,
 	hostedCutsKept,
 } from '../../../renderer/services/hostedLinkLoss';
 import {
@@ -875,6 +876,26 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		await flush();
 		expect(sends()).toHaveLength(1);
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	// CodeRabbit on #2167: the retry of an errored turn was stopped. A later send of the same entry
+	// asks the host's transcript again, never going straight out on the stale record.
+	it('asks the host again for an errored entry once its retry was stopped (R37)', async () => {
+		cut();
+		await hostBack('idle', [QUESTION, OVERLOADED]);
+		const heldId = getRetryEntry('row', 't1')!.heldItemId!;
+		stopRetriesForAgent('row', 't1');
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+		const fate = cutTurnFate(
+			'row',
+			{ id: heldId, tabId: 't1', hostEntryId: 'u1', text: QUESTION.text },
+			{ peerId: 'box', agentId: 'h1' },
+			true
+		);
+		expect(fate).not.toBeNull();
+		await act(async () => {
+			await fate;
+		});
 	});
 
 	// CodeRabbit on #2167: a retry ran into the same entry and failed again, differently. The LAST

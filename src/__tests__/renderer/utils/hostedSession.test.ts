@@ -306,6 +306,29 @@ describe('mergeHostedLogs', () => {
 			expect(order(saved, 'k1')).toEqual(sshOrder);
 		});
 
+		// CodeRabbit on #2167: a host clock behind this one stamps the copy before the bubble. The
+		// copy keeps the bubble's place below a note drawn before it, and stays above its answer.
+		it('keeps the bubble place when the host clock is behind, above the copy answer', () => {
+			const late = local('k1', {
+				text: 'hello',
+				timestamp: 10_000,
+				keptForHost: true,
+				keptSentAt: 11_000,
+			});
+			const note = local('note', { source: 'system', timestamp: 9_000 });
+			const copy = { ...record('y1', 'hello'), timestamp: 8_000 };
+			const merged = mergeHostedLogs([local('h1'), note, late], [record('h1'), copy], undefined);
+			expect(merged.map((e) => e.id)).toEqual(['h1', 'note', 'y1']);
+			const reply = { ...record('a9'), source: 'ai' as const, timestamp: 8_500 };
+			const answered = mergeHostedLogs(
+				[local('h1'), note, late],
+				[record('h1'), copy, reply],
+				undefined
+			);
+			const ids = answered.map((e) => e.id);
+			expect(ids.indexOf('y1')).toBeLessThan(ids.indexOf('a9'));
+		});
+
 		it('a turn that ended before any live frame: saved at once', () => {
 			const copy = { ...record('k1', 'hello'), timestamp: 20 };
 			const saved = mergeHostedLogs(kept, [record('h1'), copy, answer], undefined);

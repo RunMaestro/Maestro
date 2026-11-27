@@ -182,8 +182,9 @@ describe('turn records', () => {
 				text: 'Fixed the login bug in the session handler. Tests pass.',
 				turnModel: 'opus',
 				turnEffort: 'high',
-				// The turn's end, as every host stamps it (R36).
+				// The turn's end, as every host stamps it (R36), with its time.
 				turnEnded: true,
+				turnEndedAt: 1_700_000_004_200,
 			},
 		]);
 		// The desktop reads the same file.

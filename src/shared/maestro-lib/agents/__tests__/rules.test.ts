@@ -1345,6 +1345,28 @@ describe('turnFateAfter', () => {
 			'headless',
 			'errored',
 		],
+		// CodeRabbit on #2167: a retry's thinking or tool card after an earlier end is that retry,
+		// running or lost; a card of the same attempt written before its end is not.
+		[
+			'an errored attempt, then a retry that streamed a tool card',
+			[
+				u1,
+				{ ...stamped(error), turnEndedAt: 3 },
+				{ id: 't9', timestamp: 4, source: 'tool', text: '' },
+			],
+			'desktop',
+			'unended',
+		],
+		[
+			'an answer stamped before a card of the same attempt',
+			[
+				u1,
+				{ ...stamped(partial), turnEndedAt: 9 },
+				{ id: 't9', timestamp: 8, source: 'tool', text: '' },
+			],
+			'desktop',
+			'answered',
+		],
 		['nothing after it', [u1], 'headless', 'unended'],
 		['only a later message answered', [u1, u2, a2], 'headless', 'unended'],
 		['a host too old to stamp: headless text is its answer', [u1, partial], 'headless', 'answered'],

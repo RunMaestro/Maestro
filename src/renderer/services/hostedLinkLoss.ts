@@ -464,10 +464,13 @@ export function cutTurnFate(
 ): Promise<CutTurnFate> | null {
 	if (!item.hostEntryId || !connected) return null;
 	const key = cutKey(sessionId, item.tabId);
-	// The retry of a turn that ended on its own error there (`routeErroredTurn()`): sent now.
+	// The retry of a turn that ended on its own error there (`routeErroredTurn()`): sent now, while
+	// that retry still holds this copy. A retry stopped or settled since leaves the record behind:
+	// it is dropped, and the host's transcript decides (CodeRabbit on #2167).
 	if (erroredResends.get(key) === item.hostEntryId) {
 		erroredResends.delete(key);
-		return null;
+		const held = getRetryEntry(sessionId, item.tabId)?.heldItemId;
+		if (item.id !== undefined && held === item.id) return null;
 	}
 	const cut = cutTurns.get(key);
 	if (!cut || cut.stopped || cut.message?.id !== item.hostEntryId) {

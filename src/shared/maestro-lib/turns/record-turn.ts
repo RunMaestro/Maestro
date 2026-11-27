@@ -262,7 +262,7 @@ export function buildTurnTranscript(
 		});
 	}
 	// The turn ended, however it ended: its last entry says so (a host that died mid-turn writes none).
-	return markTurnEnded(entries);
+	return markTurnEnded(entries, 0, turn.endedAt);
 }
 
 export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {

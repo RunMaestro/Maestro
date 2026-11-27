@@ -318,17 +318,25 @@ function keptPlaces(local: readonly LogEntry[]): Map<string, number> {
 function atKeptPlaces(
 	entries: LogEntry[],
 	drawnAt: ReadonlyMap<string, number>,
-	placed: ReadonlyMap<string, number>
+	placed: ReadonlyMap<string, number>,
+	fromHost: ReadonlySet<string>
 ): LogEntry[] {
 	if (drawnAt.size === 0 && placed.size === 0) return entries;
 	const stay: LogEntry[] = [];
 	const moved: LogEntry[] = [];
-	for (const entry of entries) {
-		const at =
+	entries.forEach((entry, index) => {
+		const kept =
 			entry.source === 'user' ? (placed.get(entry.id) ?? drawnAt.get(entry.id)) : undefined;
-		if (at === undefined || at > entry.timestamp) stay.push(entry);
+		// A place later than the host's time (a host clock behind this one) is kept too, but never
+		// past what the host wrote after the message: its answer stays below it (CodeRabbit on #2167).
+		const after = entries.slice(index + 1).find((next) => fromHost.has(next.id))?.timestamp;
+		const at =
+			kept !== undefined && kept > entry.timestamp && after !== undefined
+				? Math.min(kept, after)
+				: kept;
+		if (at === undefined) stay.push(entry);
 		else moved.push(atPlace(entry, at));
-	}
+	});
 	if (moved.length === 0) return entries;
 	return byTime(
 		moved.sort((a, b) => a.timestamp - b.timestamp),
@@ -400,7 +408,8 @@ export function mergeHostedLogs(
 	const next = atKeptPlaces(
 		withAnswerDelivery([...byTime(shown, hostEntries), ...live], fromHost),
 		keptPlaces(local),
-		placed
+		placed,
+		fromHost
 	);
 	if (sameIds(next, local)) {
 		// Same entries in the same order: keep the old array unless a live entry's text moved on,
