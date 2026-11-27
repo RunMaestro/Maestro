@@ -38,6 +38,7 @@ import type {
 	TurnsApi,
 	Unsubscribe,
 } from '../client/types';
+import { HOST_CAPABILITIES } from '../client/types';
 import type { SshRemoteConfig } from '../../types';
 import { parseWireAskerKey, remoteAskerConsultKey } from '../../crossAgentTypes';
 import type { MaestroPaths } from '../paths/resolve';
@@ -183,6 +184,8 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 			close: () => deps.shutdown(),
 			state: (): ConnectionState => (deps.phase() === 'open' ? 'connected' : 'idle'),
 			host: () => (deps.phase() === 'open' ? host : undefined),
+			// The runtime is the host: it has every capability of this build.
+			capabilities: () => guarded('connection.capabilities', () => ok([...HOST_CAPABILITIES])),
 		},
 
 		agents: {

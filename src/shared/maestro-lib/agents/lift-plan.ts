@@ -133,6 +133,7 @@ export interface LiftPlanStay {
 		| 'secret-env'
 		| 'queued-command'
 		| 'queued-image'
+		| 'queued-held'
 		| 'transcript-image'
 		| 'hidden-tab'
 		| 'auto-run-folder';
@@ -224,6 +225,12 @@ export interface PlanAgentLiftInput {
 	providerEnvVars?: Record<string, string>;
 	/** Send secret env vars too (`--with-env`). */
 	withEnv: boolean;
+	/**
+	 * Whether the host keeps a moved held message held (`import-held` in its capabilities). False:
+	 * a held message stays on this machine, held, and the plan says so, since that host would run
+	 * it at once (R57). Absent: it does.
+	 */
+	hostKeepsHeld?: boolean;
 }
 
 function stringField(value: unknown): string | undefined {
@@ -305,7 +312,8 @@ function storedQueueItemOverrides(item: StoredQueueItem): TurnOverrides | undefi
 /** Queued messages that move, and the queue entries that stay with the reason. */
 function planQueue(
 	agent: AgentRecord,
-	tabIds: ReadonlySet<string>
+	tabIds: ReadonlySet<string>,
+	hostKeepsHeld: boolean
 ): { queue: AgentImportQueuedMessage[]; moved: string[]; stays: LiftPlanStay[] } {
 	const items = Array.isArray(agent.executionQueue) ? (agent.executionQueue as unknown[]) : [];
 	const queue: AgentImportQueuedMessage[] = [];
@@ -331,6 +339,16 @@ function planQueue(
 				kind: 'queued-command',
 				ref: id,
 				reason: 'Queued for a tab that does not move.',
+			});
+			continue;
+		}
+		// A host too old to keep it held would run it at once: it stays here, held (R57).
+		if (item.paused === true && !hostKeepsHeld) {
+			stays.push({
+				kind: 'queued-held',
+				ref: id,
+				reason:
+					'The host runs a moved message at once, so a held one stays on this machine, held. Update Maestro on the host to move it.',
 			});
 			continue;
 		}
@@ -385,7 +403,11 @@ export function planAgentLift(input: PlanAgentLiftInput): LiftPlan {
 		typeof agent.activeTabId === 'string' && tabIds.has(agent.activeTabId)
 			? agent.activeTabId
 			: undefined;
-	const { queue, moved, stays: queueStays } = planQueue(agent, tabIds);
+	const {
+		queue,
+		moved,
+		stays: queueStays,
+	} = planQueue(agent, tabIds, input.hostKeepsHeld !== false);
 
 	const stays: LiftPlanStay[] = env.withheld.map((key) => ({
 		kind: 'secret-env' as const,

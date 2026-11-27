@@ -40,6 +40,20 @@ function summaryWith(overrides: Partial<LiftPlanSummary> = {}): LiftPlanSummary 
 }
 
 describe('groupLiftStays', () => {
+	// Parity R57: a held message an older host would run at once stays here, and the dialog says why.
+	it('shows a held message that stays here as a queued message with its reason (R57)', () => {
+		const rows = groupLiftStays([
+			{ kind: 'queued-held', ref: 'q2', reason: 'The host runs a moved message at once.' },
+		]);
+		expect(rows).toEqual([
+			{
+				kind: 'queued-held',
+				title: '1 queued message',
+				detail: 'The host runs a moved message at once.',
+			},
+		]);
+	});
+
 	it('folds identical hidden tabs into one row and names secret keys', () => {
 		const rows = groupLiftStays([
 			{ kind: 'hidden-tab', ref: 'h1', reason: HIDDEN_REASON },

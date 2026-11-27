@@ -230,6 +230,31 @@ describe('planAgentLift', () => {
 		]);
 	});
 
+	// Parity R57: a host too old to keep a moved message held would run it at once: the held one
+	// stays here, held, and the plan says so; the ready one moves.
+	it('keeps a held message here when the host does not keep it held, and says so (R57)', () => {
+		const plan = planAgentLift({
+			agent: sshAgent({
+				executionQueue: [
+					{ id: 'q1', tabId: 'tab-1', type: 'message', text: 'ready' },
+					{ id: 'q2', tabId: 'tab-1', type: 'message', text: 'held', paused: true },
+				],
+			}),
+			remote,
+			peer: 'build-box',
+			withEnv: false,
+			hostKeepsHeld: false,
+		});
+		expect(plan.input.queue).toEqual([{ tabId: 'tab-1', text: 'ready' }]);
+		expect(plan.movedQueueItemIds).toEqual(['q1']);
+		expect(plan.summary.stays).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ kind: 'queued-held', ref: 'q2', reason: expect.any(String) }),
+			])
+		);
+		expect(formatLiftPlan(plan.summary, true)).toContain('Queue item q2: The host runs a moved');
+	});
+
 	// Parity R55: settings are codified at send. A queued message moves with the model, effort,
 	// read-only and save to History choices it was queued with, so the host runs it on them.
 	it('moves a queued message with the settings it was queued with (R55)', () => {

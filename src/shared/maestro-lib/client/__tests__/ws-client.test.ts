@@ -1059,6 +1059,24 @@ describe('createWsMaestroClient', () => {
 			expect(sent[2]).toMatchObject({ command: 'look', agentNotes: 'Consulting Backend.' });
 		});
 
+		// Parity R57: what the host does beyond the base protocol, for a lift to ask before it plans.
+		it('answers the host capabilities it knows, asking once per connection (R57)', async () => {
+			bridge.typed.set(
+				'host_capabilities',
+				reply('host_capabilities_result', { capabilities: ['import-held', 'later-thing'] })
+			);
+			expect(await client.connection.capabilities?.()).toEqual({
+				ok: true,
+				value: ['import-held'],
+			});
+			await client.connection.capabilities?.();
+			expect(bridge.sent('host_capabilities')).toHaveLength(1);
+		});
+
+		it('answers no capabilities for a host that echoes the ask (R57)', async () => {
+			expect(await client.connection.capabilities?.()).toEqual({ ok: true, value: [] });
+		});
+
 		it('gives a host too old to know the fields the text in the message, never a turn without it (M16)', async () => {
 			// No responder: the host echoes `host_capabilities`, as a build before it does.
 			bridge.typed.set(

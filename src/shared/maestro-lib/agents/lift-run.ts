@@ -70,7 +70,8 @@ export function liftErrorCode(code: string): string {
 export interface LiftHostConnection {
 	/** The peer id the host is addressed by: the pointer names it. */
 	peer: string;
-	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'>;
+	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'> &
+		Partial<Pick<MaestroClient, 'connection'>>;
 	release(): Promise<void>;
 }
 
@@ -445,6 +446,24 @@ function withReplacement(
 	};
 }
 
+/** Whether the agent has a message the person held (paused) in its queue. */
+function hasHeldQueuedMessage(agent: AgentRecord): boolean {
+	const queue = Array.isArray(agent.executionQueue) ? (agent.executionQueue as unknown[]) : [];
+	return queue.some(
+		(item) => !!item && typeof item === 'object' && (item as { paused?: unknown }).paused === true
+	);
+}
+
+/**
+ * Whether the host keeps a moved held message held (`import-held`). A host that cannot say (an
+ * older build, a failed ask, a client with no capabilities call) is taken not to: a held message
+ * is never run by mistake.
+ */
+async function hostKeepsHeldMessages(connection: LiftHostConnection): Promise<boolean> {
+	const asked = await connection.client.connection?.capabilities?.();
+	return asked?.ok === true && asked.value.includes('import-held');
+}
+
 /**
  * Every step of a lift, without printing. `onPlan` gets the plan once the host is reached, before
  * anything moves. Throws `LiftRunError`, or whatever `connect` / `hostCallError` throw.
@@ -494,6 +513,7 @@ export async function runLift(
 	if (local) throw local;
 
 	const peer = peerIdFor(remote, remotes);
+	let hostKeepsHeld = true;
 	const planFor = (record: AgentRecord) =>
 		planAgentLift({
 			agent: record,
@@ -501,11 +521,15 @@ export async function runLift(
 			peer,
 			providerEnvVars: deps.providerEnvVars(record.toolType),
 			withEnv: options.withEnv === true,
+			hostKeepsHeld,
 		});
 
 	const connection = await deps.connect(remote, peer);
 	try {
 		const hostError = deps.hostCallError ?? defaultHostCallError;
+		// A held message moves held only to a host that keeps it held; an older one would run it at
+		// once, so it stays here, held, and the plan says so (R57).
+		if (hasHeldQueuedMessage(agent)) hostKeepsHeld = await hostKeepsHeldMessages(connection);
 		const stale = await readStaleHostCopy(agent, connection, hostError);
 		const plan = stale
 			? withReplacement(planFor(stale.merged), stale.ref, stale.pointer.agentId, stale.tabMerge)

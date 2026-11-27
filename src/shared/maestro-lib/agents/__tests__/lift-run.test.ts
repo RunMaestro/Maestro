@@ -194,6 +194,58 @@ describe('runLift', () => {
 		expect(release).toHaveBeenCalled();
 	});
 
+	// Parity R57: a held message moves held only to a host that says it keeps one held
+	// (`import-held`); to an older host, or one that cannot say, it stays here, held.
+	it.each([
+		['keeps it held', ['turn-agent-text', 'import-held'], true],
+		['is too old to say so', [], false],
+		['cannot be asked', undefined, false],
+	] as const)(
+		'moves a held message only to a host that %s (R57)',
+		async (_how, capabilities, moves) => {
+			const conn = connectionWith();
+			const capabilitiesCall = vi.fn().mockResolvedValue({ ok: true, value: capabilities });
+			if (capabilities) {
+				(conn.connection.client as { connection?: unknown }).connection = {
+					capabilities: capabilitiesCall,
+				};
+			}
+			const agent = sshAgent({
+				executionQueue: [
+					{ id: 'q1', tabId: 'tab-1', type: 'message', text: 'ready' },
+					{ id: 'q2', tabId: 'tab-1', type: 'message', text: 'held', paused: true },
+				],
+			});
+			const { deps, importAgent } = depsWith(agent, {}, conn);
+			await runLift('agent-1', {}, deps);
+			expect(importAgent.mock.calls[0][0].queue).toEqual(
+				moves
+					? [
+							{ tabId: 'tab-1', text: 'ready' },
+							{ tabId: 'tab-1', text: 'held', held: true },
+						]
+					: [{ tabId: 'tab-1', text: 'ready' }]
+			);
+			const pointer = { peer: 'build-box', agentId: 'host-1', at: NOW };
+			expect(deps.setPointer).toHaveBeenCalledWith(
+				'agent-1',
+				pointer,
+				moves ? ['q1', 'q2'] : ['q1']
+			);
+		}
+	);
+
+	it('asks nothing about held messages when the queue holds none (R57)', async () => {
+		const conn = connectionWith();
+		const capabilitiesCall = vi.fn();
+		(conn.connection.client as { connection?: unknown }).connection = {
+			capabilities: capabilitiesCall,
+		};
+		const { deps } = depsWith(sshAgent(), {}, conn);
+		await runLift('agent-1', {}, deps);
+		expect(capabilitiesCall).not.toHaveBeenCalled();
+	});
+
 	it('withholds secret env vars unless withEnv is set', async () => {
 		const { deps, importAgent } = depsWith(sshAgent());
 		await runLift('agent-1', {}, deps);
