@@ -940,6 +940,27 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(queue().map((item) => item.hostEntryId)).toEqual(['u1']);
 	});
 
+	// CodeRabbit on #2167: the host runs a LATER message when it comes back. That is not the cut
+	// turn running: the cut message's own end decides, here an error no retry takes (held, R40).
+	it('decides a cut turn by its own end when the host is busy with a later message', async () => {
+		cut();
+		await hostBack('busy', [
+			QUESTION,
+			{
+				id: 'e1',
+				timestamp: 20,
+				source: 'error',
+				text: 'Invalid API key. Please run /login.',
+				turnEnded: true,
+			},
+			{ id: 'u2', timestamp: 30, source: 'user', text: 'Something else' },
+		]);
+		expect(sends()).toHaveLength(0);
+		expect(queue()).toEqual([
+			expect.objectContaining({ text: QUESTION.text, paused: true, hostEntryId: undefined }),
+		]);
+	});
+
 	// CodeRabbit on #2167: the retry of an errored turn was stopped. A later send of the same entry
 	// asks the host's transcript again, never going straight out on the stale record.
 	it('asks the host again for an errored entry once its retry was stopped (R37)', async () => {

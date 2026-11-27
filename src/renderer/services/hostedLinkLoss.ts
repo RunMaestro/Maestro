@@ -705,10 +705,20 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 		settleKeptCut(cut, 'tab-gone');
 		return;
 	}
+	const slot = mirror.transcripts[link.peerId]?.[liveTurnKey(link.agentId, cut.tabId)];
+	const slotReady = !!slot?.loaded && !slot.loading && !slot.error && !slot.stale;
+	// Busy with a LATER message (the cut one ended, and the host started the next): not this
+	// turn running, so its own end decides below, never "still running" (CodeRabbit on #2167). A
+	// busy tab whose transcript is not read yet is taken as this turn: never sent twice.
+	const runsLater =
+		hostTab.state === 'busy' &&
+		slotReady &&
+		!!cut.message &&
+		lastUserMessage(slot.entries as LogEntry[])?.id !== cut.message.id;
 	// Still running there (it draws Thinking again), stopped by the user, or no message to send:
 	// nothing to settle.
 	if (
-		hostTab.state === 'busy' ||
+		(hostTab.state === 'busy' && !runsLater) ||
 		cut.stopped ||
 		stoppedHere(key, cut.message?.id) ||
 		!cut.message
@@ -717,9 +727,8 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 		settleKeptCut(cut);
 		return;
 	}
-	const slot = mirror.transcripts[link.peerId]?.[liveTurnKey(link.agentId, cut.tabId)];
 	// A read that failed, or one already behind, cannot prove the turn died: never send twice.
-	if (!slot?.loaded || slot.loading || slot.error || slot.stale) {
+	if (!slot || !slotReady) {
 		cut.awaitingRead = true;
 		answerWaiters(cut, 'unknown');
 		return;
