@@ -4343,6 +4343,27 @@ describe('WebSocketMessageHandler', () => {
 			resetQueueChangeFrames();
 		});
 
+		// Parity M29: a frame sent while the read was out labelled the older list with its newer seq.
+		it('names the seq taken before it read the queues, never one a frame sent meanwhile (M29)', async () => {
+			resetQueueChangeFrames();
+			recordFramedQueue('session-1', { seq: 4, items: new Map() });
+			vi.mocked(callbacks.listQueue).mockImplementation(async () => {
+				// A change lands while the renderer answers.
+				recordFramedQueue('session-1', { seq: 5, items: new Map() });
+				return {
+					success: true,
+					queues: [{ sessionId: 'session-1', name: 'A', state: 'idle', items: [] }],
+				};
+			});
+			handler.handleMessage(client, { type: 'list_queue', sessionId: 'session-1' });
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.queues).toMatchObject([{ sessionId: 'session-1', queueSeq: 4 }]);
+			});
+			resetQueueChangeFrames();
+		});
+
 		it('passes undefined when no sessionId is provided (all agents)', async () => {
 			handler.handleMessage(client, { type: 'list_queue' });
 

@@ -240,7 +240,7 @@ describe('interruptTurn: one tab', () => {
 // turn while the host's queue frames still trail.
 describe('interruptTurn: the queue items a Stop ended (M27)', () => {
 	it.each(AGENT_MODES)(
-		'%s: names the queue item the stopped tab ran, and no item for a turn sent from the composer',
+		'%s: names the queue item the stopped tab ran, never a steer into it, and no item for a turn sent from the composer',
 		async (mode) => {
 			useSettingsStore.setState({ federationHostedAgents: true });
 			processApi.interrupt.mockResolvedValue(true);
@@ -267,6 +267,15 @@ describe('interruptTurn: the queue items a Stop ended (M27)', () => {
 						logs: [
 							{ id: 'l0', timestamp: 1, source: 'user', text: 'first', queuedItemId: 'q-1' },
 							{ id: 'l2', timestamp: 2, source: 'user', text: 'second', queuedItemId: 'q-9' },
+							// A message steered into the running turn started no turn of its own (M29).
+							{
+								id: 'l3',
+								timestamp: 3,
+								source: 'user',
+								text: 'and also',
+								queuedItemId: 'q-steer',
+								steered: true,
+							},
 						],
 					}),
 				],
