@@ -59,6 +59,7 @@ import {
 	createPendingHostTabs,
 	hostingEnabled,
 	nextPendingHostTabRetryAt,
+	pruneHostedTabBooks,
 } from './hostedTurns';
 import {
 	clearPendingSteeringNotes,
@@ -253,6 +254,7 @@ export function syncHostedAgents(): void {
 		dropStaleAutoRuns(new Set());
 		pruneHostStartedMentions(new Set());
 		pruneHostedLinkLoss(new Set());
+		pruneHostedTabBooks([]);
 		hostConnected.clear();
 		releaseHostedAgents();
 		return;
@@ -266,6 +268,7 @@ export function syncHostedAgents(): void {
 	);
 	if (!usePeerMirrorStore.getState().enabled) {
 		pruneHostedLinkLoss(new Set());
+		pruneHostedTabBooks([]);
 		hostConnected.clear();
 		return;
 	}
@@ -343,6 +346,8 @@ export function syncHostedAgents(): void {
 	dropStaleAutoRuns(hostedIds);
 	// A deleted agent, one moved back, or one whose peer was removed lets go of its cut turns.
 	pruneHostedLinkLoss(hostedIds);
+	// ...and of what the pending-tab path keeps for its tabs (R28).
+	pruneHostedTabBooks(sessions);
 	for (const id of hostConnected.keys()) if (!hostedIds.has(id)) hostConnected.delete(id);
 }
 

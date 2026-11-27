@@ -170,10 +170,31 @@ describe('mergeHostedLogs', () => {
 	it('draws a kept message once when the host writes it under its own id (R14)', () => {
 		const bubble = local('k1', { text: 'hello', timestamp: 5, keptForHost: true, keptSentAt: 6 });
 		const before = [local('h1'), bubble];
-		const live = mergeHostedLogs(before, [record('h1')], [record('y1', 'hello'), record('a1')]);
+		// The host writes its copy when it takes the message: after the bubble was typed.
+		const copy = { ...record('y1', 'hello'), timestamp: 7 };
+		const live = mergeHostedLogs(before, [record('h1')], [copy, record('a1')]);
 		expect(live.filter((e) => e.text === 'hello').map((e) => e.id)).toEqual(['y1']);
-		const saved = mergeHostedLogs(live, [record('h1'), record('y1', 'hello')], undefined);
+		const saved = mergeHostedLogs(live, [record('h1'), copy], undefined);
 		expect(saved.filter((e) => e.text === 'hello').map((e) => e.id)).toEqual(['y1']);
+	});
+
+	// Parity R28: the old rule let a host entry from up to 60 s BEFORE the bubble match it.
+	it('never takes a host message with the same words written before the bubble, even seconds before (R28)', () => {
+		const typedAt = 10 * 60_000;
+		const bubble = local('k1', {
+			text: 'continue',
+			timestamp: typedAt,
+			keptForHost: true,
+			keptSentAt: typedAt + 30_000,
+		});
+		// Another client's "continue" from 20 s before this one was typed, never drawn here.
+		const earlier = { ...record('y0', 'continue'), timestamp: typedAt - 20_000 };
+		const waiting = mergeHostedLogs([local('h1'), bubble], [record('h1'), earlier], undefined);
+		expect(waiting.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y0', 'k1']);
+		// The host's own copy, written at the send, takes the bubble's place.
+		const copy = { ...record('y1', 'continue'), timestamp: typedAt + 30_000 };
+		const taken = mergeHostedLogs(waiting, [record('h1'), earlier, copy], undefined);
+		expect(taken.filter((e) => e.text === 'continue').map((e) => e.id)).toEqual(['y0', 'y1']);
 	});
 
 	it('keeps a kept bubble when the host holds only an earlier message with the same words (R14)', () => {

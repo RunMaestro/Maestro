@@ -214,11 +214,13 @@ function sameMetadata(a: LogEntry['metadata'], b: LogEntry['metadata']): boolean
  * that does not (a desktop host) writes the message under its own id: once this machine handed the
  * message over (`keptSentAt`), the first user entry new to this tab with the same text and the
  * same number of images replaces one bubble. Each host entry replaces at most one. Never an entry
- * this tab already drew before (an earlier message with the same words), and never before the send
- * (a message another client sent with the same words), so a kept bubble waits for its own copy.
+ * this tab already drew before (an earlier message with the same words), never before the send
+ * (a message another client sent with the same words), and never a host entry written before the
+ * bubble itself (R28): the host writes its copy after the message was typed, so an earlier message
+ * with the same words, read in now, is not this one. A kept bubble waits for its own copy. The
+ * mirror holds no reading of the host's clock, so no skew is allowed: the time a message was kept
+ * (from the bubble to its send) is what absorbs a host clock that runs behind this one.
  */
-/** How far the host's clock may run behind this one when its copy of a kept message is matched. */
-const KEPT_COPY_CLOCK_SKEW_MS = 60_000;
 
 function withoutKeptCopies(
 	older: LogEntry[],
@@ -235,9 +237,9 @@ function withoutKeptCopies(
 			(copy) =>
 				copy.text === entry.text &&
 				(copy.images?.length ?? 0) === (entry.images?.length ?? 0) &&
-				// Written after the bubble (allowing for the two clocks): an older message the host
-				// read in now, with the same words, is not this one.
-				copy.timestamp >= entry.timestamp - KEPT_COPY_CLOCK_SKEW_MS
+				// Written at or after the bubble: an older message the host read in now, with the same
+				// words, is not this one (R28).
+				copy.timestamp >= entry.timestamp
 		);
 		if (at === -1) return true;
 		copies.splice(at, 1);

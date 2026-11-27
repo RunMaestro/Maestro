@@ -519,6 +519,42 @@ export function nextPendingHostTabRetryAt(sessions: readonly Session[]): number 
 }
 
 /**
+ * Forget what the pending-tab path keeps for a tab, an agent or a peer that is gone (R28): a copy's
+ * host tab and a failed try once the tab here is closed, and a close owed to a host tab once this
+ * machine no longer holds that hosted agent (deleted, moved back, or its peer removed). The sync
+ * calls it with every record, after each pass.
+ */
+export function pruneHostedTabBooks(sessions: readonly Session[]): void {
+	const agents = new Set<string>();
+	const tabs = new Set<string>();
+	for (const session of sessions) {
+		const target = hostedTargetOf(session);
+		if (!target?.agent) continue;
+		agents.add(hostTabKey(target, ''));
+		for (const tab of session.aiTabs) tabs.add(hostTabKey(target, tab.id));
+	}
+	const agentHeld = (key: string) => [...agents].some((prefix) => key.startsWith(prefix));
+	for (const key of [...copyHostTabs.keys()]) if (!tabs.has(key)) copyHostTabs.delete(key);
+	for (const key of [...pendingTabFailedAt.keys()]) {
+		if (!tabs.has(key)) pendingTabFailedAt.delete(key);
+	}
+	for (const key of [...closeWhenListed]) if (!agentHeld(key)) closeWhenListed.delete(key);
+}
+
+/** Test-only: how many entries the pending-tab path keeps, by book. */
+export function __hostedTabBookSizesForTests(): {
+	copies: number;
+	failedTries: number;
+	closesOwed: number;
+} {
+	return {
+		copies: copyHostTabs.size,
+		failedTries: pendingTabFailedAt.size,
+		closesOwed: closeWhenListed.size,
+	};
+}
+
+/**
  * The link to the host is back: make every pending tab of `session` on the host. A tab whose last
  * try failed waits `PENDING_HOST_TAB_RETRY_MS`, so a host that refuses is not asked on every sync.
  */

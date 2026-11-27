@@ -8,6 +8,7 @@
 import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	__hostedTabBookSizesForTests,
 	closeHostedTab,
 	closingHostTabIds,
 	createPendingHostTabs,
@@ -15,6 +16,7 @@ import {
 	nextPendingHostTabRetryAt,
 	openHostedTabOrHere,
 	PENDING_HOST_TAB_RETRY_MS,
+	pruneHostedTabBooks,
 	sendHostedTurn,
 } from '../../../renderer/services/hostedTurns';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -252,6 +254,89 @@ describe('New Tab while the link is down (R15)', () => {
 		const send = act$.mock.calls.find(([, , action]) => action?.kind === 'send')?.[2];
 		expect(send).toMatchObject({ tabId: 'host-own', text: 'continue' });
 	});
+
+	// Parity R28: the copy's host tab is forgotten with the copy, so the book does not grow.
+	it('forgets the host tab an older host made for a copy once the copy is closed (R28)', async () => {
+		pruneHostedTabBooks([]);
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		useSessionStore.setState({
+			sessions: [
+				{
+					...current(),
+					executionQueue: [{ id: 'kept', timestamp: 1, tabId, type: 'message', text: 'go' }],
+				},
+			],
+		});
+		hydrateHost(['t1'], 'connected');
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+			action.kind === 'new-tab'
+				? { ok: true, result: { kind: 'new-tab', tabId: 'host-own' } }
+				: { ok: true, result: { kind: action.kind } }
+		);
+		createPendingHostTabs(current());
+		await flush();
+		expect(__hostedTabBookSizesForTests().copies).toBe(1);
+
+		// Kept while the copy is on the record.
+		pruneHostedTabBooks(useSessionStore.getState().sessions);
+		expect(__hostedTabBookSizesForTests().copies).toBe(1);
+
+		const closed = closeTab({ ...current(), executionQueue: [] }, tabId)!.session;
+		useSessionStore.setState({ sessions: [closed] });
+		pruneHostedTabBooks(useSessionStore.getState().sessions);
+		expect(__hostedTabBookSizesForTests().copies).toBe(0);
+	});
+
+	it.each(['agent', 'peer'] as const)(
+		'forgets a close owed to a host tab once the %s is gone (R28)',
+		async (gone) => {
+			pruneHostedTabBooks([]);
+			const session = seed('hosted');
+			hydrateHost(['t1'], 'lost');
+			let tabId = '';
+			await act(async () => {
+				tabId = (await openHostedTabOrHere(session)) as string;
+			});
+			hydrateHost(['t1'], 'connected');
+			let answer!: (value: unknown) => void;
+			act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+				action.kind === 'new-tab'
+					? new Promise((resolve) => (answer = resolve))
+					: { ok: true, result: { kind: action.kind, tabId } }
+			);
+			createPendingHostTabs(current());
+			const before = current();
+			useSessionStore.setState({ sessions: [closeTab(before, tabId)!.session] });
+			closeHostedTab(before, tabId);
+			answer({ ok: false, error: 'The host did not answer in time.', code: 'timeout' });
+			await flush();
+			expect(__hostedTabBookSizesForTests().closesOwed).toBe(1);
+
+			// Kept while the agent is held: the host may still list the tab.
+			pruneHostedTabBooks(useSessionStore.getState().sessions);
+			expect(__hostedTabBookSizesForTests().closesOwed).toBe(1);
+
+			if (gone === 'agent') {
+				const { peer } = replacePeerAgents(
+					createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+					[],
+					[],
+					2
+				);
+				usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+			} else {
+				usePeerMirrorStore.getState().hydrate([]);
+			}
+			pruneHostedTabBooks(useSessionStore.getState().sessions);
+			expect(__hostedTabBookSizesForTests().closesOwed).toBe(0);
+			expect(closingHostTabIds(hostedTargetOf(current())!, current()).has(tabId)).toBe(false);
+		}
+	);
 
 	it("gives the older host's tab the copy's pills and name when the copy keeps its id (CodeRabbit on #2161)", async () => {
 		const session = seed('hosted');
