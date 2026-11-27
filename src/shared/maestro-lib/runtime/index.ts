@@ -336,9 +336,10 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		now: deps.now,
 	});
 
-	// The run releases what it held back (queued chat messages) when it ends, and the turn service
-	// asks whether a run holds an agent: each needs the other, so the run reaches `turns`, declared
-	// below, only when a run ends.
+	// The run has the chat queue looked at again when it starts holding the tree (a hand-over ends,
+	// U9) and releases what it held back when it ends, and the turn service asks whether a run holds
+	// an agent: each needs the other, so the run reaches `turns`, declared below, only when a run
+	// starts or ends.
 	// One History writer for every kind of turn, so each entry is copied to the project's shared
 	// History the same way, whether a chat turn, an Auto Run task, or a consult wrote it.
 	const history = createRuntimeHistory({
@@ -359,6 +360,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		options: options.turns,
 		deps: { probeBinary: deps.probeBinary, ...deps.turns },
 		onRunEnded: (agentId) => turns.drain(agentId),
+		onRunStarted: (agentId) => turns.drain(agentId),
 	});
 	// The host identity a Grok native session is bound to, computed as the desktop computes it.
 	const grokInstallation = grokInstallationId({

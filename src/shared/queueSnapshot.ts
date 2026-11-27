@@ -23,6 +23,11 @@ export interface QueuedItemSnapshot {
 	commandArgs?: string;
 	tabName?: string;
 	paused?: boolean;
+	/**
+	 * Always false from a desktop: its queue starts a tab's next message in the moment the turn
+	 * before ends, so no message waits for its tab alone (`QueuedTurn.handOver`, U6).
+	 */
+	handOver?: false;
 	/** The `@mention` routing picked for this item (strip or `dispatch --routing`). */
 	mentionRouting?: MentionRouting;
 	/** Model and effort captured when it was queued. */
@@ -50,6 +55,7 @@ export function toQueuedItemSnapshot(item: QueuedItemSource): QueuedItemSnapshot
 		...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
 		...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
 		...(item.paused !== undefined ? { paused: item.paused } : {}),
+		handOver: false,
 		...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
 		// A client's hosted queued card draws the model and effort it runs with.
 		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),

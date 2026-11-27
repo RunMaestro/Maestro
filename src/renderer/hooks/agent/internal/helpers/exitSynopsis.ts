@@ -17,6 +17,7 @@
 
 import { logger } from '../../../../utils/logger';
 import { notifyToast } from '../../../../stores/notificationStore';
+import { notifySynopsisSaved } from '../../../../services/historyEntryToast';
 import { formatRelativeTime } from '../../../../../shared/formatters';
 import { parseSynopsis } from '../../../../../shared/synopsis';
 import { hasRunnableQueueItem } from '../../../../utils/executionQueue';
@@ -175,17 +176,14 @@ export async function runExitSynopsis(
 			deps.updateLastSynopsisTime(synopsisData.sessionId, synopsisData.tabId, synopsisTime);
 		}
 
-		notifyToast({
-			type: 'info',
-			title: 'Synopsis',
-			message: parsed.shortSummary,
+		notifySynopsisSaved({
+			summary: parsed.shortSummary,
 			group: synopsisData.groupName,
 			project: synopsisData.projectName,
 			taskDuration: duration,
 			sessionId: synopsisData.sessionId,
 			tabId: synopsisData.tabId,
 			tabName: synopsisData.tabName,
-			skipCustomNotification: true,
 		});
 
 		deps.rightPanelRef.current?.refreshHistoryPanel();

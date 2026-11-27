@@ -70,6 +70,7 @@ import { notifyToast } from '../../stores/notificationStore';
 import { admitGrokNativeCommand } from '../../slashCommands';
 import { hostedTargetOf, sendHostedTurn } from '../../services/hostedTurns';
 import { inHostTabOrder, keepTurnForHost } from '../../services/hostedQueuedTurn';
+import { hostedTabHoldsLine } from '../../utils/hostedTabLine';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -688,12 +689,16 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const tabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
 				return onPlanCrossAgentMentions(planText, activeSession, tabId) !== null;
 			};
-			// This machine holds a line for the tab (a consult's hold, a mention waiting its turn):
-			// the message waits behind it, as it would for a local agent, instead of overtaking it.
+			// This machine holds a line for the tab (a turn on its way to the host, a consult's hold,
+			// a mention waiting its turn): the message waits behind it, as it would for a local agent,
+			// instead of overtaking it.
 			const hostedTabHasLocalLine = (): boolean => {
 				const tabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
-				return (activeSession.executionQueue ?? []).some(
-					(item) => item.tabId === tabId && !item.hostQueued
+				return (
+					hostedTabHoldsLine(activeSession.id, tabId) ||
+					(activeSession.executionQueue ?? []).some(
+						(item) => item.tabId === tabId && !item.hostQueued
+					)
 				);
 			};
 			if (
@@ -955,9 +960,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							activeSession.id,
 							activeTab?.id || activeSession.activeTabId
 						);
+						// A hosted tab whose turn is on its way to the host, or whose consult waits for
+						// its turn there, holds its line here: the command waits behind it, as a
+						// message does (`hostedTabHoldsLine()`).
+						const hostedLineHoldsTab = hostedTabHoldsLine(
+							activeSession.id,
+							activeTab?.id || activeSession.activeTabId
+						);
 						const sessionIsIdle =
 							!options?.hold &&
 							!retryHoldsTab &&
+							!hostedLineHoldsTab &&
 							(forceParallel
 								? activeTab?.state !== 'busy'
 								: activeSession.state !== 'busy' && !isAutoRunActive);

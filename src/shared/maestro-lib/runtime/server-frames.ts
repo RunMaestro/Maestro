@@ -77,6 +77,8 @@ export interface QueuedTurnWire {
 	type: QueuedTurn['kind'];
 	text: string;
 	paused: boolean;
+	handOver?: boolean;
+	handOverSince?: number;
 	turnSettings?: QueuedTurn['turnSettings'];
 	images?: QueuedTurn['images'];
 }
@@ -93,6 +95,8 @@ export function queuedTurnsToWire(items: readonly QueuedTurn[]): QueuedTurnWire[
 		type: item.kind,
 		text: item.text,
 		paused: item.paused,
+		...(item.handOver !== undefined ? { handOver: item.handOver } : {}),
+		...(item.handOverSince !== undefined ? { handOverSince: item.handOverSince } : {}),
 		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
 		...(item.images?.length ? { images: item.images } : {}),
 	}));

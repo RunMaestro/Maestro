@@ -12,7 +12,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	CAPTURED_RECORDINGS,
@@ -42,6 +42,28 @@ import {
 	type RuntimeDeps,
 } from '../index';
 import type { WatchDirectory } from '../settings-watch';
+
+/**
+ * Every time the runtime has an agent's chat queue looked at again (`RuntimeTurns.drain()`), with
+ * whether a run then held the agent's tree. The wrapper is transparent: the real queue still runs.
+ */
+const queueRechecks = vi.hoisted(() => [] as string[]);
+vi.mock('../turns', async (importOriginal) => {
+	const real = await importOriginal<typeof import('../turns')>();
+	return {
+		...real,
+		createRuntimeTurns: (...args: Parameters<typeof real.createRuntimeTurns>) => {
+			const turns = real.createRuntimeTurns(...args);
+			return {
+				...turns,
+				drain: (agentId: string) => {
+					queueRechecks.push(agentId);
+					turns.drain(agentId);
+				},
+			};
+		},
+	};
+});
 
 const T0 = Date.parse('2026-10-04T12:00:00Z');
 const BUNDLED_PROMPTS = path.resolve(__dirname, '../../../../prompts');
@@ -342,6 +364,7 @@ describe('runtime Auto Run', () => {
 		envFiles = [];
 		runLaunches = [];
 		statsWrites = [];
+		queueRechecks.length = 0;
 		chatRecording = writeFakeTurn(
 			work,
 			fakeTurnFromRecording(CAPTURED_RECORDINGS['captured-claude-code-normal'])
@@ -706,6 +729,26 @@ describe('runtime Auto Run', () => {
 			expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
 			const tab = value(await runtime.tabs.list('a1'))[0];
 			expect(tab.agentSessionId).toBe(CAPTURED_CLAUDE_CODE_SESSION_ID);
+		});
+
+		it('has the chat queue looked at again the moment a run starts holding the tree, not only when it ends (U9)', async () => {
+			// A message waiting for its own tab alone (the hand-over) waits for the run from now on: the
+			// queue must say so at once, and let go of a Stop armed for it, before the run ends.
+			const file = doc('gated', gated());
+			script = [{ text: 'Did the first task. Done.', tick: file }];
+			const runtime = await start();
+			const run = watchRun(runtime);
+
+			value(await runtime.autoRun.launch('a1', { documents: [{ file }] }));
+			expect(queueRechecks).toEqual(['a1']);
+			await run.paused();
+			expect(runtime.runs.activeRuns()).toMatchObject([{ agentId: 'a1' }]);
+			expect(queueRechecks).toEqual(['a1']);
+
+			value(await runtime.autoRun.stop('a1'));
+			await run.ended();
+			// The run's end looks again too, for what it held back.
+			expect(queueRechecks).toEqual(['a1', 'a1']);
 		});
 
 		it('lets one of two launches that race start, and refuses the other as busy', async () => {
