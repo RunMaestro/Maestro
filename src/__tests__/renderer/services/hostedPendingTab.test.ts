@@ -12,7 +12,9 @@ import {
 	closingHostTabIds,
 	createPendingHostTabs,
 	hostedTargetOf,
+	nextPendingHostTabRetryAt,
 	openHostedTabOrHere,
+	PENDING_HOST_TAB_RETRY_MS,
 	sendHostedTurn,
 } from '../../../renderer/services/hostedTurns';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
@@ -249,6 +251,99 @@ describe('New Tab while the link is down (R15)', () => {
 		expect(creates).toHaveLength(1);
 		const send = act$.mock.calls.find(([, , action]) => action?.kind === 'send')?.[2];
 		expect(send).toMatchObject({ tabId: 'host-own', text: 'continue' });
+	});
+
+	it("gives the older host's tab the copy's pills and name when the copy keeps its id (CodeRabbit on #2161)", async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		useSessionStore.setState({
+			sessions: [
+				{
+					...current(),
+					aiTabs: current().aiTabs.map((tab) =>
+						tab.id === tabId ? { ...tab, saveToHistory: false, name: 'Notes' } : tab
+					),
+					executionQueue: [{ id: 'kept', timestamp: 1, tabId, type: 'message', text: 'go' }],
+				},
+			],
+		});
+		hydrateHost(['t1'], 'connected');
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) =>
+			action.kind === 'new-tab'
+				? { ok: true, result: { kind: 'new-tab', tabId: 'host-own' } }
+				: { ok: true, result: { kind: action.kind } }
+		);
+
+		createPendingHostTabs(current());
+		await flush();
+
+		expect(current().aiTabs.map((tab) => tab.id)).toContain(tabId);
+		const update = act$.mock.calls.find(([, , action]) => action?.kind === 'update-tab')?.[2];
+		expect(update).toMatchObject({ tabId: 'host-own', patch: { saveToHistory: false } });
+	});
+
+	it("spends the merged context of a tab that took an older host's id on the tab it is now (CodeRabbit on #2161)", async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		useSessionStore.setState({
+			sessions: [
+				{
+					...current(),
+					aiTabs: current().aiTabs.map((tab) =>
+						tab.id === tabId ? { ...tab, pendingMergedContext: 'merged notes' } : tab
+					),
+				},
+			],
+		});
+		hydrateHost(['t1'], 'connected');
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) => {
+			if (action.kind === 'new-tab') {
+				return { ok: true, result: { kind: 'new-tab', tabId: 'host-own' } };
+			}
+			if (action.kind === 'send') {
+				return { ok: true, result: { kind: 'send', receipt: { status: 'started' } } };
+			}
+			return { ok: true, result: { kind: action.kind } };
+		});
+
+		await act(async () => {
+			await sendHostedTurn(current(), tabId, 'hello', []);
+		});
+
+		const handed = act$.mock.calls.find(
+			([, , action]) => action?.kind === 'update-tab' && action.patch?.mergedContext
+		)?.[2];
+		expect(handed).toMatchObject({ tabId: 'host-own', patch: { mergedContext: 'merged notes' } });
+		const adopted = current().aiTabs.find((tab) => tab.id === 'host-own');
+		expect(adopted).toBeDefined();
+		expect(adopted?.pendingMergedContext).toBeUndefined();
+	});
+
+	it('names when a pending tab whose making failed is asked again, only while its host is connected (CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		await act(async () => {
+			await openHostedTabOrHere(session);
+		});
+		hydrateHost(['t1'], 'connected');
+		act$.mockResolvedValue({ ok: false, error: 'The host refused the tab.' });
+		const before = Date.now();
+		createPendingHostTabs(current());
+		await flush();
+
+		const at = nextPendingHostTabRetryAt(useSessionStore.getState().sessions);
+		expect(at).toBeGreaterThanOrEqual(before + PENDING_HOST_TAB_RETRY_MS);
+		expect(at).toBeLessThanOrEqual(Date.now() + PENDING_HOST_TAB_RETRY_MS);
+		hydrateHost(['t1'], 'lost');
+		expect(nextPendingHostTabRetryAt(useSessionStore.getState().sessions)).toBeUndefined();
 	});
 
 	it('leaves one tab when the report of an older host draws its tab before the answer (Greptile on #2161)', async () => {

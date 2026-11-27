@@ -11,14 +11,20 @@ vi.mock('../../../../renderer/stores/notificationStore', async (importOriginal) 
 	notifyToast: (...args: unknown[]) => notifyToast(...args),
 }));
 
-const retryConnectionOutagesNow = vi.fn((_ids: ReadonlySet<string>) => 0);
+const retryConnectionOutagesNow = vi.fn(
+	(_ids: ReadonlySet<string>, _except?: (sessionId: string, tabId: string) => boolean) => 0
+);
 vi.mock('../../../../renderer/stores/retryStore', async (importOriginal) => ({
 	...(await importOriginal<object>()),
-	retryConnectionOutagesNow: (ids: ReadonlySet<string>) => retryConnectionOutagesNow(ids),
+	retryConnectionOutagesNow: (
+		ids: ReadonlySet<string>,
+		except?: (sessionId: string, tabId: string) => boolean
+	) => retryConnectionOutagesNow(ids, except),
 }));
 
 import { useSshReachability } from '../../../../renderer/hooks/remote/useSshReachability';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { cutTurnUndecided } from '../../../../renderer/services/hostedLinkLoss';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { createModeSession } from '../../../helpers';
 import { useSshOutageStore } from '../../../../renderer/stores/sshOutageStore';
@@ -168,6 +174,9 @@ describe('useSshReachability', () => {
 			push(up);
 			expect(retryConnectionOutagesNow).toHaveBeenCalledTimes(1);
 			expect(ids()).toEqual(['hosted-1', 'ssh-1']);
+			// A hosted tab whose cut turn the host has yet to settle fires from that decision
+			// (CodeRabbit on #2161).
+			expect(retryConnectionOutagesNow.mock.calls[0][1]).toBe(cutTurnUndecided);
 		});
 
 		it('for the hosted agents when their host is reachable again', () => {

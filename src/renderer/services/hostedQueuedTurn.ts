@@ -442,7 +442,9 @@ function forwardToHost(
 					clearRetryIfSettled(sessionId, item.tabId);
 					if (mention) fireMentionsForHostTurn(sessionId, item, mention, receipt);
 				} else if (!kept) {
-					// Refused for another reason (already toasted): a resend ends its outage here.
+					// Refused for another reason (already toasted): nothing reached the host, so the bubble
+					// is not handed over (CodeRabbit on #2161), and a resend ends its outage here.
+					markKeptBubble(sessionId, item, false);
 					failInFlightRetry(sessionId, item.tabId, 'The host did not take the message.');
 					holdRefusedItem(sessionId, item, index);
 				}

@@ -287,6 +287,22 @@ describe('a message sent while the link is down is kept for a retry', () => {
 		expect(bubble.keptSentAt).toBeUndefined();
 	});
 
+	it('takes the handed-over mark off when the host refuses the resend for another reason (CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		const entry = getRetryEntry(session.id, 't1')!;
+		useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+		// Not a not-connected refusal: nothing reached the host, and nothing keeps it for a retry.
+		act$.mockResolvedValue({ ok: false, error: 'The host refused the turn.' });
+
+		await sendTakenItemToHost(session.id, queue()[0]);
+		await flush();
+
+		const [bubble] = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(bubble.keptForHost).toBe(true);
+		expect(bubble.keptSentAt).toBeUndefined();
+	});
+
 	it('draws no bubble for a message that is not kept (Agent Resilience off) (R14)', () => {
 		const session = seed('hosted');
 		registerAgentErrorSurfacer(() => undefined);
@@ -364,6 +380,22 @@ describe('a message sent while the link is down is kept for a retry', () => {
 		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
 		expect(retryConnectionOutagesNow(new Set([session.id]))).toBe(0);
 		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+	});
+
+	it('fires the kept retry when the sync first sees the host connected, with no earlier state (CodeRabbit on #2161)', () => {
+		const session = createModeSession('hosted', {
+			id: 'row-fresh',
+			name: 'Docs',
+			state: 'idle',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1' })],
+			executionQueue: [],
+		});
+		useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+		keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('scheduled');
+		syncHostedAgents();
+		expect(getRetryEntry(session.id, 't1')?.status).toBe('in-flight');
 	});
 
 	it("fires the kept retry when the sync sees the agent's host connect again (R18)", () => {

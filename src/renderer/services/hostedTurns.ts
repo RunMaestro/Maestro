@@ -406,13 +406,13 @@ export function createPendingHostTab(
 			closeHostedTab(session, result.tabId);
 			return null;
 		}
-		const hostTabId = adoptHostTabId(sessionId, tabId, result.tabId);
-		if (!hostTabId) {
-			copyHostTabs.set(key, result.tabId);
-			return result.tabId;
-		}
+		const adopted = adoptHostTabId(sessionId, tabId, result.tabId);
+		if (!adopted) copyHostTabs.set(key, result.tabId);
+		// The host's tab takes what the tab here holds: the adopted tab, or the copy that kept its id
+		// (CodeRabbit on #2161), so its pills and name are the user's, not the host's defaults.
+		const hostTabId = adopted ?? result.tabId;
 		const local = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.find(
-			(candidate) => candidate.id === hostTabId
+			(candidate) => candidate.id === (adopted ?? tabId)
 		);
 		void actOnMirroredAgent(target.peerId, target.agentId, {
 			kind: 'update-tab',
@@ -493,6 +493,29 @@ function hostTabAdopted(sessionId: string, tabId: string): boolean {
 	return !!selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs.some(
 		(tab) => tab.id === tabId
 	);
+}
+
+/**
+ * When the soonest pending tab whose making failed may be asked of its host again (its last try
+ * plus `PENDING_HOST_TAB_RETRY_MS`), among records whose host is connected: the sync arms a recheck
+ * for it, so the tab is made without waiting for another change (CodeRabbit on #2161). A host that
+ * is down has no deadline, so an expired one cannot spin while it stays down.
+ */
+export function nextPendingHostTabRetryAt(sessions: readonly Session[]): number | undefined {
+	let soonest: number | undefined;
+	for (const session of sessions) {
+		const target = hostedTargetOf(session);
+		if (!target) continue;
+		if (usePeerMirrorStore.getState().peers[target.peerId]?.connection !== 'connected') continue;
+		for (const tab of session.aiTabs) {
+			if (!tab.pendingHostTab) continue;
+			const failedAt = pendingTabFailedAt.get(hostTabKey(target, tab.id));
+			if (failedAt === undefined) continue;
+			const at = failedAt + PENDING_HOST_TAB_RETRY_MS;
+			if (soonest === undefined || at < soonest) soonest = at;
+		}
+	}
+	return soonest;
 }
 
 /**
@@ -651,10 +674,16 @@ export async function sendHostedTurn(
 	}
 	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
 	let hostTabId = tabId;
+	// The id of this machine's tab the message came from: the pending tab's own, or the host's once
+	// this record's tab took it (an older host, nothing keyed on the tab). Its merged context is
+	// read and spent there (CodeRabbit on #2161).
+	let localTabId = tabId;
 	if (tab?.pendingHostTab && tabId && !isHostTab(target, tabId)) {
 		// A tab opened here while the host was not connected: made on the host now, under its id.
 		hostTabId = (await createPendingHostTab(session.id, tabId)) ?? undefined;
 		if (!hostTabId) return null;
+		const tabsNow = selectSessionById(session.id)(useSessionStore.getState())?.aiTabs ?? [];
+		if (!tabsNow.some((candidate) => candidate.id === tabId)) localTabId = hostTabId;
 		if (hostTabId !== tabId && !hostTabAdopted(session.id, hostTabId)) {
 			// An older host gave it its own id while this tab holds a kept message: a copy here.
 			notifyToast({
@@ -690,7 +719,7 @@ export async function sendHostedTurn(
 	// Read from the store, not the caller's snapshot: a send that waited behind an earlier one of
 	// this tab must not hand over context that send already spent.
 	const liveTab = selectSessionById(session.id)(useSessionStore.getState())?.aiTabs.find(
-		(candidate) => candidate.id === tabId
+		(candidate) => candidate.id === localTabId
 	);
 	const mergedContext = (liveTab ?? tab)?.pendingMergedContext;
 	if (mergedContext) {
@@ -726,8 +755,8 @@ export async function sendHostedTurn(
 	// keeps it, so the retry hands it over again (the host's copy is overwritten, not doubled).
 	// A message the host had already answered ran nothing now: nothing was spent, nothing to name.
 	const ranNow = receipt !== null && receipt.status !== 'answered';
-	if (ranNow && mergedContext && tabId) {
-		updateAiTab(session.id, tabId, (candidate) =>
+	if (ranNow && mergedContext && localTabId) {
+		updateAiTab(session.id, localTabId, (candidate) =>
 			candidate.pendingMergedContext === mergedContext
 				? { ...candidate, pendingMergedContext: undefined }
 				: candidate

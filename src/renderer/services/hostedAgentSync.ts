@@ -54,7 +54,12 @@ import {
 	nextHostStartDeadline,
 	pruneHostStartedMentions,
 } from './hostedQueuedTurn';
-import { closingHostTabIds, createPendingHostTabs, hostingEnabled } from './hostedTurns';
+import {
+	closingHostTabIds,
+	createPendingHostTabs,
+	hostingEnabled,
+	nextPendingHostTabRetryAt,
+} from './hostedTurns';
 import {
 	clearPendingSteeringNotes,
 	forgetHostedSteering,
@@ -219,7 +224,9 @@ const hostConnected = new Map<string, boolean>();
 function noteHostConnected(sessionId: string, connected: boolean): void {
 	const was = hostConnected.get(sessionId);
 	hostConnected.set(sessionId, connected);
-	if (connected && was === false) {
+	// Not known to be up before (disconnected, or not seen since it left the hosted set): the link
+	// is back as far as a kept message can tell (CodeRabbit on #2161).
+	if (connected && was !== true) {
 		retryConnectionOutagesNow(new Set([sessionId]), cutTurnUndecided);
 	}
 }
@@ -355,6 +362,8 @@ export function startHostedAgentSync(options: { announcesRunEnds?: boolean } = {
 		const deadlines = [
 			nextHostStartDeadline(),
 			nextHostedHandoffDeadline(useSessionStore.getState().sessions),
+			// A pending tab whose making failed is asked again when its wait ends (R15).
+			nextPendingHostTabRetryAt(useSessionStore.getState().sessions),
 		].filter((at): at is number => at !== undefined);
 		if (deadlines.length === 0) return;
 		const delay = Math.max(0, Math.min(...deadlines) - Date.now()) + 1;

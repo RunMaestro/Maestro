@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 
 import { useIsLifecycleOwner } from '../../contexts/WindowContext';
 import { notifyToast } from '../../stores/notificationStore';
+import { cutTurnUndecided } from '../../services/hostedLinkLoss';
 import { retryConnectionOutagesNow } from '../../stores/retryStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import {
@@ -48,8 +49,10 @@ export function useSshReachability(): void {
 			// SSH agent and a hosted one alike. Each window fires only the retries it holds.
 			if (event.reachable && !event.cleared) {
 				const sessions = useSessionStore.getState().sessions;
+				// A hosted tab whose cut turn the host has yet to settle fires from that decision.
 				retryConnectionOutagesNow(
-					new Set(agentsStoppedBy(sessions, event).map((session) => session.id))
+					new Set(agentsStoppedBy(sessions, event).map((session) => session.id)),
+					cutTurnUndecided
 				);
 			}
 			// Only an outage the user saw announces its recovery; a remote that
