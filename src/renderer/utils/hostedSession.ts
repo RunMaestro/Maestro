@@ -119,27 +119,25 @@ export function hostLinkNoteId(
 /**
  * The rows a turn cut by a lost link leaves, as an SSH turn's do when its link is cut, drawn in
  * time order with this machine's own entries (the retry card the cut raised), never as a live tail
- * after them (R59): the turn's message, and the answer text it streamed (`text` events, and the
- * answer it streamed as thinking chunks, which a desktop flushes as the reply when the process
- * ends with no result). They become this machine's own entries, so they stay once the turn's live
- * tail is gone; the reply rows (`cutReply`) also after the resend's answer lands (R58), and the
- * message until the host's transcript holds it under the same id. Thinking and tool cards go by
- * the tab's Thinking mode, as at a local exit, and stay the live tail.
+ * after them (R59): the turn's message, the answer text it streamed (`text` events, and the answer
+ * it streamed as thinking chunks, which a desktop flushes as the reply when the process ends with
+ * no result), and the thinking and tool cards the tab's Thinking mode keeps at a turn's end, in
+ * the order they streamed (CodeRabbit on #2177). They become this machine's own entries, so they
+ * stay once the turn's live tail is gone: the turn's rows (`cutReply`) also after the resend's
+ * answer lands (R58), and the message until the host's transcript holds it under the same id.
  */
 function cutTurnLogs(
 	tabId: string,
 	local: LogEntry[],
 	live: LiveTurn,
 	thinking: AITab['showThinking']
-): { local: LogEntry[]; tail: LogEntryRecord[] } {
-	const rows: LogEntry[] = live.entries
-		.filter((record) => record.source === 'user' || record.source === 'stdout')
-		.map((record) =>
-			record.source === 'user'
-				? mirrorLogEntry(record)
-				: { ...mirrorLogEntry(record), cutReply: true }
-		);
-	if (live.answerText && !rows.some((entry) => entry.source === 'stdout')) {
+): LogEntry[] {
+	const rows: LogEntry[] = logsKeptAtTurnEnd(live.entries, thinking).map((record) =>
+		record.source === 'user'
+			? mirrorLogEntry(record)
+			: { ...mirrorLogEntry(record), cutReply: true }
+	);
+	if (live.answerText && !live.entries.some((record) => record.source === 'stdout')) {
 		rows.push({
 			id: `host-cut-reply-${tabId}-${live.startedAt}`,
 			timestamp: live.answerAt ?? live.startedAt,
@@ -148,8 +146,8 @@ function cutTurnLogs(
 			cutReply: true,
 		});
 	}
-	// Drawn live until now (`hostLive`): the live row gives way to this machine's copy. A reply
-	// copy already made follows its live row's text while that row still moves on.
+	// Drawn live until now (`hostLive`): the live row gives way to this machine's copy. A copy
+	// already made follows its live row's text while that row still moves on.
 	const held = new Map(
 		local.filter((entry) => !entry.hostLive).map((entry) => [entry.id, entry] as const)
 	);
@@ -160,16 +158,13 @@ function cutTurnLogs(
 			.map((entry) => [entry.id, entry.text] as const)
 	);
 	const added = rows.filter((entry) => !held.has(entry.id));
-	const tail = logsKeptAtTurnEnd(live.entries, thinking).filter(
-		(record) => record.source !== 'stdout' && record.source !== 'user'
-	);
-	if (added.length === 0 && moved.size === 0) return { local, tail };
+	if (added.length === 0 && moved.size === 0) return local;
 	const addedIds = new Set(added.map((entry) => entry.id));
 	let next = local
 		.filter((entry) => !(entry.hostLive && addedIds.has(entry.id)))
 		.map((entry) => (moved.has(entry.id) ? { ...entry, text: moved.get(entry.id)! } : entry));
 	for (const entry of added) next = insertByTime(next, entry);
-	return { local: next, tail };
+	return next;
 }
 
 /** `logs` with `entry` before the first entry written after it. */
@@ -888,8 +883,12 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 		const slot = input.transcripts?.[key];
 		const live = input.liveTurns?.[key];
 		if (cut && live) {
-			const ended = cutTurnLogs(tabId, local, live, thinking);
-			return mergeHostedLogs(ended.local, slot?.loaded ? slot.entries : undefined, ended.tail);
+			// Nothing of it is a live tail any more: its rows are this machine's.
+			return mergeHostedLogs(
+				cutTurnLogs(tabId, local, live, thinking),
+				slot?.loaded ? slot.entries : undefined,
+				undefined
+			);
 		}
 		const tail = live?.entries ?? slot?.carryover;
 		return mergeHostedLogs(

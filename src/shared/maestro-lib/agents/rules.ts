@@ -805,17 +805,28 @@ export function markTurnEnded<T extends object>(
 ): T[] {
 	const stampAt = (i: number): T[] => {
 		const next = [...entries];
+		const entry = entries[i] as Partial<LogEntryRecord>;
+		// A queued steer stamped as its own turn's message: that follow-up ended with nothing of its
+		// own that stays. Its stamp may already be the end of the turn it was steered into
+		// (`steerParentEnd()`): that end stays as it was, and the follow-up's has its own fields, so
+		// neither moves the other's boundary (R63 a; CodeRabbit on #2177).
+		const ownSteerEnd = i === from && queuedSteer(entry);
+		if (ownSteerEnd && entry.turnEnded === true) {
+			next[i] = {
+				...entries[i],
+				steerTurnEnded: true,
+				...(endedAt !== undefined ? { steerTurnEndedAt: endedAt } : {}),
+			};
+			return next;
+		}
 		// Timed, so the reader tells a card of this attempt written after its last text from one of
 		// a retry that came after the end (`turnFateAfter()`).
 		next[i] = {
 			...entries[i],
 			turnEnded: true,
 			...(endedAt !== undefined ? { turnEndedAt: endedAt } : {}),
-			// A queued steer stamped as its own turn's message: that follow-up ended with nothing of
-			// its own that stays. Its stamp may already be the end of the turn it was steered into
-			// (`steerParentEnd()`), so the reader is told which (R63 a).
-			...(i === from && queuedSteer(entries[i] as Partial<LogEntryRecord>)
-				? { steerTurnEnded: true }
+			...(ownSteerEnd
+				? { steerTurnEnded: true, ...(endedAt !== undefined ? { steerTurnEndedAt: endedAt } : {}) }
 				: {}),
 		};
 		return next;
@@ -892,18 +903,62 @@ export function userTurnSpan(
 }
 
 /**
- * The index of the user message whose turn runs now in `logs`, or -1: the latest that starts a
- * turn (`isUserTurnStart()`) whose turn has begun (`userTurnSpan()`). A queued steer written while
- * the turn before it runs is not it until that turn's end is stamped; from then on its follow-up
- * is, so a host stamps that follow-up's end on the steer's turn, never the earlier one (R63 a).
+ * The index of the user message whose turn runs now in `logs`, or -1. The latest message the
+ * person sent, unless the agent ran steers into its turn as follow-ups of their own (`queued`):
+ * once that turn has ended, the earliest such steer whose follow-up has no end yet (they run in
+ * the order they were sent), so a host stamps that follow-up's end on its own steer, never on the
+ * earlier turn or a later steer (R63 a; CodeRabbit on #2177).
  */
 export function runningTurnMessageIndex(logs: readonly unknown[]): number {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	let message = -1;
+	const steers: number[] = [];
 	for (let i = entries.length - 1; i >= 0; i -= 1) {
-		if (!isUserTurnStart(entries[i])) continue;
-		if (!queuedSteer(entries[i]) || userTurnSpan(entries, i) !== null) return i;
+		const entry = entries[i];
+		if (queuedSteer(entry)) steers.unshift(i);
+		else if (isUserTurnStart(entry)) {
+			message = i;
+			break;
+		}
 	}
-	return -1;
+	if (steers.length === 0) return message;
+	// The turn the steers were sent into has ended: one of them starts its turn after that end, or
+	// that end landed on one of them.
+	const ended = steers.some(
+		(at) => userTurnSpan(entries, at) !== null || parentEndedOnSteer(entries[at])
+	);
+	if (!ended) return message;
+	for (const at of steers) {
+		if (entries[at]?.steerTurnEnded === true) continue;
+		const span = userTurnSpan(entries, at);
+		const stamped =
+			span !== null &&
+			entries
+				.slice(span.from, span.to)
+				.some((entry) => entry?.turnEnded === true && !queuedSteer(entry));
+		if (!stamped) return at;
+	}
+	return steers[steers.length - 1];
+}
+
+/**
+ * Whether the stamp on a queued steer is the end of the turn it was steered into (that turn's last
+ * entry then): stamped, and not by its own follow-up alone (`steerTurnEnded`, timed after it).
+ */
+function parentEndedOnSteer(steer: Partial<LogEntryRecord> | null | undefined): boolean {
+	if (steer?.turnEnded !== true) return false;
+	if (steer.steerTurnEnded !== true) return true;
+	return (
+		typeof steer.turnEndedAt === 'number' &&
+		typeof steer.steerTurnEndedAt === 'number' &&
+		steer.turnEndedAt < steer.steerTurnEndedAt
+	);
+}
+
+/** When a queued steer's own follow-up ended on it (`steerTurnEnded`), or undefined. */
+function steerOwnEndAt(steer: Partial<LogEntryRecord> | null | undefined): number | undefined {
+	if (steer?.steerTurnEnded !== true) return undefined;
+	return typeof steer.steerTurnEndedAt === 'number' ? steer.steerTurnEndedAt : stampedAt(steer);
 }
 
 /**
@@ -918,26 +973,35 @@ function steerParentEnd(
 	entries: readonly (Partial<LogEntryRecord> | null)[],
 	at: number
 ): 'before' | 'on' | 'running' | number {
+	const steer = entries[at];
+	// The newest thinking or tool card stepped over: one written after the stamp below it is a
+	// retry of that turn running, never a turn that had ended (Greptile and CodeRabbit on #2177).
+	let cardAt = Number.NEGATIVE_INFINITY;
 	for (let i = at - 1; i >= 0; i -= 1) {
 		const entry = entries[i];
 		// A note this machine or the host writes is about a turn, never part of one; a thinking or
 		// tool card is never stamped (`markTurnEnded()` steps over it), so the stamp is before it
 		// (R63 b).
-		if (
-			(entry?.source === 'system' || entry?.source === 'thinking' || entry?.source === 'tool') &&
-			entry.turnEnded !== true
-		) {
+		if (entry?.source === 'system' && entry.turnEnded !== true) continue;
+		if ((entry?.source === 'thinking' || entry?.source === 'tool') && entry.turnEnded !== true) {
+			if (typeof entry.timestamp === 'number') cardAt = Math.max(cardAt, entry.timestamp);
 			continue;
 		}
-		if (entry?.turnEnded === true) return 'before';
+		if (entry?.turnEnded === true) {
+			if (typeof entry.turnEndedAt === 'number' && cardAt > entry.turnEndedAt) break;
+			// A steer queued before this one, its own follow-up ended: when the turn both were sent
+			// into ended on this steer, that is where it ended (CodeRabbit on #2177).
+			if (queuedSteer(entry) && steerOwnEndAt(entry) !== undefined && parentEndedOnSteer(steer)) {
+				return 'on';
+			}
+			return 'before';
+		}
 		break;
 	}
-	const steer = entries[at];
-	// The steer's own follow-up ended on it (`steerTurnEnded`): its stamp says nothing about the
-	// turn before it, which then ended on it too, unless a stamp after it from before that end is
-	// that turn's (R63 a).
-	const ownEndAt = steer?.steerTurnEnded === true ? stampedAt(steer) : undefined;
-	if (steer?.turnEnded === true && ownEndAt === undefined) return 'on';
+	if (parentEndedOnSteer(steer)) return 'on';
+	// The steer's own follow-up ended on it (`steerTurnEnded`), the turn before it not: that turn
+	// ended at a stamp after the steer from before the follow-up's end, or on the steer (R63 a).
+	const ownEndAt = steerOwnEndAt(steer);
 	for (let i = at + 1; i < entries.length; i += 1) {
 		const entry = entries[i];
 		if (entry?.source === 'user' && entry.steered !== true) break;
@@ -979,22 +1043,24 @@ export function turnFateAfter(
 ): TurnFate {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
 	// A queued steer's stamp is the end of the turn it was steered into when that turn's end
-	// landed on it (`steerParentEnd()`), never its own then, unless its own follow-up ended on it
-	// as well (`steerTurnEnded`, R63 a).
+	// landed on it (`steerParentEnd()`), never its own then; its own follow-up's end is its own
+	// field (`steerTurnEnded`, R63 a).
+	const steerOwnEnd = steerOwnEndAt(entries[at]);
 	const ownStamp =
-		entries[at]?.turnEnded === true &&
-		(entries[at]?.steerTurnEnded === true ||
+		steerOwnEnd !== undefined ||
+		(entries[at]?.turnEnded === true &&
 			!(queuedSteer(entries[at]) && steerParentEnd(entries, at) === 'on'));
 	let ended: TurnFate | undefined = ownStamp ? 'answered' : undefined;
 	// The message itself stamped as ended after every entry of its turn: an attempt that answered
 	// with nothing that stays, after the attempts before it (`markTurnEnded()` with `endedAt`).
-	const emptyEndAt = ownStamp ? entries[at]?.turnEndedAt : undefined;
+	const ownEndAt = steerOwnEnd ?? entries[at]?.turnEndedAt;
+	const emptyEndAt = ownStamp ? ownEndAt : undefined;
 	let latestAt = Number.NEGATIVE_INFINITY;
 	// When the last stamped end was, and whether anything of a later attempt came after it: a retry's
 	// thinking or tool card after an end is that retry running (or lost), never the earlier end.
 	let lastEndAt =
 		ended !== undefined
-			? (entries[at]?.turnEndedAt ?? entries[at]?.timestamp ?? Number.NEGATIVE_INFINITY)
+			? (ownEndAt ?? entries[at]?.timestamp ?? Number.NEGATIVE_INFINITY)
 			: Number.NEGATIVE_INFINITY;
 	let pending = false;
 	// What the attempt being read says so far; each stamp ends one, and the next starts clean.

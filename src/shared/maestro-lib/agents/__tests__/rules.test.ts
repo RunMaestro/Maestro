@@ -1553,7 +1553,13 @@ describe('isUserTurnStart', () => {
 		// The follow-up is the turn that runs now, and its empty end goes on the steer.
 		expect(runningTurnMessageIndex(endedOn)).toBe(2);
 		const ownEnd = markTurnEnded(endedOn, runningTurnMessageIndex(endedOn), 20);
-		expect(ownEnd[2]).toMatchObject({ turnEnded: true, turnEndedAt: 20, steerTurnEnded: true });
+		// The first turn's end stays as it was; the follow-up's end has its own fields.
+		expect(ownEnd[2]).toMatchObject({
+			turnEnded: true,
+			turnEndedAt: 10,
+			steerTurnEnded: true,
+			steerTurnEndedAt: 20,
+		});
 		for (const hostKind of ['desktop', 'headless'] as const) {
 			expect(turnFateAfter(ownEnd, 0, hostKind)).toBe('answered');
 			expect(turnFateAfter(ownEnd, 2, hostKind)).toBe('answered');
@@ -1575,6 +1581,70 @@ describe('isUserTurnStart', () => {
 		expect(turnFateAfter(afterOwn, 2, 'desktop')).toBe('answered');
 		expect(turnFateAfter(afterOwn, 3, 'desktop')).toBe('answered');
 	});
+
+	// CodeRabbit on #2177: the steer's own follow-up ended on its own error, then a retry of it
+	// answered empty. The turn before it keeps its end on the steer: it reads answered, never the
+	// follow-up's error.
+	it("keeps the earlier turn's end on the steer when the steer's follow-up errs and then answers empty (R63)", () => {
+		const endedOn = markTurnEnded([u1, partialA, steer], 0, 10);
+		const errored = [
+			...endedOn,
+			{
+				id: 'eb',
+				timestamp: 15,
+				source: 'error',
+				text: 'Rate limited',
+				turnEnded: true,
+				turnEndedAt: 16,
+			},
+		];
+		expect(turnFateAfter(errored, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(errored, 2, 'desktop')).toBe('errored');
+		const retried = markTurnEnded(errored, runningTurnMessageIndex(errored), 20);
+		expect(retried[2]).toMatchObject({ turnEndedAt: 10, steerTurnEndedAt: 20 });
+		expect(userTurnSpan(retried, 0)).toEqual({ from: 1, to: 3 });
+		expect(turnFateAfter(retried, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(retried, 2, 'desktop')).toBe('answered');
+	});
+
+	// CodeRabbit on #2177: two steers queued behind one turn run their follow-ups in the order they
+	// were sent. The first turn's end lands on the second; each follow-up's end goes on its own steer.
+	it('stamps each queued follow-up on its own steer when two are queued behind one turn (R63)', () => {
+		const s1 = { ...steer, id: 's1', timestamp: 3 };
+		const s2 = { ...steer, id: 's2', timestamp: 4, text: 'And the tests' };
+		const endedOn = markTurnEnded([u1, s1, s2], 0, 10);
+		expect(endedOn[2]).toMatchObject({ turnEnded: true });
+		expect(runningTurnMessageIndex(endedOn)).toBe(1);
+		const firstDone = markTurnEnded(endedOn, runningTurnMessageIndex(endedOn), 20);
+		expect(firstDone[1]).toMatchObject({ turnEnded: true, steerTurnEnded: true });
+		expect(firstDone[2]).not.toHaveProperty('steerTurnEnded');
+		expect(turnFateAfter(firstDone, 1, 'desktop')).toBe('answered');
+		expect(turnFateAfter(firstDone, 2, 'desktop')).toBe('unended');
+		expect(runningTurnMessageIndex(firstDone)).toBe(2);
+		const bothDone = markTurnEnded(firstDone, runningTurnMessageIndex(firstDone), 30);
+		expect(bothDone[2]).toMatchObject({
+			turnEndedAt: 10,
+			steerTurnEnded: true,
+			steerTurnEndedAt: 30,
+		});
+		expect(turnFateAfter(bothDone, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(bothDone, 1, 'desktop')).toBe('answered');
+		expect(turnFateAfter(bothDone, 2, 'desktop')).toBe('answered');
+	});
+
+	// Greptile and CodeRabbit on #2177: a thinking or tool card written AFTER the stamp before the
+	// steer is a retry of that turn running: the steer has not begun, and the retry is the turn.
+	it.each(['thinking', 'tool'] as const)(
+		'keeps the steer not begun behind a %s card of a retry after the earlier end (R63)',
+		(source) => {
+			const answered = { ...partialA, turnEnded: true, turnEndedAt: 3 };
+			const card = { id: 'k', timestamp: 4, source, text: 'Reading files' };
+			const logs = [u1, answered, card, { ...steer, timestamp: 5 }];
+			expect(userTurnSpan(logs, 3)).toBeNull();
+			expect(turnFateAfter(logs, 3, 'desktop')).toBe('unended');
+			expect(runningTurnMessageIndex(logs)).toBe(0);
+		}
+	);
 
 	it('keeps the first turn running and the steer not begun until the first turn ends (R63)', () => {
 		expect(runningTurnMessageIndex([u1, partialA, steer])).toBe(0);

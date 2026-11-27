@@ -95,6 +95,8 @@ export interface LogEntryRecord extends UnknownFields {
 	 * the end of the turn it was steered into; this tells the reader the steer's own turn ended too.
 	 */
 	steerTurnEnded?: boolean;
+	/** When that follow-up ended, epoch ms; `turnEndedAt` stays the end of the turn before it. */
+	steerTurnEndedAt?: number;
 	/**
 	 * A desktop's Agent Resilience card: the turn's error was taken over by that desktop's own
 	 * automatic retry, and this is the id of its outage (`RetryStatusCard`). A Federation client

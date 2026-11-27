@@ -710,6 +710,36 @@ describe('projectHostedSession with the link lost', () => {
 		}
 	);
 
+	// CodeRabbit on #2177: a sticky tab keeps its thinking and tool cards at the cut, in the order
+	// they streamed with the reply text, as at a local turn's end.
+	it("keeps a sticky tab's cut rows in the order they streamed (R58)", () => {
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [
+				createMockAITab({ id: 't1', state: 'busy', showThinking: 'sticky', logs: [QUESTION] }),
+			],
+		});
+		const liveTurns = {
+			[liveTurnKey('h1', 't1')]: {
+				startedAt: 11,
+				busy: true,
+				entries: [
+					{ id: 'k1', timestamp: 12, source: 'thinking', text: 'Looking' },
+					{ id: 'o1', timestamp: 13, source: 'stdout', text: 'First' },
+					{ id: 'tool-1', timestamp: 14, source: 'tool', text: 'Read' },
+					{ id: 'o2', timestamp: 15, source: 'stdout', text: 'Second' },
+				],
+			},
+		} as never;
+		const during = projectHostedSession(local, { agent, liveTurns, linkLost });
+		expect(
+			during.aiTabs[0].logs
+				.filter((entry) => entry.agentError?.source !== 'host-link')
+				.map((entry) => entry.id)
+		).toEqual(['u1', 'k1', 'o1', 'tool-1', 'o2']);
+	});
+
 	it('never draws reasoning as a reply row at the cut (R58)', () => {
 		const local = createModeSession('hosted', {
 			id: 'row',
