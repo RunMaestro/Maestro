@@ -33,6 +33,23 @@ const entry = (
 });
 
 describe('hostHistoryComingHome', () => {
+	it("leaves out an entry without a usable time or type, and clamps one over this machine's caps (L45 c)", () => {
+		const huge = 'x'.repeat(5_000_000);
+		const coming = hostHistoryComingHome(
+			[
+				entry('ok', 10, 'host-1', { fullResponse: huge }),
+				{ ...entry('no-time', 11, 'host-1'), timestamp: Number.NaN },
+				{ ...entry('no-type', 12, 'host-1'), type: undefined as never },
+			],
+			'host-1',
+			'local-1',
+			[]
+		);
+		expect(coming.map((e) => e.id)).toEqual(['ok']);
+		expect(coming[0].fullResponse!.length).toBeLessThan(huge.length);
+		expect(coming[0].fullResponse).toContain('[truncated');
+	});
+
 	it("takes only the host agent's own entries, re-filed under the local id, oldest first, each id once", () => {
 		const coming = hostHistoryComingHome(
 			[
@@ -56,13 +73,20 @@ describe('hostHistoryComingHome', () => {
 
 describe('planHostHistoryHome and bringHostHistoryHome', () => {
 	it('reads the host list and this machine, and writes only what is new', async () => {
-		const store = { read: vi.fn(async () => [entry('x', 1, 'local-1')]), append: vi.fn() };
+		const here = [entry('x', 1, 'local-1')];
+		const store = {
+			read: vi.fn(async () => [...here]),
+			append: vi.fn(async (_agentId: string, entries: readonly HistoryEntry[]) => {
+				here.push(...entries);
+			}),
+		};
 		const coming = await planHostHistoryHome(
 			{ list: async () => ({ ok: true, value: [entry('x', 1, 'h'), entry('y', 2, 'h')] }) },
 			'h',
 			'local-1',
 			store
 		);
+		if (!coming) throw new Error('expected a plan');
 		expect(coming.map((e) => e.id)).toEqual(['y']);
 		expect(store.append).not.toHaveBeenCalled();
 		expect(await bringHostHistoryHome(store, 'local-1', coming)).toBe(1);
@@ -80,6 +104,41 @@ describe('planHostHistoryHome and bringHostHistoryHome', () => {
 				{ read: async () => [] }
 			)
 		).rejects.toThrow('its History could not be read: unreadable');
+	});
+
+	it('answers null for a host that does not send History at all, so the move keeps its copy (L43)', async () => {
+		expect(
+			await planHostHistoryHome(
+				{
+					list: async () => ({
+						ok: false,
+						error: { code: 'unsupported', message: 'The desktop does not serve history.list.' },
+					}),
+				},
+				'h',
+				'l',
+				{ read: async () => [] }
+			)
+		).toBeNull();
+	});
+
+	it('refuses when an entry does not read back after a write that reported success (L44)', async () => {
+		// A store whose append resolves but leaves nothing on disk: a write that "succeeded" and lost
+		// the entries (a swallowed append error, a migration that left them unread).
+		const store = { read: async () => [entry('x', 1, 'local-1')], append: vi.fn(async () => {}) };
+		await expect(
+			bringHostHistoryHome(store, 'local-1', [entry('y', 2, 'local-1'), entry('z', 3, 'local-1')])
+		).rejects.toThrow("2 History entries did not read back from this machine's History");
+	});
+
+	it('rethrows a failed write (L44)', async () => {
+		const store = {
+			read: async () => [],
+			append: async () => {
+				throw new Error('EACCES: permission denied');
+			},
+		};
+		await expect(bringHostHistoryHome(store, 'l', [entry('y', 2, 'l')])).rejects.toThrow('EACCES');
 	});
 });
 

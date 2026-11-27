@@ -813,7 +813,7 @@ export function createRequestHandler(
 					...(result.value.status === 'queued' ? { queued: true } : {}),
 				};
 			}
-			// A headless host's own read: the desktop's bridge has no message for it.
+			// A desktop host answers the same three History messages (`messageHandlers/history.ts`).
 			case 'get_history': {
 				const limit =
 					typeof message.limit === 'number' && Number.isFinite(message.limit) && message.limit >= 0

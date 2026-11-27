@@ -559,7 +559,9 @@ export class HistoryManager {
 		if (entries.length === 0) return 0;
 		const limit = this.resolveMaxEntries();
 		return this.writeQueue.enqueue(sessionId, async () => {
-			await this.ensureJsonlFile(sessionId);
+			// Strict: a legacy `.json` that cannot be migrated would sit beside a new `.jsonl` holding
+			// only these entries, and the reads would no longer list the rest.
+			await this.ensureJsonlFile(sessionId, { strict: true });
 			const here = new Set((await this.readEntriesInFileOrder(sessionId)).map((e) => e.id));
 			const fresh = entries.filter((entry) => !here.has(entry.id));
 			if (fresh.length === 0) return 0;
@@ -577,11 +579,15 @@ export class HistoryManager {
 	 * Ensure a JSONL file exists for this session, migrating a legacy `.json`
 	 * first if one is present. Cheap on the steady-state path (one `access`).
 	 */
-	private async ensureJsonlFile(sessionId: string): Promise<void> {
+	private async ensureJsonlFile(
+		sessionId: string,
+		options: { strict?: boolean } = {}
+	): Promise<void> {
 		if (await pathExists(this.getSessionFilePath(sessionId))) return;
 		try {
 			await this.migrateSessionToJsonl(sessionId);
 		} catch (error) {
+			if (options.strict) throw error;
 			logger.warn(
 				`Failed to migrate history for session ${sessionId} before append: ${error}`,
 				LOG_CONTEXT

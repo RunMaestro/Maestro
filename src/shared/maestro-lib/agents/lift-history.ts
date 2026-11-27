@@ -22,7 +22,7 @@
  * `desktopAgentHistoryStore()` (`src/main/federation/agent-history-store.ts`).
  */
 
-import { mergeEntriesById } from '../../history';
+import { clampHistoryEntry, mergeEntriesById } from '../../history';
 import type { HistoryEntry } from '../../types';
 import type { ReturnResult } from './lift-return';
 
@@ -41,7 +41,9 @@ export interface AgentHistoryStore {
 /**
  * The entries of a host's History list that come home for an agent: the ones the host agent
  * `hostAgentId` wrote itself (not another Maestro's shared entries), that this machine does not
- * hold yet, re-filed under `localAgentId`, oldest first, each id once.
+ * hold yet, re-filed under `localAgentId`, oldest first, each id once. An entry is another
+ * machine's data: one without a usable id, time, or type is left out, and each is clamped to what
+ * this machine stores (`clampHistoryEntry()`) before it is written here.
  */
 export function hostHistoryComingHome(
 	hostEntries: readonly HistoryEntry[],
@@ -52,10 +54,13 @@ export function hostHistoryComingHome(
 	const seen = new Set(existing.map((entry) => entry.id));
 	const coming: HistoryEntry[] = [];
 	for (const entry of hostEntries) {
-		if (!entry || typeof entry.id !== 'string' || entry.sessionId !== hostAgentId) continue;
+		if (!entry || typeof entry.id !== 'string' || !entry.id) continue;
+		if (entry.sessionId !== hostAgentId) continue;
+		if (typeof entry.timestamp !== 'number' || !Number.isFinite(entry.timestamp)) continue;
+		if (typeof entry.type !== 'string' || !entry.type) continue;
 		if (seen.has(entry.id)) continue;
 		seen.add(entry.id);
-		coming.push({ ...entry, sessionId: localAgentId });
+		coming.push(clampHistoryEntry({ ...entry, sessionId: localAgentId }));
 	}
 	return coming.sort((a, b) => a.timestamp - b.timestamp);
 }
@@ -64,21 +69,27 @@ export function hostHistoryComingHome(
 export interface HostHistoryReader {
 	list(
 		agentId: string
-	): Promise<{ ok: true; value: HistoryEntry[] } | { ok: false; error: { message: string } }>;
+	): Promise<
+		{ ok: true; value: HistoryEntry[] } | { ok: false; error: { code?: string; message: string } }
+	>;
 }
 
 /**
- * Read the host agent's History and work out what comes home, without writing anything. Throws
- * when the host cannot list it, so a move does not go on and remove a copy whose History it could
- * not read.
+ * Read the host agent's History and work out what comes home, without writing anything.
+ *
+ * `null`: the host does not serve an agent's History at all (a Maestro there from before it did,
+ * `unsupported`). The move goes on and KEEPS the host's copy, so the History stays with it until a
+ * newer host can send it. Any other failure throws, so a move does not go on and remove a copy
+ * whose History it could not read.
  */
 export async function planHostHistoryHome(
 	history: HostHistoryReader,
 	hostAgentId: string,
 	localAgentId: string,
 	store: Pick<AgentHistoryStore, 'read'>
-): Promise<HistoryEntry[]> {
+): Promise<HistoryEntry[] | null> {
 	const listed = await history.list(hostAgentId);
+	if (!listed.ok && listed.error.code === 'unsupported') return null;
 	if (!listed.ok) throw new Error(`its History could not be read: ${listed.error.message}`);
 	return hostHistoryComingHome(
 		listed.value,
@@ -88,15 +99,32 @@ export async function planHostHistoryHome(
 	);
 }
 
-/** Write the entries `planHostHistoryHome()` found. Returns how many came home. */
+/**
+ * Write the entries `planHostHistoryHome()` found, then read them back: the caller removes the
+ * host's copy next, so "written here" must be true, not only reported. Throws when the write
+ * failed or any entry that came is not in this machine's History after it. Returns how many came
+ * home.
+ */
 export async function bringHostHistoryHome(
-	store: Pick<AgentHistoryStore, 'append'>,
+	store: Pick<AgentHistoryStore, 'append' | 'read'>,
 	localAgentId: string,
 	coming: readonly HistoryEntry[]
 ): Promise<number> {
 	if (coming.length === 0) return 0;
 	await store.append(localAgentId, coming);
+	const here = new Set((await store.read(localAgentId)).map((entry) => entry.id));
+	const missing = coming.filter((entry) => !here.has(entry.id)).length;
+	if (missing > 0) {
+		throw new Error(
+			`${historyEntryCount(missing)} did not read back from this machine's History after the write`
+		);
+	}
 	return coming.length;
+}
+
+/** The notice of a move whose host does not serve an agent's History (`planHostHistoryHome()` null). */
+export function hostHistoryUnsupportedNotice(peer: string, copyRef: string): string {
+	return `${peer} does not send an agent's History (its Maestro is older), so the History written there stays with the agent's copy there (${copyRef}), which is kept. Update Maestro on that host, then move the agent again to bring that History home.`;
 }
 
 /**
@@ -124,7 +152,8 @@ export function describeReturn(result: ReturnResult, keepHostCopy = false): stri
 	const tabs = `${result.tabs} tab(s)${result.newTabs > 0 ? ` (${result.newTabs} new)` : ''}`;
 	const history = historyEntryCount(result.history);
 	if (result.dryRun) {
-		const copy = keepHostCopy ? 'its copy there is kept' : 'its copy there is removed';
+		const kept = keepHostCopy || result.hostCopyKept === true;
+		const copy = kept ? 'its copy there is kept' : 'its copy there is removed';
 		return `Moving "${result.agent.name}" back from ${result.from}: ${tabs} and ${history} come back to this machine, and ${copy}.`;
 	}
 	return `"${result.agent.name}" is an SSH agent again: ${tabs} and ${history} came back from ${result.from}${result.hostCopyRemoved ? ', host copy removed' : ''}.`;

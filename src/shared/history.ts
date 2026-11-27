@@ -347,6 +347,21 @@ export function mergeEntriesById(base: HistoryEntry[], incoming: HistoryEntry[])
 	return sortEntriesByTimestamp(merged);
 }
 
+/**
+ * An agent's History as a host answers a client's `get_history`: the agent's own entries and the
+ * entries other Maestros shared in its project, merged by id, newest first, the first `limit` when
+ * one is given. One rule for a headless host (`runtime/history.ts`) and a desktop host
+ * (`src/main/web-server/handlers/messageHandlers/history.ts`), so a client reads both alike.
+ */
+export function listAgentHistory(
+	own: HistoryEntry[],
+	shared: HistoryEntry[],
+	limit?: number
+): HistoryEntry[] {
+	const merged = sortEntriesByTimestamp(mergeEntriesById(own, shared));
+	return limit !== undefined && limit >= 0 ? merged.slice(0, limit) : merged;
+}
+
 /** The host key of an entry with no `hostname` (one written on this machine). */
 export const LOCAL_HOST_AGG_KEY = '__local__';
 

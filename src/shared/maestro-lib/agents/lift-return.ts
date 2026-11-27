@@ -14,7 +14,9 @@
  *    in, and `hostedOptOut`, so automatic Federation does not move it straight back.
  * 4. The History the host copy wrote comes home (`lift-history.ts`), re-filed under the local id,
  *    before anything else is written, so the agent's History stays one list.
- * 5. The host's copy is removed, unless the caller keeps it, so the agent has one owner again.
+ * 5. The host's copy is removed, unless the caller keeps it, so the agent has one owner again. A
+ *    host that does not send an agent's History (an older Maestro) keeps its copy too: that History
+ *    stays with it, and the result says so.
  *
  * `offline` skips 2, 4, and 5 for a host that cannot be reached: the agent comes back with only
  * what this machine kept, and the result says the host's copy, and the History it wrote, are still
@@ -27,12 +29,14 @@
 
 import type { ClientError, MaestroClient } from '../client/types';
 import type { AITabRecord, AgentRecord } from '../store/records';
+import type { HistoryEntry } from '../../types';
 import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
 import { LiftRunError } from './lift-run';
 import type { ReturnedFromHost, ReturnedHeldItem } from './lift-return-record';
 import {
 	bringHostHistoryHome,
 	historyEntryCount,
+	hostHistoryUnsupportedNotice,
 	planHostHistoryHome,
 	type AgentHistoryStore,
 } from './lift-history';
@@ -87,6 +91,11 @@ export interface ReturnResult {
 	/** History entries the host copy wrote that came home (0 when offline or none). */
 	history: number;
 	hostCopyRemoved: boolean;
+	/**
+	 * The host's copy stays (or would stay, on a dry run): kept on request, the host not reached,
+	 * or a host that does not send its History (the copy keeps it).
+	 */
+	hostCopyKept?: boolean;
 	/** Set on a dry run: the counts are what WOULD come back; nothing was written. */
 	dryRun?: boolean;
 	notices?: string[];
@@ -158,6 +167,7 @@ export async function runReturnFromHost(
 			newTabs: 0,
 			history: 0,
 			hostCopyRemoved: false,
+			hostCopyKept: true,
 			...(options.dryRun ? { dryRun: true } : {}),
 			notices: [
 				`The host was not reached, so conversations started there after the move stay there, and so does the History written there; its copy (${from}) still exists. The next Move to Host brings that History home. ${hostCopyLeftAdvice(from)}`,
@@ -171,7 +181,9 @@ export async function runReturnFromHost(
 		const notices: string[] = [];
 		let returned: ReturnedFromHost = { tabs: [] };
 		let heldQueue: ReturnedHeldItem[] = [];
-		let historyHome: Awaited<ReturnType<typeof planHostHistoryHome>> = [];
+		let historyHome: HistoryEntry[] = [];
+		// The host does not send an agent's History: its copy, which holds that History, is kept.
+		let historyStaysOnHost = false;
 		const hostAgent = await connection.client.agents.get(pointer.agentId);
 		const hostGone = !hostAgent.ok && hostAgent.error.code === 'not-found';
 		if (!hostAgent.ok && !hostGone) throw hostError(connection.peer, hostAgent.error);
@@ -228,34 +240,19 @@ export async function runReturnFromHost(
 					`"${agent.name}" has a held message on its host for a tab that does not come back. Nothing changed; send or remove that message, then move it back.`
 				);
 			}
-			// The held messages come home only as they were listed: one another client resumed or
-			// sent on the host while the tabs were read could run there and come home held too
-			// (CodeRabbit on #2171). Read the queue again just before the restore; any change refuses
-			// the move with nothing changed.
-			if (heldQueue.length > 0) {
-				const again = await connection.client.turns.queue.list(pointer.agentId);
-				if (!again.ok) throw hostError(connection.peer, again.error);
-				const unchanged =
-					again.value.length === heldQueue.length &&
-					again.value.every(
-						(item) => item.paused === true && heldQueue.some((held) => held.id === item.itemId)
-					);
-				if (!unchanged) {
-					throw new LiftRunError(
-						'RETURN_QUEUED',
-						`"${agent.name}"'s queue on its host changed while it was being moved back. Nothing changed; move it back again.`
-					);
-				}
-			}
 			// The History the copy wrote, read before anything changes: a copy whose History cannot be
 			// read is not removed, and nothing moves.
 			try {
-				historyHome = await planHostHistoryHome(
+				const planned = await planHostHistoryHome(
 					connection.client.history,
 					pointer.agentId,
 					agent.id,
 					deps.history
 				);
+				if (planned === null) {
+					historyStaysOnHost = true;
+					notices.push(hostHistoryUnsupportedNotice(connection.peer, from));
+				} else historyHome = planned;
 			} catch (error) {
 				throw new LiftRunError(
 					'RETURN_HISTORY_FAILED',
@@ -283,6 +280,9 @@ export async function runReturnFromHost(
 				newTabs,
 				history: historyHome.length,
 				hostCopyRemoved: false,
+				...(hostAgent.ok && (options.keepHostCopy || historyStaysOnHost)
+					? { hostCopyKept: true }
+					: {}),
 				dryRun: true,
 				...(notices.length > 0 ? { notices } : {}),
 			};
@@ -299,6 +299,27 @@ export async function runReturnFromHost(
 			);
 		}
 
+		// The held messages come home only as they were listed: one another client resumed or
+		// sent on the host while the tabs were read could run there and come home held too
+		// (CodeRabbit on #2171). Read the queue again after the History came home, just before the
+		// restore; any change refuses the move with nothing changed on the host (the History written
+		// here is the agent's own, filed once by id, and harmless).
+		if (heldQueue.length > 0) {
+			const again = await connection.client.turns.queue.list(pointer.agentId);
+			if (!again.ok) throw hostError(connection.peer, again.error);
+			const unchanged =
+				again.value.length === heldQueue.length &&
+				again.value.every(
+					(item) => item.paused === true && heldQueue.some((held) => held.id === item.itemId)
+				);
+			if (!unchanged) {
+				throw new LiftRunError(
+					'RETURN_QUEUED',
+					`"${agent.name}"'s queue on its host changed while it was being moved back. Nothing changed on the host; move it back again.`
+				);
+			}
+		}
+
 		// The host's copy is recorded on the agent until its removal is confirmed (it is removed
 		// below, after the restore), so a kept copy, or one whose removal fails, is replaced by a
 		// later Move to Host. A pointer to a copy since removed is harmless: the lift finds no copy.
@@ -309,7 +330,7 @@ export async function runReturnFromHost(
 		);
 
 		let hostCopyRemoved = false;
-		if (hostAgent.ok && !options.keepHostCopy) {
+		if (hostAgent.ok && !options.keepHostCopy && !historyStaysOnHost) {
 			const removed = await connection.client.agents.remove(pointer.agentId);
 			if (removed.ok) hostCopyRemoved = true;
 			else {
@@ -317,7 +338,7 @@ export async function runReturnFromHost(
 					`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} ${hostCopyLeftAdvice(from)}`
 				);
 			}
-		} else if (hostAgent.ok) {
+		} else if (hostAgent.ok && options.keepHostCopy) {
 			notices.push(`The host keeps its copy (${from}). Do not send to both.`);
 		}
 
@@ -328,6 +349,7 @@ export async function runReturnFromHost(
 			newTabs,
 			history,
 			hostCopyRemoved,
+			...(hostAgent.ok && !hostCopyRemoved ? { hostCopyKept: true } : {}),
 			...(notices.length > 0 ? { notices } : {}),
 		};
 	} finally {

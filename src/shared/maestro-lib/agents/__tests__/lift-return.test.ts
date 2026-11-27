@@ -539,10 +539,85 @@ describe('an offline Move Back and History (L39 e)', () => {
 		);
 	});
 
-	it('an offline dry run writes nothing', async () => {
+	it('an offline dry run writes nothing, and its plan says the copy there is kept', async () => {
 		const d = deps(hostedAgent());
 		const result = await runReturnFromHost('agent-1', { offline: true, dryRun: true }, d.value);
-		expect(result).toMatchObject({ dryRun: true, history: 0 });
+		expect(result).toMatchObject({ dryRun: true, history: 0, hostCopyKept: true });
 		expect(d.restore).not.toHaveBeenCalled();
+		// CodeRabbit on #2181: the plan said "its copy there is removed" for an offline Move Back.
+		expect(describeReturn(result)).toBe(
+			'Moving "Docs" back from build-box:host-1: 0 tab(s) and 0 History entries come back to this machine, and its copy there is kept.'
+		);
+	});
+});
+
+/**
+ * L43: a host whose Maestro does not send an agent's History at all (`unsupported`, a desktop from
+ * before it served `get_history`). The Move Back goes on and KEEPS the host's copy, which holds
+ * that History; the plan and the result say so. Nothing is lost.
+ */
+describe('a Move Back from a host that does not send History (L43)', () => {
+	const unsupported = () =>
+		hostClient({
+			history: fail('unsupported', 'The desktop does not serve history.list.'),
+		});
+
+	it('comes back, keeps the host copy with its History, and says so', async () => {
+		const history = createMemoryAgentHistoryStore();
+		const d = deps(hostedAgent(), unsupported(), history);
+		const result = await runReturnFromHost('agent-1', {}, d.value);
+		expect(d.restore).toHaveBeenCalledWith(
+			'agent-1',
+			expect.objectContaining({ leftOnHost: { peer: 'build-box', agentId: 'host-1', at: 1 } })
+		);
+		expect(d.client.agents.remove).not.toHaveBeenCalled();
+		expect(history.appends).toEqual([]);
+		expect(result).toMatchObject({ history: 0, hostCopyRemoved: false, hostCopyKept: true });
+		expect(result.notices?.join(' ')).toContain(
+			"build-box does not send an agent's History (its Maestro is older)"
+		);
+		expect(result.notices?.join(' ')).toContain('build-box:host-1');
+	});
+
+	it('its dry run says the copy there is kept', async () => {
+		const d = deps(hostedAgent(), unsupported());
+		const result = await runReturnFromHost('agent-1', { dryRun: true }, d.value);
+		expect(result.hostCopyKept).toBe(true);
+		expect(describeReturn(result)).toContain('and its copy there is kept.');
+		expect(result.notices?.join(' ')).toContain('does not send an agent');
+	});
+});
+
+describe('the held queue is read again after the History comes home (CodeRabbit on #2181)', () => {
+	it('reads the queue, writes the History, reads the queue again, then restores', async () => {
+		const held = {
+			itemId: 'h1',
+			tabId: 'tab-1',
+			queuedAt: 7,
+			kind: 'message',
+			text: 'later',
+			paused: true,
+		};
+		const order: string[] = [];
+		const client = hostClient({
+			queue: ok([held]),
+			history: ok([entry('host-only', 10, 'host-1')]),
+		});
+		client.turns.queue.list.mockImplementation(async () => {
+			order.push('queue');
+			return ok([held]);
+		});
+		const history = createMemoryAgentHistoryStore();
+		const append = history.append;
+		history.append = async (agentId, entries) => {
+			order.push('history');
+			await append(agentId, entries);
+		};
+		const d = deps(hostedAgent(), client, history);
+		d.restore.mockImplementation(async () => {
+			order.push('restore');
+		});
+		await runReturnFromHost('agent-1', {}, d.value);
+		expect(order).toEqual(['queue', 'history', 'queue', 'restore']);
 	});
 });

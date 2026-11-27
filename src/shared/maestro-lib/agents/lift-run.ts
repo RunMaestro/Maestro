@@ -304,13 +304,21 @@ async function readStaleHostCopy(
 		TRANSCRIPT_MATCH
 	) as unknown as AgentRecord;
 	// Its History, filed on the host under the copy's id: read now, so the replace cannot lose it.
-	let historyHome: HistoryEntry[];
+	let historyHome: HistoryEntry[] | null;
 	try {
 		historyHome = await planHostHistoryHome(client.history, pointer.agentId, agent.id, history);
 	} catch (error) {
 		throw new LiftRunError(
 			liftErrorCode('history-failed'),
 			`"${agent.name}" still has a copy on the host (${ref}), and ${error instanceof Error ? error.message : String(error)}. Nothing moved.`
+		);
+	}
+	// A host that does not send an agent's History (an older Maestro): replacing the copy would lose
+	// the History it holds, and the host refuses a second copy beside it. Refused, nothing changed.
+	if (historyHome === null) {
+		throw new LiftRunError(
+			liftErrorCode('history-failed'),
+			`"${agent.name}" still has a copy on the host (${ref}) with History written there, and ${connection.peer} does not send an agent's History (its Maestro is older), so replacing that copy would lose it. Nothing moved. Update Maestro on that host and move again, or, if that History is not needed: maestro-cli remove-agent ${ref}`
 		);
 	}
 	return {

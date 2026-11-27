@@ -2411,7 +2411,7 @@ class WsMaestroClient implements MaestroClient {
 		return ok({ removed: sent.value.removed === true });
 	}
 
-	/** A headless host's own request: a desktop's bridge does not serve it (`unsupported`). */
+	/** Both host kinds serve it; a desktop from before they did answers `unsupported`. */
 	private async historyRemove(
 		agentId: string,
 		entryId: string
@@ -2427,7 +2427,7 @@ class WsMaestroClient implements MaestroClient {
 		return ok({ removed: sent.value.removed === true });
 	}
 
-	/** A headless host's own request: a desktop's bridge does not serve it (`unsupported`). */
+	/** Both host kinds serve it; a desktop from before they did answers `unsupported`. */
 	private async historyUpdate(
 		agentId: string,
 		entryId: string,
@@ -2449,7 +2449,7 @@ class WsMaestroClient implements MaestroClient {
 		return ok({ updated: sent.value.updated === true });
 	}
 
-	/** A headless host's own request: a desktop's bridge does not serve it (`unsupported`). */
+	/** Both host kinds serve it; a desktop from before they did answers `unsupported`. */
 	private async historyList(
 		agentId: string,
 		options: HistoryListOptions = {}

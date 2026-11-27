@@ -210,6 +210,42 @@ describe('Move to Host after an offline Move Back (T5)', () => {
 		expect(value(await host.agents.list()).map((agent) => agent.id)).toEqual(['host-1']);
 	});
 
+	it('(c) refuses, with nothing changed, to replace the copy on a host that does not send History (L43)', async () => {
+		// A host whose Maestro does not answer `get_history` (`unsupported`): replacing the copy would
+		// lose the History it holds, and the host refuses a second copy beside it.
+		const olderHost = new Proxy(host, {
+			get: (target, key, receiver) =>
+				key === 'history'
+					? {
+							...target.history,
+							list: async () => ({
+								ok: false as const,
+								error: {
+									code: 'unsupported' as const,
+									message: 'The desktop does not serve history.list.',
+									method: 'history.list' as const,
+								},
+							}),
+						}
+					: Reflect.get(target, key, receiver),
+		});
+		const refused = await runLift(
+			'agent-1',
+			{},
+			{
+				...deps(localAgent('agent-1', true)),
+				connect: async () => ({ peer: PEER, client: olderHost, release: async () => undefined }),
+			}
+		).catch((error: unknown) => error);
+		expect(refused).toMatchObject({ code: expect.stringMatching(/HISTORY/) });
+		expect(String((refused as Error).message)).toContain(
+			`${PEER} does not send an agent's History (its Maestro is older)`
+		);
+		expect(String((refused as Error).message)).toContain(`maestro-cli remove-agent ${PEER}:host-1`);
+		expect(localHistory.appends).toEqual([]);
+		expect(value(await host.agents.list()).map((agent) => agent.id)).toEqual(['host-1']);
+	});
+
 	it('(d) a plain lift counts the History that stays here (L39)', async () => {
 		const result = await runLift('agent-2', { dryRun: true }, deps(localAgent('agent-2', false)));
 		expect(result.plan.history).toEqual({ here: 0, comesHome: 0 });

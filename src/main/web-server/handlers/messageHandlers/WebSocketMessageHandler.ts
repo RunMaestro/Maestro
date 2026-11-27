@@ -28,6 +28,8 @@ import { HOST_CAPABILITIES } from '../../../../shared/maestro-lib/client/types';
  * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
+ * - get_history / delete_history_entry / update_history_entry: an agent's History for a Federation
+ *   client, the same messages a headless host serves (`MaestroClient.history`)
  * - throughput_gauge_command: Show, hide, configure, or read the Throughput Gauge (CLI: `throughput-gauge`)
  * - live_command: Read or switch Live mode and Remote Control, CLI clients only (CLI: `live`)
  * - federation_command: List or reconnect the Federation peers the desktop mirrors, CLI clients only (CLI: `federation`)
@@ -130,6 +132,7 @@ import { handleSnoozeCommand } from './snooze';
 import { handleClosedTabCommand } from './closedTabs';
 import { handleMessagePinCommand } from './messagePins';
 import { handleComputerHistoryCommand } from './computerHistory';
+import { handleDeleteHistoryEntry, handleGetHistory, handleUpdateHistoryEntry } from './history';
 import { handleLiveCommand } from './live';
 import { handleFederationCommand } from './federation';
 import { handleMaestroRunCommand } from './maestroRun';
@@ -465,6 +468,18 @@ export class WebSocketMessageHandler {
 
 			case 'computer_history_command':
 				void handleComputerHistoryCommand(this.ctx, client, message);
+				break;
+
+			case 'get_history':
+				void handleGetHistory(this.ctx, client, message);
+				break;
+
+			case 'delete_history_entry':
+				void handleDeleteHistoryEntry(this.ctx, client, message);
+				break;
+
+			case 'update_history_entry':
+				void handleUpdateHistoryEntry(this.ctx, client, message);
 				break;
 
 			case 'live_command':

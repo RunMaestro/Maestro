@@ -870,6 +870,22 @@ describe('HistoryManager', () => {
 				manager.importEntries('session-1', [createMockEntry({ id: 'a' })])
 			).rejects.toThrow('ENOSPC');
 		});
+
+		it('throws when the legacy file cannot be migrated first, where addEntry only warns (L44)', async () => {
+			// No .jsonl yet, and the legacy .json is there but unreadable: appending would start a
+			// .jsonl holding only these entries, and the reads would stop listing the rest.
+			mockExistsSync.mockReturnValue(false);
+			mockReadFileSync.mockImplementation((p: fs.PathLike) => {
+				if (p.toString().endsWith('.json')) {
+					throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+				}
+				return '';
+			});
+			await expect(
+				manager.importEntries('session-1', [createMockEntry({ id: 'a' })])
+			).rejects.toThrow('EACCES');
+			expect(mockAppendFileSync).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('addEntry()', () => {

@@ -17,7 +17,7 @@
 
 import * as fs from 'fs';
 
-import { MAX_ENTRIES_PER_SESSION, mergeEntriesById } from '../../history';
+import { MAX_ENTRIES_PER_SESSION, listAgentHistory } from '../../history';
 import { sharesHistoryInProject } from '../../historySharing';
 import type { AgentSshRemoteConfig, HistoryEntry } from '../../types';
 import { sshRecordOf } from '../agents/rules';
@@ -144,12 +144,7 @@ export function createRuntimeHistory(options: RuntimeHistoryOptions): RuntimeHis
 					logger.warn(`The shared History was not read: ${errorText(error)}`, LOG_CONTEXT);
 				}
 			}
-			const merged = mergeEntriesById(own, others);
-			const limit = listOptions.limit;
-			return {
-				ok: true,
-				value: limit !== undefined && limit >= 0 ? merged.slice(0, limit) : merged,
-			};
+			return { ok: true, value: listAgentHistory(own, others, listOptions.limit) };
 		},
 		// Only the agent's own entries: an entry another Maestro shared stays theirs to edit, the
 		// same as `HistoryManager.deleteEntry` on a desktop finds only the agent's own file.
