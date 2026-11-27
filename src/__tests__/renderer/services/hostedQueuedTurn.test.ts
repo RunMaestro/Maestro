@@ -1625,6 +1625,45 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 					expect(row().aiTabs[0].logs.map((entry) => entry.text)).not.toContain(stoppedNote);
 				});
 
+				it("a stopped message's entry read back while another message's turn runs is no start of its own (CodeRabbit on #2160)", async () => {
+					const id = `m25o-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: false, busy: 200 });
+					hydrateHost(200);
+					fireHostStartedMentions(row(), undefined, now);
+					// No list from the host: no queue ever listed it, so it is kept.
+					settleStoppedHostStartMentions(dropStoppedHostStartMentions('row', ['t1']));
+					// Its own (stopped) entry shows up, while the tab runs another message's turn.
+					useSessionStore.setState((current) => ({
+						sessions: current.sessions.map((session) =>
+							session.id === 'row'
+								? {
+										...session,
+										aiTabs: session.aiTabs.map((tab) => ({
+											...tab,
+											state: 'busy' as const,
+											thinkingStartTime: 300,
+											logs: [
+												{ id: 'u', timestamp: 1, source: 'user' as const, text },
+												{ id: 'a', timestamp: 2, source: 'ai' as const, text: 'Stopped.' },
+												{
+													id: 'u2',
+													timestamp: 4,
+													source: 'user' as const,
+													text: 'another message',
+												},
+											],
+										})),
+									}
+								: session
+						),
+					}));
+					fireHostStartedMentions(row(), undefined, now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
 				it('Stop on another tab keeps it', async () => {
 					const id = `m24t-${routing}`;
 					const text = await drainQueued(id, routing);

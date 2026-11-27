@@ -29,7 +29,7 @@
  * its transcript shows what a local one shows. A host that refuses the turn consults nobody.
  */
 
-import type { AgentError, QueuedItem, Session } from '../types';
+import type { AgentError, LogEntry, QueuedItem, Session } from '../types';
 import type {
 	QueueExit,
 	TurnOverrides,
@@ -548,6 +548,14 @@ export type HostStopToken = { readonly sessionId: string };
 
 type AwaitingHostStart = typeof mentionsAwaitingHostStart extends Map<string, infer V> ? V : never;
 
+/** The entries of a tab's latest turn: from its last user entry on (none when it has none). */
+function latestUserTurn(logs: readonly LogEntry[]): LogEntry[] {
+	for (let index = logs.length - 1; index >= 0; index--) {
+		if (logs[index].source === 'user') return logs.slice(index);
+	}
+	return [];
+}
+
 /** A waiting consult's message, as the host's user entry for it is matched. */
 function waitingMessage(hostItemId: string, waiting: AwaitingHostStart): HostedMessageRef {
 	return {
@@ -816,12 +824,16 @@ export function fireHostStartedMentions(
 			}
 			// Its own entry, with a Stop of its tab in between. Before the host answered the Stop, or
 			// after it for one no queue listed: it is its own later turn only while the tab runs a
-			// turn that is not the one Stop ended. Otherwise it was the stopped turn (M25).
+			// turn that is not the one Stop ended, and that running turn is its own (its entry is the
+			// tab's latest user entry): a stopped message's entry read back while another message's
+			// turn runs is no start of its own (CodeRabbit on #2160). Otherwise it was the stopped
+			// turn (M25).
 			if (waiting.stop) {
 				const ownLaterTurn =
 					!waiting.stop.pending &&
 					tab?.state === 'busy' &&
-					tab.thinkingStartTime !== waiting.stop.turnStartedAt;
+					tab.thinkingStartTime !== waiting.stop.turnStartedAt &&
+					hostRanMessage(latestUserTurn(tab.logs), undefined, waitingMessage(hostItemId, waiting));
 				if (!ownLaterTurn) {
 					letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
 					continue;
