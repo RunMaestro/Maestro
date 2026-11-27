@@ -40,6 +40,7 @@ vi.mock('../../../renderer/services/peerMirror', async (importOriginal) => ({
 
 import { interruptTurn, registerTurnInterruptDeps } from '../../../renderer/services/turnInterrupt';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { runningQueuedItemId } from '../../../renderer/utils/tabHelpers';
 import { cancelContextCompaction, stopRetriesForAgent } from '../../../renderer/stores/retryStore';
 import { dropMentionHandoffs } from '../../../renderer/services/crossAgentHandoff';
 import { interruptMirroredAgent } from '../../../renderer/services/peerMirror';
@@ -292,6 +293,26 @@ describe('interruptTurn: the queue items a Stop ended (M27)', () => {
 			expect(composed.stoppedItemIds).toEqual([]);
 		}
 	);
+
+	// Greptile on #2162: a steer the agent ran as a turn of its own (`steerState: 'queued'`) is the
+	// running turn, and a Stop names it.
+	it('names a steer that became its own turn, and passes over one the turn absorbed', () => {
+		const logs = (steerState: 'queued' | 'absorbed') => [
+			{ id: 'l2', timestamp: 2, source: 'user' as const, text: 'second', queuedItemId: 'q-9' },
+			{
+				id: 'l3',
+				timestamp: 3,
+				source: 'user' as const,
+				text: 'and also',
+				queuedItemId: 'q-steer',
+				steered: true,
+				steerState,
+			},
+		];
+		expect(runningQueuedItemId({ state: 'busy', logs: logs('queued') })).toBe('q-steer');
+		expect(runningQueuedItemId({ state: 'busy', logs: logs('absorbed') })).toBe('q-9');
+		expect(runningQueuedItemId({ state: 'idle', logs: logs('queued') })).toBeUndefined();
+	});
 });
 
 describe('interruptTurn: queued work after a whole-agent stop', () => {
