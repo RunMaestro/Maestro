@@ -29,12 +29,14 @@ import { liveTurnKey } from '../../shared/maestro-lib/client/live-turn';
 import type { QueuedTurn } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord, AITabRecord } from '../../shared/maestro-lib/store/records';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
+import { HAND_OVER_MAX_MS } from '../../shared/maestro-lib/turns/queue';
 import type { AgentError } from '../../shared/types';
 import type { AITab, LogEntry, QueuedItem, Session, UnifiedTabRef } from '../types';
 import { mirrorLogEntry, mirrorQueuedItem, mirrorTab, mirrorUsageStats } from './peerMirrorView';
 import { isAiTabHidden } from './unifiedTabOrderUtils';
 import { normalizeTabGroups } from './panelLayout';
 import { closeTab } from './tabHelpers';
+import type { HandOverClock } from './hostedTabLine';
 
 /** One tab's transcript as the mirror holds it (`MirrorTranscriptSlot`, the fields read here). */
 export interface HostedTranscript {
@@ -64,6 +66,19 @@ export interface HostedProjectionInput {
 	 * draws the host's real state again, and the error clears (`source: 'host-link'`).
 	 */
 	linkLost?: AgentError;
+	/**
+	 * Tabs with a turn this machine is handing to the host now (`hostedTabsHandingOver()`), each
+	 * with when it left here: drawn busy, as a local tab is from the moment its queue takes the turn.
+	 */
+	handingOver?: ReadonlyMap<string, number>;
+	/** This machine's clock now, for a host-queue hand-over's time limit. Default `Date.now()`. */
+	now?: number;
+	/**
+	 * When each host-queue hand-over's limit started (`hostHandOverClock()`): the host's own time for
+	 * it, never later than when it was first seen here. Without it the limit counts from the host's
+	 * own time for it (`handOverSince`, else `queuedAt`).
+	 */
+	handOverClock?: HandOverClock;
 	/** Tabs whose turn was stopped here while the host could not be told: drawn idle until it can. */
 	endedHere?: ReadonlySet<string>;
 	/**
@@ -512,11 +527,16 @@ function projectTab(
 	liveTurn: LiveTurn | undefined,
 	watched: boolean,
 	hostSeenAt: number | undefined,
-	link: { lost?: AgentError; endedHere: boolean; kept: boolean }
+	link: { lost?: AgentError; endedHere: boolean; kept: boolean },
+	nextWaitingSince?: number
 ): AITab {
 	// A turn the host last reported running that nobody here can follow or finish ends here.
 	const cut = host.state === 'busy' && link.lost !== undefined;
-	const busy = host.state === 'busy' && !cut && !link.endedHere;
+	// The tab's next message waits in the host's queue for the tab itself (a History synopsis still
+	// holds its session, its previous process is still exiting): the hand-over, which a local tab
+	// draws busy from the moment its queue takes the message (U2).
+	const handingOver = nextWaitingSince !== undefined && link.lost === undefined;
+	const busy = (host.state === 'busy' || handingOver) && !cut && !link.endedHere;
 	// A kept cut has the retry card for its note, and the kept message's error for its own.
 	const noted = cut && !link.kept;
 	const logs =
@@ -530,7 +550,7 @@ function projectTab(
 				})
 			: merged;
 	const thinkingStartTime = busy
-		? (hostTabTurnStartedAt(host, liveTurn) ?? local.thinkingStartTime)
+		? (hostTabTurnStartedAt(host, liveTurn) ?? nextWaitingSince ?? local.thinkingStartTime)
 		: undefined;
 	const name = host.name ?? null;
 	const agentSessionId = host.agentSessionId ?? local.agentSessionId ?? null;
@@ -588,6 +608,44 @@ export function hostRunView<T extends Pick<Session, 'sshRemoteId' | 'sessionSshR
 	return { ...session, sshRemoteId: undefined, sessionSshRemoteConfig: undefined };
 }
 
+/**
+ * How long the next ready message of a host that does not say which message waits for its tab
+ * alone (an older host: `QueuedTurn.handOver` absent) is drawn as a hand-over: about the hand-over
+ * itself (a History synopsis), then it reads queued.
+ */
+export const UNNAMED_HAND_OVER_MS = 10_000;
+
+/**
+ * The host queue's hand-over while no host tab runs a turn: the tab whose next message waits there
+ * for that tab alone (U6), and since when (the host's time for it, drawn as the tab's start time).
+ * A host that says (`handOver` on its items) names it, and it counts for `HAND_OVER_MAX_MS`, as
+ * the host's own Stop does. A host that says nothing has its first ready message drawn so for
+ * `UNNAMED_HAND_OVER_MS`. Past the limit, or with none, undefined: the message reads queued.
+ */
+export function hostQueueHandOver(
+	queue: readonly QueuedTurn[],
+	now: number,
+	clock?: HandOverClock
+): { tabId: string; since: number } | undefined {
+	const says = queue.some((item) => item.handOver !== undefined);
+	// Only the first ready message starts next; one behind it waits for that turn.
+	const next = says
+		? queue.find((item) => item.handOver === true && !item.paused)
+		: queue.find((item) => !item.paused);
+	if (!next) {
+		clock?.clear();
+		return undefined;
+	}
+	const since = next.handOverSince ?? next.queuedAt;
+	const limitMs = says ? HAND_OVER_MAX_MS : UNNAMED_HAND_OVER_MS;
+	// A host that names the hand-over times it (`handOverSince`); the clock bounds that by when
+	// this machine first saw it. An older host's time says nothing about the hand-over.
+	const seen = clock
+		? clock.seenAt(next.itemId, limitMs, says ? next.handOverSince : undefined)
+		: since;
+	return now - seen < limitMs ? { tabId: next.tabId, since: says ? since : seen } : undefined;
+}
+
 /** `session` with the host's tabs, transcripts, busy state, and queue folded in. */
 export function projectHostedSession(incoming: Session, input: HostedProjectionInput): Session {
 	const { agent } = input;
@@ -641,6 +699,23 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 			: []
 	);
 
+	// When each tab's next turn started its hand-over: on its way from here, or waiting in the host's
+	// queue for that tab alone. While no turn of the agent runs on the host, a ready message there
+	// waits only for its own tab. One that waits behind another tab's turn reads queued, as a local
+	// tab's queued message does (a local drain takes nothing while the agent is busy).
+	const nextWaitingSince = new Map<string, number>();
+	if (!hostTabs.some((tab) => tab.state === 'busy')) {
+		for (const [tabId, since] of input.handingOver ?? []) nextWaitingSince.set(tabId, since);
+		const handOver = hostQueueHandOver(
+			input.queue ?? [],
+			input.now ?? Date.now(),
+			input.handOverClock
+		);
+		if (handOver && !nextWaitingSince.has(handOver.tabId)) {
+			nextWaitingSince.set(handOver.tabId, handOver.since);
+		}
+	} else input.handOverClock?.clear();
+
 	const aiTabs: AITab[] = [];
 	for (const local of session.aiTabs) {
 		if (dropped.has(local.id)) {
@@ -678,7 +753,8 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 				lost: input.linkLost,
 				endedHere: input.endedHere?.has(local.id) === true,
 				kept: input.keptCuts?.has(local.id) === true,
-			}
+			},
+			nextWaitingSince.get(local.id)
 		);
 		// Its first report is the host's blank tab: the name and pills given here stay, and go to
 		// the host with the answer to its creation (`createPendingHostTab()`).

@@ -51,6 +51,7 @@ import {
 	rehydrateBrowserTab,
 } from '../browserTabPersistence';
 import { getLiveDraft } from '../liveDraftStore';
+import { hostedTabHoldsLine } from '../hostedTabLine';
 import { codifyQueuedTurnSettings } from '../providerTabSessions';
 import {
 	aiTabFocusFields,
@@ -891,10 +892,16 @@ export function resolveQueuedItemTarget(
  * ("Agent process already running for session ...-ai-<tabId>", MAESTRO-ZS). Every
  * drain path checks this first and leaves the item queued; the busy tab's own exit
  * drains it.
+ *
+ * A hosted agent's tab is also busy while it holds its line here (`hostedTabHoldsLine()`):
+ * a turn on its way to the host, or a consult waiting for its turn to start there. The tab
+ * reads the host's state, idle until the host's first frame of that turn, and the next
+ * item must not overtake it (U1).
  */
 export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 'tabId'>): boolean {
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) return false;
+	if (hostedTabHoldsLine(session.id, target.tabId)) return true;
 	const tab =
 		session.aiTabs?.find((candidate) => candidate.id === target.tabId) ??
 		session.orphanedThinkingTabs?.find((candidate) => candidate.id === target.tabId);

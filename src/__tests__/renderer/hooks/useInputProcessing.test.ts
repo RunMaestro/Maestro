@@ -66,6 +66,10 @@ import { askSideQuestion } from '../../../renderer/services/sideQuestion';
 import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
 import { sendHostedTurn } from '../../../renderer/services/hostedTurns';
 import { keepTurnForHost } from '../../../renderer/services/hostedQueuedTurn';
+import {
+	holdHostedTabLine,
+	resetHostedTabLinesForTest,
+} from '../../../renderer/utils/hostedTabLine';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
 	createMirroredPeer,
@@ -1846,6 +1850,42 @@ describe('useInputProcessing', () => {
 			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			vi.mocked(sendHostedTurn).mockReset();
 			vi.mocked(sendHostedTurn).mockResolvedValue({ status: 'started' });
+		});
+
+		it('queues a custom command behind a turn of the tab still on its way to the host (CodeRabbit on #2166)', async () => {
+			vi.useFakeTimers();
+			vi.mocked(sendHostedTurn).mockClear();
+			mockProcessQueuedItemRef.current.mockClear();
+			const session = createMockSession({ liftedTo });
+			holdHostedTabLine(session.id, session.activeTabId, 'send:on-its-way', { handingOver: true });
+			try {
+				const deps = createDeps({
+					activeSession: session,
+					inputValue: '/commit',
+					customAICommands: [
+						{
+							id: 'commit',
+							command: '/commit',
+							description: 'Commit changes',
+							prompt: 'Please commit all outstanding changes.',
+						},
+					],
+				});
+				const { result } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput();
+				});
+				await act(async () => {
+					vi.advanceTimersByTime(100);
+				});
+
+				// It waits in this machine's line for the drain: not run, not sent past the turn.
+				expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
+				expect(sendHostedTurn).not.toHaveBeenCalled();
+			} finally {
+				resetHostedTabLinesForTest();
+				vi.useRealTimers();
+			}
 		});
 
 		it('keeps a draft typed while the hosted send was in flight when the message is kept', async () => {

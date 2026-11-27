@@ -9,6 +9,10 @@ import type { Session, AITab } from '../../../renderer/types';
 import { createMockAITab, createMockDesignPick } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { updateAiTab, useSessionStore } from '../../../renderer/stores/sessionStore';
+import {
+	holdHostedTabLine,
+	resetHostedTabLinesForTest,
+} from '../../../renderer/utils/hostedTabLine';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useMovementStore } from '../../../renderer/stores/movementStore';
 import { getModalActions, useModalStore } from '../../../renderer/stores/modalStore';
@@ -3198,6 +3202,30 @@ describe('useRemoteIntegration', () => {
 				enqueue('chan-agent-text-hosted-line');
 
 				expect(queuedItem()).toMatchObject(agentText);
+			});
+
+			it("waits in this machine's line while a turn of the hosted tab is on its way to the host (Greptile on #2166)", () => {
+				const session = createMockSession({
+					...agentModeFields('hosted'),
+					id: 'session-1',
+					state: 'idle',
+					aiTabs: [createMockTab({ id: 'tab-1' })],
+					activeTabId: 'tab-1',
+					executionQueue: [],
+				});
+				useSettingsStore.setState({ federationHostedAgents: true });
+				useSessionStore.setState({ sessions: [session] });
+				holdHostedTabLine('session-1', 'tab-1', 'send:on-its-way', { handingOver: true });
+				try {
+					renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+					enqueue('chan-agent-text-hosted-in-flight');
+
+					// Queued here for the drain, never sent past the turn on its way.
+					expect(queuedItem()).toMatchObject(agentText);
+				} finally {
+					resetHostedTabLinesForTest();
+				}
 			});
 
 			it('rides on the item a busy tab queues', () => {
