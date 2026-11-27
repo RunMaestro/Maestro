@@ -358,6 +358,7 @@ Keep these points in mind:
 - Your agents, settings, and history stay in place. An older version may not read data that a newer version wrote, so roll back only as far as you need to.
 - Auto Runs in progress do not resume after a rollback, because an older version may not have that feature. Let them finish first, or use **Restart App When Idle**.
 - Check for Updates offers the newest version again, so you can move forward when the fix ships.
+- Maestro installs only builds signed by the same publisher as the one you run, so releases from before code signing are not offered. On macOS that is any release before v0.8.1. On Windows, only releases built after Windows code signing began are offered.
 - A rollback can be started only from the desktop app or `maestro-cli`, never from the web interface, because an older version can bring back problems that a newer release fixed.
 
 ### Anonymous Check-in

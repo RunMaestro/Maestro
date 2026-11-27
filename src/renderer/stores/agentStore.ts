@@ -65,7 +65,11 @@ import { probeSessionAiProcesses } from '../services/process';
 // with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
 import { noteDispatch } from './retryStore';
-import { expandCommandArguments } from '../../shared/maestro-lib/turns/prompt';
+import {
+	appendAgentNotes,
+	expandCommandArguments,
+	withTurnAgentText,
+} from '../../shared/maestro-lib/turns/prompt';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
@@ -734,7 +738,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		if (plainQueueKey && pendingPlainQueueDispatches.has(plainQueueKey)) return false;
 		if (plainQueueKey) pendingPlainQueueDispatches.add(plainQueueKey);
 		try {
-			if (managedQueue && (item.type !== 'message' || item.agentContext))
+			// A managed spawn's prompt must equal the item text, so agent-only text (a consult's
+			// replies ahead, a Federation sender's @mention notes behind) cannot ride on it.
+			if (managedQueue && (item.type !== 'message' || item.agentContext || item.agentNotes))
 				throw new Error('DispatchQueueRoutingUnsupported');
 			if (managedQueue && item.crossAgentMention && !deps.managedStepId) {
 				if (deps.isCancelled?.()) return false;
@@ -806,7 +812,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// Process a message - spawn agent with the message text
 				const messagePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 				// `agentContext` is agent-only text the transcript never shows (a
-				// released consult hold carries the replies verbatim in it).
+				// released consult hold carries the replies verbatim in it), and
+				// `agentNotes` (a Federation sender's `@mention` notes) goes behind.
+				// Both are laid out as a host lays them (`withTurnAgentText()`).
 				// A queued message that is the tab's FIRST turn opens a new provider
 				// session, so it carries the New Session Message like a typed one does.
 				// A message queued behind a running turn resumes, and gets nothing.
@@ -816,19 +824,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							session.newSessionMessage,
 							tabAgentSessionId
 						)
-					: withMentionTurnNotes(
-							takePendingMergedContext(
-								sessionId,
-								targetTab.id,
-								prependNewSessionMessageOnFirstTurn(
-									item.agentContext
-										? `${item.agentContext}\n\n---\n\n${messagePrompt}`
-										: messagePrompt,
-									session.newSessionMessage,
-									tabAgentSessionId
-								)
+					: appendAgentNotes(
+							withMentionTurnNotes(
+								takePendingMergedContext(
+									sessionId,
+									targetTab.id,
+									prependNewSessionMessageOnFirstTurn(
+										withTurnAgentText(messagePrompt, { agentContext: item.agentContext }),
+										session.newSessionMessage,
+										tabAgentSessionId
+									)
+								),
+								mentionDispatch
 							),
-							mentionDispatch
+							item.agentNotes
 						);
 
 				// NOTE: The user-visible log entry for this message is appended by the
@@ -980,6 +989,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					// new process must advertise the same entry before it is submitted.
 					const nativeText = slashInput!;
 					if (await refuseChangedCommand()) return false;
+					// The native command must reach Grok exactly as typed, so it has no place for a
+					// Federation sender's agent-only text: refuse it rather than run without it.
+					if (item.agentContext || item.agentNotes) {
+						await settleUnsentCommand(
+							`${item.command} is a Grok command that runs exactly as typed, so it cannot carry a consult's replies or the @mention notes. Send it without an @mention, or as a message.`
+						);
+						return false;
+					}
 					const expectedGrokSpawnSelection = await getQueuedCommandSpawnSelection(sessionId, item);
 					if (deps.isCancelled?.()) {
 						await settleUnsentCommand();
@@ -1131,11 +1148,15 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						command: commandToUse,
 						args: spawnArgs,
 						// Agent-only, like the message branch: the log entry above keeps
-						// the bare command prompt.
-						prompt: prependNewSessionMessageOnFirstTurn(
-							substitutedPrompt,
-							session.newSessionMessage,
-							tabAgentSessionId
+						// the bare command prompt. A Federation sender's agent-only text
+						// lays around it as a headless host lays it (`assembleTurn()`).
+						prompt: appendAgentNotes(
+							prependNewSessionMessageOnFirstTurn(
+								withTurnAgentText(substitutedPrompt, { agentContext: item.agentContext }),
+								session.newSessionMessage,
+								tabAgentSessionId
+							),
+							item.agentNotes
 						),
 						images: hasImages ? item.images : undefined,
 						appendSystemPrompt: appendSystemPromptForCommand,

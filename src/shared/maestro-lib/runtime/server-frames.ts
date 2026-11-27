@@ -16,7 +16,13 @@ import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { AutoRunProgress } from '../autorun/progress';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
 import { TRANSCRIPT_CHANGED_CHANNEL, transcriptChangedArgs } from '../client/bridge-frames';
-import type { AutoRunOutcome, MaestroEvent, QueuedTurn, TurnEvent } from '../client/types';
+import type {
+	AutoRunOutcome,
+	MaestroEvent,
+	QueuedTurn,
+	QueueExit,
+	TurnEvent,
+} from '../client/types';
 import type { GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
 import type { AgentRecord, AITabRecord } from '../store/records';
 
@@ -95,10 +101,21 @@ export function queuedTurnsToWire(items: readonly QueuedTurn[]): QueuedTurnWire[
 /**
  * An agent's execution queue changed. The desktop's bridge has no frame for this, so it is a
  * headless host's own: `createWsMaestroClient` reads it back into `queue.changed`, and a client
- * that does not know the type ignores it.
+ * that does not know the type ignores it. `namesExits` says this host names how every item leaves
+ * its queue (`exit`: started or removed); an older client ignores both fields.
  */
-export function queueChangedFrame(agentId: string, items: readonly QueuedTurn[]): Frame {
-	return { type: 'queue_changed', sessionId: agentId, items: queuedTurnsToWire(items) };
+export function queueChangedFrame(
+	agentId: string,
+	items: readonly QueuedTurn[],
+	exit?: QueueExit
+): Frame {
+	return {
+		type: 'queue_changed',
+		sessionId: agentId,
+		items: queuedTurnsToWire(items),
+		namesExits: true,
+		...(exit ? { exit: { itemId: exit.itemId, exit: exit.exit } } : {}),
+	};
 }
 
 /** The desktop's process id for an agent's AI tab, which is what the client parses back. */
@@ -130,6 +147,9 @@ export function progressToWire(progress: AutoRunProgress): AutoRunBroadcastState
 		loopEnabled: progress.loopEnabled,
 		loopIteration: progress.loopIteration,
 		...(progress.startTime !== undefined ? { startTime: progress.startTime } : {}),
+		...(progress.initialTasksDone !== undefined
+			? { initialCompletedTasks: progress.initialTasksDone }
+			: {}),
 		...(progress.worktreeBranch ? { worktreeBranch: progress.worktreeBranch } : {}),
 		...(pause
 			? {
@@ -370,7 +390,7 @@ export function framesForEvent(event: MaestroEvent, state: FrameState): Frame[] 
 		case 'turn':
 			return turnFrames(event.agentId, event.tabId, event.event, state);
 		case 'queue.changed':
-			return [queueChangedFrame(event.agentId, event.items)];
+			return [queueChangedFrame(event.agentId, event.items, event.exit)];
 		case 'autorun':
 			return autoRunFrames(event.agentId, event.event);
 		case 'autorun.ended':

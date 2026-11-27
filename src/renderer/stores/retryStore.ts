@@ -71,6 +71,7 @@ import { notifyToast } from './notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
 import type { AgentError, QueuedItem, ToolType } from '../types';
 import { registerBatchResumer, getBatchResumer } from '../services/batchResumer';
+import { isSshTransportError } from './sshOutageStore';
 
 // ============================================================================
 // Types
@@ -183,6 +184,46 @@ export interface OutageRecord {
 	 * that forward no quota object.
 	 */
 	quota?: QuotaLimitDetail;
+	/**
+	 * What failed, when it was not the provider: `connection` when the turn never reached the
+	 * agent because its link was down (ssh could not reach the remote, or the hosted agent's
+	 * Maestro host could not be reached). Same backoff as `availability`; the card names the link
+	 * instead of "Service overloaded". Undefined for a provider outage.
+	 */
+	cause?: OutageCause;
+	/**
+	 * The kept message was not sent again because the hosted agent's host already had it: the turn
+	 * a lost link cut was still running there, or had finished (`settleRetryOnHost()`). The card
+	 * says so instead of "Sent after n retries".
+	 */
+	settledByHost?: boolean;
+	/**
+	 * Set with `settledByHost` when the kept message was not sent because the host no longer has
+	 * what it named: its tab was closed there (`tab`), or the message is gone from that tab (a
+	 * clear, `message`). Nothing was sent, and the message stays held in the queue to send again.
+	 */
+	notOnHost?: NotOnHost;
+}
+
+/** See `OutageRecord.cause`. */
+export type OutageCause = 'connection';
+
+/** See `OutageRecord.notOnHost`. */
+export type NotOnHost = 'tab' | 'message';
+
+/** What the card and the toast say when a kept message was not sent: the host had it. */
+export const HOST_HAD_MESSAGE_TEXT = 'The host already had this message, so it was not sent again.';
+
+/** What the card and the toast say when a kept message was not sent: the host lost what it named. */
+export function notOnHostText(notOnHost: NotOnHost): string {
+	return notOnHost === 'tab'
+		? 'Its tab is no longer on the host, so the message was not sent. It is held in the queue for you to send again.'
+		: 'The message is no longer on the host (its tab was cleared), so it was not sent. It is held in the queue for you to send again.';
+}
+
+/** The cause an outage card names for `error`: the link (SSH or hosted host), or the provider. */
+export function outageCauseOf(error: AgentError): OutageCause | undefined {
+	return isSshTransportError(error) ? 'connection' : undefined;
 }
 
 interface DispatchSnapshot {
@@ -416,6 +457,18 @@ export function registerAgentErrorSurfacer(
 	agentErrorSurfacer = fn;
 }
 
+/**
+ * Raise an agent error through the listener that owns error UI, as though the turn's process had
+ * reported it on `processSessionId`. For a failure that happened before any process existed here:
+ * a hosted agent's send its host could not take. The same retry, transcript card and outage
+ * surfacing follow as for a spawned turn. False when no listener is registered.
+ */
+export function raiseAgentError(processSessionId: string, error: AgentError): boolean {
+	if (!agentErrorSurfacer) return false;
+	agentErrorSurfacer(processSessionId, error);
+	return true;
+}
+
 function keyFor(sessionId: string, tabId: string): string {
 	return `${sessionId}:${tabId}`;
 }
@@ -632,6 +685,15 @@ function resolveStrategy(sessionId: string, error: ClassifiableError): RetryStra
 }
 
 /**
+ * Whether `error` on this agent would be taken over by an automatic retry (the error is retryable
+ * and the agent's resilience toggle for it is on), without scheduling anything. A caller that keeps
+ * a message only when the retry card will stand for it asks this first.
+ */
+export function wouldAutoRetry(sessionId: string, error: ClassifiableError): boolean {
+	return resolveStrategy(sessionId, error) !== null;
+}
+
+/**
  * Try to take over an agent error with an automatic retry. Returns `true` if a
  * retry was scheduled (the caller should then suppress the error modal), or
  * `false` if the error is not auto-retryable / resilience is off / we have no
@@ -741,6 +803,7 @@ export function scheduleRetryForError(
 		// and a card still naming the first window sends the user to wait out a
 		// reset that already happened.
 		quota: parseQuotaLimitDetail(error.parsedJson),
+		cause: outageCauseOf(error),
 	});
 
 	const delay = Math.max(0, nextRetryAt - now);
@@ -1769,6 +1832,40 @@ export function clearRetryIfSettled(sessionId: string, tabId: string): void {
  */
 export function noteRetryProgress(sessionId: string, tabId: string): void {
 	recoverInFlightRetry(sessionId, tabId, 'Resend is producing output; outage recovered');
+}
+
+/**
+ * End this tab's outage because the message it keeps is not owed any more: a hosted agent's host
+ * already had it (the turn a lost link cut was still running there, or had finished). Nothing is
+ * sent again: the held copy leaves the queue, the retry ends as recovered with the card saying the
+ * host had it (`OutageRecord.settledByHost`), and the tab's retryable error clears. Works whether
+ * the retry is still counting down or its resend is waiting for this answer. Answers whether there
+ * was an outage to end.
+ *
+ * With `notOnHost` the host no longer has the tab or the message the kept copy named: nothing is
+ * sent there either, but the copy is NOT released. The caller parks it held, so the user can send
+ * it again, and the card says what happened (`OutageRecord.notOnHost`).
+ */
+export function settleRetryOnHost(
+	sessionId: string,
+	tabId: string,
+	notOnHost?: NotOnHost
+): boolean {
+	const key = keyFor(sessionId, tabId);
+	const entry = useRetryStore.getState().retries[key];
+	if (!entry) return false;
+	logger.info('[retry] The host already had the kept message; not sending it again', undefined, {
+		key,
+		notOnHost,
+	});
+	if (entry.heldItemId && !notOnHost) releaseHeldItemFromQueue(sessionId, entry.heldItemId);
+	useRetryStore
+		.getState()
+		.patchOutage(entry.outageId, { settledByHost: true, ...(notOnHost ? { notOnHost } : {}) });
+	resolveOutage(entry.outageId, 'recovered');
+	removeEntry(key);
+	clearTabAgentError(sessionId, tabId, entry.lastMessage);
+	return true;
 }
 
 /**

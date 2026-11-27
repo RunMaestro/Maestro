@@ -1826,10 +1826,13 @@ export async function sha256FileRemote(
  *    (the target's disk is full) puts the target's earlier bytes back from a
  *    private temp copy (mode 0600), and reports the failure.
  *
- * Steps 2 and 3 run back to back on the remote host, which leaves the window for
- * another writer at the remote's own speed instead of an SSH round trip. A
- * target that already holds `content` (a retried write that had landed) counts
- * as written.
+ * Steps 2 and 3 run on the remote host with no SSH round trip between them,
+ * but they are not back to back: the backup copy of the target (`cp "$f"
+ * "$orig"`, up to the write-back's size cap) sits between the hash check and
+ * the write, so another writer that changes the target in that time is
+ * overwritten. What protects the data is the backup: a copy into the target
+ * that fails puts the target's earlier bytes back. A target that already holds
+ * `content` (a retried write that had landed) counts as written.
  */
 export async function replaceFileRemoteIfUnchanged(
 	filePath: string,

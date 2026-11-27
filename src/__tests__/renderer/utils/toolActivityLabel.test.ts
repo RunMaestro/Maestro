@@ -9,6 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+	toolActivityState,
 	describeToolActivity,
 	describeToolActivityStatus,
 	describeToolCommand,
@@ -644,5 +645,51 @@ describe('describeToolKind', () => {
 
 	it('does not read a shell command that edits a file as an edit', () => {
 		expect(describeToolKind('Bash', { command: 'sed -i s/a/b/ a.ts' })).toBe('shell');
+	});
+});
+
+describe('toolActivityState (P10)', () => {
+	const output = 'x'.repeat(200_000);
+
+	it('keeps the input and the outcome fields and drops the output', () => {
+		const state = {
+			status: 'completed',
+			input: { command: 'npm test' },
+			exit_code: 1,
+			is_error: false,
+			output,
+			result: { stdout: output },
+		};
+		expect(toolActivityState(state)).toEqual({
+			status: 'completed',
+			input: { command: 'npm test' },
+			exit_code: 1,
+			is_error: false,
+		});
+	});
+
+	it('reads the same line and glyph as the whole state', () => {
+		const cases = [
+			['Bash', { status: 'completed', input: { command: 'npm test' }, exitCode: 2, output }],
+			['Read', { status: 'running', input: { file_path: '/p/src/a.ts' }, content: output }],
+			['Edit', { isError: true, input: { file_path: '/p/b.ts', old_string: output } }],
+		] as const;
+		for (const [tool, state] of cases) {
+			const kept = toolActivityState(state) as { input?: unknown };
+			expect(describeToolActivity(tool, kept.input)).toEqual(
+				describeToolActivity(tool, state.input)
+			);
+			expect(describeToolActivityStatus(kept)).toBe(describeToolActivityStatus(state));
+		}
+	});
+
+	it('caps a large input and answers undefined for a state that is not an object', () => {
+		const kept = toolActivityState({ input: { content: output } }) as {
+			input: { content: string };
+		};
+		expect(kept.input.content.length).toBeLessThan(5_000);
+		expect(toolActivityState(null)).toBeUndefined();
+		expect(toolActivityState('running')).toBeUndefined();
+		expect(toolActivityState([1])).toBeUndefined();
 	});
 });

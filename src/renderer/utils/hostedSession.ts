@@ -56,6 +56,74 @@ export interface HostedProjectionInput {
 	viewing?: boolean;
 	/** Tabs closed here whose close the host has not reported yet: never drawn back. */
 	closing?: ReadonlySet<string>;
+	/**
+	 * The link to the host is down (a confirmed outage of its remote, or a connection the mirror gave
+	 * up). The mirror keeps the host's last report through a disconnect, so a turn it last reported
+	 * running would draw Thinking forever. Each such tab is drawn ended instead, with this error and
+	 * a note in its transcript, as an SSH tab whose link is cut mid-turn. The next connected report
+	 * draws the host's real state again, and the error clears (`source: 'host-link'`).
+	 */
+	linkLost?: AgentError;
+	/** Tabs whose turn was stopped here while the host could not be told: drawn idle until it can. */
+	endedHere?: ReadonlySet<string>;
+	/**
+	 * Tabs whose cut turn's message is kept for a resend (`hostedCutsKept()`): drawn ended like any
+	 * cut tab, with no link note and no link error, because the auto-retry card and its error stand
+	 * for the cut, as they do for an SSH turn whose link is cut.
+	 */
+	keptCuts?: ReadonlySet<string>;
+}
+
+/**
+ * The transcript note a tab gets when the link to its host is lost mid-turn. Keyed on the cut: the
+ * tab and the message whose turn it ended, so the loss moving from "connection lost" to "outage
+ * confirmed" (or the same turn cut again) rewords one note instead of adding another. A note this
+ * cut already drew keeps its id (the error keeps its timestamp for one loss), so a transcript that
+ * lands during the loss, with the turn's message in it, does not add a second note.
+ */
+export function hostLinkNoteId(
+	tabId: string,
+	logs: readonly LogEntry[],
+	error: AgentError
+): string {
+	const prefix = `host-link-${tabId}-`;
+	const drawn = logs.find(
+		(entry) =>
+			entry.id.startsWith(prefix) &&
+			entry.agentError?.source === 'host-link' &&
+			entry.agentError.timestamp === error.timestamp
+	);
+	if (drawn) return drawn.id;
+	for (let i = logs.length - 1; i >= 0; i -= 1) {
+		if (logs[i].source === 'user') return `${prefix}${logs[i].id}`;
+	}
+	return `${prefix}${error.timestamp}`;
+}
+
+/**
+ * `logs` with the link note last: after the turn's live entries, where an SSH tab's error lands.
+ * The same array back when it is already there with the same words, so the projection settles.
+ */
+function withLinkNote(logs: LogEntry[], prior: readonly LogEntry[], note: LogEntry): LogEntry[] {
+	const last = logs[logs.length - 1];
+	if (last?.id === note.id && last.text === note.text) return logs;
+	const next = [...logs.filter((entry) => entry.id !== note.id), note];
+	return sameEntries(next, prior) ? (prior as LogEntry[]) : next;
+}
+
+/**
+ * Whether two transcripts draw the same: the same entries in the same order, each with the same
+ * text, tool card, and delivered tick (the fields a pass of `mergeHostedLogs()` can move on).
+ */
+function sameEntries(a: readonly LogEntry[], b: readonly LogEntry[]): boolean {
+	if (!sameIds(a, b)) return false;
+	return a.every(
+		(entry, i) =>
+			entry === b[i] ||
+			(entry.text === b[i].text &&
+				!!entry.delivered === !!b[i].delivered &&
+				sameMetadata(entry.metadata, b[i].metadata))
+	);
 }
 
 const persistedViews = new WeakMap<readonly LogEntryRecord[], LogEntry[]>();
@@ -149,8 +217,15 @@ export function mergeHostedLogs(
 	persisted: readonly LogEntryRecord[] | undefined,
 	tail: readonly LogEntryRecord[] | undefined
 ): LogEntry[] {
-	const kept = local.filter((entry) => !entry.hostLive);
-	const hostEntries = persisted ? persistedView(persisted) : [];
+	// A live entry with the id of one already drawn is that entry rewritten in place while a turn
+	// runs (a `/history` progress line settled to its outcome, M22): the line takes its new text.
+	const rewrites = new Map((tail ?? []).map((record) => [record.id, record.text]));
+	const rewritten = (entry: LogEntry): LogEntry => {
+		const text = rewrites.get(entry.id);
+		return text === undefined || text === entry.text ? entry : { ...entry, text };
+	};
+	const kept = local.filter((entry) => !entry.hostLive).map(rewritten);
+	const hostEntries = persisted ? persistedView(persisted).map(rewritten) : [];
 	const hostIds = new Set(hostEntries.map((entry) => entry.id));
 	const older = persisted ? kept.filter((entry) => !hostIds.has(entry.id)) : kept;
 	const seen = new Set([...older.map((entry) => entry.id), ...hostIds]);
@@ -172,7 +247,10 @@ export function mergeHostedLogs(
 			return prior?.text !== entry.text || !sameMetadata(prior?.metadata, entry.metadata);
 		});
 		const tickChanged = next.some((entry, i) => !!entry.delivered !== !!local[i].delivered);
-		if (!liveChanged && !tickChanged) return local;
+		// A saved entry the host rewrote in place (a command's progress line settled to its
+		// outcome, M22) keeps its id: its text is what changed.
+		const savedChanged = next.some((entry, i) => !entry.hostLive && entry.text !== local[i].text);
+		if (!liveChanged && !tickChanged && !savedChanged) return local;
 	}
 	return next;
 }
@@ -195,6 +273,7 @@ function sameQueue(a: readonly QueuedItem[], b: readonly QueuedItem[]): boolean 
 				item.command === other.command &&
 				item.commandArgs === other.commandArgs &&
 				item.tabId === other.tabId &&
+				item.hostImagesPending === other.hostImagesPending &&
 				sameImages(item.images, other.images) &&
 				canonicalJson(item.turnSettings ?? null) === canonicalJson(other.turnSettings ?? null)
 			);
@@ -202,7 +281,11 @@ function sameQueue(a: readonly QueuedItem[], b: readonly QueuedItem[]): boolean 
 	);
 }
 
-function sameImages(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+/** Whether two image lists hold the same images in the same order (absent reads as none). */
+export function sameImages(
+	a: readonly string[] | undefined,
+	b: readonly string[] | undefined
+): boolean {
 	const left = a ?? [];
 	const right = b ?? [];
 	return left.length === right.length && left.every((image, i) => image === right[i]);
@@ -218,9 +301,12 @@ function sameImages(a: readonly string[] | undefined, b: readonly string[] | und
 function hostedTabError(
 	local: AITab,
 	busy: boolean,
-	logs: readonly LogEntry[]
+	logs: readonly LogEntry[],
+	linkDown: boolean
 ): AgentError | undefined {
 	let error = busy && local.state !== 'busy' ? undefined : local.agentError;
+	// The link is back: the host's own report says how the turn ended.
+	if (!linkDown && error?.source === 'host-link') error = undefined;
 	if (logs === local.logs) return error;
 	const drawn = new Set((local.logs ?? []).map((entry) => entry.id));
 	for (const entry of logs) {
@@ -266,23 +352,52 @@ function hostedTabUnread(
 	return unread && isAiTabHidden(local) ? local.hasUnread : unread;
 }
 
+/**
+ * When the turn a host tab runs started, as the host tells it (its record, else the live turn's
+ * first event); undefined when the tab is idle or the host has not said. The projection draws this
+ * as the tab's `thinkingStartTime`.
+ */
+export function hostTabTurnStartedAt(
+	host: Pick<AITabRecord, 'state' | 'thinkingStartTime'>,
+	liveTurn: Pick<LiveTurn, 'startedAt'> | undefined
+): number | undefined {
+	if (host.state !== 'busy') return undefined;
+	return host.thinkingStartTime ?? liveTurn?.startedAt;
+}
+
 function projectTab(
 	local: AITab,
 	host: AITabRecord,
-	logs: LogEntry[],
+	merged: LogEntry[],
 	liveTurn: LiveTurn | undefined,
 	watched: boolean,
-	hostSeenAt: number | undefined
+	hostSeenAt: number | undefined,
+	link: { lost?: AgentError; endedHere: boolean; kept: boolean }
 ): AITab {
-	const busy = host.state === 'busy';
+	// A turn the host last reported running that nobody here can follow or finish ends here.
+	const cut = host.state === 'busy' && link.lost !== undefined;
+	const busy = host.state === 'busy' && !cut && !link.endedHere;
+	// A kept cut has the retry card for its note, and the kept message's error for its own.
+	const noted = cut && !link.kept;
+	const logs =
+		noted && link.lost
+			? withLinkNote(merged, local.logs ?? [], {
+					id: hostLinkNoteId(local.id, merged, link.lost),
+					timestamp: link.lost.timestamp,
+					source: 'error',
+					text: link.lost.message,
+					agentError: link.lost,
+				})
+			: merged;
 	const thinkingStartTime = busy
-		? (host.thinkingStartTime ?? liveTurn?.startedAt ?? local.thinkingStartTime)
+		? (hostTabTurnStartedAt(host, liveTurn) ?? local.thinkingStartTime)
 		: undefined;
 	const name = host.name ?? null;
 	const agentSessionId = host.agentSessionId ?? local.agentSessionId ?? null;
 	const starred = host.starred === true;
 	const state = busy ? 'busy' : 'idle';
-	const agentError = hostedTabError(local, busy, logs);
+	const agentError =
+		noted && link.lost ? link.lost : hostedTabError(local, busy, logs, link.lost !== undefined);
 	const hasUnread = hostedTabUnread(local, logs, watched);
 	// The host runs the turns, so its tab's usage is what the header's gauge and cost pill read. A
 	// host that reports none (an older host) leaves the usage this tab already had.
@@ -414,7 +529,12 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 			logsFor(local.id, local.logs ?? []),
 			input.liveTurns?.[liveTurnKey(agent.id, local.id)],
 			input.viewing === true && local.id === session.activeTabId,
-			hostingAt ?? local.hostSeenAt
+			hostingAt ?? local.hostSeenAt,
+			{
+				lost: input.linkLost,
+				endedHere: input.endedHere?.has(local.id) === true,
+				kept: input.keptCuts?.has(local.id) === true,
+			}
 		);
 		if (next !== local) changed = true;
 		aiTabs.push(next);
@@ -425,6 +545,11 @@ export function projectHostedSession(incoming: Session, input: HostedProjectionI
 		const tab = mirrorTab(host);
 		tab.logs = logsFor(host.id, []);
 		if (hostingAt !== undefined) tab.hostSeenAt = hostingAt;
+		if (input.linkLost && tab.state === 'busy') {
+			// First drawn while the link is down: nothing here can follow its turn either.
+			tab.state = 'idle';
+			tab.thinkingStartTime = undefined;
+		}
 		added.push(tab);
 	}
 	if (added.length > 0) {

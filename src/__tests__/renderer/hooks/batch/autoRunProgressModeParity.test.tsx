@@ -13,7 +13,12 @@ import { buildMirroredBatchState } from '../../../../renderer/hooks/batch/useAut
 import { DEFAULT_BATCH_STATE } from '../../../../renderer/hooks/batch/batchReducer';
 import { autoRunActiveElapsedMs } from '../../../../renderer/hooks/batch/useTimeTracking';
 import { mirroredRunCompleteInfo } from '../../../../renderer/services/autoRunCompletion';
-import type { AutoRunBroadcastState } from '../../../../shared/autoRunBroadcast';
+import {
+	parseAutoRunBroadcastState,
+	type AutoRunBroadcastState,
+} from '../../../../shared/autoRunBroadcast';
+import { parseAutoRunProgress } from '../../../../shared/maestro-lib/autorun/progress';
+import { progressToWire } from '../../../../shared/maestro-lib/runtime/server-frames';
 import type { BatchRunState } from '../../../../renderer/types';
 import { AGENT_MODES, type AgentMode } from '../../../helpers';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -56,11 +61,26 @@ function hostFrame(): AutoRunBroadcastState {
 	};
 }
 
+/**
+ * A host's run state as the desktop receives it: the host publishes it as `AutoRunProgress`
+ * (`publish()` in runtime/autorun.ts), its server writes the `autorun_state` frame
+ * (`progressToWire()`), and the client reads the frame off the socket.
+ */
+function overTheWire(state: AutoRunBroadcastState): AutoRunBroadcastState {
+	const progress = parseAutoRunProgress(state);
+	if (!progress) throw new Error('no progress');
+	const received = parseAutoRunBroadcastState(JSON.parse(JSON.stringify(progressToWire(progress))));
+	if (!received) throw new Error('no frame');
+	return received;
+}
+
 function runState(mode: AgentMode): BatchRunState {
 	if (mode !== 'hosted') return localRun();
 	// Two frames, as a run sends them: the second is built on the first mirror.
-	const first = buildMirroredBatchState({ ...hostFrame(), completedTasksAcrossAllDocs: 2 });
-	return buildMirroredBatchState(hostFrame(), first);
+	const first = buildMirroredBatchState(
+		overTheWire({ ...hostFrame(), completedTasksAcrossAllDocs: 2 })
+	);
+	return buildMirroredBatchState(overTheWire(hostFrame()), first);
 }
 
 /** The card's ELAPSED and REMAINING cells, as RightPanel feeds it. */

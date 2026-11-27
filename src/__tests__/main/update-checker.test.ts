@@ -10,8 +10,12 @@ const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
 // Import after mocking
-import { checkForUpdates, listRollbackTargets } from '../../main/update-checker';
-import { updaterChannelFile } from '../../shared/updateRollback';
+import {
+	checkForUpdates,
+	listRollbackTargets,
+	rollbackTargetRefusal,
+} from '../../main/update-checker';
+import { updaterChannelFile, WINDOWS_SIGNATURE_ASSET } from '../../shared/updateRollback';
 
 // Helper to create mock release
 const createMockRelease = (
@@ -394,8 +398,10 @@ describe('update-checker', () => {
 	describe('listRollbackTargets', () => {
 		// The channel file electron-updater needs on whatever machine runs the suite.
 		const channelFile = updaterChannelFile(process.platform, process.arch)!;
+		// A Windows release is only installable once it carries the signature marker.
+		const installableAssets = [{ name: channelFile }, { name: WINDOWS_SIGNATURE_ASSET }];
 		const installable = (tag: string, extra: Record<string, unknown> = {}) =>
-			createMockRelease({ tag_name: tag, assets: [{ name: channelFile }], ...extra });
+			createMockRelease({ tag_name: tag, assets: installableAssets, ...extra });
 
 		it('lists only older, installable releases, newest first', async () => {
 			mockFetch.mockResolvedValue({
@@ -450,6 +456,59 @@ describe('update-checker', () => {
 
 			expect(result.releases).toEqual([]);
 			expect(result.error).toContain('503');
+		});
+	});
+
+	describe('rollbackTargetRefusal', () => {
+		const channelFile = updaterChannelFile(process.platform, process.arch)!;
+		const installableAssets = [{ name: channelFile }, { name: WINDOWS_SIGNATURE_ASSET }];
+
+		it('looks the one release up by tag and accepts an installable one', async () => {
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () =>
+					Promise.resolve(createMockRelease({ tag_name: 'v0.9.0', assets: installableAssets })),
+			});
+
+			expect(await rollbackTargetRefusal('v0.9.0', '1.0.0')).toBeNull();
+			expect(mockFetch.mock.calls[0][0]).toBe(
+				'https://api.github.com/repos/RunMaestro/Maestro/releases/tags/v0.9.0'
+			);
+		});
+
+		it('applies the rollback rules to the release it found', async () => {
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () =>
+					Promise.resolve(
+						createMockRelease({ tag_name: 'v0.9.0', assets: [{ name: 'notes.txt' }] })
+					),
+			});
+
+			expect(await rollbackTargetRefusal('v0.9.0', '1.0.0')).toContain(`has no ${channelFile}`);
+		});
+
+		it('refuses a tag with no release, or only a draft', async () => {
+			mockFetch.mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' });
+			expect(await rollbackTargetRefusal('v0.9.0', '1.0.0')).toContain('No published release');
+
+			mockFetch.mockResolvedValue({
+				ok: true,
+				status: 200,
+				json: () =>
+					Promise.resolve(
+						createMockRelease({ tag_name: 'v0.9.0', draft: true, assets: installableAssets })
+					),
+			});
+			expect(await rollbackTargetRefusal('v0.9.0', '1.0.0')).toContain('No published release');
+		});
+
+		it('returns the reason instead of throwing when GitHub is unreachable', async () => {
+			mockFetch.mockRejectedValue(new Error('getaddrinfo ENOTFOUND api.github.com'));
+
+			expect(await rollbackTargetRefusal('v0.9.0', '1.0.0')).toContain('ENOTFOUND');
 		});
 	});
 });

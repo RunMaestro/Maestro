@@ -3275,6 +3275,7 @@ describe('useRemoteIntegration', () => {
 						undefined,
 						undefined,
 						undefined,
+						undefined,
 						true
 					);
 				});
@@ -3437,6 +3438,101 @@ describe('useRemoteIntegration', () => {
 						queueLength: 1,
 						itemId: expect.any(String),
 					})
+				);
+			});
+		});
+
+		describe("a Federation sender's agent-only text (M16)", () => {
+			const agentText = {
+				agentContext: 'Replies:\nBackend: the cache is fine.',
+				agentNotes: 'Your answer goes to Backend.',
+			};
+			const enqueue = (channel: string) =>
+				act(() => {
+					onRemoteEnqueueCommandHandler?.(
+						'session-1',
+						'Finish your answer.',
+						channel,
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						agentText
+					);
+				});
+			const queuedItem = () =>
+				useSessionStore
+					.getState()
+					.sessions.find((s) => s.id === 'session-1')
+					?.executionQueue.find((item) => item.text === 'Finish your answer.');
+
+			it('rides on the queued item an idle tab sends at once, never the plain remote command', () => {
+				vi.mocked(sendQueuedItemNow).mockReturnValueOnce(true);
+				const session = createMockSession({
+					id: 'session-1',
+					state: 'idle',
+					aiTabs: [createMockTab({ id: 'tab-1' })],
+					activeTabId: 'tab-1',
+					executionQueue: [],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				enqueue('chan-agent-text-idle');
+
+				expect(dispatchEventSpy).not.toHaveBeenCalledWith(
+					expect.objectContaining({ type: 'maestro:remoteCommand' })
+				);
+				expect(queuedItem()).toMatchObject(agentText);
+				expect(sendQueuedItemNow).toHaveBeenCalledWith('session-1', queuedItem()?.id);
+				dispatchEventSpy.mockRestore();
+			});
+
+			it("rides on the item a hosted agent's own line holds here, for its drain to send on (CodeRabbit on #2148)", () => {
+				const session = createMockSession({
+					...agentModeFields('hosted'),
+					id: 'session-1',
+					state: 'idle',
+					aiTabs: [createMockTab({ id: 'tab-1' })],
+					activeTabId: 'tab-1',
+					// A consult's hold waits in this machine's line for the tab.
+					executionQueue: [
+						{ id: 'hold', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'held line' },
+					],
+				});
+				useSettingsStore.setState({ federationHostedAgents: true });
+				useSessionStore.setState({ sessions: [session] });
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				enqueue('chan-agent-text-hosted-line');
+
+				expect(queuedItem()).toMatchObject(agentText);
+			});
+
+			it('rides on the item a busy tab queues', () => {
+				const session = createMockSession({
+					id: 'session-1',
+					state: 'busy',
+					aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' })],
+					activeTabId: 'tab-1',
+					executionQueue: [],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				enqueue('chan-agent-text-busy');
+
+				expect(queuedItem()).toMatchObject(agentText);
+				expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
+					'chan-agent-text-busy',
+					expect.objectContaining({ success: true, queued: true })
 				);
 			});
 		});

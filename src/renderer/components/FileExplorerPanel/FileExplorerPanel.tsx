@@ -52,7 +52,7 @@ import { FileTreeContextMenu } from './components/FileTreeContextMenu';
 import { useFileTreeFlatten } from './hooks/useFileTreeFlatten';
 import { useFileTreeSelection } from './hooks/useFileTreeSelection';
 import { useFileTreeFilter } from './hooks/useFileTreeFilter';
-import { useAutoRefresh } from './hooks/useAutoRefresh';
+import { fileTreeAutoRefreshSeconds, useAutoRefresh } from './hooks/useAutoRefresh';
 import { useFileOperations } from './hooks/useFileOperations';
 import { useDragToMove } from './hooks/useDragToMove';
 import { useOsFileDragOut } from './hooks/useOsFileDragOut';
@@ -192,8 +192,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	// AI and terminal-only SSH sessions.
 	const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 
-	// Get current auto-refresh interval (180s default for unmigrated sessions)
-	const autoRefreshInterval = session.fileTreeAutoRefreshInterval ?? 180;
+	// Current auto-refresh interval (180s default for unmigrated sessions), the same rule in every mode
+	const autoRefreshInterval = fileTreeAutoRefreshSeconds(session);
 
 	// ── Flatten + Selection ────────────────────────────────────────────────────
 

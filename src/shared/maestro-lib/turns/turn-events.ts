@@ -11,6 +11,10 @@
  *   is the same words again, so it is dropped. A provider that sends only a `result` (no partials)
  *   is read from the result. This is `TurnCapture`'s fallback order, applied as the events go by.
  * - **Reasoning is `thinking`, never answer text.** A partial event marked `isReasoning` is thought.
+ *   Which partials are a thinking chunk is `partialTextRoute()`, the rule the desktop's
+ *   `StdoutHandler` reads too, so a sticky tab keeps the same `thinking` entries in every mode. A
+ *   partial that is a thinking chunk and answer text both (Claude) is said as thinking only, and
+ *   the answer is read from the `result`, as the desktop draws it.
  * - **Usage is passed on as the provider reported it.** A client must not sum these (see `TurnEvent`).
  *
  * Stateful by design: one mapper per turn, because "has answer text been seen" is a fact about the
@@ -192,6 +196,51 @@ function toolCall(
 	return { kind: 'tool', tool };
 }
 
+/**
+ * Providers that stream the final answer as partial `text` WITHOUT `isReasoning`: only a delta
+ * tagged `isReasoning` is a thinking chunk. Sending their answer to the thinking display makes a
+ * turn look finished while tools still run (Grok emits no tool events on the stream), and a sticky
+ * tab printed every Antigravity answer twice. Antigravity's real thinking rides in as
+ * `reasoningText` instead.
+ */
+const REASONING_TAGGED_PROVIDERS: ReadonlySet<string> = new Set([
+	'grok',
+	'codex',
+	'opencode',
+	'kilo',
+	'omp',
+	'antigravity',
+]);
+
+/** What one partial `text` event is: a thinking chunk, answer text, or both. */
+export interface PartialTextRoute {
+	thinking: boolean;
+	answer: boolean;
+}
+
+/**
+ * The one rule for a partial `text` event, read by the desktop's `StdoutHandler` (a local and an
+ * SSH turn) and by `createTurnEventMapper()` (a Federation host's turn).
+ *
+ * - Copilot: never a thinking chunk (its deltas accumulate and flush once at exit).
+ * - The `REASONING_TAGGED_PROVIDERS`: a thinking chunk only when tagged `isReasoning`.
+ * - Claude Code, Factory Droid and the rest: EVERY partial is a thinking chunk. Claude's assistant
+ *   text arrives as partials with `isReasoning` unset, and that live preview is what drives the
+ *   thinking display during a turn; a sticky tab keeps it after the turn.
+ *
+ * Reasoning is never answer text.
+ */
+export function partialTextRoute(
+	provider: string,
+	isReasoning: boolean | undefined
+): PartialTextRoute {
+	return {
+		thinking:
+			provider !== 'copilot-cli' && (!REASONING_TAGGED_PROVIDERS.has(provider) || !!isReasoning),
+		answer: !isReasoning,
+	};
+}
+
 export function createTurnEventMapper(options: TurnEventMapperOptions): TurnEventMapper {
 	const now = options.now ?? Date.now;
 	let answerTextSeen = false;
@@ -225,11 +274,27 @@ export function createTurnEventMapper(options: TurnEventMapperOptions): TurnEven
 
 			const parentId = subagentDisplayParentOf(event);
 
+			// Reasoning that rode in on another event (Antigravity reads a model step's thinking from
+			// its conversation store), ahead of the step's own text, as the desktop emits it.
+			if (event.reasoningText) out.push({ kind: 'thinking', text: event.reasoningText });
+
 			switch (event.type) {
 				case 'text': {
-					if (event.isPartial && event.isReasoning) {
-						if (event.text) out.push({ kind: 'thinking', text: event.text });
-					} else if (event.text && (event.isPartial || !answerTextSeen)) {
+					if (event.isPartial) {
+						if (event.text) {
+							const route = partialTextRoute(options.agentId, event.isReasoning);
+							if (route.thinking) {
+								// A partial that is a thinking chunk is said once, as thinking, even when it is
+								// also answer text (Claude's assistant messages): the desktop streams it to the
+								// thinking display and draws the answer from the `result`, which this mapper then
+								// says, so a client never gets the same words twice.
+								out.push({ kind: 'thinking', text: event.text });
+							} else if (route.answer) {
+								answerTextSeen = true;
+								out.push({ kind: 'text', text: event.text });
+							}
+						}
+					} else if (event.text && !answerTextSeen) {
 						// A text event that is not partial and arrives before any answer text is the
 						// whole answer from a provider that does not stream; one after streaming is a repeat.
 						answerTextSeen = true;

@@ -426,24 +426,6 @@ describe('tabStore', () => {
 			expect(session.aiTabs[0].saveToHistory).toBe(false);
 		});
 
-		it('should cycle thinking mode: off → on → sticky → off', () => {
-			const tab1 = createMockAITab({ id: 'tab-1' });
-			setupSessionWithTabs([tab1]);
-
-			// Default is off (undefined → treated as 'off')
-			useTabStore.getState().cycleThinkingMode('tab-1');
-			let session = useSessionStore.getState().sessions[0];
-			expect(session.aiTabs[0].showThinking).toBe('on');
-
-			useTabStore.getState().cycleThinkingMode('tab-1');
-			session = useSessionStore.getState().sessions[0];
-			expect(session.aiTabs[0].showThinking).toBe('sticky');
-
-			useTabStore.getState().cycleThinkingMode('tab-1');
-			session = useSessionStore.getState().sessions[0];
-			expect(session.aiTabs[0].showThinking).toBe('off');
-		});
-
 		it('should be no-op for non-existent tab', () => {
 			const tab1 = createMockAITab({ id: 'tab-1' });
 			setupSessionWithTabs([tab1]);
@@ -451,7 +433,6 @@ describe('tabStore', () => {
 			// These should not throw
 			useTabStore.getState().starTab('non-existent');
 			useTabStore.getState().toggleReadOnly('non-existent');
-			useTabStore.getState().cycleThinkingMode('non-existent');
 
 			// Tab-1 should be unchanged
 			const session = useSessionStore.getState().sessions[0];

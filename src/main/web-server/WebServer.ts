@@ -1,4 +1,5 @@
 import type { QueuedTurnEdit } from '../../shared/maestro-lib/client/types';
+import type { CliAudience } from './queue-change-broadcast';
 import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
 import { pianolaScopeSnapshotFromDesktop } from '../../shared/pianola/pianola-scope-cycle';
 import type {
@@ -1427,8 +1428,14 @@ export class WebServer {
 			},
 			getBridgeEpoch: () => this.broadcastService.bridgeEpoch,
 			getBridgeSeq: () => this.broadcastService.getBridgeSeq(),
-			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId) =>
-				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId),
+			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId, cli, queueChanges) =>
+				this.broadcastService.resumeBridgeClient(
+					epoch,
+					lastSeq,
+					subscribedSessionId,
+					cli,
+					queueChanges
+				),
 		});
 		this.wsRoute.registerRoute(this.server);
 		registerLiteConnectionRoutes(this.server, {
@@ -1605,6 +1612,7 @@ export class WebServer {
 				dispatchCallback?: boolean,
 				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl,
 				turnOverrides?: import('../../shared/maestro-lib/client/types').TurnOverrides,
+				agentText?: import('../../shared/maestro-lib/client/types').TurnAgentText,
 				hostedTurn?: boolean
 			) =>
 				this.callbackRegistry.enqueueCommand(
@@ -1620,6 +1628,7 @@ export class WebServer {
 					dispatchCallback,
 					control,
 					turnOverrides,
+					agentText,
 					hostedTurn
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
@@ -1864,6 +1873,16 @@ export class WebServer {
 
 	broadcastToAll(message: object): void {
 		this.broadcastService.broadcastToAll(message);
+	}
+
+	/** To the clients admitted by the CLI secret only (`BroadcastService.broadcastToCliClients`). */
+	broadcastToCliClients(message: object, audience?: CliAudience): void {
+		this.broadcastService.broadcastToCliClients(message, audience);
+	}
+
+	/** How many open clients the CLI secret admitted read queue changes, and how many do not. */
+	getCliClientCounts(): Record<CliAudience, number> {
+		return this.broadcastService.getCliClientCounts();
 	}
 
 	broadcastSessionStateChange(

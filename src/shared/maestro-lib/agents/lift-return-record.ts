@@ -7,12 +7,23 @@
  */
 
 import type { AITabRecord } from '../store/records';
-import { readLiftedTo } from './lift-pointer';
+import { readLiftedTo, type LiftedToPointer } from './lift-pointer';
 
 /** What the host held, to merge into the local record. Each tab carries its transcript. */
 export interface ReturnedFromHost {
 	tabs: AITabRecord[];
 	activeTabId?: string;
+	/**
+	 * The host's copy this move back leaves behind (the host was not reached, or the caller kept
+	 * it). Recorded on the local agent as `leftOnHost`, so the next Move to Host of the SAME agent
+	 * replaces that copy instead of being refused for its name (`runLift()`).
+	 */
+	leftOnHost?: LiftedToPointer;
+}
+
+/** The host copy a move back left behind, or undefined when the field is absent or malformed. */
+export function readLeftOnHost(record: { leftOnHost?: unknown }): LiftedToPointer | undefined {
+	return readLiftedTo(record.leftOnHost);
 }
 
 /** A host tab as a local tab record: the fields a local tab needs, idle, with its transcript. */
@@ -78,12 +89,13 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 			? returned.activeTabId
 			: record.activeTabId;
 
-	const { liftedTo: _liftedTo, ...rest } = record;
+	const { liftedTo: _liftedTo, leftOnHost: _leftOnHost, ...rest } = record;
 	return {
 		...rest,
 		aiTabs,
 		...(order ? { unifiedTabOrder: order } : {}),
 		...(activeTabId !== undefined ? { activeTabId } : {}),
+		...(returned.leftOnHost ? { leftOnHost: returned.leftOnHost } : {}),
 		hostedOptOut: true,
 	} as unknown as T;
 }
@@ -94,7 +106,7 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
  */
 export function readReturnedFromHost(value: unknown): ReturnedFromHost | undefined {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-	const raw = value as { tabs?: unknown; activeTabId?: unknown };
+	const raw = value as { tabs?: unknown; activeTabId?: unknown; leftOnHost?: unknown };
 	if (!Array.isArray(raw.tabs)) return undefined;
 	const tabs: AITabRecord[] = [];
 	for (const tab of raw.tabs) {
@@ -103,11 +115,13 @@ export function readReturnedFromHost(value: unknown): ReturnedFromHost | undefin
 		if (typeof id !== 'string' || !id) return undefined;
 		tabs.push(tab as AITabRecord);
 	}
+	const leftOnHost = readLiftedTo(raw.leftOnHost);
 	return {
 		tabs,
 		...(typeof raw.activeTabId === 'string' && raw.activeTabId
 			? { activeTabId: raw.activeTabId }
 			: {}),
+		...(leftOnHost ? { leftOnHost } : {}),
 	};
 }
 

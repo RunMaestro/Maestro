@@ -73,7 +73,6 @@ import {
 	toggleReadOnlyModeFields,
 	permissionModeFields,
 	nextPermissionMode,
-	cycleShowThinkingFields,
 	setShowThinkingFields,
 	findNextUnreadSession,
 	findPreviousUnreadSession,
@@ -6908,46 +6907,6 @@ describe('tabHelpers', () => {
 		});
 	});
 
-	describe('cycleShowThinkingFields', () => {
-		const thinkingLog: LogEntry = {
-			id: 'think-1',
-			timestamp: 1,
-			source: 'thinking',
-			text: 'reasoning',
-		};
-		const toolLog: LogEntry = { id: 'tool-1', timestamp: 2, source: 'tool', text: 'edit' };
-		const stdoutLog: LogEntry = { id: 'out-1', timestamp: 3, source: 'stdout', text: 'ok' };
-		const mixedLogs = [thinkingLog, toolLog, stdoutLog];
-
-		it('cycles off to on and leaves logs unchanged', () => {
-			expect(cycleShowThinkingFields({ showThinking: 'off', logs: mixedLogs })).toEqual({
-				showThinking: 'on',
-				logs: mixedLogs,
-			});
-		});
-
-		it('treats an unset mode as off, same as nextThinkingMode', () => {
-			expect(cycleShowThinkingFields({ showThinking: undefined, logs: mixedLogs })).toEqual({
-				showThinking: 'on',
-				logs: mixedLogs,
-			});
-		});
-
-		it('cycles on to sticky and leaves logs unchanged', () => {
-			expect(cycleShowThinkingFields({ showThinking: 'on', logs: mixedLogs })).toEqual({
-				showThinking: 'sticky',
-				logs: mixedLogs,
-			});
-		});
-
-		it('cycles sticky to off and drops only thinking logs', () => {
-			expect(cycleShowThinkingFields({ showThinking: 'sticky', logs: mixedLogs })).toEqual({
-				showThinking: 'off',
-				logs: [toolLog, stdoutLog],
-			});
-		});
-	});
-
 	describe('setShowThinkingFields', () => {
 		const thinkingLog: LogEntry = {
 			id: 'think-1',
@@ -6972,19 +6931,6 @@ describe('tabHelpers', () => {
 				showThinking: 'off',
 				logs: [toolLog],
 			});
-		});
-
-		it('agrees with cycleShowThinkingFields on every step of the cycle', () => {
-			// The cycle delegates here, so the log-clearing rule is written once.
-			for (const [from, to] of [
-				['off', 'on'],
-				['on', 'sticky'],
-				['sticky', 'off'],
-			] as const) {
-				expect(cycleShowThinkingFields({ showThinking: from, logs: mixedLogs })).toEqual(
-					setShowThinkingFields({ logs: mixedLogs }, to)
-				);
-			}
 		});
 	});
 

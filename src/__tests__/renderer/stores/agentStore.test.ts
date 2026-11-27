@@ -10,13 +10,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { webcrypto } from 'node:crypto';
 import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act } from '@testing-library/react';
+import { withTurnAgentText } from '../../../shared/maestro-lib/turns/prompt';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
-import { resetStores } from '../../helpers';
+import { agentModeFields, resetStores } from '../../helpers';
 import { useSessionTranscriptSync } from '../../../renderer/hooks/session/useSessionTranscriptSync';
 import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
 import { resetAutoTurnForTests } from '../../../renderer/services/autoTurn';
@@ -1588,6 +1589,28 @@ describe('agentStore', () => {
 			unmount();
 		});
 
+		// A managed spawn's prompt must equal the item text, so agent-only text cannot ride on it:
+		// the item is held with the reason, never run without the notes (CodeRabbit on #2148).
+		it.each([
+			['agentContext', { agentContext: 'Replies: ...' }],
+			['agentNotes', { agentNotes: 'Asked @Backend.' }],
+		] as const)(
+			'holds a managed queue item that carries %s, and spawns nothing',
+			async (_n, extra) => {
+				const item = createQueuedItem({ pendingAdmissionId: 'dispatch-1', ...extra });
+				useSessionStore
+					.getState()
+					.setSessions([createMockSession({ id: 'session-1', executionQueue: [item] })]);
+				await useAgentStore
+					.getState()
+					.processQueuedItem('session-1', item, defaultDeps)
+					.catch(() => undefined);
+				expect(mockSpawn).not.toHaveBeenCalled();
+				const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+				expect(logs.some((log) => log.text.includes('DispatchQueueRoutingUnsupported'))).toBe(true);
+			}
+		);
+
 		it.each(['user', 'auto', undefined] as const)(
 			'preserves queued message and command provenance %s without promoting unknown callers',
 			async (querySource) => {
@@ -1948,6 +1971,106 @@ describe('agentStore', () => {
 				expect(mockSpawn).toHaveBeenCalledTimes(1);
 				expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
 			});
+		});
+
+		// A Federation sender's agent-only text (a desktop host running a hosted agent's turn) lays
+		// out as the headless host lays it: one `withTurnAgentText()` for both (M16).
+		// A hosted agent's turn carries the same two fields to its host (hostedQueuedTurn.test.ts),
+		// and a host too old for them gets this same text as its message (ws-client.test.ts).
+		it.each(['local', 'ssh'] as const)(
+			"%s: lays a received turn's agent-only text around the prompt as a headless host does",
+			async (mode) => {
+				const session = createMockSession({
+					...agentModeFields(mode),
+					id: 'session-1',
+					toolType: 'claude-code',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: 'existing-conv-id',
+							name: null,
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'tab-1',
+				});
+				useSessionStore.getState().setSessions([session]);
+
+				await useAgentStore.getState().processQueuedItem(
+					'session-1',
+					createQueuedItem({
+						tabId: 'tab-1',
+						text: 'Finish your answer.',
+						agentContext: 'Replies:\nBackend: fine.',
+						agentNotes: 'Your answer goes to Backend.',
+					}),
+					defaultDeps
+				);
+
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				const prompt = mockSpawn.mock.calls[0][0].prompt;
+				expect(prompt).toBe(
+					withTurnAgentText('Finish your answer.', {
+						agentContext: 'Replies:\nBackend: fine.',
+						agentNotes: 'Your answer goes to Backend.',
+					})
+				);
+				expect(prompt).toBe(
+					'Replies:\nBackend: fine.\n\n---\n\nFinish your answer.\n\n---\n\nYour answer goes to Backend.'
+				);
+			}
+		);
+
+		it("lays a received command's agent-only text around its expanded prompt, as assembleTurn() does (Greptile on #2148)", async () => {
+			useSessionStore.getState().setSessions([
+				createMockSession({
+					id: 'session-1',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: 'existing-conv-id',
+							name: null,
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'tab-1',
+				}),
+			]);
+			await useAgentStore.getState().processQueuedItem(
+				'session-1',
+				createQueuedItem({
+					tabId: 'tab-1',
+					type: 'command',
+					command: '/read',
+					agentContext: 'Replies:\nBackend: fine.',
+					agentNotes: 'Your answer goes to Backend.',
+				}),
+				{
+					...defaultDeps,
+					customAICommands: [
+						{
+							id: 'read',
+							command: '/read',
+							description: 'Read mail',
+							prompt: 'Read authorized mail',
+						},
+					],
+				}
+			);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(mockSpawn.mock.calls[0][0].prompt).toBe(
+				'Replies:\nBackend: fine.\n\n---\n\nRead authorized mail\n\n---\n\nYour answer goes to Backend.'
+			);
 		});
 
 		// A queued message that @mentions another agent must consult that agent HERE,
@@ -2527,7 +2650,9 @@ describe('agentStore', () => {
 				}
 			);
 
-			it.each(['advertised', 'absent'] as const)(
+			// `agent-text`: a Federation sender's agent-only text cannot ride a command that must reach
+			// Grok exactly as typed, so it is refused, never run without it (CodeRabbit on #2148).
+			it.each(['advertised', 'absent', 'agent-text'] as const)(
 				'drains a native command only as the admitted intent (%s)',
 				async (catalog) => {
 					const session = createMockSession({
@@ -2560,7 +2685,7 @@ describe('agentStore', () => {
 					mockDiscoverSlashCommands.mockResolvedValue({
 						status: 'discovered',
 						commands:
-							catalog === 'advertised'
+							catalog !== 'absent'
 								? [
 										{
 											name: 'review',
@@ -2585,12 +2710,15 @@ describe('agentStore', () => {
 							effort: 'high',
 						},
 					});
-					const item = buildQueuedMessageItem({
-						session,
-						tab: session.aiTabs[0],
-						slashCommand: true,
-						text: '/review src/a.ts',
-					});
+					const item = {
+						...buildQueuedMessageItem({
+							session,
+							tab: session.aiTabs[0],
+							slashCommand: true,
+							text: '/review src/a.ts',
+						}),
+						...(catalog === 'agent-text' ? { agentNotes: 'Your answer goes to Backend.' } : {}),
+					};
 					const expectedGrokSpawnSelection = await getQueuedCommandSpawnSelection(session.id, item);
 					useSessionStore.getState().setSessions([applyQueuedItemDispatch(session, item)]);
 
@@ -2606,6 +2734,18 @@ describe('agentStore', () => {
 							source: 'error',
 							text: expect.stringContaining('not advertised for this Grok conversation'),
 						});
+						return;
+					}
+					if (catalog === 'agent-text') {
+						expect(dispatched).toBe(false);
+						expect(mockSpawn).not.toHaveBeenCalled();
+						expect(updated.aiTabs[0].logs.at(-1)).toMatchObject({
+							source: 'error',
+							text: expect.stringContaining("cannot carry a consult's replies"),
+						});
+						expect(updated.executionQueue.find((queued) => queued.id === item.id)?.paused).toBe(
+							true
+						);
 						return;
 					}
 					expect(dispatched).toBe(true);

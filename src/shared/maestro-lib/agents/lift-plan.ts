@@ -155,6 +155,11 @@ export interface LiftPlanSummary {
 	/** Queued messages that move, by queue item id, in queue order. */
 	queued: string[];
 	stays: LiftPlanStay[];
+	/**
+	 * `peer:agentId` of the copy an earlier Move Back left on this host, which this lift replaces
+	 * (`runLift()`). Absent for a plain lift.
+	 */
+	replaces?: string;
 }
 
 export interface LiftPlan {
@@ -346,6 +351,8 @@ export function planAgentLift(input: PlanAgentLiftInput): LiftPlan {
 		tabs: importTabs,
 		...(activeTabId ? { activeTabId } : {}),
 		...(queue.length > 0 ? { queue } : {}),
+		// The host stores it, and replaces a copy a Move Back left only when it carries this id.
+		liftedFromAgentId: agent.id,
 	};
 
 	const summary: LiftPlanSummary = {

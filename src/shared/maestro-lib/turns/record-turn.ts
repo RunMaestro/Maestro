@@ -30,7 +30,7 @@
  * Usage is recorded for every turn that ran.
  */
 
-import { formatSessionId } from '../store/tab-display';
+import { historyEntryTabName } from '../store/tab-display';
 import { TURN_CANCELED_NOTE, type LogEntryRecord } from '../store/transcript';
 import type { AgentRecord, AITabRecord } from '../store/records';
 import type { NativeSessionBinding } from '../agents/providerSwap';
@@ -103,7 +103,16 @@ export interface RecordedTurn {
 	 * turn's end ('sticky'); the rest is recorded from `completed`.
 	 */
 	streamed?: readonly LogEntryRecord[];
+	/**
+	 * Whether the turn ran a tool, for a caller that folds `streamed` only for a tab that keeps its
+	 * cards (the runtime folds a 'sticky' tab's only). True wins over `streamed`, which may hold
+	 * some cards and not the tool's. Absent or false: `streamed` says whether a tool ran.
+	 */
+	ranTool?: boolean;
 }
+
+/** What a turn that ran a tool shows the History gate when its cards were not folded. */
+const RAN_TOOL_LOGS: ReadonlyArray<{ source: string }> = [{ source: 'tool' }];
 
 /** What happened to each record. A skipped record says why. */
 export interface TurnRecordResult {
@@ -362,7 +371,8 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 		} else if (
 			options.summarize &&
 			!turnDidMeaningfulWork(
-				turn.streamed ?? [],
+				// A tool counts whether or not its card was folded (the tab may have left sticky mid-turn).
+				turn.ranTool ? RAN_TOOL_LOGS : (turn.streamed ?? []),
 				!!turn.assembled.entry.aiCommand,
 				thinkingLogsRecorded(tab.showThinking as ThinkingMode | boolean | undefined)
 			)
@@ -383,8 +393,7 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 				summary,
 				...(completed.answerText ? { fullResponse: completed.answerText } : {}),
 				...(completed.sessionId ? { agentSessionId: completed.sessionId } : {}),
-				sessionName:
-					tab.name || (completed.sessionId ? formatSessionId(completed.sessionId) : undefined),
+				sessionName: historyEntryTabName(tab, completed.sessionId),
 				projectPath: turn.scope?.projectPath ?? agent.cwd ?? '',
 				...(provider === 'grok'
 					? {

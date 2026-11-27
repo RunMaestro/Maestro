@@ -1,10 +1,20 @@
 const hostPaths = vi.hoisted(() => ({ userData: '' }));
 vi.mock('electron', () => ({ app: { getPath: () => hostPaths.userData } }));
 
+const bridgeRead = vi.hoisted(() => ({ invokeAsBridge: vi.fn() }));
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/web-server/handlers/bridgeHandlers')>()),
+	invokeAsBridge: bridgeRead.invokeAsBridge,
+}));
+
 vi.mock(
 	'../../../../main/plugins/plugin-scan',
 	async () => await import('../../../helpers/pluginScan')
 );
+import {
+	recordFramedQueue,
+	resetQueueChangeFrames,
+} from '../../../../main/web-server/queue-change-frames';
 import { MAESTRO_PUBLISHER_KEYS } from '../../../../shared/plugins/publisher-keys';
 import { RELAY_PUBLISHER_KEY } from '../../../../shared/plugins/relay-identity';
 /**
@@ -1543,6 +1553,38 @@ describe('WebSocketMessageHandler', () => {
 				requestId: 'req-1',
 			});
 			expect(response.error).toContain('mid-turn');
+		});
+
+		// M19: a hosted agent's host has no `--force`; the CLI must print queued, not delivered.
+		it('answers a command a hosted agent host queued as a queued command_result with its item', async () => {
+			(callbacks.executeCommand as any).mockResolvedValue({
+				queued: true,
+				itemId: 'q-7',
+				queuePosition: 2,
+			});
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'test',
+				inputMode: 'ai',
+				tabId: 'busy-tab',
+				force: true,
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'command_result',
+				success: true,
+				queued: true,
+				itemId: 'q-7',
+				queuePosition: 2,
+				tabId: 'busy-tab',
+				requestId: 'req-1',
+			});
+			expect(response.error).toBeUndefined();
 		});
 
 		it('omits tabId from command_result on the no-tabId path so callers do not chain to a stale snapshot', async () => {
@@ -4517,7 +4559,7 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
-		it('forwards the hosted-turn mark after the overrides slot, filling the empty slots', async () => {
+		it('forwards the hosted-turn mark after the agent-text slot, filling the empty slots', async () => {
 			handler.handleMessage(client, {
 				type: 'enqueue_command',
 				sessionId: 'session-1',
@@ -4542,9 +4584,152 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					undefined,
 					undefined,
+					undefined,
 					true
 				);
 			});
+		});
+
+		it("forwards a Federation sender's agent-only text after the overrides slot, read as the headless host reads it (M16)", async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Mine',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+				agentContext: 'Replies:\nBackend: the cache is fine.',
+				agentNotes: '   ',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Mine',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					{ agentContext: 'Replies:\nBackend: the cache is fine.' }
+				);
+			});
+		});
+
+		// Parity R19: the resend of a message this tab already answered (the client lost track of
+		// the turn: a cut link, a restart) never runs again, as a headless host refuses it.
+		describe('the resend of a message the tab already answered (entryId, R19)', () => {
+			const QUESTION = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize the docs' };
+			const resend = (text = 'Summarize the docs') =>
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: text,
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					background: true,
+					entryId: 'u1',
+					requestId: 'r1',
+				});
+
+			afterEach(() => bridgeRead.invokeAsBridge.mockReset());
+
+			it('answers "already ran" and queues nothing when an answer follows the entry', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [QUESTION, { id: 'a1', timestamp: 2, source: 'ai', text: 'The docs say...' }],
+				});
+				resend();
+				await vi.waitFor(() =>
+					expect(lastSend()).toMatchObject({
+						type: 'enqueue_command_result',
+						success: true,
+						queued: false,
+						answered: true,
+						tabId: 'tab-1',
+					})
+				);
+				expect(bridgeRead.invokeAsBridge).toHaveBeenCalledWith(
+					'sessions:getDeferredContent',
+					'session-1',
+					'tab-1',
+					false
+				);
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			});
+
+			it.each([
+				['the turn died before an answer', { logs: [QUESTION] }, 'Summarize the docs'],
+				// Parity R23: a2 answers the later u2, never u1, whose own turn died.
+				[
+					'only a later message was answered',
+					{
+						logs: [
+							QUESTION,
+							{ id: 'u2', timestamp: 3, source: 'user', text: 'And the tests?' },
+							{ id: 'a2', timestamp: 4, source: 'ai', text: 'The tests...' },
+						],
+					},
+					'Summarize the docs',
+				],
+				[
+					'the message was edited while it was kept',
+					{ logs: [QUESTION, { id: 'a1', timestamp: 2, source: 'ai', text: 'ok' }] },
+					'Summarize the docs, briefly',
+				],
+			])('runs the message when %s', async (_why, read, text) => {
+				bridgeRead.invokeAsBridge.mockResolvedValue(read);
+				resend(text);
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			it('runs the message when the tab cannot be read: the client read the host first', async () => {
+				bridgeRead.invokeAsBridge.mockRejectedValue(new Error('no owner'));
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+			});
+		});
+
+		it.each([
+			[{ agentContext: 42 }, 'agentContext must be text.'],
+			[{ agentNotes: 'x'.repeat(1_000_001) }, 'agentNotes is longer than 1000000 characters.'],
+		])(
+			'refuses agent-only text it cannot take, and queues nothing (M16)',
+			async (fields, error) => {
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: 'Mine',
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					...fields,
+				});
+				await vi.waitFor(() =>
+					expect(lastSend()).toMatchObject({
+						type: 'enqueue_command_result',
+						success: false,
+						error,
+					})
+				);
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			}
+		);
+
+		it('names what it does beyond the base protocol, as the headless host does (M16)', async () => {
+			handler.handleMessage(client, { type: 'host_capabilities', requestId: 'r1' });
+			await vi.waitFor(() =>
+				expect(lastSend()).toMatchObject({
+					type: 'host_capabilities_result',
+					requestId: 'r1',
+					success: true,
+					capabilities: ['turn-agent-text'],
+				})
+			);
 		});
 
 		it('forwards sessionId/command/tab/background to the callback and replies with queue info', async () => {
@@ -4718,6 +4903,29 @@ describe('WebSocketMessageHandler', () => {
 				expect(response.success).toBe(true);
 				expect(Array.isArray(response.queues)).toBe(true);
 			});
+		});
+
+		// Parity M28: a client that reads queue changes applies the next one over this answer.
+		it('answers each queue with the seq of the last changes frame sent for it (M28)', async () => {
+			resetQueueChangeFrames();
+			recordFramedQueue('session-1', { seq: 4, items: new Map() });
+			vi.mocked(callbacks.listQueue).mockResolvedValue({
+				success: true,
+				queues: [
+					{ sessionId: 'session-1', name: 'A', state: 'idle', items: [] },
+					{ sessionId: 'session-2', name: 'B', state: 'idle', items: [] },
+				],
+			});
+			handler.handleMessage(client, { type: 'list_queue' });
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.queues).toMatchObject([
+					{ sessionId: 'session-1', queueSeq: 4 },
+					{ sessionId: 'session-2', queueSeq: 0 },
+				]);
+			});
+			resetQueueChangeFrames();
 		});
 
 		it('passes undefined when no sessionId is provided (all agents)', async () => {

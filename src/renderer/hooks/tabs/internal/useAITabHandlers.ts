@@ -14,13 +14,13 @@ import { persistTabStarred } from '../../../utils/starredSessions';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { closeAiTabInSession } from '../../../services/aiTabClose';
 import { requestDesktopTabCloses } from '../../../services/desktopTabClose';
+import { cycleTabThinkingMode } from '../../../services/tabThinkingMode';
 import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
 import {
 	aiTabFocusFields,
 	closeTab,
 	addAiTabToUnifiedHistory,
 	createTab,
-	cycleShowThinkingFields,
 	getActiveTab,
 	getInitialRenameValue,
 	getRepairedUnifiedTabOrder,
@@ -350,10 +350,7 @@ export function useAITabHandlers(
 		if (!session) return;
 		const currentActiveTab = getActiveTab(session);
 		if (!currentActiveTab) return;
-		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
-			...tab,
-			...cycleShowThinkingFields(tab),
-		}));
+		cycleTabThinkingMode(session.id, currentActiveTab.id);
 	}, []);
 
 	const handleToggleTabEnterToSend = useCallback(() => {

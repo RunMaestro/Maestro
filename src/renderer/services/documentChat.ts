@@ -30,12 +30,7 @@
 
 import type { AITab, QueuedItem, Session } from '../types';
 import { useSessionStore, updateSessionWith, selectActiveSession } from '../stores/sessionStore';
-import {
-	createTab,
-	focusAiTabInSession,
-	revealAiTab,
-	cycleShowThinkingFields,
-} from '../utils/tabHelpers';
+import { createTab, focusAiTabInSession, revealAiTab } from '../utils/tabHelpers';
 import { enqueuePromptForTab, removeQueuedItem } from './queuedPrompt';
 import {
 	buildDocumentOpeningPrompt,
@@ -46,6 +41,7 @@ import { notifyToast } from '../stores/notificationStore';
 import { logsToQuickChatMessages } from '../../shared/quickChat';
 import { cancelRecoveryForTab } from '../stores/retryStore';
 import { processService } from './process';
+import { cycleTabThinkingMode } from './tabThinkingMode';
 
 /** One line in the bubble's history. */
 export interface DocumentChatMessage {
@@ -397,12 +393,7 @@ export function cycleDocumentChatThinking(options: { path: string; sessionId?: s
 	if (!sessionId) return;
 	const ensured = ensureDocumentChatTab(sessionId, options.path);
 	if (!ensured) return;
-	updateSessionWith(sessionId, (session) => ({
-		...session,
-		aiTabs: session.aiTabs.map((tab) =>
-			tab.id === ensured.tabId ? { ...tab, ...cycleShowThinkingFields(tab) } : tab
-		),
-	}));
+	cycleTabThinkingMode(sessionId, ensured.tabId);
 }
 
 /** Resume an earlier thread without changing the file or the main tab selection. */

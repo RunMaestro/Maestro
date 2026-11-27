@@ -61,6 +61,23 @@ describe('ssh-remote-status', () => {
 		expect(JSON.parse(log.mock.calls[0][0])).toEqual({ success: true, unreachable: [outage] });
 	});
 
+	it('names a host outage (ssh works, the Maestro host does not) apart from an SSH one', async () => {
+		sendCommand.mockResolvedValue({
+			success: true,
+			unreachable: [
+				outage,
+				{ ...outage, remoteId: 'remote-2', remoteName: 'box', cause: 'host', message: 'x' },
+			],
+		});
+
+		await sshRemoteStatus({});
+
+		const lines = log.mock.calls.map((call) => String(call[0]));
+		expect(lines.some((l) => l.includes('UNREACHABLE') && l.includes('pedtome'))).toBe(true);
+		expect(lines.some((l) => l.includes('HOST UNREACHABLE') && l.includes('box'))).toBe(true);
+		expect(lines.some((l) => l.includes('HOST UNREACHABLE') && l.includes('pedtome'))).toBe(false);
+	});
+
 	it('says so plainly when nothing is down', async () => {
 		sendCommand.mockResolvedValue({ success: true, unreachable: [] });
 		await sshRemoteStatus({});

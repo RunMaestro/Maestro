@@ -702,6 +702,15 @@ function hostQueuedEdit(edit: QueuedTurnEdit): QueuedTurnEdit {
 	};
 }
 
+/** Why an edit that adds images waits: the host's own images for the message are not here yet. */
+export const QUEUED_EDIT_IMAGES_PENDING_REASON =
+	"This message's images are still loading from its host. Try again in a moment.";
+
+/** An edit that keeps the host's images: it names none. */
+function withoutEditImages({ images: _images, ...edit }: QueuedTurnEdit): QueuedTurnEdit {
+	return edit;
+}
+
 /** Why an edit did not land: the message left the queue (it started, or was removed). */
 export const QUEUED_EDIT_GONE_REASON =
 	'It no longer waits in the queue: it may have started already.';
@@ -723,10 +732,17 @@ export async function saveQueuedItemEdit(
 			? { saved: true }
 			: { saved: false, reason: QUEUED_EDIT_GONE_REASON };
 	}
+	// Its images are on the host but not here yet (M28): the card drew none, so an edit that names
+	// none keeps the host's, and one that adds images waits until the host's are here to keep.
+	const imagesPending = hosted.item.hostImagesPending === true;
+	if (imagesPending && edit.images?.length) {
+		return { saved: false, reason: QUEUED_EDIT_IMAGES_PENDING_REASON };
+	}
+	const hostEdit = hostQueuedEdit(edit);
 	const answer = await actOnMirroredAgentQuietly(hosted.peerId, hosted.agentId, {
 		kind: 'edit-queued',
 		itemId,
-		edit: hostQueuedEdit(edit),
+		edit: imagesPending ? withoutEditImages(hostEdit) : hostEdit,
 	});
 	if ('error' in answer) return { saved: false, reason: answer.error };
 	if (answer.result.kind !== 'edit-queued') return { saved: false, reason: HOST_NO_ANSWER_REASON };

@@ -9,7 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueuedItemEditModal } from '../../../renderer/components/QueuedItemEditModal';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
-import { saveQueuedItemEdit } from '../../../renderer/services/queuedPrompt';
+import {
+	QUEUED_EDIT_IMAGES_PENDING_REASON,
+	saveQueuedItemEdit,
+} from '../../../renderer/services/queuedPrompt';
 import { MODAL_SAVE_CHANGED_REASON } from '../../../renderer/hooks/ui/useModalSave';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -54,7 +57,7 @@ afterEach(() => {
 });
 
 /** A queued message as each mode holds it: a hosted agent's waits on its host. */
-function itemFor(mode: AgentMode): QueuedItem {
+function itemFor(mode: AgentMode, extra: Partial<QueuedItem> = {}): QueuedItem {
 	return {
 		id: 'q1',
 		timestamp: 0,
@@ -62,6 +65,7 @@ function itemFor(mode: AgentMode): QueuedItem {
 		type: 'message',
 		text: 'old text',
 		...(mode === 'hosted' ? { hostQueued: true } : {}),
+		...extra,
 	} as QueuedItem;
 }
 
@@ -69,8 +73,8 @@ function itemFor(mode: AgentMode): QueuedItem {
  * Render the modal on an agent of `mode`. `inQueue: false` is the local version of "the host no
  * longer holds it": the message left this window's queue (it started) while the modal was open.
  */
-function open(mode: AgentMode, inQueue: boolean) {
-	const item = itemFor(mode);
+function open(mode: AgentMode, inQueue: boolean, extra: Partial<QueuedItem> = {}) {
+	const item = itemFor(mode, extra);
 	useSessionStore.setState({
 		sessions: [
 			createModeSession(mode, {
@@ -200,5 +204,52 @@ describe('Edit Queued Message: a save that landed (P6)', () => {
 			const queued = useSessionStore.getState().sessions[0].executionQueue?.[0];
 			expect(queued?.text).toBe('new text');
 		}
+	});
+});
+
+// Parity M28: an older desktop host says an item's images are unchanged (`imagesKept`) before this
+// window holds them, so the card draws none. A text edit must not save the message without them.
+describe('Edit Queued Message: a message whose images are not here yet (M28)', () => {
+	const image = 'data:image/png;base64,AAAA';
+
+	it.each(AGENT_MODES)('%s: a text edit keeps the message images', async (mode) => {
+		const { onClose } = open(
+			mode,
+			true,
+			mode === 'hosted' ? { hostImagesPending: true } : { images: [image] }
+		);
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		if (mode === 'hosted') {
+			// No images named: the host keeps its own. The settings stay pinned to the provider.
+			expect(act).toHaveBeenLastCalledWith('box', 'h1', {
+				kind: 'edit-queued',
+				itemId: 'q1',
+				edit: {
+					text: 'new text',
+					turnSettings: expect.objectContaining({ provider: 'claude-code' }),
+				},
+			});
+		} else {
+			const queued = useSessionStore.getState().sessions[0].executionQueue?.[0];
+			expect(queued).toMatchObject({ text: 'new text', images: [image] });
+		}
+	});
+
+	it('hosted: an edit that adds images waits until the host images are here, and says why', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createModeSession('hosted', {
+					id: SID,
+					aiTabs: [createMockAITab({ id: 'tab-1' })],
+					executionQueue: [itemFor('hosted', { hostImagesPending: true })],
+				}),
+			],
+			activeSessionId: SID,
+		} as never);
+		expect(await saveQueuedItemEdit(SID, 'q1', { text: 'new text', images: [image] })).toEqual({
+			saved: false,
+			reason: QUEUED_EDIT_IMAGES_PENDING_REASON,
+		});
+		expect(act).not.toHaveBeenCalled();
 	});
 });

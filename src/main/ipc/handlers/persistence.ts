@@ -33,6 +33,7 @@ import { forgetAgentActors } from '../../web-server/auth/turn-attribution';
 import { deleteJourney } from '../../user-journey-manager';
 import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
+import { broadcastDesktopQueueChanges } from '../../web-server/queue-change-broadcast';
 import {
 	WEB_SETTINGS_BROADCAST_KEYS,
 	buildWebSettingsSnapshot,
@@ -1153,8 +1154,10 @@ export function registerPersistenceHandlers(
 
 				try {
 					await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
-					noteQueueRemovals(sessionsStore.get('sessions', []), sessionsToPersist);
+					const persistedBefore = sessionsStore.get('sessions', []);
+					noteQueueRemovals(persistedBefore, sessionsToPersist);
 					sessionsStore.set('sessions', sessionsToPersist);
+					broadcastDesktopQueueChanges(getWebServer(), persistedBefore, sessionsToPersist);
 					// Preserve the renderer acknowledgement contract: true means this
 					// revision reached disk, not merely the in-memory cache.
 					await flushSessionWrites();
@@ -1338,8 +1341,10 @@ export function registerPersistenceHandlers(
 			}
 
 			try {
-				noteQueueRemovals(sessionsStore.get('sessions', []), sessionsToPersist);
+				const persistedBefore = sessionsStore.get('sessions', []);
+				noteQueueRemovals(persistedBefore, sessionsToPersist);
 				sessionsStore.set('sessions', sessionsToPersist);
+				broadcastDesktopQueueChanges(getWebServer(), persistedBefore, sessionsToPersist);
 				await flushSessionWrites();
 			} catch (err) {
 				// ENOSPC, ENFILE, or JSON serialization failures are recoverable -

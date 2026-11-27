@@ -85,7 +85,7 @@ import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
-import { createFederationRuntime, getPeerMirrorService } from './federation';
+import { createFederationRuntime, getPeerMirrorService, onMirrorPush } from './federation';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
@@ -226,6 +226,7 @@ import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude
 import {
 	ensureCliServer,
 	flushRemoteCopyWriteBack,
+	pendingRemoteCopyWrites,
 	startCliDiscoveryWatchdog,
 	stopCliDiscoveryWatchdog,
 } from './ipc/handlers';
@@ -335,7 +336,8 @@ import { planWindowRestore, pickFocusWindowSpec } from './window-state-persisten
 import type { WindowState as SharedWindowState } from '../shared/window-types';
 import { setupAgentRunCapture } from './agent-run/setup-capture-listener';
 import { setAgentRunSink } from './agent-run/broadcast';
-import { configureSshReachability } from './ssh-reachability';
+import { configureSshReachability, forgetHostPeer, noteHostConnection } from './ssh-reachability';
+import { HOSTED_AGENTS_SETTING, readLiftedTo } from '../shared/maestro-lib/agents/lift-pointer';
 import { sshRemoteManager } from './ssh-remote-manager';
 import { startAgentRunStoreWatcher } from './agent-run/store-watcher';
 import { setupAgentRunRecovery } from './agent-run/setup-recovery';
@@ -721,6 +723,31 @@ configureSshReachability({
 	probe: (remote) => sshRemoteManager.probeReachability(remote),
 	emit: (event) => safeSend('ssh-remote:reachability', event),
 	hasLiveTransport: (remoteId) => getPeerMirrorService()?.isRemoteConnected(remoteId) ?? false,
+	// A hosted agent's host that stops answering is an outage of its remote, told through the
+	// same dialog. Only a host one of this machine's agents runs on counts.
+	hostsAgents: (peerId) => {
+		const hostedEnabled = store.get(HOSTED_AGENTS_SETTING, false) === true;
+		if (!hostedEnabled) return false;
+		const sessions = sessionsStore.get('sessions', []) as Array<{ liftedTo?: unknown }>;
+		return sessions.some((session) => readLiftedTo(session?.liftedTo)?.peer === peerId);
+	},
+	reconnectHost: async (remoteId) => {
+		const result = await getPeerMirrorService()?.reconnectRemote(remoteId);
+		return result?.ok ?? false;
+	},
+});
+onMirrorPush(({ peerId, event }) => {
+	if (event.type === 'peer.state') {
+		noteHostConnection({
+			remoteId: event.peer.remoteId,
+			peerId: event.peer.peerId,
+			name: event.peer.name,
+			connection: event.peer.connection,
+			...(event.peer.error ? { error: event.peer.error } : {}),
+		});
+	} else if (event.type === 'peer.removed') {
+		forgetHostPeer(peerId);
+	}
 });
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
@@ -4475,6 +4502,7 @@ quitHandler = createQuitHandler({
 		closeEmbeddingStore();
 	},
 	flushPendingRemoteWrites: flushRemoteCopyWriteBack,
+	listPendingRemoteWrites: pendingRemoteCopyWrites,
 	stopCliWatcher: () => {
 		cliWatcher.stop();
 		// Tear down the discovery-file watchdog so it doesn't try to rewrite

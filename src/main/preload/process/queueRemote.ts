@@ -3,7 +3,11 @@ import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
 import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
-import type { QueuedTurnEdit, TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import type {
+	QueuedTurnEdit,
+	TurnAgentText,
+	TurnOverrides,
+} from '../../../shared/maestro-lib/client/types';
 
 export function createQueueRemoteApi() {
 	return {
@@ -29,6 +33,8 @@ export function createQueueRemoteApi() {
 				control?: PianolaQueueControl,
 				/** A Federation sender's own tab chips for this one message (`TurnInput.overrides`). */
 				turnOverrides?: TurnOverrides,
+				/** A Federation sender's agent-only text for this turn (`agentContext`, `agentNotes`). */
+				agentText?: TurnAgentText,
 				/** Sent over the client protocol: a hosted agent's turn (`MAESTRO_HOSTED_TURN`). */
 				hostedTurn?: boolean
 			) => void
@@ -52,6 +58,7 @@ export function createQueueRemoteApi() {
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl,
 				turnOverrides?: TurnOverrides,
+				agentText?: TurnAgentText,
 				hostedTurn?: boolean
 			) => {
 				try {
@@ -69,7 +76,8 @@ export function createQueueRemoteApi() {
 						dispatchCallback,
 						control,
 					];
-					if (turnOverrides || hostedTurn) args.push(turnOverrides);
+					if (turnOverrides || agentText || hostedTurn) args.push(turnOverrides);
+					if (agentText || hostedTurn) args.push(agentText);
 					if (hostedTurn) args.push(true);
 					callback(...args);
 				} catch (error) {

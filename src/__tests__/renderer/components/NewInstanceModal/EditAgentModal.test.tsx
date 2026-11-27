@@ -3023,6 +3023,28 @@ describe('EditAgentModal', () => {
 			}
 		);
 
+		// T4: the note says what the spawn runs (`claudeTurnMayUseTui()`, the rule of
+		// `resolveClaudeSpawnModeCore()`), so every agent that runs the TUI shows it, in any mode.
+		it.each(AGENT_MODES)(
+			'shows the token source note for a %s agent exactly when its turns run the TUI',
+			async (mode) => {
+				installCotExport();
+				const runsTui = {
+					local: { customPath: '/opt/maestro/bin/maestro-p', enableMaestroP: false },
+					ssh: { enableMaestroP: undefined },
+					hosted: { enableMaestroP: undefined },
+				}[mode];
+				const view = renderModal(createModeSession(mode, runsTui));
+				expect(await screen.findByText(INTERACTIVE_NOTE)).toBeInTheDocument();
+				view.unmount();
+				// A stored Dynamic runs the TUI locally, and falls back to the API over SSH.
+				renderModal(createModeSession(mode, { enableMaestroP: true, maestroPMode: 'dynamic' }));
+				await sectionReady();
+				if (mode === 'local') expect(screen.getByText(INTERACTIVE_NOTE)).toBeInTheDocument();
+				else expect(screen.queryByText(INTERACTIVE_NOTE)).not.toBeInTheDocument();
+			}
+		);
+
 		it('shows no token source note for an agent on the API', async () => {
 			installCotExport();
 			renderModal(createSession({ enableMaestroP: false }));

@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab } from '../../types';
-import {
-	cycleShowThinkingFields,
-	moveActiveUnifiedTabToEdge,
-	toggleReadOnlyModeFields,
-} from '../../utils/tabHelpers';
+import { moveActiveUnifiedTabToEdge, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
+import { cycleTabThinkingMode } from '../../services/tabThinkingMode';
 import {
 	resolveActiveTabRef,
 	resolveModelEffortTabId,
@@ -1656,14 +1653,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					}
 					if (ctx.isTabShortcut(e, 'toggleShowThinking')) {
 						e.preventDefault();
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => {
-								if (s.id !== activeSession!.id) return s;
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((tab: AITab) => {
-										if (tab.id !== s.activeTabId) return tab;
-										if (tab.wizardState?.isActive) {
+						const thinkingTab = activeSession!.aiTabs.find(
+							(tab: AITab) => tab.id === activeSession!.activeTabId
+						);
+						if (thinkingTab?.wizardState?.isActive) {
+							ctx.setSessions((prev: Session[]) =>
+								prev.map((s: Session) => {
+									if (s.id !== activeSession!.id) return s;
+									return {
+										...s,
+										aiTabs: s.aiTabs.map((tab: AITab) => {
+											if (tab.id !== s.activeTabId || !tab.wizardState) return tab;
 											return {
 												...tab,
 												wizardState: {
@@ -1674,12 +1674,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 														: tab.wizardState.thinkingContent,
 												},
 											};
-										}
-										return { ...tab, ...cycleShowThinkingFields(tab) };
-									}),
-								};
-							})
-						);
+										}),
+									};
+								})
+							);
+						} else if (thinkingTab) {
+							// The same write the Thinking pill makes, so a hosted tab's host gets it too.
+							cycleTabThinkingMode(activeSession!.id, thinkingTab.id);
+						}
 						trackShortcut('toggleShowThinking');
 					}
 				}

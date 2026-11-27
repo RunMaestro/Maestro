@@ -6,7 +6,7 @@ import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
 import { requestRemoteCommandReceipt } from './remoteCommandReceipt';
 import { REMOTE_COMMAND_CLAIM_TIMEOUT_MS } from '../../../shared/remoteCommandReceipt';
-import type { ConsultAgentResult } from '../types';
+import type { ConsultAgentResult, ExecuteCommandQueued } from '../types';
 import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { snapshotAiTurnProcesses, waitForAiTurnsToExit } from '../../utils/agent-busy';
@@ -164,6 +164,13 @@ export function registerCommandCallbacks(
 			// Scoped callers preserve the durable intent when this throws.
 			if (requireDeliveryReceipt && (receipt.timedOut || receipt.reason === 'malformed-receipt')) {
 				throw new Error('Renderer delivery outcome unknown');
+			}
+			if (receipt.accepted && receipt.queued) {
+				return {
+					queued: true,
+					itemId: receipt.queued.itemId,
+					queuePosition: receipt.queued.position,
+				} satisfies ExecuteCommandQueued;
 			}
 			return receipt.accepted;
 		}

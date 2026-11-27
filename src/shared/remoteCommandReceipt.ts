@@ -45,6 +45,24 @@ export interface RemoteCommandReceipt {
 	 * sender stopped waiting. Delivered; whether the turn started is not known.
 	 */
 	pending?: boolean;
+	/** Accepted, and a hosted agent's host queued it behind the running turn. */
+	queued?: { itemId: string; position: number };
+}
+
+/** The longest host queue item id a receipt may carry (ids are UUIDs; this bounds a bad one). */
+const MAX_RECEIPT_ITEM_ID_CHARS = 200;
+
+/** A receipt's `queued` field, checked: an item id and a 1-based position, or nothing. */
+function parseReceiptQueued(raw: unknown): RemoteCommandReceipt['queued'] {
+	if (typeof raw !== 'object' || raw === null) return undefined;
+	const { itemId, position } = raw as { itemId?: unknown; position?: unknown };
+	if (typeof itemId !== 'string' || !itemId || itemId.length > MAX_RECEIPT_ITEM_ID_CHARS) {
+		return undefined;
+	}
+	if (typeof position !== 'number' || !Number.isSafeInteger(position) || position < 1) {
+		return undefined;
+	}
+	return { itemId, position };
 }
 
 /**
@@ -79,11 +97,13 @@ export const PENDING_REMOTE_COMMAND_RECEIPT: RemoteCommandReceipt = {
  */
 export function parseRemoteCommandReceipt(raw: unknown): RemoteCommandReceipt {
 	if (typeof raw === 'object' && raw !== null && 'accepted' in raw) {
-		const receipt = raw as { accepted: unknown; reason?: unknown };
+		const receipt = raw as { accepted: unknown; reason?: unknown; queued?: unknown };
 		if (typeof receipt.accepted === 'boolean') {
+			const queued = receipt.accepted ? parseReceiptQueued(receipt.queued) : undefined;
 			return {
 				accepted: receipt.accepted,
 				reason: typeof receipt.reason === 'string' ? receipt.reason : undefined,
+				...(queued ? { queued } : {}),
 			};
 		}
 	}

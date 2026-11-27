@@ -46,7 +46,7 @@ import {
 } from '../../services/queuedPrompt';
 import { routeQueuedAutoItem } from '../../services/autoTurn';
 import { withQueuedTurnOverrides } from '../../../shared/queuedTurnSettings';
-import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import type { TurnAgentText, TurnOverrides } from '../../../shared/maestro-lib/client/types';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSideQuestion } from '../../services/sideQuestion';
 import { runMaestroBuiltinCommand } from '../../services/maestroBuiltinCommands';
@@ -116,6 +116,7 @@ import { useRemoteGroupChat } from './useRemoteGroupChat';
 import type { ConsultChain } from '../../../shared/consultBudget';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { getGrokSlashCommandRefusal } from '../../slashCommands';
+import { toQueuedItemSnapshot } from '../../../shared/queueSnapshot';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -1499,10 +1500,18 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// The model, effort, and read-only ride on the queued item; save-to-History has no
 				// per-item field here, so the tab's own chip decides it.
 				turnOverrides?: TurnOverrides,
+				// A Federation sender's agent-only text for this turn: a consult's replies ahead of the
+				// message, the `@mention` notes behind it. It rides on the queued item, never drawn.
+				agentText?: TurnAgentText,
 				// Sent over the client protocol (a Federation conductor): the turn is a hosted
 				// agent's. It always takes the queue path, which carries the mark to the spawn.
 				hostedTurn?: boolean
 			) => {
+				const withAgentText = (item: QueuedItem): QueuedItem => ({
+					...item,
+					...(agentText?.agentContext ? { agentContext: agentText.agentContext } : {}),
+					...(agentText?.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
+				});
 				const reply = (result: {
 					success: boolean;
 					tabId?: string;
@@ -1592,15 +1601,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						(hostedLocalLine || planCrossAgentMentions(command, sessionId, mentionRouting))
 					) {
 						const item: QueuedItem = {
-							...withQueuedTurnOverrides(
-								buildQueuedMessageItem({
-									session,
-									tab: targetTab,
-									text: command,
-									images,
-									mentionRouting,
-								}),
-								turnOverrides
+							...withAgentText(
+								withQueuedTurnOverrides(
+									buildQueuedMessageItem({
+										session,
+										tab: targetTab,
+										text: command,
+										images,
+										mentionRouting,
+									}),
+									turnOverrides
+								)
 							),
 							...(held && { paused: true }),
 						};
@@ -1628,6 +1639,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						const receipt = await sendHostedTurn(session, resolvedTabId, command, images ?? [], {
 							held,
 							overrides: turnOverrides,
+							...(agentText?.agentContext ? { agentContext: agentText.agentContext } : {}),
+							...(agentText?.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
 						});
 						if (!receipt) {
 							reply({ success: false, tabId: resolvedTabId, error: 'The host did not take it' });
@@ -1677,21 +1690,29 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// as a command, so the drain expands it, as the composer and the plain remote-command
 					// path do. A provider's own `/compact` stays a message, as typed.
 					const isUserSlashCommand = matchQueuedSlashCommand(session, command) !== null;
-					// The plain remote-command path spawns on the live tab's settings, so a message
-					// carrying the sender's own chips goes through the queue instead and is sent at
-					// once from there (Force Send): the queued item is what carries them.
-					if ((turnOverrides || hostedTurn) && targetTab.state !== 'busy' && !lineForTab && !held) {
+					// The plain remote-command path spawns on the live tab's settings and the bare text, so
+					// a message carrying the sender's own chips or agent-only text (or a hosted agent's turn
+					// mark) goes through the queue instead and is sent at once from there (Force Send): the
+					// queued item carries them.
+					if (
+						(turnOverrides || agentText || hostedTurn) &&
+						targetTab.state !== 'busy' &&
+						!lineForTab &&
+						!held
+					) {
 						const item: QueuedItem = {
-							...withQueuedTurnOverrides(
-								buildQueuedMessageItem({
-									session,
-									tab: targetTab,
-									text: command,
-									images,
-									mentionRouting,
-									slashCommand: isUserSlashCommand,
-								}),
-								turnOverrides
+							...withAgentText(
+								withQueuedTurnOverrides(
+									buildQueuedMessageItem({
+										session,
+										tab: targetTab,
+										text: command,
+										images,
+										mentionRouting,
+										slashCommand: isUserSlashCommand,
+									}),
+									turnOverrides
+								)
 							),
 							...(hostedTurn && { hostedTurn: true }),
 						};
@@ -1747,17 +1768,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// here) and the model/effort capture that keeps a queued turn running
 					// under the settings it was queued with.
 					const queuedItem: QueuedItem = {
-						...withQueuedTurnOverrides(
-							buildQueuedMessageItem({
-								session,
-								tab: targetTab,
-								text: command,
-								images,
-								consultChain,
-								mentionRouting,
-								slashCommand: isUserSlashCommand,
-							}),
-							turnOverrides
+						...withAgentText(
+							withQueuedTurnOverrides(
+								buildQueuedMessageItem({
+									session,
+									tab: targetTab,
+									text: command,
+									images,
+									consultChain,
+									mentionRouting,
+									slashCommand: isUserSlashCommand,
+								}),
+								turnOverrides
+							)
 						),
 						...(held && { paused: true }),
 						...(dispatchCallback && { dispatchCallback: true }),
@@ -1811,22 +1834,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						sessionId: s.id,
 						name: s.name,
 						state: s.state,
-						items: (s.executionQueue ?? []).map((item) => ({
-							id: item.id,
-							timestamp: item.timestamp,
-							tabId: item.tabId,
-							type: item.type,
-							...(item.text !== undefined ? { text: item.text } : {}),
-							...(item.command !== undefined ? { command: item.command } : {}),
-							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
-							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
-							...(item.paused !== undefined ? { paused: item.paused } : {}),
-							...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
-							// A client's hosted queued card draws the model and effort it runs with.
-							...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
-							// Store refs as held: main inlines them only for a client that asks.
-							...(item.images?.length ? { images: item.images } : {}),
-						})),
+						items: (s.executionQueue ?? []).map(toQueuedItemSnapshot),
 					}));
 					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
 						success: true,

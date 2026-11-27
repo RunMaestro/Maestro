@@ -13,7 +13,7 @@ import { withMaestroClient } from '../services/maestro-client';
 import { resolveSshRemoteId } from '../services/storage';
 import { formatError, formatSuccess, colorize } from '../output/formatter';
 import { formatRelativeTime } from '../../shared/formatters';
-import type { SshReachabilityEvent } from '../../shared/sshConnection';
+import { outageCause, type SshReachabilityEvent } from '../../shared/sshConnection';
 
 /** Longer than any sane `ConnectTimeout`, so a slow dead host still gets its answer. */
 const CHECK_TIMEOUT_MS = 120_000;
@@ -30,8 +30,10 @@ function fail(message: string, json?: boolean): never {
 }
 
 function printOutage(event: SshReachabilityEvent): void {
+	// A host outage: ssh answers, the Maestro host behind it (hosted agents' turns) does not.
+	const what = outageCause(event) === 'host' ? 'HOST UNREACHABLE' : 'UNREACHABLE';
 	console.log(
-		`${colorize('red', 'UNREACHABLE')} ${event.remoteName} (${event.remoteId}) since ${formatRelativeTime(event.since)}`
+		`${colorize('red', what)} ${event.remoteName} (${event.remoteId}) since ${formatRelativeTime(event.since)}`
 	);
 	if (event.message) console.log(`  ${event.message}`);
 }

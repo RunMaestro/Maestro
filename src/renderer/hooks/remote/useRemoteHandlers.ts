@@ -216,10 +216,18 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// `git status` outlasted the sender, which reported a prompt that then
 			// ran normally as "not delivered (renderer-timeout)".
 			let receiptSent = false;
-			const reportDelivery = (accepted: boolean, reason?: string) => {
+			const reportDelivery = (
+				accepted: boolean,
+				reason?: string,
+				queued?: { itemId: string; position: number }
+			) => {
 				if (!receiptChannel || receiptSent) return;
 				receiptSent = true;
-				window.maestro.process.sendRemoteCommandReceipt(receiptChannel, accepted, reason);
+				if (queued) {
+					window.maestro.process.sendRemoteCommandReceipt(receiptChannel, accepted, reason, queued);
+				} else {
+					window.maestro.process.sendRemoteCommandReceipt(receiptChannel, accepted, reason);
+				}
 			};
 
 			logger.info('[Remote] Processing remote command via event:', undefined, {
@@ -379,7 +387,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					images ?? [],
 					namesTab ? { nameFrom: { text: command, label: 'remote' } } : {}
 				);
-				reportDelivery(!!receipt, receipt ? undefined : 'host-refused');
+				// A host has no `--force`: a message for a busy host tab waits in its queue, and the
+				// CLI says queued, never delivered.
+				reportDelivery(
+					!!receipt,
+					receipt ? undefined : 'host-refused',
+					receipt?.status === 'queued'
+						? { itemId: receipt.itemId, position: receipt.position }
+						: undefined
+				);
 			};
 
 			// Maestro's own commands run for the tab now, busy or not, as the composer runs them,

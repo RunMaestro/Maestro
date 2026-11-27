@@ -34,6 +34,14 @@
  * ```
  */
 /**
+ * `text` with every run of whitespace (spaces, tabs, line breaks) collapsed to one space, and
+ * trimmed: two texts that differ only in how they were wrapped or indented compare equal.
+ */
+export function collapseWhitespace(text: string): string {
+	return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
  * Escape special regex characters so a literal string can be embedded in a
  * `RegExp` without being interpreted as a pattern.
  *

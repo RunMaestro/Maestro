@@ -24,7 +24,7 @@ import { joinPath } from '../../shared/formatters';
 import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { DEFAULT_TAB_DEFAULTS } from '../../shared/maestro-lib/agents/rules';
 import { parseMaestroBuiltinCommand } from '../../shared/maestroBuiltinCommands';
-import type { AutoRunControl } from '../../shared/maestro-lib/client/peer-actions';
+import type { AutoRunControl, HostStopAnswer } from '../../shared/maestro-lib/client/peer-actions';
 import type {
 	TabPatch,
 	TurnOverrides,
@@ -32,10 +32,7 @@ import type {
 } from '../../shared/maestro-lib/client/types';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { BatchRunConfig } from '../../shared/types';
-import type {
-	SteeringCommandInput,
-	SteeringCommandResult,
-} from '../../shared/autoRunSteeringCommands';
+import type { SteeringCommandInput } from '../../shared/autoRunSteeringCommands';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { notifyToast } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -60,6 +57,7 @@ import {
 	sendToMirroredTab,
 	starMirrorTab,
 	steerMirrorAutoRun,
+	type MirrorSteeringAnswer,
 } from './peerMirror';
 import { requestTabAutoNameForMessage } from './tabAutoNaming';
 import { hostedTranscriptBaseline, watchHostedHistoryCommand } from './historyEntryToast';
@@ -370,22 +368,33 @@ export async function sendHostedTurn(
 		overrides?: TurnOverrides;
 		nameFrom?: { text: string; label?: string };
 		/**
+		 * Takes a refusal that sent nothing because the host is not connected, instead of the red
+		 * toast, so the caller can keep the message for a retry (`keepTurnForHost()`).
+		 */
+		onHostUnavailable?: (message: string) => void;
+		/**
 		 * Agent-only text for this one turn: ahead of the message (a released consult's replies,
 		 * `QueuedItem.agentContext`) and behind it (the `@mention` notes). The host's transcript
 		 * shows `text` alone, as a local transcript does.
 		 */
 		agentContext?: string;
 		agentNotes?: string;
+		/** The transcript entry the message already is (`QueuedItem.hostEntryId`): drawn once. */
+		entryId?: string;
 	} = {}
 ): Promise<TurnSendReceipt | null> {
 	const target = hostedTargetOf(session);
 	if (!target) return null;
-	if (!target.agent) {
-		notifyToast({
-			color: 'red',
-			title: 'Message not sent',
-			message: `${session.name} runs on peer "${target.peerId}", which is not connected. Nothing was sent.`,
-		});
+	const connection = usePeerMirrorStore.getState().peers[target.peerId]?.connection;
+	if (!target.agent || (opts.onHostUnavailable && connection !== 'connected')) {
+		// Nothing is sent to a host that is not connected, including the steps ahead of the send
+		// (a new host tab, merged context): the caller keeps the message for a retry, or it is told.
+		const message = `${session.name} runs on peer "${target.peerId}", which is not connected${connection ? ` (${connection})` : ''}. Nothing was sent.`;
+		if (opts.onHostUnavailable) {
+			opts.onHostUnavailable(message);
+			return null;
+		}
+		notifyToast({ color: 'red', title: 'Message not sent', message });
 		return null;
 	}
 	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
@@ -402,7 +411,12 @@ export async function sendHostedTurn(
 	// Merge context, Send to Agent, and session recovery leave context for the tab's next turn. A
 	// local send prepends it to the prompt (`takePendingMergedContext()`); the host does the same
 	// from its own tab, so it goes there first and the transcript shows only the typed message.
-	const mergedContext = tab?.pendingMergedContext;
+	// Read from the store, not the caller's snapshot: a send that waited behind an earlier one of
+	// this tab must not hand over context that send already spent.
+	const liveTab = selectSessionById(session.id)(useSessionStore.getState())?.aiTabs.find(
+		(candidate) => candidate.id === tabId
+	);
+	const mergedContext = (liveTab ?? tab)?.pendingMergedContext;
 	if (mergedContext) {
 		const handed = await actOnMirroredAgent(target.peerId, target.agentId, {
 			kind: 'update-tab',
@@ -428,11 +442,15 @@ export async function sendHostedTurn(
 		{
 			...(opts.agentContext ? { agentContext: opts.agentContext } : {}),
 			...(opts.agentNotes ? { agentNotes: opts.agentNotes } : {}),
-		}
+			...(opts.entryId ? { entryId: opts.entryId } : {}),
+		},
+		opts.onHostUnavailable
 	);
 	// Spent here once the host took the turn, as a local send spends it at spawn. A refused send
 	// keeps it, so the retry hands it over again (the host's copy is overwritten, not doubled).
-	if (receipt && mergedContext && tabId) {
+	// A message the host had already answered ran nothing now: nothing was spent, nothing to name.
+	const ranNow = receipt !== null && receipt.status !== 'answered';
+	if (ranNow && mergedContext && tabId) {
 		updateAiTab(session.id, tabId, (candidate) =>
 			candidate.pendingMergedContext === mergedContext
 				? { ...candidate, pendingMergedContext: undefined }
@@ -444,7 +462,7 @@ export async function sendHostedTurn(
 		watchHostedHistoryCommand(session.id, target, hostTabId, { baseline: historyBaseline });
 	}
 	// The tab the message landed in: a kept tab's message opened a new host tab above.
-	if (receipt && opts.nameFrom && hostTabId) {
+	if (ranNow && opts.nameFrom && hostTabId) {
 		requestTabAutoNameForMessage(session, hostTabId, opts.nameFrom.text, opts.nameFrom.label);
 	}
 	return receipt;
@@ -454,9 +472,9 @@ export async function sendHostedTurn(
 export async function interruptHostedTurn(
 	session: Pick<Session, 'liftedTo'>,
 	tabId?: string
-): Promise<void> {
+): Promise<HostStopAnswer | undefined> {
 	const target = hostedTargetOf(session);
-	if (target) await interruptMirroredAgent(target.peerId, target.agentId, tabId);
+	return target ? interruptMirroredAgent(target.peerId, target.agentId, tabId) : undefined;
 }
 
 /**
@@ -646,17 +664,16 @@ export async function startHostedAutoRun(
 
 /**
  * Steer a hosted agent's run on the host that runs it (the Thought Stream's Steer). Undefined for
- * an agent that is not hosted, so the caller steers its own run; otherwise the host's answer, or
- * null when the host could not be reached (already a red toast).
+ * an agent that is not hosted, so the caller steers its own run; otherwise what the host said
+ * (`steerMirrorAutoRun()`: no toast, the caller reports a failure).
  */
 export function steerHostedAutoRun(
 	session: Pick<Session, 'liftedTo'> | null | undefined,
-	input: SteeringCommandInput,
-	options: { quiet?: boolean } = {}
-): Promise<SteeringCommandResult | null> | undefined {
+	input: SteeringCommandInput
+): Promise<MirrorSteeringAnswer> | undefined {
 	const target = hostedTargetOf(session);
 	if (!target) return undefined;
-	return steerMirrorAutoRun(target.peerId, target.agentId, input, options);
+	return steerMirrorAutoRun(target.peerId, target.agentId, input);
 }
 
 /**

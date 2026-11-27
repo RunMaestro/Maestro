@@ -11,10 +11,13 @@ import {
 	createMirroredPeer,
 	findMirrorPeer,
 	markAllTabsStale,
+	MAX_MIRRORED_QUEUE_EXITS,
+	queueExitOf,
 	mirrorKey,
 	replacePeerAgents,
 	setAgentAutoRun,
 	setAgentQueue,
+	withReadQueueImages,
 	setPeerConnection,
 	summarizePeer,
 	type MirrorPeerSummary,
@@ -197,6 +200,38 @@ describe('host queues', () => {
 		expect(next.peer.queues).toEqual({ a1: [waiting('q2')] });
 	});
 
+	// Parity M26: a desktop host sends an item's images once, then says they are unchanged.
+	it('an imagesKept item takes the images held for its id, and pushes them, so a card keeps its thumbnails (M26)', () => {
+		const withImages = { ...waiting('q1'), images: ['data:image/png;base64,AAAA'] };
+		const held = setAgentQueue(peerWith([agent('a1')]), 'a1', [withImages]).peer;
+		const step = setAgentQueue(held, 'a1', [
+			{ ...waiting('q1'), imagesKept: true },
+			{ ...waiting('q2'), imagesKept: true },
+		]);
+		// q2 has none held: it keeps the flag, so a raced read can still give them.
+		const unresolved = { ...waiting('q2'), imagesKept: true as const };
+		expect(step.peer.queues).toEqual({ a1: [withImages, unresolved] });
+		expect(step.push).toEqual([
+			{ type: 'agent.queue', agentId: 'a1', items: [withImages, unresolved] },
+		]);
+		// The next change keeps q1's images again from what it holds.
+		const again = setAgentQueue(step.peer, 'a1', [{ ...waiting('q1'), imagesKept: true }]);
+		expect(again.peer.queues).toEqual({ a1: [withImages] });
+	});
+
+	it("withReadQueueImages gives an unresolved kept item the read's images, and nothing else (M26)", () => {
+		const images = ['data:image/png;base64,AAAA'];
+		const kept = [{ ...waiting('q1'), imagesKept: true as const }, waiting('q2')];
+		expect(
+			withReadQueueImages(kept, [
+				{ ...waiting('q1'), images },
+				{ ...waiting('q2'), images },
+			])
+		).toEqual([{ ...waiting('q1'), images }, waiting('q2')]);
+		// Nothing to give: the same list.
+		expect(withReadQueueImages(kept, [waiting('q1')])).toBe(kept);
+	});
+
 	it('an empty list drops the entry and still pushes, so a window clears its cards', () => {
 		const held = setAgentQueue(peerWith([agent('a1')]), 'a1', [waiting('q1')]).peer;
 		const step = setAgentQueue(held, 'a1', []);
@@ -222,6 +257,84 @@ describe('host queues', () => {
 		);
 		expect(step.peer.queues).toEqual({ a1: [waiting('q1')] });
 		expect(step.push.map((e) => e.type)).toEqual(['agent.queue']);
+	});
+
+	it('keeps how items left the queue, bounded, and only for a host that names it (M14)', () => {
+		let peer = peerWith([agent('a1'), agent('a2')]);
+		// A queue read, or a host that names no exits, records none.
+		peer = setAgentQueue(peer, 'a1', [waiting('q1')]).peer;
+		peer = applyPeerEvent(
+			peer,
+			{ type: 'queue.changed', agentId: 'a2', items: [waiting('q9')] },
+			ctx()
+		).peer;
+		expect(peer.queueExits).toBeUndefined();
+
+		// A start that empties the queue, even of an item this mirror never held, is named.
+		const started = applyPeerEvent(
+			peer,
+			{
+				type: 'queue.changed',
+				agentId: 'a1',
+				items: [],
+				namesExits: true,
+				exit: { itemId: 'q0', exit: 'started' },
+			},
+			ctx()
+		);
+		expect(started.peer.queueExits).toEqual({ a1: [{ itemId: 'q0', exit: 'started' }] });
+		expect(started.push).toEqual([
+			{
+				type: 'agent.queue',
+				agentId: 'a1',
+				items: [],
+				namesExits: true,
+				exit: { itemId: 'q0', exit: 'started' },
+			},
+		]);
+		expect(queueExitOf(started.peer.queueExits?.a1, 'q0')).toBe('started');
+		expect(queueExitOf(started.peer.queueExits?.a1, 'q1')).toBeUndefined();
+		peer = setAgentQueue(started.peer, 'a1', [], {
+			namesExits: true,
+			exit: { itemId: 'q1', exit: 'removed' },
+		}).peer;
+		expect(queueExitOf(peer.queueExits?.a1, 'q1')).toBe('removed');
+		for (let n = 1; n <= MAX_MIRRORED_QUEUE_EXITS + 5; n++) {
+			peer = setAgentQueue(peer, 'a1', [], {
+				namesExits: true,
+				exit: { itemId: `s${n}`, exit: 'started' },
+			}).peer;
+		}
+		expect(peer.queueExits?.a1).toHaveLength(MAX_MIRRORED_QUEUE_EXITS);
+		expect(peer.queueExits?.a1?.at(-1)?.itemId).toBe(`s${MAX_MIRRORED_QUEUE_EXITS + 5}`);
+		// A later queue read keeps them; the agent leaving drops them.
+		expect(setAgentQueue(peer, 'a1', [waiting('q2')]).peer.queueExits?.a1).toHaveLength(
+			MAX_MIRRORED_QUEUE_EXITS
+		);
+		const removed = applyPeerEvent(peer, { type: 'agent.removed', agentId: 'a1' }, ctx());
+		expect(removed.peer.queueExits).toEqual({});
+		expect(replacePeerAgents(peer, [agent('a2')], [], 2000).peer.queueExits).toEqual({});
+	});
+
+	it('counts whole reads of a queue whose host names exits, where a named exit can be missed (M18)', () => {
+		let peer = peerWith([agent('a1')]);
+		// Before the host is known to name exits, a read is not a gap.
+		peer = setAgentQueue(peer, 'a1', [waiting('q1')]).peer;
+		expect(peer.queueReads).toBeUndefined();
+		peer = setAgentQueue(peer, 'a1', [waiting('q1')], { namesExits: true }).peer;
+		// A named change is not a read; a read (after a reconnect) is, even of an empty queue.
+		peer = setAgentQueue(peer, 'a1', [], {
+			namesExits: true,
+			exit: { itemId: 'q1', exit: 'removed' },
+		}).peer;
+		expect(peer.queueReads).toBeUndefined();
+		const read = setAgentQueue(peer, 'a1', []);
+		expect(read.peer.queueReads).toEqual({ a1: 1 });
+		expect(read.push).toEqual([{ type: 'agent.queue', agentId: 'a1', items: [] }]);
+		expect(setAgentQueue(read.peer, 'a1', []).peer.queueReads).toEqual({ a1: 2 });
+		expect(
+			applyPeerEvent(read.peer, { type: 'agent.removed', agentId: 'a1' }, ctx()).peer.queueReads
+		).toEqual({});
 	});
 
 	it('a snapshot keeps the queues of agents still there and drops the rest', () => {

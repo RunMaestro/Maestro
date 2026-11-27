@@ -3098,7 +3098,10 @@ program
 // Remove agent command - remove an agent from the Maestro desktop app
 program
 	.command('remove-agent <agent-id>')
-	.description('Remove an agent from the Maestro desktop app')
+	.description(
+		"Remove an agent from the Maestro desktop app, or, given peer:agent, from that peer's host"
+	)
+	.option('--force', 'Remove it even while it runs a turn (the turn stops and its answer is lost)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(removeAgent);
 

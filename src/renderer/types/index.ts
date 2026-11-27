@@ -590,8 +590,23 @@ export interface MentionHandoff {
 		afterEntryId?: string;
 		/** The host's queue frame showed `queueItemId` waiting. */
 		seenQueued?: boolean;
-		/** The start time of the turn it was queued behind (the tab's `thinkingStartTime`). */
+		/**
+		 * The start time of the turn it was queued behind (the tab's `thinkingStartTime` when it was
+		 * first seen waiting; never overwritten).
+		 */
 		turnStartedAt?: number;
+		/**
+		 * When it left the host queue with no start seen (this machine's clock, compared only with
+		 * it): past `HOST_QUEUE_START_GRACE_MS` it counts as removed.
+		 */
+		goneAt?: number;
+		/**
+		 * The mirror's count of whole host-queue reads when it was last seen waiting (or sent). A
+		 * read since then (a reconnect) may have missed its named exit: the tab's state decides.
+		 */
+		readsAtSeen?: number;
+		/** How many images the message carried (absent: none): an image-only message is matched by it. */
+		imageCount?: number;
 	};
 }
 
@@ -639,6 +654,18 @@ export interface QueuedItem {
 	 * never run here. Remove and Hold / Resume act on the host.
 	 */
 	hostQueued?: boolean;
+	/**
+	 * A host queue item whose images this window does not hold yet: an older desktop host said they
+	 * were unchanged (`imagesKept`) before this window read them (M28). Its card draws none, so an
+	 * Edit must not save it without them.
+	 */
+	hostImagesPending?: boolean;
+	/**
+	 * A hosted agent's message that is already an entry in its host's transcript (or drawn here):
+	 * the send names it (`TurnInput.entryId`), so the message is drawn once. Set on the message of a
+	 * turn a lost link cut, kept for a resend (`noteHostedTurnsCut()`).
+	 */
+	hostEntryId?: string;
 	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
 	pendingAdmissionId?: string;
 	/** Host-journaled release revision. Pending ID remains provenance and a
@@ -685,6 +712,10 @@ export interface QueuedItem {
 	// transcript. Carries a consult's replies verbatim without repeating them in
 	// the user bubble, where they are already shown as the consult's own reply.
 	agentContext?: string;
+	// Agent-only notes appended BEHIND the prompt at spawn and never rendered (a Federation
+	// sender's `@mention` notes: a consult is running, the answer is handed off), as the drain
+	// appends a mention's own notes (`TurnInput.agentNotes`).
+	agentNotes?: string;
 	// A `dispatch --notify-on-complete` wake that main queued because this tab was
 	// mid-turn: another agent reporting back, not the user's message. It runs as
 	// its own turn when the tab goes idle and is never steered into the running
@@ -1843,6 +1874,12 @@ export interface Session {
 	// Federation: moved back from its host by the person (Move Back from Host, `maestro-cli
 	// unlift`). Automatic Federation leaves it an SSH agent; Move to Host clears it.
 	hostedOptOut?: boolean;
+	// Federation: the host's copy a Move Back left behind (the host was down). The next Move to
+	// Host of this agent replaces it instead of being refused for its name.
+	leftOnHost?: LiftedToPointer;
+	// Federation, on a host: the id of the agent this record was lifted from. A later Move to Host
+	// of that agent may replace this record (`planAgentImport()`).
+	liftedFromAgentId?: string;
 
 	// Inline wizard state for /wizard command
 	// Keeps per-session/per-tab wizard state for creating or iterating on Auto Run documents

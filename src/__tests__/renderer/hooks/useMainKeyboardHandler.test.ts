@@ -28,6 +28,12 @@ const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession:
 vi.mock('../../../renderer/services/tileNewTabAction', () => ({
 	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
 }));
+// Cmd+Shift+K cycles thinking through the shared write (covered in tabThinkingMode.test), which
+// also tells a hosted agent's host. Mocked so the test asserts the wiring.
+const { mockCycleTabThinkingMode } = vi.hoisted(() => ({ mockCycleTabThinkingMode: vi.fn() }));
+vi.mock('../../../renderer/services/tabThinkingMode', () => ({
+	cycleTabThinkingMode: (...args: unknown[]) => mockCycleTabThinkingMode(...args),
+}));
 import { eventMatchesShortcutKeys } from '../../../renderer/utils/shortcutMatch';
 import { publishGitShortcutActions } from '../../../renderer/services/gitShortcutActions';
 import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
@@ -2190,6 +2196,80 @@ describe('useMainKeyboardHandler', () => {
 				});
 
 				expect(mockSetSessions).toHaveBeenCalled();
+			});
+
+			it('Cmd+Shift+K cycles thinking through the shared write in every mode (mode parity)', () => {
+				// docs/parity/agent-ux-parity.md: the shortcut wrote the tab here only, so a hosted
+				// tab showed 'sticky' while its host ran the turn with thinking off.
+				const calls = AGENT_MODES.map((mode: AgentMode) => {
+					mockCycleTabThinkingMode.mockClear();
+					const { result, unmount } = renderHook(() => useMainKeyboardHandler());
+					const mockSetSessions = vi.fn();
+					result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+						isTabShortcut: (_e: KeyboardEvent, actionId: string) =>
+							actionId === 'toggleShowThinking',
+						setSessions: mockSetSessions,
+						activeSession: {
+							...createModeSession(mode, { id: 'session-1', inputMode: 'ai' }),
+							aiTabs: [createMockAITab({ id: 'ai-tab-1', showThinking: 'on' })],
+							activeTabId: 'ai-tab-1',
+							filePreviewTabs: [],
+							activeFileTabId: null,
+							unifiedTabOrder: ['ai-tab-1'],
+						},
+					});
+					act(() => {
+						window.dispatchEvent(
+							new KeyboardEvent('keydown', {
+								key: 'k',
+								metaKey: true,
+								shiftKey: true,
+								bubbles: true,
+							})
+						);
+					});
+					expect(mockSetSessions).not.toHaveBeenCalled();
+					const seen = [...mockCycleTabThinkingMode.mock.calls];
+					unmount();
+					return seen;
+				});
+				expect(calls[0]).toEqual([['session-1', 'ai-tab-1']]);
+				expect(calls[1]).toEqual(calls[0]);
+				expect(calls[2]).toEqual(calls[0]);
+			});
+
+			it('Cmd+Shift+K in a wizard tab flips the wizard thinking and leaves the tab mode alone', () => {
+				mockCycleTabThinkingMode.mockClear();
+				const { result } = renderHook(() => useMainKeyboardHandler());
+				const mockSetSessions = vi.fn();
+				const tab = createMockAITab({
+					id: 'ai-tab-1',
+					showThinking: 'off',
+					wizardState: { isActive: true, showWizardThinking: false, thinkingContent: 'x' },
+				} as never);
+				const session = {
+					...createModeSession('hosted', { id: 'session-1', inputMode: 'ai' }),
+					aiTabs: [tab],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [],
+					activeFileTabId: null,
+					unifiedTabOrder: ['ai-tab-1'],
+				};
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'toggleShowThinking',
+					setSessions: mockSetSessions,
+					activeSession: session,
+				});
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', { key: 'k', metaKey: true, shiftKey: true, bubbles: true })
+					);
+				});
+				expect(mockCycleTabThinkingMode).not.toHaveBeenCalled();
+				const [updater] = mockSetSessions.mock.calls[0];
+				const next = updater([session])[0].aiTabs[0];
+				expect(next.showThinking).toBe('off');
+				expect(next.wizardState).toMatchObject({ showWizardThinking: true, thinkingContent: '' });
 			});
 
 			it('Cmd+S does NOT toggle save-to-history when a file tab is active', () => {

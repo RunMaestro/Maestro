@@ -25,7 +25,6 @@
  */
 
 import { create } from 'zustand';
-import { nextThinkingMode } from '../../shared/types';
 import type {
 	AITab,
 	FilePreviewTab,
@@ -303,11 +302,6 @@ export interface TabStoreActions {
 	 * Toggle saveToHistory flag on an AI tab.
 	 */
 	toggleSaveToHistory: (tabId: string) => void;
-
-	/**
-	 * Cycle through thinking modes: off → on → sticky → off.
-	 */
-	cycleThinkingMode: (tabId: string) => void;
 
 	/**
 	 * Set per-tab model override. Pass undefined to clear and fall back to session/agent default.
@@ -743,14 +737,6 @@ export const useTabStore = create<TabStore>()((set) => ({
 		const tab = session.aiTabs.find((t) => t.id === tabId);
 		if (!tab) return;
 		updateAiTab(tabId, { saveToHistory: !tab.saveToHistory });
-	},
-
-	cycleThinkingMode: (tabId) => {
-		const session = getActiveSession();
-		if (!session) return;
-		const tab = session.aiTabs.find((t) => t.id === tabId);
-		if (!tab) return;
-		updateAiTab(tabId, { showThinking: nextThinkingMode(tab.showThinking) });
 	},
 
 	setTabModel: (tabId, model) => {

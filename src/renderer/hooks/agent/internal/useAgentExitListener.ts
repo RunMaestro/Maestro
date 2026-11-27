@@ -33,12 +33,12 @@ import { announceAgentFinished } from '../../../services/spokenNotices';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { isQuickChatTab } from '../../../services/quickChatEngine';
 import {
-	formatSessionId,
 	getActiveTab,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
 } from '../../../utils/tabHelpers';
 import { summarizeAnswer } from '../../../../shared/maestro-lib/turns/summary';
+import { historyEntryTabName } from '../../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { cleanupExitedTabLogs } from './helpers/exitTabCleanup';
@@ -330,8 +330,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					// thread id (`THREAD_A` vs the strip's `THR_ABC1`), so the history
 					// entry recorded a placeholder that matched nothing on screen and that
 					// no "is this just the id?" check could recognize.
-					const tabName =
-						completedTab?.name || (agentSessionId ? formatSessionId(agentSessionId) : undefined);
+					const tabName = historyEntryTabName(completedTab, agentSessionId);
 
 					toastData = {
 						title,

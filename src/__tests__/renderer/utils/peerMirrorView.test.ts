@@ -41,6 +41,21 @@ describe('mirrorLogEntry', () => {
 		).toBeUndefined();
 	});
 
+	it("keeps the host's queue item id on a user entry, so a queued consult finds its own turn (M23)", () => {
+		expect(
+			mirrorLogEntry(entry('u1', 'run it', { source: 'user', queuedItemId: 'q1' })).queuedItemId
+		).toBe('q1');
+		// Only a real id: anything else from the wire is left off.
+		expect(
+			mirrorLogEntry(
+				entry('u2', 'run it', { source: 'user', queuedItemId: 7 as unknown as string })
+			).queuedItemId
+		).toBeUndefined();
+		expect(mirrorLogEntry(entry('u3', 'run it', { source: 'user' }))).not.toHaveProperty(
+			'queuedItemId'
+		);
+	});
+
 	it('copies the drawn fields and maps an unknown kind to a system line', () => {
 		expect(mirrorLogEntry(entry('e1', 'hi', { source: 'future-kind' })).source).toBe('system');
 		const mapped = mirrorLogEntry(
@@ -170,6 +185,16 @@ describe('mirrorQueuedItem', () => {
 		expect(mirrorQueuedItem(queued('q5', { images })).images).toEqual(images);
 		expect(mirrorQueuedItem(queued('q6', { images: [] }))).not.toHaveProperty('images');
 		expect(mirrorQueuedItem(queued('q7'))).not.toHaveProperty('images');
+	});
+
+	// Parity M28: an older desktop host's `imagesKept` before this window held the images.
+	it('marks an item whose host images are not here yet, so an edit keeps them', () => {
+		expect(mirrorQueuedItem(queued('q8', { imagesKept: true })).hostImagesPending).toBe(true);
+		const images = ['data:image/png;base64,AAAA'];
+		expect(mirrorQueuedItem(queued('q9', { imagesKept: true, images }))).not.toHaveProperty(
+			'hostImagesPending'
+		);
+		expect(mirrorQueuedItem(queued('q10'))).not.toHaveProperty('hostImagesPending');
 	});
 
 	it('carries the model and effort the host will run it with', () => {

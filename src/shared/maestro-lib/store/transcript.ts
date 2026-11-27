@@ -65,6 +65,12 @@ export interface LogEntryRecord extends UnknownFields {
 	readOnly?: boolean;
 	/** A user message steered into the turn already running (`SteeredMessageHeader`). */
 	steered?: boolean;
+	/**
+	 * A user message: the id of the queue item it ran from, on the host that ran it. A client that
+	 * queued the message knows that id from the host's receipt, so it finds this entry by identity,
+	 * never by text or position (two messages with the same text, or an image-only message).
+	 */
+	queuedItemId?: string;
 	/** A custom AI command (`/commit`) this user message invoked. */
 	aiCommand?: { command: string; description: string };
 	metadata?: UnknownFields & {

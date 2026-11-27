@@ -1,6 +1,10 @@
 import type { TabConfigResult } from '../../../shared/desktopTabs';
 import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
-import type { QueuedTurnEdit, TurnOverrides } from '../../../shared/maestro-lib/client/types';
+import type {
+	QueuedTurnEdit,
+	TurnAgentText,
+	TurnOverrides,
+} from '../../../shared/maestro-lib/client/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
  *
@@ -24,6 +28,7 @@ import type {
 	GetSessionDetailCallback,
 	WriteToSessionCallback,
 	ExecuteCommandCallback,
+	ExecuteCommandOutcome,
 	InterruptSessionCallback,
 	SwitchModeCallback,
 	SelectSessionCallback,
@@ -540,7 +545,7 @@ export class CallbackRegistry {
 		mentionRouting?: MentionRouting,
 		requireDeliveryReceipt?: boolean,
 		pianolaDispatchId?: string
-	): Promise<boolean> {
+	): Promise<ExecuteCommandOutcome> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
 			sessionId,
@@ -835,6 +840,7 @@ export class CallbackRegistry {
 		dispatchCallback?: boolean,
 		control?: PianolaQueueControl,
 		turnOverrides?: TurnOverrides,
+		agentText?: TurnAgentText,
 		hostedTurn?: boolean
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
@@ -851,7 +857,8 @@ export class CallbackRegistry {
 			dispatchCallback,
 			control,
 		];
-		if (turnOverrides || hostedTurn) args.push(turnOverrides);
+		if (turnOverrides || agentText || hostedTurn) args.push(turnOverrides);
+		if (agentText || hostedTurn) args.push(agentText);
 		if (hostedTurn) args.push(true);
 		return this.callbacks.enqueueCommand(...args);
 	}

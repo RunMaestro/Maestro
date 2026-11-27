@@ -36,6 +36,7 @@ import {
 	cancelRecoveryForTab,
 	isAwaitingContextCompaction,
 	registerAgentErrorSurfacer,
+	outageCauseOf,
 } from '../../../renderer/stores/retryStore';
 import {
 	registerContextCompactionSpawner,
@@ -53,7 +54,8 @@ import {
 	RESET_TIME_BUFFER_MS,
 	TOKEN_EXHAUSTION_POLL_STEPS_MS,
 } from '../../../shared/retryClassification';
-import { createMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, createMockSession, createModeSession } from '../../helpers/mockSession';
+import { getSessionSshRemoteId } from '../../../renderer/utils/sessionHelpers';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { AgentError } from '../../../renderer/types';
 
@@ -207,6 +209,63 @@ describe('scheduleRetryForError - classification gating', () => {
 	it('returns false when the session cannot be found', () => {
 		seedSnapshot('missing', 't1');
 		expect(scheduleRetryForError('missing', 't1', overload())).toBe(false);
+	});
+});
+
+describe('scheduleRetryForError - what the outage card names (R6)', () => {
+	/** The error a turn gets when its link is down: ssh to the remote, or the hosted agent's host. */
+	const linkDown = (remoteId: string) =>
+		err({
+			type: 'network_error',
+			message: 'SSH connection failed: Connection refused',
+			sshRemoteId: remoteId,
+		});
+
+	it.each(AGENT_MODES)('names a provider overload as the provider, in %s mode', (mode) => {
+		useSessionStore.setState({
+			sessions: [
+				createModeSession(mode, {
+					id: 'm1',
+					aiTabs: [createMockAITab({ id: 't1' })],
+					activeTabId: 't1',
+				}),
+			],
+		} as any);
+		seedSnapshot('m1', 't1');
+		expect(scheduleRetryForError('m1', 't1', overload())).toBe(true);
+		const outage = getOutage(getRetryEntry('m1', 't1')!.outageId);
+		expect(outage?.strategy).toBe('availability');
+		expect(outage?.cause).toBeUndefined();
+	});
+
+	it.each(['ssh', 'hosted'] as const)(
+		'names a link that was down as the connection, never an overload, in %s mode',
+		(mode) => {
+			const session = createModeSession(mode, {
+				id: 'm2',
+				aiTabs: [createMockAITab({ id: 't1' })],
+				activeTabId: 't1',
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+			seedSnapshot('m2', 't1');
+			const remoteId = getSessionSshRemoteId(session)!;
+			const error =
+				mode === 'hosted'
+					? { ...linkDown(remoteId), source: 'host-link' as const }
+					: linkDown(remoteId);
+			expect(scheduleRetryForError('m2', 't1', error)).toBe(true);
+			const outage = getOutage(getRetryEntry('m2', 't1')!.outageId);
+			// Same backoff as an availability outage; only the words differ.
+			expect(outage?.strategy).toBe('availability');
+			expect(outage?.cause).toBe('connection');
+		}
+	);
+
+	it('keeps a provider network error with no link as the provider (a local agent)', () => {
+		expect(
+			outageCauseOf(err({ type: 'network_error', message: 'fetch failed: ECONNRESET' }))
+		).toBeUndefined();
+		expect(outageCauseOf(linkDown('r1'))).toBe('connection');
 	});
 });
 

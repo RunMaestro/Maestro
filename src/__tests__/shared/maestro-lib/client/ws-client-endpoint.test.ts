@@ -73,7 +73,7 @@ describe('createWsMaestroClient with an explicit endpoint', () => {
 		const result = await client.connection.connect();
 		expect(result).toMatchObject({ ok: true, value: { label: 'headless pid 812' } });
 		expect(bridge.connections[0].headers['x-maestro-cli-secret']).toBe(CLI_SECRET);
-		expect(bridge.connections[0].url).toBe(`/${TOKEN}/ws`);
+		expect(bridge.connections[0].url).toBe(`/${TOKEN}/ws?queueChanges=1`);
 		expect(client.connection.state()).toBe('connected');
 	});
 
@@ -100,6 +100,28 @@ describe('createWsMaestroClient with an explicit endpoint', () => {
 		await vi.waitFor(() => expect(types()).toContain('host.connected'));
 		expect(client.connection.state()).toBe('connected');
 		expect(resolver).toHaveBeenCalledTimes(2);
+	});
+
+	it('joins the attempt already dialing when reconnect() is called during the backoff', async () => {
+		let release: (() => void) | undefined;
+		let calls = 0;
+		const resolver = vi.fn(async () => {
+			calls += 1;
+			// Hold the backoff's own attempt in discovery, so a caller's reconnect lands beside it.
+			if (calls === 2) await new Promise<void>((resolve) => (release = resolve));
+			return endpointOf();
+		});
+		const client = makeClient(resolver);
+		expect(await client.connection.connect()).toMatchObject({ ok: true });
+		bridge.dropAll();
+		await vi.waitFor(() => expect(release).toBeDefined());
+		const asked = client.connection.reconnect();
+		release?.();
+		expect(await asked).toMatchObject({ ok: true });
+		expect(client.connection.state()).toBe('connected');
+		// One attempt dialed, never a second socket beside it.
+		expect(resolver).toHaveBeenCalledTimes(2);
+		expect(bridge.connections).toHaveLength(2);
 	});
 
 	it('follows a host that restarted on a new port', async () => {

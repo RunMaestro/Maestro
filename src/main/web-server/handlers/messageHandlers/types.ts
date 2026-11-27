@@ -36,6 +36,7 @@ import type {
 	PickBrowserElementResult,
 	BrowserViewportCallback,
 	CreateSessionConfig,
+	ExecuteCommandOutcome,
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
 	WebPlaybookDocument,
@@ -163,7 +164,7 @@ export interface MessageHandlerCallbacks {
 		mentionRouting?: MentionRouting,
 		requireDeliveryReceipt?: boolean,
 		pianolaDispatchId?: string
-	) => Promise<boolean>;
+	) => Promise<ExecuteCommandOutcome>;
 	switchMode: (
 		sessionId: string,
 		mode: 'ai' | 'terminal',
@@ -271,6 +272,7 @@ export interface MessageHandlerCallbacks {
 		dispatchCallback?: boolean,
 		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl,
 		turnOverrides?: import('../../../../shared/maestro-lib/client/types').TurnOverrides,
+		agentText?: import('../../../../shared/maestro-lib/client/types').TurnAgentText,
 		hostedTurn?: boolean
 	) => Promise<EnqueueCommandResult>;
 	confirmQueueItem?: import('../../../stores/queue-item-receipt').ConfirmQueueItem;

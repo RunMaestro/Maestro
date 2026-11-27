@@ -52,6 +52,11 @@ export function mirrorLogEntry(record: LogEntryRecord): LogEntry {
 	if (record.readOnly !== undefined) entry.readOnly = record.readOnly;
 	// A message the host steered into its running turn wears the same header as a local one.
 	if (record.steered === true) entry.steered = true;
+	// The host's queue item this message ran from: a queued consult or hand-off finds its own turn
+	// by it (`crossAgentHandoff.ts`).
+	if (typeof record.queuedItemId === 'string' && record.queuedItemId) {
+		entry.queuedItemId = record.queuedItemId;
+	}
 	if (record.aiCommand) entry.aiCommand = record.aiCommand;
 	if (record.turnModel) entry.turnModel = record.turnModel;
 	if (record.turnEffort) entry.turnEffort = record.turnEffort;
@@ -202,6 +207,8 @@ export function mirrorQueuedItem(item: QueuedTurn): QueuedItem {
 		...(item.paused ? { paused: true } : {}),
 		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
 		...(item.images?.length ? { images: [...item.images] } : {}),
+		// Images an older desktop host said were unchanged before this window held them (M28).
+		...(item.imagesKept && !item.images?.length ? { hostImagesPending: true } : {}),
 	};
 	if (item.kind === 'command') {
 		const line = item.text.trim();

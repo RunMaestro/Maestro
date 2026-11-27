@@ -30,7 +30,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { selectMode as builtinSelectMode } from './claude-mode-selector';
 import type { SelectModeInput, SelectModeResult, UsageSnapshot } from './claude-mode-selector';
-import type { ClaudeTokenMode } from '../../claudeTokenMode';
+import { isMaestroPBinaryPath, type ClaudeTokenMode } from '../../claudeTokenMode';
 import { isBlankEnvValue } from '../../agentEnvironment';
 import { effectiveAgentCustomEnvVars } from '../../providerProfiles';
 import { normalizeWorktreePath } from '../../worktreePaths';
@@ -55,26 +55,9 @@ export interface CoreLogger {
 	debug: (message: string, context?: string, meta?: unknown) => void;
 }
 
-/**
- * Return true when `binaryPath` looks like a maestro-p binary (by basename).
- *
- * Canonical implementation shared by every surface. Recognises the bundled
- * `maestro-p.js` script, a packaged `maestro-p` executable, and the Windows
- * `.exe` variant. Used to detect power-user setups where the `Path` field
- * points directly at maestro-p (bypassing the token-source toggle) so the
- * resolved mode still surfaces as `interactive`, and to avoid pointing
- * `MAESTRO_CLAUDE_BIN` at maestro-p itself (which would make it drive itself
- * instead of the claude TUI).
- */
-export function isMaestroPBinaryPath(binaryPath: string | undefined | null): boolean {
-	if (!binaryPath) return false;
-	// Split on both `/` and `\` so a Windows-style path resolves correctly when
-	// this code runs on POSIX (path.basename on POSIX doesn't treat `\` as a
-	// separator, which would otherwise leave the whole `C:\…` string as the
-	// "basename" and miss the match).
-	const base = (binaryPath.split(/[\\/]/).pop() ?? '').toLowerCase();
-	return base === 'maestro-p' || base === 'maestro-p.js' || base === 'maestro-p.exe';
-}
+// Pure, so the renderer reads it too (the Edit Agent modal's TUI note): it lives beside the token
+// mode it qualifies, and is re-exported here, where every spawn surface has imported it from.
+export { isMaestroPBinaryPath };
 
 /**
  * Canonical CLAUDE_CONFIG_DIR key: the absolute path of `$CLAUDE_CONFIG_DIR`
