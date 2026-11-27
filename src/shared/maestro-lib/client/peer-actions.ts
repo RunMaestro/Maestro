@@ -356,7 +356,7 @@ export async function runPeerAgentAction(
 					stoppedTabIds,
 					...(waiting?.ok ? { waitingAtStop: waiting.value.map((item) => item.itemId) } : {}),
 					...(named ? { stoppedItemIds: [...new Set(named)] } : {}),
-					...(!named && client.connection?.host()?.kind === 'desktop'
+					...(!named && client.connection?.host?.()?.kind === 'desktop'
 						? { queueFramesTrail: true as const }
 						: {}),
 				},

@@ -25,6 +25,7 @@ import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import { sendBounded } from './socket-send';
 import type { WebLoginPolicyContext } from '../auth/web-login-policy';
+import type { CliAudience } from '../queue-change-broadcast';
 import type {
 	Theme,
 	WebClient,
@@ -82,8 +83,9 @@ type BridgeScope =
 	/**
 	 * Clients admitted by the per-boot CLI secret only (`maestro-cli` and Federation clients): a
 	 * frame no browser reads, such as `queue_changed`, never reaches a phone over the tunnel.
+	 * `audience` narrows it to those that read queue changes, or to the rest (M28).
 	 */
-	| { kind: 'cli' };
+	| { kind: 'cli'; audience?: CliAudience };
 
 interface ReplayFrame {
 	seq: number;
@@ -96,18 +98,24 @@ interface ReplayFrame {
 function frameReaches(
 	scope: BridgeScope,
 	subscribedSessionId: string | undefined,
-	cli: boolean
+	cli: boolean,
+	/** The client said at connect it reads queue changes (`QUEUE_CHANGES_QUERY_PARAM`). */
+	queueChanges = false
 ): boolean {
 	switch (scope.kind) {
 		case 'all':
 			return true;
 		case 'cli':
-			return cli;
+			return cli && (!scope.audience || scope.audience === cliAudienceOf(queueChanges));
 		case 'session':
 			return !subscribedSessionId || subscribedSessionId === scope.sessionId;
 		case 'subscribers':
 			return subscribedSessionId === scope.sessionId;
 	}
+}
+
+function cliAudienceOf(queueChanges: boolean): CliAudience {
+	return queueChanges ? 'queue-changes' : 'whole-queue';
 }
 
 /**
@@ -199,7 +207,12 @@ export class BroadcastService {
 			if (
 				client.socket.readyState === WebSocket.OPEN &&
 				client.isAuthorized?.(policy) !== false &&
-				frameReaches(frame.scope, client.subscribedSessionId, client.cliAuthenticated === true)
+				frameReaches(
+					frame.scope,
+					client.subscribedSessionId,
+					client.cliAuthenticated === true,
+					client.readsQueueChanges === true
+				)
 			) {
 				delivered = sendBounded(client.socket, frame.data, frame.bytes) || delivered;
 			}
@@ -218,7 +231,9 @@ export class BroadcastService {
 		lastSeq: number,
 		subscribedSessionId?: string,
 		/** The client was admitted by the CLI secret: it was sent the `cli` frames too. */
-		cli = false
+		cli = false,
+		/** It reads queue changes: it was sent that audience's `cli` frames, not the whole ones. */
+		queueChanges = false
 	): string[] | null {
 		if (
 			epoch !== this.bridgeEpoch ||
@@ -237,7 +252,10 @@ export class BroadcastService {
 			? [...this.replay.frames, ...this.cliReplay.frames].sort((a, b) => a.seq - b.seq)
 			: this.replay.frames;
 		return frames
-			.filter((frame) => frame.seq > lastSeq && frameReaches(frame.scope, subscribedSessionId, cli))
+			.filter(
+				(frame) =>
+					frame.seq > lastSeq && frameReaches(frame.scope, subscribedSessionId, cli, queueChanges)
+			)
 			.map((frame) => frame.data);
 	}
 
@@ -261,10 +279,26 @@ export class BroadcastService {
 		this.deliver(this.stampForBridge(message, { kind: 'all' }));
 	}
 
-	/** Broadcast a message to the clients admitted by the CLI secret only (see the `cli` scope). */
-	broadcastToCliClients(message: object): void {
+	/**
+	 * Broadcast a message to the clients admitted by the CLI secret only (see the `cli` scope), or
+	 * to one audience of them: those that read queue changes, or the rest.
+	 */
+	broadcastToCliClients(message: object, audience?: CliAudience): void {
 		if (!this.getWebClients) return;
-		this.deliver(this.stampForBridge(message, { kind: 'cli' }));
+		this.deliver(
+			this.stampForBridge(message, audience ? { kind: 'cli', audience } : { kind: 'cli' })
+		);
+	}
+
+	/** How many open clients the CLI secret admitted are in each audience. */
+	getCliClientCounts(): Record<CliAudience, number> {
+		const counts: Record<CliAudience, number> = { 'queue-changes': 0, 'whole-queue': 0 };
+		if (!this.getWebClients) return counts;
+		for (const client of this.getWebClients().values()) {
+			if (client.socket.readyState !== WebSocket.OPEN || client.cliAuthenticated !== true) continue;
+			counts[cliAudienceOf(client.readsQueueChanges === true)] += 1;
+		}
+		return counts;
 	}
 
 	/**

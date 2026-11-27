@@ -7,9 +7,13 @@
  * ignores it.
  *
  * Only a client admitted by the CLI secret reads the frame (a Federation client, `maestro-cli`),
- * so it goes to those clients alone: a browser, a phone over the tunnel, never gets it. And an
- * item's images go once (M26): a later frame whose item still has the images it was sent with
- * says so (`imagesKept`) instead of sending them again, and the client keeps the ones it holds.
+ * so it goes to those clients alone: a browser, a phone over the tunnel, never gets it. A client
+ * that said at connect it reads queue CHANGES (`QUEUE_CHANGES_QUERY_PARAM`, M28) gets the change
+ * only: the waiting ids in order and the items new or changed since the agent's last frame, with
+ * their images (`QueueChangesFrame`), so an item's images go once. Any other client (an older
+ * build) gets the whole list with every image, as before M26, so it never meets a field it does
+ * not know. Nothing is tracked per client: a client whose list is not the one a frame changes
+ * (it missed a frame, or connected since) reads the queue whole, which answers the `seq` it is at.
  */
 
 import { canonicalJson } from '../../shared/canonicalJson';
@@ -17,77 +21,71 @@ import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import type { QueueExit } from '../../shared/maestro-lib/client/types';
 import {
 	desktopQueueChanges,
+	type QueueChangesFrame,
 	type QueueDiffAgent,
 	type QueuedItemSnapshot,
 } from '../../shared/queueSnapshot';
 import { captureException } from '../utils/sentry';
 import { withQueueItemImages } from './handlers/messageHandlers/queue';
+import { framedQueue, recordFramedQueue } from './queue-change-frames';
+
+/** Which clients the CLI secret admitted a frame is for: those that read changes, or the rest. */
+export type CliAudience = 'queue-changes' | 'whole-queue';
 
 /** The part of the web server the broadcast uses. */
 export interface QueueChangeBroadcaster {
-	/** To the clients admitted by the CLI secret only: no browser reads the frame. */
-	broadcastToCliClients(message: object): void;
+	/** To the clients admitted by the CLI secret only (no browser reads it), or one audience of them. */
+	broadcastToCliClients(message: object, audience?: CliAudience): void;
 	getWebClientCount(): number;
+	/** How many open clients the CLI secret admitted are in each audience. */
+	getCliClientCounts?(): Record<CliAudience, number>;
 }
 
 /** One agent's frames go out in the order of its writes, though each inlines its images first. */
 const frameOrder = createKeyedWriteQueue();
 
 /**
- * The images each agent's last frame sent, as each item's image refs, by agent id and item id. An
- * item whose refs are the same in the next frame rides without them (`imagesKept`).
+ * The changes frames of one change, one per frame of it: the first carries the items new or
+ * changed since the agent's last frame, the later ones none (the first sent them). An item whose
+ * images were not all read is not recorded as sent, so the next change carries it again
+ * (CodeRabbit on #2160).
  */
-const sentImages = new Map<string, Map<string, string>>();
-
-function withoutImages({ images: _images, ...item }: QueuedItemSnapshot): QueuedItemSnapshot {
-	return item;
-}
-
-/** An item's image refs as one comparable value; empty when it has none. */
-function imageKey(item: QueuedItemSnapshot): string {
-	return item.images?.length ? canonicalJson(item.images) : '';
-}
-
-/**
- * One change's items for its frames: the first frame carries the images of each item whose images
- * the agent's last frame did not send, as data URLs (the client cannot read this machine's store);
- * every other item with images, and every item in the change's later frames, says `imagesKept`.
- */
-async function framedItems(
+async function changesFrames(
 	agentId: string,
-	items: QueuedItemSnapshot[]
-): Promise<{ first: object[]; later: object[] }> {
-	const before = sentImages.get(agentId);
-	const after = new Map<string, string>();
-	const kept = new Set<string>();
-	for (const item of items) {
-		const key = imageKey(item);
-		if (!key) continue;
-		after.set(item.id, key);
-		if (before?.get(item.id) === key) kept.add(item.id);
-	}
-	const inlined = await withQueueItemImages(
-		items.map((item) => (kept.has(item.id) ? withoutImages(item) : item)),
-		true
-	);
-	// An item with an image that could not be read is not recorded as sent: its next frame tries
-	// all of its images again (CodeRabbit on #2160).
-	inlined.forEach((item, index) => {
-		const wanted = items[index].images?.length ?? 0;
-		if (!kept.has(item.id) && (item.images?.length ?? 0) < wanted) after.delete(item.id);
+	items: QueuedItemSnapshot[],
+	count: number,
+	inlinedAll: QueuedItemSnapshot[] | undefined
+): Promise<QueueChangesFrame[]> {
+	const before = framedQueue(agentId);
+	const values = items.map((item) => canonicalJson(item));
+	const changedIndexes = items
+		.map((_item, index) => index)
+		.filter((index) => before?.items.get(items[index].id) !== values[index]);
+	const changed = inlinedAll
+		? changedIndexes.map((index) => inlinedAll[index])
+		: await withQueueItemImages(
+				changedIndexes.map((index) => items[index]),
+				true
+			);
+	const sent = new Map<string, string>();
+	items.forEach((item, index) => {
+		const changedAt = changedIndexes.indexOf(index);
+		if (changedAt === -1) {
+			sent.set(item.id, values[index]);
+			return;
+		}
+		const wanted = item.images?.length ?? 0;
+		if ((changed[changedAt].images?.length ?? 0) >= wanted) sent.set(item.id, values[index]);
 	});
-	// Recorded once the images are in hand: a change whose images could not be read sends no frame,
-	// and its items' images go again with the next one.
-	if (after.size > 0) sentImages.set(agentId, after);
-	else sentImages.delete(agentId);
-	const keptMark = (item: QueuedItemSnapshot, isKept: boolean) =>
-		isKept ? { ...withoutImages(item), imagesKept: true } : item;
-	return {
-		first: inlined.map((item) => keptMark(item, kept.has(item.id))),
-		// The first frame sent them: the change's later frames keep them, except an item whose
-		// images were not all read, which rides as the first frame read it.
-		later: inlined.map((item) => keptMark(item, after.has(item.id))),
-	};
+	const order = items.map((item) => item.id);
+	let seq = before?.seq ?? 0;
+	const frames: QueueChangesFrame[] = [];
+	for (let index = 0; index < count; index++) {
+		frames.push({ seq: seq + 1, base: seq, order, changed: index === 0 ? changed : [] });
+		seq += 1;
+	}
+	recordFramedQueue(agentId, { seq, items: sent });
+	return frames;
 }
 
 /**
@@ -97,7 +95,8 @@ async function framedItems(
  * exits, except the last frame of a change with an exit it could not prove (`unnamedExit`): there
  * the claim is left off, so a client counts a gap and judges what waits by the tab, and keeps
  * every exit the frames before it named (CodeRabbit on #2154). Images ride as data URLs, as a
- * client's queue read asks for them, so a hosted queued card keeps drawing them; once per item.
+ * client's queue read asks for them, so a hosted queued card keeps drawing them: once per item for
+ * a client that reads changes, on every frame for one that does not.
  */
 export function broadcastDesktopQueueChanges(
 	server: QueueChangeBroadcaster | null | undefined,
@@ -117,15 +116,27 @@ export function broadcastDesktopQueueChanges(
 		else if (frames.length === 0) frames.push({ namesExits: true });
 		void frameOrder
 			.enqueue(change.agentId, async () => {
-				const { first, later } = await framedItems(change.agentId, change.items);
+				const counts = server.getCliClientCounts?.();
+				const toWhole = !counts || counts['whole-queue'] > 0;
+				const toChanges = !counts || counts['queue-changes'] > 0;
+				// Read once for both audiences: a whole frame inlines every item's images.
+				const inlinedAll = toWhole ? await withQueueItemImages(change.items, true) : undefined;
+				const changes = toChanges
+					? await changesFrames(change.agentId, change.items, frames.length, inlinedAll)
+					: [];
 				frames.forEach((frame, index) => {
-					server.broadcastToCliClients({
+					const named = {
 						type: 'queue_changed',
 						sessionId: change.agentId,
-						items: index === 0 ? first : later,
 						...(frame.namesExits ? { namesExits: true } : {}),
 						...(frame.exit ? { exit: frame.exit } : {}),
-					});
+					};
+					if (inlinedAll) {
+						server.broadcastToCliClients({ ...named, items: inlinedAll }, 'whole-queue');
+					}
+					if (changes[index]) {
+						server.broadcastToCliClients({ ...named, changes: changes[index] }, 'queue-changes');
+					}
 				});
 			})
 			.catch((error) =>

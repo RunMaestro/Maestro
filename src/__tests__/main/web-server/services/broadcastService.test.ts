@@ -656,6 +656,38 @@ describe('BroadcastService bridge resume (seq stamping + replay)', () => {
 		]);
 	});
 
+	// Parity M28: a client that reads queue changes gets the change frame, any other CLI client the
+	// whole one, live and on replay; a browser gets neither.
+	it('sends each queue frame to its audience of CLI clients only, live and on replay, and counts them (M28)', () => {
+		const browser = { ...createMockClient('browser'), readsQueueChanges: true };
+		const whole = { ...createMockClient('whole'), cliAuthenticated: true };
+		const changes = {
+			...createMockClient('changes'),
+			cliAuthenticated: true,
+			readsQueueChanges: true,
+		};
+		clients.set('browser', browser);
+		clients.set('whole', whole);
+		clients.set('changes', changes);
+		service.broadcastToCliClients({ type: 'whole_frame' }, 'whole-queue');
+		service.broadcastToCliClients({ type: 'changes_frame' }, 'queue-changes');
+
+		const sent = (client: WebClientInfo) =>
+			(client.socket.send as any).mock.calls.map((call: any[]) => JSON.parse(call[0]).type);
+		expect(sent(browser)).toEqual([]);
+		expect(sent(whole)).toEqual(['whole_frame']);
+		expect(sent(changes)).toEqual(['changes_frame']);
+		expect(service.getCliClientCounts()).toEqual({ 'queue-changes': 1, 'whole-queue': 1 });
+		const types = (frames: string[] | null) => frames?.map((f) => JSON.parse(f).type);
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 0, undefined, true))).toEqual([
+			'whole_frame',
+		]);
+		expect(
+			types(service.resumeBridgeClient(service.bridgeEpoch, 0, undefined, true, true))
+		).toEqual(['changes_frame']);
+		expect(types(service.resumeBridgeClient(service.bridgeEpoch, 0))).toEqual([]);
+	});
+
 	it('keeps CLI-only frames out of a browser replay budget, so queue traffic never forces a browser reload (Greptile on #2160)', () => {
 		service.broadcastToAll({ type: 'before' });
 		// Far more CLI-only traffic than the browser replay could hold.

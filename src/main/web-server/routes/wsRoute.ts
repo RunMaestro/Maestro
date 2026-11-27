@@ -23,6 +23,7 @@ import { yieldToEventLoop } from '../../utils/concurrency';
 import { hostCallerRuns } from '../../agent-run/caller-identity';
 import { CALLER_RUN_PROOF_HEADER } from '../../../shared/agentDelegation';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
+import { QUEUE_CHANGES_QUERY_PARAM } from '../../../shared/queueSnapshot';
 import { isWebRequestAuthorized, resolveWebRequestAuth } from '../auth/web-login-policy';
 import {
 	acknowledgeWebSocketChunk,
@@ -96,7 +97,9 @@ export interface WsRouteCallbacks {
 		lastSeq: number,
 		subscribedSessionId?: string,
 		/** Admitted by the CLI secret: its replay includes the frames only such clients get. */
-		cli?: boolean
+		cli?: boolean,
+		/** It reads queue changes (M28): its replay holds that audience's frames, not the whole ones. */
+		queueChanges?: boolean
 	) => string[] | null;
 }
 
@@ -177,6 +180,9 @@ export class WsRoute {
 			// it mid-session (`subscribe` / `select_session`) must carry the current
 			// one in its reconnect URL. The web-desktop bundle never sends either
 			// and reconnects as the dashboard client it connected as.
+			// A Federation client that reads queue changes says so here, on every connect (M28).
+			const readsQueueChanges =
+				auth.cli === true && url.searchParams.get(QUEUE_CHANGES_QUERY_PARAM) === '1';
 			const sinceParam = url.searchParams.get('since');
 			const epochParam = url.searchParams.get('epoch');
 			const replay =
@@ -185,7 +191,8 @@ export class WsRoute {
 							epochParam,
 							Number(sinceParam),
 							sessionId,
-							auth.cli === true
+							auth.cli === true,
+							readsQueueChanges
 						) ?? null)
 					: null;
 
@@ -194,6 +201,7 @@ export class WsRoute {
 				id: clientId,
 				connectedAt: Date.now(),
 				cliAuthenticated: auth.cli,
+				...(readsQueueChanges ? { readsQueueChanges: true } : {}),
 				subscribedSessionId: sessionId,
 				// Resolved once, here: the cookie is only on the upgrade request, so
 				// there is no later point at which a frame can say who sent it.

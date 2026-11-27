@@ -266,6 +266,11 @@ export interface WebClient {
 	subscribedSessionId?: string;
 	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
 	cliAuthenticated?: boolean;
+	/**
+	 * The upgrade said this client reads queue changes (`QUEUE_CHANGES_QUERY_PARAM`, M28): its
+	 * `queue_changed` frames carry the change only. Read only for a client the CLI secret admitted.
+	 */
+	readsQueueChanges?: boolean;
 	/** Revalidate the upgrade session/current login policy before commands and delivery. */
 	isAuthorized?: (context?: import('./auth/web-login-policy').WebLoginPolicyContext) => boolean;
 	/**

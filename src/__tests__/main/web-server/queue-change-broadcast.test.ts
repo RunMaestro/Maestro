@@ -1,6 +1,7 @@
 /**
  * M23: the desktop sends `queue_changed` with `exit` and `namesExits`, as a headless host does,
- * whenever a write of its agents changes a queue.
+ * whenever a write of its agents changes a queue. M28: a client that reads queue changes gets the
+ * change only (ids in order, what is new or changed, with images); any other gets the whole list.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +17,10 @@ vi.mock('../../../main/web-server/handlers/messageHandlers/queue', () => ({ with
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
 import { broadcastDesktopQueueChanges } from '../../../main/web-server/queue-change-broadcast';
+import {
+	queueChangesSeq,
+	resetQueueChangeFrames,
+} from '../../../main/web-server/queue-change-frames';
 
 const message = (id: string, extra: Record<string, unknown> = {}) => ({
 	id,
@@ -28,13 +33,21 @@ const message = (id: string, extra: Record<string, unknown> = {}) => ({
 
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-describe('broadcastDesktopQueueChanges (M23, M26)', () => {
+describe('broadcastDesktopQueueChanges (M23, M28)', () => {
 	const broadcastToCliClients = vi.fn();
-	const server = (clients: number) => ({ broadcastToCliClients, getWebClientCount: () => clients });
+	/** `clients` open clients, of which `changes` read queue changes and the rest whole frames. */
+	const server = (clients: number, changes = 0) => ({
+		broadcastToCliClients,
+		getWebClientCount: () => clients,
+		getCliClientCounts: () => ({ 'queue-changes': changes, 'whole-queue': clients - changes }),
+	});
+	const inlined = (count: number) =>
+		Array.from({ length: count }, () => 'data:image/png;base64,AAAA');
 
 	beforeEach(() => {
 		broadcastToCliClients.mockReset();
 		withQueueItemImages.mockClear();
+		resetQueueChangeFrames();
 	});
 
 	it('sends one frame per item that left, each with the list after the write and its images inlined', async () => {
@@ -67,11 +80,15 @@ describe('broadcastDesktopQueueChanges (M23, M26)', () => {
 			{
 				type: 'queue_changed',
 				sessionId: 'a1',
-				// The frame before it sent the images (M26).
-				items: [{ ...message('waits'), imagesKept: true }],
+				// A client that does not read changes gets every frame whole, images and all (M28).
+				items,
 				namesExits: true,
 				exit: { itemId: 'gone', exit: 'removed' },
 			},
+		]);
+		expect(broadcastToCliClients.mock.calls.map(([, audience]) => audience)).toEqual([
+			'whole-queue',
+			'whole-queue',
 		]);
 	});
 
@@ -82,12 +99,10 @@ describe('broadcastDesktopQueueChanges (M23, M26)', () => {
 			[{ id: 'a1', executionQueue: [message('q1')] }]
 		);
 		await settled();
-		expect(broadcastToCliClients).toHaveBeenCalledWith({
-			type: 'queue_changed',
-			sessionId: 'a1',
-			items: [message('q1')],
-			namesExits: true,
-		});
+		expect(broadcastToCliClients).toHaveBeenCalledWith(
+			{ type: 'queue_changed', sessionId: 'a1', items: [message('q1')], namesExits: true },
+			'whole-queue'
+		);
 	});
 
 	it('leaves off namesExits on a change with an exit it cannot prove, so the client counts a gap (CodeRabbit on #2154)', async () => {
@@ -97,11 +112,10 @@ describe('broadcastDesktopQueueChanges (M23, M26)', () => {
 			[{ id: 'a1', executionQueue: [] }]
 		);
 		await settled();
-		expect(broadcastToCliClients).toHaveBeenCalledWith({
-			type: 'queue_changed',
-			sessionId: 'a1',
-			items: [],
-		});
+		expect(broadcastToCliClients).toHaveBeenCalledWith(
+			{ type: 'queue_changed', sessionId: 'a1', items: [] },
+			'whole-queue'
+		);
 	});
 
 	it('keeps a proven start beside an exit it cannot prove: the start is named, then the gap is marked (CodeRabbit on #2154)', async () => {
@@ -134,94 +148,159 @@ describe('broadcastDesktopQueueChanges (M23, M26)', () => {
 		]);
 	});
 
-	// Parity M26: a queue change went to every web client with every item's images inlined again.
-	it("sends an item's images once: a later frame whose item keeps its images says imagesKept (M26)", async () => {
+	// Parity M28: `imagesKept` reached clients that could not read it (an older desktop client drew
+	// its queued cards without thumbnails), and was tracked per agent, not per client.
+	it('gives a client that does not read changes every frame whole, every image every time, never imagesKept (M28)', async () => {
 		const waits = message('w1', { images: ['ref-1'] });
 		broadcastDesktopQueueChanges(
 			server(1),
-			[{ id: 'm26', executionQueue: [] }],
-			[{ id: 'm26', executionQueue: [waits] }]
+			[{ id: 'm28w', executionQueue: [] }],
+			[{ id: 'm28w', executionQueue: [waits] }]
 		);
 		await settled();
 		broadcastDesktopQueueChanges(
 			server(1),
-			[{ id: 'm26', executionQueue: [waits] }],
-			[{ id: 'm26', executionQueue: [waits, message('w2')] }]
+			[{ id: 'm28w', executionQueue: [waits] }],
+			[{ id: 'm28w', executionQueue: [waits, message('w2')] }]
 		);
 		await settled();
 		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame.items)).toEqual([
-			[{ ...message('w1'), images: ['data:image/png;base64,AAAA'] }],
-			[{ ...message('w1'), imagesKept: true }, message('w2')],
+			[{ ...message('w1'), images: inlined(1) }],
+			[{ ...message('w1'), images: inlined(1) }, message('w2')],
 		]);
-		expect(withQueueItemImages).toHaveBeenLastCalledWith([message('w1'), message('w2')], true);
+		expect(JSON.stringify(broadcastToCliClients.mock.calls)).not.toContain('imagesKept');
 	});
 
-	it('sends the images again when an edit changes them, or the item left and came back (M26)', async () => {
+	it('gives a client that reads changes the ids in order and only what is new or changed since the last frame, with its images (M28)', async () => {
+		const waits = message('c1', { images: ['ref-1'] });
+		broadcastDesktopQueueChanges(
+			server(1, 1),
+			[{ id: 'm28c', executionQueue: [] }],
+			[{ id: 'm28c', executionQueue: [waits] }]
+		);
+		await settled();
+		broadcastDesktopQueueChanges(
+			server(1, 1),
+			[{ id: 'm28c', executionQueue: [waits] }],
+			[{ id: 'm28c', executionQueue: [waits, message('c2')] }]
+		);
+		await settled();
+		expect(broadcastToCliClients.mock.calls).toEqual([
+			[
+				{
+					type: 'queue_changed',
+					sessionId: 'm28c',
+					namesExits: true,
+					changes: {
+						seq: 1,
+						base: 0,
+						order: ['c1'],
+						changed: [{ ...message('c1'), images: inlined(1) }],
+					},
+				},
+				'queue-changes',
+			],
+			[
+				{
+					type: 'queue_changed',
+					sessionId: 'm28c',
+					namesExits: true,
+					changes: { seq: 2, base: 1, order: ['c1', 'c2'], changed: [message('c2')] },
+				},
+				'queue-changes',
+			],
+		]);
+		// Only the new item's images are read for it.
+		expect(withQueueItemImages).toHaveBeenLastCalledWith([message('c2')], true);
+		// A queue read answers the seq the frames are at.
+		expect(queueChangesSeq('m28c')).toBe(2);
+		expect(queueChangesSeq('never-framed')).toBe(0);
+	});
+
+	it('carries an item again when an edit changes its images, or it left and came back (M28)', async () => {
 		const before = message('e1', { images: ['ref-1'] });
 		const edited = message('e1', { images: ['ref-1', 'ref-2'] });
-		broadcastDesktopQueueChanges(
-			server(1),
-			[{ id: 'm26e', executionQueue: [] }],
-			[{ id: 'm26e', executionQueue: [before] }]
-		);
-		await settled();
-		broadcastDesktopQueueChanges(
-			server(1),
-			[{ id: 'm26e', executionQueue: [before] }],
-			[{ id: 'm26e', executionQueue: [edited] }]
-		);
-		await settled();
-		broadcastDesktopQueueChanges(
-			server(1),
-			[{ id: 'm26e', executionQueue: [edited] }],
-			[{ id: 'm26e', executionQueue: [] }]
-		);
-		await settled();
-		broadcastDesktopQueueChanges(
-			server(1),
-			[{ id: 'm26e', executionQueue: [] }],
-			[{ id: 'm26e', executionQueue: [edited] }]
-		);
-		await settled();
-		const inlined = (count: number) => ({
-			...message('e1'),
-			images: Array.from({ length: count }, () => 'data:image/png;base64,AAAA'),
-		});
-		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame.items)).toEqual([
-			[inlined(1)],
-			[inlined(2)],
+		const steps: Array<[unknown[], unknown[]]> = [
+			[[], [before]],
+			[[before], [edited]],
+			[[edited], []],
+			[[], [edited]],
+		];
+		for (const [had, has] of steps) {
+			broadcastDesktopQueueChanges(
+				server(1, 1),
+				[{ id: 'm28e', executionQueue: had as never }],
+				[{ id: 'm28e', executionQueue: has as never }]
+			);
+			await settled();
+		}
+		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame.changes.changed)).toEqual([
+			[{ ...message('e1'), images: inlined(1) }],
+			[{ ...message('e1'), images: inlined(2) }],
 			[],
-			[inlined(2)],
+			[{ ...message('e1'), images: inlined(2) }],
 		]);
 	});
 
-	it('sends an image that could not be read again with the next frame, never as kept (CodeRabbit on #2160)', async () => {
+	it('carries an item whose image could not be read again in the next change (CodeRabbit on #2160)', async () => {
 		const waits = message('u1', { images: ['ref-1', 'ref-2'] });
 		// The first read finds only one of the two files.
 		withQueueItemImages.mockImplementationOnce(async (items: Array<{ images?: string[] }>) =>
-			items.map((item) =>
-				item.images ? { ...item, images: ['data:image/png;base64,AAAA'] } : item
-			)
+			items.map((item) => (item.images ? { ...item, images: inlined(1) } : item))
 		);
 		broadcastDesktopQueueChanges(
-			server(1),
-			[{ id: 'm26u', executionQueue: [] }],
-			[{ id: 'm26u', executionQueue: [waits] }]
+			server(1, 1),
+			[{ id: 'm28u', executionQueue: [] }],
+			[{ id: 'm28u', executionQueue: [waits] }]
 		);
 		await settled();
 		broadcastDesktopQueueChanges(
-			server(1),
-			[{ id: 'm26u', executionQueue: [waits] }],
-			[{ id: 'm26u', executionQueue: [waits, message('u2')] }]
+			server(1, 1),
+			[{ id: 'm28u', executionQueue: [waits] }],
+			[{ id: 'm28u', executionQueue: [waits, message('u2')] }]
 		);
 		await settled();
-		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame.items[0])).toEqual([
-			{ ...message('u1'), images: ['data:image/png;base64,AAAA'] },
-			{
-				...message('u1'),
-				images: ['data:image/png;base64,AAAA', 'data:image/png;base64,AAAA'],
-			},
+		expect(broadcastToCliClients.mock.calls.map(([frame]) => frame.changes.changed)).toEqual([
+			[{ ...message('u1'), images: inlined(1) }],
+			[{ ...message('u1'), images: inlined(2) }, message('u2')],
 		]);
+	});
+
+	it('numbers each frame of one change, the later ones carrying nothing, and reads images once for both kinds of client (M28)', async () => {
+		broadcastDesktopQueueChanges(
+			server(2, 1),
+			[{ id: 'm28m', executionQueue: [message('ran'), message('gone'), message('waits')] }],
+			[
+				{
+					id: 'm28m',
+					executionQueue: [message('waits', { images: ['ref'] })],
+					aiTabs: [{ logs: [{ source: 'user', queuedItemId: 'ran' }] }],
+				},
+			]
+		);
+		await settled();
+		const changes = broadcastToCliClients.mock.calls
+			.filter(([, audience]) => audience === 'queue-changes')
+			.map(([frame]) => [frame.exit, frame.changes]);
+		expect(changes).toEqual([
+			[
+				{ itemId: 'ran', exit: 'started' },
+				{
+					seq: 1,
+					base: 0,
+					order: ['waits'],
+					changed: [{ ...message('waits'), images: inlined(1) }],
+				},
+			],
+			[
+				{ itemId: 'gone', exit: 'removed' },
+				{ seq: 2, base: 1, order: ['waits'], changed: [] },
+			],
+		]);
+		expect(
+			broadcastToCliClients.mock.calls.filter(([, audience]) => audience === 'whole-queue')
+		).toHaveLength(2);
+		expect(withQueueItemImages).toHaveBeenCalledTimes(1);
 	});
 
 	it('names the start of a message whose tab was snoozed since it started (M26)', async () => {

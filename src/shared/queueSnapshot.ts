@@ -148,3 +148,26 @@ export function desktopQueueChanges(
 	}
 	return changes;
 }
+
+/**
+ * The upgrade-URL query parameter (`?queueChanges=1`) a Federation client sends when it reads a
+ * desktop host's queue CHANGES (M28): each `queue_changed` frame then carries only the waiting
+ * ids in order and the items new or changed since the agent's last frame, with their images
+ * (`QueueChangesFrame`). A client that does not send it (an older build) gets every frame whole,
+ * images and all, as before M26, so it never meets a field it does not know.
+ */
+export const QUEUE_CHANGES_QUERY_PARAM = 'queueChanges';
+
+/**
+ * The change part of a desktop host's `queue_changed` frame for a client that reads changes. `seq`
+ * numbers the agent's frames; `base` is the `seq` of the frame (or the `list_queue` answer, its
+ * `queueSeq`) this one changes. A client holding that list applies `order` (every waiting item id,
+ * in order) over it with `changed` (the items new or changed since `base`, images inlined); any
+ * other client reads the queue whole instead.
+ */
+export interface QueueChangesFrame {
+	seq: number;
+	base: number;
+	order: string[];
+	changed: QueuedItemSnapshot[];
+}
