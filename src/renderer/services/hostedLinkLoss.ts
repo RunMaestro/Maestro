@@ -52,7 +52,7 @@ import { sameImages } from '../utils/hostedSession';
 import { generateId } from '../utils/ids';
 import { settleTabThinkingState } from '../utils/tabHelpers';
 import { keepTurnForHost } from './hostedQueuedTurn';
-import { MIRROR_TRANSCRIPT_TAIL, readMirrorTranscript } from './peerMirror';
+import { MIRROR_TRANSCRIPT_TAIL, readMirrorTranscript, requestPeerReport } from './peerMirror';
 
 /** How the mirror stands with the host a hosted record runs on. */
 export interface HostLink {
@@ -363,6 +363,45 @@ function hostReportCurrent(peerId: string): boolean {
 	return !!peer && hostReportIsCurrent(peer);
 }
 
+/** How long after the link is back a decision waits for the host's report before asking for it. */
+export const HOST_REPORT_REQUEST_MS = 3_000;
+
+/** At most one ask per peer in this long, so a host that cannot answer is not asked in a loop. */
+const HOST_REPORT_REQUEST_EVERY_MS = 30_000;
+
+/** Per peer: the ask timer waiting to fire, and when the last ask went. */
+const reportRequests = new Map<
+	string,
+	{ timer?: ReturnType<typeof setTimeout>; askedAt?: number }
+>();
+
+/**
+ * A decision waits for the host's report since the link came back (`hostReportCurrent()`). One
+ * normally lands at once (a restarted host's snapshot); a link that resumed without one sends
+ * none, and the decision would wait for ever. So when none came within `HOST_REPORT_REQUEST_MS`,
+ * ask the host for its agent list (`requestPeerReport()`), at most once per
+ * `HOST_REPORT_REQUEST_EVERY_MS` per peer.
+ */
+function askForHostReport(peerId: string): void {
+	if (hostReportCurrent(peerId)) return;
+	const request = reportRequests.get(peerId) ?? {};
+	if (request.timer) return;
+	if (
+		request.askedAt !== undefined &&
+		Date.now() - request.askedAt < HOST_REPORT_REQUEST_EVERY_MS
+	) {
+		return;
+	}
+	request.timer = setTimeout(() => {
+		request.timer = undefined;
+		const peer = usePeerMirrorStore.getState().peers[peerId];
+		if (!peer || peer.connection !== 'connected' || hostReportIsCurrent(peer)) return;
+		request.askedAt = Date.now();
+		void requestPeerReport(peerId);
+	}, HOST_REPORT_REQUEST_MS);
+	reportRequests.set(peerId, request);
+}
+
 /**
  * The kind of host `peerId` runs: how its transcript tells a turn that ended from one it lost with
  * no end stamp (`turnFateAfter()`). Not known yet: read as a headless host's, which never sends a
@@ -460,6 +499,7 @@ async function readKeptEntryFate(
 ): Promise<CutTurnFate> {
 	// After a reload the mirror can say connected while it still holds the host's report from
 	// before a crash (the tab busy, or no agents yet): decided only from a report since the link.
+	askForHostReport(host.peerId);
 	if (!(await awaitCurrentHostReport(host.peerId, CUT_TURN_FATE_WAIT_MS))) return 'unknown';
 	await readMirrorTranscript(host.peerId, host.agentId, item.tabId);
 	const mirror = usePeerMirrorStore.getState();
@@ -567,6 +607,7 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 	// one read (`settleCutHostedTurns()`).
 	if (!hostReportCurrent(link.peerId)) {
 		cut.awaitingReport = true;
+		askForHostReport(link.peerId);
 		return;
 	}
 	// Closed on the host: not sent into a tab that is gone, and held for the user to send again.
@@ -665,8 +706,10 @@ export function settleCutHostedTurns(sessionId: string, link: HostLink): void {
 			continue;
 		}
 		if (!current) {
-			// Still the report from before the cut: nothing to decide from, and no read started.
+			// Still the report from before the cut: nothing to decide from, and no read started. A
+			// report that does not come on its own is asked for (R39).
 			cut.awaitingReport = true;
+			askForHostReport(link.peerId);
 			continue;
 		}
 		if (cut.awaitingReport) {
@@ -778,6 +821,10 @@ export function pruneHostedLinkLoss(hostedIds: ReadonlySet<string>): void {
 	for (const key of [...erroredResends.keys()]) if (gone(key)) erroredResends.delete(key);
 	for (const id of [...linkErrors.keys()]) if (!hostedIds.has(id)) linkErrors.delete(id);
 	for (const id of [...endedHere.keys()]) if (!hostedIds.has(id)) endedHere.delete(id);
+	if (hostedIds.size === 0) {
+		for (const request of reportRequests.values()) clearTimeout(request.timer);
+		reportRequests.clear();
+	}
 }
 
 /** Test-only: forget every cut turn and local stop. */
@@ -787,5 +834,7 @@ export function __resetHostedLinkLossForTests(): void {
 	cutTurns.clear();
 	stoppedTurns.clear();
 	erroredResends.clear();
+	for (const request of reportRequests.values()) clearTimeout(request.timer);
+	reportRequests.clear();
 	endedHere.clear();
 }

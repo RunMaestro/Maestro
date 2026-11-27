@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
 import {
 	__resetHostedLinkLossForTests,
+	HOST_REPORT_REQUEST_MS,
 	cutHostedTurnTabs,
 	hostedCutsKept,
 } from '../../../renderer/services/hostedLinkLoss';
@@ -728,6 +729,48 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		await flush();
 		expect(sends()).toHaveLength(1);
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	// Parity R39: a link that comes back without a new report (a resumed attach sends none) would
+	// leave the cut waiting for ever, the card hanging: the host is asked for its report.
+	it('asks the host for its report when none came within a few seconds of the reconnect (R39)', async () => {
+		vi.useFakeTimers();
+		try {
+			cut();
+			act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+			transcript.mockResolvedValue([QUESTION]);
+			const reconnect = vi.fn(async () => {
+				// The host answers with its whole agent list: the tab is idle, the turn died.
+				hostReports('idle', 'connected');
+				return { ok: true };
+			});
+			maestro.federation = { transcript, act: act$, reconnect };
+			useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+			usePeerMirrorStore.setState((current) => ({
+				peers: { ...current.peers, box: { ...current.peers.box, connection: 'connected' } },
+			}));
+			syncHostedAgents();
+			await flush();
+			expect(reconnect).not.toHaveBeenCalled();
+			await act(async () => {
+				vi.advanceTimersByTime(HOST_REPORT_REQUEST_MS);
+			});
+			expect(reconnect).toHaveBeenCalledTimes(1);
+			expect(reconnect).toHaveBeenCalledWith('box');
+			syncHostedAgents();
+			await flush();
+			syncHostedAgents();
+			await flush();
+			expect(sends()).toHaveLength(1);
+			expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+			// Asked once: no loop against the host.
+			await act(async () => {
+				vi.advanceTimersByTime(HOST_REPORT_REQUEST_MS * 2);
+			});
+			expect(reconnect).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('never sends again a cut turn the host reports running after the reconnect (R31)', async () => {
