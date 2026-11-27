@@ -73,7 +73,7 @@ describe('createWsMaestroClient with an explicit endpoint', () => {
 		const result = await client.connection.connect();
 		expect(result).toMatchObject({ ok: true, value: { label: 'headless pid 812' } });
 		expect(bridge.connections[0].headers['x-maestro-cli-secret']).toBe(CLI_SECRET);
-		expect(bridge.connections[0].url).toBe(`/${TOKEN}/ws`);
+		expect(bridge.connections[0].url).toBe(`/${TOKEN}/ws?queueChanges=1`);
 		expect(client.connection.state()).toBe('connected');
 	});
 

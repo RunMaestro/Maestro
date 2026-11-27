@@ -25,6 +25,7 @@ import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
 import { sendBounded } from './socket-send';
 import type { WebLoginPolicyContext } from '../auth/web-login-policy';
+import type { CliAudience } from '../queue-change-broadcast';
 import type {
 	Theme,
 	WebClient,
@@ -60,6 +61,11 @@ const LOG_CONTEXT = 'BroadcastService';
 // reload it replaced; raise both if that bites.
 const REPLAY_MAX_FRAMES = 2000;
 const REPLAY_MAX_BYTES = 8 * 1024 * 1024;
+// The `cli` frames (`queue_changed`) keep their own, smaller replay, so they never push a
+// browser's frames out of its replay: a client the CLI secret admitted that misses more than this
+// resyncs from scratch, and reads the queues again.
+const CLI_REPLAY_MAX_FRAMES = 500;
+const CLI_REPLAY_MAX_BYTES = 2 * 1024 * 1024;
 
 /**
  * Who a broadcast frame is for. Recorded beside each buffered frame so a
@@ -73,7 +79,13 @@ type BridgeScope =
 	/** Subscribers of the session, plus unsubscribed (dashboard) clients. */
 	| { kind: 'session'; sessionId: string }
 	/** Subscribers of the session only: tool events are high-volume. */
-	| { kind: 'subscribers'; sessionId: string };
+	| { kind: 'subscribers'; sessionId: string }
+	/**
+	 * Clients admitted by the per-boot CLI secret only (`maestro-cli` and Federation clients): a
+	 * frame no browser reads, such as `queue_changed`, never reaches a phone over the tunnel.
+	 * `audience` narrows it to those that read queue changes, or to the rest (M28).
+	 */
+	| { kind: 'cli'; audience?: CliAudience };
 
 interface ReplayFrame {
 	seq: number;
@@ -83,14 +95,52 @@ interface ReplayFrame {
 	scope: BridgeScope;
 }
 
-function frameReaches(scope: BridgeScope, subscribedSessionId: string | undefined): boolean {
+function frameReaches(
+	scope: BridgeScope,
+	subscribedSessionId: string | undefined,
+	cli: boolean,
+	/** The client said at connect it reads queue changes (`QUEUE_CHANGES_QUERY_PARAM`). */
+	queueChanges = false
+): boolean {
 	switch (scope.kind) {
 		case 'all':
 			return true;
+		case 'cli':
+			return cli && (!scope.audience || scope.audience === cliAudienceOf(queueChanges));
 		case 'session':
 			return !subscribedSessionId || subscribedSessionId === scope.sessionId;
 		case 'subscribers':
 			return subscribedSessionId === scope.sessionId;
+	}
+}
+
+function cliAudienceOf(queueChanges: boolean): CliAudience {
+	return queueChanges ? 'queue-changes' : 'whole-queue';
+}
+
+/**
+ * The most recent frames, bounded by count and bytes, oldest first. `evictedThrough` is the
+ * highest seq it let go: a client that last saw a seq below it may have missed a frame it holds.
+ */
+class ReplayBuffer {
+	readonly frames: ReplayFrame[] = [];
+	private bytes = 0;
+	evictedThrough = 0;
+
+	constructor(
+		private readonly maxFrames: number,
+		private readonly maxBytes: number
+	) {}
+
+	push(frame: ReplayFrame): void {
+		this.frames.push(frame);
+		this.bytes += frame.bytes;
+		while (this.frames.length > this.maxFrames || this.bytes > this.maxBytes) {
+			const dropped = this.frames.shift();
+			if (!dropped) break;
+			this.bytes -= dropped.bytes;
+			this.evictedThrough = dropped.seq;
+		}
 	}
 }
 
@@ -125,8 +175,8 @@ export class BroadcastService {
 	// cannot be resumed, because that run's counter means nothing here.
 	readonly bridgeEpoch = randomUUID();
 	private bridgeSeq = 0;
-	private replayFrames: ReplayFrame[] = [];
-	private replayBytes = 0;
+	private replay = new ReplayBuffer(REPLAY_MAX_FRAMES, REPLAY_MAX_BYTES);
+	private cliReplay = new ReplayBuffer(CLI_REPLAY_MAX_FRAMES, CLI_REPLAY_MAX_BYTES);
 
 	/**
 	 * Set the callback for getting web clients
@@ -143,13 +193,7 @@ export class BroadcastService {
 		const seq = ++this.bridgeSeq;
 		const data = JSON.stringify({ ...message, seq });
 		const frame: ReplayFrame = { seq, data, bytes: Buffer.byteLength(data), scope };
-		this.replayFrames.push(frame);
-		this.replayBytes += frame.bytes;
-		while (this.replayFrames.length > REPLAY_MAX_FRAMES || this.replayBytes > REPLAY_MAX_BYTES) {
-			const dropped = this.replayFrames.shift();
-			if (!dropped) break;
-			this.replayBytes -= dropped.bytes;
-		}
+		(scope.kind === 'cli' ? this.cliReplay : this.replay).push(frame);
 		return frame;
 	}
 
@@ -163,7 +207,12 @@ export class BroadcastService {
 			if (
 				client.socket.readyState === WebSocket.OPEN &&
 				client.isAuthorized?.(policy) !== false &&
-				frameReaches(frame.scope, client.subscribedSessionId)
+				frameReaches(
+					frame.scope,
+					client.subscribedSessionId,
+					client.cliAuthenticated === true,
+					client.readsQueueChanges === true
+				)
 			) {
 				delivered = sendBounded(client.socket, frame.data, frame.bytes) || delivered;
 			}
@@ -180,7 +229,11 @@ export class BroadcastService {
 	resumeBridgeClient(
 		epoch: string,
 		lastSeq: number,
-		subscribedSessionId?: string
+		subscribedSessionId?: string,
+		/** The client was admitted by the CLI secret: it was sent the `cli` frames too. */
+		cli = false,
+		/** It reads queue changes: it was sent that audience's `cli` frames, not the whole ones. */
+		queueChanges = false
 	): string[] | null {
 		if (
 			epoch !== this.bridgeEpoch ||
@@ -191,10 +244,18 @@ export class BroadcastService {
 			return null;
 		}
 		if (lastSeq === this.bridgeSeq) return [];
-		const oldest = this.replayFrames[0]?.seq;
-		if (oldest === undefined || oldest > lastSeq + 1) return null;
-		return this.replayFrames
-			.filter((frame) => frame.seq > lastSeq && frameReaches(frame.scope, subscribedSessionId))
+		// A frame after `lastSeq` was let go: the client may have missed it, so it reloads. A browser
+		// is judged by the frames it is sent only, so the `cli` replay's evictions never reach it.
+		if (lastSeq < this.replay.evictedThrough) return null;
+		if (cli && lastSeq < this.cliReplay.evictedThrough) return null;
+		const frames = cli
+			? [...this.replay.frames, ...this.cliReplay.frames].sort((a, b) => a.seq - b.seq)
+			: this.replay.frames;
+		return frames
+			.filter(
+				(frame) =>
+					frame.seq > lastSeq && frameReaches(frame.scope, subscribedSessionId, cli, queueChanges)
+			)
 			.map((frame) => frame.data);
 	}
 
@@ -216,6 +277,28 @@ export class BroadcastService {
 	broadcastToAll(message: object): void {
 		if (!this.getWebClients) return;
 		this.deliver(this.stampForBridge(message, { kind: 'all' }));
+	}
+
+	/**
+	 * Broadcast a message to the clients admitted by the CLI secret only (see the `cli` scope), or
+	 * to one audience of them: those that read queue changes, or the rest.
+	 */
+	broadcastToCliClients(message: object, audience?: CliAudience): void {
+		if (!this.getWebClients) return;
+		this.deliver(
+			this.stampForBridge(message, audience ? { kind: 'cli', audience } : { kind: 'cli' })
+		);
+	}
+
+	/** How many open clients the CLI secret admitted are in each audience. */
+	getCliClientCounts(): Record<CliAudience, number> {
+		const counts: Record<CliAudience, number> = { 'queue-changes': 0, 'whole-queue': 0 };
+		if (!this.getWebClients) return counts;
+		for (const client of this.getWebClients().values()) {
+			if (client.socket.readyState !== WebSocket.OPEN || client.cliAuthenticated !== true) continue;
+			counts[cliAudienceOf(client.readsQueueChanges === true)] += 1;
+		}
+		return counts;
 	}
 
 	/**
