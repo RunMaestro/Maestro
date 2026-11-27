@@ -799,12 +799,17 @@ export type TranscriptHostKind = 'headless' | 'desktop';
  * turn's process exits. With no entry from `from` on, nothing is stamped (the same array).
  */
 export function markTurnEnded<T extends object>(entries: readonly T[], from = 0): T[] {
-	const last = entries.length - 1;
-	if (last < from || last < 0) return entries as T[];
-	if ((entries[last] as { turnEnded?: unknown }).turnEnded === true) return entries as T[];
-	const next = [...entries];
-	next[last] = { ...entries[last], turnEnded: true };
-	return next;
+	for (let i = entries.length - 1; i >= Math.max(from, 0); i -= 1) {
+		const entry = entries[i] as Partial<LogEntryRecord>;
+		// Thinking and tool cards are dropped by a later exit in a tab that does not keep them
+		// (`logsKeptAtTurnEnd()`): the stamp goes on an entry that stays (CodeRabbit on #2167).
+		if (entry.source === 'thinking' || entry.source === 'tool') continue;
+		if (entry.turnEnded === true) return entries as T[];
+		const next = [...entries];
+		next[i] = { ...entries[i], turnEnded: true };
+		return next;
+	}
+	return entries as T[];
 }
 
 function isUserTurnStart(entry: Partial<LogEntryRecord> | null | undefined): boolean {
@@ -817,11 +822,14 @@ function isUserTurnStart(entry: Partial<LogEntryRecord> | null | undefined): boo
  * the next user message (a steer into it is part of it): an answer after a LATER message is that
  * message's, never this one's.
  *
- * Stamped (`markTurnEnded()`, on any of them or on the message itself): ended, as its entries say
- * (its own error, the Stop note, or else answered). Not stamped by a host that stamps (another
- * turn of the tab is): `unended`, whatever text it streamed. Written by a host too old to stamp:
- * an error or the Stop note says how it ended; otherwise a headless host's text is its answer
- * (written only at the end), and a desktop host's text with nothing after it is a turn it lost.
+ * Each stamp (`markTurnEnded()`, on any of them or on the message itself) ends one attempt: a
+ * retry runs into the same entry, so the LAST attempt says how the message stands (CodeRabbit on
+ * #2167). An ended attempt is what its entries say: its own error, the Stop note, or else
+ * answered. Entries after the last stamp are an attempt with no end yet (or the turn of a host too
+ * old to stamp): an error or the Stop note says how it ended; otherwise a headless host's text is
+ * its answer (it writes the answer only when the turn ends, stamped or not, so a turn written
+ * before the host stamped still reads answered), and a desktop host's text is a turn it lost
+ * unless a later message started after it. With nothing after the last stamp, that stamp decides.
  */
 export function turnFateAfter(
 	logs: readonly unknown[],
@@ -829,7 +837,8 @@ export function turnFateAfter(
 	hostKind: TranscriptHostKind = 'headless'
 ): TurnFate {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
-	let ended = entries[at]?.turnEnded === true;
+	let ended: TurnFate | undefined = entries[at]?.turnEnded === true ? 'answered' : undefined;
+	// What the attempt being read says so far; each stamp ends one, and the next starts clean.
 	let errored = false;
 	let stopped = false;
 	let output = false;
@@ -837,16 +846,17 @@ export function turnFateAfter(
 	for (; next < entries.length; next += 1) {
 		const entry = entries[next];
 		if (isUserTurnStart(entry)) break;
-		if (entry?.turnEnded === true) ended = true;
 		if (entry?.source === 'error') errored = true;
 		else if (entry?.source === 'system' && entry.text === TURN_CANCELED_NOTE) stopped = true;
 		else if (entry?.source === 'stdout' || entry?.source === 'ai') output = true;
+		if (entry?.turnEnded === true) {
+			ended = errored ? 'errored' : stopped ? 'stopped' : 'answered';
+			errored = stopped = output = false;
+		}
 	}
-	const said: TurnFate | undefined = errored ? 'errored' : stopped ? 'stopped' : undefined;
-	if (ended) return said ?? 'answered';
-	if (entries.some((entry) => entry?.turnEnded === true)) return 'unended';
-	if (said) return said;
-	if (!output) return 'unended';
+	if (errored) return 'errored';
+	if (stopped) return 'stopped';
+	if (!output) return ended ?? 'unended';
 	return hostKind === 'headless' || next < entries.length ? 'answered' : 'unended';
 }
 
@@ -898,7 +908,7 @@ export function userEntryAnswered(
 export function tabRunsUserEntry(
 	logs: readonly unknown[],
 	entry: SentUserEntry,
-	running: { busy: boolean; itemId?: string }
+	running: { busy: boolean; itemId?: string; startedAt?: number }
 ): boolean {
 	if (!running.busy) return false;
 	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
@@ -909,8 +919,22 @@ export function tabRunsUserEntry(
 	for (let i = logs.length - 1; i > at; i -= 1) {
 		if (isUserTurnStart(logs[i] as Partial<LogEntryRecord> | null)) return false;
 	}
+	// The running turn began with this message, not after it: a turn that writes no message of its
+	// own (a command) started later is not this one (CodeRabbit on #2167). A desktop writes the
+	// message at the turn's start, on the same clock (`markTabRunningQueuedItem()`).
+	const written = (logs[at] as LogEntryRecord).timestamp;
+	if (
+		running.startedAt !== undefined &&
+		typeof written === 'number' &&
+		written < running.startedAt - RUNNING_ENTRY_START_SLACK_MS
+	) {
+		return false;
+	}
 	return turnFateAfter(logs, at, 'desktop') === 'unended';
 }
+
+/** How far before a running turn's start its message may be written (`tabRunsUserEntry()`). */
+export const RUNNING_ENTRY_START_SLACK_MS = 2_000;
 
 /**
  * `logs` with the message a turn starts on. A resend of a message the transcript already holds

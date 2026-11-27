@@ -515,7 +515,11 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			if (ranBy && ranBy !== item.id && startedEntries.get(key) === ranBy) {
 				return { done: Promise.resolve(), interrupt: () => undefined };
 			}
-			startedEntries.set(key, item.id);
+			// A copy edited while it waited is another message: it gets an entry of its own
+			// (`turnEntryIdFor()`), so it never stands for the copy that started this entry, and a
+			// later copy of the original is still known as run (CodeRabbit on #2167).
+			const held = logs.find((entry) => entry?.id === item.entryId);
+			if (!held || isSameUserEntry(held, sent)) startedEntries.set(key, item.id);
 		}
 
 		const agent = toTurnAgent(record);

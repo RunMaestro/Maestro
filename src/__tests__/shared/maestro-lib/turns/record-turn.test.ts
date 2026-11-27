@@ -206,6 +206,37 @@ describe('turn records', () => {
 		]);
 	});
 
+	// CodeRabbit on #2167: a stamp that could not be written is reported, never a silent success.
+	it('reports the transcript failed when the end stamp on the message could not be written', async () => {
+		seed({}, { logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug' }] });
+		const { repository } = await recorder();
+		const records = createTurnRecorder({
+			paths,
+			repository: {
+				getAgent: repository.getAgent,
+				getTab: repository.getTab,
+				appendTranscript: repository.appendTranscript,
+				replaceTranscriptEntry: async () => ({
+					ok: false as const,
+					error: { code: 'rejected' as const, message: 'fenced', method: 'tabs.update' as const },
+				}),
+			},
+			loadSqlite: () => {
+				throw new Error('unused');
+			},
+			context: context(),
+			statsRecorder,
+		});
+		const result = await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(result.transcript).toMatchObject({ ok: false, error: { message: 'fenced' } });
+	});
+
 	it('records usage under the provider the turn was sent to, not the one the agent has now', async () => {
 		const { recorder: records } = await recorder();
 		await records.recordTurn(

@@ -1305,7 +1305,33 @@ describe('turnFateAfter', () => {
 		['the Stop note stamped', [u1, stamped(stop)], 'headless', 'stopped'],
 		['the message itself stamped (nothing of its own)', [stamped(u1)], 'headless', 'answered'],
 		['streamed text, no stamp, desktop', [u1, partial], 'desktop', 'unended'],
-		['streamed text, no stamp, a later turn stamped', [u1, partial, u2, a2], 'desktop', 'unended'],
+		// Its text, then a later message: a turn written before the host stamped (CodeRabbit on #2167).
+		['streamed text, no stamp, then a later turn', [u1, partial, u2, a2], 'desktop', 'answered'],
+		[
+			'a headless turn from before stamping, then a stamped turn',
+			[u1, partial, u2, a2],
+			'headless',
+			'answered',
+		],
+		// A retry runs into the same entry: the LAST attempt decides (CodeRabbit on #2167).
+		[
+			'an errored attempt, then a retry answered',
+			[u1, stamped(error), stamped(partial)],
+			'desktop',
+			'answered',
+		],
+		[
+			'an answered attempt, then a retry that errored',
+			[u1, stamped(partial), stamped(error)],
+			'headless',
+			'errored',
+		],
+		[
+			'an errored attempt, then a retry mid-stream',
+			[u1, stamped(error), partial],
+			'desktop',
+			'unended',
+		],
 		['nothing after it', [u1], 'headless', 'unended'],
 		['only a later message answered', [u1, u2, a2], 'headless', 'unended'],
 		['a host too old to stamp: headless text is its answer', [u1, partial], 'headless', 'answered'],
@@ -1324,6 +1350,12 @@ describe('turnFateAfter', () => {
 		],
 	] as const)('%s', (_how, logs, hostKind, fate) => {
 		expect(turnFateAfter(logs, 0, hostKind)).toBe(fate);
+	});
+
+	it('stamps an entry a later exit keeps, never a thinking or tool card (CodeRabbit on #2167)', () => {
+		const tool = { id: 't1', timestamp: 2, source: 'tool', text: 'ran' };
+		expect(markTurnEnded([u1, tool])).toEqual([{ ...u1, turnEnded: true }, tool]);
+		expect(markTurnEnded([tool])).toEqual([tool]);
 	});
 
 	it('stamps only the last entry, once', () => {
@@ -1359,6 +1391,19 @@ describe('tabRunsUserEntry', () => {
 		['a headless tab running its item', [u1], { busy: true, itemId: 'q1' }, true],
 		['a headless tab running another item', [u1], { busy: true, itemId: 'q2' }, false],
 		['a tab without the message', [partial], { busy: true }, false],
+		// A turn that writes no message of its own (a command) started after it (CodeRabbit on #2167).
+		[
+			'a desktop tab whose running turn began after the message',
+			[u1, partial],
+			{ busy: true, startedAt: 60_000 },
+			false,
+		],
+		[
+			'a desktop tab whose running turn began with the message',
+			[u1, partial],
+			{ busy: true, startedAt: 1 },
+			true,
+		],
 	] as const)('%s', (_how, logs, running, runs) => {
 		expect(tabRunsUserEntry(logs, sent, running)).toBe(runs);
 	});

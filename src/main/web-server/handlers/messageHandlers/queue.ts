@@ -820,7 +820,10 @@ async function desktopTabAnswered(
 		const read = (await invokeAsBridge('sessions:getDeferredContent', sessionId, tabId, false)) as
 			| {
 					logs?: unknown;
-					transcriptSnapshots?: Array<{ tabId?: string; runtime?: { state?: unknown } }>;
+					transcriptSnapshots?: Array<{
+						tabId?: string;
+						runtime?: { state?: unknown; thinkingStartTime?: unknown };
+					}>;
 			  }
 			| undefined;
 		const logs: unknown[] = Array.isArray(read?.logs) ? read.logs : [];
@@ -842,12 +845,17 @@ async function desktopTabAnswered(
 			...entry,
 			...(sent ? { images: sent.filter((image): image is string => image !== null) } : {}),
 		};
-		const state = read?.transcriptSnapshots?.find((snapshot) => snapshot.tabId === tabId)?.runtime
-			?.state;
+		const runtime = read?.transcriptSnapshots?.find(
+			(snapshot) => snapshot.tabId === tabId
+		)?.runtime;
+		const startedAt = runtime?.thinkingStartTime;
 		// This desktop writes streamed text as it arrives: only its end stamp says the turn ended.
 		return (
 			userEntryAnswered(comparable, asSent, 'desktop') ||
-			tabRunsUserEntry(comparable, asSent, { busy: state === 'busy' })
+			tabRunsUserEntry(comparable, asSent, {
+				busy: runtime?.state === 'busy',
+				...(typeof startedAt === 'number' ? { startedAt } : {}),
+			})
 		);
 	} catch (error) {
 		logger.warn(`Could not read tab ${tabId} to check a resend: ${String(error)}`, LOG_CONTEXT);

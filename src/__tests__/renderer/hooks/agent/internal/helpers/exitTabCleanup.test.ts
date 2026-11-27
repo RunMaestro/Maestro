@@ -96,5 +96,25 @@ describe('exitTabCleanup helpers', () => {
 			]);
 			expect(cleanupExitedTabLogs(out, 'tab-1', { showThinking: 'on' })).toBe(out);
 		});
+
+		// CodeRabbit on #2167: a sticky turn that ended on a tool card keeps its stamp on an entry a
+		// later exit in 'on' mode (which drops every thinking and tool card) does not remove.
+		it('keeps an earlier turn stamped when a later exit drops its thinking and tool cards', () => {
+			const sticky = cleanupExitedTabLogs(
+				[log({ id: 'u1', source: 'user' }), log({ id: 't1', source: 'tool' })],
+				'tab-1',
+				{ showThinking: 'sticky' }
+			);
+			const later = cleanupExitedTabLogs(
+				[...sticky, log({ id: 'u2', source: 'user' }), log({ id: 'a2', source: 'stdout' })],
+				'tab-1',
+				{ showThinking: 'on' }
+			);
+			expect(later.map((l) => [l.id, l.turnEnded === true])).toEqual([
+				['u1', true],
+				['u2', false],
+				['a2', true],
+			]);
+		});
 	});
 });

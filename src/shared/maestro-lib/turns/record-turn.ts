@@ -307,27 +307,33 @@ export function createTurnRecorder(options: TurnRecorderOptions): TurnRecorder {
 		}
 
 		const entries = buildTurnTranscript(turn, ctx, tab.showThinking);
-		const transcript = await options.repository.appendTranscript(
+		const appended = await options.repository.appendTranscript(
 			turn.agentId,
 			turn.tabId,
 			entries,
 			...(turn.writeGuard ? [turn.writeGuard] : [])
 		);
-		// Nothing of its own to stamp: the end goes on the message's entry the runtime wrote.
+		// Nothing of its own that stays (no entry, or only thinking and tool cards a later exit may
+		// drop): the end goes on the message's entry the runtime wrote.
 		const userEntry =
-			entries.length === 0 && turn.userEntryWritten && turn.userEntryId
+			!entries.some((entry) => entry.turnEnded === true) &&
+			turn.userEntryWritten &&
+			turn.userEntryId
 				? (Array.isArray(tab.logs) ? (tab.logs as LogEntryRecord[]) : []).find(
 						(entry) => entry?.id === turn.userEntryId
 					)
 				: undefined;
-		if (transcript.ok && userEntry && options.repository.replaceTranscriptEntry) {
-			await options.repository.replaceTranscriptEntry(
-				turn.agentId,
-				turn.tabId,
-				markTurnEnded([userEntry])[0],
-				...(turn.writeGuard ? [turn.writeGuard] : [])
-			);
-		}
+		// A stamp that could not be written is a transcript that does not say the turn ended
+		// (CodeRabbit on #2167): reported as the transcript's result.
+		const transcript =
+			appended.ok && userEntry && options.repository.replaceTranscriptEntry
+				? await options.repository.replaceTranscriptEntry(
+						turn.agentId,
+						turn.tabId,
+						markTurnEnded([userEntry])[0],
+						...(turn.writeGuard ? [turn.writeGuard] : [])
+					)
+				: appended;
 
 		// Reserve the repository mutation queue across the writers' own queues and
 		// filesystem awaits. A prior CAS alone leaves a replacement race here.

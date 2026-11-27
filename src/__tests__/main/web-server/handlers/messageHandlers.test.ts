@@ -4145,6 +4145,24 @@ describe('WebSocketMessageHandler', () => {
 				}
 			});
 
+			// CodeRabbit on #2167: a busy tab whose turn began after the message (a command that writes
+			// no message of its own) is not running this message: the resend runs.
+			it('runs the resend when the tab is busy with a turn that began after the message', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }],
+					transcriptSnapshots: [
+						{
+							sessionId: 'session-1',
+							tabId: 'tab-1',
+							runtime: { state: 'busy', thinkingStartTime: 600_000 },
+						},
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
 			it('answers "already ran" when the entry\'s turn was stopped by the person', async () => {
 				bridgeRead.invokeAsBridge.mockResolvedValue({
 					logs: [

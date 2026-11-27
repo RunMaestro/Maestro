@@ -877,6 +877,35 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
 	});
 
+	// CodeRabbit on #2167: the tab's retry holds another message when the cut message's turn ends on
+	// its own error. That error must not reschedule the other message; the cut copy waits behind
+	// it, unsent, and is decided from the host again when its own turn comes.
+	it("never reschedules another message's retry with a cut message's error (R37)", async () => {
+		const other = { id: 'other', timestamp: 2, tabId: 't1', type: 'message' as const, text: 'x' };
+		noteDirectDispatch('row', other);
+		expect(
+			scheduleRetryForError('row', 't1', {
+				type: 'network_error',
+				message: 'Connection reset',
+				recoverable: true,
+				agentId: 'claude-code',
+				timestamp: 1,
+			})
+		).toBe(true);
+		const before = getRetryEntry('row', 't1')!;
+		expect(before.heldItemId).toBe('other');
+		cut();
+		expect(queue().map((item) => item.hostEntryId)).toContain('u1');
+		await hostBack('idle', [QUESTION, OVERLOADED]);
+		expect(sends()).toHaveLength(0);
+		expect(getRetryEntry('row', 't1')).toMatchObject({
+			heldItemId: 'other',
+			lastMessage: 'Connection reset',
+			attempt: before.attempt,
+		});
+		expect(queue().map((item) => item.hostEntryId)).toContain('u1');
+	});
+
 	it('sends the kept message when only a LATER message of the tab was answered: its own turn died (R23)', async () => {
 		cut();
 		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
@@ -1356,6 +1385,31 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		await flush();
 		expect(sends()).toHaveLength(1);
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
+	});
+
+	// CodeRabbit on #2167: the link drops while the tab's read is out. The busy tab held now is the
+	// report from before the drop: nothing is decided from it, and the message stays kept.
+	it('decides nothing from a busy tab when the link dropped during the read', async () => {
+		relaunch('busy', [QUESTION]);
+		transcript.mockImplementation(async () => {
+			usePeerMirrorStore.setState((current) => ({
+				peers: {
+					...current.peers,
+					box: setPeerConnection(current.peers.box, 'reconnecting').peer,
+				},
+			}));
+			return [QUESTION];
+		});
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(toastMock).not.toHaveBeenCalledWith(
+			expect.objectContaining({
+				message: 'The host already had this message, so it was not sent again.',
+			})
+		);
+		expect(queue().map((item) => item.hostEntryId)).toEqual(['u1']);
 	});
 
 	it('takes the host saying the message already ran as "already ran"', async () => {

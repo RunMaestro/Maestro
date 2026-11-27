@@ -1699,6 +1699,34 @@ describe('runtime turns', () => {
 				expect(runsOf('Summarize the docs')).toBe(1);
 			});
 
+			// CodeRabbit on #2167: copies A, B and C of a message wait behind another turn, and B is
+			// edited. A runs the message; B is another message now and runs as its own entry; C, when
+			// its turn comes, is still known as the message A ran.
+			it('never runs a later copy of a message again after an edited copy ran between them', async () => {
+				hold = true;
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Something else first' }));
+				await turn.started();
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				value(await runtime.turns.send('a1', 't1', resend));
+				const edited = value(await runtime.turns.send('a1', 't1', resend)) as { itemId: string };
+				value(await runtime.turns.send('a1', 't1', resend));
+				value(
+					await runtime.turns.queue.edit('a1', edited.itemId, {
+						text: 'Summarize the docs, briefly',
+					})
+				);
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(3);
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				expect(runsOf('Summarize the docs')).toBe(1);
+				expect(runsOf('Summarize the docs, briefly')).toBe(1);
+				expect(turn.outcomes()).toHaveLength(3);
+			});
+
 			// CodeRabbit on #2167: a held copy keeps the record of the copy that ran, through other
 			// turns, and still never runs the message when it is resumed.
 			it('never runs a held resend of a message an earlier copy ran, resumed after other turns', async () => {

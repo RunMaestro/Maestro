@@ -189,11 +189,16 @@ function routeErroredTurn(
 	sessionId: string,
 	tabId: string,
 	entryId: string,
-	error: AgentError | undefined
-): boolean {
-	if (!error || !scheduleRetryForError(sessionId, tabId, error)) return false;
+	error: AgentError | undefined,
+	itemId: string | undefined
+): 'retried' | 'not-retried' | 'not-held' {
+	// The tab's retry holds another message: this error must not reschedule that one. The copy
+	// stays kept behind it and is decided again when its own turn comes (CodeRabbit on #2167).
+	const waiting = getRetryEntry(sessionId, tabId);
+	if (waiting && waiting.heldItemId !== itemId) return 'not-held';
+	if (!error || !scheduleRetryForError(sessionId, tabId, error)) return 'not-retried';
 	erroredResends.set(cutKey(sessionId, tabId), entryId);
-	return true;
+	return 'retried';
 }
 
 /**
@@ -444,7 +449,7 @@ function awaitCurrentHostReport(peerId: string, timeoutMs: number): Promise<bool
  */
 export function cutTurnFate(
 	sessionId: string,
-	item: Pick<QueuedItem, 'tabId' | 'hostEntryId' | 'text' | 'images'>,
+	item: Pick<QueuedItem, 'tabId' | 'hostEntryId' | 'text' | 'images'> & { id?: string },
 	host: HostAgentRef,
 	connected: boolean
 ): Promise<CutTurnFate> | null {
@@ -495,13 +500,15 @@ export function cutTurnFate(
 async function readKeptEntryFate(
 	sessionId: string,
 	host: HostAgentRef,
-	item: Pick<QueuedItem, 'tabId' | 'text' | 'images'> & { hostEntryId: string }
+	item: Pick<QueuedItem, 'tabId' | 'text' | 'images'> & { hostEntryId: string; id?: string }
 ): Promise<CutTurnFate> {
 	// After a reload the mirror can say connected while it still holds the host's report from
 	// before a crash (the tab busy, or no agents yet): decided only from a report since the link.
 	askForHostReport(host.peerId);
 	if (!(await awaitCurrentHostReport(host.peerId, CUT_TURN_FATE_WAIT_MS))) return 'unknown';
 	await readMirrorTranscript(host.peerId, host.agentId, item.tabId);
+	// The link may have dropped while the read was out: the tab state held now is from before.
+	if (!hostReportCurrent(host.peerId)) return 'unknown';
 	const mirror = usePeerMirrorStore.getState();
 	const hostTab = mirror.peers[host.peerId]?.agents
 		.find((agent) => agent.id === host.agentId)
@@ -527,7 +534,8 @@ async function readKeptEntryFate(
 	if (hostTab.state === 'busy' && newestUser?.id === entry.id) return 'answered';
 	if (fate === 'errored') {
 		const error = turnErrorAfter(sessionId, slot.entries, at);
-		return routeErroredTurn(sessionId, item.tabId, entry.id, error) ? 'errored' : 'answered';
+		const routed = routeErroredTurn(sessionId, item.tabId, entry.id, error, item.id);
+		return routed === 'retried' ? 'errored' : routed === 'not-held' ? 'unknown' : 'answered';
 	}
 	return 'send';
 }
@@ -648,17 +656,20 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 	// desktop host's streamed text with no end stamp is a turn it lost.
 	const fate = turnFateAfter(slot.entries, at, transcriptHostKind(link.peerId));
 	// Ended on its own error: retried by that error's rule, as a local turn that ends on it is.
-	if (
-		fate === 'errored' &&
-		routeErroredTurn(
+	if (fate === 'errored') {
+		const routed = routeErroredTurn(
 			cut.sessionId,
 			cut.tabId,
 			messageId,
-			turnErrorAfter(cut.sessionId, slot.entries, at)
-		)
-	) {
-		answerWaiters(cut, 'errored');
-		return;
+			turnErrorAfter(cut.sessionId, slot.entries, at),
+			cut.keptItemId
+		);
+		if (routed !== 'not-retried') {
+			// Retried: the retry holds the kept copy. Not held: it waits behind another message's
+			// retry, decided from the host again when its own turn comes.
+			answerWaiters(cut, routed === 'retried' ? 'errored' : 'unknown');
+			return;
+		}
 	}
 	if (fate !== 'unended') {
 		settleKeptCut(cut);
