@@ -830,7 +830,9 @@ export function markTurnEnded<T extends object>(
 }
 
 /** Whether `entry` starts a user turn of its own: a message steered into the running turn does not. */
-export function isUserTurnStart(entry: Partial<LogEntryRecord> | null | undefined): boolean {
+export function isUserTurnStart(
+	entry: Pick<Partial<LogEntryRecord>, 'source' | 'steered'> | null | undefined
+): boolean {
 	return entry?.source === 'user' && entry.steered !== true;
 }
 

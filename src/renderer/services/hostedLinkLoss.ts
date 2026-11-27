@@ -27,6 +27,7 @@
 import {
 	hostRetriesTurn,
 	isSameUserEntry,
+	isUserTurnStart,
 	turnFateAfter,
 	userEntryFate,
 	type TranscriptHostKind,
@@ -181,7 +182,7 @@ function turnErrorAfter(
 	let attempt: LogEntryRecord | undefined;
 	for (let i = at + 1; i < entries.length; i += 1) {
 		const entry = entries[i];
-		if (entry.source === 'user' && entry.steered !== true) break;
+		if (isUserTurnStart(entry)) break;
 		if (entry.source === 'error' && !attempt) attempt = entry;
 		if (entry.turnEnded === true) {
 			if (attempt) latest = attempt;
@@ -297,11 +298,14 @@ function cutTurnMessage(
 
 /**
  * The newest message the user sent in a tab that its host has: the one its running turn answers.
- * A kept message's bubble (`keptForHost`) never reached the host, so no turn there answers it.
+ * A kept message's bubble (`keptForHost`) never reached the host, so no turn there answers it. A
+ * message steered into a turn is part of that turn, never a turn of its own (`isUserTurnStart()`):
+ * read as the newest message, a steer would make the turn it joined read as a later one (R47).
  */
 function lastUserMessage(logs: readonly LogEntry[] | undefined): LogEntry | undefined {
 	for (let i = (logs?.length ?? 0) - 1; i >= 0; i -= 1) {
-		if (logs![i].source === 'user' && !logs![i].keptForHost) return logs![i];
+		const entry = logs![i];
+		if (isUserTurnStart(entry) && !entry.keptForHost) return entry;
 	}
 	return undefined;
 }

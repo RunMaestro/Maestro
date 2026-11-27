@@ -961,6 +961,32 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		]);
 	});
 
+	// Parity R47: a message steered into the cut turn is part of that turn, not a later one. A
+	// desktop host still running it holds the cut message, its streamed text (no end stamp yet) and
+	// the steer: the turn still runs there, so the kept copy is never sent again.
+	it('never resends a cut turn a desktop host still runs after a steer joined it (R47)', async () => {
+		cut();
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		transcript.mockResolvedValue([
+			QUESTION,
+			{ id: 'o1', timestamp: 15, source: 'stdout', text: 'The docs s' },
+			{ id: 's1', timestamp: 18, source: 'user', text: 'Also the README', steered: true },
+		]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...peerWith('busy', 'connected'), hostKind: 'desktop' } },
+		}));
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		retryNow('row', 't1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(queue()).toHaveLength(0);
+	});
+
 	// CodeRabbit on #2167: the retry of an errored turn was stopped. A later send of the same entry
 	// asks the host's transcript again, never going straight out on the stale record.
 	it('asks the host again for an errored entry once its retry was stopped (R37)', async () => {
@@ -1398,6 +1424,23 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 				message: 'The host already had this message, so it was not sent again.',
 			})
 		);
+	});
+
+	// Parity R47: a steer joined the turn; the desktop host still runs it (no end stamp yet).
+	it('never sends the kept message again while a desktop host runs its turn with a steer in it (R47)', async () => {
+		relaunch('busy', [
+			QUESTION,
+			{ id: 'o1', timestamp: 15, source: 'stdout', text: 'The docs s' },
+			{ id: 's1', timestamp: 18, source: 'user', text: 'Also the README', steered: true },
+		]);
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...current.peers.box, hostKind: 'desktop' } },
+		}));
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(queue()).toHaveLength(0);
 	});
 
 	it('sends the kept message, naming its entry, when the turn died with the host', async () => {
