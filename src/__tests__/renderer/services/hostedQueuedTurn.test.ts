@@ -1710,6 +1710,49 @@ describe('hostedQueuedTurn: @mentions (M7)', () => {
 					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
 				});
 
+				it("a later Stop's answer that names nothing keeps the mark an earlier Stop set until that one answers (CodeRabbit on #2160)", async () => {
+					const id = `m27s-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const first = dropStoppedHostStartMentions('row', ['t1']);
+					const second = dropStoppedHostStartMentions('row', ['t1']);
+					mirrorHostQueue([id], []);
+					// The second Stop answers first: it ended no queued turn.
+					settleStoppedHostStartMentions(second, { waitingAtStop: [id], stoppedItemIds: [] });
+					// The first Stop's started frame lands before its answer: still the stopped turn.
+					hostSays(id, text, { queued: false, busy: 200, ran: true });
+					fireHostStartedMentions(row(), [started(id)], now);
+					settleStoppedHostStartMentions(first, { waitingAtStop: [id], stoppedItemIds: [id] });
+					fireHostStartedMentions(row(), [started(id)], now);
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
+				it('a Stop with no answer keeps a listed message marked through a stale frame, and its late start asks nothing (CodeRabbit on #2160)', async () => {
+					const id = `m27f-${routing}`;
+					const text = await drainQueued(id, routing);
+					const now = Date.now();
+					hostSays(id, text, { queued: true, busy: 100 });
+					hydrateHost(100);
+					fireHostStartedMentions(row(), [], now);
+					const stop = dropStoppedHostStartMentions('row', ['t1']);
+					mirrorHostQueue([id], []);
+					// The Stop failed partway: no answer.
+					settleStoppedHostStartMentions(stop);
+					hostSays(id, text, { queued: true, busy: 100 });
+					fireHostStartedMentions(row(), [], now);
+					hostSays(id, text, { queued: false, logs: true });
+					fireHostStartedMentions(row(), [started(id)], now, 0, {
+						read: vi.fn(),
+						isCurrent: () => true,
+					});
+					expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+					expect(row().aiTabs[0].logs.map((entry) => entry.text)).toContain(stoppedNote);
+				});
+
 				it("the host's own list at the Stop still holds it: it waited through the Stop, and consults once when it starts (M25)", async () => {
 					const id = `m25r-${routing}`;
 					const text = await drainQueued(id, routing);

@@ -535,11 +535,18 @@ const mentionsAwaitingHostStart = new Map<
 		 * the Stop yet, so a start seen now ran before the host stopped anything, and was the turn
 		 * Stop ended. After the answer it stays only for one the host's queue never listed (an older
 		 * desktop host lists none): then `turnStartedAt`, the turn Stop ended (the host's clock),
-		 * tells its own later turn from the stopped one. `untilNamed`: the host named nothing and its
-		 * queue frames trail its answer (an older desktop host), so a frame that still lists it may
-		 * predate the Stop: only a frame that names its exit settles it (M27).
+		 * tells its own later turn from the stopped one. `by`: the Stops still to answer that marked
+		 * it (it stays pending until each has), so a later Stop never settles what an earlier one's
+		 * answer would name (CodeRabbit on #2160). `untilNamed`: the host named nothing and its queue
+		 * frames may trail its answer (an older desktop host, or no answer came), so a frame that
+		 * still lists it may predate the Stop: only a frame that names its exit settles it (M27).
 		 */
-		stop?: { pending: boolean; turnStartedAt?: number; by: HostStopToken; untilNamed?: boolean };
+		stop?: {
+			pending: boolean;
+			turnStartedAt?: number;
+			by: HostStopToken[];
+			untilNamed?: boolean;
+		};
 	}
 >();
 
@@ -680,12 +687,17 @@ export function dropStoppedHostStartMentions(
 		// The host's own record: the local tab may read idle between the drain's release and the
 		// next sync while the host runs the turn Stop ends.
 		const running = hostTurnAhead(sessionId, tabId);
+		const earlier = waiting.stop;
 		waiting.stop = {
 			pending: true,
-			by: token,
+			// An earlier Stop still to answer keeps its say: this one joins it.
+			by: earlier?.pending ? [...earlier.by, token] : [token],
 			...(running.busy && running.startedAt !== undefined
 				? { turnStartedAt: running.startedAt }
-				: {}),
+				: earlier?.turnStartedAt !== undefined
+					? { turnStartedAt: earlier.turnStartedAt }
+					: {}),
+			...(earlier?.untilNamed ? { untilNamed: true } : {}),
 		};
 	}
 	return token;
@@ -711,10 +723,13 @@ export function settleStoppedHostStartMentions(
 	 * What the host's answer said of its queue at the Stop. `waitingAtStop` rules over the mirror
 	 * where given: a desktop host's queue frames trail its writes by seconds (Greptile on #2160),
 	 * so the mirror may still list a message that had started, or not yet list one that waits.
+	 * Undefined when no answer came (the host could not be told, or the Stop failed): its frames
+	 * may still trail, as a host's that names nothing (CodeRabbit on #2160).
 	 */
-	answer: HostStopAnswer = {}
+	answer?: HostStopAnswer
 ): void {
-	const { waitingAtStop, stoppedItemIds, queueFramesTrail } = answer;
+	const { waitingAtStop, stoppedItemIds } = answer ?? {};
+	const queueFramesTrail = !answer || answer.queueFramesTrail === true;
 	const namedStops = stoppedItemIds ? new Set(stoppedItemIds) : undefined;
 	const { sessionId } = stop;
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
@@ -725,14 +740,22 @@ export function settleStoppedHostStartMentions(
 	);
 	const exits = target ? peer?.queueExits?.[target.agentId] : undefined;
 	for (const [hostItemId, waiting] of [...mentionsAwaitingHostStart]) {
+		if (waiting.sessionId !== sessionId) continue;
+		// The host says this Stop ended its turn: it goes, whichever Stop marked it last.
+		if (namedStops?.has(hostItemId)) {
+			letGoOfHostStart(hostItemId, waiting, 'the turn was stopped.');
+			continue;
+		}
 		// Only the consults this Stop left waiting: another Stop's wait for its own answer stays.
-		if (waiting.sessionId !== sessionId || !waiting.stop?.pending || waiting.stop.by !== stop) {
+		if (!waiting.stop?.pending || !waiting.stop.by.includes(stop)) continue;
+		const stillToAnswer = waiting.stop.by.filter((token) => token !== stop);
+		if (stillToAnswer.length > 0) {
+			waiting.stop = { ...waiting.stop, by: stillToAnswer };
 			continue;
 		}
 		const tabId = waiting.item.tabId || session?.activeTabId;
 		const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
 		const ran =
-			namedStops?.has(hostItemId) === true ||
 			queueExitOf(exits, hostItemId) === 'started' ||
 			(!!tab &&
 				hostRanMessage(tab.logs, waiting.afterEntryId, waitingMessage(hostItemId, waiting)));
@@ -755,6 +778,7 @@ export function settleStoppedHostStartMentions(
 		waiting.stop = {
 			...waiting.stop,
 			pending: false,
+			by: [],
 			...(queueFramesTrail ? { untilNamed: true } : {}),
 		};
 	}
