@@ -2171,6 +2171,24 @@ class WsMaestroClient implements MaestroClient {
 				const stoppedItemIds = parseStoppedItemIds(named.value.stoppedItemIds);
 				return ok({ stopped, ...(stoppedItemIds ? { stoppedItemIds } : {}) });
 			}
+			// The process signal only where the host's own Stop sent none: a host without it, or a
+			// desktop with no window that owns the agent. Any other failure may come after the host
+			// stopped the turn and started the next one on this tab, which a signal to the tab's
+			// process would then stop (CodeRabbit on #2160): that failure is the answer.
+			const code = named.ok ? asString(named.value.code) : undefined;
+			const signalSent = named.ok
+				? code !== 'RENDERER_UNAVAILABLE'
+				: named.error.code !== 'unsupported';
+			if (signalSent) {
+				if (state) state.interruptRequested = previous;
+				if (!named.ok) return named;
+				if (code === 'AGENT_NOT_FOUND' || code === 'TAB_NOT_FOUND') return ok({ stopped: false });
+				return this.fail(
+					'turns.interrupt',
+					'failed',
+					asString(named.value.error) ?? 'The Maestro desktop could not stop the turn.'
+				);
+			}
 		}
 
 		let stopped = false;

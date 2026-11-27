@@ -1183,6 +1183,41 @@ describe('createWsMaestroClient', () => {
 			expect(bridge.invoked('process:interrupt').map((m) => m.args)).toEqual([[PID]]);
 		});
 
+		it("never signals the tab's process after a desktop host's own Stop failed once it may have signalled (CodeRabbit on #2160)", async () => {
+			bridge.invokes.set('process:interrupt', () => true);
+			bridge.typed.set(
+				'interrupt_turn',
+				reply('interrupt_turn_result', {
+					success: false,
+					code: 'RENDERER_TIMEOUT',
+					error: 'The Maestro window did not answer the interrupt in time',
+				})
+			);
+			expect(await client.turns.interrupt(A1, A1_TAB)).toMatchObject({
+				ok: false,
+				error: { message: 'The Maestro window did not answer the interrupt in time' },
+			});
+			bridge.typed.set(
+				'interrupt_turn',
+				reply('interrupt_turn_result', { success: false, code: 'TAB_NOT_FOUND' })
+			);
+			expect(await client.turns.interrupt(A1, A1_TAB)).toEqual({
+				ok: true,
+				value: { stopped: false },
+			});
+			expect(bridge.invoked('process:interrupt')).toEqual([]);
+			// No window owns the agent: nothing was signalled, so the process signal goes.
+			bridge.typed.set(
+				'interrupt_turn',
+				reply('interrupt_turn_result', { success: false, code: 'RENDERER_UNAVAILABLE' })
+			);
+			expect(await client.turns.interrupt(A1, A1_TAB)).toEqual({
+				ok: true,
+				value: { stopped: true },
+			});
+			expect(bridge.invoked('process:interrupt')).toHaveLength(1);
+		});
+
 		it('lists and removes queued items', async () => {
 			bridge.typed.set(
 				'list_queue',
