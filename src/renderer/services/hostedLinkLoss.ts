@@ -26,6 +26,7 @@
 
 import {
 	hostRetriesTurn,
+	hostRetryCardStands,
 	isSameUserEntry,
 	isUserTurnStart,
 	turnFateAfter,
@@ -607,6 +608,10 @@ async function readKeptEntryFate(
 	if (!isSameUserEntry(slot.entries[at], entry)) return 'send';
 	// The host's own retry holds it (a desktop host's Agent Resilience): the host sends it.
 	if (hostRetriesTurn(slot.entries, at, hostTab.retryPending)) return 'host-retries';
+	// The host's retry card is the turn's last word but no retry runs behind it (stopped there, or
+	// lost to a restart): the host's queue holds the message. Never retried from here on its own;
+	// the user's Force Send still goes (CodeRabbit on #2171).
+	if (!userSent && hostRetryCardStands(slot.entries, at)) return 'answered';
 	const fate = userEntryFate(slot.entries, entry, transcriptHostKind(host.peerId));
 	if (fate === 'answered' || fate === 'stopped') return 'answered';
 	const newestUser = lastUserMessage(slot.entries as LogEntry[]);
@@ -780,6 +785,11 @@ function decideCutTurn(key: string, link: HostAgentRef): void {
 	// and it is the host, so nothing is sent or retried from here.
 	if (hostRetriesTurn(slot.entries, at, hostTab.retryPending)) {
 		settleKeptCut(cut, 'host-retries');
+		return;
+	}
+	// Its card stands with no retry behind it: the host's queue holds the message (above).
+	if (hostRetryCardStands(slot.entries, at)) {
+		settleKeptCut(cut);
 		return;
 	}
 	const fate = turnFateAfter(slot.entries, at, transcriptHostKind(link.peerId));

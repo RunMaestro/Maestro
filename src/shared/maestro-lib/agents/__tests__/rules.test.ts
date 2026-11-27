@@ -3,6 +3,7 @@ import {
 	activeAgentAfterRemoval,
 	addTabRecord,
 	hostRetriesTurn,
+	hostRetryCardStands,
 	markTurnEnded,
 	tabRunsUserEntry,
 	turnFateAfter,
@@ -1589,6 +1590,10 @@ describe('hostRetriesTurn', () => {
 		// holds nothing, whatever its card says (the retry went with a restart of the host).
 		expect(hostRetriesTurn(logs, 0, true)).toBe(retries);
 		expect(hostRetriesTurn(logs, 0, false)).toBe(false);
+		// The card is the turn's last word whether or not a retry still runs behind it.
+		expect(hostRetryCardStands(logs, 0)).toBe(
+			retries || _what === 'the host retry card stopped on the host'
+		);
 		// The shared reader of the turn's end reads the stamped card as ended, never errored.
 		if (retries) expect(turnFateAfter(logs, 0, 'desktop')).not.toBe('errored');
 	});

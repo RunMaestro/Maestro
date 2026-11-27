@@ -1009,10 +1009,6 @@ export function turnEndedAfter(
 }
 
 /**
- * How the turn of the user message `entry` in `logs` ended (`turnFateAfter()`), or undefined when
- * `logs` do not hold it.
- */
-/**
  * Whether the turn of the user message at `at` in `logs` is held by the host's OWN automatic retry
  * (a desktop host's Agent Resilience): its latest entry of note is that retry's card
  * (`LogEntryRecord.retryOutageId`), with no answer or error after it before the next user message.
@@ -1027,26 +1023,50 @@ export function turnEndedAfter(
  */
 export function hostRetriesTurn(logs: readonly unknown[], at: number, reported?: boolean): boolean {
 	if (reported === false) return false;
+	const card = standingRetryCard(logs, at);
+	return !!card && card.retryStopped !== true;
+}
+
+/**
+ * Whether the turn of the user message at `at` in `logs` ended on the host's OWN retry card, still
+ * the turn's last word (no answer, error, or Stop note after it), whether that retry still runs or
+ * not (stopped there, or lost to a restart of the host). The host's retry put the message back in
+ * the host's queue, where it waits: a client's kept copy is not retried automatically from here.
+ * A deliberate Force Send of the copy still goes (CodeRabbit on #2171).
+ */
+export function hostRetryCardStands(logs: readonly unknown[], at: number): boolean {
+	return standingRetryCard(logs, at) !== undefined;
+}
+
+/** The host retry card that is the turn's last word (`hostRetriesTurn()`), or undefined. */
+function standingRetryCard(
+	logs: readonly unknown[],
+	at: number
+): Partial<LogEntryRecord> | undefined {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
-	let retrying = false;
+	let card: Partial<LogEntryRecord> | undefined;
 	const span = userTurnSpan(entries, at);
-	if (!span) return false;
+	if (!span) return undefined;
 	for (let next = span.from; next < span.to; next += 1) {
 		const entry = entries[next];
 		if (typeof entry?.retryOutageId === 'string' && entry.retryOutageId) {
-			retrying = entry.retryStopped !== true;
+			card = entry;
 		} else if (
 			entry?.source === 'stdout' ||
 			entry?.source === 'ai' ||
 			entry?.source === 'error' ||
 			(entry?.source === 'system' && entry.text === TURN_CANCELED_NOTE)
 		) {
-			retrying = false;
+			card = undefined;
 		}
 	}
-	return retrying;
+	return card;
 }
 
+/**
+ * How the turn of the user message `entry` in `logs` ended (`turnFateAfter()`), or undefined when
+ * `logs` do not hold it.
+ */
 export function userEntryFate(
 	logs: readonly unknown[],
 	entry: SentUserEntry,

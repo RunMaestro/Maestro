@@ -1036,6 +1036,25 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		}
 	);
 
+	// CodeRabbit on #2171: the host's turn wrote a provider error line, then its retry card, and the
+	// user stopped that retry on the host. The error does not make the turn "errored" for this
+	// machine's own retry: the host's queue holds the message, paused, so nothing is retried here.
+	it('never retries here a cut turn whose host retry card was stopped after a provider error', async () => {
+		cut();
+		raised.length = 0;
+		await hostBack('idle', [
+			QUESTION,
+			{ id: 'p1', timestamp: 15, source: 'error', text: 'API Error: 529 Overloaded' },
+			{ ...HOST_RETRY_CARD, retryStopped: true },
+		]);
+		retryNow('row', 't1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(raised).toEqual([]);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+	});
+
 	it("starts a provider error's backoff at its first attempt after a long outage (R41)", async () => {
 		cut();
 		const linkRetry = getRetryEntry('row', 't1')!;
@@ -1918,6 +1937,48 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		expect(toastMock).toHaveBeenCalledWith(
 			expect.objectContaining({ title: 'Not sent again', message: HOST_RETRIES_TEXT })
 		);
+	});
+
+	// CodeRabbit on #2171: after a reload, the same stopped host retry card after a provider error.
+	// Nothing is retried from here on its own; the user's Force Send of the copy still goes.
+	const STOPPED_AFTER_ERROR: LogEntry[] = [
+		QUESTION,
+		{ id: 'p1', timestamp: 15, source: 'error', text: 'API Error: 529 Overloaded' },
+		{
+			id: 'r1',
+			timestamp: 20,
+			source: 'system',
+			text: 'API Error: 529 Overloaded',
+			retryOutageId: 'host-outage',
+			retryStopped: true,
+			turnEnded: true,
+		},
+	];
+
+	it('never retries a kept copy on its own after a reload when its host retry card was stopped', async () => {
+		relaunch('idle', STOPPED_AFTER_ERROR);
+		raised.length = 0;
+		handQueuedItemToHost('row', 'k1');
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(0);
+		expect(raised).toEqual([]);
+		expect(getRetryEntry('row', 't1')).toBeUndefined();
+	});
+
+	it("sends a kept copy on the user's Force Send when its host retry card was stopped", async () => {
+		relaunch('idle', STOPPED_AFTER_ERROR);
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		// Parked held (as a Stop here leaves it), so the send is the user's own.
+		const kept = { ...queue().find((item) => item.id === 'k1')!, paused: true };
+		updateSessionWith('row', (s) => ({ ...s, executionQueue: [kept] }));
+		await act(async () => {
+			await sendTakenItemToHost('row', kept);
+		});
+		await flush();
+		await flush();
+		expect(sends()).toHaveLength(1);
+		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
 	});
 
 	it('takes the host saying its own retry holds the message as "the host retries it" (R41)', async () => {
