@@ -5971,6 +5971,37 @@ describe('useRemoteIntegration', () => {
 			);
 		});
 
+		it('hosted: nothing is renamed here until the host took the name', async () => {
+			let answer!: (value: unknown) => void;
+			act$.mockReturnValue(
+				new Promise((resolve) => {
+					answer = resolve;
+				})
+			);
+			const session = seed('hosted');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			let pending!: Promise<void>;
+			act(() => {
+				pending = Promise.resolve(
+					onRemoteRenameTabHandler?.('session-1', 'tab-1', 'New', 'rename-chan')
+				);
+			});
+			await waitFor(() => expect(act$).toHaveBeenCalled());
+			expect(storedTab().name).toBe('Old');
+			expect(mockClaude.updateSessionName).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteRenameTabResponse).not.toHaveBeenCalled();
+
+			await act(async () => {
+				answer({ ok: true, result: { kind: 'rename-tab', tabId: 'tab-1' } });
+				await pending;
+			});
+			expect(storedTab().name).toBe('New');
+			expect(mockProcess.sendRemoteRenameTabResponse).toHaveBeenLastCalledWith('rename-chan', {
+				success: true,
+			});
+		});
+
 		it('hosted: a name the host refuses changes nothing here and answers its reason', async () => {
 			act$.mockResolvedValue({ ok: false, error: 'The host refused the name.' });
 			const session = seed('hosted');
