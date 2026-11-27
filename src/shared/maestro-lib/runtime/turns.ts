@@ -1094,6 +1094,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		const kept = await keepImages(admitted.images);
 		if (!kept.ok) return fail(method, 'failed', kept.error);
 		const images = kept.images;
+		// Read again: a turn may have begun on the tab while the images were kept (CodeRabbit on #2167).
+		const currentTab = repository.getTab(agentId, tabId);
+		if (!currentTab) return fail(method, 'not-found', `No tab ${tabId}.`);
 		// The resend of a message whose turn already answered (its sender lost the link, or quit, while
 		// it ran): it ran once, and never runs again. The sender reads `answered` as "already ran".
 		// The same for the message of the turn running on the tab now (the entry it wrote names the
@@ -1101,13 +1104,13 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 		// item the queue runs or starts on the tab must be the turn the tab record names: a turn that
 		// is starting before it wrote its own id leaves the record naming the one before it.
 		const entryId = readTurnEntryId(input.entryId);
-		const tabLogs = (Array.isArray(tabRecord.logs) ? tabRecord.logs : []) as LogEntryRecord[];
+		const tabLogs = (Array.isArray(currentTab.logs) ? currentTab.logs : []) as LogEntryRecord[];
 		const sentEntry = { id: entryId ?? '', text, images };
 		const busyItemId = queues.get(agentId)?.busyItemId(tabId);
 		const runsNow =
 			!!entryId &&
 			!!busyItemId &&
-			busyItemId === tabRecord.runtimeTurnId &&
+			busyItemId === currentTab.runtimeTurnId &&
 			tabLogs.some(
 				(entry) => isSameUserEntry(entry, sentEntry) && entry.queuedItemId === busyItemId
 			);

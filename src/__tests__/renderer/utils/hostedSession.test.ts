@@ -293,6 +293,31 @@ describe('mergeHostedLogs', () => {
 			expect(order(saved, 'k1')).toEqual(sshOrder);
 		});
 
+		// CodeRabbit on #2167: the delivered tick is read in the order the host recorded the turns,
+		// before the copy moves above another client's message.
+		it('ticks the moved copy by its own answer, not by the turn of a message it moved above', () => {
+			const copy = { ...record('y1', 'hello'), timestamp: 20 };
+			const other = { ...record('y0', 'meanwhile'), timestamp: 10 };
+			const otherAnswer = { ...record('b0'), source: 'ai' as const, timestamp: 11 };
+			const merged = mergeHostedLogs(
+				kept,
+				[record('h1'), other, otherAnswer, copy, answer],
+				undefined
+			);
+			expect(merged.map((e) => e.id)).toEqual(['h1', 'y1', 'card', 'y0', 'b0', 'a1']);
+			expect(merged.find((e) => e.id === 'y1')?.delivered).toBe(true);
+			expect(merged.find((e) => e.id === 'y0')?.delivered).toBe(true);
+			// Not answered yet: an answer to an earlier message, recorded before it, never ticks it.
+			const early = { ...record('b9'), source: 'ai' as const, timestamp: 8 };
+			const waiting = mergeHostedLogs(
+				kept,
+				[record('h1'), early, other, otherAnswer, copy],
+				undefined
+			);
+			expect(waiting.map((e) => e.id)).toEqual(['h1', 'y1', 'card', 'b9', 'y0', 'b0']);
+			expect(waiting.find((e) => e.id === 'y1')?.delivered).toBeFalsy();
+		});
+
 		it('leaves a message that was never kept at the time the host gave it', () => {
 			const sent = local('m1', { text: 'hi', timestamp: 5 });
 			const copy = { ...record('m1', 'hi'), timestamp: 20 };

@@ -296,15 +296,16 @@ function keptPlaces(local: readonly LogEntry[]): Map<string, number> {
  * stays above its retry card and the "Connection restored" note (R33). The host stamps its copy
  * when it takes the resend, after the card: drawn at that time it would sit below the card. A user
  * entry with a place (`placed` this pass, or `drawnAt` from an earlier one) earlier than its own
- * time is drawn at that place (`keptPlace`). Answers the entries that keep the host's time and the
- * ones moved, in their own order.
+ * time is drawn at that place (`keptPlace`); a tie goes to it, as its bubble was drawn before the
+ * card raised in the same moment. Every other entry keeps its order. `entries` already carry their
+ * delivered ticks, decided in the order the host recorded the turns (CodeRabbit on #2167).
  */
-function atKeptPlace(
-	entries: readonly LogEntry[],
+function atKeptPlaces(
+	entries: LogEntry[],
 	drawnAt: ReadonlyMap<string, number>,
 	placed: ReadonlyMap<string, number>
-): { stay: readonly LogEntry[]; moved: LogEntry[] } {
-	if (drawnAt.size === 0 && placed.size === 0) return { stay: entries, moved: [] };
+): LogEntry[] {
+	if (drawnAt.size === 0 && placed.size === 0) return entries;
 	const stay: LogEntry[] = [];
 	const moved: LogEntry[] = [];
 	for (const entry of entries) {
@@ -313,7 +314,11 @@ function atKeptPlace(
 		if (at === undefined || at >= entry.timestamp) stay.push(entry);
 		else moved.push(atPlace(entry, at));
 	}
-	return { stay, moved };
+	if (moved.length === 0) return entries;
+	return byTime(
+		moved.sort((a, b) => a.timestamp - b.timestamp),
+		stay
+	);
 }
 
 /** `entry` drawn at `at`, as one object per entry and place across merges (R29). */
@@ -375,14 +380,13 @@ export function mergeHostedLogs(
 	const fromHost = new Set([...hostIds, ...live.map((entry) => entry.id)]);
 	const placed = new Map<string, number>();
 	const shown = withoutKeptCopies(older, [...hostEntries, ...live], local, placed);
-	// A kept message's host copy is drawn where its bubble was, above the retry card (R33).
-	const drawnAt = keptPlaces(local);
-	const saved = atKeptPlace(hostEntries, drawnAt, placed);
-	const tailed = atKeptPlace(live, drawnAt, placed);
-	const moved = [...saved.moved, ...tailed.moved].sort((a, b) => a.timestamp - b.timestamp);
-	// A tie goes to the moved copy: its bubble was drawn before the card raised in the same moment.
-	const here = moved.length > 0 ? byTime(moved, shown) : shown;
-	const next = withAnswerDelivery([...byTime(here, saved.stay), ...tailed.stay], fromHost);
+	// Delivered ticks are decided in the order the host recorded the turns; then a kept message's
+	// host copy is drawn where its bubble was, above the retry card (R33).
+	const next = atKeptPlaces(
+		withAnswerDelivery([...byTime(shown, hostEntries), ...live], fromHost),
+		keptPlaces(local),
+		placed
+	);
 	if (sameIds(next, local)) {
 		// Same entries in the same order: keep the old array unless a live entry's text moved on,
 		// its tool card did, or a message's delivered tick did. `mirrorLogEntry()` builds a new
