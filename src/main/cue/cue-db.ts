@@ -1272,12 +1272,18 @@ export interface CueFailureStreakRecord {
 
 /**
  * Every open failure streak: per (agent, subscription), the `failed` /
- * `timeout` runs since that subscription's last `completed` run. Read once at
- * engine start so a restart neither forgets a failing subscription nor
- * re-alerts for it. Mirrors the live tracker in `cue-failure-streak.ts`:
+ * `timeout` runs that ended after that subscription's last `completed` run.
+ * Read once at engine start so a restart neither forgets a failing
+ * subscription nor re-alerts for it. Mirrors the live tracker in
+ * `cue-failure-streak.ts`:
+ * - Runs are ordered by when they ENDED, the order the live tracker sees
+ *   them in: a failure that started before a success but finished after it
+ *   still counts.
  * - `stopped` rows neither count nor reset (they are simply not selected).
- * - `<name>:output` rows are skipped. Live tracking sees only the parent run,
- *   which keeps its own status when the output phase fails.
+ * - Generated output-phase rows (`<name>:output` with `outputPromptPhase` in
+ *   the payload) are skipped: live tracking sees only the parent run, which
+ *   keeps its own status when the output phase fails. A subscription the user
+ *   named `x:output` is an ordinary run and is kept.
  * - Rows carrying `orphanedMessage` (settled by the engine-start sweep because
  *   the previous engine died mid-run) are skipped: a quit is not a failure.
  *
@@ -1287,31 +1293,40 @@ export interface CueFailureStreakRecord {
  */
 export function getCueFailureStreakRecords(orphanedMessage: string): CueFailureStreakRecord[] {
 	if (!db) return [];
+	// CASE, not AND: SQLite does not promise to short-circuit AND, and
+	// json_extract raises on a malformed payload.
 	const rows = db
 		.prepare(
-			`WITH last_ok AS (
-			   SELECT session_id, subscription_name, MAX(created_at) AS ok_at
+			`WITH runs AS (
+			   SELECT rowid AS seq, session_id, subscription_name, status, error_message,
+			          COALESCE(completed_at, created_at) AS ended_at
 			   FROM cue_events
+			   WHERE CASE
+			           WHEN subscription_name LIKE '%:output' AND json_valid(payload)
+			             THEN COALESCE(json_extract(payload, '$.outputPromptPhase'), 0)
+			           ELSE 0
+			         END = 0
+			 ),
+			 last_ok AS (
+			   SELECT session_id, subscription_name, MAX(ended_at) AS ok_at
+			   FROM runs
 			   WHERE status = 'completed'
 			   GROUP BY session_id, subscription_name
 			 ),
 			 streak AS (
-			   SELECT e.session_id, e.subscription_name, e.status, e.error_message,
-			          COALESCE(e.completed_at, e.created_at) AS ended_at,
-			          COUNT(*) OVER (PARTITION BY e.session_id, e.subscription_name) AS failures,
-			          MIN(COALESCE(e.completed_at, e.created_at))
-			            OVER (PARTITION BY e.session_id, e.subscription_name) AS first_at,
+			   SELECT r.session_id, r.subscription_name, r.status, r.error_message, r.ended_at,
+			          COUNT(*) OVER (PARTITION BY r.session_id, r.subscription_name) AS failures,
+			          MIN(r.ended_at) OVER (PARTITION BY r.session_id, r.subscription_name) AS first_at,
 			          ROW_NUMBER() OVER (
-			            PARTITION BY e.session_id, e.subscription_name
-			            ORDER BY e.created_at DESC, e.rowid DESC
+			            PARTITION BY r.session_id, r.subscription_name
+			            ORDER BY r.ended_at DESC, r.seq DESC
 			          ) AS newest
-			   FROM cue_events e
+			   FROM runs r
 			   LEFT JOIN last_ok l
-			     ON l.session_id = e.session_id AND l.subscription_name = e.subscription_name
-			   WHERE e.status IN ('failed', 'timeout')
-			     AND e.subscription_name NOT LIKE '%:output'
-			     AND (e.error_message IS NULL OR e.error_message <> ?)
-			     AND (l.ok_at IS NULL OR e.created_at > l.ok_at)
+			     ON l.session_id = r.session_id AND l.subscription_name = r.subscription_name
+			   WHERE r.status IN ('failed', 'timeout')
+			     AND (r.error_message IS NULL OR r.error_message <> ?)
+			     AND (l.ok_at IS NULL OR r.ended_at > l.ok_at)
 			 )
 			 SELECT session_id, subscription_name, status, error_message, ended_at, failures, first_at
 			 FROM streak
