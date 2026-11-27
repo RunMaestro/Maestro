@@ -11,7 +11,7 @@ Maestro integrates deeply with Git, providing visual tools for exploring reposit
 Every agent whose working directory is a git repository has a git menu, reachable three ways:
 
 - **Header branch pill** - hover the pill showing the current branch name (clicking works too).
-- **Left Bar right-click** - right-click the agent in the agent list.
+- **Left Bar right-click** - right-click the agent in the agent list and open **Repository**.
 - **Command palette** (`Cmd+K` / `Ctrl+K`) - every action is searchable by name.
 
 All three offer the same actions: **View Git Log**, **View Git Diff**, **Git Pull**, **Git Push**, **Change Branch**, and **Create Pull Request**. Pull and Push are badged with how many commits you're behind and ahead. The header menu additionally shows the current branch and origin (each with a copy button, and the origin clickable to open the repo in your browser) and a **Configure Worktrees** entry.
@@ -79,7 +79,7 @@ There are three ways to access worktree configuration:
 **From the Context Menu (Left Bar):**
 
 1. Right-click an agent in the session list
-2. Select **"Configure Worktrees"** (only shown for git repositories)
+2. Open **Repository > Configure Worktrees** (only shown for git repositories)
 
 **From the Command Palette:**
 
@@ -99,7 +99,7 @@ In the configuration modal:
 
 **Tip:** Configure the worktree directory to be outside your main repository (e.g., `~/Projects/Maestro-WorkTrees/`). This keeps worktrees organized and prevents them from appearing in your main repo's file tree.
 
-**Note:** Once configured, you can quickly create additional worktrees by right-clicking the parent session and selecting **"Create Worktree"** (bypasses the full configuration modal).
+**Note:** Once configured, you can quickly create additional worktrees by right-clicking the parent session and selecting **Repository > Create Worktree** (bypasses the full configuration modal).
 
 **Agents honor it too.** The directory is printed in every agent's system prompt as its Worktree Directory, and `maestro-cli show agent <id> --json` reports it as `worktreeBasePath`. Agents are told to create worktrees only through `maestro-cli create-worktree`, which uses this directory and registers the result as a worktree agent, so nothing an agent branches off ends up somewhere you cannot see.
 
@@ -160,20 +160,20 @@ Right-click any worktree sub-agent to access management options:
 
 ![Worktree right-click menu](./screenshots/git-worktree-right-click.png)
 
-| Action                  | Description                                                                |
-| ----------------------- | -------------------------------------------------------------------------- |
-| **Rename**              | Change the display name of the worktree agent                              |
-| **Edit Agent...**       | Modify agent configuration                                                 |
-| **Duplicate...**        | Create a new agent with the same configuration                             |
-| **Git actions**         | View Git Log, View Git Diff, Git Pull, Git Push, Change Branch (see above) |
-| **Create Pull Request** | Open a PR from this worktree's branch                                      |
-| **Remove Worktree**     | Delete the worktree agent (see below)                                      |
+| Action                               | Description                                                                |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| **Rename**                           | Change the display name of the worktree agent                              |
+| **Edit Agent...**                    | Modify agent configuration                                                 |
+| **Agent Tools > Duplicate...**       | Create a new agent with the same configuration                             |
+| **Repository**                       | View Git Log, View Git Diff, Git Pull, Git Push, Change Branch (see above) |
+| **Repository > Create Pull Request** | Open a PR from this worktree's branch                                      |
+| **Remove Worktree**                  | Delete the worktree agent (see below)                                      |
 
 ### Creating Pull Requests
 
 When you're done with work in a worktree:
 
-1. **Right-click** the worktree agent → **Create Pull Request**, or
+1. **Right-click** the worktree agent → **Repository > Create Pull Request**, or
 2. Hover the header **branch pill** → **Create Pull Request**, or
 3. Press `Cmd+K` / `Ctrl+K` with the worktree active → search "Create Pull Request"
 

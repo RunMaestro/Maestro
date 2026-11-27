@@ -27,10 +27,14 @@ export const INDEX_HEADING = '### Commonly-reimplemented functions';
 /** Room for a title, a handful of symbols, and two paths. Not for a paragraph. */
 export const MAX_INDEX_LINE = 320;
 
-/** `- **Title:** ...` entries, as [title, line]. */
+/**
+ * `- **Title:** ...` entries, as [title, line]. Splits on CRLF as well as LF:
+ * a Windows checkout has CRLF endings, and a trailing `\r` would count toward
+ * the line length and fail an index line that is exactly at the limit.
+ */
 function entryLines(text) {
 	return text
-		.split('\n')
+		.split(/\r?\n/)
 		.map((line) => [line.match(/^- \*\*(.+?):\*\*/)?.[1], line])
 		.filter(([title]) => title);
 }

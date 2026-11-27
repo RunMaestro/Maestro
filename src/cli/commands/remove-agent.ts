@@ -3,6 +3,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import {
 	PeerResolveError,
@@ -11,7 +12,6 @@ import {
 	withPeerAgent,
 	type PeerTarget,
 } from '../services/peer-resolver';
-import { ExitCode } from '../exit-codes';
 import {
 	runningTurnWhere,
 	type RunningTurnProbe,
@@ -57,7 +57,7 @@ export async function removeAgent(agentId: string, options: RemoveAgentOptions):
 		} else {
 			console.error(formatError(msg));
 		}
-		return process.exit(1);
+		return exitWith(exitCodeForError(error));
 	}
 
 	try {
@@ -101,7 +101,7 @@ export async function removeAgent(agentId: string, options: RemoveAgentOptions):
 			} else {
 				console.error(formatError(msg));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
@@ -111,7 +111,7 @@ export async function removeAgent(agentId: string, options: RemoveAgentOptions):
 		} else {
 			console.error(formatError(msg));
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 

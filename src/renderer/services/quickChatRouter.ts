@@ -1,10 +1,14 @@
-import { translatedHistorySessionId } from '../../shared/maestro-lib/translation/session';
+import {
+	resolveHistorySession,
+	translationSessionTabs,
+} from '../../shared/maestro-lib/translation/session';
 import {
 	updateProviderSlot,
 	type NativeSessionBinding,
 } from '../../shared/maestro-lib/agents/providerSwap';
 import { canonicalJson } from '../../shared/canonicalJson';
-import type { HistoryEntry } from '../../shared/types';
+import { projectTabProvider, resolveTabProvider } from '../utils/providerTabSessions';
+import type { HistoryEntry, ToolType } from '../../shared/types';
 /**
  * Quick Chat router - finds the conversation a Quick Chat message belongs in.
  *
@@ -53,7 +57,7 @@ export type RouteTarget =
 	| ({ kind: 'closed' } & Pick<
 			ClosedConversation,
 			'agentSessionId' | 'name' | 'ownerAgentId' | 'nativeSessionBinding' | 'hostTabId'
-	  >)
+	  > & { provider?: ToolType })
 	| { kind: 'new' };
 
 export interface RouteContext {
@@ -72,8 +76,21 @@ const SUMMARIES_PER_CONVERSATION = 6;
 /** How long one agent's closed conversations are reused across back-to-back sends. */
 const CLOSED_CACHE_TTL_MS = 30_000;
 
+/**
+ * The slot that holds `provider`'s native conversation in a tab: the tab's live
+ * fields when it runs that provider, else the parked provider session.
+ */
+function providerSlotOf(
+	tab: AITab,
+	session: Session,
+	provider: ToolType
+): Pick<AITab, 'agentSessionId' | 'nativeSessionBinding'> | undefined {
+	return provider === resolveTabProvider(tab, session) ? tab : tab.providerSessions?.[provider];
+}
+
 /** A past conversation of the agent, as its History entries describe it. */
 interface ClosedConversation {
+	provider: ToolType;
 	agentSessionId: string;
 	ownerAgentId?: string;
 	nativeSessionBinding?: NativeSessionBinding;
@@ -86,7 +103,7 @@ interface ClosedConversation {
 
 const closedCache = new Map<
 	string,
-	{ at: number; selectionKey: string; conversations: ClosedConversation[] }
+	{ agentId: string; at: number; conversations: ClosedConversation[] }
 >();
 
 /** Drop the cached History reads. Tests only. */
@@ -102,16 +119,39 @@ export function resetQuickChatRouterForTests(): void {
  */
 async function readClosedConversations(session: Session): Promise<ClosedConversation[]> {
 	// A hosted agent's conversations run on its host, which keeps their closed tabs: they are
-	// offered from there and reopen there, so the host continues them. The cache is keyed on the
+	// offered from there and reopen there, so the host continues them. The cache key names the
 	// host too, so a move or the hosted setting changing never serves the other source's list.
 	const host = hostedTargetOf(session);
-	const cached = closedCache.get(session.id);
-	const selectionKey = `${resumeSelectionKey(session)}\u0000${host ? `${host.peerId}\u0000${host.agentId}` : 'local'}`;
-	if (cached?.selectionKey === selectionKey && Date.now() - cached.at < CLOSED_CACHE_TTL_MS)
-		return cached.conversations;
+	// Keyed by everything that decides which native conversations the History
+	// describes and who owns them: the provider each tab runs, its native ids,
+	// and the account/host/cwd selection a resume is checked against.
+	const cacheKey = canonicalJson([
+		session.id,
+		session.toolType,
+		session.projectRoot ?? null,
+		session.cwd ?? null,
+		session.sessionSshRemoteConfig ?? null,
+		session.providerTranslationHistoryMappings ?? null,
+		resumeSelectionKey(session),
+		host ? [host.peerId, host.agentId] : 'local',
+		translationSessionTabs(session).map((tab) => [
+			tab.id,
+			resolveTabProvider(tab, session),
+			tab.agentSessionId ?? null,
+			tab.pendingTranslation ?? null,
+			Object.entries(tab.providerSessions ?? {}).map(([provider, slot]) => [
+				provider,
+				slot?.agentSessionId ?? null,
+			]),
+		]),
+	]);
+	const cached = closedCache.get(cacheKey);
+	if (cached && Date.now() - cached.at < CLOSED_CACHE_TTL_MS) return cached.conversations;
 	if (host) {
-		const conversations = await readHostedClosedConversations(host);
-		closedCache.set(session.id, { at: Date.now(), selectionKey, conversations });
+		const conversations = await readHostedClosedConversations(host, session.toolType);
+		for (const [key, entry] of closedCache)
+			if (entry.agentId === session.id) closedCache.delete(key);
+		closedCache.set(cacheKey, { agentId: session.id, at: Date.now(), conversations });
 		return conversations;
 	}
 
@@ -128,14 +168,26 @@ async function readClosedConversations(session: Session): Promise<ClosedConversa
 	for (const entry of entries) {
 		const id = entry.agentSessionId;
 		if (!id) continue;
+		let native: ReturnType<typeof resolveHistorySession>;
+		try {
+			native = resolveHistorySession(session, id);
+		} catch {
+			continue;
+		}
 		const ownerAgentId = entry.sessionId;
 		const nativeSessionBinding =
 			entry.nativeSessionBinding && structuredClone(entry.nativeSessionBinding);
-		const key = canonicalJson({ ownerAgentId, nativeSessionBinding, id });
+		const key = canonicalJson({
+			provider: native.provider,
+			ownerAgentId,
+			nativeSessionBinding,
+			id: native.agentSessionId,
+		});
 		let conversation = byConversation.get(key);
 		if (!conversation) {
 			conversation = {
-				agentSessionId: id,
+				provider: native.provider,
+				agentSessionId: native.agentSessionId,
 				ownerAgentId,
 				nativeSessionBinding,
 				name: null,
@@ -158,7 +210,9 @@ async function readClosedConversations(session: Session): Promise<ClosedConversa
 		...conversation,
 		text: summaries.join('\n'),
 	}));
-	closedCache.set(session.id, { at: Date.now(), selectionKey, conversations });
+	for (const [key, cached] of closedCache)
+		if (cached.agentId === session.id) closedCache.delete(key);
+	closedCache.set(cacheKey, { agentId: session.id, at: Date.now(), conversations });
 	return conversations;
 }
 
@@ -167,7 +221,14 @@ async function readClosedConversations(session: Session): Promise<ClosedConversa
  * name a provider session and closed in the lookback window, described by the USER turns of its
  * host's History, as a local agent's are by its own. A host that cannot say offers none.
  */
-async function readHostedClosedConversations(host: HostedTarget): Promise<ClosedConversation[]> {
+/**
+ * A hosted agent's closed tabs, from its host. The mirror's entries name no provider, so each
+ * conversation is the agent's own (`provider`), which its host runs.
+ */
+async function readHostedClosedConversations(
+	host: HostedTarget,
+	provider: ToolType
+): Promise<ClosedConversation[]> {
 	const since = Date.now() - QUICK_CHAT_ROUTE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
 	const closed = (await readMirrorClosedTabs(host.peerId, host.agentId)).filter(
 		(entry) => entry.type === 'ai' && entry.agentSessionId && entry.closedAt >= since
@@ -197,6 +258,7 @@ async function readHostedClosedConversations(host: HostedTarget): Promise<Closed
 		const agentSessionId = entry.agentSessionId as string;
 		const described = summaries.get(agentSessionId);
 		return {
+			provider,
 			agentSessionId,
 			name: entry.label && !isSessionIdLabel(entry.label, agentSessionId) ? entry.label : null,
 			text: described?.text.join('\n') ?? '',
@@ -313,23 +375,26 @@ export async function routeQuickChatMessage(
 	}
 	for (const conversation of closed) {
 		if (
-			liveTabs.some(
-				(tab) =>
-					tab.agentSessionId === conversation.agentSessionId &&
-					(conversation.nativeSessionBinding !== undefined || session.toolType === 'grok'
+			liveTabs.some((tab) => {
+				const slot = providerSlotOf(tab, session, conversation.provider);
+				return (
+					slot?.agentSessionId === conversation.agentSessionId &&
+					(conversation.nativeSessionBinding !== undefined || conversation.provider === 'grok'
 						? conversation.ownerAgentId === session.id &&
 							matchesNativeSessionBinding(
-								tab.nativeSessionBinding,
+								slot.nativeSessionBinding,
 								conversation.nativeSessionBinding
 							)
-						: !tab.nativeSessionBinding &&
+						: !slot.nativeSessionBinding &&
 							(!conversation.ownerAgentId || conversation.ownerAgentId === session.id))
-			)
+				);
+			})
 		)
 			continue;
-		const key = `session:${canonicalJson({ ownerAgentId: conversation.ownerAgentId, nativeSessionBinding: conversation.nativeSessionBinding, id: conversation.agentSessionId, hostTabId: conversation.hostTabId })}`;
+		const key = `session:${canonicalJson({ provider: conversation.provider, ownerAgentId: conversation.ownerAgentId, nativeSessionBinding: conversation.nativeSessionBinding, id: conversation.agentSessionId, hostTabId: conversation.hostTabId })}`;
 		targets.set(key, {
 			kind: 'closed',
+			provider: conversation.provider,
 			agentSessionId: conversation.agentSessionId,
 			name: conversation.name,
 			...(conversation.hostTabId ? { hostTabId: conversation.hostTabId } : {}),
@@ -351,7 +416,12 @@ export async function routeQuickChatMessage(
 	if (decision.action === 'new') return { kind: 'new' };
 	if (decision.action === 'route') return targets.get(decision.candidate.key) ?? { kind: 'new' };
 
-	const answer = await askRoutingModel(session, message, decision.shortlist);
+	const routingTab = session.aiTabs.find((tab) => tab.id === context.currentTabId);
+	const answer = await askRoutingModel(
+		projectTabProvider(session, routingTab).agent,
+		message,
+		decision.shortlist
+	);
 	if (answer === 'new') return { kind: 'new' };
 	const chosen =
 		answer === null ? decision.shortlist.find((c) => c.current) : decision.shortlist[answer];
@@ -402,7 +472,7 @@ export async function reopenClosedConversation(
 	conversation: Pick<
 		ClosedConversation,
 		'agentSessionId' | 'name' | 'ownerAgentId' | 'nativeSessionBinding' | 'hostTabId'
-	>,
+	> & { provider?: ToolType },
 	isCurrent: () => boolean = () => true,
 	onCreated?: (tabId: string) => void
 ): Promise<string | null> {
@@ -412,10 +482,20 @@ export async function reopenClosedConversation(
 	// A hosted agent's conversation reopens on its host, which continues it there.
 	const host = hostedTargetOf(session);
 	if (host) return reopenHostedConversation(session, host, conversation, isCurrent, onCreated);
-	const selectionKey = resumeSelectionKey(session);
 	const binding =
 		conversation.nativeSessionBinding && structuredClone(conversation.nativeSessionBinding);
-	const scoped = requiresNativeOwnership(session.toolType, binding);
+	const scoped =
+		requiresNativeOwnership(session.toolType, binding) || conversation.provider === 'grok';
+	// An explicit, unscoped native owner (a History record that names its
+	// provider) does not move when the agent's default provider changes, so the
+	// default is left out of the selection check. Grok on either side keeps it.
+	const ownerIsExplicit = (owner: Session) =>
+		conversation.provider !== undefined && !scoped && owner.toolType !== 'grok';
+	const selectionKeyOf = (owner: Session) =>
+		resumeSelectionKey(
+			ownerIsExplicit(owner) ? { ...owner, toolType: conversation.provider! } : owner
+		);
+	const selectionKey = selectionKeyOf(session);
 	if (
 		(conversation.ownerAgentId && conversation.ownerAgentId !== sessionId) ||
 		(scoped && conversation.ownerAgentId !== sessionId)
@@ -424,15 +504,16 @@ export async function reopenClosedConversation(
 			'The selected history does not have this agent as its recorded owner.'
 		);
 	}
-	let agentSessionId: string;
+	let native: ReturnType<typeof resolveHistorySession>;
 	try {
-		agentSessionId = translatedHistorySessionId(session, conversation.agentSessionId);
+		native = resolveHistorySession(session, conversation.agentSessionId, conversation.provider);
 	} catch (error) {
 		if (scoped)
 			throw new SessionResumeRefusedError('The selected native conversation cannot be translated.');
 		logger.warn('[QuickChat] History native translation is unavailable', undefined, error);
 		return null;
 	}
+	const agentSessionId = native.agentSessionId;
 	const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(session);
 	if (!projectPathForSessions) {
 		if (scoped)
@@ -441,17 +522,21 @@ export async function reopenClosedConversation(
 			);
 		return null;
 	}
-	const matchesTab = (tab: AITab) =>
-		tab.agentSessionId === agentSessionId &&
-		(!scoped || matchesNativeSessionBinding(tab.nativeSessionBinding, binding));
-	const selectedTab = session.aiTabs.find(matchesTab);
+	const matchesTab = (tab: AITab, owner: Session = session) => {
+		const slot = providerSlotOf(tab, owner, native.provider);
+		return (
+			slot?.agentSessionId === agentSessionId &&
+			(!scoped || matchesNativeSessionBinding(slot.nativeSessionBinding, binding))
+		);
+	};
+	const selectedTab = session.aiTabs.find((tab) => matchesTab(tab));
 
 	let resumable;
 	try {
 		resumable = await loadResumableSession({
 			ownerAgentId: conversation.ownerAgentId,
 			nativeSessionBinding: binding,
-			toolType: session.toolType,
+			toolType: native.provider,
 			projectRoot: projectPathForSessions,
 			sshRemoteId,
 			agentSessionId,
@@ -485,8 +570,8 @@ export async function reopenClosedConversation(
 	updateSessionWith(sessionId, (s) => {
 		if (!isCurrent()) return s;
 		if (
-			resumeSelectionKey(s) !== selectionKey ||
-			(selectedTab && !s.aiTabs.some((tab) => tab.id === selectedTab.id && matchesTab(tab)))
+			selectionKeyOf(s) !== selectionKey ||
+			(selectedTab && !s.aiTabs.some((tab) => tab.id === selectedTab.id && matchesTab(tab, s)))
 		) {
 			throw new SessionResumeRefusedError(
 				'The agent or conversation changed while reopening history.'
@@ -494,7 +579,7 @@ export async function reopenClosedConversation(
 		}
 		// Re-checked on fresh state: the read above was awaited, and there must
 		// never be two tabs for one conversation.
-		const existing = s.aiTabs.find(matchesTab);
+		const existing = s.aiTabs.find((tab) => matchesTab(tab, s));
 		if (existing) {
 			tabId = existing.id;
 			return s;
@@ -502,11 +587,13 @@ export async function reopenClosedConversation(
 		// Reopened, used, and closed mid-reply while we were reading: it is still
 		// answering in the background, and a second tab would send a second turn
 		// into the same conversation at once. The caller starts a new tab instead.
-		if (s.orphanedThinkingTabs?.some(matchesTab)) {
+		if (s.orphanedThinkingTabs?.some((tab) => matchesTab(tab, s))) {
 			return s;
 		}
 		const created = createTab(s, {
 			agentSessionId,
+			sourceProvider: native.provider,
+			providerSessions: native.providerSessions,
 			logs: resumable.messages,
 			origin: resumable.origin,
 			name: resumable.name,
@@ -524,18 +611,14 @@ export async function reopenClosedConversation(
 			...created.session,
 			aiTabs: created.session.aiTabs.map((tab) =>
 				tab.id === created.tab.id && resumable.nativeSessionBinding
-					? updateProviderSlot(tab, s, s.toolType, {
+					? updateProviderSlot(tab, s, native.provider, {
 							nativeSessionBinding: resumable.nativeSessionBinding,
 						})
 					: tab
 			),
 		};
 	});
-	if (
-		!tabId &&
-		isCurrent() &&
-		(scoped || !find() || resumeSelectionKey(find()!) !== selectionKey)
-	) {
+	if (!tabId && isCurrent() && (scoped || !find() || selectionKeyOf(find()!) !== selectionKey)) {
 		throw new SessionResumeRefusedError(
 			'The selected conversation could not be reopened. Retained history was kept.'
 		);

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
 	assertSerializedJsonIsSafe,
+	extractJsonObject,
 	parseJsonWithBom,
-	serializedJsonByteLength,
 	stripJsonBom,
+	serializedJsonByteLength,
 } from '../../shared/jsonUtils';
 import { serializedJsonByteLength as contributionsByteLength } from '../../shared/plugins/contributions';
 
@@ -69,6 +70,27 @@ describe('assertSerializedJsonIsSafe', () => {
 
 	it('accepts a large top-level array', () => {
 		expect(() => assertSerializedJsonIsSafe(`["${'z'.repeat(1_200_000)}"]`, 'store')).not.toThrow();
+	});
+});
+
+describe('extractJsonObject', () => {
+	it('finds an object inside a fenced block with a preamble', () => {
+		const raw = 'Sure! Here you go:\n```json\n{"target":"conductor"}\n```';
+		expect(extractJsonObject(raw)).toEqual({ target: 'conductor' });
+	});
+
+	it('keeps braces that belong to a string value', () => {
+		// The non-greedy regex that "worked" would truncate here.
+		const raw = '{"prompt":"replace {old} with {new}","confidence":0.5}';
+		expect(extractJsonObject(raw)).toMatchObject({ prompt: 'replace {old} with {new}' });
+	});
+
+	it('returns null for text with no object in it', () => {
+		expect(extractJsonObject('I think you want the backend agent.')).toBeNull();
+	});
+
+	it('returns null rather than throwing on malformed JSON', () => {
+		expect(extractJsonObject('{"target": }')).toBeNull();
 	});
 });
 

@@ -49,5 +49,16 @@ export function createContextOpsRemoteApi() {
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},
+
+		/** The read-only continuity preview (`maestro-cli tab continuity`). */
+		onRemoteContinuityPreview: (callback: TabContextOpListener): (() => void) =>
+			subscribe('remote:continuityPreview', callback),
+
+		sendRemoteContinuityPreviewResponse: (
+			responseChannel: string,
+			result: TabContextOpResult
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
 	};
 }

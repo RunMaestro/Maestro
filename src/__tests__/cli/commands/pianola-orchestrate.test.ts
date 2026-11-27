@@ -207,6 +207,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		expect(runDispatch).toHaveBeenCalledWith('engineer', 'Founder correction', {
 			newTab: true,
 			background: true,
+			skipConsultBudget: true,
 		});
 		expect(persisted?.tasks[0]).toEqual(completed);
 		expect(persisted?.tasks[1]).toMatchObject({ prompt: 'Founder correction', status: 'running' });
@@ -388,10 +389,12 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 				expect(runDispatch).toHaveBeenNthCalledWith(1, 'agent-1', 'p', {
 					newTab: true,
 					background: true,
+					skipConsultBudget: true,
 				});
 				expect(runDispatch).toHaveBeenNthCalledWith(2, 'agent-1', expect.any(String), {
 					newTab: true,
 					background: true,
+					skipConsultBudget: true,
 				});
 				return doneResult(state);
 			}
@@ -414,7 +417,11 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 			}
 		);
 		await pianolaOrchestrate('plan-1', { once: true });
-		expect(runDispatch).toHaveBeenCalledWith('agent-1', prompt, { newTab: true, background: true });
+		expect(runDispatch).toHaveBeenCalledWith('agent-1', prompt, {
+			newTab: true,
+			background: true,
+			skipConsultBudget: true,
+		});
 		expect(memoryRequestMock.mock.calls[0][0].query.query).toHaveLength(16_000);
 	});
 	it('surfaces runner configuration changes during an iteration instead of swallowing them', async () => {
@@ -1633,9 +1640,11 @@ describe('pianolaOrchestrate with Grok tasks', () => {
 		// Pianola task): no account, model, effort or remote is forced over what
 		// the Grok agent itself is configured with.
 		expect(runDispatch).toHaveBeenCalledTimes(1);
+		// The supervisor loop dispatches outside the per-message consult budget.
 		expect(runDispatch).toHaveBeenCalledWith('grok-agent-1', 'refactor the parser', {
 			newTab: true,
 			background: true,
+			skipConsultBudget: true,
 		});
 		expect(sentOfType('create_session')).toHaveLength(0);
 		// Upstream lists sessions only to find the bound agent's tab; the agent

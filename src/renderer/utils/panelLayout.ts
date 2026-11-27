@@ -416,6 +416,29 @@ export function resolveModelEffortTabId(
 	return ref?.type === 'ai' ? ref.id : null;
 }
 
+/**
+ * The AI tab a message addressed to "the tab I am in" means, or `null`.
+ *
+ * Different from {@link resolveModelEffortTabId} on one point, and it is the
+ * point: a file, terminal or browser tab in front of a SINGLE view still has a
+ * conversation behind it, and that conversation is the answer. Looking at a
+ * file does not stop the agent's tab from being the one you are talking to.
+ * Inside a tiled group there is no "behind": the focused pane is what is on
+ * screen, so a non-AI pane there means no conversation is addressed.
+ *
+ * The voice HUD's Tab mode binds to this, both when the mode is picked and when
+ * the user moves to another tab.
+ */
+export function resolveFocusedAiTabId(session: Session | null | undefined): string | null {
+	if (!session) return null;
+	const ref = resolveActiveTabRef(session);
+	if (ref?.type === 'ai') return ref.id;
+	const tiled =
+		session.activeGroupId != null &&
+		!!session.tabGroups?.some((group) => group.id === session.activeGroupId);
+	return tiled ? null : (getActiveTab(session)?.id ?? null);
+}
+
 export function resolveActiveTabRef(session: Session): UnifiedTabRef | null {
 	const group =
 		session.activeGroupId != null

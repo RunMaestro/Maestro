@@ -26,6 +26,7 @@ import { formatTokensCompact } from '../../../shared/formatters';
 import { highlightMatches } from '../../utils/highlightMatches';
 import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 import './DualPaneFileEditor.css';
+import { hostShellAvailable } from '../../services/hostShell';
 
 export interface DualPaneFileEditorItem {
 	id: string;
@@ -608,7 +609,7 @@ export function DualPaneFileEditor({
 									{renderActionButton(primaryAction, 'save-button')}
 									{secondaryAction && renderActionButton(secondaryAction, 'reset-button')}
 									<div className="flex-1" />
-									{openInFinderPath && (
+									{openInFinderPath && hostShellAvailable() && (
 										<button
 											className="dual-pane-open-folder-button"
 											onClick={() => window.maestro?.shell?.openPath(openInFinderPath)}

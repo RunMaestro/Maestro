@@ -12,6 +12,7 @@ import {
 	AutoResumeSection,
 	BrowserSection,
 	ConductorProfileSection,
+	ConsultationBudgetSection,
 	CrossAgentMentionsSection,
 	GitHubCliSection,
 	GlobalHotkeySection,
@@ -29,7 +30,6 @@ import {
 	TabBehaviorSection,
 	ThinkingModeSection,
 	UpdatesSection,
-	UtilityAgentSection,
 	WebInterfaceSection,
 } from './components';
 import {
@@ -159,6 +159,17 @@ function CrossAgentMentions({ theme }: SettingsSectionProps) {
 	);
 }
 
+function ConsultationBudget({ theme }: SettingsSectionProps) {
+	const settings = useSettingsValues();
+	return (
+		<ConsultationBudgetSection
+			theme={theme}
+			maxConsultationsPerTurn={settings.maxConsultationsPerTurn}
+			setMaxConsultationsPerTurn={settings.setMaxConsultationsPerTurn}
+		/>
+	);
+}
+
 function AutoRunInactivity({ theme }: SettingsSectionProps) {
 	const settings = useSettingsValues();
 	return (
@@ -246,21 +257,6 @@ function PrimaryAgent({ theme }: SettingsSectionProps) {
 		/>
 	);
 }
-
-function UtilityAgent({ theme, isOpen }: SettingsSectionProps) {
-	const settings = useSettingsValues();
-	return (
-		<UtilityAgentSection
-			theme={theme}
-			isOpen={isOpen}
-			utilityAgentId={settings.utilityAgentId}
-			setUtilityAgentId={settings.setUtilityAgentId}
-			utilityModelId={settings.utilityModelId}
-			setUtilityModelId={settings.setUtilityModelId}
-		/>
-	);
-}
-
 function SpellCheck({ theme }: SettingsSectionProps) {
 	const settings = useSettingsValues();
 	return (
@@ -379,6 +375,11 @@ export const GENERAL_SECTIONS: readonly SettingsSectionDef[] = [
 		Component: CrossAgentMentions,
 	},
 	{
+		key: 'consultationBudget',
+		settingIds: ['general-consultation-budget'],
+		Component: ConsultationBudget,
+	},
+	{
 		key: 'autoRunInactivity',
 		settingIds: ['general-autorun-inactivity-timeout', 'general-autorun-max-task-duration'],
 		Component: AutoRunInactivity,
@@ -409,7 +410,6 @@ export const GENERAL_SECTIONS: readonly SettingsSectionDef[] = [
 		Component: TabBehavior,
 	},
 	{ key: 'primaryAgent', settingIds: ['general-primary-agent'], Component: PrimaryAgent },
-	{ key: 'utilityAgent', settingIds: ['general-utility-agent'], Component: UtilityAgent },
 	{ key: 'spellCheck', settingIds: ['general-spell-check'], Component: SpellCheck },
 	{ key: 'power', settingIds: ['general-power', 'general-display-sleep'], Component: Power },
 	{ key: 'rendering', settingIds: ['general-rendering'], Component: Rendering },

@@ -1,3 +1,5 @@
+import { getAgentCommands } from '../../../../../renderer/utils/agentCommands';
+import { createMockAITab } from '../../../../helpers/mockTab';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useAgentSlashCommandsListener } from '../../../../../renderer/hooks/agent/internal/useAgentSlashCommandsListener';
@@ -47,6 +49,28 @@ describe('useAgentSlashCommandsListener', () => {
 		updated?.agentCommands?.forEach((c) => {
 			expect(c.description).toBeDefined();
 		});
+	});
+
+	it('does not overwrite selected commands with a late event from another provider', () => {
+		const tab = createMockAITab({ id: 'tab-1', tabProvider: 'codex', turnProvider: 'claude-code' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: tab.id });
+		useSessionStore.setState({ sessions: [session] });
+		renderHook(() => useAgentSlashCommandsListener());
+		onSlashCommandsHandler!('sess-1-ai-tab-1', ['claude-only']);
+		expect(getAgentCommands(useSessionStore.getState().sessions[0], tab)).toBeUndefined();
+		expect(useSessionStore.getState().sessions[0].agentCommands).toBeUndefined();
+	});
+
+	it('attributes command events to the addressed tab rather than the agent default', () => {
+		const tab = createMockAITab({ id: 'tab-1', tabProvider: 'codex', turnProvider: 'codex' });
+		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: tab.id });
+		useSessionStore.setState({ sessions: [session] });
+		renderHook(() => useAgentSlashCommandsListener());
+		onSlashCommandsHandler!('sess-1-ai-tab-1', ['codex-only']);
+		expect(getAgentCommands(useSessionStore.getState().sessions[0], tab)?.[0].command).toBe(
+			'/codex-only'
+		);
+		expect(getAgentCommands(useSessionStore.getState().sessions[0])).toBeUndefined();
 	});
 
 	it('skips no-op renders when the session does not exist (orphan event)', () => {

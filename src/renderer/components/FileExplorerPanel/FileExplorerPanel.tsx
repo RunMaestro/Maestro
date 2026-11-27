@@ -18,7 +18,7 @@ import {
 	ExternalLink,
 } from 'lucide-react';
 import { getBasename } from '../../../shared/formatters';
-import { useSettingsStore } from '../../stores/settingsStore';
+import { selectACappellaEnabled, useSettingsStore } from '../../stores/settingsStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 import { buildChangedAncestors, buildFileChangeMap } from '../../utils/gitChangeMap';
 import { RIGHT_PANEL_COMPACT_THRESHOLD } from '../../constants/rightPanel';
@@ -61,6 +61,7 @@ import { openFolderInFileManager } from '../../services/fileActions';
 
 // Utils
 import { formatBytes } from './utils/pathHelpers';
+import { hostShellAvailable } from '../../services/hostShell';
 
 /** localStorage key remembering that the user dismissed the "not all files loaded" banner. */
 export const TRUNCATION_BANNER_DISMISSED_KEY = 'fileExplorer.truncationBanner.dismissed';
@@ -103,6 +104,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 	const dotfilesToggleHidden = useSettingsStore((s) => s.dotfilesToggleHidden);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const voiceEnabled = useSettingsStore(selectACappellaEnabled);
 	const htmlDoubleClickOpensInBrowser = useSettingsStore((s) => s.htmlDoubleClickOpensInBrowser);
 	// Two ways to fit the toolbar in a narrow panel, by what is scarce: a narrow
 	// DESKTOP panel (`compact`) drops the icons and keeps the words for a mouse
@@ -415,6 +417,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		handleOpenNewFile,
 		handleOpenNewFolder,
 		handleNewAgentHere,
+		handleTalkWithDocument,
 		handleOpenRename,
 		handleOpenDelete,
 		handleFocusInGraph,
@@ -608,24 +611,26 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					</button>
 					{/* Open in file manager. A remote working directory has no location on
 					    this computer, so it is shown in the Files panel with a flash. */}
-					<button
-						onClick={() =>
-							void openFolderInFileManager(
-								{ path: session.fullPath || session.projectRoot, sshRemoteId },
-								{ sessionId: session.id }
-							)
-						}
-						className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
-						style={{
-							color: theme.colors.accent,
-							border: `1px solid ${theme.colors.accent}40`,
-							backgroundColor: `${theme.colors.accent}15`,
-						}}
-						title={getOpenInLabel(window.maestro?.platform || 'darwin')}
-					>
-						{!compact && <FolderOpen className="w-3 h-3" />}
-						{!iconOnly && 'Open'}
-					</button>
+					{hostShellAvailable() && (
+						<button
+							onClick={() =>
+								void openFolderInFileManager(
+									{ path: session.fullPath || session.projectRoot, sshRemoteId },
+									{ sessionId: session.id }
+								)
+							}
+							className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+							style={{
+								color: theme.colors.accent,
+								border: `1px solid ${theme.colors.accent}40`,
+								backgroundColor: `${theme.colors.accent}15`,
+							}}
+							title={getOpenInLabel(window.maestro?.platform || 'darwin')}
+						>
+							{!compact && <FolderOpen className="w-3 h-3" />}
+							{!iconOnly && 'Open'}
+						</button>
+					)}
 					{/* Show/hide dotfiles */}
 					{!dotfilesToggleHidden && (
 						<button
@@ -1072,6 +1077,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					contextMenu={contextMenu}
 					contextMenuRef={contextMenuRef}
 					contextMenuPos={contextMenuPos}
+					rootPath={session.projectRoot}
 					onFocusFileInGraph={onFocusFileInGraph}
 					onGraphFolder={handleGraphFolder}
 					onGraphSelection={handleGraphSelection}
@@ -1089,6 +1095,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onOpenNewFile={handleOpenNewFile}
 					onOpenNewFolder={handleOpenNewFolder}
 					onNewAgentHere={handleNewAgentHere}
+					voiceEnabled={voiceEnabled}
+					onTalkWithDocument={handleTalkWithDocument}
 					onPreviewFile={handlePreviewFile}
 					onPreviewAllInFolder={handlePreviewAllInFolder}
 					autoRunStagedCount={autoRunStagedDocs.length}

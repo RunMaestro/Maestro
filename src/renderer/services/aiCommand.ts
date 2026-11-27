@@ -1,9 +1,11 @@
 /**
  * AI command mode: the request/confirm/run cycle.
  *
- * AI command mode (the `!!` rung of the composer's bang ladder) asks the tab's
- * OWN model, at its current model and effort, to turn a plain-English request
- * into one shell command line. Nothing runs until the user confirms.
+ * AI command mode (the `!!` rung of the composer's bang ladder) asks a model to
+ * turn a plain-English request into one shell command line. By default that is
+ * the tab's OWN provider at its current model and effort; the `ai-command`
+ * Local Models assignment can move it to a local model or an endpoint. Nothing
+ * runs until the user confirms.
  *
  * The accepted command goes back through `dispatchShellCommand`, the same entry
  * point a typed `!` command uses, so it lands in the transcript and in recall
@@ -17,8 +19,55 @@ import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 import { dispatchShellCommand, resolveCommandCwd } from './shellCommand';
 import { aiCommandKey, useAiCommandStore, type AiCommandEntry } from '../stores/aiCommandStore';
-import { codifyTurnSettings } from '../utils/providerTabSessions';
+import { codifyTurnSettings, projectTabProvider } from '../utils/providerTabSessions';
 import { collectRecentCommands } from '../../shared/aiCommand';
+import type { LocalModelEndpoint } from '../../shared/local-models/endpoints';
+import { getAgentDisplayName } from '../../shared/agentMetadata';
+import {
+	localModelAssignmentSourceLabel,
+	modelMapRoleOf,
+	resolveLocalModelAssignment,
+	type LocalModelAssignments,
+} from '../../shared/local-models/tasks';
+import { resolveSlotProvider, type ModelMap } from '../../shared/local-models/model-map';
+import { useSettingsStore } from '../stores/settingsStore';
+
+/**
+ * The model and effort the AI Command bar names for a request sent now.
+ *
+ * Which model answers is the `ai-command` Local Models assignment, so the label
+ * follows it:
+ *   - a Model Map slot on a provider names that provider; a slot that follows
+ *     the session (the default) is the tab's own provider, so the turn's
+ *     codified model and effort are the answer;
+ *   - a local model or an endpoint is named instead (`Qwen3 1.7B`,
+ *     `qwen3:latest on Ollama`), with no effort: those sources have no effort
+ *     ladder, and showing the tab's would credit a model that is not asked;
+ *   - `off` names nothing, because no model is asked at all.
+ *
+ * Both the bar's draft state and `requestAiCommand` read it, so the label shown
+ * before Enter is the one stamped onto the request.
+ */
+export function resolveAiCommandProvenance(
+	turn: { turnModel?: string; turnEffort?: string },
+	assignments: LocalModelAssignments | undefined,
+	endpoints: readonly LocalModelEndpoint[],
+	modelMap?: ModelMap
+): { model?: string; effort?: string } {
+	const assignment = resolveLocalModelAssignment(assignments, 'ai-command', modelMap);
+	const role = modelMapRoleOf(assignment);
+	if (role) {
+		const provider = modelMap ? resolveSlotProvider(modelMap[role], '') : null;
+		if (provider?.usesMappedProvider) {
+			return {
+				model: provider.modelId ?? `${getAgentDisplayName(provider.agentType)} (default model)`,
+			};
+		}
+		return { model: turn.turnModel, effort: turn.turnEffort };
+	}
+	const source = localModelAssignmentSourceLabel(assignment, endpoints);
+	return source ? { model: source } : {};
+}
 import { getClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 
 /**
@@ -37,6 +86,8 @@ export async function requestAiCommand(options: {
 	const requestId = generateId();
 
 	const tab = session.aiTabs?.find((t) => t.id === tabId);
+	if (!tab) return;
+	const providerSession = projectTabProvider(session, tab).agent;
 	// Same resolution the chat spawn uses, so the suggestion runs under exactly
 	// the model and effort the composer's pills advertise. Settings are codified
 	// here, at send time, for the same reason a chat turn codifies them: changing
@@ -49,35 +100,46 @@ export async function requestAiCommand(options: {
 	// tab's commands in true chronological order.
 	const recentCommands = collectRecentCommands(tab?.logs ?? []);
 
+	const { localModelAssignments, localModelEndpoints, modelMap } = useSettingsStore.getState();
+	const provenance = resolveAiCommandProvenance(
+		{ turnModel, turnEffort },
+		localModelAssignments,
+		localModelEndpoints,
+		modelMap
+	);
+
 	useAiCommandStore.getState().beginAiCommand({
 		requestId,
 		sessionId: session.id,
 		tabId,
 		request,
-		model: turnModel,
-		effort: turnEffort,
+		model: provenance.model,
+		effort: provenance.effort,
 	});
 
 	try {
 		const result = await window.maestro.aiCommand.suggest({
 			request,
 			ownerAgentId: session.id,
-			agentType: session.toolType,
+			agentType: providerSession.toolType,
 			cwd: resolveCommandCwd(session),
 			isGitRepo: session.isGitRepo,
 			sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 			sshRemoteName: session.sshRemote?.name,
-			customPath: session.customPath,
-			customArgs: session.customArgs,
-			customEnvVars: session.customEnvVars,
+			customPath: providerSession.customPath,
+			customArgs: providerSession.customArgs,
+			customEnvVars: providerSession.customEnvVars,
 			customModel: turnModel,
 			customEffort: turnEffort,
-			claudeTokenSource: getClaudeTokenSourceFields(session),
+			claudeTokenSource: getClaudeTokenSourceFields(providerSession),
 			recentCommands,
 		});
 
 		if (result.success && result.command) {
-			useAiCommandStore.getState().resolveAiCommand(requestId, result.command);
+			useAiCommandStore.getState().resolveAiCommand(requestId, result.command, {
+				explanation: result.explanation,
+				producedBy: result.producedBy,
+			});
 		} else {
 			useAiCommandStore
 				.getState()

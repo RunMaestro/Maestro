@@ -435,6 +435,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 	const consults = createRuntimeConsults({
 		paths,
 		repository,
+		registry,
 		fence,
 		historyWriter,
 		background,

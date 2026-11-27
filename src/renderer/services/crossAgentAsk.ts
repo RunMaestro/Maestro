@@ -28,6 +28,7 @@ import {
 	settleAgentDelegation,
 } from './agentDelegation';
 import type { LogEntry } from '../types';
+import type { ConsultChain } from '../../shared/consultBudget';
 import {
 	CROSS_AGENT_ASK_SESSION_ID,
 	CROSS_AGENT_ASK_TAB_ID,
@@ -68,6 +69,12 @@ export interface CrossAgentAskRequest extends RemoteAskerContext {
 	 * transcript is what `@mention` is for.
 	 */
 	withContext?: boolean;
+	/**
+	 * The consulted agent's place in a consult chain. `maestro-cli ask` admitted
+	 * the consult and spent for it before sending; this only has to reach the
+	 * consult's environment (see `CrossAgentRequest.consultChain`).
+	 */
+	consultChain?: ConsultChain;
 }
 
 export interface CrossAgentAskResult {
@@ -81,6 +88,7 @@ export interface CrossAgentAskResult {
 	targetAgentName?: string;
 	/** The hidden consult tab on the target that holds the persisted exchange. */
 	targetTabId?: string;
+	targetToolType?: CrossAgentCompletion['targetToolType'];
 }
 
 /**
@@ -144,6 +152,7 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 					status: completion.canceled ? 'canceled' : completion.error ? 'error' : 'done',
 					error: completion.error,
 					toTabId: completion.targetTabId,
+					toToolType: completion.targetToolType,
 				});
 			}
 			resolve({
@@ -153,6 +162,7 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 				canceled: completion.canceled,
 				targetAgentName: target.name,
 				targetTabId: completion.targetTabId,
+				targetToolType: completion.targetToolType,
 			});
 		};
 
@@ -173,6 +183,7 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 			...(request.transcript ? { contextTranscript: request.transcript } : {}),
 			...(request.handoffAnswer !== undefined ? { handoffAnswer: request.handoffAnswer } : {}),
 			sourceCwd: source?.cwd,
+			...(request.consultChain ? { consultChain: request.consultChain } : {}),
 			onComplete: finish,
 		});
 	});

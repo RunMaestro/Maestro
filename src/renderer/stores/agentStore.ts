@@ -1,3 +1,10 @@
+import { getAgentCommands } from '../utils/agentCommands';
+import { prepareProviderTranslationForSend } from '../services/providerTranslation';
+import { TranslationSendHeldError } from '../../shared/maestro-lib/translation/send';
+import {
+	projectTabProvider,
+	resolveTabProvider,
+} from '../../shared/maestro-lib/agents/providerSwap';
 import {
 	flushSessionPersistenceNow,
 	flushSessionTranscriptNow,
@@ -41,6 +48,8 @@ import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMess
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
 import { createTab, getActiveTab, markTabRunningQueuedItem } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
+import { isAutoModel } from '../../shared/autoModel';
+import { settleAutoTurn, turnSpawnSettings } from '../services/autoTurn';
 import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
@@ -323,19 +332,30 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	},
 
 	clearAgentError: (sessionId, tabId?) => {
+		const session = getSession(sessionId);
+		const clearsSessionError =
+			!tabId || !session?.agentErrorTabId || session.agentErrorTabId === tabId;
+		const targetTabId = tabId ?? session?.agentErrorTabId;
+		const remainingErrorTab = session?.aiTabs.find(
+			(tab) => tab.id !== targetTabId && tab.agentError
+		);
 		updateSession(sessionId, (s) => {
 			const targetTabId = tabId ?? s.agentErrorTabId;
 			const updatedAiTabs = targetTabId
 				? s.aiTabs.map((tab) => (tab.id === targetTabId ? { ...tab, agentError: undefined } : tab))
 				: s.aiTabs;
-			// When a specific tabId is provided and the session-level error belongs
-			// to a different tab, only clear that tab's error and leave the newer
-			// session-level error intact.
-			const clearsSessionError = !tabId || !s.agentErrorTabId || s.agentErrorTabId === tabId;
+			// Resolving one provider outage cannot release another tab's pause.
 			if (!clearsSessionError) {
+				return { ...s, aiTabs: updatedAiTabs };
+			}
+			if (remainingErrorTab) {
 				return {
 					...s,
 					aiTabs: updatedAiTabs,
+					agentError: remainingErrorTab.agentError,
+					agentErrorTabId: remainingErrorTab.id,
+					agentErrorPaused: true,
+					state: 'error' as SessionState,
 				};
 			}
 			// Clearing the error must not claim the AGENT is idle while one of its
@@ -364,6 +384,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				aiTabs: updatedAiTabs,
 			};
 		});
+		if (!clearsSessionError || remainingErrorTab) return;
 		// Close the agent error modal if open
 		window.maestro.agentError.clearError(sessionId).catch((err) => {
 			logger.error('Failed to clear agent error:', undefined, err);
@@ -442,7 +463,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 	processQueuedItem: async (sessionId, item, deps) => {
 		const managedQueue = !!item.pendingAdmissionId;
 		if (managedQueue && item.admissionRelease && !deps.managedStepId) return false; // native in-flight/Unknown barrier, never resend
-		const session = getSession(sessionId);
+		let session = getSession(sessionId);
 		if (!session) {
 			logger.error('[processQueuedItem] Session not found:', undefined, sessionId);
 			return false;
@@ -485,7 +506,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				: false;
 			updateSessionWith(sessionId, (s) =>
 				applyQueuedItemAbort(
-					item.type === 'command' && (session.toolType === 'grok' || item.commandScope)
+					item.type === 'command' && (s.toolType === 'grok' || item.commandScope)
 						? applyQueuedItemDispatchFailure(s, { ...item, paused: true }, { collision: true })
 						: s,
 					item,
@@ -495,7 +516,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			return false;
 		}
 
-		const targetTab = tabByItemId || getActiveTab(session);
+		let targetTab = tabByItemId || getActiveTab(session);
 
 		if (!targetTab) {
 			logger.error(
@@ -503,6 +524,39 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
+			return false;
+		}
+
+		const provider = item.turnSettings?.provider ?? resolveTabProvider(targetTab, session);
+		const translationTabId = targetTab.id;
+		try {
+			if (!item.crossAgentOnly)
+				await prepareProviderTranslationForSend(sessionId, targetTab.id, provider);
+			const fresh = getSession(sessionId);
+			if (!fresh) throw new Error('Agent removed before sending');
+			// Project the captured provider for launch only. Live defaults stay unchanged.
+			const currentTab =
+				fresh.aiTabs.find((tab) => tab.id === translationTabId) ??
+				fresh.orphanedThinkingTabs?.find((tab) => tab.id === translationTabId);
+			const projected = projectTabProvider(fresh, currentTab, provider);
+			session = projected.agent;
+			targetTab = projected.tab;
+			if (!targetTab) throw new Error('Target tab removed before sending');
+		} catch (error) {
+			const deferred = error instanceof TranslationSendHeldError && error.deferred;
+			const targetRunning =
+				deferred && (await probeSessionAiProcesses(sessionId, translationTabId)).targetTabActive;
+			updateSessionWith(sessionId, (s) => {
+				const recovered = applyQueuedItemDispatchFailure(s, item, { collision: targetRunning });
+				return deferred
+					? {
+							...recovered,
+							executionQueue: recovered.executionQueue.map((queued) =>
+								queued.id === item.id ? { ...queued, paused: item.paused } : queued
+							),
+						}
+					: recovered;
+			});
 			return false;
 		}
 
@@ -616,6 +670,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				session,
 				targetTab.id,
 				item.images,
+				// Set only when another agent's `maestro-cli dispatch` queued the item:
+				// the mentions in it are then that agent's consults, and spend its chain.
+				item.consultChain,
 				{
 					routingOverride: item.mentionRouting,
 					planText: withoutDesignPickPageText(item.text, item.designPickPageText),
@@ -643,7 +700,27 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// it, so a queue that drains after the user switched models still spawns
 		// each item on what it was queued with. Falls back to the live values only
 		// for items queued before the capture existed.
-		const { turnModel, turnEffort } = codifyQueuedTurnSettings(item, targetTab, session);
+		const settings = codifyQueuedTurnSettings(item, targetTab, session);
+		const { turnModel, turnEffort } = settings;
+		updateSessionWith(sessionId, (s) => ({
+			...s,
+			aiTabs: s.aiTabs.map((tab) => (tab.id === translationTabId ? { ...tab, ...settings } : tab)),
+			orphanedThinkingTabs: s.orphanedThinkingTabs?.map((tab) =>
+				tab.id === translationTabId ? { ...tab, ...settings } : tab
+			),
+		}));
+		// An item on the Auto model (queued on it, or sent on it by an agent that
+		// is) is settled below, inside the `try`: the tab took the turn with a
+		// stamp, and the router's answer decides what this spawn launches with.
+		// Read from the item's own capture, like the model and effort above, so a
+		// stamp left by the turn before never speaks for an item on a named model.
+		const sentOnAuto = isAutoModel(
+			item.turnSettings ? item.turnSettings.model : (targetTab.customModel ?? session.customModel)
+		);
+		const settleAuto = (prompt: string) =>
+			sentOnAuto
+				? settleAutoTurn({ sessionId, tabId: targetTab.id, prompt, itemId: item.id })
+				: Promise.resolve(null);
 
 		// Agent Resilience: snapshot the exact prompt (keyed on the RESOLVED target
 		// tab so it matches the error listener's tab) so it can be auto-resent if
@@ -704,6 +781,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					session,
 					targetTab.id,
 					item.images,
+					item.consultChain,
 					{ dispatchId: item.pendingAdmissionId!, generation: prepared.generation, starts }
 				);
 				await Promise.all(starts);
@@ -768,10 +846,17 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// handleQuickActionsDebugReleaseQueuedItem) so it lands atomically with
 				// the dequeue/state-busy transition. Adding it here too would duplicate.
 
-				const appendSystemPrompt = await prepareMaestroSystemPrompt({
-					session,
-					activeTabId: targetTab.id,
-				});
+				// The router judges the message itself, without the consult replies
+				// and merged context folded in around it above. A tier target that
+				// cannot be used throws, and the catch below holds the item.
+				const [appendSystemPrompt, autoLaunch] = await Promise.all([
+					prepareMaestroSystemPrompt({
+						session,
+						activeTabId: targetTab.id,
+						consultChain: item.consultChain,
+					}),
+					settleAuto(messagePrompt),
+				]);
 
 				logger.info('[processQueuedItem] Spawning agent with queued message:', undefined, {
 					sessionId: targetSessionId,
@@ -846,10 +931,18 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomArgs: session.customArgs,
 					sessionAdditionalDirectories: session.additionalDirectories,
 					sessionCustomEnvVars: session.customEnvVars,
-					sessionCustomModel: turnModel,
-					sessionCustomEffort: turnEffort,
+					...turnSpawnSettings(autoLaunch, {
+						model: turnModel,
+						effort: turnEffort,
+						runOn: settings.turnRunOnTarget,
+					}),
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					// A turn another agent delegated runs in the chain that agent
+					// was admitted to, so its own consults spend the same budget.
+					...(item.consultChain ? { consultChain: item.consultChain } : {}),
+					// A conductor's message to a hosted agent: its consults stay on this host.
+					...(item.hostedTurn ? { hostedTurn: true } : {}),
 				});
 				if (managedQueue) {
 					if (!spawnResult.success)
@@ -872,9 +965,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// Process a slash command - find matching command
 				// Check user-defined commands first, then agent-discovered commands with prompts
 				const matchingAgentCommand =
-					session.toolType === 'grok'
+					provider === 'grok'
 						? undefined
-						: session.agentCommands?.find((cmd) => cmd.command === item.command && cmd.prompt);
+						: getAgentCommands(getSession(sessionId), targetTab, provider)?.find(
+								(cmd) => cmd.command === item.command && cmd.prompt
+							);
 				const matchingCommand =
 					deps.customAICommands.find((cmd) => cmd.command === item.command) ||
 					deps.speckitCommands.find((cmd) => cmd.command === item.command) ||
@@ -986,10 +1081,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						conductorProfile: deps.conductorProfile,
 					});
 
-					const appendSystemPromptForCommand = await prepareMaestroSystemPrompt({
-						session,
-						activeTabId: targetTab.id,
-					});
+					// A command's prompt is only known here, so a command on the Auto
+					// model is routed at its dispatch, on the prompt it expands to.
+					const [appendSystemPromptForCommand, autoLaunch] = await Promise.all([
+						prepareMaestroSystemPrompt({
+							session,
+							activeTabId: targetTab.id,
+							consultChain: item.consultChain,
+						}),
+						settleAuto(substitutedPrompt),
+					]);
 
 					// Preparation yields to settings/tab changes and Stop. Validate before
 					// recording a command that may never be admitted.
@@ -1068,10 +1169,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionCustomArgs: session.customArgs,
 						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
-						sessionCustomModel: turnModel,
-						sessionCustomEffort: turnEffort,
+						...turnSpawnSettings(autoLaunch, {
+							model: turnModel,
+							effort: turnEffort,
+							runOn: settings.turnRunOnTarget,
+						}),
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+						...(item.consultChain ? { consultChain: item.consultChain } : {}),
 					});
 					if (result?.success === false) {
 						throw new Error(

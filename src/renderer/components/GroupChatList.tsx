@@ -32,6 +32,7 @@ import { isGroupChatBusy, type GroupChatBusySnapshot } from '../utils/groupChatS
 import { selectVisibleGroupChats } from '../utils/groupChatOrdering';
 import { CornerDot } from './ui/CornerDot';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
+import { contextMenuIconStyle } from './ui/ContextMenuHeader';
 
 // ============================================================================
 // GroupChatContextMenu - Right-click context menu for group chat items
@@ -83,6 +84,10 @@ function GroupChatContextMenu({
 	// Measure menu and adjust position to stay within viewport
 	const { left, top, maxHeight, ready } = useContextMenuPosition(menuRef, x, y);
 
+	// Icons in the accent, labels in the main text color: the shared
+	// right-click menu look (see ContextMenuHeader).
+	const iconStyle = contextMenuIconStyle(theme);
+
 	return (
 		<div
 			ref={menuRef}
@@ -108,7 +113,7 @@ function GroupChatContextMenu({
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				<Settings className="w-3.5 h-3.5" />
+				<Settings className="w-3.5 h-3.5" style={iconStyle} />
 				Edit
 			</button>
 			<button
@@ -119,7 +124,7 @@ function GroupChatContextMenu({
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				<Edit3 className="w-3.5 h-3.5" />
+				<Edit3 className="w-3.5 h-3.5" style={iconStyle} />
 				Rename
 			</button>
 			<button
@@ -144,9 +149,9 @@ function GroupChatContextMenu({
 					style={{ color: theme.colors.textMain }}
 				>
 					{isArchived ? (
-						<ArchiveRestore className="w-3.5 h-3.5" />
+						<ArchiveRestore className="w-3.5 h-3.5" style={iconStyle} />
 					) : (
-						<Archive className="w-3.5 h-3.5" />
+						<Archive className="w-3.5 h-3.5" style={iconStyle} />
 					)}
 					{isArchived ? 'Unarchive' : 'Archive'}
 				</button>

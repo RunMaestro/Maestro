@@ -14,6 +14,10 @@ export {
 } from './ComposerSendColumn';
 export { ComposerTextarea, type ComposerTextareaProps } from './ComposerTextarea';
 export {
+	ComposerVoiceSessionButton,
+	type ComposerVoiceSessionButtonProps,
+} from './ComposerVoiceSessionButton';
+export {
 	ImageAttachInput,
 	stageImageFiles,
 	type ImageAttachInputProps,

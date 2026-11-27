@@ -7,7 +7,9 @@ import {
 	formatSize,
 	formatTokensPerSecond,
 	formatNumber,
+	formatContextWindow,
 	formatCount,
+	formatCountNoun,
 	formatTokens,
 	formatTokensCompact,
 	formatRelativeTime,
@@ -19,10 +21,13 @@ import {
 	formatElapsedTimeColon,
 	formatCost,
 	estimateTokenCount,
+	estimateTokensFromBytes,
 	truncatePath,
 	truncateCommand,
 	truncateAtWordBoundary,
 	abbreviateGroupName,
+	groupBadgeLabel,
+	GROUP_SHORT_LABEL_MAX_LENGTH,
 	isAbsolutePath,
 	getBasename,
 	joinPath,
@@ -117,6 +122,32 @@ describe('shared/formatters', () => {
 	});
 
 	// ==========================================================================
+	// formatCountNoun tests (a count with its noun)
+	// ==========================================================================
+	describe('formatCountNoun', () => {
+		it('makes the noun agree with the count', () => {
+			expect(formatCountNoun(1, 'request')).toBe('1 request');
+			expect(formatCountNoun(0, 'request')).toBe('0 requests');
+			expect(formatCountNoun(2, 'request')).toBe('2 requests');
+		});
+
+		it('groups the digits of the count like formatCount', () => {
+			expect(formatCountNoun(1204, 'request')).toBe('1,204 requests');
+			expect(formatCountNoun(1204993, 'block')).toBe('1,204,993 blocks');
+		});
+
+		it('takes the plural for a noun that does not add an s', () => {
+			expect(formatCountNoun(1, 'entry', 'entries')).toBe('1 entry');
+			expect(formatCountNoun(3, 'entry', 'entries')).toBe('3 entries');
+		});
+
+		it('keeps a phrase as the noun', () => {
+			expect(formatCountNoun(1, 'read request')).toBe('1 read request');
+			expect(formatCountNoun(5, 'read request')).toBe('5 read requests');
+		});
+	});
+
+	// ==========================================================================
 	// formatTokens tests (with ~ prefix)
 	// ==========================================================================
 	describe('formatTokens', () => {
@@ -157,6 +188,23 @@ describe('shared/formatters', () => {
 			expect(formatTokensPerSecond(0)).toBe('-');
 			expect(formatTokensPerSecond(-1)).toBe('-');
 			expect(formatTokensPerSecond(Number.NaN)).toBe('-');
+		});
+	});
+
+	describe('formatContextWindow', () => {
+		it('names binary windows in binary units, as model cards do', () => {
+			expect(formatContextWindow(131_072)).toBe('128K');
+			expect(formatContextWindow(1_048_576)).toBe('1M');
+			expect(formatContextWindow(40_960)).toBe('40K');
+		});
+
+		it('names decimal windows in decimal units', () => {
+			expect(formatContextWindow(200_000)).toBe('200K');
+			expect(formatContextWindow(2_000_000)).toBe('2M');
+		});
+
+		it('gives the exact count for any other size', () => {
+			expect(formatContextWindow(100_001)).toBe('100,001');
 		});
 	});
 
@@ -541,6 +589,27 @@ describe('shared/formatters', () => {
 		});
 	});
 
+	describe('estimateTokensFromBytes', () => {
+		it('follows the same rule as estimateTokenCount, for a size', () => {
+			for (const text of ['', 'a', 'abcd', 'abcde', 'x'.repeat(401)]) {
+				expect(estimateTokensFromBytes(Buffer.byteLength(text))).toBe(estimateTokenCount(text));
+			}
+		});
+
+		it('is zero for no bytes and for a size that cannot be real', () => {
+			expect(estimateTokensFromBytes(0)).toBe(0);
+			expect(estimateTokensFromBytes(-5)).toBe(0);
+			expect(estimateTokensFromBytes(Number.NaN)).toBe(0);
+		});
+
+		it('leans high for non-ASCII text, where bytes outnumber characters', () => {
+			const text = 'é'.repeat(8);
+			expect(estimateTokensFromBytes(Buffer.byteLength(text))).toBeGreaterThan(
+				estimateTokenCount(text)
+			);
+		});
+	});
+
 	// ==========================================================================
 	// formatElapsedTimeColon tests
 	// ==========================================================================
@@ -772,6 +841,69 @@ describe('shared/formatters', () => {
 			expect(abbreviateGroupName('[VeryLongTagName] X', { max: 5 })).toBe('VX');
 			// Pure-numbering prefix is not a tag → dropped, initials of the rest win.
 			expect(abbreviateGroupName('[1] Aleyemma/Money-Sessions')).toBe('AMS');
+		});
+
+		describe('groupBadgeLabel', () => {
+			it('returns the shortLabel the user set, in place of the abbreviation', () => {
+				expect(groupBadgeLabel({ name: '[1] Aleyemma/Money-Sessions', shortLabel: 'Money' })).toBe(
+					'Money'
+				);
+				// A short name the abbreviator would return as-is is still overridden.
+				expect(groupBadgeLabel({ name: 'Work', shortLabel: 'W' })).toBe('W');
+			});
+
+			it('returns the shortLabel verbatim: not abbreviated, not re-cased', () => {
+				// 12 characters, over the abbreviator's max of 10.
+				const label = 'Engineering!';
+				expect(label).toHaveLength(GROUP_SHORT_LABEL_MAX_LENGTH);
+				expect(groupBadgeLabel({ name: 'Backend', shortLabel: label })).toBe(label);
+				expect(groupBadgeLabel({ name: 'Backend', shortLabel: 'a & c' })).toBe('a & c');
+			});
+
+			it('trims the shortLabel', () => {
+				expect(groupBadgeLabel({ name: 'Amini & Conant', shortLabel: '  A+C  ' })).toBe('A+C');
+			});
+
+			it('falls back to the abbreviation for an empty or whitespace-only shortLabel', () => {
+				expect(groupBadgeLabel({ name: 'Amini & Conant', shortLabel: '' })).toBe('A&C');
+				expect(groupBadgeLabel({ name: 'Amini & Conant', shortLabel: '   ' })).toBe('A&C');
+				expect(groupBadgeLabel({ name: 'Amini & Conant', shortLabel: '\t\n' })).toBe('A&C');
+			});
+
+			it('matches abbreviateGroupName exactly when there is no shortLabel', () => {
+				const names = [
+					'Work',
+					'Personal',
+					'Side Gigs',
+					'TenChars10',
+					'  Work  ',
+					'',
+					'   ',
+					'AMINI & CONANT',
+					'Amini&Conant',
+					'Foo & Bar & Baz',
+					'Research and Development',
+					'Acme Corporation Limited',
+					'staging_environment_two',
+					'client-facing-team',
+					'[1] Aleyemma/Money-Sessions',
+					'(2) Research Operations',
+					'#3 backend-api-gateway',
+					'Engineering',
+					'Documentation',
+					'Pneumonoultramicroscop',
+					'[ARP] Auditoria Relatório Pessoal',
+					'[ARP]',
+				];
+				for (const name of names) {
+					expect(groupBadgeLabel({ name })).toBe(abbreviateGroupName(name));
+					expect(groupBadgeLabel({ name, shortLabel: undefined })).toBe(abbreviateGroupName(name));
+				}
+			});
+
+			it('caps a hand-picked label two characters above the abbreviator', () => {
+				expect(GROUP_SHORT_LABEL_MAX_LENGTH).toBe(12);
+			});
 		});
 	});
 

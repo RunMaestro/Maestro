@@ -14,6 +14,7 @@
  */
 
 import type { QueryEvent } from '../../stats-types';
+import { asTierLevel } from '../../tierLevels';
 import { normalizePath } from './utils';
 
 /** Columns written by every insert path, in bind order. */
@@ -34,6 +35,9 @@ export const QUERY_EVENT_COLUMNS = [
 	'cache_read_tokens',
 	'cache_creation_tokens',
 	'cost_usd',
+	'run_on_endpoint',
+	'run_on_model',
+	'routed_tier',
 ] as const;
 
 /** `INSERT INTO query_events (...) VALUES (?, ?, ...)` for the columns above. */
@@ -54,6 +58,7 @@ export function bindQueryEvent(
 	id: string,
 	event: Omit<QueryEvent, 'id'>
 ): Array<string | number | null> {
+	const ranOnSource = !!event.runOnEndpoint && !!event.runOnModel;
 	return [
 		id,
 		event.sessionId,
@@ -71,5 +76,8 @@ export function bindQueryEvent(
 		event.cacheReadTokens ?? null,
 		event.cacheCreationTokens ?? null,
 		event.costUsd ?? null,
+		ranOnSource ? (event.runOnEndpoint ?? null) : null,
+		ranOnSource ? (event.runOnModel ?? null) : null,
+		asTierLevel(event.routedTier) ?? null,
 	];
 }

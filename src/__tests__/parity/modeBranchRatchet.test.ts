@@ -47,10 +47,6 @@ const MODE_CONDITION = new RegExp(
 const ALLOWED: Record<string, Array<{ line: string; why: string }>> = {
 	'NewInstanceModal/NewInstanceModal.tsx': [
 		{
-			line: 'source?.sshRemoteId ? { enabled: true, remoteId: source.sshRemoteId } : undefined',
-			why: 'Creation flow: a duplicated agent starts on its source remote. Choosing the remote is the setting here.',
-		},
-		{
 			line: 'sshRemoteId ? workingDir.trim() : expandTilde(workingDir.trim())',
 			why: 'Transport: `~` is expanded with this machine home only for a path on this machine.',
 		},

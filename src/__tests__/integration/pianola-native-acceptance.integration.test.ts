@@ -297,14 +297,16 @@ class AcceptanceFixture {
 			force,
 			_images,
 			background,
+			consultChain,
 			mentionRouting,
 			requireReceipt
 		) => {
 			this.assertDestination(agentId, tabId);
-			expect({ mode, force, background, mentionRouting, requireReceipt }).toEqual({
+			expect({ mode, force, background, consultChain, mentionRouting, requireReceipt }).toEqual({
 				mode: 'ai',
 				force: false,
 				background: true,
+				consultChain: undefined,
 				mentionRouting: undefined,
 				requireReceipt: true,
 			});

@@ -6,7 +6,10 @@ import { emptyTokenSpeedSummary } from '../../../shared/tokenSpeed';
 import { providerProfileKey } from '../../../shared/providerProfiles';
 
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
-vi.mock('../../../cli/services/session-command', () => ({ exitIfMaestroNotRunning: vi.fn() }));
+vi.mock('../../../cli/services/session-command', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../cli/services/session-command')>()),
+	exitIfMaestroNotRunning: vi.fn(),
+}));
 
 import * as path from 'path';
 import { statsProjectTokens, statsTokens } from '../../../cli/commands/stats';
@@ -246,12 +249,17 @@ describe('stats-tokens accounting', () => {
 			sendCommand.mockRejectedValue(new Error('Usage unavailable'));
 			await expect(statsTokens({ json })).rejects.toThrow('process.exit');
 			expect(exitSpy).toHaveBeenCalledWith(1);
-			expect(logSpy).not.toHaveBeenCalled();
-			expect(errorSpy.mock.calls[0][0]).toContain('Usage unavailable');
-			if (json)
-				expect(JSON.parse(errorSpy.mock.calls[0][0] as string)).toEqual({
+			if (json) {
+				// failCommand writes a --json failure to stdout, and nothing else is printed.
+				expect(logSpy).toHaveBeenCalledTimes(1);
+				expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+					success: false,
 					error: 'Usage unavailable',
 				});
+			} else {
+				expect(logSpy).not.toHaveBeenCalled();
+				expect(errorSpy.mock.calls[0][0]).toContain('Usage unavailable');
+			}
 		}
 	);
 });
@@ -392,8 +400,10 @@ describe('stats-project-tokens (the host op behind remote and hosted agents)', (
 		await expect(
 			statsProjectTokens({ provider: 'codex', project: ['/x'], json: true })
 		).rejects.toThrow('process.exit');
-		expect(logSpy).not.toHaveBeenCalled();
-		expect(JSON.parse(errorSpy.mock.calls[0][0] as string)).toEqual({
+		// The one failure shape (failCommand): an error and no summary, never a zero one.
+		expect(logSpy).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+			success: false,
 			error: 'Failed to read token usage: disk gone',
 		});
 	});

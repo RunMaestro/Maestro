@@ -12,13 +12,23 @@ import {
 	cheapResumeLadderEffort,
 	cheapResumeTurnSettings,
 	cheapTurnSettings,
+	CODEX_TIER_FAMILIES,
+	isModelOutsideTierFamilies,
+	modelIdInTierFamily,
+	parseHarnessTierDefaults,
+	parseTierTarget,
 	isLadderEffortValue,
 	rejectedEffortForLevel,
 	resolveEffortLevel,
+	resolveTierTarget,
 	resolveTierModel,
 	supportsEffortSelection,
 	supportsTierSelection,
+	tierLaunchKey,
+	tierPillLabel,
 	tierNeedsOfferedModels,
+	tierTargetLaunch,
+	type TierTarget,
 	unofferedTierModel,
 } from '../../shared/modelTiers';
 
@@ -54,6 +64,9 @@ describe('effort ladders', () => {
 		expect(resolveEffortLevel('codex', 'low')).toBe('low');
 		expect(resolveEffortLevel('codex', 'medium')).toBe('medium');
 		expect(resolveEffortLevel('codex', 'high')).toBe('xhigh');
+		for (const level of ['low', 'medium', 'high'] as const) {
+			expect(resolveEffortLevel('codex', level)).not.toBe('minimal');
+		}
 	});
 
 	it('is the identity only where the provider ladder is exactly three rungs', () => {
@@ -78,15 +91,64 @@ describe('model tiers', () => {
 		expect(resolveTierModel('claude-code', 'high')).toBe('opus');
 	});
 
-	it('leaves discovery-driven providers unmapped rather than guessing', () => {
-		// Codex/Copilot IDs churn per release and OpenCode runs whatever the user
+	it('maps codex by family: luna, sol, astra', () => {
+		expect(resolveTierModel('codex', 'low')).toBe('gpt-6-luna');
+		expect(resolveTierModel('codex', 'medium')).toBe('gpt-6.1-sol');
+		expect(resolveTierModel('codex', 'high')).toBe('gpt-6-astra');
+		for (const tier of ['low', 'medium', 'high'] as const) {
+			expect(resolveTierModel('codex', tier)?.endsWith(`-${CODEX_TIER_FAMILIES[tier]}`)).toBe(true);
+		}
+		expect(supportsTierSelection('codex')).toBe(true);
+	});
+
+	it('leaves discovery-driven providers without stable families unmapped', () => {
+		// Copilot IDs churn per release and OpenCode runs whatever the user
 		// configured. A shipped guess would rot into naming a model they cannot
 		// run, so these resolve to the agent default and the caller warns.
-		expect(resolveTierModel('codex', 'high')).toBeUndefined();
 		expect(resolveTierModel('copilot-cli', 'high')).toBeUndefined();
 		expect(resolveTierModel('opencode', 'high')).toBeUndefined();
 		expect(supportsTierSelection('opencode')).toBe(false);
 		expect(supportsTierSelection('claude-code')).toBe(true);
+	});
+});
+
+describe('modelIdInTierFamily', () => {
+	it("reads Claude Code's small model from the ids its CLI puts on the wire", () => {
+		for (const id of [
+			'haiku',
+			'claude-haiku-4-5-20251001',
+			'claude-haiku-4-5',
+			'claude-3-5-haiku-20241022',
+			'claude-3-5-haiku-latest',
+			'Claude-Haiku-4-5',
+		]) {
+			expect(modelIdInTierFamily('claude-code', 'low', id), id).toBe(true);
+		}
+	});
+
+	it('keeps each family in its own tier', () => {
+		expect(modelIdInTierFamily('claude-code', 'low', 'claude-sonnet-4-5-20250929')).toBe(false);
+		expect(modelIdInTierFamily('claude-code', 'low', 'claude-opus-4-8')).toBe(false);
+		expect(modelIdInTierFamily('claude-code', 'medium', 'claude-sonnet-4-5-20250929')).toBe(true);
+		expect(modelIdInTierFamily('claude-code', 'high', 'claude-opus-4-8')).toBe(true);
+		expect(modelIdInTierFamily('codex', 'low', 'gpt-6-luna')).toBe(true);
+		expect(modelIdInTierFamily('codex', 'low', 'gpt-6.1-sol')).toBe(false);
+	});
+
+	it('wants the family as a whole word of the id', () => {
+		expect(modelIdInTierFamily('claude-code', 'low', 'claude-haikus-4')).toBe(false);
+		expect(modelIdInTierFamily('claude-code', 'low', 'myhaiku')).toBe(false);
+		expect(modelIdInTierFamily('claude-code', 'low', '')).toBe(false);
+	});
+
+	it('matches the built-in id of a harness with no family, and nothing else of it', () => {
+		expect(modelIdInTierFamily('factory-droid', 'low', 'claude-haiku-4-5-20251001')).toBe(true);
+		expect(modelIdInTierFamily('factory-droid', 'low', 'claude-haiku-4-6')).toBe(false);
+	});
+
+	it('knows nothing about a harness with no built-in row', () => {
+		expect(modelIdInTierFamily('opencode', 'low', 'anthropic/claude-haiku-4-5')).toBe(false);
+		expect(modelIdInTierFamily('not-a-harness', 'low', 'haiku')).toBe(false);
 	});
 });
 
@@ -194,7 +256,7 @@ describe('Grok effort candidates and refusal memory', () => {
 describe('cheap synopsis turn', () => {
 	it('pins to the bottom of both ladders', () => {
 		expect(cheapTurnSettings('claude-code')).toEqual({ model: 'haiku', effort: 'low' });
-		expect(cheapTurnSettings('codex')).toEqual({ model: undefined, effort: 'low' });
+		expect(cheapTurnSettings('codex')).toEqual({ model: 'gpt-6-luna', effort: 'low' });
 	});
 
 	it('yields all-undefined for a provider with neither axis mapped', () => {
@@ -220,11 +282,14 @@ describe('cheap synopsis turn resumed on its session', () => {
 		});
 	});
 
-	it('inherits the session values on a provider with no cheap tier', () => {
-		expect(cheapResumeTurnSettings('codex', { model: 'gpt-5-codex', effort: 'high' })).toEqual({
-			model: 'gpt-5-codex',
+	it('keeps a codex session model while lowering effort for a resume', () => {
+		expect(cheapResumeTurnSettings('codex', { model: 'gpt-6.1-sol', effort: 'high' })).toEqual({
+			model: 'gpt-6.1-sol',
 			effort: 'low',
 		});
+	});
+
+	it('inherits the session values on a provider with no cheap tier', () => {
 		expect(cheapResumeTurnSettings('opencode', { model: 'm', effort: 'e' })).toEqual({
 			model: 'm',
 			effort: 'e',
@@ -305,6 +370,391 @@ describe('cheap synopsis turn resumed on its session', () => {
 	});
 });
 
+const LOCAL: TierTarget = { type: 'source', endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+const OLLAMA: TierTarget = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+describe('a stored tier target', () => {
+	it('reads a provider model, trimmed', () => {
+		expect(parseTierTarget({ type: 'provider-model', model: ' opus ' })).toEqual({
+			ok: true,
+			target: { type: 'provider-model', model: 'opus' },
+		});
+	});
+
+	it('reads a provider model with no model as the provider on the agent model', () => {
+		expect(parseTierTarget({ type: 'provider-model' })).toEqual({
+			ok: true,
+			target: { type: 'provider-model' },
+		});
+		expect(parseTierTarget({ type: 'provider-model', model: '  ' })).toEqual({
+			ok: true,
+			target: { type: 'provider-model' },
+		});
+	});
+
+	it('reads a model source through the Run on parser, dropping unknown keys', () => {
+		expect(parseTierTarget({ type: 'provider', extra: 1 })).toEqual({
+			ok: true,
+			target: { type: 'provider' },
+		});
+		expect(parseTierTarget({ ...LOCAL, contextTokens: 65_536, extra: 1 })).toEqual({
+			ok: true,
+			target: { ...LOCAL, contextTokens: 65_536 },
+		});
+	});
+
+	it('refuses what a launch could not use', () => {
+		expect(parseTierTarget(undefined).ok).toBe(false);
+		expect(parseTierTarget('opus').ok).toBe(false);
+		expect(parseTierTarget({ type: 'cloud' }).ok).toBe(false);
+		expect(parseTierTarget({ type: 'provider-model', model: 7 }).ok).toBe(false);
+		expect(parseTierTarget({ type: 'source', endpointId: 'maestro-server' }).ok).toBe(false);
+		// A context a harness cannot hold its own first prompt in.
+		expect(parseTierTarget({ ...LOCAL, contextTokens: 1024 }).ok).toBe(false);
+	});
+});
+
+describe('the harnessTierDefaults setting', () => {
+	it('reads anything that is not a plain object as the built-in table', () => {
+		expect(parseHarnessTierDefaults(undefined)).toEqual({});
+		expect(parseHarnessTierDefaults('nope')).toEqual({});
+		expect(parseHarnessTierDefaults([LOCAL])).toEqual({});
+	});
+
+	it('keeps known harnesses and tiers, and stays sparse', () => {
+		expect(
+			parseHarnessTierDefaults({
+				'claude-code': { low: LOCAL, ultra: LOCAL, medium: null },
+				opencode: { high: { type: 'provider-model', model: 'anthropic/claude-opus' } },
+				'not-a-harness': { low: LOCAL },
+				codex: {},
+				'copilot-cli': 'gpt-5',
+			})
+		).toEqual({
+			'claude-code': { low: LOCAL },
+			opencode: { high: { type: 'provider-model', model: 'anthropic/claude-opus' } },
+		});
+	});
+
+	it('keeps a malformed target, so the launch refuses it instead of using the next layer', () => {
+		const stored = { 'claude-code': { low: { type: 'source' } } };
+		expect(parseHarnessTierDefaults(stored)).toEqual(stored);
+	});
+});
+
+describe('resolveTierTarget', () => {
+	it('uses the built-in table when no layer sets the tier', () => {
+		expect(resolveTierTarget({ toolType: 'claude-code' }, 'high')).toEqual({
+			kind: 'resolved',
+			target: { type: 'provider-model', model: 'opus' },
+			source: 'built-in',
+		});
+	});
+
+	it('lets the harness default win over the built-in table', () => {
+		expect(
+			resolveTierTarget({ toolType: 'claude-code' }, 'low', { 'claude-code': { low: LOCAL } })
+		).toEqual({ kind: 'resolved', target: LOCAL, source: 'harness-default' });
+	});
+
+	it('lets the agent win over the harness default, one tier at a time', () => {
+		const agent = {
+			toolType: 'claude-code' as const,
+			tierTargets: { low: OLLAMA },
+		};
+		const defaults = { 'claude-code': { low: LOCAL, medium: LOCAL } };
+		expect(resolveTierTarget(agent, 'low', defaults)).toEqual({
+			kind: 'resolved',
+			target: OLLAMA,
+			source: 'agent',
+		});
+		// A tier the agent leaves on "Harness default" falls through.
+		expect(resolveTierTarget(agent, 'medium', defaults)).toMatchObject({
+			target: LOCAL,
+			source: 'harness-default',
+		});
+		// And one neither sets reaches the built-in table.
+		expect(resolveTierTarget(agent, 'high', defaults)).toMatchObject({
+			target: { type: 'provider-model', model: 'opus' },
+			source: 'built-in',
+		});
+	});
+
+	it("reads only the agent's own harness row", () => {
+		expect(
+			resolveTierTarget({ toolType: 'claude-code' }, 'low', { codex: { low: LOCAL } })
+		).toMatchObject({ source: 'built-in', target: { type: 'provider-model', model: 'haiku' } });
+	});
+
+	it('gives a harness with no built-in table a tier through its harness default', () => {
+		const target = { type: 'provider-model' as const, model: 'ollama/qwen3:8b' };
+		expect(
+			resolveTierTarget({ toolType: 'opencode' }, 'low', { opencode: { low: target } })
+		).toEqual({ kind: 'resolved', target, source: 'harness-default' });
+	});
+
+	it('reports a tier no layer maps, without blocking the launch', () => {
+		// The two existing wordings: no table at all, and a table missing the tier.
+		expect(resolveTierTarget({ toolType: 'opencode' }, 'high')).toEqual({
+			kind: 'refused',
+			code: 'tier-unmapped',
+			message:
+				'opencode has no model tier mapping, so tier="high" was ignored; using the agent\'s configured model.',
+			blocksLaunch: false,
+		});
+	});
+
+	it('refuses a malformed target and names its layer, never falling through', () => {
+		const fromAgent = resolveTierTarget(
+			{ toolType: 'claude-code', tierTargets: { low: { type: 'source' } as TierTarget } },
+			'low',
+			{ 'claude-code': { low: LOCAL } }
+		);
+		expect(fromAgent).toMatchObject({
+			kind: 'refused',
+			code: 'tier-invalid-target',
+			blocksLaunch: true,
+		});
+		expect(fromAgent.kind === 'refused' && fromAgent.message).toContain(
+			'This agent\'s "low" tier target'
+		);
+
+		const fromDefault = resolveTierTarget({ toolType: 'claude-code' }, 'low', {
+			'claude-code': { low: { type: 'provider-model', model: 7 } as unknown as TierTarget },
+		});
+		expect(fromDefault).toMatchObject({ code: 'tier-invalid-target', blocksLaunch: true });
+		expect(fromDefault.kind === 'refused' && fromDefault.message).toContain(
+			'The Claude Code harness default for the "low" tier'
+		);
+	});
+
+	it('refuses a source on a harness with no model source recipe', () => {
+		const resolved = resolveTierTarget(
+			{ toolType: 'factory-droid', tierTargets: { low: LOCAL } },
+			'low'
+		);
+		expect(resolved).toMatchObject({
+			kind: 'refused',
+			code: 'tier-unsupported-source',
+			blocksLaunch: true,
+		});
+		// A provider model on the same harness is fine.
+		expect(
+			resolveTierTarget(
+				{ toolType: 'factory-droid', tierTargets: { low: { type: 'provider-model', model: 'x' } } },
+				'low'
+			).kind
+		).toBe('resolved');
+	});
+
+	it('does not apply the built-in table to an agent that runs on a source', () => {
+		// The table names the provider's cloud models. The user took this agent
+		// off the provider, so only a layer the user wrote may send it back.
+		const agent = { toolType: 'claude-code' as const, runOn: LOCAL };
+		expect(resolveTierTarget(agent, 'high')).toMatchObject({
+			kind: 'refused',
+			code: 'tier-agent-runs-on-source',
+			blocksLaunch: false,
+		});
+		expect(
+			resolveTierTarget(agent, 'high', {
+				'claude-code': { high: { type: 'provider-model', model: 'opus' } },
+			})
+		).toMatchObject({ kind: 'resolved', source: 'harness-default' });
+		// A stored model source that is malformed counts: its launch is refused,
+		// and it never runs on the provider.
+		expect(
+			resolveTierTarget({ toolType: 'claude-code', runOn: { type: 'source' } }, 'high')
+		).toMatchObject({ code: 'tier-agent-runs-on-source' });
+	});
+
+	it("does not apply the built-in table over a model outside the harness's tier families", () => {
+		// An access-program model is not a stock tier: swapping it for Sol drops
+		// the program, which is how a Daybreak Blue Auto Run got refused.
+		const agent = { toolType: 'codex' as const, customModel: 'gpt-daybreak-blue-latest' };
+		for (const tier of TIER_LEVELS) {
+			const resolved = resolveTierTarget(agent, tier);
+			expect(resolved).toMatchObject({
+				kind: 'refused',
+				code: 'tier-agent-model-pinned',
+				blocksLaunch: false,
+			});
+			expect(resolved.kind === 'refused' && resolved.message).toContain('gpt-daybreak-blue-latest');
+			expect(resolved.kind === 'refused' && resolved.message).toContain('Luna, Sol or Astra');
+		}
+		// A layer the user wrote still applies.
+		expect(
+			resolveTierTarget(agent, 'low', {
+				codex: { low: { type: 'provider-model', model: 'gpt-6-luna' } },
+			})
+		).toMatchObject({ kind: 'resolved', source: 'harness-default' });
+		expect(
+			resolveTierTarget(
+				{ ...agent, tierTargets: { high: { type: 'provider-model', model: 'gpt-6-astra' } } },
+				'high'
+			)
+		).toMatchObject({ kind: 'resolved', source: 'agent' });
+	});
+
+	it('applies the built-in table over a model in one of its families, Auto, or none', () => {
+		for (const customModel of [
+			'gpt-6.1-sol',
+			'gpt-5.6-luna',
+			'opus',
+			'claude-sonnet-4-5-20250929',
+			'auto',
+			'',
+			undefined,
+		]) {
+			const toolType = customModel && /opus|sonnet/.test(customModel) ? 'claude-code' : 'codex';
+			expect(resolveTierTarget({ toolType, customModel }, 'low')).toMatchObject({
+				kind: 'resolved',
+				source: 'built-in',
+			});
+		}
+	});
+});
+
+describe('isModelOutsideTierFamilies', () => {
+	it('is true only for a model no built-in tier or family names', () => {
+		expect(isModelOutsideTierFamilies('codex', 'gpt-daybreak-blue-latest')).toBe(true);
+		expect(isModelOutsideTierFamilies('claude-code', 'my-fine-tune')).toBe(true);
+		expect(isModelOutsideTierFamilies('codex', 'gpt-6-astra')).toBe(false);
+		expect(isModelOutsideTierFamilies('claude-code', 'claude-3-5-haiku-latest')).toBe(false);
+		expect(isModelOutsideTierFamilies('factory-droid', 'claude-opus-4-5-20251101')).toBe(false);
+	});
+
+	it('is false where there is no table to replace the model with', () => {
+		expect(isModelOutsideTierFamilies('opencode', 'anything')).toBe(false);
+		expect(isModelOutsideTierFamilies('codex', '  ')).toBe(false);
+	});
+});
+
+describe('what a resolved tier does to a launch', () => {
+	it('launches a built-in model on the place the agent already runs', () => {
+		expect(
+			tierTargetLaunch(
+				{ kind: 'resolved', target: { type: 'provider-model', model: 'opus' }, source: 'built-in' },
+				'sonnet'
+			)
+		).toEqual({ model: 'opus' });
+	});
+
+	it('names the provider when a layer the user wrote picks a provider model', () => {
+		expect(
+			tierTargetLaunch(
+				{ kind: 'resolved', target: { type: 'provider-model', model: 'opus' }, source: 'agent' },
+				'sonnet'
+			)
+		).toEqual({ model: 'opus', runOn: { type: 'provider' } });
+	});
+
+	it("keeps the agent's model for a target that names only the provider", () => {
+		for (const target of [{ type: 'provider-model' }, { type: 'provider' }] as TierTarget[]) {
+			expect(
+				tierTargetLaunch({ kind: 'resolved', target, source: 'harness-default' }, 'sonnet')
+			).toEqual({ model: 'sonnet', runOn: { type: 'provider' } });
+		}
+	});
+
+	it("launches a source on the source's model", () => {
+		expect(
+			tierTargetLaunch({ kind: 'resolved', target: LOCAL, source: 'agent' }, 'sonnet')
+		).toEqual({ model: 'qwen3.5-4b', runOn: LOCAL });
+	});
+});
+
+describe('tierPillLabel', () => {
+	const OLLAMA = { id: 'ep-ollama', name: 'Ollama' };
+	const ON_OLLAMA: TierTarget = { type: 'source', endpointId: OLLAMA.id, model: 'qwen3:latest' };
+
+	it('names the tier, the model and the source for a tier on a source', () => {
+		expect(
+			tierPillLabel('claude-code', 'low', 'sonnet', { tierTargets: { low: ON_OLLAMA } }, [OLLAMA])
+		).toBe('low · qwen3:latest · Ollama');
+	});
+
+	it('names the Maestro model server as Maestro', () => {
+		expect(
+			tierPillLabel('claude-code', 'low', 'sonnet', {
+				harnessDefaults: { 'claude-code': { low: LOCAL } },
+			})
+		).toBe(`low · ${LOCAL.model} · Maestro`);
+	});
+
+	it('names the tier and the model for a tier on the provider', () => {
+		expect(tierPillLabel('claude-code', 'high', 'sonnet')).toBe('high · opus');
+		expect(
+			tierPillLabel('claude-code', 'high', 'sonnet', {
+				tierTargets: { high: { type: 'provider-model', model: 'opus[1m]' } },
+			})
+		).toBe('high · opus[1m]');
+	});
+
+	it("names the agent's own model for a target that names only the provider", () => {
+		expect(
+			tierPillLabel('claude-code', 'medium', 'sonnet', {
+				tierTargets: { medium: { type: 'provider' } },
+			})
+		).toBe('medium · sonnet');
+	});
+
+	it('names nothing for a tier that has no target on this agent', () => {
+		// No layer maps it.
+		expect(tierPillLabel('opencode', 'high', 'some-model')).toBeUndefined();
+		// The stored target cannot be used: the launch refuses, and says why.
+		expect(
+			tierPillLabel('claude-code', 'low', 'sonnet', {
+				tierTargets: { low: { type: 'source' } as TierTarget },
+			})
+		).toBeUndefined();
+		// Only the built-in table maps it, and the agent runs on a source.
+		expect(tierPillLabel('claude-code', 'high', 'sonnet', { runOn: ON_OLLAMA })).toBeUndefined();
+		// Only the built-in table maps it, and the agent runs a model outside its families.
+		expect(tierPillLabel('codex', 'medium', 'gpt-daybreak-blue-latest')).toBeUndefined();
+		// The provider, on a model nobody named.
+		expect(
+			tierPillLabel('claude-code', 'medium', undefined, {
+				tierTargets: { medium: { type: 'provider' } },
+			})
+		).toBeUndefined();
+	});
+});
+
+describe('tierLaunchKey', () => {
+	it('is the same for a tier that resolves to what the agent already runs', () => {
+		const routing = {
+			tierTargets: { medium: { type: 'provider-model' as const, model: 'sonnet' } },
+		};
+		expect(tierLaunchKey('claude-code', 'medium', 'sonnet', routing)).toBe(
+			tierLaunchKey('claude-code', undefined, 'sonnet', routing)
+		);
+	});
+
+	it('does not split a document at a built-in tier the agent model is outside of', () => {
+		expect(tierLaunchKey('codex', 'medium', 'gpt-daybreak-blue-latest')).toBe(
+			tierLaunchKey('codex', undefined, 'gpt-daybreak-blue-latest')
+		);
+	});
+
+	it('differs when two tiers share a model name on different sources', () => {
+		const routing = {
+			tierTargets: { low: LOCAL, medium: { ...LOCAL, endpointId: 'ep-other' } },
+		};
+		expect(tierLaunchKey('claude-code', 'low', 'sonnet', routing)).not.toBe(
+			tierLaunchKey('claude-code', 'medium', 'sonnet', routing)
+		);
+	});
+
+	it('reads a tier that does not apply as no tier, and a refused one as its own', () => {
+		expect(tierLaunchKey('opencode', 'high', 'm')).toBe(tierLaunchKey('opencode', undefined, 'm'));
+		const refused = { tierTargets: { low: { type: 'source' } as TierTarget } };
+		expect(tierLaunchKey('claude-code', 'low', 'sonnet', refused)).not.toBe(
+			tierLaunchKey('claude-code', undefined, 'sonnet', refused)
+		);
+	});
+});
+
 describe('Grok cheap turns require advertised wire-value evidence', () => {
 	it.each([
 		{ name: 'absent', menu: undefined, floor: undefined },
@@ -361,7 +811,7 @@ describe('Grok cheap turns require advertised wire-value evidence', () => {
 				).toEqual({ model: 'another-grok-model', effort });
 			}
 			expect(resolveEffortLevel('grok', 'medium', menu)).toBe('medium');
-			expect(cheapTurnSettings('codex', menu)).toEqual({ model: undefined, effort: 'low' });
+			expect(cheapTurnSettings('codex', menu)).toEqual({ model: 'gpt-6-luna', effort: 'low' });
 		});
 	});
 });
@@ -369,12 +819,15 @@ describe('Grok cheap turns require advertised wire-value evidence', () => {
 describe('optional effort menus leave ordinary cheap turns unchanged', () => {
 	it.each([
 		{ provider: 'claude-code', model: 'haiku', effort: 'low' },
-		{ provider: 'codex', model: undefined, effort: 'low' },
+		// acappella's built-in Codex tier table names the cheap model; a resumed
+		// Codex thread keeps its own model.
+		{ provider: 'codex', model: 'gpt-6-luna', effort: 'low', resumeModel: 'configured-model' },
 		{ provider: 'factory-droid', model: 'claude-haiku-4-5-20251001', effort: 'low' },
 		{ provider: 'opencode', model: undefined, effort: undefined },
 	] as const)(
 		'preserves $provider defaults with unrelated menus',
-		({ provider, model, effort }) => {
+		({ provider, model, effort, ...row }) => {
+			const resumeModel = 'resumeModel' in row ? row.resumeModel : undefined;
 			for (const menu of [[], ['none', 'minimal', 'max']]) {
 				expect(cheapTurnSettings(provider, menu)).toEqual({ model, effort });
 				expect(
@@ -384,7 +837,7 @@ describe('optional effort menus leave ordinary cheap turns unchanged', () => {
 						menu
 					)
 				).toEqual({
-					model: model ?? 'configured-model',
+					model: resumeModel ?? model ?? 'configured-model',
 					effort: effort ?? 'configured-effort',
 				});
 			}
@@ -413,7 +866,8 @@ describe('a ladder value the provider has refused', () => {
 		expect(resolveEffortLevel('codex', 'low')).toBe('low');
 		noteEffortRejection('codex', refusal);
 		expect(resolveEffortLevel('codex', 'low')).toBeUndefined();
-		expect(cheapTurnSettings('codex')).toEqual({ model: undefined, effort: undefined });
+		// The refusal is of the EFFORT value. The tier still names its model.
+		expect(cheapTurnSettings('codex')).toEqual({ model: 'gpt-6-luna', effort: undefined });
 	});
 
 	it('leaves the other levels and the other providers alone', () => {
@@ -500,6 +954,25 @@ describe('Antigravity tiers and effort', () => {
 		expect(tierNeedsOfferedModels('antigravity', 'high')).toBe(true);
 		expect(tierNeedsOfferedModels('antigravity', 'default')).toBe(false);
 		expect(tierNeedsOfferedModels('claude-code', 'high')).toBe(false);
+	});
+
+	it('refuses the built-in layer without blocking the launch when the account lacks its model', () => {
+		expect(resolveTierTarget({ toolType: 'antigravity', offeredModels: offered }, 'high')).toEqual({
+			kind: 'refused',
+			code: 'tier-model-not-offered',
+			message: `tier="high" maps to gemini-4-carbon, which this account does not offer; using the agent's configured model.`,
+			blocksLaunch: false,
+		});
+		expect(resolveTierTarget({ toolType: 'antigravity', offeredModels: offered }, 'low')).toEqual({
+			kind: 'resolved',
+			target: { type: 'provider-model', model: 'gemini-4-hydrogen' },
+			source: 'built-in',
+		});
+		// No catalogue is no evidence: the table stands.
+		expect(resolveTierTarget({ toolType: 'antigravity' }, 'high')).toMatchObject({
+			kind: 'resolved',
+			source: 'built-in',
+		});
 	});
 
 	it('maps effort levels to rungs every tier model accepts', () => {

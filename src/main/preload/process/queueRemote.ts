@@ -1,6 +1,7 @@
 import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 import type {
 	QueuedTurnEdit,
@@ -26,13 +27,16 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl,
 				/** A Federation sender's own tab chips for this one message (`TurnInput.overrides`). */
 				turnOverrides?: TurnOverrides,
 				/** A Federation sender's agent-only text for this turn (`agentContext`, `agentNotes`). */
-				agentText?: TurnAgentText
+				agentText?: TurnAgentText,
+				/** Sent over the client protocol: a hosted agent's turn (`MAESTRO_HOSTED_TURN`). */
+				hostedTurn?: boolean
 			) => void
 		): (() => void) => {
 			/**
@@ -49,11 +53,13 @@ export function createQueueRemoteApi() {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
 				control?: PianolaQueueControl,
 				turnOverrides?: TurnOverrides,
-				agentText?: TurnAgentText
+				agentText?: TurnAgentText,
+				hostedTurn?: boolean
 			) => {
 				try {
 					const args: Parameters<typeof callback> = [
@@ -65,12 +71,14 @@ export function createQueueRemoteApi() {
 						images,
 						background,
 						held,
+						consultChain,
 						mentionRouting,
 						dispatchCallback,
 						control,
 					];
-					if (turnOverrides || agentText) args.push(turnOverrides);
-					if (agentText) args.push(agentText);
+					if (turnOverrides || agentText || hostedTurn) args.push(turnOverrides);
+					if (agentText || hostedTurn) args.push(agentText);
+					if (hostedTurn) args.push(true);
 					callback(...args);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });

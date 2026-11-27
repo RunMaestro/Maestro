@@ -16,6 +16,8 @@ import type {
 	AutoRunTurnRequest,
 	AutoRunTurnResult,
 } from '../../shared/maestro-lib/autorun/engine-types';
+import { readHarnessTierDefaults } from './storage';
+import { resolveCliAutoTurn } from './auto-turn';
 import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
 import { logger } from '../../main/utils/logger';
 import {
@@ -40,6 +42,8 @@ function autoRunTurnOptions(session: SessionInfo): SpawnAgentOptions {
 		sessionCustomPath: session.customPath,
 		additionalDirectories: session.additionalDirectories,
 		customEnvVars: session.customEnvVars,
+		gatewayUrl: session.gatewayUrl,
+		runOn: session.runOn,
 		requiredSecrets: session.requiredSecrets,
 		sshRemoteConfig: session.sessionSshRemoteConfig,
 		harnessControlMode: session.harnessControlMode,
@@ -61,6 +65,8 @@ function goalTurnOptions(session: SessionInfo): SpawnAgentOptions {
 		customArgs: session.customArgs,
 		sessionCustomPath: session.customPath,
 		customEnvVars: session.customEnvVars,
+		gatewayUrl: session.gatewayUrl,
+		runOn: session.runOn,
 		requiredSecrets: session.requiredSecrets,
 		sshRemoteConfig: session.sessionSshRemoteConfig,
 		harnessControlMode: session.harnessControlMode,
@@ -91,12 +97,19 @@ export function createCliAutoRunDeps(session: SessionInfo): AutoRunDeps {
 					customModel: request.model,
 					customEffort: request.effort,
 					...options,
+					...(request.runOn !== undefined ? { runOn: request.runOn } : {}),
 					signal: request.signal,
 				}),
 			settlementFromAgentResult
 		);
 
 	return {
+		tierRouting: () => ({
+			tierTargets: session.tierTargets,
+			runOn: session.runOn,
+			harnessDefaults: readHarnessTierDefaults(),
+		}),
+		resolveAutoTurn: (input) => resolveCliAutoTurn({ ...input, agent: session }),
 		turns: {
 			async prepare() {
 				appendSystemPrompt = await prepareMaestroSystemPromptCli(session);

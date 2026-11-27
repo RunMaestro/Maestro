@@ -190,6 +190,60 @@ describe('ConfirmModal', () => {
 		});
 	});
 
+	describe('alternative (a third outcome)', () => {
+		const renderWithAlternative = (overrides: { onSelect?: () => void } = {}) => {
+			const handlers = {
+				onConfirm: vi.fn(),
+				onClose: vi.fn(),
+				onSelect: overrides.onSelect ?? vi.fn(),
+			};
+			renderWithLayerStack(
+				<ConfirmModal
+					theme={testTheme}
+					message={
+						<>
+							You changed <strong>Model</strong>.
+						</>
+					}
+					confirmLabel="Publish"
+					onConfirm={handlers.onConfirm}
+					onClose={handlers.onClose}
+					alternative={{ label: 'New agents only', onSelect: handlers.onSelect }}
+				/>
+			);
+			return handlers;
+		};
+
+		it('draws it between Cancel and the confirm button', () => {
+			renderWithAlternative();
+
+			const labels = screen.getAllByRole('button').map((button) => button.textContent);
+			expect(labels.slice(-3)).toEqual(['Cancel', 'New agents only', 'Publish']);
+			// The message takes markup, not only text.
+			expect(screen.getByText('Model').tagName).toBe('STRONG');
+		});
+
+		it('gives it the focus, so Enter picks the safe outcome', async () => {
+			renderWithAlternative();
+
+			await waitFor(() => {
+				expect(document.activeElement).toBe(
+					screen.getByRole('button', { name: 'New agents only' })
+				);
+			});
+		});
+
+		it('runs it and closes, without confirming', () => {
+			const { onConfirm, onClose, onSelect } = renderWithAlternative();
+
+			fireEvent.click(screen.getByRole('button', { name: 'New agents only' }));
+
+			expect(onSelect).toHaveBeenCalledTimes(1);
+			expect(onClose).toHaveBeenCalledTimes(1);
+			expect(onConfirm).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('layer stack integration', () => {
 		it('registers and unregisters without errors', () => {
 			const { unmount } = renderWithLayerStack(

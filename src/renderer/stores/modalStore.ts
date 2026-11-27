@@ -15,11 +15,14 @@
  */
 
 import { create } from 'zustand';
-import type { Session, SettingsTab, AgentError } from '../types';
+import type { Session, SettingsTab, AgentError, ToolType } from '../types';
 import type { GitStreamingOperation } from '../../shared/gitUtils';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
+import type { AgentSettingsTabId } from '../components/AgentSettings/agentSettingsTabs';
 import { UI_SURFACES } from '../../shared/uiSurfaces';
+import type { DelegationGraphScope } from '../../shared/delegationGraph';
+import type { LogSourceId } from '../../shared/logSources';
 import type { UpdateCheckView } from '../../shared/updateRollback';
 import { logger } from '../utils/logger';
 import { safeStorageGet, safeStorageSet } from '../utils/safeLocalStorage';
@@ -78,6 +81,21 @@ export interface SettingsModalData {
 	/** A `data-setting-id` (see searchableSettings.ts) to scroll to and flash on
 	 *  open, the same jump a Settings search result makes. Belongs to `tab`. */
 	settingId?: string;
+	/** An inner tab of `tab` to open on (Models > System One), the way `--sub-tab`
+	 *  reaches one. A setting jump needs none: the searchable entry names its own. */
+	subTab?: string;
+}
+
+/** System Log Viewer data */
+export interface LogViewerModalData {
+	/** The log source pill to open on. Omitted, the viewer opens on Maestro's own log. */
+	source?: LogSourceId;
+	/**
+	 * Where Escape (or the close button) goes back to. The viewer is opened from
+	 * a Settings control (Models > Sources > Open log) and Settings closes for it,
+	 * since only one destination is up at a time, so closing reopens Settings there.
+	 */
+	returnTo?: SettingsModalData;
 }
 
 /** New instance modal data */
@@ -87,13 +105,21 @@ export interface NewInstanceModalData {
 	presetGroupId?: string | null;
 	/** When set, seeds the working directory (and a default name from its basename). Ignored if duplicatingSessionId is set - duplicates inherit the source's cwd. */
 	presetWorkingDir?: string | null;
+	/**
+	 * `'host'`: open on the first Federation host that runs agents the Left Bar does not show yet,
+	 * with its list (Add Hosted Agent in the palette and the hamburger menu, `open add-hosted-agent`).
+	 */
+	presetSource?: 'host';
 	/** The SSH remote `presetWorkingDir` is on, so a folder of an SSH or hosted agent seeds an agent on that remote. Ignored when duplicating. */
 	presetSshRemoteId?: string | null;
 }
 
 /** Edit agent modal data */
 export interface EditAgentModalData {
+	translationReview?: { tabId: string; provider: Session['toolType'] };
 	session: Session;
+	/** The tab to open on. Absent, the form opens on the tab it was last on. */
+	initialTab?: AgentSettingsTabId;
 }
 
 /** Quick action modal data */
@@ -161,6 +187,16 @@ export interface ModelEffortModalData {
 	tabId: string;
 }
 
+/**
+ * Continuity preview modal data: which tab to preview, and nothing else. The
+ * preview itself is never stored here. The modal reads it when it opens and
+ * keeps it in its own state, so closing the modal leaves nothing behind.
+ */
+export interface ContinuityPreviewModalData {
+	sessionId: string;
+	tabId: string;
+}
+
 /** Terminal tab startup command modal data */
 export interface TerminalStartupCommandModalData {
 	sessionId: string;
@@ -177,6 +213,11 @@ export interface RenameGroupModalData {
 	emoji: string;
 	icon?: string;
 	color?: string;
+}
+
+/** Group Settings modal data: the group whose defaults for new agents are edited. */
+export interface GroupSettingsModalData {
+	groupId: string;
 }
 
 /** Agent sessions browser data */
@@ -231,6 +272,7 @@ export type ReauthHost = Pick<
 	| 'projectRoot'
 	| 'customEnvVars'
 	| 'customPath'
+	| 'providerOverrides'
 	| 'sessionSshRemoteConfig'
 	| 'sshRemoteId'
 	| 'remoteCwd'
@@ -244,6 +286,8 @@ export interface ProviderInstallModalData {
 	sessionId: string;
 	/** The tab whose turn failed, replayed by Retry. */
 	tabId?: string;
+	/** The failed provider (e.g. a per-tab provider different from session.toolType). */
+	agentId?: ToolType;
 	/** The classified error message, shown above the install terminal. */
 	reason?: string;
 }
@@ -271,6 +315,12 @@ export interface AgentImportModalData {
 /** Director's Notes modal data */
 export interface DirectorNotesData {
 	initialTab?: 'overview' | 'history' | 'ai-overview';
+}
+
+/** Delegation Graph modal data */
+export interface DelegationGraphModalData {
+	/** The scope the graph opens on, e.g. one group. Absent, every agent. */
+	scope?: DelegationGraphScope;
 }
 
 /** Check for Updates modal data: which page it opens on. */
@@ -423,7 +473,6 @@ export type ModalId =
 	| 'agentExport'
 	| 'agentImport'
 	| 'moveToHost'
-	| 'addHostedAgent'
 	| 'renameInstance'
 	| 'agentError'
 	| 'reauth'
@@ -439,10 +488,13 @@ export type ModalId =
 	| 'terminalStartupCommand'
 	| 'snoozeTab'
 	| 'modelEffort'
+	| 'continuityPreview'
 	| 'snoozedTabs'
+	| 'tabCleanup'
 	| 'promptLinks'
 	// Group Management
 	| 'renameGroup'
+	| 'groupSettings'
 	// Session Operations
 	| 'mergeSession'
 	| 'sendToAgent'
@@ -469,6 +521,8 @@ export type ModalId =
 	| 'gitLog'
 	| 'gitCommandRunner'
 	| 'branchSwitcher'
+	// Voice
+	| 'voiceSetup'
 	// Wizard & Tour
 	| 'wizardResume'
 	| 'tour'
@@ -508,6 +562,8 @@ export type ModalId =
 	| 'pianolaModal'
 	// Computer History viewer
 	| 'computerHistory'
+	// Delegation Graph (the fleet's peer relationships, drawn)
+	| 'delegationGraph'
 	// Concerto (agent-composed views)
 	| 'concertoStage';
 
@@ -549,6 +605,7 @@ export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
 	'marketplace',
 	'processMonitor',
 	'computerHistory',
+	'delegationGraph',
 	// Main-panel destinations - these replace the whole center workspace, so an
 	// overlay left open on top of one hides it completely.
 	'logViewer',
@@ -629,8 +686,10 @@ export interface ModalDataMap {
 	snoozeTab: SnoozeTabModalData;
 	promptLinks: PromptLinksModalData;
 	modelEffort: ModelEffortModalData;
+	continuityPreview: ContinuityPreviewModalData;
 	terminalStartupCommand: TerminalStartupCommandModalData;
 	renameGroup: RenameGroupModalData;
+	groupSettings: GroupSettingsModalData;
 	agentSessions: AgentSessionsModalData;
 	batchRunner: BatchRunnerModalData;
 	wizardResume: WizardResumeModalData;
@@ -665,7 +724,9 @@ export interface ModalDataMap {
 	directorNotes: DirectorNotesData;
 	cueModal: CueModalData;
 	cueYamlEditor: CueYamlEditorData;
+	delegationGraph: DelegationGraphModalData;
 	quitConfirm: QuitConfirmModalData;
+	logViewer: LogViewerModalData;
 	updateCheck: UpdateCheckModalData;
 }
 
@@ -911,8 +972,8 @@ export function getModalActions() {
 		setSettingsModalOpen: (open: boolean) =>
 			open ? openModal('settings', { tab: undefined }) : closeModal('settings'),
 		setSettingsTab: (tab: SettingsTab) => updateModalData('settings', { tab }),
-		openSettings: (tab?: SettingsTab, settingId?: string) =>
-			openModal('settings', { tab, settingId }),
+		openSettings: (tab?: SettingsTab, settingId?: string, subTab?: string) =>
+			openModal('settings', { tab, settingId, subTab }),
 		closeSettings: () => closeModal('settings'),
 
 		// New Instance Modal
@@ -932,6 +993,11 @@ export function getModalActions() {
 			open ? openModal('deleteAgent') : closeModal('deleteAgent'),
 		setDeleteAgentSession: (session: Session | null) =>
 			session ? openModal('deleteAgent', { session }) : closeModal('deleteAgent'),
+
+		// Voice Setup walkthrough. Opened when A Cappella is switched on and its
+		// models are not installed yet, and from the command palette afterwards.
+		setVoiceSetupOpen: (open: boolean) =>
+			open ? openModal('voiceSetup') : closeModal('voiceSetup'),
 
 		// Shortcuts Help Modal
 		setShortcutsHelpOpen: (open: boolean) =>
@@ -1000,6 +1066,14 @@ export function getModalActions() {
 
 		// Log Viewer
 		setLogViewerOpen: (open: boolean) => (open ? openModal('logViewer') : closeModal('logViewer')),
+		/** Open the System Log Viewer on one source, optionally returning to Settings on close. */
+		openLogViewer: (data?: LogViewerModalData) => openModal('logViewer', data ?? {}),
+		/** Close the viewer the way Escape does: back to Settings when it came from there. */
+		closeLogViewer: () => {
+			const returnTo = useModalStore.getState().getData('logViewer')?.returnTo;
+			closeModal('logViewer');
+			if (returnTo) openModal('settings', returnTo);
+		},
 
 		// Process Monitor
 		setProcessMonitorOpen: (open: boolean) =>
@@ -1153,6 +1227,15 @@ export function getModalActions() {
 				openModal('renameGroup', { groupId: '', value: '', emoji: '📂', color });
 			}
 		},
+
+		// Group Settings Modal
+		openGroupSettings: (groupId: string) => openModal('groupSettings', { groupId }),
+		closeGroupSettings: () => closeModal('groupSettings'),
+
+		// Delegation Graph Modal
+		// With no group it opens on every agent, as the menu item and the hotkey do.
+		openDelegationGraph: (groupId?: string) =>
+			openModal('delegationGraph', groupId ? { scope: { kind: 'group', groupId } } : undefined),
 
 		// Agent Sessions Browser
 		setAgentSessionsOpen: (open: boolean) =>

@@ -249,7 +249,10 @@ describe('formatTimelineLine', () => {
 
 describe('follow-ups', () => {
 	it('names the command that reads more about one event', () => {
-		expect(timelineFollowUp(event({ ref: 'h-1' }))).toBe('timeline show h-1');
+		expect(timelineFollowUp(event({ ref: 'h-1', agentId: 'agent-1' }))).toBe(
+			'timeline show h-1 --agent agent-1'
+		);
+		expect(timelineFollowUp(event({ ref: 'h-1', agentId: undefined }))).toBe('timeline show h-1');
 		expect(timelineFollowUp(event({ source: 'git', ref: SHA }))).toBe(`git show ${SHA}`);
 		expect(timelineFollowUp(event({ source: 'journey', text: 'user saved a.ts' }))).toBeUndefined();
 		expect(timelineFollowUp(event({ source: 'computer', ts: Date.UTC(2026, 0, 1) }))).toBe(
@@ -265,5 +268,6 @@ describe('follow-ups', () => {
 		expect(lines.some((l) => l.startsWith('computer-history'))).toBe(false);
 		expect(lines[lines.length - 1]).toContain('--since 1w');
 		expect(timelineFollowUps([])).toHaveLength(1);
+		expect(timelineFollowUps([])[0]).toContain('--global for every agent');
 	});
 });

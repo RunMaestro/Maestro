@@ -13,6 +13,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { openInMaestroBrowser, openInSystemBrowser } from '../utils/openUrl';
 import { isWebUrl, stripUrlRoutingHint } from '../../shared/urlRoutingHint';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
+import { contextMenuIconStyle } from './ui/ContextMenuHeader';
 
 export interface LinkContextMenuState {
 	x: number;
@@ -71,6 +72,10 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 		onDismiss();
 	}, [menu.url, isOpenable, onDismiss]);
 
+	// Icons in the accent, labels in the main text color: the shared
+	// right-click menu look (see ContextMenuHeader).
+	const iconStyle = contextMenuIconStyle(theme);
+
 	return createPortal(
 		<div
 			ref={menuRef}
@@ -94,7 +99,7 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				<Copy className="w-3.5 h-3.5" />
+				<Copy className="w-3.5 h-3.5" style={iconStyle} />
 				Copy Link
 			</button>
 			<button
@@ -102,7 +107,7 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				<Globe className="w-3.5 h-3.5" />
+				<Globe className="w-3.5 h-3.5" style={iconStyle} />
 				Open in Maestro Browser
 			</button>
 			<button
@@ -110,7 +115,7 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 				style={{ color: theme.colors.textMain }}
 			>
-				<ExternalLink className="w-3.5 h-3.5" />
+				<ExternalLink className="w-3.5 h-3.5" style={iconStyle} />
 				Open in System Browser
 			</button>
 		</div>,

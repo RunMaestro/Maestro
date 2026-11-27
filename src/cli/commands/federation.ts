@@ -10,7 +10,7 @@
 // `auto run` runs a pass now, the same as Run Now in Settings > SSH Hosts.
 //
 // `agents` lists every agent the peers' hosts run and which ones the Left Bar shows; `add
-// <peer:agent>` adds one to the Left Bar, the same as the Add Hosted Agent modal. A host's agents
+// <peer:agent>` adds one to the Left Bar, the same as New Agent's host list. A host's agents
 // stay out of the Left Bar until someone adds them.
 //
 // A headless host (`maestro-cli host`) mirrors no peers, so it does not serve this message.

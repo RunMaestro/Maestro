@@ -22,7 +22,7 @@
  * listener both run outside the click that started the steer.
  */
 
-import type { LogEntry, PendingSteer, QueuedItem, Session } from '../types';
+import type { AITab, LogEntry, PendingSteer, QueuedItem, Session } from '../types';
 import type {
 	QueueSteerResult,
 	SteerBubbleState,
@@ -32,6 +32,7 @@ import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
+import { resolveTurnProvider } from '../utils/providerTabSessions';
 import { resolveQueuedItemTarget } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
 import { hostedTargetOf } from './hostedTurns';
@@ -41,6 +42,31 @@ import {
 	getSteerEligibility,
 	recoverQueuedItem,
 } from '../utils/executionQueue';
+import type { CodexTransport } from '../../shared/codexTransport';
+import { mapAgentAiTabs } from '../../shared/maestro-lib/translation/session';
+import { parseSessionId } from '../utils/sessionIdParser';
+
+/** Track main's actual transport on the tab whose running process can be steered. */
+export function applyCodexTransport(
+	processKey: string,
+	transport: CodexTransport | undefined
+): void {
+	const { actualSessionId, tabId } = parseSessionId(processKey);
+	// Forced parallel processes share a tab but are not the queue's steering target.
+	if (!tabId || processKey !== `${actualSessionId}-ai-${tabId}`) return;
+	updateSessionWith(actualSessionId, (session) => {
+		const tab =
+			session.aiTabs.find((tab) => tab.id === tabId) ??
+			session.orphanedThinkingTabs?.find((tab) => tab.id === tabId);
+		if (!tab || tab.turnCodexTransport === transport) return session;
+		return {
+			...session,
+			...mapAgentAiTabs(session, (tab: AITab) =>
+				tab.id === tabId ? { ...tab, turnCodexTransport: transport } : tab
+			),
+		};
+	});
+}
 
 /**
  * Steers whose socket answer has not come back yet, keyed `sessionId:itemId`. The
@@ -98,12 +124,20 @@ export function pendingSteerCount(): number {
 }
 
 /** What the toasts call the agent: the provider, since it is the provider that takes the message. */
-function agentLabel(session: Pick<Session, 'toolType'> | undefined): string {
-	return session ? getAgentDisplayName(session.toolType) : 'The agent';
+function agentLabel(session: Session | undefined, tabId: string): string {
+	if (!session) return 'The agent';
+	const tab =
+		session.aiTabs.find((tab) => tab.id === tabId) ??
+		session.orphanedThinkingTabs?.find((tab) => tab.id === tabId);
+	return getAgentDisplayName(resolveTurnProvider(tab, session));
 }
 
-function labelFor(sessionId: string): string {
-	return agentLabel(useSessionStore.getState().sessions.find((s) => s.id === sessionId));
+function labelFor(sessionId: string, tabId: string, provider?: Session['toolType']): string {
+	if (provider) return getAgentDisplayName(provider);
+	return agentLabel(
+		useSessionStore.getState().sessions.find((s) => s.id === sessionId),
+		tabId
+	);
 }
 
 /** Apply `fn` to the logs of the tab `tabId`, live or orphaned (closed mid-turn). */
@@ -236,11 +270,11 @@ function notifySteeringUnavailable(detail?: string): void {
 	});
 }
 
-function notifyUnconfirmed(sessionId: string, tabId: string): void {
+function notifyUnconfirmed(sessionId: string, tabId: string, provider?: Session['toolType']): void {
 	notifyToast({
 		color: 'orange',
 		title: 'Steering result unconfirmed',
-		message: `${labelFor(sessionId)} may or may not have received the message, so it has been paused rather than sent twice. Resume it if the agent never answered it.`,
+		message: `${labelFor(sessionId, tabId, provider)} may or may not have received the message, so it has been paused rather than sent twice. Resume it if the agent never answered it.`,
 		dismissible: true,
 		sessionId,
 		tabId,
@@ -304,7 +338,11 @@ export async function steerQueuedItem(
 		};
 	}
 	const processKey = `${sessionId}-ai-${target.tabId}`;
-	const name = agentLabel(session);
+	const targetTab =
+		session.aiTabs.find((tab) => tab.id === target.tabId) ??
+		session.orphanedThinkingTabs?.find((tab) => tab.id === target.tabId);
+	const provider = resolveTurnProvider(targetTab, session);
+	const name = getAgentDisplayName(provider);
 
 	// Take the item out of the queue BEFORE typing it. While the socket answer is
 	// outstanding the turn can end, and a queue drain that still saw the item would
@@ -318,6 +356,7 @@ export async function steerQueuedItem(
 		if (!s.executionQueue.some((i) => i.id === itemId)) return s;
 		parked = true;
 		const record: PendingSteer = {
+			provider,
 			steerId: provisionalId,
 			processKey,
 			tabId: target.tabId,
@@ -408,7 +447,7 @@ export async function steerQueuedItem(
 		// the one-click resolution.
 		if (stillParked()) {
 			updateSessionWith(sessionId, (s) => returnPendingSteersToQueue(s, provisional, true));
-			notifyUnconfirmed(sessionId, target.tabId);
+			notifyUnconfirmed(sessionId, target.tabId, provider);
 		}
 		return { outcome: 'unconfirmed', verdict: result.verdict, detail: result.detail };
 	} finally {
@@ -458,7 +497,7 @@ async function runHostSteer(
 	// The host could not be reached or refused the call: already a red toast, and the message
 	// still waits on the host.
 	if (!result) return { outcome: 'unavailable', detail: 'the host did not take the steer' };
-	const name = agentLabel(session);
+	const name = agentLabel(session, tabId);
 	switch (result.outcome) {
 		case 'delivered':
 			notifyDelivered(session.id, tabId, name);
@@ -605,7 +644,11 @@ export function applySteeringVerdict(processKey: string, verdict: SteeringResult
 	}
 	const { sessionId, pending } = found;
 	const ids = new Set([pending.steerId]);
-	const name = labelFor(sessionId);
+	const name = labelFor(
+		sessionId,
+		pending.tabId,
+		pending.provider ?? pending.item.turnSettings?.provider
+	);
 
 	switch (verdict.verdict) {
 		case 'absorbed':
@@ -657,7 +700,8 @@ export function settlePendingSteersOnExit(processKey: string): void {
 	for (const [sessionId, parked] of bySession) {
 		const ids = new Set(parked.map((p) => p.steerId));
 		updateSessionWith(sessionId, (s) => returnPendingSteersToQueue(s, ids, true));
-		for (const p of parked) notifyUnconfirmed(sessionId, p.tabId);
+		for (const p of parked)
+			notifyUnconfirmed(sessionId, p.tabId, p.provider ?? p.item.turnSettings?.provider);
 	}
 }
 

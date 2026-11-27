@@ -331,6 +331,41 @@ describe('runLift follow-up settings', () => {
 		expect(result).not.toHaveProperty('notices');
 	});
 
+	it("rewrites peer rows to the host's ids and keeps a row the host cannot honor here", async () => {
+		const agent = sshAgent({
+			peerAgents: [
+				{ sessionId: 'lifted-local', read: true, write: false },
+				{ sessionId: 'host-only', read: false, write: true },
+				{ sessionId: 'laptop-only', read: true, write: true },
+			],
+			groupPeerAccess: { read: true, write: false },
+			peerDescription: 'Owns the docs',
+		});
+		const liftedPeer: AgentRecord = {
+			id: 'lifted-local',
+			name: 'Builder',
+			toolType: 'claude-code',
+			liftedTo: { peer: 'build-box', agentId: 'host-builder', at: 1 },
+		};
+		const conn = connectionWith();
+		const list = vi.fn().mockResolvedValue({
+			ok: true,
+			value: [{ id: 'host-builder' }, { id: 'host-only' }],
+		});
+		(conn.connection.client.agents as unknown as Record<string, unknown>).list = list;
+		const { deps, update } = depsWith(agent, { readAgents: () => [agent, liftedPeer] }, conn);
+		await runLift('agent-1', {}, deps);
+		expect(list).toHaveBeenCalledTimes(1);
+		expect(update).toHaveBeenCalledWith('host-1', {
+			peerAgents: [
+				{ sessionId: 'host-builder', read: true, write: false },
+				{ sessionId: 'host-only', read: false, write: true },
+			],
+			groupPeerAccess: { read: true, write: false },
+			peerDescription: 'Owns the docs',
+		});
+	});
+
 	it('sends nothing more for an agent that sets none of them', async () => {
 		const { deps, update } = depsWith(sshAgent());
 		await runLift('agent-1', {}, deps);

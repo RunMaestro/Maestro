@@ -67,6 +67,24 @@ describe('SendMenuPopover', () => {
 		anchors.splice(0).forEach((anchor) => anchor.remove());
 	});
 
+	it('opens a feature request for the running harness rather than the default or next harness', () => {
+		seed({}, [
+			createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				tabProvider: 'codex',
+				turnProvider: 'opencode',
+			}),
+		]);
+		renderMenu();
+		fireEvent.click(screen.getByLabelText('How steering works on this agent'));
+		expect(screen.getByTestId('steer-help')).toHaveTextContent('unavailable for OpenCode');
+		fireEvent.click(screen.getByText('Open a feature request'));
+		expect(openUrlMock).toHaveBeenCalledWith(
+			expect.stringContaining('Steering%20support%20for%20OpenCode')
+		);
+	});
+
 	it('queues through the plain send', () => {
 		seed();
 		const { processInput, onClose } = renderMenu();

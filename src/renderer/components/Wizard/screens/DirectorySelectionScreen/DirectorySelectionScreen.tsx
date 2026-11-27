@@ -3,6 +3,8 @@ import { useWizard } from '../../WizardContext';
 import { ScreenReaderAnnouncement } from '../../ScreenReaderAnnouncement';
 import { ExistingDocsModal } from '../../ExistingDocsModal';
 import { AdditionalDirectoriesSection } from '../../../shared/AdditionalDirectoriesSection';
+import { PeerAgentsSection } from '../../../shared/PeerAgentsSection';
+import { usePeerFleet } from '../../../../hooks/agent/usePeerFleet';
 import {
 	DirectoryContinueButton,
 	DirectoryKeyboardHints,
@@ -34,6 +36,9 @@ export function DirectorySelectionScreen({
 		setAutoRunMode,
 		setDirectoryPath,
 		setAdditionalDirectories,
+		setPeerAgents,
+		setGroupPeerAccess,
+		setWorktreePeerAccess,
 		setIsGitRepo,
 		setDirectoryError,
 		setHasExistingAutoRunDocs,
@@ -53,6 +58,9 @@ export function DirectorySelectionScreen({
 
 	const { announcement, announcementKey, announce } = useDirectoryAnnouncements();
 	const agentConfig = useDirectoryAgentConfig(state.selectedAgent);
+	// The wizard creates its agent in no group, so no group id: the section
+	// draws the group grant disabled and says why.
+	const peerFleet = usePeerFleet(undefined);
 	// Where Browse looks, for both path rows: this machine, the chosen SSH remote, or `null` while
 	// SSH is chosen and no remote is picked yet (`pickDirectory()`).
 	const pickerRemoteId = state.sessionSshRemoteConfig?.enabled
@@ -192,6 +200,21 @@ export function DirectorySelectionScreen({
 							onChange={setAdditionalDirectories}
 							sshRemoteId={pickerRemoteId}
 							nativelyEnforced={!!agentConfig?.capabilities?.supportsAdditionalDirectories}
+						/>
+					</div>
+
+					{/* Optional consult/delegate grants to other agents. No selfSessionId:
+					    the agent has no id until the wizard creates it. */}
+					<div className="mt-6">
+						<PeerAgentsSection
+							theme={theme}
+							peers={state.peerAgents}
+							onChange={setPeerAgents}
+							groupAccess={state.groupPeerAccess}
+							onGroupAccessChange={setGroupPeerAccess}
+							worktreeAccess={state.worktreePeerAccess}
+							onWorktreeAccessChange={setWorktreePeerAccess}
+							{...peerFleet}
 						/>
 					</div>
 				</div>

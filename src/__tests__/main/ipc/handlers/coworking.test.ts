@@ -125,7 +125,9 @@ describe('coworking browser approval from persisted settings', () => {
 				sessionId,
 				op,
 				expect.any(String),
-				required
+				required,
+				// No MCP caller identity in this fixture.
+				undefined
 			);
 		}
 

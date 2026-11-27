@@ -1,6 +1,6 @@
 /**
  * runRemoteTabContextOp - the renderer end of `maestro-cli tab compact|merge|
- * transfer`. It resolves what the overlay menu resolves by having the tab on
+ * transfer|continuity`. It resolves what the overlay menu resolves by having the tab on
  * screen (default tabs, the modals' target rules), then calls the menu's own
  * handler, which these tests stand in for.
  */
@@ -28,6 +28,7 @@ function agent(id: string, overrides: Partial<Session> = {}): Session {
 
 let handlers: {
 	summarizeTab: ReturnType<typeof vi.fn>;
+	previewContinuity: ReturnType<typeof vi.fn>;
 	mergeTabContext: ReturnType<typeof vi.fn>;
 	transferTabContext: ReturnType<typeof vi.fn>;
 };
@@ -41,6 +42,18 @@ beforeEach(() => {
 			sessionId,
 			tabId,
 			newTabId: 'compacted',
+		})),
+		previewContinuity: vi.fn(async (sessionId: string, tabId: string) => ({
+			success: true,
+			sessionId,
+			tabId,
+			continuity: {
+				text: 'Continuity preview',
+				entries: 2,
+				synopses: { shown: 0, refused: {} },
+				notices: [],
+				unknowns: [],
+			},
 		})),
 		mergeTabContext: vi.fn().mockResolvedValue({ success: true }),
 		transferTabContext: vi.fn().mockResolvedValue({ success: true, newTabId: 'moved' }),
@@ -103,6 +116,72 @@ describe('compact', () => {
 
 		expect(result).toEqual({ success: false, error: DORMANT_PIANOLA_MESSAGE });
 		expect(handlers.summarizeTab).not.toHaveBeenCalled();
+	});
+});
+
+describe('continuity', () => {
+	it('defaults to the active AI tab and passes the preview through', async () => {
+		const result = await run({ op: 'continuity', sessionId: 'a' });
+
+		expect(handlers.previewContinuity).toHaveBeenCalledWith('a', 'a-t1');
+		expect(result).toMatchObject({ success: true, sessionId: 'a', tabId: 'a-t1' });
+		expect(result.continuity?.text).toBe('Continuity preview');
+	});
+
+	it('takes an explicit tab of the agent', async () => {
+		await run({ op: 'continuity', sessionId: 'b', tabId: 'b-t2' });
+
+		expect(handlers.previewContinuity).toHaveBeenCalledWith('b', 'b-t2');
+	});
+
+	it('never compacts, merges or transfers', async () => {
+		await run({ op: 'continuity', sessionId: 'a' });
+
+		expect(handlers.summarizeTab).not.toHaveBeenCalled();
+		expect(handlers.mergeTabContext).not.toHaveBeenCalled();
+		expect(handlers.transferTabContext).not.toHaveBeenCalled();
+	});
+
+	it('refuses an unknown agent without calling the handler', async () => {
+		const result = await run({ op: 'continuity', sessionId: 'ghost' });
+
+		expect(result).toEqual({ success: false, error: 'Agent not found: ghost' });
+		expect(handlers.previewContinuity).not.toHaveBeenCalled();
+	});
+
+	it("refuses another agent's tab without calling the handler (cross-tab rejection)", async () => {
+		const result = await run({ op: 'continuity', sessionId: 'a', tabId: 'b-t1' });
+
+		expect(result).toMatchObject({ success: false, error: 'Tab b-t1 is not an AI tab of agent a' });
+		expect(handlers.previewContinuity).not.toHaveBeenCalled();
+	});
+
+	it('refuses a dormant Pianola agent', async () => {
+		useSessionStore.setState({ sessions: [agent('p', { isPianola: true } as Partial<Session>)] });
+		useSettingsStore.setState({
+			encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: false },
+		});
+
+		const result = await run({ op: 'continuity', sessionId: 'p' });
+
+		expect(result).toEqual({ success: false, error: DORMANT_PIANOLA_MESSAGE });
+		expect(handlers.previewContinuity).not.toHaveBeenCalled();
+	});
+
+	it('keeps the handler refusal and names the tab it was asked about', async () => {
+		handlers.previewContinuity.mockResolvedValueOnce({
+			success: false,
+			error: "Tab a-t1 holds another agent's consult, not a conversation of this agent.",
+		});
+
+		const result = await run({ op: 'continuity', sessionId: 'a' });
+
+		expect(result).toEqual({
+			success: false,
+			error: "Tab a-t1 holds another agent's consult, not a conversation of this agent.",
+			sessionId: 'a',
+			tabId: 'a-t1',
+		});
 	});
 });
 

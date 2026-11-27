@@ -1,3 +1,8 @@
+import {
+	listCodexSessionFiles,
+	findCodexSessionFile,
+	extractSessionIdFromFilename,
+} from '../../shared/maestro-lib/codex/session-files';
 import { parseNativeLines } from '../../shared/maestro-lib/translation/native-records';
 /**
  * Codex CLI Session Storage Implementation
@@ -102,20 +107,6 @@ interface CodexToolUseEntry {
 		input?: unknown;
 		output?: string;
 	};
-}
-
-/**
- * Extract the session ID (UUID) from a Codex session filename
- * Format: rollout-TIMESTAMP-UUID.jsonl
- */
-function extractSessionIdFromFilename(filename: string): string | null {
-	// Match pattern: rollout-YYYYMMDD_HHMMSS_MMM-UUID.jsonl or similar
-	const match = filename.match(/rollout-[\d_]+-([a-f0-9-]+)\.jsonl$/i);
-	if (match) {
-		return match[1];
-	}
-	// Fallback: use filename without extension
-	return filename.replace('.jsonl', '');
 }
 
 function isSessionForProject(sessionProjectPath: string, projectPath: string): boolean {
@@ -315,92 +306,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		/** Counts the folders that are there but could not be listed (their rollouts are missed). */
 		unreadable?: { dirs: number }
 	): Promise<Array<{ filePath: string; filename: string }>> {
-		const sessionsDir = this.getSessionsDir(accountDir);
-		const sessionFiles: Array<{ filePath: string; filename: string }> = [];
-		const missed = (error: unknown): void => {
-			if (unreadable && (error as NodeJS.ErrnoException)?.code !== 'ENOENT') unreadable.dirs++;
-		};
-
-		// A missing root is an account with no rollouts; one that is there but cannot be listed
-		// misses all of them, and says so.
-		let years: string[];
-		try {
-			await fs.access(sessionsDir);
-			years = await fs.readdir(sessionsDir);
-		} catch (error) {
-			const code = (error as NodeJS.ErrnoException)?.code;
-			if (code !== 'ENOENT' && code !== 'ENOTDIR') missed(error);
-			return [];
-		}
-
-		// Scan YYYY directories
-		for (const year of years) {
-			if (!/^\d{4}$/.test(year)) continue;
-
-			const yearDir = path.join(sessionsDir, year);
-			try {
-				const yearStat = await fs.stat(yearDir);
-				if (!yearStat.isDirectory()) continue;
-			} catch (error) {
-				missed(error);
-				continue;
-			}
-
-			// Scan MM directories; an unlisted year misses only its own rollouts.
-			let months: string[];
-			try {
-				months = await fs.readdir(yearDir);
-			} catch (error) {
-				missed(error);
-				continue;
-			}
-			for (const month of months) {
-				if (!/^\d{2}$/.test(month)) continue;
-
-				const monthDir = path.join(yearDir, month);
-				try {
-					const monthStat = await fs.stat(monthDir);
-					if (!monthStat.isDirectory()) continue;
-				} catch (error) {
-					missed(error);
-					continue;
-				}
-
-				// Scan DD directories; an unlisted month misses only its own rollouts.
-				let days: string[];
-				try {
-					days = await fs.readdir(monthDir);
-				} catch (error) {
-					missed(error);
-					continue;
-				}
-				for (const day of days) {
-					if (!/^\d{2}$/.test(day)) continue;
-
-					const dayDir = path.join(monthDir, day);
-					try {
-						const dayStat = await fs.stat(dayDir);
-						if (!dayStat.isDirectory()) continue;
-
-						// Find session files
-						const files = await fs.readdir(dayDir);
-						for (const file of files) {
-							if (file.endsWith('.jsonl')) {
-								sessionFiles.push({
-									filePath: path.join(dayDir, file),
-									filename: file,
-								});
-							}
-						}
-					} catch (error) {
-						missed(error);
-						continue;
-					}
-				}
-			}
-		}
-
-		return sessionFiles;
+		return listCodexSessionFiles(this.getSessionsDir(accountDir), undefined, unreadable);
 	}
 
 	/**
@@ -1187,32 +1093,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * Find the file path for a session by ID (async)
 	 */
 	async findSessionFile(sessionId: string, accountDir?: string): Promise<string | null> {
-		const allFiles = await this.findAllSessionFiles(accountDir);
-
-		for (const { filePath, filename } of allFiles) {
-			const fileSessionId = extractSessionIdFromFilename(filename);
-			if (fileSessionId === sessionId) {
-				return filePath;
-			}
-
-			// Also check by reading first line for session ID. Only that line: this
-			// runs for every rollout until the match, and a rollout can be hundreds
-			// of MB (#1862).
-			try {
-				const firstLine = await readFirstJsonlLine(filePath);
-				if (firstLine) {
-					const metadata = JSON.parse(firstLine) as CodexSessionMetadata;
-					const metadataId = metadata?.payload?.id || metadata.id;
-					if (metadataId === sessionId) {
-						return filePath;
-					}
-				}
-			} catch {
-				// Skip files that can't be read
-			}
-		}
-
-		return null;
+		return findCodexSessionFile(sessionId, path.dirname(this.getSessionsDir(accountDir)));
 	}
 
 	/**

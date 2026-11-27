@@ -10,6 +10,8 @@ export function registerCueCallbacks(
 		WebServerFactoryDependencies,
 		| 'getCueGraphData'
 		| 'setCueSubscriptionEnabled'
+		| 'setCueSubscriptionGate'
+		| 'setCueSubscriptionInjectionScreen'
 		| 'getCueActivityLog'
 		| 'triggerCueSubscription'
 		| 'getCueSubscriptionTriggerStats'
@@ -51,6 +53,27 @@ export function registerCueCallbacks(
 			return false;
 		}
 		return deps.setCueSubscriptionEnabled(subscriptionId, enabled);
+	});
+
+	// Set or remove a subscription's gate - the engine writes cue.yaml, as it
+	// does for the toggle above. A missing dependency is an answer the caller
+	// can print, not a silent `false`.
+	server.setSetCueSubscriptionGateCallback(async (subscriptionId, gate) => {
+		if (!deps.setCueSubscriptionGate) {
+			logger.warn('setCueSubscriptionGate dependency not available', 'WebServer');
+			return { ok: false, error: 'Cue gate editing is not available.' };
+		}
+		return deps.setCueSubscriptionGate(subscriptionId, gate);
+	});
+
+	// Set a subscription's prompt-injection screen, through the same engine
+	// writer as the gate.
+	server.setSetCueSubscriptionInjectionScreenCallback(async (subscriptionId, setting) => {
+		if (!deps.setCueSubscriptionInjectionScreen) {
+			logger.warn('setCueSubscriptionInjectionScreen dependency not available', 'WebServer');
+			return { ok: false, error: 'Cue injection screen editing is not available.' };
+		}
+		return deps.setCueSubscriptionInjectionScreen(subscriptionId, setting);
 	});
 
 	// Get Cue activity log - calls engine directly in the main process.

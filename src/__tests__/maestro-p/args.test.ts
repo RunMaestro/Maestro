@@ -16,6 +16,11 @@ import {
 	DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS,
 	DEFAULT_READY_TIMEOUT_SECONDS,
 } from '../../maestro-p/args';
+import {
+	buildMcpInjection,
+	MCP_CONFIG_BY_AGENT,
+	mergeMcpInjectionArgs,
+} from '../../shared/plugins/mcp-agent-config';
 
 describe('parseArgs', () => {
 	let warnSpy: ReturnType<typeof vi.fn<(message: string) => void>>;
@@ -179,6 +184,39 @@ describe('parseArgs', () => {
 				'--model',
 				'opus[1m]',
 			]);
+			expect(warnSpy).not.toHaveBeenCalled();
+		});
+
+		it("forwards the desktop's MCP bridge config to claude intact", () => {
+			// The exact flags the desktop injects for a Claude launch, ahead of its
+			// API-mode line, with a path that holds a space and a flag-like arg.
+			const cap = MCP_CONFIG_BY_AGENT['claude-code']!;
+			const { globalArgs } = buildMcpInjection(
+				cap,
+				{
+					command: '/Applications/Maestro.app/Contents/MacOS/Maestro',
+					args: ['/path with space/maestro-cli.js', 'mcp', 'serve', '--tab', 'agent-1'],
+					env: { ELECTRON_RUN_AS_NODE: '1', MAESTRO_PLUGIN_RUN_TOKEN_FILE: '/tmp/proof' },
+				},
+				{ tmpDir: '/tmp', join: (...parts) => parts.join('/') }
+			);
+			const argv = mergeMcpInjectionArgs(
+				cap,
+				[
+					'--print',
+					'--verbose',
+					'--output-format',
+					'stream-json',
+					'--dangerously-skip-permissions',
+					'--',
+					'hello there',
+				],
+				globalArgs
+			);
+
+			const result = callArgs(argv);
+			expect(result.prompt).toBe('hello there');
+			expect(result.passThroughArgs).toEqual([...globalArgs, '--dangerously-skip-permissions']);
 			expect(warnSpy).not.toHaveBeenCalled();
 		});
 	});

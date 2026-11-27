@@ -10,6 +10,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { QuickChatRoot } from '../../../renderer/quickChat/QuickChatRoot';
 import {
 	EMPTY_QUICK_CHAT_SNAPSHOT,
+	QUICK_CHAT_COMPACT_HEIGHT,
 	type QuickChatMessage,
 	type QuickChatRoute,
 	type QuickChatSnapshot,
@@ -193,13 +194,11 @@ describe('recent chats', () => {
 		]);
 	});
 
-	it('the History button sits just left of the thinking button and explains itself', async () => {
+	it('the History button remains beside Keep as a tab and explains itself', async () => {
 		await renderWith(snapshot());
 		const history = screen.getByRole('button', { name: /^Recent chats\./ });
-		const thinking = screen.getByRole('button', { name: /^Thinking hidden\./ });
-		expect(
-			history.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING
-		).toBeTruthy();
+		const keep = screen.getByRole('button', { name: /^Keep as a tab\./ });
+		expect(history.compareDocumentPosition(keep) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		fireEvent.mouseEnter(history.parentElement!);
 		expect(screen.getByRole('tooltip')).toHaveTextContent('Bring back an earlier chat');
 	});
@@ -280,33 +279,18 @@ describe('tabChoiceFromPickerId', () => {
 	});
 });
 
-describe('Thinking button', () => {
-	it.each([
-		['off', /^Thinking hidden\./, "Click to show the agent's reasoning"],
-		['on', /^Showing thinking\./, 'goes away once the answer arrives'],
-		['sticky', /^Keeping thinking\./, 'stays above each answer'],
-	] as const)('explains the %s mode', async (mode, name, hint) => {
-		await renderWith(snapshot({ thinking: mode }));
-		const button = screen.getByRole('button', { name });
-		fireEvent.mouseEnter(button.parentElement!);
-		expect(screen.getByRole('tooltip')).toHaveTextContent(hint);
-	});
-
-	it('asks the engine to step to the next mode', async () => {
-		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
-			ok: true,
-			snapshot: snapshot({ thinking: 'on' }),
-		});
-		await renderWith(snapshot());
-		await act(async () =>
-			fireEvent.click(screen.getByRole('button', { name: /^Thinking hidden\./ }))
-		);
-		expect(window.maestro.quickChat.command).toHaveBeenCalledWith({
-			type: 'setThinking',
-			mode: 'cycle',
-		});
-		expect(screen.getByRole('button', { name: /^Showing thinking\./ })).toBeInTheDocument();
-	});
+describe('Thinking visibility', () => {
+	it.each(['off', 'on', 'sticky'] as const)(
+		'keeps the %s toggle out of the compact toolbar',
+		async (mode) => {
+			await renderWith(snapshot({ thinking: mode }));
+			expect(
+				screen.queryByRole('button', {
+					name: /^(Thinking hidden|Showing thinking|Keeping thinking)/,
+				})
+			).not.toBeInTheDocument();
+		}
+	);
 
 	it('Cmd+Shift+K cycles it, like the main composer', async () => {
 		vi.mocked(window.maestro.quickChat.command).mockResolvedValue({
@@ -396,6 +380,113 @@ describe('keyboard chords', () => {
 		await renderWith(snapshot());
 		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Keep as a tab\./ }).parentElement!);
 		expect(screen.getByRole('tooltip')).toHaveTextContent(/S$/);
+	});
+});
+
+describe('Cmd+A attaches images', () => {
+	function composer() {
+		return screen.getByPlaceholderText('Ask Pedsidian anything') as HTMLTextAreaElement;
+	}
+
+	it('opens the image picker from an empty draft, and the overlay names the chord', async () => {
+		await renderWith(snapshot());
+		const click = vi.spyOn(screen.getByTestId('quick-chat-image-input'), 'click');
+		const event = new KeyboardEvent('keydown', {
+			key: 'a',
+			metaKey: true,
+			cancelable: true,
+			bubbles: true,
+		});
+		await act(async () => {
+			composer().dispatchEvent(event);
+		});
+		expect(event.defaultPrevented).toBe(true);
+		expect(click).toHaveBeenCalledTimes(1);
+
+		fireEvent.mouseEnter(screen.getByRole('button', { name: /^Attach images\./ }).parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent(/A$/);
+	});
+
+	it('leaves select-all to a draft with text in it', async () => {
+		await renderWith(snapshot());
+		const click = vi.spyOn(screen.getByTestId('quick-chat-image-input'), 'click');
+		fireEvent.change(composer(), { target: { value: 'hello' } });
+		const event = new KeyboardEvent('keydown', {
+			key: 'a',
+			metaKey: true,
+			cancelable: true,
+			bubbles: true,
+		});
+		await act(async () => {
+			composer().dispatchEvent(event);
+		});
+		expect(event.defaultPrevented).toBe(false);
+		expect(click).not.toHaveBeenCalled();
+	});
+});
+
+describe('Cmd+N', () => {
+	/** The engine's answers: a new chat lands on `defaultTab`, a choice is shown as made. */
+	function engine(defaultTab: 'auto' | 'new') {
+		vi.mocked(window.maestro.quickChat.command).mockImplementation(async (command) => ({
+			ok: true,
+			snapshot: snapshot({
+				next:
+					command.type === 'setTab' && command.choice.kind !== 'tab'
+						? { kind: command.choice.kind }
+						: { kind: defaultTab },
+			}),
+		}));
+	}
+	const press = () => act(async () => fireEvent.keyDown(window, { key: 'n', metaKey: true }));
+
+	it('starts a new chat, then flips the next message between the two defaults', async () => {
+		engine('auto');
+		await renderWith(snapshot({ messages: [{ id: 'm', role: 'user', text: 'hi' }] }));
+
+		await press();
+		await press();
+		await press();
+
+		expect(vi.mocked(window.maestro.quickChat.command).mock.calls.map(([c]) => c)).toEqual([
+			{ type: 'new' },
+			{ type: 'setTab', choice: { kind: 'new' } },
+			{ type: 'setTab', choice: { kind: 'auto' } },
+		]);
+		expect(screen.getByTestId('quick-chat-tab-button')).toHaveTextContent('Choose tab');
+	});
+
+	it('flips from New tab when that is the default', async () => {
+		engine('new');
+		await renderWith(snapshot());
+
+		await press();
+		await press();
+
+		expect(window.maestro.quickChat.command).toHaveBeenLastCalledWith({
+			type: 'setTab',
+			choice: { kind: 'auto' },
+		});
+		expect(screen.getByTestId('quick-chat-tab-button')).toHaveTextContent('Choose tab');
+	});
+
+	it('starts another new chat once something was typed', async () => {
+		engine('auto');
+		await renderWith(snapshot());
+
+		await press();
+		fireEvent.change(screen.getByPlaceholderText('Ask Pedsidian anything'), {
+			target: { value: 'x' },
+		});
+		fireEvent.change(screen.getByPlaceholderText('Ask Pedsidian anything'), {
+			target: { value: '' },
+		});
+		await press();
+
+		expect(vi.mocked(window.maestro.quickChat.command).mock.calls.map(([c]) => c)).toEqual([
+			{ type: 'new' },
+			{ type: 'new' },
+		]);
 	});
 });
 
@@ -521,6 +612,10 @@ describe('working indicator', () => {
 			})
 		);
 		expect(screen.getByText(/^Working for 5s$/)).toBeTruthy();
+		expect(screen.getByTestId('quick-chat-working').querySelector('.animate-spin')).toHaveAttribute(
+			'aria-hidden',
+			'true'
+		);
 	});
 
 	it('says Working without a frozen 0s when the start is unknown', async () => {
@@ -847,6 +942,11 @@ describe('composer-only window height', () => {
 		expect(window.maestro.quickChat.setCompactHeight).toHaveBeenLastCalledWith(260);
 		// Its height is its content's, never stretched to the window it sizes.
 		expect(screen.getByTestId('quick-chat-composer').className).not.toContain('h-full');
+		// Extracting the shared surface must preserve compact sizing and its DOM ref.
+		expect(screen.getByTestId('quick-chat-composer')).toHaveStyle({
+			minHeight: `${QUICK_CHAT_COMPACT_HEIGHT}px`,
+		});
+		expect(screen.getByTestId('quick-chat-composer')).toHaveClass('rounded-3xl');
 	});
 });
 
@@ -936,7 +1036,7 @@ describe('images', () => {
 		await renderWith(snapshot());
 		const composer = screen.getByPlaceholderText(/Ask Pedsidian anything/);
 		fireEvent.drop(composer, { dataTransfer: transfer([new File(['x'], 'notes.txt')]) });
-		expect(screen.getByText('Only images can be attached to a Quick Chat message')).toBeTruthy();
+		expect(screen.getByText('Only images can be attached to a chat message')).toBeTruthy();
 		fireEvent.drop(composer, { dataTransfer: transfer([imageFile()]) });
 		await vi.waitFor(() =>
 			expect(screen.getByRole('button', { name: 'Staged image 1' })).toBeTruthy()

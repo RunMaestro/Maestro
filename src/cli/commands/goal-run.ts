@@ -20,9 +20,11 @@ import {
 	UnsupportedCommandError,
 	CommandTimeoutError,
 } from '../services/maestro-client';
-import { ExitCode } from '../exit-codes';
 import { MaestroNotRunningError } from '../services/maestro-not-running';
 import type { GoalRunConfig } from '../../shared/goalDriven/types';
+import { ExitCode, exitWith } from '../exit-codes';
+import { readRunOnFlags, reportedRunOnFlagContext } from '../services/run-on';
+import type { RunOnTarget } from '../../shared/local-models/run-on';
 
 interface GoalRunOptions {
 	exitCriteria?: string;
@@ -37,6 +39,9 @@ interface GoalRunOptions {
 	 */
 	model?: string;
 	effort?: string;
+	/** This run's model source (`<source id>:<model>` or `provider`), and its context. */
+	modelSource?: string;
+	modelSourceContext?: string;
 	/**
 	 * Hand the run to the running desktop app instead of executing it in this
 	 * process. The run then behaves exactly like one started from the Auto Run
@@ -62,7 +67,7 @@ function parseMaxIterations(raw: string | undefined, useJson: boolean): number |
 		} else {
 			console.error(formatError(message));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 	return parsed;
 }
@@ -120,7 +125,7 @@ function failVisibleLaunch(
 	} else {
 		console.error(formatError(message));
 	}
-	process.exit(exitCode);
+	exitWith(exitCode);
 }
 
 /**
@@ -134,6 +139,7 @@ function failVisibleLaunch(
  */
 async function runVisibleGoalRun(
 	agent: { id: string; name: string },
+	runOn: RunOnTarget | undefined,
 	goalConfig: GoalRunConfig,
 	options: GoalRunOptions
 ): Promise<void> {
@@ -182,6 +188,7 @@ async function runVisibleGoalRun(
 					maxIterations: goalConfig.maxIterations,
 					...(options.model?.trim() && { model: options.model.trim() }),
 					...(options.effort?.trim() && { effort: options.effort.trim() }),
+					...(runOn && { runOn }),
 				},
 				'launch_goal_run_result',
 				// The desktop waits for the run to actually reach a running state
@@ -266,7 +273,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const agent = getSessionById(agentId);
@@ -277,7 +284,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// `--wait` polls for the agent to free up, which only the desktop handoff
@@ -291,7 +298,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// `--visible` hands the run to the desktop, which spawns the agent itself.
@@ -299,8 +306,25 @@ export async function goalRun(
 		// provider (and honors SSH remotes), so a CLI-side `detectAgent` here would
 		// reject a perfectly runnable agent just because this machine lacks the
 		// binary. Everything after this point is the headless path.
+		// The run's model source, by the rules `update-agent --model-source` follows.
+		let runOn: RunOnTarget | undefined;
+		if (options.modelSource !== undefined || options.modelSourceContext !== undefined) {
+			const edit = readRunOnFlags(options, agent, await reportedRunOnFlagContext(options));
+			if (edit.kind === 'refused') {
+				if (useJson) emitError(edit.error, 'BAD_RUN_ON');
+				else console.error(formatError(edit.error));
+				exitWith(ExitCode.GeneralError);
+			}
+			if (edit.kind === 'set') runOn = edit.target ?? { type: 'provider' };
+		}
+
 		if (options.visible) {
-			await runVisibleGoalRun(agent, buildGoalConfig(trimmedGoal, options, useJson), options);
+			await runVisibleGoalRun(
+				agent,
+				runOn,
+				buildGoalConfig(trimmedGoal, options, useJson),
+				options
+			);
 			return;
 		}
 
@@ -313,7 +337,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const detection = await detectAgent(agent.toolType);
@@ -325,7 +349,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// One run per agent: refuse if busy in desktop or another CLI instance.
@@ -337,7 +361,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const goalConfig = buildGoalConfig(trimmedGoal, options, useJson);
@@ -377,6 +401,7 @@ export async function goalRun(
 			verbose: options.verbose,
 			model: options.model?.trim() || undefined,
 			effort: options.effort?.trim() || undefined,
+			...(runOn ? { runOn } : {}),
 			signal: interrupt.signal,
 		});
 
@@ -388,7 +413,7 @@ export async function goalRun(
 					console.log(formatRunEvent(event as RunEvent, { debug: false }));
 				}
 			}
-			if (interrupt.signal.aborted) process.exitCode = 130;
+			if (interrupt.signal.aborted) process.exitCode = ExitCode.Interrupted;
 		} finally {
 			interrupt.dispose();
 		}
@@ -399,6 +424,6 @@ export async function goalRun(
 		} else {
 			console.error(formatError(`Failed to run goal: ${message}`));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 }

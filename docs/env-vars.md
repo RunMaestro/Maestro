@@ -188,6 +188,10 @@ The parser and serializer are `parseDotEnv()` / `serializeDotEnv()` in `src/shar
 
 ## Precedence Rules
 
+<Note>
+**Group defaults are not a precedence level.** [Group Settings](./features#groups) can hold environment variables for a group, and that reads like a fourth layer, but it is not one. The group's variables are **copied into the agent when it is created**, and the agent keeps them as its own session-level variables. Nothing reads the group while an agent runs. Editing the group changes no existing agent unless you choose **Publish** when you save, which copies the change into each agent again, key by key, on request.
+</Note>
+
 The environment variable precedence (highest to lowest) is:
 
 ```text

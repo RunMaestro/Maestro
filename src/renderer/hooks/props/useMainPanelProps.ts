@@ -1,3 +1,5 @@
+import type { ToolType } from '../../types';
+import type { UseAgentSessionManagementReturn } from '../agent/useAgentSessionManagement';
 /**
  * useMainPanelProps Hook
  *
@@ -18,8 +20,6 @@ import type {
 	Session,
 	Theme,
 	BatchRunState,
-	LogEntry,
-	UsageStats,
 	AITab,
 	AgentError,
 	QueuedItem,
@@ -133,11 +133,7 @@ export interface UseMainPanelPropsDeps {
 
 	// Handlers (should be memoized with useCallback at definition site)
 	handleResumeSession: (
-		agentSessionId: string,
-		messages: LogEntry[],
-		sessionName?: string,
-		starred?: boolean,
-		usageStats?: UsageStats
+		...args: Parameters<UseAgentSessionManagementReturn['handleResumeSession']>
 	) => void;
 	handleNewAgentSession: () => void;
 	toggleInputMode: () => void;
@@ -173,7 +169,9 @@ export interface UseMainPanelPropsDeps {
 	handleUnifiedTabReorder: (sourceTabId: string, targetTabId: string) => void;
 	handleUpdateTabByClaudeSessionId: (
 		agentSessionId: string,
-		updates: { name?: string | null; starred?: boolean }
+		updates: { name?: string | null; starred?: boolean },
+		provider?: ToolType,
+		sessionId?: string
 	) => void;
 	handleTabStar: (tabId: string, starred: boolean) => void;
 	handleTabMarkUnread: (tabId: string) => void;

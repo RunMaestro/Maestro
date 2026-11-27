@@ -247,7 +247,8 @@ export interface PianolaNewTabRequest {
 	prompt: string;
 	background: boolean;
 	hidden: boolean;
-	mentionRouting?: Parameters<NewAITabWithPromptCallback>[4];
+	consultChain?: Parameters<NewAITabWithPromptCallback>[4];
+	mentionRouting?: Parameters<NewAITabWithPromptCallback>[5];
 }
 
 type Client = { cliAuthenticated?: boolean };
@@ -422,6 +423,7 @@ export class PianolaNewTabDispatch {
 						false,
 						(request as PianolaExistingTabRequest).images,
 						request.background,
+						request.consultChain,
 						request.mentionRouting,
 						true,
 						request.dispatchId
@@ -437,6 +439,7 @@ export class PianolaNewTabDispatch {
 					request.prompt,
 					request.background,
 					request.hidden,
+					request.consultChain,
 					request.mentionRouting,
 					{ phase: 'release', dispatchId: request.dispatchId, tabId: receipt.targetTabId }
 				);
@@ -602,6 +605,7 @@ export class PianolaNewTabDispatch {
 							request.images,
 							request.background,
 							request.held,
+							request.consultChain,
 							request.mentionRouting,
 							undefined,
 							{ dispatchId: request.dispatchId, item: prepared.item }
@@ -1103,6 +1107,7 @@ export class PianolaNewTabDispatch {
 			'',
 			request.background,
 			request.hidden,
+			request.consultChain,
 			request.mentionRouting,
 			{ phase: 'prepare', dispatchId: request.dispatchId, tabId }
 		);

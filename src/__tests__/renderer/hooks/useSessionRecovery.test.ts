@@ -73,10 +73,12 @@ describe('useSessionRecovery', () => {
 			});
 
 			// The send path routes it (spawn here, over SSH, or to the host with the context,
-			// `sendHostedTurn()`); recovery itself is the same for every mode.
+			// `sendHostedTurn()`); recovery itself is the same for every mode. The re-send carries
+			// the settings codified at the original send, pinned to the provider that failed.
 			expect(processInput).toHaveBeenCalledWith('retry this', {
 				sessionId: 'agent-1',
 				tabId: 'tab-1',
+				turnSettings: expect.objectContaining({ provider: 'claude-code' }),
 			});
 			const context = useSessionStore.getState().sessions[0].aiTabs[0].pendingMergedContext;
 			expect(context).toContain('# Prior Conversation (Session Recovered)');

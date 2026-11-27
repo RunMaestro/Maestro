@@ -23,6 +23,7 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import type { Session } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
 
 // ============================================================================
 // Helpers
@@ -441,5 +442,107 @@ describe('useStarredItems', () => {
 				'Manager Tab',
 			]);
 		});
+	});
+});
+
+describe('Ensemble starred identities', () => {
+	it('does not hide a closed star with the same native ID on another provider', async () => {
+		mockNamedSessions([makeNamed({ agentSessionId: 'shared', sessionName: 'Claude closed' })]);
+		useSessionStore.setState({
+			sessions: [
+				makeSession({
+					aiTabs: [
+						createMockAITab({
+							id: 'codex',
+							tabProvider: 'codex',
+							agentSessionId: 'shared',
+							starred: true,
+						}),
+					],
+				}),
+			],
+		});
+		const { result } = renderHook(() => useStarredItems({}));
+		await waitFor(() => expect(result.current.starredItems).toHaveLength(2));
+		expect(result.current.starredItems.find((item) => item.kind === 'closed')).toMatchObject({
+			agentId: 'claude-code',
+			agentSessionId: 'shared',
+		});
+	});
+	it('invalidates the open-star signature when only the pin changes', async () => {
+		mockNamedSessions([makeNamed({ agentSessionId: 'shared' })]);
+		const tab = createMockAITab({ id: 'tab', agentSessionId: 'shared', starred: true });
+		const session = makeSession({ aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] });
+		const { result } = renderHook(() => useStarredItems({}));
+		await waitFor(() =>
+			expect(window.maestro.agentSessions.getAllNamedSessions).toHaveBeenCalled()
+		);
+		expect(result.current.starredItems).toHaveLength(1);
+		act(() =>
+			useSessionStore.setState({
+				sessions: [{ ...session, aiTabs: [{ ...tab, tabProvider: 'codex' }] }],
+			})
+		);
+		expect(result.current.starredItems).toHaveLength(2);
+	});
+	it('suppresses a pending source star and refreshes when its parked ID changes', async () => {
+		mockNamedSessions([makeNamed({ agentSessionId: 'source' })]);
+		const tab = createMockAITab({
+			tabProvider: 'codex',
+			agentSessionId: 'destination',
+			pendingTranslation: 'claude-code',
+			providerSessions: { 'claude-code': { agentSessionId: 'source' } },
+		});
+		const session = makeSession({ aiTabs: [tab] });
+		useSessionStore.setState({ sessions: [session] });
+		const { result } = renderHook(() => useStarredItems({}));
+		await waitFor(() =>
+			expect(window.maestro.agentSessions.getAllNamedSessions).toHaveBeenCalled()
+		);
+		expect(result.current.starredItems).toEqual([]);
+		act(() =>
+			useSessionStore.setState({
+				sessions: [
+					{
+						...session,
+						aiTabs: [
+							{ ...tab, providerSessions: { 'claude-code': { agentSessionId: 'different' } } },
+						],
+					},
+				],
+			})
+		);
+		expect(result.current.starredItems).toHaveLength(1);
+	});
+	it('keeps distinct keys for closed provider identities and reopens under the recorded owner', async () => {
+		mockNamedSessions([
+			makeNamed({ agentSessionId: 'same' }),
+			makeNamed({ agentId: 'codex', agentSessionId: 'same' }),
+		]);
+		useSessionStore.setState({ sessions: [makeSession()] });
+		const jump = vi.fn().mockResolvedValue(true);
+		const { result } = renderHook(() => useStarredItems({ onJumpToStarredSession: jump }));
+		await waitFor(() => expect(result.current.starredItems).toHaveLength(2));
+		expect(new Set(result.current.starredItems.map((item) => item.key)).size).toBe(2);
+		const codex = result.current.starredItems.find(
+			(item) => item.kind === 'closed' && item.agentId === 'codex'
+		)!;
+		await act(async () => {
+			await result.current.activateStarredItem(codex);
+		});
+		expect(jump).toHaveBeenCalledWith('codex', '/proj', 'same', 'Closed One', 'session-1');
+	});
+	it('does not suppress an equal native ID from a different project', async () => {
+		mockNamedSessions([makeNamed({ agentSessionId: 'same', projectPath: '/other' })]);
+		useSessionStore.setState({
+			sessions: [
+				makeSession({ aiTabs: [createMockAITab({ agentSessionId: 'same' })] }),
+				makeSession({ id: 'other', projectRoot: '/other' }),
+			],
+		});
+		const { result } = renderHook(() => useStarredItems({}));
+		await waitFor(() => expect(result.current.starredItems).toHaveLength(1));
+		expect(result.current.starredItems[0].parentSessionId).toBe('other');
 	});
 });

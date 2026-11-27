@@ -17,6 +17,7 @@
 import type { AITab, Session, SnoozedTabEntry } from '../types';
 import { collectSnoozedAiTabs } from './snoozeHelpers';
 import { logger } from './logger';
+import { projectTabProvider, resolveTabNativeProvider } from './providerTabSessions';
 
 /**
  * Whether this tab can be mirrored at all.
@@ -31,10 +32,12 @@ function mirrorTarget(
 	tab: AITab | undefined
 ): { agentId: string; projectPath: string; sessionId: string; sessionName?: string } | null {
 	if (!session?.projectRoot) return null;
+	const agentId = resolveTabNativeProvider(tab, session);
+	tab = projectTabProvider(session, tab, agentId).tab;
 	const sessionId = tab?.agentSessionId;
 	if (!sessionId) return null;
 	return {
-		agentId: session.toolType || 'claude-code',
+		agentId,
 		projectPath: session.projectRoot,
 		sessionId,
 		sessionName: tab?.name ?? undefined,

@@ -28,7 +28,8 @@ import type { AgentConfig } from '../../../../renderer/types';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal()),
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="x-icon" className={className} style={style} />
 	),
@@ -106,6 +107,9 @@ vi.mock('lucide-react', () => ({
 	),
 	Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="trash-icon" className={className} style={style} />
+	),
+	Users: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="users-icon" className={className} style={style} />
 	),
 	Brain: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="brain-icon" className={className} style={style} />

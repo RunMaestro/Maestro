@@ -42,6 +42,7 @@ import {
 	renumberScreenshotReferences,
 } from '../../utils/stagedImageOrder';
 import type { Theme, Shortcut } from '../../types';
+import type { DictationTarget } from '../../utils/dictationTargets';
 import type { ComposerCapabilities } from './capabilities';
 
 const NOOP_SET_ENTER_TO_SEND = () => {};
@@ -69,6 +70,11 @@ export interface ChatComposerVoice {
 	listening: boolean;
 	/** Must be identity-stable, or the memoized toolbar re-renders per keystroke. */
 	onToggle: () => void;
+	/**
+	 * A Cappella owns the microphone (drawn under Send), so the toolbar draws no
+	 * Web Speech one, except on a phone, where the send column is gone.
+	 */
+	handledElsewhere?: boolean;
 }
 
 /** Toolbar props the frame sets itself; the rest pass through `toolbarProps`. */
@@ -85,6 +91,8 @@ type FrameOwnedToolbarProp =
 	| 'voiceSupported'
 	| 'isVoiceListening'
 	| 'onToggleVoiceInput'
+	| 'voiceHandledElsewhere'
+	| 'dictationTarget'
 	| 'onOpenPromptComposer'
 	| 'shortcuts'
 	| 'showFlashNotification'
@@ -155,6 +163,8 @@ export interface ChatComposerFrameProps {
 	enterToSend?: boolean;
 	setEnterToSend?: (value: boolean) => void;
 	voice?: ChatComposerVoice;
+	/** Where a dictated transcript lands (the toolbar's DictationButton). */
+	dictationTarget?: DictationTarget;
 	onUploadFiles?: (files: File[]) => void;
 	onOpenPromptComposer?: () => void;
 	shortcuts?: Record<string, Shortcut>;
@@ -172,6 +182,8 @@ export interface ChatComposerFrameProps {
 	sendDisabled?: boolean;
 	sendTone?: 'accent' | 'warning';
 	sendColumnClassName?: string;
+	/** Drawn under Send in the column, e.g. the A Cappella microphone. Not drawn on a phone. */
+	sendColumnExtras?: React.ReactNode;
 
 	className?: string;
 	style?: React.CSSProperties;
@@ -208,6 +220,7 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 	enterToSend = false,
 	setEnterToSend,
 	voice,
+	dictationTarget,
 	onUploadFiles,
 	onOpenPromptComposer,
 	shortcuts,
@@ -220,6 +233,7 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 	sendDisabled,
 	sendTone,
 	sendColumnClassName,
+	sendColumnExtras,
 	className,
 	style,
 }: ChatComposerFrameProps): JSX.Element {
@@ -276,6 +290,8 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 				voiceSupported={voice?.supported}
 				isVoiceListening={voice?.listening}
 				onToggleVoiceInput={voice?.onToggle}
+				voiceHandledElsewhere={voice?.handledElsewhere}
+				dictationTarget={dictationTarget}
 				onOpenPromptComposer={onOpenPromptComposer}
 				shortcuts={shortcuts}
 				showFlashNotification={showFlashNotification}
@@ -362,6 +378,7 @@ export const ChatComposerFrame = React.memo(function ChatComposerFrame({
 						sendDisabled={sendDisabled}
 						sendTone={sendTone}
 						sendMenu={sendMenu}
+						belowSend={sendColumnExtras}
 					/>
 				)}
 			</div>

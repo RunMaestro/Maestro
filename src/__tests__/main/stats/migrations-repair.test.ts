@@ -45,7 +45,7 @@ import { INSERT_QUERY_EVENT_SQL } from '../../../main/stats/query-event-insert';
 import { logger } from '../../../main/utils/logger';
 
 /** rc's highest stats migration. Bump alongside a new entry in getMigrations(). */
-const RC_TARGET_VERSION = 16;
+const RC_TARGET_VERSION = 24;
 
 function openDb(): Database.Database {
 	const raw = new DatabaseSync(':memory:');
@@ -92,6 +92,11 @@ function crossBranchDb(
 		resilience?: boolean;
 		wizard?: boolean;
 		wizardActiveMs?: boolean;
+		localModelRuns?: boolean;
+		proxyRequests?: boolean;
+		proxyRoutedTo?: boolean;
+		s1Decisions?: boolean;
+		s1AgentColumns?: boolean;
 	}
 ): Database.Database {
 	const db = openDb();
@@ -105,6 +110,14 @@ function crossBranchDb(
 	if (missing.resilience) db.exec('DROP TABLE resilience_events');
 	if (missing.wizard) db.exec('DROP TABLE wizard_runs');
 	if (missing.wizardActiveMs) db.exec('ALTER TABLE wizard_runs DROP COLUMN active_ms');
+	if (missing.localModelRuns) db.exec('DROP TABLE local_model_runs');
+	if (missing.proxyRequests) db.exec('DROP TABLE proxy_requests');
+	if (missing.proxyRoutedTo) db.exec('ALTER TABLE proxy_requests DROP COLUMN routed_to');
+	if (missing.s1Decisions) db.exec('DROP TABLE s1_decisions');
+	if (missing.s1AgentColumns) {
+		db.exec('ALTER TABLE s1_decisions DROP COLUMN tab_id');
+		db.exec('ALTER TABLE s1_decisions DROP COLUMN cached');
+	}
 	db.pragma(`user_version = ${version}`);
 	return db;
 }
@@ -242,6 +255,132 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
 	});
 
+	it("gives an acappella database stamped v22 (kind column, no shortcut_usage_by_id) main's v14", () => {
+		// acappella numbered its Local Models migrations 15-22 on top of kind at
+		// v14, before rc moved kind to v15; they are 17-24 now. Such a database
+		// has every table but shortcut_usage_by_id, which v14 repairs, and the
+		// rest upgrades as usual.
+		const db = openDb();
+		runMigrations(db);
+		db.exec('DROP TABLE shortcut_usage_by_id');
+		db.pragma('user_version = 22');
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'shortcut_usage_by_id')).toBe(true);
+		expect(columnNames(db, 'auto_run_sessions')).toContain('kind');
+		expect(hasTable(db, 'local_model_runs')).toBe(true);
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v14');
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+	});
+
+	it('creates local_model_runs for a database stamped v17 without it', () => {
+		// v17 declares isApplied, so if rc ships a different v17 first, an install
+		// stamped 17 by that build still gets this table.
+		const db = crossBranchDb(RC_TARGET_VERSION, { localModelRuns: true });
+		expect(hasTable(db, 'local_model_runs')).toBe(false);
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'local_model_runs')).toBe(true);
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v17');
+	});
+
+	it('creates proxy_requests for a database stamped v18 without it', () => {
+		// v18 declares isApplied for the same reason v17 does.
+		const db = crossBranchDb(RC_TARGET_VERSION, { proxyRequests: true });
+		expect(hasTable(db, 'proxy_requests')).toBe(false);
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'proxy_requests')).toBe(true);
+		// The table is created with every column it has today, so v19 has
+		// nothing left to repair.
+		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v18');
+	});
+
+	it('gives a fresh proxy_requests table the routed_to column', () => {
+		const db = openDb();
+		runMigrations(db);
+
+		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
+	});
+
+	it('adds routed_to to a proxy_requests table created before the column existed', () => {
+		// A v18 install: the table exists, without the column v19 adds.
+		const db = crossBranchDb(18, { proxyRoutedTo: true });
+		expect(columnNames(db, 'proxy_requests')).not.toContain('routed_to');
+
+		runMigrations(db);
+
+		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+		// An ordinary upgrade, not a repair.
+		expect(logger.warn).not.toHaveBeenCalled();
+	});
+
+	it('adds routed_to back to a database stamped v19 without it', () => {
+		// v19 declares isApplied, so a database another branch stamped 19 for a
+		// different migration still gets the column the insert names.
+		const db = crossBranchDb(RC_TARGET_VERSION, { proxyRoutedTo: true });
+
+		runMigrations(db);
+
+		expect(columnNames(db, 'proxy_requests')).toContain('routed_to');
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v19');
+	});
+
+	it('creates s1_decisions for a database stamped v20 without it', () => {
+		// v20 declares isApplied, so if rc ships a different v20 first, an install
+		// stamped 20 by that build still gets the System One ledger's table.
+		const db = crossBranchDb(RC_TARGET_VERSION, { s1Decisions: true });
+		expect(hasTable(db, 's1_decisions')).toBe(false);
+
+		runMigrations(db);
+
+		expect(hasTable(db, 's1_decisions')).toBe(true);
+		// The table v20 creates already has v21's columns, so v21 has nothing to repair.
+		expect(columnNames(db, 's1_decisions')).toEqual(expect.arrayContaining(['tab_id', 'cached']));
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v20');
+	});
+
+	it('adds tab_id and cached to an s1_decisions table created before the columns existed', () => {
+		const db = crossBranchDb(20, { s1AgentColumns: true });
+		expect(columnNames(db, 's1_decisions')).not.toContain('tab_id');
+		db.exec(
+			`INSERT INTO s1_decisions (id, started_at, task_id, engine, question_ids, outcome, latency_ms)
+			 VALUES ('d-1', 1, 'cue-gate', 'jev-cloud', '["proceed"]', 'ok', 200)`
+		);
+
+		runMigrations(db);
+
+		expect(columnNames(db, 's1_decisions')).toEqual(expect.arrayContaining(['tab_id', 'cached']));
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+		// A row written before the columns reads as not cached, from no tab.
+		expect(db.prepare('SELECT tab_id, cached FROM s1_decisions').get()).toEqual({
+			tab_id: null,
+			cached: 0,
+		});
+		// An ordinary upgrade, not a repair.
+		expect(logger.warn).not.toHaveBeenCalled();
+	});
+
+	it('adds the s1_decisions agent columns back to a database stamped v21 without them', () => {
+		const db = crossBranchDb(RC_TARGET_VERSION, { s1AgentColumns: true });
+
+		runMigrations(db);
+
+		expect(columnNames(db, 's1_decisions')).toEqual(expect.arrayContaining(['tab_id', 'cached']));
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v21');
+	});
+
 	it("gives a main database stamped v15 (token_speed_hourly, no kind column) rc's v15", () => {
 		// main ships token_speed_hourly as v15, the number rc gave the `kind`
 		// column. Such a database must get `kind` by repair, and v16 must leave the
@@ -262,6 +401,24 @@ describe('runMigrations repairs schema skipped by a cross-branch user_version', 
 		expect(
 			(db.prepare('SELECT COUNT(*) AS n FROM token_speed_hourly').get() as { n: number }).n
 		).toBe(1);
+		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
+	});
+
+	it('gives an acappella database stamped v23 before rc took v16 its token_speed_hourly', () => {
+		// acappella shipped its Local Models migrations as v16-v23 before rc took
+		// v16 for token_speed_hourly; they are v17-v24 now. A database such a build
+		// stamped 23 has every acappella table but not token_speed_hourly, which
+		// the repair pass gives it, and v24 then upgrades as usual.
+		const db = openDb();
+		runMigrations(db);
+		db.exec('DROP TABLE token_speed_hourly');
+		db.pragma('user_version = 23');
+
+		runMigrations(db);
+
+		expect(hasTable(db, 'token_speed_hourly')).toBe(true);
+		expect(logger.warn).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(logger.warn).mock.calls[0][0]).toContain('v16');
 		expect(getCurrentVersion(db)).toBe(RC_TARGET_VERSION);
 	});
 });

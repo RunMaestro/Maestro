@@ -2374,7 +2374,7 @@ describe('qualification spend admission', () => {
 				binary: {
 					path: `${REL}/bin/grok`,
 					sha256: sha.grok,
-					version: TRANSLATION_PROVIDER_VERSIONS.grok[0],
+					version: TRANSLATION_PROVIDER_VERSIONS.grok.testedVersions[0],
 				},
 				spendBounds: {
 					perCall: {
@@ -2407,7 +2407,7 @@ describe('qualification spend admission', () => {
 						binary: {
 							path: `${REL}/bin/claude`,
 							sha256: sha.claude,
-							version: TRANSLATION_PROVIDER_VERSIONS['claude-code'][0],
+							version: TRANSLATION_PROVIDER_VERSIONS['claude-code'].testedVersions[0],
 						},
 					},
 					codex: {
@@ -2417,7 +2417,7 @@ describe('qualification spend admission', () => {
 						binary: {
 							path: `${REL}/bin/codex`,
 							sha256: sha.codex,
-							version: TRANSLATION_PROVIDER_VERSIONS.codex[0],
+							version: TRANSLATION_PROVIDER_VERSIONS.codex.testedVersions[0],
 						},
 					},
 				},

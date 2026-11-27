@@ -2,6 +2,7 @@ import { memo, useCallback } from 'react';
 import { selectModalData, useModalStore } from '../../stores/modalStore';
 import { selectAuthOutage, useAuthOutageStore } from '../../stores/authOutageStore';
 import { selectSessionById, useSessionStore } from '../../stores/sessionStore';
+import { resolveErrorProvider } from '../../utils/providerTabSessions';
 import { notifyToast } from '../../stores/notificationStore';
 import type {
 	Theme,
@@ -28,6 +29,7 @@ import { TransferProgressModal } from '../TransferProgressModal';
 import { LeaderboardRegistrationModal } from '../LeaderboardRegistrationModal';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 
 // Re-export types used by consumers
 export type { RecoveryAction, MergeOptions, SendToAgentOptions };
@@ -176,7 +178,9 @@ export const AppAgentModals = memo(function AppAgentModals({
 	// An account login names its own host: the outage's first blocked agent
 	// may be on a different account of the same provider.
 	const reauthSession = reauthOutage
-		? (reauthData?.host ?? sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId))
+		? (reauthData?.host ??
+			reauthOutage.host ??
+			sessions.find((s) => s.id === reauthOutage.blocked[0]?.sessionId))
 		: undefined;
 
 	// Self-sourced for the same reason: opened from the agent error dialog's
@@ -187,7 +191,7 @@ export const AppAgentModals = memo(function AppAgentModals({
 		: undefined;
 	const handleProviderInstallRetry = useCallback(async () => {
 		if (!providerInstallData) return;
-		const { sessionId, tabId } = providerInstallData;
+		const { sessionId, tabId, agentId: failedAgentId } = providerInstallData;
 		closeReauthModal('providerInstall');
 		const initialSession = selectSessionById(sessionId)(useSessionStore.getState());
 		if (!initialSession) {
@@ -201,7 +205,11 @@ export const AppAgentModals = memo(function AppAgentModals({
 		}
 		// Refresh agent detection so a cached "not found" result does not survive
 		// into the retried spawn.
-		await window.maestro?.agents?.reprobe?.(initialSession.toolType)?.catch(() => undefined);
+		const failedTab = tabId ? initialSession.aiTabs?.find((t) => t.id === tabId) : undefined;
+		const reprobeTarget =
+			failedAgentId ??
+			resolveErrorProvider(failedTab, initialSession, initialSession.agentError ?? undefined);
+		await window.maestro?.agents?.reprobe?.(reprobeTarget)?.catch(() => undefined);
 		// Re-read live session/tab state after the await: the user may have closed
 		// the agent or tab while reprobe was running.
 		const liveSession = selectSessionById(sessionId)(useSessionStore.getState());
@@ -248,13 +256,9 @@ export const AppAgentModals = memo(function AppAgentModals({
 				<AgentErrorModal
 					theme={theme}
 					error={effectiveAgentError}
-					agentName={
-						errorSession
-							? errorSession.toolType === 'claude-code'
-								? 'Claude Code'
-								: errorSession.toolType
-							: undefined
-					}
+					agentName={getAgentDisplayName(
+						effectiveAgentError.agentId || errorSession?.toolType || ''
+					)}
 					sessionName={errorSession?.name}
 					recoveryActions={recoveryActions}
 					onDismiss={onDismissAgentError}
@@ -266,6 +270,7 @@ export const AppAgentModals = memo(function AppAgentModals({
 			{/* --- PROVIDER RE-AUTHENTICATION MODAL --- */}
 			{reauthOutage && reauthSession && (
 				<ReauthModal
+					key={reauthOutage.providerKey}
 					theme={theme}
 					outage={reauthOutage}
 					session={reauthSession}
@@ -278,6 +283,8 @@ export const AppAgentModals = memo(function AppAgentModals({
 				<ProviderInstallModal
 					theme={theme}
 					session={providerInstallSession}
+					agentId={providerInstallData.agentId}
+					tabId={providerInstallData.tabId}
 					reason={providerInstallData.reason}
 					onClose={() => closeReauthModal('providerInstall')}
 					onRetry={handleProviderInstallRetry}

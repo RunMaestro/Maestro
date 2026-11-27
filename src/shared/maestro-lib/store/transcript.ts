@@ -20,6 +20,7 @@
 import type { AgentError } from '../../types';
 import type { AgentRecord, AITabRecord, SessionsDocument, UnknownFields } from './records';
 import { agentsOf, aiTabsOf } from './read-stores';
+import type { ContextTranslationRecord } from '../translation/types';
 
 /** Every kind of transcript entry, in no particular order. */
 export const LOG_ENTRY_SOURCES = [
@@ -79,7 +80,9 @@ export interface LogEntryRecord extends UnknownFields {
 	};
 	/** The model and effort the turn ran under; absent means the agent default. */
 	turnModel?: string;
+	turnProvider?: string;
 	turnEffort?: string;
+	contextTranslation?: ContextTranslationRecord;
 	/**
 	 * A "Session not found" entry's recovery card: the prompt that hit the dead session and the
 	 * tab to re-send it on, with the prior conversation as context.

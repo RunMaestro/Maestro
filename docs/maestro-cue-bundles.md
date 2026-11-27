@@ -8,7 +8,7 @@ A bundle is a zip that carries one Cue pipeline (its subscriptions, prompt files
 
 ## In the app
 
-**Export an agent.** Right-click it in the Left Bar and choose **Export Agent...** (or **Export Agent** in the command palette). One export, with options:
+**Export an agent.** Right-click it in the Left Bar and choose **Agent Tools > Export Agent...** (or **Export Agent** in the command palette). One export, with options:
 
 - **Cue subscriptions**, the ones the agent runs, with their prompt files. Shown only while Maestro Cue is on; with Cue off they stay out.
 - **Claude Code assets** (skills, MCP servers, memory), for a Claude Code agent.

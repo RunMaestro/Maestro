@@ -110,6 +110,36 @@ describe('captureFeedbackLiveDiagnosis', () => {
 		]);
 	});
 
+	it('reports tab selection, running owner and failure owner without publishing native identities', async () => {
+		windows.push(
+			windowReturning({
+				...limitPaused,
+				agents: [
+					{
+						...limitPaused.agents[0],
+						tabs: [
+							{
+								id: 'private-tab-id',
+								provider: 'claude-code',
+								turnProvider: 'codex',
+								state: 'busy',
+							},
+						],
+						error: { ...limitPaused.agents[0].error, provider: 'codex' },
+					},
+				],
+			})
+		);
+		const diagnosis = await captureFeedbackLiveDiagnosis();
+		expect(formatLiveDiagnosisForPrompt(diagnosis)).toContain(
+			'Tab private-tab-id: provider=claude-code, state=busy, turnProvider=codex'
+		);
+		const issue = formatLiveDiagnosisForIssue(diagnosis);
+		expect(issue).toContain('Tab 1: provider=claude-code, state=busy, turnProvider=codex');
+		expect(issue).toContain('provider=codex');
+		expect(issue).not.toContain('private-tab-id');
+	});
+
 	it('names the agent in the prompt but never in the public issue', async () => {
 		windows.push(windowReturning(limitPaused));
 		const diagnosis = await captureFeedbackLiveDiagnosis();

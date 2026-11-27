@@ -30,6 +30,7 @@ import type { QueueSteerResult } from '../../chatSteering';
 import type { SteeringCommandInput, SteeringCommandResult } from '../../autoRunSteeringCommands';
 import type { ProjectTokenUsage, ProjectTokenUsageProject } from '../../projectTokenUsage';
 import type { HarnessControlMode } from '../providers/native-control';
+import type { PeerAccess, PeerAgent } from '../../types';
 import type { AutoRunLaunchInput, GoalRunLaunchInput } from '../autorun/launch';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
 import type { GroupChatCreateInput, GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
@@ -320,6 +321,18 @@ export interface AgentPatch {
 	codexTransport?: CodexTransport | null;
 	/** Optional native protocol mode. `current` and `null` are stored as unset. */
 	harnessControlMode?: HarnessControlMode | null;
+	/**
+	 * Peer Agents: the explicit rows, replaced whole, naming agents by their id on THIS host.
+	 * `null` clears them. A conductor sends only the rows it can name here
+	 * (`splitPeerRowsForHost()`); a row for an agent on another machine stays with it.
+	 */
+	peerAgents?: PeerAgent[] | null;
+	/** The group grant: every other agent in this agent's group on the host. `null` is off. */
+	groupPeerAccess?: PeerAccess | null;
+	/** The worktree grant: the worktree family on the host. `null` is off. */
+	worktreePeerAccess?: PeerAccess | null;
+	/** How peers see this agent: its advertised specialty. */
+	peerDescription?: string | null;
 }
 
 export type AgentPatchField = keyof AgentPatch;
@@ -929,6 +942,8 @@ export interface GroupChatsApi {
 // ---------------------------------------------------------------------------
 
 export interface ConsultAskInput {
+	/** Place already admitted by the calling CLI, forwarded across hosts. */
+	consultChain?: import('../../consultBudget').ConsultChain;
 	/** The agent to ask. */
 	targetAgentId: string;
 	/** A self-contained question: no transcript is forwarded unless `withContext`. */
@@ -975,6 +990,8 @@ export interface ConsultAnswer {
 	answer: string;
 	/** The consulted agent's name, as the host reports it. */
 	agentName?: string;
+	/** Provider captured from the destination consult's launch. */
+	provider?: string;
 }
 
 /**

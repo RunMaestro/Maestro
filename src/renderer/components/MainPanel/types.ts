@@ -1,3 +1,5 @@
+import type { ToolType } from '../../types';
+import type { UseAgentSessionManagementReturn } from '../../hooks/agent/useAgentSessionManagement';
 import type React from 'react';
 import type { BrowserTab } from '../../../shared/browserPage';
 import type { BrowserViewportPreset } from '../../../shared/browserViewport';
@@ -105,11 +107,7 @@ export interface MainPanelProps {
 	setMemoryViewerOpen: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
 	onResumeAgentSession: (
-		agentSessionId: string,
-		messages: import('../../types').LogEntry[],
-		sessionName?: string,
-		starred?: boolean,
-		usageStats?: import('../../types').UsageStats
+		...args: Parameters<UseAgentSessionManagementReturn['handleResumeSession']>
 	) => void;
 	onNewAgentSession: () => void;
 	setInputValue: (value: string) => void;
@@ -187,7 +185,9 @@ export interface MainPanelProps {
 	onTabMarkUnread?: (tabId: string) => void;
 	onUpdateTabByClaudeSessionId?: (
 		agentSessionId: string,
-		updates: { name?: string | null; starred?: boolean }
+		updates: { name?: string | null; starred?: boolean },
+		provider?: ToolType,
+		sessionId?: string
 	) => void;
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;

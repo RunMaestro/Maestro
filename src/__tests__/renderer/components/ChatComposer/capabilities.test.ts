@@ -77,19 +77,20 @@ describe('aiCanAttachImages', () => {
 });
 
 describe('deriveAiComposerCapabilities', () => {
-	it('offers every control in AI mode on a fully capable agent', () => {
+	it('offers every agent control in AI mode on a fully capable agent, and no file upload', () => {
 		expect(deriveAiComposerCapabilities(input())).toEqual({
 			imageAttach: true,
-			upload: true,
+			upload: false,
 			voice: true,
 			saveToHistory: true,
 			permission: true,
 			thinking: true,
 			modelEffort: true,
+			enterToSendToggle: false,
 		});
 	});
 
-	it('offers nothing in terminal mode', () => {
+	it('offers only the Enter toggle in terminal mode', () => {
 		expect(deriveAiComposerCapabilities(input({ inputMode: 'terminal' }))).toEqual({
 			imageAttach: false,
 			upload: false,
@@ -98,6 +99,7 @@ describe('deriveAiComposerCapabilities', () => {
 			permission: false,
 			thinking: false,
 			modelEffort: false,
+			enterToSendToggle: true,
 		});
 	});
 
@@ -125,7 +127,7 @@ describe('deriveAiComposerCapabilities', () => {
 			input({ hasCapability: capabilitiesOf(), supportsThinking: false })
 		);
 		expect(caps).toMatchObject({
-			upload: true,
+			upload: false,
 			voice: true,
 			saveToHistory: true,
 			modelEffort: true,
@@ -134,7 +136,7 @@ describe('deriveAiComposerCapabilities', () => {
 });
 
 describe('GROUP_CHAT_COMPOSER_CAPABILITIES', () => {
-	it('offers attach, upload and voice, and no per-tab agent setting', () => {
+	it('offers attach, upload, voice and the Enter toggle, and no per-tab agent setting', () => {
 		expect(GROUP_CHAT_COMPOSER_CAPABILITIES).toEqual({
 			imageAttach: true,
 			upload: true,
@@ -143,6 +145,7 @@ describe('GROUP_CHAT_COMPOSER_CAPABILITIES', () => {
 			permission: false,
 			thinking: false,
 			modelEffort: false,
+			enterToSendToggle: true,
 		});
 	});
 

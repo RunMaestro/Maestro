@@ -1,5 +1,6 @@
 import {
 	analyzeMemoryLinks,
+	resolveClaudeMemoryPath,
 	resolveMemoryRepositoryRoot,
 } from '../../shared/maestro-lib/translation/memory';
 import { getAgentCapabilities } from '../../shared/maestro-lib/providers/capabilities';
@@ -10,13 +11,14 @@ import { getAgentCapabilities } from '../../shared/maestro-lib/providers/capabil
  * never touch the user's real ~/.claude/projects/<encoded>/memory/.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
 import {
 	memoryLayoutFor,
+	resolveProviderMemoryLayout,
 	type MemoryLayout,
 	listMemoryEntries,
 	readMemoryEntry,
@@ -492,5 +494,81 @@ describe('shared memory link discovery', () => {
 		);
 		expect(result.referenced.has('memory/nested/topic.md')).toBe(true);
 		expect(result.brokenLinks).toEqual([{ source: 'memory/MEMORY.md', target: 'absent.md' }]);
+	});
+});
+
+describe('resolveProviderMemoryLayout', () => {
+	let root: string;
+	let account: string;
+	let project: string;
+
+	beforeEach(() => {
+		root = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-memory-resolve-'));
+		account = path.join(root, 'account');
+		project = path.join(root, 'project');
+		fs.mkdirSync(account, { recursive: true });
+	});
+
+	afterEach(() => {
+		fs.rmSync(root, { recursive: true, force: true });
+	});
+
+	const noGit = async () => undefined;
+
+	it('keys a Claude store by the project path when there is no repository', async () => {
+		const layout = await resolveProviderMemoryLayout('claude-code', {
+			projectPath: project,
+			accountDir: account,
+			readCommonDirectory: noGit,
+		});
+		expect(layout.directoryPath).toBe(resolveClaudeMemoryPath(project, account));
+		expect(layout.scope).toBe('project');
+	});
+
+	it("keys a worktree's Claude store by its main checkout, as the Memory Viewer does", async () => {
+		const main = path.join(root, 'main-checkout');
+		const layout = await resolveProviderMemoryLayout('claude-code', {
+			projectPath: project,
+			accountDir: account,
+			readCommonDirectory: async () => path.join(main, '.git'),
+		});
+		expect(layout.directoryPath).toBe(resolveClaudeMemoryPath(main, account));
+		expect(layout.directoryPath).not.toBe(resolveClaudeMemoryPath(project, account));
+	});
+
+	it('honors autoMemoryDirectory from the account settings', async () => {
+		const elsewhere = path.join(root, 'notes');
+		fs.writeFileSync(
+			path.join(account, 'settings.json'),
+			JSON.stringify({ autoMemoryDirectory: elsewhere })
+		);
+		const layout = await resolveProviderMemoryLayout('claude-code', {
+			projectPath: project,
+			accountDir: account,
+			readCommonDirectory: noGit,
+		});
+		expect(layout.directoryPath).toBe(path.resolve(elsewhere));
+	});
+
+	it('never asks git for a provider whose store is per account', async () => {
+		const readCommonDirectory = vi.fn(noGit);
+		const layout = await resolveProviderMemoryLayout('codex', {
+			projectPath: project,
+			accountDir: account,
+			readCommonDirectory,
+		});
+		expect(layout.directoryPath).toBe(path.join(account, 'memories'));
+		expect(layout.scope).toBe('account');
+		expect(readCommonDirectory).not.toHaveBeenCalled();
+	});
+
+	it('refuses a provider with no store Maestro can read, with the same reason the viewer gives', async () => {
+		await expect(
+			resolveProviderMemoryLayout('opencode', {
+				projectPath: project,
+				accountDir: account,
+				readCommonDirectory: noGit,
+			})
+		).rejects.toThrow('Memory viewer is not supported for agent "opencode"');
 	});
 });

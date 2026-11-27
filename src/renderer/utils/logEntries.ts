@@ -51,6 +51,8 @@ export function isSelfContainedCard(entry: LogEntry): boolean {
 		entry.delegation ||
 		// Automatic context compaction pill - owned by services/contextCompaction.ts
 		entry.contextCompaction ||
+		// Committed provider translation marker - never a stream or assistant response.
+		entry.contextTranslation ||
 		// Tool call card / hidden-progress placeholder
 		entry.metadata?.hiddenProgress ||
 		entry.metadata?.toolState ||

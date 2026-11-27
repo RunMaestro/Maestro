@@ -15,6 +15,7 @@ import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
+import { contextMenuIconStyle } from './ui/ContextMenuHeader';
 
 export interface TerminalSelectionContextMenuState {
 	x: number;
@@ -79,6 +80,9 @@ export function TerminalSelectionContextMenu({
 		onDismiss();
 	}, [menu.selection, onQuote, onDismiss]);
 
+	// Icons in the accent, labels in the main text color: the shared
+	// right-click menu look (see ContextMenuHeader).
+	const iconStyle = contextMenuIconStyle(theme);
 	const handleComment = useCallback(() => {
 		onComment?.();
 		onDismiss();
@@ -109,7 +113,7 @@ export function TerminalSelectionContextMenu({
 					style={{ color: theme.colors.textMain }}
 					data-testid="selection-menu-comment"
 				>
-					<MessageSquarePlus className="w-3.5 h-3.5" />
+					<MessageSquarePlus className="w-3.5 h-3.5" style={iconStyle} />
 					{commentLabel}
 				</button>
 			)}
@@ -119,7 +123,7 @@ export function TerminalSelectionContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Quote className="w-3.5 h-3.5" />
+					<Quote className="w-3.5 h-3.5" style={iconStyle} />
 					Quote in Message
 				</button>
 			)}
@@ -129,7 +133,7 @@ export function TerminalSelectionContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Copy className="w-3.5 h-3.5" />
+					<Copy className="w-3.5 h-3.5" style={iconStyle} />
 					Copy to Clipboard
 				</button>
 			)}
@@ -139,7 +143,7 @@ export function TerminalSelectionContextMenu({
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					<Send className="w-3.5 h-3.5" />
+					<Send className="w-3.5 h-3.5" style={iconStyle} />
 					Send to Agent
 				</button>
 			)}

@@ -1,3 +1,8 @@
+import {
+	captureQueuedTurnSettings,
+	projectTabProvider,
+	resolveTurnProvider,
+} from '../../utils/providerTabSessions';
 /**
  * useSessionRecovery - in-place recovery for session_not_found errors.
  *
@@ -17,6 +22,7 @@
  *      session in place - tab id, tab name, and sidebar entry are preserved.
  */
 
+import type { ProcessInputOptions } from '../input/useInputProcessing';
 import { useCallback, useState } from 'react';
 import type { LogEntry } from '../../types';
 import { useSessionStore, updateSessionWith } from '../../stores/sessionStore';
@@ -34,12 +40,7 @@ export interface StartRecoveryOptions {
 }
 
 export interface UseSessionRecoveryDeps {
-	processInputRef: React.MutableRefObject<
-		(
-			text?: string,
-			options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
-		) => void
-	>;
+	processInputRef: React.MutableRefObject<(text?: string, options?: ProcessInputOptions) => void>;
 }
 
 export interface UseSessionRecoveryResult {
@@ -82,20 +83,29 @@ export function useSessionRecovery(deps: UseSessionRecoveryDeps): UseSessionReco
 				if (!session) throw new Error('Session not found in store');
 				const tab = session.aiTabs.find((t) => t.id === tabId);
 				if (!tab) throw new Error('Tab not found in session');
+				const { agent: recoverySession, tab: recoveryTab } = projectTabProvider(
+					session,
+					tab,
+					resolveTurnProvider(tab, session)
+				);
+				const turnSettings = captureQueuedTurnSettings(recoveryTab, recoverySession);
 
 				const sourceContext = extractTabContext(
-					tab,
+					recoveryTab!,
 					getSessionDisplayName(session.name, session.projectRoot),
-					session
+					recoverySession
 				);
 
 				let conversationText: string;
 				if (groomContext) {
-					const transferPrompt = buildContextTransferPrompt(session.toolType, session.toolType);
+					const transferPrompt = buildContextTransferPrompt(
+						recoverySession.toolType,
+						recoverySession.toolType
+					);
 					const result = await contextGroomingService.groomContexts(
 						{
 							sources: [sourceContext],
-							targetAgent: session.toolType,
+							targetAgent: recoverySession.toolType,
 							targetProjectRoot: session.projectRoot,
 							groomingPrompt: transferPrompt,
 						},
@@ -128,6 +138,14 @@ ${conversationText}
 ---`
 					: undefined;
 
+				if (
+					!useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === sessionId)
+						?.aiTabs.some((t) => t.id === tabId)
+				)
+					throw new Error('Recovery tab was closed');
+
 				if (pendingMergedContext) {
 					updateSessionWith(sessionId, (s) => ({
 						...s,
@@ -140,7 +158,14 @@ ${conversationText}
 
 				// Pin session/tab from recovery start - the user may have switched focus
 				// during grooming.
-				deps.processInputRef.current(lastUserPrompt, { sessionId, tabId });
+				if (
+					!useSessionStore
+						.getState()
+						.sessions.find((s) => s.id === sessionId)
+						?.aiTabs.some((t) => t.id === tabId)
+				)
+					throw new Error('Recovery tab was closed');
+				deps.processInputRef.current(lastUserPrompt, { sessionId, tabId, turnSettings });
 			} catch (err) {
 				const message = err instanceof Error ? err.message : 'Unknown recovery error';
 				setRecoveryError(message);

@@ -12,7 +12,11 @@
 
 import type { MirrorPeerSummary } from './maestro-lib/client/peer-mirror';
 import type { AutoFederationSnapshot } from './federationAuto';
-import type { LiftSyncConflict, LiftSyncResolution } from './maestro-lib/agents/lift-settings-sync';
+import type {
+	FederationFieldStatus,
+	LiftSyncConflict,
+	LiftSyncResolution,
+} from './maestro-lib/agents/lift-settings-sync';
 
 /**
  * The answer while the main-process peer mirror is not running: before boot started it, or after
@@ -34,9 +38,10 @@ export const FEDERATION_COMMAND_RESULT = 'federation_command_result';
  * `peers` lists what the desktop mirrors; `reconnect` forces one peer's reload; `auto-status`
  * reads automatic Federation's snapshot; `auto-run` runs a pass now and answers what it left.
  * `conflicts` lists the hosted agents' settings waiting for a person (the Federation Settings
- * Conflicts modal); `resolve-conflict` settles one the way its buttons do. `hosted-agents` lists
- * every agent the peers' hosts run and which of them the Left Bar shows; `add-agent` adds one (the
- * Add Hosted Agent modal).
+ * Conflicts modal); `resolve-conflict` settles one the way its buttons do. `settings-fields`
+ * answers where each setting of one hosted agent lives and what waits on it (the badges Edit
+ * Agent draws), for `show agent --json`. `hosted-agents` lists every agent the peers' hosts run
+ * and which of them the Left Bar shows; `add-agent` adds one (New Agent's host list).
  */
 export type FederationCommandAction =
 	| 'peers'
@@ -45,6 +50,7 @@ export type FederationCommandAction =
 	| 'auto-run'
 	| 'conflicts'
 	| 'resolve-conflict'
+	| 'settings-fields'
 	| 'hosted-agents'
 	| 'add-agent';
 
@@ -55,17 +61,20 @@ export const FEDERATION_COMMAND_ACTIONS: readonly FederationCommandAction[] = [
 	'auto-run',
 	'conflicts',
 	'resolve-conflict',
+	'settings-fields',
 	'hosted-agents',
 	'add-agent',
 ];
 
 /**
- * One agent a peer's host runs, as the Add Hosted Agent modal and `maestro-cli federation agents`
+ * One agent a peer's host runs, as New Agent's host list and `maestro-cli federation agents`
  * list it. `addedAs` is the local agent (Left Bar row) that points at it, when one does.
  */
 export interface HostedAgentListing {
 	peerId: string;
 	peerName: string;
+	/** The SSH remote the host is reached over (the New Agent "Runs on" choice). */
+	remoteId: string;
 	agentId: string;
 	/** `peer:agentId`, the address maestro-cli takes. */
 	ref: string;
@@ -115,6 +124,8 @@ export interface HostedSettingsConflictSummary {
 export type FederationWindowRequest =
 	| { action: 'list' }
 	| { action: 'resolve'; agent: string; field: string; resolution: LiftSyncResolution }
+	/** `agent` is `peer:agentId` of the host agent. */
+	| { action: 'fields'; agent: string }
 	| { action: 'hosted-agents' }
 	| ({ action: 'add-agent' } & AddHostedAgentRequest);
 
@@ -122,6 +133,8 @@ export interface FederationWindowReply {
 	success: boolean;
 	error?: string;
 	conflicts?: HostedSettingsConflictSummary[];
+	/** `fields`: every setting of the agent, with its scope and what waits on it. */
+	fields?: FederationFieldStatus[];
 	hostedAgents?: HostedAgentListing[];
 	added?: AddedHostedAgent;
 }
@@ -134,7 +147,7 @@ export interface FederationCommandRequest {
 	action: FederationCommandAction;
 	/** `reconnect` only: a peer id, remote name, or remote id (prefix), as `findMirrorPeer()` reads it. */
 	peer?: string;
-	/** `resolve-conflict` only: the hosted agent (`peer:agentId`). */
+	/** `resolve-conflict` and `settings-fields`: the hosted agent (`peer:agentId`). */
 	agent?: string;
 	/** `resolve-conflict` only: the field id the conflict list names. */
 	field?: string;
@@ -159,6 +172,8 @@ export interface FederationCommandResult {
 	auto?: AutoFederationSnapshot;
 	/** `conflicts` / `resolve-conflict`: what still waits for a person, after the change. */
 	conflicts?: HostedSettingsConflictSummary[];
+	/** `settings-fields`: every setting of the agent, with its scope and what waits on it. */
+	fields?: FederationFieldStatus[];
 	/** `hosted-agents`: every agent the mirrored hosts run, with the ones the Left Bar shows. */
 	hostedAgents?: HostedAgentListing[];
 	/** `add-agent`: the Left Bar row it made. */

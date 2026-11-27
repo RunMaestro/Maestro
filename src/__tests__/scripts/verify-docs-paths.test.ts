@@ -96,6 +96,15 @@ describe('verify-docs-paths', () => {
 		expect(findings[0]).toContain(`max ${MAX_INDEX_LINE}`);
 	});
 
+	it('measures an index line without its CRLF ending (a Windows checkout)', () => {
+		const atLimit = `${INDEX_LINE}${'x'.repeat(MAX_INDEX_LINE - INDEX_LINE.length)}`;
+		expect(atLimit.length).toBe(MAX_INDEX_LINE);
+		plant(sandbox, INDEX_DOC, indexDoc([atLimit]).replace(/\n/g, '\r\n'));
+		plant(sandbox, CANON_DOC, `# Canonical Utilities\r\n\r\n${CANON_LINE}\r\n`);
+
+		expect(verifyDocs(sandbox)).toMatchObject({ findings: [], indexEntries: 1, canonEntries: 1 });
+	});
+
 	it('leaves a long entry in the full-rationale file alone', () => {
 		write([INDEX_LINE], [`${CANON_LINE} ${'A long reasoned paragraph. '.repeat(40)}`]);
 

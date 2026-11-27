@@ -27,6 +27,7 @@ import { useResolvedTheme } from '../hooks/ui/useResolvedTheme';
 import { useSettingsStore } from '../stores/settingsStore';
 import { logger } from '../utils/logger';
 import type { Theme } from '../types';
+import { VoiceWidget } from './VoiceWidget';
 import { MediaPlayerWidget } from './MediaPlayerWidget';
 import { ThroughputGaugeWidget } from './ThroughputGaugeWidget';
 
@@ -41,6 +42,7 @@ export interface FloatingWidgetBodyProps {
 const WIDGET_BODIES: Record<FloatingWidgetId, ComponentType<FloatingWidgetBodyProps>> = {
 	'throughput-gauge': ThroughputGaugeWidget,
 	'media-player': MediaPlayerWidget,
+	'acappella-voice': VoiceWidget,
 };
 
 function readWidgetParam(): string | null {

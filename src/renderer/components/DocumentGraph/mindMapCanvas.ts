@@ -9,6 +9,7 @@
 import { BASE_FONT_SIZE_DEFAULT } from '../../../shared/typography';
 import type { Theme } from '../../types';
 import type { MindMapNode } from './MindMap';
+import type { GraphEdgeGeometry } from '../../utils/graphEdgeGeometry';
 import {
 	NODE_PILL_CHAR_WIDTH,
 	NODE_PILL_CHROME_WIDTH,
@@ -190,7 +191,9 @@ export function drawLink(
 	targetY: number,
 	color: string,
 	lineWidth: number,
-	isDashed: boolean = false
+	isDashed: boolean = false,
+	directed: boolean = false,
+	geometry?: GraphEdgeGeometry
 ): void {
 	ctx.strokeStyle = color;
 	ctx.lineWidth = lineWidth;
@@ -209,7 +212,9 @@ export function drawLink(
 	ctx.moveTo(sourceX, sourceY);
 
 	// Use quadratic bezier for horizontal-ish connections
-	if (Math.abs(sourceY - targetY) < 20) {
+	if (geometry?.control) {
+		ctx.quadraticCurveTo(geometry.control.x, geometry.control.y, targetX, targetY);
+	} else if (geometry || Math.abs(sourceY - targetY) < 20) {
 		ctx.lineTo(targetX, targetY);
 	} else {
 		// Use cubic bezier for better curves
@@ -220,6 +225,33 @@ export function drawLink(
 
 	ctx.stroke();
 	ctx.setLineDash([]);
+	if (directed) {
+		// The curve's final tangent is horizontal unless the nodes share an x.
+		const angle = geometry
+			? Math.atan2(
+					targetY - (geometry.control?.y ?? sourceY),
+					targetX - (geometry.control?.x ?? sourceX)
+				)
+			: sourceX === targetX
+				? Math.atan2(targetY - sourceY, targetX - sourceX)
+				: targetX > sourceX
+					? 0
+					: Math.PI;
+		const arrowSize = 9;
+		ctx.beginPath();
+		ctx.moveTo(targetX, targetY);
+		ctx.lineTo(
+			targetX - arrowSize * Math.cos(angle - Math.PI / 6),
+			targetY - arrowSize * Math.sin(angle - Math.PI / 6)
+		);
+		ctx.lineTo(
+			targetX - arrowSize * Math.cos(angle + Math.PI / 6),
+			targetY - arrowSize * Math.sin(angle + Math.PI / 6)
+		);
+		ctx.closePath();
+		ctx.fillStyle = color;
+		ctx.fill();
+	}
 }
 
 /**

@@ -38,6 +38,8 @@ const REPO_ROOT = path.resolve(SRC, '../../..');
  * wiring drops is a feature quietly turned off in a shipped build.
  */
 const INTENTIONALLY_OMITTED: Record<string, string> = {
+	'registerACappellaHandlers.getDefaultScope':
+		'test seam; absent, a hotkey or remote-button press with no explicit scope binds the Conductor',
 	'registerPersistenceHandlers.cancelQueueItem':
 		'test seam; absent, the handler cancels through cancelPianolaQueueItem() on the live store',
 	'registerPianolaHandlers.confirmScopeConfiguration':
@@ -195,7 +197,7 @@ describe('IPC handler wiring parity', () => {
 	it('uses the composed post-flush Pianola consumer in the live bootstrap', () => {
 		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf8'));
 		expect(source).toContain(
-			'onSessionsPersisted: pianolaPersistenceConsumer(deps.getPianolaSupervisor)'
+			'pianolaPersistenceConsumer(deps.getPianolaSupervisor)(added, current, removedIds)'
 		);
 		expect(source).toContain("from './pianola-persistence'");
 	});

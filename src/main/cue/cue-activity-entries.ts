@@ -1,3 +1,5 @@
+import { isCueRunBlocked } from '../../shared/cue/contracts';
+import { readCueGateRecord } from '../../shared/cue/gate';
 /**
  * The Cue activity view's one mapping, shared by every surface that shows it.
  *
@@ -106,6 +108,8 @@ export function cueEventRecordsToRunResults(
 function activityStatus(status: CueRunStatus): CueActivityEntry['status'] {
 	if (status === 'completed') return 'completed';
 	if (status === 'running') return 'running';
+	if (status === 'gated') return 'gated';
+	if (isCueRunBlocked(status)) return 'blocked';
 	// `timeout` and `stopped` are terminal failure variants.
 	if (status === 'failed' || status === 'timeout' || status === 'stopped') return 'failed';
 	return 'triggered';
@@ -145,7 +149,12 @@ export function toCueActivityEntries(
 		sessionId: r.sessionId,
 		timestamp: Date.parse(r.startedAt) || 0,
 		status: activityStatus(r.status),
-		result: r.status === 'completed' ? r.stdout || undefined : r.stderr || undefined,
+		result:
+			r.status === 'completed'
+				? r.stdout || undefined
+				: r.status === 'gated'
+					? readCueGateRecord(r.event.payload)?.reason || undefined
+					: r.stderr || undefined,
 		// A run still in flight has no duration yet; its `durationMs` is a
 		// placeholder 0, which would read as a finished zero-length run.
 		duration: r.status === 'running' ? undefined : r.durationMs,

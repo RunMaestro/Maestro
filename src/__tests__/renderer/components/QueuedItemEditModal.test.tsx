@@ -12,6 +12,7 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem, Session } from '../../../renderer/types';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import { resetStore } from '../../helpers/resetStores';
@@ -120,6 +121,11 @@ describe('QueuedItemEditModal model + effort override', () => {
 				effort: [],
 				reasoning: ['low', 'high'],
 			},
+			opencode: {
+				models: ['opencode/kimi-k2.5-free'],
+				effort: [],
+				reasoning: [],
+			},
 		};
 
 	function mockAgentsApi(status: AgentDiscoveryResult['status'] = 'discovered') {
@@ -157,7 +163,7 @@ describe('QueuedItemEditModal model + effort override', () => {
 		useSessionStore.setState({
 			sessions: [
 				{
-					...createMockSession({ id: 'agent-1', toolType: toolType as never }),
+					...createMockSession({ id: 'agent-1', toolType: toolType as never, ...sessionOverrides }),
 					aiTabs: [{ ...createMockAITab({ id: 'tab-1' }) }],
 					executionQueue: [],
 					...sessionOverrides,
@@ -188,6 +194,23 @@ describe('QueuedItemEditModal model + effort override', () => {
 		);
 		return { onSave };
 	}
+
+	it('edits the captured provider even after the target tab switches', async () => {
+		const { onSave } = renderWithSession('claude-code', {
+			turnSettings: { provider: 'codex', model: 'gpt-5-codex', effort: 'high' },
+		});
+		await screen.findByTitle('Change model');
+		expect(window.maestro.agents.getModels).toHaveBeenCalledWith('codex', false, undefined);
+		fireEvent.click(screen.getByTitle('Change effort level'));
+		expect(screen.getByText('low')).toBeInTheDocument();
+		expect(screen.queryByText('ultrathink')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(onSave).toHaveBeenCalledWith(
+			expect.objectContaining({
+				turnSettings: { provider: 'codex', model: 'gpt-5-codex', effort: 'high' },
+			})
+		);
+	});
 
 	it('offers Claude Code models and thinking levels for a claude-code agent', async () => {
 		renderWithSession('claude-code');
@@ -238,7 +261,14 @@ describe('QueuedItemEditModal model + effort override', () => {
 			metaKey: true,
 		});
 		expect(onSave).toHaveBeenCalledWith(
-			expect.objectContaining({ turnSettings: { model: 'opus', effort: 'ultrathink' } })
+			expect.objectContaining({
+				turnSettings: expect.objectContaining({
+					provider: 'claude-code',
+					model: 'opus',
+					effort: 'ultrathink',
+					runOn: { type: 'provider' },
+				}),
+			})
 		);
 	});
 
@@ -274,6 +304,92 @@ describe('QueuedItemEditModal model + effort override', () => {
 		const pillGroup = screen.getByTitle('Change model').closest('.ml-auto');
 		expect(pillGroup).not.toBeNull();
 		expect(pillGroup!.parentElement).toBe(row);
+	});
+
+	// Auto is a model choice like any other here: offered for an agent it can
+	// act on, and stored on the item as the word, never as what it would come to.
+	describe('the Auto model choice', () => {
+		const save = () =>
+			fireEvent.keyDown(screen.getByPlaceholderText('Message to send…'), {
+				key: 'Enter',
+				metaKey: true,
+			});
+
+		beforeEach(() => {
+			// The shipped defaults: no harness tier overrides, the model router off.
+			useSettingsStore.setState({
+				harnessTierDefaults: {},
+				localModelAssignments: {},
+				localModelEndpoints: [],
+			});
+		});
+
+		it('offers Auto for a claude-code agent and writes the word into the patch', async () => {
+			const { onSave } = renderWithSession('claude-code');
+			await waitFor(() => expect(screen.getByTitle('Change model')).toBeInTheDocument());
+
+			fireEvent.click(screen.getByTitle('Change model'));
+			const row = screen.getByText('Auto').closest('button')!;
+			expect(row.getAttribute('title')).toContain(
+				'Auto: picks the model and the effort for each turn.'
+			);
+			fireEvent.click(row);
+
+			save();
+			expect(onSave).toHaveBeenCalledWith(
+				expect.objectContaining({ turnSettings: expect.objectContaining({ model: 'auto' }) })
+			);
+		});
+
+		it('offers no Auto for an agent it would change nothing for', async () => {
+			// OpenCode has no effort ladder Maestro can name, and none of this
+			// agent's tiers is mapped to a model.
+			renderWithSession('opencode');
+			await waitFor(() => expect(screen.getByTitle('Change model')).toBeInTheDocument());
+
+			fireEvent.click(screen.getByTitle('Change model'));
+			expect(screen.getByText('opencode/kimi-k2.5-free')).toBeInTheDocument();
+			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
+		});
+
+		it('seeds an item from before the capture with the word when its agent is on Auto', async () => {
+			// The selection, not a resolution of it: the item is still Auto when it
+			// is saved, so it is routed for what it says when it is dispatched.
+			const { onSave } = renderWithSession(
+				'claude-code',
+				{},
+				{ customModel: 'auto', customEffort: 'think' }
+			);
+			await waitFor(() => expect(screen.getByText('Auto')).toBeInTheDocument());
+			// The pill says what Auto does in place of the plain "Change model".
+			expect(screen.getByText('Auto').closest('button')!.getAttribute('title')).toMatch(
+				/^Auto: picks the model and the effort for each turn\./
+			);
+
+			save();
+			expect(onSave).toHaveBeenCalledWith(
+				expect.objectContaining({
+					turnSettings: expect.objectContaining({
+						provider: 'claude-code',
+						model: 'auto',
+						effort: 'think',
+						runOn: { type: 'provider' },
+					}),
+				})
+			);
+		});
+
+		it('keeps the answer the router gave an item it does not change', () => {
+			const route = { tier: 'low', effort: 'low', engine: 'Embedding router', calibrated: false };
+			const { onSave } = renderWithSession('claude-code', {
+				turnSettings: { model: 'auto', effort: 'think', route } as never,
+			});
+
+			save();
+			expect(onSave).toHaveBeenCalledWith(
+				expect.objectContaining({ turnSettings: { model: 'auto', effort: 'think', route } })
+			);
+		});
 	});
 
 	it('prefills from the item own capture and returns it unchanged on save', () => {
@@ -329,9 +445,12 @@ describe('QueuedItemEditModal model + effort override', () => {
 					'reasoningEffort'
 				);
 				fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-				expect(onSave).toHaveBeenCalledWith(
-					expect.objectContaining({ turnSettings: { model, effort } })
-				);
+				expect(onSave).toHaveBeenCalledTimes(1);
+				// The capture also stamps the provider, routing and Run on, so compare
+				// only the model and effort the discovery was asked about.
+				const saved = onSave.mock.calls[0][0];
+				expect(saved.turnSettings?.model).toBe(model);
+				expect(saved.turnSettings?.effort).toBe(effort);
 			}
 		);
 

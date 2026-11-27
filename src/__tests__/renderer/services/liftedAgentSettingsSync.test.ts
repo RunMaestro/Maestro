@@ -15,6 +15,7 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 
 import {
 	answerHostedSettingsRequest,
+	hostedFieldState,
 	startLiftedAgentSettingsSync,
 } from '../../../renderer/services/liftedAgentSettingsSync';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
@@ -75,8 +76,9 @@ function showPointer(overrides: Parameters<typeof createMockSession>[0] = {}) {
 }
 
 function editPointer(patch: Parameters<typeof createMockSession>[0]) {
-	const [session] = useSessionStore.getState().sessions;
-	useSessionStore.setState({ sessions: [{ ...session, ...patch }] });
+	// Edits the pointer (always first) and keeps every other agent in the store.
+	const [session, ...rest] = useSessionStore.getState().sessions;
+	useSessionStore.setState({ sessions: [{ ...session, ...patch }, ...rest] });
 }
 
 function pointer() {
@@ -252,7 +254,113 @@ describe('services/liftedAgentSettingsSync', () => {
 		});
 	});
 
+	describe('peer rows on a lifted pointer', () => {
+		beforeEach(() => {
+			useSessionStore.setState({ sessionsReadOk: true, sessions: [] });
+		});
+
+		it("sends the pointer's peer rows in the host's ids and keeps a row the host cannot honor", async () => {
+			const peer = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r-box', name: 'box' }),
+				[hostAgent(), hostAgent({ id: 'host-2', name: 'Builder' })],
+				[],
+				1
+			).peer;
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+			showPointer();
+			const builder = createMockSession({
+				id: 'local-2',
+				name: 'Builder',
+				liftedTo: { peer: 'box', agentId: 'host-2', at: 1 },
+			});
+			const laptop = createMockSession({ id: 'local-3', name: 'Laptop' });
+			useSessionStore.setState({ sessions: [pointer(), builder, laptop] });
+			stop = startLiftedAgentSettingsSync();
+			await pass();
+			editPointer({
+				peerAgents: [
+					{ sessionId: 'local-2', read: true, write: false },
+					{ sessionId: 'local-3', read: true, write: true },
+				],
+			});
+			await pass();
+			expect(act$).toHaveBeenCalledWith('box', 'host-1', {
+				kind: 'update-agent',
+				patch: { peerAgents: [{ sessionId: 'host-2', read: true, write: false }] },
+			});
+			// The row for this machine's agent stays on the pointer, never sent.
+			expect(pointer().peerAgents).toEqual([
+				{ sessionId: 'local-2', read: true, write: false },
+				{ sessionId: 'local-3', read: true, write: true },
+			]);
+		});
+	});
+
+	describe('hostedFieldState', () => {
+		it("counts a pointer's edit made while the peer is down as pending", async () => {
+			showPeer(hostAgent());
+			showPointer();
+			stop = startLiftedAgentSettingsSync();
+			await pass();
+			showPeer(hostAgent(), 'reconnecting');
+			editPointer({ nudgeMessage: 'while away' });
+			await pass();
+			expect(hostedFieldState('box', 'host-1')).toEqual({
+				pendingIds: ['nudgeMessage'],
+				conflictIds: [],
+			});
+		});
+
+		it("counts a mirrored agent's held edits as pending, and a conflict as a conflict", async () => {
+			showPeer(hostAgent({ nudgeMessage: 'host moved' }), 'reconnecting');
+			useHostedAgentSettingsStore.getState().setPending(KEY, {
+				values: { customModel: 'sonnet' },
+				base: { customModel: null },
+				envKeys: [],
+			});
+			useHostedAgentSettingsStore.getState().setConflicts(KEY, {
+				peerId: 'box',
+				agentId: 'host-1',
+				agentName: 'Docs',
+				conflicts: [
+					{
+						id: 'nudgeMessage',
+						label: 'Nudge message',
+						local: 'mine',
+						host: 'host moved',
+						mergeable: true,
+						firstSync: false,
+					},
+				],
+			});
+			expect(hostedFieldState('box', 'host-1')).toEqual({
+				pendingIds: ['customModel'],
+				conflictIds: ['nudgeMessage'],
+			});
+		});
+	});
+
 	describe('answerHostedSettingsRequest', () => {
+		it('answers every field of a hosted agent with its scope and what waits on it', async () => {
+			showPeer(hostAgent());
+			showPointer({ nudgeMessage: 'stale' });
+			stop = startLiftedAgentSettingsSync();
+			await pass();
+			const reply = answerHostedSettingsRequest({ action: 'fields', agent: KEY });
+			expect(reply.success).toBe(true);
+			expect(reply.fields?.find((field) => field.field === 'nudgeMessage')).toMatchObject({
+				scope: 'shared',
+				conflict: true,
+			});
+			expect(reply.fields?.find((field) => field.field === 'gatewayUrl')).toMatchObject({
+				scope: 'machine',
+				pending: false,
+			});
+			expect(answerHostedSettingsRequest({ action: 'fields', agent: 'no-colon' }).success).toBe(
+				false
+			);
+		});
+
 		it('lists conflicts and settles one the way the modal does', async () => {
 			showPeer(hostAgent());
 			showPointer({ nudgeMessage: 'stale' });

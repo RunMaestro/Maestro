@@ -5,6 +5,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import { requestFromRenderer } from './remoteRequest';
 import {
 	parseQueueSteerResult,
@@ -76,11 +77,13 @@ export function registerQueueCallbacks(
 			images?: string[],
 			background?: boolean,
 			held?: boolean,
+			consultChain?: ConsultChain,
 			mentionRouting?: MentionRouting,
 			dispatchCallback?: boolean,
 			control?: PianolaQueueControl,
 			turnOverrides?: TurnOverrides,
-			agentText?: TurnAgentText
+			agentText?: TurnAgentText,
+			hostedTurn?: boolean
 		) => {
 			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
@@ -131,13 +134,16 @@ export function registerQueueCallbacks(
 					images,
 					background,
 					held,
+					consultChain,
 					mentionRouting,
 					dispatchCallback,
-					// Positional: the overrides follow `control`, and the agent-only text follows the
-					// overrides; a slot before a sent one is sent as undefined.
-					...(control || turnOverrides || agentText ? [control] : []),
-					...(turnOverrides || agentText ? [turnOverrides] : []),
-					...(agentText ? [agentText] : [])
+					// Positional: the overrides follow `control`, the agent-only text follows the
+					// overrides, and the hosted-turn mark follows the agent-only text; a slot before a
+					// sent one is sent as undefined.
+					...(control || turnOverrides || agentText || hostedTurn ? [control] : []),
+					...(turnOverrides || agentText || hostedTurn ? [turnOverrides] : []),
+					...(agentText || hostedTurn ? [agentText] : []),
+					...(hostedTurn ? [true] : [])
 				);
 
 				const timeoutId = setTimeout(() => {

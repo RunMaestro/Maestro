@@ -31,6 +31,7 @@ import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/
 import { toggleGroupChatRightTab } from '../../utils/groupChatRightTab';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { tileNewTabInSession } from '../../services/tileNewTabAction';
+import { requestDictationShortcutPress } from '../../services/dictation';
 import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSKeyboard } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
@@ -451,6 +452,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					!e.shiftKey &&
 					keyLower === 'f';
 
+				// Dictation writes into the focused text box, and a modal's text box
+				// is as much a text box as the composer, so the chord stays live
+				// behind both guards below.
+				const isDictateShortcut = ctx.isShortcut(e, 'dictate');
+
 				if (ctx.hasOpenModal()) {
 					// TRUE MODAL is open - block most shortcuts from App.tsx
 					// The modal's own handler will handle Cmd+Shift+[] if it supports it
@@ -467,7 +473,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isMarkdownToggleShortcut &&
 						!isFontSizeShortcut &&
 						!isConcertoToggleShortcut &&
-						!isPromptComposerCycleShortcut
+						!isPromptComposerCycleShortcut &&
+						!isDictateShortcut
 					) {
 						return;
 					}
@@ -500,7 +507,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isOutputSearchGlobalShortcut &&
 						!isOutputSearchRefocusShortcut &&
 						!isConcertoToggleShortcut &&
-						!isFontSizeShortcut
+						!isFontSizeShortcut &&
+						!isDictateShortcut
 					) {
 						return;
 					}
@@ -761,6 +769,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useModalStore.getState().openModal('snoozedTabs');
 				trackShortcut('showSnoozeList');
+			} else if (ctx.isShortcut(e, 'tabCleanupSuggestions')) {
+				e.preventDefault();
+				useModalStore.getState().openModal('tabCleanup');
+				trackShortcut('tabCleanupSuggestions');
+			} else if (ctx.isShortcut(e, 'openDelegationGraph')) {
+				e.preventDefault();
+				useModalStore.getState().openModal('delegationGraph');
+				trackShortcut('openDelegationGraph');
 			} else if (ctx.isShortcut(e, 'openLeaderboard')) {
 				e.preventDefault();
 				useModalStore.getState().openModal('leaderboard');
@@ -784,6 +800,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				openMediaPlayerFromShortcut();
 				trackShortcut('openMediaPlayer');
+			} else if (ctx.isShortcut(e, 'dictate')) {
+				// The press is classified elsewhere (DictationHost): a tap toggles
+				// and a hold records while held, so only the FIRST keydown of a held
+				// chord counts. The repeats are swallowed so they do not type.
+				e.preventDefault();
+				if (!e.repeat) {
+					requestDictationShortcutPress();
+					trackShortcut('dictate');
+				}
 			} else if (ctx.isShortcut(e, 'mediaPlayPause')) {
 				e.preventDefault();
 				useMediaPlaybackStore.getState().requestToggle();

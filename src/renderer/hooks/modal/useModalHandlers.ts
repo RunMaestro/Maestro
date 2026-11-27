@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { resolveErrorProvider } from '../../utils/providerTabSessions';
 import type { Session, LeaderboardRegistration, AgentError } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 import type { UnifiedHistoryTabProps } from '../../components/DirectorNotes/UnifiedHistoryTab';
@@ -480,10 +481,15 @@ export function useModalHandlers(
 	// runs in its own terminal dialog, which replays the failed turn on Retry.
 	const handleInstallAfterError = useCallback((sessionId: string) => {
 		const session = selectSessionById(sessionId)(useSessionStore.getState());
+		const errorTab = session?.aiTabs.find((tab) => tab.id === session.agentErrorTabId);
+		const agentId = session
+			? resolveErrorProvider(errorTab, session, session.agentError ?? undefined)
+			: undefined;
 		getModalActions().setAgentErrorModalSessionId(null);
 		getModalActions().openProviderInstallModal({
 			sessionId,
 			tabId: session?.agentErrorTabId,
+			agentId,
 			reason: session?.agentError?.message,
 		});
 	}, []);
@@ -499,7 +505,13 @@ export function useModalHandlers(
 	// Historical errors get no recovery actions (they're read-only)
 	const { recoveryActions } = useAgentErrorRecovery({
 		error: effectiveError,
-		agentId: errorSession?.toolType || 'claude-code',
+		agentId: errorSession
+			? resolveErrorProvider(
+					errorSession.aiTabs.find((tab) => tab.id === errorSession.agentErrorTabId),
+					errorSession,
+					effectiveError
+				)
+			: 'claude-code',
 		sessionId: errorSession?.id || '',
 		onNewSession:
 			!isHistorical && errorSession

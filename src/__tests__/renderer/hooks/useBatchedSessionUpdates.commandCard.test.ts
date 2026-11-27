@@ -147,7 +147,15 @@ describe('useBatchedSessionUpdates - command-mode card is not a coalesce target'
 	it('still coalesces normal agent output into a plain stdout entry', () => {
 		// Guard against over-correcting: ordinary streaming must keep grouping,
 		// or every chunk becomes its own bubble.
-		seed([{ id: 'plain-1', timestamp: Date.now(), source: 'stdout', text: 'hello ' }]);
+		seed([
+			{
+				id: 'plain-1',
+				timestamp: Date.now(),
+				source: 'stdout',
+				text: 'hello ',
+				turnProvider: 'claude-code',
+			},
+		]);
 
 		const { result } = renderHook(() => useBatchedSessionUpdates());
 
@@ -160,4 +168,17 @@ describe('useBatchedSessionUpdates - command-mode card is not a coalesce target'
 		expect(logs).toHaveLength(1);
 		expect(logs[0].text).toBe('hello world');
 	});
+});
+
+it('keeps old untagged output separate from a newly attributed provider turn', () => {
+	seed([{ id: 'legacy', timestamp: Date.now(), source: 'stdout', text: 'old unknown owner' }]);
+	const { result } = renderHook(() => useBatchedSessionUpdates());
+	act(() => {
+		result.current.appendLog(SESSION_ID, TAB_ID, true, 'new known owner');
+		result.current.flushNow();
+	});
+	const logs = tabLogs();
+	expect(logs).toHaveLength(2);
+	expect(logs[0].turnProvider).toBeUndefined();
+	expect(logs[1].turnProvider).toBe('claude-code');
 });

@@ -84,6 +84,12 @@ const result = remarkFileLinks({ indices, cwd });
 
 ## Main Process (Node.js)
 
+**Run ONNX encoder inference in a worker:**
+
+`onnxruntime-node` exposes a Promise API around synchronous native work. Calling a session from main still blocks Electron. Encoder consumers use `getOnnxEncoderPool()` in `src/main/local-models/onnx-encoder.ts`; its worker sessions share the core native loader, cap compute threads at two (one on smaller machines), and terminate on idle unload. Keep graph creation and inference inside `runtime/onnx-worker.ts`.
+
+The semantic indexer sends at most four chunks per call, including slices of long sources, and checks for interactive work between calls. It rests for the previous call's runtime, bounded to 50 to 1,000 ms, and commits a source only after every slice succeeds. Storage UI polling runs every five seconds while indexing, independently of progress pushes.
+
 **Cache expensive lookups:**
 
 ```typescript

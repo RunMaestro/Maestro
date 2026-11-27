@@ -13,6 +13,8 @@ import type { ComputerHistoryConfig } from '../../../shared/computer-history/typ
 
 let dir: string;
 let config: ComputerHistoryConfig;
+/** Whether the `history-digests` task is assigned a model. */
+let hasModel: boolean;
 const T0 = Date.parse('2026-10-03T14:15:00.000Z');
 const entry = {
 	file: 'segments/2026-10-03/1415Z.jsonl',
@@ -26,16 +28,19 @@ const entry = {
 beforeEach(() => {
 	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ch-digests-'));
 	config = defaultComputerHistoryConfig();
+	hasModel = true;
 	// The segment a digest describes must still exist when it is written.
 	fs.mkdirSync(path.join(dir, 'segments', '2026-10-03'), { recursive: true });
 	fs.writeFileSync(path.join(dir, 'segments', '2026-10-03', '1415Z.jsonl'), '{}\n');
 });
 
-function scheduler(consult: ReturnType<typeof vi.fn>) {
+function scheduler(consult: ReturnType<typeof vi.fn>, localWriter?: ReturnType<typeof vi.fn>) {
 	const s = new DigestScheduler({
 		storeDir: dir,
 		getConfig: () => config,
 		getConsult: () => consult as never,
+		getLocalWriter: () =>
+			localWriter ? ({ hasModel: () => hasModel, write: localWriter } as never) : null,
 	});
 	s.start();
 	return s;
@@ -45,16 +50,105 @@ afterEach(() => {
 });
 
 describe('DigestScheduler', () => {
-	it('is off by default: no consult is made', async () => {
+	it('is off by default: no writer is asked', async () => {
 		const consult = vi.fn();
-		const s = scheduler(consult);
+		const local = vi.fn();
+		const s = scheduler(consult, local);
 		s.onSegmentClosed(entry, T0);
 		await new Promise((r) => setImmediate(r));
 		expect(consult).not.toHaveBeenCalled();
+		expect(local).not.toHaveBeenCalled();
+	});
+
+	it('the agent source with no agent chosen asks nobody', async () => {
+		config.digests = { enabled: true, source: 'agent', agentId: null, rollup: true };
+		const consult = vi.fn();
+		const local = vi.fn();
+		const s = scheduler(consult, local);
+		s.onSegmentClosed(entry, T0);
+		await new Promise((r) => setImmediate(r));
+		expect(consult).not.toHaveBeenCalled();
+		expect(local).not.toHaveBeenCalled();
+		expect(s.status().pending).toBe(0);
+	});
+
+	it('the local source hands the local writer the segment path and never asks the agent', async () => {
+		// An agent is still stored: the source decides, not which fields are set.
+		config.digests = { enabled: true, source: 'local', agentId: 'agent-1', rollup: true };
+		const consult = vi.fn();
+		const local = vi.fn(async () => ({
+			success: true,
+			answer: '- reviewed a pull request\n- pasted sk-ABCDEFGHIJKLMNOP1234 into a terminal',
+			writtenBy: 'local model `Qwen3 1.7B`',
+		}));
+		const s = scheduler(consult, local);
+		s.onSegmentClosed(entry, T0);
+		const out = path.join(dir, 'digests', '2026-10-03', '1415Z.md');
+		await vi.waitFor(() => expect(fs.existsSync(out)).toBe(true));
+		expect(consult).not.toHaveBeenCalled();
+		expect(local).toHaveBeenCalledWith({
+			kind: '15m',
+			segmentPath: path.join(dir, 'segments', '2026-10-03', '1415Z.jsonl'),
+			windowStartIso: '2026-10-03T14:15:00.000Z',
+			windowEndIso: '2026-10-03T14:30:00.000Z',
+			previousDigestPath: null,
+		});
+		const written = fs.readFileSync(out, 'utf-8');
+		expect(written).toContain('Written by local model `Qwen3 1.7B`.');
+		expect(written).toContain('- reviewed a pull request');
+		// A local model's answer is scrubbed like an agent's.
+		expect(written).toContain('[REDACTED_API_KEY]');
+		expect(written).not.toContain('sk-ABCDEFGHIJKLMNOP1234');
+		expect(s.status().lastError).toBeNull();
+	});
+
+	it('a local writer that cannot run is the last error, and the agent is not asked in its place', async () => {
+		config.digests = { enabled: true, source: 'local', agentId: 'agent-1', rollup: true };
+		const consult = vi.fn(async () => ({ success: true, answer: 'x' }));
+		const local = vi.fn(async () => ({ success: false, error: 'Qwen3 1.7B is not downloaded.' }));
+		const s = scheduler(consult, local);
+		s.onSegmentClosed(entry, T0);
+		await vi.waitFor(() => expect(s.status().lastError).toBe('Qwen3 1.7B is not downloaded.'));
+		expect(consult).not.toHaveBeenCalled();
+		expect(fs.existsSync(path.join(dir, 'digests'))).toBe(false);
+	});
+
+	it('the local source with no model assigned asks nobody, like an agent source with no agent', async () => {
+		config.digests = { enabled: true, source: 'local', agentId: 'agent-1', rollup: true };
+		hasModel = false;
+		const consult = vi.fn();
+		const local = vi.fn();
+		const s = scheduler(consult, local);
+		s.onSegmentClosed(entry, T0);
+		await new Promise((r) => setImmediate(r));
+		expect(local).not.toHaveBeenCalled();
+		expect(consult).not.toHaveBeenCalled();
+		expect(s.status()).toMatchObject({ pending: 0, lastError: null });
+		// Unwired Local Models (no writer at all) reads the same way.
+		const bare = scheduler(consult);
+		bare.onSegmentClosed(entry, T0);
+		await new Promise((r) => setImmediate(r));
+		expect(bare.status()).toMatchObject({ pending: 0, lastError: null });
+	});
+
+	it('an unclassified failure inside the local writer is recorded, and the queue keeps draining', async () => {
+		config.digests = { enabled: true, source: 'local', agentId: null, rollup: false };
+		const local = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('engine exploded'))
+			.mockResolvedValue({ success: true, answer: '- ok', writtenBy: 'local model `m`' });
+		const s = scheduler(vi.fn(), local);
+		s.onSegmentClosed(entry, T0);
+		await vi.waitFor(() => expect(s.status().lastError).toBe('engine exploded'));
+		fs.writeFileSync(path.join(dir, 'segments', '2026-10-03', '1430Z.jsonl'), '{}\n');
+		s.onSegmentClosed({ ...entry, file: 'segments/2026-10-03/1430Z.jsonl' }, T0 + 15 * 60_000);
+		await vi.waitFor(() =>
+			expect(fs.existsSync(path.join(dir, 'digests', '2026-10-03', '1430Z.md'))).toBe(true)
+		);
 	});
 
 	it('asks the chosen agent with the segment path and untrusted warning, then writes the digest', async () => {
-		config.digests = { enabled: true, agentId: 'agent-1' };
+		config.digests = { enabled: true, source: 'agent', agentId: 'agent-1' };
 		const consult = vi.fn(async () => ({
 			success: true,
 			answer: '- worked on invoices\n- pasted sk-ABCDEFGHIJKLMNOP1234 into a terminal',
@@ -76,6 +170,7 @@ describe('DigestScheduler', () => {
 		// No earlier digest in the last hour: no continuity line.
 		expect(call.question).not.toContain('The previous digest is at:');
 		const written = fs.readFileSync(out, 'utf-8');
+		expect(written).toContain('Written by agent `agent-1`.');
 		expect(written).toContain('- worked on invoices');
 		// The agent's answer is scrubbed like captured text.
 		expect(written).toContain('[REDACTED_API_KEY]');
@@ -86,7 +181,7 @@ describe('DigestScheduler', () => {
 	});
 
 	it('hands the nearest earlier digest of the last hour for continuity', async () => {
-		config.digests = { enabled: true, agentId: 'agent-1' };
+		config.digests = { enabled: true, source: 'agent', agentId: 'agent-1' };
 		// 14:15 has no digest (an idle window); 14:00 does, two windows back.
 		const earlier = path.join(dir, 'digests', '2026-10-03', '1400Z.md');
 		fs.mkdirSync(path.dirname(earlier), { recursive: true });
@@ -105,7 +200,7 @@ describe('DigestScheduler', () => {
 	});
 
 	it('looks back at most an hour for the previous digest', async () => {
-		config.digests = { enabled: true, agentId: 'agent-1' };
+		config.digests = { enabled: true, source: 'agent', agentId: 'agent-1' };
 		// Five windows (75 minutes) before 14:15.
 		const old = path.join(dir, 'digests', '2026-10-03', '1300Z.md');
 		fs.mkdirSync(path.dirname(old), { recursive: true });
@@ -119,7 +214,7 @@ describe('DigestScheduler', () => {
 	});
 
 	it('records a failed consult without writing a file', async () => {
-		config.digests = { enabled: true, agentId: 'agent-1' };
+		config.digests = { enabled: true, source: 'agent', agentId: 'agent-1' };
 		const consult = vi.fn(async () => ({ success: false, error: 'busy' }));
 		const s = scheduler(consult);
 		s.onSegmentClosed(entry, T0);
@@ -128,7 +223,7 @@ describe('DigestScheduler', () => {
 	});
 
 	it('ignores closes before start() and after stop() (a close produced by shutting down)', async () => {
-		config.digests = { enabled: true, agentId: 'agent-1' };
+		config.digests = { enabled: true, source: 'agent', agentId: 'agent-1' };
 		const consult = vi.fn(async () => ({ success: true, answer: 'x' }));
 		const unstarted = new DigestScheduler({
 			storeDir: dir,
@@ -144,7 +239,7 @@ describe('DigestScheduler', () => {
 	});
 
 	it('discards an in-flight digest when its window is cleared, or when the segment is gone', async () => {
-		config.digests = { enabled: true, agentId: 'agent-1' };
+		config.digests = { enabled: true, source: 'agent', agentId: 'agent-1' };
 		let release: (v: { success: boolean; answer: string }) => void = () => {};
 		const consult = vi.fn(
 			() => new Promise<{ success: boolean; answer: string }>((resolve) => (release = resolve))
@@ -167,7 +262,7 @@ describe('DigestScheduler', () => {
 	});
 
 	it('cancel drops queued digests in the cleared range', async () => {
-		config.digests = { enabled: true, agentId: 'agent-1' };
+		config.digests = { enabled: true, source: 'agent', agentId: 'agent-1' };
 		let release: (v: { success: boolean; answer: string }) => void = () => {};
 		const consult = vi.fn(
 			() => new Promise<{ success: boolean; answer: string }>((resolve) => (release = resolve))

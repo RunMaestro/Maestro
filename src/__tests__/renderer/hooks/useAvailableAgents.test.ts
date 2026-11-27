@@ -4,6 +4,7 @@ import { useAvailableAgents, useAvailableAgentsForCapability } from '../../../re
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { DEFAULT_CAPABILITIES, type AgentCapabilities } from '../../../renderer/hooks';
+import { createMockAITab } from '../../helpers/mockTab';
 
 // Define agent config type matching what detect() returns
 interface AgentConfigDetected {
@@ -69,6 +70,35 @@ function createMockSession(
 }
 
 describe('useAvailableAgents', () => {
+	it('marks captured busy providers, including closed tabs, while roster counts keep agent identity', async () => {
+		const session = baseCreateMockSession({
+			toolType: 'claude-code',
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [
+				createMockAITab({ tabProvider: 'claude-code', turnProvider: 'opencode', state: 'busy' }),
+			],
+			orphanedThinkingTabs: [
+				createMockAITab({
+					id: 'closed',
+					tabProvider: 'claude-code',
+					turnProvider: 'opencode',
+					state: 'busy',
+				}),
+			],
+		});
+		const { result } = renderHook(() => useAvailableAgents(null, [session]));
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		expect(result.current.getAgent('opencode')).toMatchObject({
+			status: 'busy',
+			activeSessions: 0,
+		});
+		expect(result.current.getAgent('claude-code')).toMatchObject({
+			status: 'ready',
+			activeSessions: 1,
+		});
+	});
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.mocked(window.maestro.agents.detect).mockResolvedValue(mockAgentConfigs);

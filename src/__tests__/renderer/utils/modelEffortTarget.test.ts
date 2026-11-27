@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
 	createGroupFromTabRefs,
+	resolveFocusedAiTabId,
 	resolveModelEffortTabId,
 } from '../../../renderer/utils/panelLayout';
+import { createMockFileTab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 
@@ -70,5 +72,71 @@ describe('resolveModelEffortTabId', () => {
 		expect(resolveModelEffortTabId(terminalSession)).toBeNull();
 		expect(resolveModelEffortTabId(null)).toBeNull();
 		expect(resolveModelEffortTabId(undefined)).toBeNull();
+	});
+});
+
+describe('resolveFocusedAiTabId', () => {
+	it('resolves the active AI tab', () => {
+		const session = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })],
+			activeTabId: 'tab-2',
+		});
+
+		expect(resolveFocusedAiTabId(session)).toBe('tab-2');
+	});
+
+	// The one place it differs from the model/effort target: looking at a file
+	// does not stop the conversation behind it from being the one you talk to.
+	it('keeps the conversation behind a file tab in a single view', () => {
+		const session = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+			activeFileTabId: 'file-1',
+		});
+
+		expect(resolveModelEffortTabId(session)).toBeNull();
+		expect(resolveFocusedAiTabId(session)).toBe('tab-1');
+	});
+
+	it('takes the focused AI pane of a tiled group over the tab behind it', () => {
+		const base = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' }), createMockAITab({ id: 'tab-2' })],
+			activeTabId: 'tab-1',
+		});
+		const group = createGroupFromTabRefs(
+			[
+				{ type: 'ai', id: 'tab-2' },
+				{ type: 'ai', id: 'tab-1' },
+			],
+			'Group'
+		);
+		const session = createMockSession({ ...base, tabGroups: [group], activeGroupId: group.id });
+
+		expect(resolveFocusedAiTabId(session)).toBe('tab-2');
+	});
+
+	// Inside a group there is no "behind": the pane in front is what is on screen.
+	it('addresses no conversation when a tiled group is focused on a file pane', () => {
+		const base = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+		});
+		const group = createGroupFromTabRefs(
+			[
+				{ type: 'file', id: 'file-1' },
+				{ type: 'ai', id: 'tab-1' },
+			],
+			'Group'
+		);
+		const session = createMockSession({ ...base, tabGroups: [group], activeGroupId: group.id });
+
+		expect(resolveFocusedAiTabId(session)).toBeNull();
+	});
+
+	it('is null without an agent, or for an agent with no AI tab', () => {
+		expect(resolveFocusedAiTabId(null)).toBeNull();
+		expect(resolveFocusedAiTabId(createMockSession({ aiTabs: [], activeTabId: '' }))).toBeNull();
 	});
 });

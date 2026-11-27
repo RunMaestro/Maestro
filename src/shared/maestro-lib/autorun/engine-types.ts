@@ -11,6 +11,9 @@
  * CLI's synchronous file helpers and the runtime's async writers fit one shape.
  */
 
+import type { TierRouting } from '../../modelTiers';
+import type { ResolvedTurnSettings } from '../../autorunTurnSettings';
+import type { AutoTurnInput } from '../../autoTurn';
 import type { AgentError, HistoryEntry, TaskSelectionMode, UsageStats } from '../../types';
 import type { AutoRunKind } from '../../stats-types';
 import type { PromptId } from '../../promptDefinitions';
@@ -35,6 +38,7 @@ export type AutoRunTurnPurpose = 'task' | 'synopsis' | 'goal-iteration' | 'goal-
 
 export interface AutoRunTurnRequest {
 	purpose: AutoRunTurnPurpose;
+	runOn?: unknown;
 	prompt: string;
 	/** Resume this provider session (synopsis, handoff). Absent: a fresh session. */
 	resumeSessionId?: string;
@@ -144,6 +148,11 @@ export interface AutoRunStatsTask {
 }
 
 export interface AutoRunDeps {
+	/** Per-dispatch model routing supplied by the host. */
+	tierRouting?: () => TierRouting;
+	resolveAutoTurn?: (
+		input: Pick<AutoTurnInput, 'agentEffort' | 'marker'> & { prompt: string }
+	) => Promise<ResolvedTurnSettings>;
 	turns: {
 		/** Once per run, after the preflight, where the CLI builds its system prompt today. */
 		prepare?(): Promise<void>;

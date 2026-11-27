@@ -8,11 +8,11 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { HamburgerMenuContent } from '../../../../renderer/components/SessionList/HamburgerMenuContent';
 import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
-import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
 import {
 	selectModalData,
 	selectModalOpen,
@@ -97,18 +97,34 @@ describe('HamburgerMenuContent sections', () => {
 		const allOn = { ...original };
 		for (const key of Object.keys(allOn) as (keyof typeof allOn)[]) allOn[key] = true;
 		useSettingsStore.setState({ encoreFeatures: allOn });
-		const { container } = renderMenu();
-		const rows = Array.from(container.firstElementChild!.children);
-		const dividers = rows.flatMap((row, i) => (row.classList.contains('border-t') ? [i] : []));
-		expect(dividers).toHaveLength(2);
+		try {
+			const { container } = renderMenu();
+			const rows = Array.from(container.firstElementChild!.children);
+			const dividers = rows.flatMap((row, i) => (row.classList.contains('border-t') ? [i] : []));
+			expect(dividers).toHaveLength(2);
 
-		const labelOf = (row: Element) => row.querySelector('.text-sm.font-medium')?.textContent ?? '';
-		const features = rows.slice(dividers[0] + 1, dividers[1]).map(labelOf);
-		expect(features.length).toBeGreaterThan(1);
-		expect(features).toEqual([...features].sort((a, b) => a.localeCompare(b)));
-		// The app-level entries all sit above the first divider.
-		expect(rows.slice(0, dividers[0]).map(labelOf)).toContain('Process Monitor');
-		useSettingsStore.setState({ encoreFeatures: original });
+			const labelOf = (row: Element) =>
+				row.querySelector('.text-sm.font-medium')?.textContent ?? '';
+			const features = rows.slice(dividers[0] + 1, dividers[1]).map(labelOf);
+			expect(features.length).toBeGreaterThan(1);
+			expect(features).toEqual([...features].sort((a, b) => a.localeCompare(b)));
+			// The app-level entries all sit above the first divider.
+			expect(rows.slice(0, dividers[0]).map(labelOf)).toContain('Process Monitor');
+		} finally {
+			useSettingsStore.setState({ encoreFeatures: original });
+		}
+	});
+
+	it('leaves the palette-only surfaces out of the menu', () => {
+		renderMenu();
+		for (const label of [
+			'Tab Cleanup',
+			'Delegation Graph',
+			'Federation Settings Conflicts',
+			'Add Hosted Agent',
+		]) {
+			expect(screen.queryByText(label)).not.toBeInTheDocument();
+		}
 	});
 });
 

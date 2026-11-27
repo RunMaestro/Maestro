@@ -1,3 +1,4 @@
+import { inspectTabProvider } from '../../desktopTabs';
 /**
  * The requests a detached host answers: the desktop bridge's typed messages, run against a
  * `MaestroClient`.
@@ -13,6 +14,7 @@
  * transport answers with the bridge's `echo`, the signal a client reads as "unsupported".
  */
 
+import { parseConsultChain } from '../../consultBudget';
 import type { AgentRecord } from '../store/records';
 import {
 	parseWireAgentName,
@@ -24,6 +26,7 @@ import { parseProcessId } from '../client/bridge-frames';
 import { parseClosedTabCommandRequest } from '../../closedTabCommands';
 import { parseSteeringCommandRequest } from '../../autoRunSteeringCommands';
 import type { ThinkingMode, UsageStats } from '../../types';
+import type { RunOnTarget } from '../../local-models/run-on';
 import type {
 	AgentCreateInput,
 	AgentImportInput,
@@ -122,6 +125,10 @@ export function agentPatchFromConfig(config: Record<string, unknown>): AgentPatc
 	// Passed as sent: `applyAgentConfigPatch` is what refuses a transport it does not know.
 	take('codexTransport', 'codexTransport');
 	take('harnessControlMode', 'harnessControlMode');
+	take('peerAgents', 'peerAgents');
+	take('groupPeerAccess', 'groupPeerAccess');
+	take('worktreePeerAccess', 'worktreePeerAccess');
+	take('peerDescription', 'peerDescription');
 	return patch as AgentPatch;
 }
 
@@ -485,6 +492,7 @@ async function projectSessions(client: MaestroClient, live: LiveAgent): Promise<
 					? {
 							aiTabs: tabs.map((tab) => ({
 								id: tab.id,
+								...inspectTabProvider(tab as never, agent as never),
 								agentSessionId: tab.agentSessionId ?? null,
 								name: tab.name ?? null,
 								...(tab.starred !== undefined ? { starred: tab.starred } : {}),
@@ -618,8 +626,23 @@ export function createRequestHandler(
 						ssh: (obj(message.sshPatch) ?? {}) as never,
 					})
 				);
+			case 'tab_provider':
+				return refusal(
+					'tab_provider_result',
+					'Per-tab provider switching has been removed. Change the provider in Edit Agent.'
+				);
 			case 'update_session_config': {
 				const config = obj(message.configPatch) ?? {};
+				if (
+					'tabProviderSelection' in config ||
+					'tabProvider' in config ||
+					'providerSessions' in config ||
+					'pendingTranslation' in config
+				)
+					return refusal(
+						'update_session_config_result',
+						'Use tab provider through the desktop parking operation.'
+					);
 				if ('migrationAction' in config) {
 					return refusal(
 						'update_session_config_result',
@@ -962,6 +985,9 @@ export function createRequestHandler(
 						...(str(message.model) ? { model: str(message.model) } : {}),
 						...(str(message.effort) ? { effort: str(message.effort) } : {}),
 						...(message.ignoreModelHints === true ? { ignoreModelHints: true } : {}),
+						// Checked by `validateAutoRunLaunch` in the runtime: a malformed
+						// target is refused there, never dropped.
+						...(message.runOn !== undefined ? { runOn: message.runOn as RunOnTarget } : {}),
 					})
 				);
 			}
@@ -974,6 +1000,7 @@ export function createRequestHandler(
 						: {}),
 					...(str(message.model) ? { model: str(message.model) } : {}),
 					...(str(message.effort) ? { effort: str(message.effort) } : {}),
+					...(message.runOn !== undefined ? { runOn: message.runOn as RunOnTarget } : {}),
 				});
 				return outcome('launch_goal_run_result', result, (value) =>
 					value.tabId ? { tabId: value.tabId } : {}
@@ -1059,6 +1086,9 @@ export function createRequestHandler(
 				const askerKey = parseWireAskerKey(message.askerKey);
 				const result = await client.consults.ask({
 					targetAgentId: sessionId(message),
+					...(parseConsultChain(message.consultChain)
+						? { consultChain: parseConsultChain(message.consultChain) }
+						: {}),
 					question: typeof message.question === 'string' ? message.question : '',
 					...(str(message.fromSessionId) ? { fromAgentId: str(message.fromSessionId) } : {}),
 					...(str(message.fromTabId) ? { fromTabId: str(message.fromTabId) } : {}),

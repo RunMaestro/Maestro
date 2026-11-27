@@ -4,7 +4,7 @@ import type { QuickAction } from '../types';
 interface BuildFederationCommandsArgs {
 	/** Peers in stored order, from `peerMirrorStore`. Empty while the feature is off. */
 	peers: MirroredPeer[];
-	reconnectPeer: (peerId: string) => void | Promise<void>;
+	reconnectPeer: (peerId: string) => unknown;
 	/**
 	 * The active local SSH agent whose remote takes part (`canMoveToHost()`). `hostReady` false: the
 	 * same Move to Host sets a host up first.

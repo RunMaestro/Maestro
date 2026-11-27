@@ -25,6 +25,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
 import { useTabStore } from '../../stores/tabStore';
 import { isGistPublishableFile } from '../FilePreview/filePreviewUtils';
+import { hostShellAvailable, openFileForUserLabel } from '../../services/hostShell';
 import { openFileInDefaultApp, revealInFileManager } from '../../services/fileActions';
 
 /**
@@ -556,7 +557,7 @@ export const FileTab = memo(function FileTab({
 							{showCopied === 'name' ? 'Copied!' : 'Copy File Name'}
 						</button>
 
-						{/* Open in Default App */}
+						{/* Open in Default App - a remote file opens its fetched copy; a browser downloads it */}
 						{hasDiskPath && (
 							<button
 								onClick={handleOpenInDefaultApp}
@@ -564,12 +565,12 @@ export const FileTab = memo(function FileTab({
 								style={{ color: theme.colors.textMain }}
 							>
 								<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-								Open in Default App
+								{openFileForUserLabel()}
 							</button>
 						)}
 
-						{/* Reveal in Finder / Explorer - a remote file reveals its fetched copy */}
-						{hasDiskPath && (
+						{/* Reveal in Finder / Explorer - a remote file reveals its fetched copy; desktop only */}
+						{hasDiskPath && hostShellAvailable() && (
 							<button
 								onClick={handleRevealInFinder}
 								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"

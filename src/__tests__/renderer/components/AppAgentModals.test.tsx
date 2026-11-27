@@ -22,6 +22,7 @@ vi.mock('../../../renderer/components/ReauthModal', () => ({
 		<div
 			data-testid="reauth-modal"
 			data-session-name={props.session?.name}
+			data-provider={props.session?.toolType}
 			data-blocked={String(props.outage?.blocked?.length ?? 0)}
 		/>
 	),
@@ -241,6 +242,27 @@ describe('AppAgentModals', () => {
 		expect(modal.getAttribute('data-session-name')).toBe('Pipeline Agent');
 	});
 
+	it('hosts recovery from captured tab configuration even after the agent is removed', () => {
+		const host = createMockSession({ id: 'auth-session', toolType: 'codex' });
+		useAuthOutageStore.setState({
+			outages: {
+				codex: {
+					providerKey: 'codex',
+					toolType: 'codex',
+					host,
+					message: 'expired',
+					startedAt: 1,
+					blocked: [{ sessionId: host.id, tabIds: ['failed'] }],
+					fromPipeline: false,
+					initiatedBy: 'failure',
+				},
+			},
+		});
+		useModalStore.getState().openModal('reauth', { providerKey: 'codex' });
+		render(<AppAgentModals {...defaultProps} sessions={[]} />);
+		expect(screen.getByTestId('reauth-modal')).toHaveAttribute('data-provider', 'codex');
+	});
+
 	it('does not render ReauthModal when the outage is gone', () => {
 		useModalStore.getState().openModal('reauth', { providerKey: 'claude-code' });
 
@@ -404,6 +426,32 @@ describe('AppAgentModals', () => {
 			);
 			expect(mockReplayAfterAuth).not.toHaveBeenCalled();
 			expect(mockClearAgentError).not.toHaveBeenCalled();
+		});
+
+		it('reprobes the failed tab provider rather than session.toolType on Retry', async () => {
+			const reprobe = vi.fn().mockResolvedValue({ status: 'ok' });
+			(window as any).maestro.agents = { ...(window as any).maestro.agents, reprobe };
+			const session = createMockSession({
+				id: 'install-sess',
+				toolType: 'claude-code',
+				activeTabId: 'tab-codex',
+				aiTabs: [{ id: 'tab-codex', tabProvider: 'codex', logs: [] } as any],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			useModalStore.getState().openModal('providerInstall', {
+				sessionId: 'install-sess',
+				tabId: 'tab-codex',
+				agentId: 'codex',
+			});
+
+			render(<AppAgentModals {...defaultProps} sessions={[session]} />);
+			fireEvent.click(screen.getByTestId('provider-install-retry-trigger'));
+
+			await waitFor(() => expect(reprobe).toHaveBeenCalledWith('codex'));
+			await waitFor(() =>
+				expect(mockReplayAfterAuth).toHaveBeenCalledWith('install-sess', ['tab-codex'], 'install')
+			);
+			expect(mockClearAgentError).toHaveBeenCalledWith('install-sess', 'tab-codex');
 		});
 	});
 });

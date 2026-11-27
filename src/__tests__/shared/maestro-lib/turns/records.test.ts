@@ -125,3 +125,9 @@ describe('toTurnTab', () => {
 		expect(toTurnTab(tab({ permissionMode: 'yolo' })).permissionMode).toBeUndefined();
 	});
 });
+
+it('preserves a validated tab provider through turn conversion', () => {
+	expect(toTurnTab({ id: 'pin', tabProvider: 'codex' }).tabProvider).toBe('codex');
+	expect(toTurnTab({ id: 'old' }).tabProvider).toBeUndefined();
+	expect(toTurnTab({ id: 'future', tabProvider: 'unknown' }).tabProvider).toBeUndefined();
+});

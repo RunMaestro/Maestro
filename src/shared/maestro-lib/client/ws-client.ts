@@ -2067,6 +2067,9 @@ class WsMaestroClient implements MaestroClient {
 		if (originHost) message.originHost = originHost;
 		const turnOverrides = normalizeTurnOverrides(input.overrides);
 		if (turnOverrides) message.turnOverrides = turnOverrides;
+		// A message over the client protocol is a hosted agent's turn: a desktop host runs it with
+		// `MAESTRO_HOSTED_TURN`, as `maestro-cli host` runs every turn.
+		message.hostedTurn = true;
 		if (input.held === true) message.held = true;
 		if (input.agentContext || input.agentNotes) {
 			// A host too old to take the two fields would drop them, and the turn would answer
@@ -2570,7 +2573,8 @@ class WsMaestroClient implements MaestroClient {
 		if (refused) return refused;
 		const checked = validateAutoRunLaunch(input);
 		if (!checked.ok) return this.fail(method, 'invalid', checked.reason);
-		const { documents, loop, maxLoops, model, effort, prompt, ignoreModelHints } = checked.value;
+		const { documents, loop, maxLoops, model, effort, prompt, ignoreModelHints, runOn } =
+			checked.value;
 		const sent = await this.send(
 			method,
 			{
@@ -2589,6 +2593,7 @@ class WsMaestroClient implements MaestroClient {
 				// Under the names `maestro-cli auto-run` sends them and both hosts read them.
 				...(prompt ? { prompt } : {}),
 				...(ignoreModelHints ? { ignoreModelHints: true } : {}),
+				...(runOn ? { runOn } : {}),
 			},
 			'configure_auto_run_result'
 		);
@@ -2606,7 +2611,7 @@ class WsMaestroClient implements MaestroClient {
 		if (refused) return refused;
 		const checked = validateGoalRunLaunch(input);
 		if (!checked.ok) return this.fail(method, 'invalid', checked.reason);
-		const { goal, exitCriteria, maxIterations, model, effort } = checked.value;
+		const { goal, exitCriteria, maxIterations, model, effort, runOn } = checked.value;
 		const sent = await this.send(
 			method,
 			{
@@ -2617,6 +2622,7 @@ class WsMaestroClient implements MaestroClient {
 				...(maxIterations !== undefined ? { maxIterations } : {}),
 				...(model ? { model } : {}),
 				...(effort ? { effort } : {}),
+				...(runOn ? { runOn } : {}),
 			},
 			'launch_goal_run_result'
 		);
@@ -2812,6 +2818,7 @@ class WsMaestroClient implements MaestroClient {
 			method,
 			{
 				type: 'cross_agent_ask',
+				...(input.consultChain ? { consultChain: input.consultChain } : {}),
 				sessionId: input.targetAgentId,
 				question: input.question,
 				...(input.fromAgentId ? { fromSessionId: input.fromAgentId } : {}),

@@ -2,7 +2,8 @@
 // Lists all session groups from Maestro storage
 
 import { readGroups } from '../services/storage';
-import { formatGroups, formatError, GroupDisplay } from '../output/formatter';
+import { formatGroups, GroupDisplay } from '../output/formatter';
+import { failCommand } from '../services/session-command';
 
 interface ListGroupsOptions {
 	json?: boolean;
@@ -38,11 +39,6 @@ export function listGroups(options: ListGroupsOptions): void {
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to list groups: ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to list groups: ${message}`, options.json);
 	}
 }

@@ -20,12 +20,12 @@ import type { SessionInfo } from '../../shared/types';
 import {
 	formatSettingsList,
 	formatSettingDetail,
-	formatError,
 	formatSuccess,
 	formatWarning,
 	type SettingDisplay,
 } from '../output/formatter';
 import { emitJsonl } from '../output/jsonl';
+import { failCommand } from '../services/session-command';
 
 // Known agent config keys with descriptions for --verbose mode
 const AGENT_CONFIG_METADATA: Record<string, { description: string; type: string }> = {
@@ -254,12 +254,7 @@ export function settingsAgentList(agentId: string | undefined, options: AgentLis
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to list agent configs: ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to list agent configs: ${message}`, options.json);
 	}
 }
 
@@ -318,12 +313,7 @@ export function settingsAgentGet(agentId: string, key: string, options: AgentGet
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(message));
-		}
-		process.exit(1);
+		failCommand(message, options.json);
 	}
 }
 
@@ -366,12 +356,7 @@ export function settingsAgentSet(
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to set "${agentId}.${key}": ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to set "${agentId}.${key}": ${message}`, options.json);
 	}
 }
 
@@ -401,11 +386,6 @@ export function settingsAgentReset(agentId: string, key: string, options: AgentR
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to reset "${agentId}.${key}": ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to reset "${agentId}.${key}": ${message}`, options.json);
 	}
 }

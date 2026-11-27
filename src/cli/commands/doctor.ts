@@ -13,7 +13,7 @@ import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-d
 import { readSshRemotes } from '../services/storage';
 import { MaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { colorize } from '../output/formatter';
-import { ExitCode } from '../exit-codes';
+import { ExitCode, exitWith } from '../exit-codes';
 
 type CheckStatus = 'ok' | 'warn' | 'fail';
 
@@ -176,6 +176,6 @@ function report(
 		}
 	}
 	if (exitCode !== ExitCode.Success) {
-		process.exit(exitCode);
+		exitWith(exitCode);
 	}
 }

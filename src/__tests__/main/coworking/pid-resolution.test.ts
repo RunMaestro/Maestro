@@ -12,6 +12,21 @@ import {
 } from '../../../main/coworking/pid-resolution';
 
 describe('resolveSessionFromPidWalk', () => {
+	it('preserves the captured provider and process identity from the known ancestor', async () => {
+		const caller = {
+			sessionId: 's1',
+			processSessionId: 's1-ai-tab-fp-123',
+			provider: 'codex' as const,
+		};
+		expect(
+			await resolveSessionFromPidWalk(
+				200,
+				(pid) => (pid === 100 ? caller : null),
+				async () => 100
+			)
+		).toBe(caller);
+	});
+
 	it('returns the session id when the start pid is directly known', async () => {
 		const lookup = vi.fn((pid: number) => (pid === 100 ? 'sess-A' : null));
 		const getParent = vi.fn(async () => null);

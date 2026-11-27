@@ -132,6 +132,20 @@ describe('FloatingMediaPlayer', () => {
 		expect(state.items).toHaveLength(1);
 	});
 
+	it('calls minimize without passing the DOM event to the media action', () => {
+		const originalDismiss = useMediaPlaybackStore.getState().dismiss;
+		const dismiss = vi.fn(originalDismiss);
+		useMediaPlaybackStore.setState({ dismiss });
+		try {
+			renderPlayer();
+			fireEvent.click(screen.getByLabelText('Minimize player to the Left Bar'));
+			expect(dismiss).toHaveBeenCalledExactlyOnceWith();
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+		} finally {
+			useMediaPlaybackStore.setState({ dismiss: originalDismiss });
+		}
+	});
+
 	describe('focus', () => {
 		it('takes the caret when something asks for the player to be shown', () => {
 			const a = item();

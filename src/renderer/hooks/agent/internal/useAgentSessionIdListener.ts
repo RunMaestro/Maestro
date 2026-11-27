@@ -22,7 +22,11 @@ import { updateSessionWith, useSessionStore } from '../../../stores/sessionStore
 import { notifyToast } from '../../../stores/notificationStore';
 import { parseSessionId, isBatchSession } from '../../../utils/sessionIdParser';
 import { getActiveTab } from '../../../utils/tabHelpers';
-import { resolveTurnProvider, updateProviderSlot } from '../../../utils/providerTabSessions';
+import {
+	resolveTabProvider,
+	resolveTurnProvider,
+	updateProviderSlot,
+} from '../../../utils/providerTabSessions';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { useOwnedSideEffectGate } from './useOwnedSessionGate';
@@ -164,7 +168,10 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 
 				const session = useSessionStore.getState().sessions.find((s) => s.id === actualSessionId);
 				if (session) {
-					const eventTab = session.aiTabs?.find((tab) => tab.id === tabId);
+					const eventTab = tabId
+						? (session.aiTabs.find((tab) => tab.id === tabId) ??
+							session.orphanedThinkingTabs?.find((tab) => tab.id === tabId))
+						: getActiveTab(session);
 					const capture = attempts.get(sessionId);
 					// A receipt must never fall through into another provider's legacy path.
 					const isGrokEvent =
@@ -203,8 +210,13 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 						if (!matchesNativeSessionBinding(binding, binding)) return;
 						capture.generation = launch.processGeneration;
 					}
-					// This legacy bridge writes Claude's origin index, not Grok history.
-					if (!isGrokEvent)
+					// This legacy bridge writes Claude's origin index, not Grok history, and
+					// only for a turn a Claude tab started (a pinned Codex tab has no index).
+					if (
+						!isGrokEvent &&
+						(!tabId || eventTab) &&
+						resolveTurnProvider(eventTab, session) === 'claude-code'
+					)
 						window.maestro.agentSessions
 							.registerSessionOrigin(session.projectRoot, agentSessionId, 'user')
 							.catch((err) =>
@@ -219,11 +231,13 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 						// using it on the next spawn produces "no conversation found with session id"
 						// because the file does not exist. So once a claude-code tab/session has an
 						// agentSessionId, treat it as immutable and ignore subsequent fork IDs.
-						const isClaudeCode = s.toolType === 'claude-code';
+						let isClaudeCode = s.toolType === 'claude-code';
 
 						let targetTab;
 						if (tabId) {
-							targetTab = s.aiTabs?.find((tab) => tab.id === tabId);
+							targetTab =
+								s.aiTabs?.find((tab) => tab.id === tabId) ??
+								s.orphanedThinkingTabs?.find((tab) => tab.id === tabId);
 							if (!targetTab) {
 								logger.info(
 									'[onSessionId] Tab was closed, storing session ID at session level only:',
@@ -233,7 +247,7 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 										agentSessionId: agentSessionId.substring(0, 8),
 									}
 								);
-								return isClaudeCode ? s : { ...s, agentSessionId };
+								return s;
 							}
 						}
 
@@ -257,7 +271,10 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 						// token would be a resume target the new provider has never heard of -
 						// park it under its real owner instead.
 						const owningProvider = isGrokEvent ? 'grok' : resolveTurnProvider(targetTab, s);
-						const isStaleProvider = owningProvider !== s.toolType;
+						isClaudeCode = owningProvider === 'claude-code';
+						// Stale against the TAB's own provider: a pinned tab is not stale
+						// just because the agent's default harness differs.
+						const isStaleProvider = owningProvider !== resolveTabProvider(targetTab, s);
 						if (owningProvider === 'grok') {
 							if (!capture || !binding) return s;
 							const requested = capture.attempt.requestedNativeSessionId;
@@ -335,6 +352,22 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 								),
 							};
 						}
+						if (!s.aiTabs.some((tab) => tab.id === targetTab.id)) {
+							return {
+								...s,
+								orphanedThinkingTabs: s.orphanedThinkingTabs?.map((tab) =>
+									tab.id === targetTab.id
+										? updateProviderSlot(tab, s, owningProvider, { agentSessionId })
+										: tab
+								),
+							};
+						}
+						if (
+							isStaleProvider &&
+							isClaudeCode &&
+							targetTab.providerSessions?.[owningProvider]?.agentSessionId
+						)
+							return s;
 						if (isStaleProvider) {
 							logger.info(
 								'[onSessionId] Session ID arrived for a provider the agent has since switched away from - parking it',
@@ -396,7 +429,11 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 								};
 							});
 
-							return { ...s, aiTabs: updatedAiTabs, agentSessionId };
+							return {
+								...s,
+								aiTabs: updatedAiTabs,
+								...(owningProvider === s.toolType ? { agentSessionId } : {}),
+							};
 						}
 
 						const updatedAiTabs = s.aiTabs.map((tab) => {
@@ -405,12 +442,13 @@ export function useAgentSessionIdListener(deps: UseAgentSessionIdListenerDeps): 
 							return {
 								...tab,
 								agentSessionId,
+								turnSessionId: agentSessionId,
 								awaitingSessionId: false,
 								name: newName,
 							};
 						});
 
-						return isClaudeCode
+						return isClaudeCode || owningProvider !== s.toolType
 							? { ...s, aiTabs: updatedAiTabs }
 							: { ...s, aiTabs: updatedAiTabs, agentSessionId };
 					});

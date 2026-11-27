@@ -177,6 +177,17 @@ export interface CaptureRule {
 	action: CaptureRuleAction;
 }
 
+/**
+ * Who writes digests. `local`: the model assigned to the `history-digests`
+ * Local Models task (text never leaves this computer unless that assignment is
+ * a remote endpoint). `agent`: the agent in `digests.agentId`, asked through
+ * the cross-agent consult path.
+ */
+export type DigestSource = 'local' | 'agent';
+
+/** In the order a picker offers them: the local model first. */
+export const DIGEST_SOURCES: readonly DigestSource[] = ['local', 'agent'];
+
 export interface ComputerHistoryConfig {
 	version: 1;
 	retentionDays: number;
@@ -193,9 +204,9 @@ export interface ComputerHistoryConfig {
 	/** ISO timestamp, `'forever'`, or null when recording. */
 	pausedUntil: string | null;
 	/**
-	 * Agent-written digests: one per closed 15-minute segment, plus (when
-	 * `rollup`) one per 6-hour UTC block, written from that block's 15-minute
-	 * digests.
+	 * Digests: one per closed 15-minute segment, plus (when `rollup`) one per
+	 * 6-hour UTC block, written from that block's 15-minute digests. `source`
+	 * says who writes them; `agentId` is read only while it is `agent`.
 	 */
-	digests: { enabled: boolean; agentId: string | null; rollup: boolean };
+	digests: { enabled: boolean; source: DigestSource; agentId: string | null; rollup: boolean };
 }

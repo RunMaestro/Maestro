@@ -155,6 +155,7 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 										nativeSessionBinding: entry.nativeSessionBinding
 											? structuredClone(entry.nativeSessionBinding)
 											: undefined,
+										...(entry.provider ? { provider: entry.provider } : {}),
 									}
 								);
 							}}

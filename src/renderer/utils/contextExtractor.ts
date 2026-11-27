@@ -18,6 +18,7 @@ import { matchesNativeSessionBinding } from '../../shared/maestro-lib/agents/pro
 import { countTokens, estimateTokens } from './tokenCounter';
 import { calculateContextTokens } from './contextUsage';
 import { logger } from './logger';
+import { projectTabProvider, resolveTabNativeProvider } from './providerTabSessions';
 
 // Marks a text projection so shared formatters keep its provenance and tool
 // evidence. It conveys no native ownership or permission to resume/migrate.
@@ -43,20 +44,21 @@ export function extractTabContext(
 	sessionName: string,
 	session: Session
 ): ContextSource {
+	const native = projectTabProvider(session, tab, resolveTabNativeProvider(tab, session));
 	// Build a display name that includes both session and tab info
-	const tabDisplayName = tab.name || (tab.agentSessionId?.slice(0, 8) ?? 'New Tab');
+	const tabDisplayName = tab.name || (native.tab?.agentSessionId?.slice(0, 8) ?? 'New Tab');
 	const displayName = `${sessionName} / ${tabDisplayName}`;
 
 	return {
 		type: 'tab',
 		sessionId: session.id,
 		tabId: tab.id,
-		agentSessionId: tab.agentSessionId ?? undefined,
+		agentSessionId: native.tab?.agentSessionId ?? undefined,
 		projectRoot: session.projectRoot,
 		name: displayName,
 		logs: [...tab.logs], // Shallow copy to prevent mutations
-		usageStats: tab.usageStats ? { ...tab.usageStats } : undefined,
-		agentType: session.toolType,
+		usageStats: native.tab?.usageStats ? { ...native.tab.usageStats } : undefined,
+		agentType: native.agent.toolType,
 	};
 }
 
@@ -214,6 +216,7 @@ export async function extractStoredSessionContext(
 			timestamp: new Date(msg.timestamp).getTime(),
 			source: mapRoleToSource(msg.role || msg.type),
 			text: msg.content,
+			turnProvider: agentId,
 		}));
 
 		// Build display name from first user message or session ID

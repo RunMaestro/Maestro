@@ -4,6 +4,7 @@ export { AgentsView } from './AgentsView';
 export { AutoRunView } from './AutoRunView';
 export { DashboardTabPanel } from './DashboardTabPanel';
 export { GroupsView } from './GroupsView';
+export { ModelsView } from './ModelsView';
 export { OverviewView } from './OverviewView';
 export { ProviderQuotaUsageView } from './ProviderQuotaUsageView';
 export { ShortcutsView } from './ShortcutsView';

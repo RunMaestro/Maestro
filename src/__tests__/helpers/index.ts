@@ -10,6 +10,14 @@ export { createMockAITab, createMockDesignPick, createMockFileTab } from './mock
 export { AGENT_MODES, agentModeFields, createMockSession, createModeSession } from './mockSession';
 export type { AgentMode } from './mockSession';
 export { installLocalStorageMock, installSessionStorageMock } from './mockLocalStorage';
+export {
+	createFakeAudioBuffer,
+	createFakeAudioContext,
+	createFakeGainNode,
+	createFakeMediaStream,
+	installAudioWorkletNodeMock,
+	installMediaDevicesMock,
+} from './mockWebAudio';
 export { ALL_RENDERER_STORES, resetAllStores, resetStore, resetStores } from './resetStores';
 
 // NOT re-exported: `./nodeSqlite`. It imports `node:sqlite` at module scope, and

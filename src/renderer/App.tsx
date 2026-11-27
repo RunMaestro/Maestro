@@ -1,3 +1,5 @@
+import { getAgentCommands } from './utils/agentCommands';
+import { resolveTabProvider } from './utils/providerTabSessions';
 import React, {
 	useState,
 	useEffect,
@@ -147,6 +149,7 @@ import { useChatFileDropZone } from './hooks/ui/useChatFileDropZone';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
 import { useSshReachability } from './hooks/remote/useSshReachability';
+import { useTokenProxyDefaultSync } from './hooks/localModels/useTokenProxyDefaultSync';
 import { installFeedbackLiveStateHook } from './services/feedbackLiveState';
 import { installAutoRunSnapshotResponder } from './services/debugPackage';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
@@ -1593,9 +1596,12 @@ function MaestroConsoleInner() {
 		glossLevel: themeGloss,
 	});
 
-	// Get capabilities for the active session's agent type
+	// Commands and capabilities follow the selected tab's provider.
+	const commandTab = activeSession ? getActiveTab(activeSession) : undefined;
+	const commandProvider = activeSession ? resolveTabProvider(commandTab, activeSession) : undefined;
+	const scopedAgentCommands = getAgentCommands(activeSession, commandTab);
 	const { hasCapability: hasActiveSessionCapability } = useAgentCapabilities(
-		activeSession?.toolType,
+		commandProvider,
 		activeSession?.providerTranslationKnowledgeDirectory
 	);
 
@@ -1640,6 +1646,7 @@ function MaestroConsoleInner() {
 		canSummarize,
 		handleSummarizeAndContinue,
 		summarizeTab,
+		previewContinuity,
 	} = useSummarizeAndContinue();
 
 	// Fresh store snapshot - chrome equality ignores contextUsage / logs.
@@ -1788,6 +1795,9 @@ function MaestroConsoleInner() {
 
 	// One dialog per unreachable SSH remote (SshUnreachableModal reads the store).
 	useSshReachability();
+
+	// Agents that follow the Maestro proxy default move with it, wherever it changed.
+	useTokenProxyDefaultSync();
 
 	// --- AGENT IPC LISTENERS ---
 	// Extracted hook for all window.maestro.process.onXxx listeners
@@ -1962,7 +1972,9 @@ function MaestroConsoleInner() {
 	const allSlashCommands = useMemo(
 		() =>
 			assembleSlashCommandCompletions({
-				toolType: activeSession?.toolType,
+				// The active tab's provider: a tab pinned to another provider lists
+				// that provider's commands, not the agent default's.
+				toolType: commandProvider,
 				supportsProviderCommands: hasActiveSessionCapability('supportsSlashCommands'),
 				customCommands: [
 					...customAICommands,
@@ -1970,7 +1982,7 @@ function MaestroConsoleInner() {
 					...openspecCommands,
 					...bmadCommands,
 				],
-				agentCommands: activeSession?.agentCommands,
+				agentCommands: scopedAgentCommands,
 				grokDiscovery: grokCommandDiscovery,
 			}),
 		[
@@ -1979,8 +1991,8 @@ function MaestroConsoleInner() {
 			speckitCommands,
 			openspecCommands,
 			bmadCommands,
-			activeSession?.agentCommands,
-			activeSession?.toolType,
+			scopedAgentCommands,
+			commandProvider,
 			hasActiveSessionCapability,
 		]
 	);
@@ -2533,7 +2545,7 @@ function MaestroConsoleInner() {
 		resumeAfterError: resumeAutoRunAfterError,
 		skipCurrentDocument: skipCurrentAutoRunDocument,
 		abortBatchOnError: abortAutoRunBatchOnError,
-		tabContextOps: { summarizeTab, mergeTabContext, transferTabContext },
+		tabContextOps: { summarizeTab, previewContinuity, mergeTabContext, transferTabContext },
 	});
 
 	/*
@@ -3404,6 +3416,7 @@ function MaestroConsoleInner() {
 				useNativeTitleBar={useNativeTitleBar}
 				isMdDownViewport={isMdDownViewport}
 				concertoEnabled={encoreFeatures.concerto === true}
+				aCappellaEnabled={encoreFeatures.aCappella === true}
 				activeGroupChatId={activeGroupChatId}
 				groupChats={groupChats}
 				groups={groups}

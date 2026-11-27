@@ -4,6 +4,7 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type {
 	TerminalTabInfo,
 	ReadTerminalTabResult,
@@ -498,11 +499,13 @@ export function registerBrowserTabCallbacks(
 			prompt: string,
 			background?: boolean,
 			hidden?: boolean,
+			consultChain?: ConsultChain,
 			mentionRouting?: MentionRouting,
 			control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 		) =>
 			requestNewAITabWithPrompt(getMainWindow, sessionId, prompt, background, {
 				hidden,
+				consultChain,
 				mentionRouting,
 				control,
 			})

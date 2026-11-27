@@ -2397,6 +2397,75 @@ describe('agents IPC handlers', () => {
 				expect(result).toEqual(['anthropic/claude-opus-4-8', 'openai-codex/gpt-5.2']);
 			});
 
+			it('lists Claude Code models on SSH from the aliases and the remote catalog, never `claude models`', async () => {
+				mockSettingsStore.get.mockReturnValue([
+					{ id: 'remote-claude', host: 'tome.example.com', user: 'dev', enabled: true },
+				]);
+				vi.mocked(buildSshCommand).mockResolvedValue({
+					command: 'ssh',
+					args: ['-o', 'BatchMode=yes', 'dev@tome.example.com', 'sh -c ...'],
+				});
+				const catalog = (surface: string, ids: string[]) =>
+					JSON.stringify({ catalog: { surface, config: { models: ids.map((id) => ({ id })) } } });
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout: [
+						'___MAESTRO_REMOTE_FILE_START___ /home/dev/.claude/cache/model-catalog/a-cc.json',
+						catalog('cc', ['opus', 'claude-opus-5-5', 'claude-sonnet-5-5']),
+						'___MAESTRO_REMOTE_FILE_END___',
+						'___MAESTRO_REMOTE_FILE_START___ /home/dev/.claude/cache/model-catalog/b-chat.json',
+						catalog('chat', ['chat-only-model']),
+						'___MAESTRO_REMOTE_FILE_END___',
+						'___MAESTRO_REMOTE_FILE_START___ /home/dev/.claude/cache/model-catalog/published-floor.json',
+						catalog('cc', ['floor-index-model']),
+						'___MAESTRO_REMOTE_FILE_END___',
+						'',
+					].join('\n'),
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:getModels');
+				const result = await handler!({} as any, 'claude-code', false, 'remote-claude');
+
+				expect(buildSshCommand).toHaveBeenCalledTimes(1);
+				const remoteOptions = vi.mocked(buildSshCommand).mock.calls[0][1];
+				expect(remoteOptions).toMatchObject({ command: 'sh' });
+				expect(remoteOptions.args?.[1]).toContain(
+					'"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/cache/model-catalog/*.json'
+				);
+				expect(result).toEqual([
+					'fable',
+					'sonnet',
+					'opus',
+					'haiku',
+					'opus[1m]',
+					'sonnet[1m]',
+					'claude-opus-5-5',
+					'claude-sonnet-5-5',
+				]);
+				expect(mockAgentDetector.discoverModels).not.toHaveBeenCalled();
+			});
+
+			it('still offers the Claude Code aliases when the SSH remote cannot be read', async () => {
+				mockSettingsStore.get.mockReturnValue([
+					{ id: 'remote-claude-down', host: 'down.example.com', user: 'dev', enabled: true },
+				]);
+				vi.mocked(buildSshCommand).mockResolvedValue({
+					command: 'ssh',
+					args: ['dev@down.example.com', 'sh -c ...'],
+				});
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 255,
+					stdout: '',
+					stderr: 'ssh: connect to host down.example.com: Connection refused',
+				});
+
+				const handler = handlers.get('agents:getModels');
+				const result = await handler!({} as any, 'claude-code', false, 'remote-claude-down');
+
+				expect(result).toEqual(['fable', 'sonnet', 'opus', 'haiku', 'opus[1m]', 'sonnet[1m]']);
+			});
+
 			it('should throw when SSH remote not found', async () => {
 				mockSettingsStore.get.mockReturnValue([
 					{ id: 'remote-1', host: 'dev.example.com', enabled: true },
@@ -2425,6 +2494,40 @@ describe('agents IPC handlers', () => {
 	});
 
 	describe('agents:discoverSlashCommands', () => {
+		it('uses the selected Claude account for the probe and description enrichment', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				available: true,
+				path: '/usr/bin/claude',
+			});
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				exitCode: 0,
+				stdout: JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['work'] }),
+				stderr: '',
+			});
+			await (
+				handlers.get('agents:discoverSlashCommands') as (...args: unknown[]) => Promise<unknown>
+			)({}, 'claude-code', '/test', undefined, undefined, { CLAUDE_CONFIG_DIR: '/accounts/work' });
+			expect(execFileNoThrow).toHaveBeenCalledWith('/usr/bin/claude', expect.any(Array), '/test', {
+				env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/accounts/work' }),
+			});
+			expect(fs.promises.readdir).toHaveBeenCalledWith(
+				// The handler joins with the platform separator, so the expectation does too.
+				expect.stringContaining(path.join('/accounts/work', 'skills')),
+				expect.anything()
+			);
+		});
+
+		it('does not probe local Claude accounts for an SSH host', async () => {
+			expect(
+				await (
+					handlers.get('agents:discoverSlashCommands') as (...args: unknown[]) => Promise<unknown>
+				)({}, 'claude-code', '/remote', undefined, 'ssh-1')
+			).toBeNull();
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
 		it('should return slash commands for Claude Code', async () => {
 			const mockAgent = {
 				id: 'claude-code',
@@ -2464,7 +2567,8 @@ describe('agents IPC handlers', () => {
 					'--',
 					'/help',
 				],
-				'/test/project'
+				'/test/project',
+				{ env: expect.any(Object) }
 			);
 			expect(result).toEqual([{ name: '/help' }, { name: '/compact' }, { name: '/clear' }]);
 		});
@@ -2619,7 +2723,9 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			await handler!({} as any, 'claude-code', '/test', '/custom/claude');
 
-			expect(execFileNoThrow).toHaveBeenCalledWith('/custom/claude', expect.any(Array), '/test');
+			expect(execFileNoThrow).toHaveBeenCalledWith('/custom/claude', expect.any(Array), '/test', {
+				env: expect.any(Object),
+			});
 		});
 
 		it('should return null for unsupported agents', async () => {

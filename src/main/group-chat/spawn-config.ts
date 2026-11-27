@@ -21,6 +21,7 @@ export function toSpawnGroupChatAgentConfig(
 ): SpawnGroupChatAgentConfig {
 	return {
 		sessionId: spawn.processId,
+		maestroAgentId: spawn.maestroAgentId,
 		agentId: spawn.providerId,
 		agent: spawn.agent,
 		command: spawn.command,

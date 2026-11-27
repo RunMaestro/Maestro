@@ -20,7 +20,7 @@ import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useComposerInputStore, selectAiComposerValue } from '../../../stores/composerInputStore';
 import { getModalActions } from '../../../stores/modalStore';
-import { FORCED_PARALLEL_SEND_EVENT, HOLD_SEND_EVENT } from '../../../hooks/input/useInputKeyDown';
+import { FORCED_PARALLEL_SEND_EVENT, requestHoldSend } from '../../../hooks/input/useInputKeyDown';
 import { requestSteerSend } from '../../../services/chatSteering';
 import { hostedTargetOf } from '../../../services/hostedTurns';
 import { openAgentSettings } from '../../../services/agentNavigation';
@@ -152,7 +152,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 				window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
 				return;
 			case 'hold':
-				window.dispatchEvent(new CustomEvent(HOLD_SEND_EVENT));
+				requestHoldSend();
 				return;
 			case 'steer':
 				requestSteerSend();
@@ -321,7 +321,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 									{support.kind === 'unsupported' && support.reason === 'not-claude' && (
 										<button
 											type="button"
-											onClick={() => openUrl(steerFeatureRequestUrl(session.toolType))}
+											onClick={() => openUrl(steerFeatureRequestUrl(model.steerProvider))}
 											className="inline-flex items-center gap-1"
 											style={{ color: theme.colors.accent }}
 										>

@@ -49,6 +49,8 @@ A confidence bar at the top tracks how well the AI understands your issue. As yo
 - Drag and drop up to 5 screenshots (PNG, JPG, GIF, or WebP - 10 MB each)
 - Check **Include support package** to attach debug information
 
+Before anything is uploaded, Maestro checks the issue text and the support package for credentials. If it finds one, nothing is sent and a dialog lists what it found, masked, with **Publish anyway** and **Cancel**. See [The secret screen](./local-models#the-secret-screen).
+
 ### Live Diagnostics
 
 The feedback agent runs on your own machine, so it can look at the problem instead of asking you to describe it.

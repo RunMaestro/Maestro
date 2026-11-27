@@ -10,6 +10,8 @@
  * trip and a refusal.
  */
 
+import { parseRunOnTarget, type RunOnTarget } from '../../local-models/run-on';
+
 /** The cap the desktop's goal panel starts at when "Infinite" is turned off. */
 export const DEFAULT_GOAL_MAX_ITERATIONS = 10;
 
@@ -40,6 +42,8 @@ export interface AutoRunLaunchInput {
 	prompt?: string;
 	/** Skip the documents' `MAESTRO:MODEL` markers for this run (`--ignore-model-hints`). */
 	ignoreModelHints?: boolean;
+	/** Where this run's model runs, in place of the agent's own target (`--model-source`). */
+	runOn?: RunOnTarget;
 }
 
 export interface GoalRunLaunchInput {
@@ -49,6 +53,8 @@ export interface GoalRunLaunchInput {
 	maxIterations?: number | null;
 	model?: string;
 	effort?: string;
+	/** Where this run's model runs, in place of the agent's own target (`--model-source`). */
+	runOn?: RunOnTarget;
 }
 
 export type LaunchValidation<T> = { ok: true; value: T } | { ok: false; reason: string };
@@ -79,6 +85,8 @@ export function validateAutoRunLaunch(
 	if (loopProblem) return { ok: false, reason: loopProblem };
 	const model = blankToUndefined(input.model);
 	const effort = blankToUndefined(input.effort);
+	const runOn = checkRunOn(input.runOn);
+	if (!runOn.ok) return runOn;
 	return {
 		ok: true,
 		value: {
@@ -93,6 +101,7 @@ export function validateAutoRunLaunch(
 			// Kept as written: a prompt's own line breaks and indentation are part of it.
 			...(input.prompt?.trim() ? { prompt: input.prompt } : {}),
 			...(input.ignoreModelHints === true ? { ignoreModelHints: true } : {}),
+			...(runOn.value ? { runOn: runOn.value } : {}),
 		},
 	};
 }
@@ -107,6 +116,8 @@ export function validateGoalRunLaunch(
 	const exitCriteria = blankToUndefined(input.exitCriteria);
 	const model = blankToUndefined(input.model);
 	const effort = blankToUndefined(input.effort);
+	const runOn = checkRunOn(input.runOn);
+	if (!runOn.ok) return runOn;
 	return {
 		ok: true,
 		value: {
@@ -116,6 +127,18 @@ export function validateGoalRunLaunch(
 			...(input.maxIterations !== undefined ? { maxIterations: input.maxIterations } : {}),
 			...(model ? { model } : {}),
 			...(effort ? { effort } : {}),
+			...(runOn.value ? { runOn: runOn.value } : {}),
 		},
 	};
+}
+
+/** A run's own target in its stored form. Refused, never dropped: dropping it runs the agent's own. */
+function checkRunOn(
+	value: unknown
+): { ok: true; value: RunOnTarget | undefined } | { ok: false; reason: string } {
+	if (value === undefined) return { ok: true, value: undefined };
+	const parsed = parseRunOnTarget(value);
+	return parsed.ok
+		? { ok: true, value: parsed.target }
+		: { ok: false, reason: `Model source: ${parsed.error}` };
 }

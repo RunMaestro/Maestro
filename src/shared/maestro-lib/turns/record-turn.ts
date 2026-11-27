@@ -227,6 +227,7 @@ export function buildTurnTranscript(
 			timestamp: turn.endedAt,
 			source: 'stdout',
 			text: answer,
+			turnProvider: settings.provider,
 			// What the turn ran under, frozen at send (a model change mid-stream must not relabel it).
 			...(settings.model ? { turnModel: settings.model } : {}),
 			...(settings.effort ? { turnEffort: settings.effort } : {}),

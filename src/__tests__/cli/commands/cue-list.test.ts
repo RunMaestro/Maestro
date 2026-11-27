@@ -145,7 +145,7 @@ describe('cue list', () => {
 
 		await expect(cueList({})).rejects.toThrow('__exit__');
 
-		expect(exitSpy).toHaveBeenCalledWith(1);
+		expect(exitSpy).toHaveBeenCalledWith(4);
 		expect(console.error).toHaveBeenCalledWith(expect.stringContaining('rebuild and restart'));
 		expect(loadCueConfigDetailed).not.toHaveBeenCalled();
 	});
@@ -155,7 +155,7 @@ describe('cue list', () => {
 
 		await expect(cueList({ json: true })).rejects.toThrow('__exit__');
 
-		expect(exitSpy).toHaveBeenCalledWith(1);
+		expect(exitSpy).toHaveBeenCalledWith(5);
 		expect(loadCueConfigDetailed).not.toHaveBeenCalled();
 	});
 

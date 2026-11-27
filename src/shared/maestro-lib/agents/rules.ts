@@ -21,6 +21,7 @@ import { isSameDirectory, rebasePathOntoRoot } from '../../agentWorkingDirectory
 import { canonicalJson } from '../../canonicalJson';
 import { isCodexTransport } from '../../codexTransport';
 import { isHarnessControlMode } from '../providers/native-control';
+import { parsePeerAgentRows, parsePeerGrantValue } from '../../peerAgents';
 import { validateGroupAppearance } from '../../groupAppearance';
 import { canCreateGroupInside, removeGroupAndPromoteChildren } from '../../groupHierarchy';
 import { PLAYBOOKS_DIR } from '../../maestro-paths';
@@ -800,6 +801,7 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 	return {
 		...base,
 		turnProvider: begin.provider,
+		turnSessionId: tab.agentSessionId || undefined,
 		runtimeTurnId: begin.turnId,
 		logs: withUserEntry(Array.isArray(tab.logs) ? tab.logs : [], begin.userEntry),
 	};
@@ -831,8 +833,10 @@ export function recordTabSession(
 	owningProvider: string,
 	update: TabSessionUpdate
 ): AITabRecord {
+	// The live fields belong to the tab's own provider (a tab may run on a
+	// provider other than the agent's default); every other provider is parked.
 	const slot = (
-		owningProvider === agent.toolType
+		owningProvider === (tab.tabProvider ?? agent.toolType)
 			? tab
 			: (tab.providerSessions as Record<string, unknown>)?.[owningProvider]
 	) as ProviderSwitchTab | undefined;
@@ -900,6 +904,8 @@ export function applyTabPatch(
 	tab: AITabRecord,
 	patch: Record<string, unknown>
 ): RuleResult<AITabRecord> {
+	if ('tabProvider' in patch || 'providerSessions' in patch || 'pendingTranslation' in patch)
+		return invalid('Use tab provider to select a provider through the parking operation.');
 	const next: AITabRecord = { ...tab };
 	let touched = 0;
 	for (const key of Object.keys(patch)) {
@@ -1148,6 +1154,11 @@ export const AGENT_EDITABLE_KEYS: ReadonlySet<string> = new Set([
 	'codexTransport',
 	'harnessControlMode',
 	'bookmarked',
+	// Peer Agents. Validated in `applyAgentConfigPatch`: a malformed row must never reach a roster.
+	'peerAgents',
+	'groupPeerAccess',
+	'worktreePeerAccess',
+	'peerDescription',
 ]);
 
 /** The record-keyed form of an `AgentPatch`'s config fields, and the `AgentPatchField`s it carries. */
@@ -1192,6 +1203,16 @@ export function buildAgentConfigPatch(patch: AgentPatch): {
 	}
 	if (patch.harnessControlMode !== undefined)
 		put('harnessControlMode', 'harnessControlMode', patch.harnessControlMode);
+	if (patch.peerAgents !== undefined) put('peerAgents', 'peerAgents', patch.peerAgents);
+	if (patch.groupPeerAccess !== undefined) {
+		put('groupPeerAccess', 'groupPeerAccess', patch.groupPeerAccess);
+	}
+	if (patch.worktreePeerAccess !== undefined) {
+		put('worktreePeerAccess', 'worktreePeerAccess', patch.worktreePeerAccess);
+	}
+	if (patch.peerDescription !== undefined) {
+		put('peerDescription', 'peerDescription', patch.peerDescription);
+	}
 	return { fields, patch: out };
 }
 
@@ -1202,9 +1223,11 @@ export function buildAgentConfigPatch(patch: AgentPatch): {
  * window set without provenance inherits a precedence nobody asked for. A blank
  * `customEffort` clears, since an effort of whitespace names no effort.
  *
- * `codexTransport` is the one validated key: only a known transport is written,
- * and `exec`, the default, is stored the way the Edit Agent form stores it, as
- * an unset field. Anything else fails the whole patch, before any key is applied.
+ * `codexTransport` is validated: only a known transport is written, and `exec`,
+ * the default, is stored the way the Edit Agent form stores it, as an unset
+ * field. The peer rows and the two peer grants are read the way the Peers tab
+ * saves them (`parsePeerAgentRows()`, `parsePeerGrantValue()`). Anything else
+ * fails the whole patch, before any key is applied.
  */
 export function applyAgentConfigPatch(
 	agent: AgentRecord,
@@ -1218,12 +1241,33 @@ export function applyAgentConfigPatch(
 	if (controlMode !== undefined && controlMode !== null && !isHarnessControlMode(controlMode)) {
 		return invalid("Invalid value for field 'harnessControlMode'");
 	}
+	// Peer rows and grants are read the way a form save writes them, or the whole patch fails.
+	const peerValues: Record<string, unknown> = {};
+	if (patch.peerAgents !== undefined) {
+		const rows = parsePeerAgentRows(patch.peerAgents);
+		if (!rows.ok) return invalid(rows.error);
+		peerValues.peerAgents = rows.peerAgents;
+	}
+	for (const key of ['groupPeerAccess', 'worktreePeerAccess'] as const) {
+		if (patch[key] === undefined) continue;
+		const grant = parsePeerGrantValue(patch[key]);
+		if (!grant.ok) return invalid(`${key}: ${grant.error}`);
+		peerValues[key] = grant.access;
+	}
+	if (
+		patch.peerDescription !== undefined &&
+		patch.peerDescription !== null &&
+		typeof patch.peerDescription !== 'string'
+	) {
+		return invalid("Invalid value for field 'peerDescription'");
+	}
 	const next: AgentRecord = { ...agent };
 	let touched = 0;
 	for (const key of Object.keys(patch)) {
 		if (!AGENT_EDITABLE_KEYS.has(key)) continue;
 		touched += 1;
-		let value = patch[key];
+		let value = key in peerValues ? peerValues[key] : patch[key];
+		if (key === 'peerDescription' && typeof value === 'string') value = value.trim() || null;
 		if (key === 'customEffort' && typeof value === 'string') value = value.trim() || null;
 		if (key === 'codexTransport' && value === 'exec') value = null;
 		if (key === 'harnessControlMode' && value === 'current') value = null;

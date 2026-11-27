@@ -58,6 +58,7 @@ import { registerLiteConnectionRoutes } from './routes/liteConnectionRoutes';
 import { logger } from '../utils/logger';
 import { resolvePianolaDecision } from '../pianola/pianola-decisions';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
+import type { GroupSettingsUpdateRequest } from '../../shared/groupSettingsUpdate';
 import { getLocalIpAddress } from '../utils/networkUtils';
 import {
 	createNetworkAddressWatcher,
@@ -65,6 +66,7 @@ import {
 } from '../utils/network-address-watcher';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
+import { handleACappellaSignalDisconnect } from './handlers/messageHandlers/acappellaSignal';
 import { BroadcastService } from './services';
 import {
 	ApiRoutes,
@@ -187,6 +189,7 @@ import type {
 	CreateGroupCallback,
 	RenameGroupCallback,
 	UpdateGroupCallback,
+	UpdateGroupSettingsCallback,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -219,6 +222,8 @@ import type {
 	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
+	SetCueSubscriptionGateCallback,
+	SetCueSubscriptionInjectionScreenCallback,
 	TriggerCueSubscriptionCallback,
 	GetCueActivityCallback,
 	CueActivityEntry,
@@ -247,6 +252,7 @@ import type { TabContextOpRequest } from '../../shared/tabContextOps';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { DiffReviewCommandRequest } from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
+import type { ConsultChain } from '../../shared/consultBudget';
 import type { ThroughputGaugeCommandRequest } from '../../shared/throughputGaugeCommands';
 
 // Logger context for all web server logs
@@ -842,6 +848,7 @@ export class WebServer {
 			true,
 			undefined,
 			undefined,
+			undefined,
 			true
 		);
 	}
@@ -1001,6 +1008,10 @@ export class WebServer {
 		this.callbackRegistry.setRenameGroupCallback(callback);
 	}
 
+	setUpdateGroupSettingsCallback(callback: UpdateGroupSettingsCallback): void {
+		this.callbackRegistry.setUpdateGroupSettingsCallback(callback);
+	}
+
 	setUpdateGroupCallback(callback: UpdateGroupCallback): void {
 		this.callbackRegistry.setUpdateGroupCallback(callback);
 	}
@@ -1107,6 +1118,16 @@ export class WebServer {
 
 	setToggleCueSubscriptionCallback(callback: ToggleCueSubscriptionCallback): void {
 		this.callbackRegistry.setToggleCueSubscriptionCallback(callback);
+	}
+
+	setSetCueSubscriptionGateCallback(callback: SetCueSubscriptionGateCallback): void {
+		this.callbackRegistry.setSetCueSubscriptionGateCallback(callback);
+	}
+
+	setSetCueSubscriptionInjectionScreenCallback(
+		callback: SetCueSubscriptionInjectionScreenCallback
+	): void {
+		this.callbackRegistry.setSetCueSubscriptionInjectionScreenCallback(callback);
 	}
 
 	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
@@ -1386,6 +1407,10 @@ export class WebServer {
 				logger.info(`Client connected: ${client.id} (total: ${this.webClients.size})`, LOG_CONTEXT);
 			},
 			onClientDisconnect: (clientId) => {
+				// Tears down any A Cappella peer connection and closes the voice
+				// session if this socket's device was holding the microphone. A
+				// dropped socket must not leave a hot mic behind.
+				handleACappellaSignalDisconnect(clientId);
 				// Release only this connection's capture/input lease. Accepted host
 				// work and terminals survive disconnecting a browser or Lite.
 				void this.releaseWebClient(clientId);
@@ -1395,6 +1420,7 @@ export class WebServer {
 				);
 			},
 			onClientError: (clientId) => {
+				handleACappellaSignalDisconnect(clientId);
 				void this.releaseWebClient(clientId);
 			},
 			handleMessage: (clientId, message) => {
@@ -1471,6 +1497,7 @@ export class WebServer {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				requireDeliveryReceipt?: boolean,
 				pianolaDispatchId?: string
@@ -1483,6 +1510,7 @@ export class WebServer {
 					force,
 					images,
 					background,
+					consultChain,
 					mentionRouting,
 					...((pianolaDispatchId
 						? [requireDeliveryReceipt, pianolaDispatchId]
@@ -1550,6 +1578,7 @@ export class WebServer {
 				prompt: string,
 				background?: boolean,
 				hidden?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				control?: import('../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) =>
@@ -1558,6 +1587,7 @@ export class WebServer {
 					prompt,
 					background,
 					hidden,
+					consultChain,
 					mentionRouting,
 					control
 				),
@@ -1577,11 +1607,13 @@ export class WebServer {
 				images?: string[],
 				background?: boolean,
 				held?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
 				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl,
 				turnOverrides?: import('../../shared/maestro-lib/client/types').TurnOverrides,
-				agentText?: import('../../shared/maestro-lib/client/types').TurnAgentText
+				agentText?: import('../../shared/maestro-lib/client/types').TurnAgentText,
+				hostedTurn?: boolean
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1591,11 +1623,13 @@ export class WebServer {
 					images,
 					background,
 					held,
+					consultChain,
 					mentionRouting,
 					dispatchCallback,
 					control,
 					turnOverrides,
-					agentText
+					agentText,
+					hostedTurn
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
@@ -1667,6 +1701,8 @@ export class WebServer {
 				this.callbackRegistry.renameGroup(groupId, name),
 			updateGroup: async (groupId: string, update: GroupUpdateRequest) =>
 				this.callbackRegistry.updateGroup(groupId, update),
+			updateGroupSettings: async (groupId: string, request: GroupSettingsUpdateRequest) =>
+				this.callbackRegistry.updateGroupSettings(groupId, request),
 			deleteGroup: async (groupId: string) => this.callbackRegistry.deleteGroup(groupId),
 			moveSessionToGroup: async (sessionId: string, groupId: string | null) =>
 				this.callbackRegistry.moveSessionToGroup(sessionId, groupId),
@@ -1729,6 +1765,10 @@ export class WebServer {
 				this.callbackRegistry.getCueSubscriptions(sessionId),
 			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>
 				this.callbackRegistry.toggleCueSubscription(subscriptionId, enabled),
+			setCueSubscriptionGate: async (subscriptionId, gate) =>
+				this.callbackRegistry.setCueSubscriptionGate(subscriptionId, gate),
+			setCueSubscriptionInjectionScreen: async (subscriptionId, setting) =>
+				this.callbackRegistry.setCueSubscriptionInjectionScreen(subscriptionId, setting),
 			getCueActivity: async (sessionId?: string, limit?: number) =>
 				this.callbackRegistry.getCueActivity(sessionId, limit),
 			triggerCueSubscription: async (

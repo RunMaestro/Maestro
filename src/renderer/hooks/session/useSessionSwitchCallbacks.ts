@@ -16,7 +16,8 @@
  */
 
 import { useCallback, useEffect, useMemo } from 'react';
-import type { LogEntry, UsageStats } from '../../types';
+import type { LogEntry, UsageStats, ToolType } from '../../types';
+import type { ResumeSessionOptions } from '../agent/useAgentSessionManagement';
 import type { FlatFileItem } from '../../components/FileSearchModal';
 import type { FileNode } from '../../types/fileTree';
 import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
@@ -50,7 +51,7 @@ export interface UseSessionSwitchCallbacksDeps {
 		starred?: boolean,
 		usageStats?: UsageStats,
 		projectPath?: string,
-		opts?: { targetSessionId?: string; suppressUnavailableFlash?: boolean }
+		opts?: ResumeSessionOptions
 	) => Promise<boolean>;
 	/** Ref to main input textarea (for auto-focus after navigation) */
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -76,7 +77,8 @@ export interface UseSessionSwitchCallbacksReturn {
 		agentSessionId: string,
 		projectPath: string,
 		sessionName: string,
-		starred?: boolean
+		starred?: boolean,
+		provider?: ToolType
 	) => void;
 	/**
 	 * Jump to a starred session from the Left Bar, switching to its owning agent
@@ -243,9 +245,17 @@ export function useSessionSwitchCallbacks(
 
 	// Open a closed named session from the agent session browser
 	const handleNamedSessionSelect = useCallback(
-		(agentSessionId: string, _projectPath: string, sessionName: string, starred?: boolean) => {
+		(
+			agentSessionId: string,
+			projectPath: string,
+			sessionName: string,
+			starred?: boolean,
+			provider?: ToolType
+		) => {
 			// Open a closed named session as a new tab - use handleResumeSession to properly load messages
-			handleResumeSession(agentSessionId, [], sessionName, starred);
+			handleResumeSession(agentSessionId, [], sessionName, starred, undefined, projectPath, {
+				provider,
+			});
 			// Focus input so user can start interacting immediately
 			setActiveFocus('main');
 			setTimeout(() => inputRef.current?.focus(), 50);
@@ -311,10 +321,14 @@ export function useSessionSwitchCallbacks(
 			}
 
 			const ui = useUIStore.getState();
-			const searchKey = outputSearchKeyFor(activeSession.id, tabId);
-			ui.setOutputSearchQuery(searchKey, query);
-			ui.setOutputSearchRegex(searchKey, regex);
-			ui.setOutputSearchOpen(searchKey, true);
+			// A semantic hit carries no query: it matched by meaning, so there is
+			// nothing for the Find bar to look for. Only the jump happens.
+			if (query !== '') {
+				const searchKey = outputSearchKeyFor(activeSession.id, tabId);
+				ui.setOutputSearchQuery(searchKey, query);
+				ui.setOutputSearchRegex(searchKey, regex);
+				ui.setOutputSearchOpen(searchKey, true);
+			}
 			ui.setPendingLogJump({ sessionId: activeSession.id, tabId, logId });
 			setActiveFocus('main');
 		},

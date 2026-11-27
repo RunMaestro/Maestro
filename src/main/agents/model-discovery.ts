@@ -11,6 +11,11 @@
 import { AGENT_DEFINITIONS } from './definitions';
 import { parseOpenCodeConfig, extractModelsFromConfig } from './opencode-config';
 import type { AgentDetector } from './detector';
+import {
+	CLAUDE_CATALOG_SUBDIR,
+	CLAUDE_MODEL_ALIASES,
+	claudeCatalogModelIds,
+} from './claude-model-catalog';
 import { logger } from '../utils/logger';
 import {
 	buildSshCommand,
@@ -33,94 +38,144 @@ const remoteModelCache = new Map<string, { models: string[]; timestamp: number }
 const REMOTE_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
 export const SSH_MODEL_TIMEOUT_MS = 10000;
 
+const REMOTE_FILE_START = '___MAESTRO_REMOTE_FILE_START___';
+const REMOTE_FILE_END = '___MAESTRO_REMOTE_FILE_END___';
+
+/** One file read off an SSH remote: the path the remote shell expanded, and its text. */
+interface RemoteTextFile {
+	path: string;
+	text: string;
+}
+
+/**
+ * Read text files off an SSH remote in one round trip.
+ *
+ * Each pattern is a shell word the REMOTE shell expands (`~`, `$VAR`, a glob),
+ * so one pattern may name several files and the remote's own home and
+ * environment decide where they are. A pattern that matches nothing, or names a
+ * file that does not exist, contributes nothing.
+ *
+ * Fails soft by design: a timeout, a non-zero exit or an ssh failure returns
+ * what it has (usually nothing) and logs, because every caller treats remote
+ * files as an optional source next to a list that is usable without them.
+ */
+async function readRemoteTextFiles(
+	sshRemote: SshRemoteConfig,
+	patterns: readonly string[],
+	what: string
+): Promise<RemoteTextFile[]> {
+	const script = `for f in ${patterns.join(' ')}; do [ -f "$f" ] || continue; echo "${REMOTE_FILE_START} $f"; cat "$f"; echo; echo "${REMOTE_FILE_END}"; done`;
+	const remoteOptions: RemoteCommandOptions = {
+		command: 'sh',
+		args: ['-c', script],
+		env: sshRemote.remoteEnv,
+	};
+
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new Error(`${what} read timed out`)), SSH_MODEL_TIMEOUT_MS);
+		});
+		const result = await Promise.race([execSshCommand(sshRemote, sshCommand), timeout]);
+		if (result.exitCode !== 0) {
+			logger.warn(
+				`Reading ${what} on ${sshRemote.host} exited with ${result.exitCode}`,
+				LOG_CONTEXT,
+				{
+					stderr: result.stderr,
+				}
+			);
+			return [];
+		}
+
+		const files: RemoteTextFile[] = [];
+		for (const block of result.stdout.split(REMOTE_FILE_START).slice(1)) {
+			const newline = block.indexOf('\n');
+			if (newline < 0) continue;
+			const endIdx = block.indexOf(REMOTE_FILE_END, newline);
+			files.push({
+				path: block.slice(0, newline).trim(),
+				text: (endIdx >= 0 ? block.slice(newline + 1, endIdx) : block.slice(newline + 1)).trim(),
+			});
+		}
+		return files;
+	} catch (error) {
+		logger.warn(`Failed to read ${what} on ${sshRemote.host}`, LOG_CONTEXT, { error });
+		return [];
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
 /**
  * Read OpenCode config files from a remote SSH host and extract model IDs.
  *
  * Probes the same config paths OpenCode uses on POSIX systems:
  *   ~/.opencode/opencode.json, ~/.opencode.json, ~/.config/opencode/opencode.json
  *
- * Uses a single SSH command with a shell script that cats each file, avoiding
- * multiple round-trips. Returns unique model IDs in provider/model format.
+ * Returns unique model IDs in provider/model format.
  */
 async function discoverModelsFromRemoteConfigs(sshRemote: SshRemoteConfig): Promise<string[]> {
-	// Shell script that probes each config path and prints its content with delimiters.
-	// We use a delimiter so we can split multiple config files from a single stdout.
-	const configPaths = [
-		'~/.opencode/opencode.json',
-		'~/.opencode.json',
-		'${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json',
-	];
+	const files = await readRemoteTextFiles(
+		sshRemote,
+		[
+			'~/.opencode/opencode.json',
+			'~/.opencode.json',
+			'${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json',
+		],
+		'remote OpenCode configs'
+	);
 
-	// Build a script that cats each config file if it exists
-	const catScript = configPaths
-		.map(
-			(p) =>
-				`if [ -f ${p} ]; then echo "___OPENCODE_CONFIG_START___"; cat ${p}; echo "___OPENCODE_CONFIG_END___"; fi`
-		)
-		.join('; ');
-
-	const remoteOptions: RemoteCommandOptions = {
-		command: 'sh',
-		args: ['-c', catScript],
-		env: sshRemote.remoteEnv,
-	};
-
-	try {
-		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
-		const resultPromise = execSshCommand(sshRemote, sshCommand);
-		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
-			(_, reject) => {
-				setTimeout(() => reject(new Error('SSH config read timed out')), SSH_MODEL_TIMEOUT_MS);
-			}
-		);
-
-		const result = await Promise.race([resultPromise, timeoutPromise]);
-
-		if (result.exitCode !== 0 || !result.stdout.includes('___OPENCODE_CONFIG_START___')) {
-			return [];
-		}
-
-		// Parse delimited config blocks from stdout
-		const seen = new Set<string>();
-		const models: string[] = [];
-		const blocks = result.stdout.split('___OPENCODE_CONFIG_START___').slice(1);
-
-		for (const block of blocks) {
-			const endIdx = block.indexOf('___OPENCODE_CONFIG_END___');
-			const jsonStr = endIdx >= 0 ? block.slice(0, endIdx).trim() : block.trim();
-			if (!jsonStr) continue;
-
-			const config = parseOpenCodeConfig(jsonStr);
-			if (!config) continue;
-
-			for (const modelId of extractModelsFromConfig(config)) {
-				if (!seen.has(modelId)) {
-					seen.add(modelId);
-					models.push(modelId);
-				}
+	const seen = new Set<string>();
+	const models: string[] = [];
+	for (const { text } of files) {
+		if (!text) continue;
+		const config = parseOpenCodeConfig(text);
+		if (!config) continue;
+		for (const modelId of extractModelsFromConfig(config)) {
+			if (!seen.has(modelId)) {
+				seen.add(modelId);
+				models.push(modelId);
 			}
 		}
-
-		if (models.length > 0) {
-			logger.info(
-				`Extracted ${models.length} models from remote OpenCode configs on ${sshRemote.host}`,
-				LOG_CONTEXT,
-				{ models }
-			);
-		}
-
-		return models;
-	} catch (error) {
-		if (error instanceof Error && error.message.includes('timed out')) {
-			logger.warn(`Timed out reading remote OpenCode configs on ${sshRemote.host}`, LOG_CONTEXT);
-			return [];
-		}
-		// Non-fatal: config reading failure shouldn't block CLI-based discovery
-		logger.warn(`Failed to read remote OpenCode configs on ${sshRemote.host}`, LOG_CONTEXT, {
-			error,
-		});
-		return [];
 	}
+
+	if (models.length > 0) {
+		logger.info(
+			`Extracted ${models.length} models from remote OpenCode configs on ${sshRemote.host}`,
+			LOG_CONTEXT,
+			{ models }
+		);
+	}
+	return models;
+}
+
+/**
+ * Claude Code's models on an SSH remote.
+ *
+ * Claude Code has no `models` subcommand, so the generic `<binary> models`
+ * probe can only fail (or worse, read `models` as a prompt). Local discovery
+ * assembles the list from the aliases plus the catalog the CLI caches; this is
+ * the same list for the remote, with the catalog read from the REMOTE's config
+ * dir (`$CLAUDE_CONFIG_DIR`, else `~/.claude`) and parsed by the same rules.
+ * The aliases alone are always a usable list, so an unreachable remote or a
+ * missing cache still offers them.
+ */
+async function discoverClaudeModelsRemote(sshRemote: SshRemoteConfig): Promise<string[]> {
+	const catalogDir = `"\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/${CLAUDE_CATALOG_SUBDIR.join('/')}`;
+	const files = await readRemoteTextFiles(
+		sshRemote,
+		[`${catalogDir}/*.json`],
+		'remote Claude model catalog'
+	);
+	const models = [...CLAUDE_MODEL_ALIASES];
+	for (const id of claudeCatalogModelIds(
+		files.map(({ path, text }) => ({ name: path.slice(path.lastIndexOf('/') + 1), text }))
+	)) {
+		if (!models.includes(id)) models.push(id);
+	}
+	return models;
 }
 
 /**
@@ -144,6 +199,16 @@ export async function discoverModelsRemote(
 			logger.info(`Using cached remote models for ${agentId} on ${sshRemote.host}`, LOG_CONTEXT);
 			return cached.models;
 		}
+	}
+
+	if (agentId === 'claude-code') {
+		const models = await discoverClaudeModelsRemote(sshRemote);
+		logger.info(
+			`Discovered ${models.length} models for Claude Code on remote ${sshRemote.host}`,
+			LOG_CONTEXT
+		);
+		remoteModelCache.set(cacheKey, { models, timestamp: Date.now() });
+		return models;
 	}
 
 	// Look up the agent's binary name

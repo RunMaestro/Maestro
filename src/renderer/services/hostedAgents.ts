@@ -8,7 +8,7 @@
  * never shows until someone adds it. Adding builds the record a lift leaves behind (pointer plus the
  * SSH remote the host is reached over), so the rest of the app treats both the same way.
  *
- * One implementation for every way in: the Add Hosted Agent modal, and `maestro-cli federation
+ * One implementation for every way in: New Agent's host list, and `maestro-cli federation
  * agents|add`, which main routes here through `answerFederationWindowRequest()`.
  */
 
@@ -57,6 +57,7 @@ export function buildHostedAgentListings(
 			listings.push({
 				peerId,
 				peerName: peer.name,
+				remoteId: peer.remoteId,
 				agentId: agent.id,
 				ref: mirrorKey(peerId, agent.id),
 				name: agent.name,

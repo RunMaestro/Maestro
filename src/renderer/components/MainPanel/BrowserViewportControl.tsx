@@ -7,7 +7,7 @@
  * what it is and how wide.
  */
 
-import { Laptop, Maximize2, Monitor, Smartphone, Tablet } from 'lucide-react';
+import { Laptop, Maximize2, Monitor, Smartphone, Tablet, type LucideIcon } from 'lucide-react';
 import { SegmentedControl, type SegmentedOption } from '../ui/SegmentedControl';
 import {
 	BROWSER_VIEWPORT_PRESETS,
@@ -17,14 +17,12 @@ import {
 } from '../../../shared/browserViewport';
 import type { Theme } from '../../types';
 
-const ICON_CLASS = 'w-3.5 h-3.5';
-
-const PRESET_ICONS: Record<BrowserViewportPreset, React.ReactNode> = {
-	fit: <Maximize2 className={ICON_CLASS} />,
-	desktop: <Monitor className={ICON_CLASS} />,
-	laptop: <Laptop className={ICON_CLASS} />,
-	tablet: <Tablet className={ICON_CLASS} />,
-	phone: <Smartphone className={ICON_CLASS} />,
+const PRESET_ICONS: Record<BrowserViewportPreset, LucideIcon> = {
+	fit: Maximize2,
+	desktop: Monitor,
+	laptop: Laptop,
+	tablet: Tablet,
+	phone: Smartphone,
 };
 
 const OPTIONS: ReadonlyArray<SegmentedOption<BrowserViewportPreset>> = BROWSER_VIEWPORT_PRESETS.map(

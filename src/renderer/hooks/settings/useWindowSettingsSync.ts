@@ -13,6 +13,7 @@ import { useEffect } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
 import { loadAllSettings, useSettingsStore, type SettingsStore } from '../../stores/settingsStore';
+import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { applyTypographyVars } from '../../utils/applyTypographyVars';
 import { logger } from '../../utils/logger';
 
@@ -84,6 +85,12 @@ export function useReloadSettingsOnExternalChange(): void {
 		const cleanup = window.maestro.settings.onExternalChange(() => {
 			logger.info('[Settings] External settings change detected, reloading');
 			loadAllSettings();
+			// The Left Bar draws a wake-phrase badge per agent from a mirror of the
+			// A Cappella blob, which is not in the settings store. `maestro-cli voice
+			// wake-phrase` writes that blob, so the mirror is re-read here. Only once
+			// it has loaded: a window that never showed voice has nothing to refresh.
+			const voiceUi = useVoiceUiStore.getState();
+			if (voiceUi.loaded) void voiceUi.refreshWakePhrases();
 		});
 		return cleanup;
 	}, []);

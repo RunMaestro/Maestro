@@ -5,8 +5,9 @@ import { notifyToast } from '../../../stores/notificationStore';
 import type { Session } from '../../../types';
 import { getActiveTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
-import { resolveTurnProvider } from '../../../../shared/maestro-lib/agents/providerSwap';
+import { projectTabProvider, resolveTabNativeProvider } from '../../../utils/providerTabSessions';
 import { resolveSessionProjectPath } from '../../../components/AgentSessionsBrowser/utils/sessionProjectPath';
+import { resolveTurnProvider } from '../../../../shared/maestro-lib/agents/providerSwap';
 import { deleteShellCommandLog } from './deleteShellCommandLog';
 import type { ScrollLogHandlersReturn } from './types';
 
@@ -96,20 +97,24 @@ export function useScrollLogHandlers(): ScrollLogHandlersReturn {
 		}
 
 		if (isAIMode && currentActiveTab) {
-			// The tab's live provider session (`agentSessionId` always belongs to
-			// `session.toolType`; parked providers live in `providerSessions`). The
-			// message leaves the tab only once it has left the agent's context too,
-			// or the provider confirms it never recorded it (a turn that failed
-			// before the provider wrote anything).
-			const agentSessionId = currentActiveTab.agentSessionId;
+			// The provider that ran this turn (a tab may have switched since), and
+			// its session for this tab. The message leaves the tab only once it has
+			// left the agent's context too, or the provider confirms it never
+			// recorded it (a turn that failed before the provider wrote anything).
+			const provider =
+				log.turnProvider ?? resolveTabNativeProvider(currentActiveTab, currentSession);
+			const projected = projectTabProvider(currentSession, currentActiveTab, provider);
+			const agentSessionId = projected.tab?.agentSessionId;
 			if (agentSessionId) {
 				try {
 					// A remote agent's transcript lives on its SSH remote, under the
 					// remote working directory rather than the local cwd. Passing the
 					// agent's id lets main resolve its own account directory too.
-					const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(currentSession);
+					const { projectPathForSessions, sshRemoteId } = resolveSessionProjectPath(
+						projected.agent
+					);
 					const result = await window.maestro.agentSessions.deleteMessagePair(
-						currentSession.toolType,
+						provider,
 						sshRemoteId ? (projectPathForSessions ?? currentSession.cwd) : currentSession.cwd,
 						agentSessionId,
 						logId,

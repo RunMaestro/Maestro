@@ -10,14 +10,17 @@
  * Two shapes, like the ChatGPT companion window it is modeled on: just the
  * composer before the first message, then the conversation above it. In the
  * first shape the window is exactly the composer, so it grows with the draft.
+ *
+ * With A Cappella on, the composer has a microphone. It opens a voice session
+ * locked to this chat (see `useQuickChatVoice`): spoken turns arrive through the
+ * same `send` command a typed one does, so they show up here as ordinary
+ * messages, and the reply is spoken as well as shown.
  */
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-	ArrowUp,
 	Bookmark,
 	BookmarkCheck,
-	Brain,
 	ChevronDown,
 	ExternalLink,
 	History,
@@ -36,10 +39,20 @@ import {
 	type QuickChatRoute,
 	type QuickChatSnapshot,
 } from '../../shared/quickChat';
+import { VOICE_HUD_STATE_DESCRIPTIONS } from '../../shared/acappella/hud-state';
 import { useWindowSettingsSync } from '../hooks/settings/useWindowSettingsSync';
 import { useResolvedTheme } from '../hooks/ui/useResolvedTheme';
 import { useStickToBottom } from '../hooks/ui/useStickToBottom';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
+import { useQuickChatVoice } from '../hooks/voice/useQuickChatVoice';
+import {
+	ChatComposerSurface,
+	ChatSendButton,
+	ChatUserMessage,
+	ChatTooltip as QuickChatTooltip,
+	ChatIconButton as IconButton,
+} from '../components/ui/ChatSurface';
+import { VoiceHeldNotice } from '../components/ACappella/VoiceHeldNotice';
 import { useElementHeight } from '../hooks/ui/useElementWidth';
 import { FontScaleControl } from '../components/ui/FontScaleControl';
 import type { UseFontScaleReturn } from '../hooks/ui/useFontScale';
@@ -47,23 +60,20 @@ import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN } from '../../shared
 import { MarkdownRenderer } from '../components/MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
-import { HoverTooltip } from '../components/ui/HoverTooltip';
 import { isImeComposing } from '../utils/ime';
-import type { ShortcutChords } from '../components/ui/ShortcutHint';
+import { isEditingTextTarget } from '../utils/editableTarget';
+import { shortcutText } from '../components/ui/ShortcutHint';
 import { ZOOM_VIEWER_ATTR, ZoomViewerHost, useZoomViewerStore } from '../components/ZoomViewer';
 import { LayerStackProvider } from '../contexts/LayerStackContext';
 import type { Theme } from '../types';
 import { QuickChatAgentPicker } from './QuickChatAgentPicker';
+import { QuickChatVoiceButton } from './QuickChatVoiceButton';
 import { QuickChatTabPicker, tabChoiceFromPickerId } from './QuickChatTabPicker';
 import { QuickChatHistoryPicker } from './QuickChatHistoryPicker';
-import { QuickChatRouteLine, QuickChatWorkingLine } from './QuickChatRouteLine';
+import { QuickChatRouteLine } from './QuickChatRouteLine';
+import { ChatWorkingLine } from '../components/ui/ChatWorkingLine';
 import { StagedImageTile } from '../components/InputArea/components/StagedImageTile';
-import {
-	dragCarriesStagedImage,
-	useStagedImageDnd,
-} from '../components/InputArea/components/stagedImageDrag';
-import { moveStagedImage } from '../utils/stagedImageOrder';
-import { imageFilesIn, readBlobAsDataUrl } from '../utils/imageData';
+import { useChatImageDraft } from '../hooks/input/useChatImageDraft';
 import { openZoomViewer } from '../components/ZoomViewer';
 
 /** The reply box under a conversation: the conversation keeps the room. */
@@ -92,7 +102,27 @@ const QUICK_CHAT_KEYS = {
 	keep: 's',
 	pin: 'p',
 	close: 'w',
+	/**
+	 * Attach images. Select-all keeps the letter while the caret is in a field
+	 * with text in it: see `claimsAttachChord`.
+	 */
+	attach: 'a',
+	/** The microphone, while A Cappella is on. */
+	mic: 'm',
 } as const;
+
+/**
+ * Whether Cmd+A means "attach images" here rather than select-all. An empty
+ * field has nothing to select, so the chord is free there; a field with text
+ * keeps select-all, or clearing a long draft would mean deleting it by hand.
+ */
+function claimsAttachChord(target: EventTarget | null): boolean {
+	if (!isEditingTextTarget(target)) return true;
+	if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+		return target.value.length === 0;
+	}
+	return !(target as HTMLElement).textContent;
+}
 
 /**
  * Chords that take Shift too: the thinking toggle, on the same chord the main
@@ -103,22 +133,6 @@ const QUICK_CHAT_SHIFT_KEYS = {
 	thinking: 'k',
 	/** Shift on the tab picker's letter: open the chat's tab in Maestro itself. */
 	openTab: 't',
-} as const;
-
-/** What the thinking button says in each mode, and what a click does next. */
-const THINKING_LABELS = {
-	off: {
-		label: 'Thinking hidden',
-		hint: "Click to show the agent's reasoning while it works on a reply.",
-	},
-	on: {
-		label: 'Showing thinking',
-		hint: 'The reasoning goes away once the answer arrives. Click to keep it.',
-	},
-	sticky: {
-		label: 'Keeping thinking',
-		hint: 'The reasoning stays above each answer. Click to hide it.',
-	},
 } as const;
 
 /**
@@ -170,86 +184,6 @@ function followMainValue<T>(
 		if (!announced) apply(value);
 	});
 	return off;
-}
-
-/** Widest a hover overlay gets before its explanation wraps. */
-const TOOLTIP_MAX_WIDTH = 260;
-
-/**
- * A hover overlay naming the control and, when it is not obvious, what it does.
- * Not the native `title`: macOS does not show one in this window while another
- * app is active, which is exactly when the window is summoned.
- */
-function QuickChatTooltip({
-	label,
-	hint,
-	shortcut,
-	theme,
-	triggerClassName,
-	children,
-}: {
-	label: string;
-	hint?: string;
-	shortcut?: string | ShortcutChords;
-	theme: Theme;
-	/** Wrapper classes, for a trigger that must keep shrinking in a flex row. */
-	triggerClassName?: string;
-	children: React.ReactNode;
-}) {
-	return (
-		<HoverTooltip
-			theme={theme}
-			shortcut={shortcut}
-			triggerClassName={triggerClassName}
-			maxWidth={hint ? TOOLTIP_MAX_WIDTH : undefined}
-			triggerStyle={NO_DRAG_REGION}
-			label={
-				hint ? (
-					<span className="flex flex-col gap-0.5">
-						<span className="font-medium">{label}</span>
-						<span style={{ color: theme.colors.textDim }}>{hint}</span>
-					</span>
-				) : (
-					label
-				)
-			}
-		>
-			{children}
-		</HoverTooltip>
-	);
-}
-
-function IconButton({
-	label,
-	hint,
-	shortcut,
-	onClick,
-	theme,
-	children,
-	disabled,
-}: {
-	label: string;
-	hint?: string;
-	shortcut?: string | ShortcutChords;
-	onClick: () => void;
-	theme: Theme;
-	children: React.ReactNode;
-	disabled?: boolean;
-}) {
-	return (
-		<QuickChatTooltip label={label} hint={hint} shortcut={shortcut} theme={theme}>
-			<button
-				type="button"
-				aria-label={hint ? `${label}. ${hint}` : label}
-				onClick={onClick}
-				disabled={disabled}
-				className="p-1.5 rounded-md transition-opacity hover:opacity-100 opacity-70 disabled:opacity-30"
-				style={{ ...NO_DRAG_REGION, color: theme.colors.textMain }}
-			>
-				{children}
-			</button>
-		</QuickChatTooltip>
-	);
 }
 
 /** The route of the turn a message belongs to: its own, or the user message above it. */
@@ -305,12 +239,7 @@ function MessageView({
 				)}
 				{message.text.trim() && (
 					<div className="flex justify-end">
-						<div
-							className="max-w-[85%] rounded-2xl px-4 py-2 whitespace-pre-wrap break-words select-text"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
-						>
-							{message.text}
-						</div>
+						<ChatUserMessage theme={theme}>{message.text}</ChatUserMessage>
 					</div>
 				)}
 				{message.route && (
@@ -372,8 +301,6 @@ function QuickChatWindow() {
 	const theme = useResolvedTheme();
 	const [snapshot, setSnapshot] = useState<QuickChatSnapshot>({ ...EMPTY_QUICK_CHAT_SNAPSHOT });
 	const [draft, setDraft] = useState('');
-	/** Images staged for the next message (pasted, dropped, or picked), as data URLs. */
-	const [images, setImages] = useState<string[]>([]);
 	const [error, setError] = useState<string | null>(null);
 	/** Which picker is open: the agent's (Cmd+O), the next message's tab (Cmd+T), or the recent chats (Cmd+Y). */
 	const [picker, setPicker] = useState<'agent' | 'tab' | 'history' | null>(null);
@@ -383,10 +310,18 @@ function QuickChatWindow() {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const composerRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	/**
+	 * Set by a new chat and cleared by anything the user does in it (typing,
+	 * staging an image, picking a tab, agent, or recent chat). While it holds,
+	 * Cmd+N again flips the next message between the Default Tab setting's two
+	 * choices instead of starting yet another empty chat.
+	 */
+	const freshChatRef = useRef(false);
 
 	// This window boots its own renderer and never runs useSettings: load the
 	// settings, follow changes made in the main window, and apply the typography.
 	useWindowSettingsSync();
+	const voice = useQuickChatVoice();
 
 	useEffect(() => {
 		const offSnapshot = window.maestro.quickChat.onSnapshot(setSnapshot);
@@ -426,12 +361,17 @@ function QuickChatWindow() {
 	}, []);
 
 	// The picker needs room the composer-only window does not have, so the
-	// window grows while it is open and shrinks back when it closes.
+	// window grows while it is open and shrinks back when it closes. A live voice
+	// session is a conversation from its first second: what is being heard, and
+	// a held sentence waiting to be sent, need the room too.
 	const hasConversation = snapshot.messages.length > 0 || snapshot.busy;
-	const expanded = hasConversation || pickerOpen;
+	const expanded = hasConversation || pickerOpen || voice.active;
 	useEffect(() => {
 		window.maestro.quickChat.setLayout(expanded ? 'expanded' : 'compact');
 	}, [expanded]);
+
+	const { images, setImages, stageImageFiles, imageDnd, onPaste, onDragOver, onDrop } =
+		useChatImageDraft(textareaRef, setError);
 
 	// Composer only, the window is the composer: report its height as the draft
 	// grows and shrinks, or lines past the second are clipped by the window.
@@ -453,7 +393,7 @@ function QuickChatWindow() {
 	);
 	const threadStatus = snapshot.messages.map((m) => m.route?.status ?? '').join('');
 	const stickRef = useStickToBottom<HTMLDivElement>(
-		`${snapshot.messages.length}:${threadSize}:${threadStatus}:${fontScaleValue}`
+		`${snapshot.messages.length}:${threadSize}:${threadStatus}:${fontScaleValue}:${voice.partialTranscript.length}`
 	);
 	useAutosizeTextarea({
 		textareaRef,
@@ -463,55 +403,6 @@ function QuickChatWindow() {
 			: COMPACT_COMPOSER_MAX_HEIGHT - (images.length > 0 ? STAGED_IMAGES_ROOM : 0),
 	});
 
-	// Images reach the agent the way a paste into the main composer does: staged
-	// here, then sent with the message to its tab.
-	const stageImageFiles = useCallback((files: File[]) => {
-		if (files.length === 0) return;
-		void Promise.all(files.map((file) => readBlobAsDataUrl(file).catch(() => null))).then(
-			(read) => {
-				const added = read.filter((image): image is string => image !== null);
-				if (added.length < read.length) setError('Could not read an image');
-				// The same image twice is staged once, as in the main composer.
-				setImages((prev) => [
-					...prev,
-					...added.filter((image, i) => !prev.includes(image) && added.indexOf(image) === i),
-				]);
-			}
-		);
-	}, []);
-	const reorderImages = useCallback(
-		(from: number, to: number) => setImages((prev) => moveStagedImage(prev, from, to)),
-		[]
-	);
-	const imageDnd = useStagedImageDnd(images.length, reorderImages);
-	const onPaste = useCallback(
-		(e: React.ClipboardEvent) => {
-			const files = imageFilesIn(e.clipboardData);
-			if (files.length === 0) return;
-			e.preventDefault();
-			stageImageFiles(files);
-		},
-		[stageImageFiles]
-	);
-	const onDragOver = useCallback((e: React.DragEvent) => {
-		if (Array.from(e.dataTransfer.types).includes('Files')) e.preventDefault();
-	}, []);
-	const onDrop = useCallback(
-		(e: React.DragEvent) => {
-			// A staged thumbnail dragged out of its strip is a reorder that missed.
-			if (dragCarriesStagedImage(e.dataTransfer)) return;
-			if (!Array.from(e.dataTransfer.types).includes('Files')) return;
-			e.preventDefault();
-			const files = imageFilesIn(e.dataTransfer);
-			if (files.length === 0) {
-				setError('Only images can be attached to a Quick Chat message');
-				return;
-			}
-			stageImageFiles(files);
-			textareaRef.current?.focus();
-		},
-		[stageImageFiles]
-	);
 	const canSend = draft.trim().length > 0 || images.length > 0;
 
 	// Sending does not wait for a reply in progress: each message finds its own
@@ -564,6 +455,7 @@ function QuickChatWindow() {
 	const pickAgent = useCallback(
 		(agentId: string) => {
 			setPicker(null);
+			freshChatRef.current = false;
 			// Picking the agent the chat is already on is not a reason to wipe it.
 			const done =
 				agentId === snapshot.agentId ? Promise.resolve(true) : run({ type: 'setAgent', agentId });
@@ -574,6 +466,7 @@ function QuickChatWindow() {
 	const pickTab = useCallback(
 		(pickerId: string) => {
 			setPicker(null);
+			freshChatRef.current = false;
 			void run({ type: 'setTab', choice: tabChoiceFromPickerId(pickerId) }).then(() =>
 				textareaRef.current?.focus()
 			);
@@ -583,6 +476,7 @@ function QuickChatWindow() {
 	const pickRecent = useCallback(
 		(chatId: string) => {
 			setPicker(null);
+			freshChatRef.current = false;
 			// Picking the chat already in the window is not a reason to reload it.
 			const done =
 				chatId === snapshot.chatId ? Promise.resolve(true) : run({ type: 'recall', chatId });
@@ -593,10 +487,29 @@ function QuickChatWindow() {
 	const pickerShortcut = ['Meta', QUICK_CHAT_KEYS.picker];
 	const tabPickerShortcut = ['Meta', QUICK_CHAT_KEYS.tabPicker];
 	const newChat = useCallback(() => {
+		const untouched =
+			freshChatRef.current &&
+			draft.length === 0 &&
+			images.length === 0 &&
+			snapshot.messages.length === 0 &&
+			!snapshot.busy;
+		if (untouched) {
+			void run({
+				type: 'setTab',
+				choice: { kind: snapshot.next.kind === 'new' ? 'auto' : 'new' },
+			}).then(() => textareaRef.current?.focus());
+			return;
+		}
 		setDraft('');
 		setImages([]);
+		freshChatRef.current = true;
 		void run({ type: 'new' }).then(() => textareaRef.current?.focus());
-	}, [run]);
+	}, [run, draft, images.length, snapshot.messages.length, snapshot.busy, snapshot.next.kind]);
+	// Anything staged makes the chat no longer fresh, even if it is removed again.
+	useEffect(() => {
+		if (images.length > 0) freshChatRef.current = false;
+	}, [images.length]);
+	const openImagePicker = useCallback(() => fileInputRef.current?.click(), []);
 	const togglePersistent = useCallback(
 		() => void run({ type: 'setPersistent', persistent: !snapshot.persistent }),
 		[run, snapshot.persistent]
@@ -660,6 +573,8 @@ function QuickChatWindow() {
 			[QUICK_CHAT_KEYS.pin]: togglePinned,
 			// Closes the window whatever is open in it, unlike Escape.
 			[QUICK_CHAT_KEYS.close]: hide,
+			// No microphone without A Cappella: the key stays unclaimed then.
+			...(voice.enabled && { [QUICK_CHAT_KEYS.mic]: voice.toggle }),
 		};
 		const shiftChords: Record<string, () => void> = {
 			[QUICK_CHAT_SHIFT_KEYS.thinking]: cycleThinking,
@@ -685,7 +600,15 @@ function QuickChatWindow() {
 				else adjustFontScale(zoom);
 				return;
 			}
-			const action = (e.shiftKey ? shiftChords : chords)[e.key.toLowerCase()];
+			const key = e.key.toLowerCase();
+			// Select-all keeps the letter in a field with text in it.
+			if (!e.shiftKey && key === QUICK_CHAT_KEYS.attach) {
+				if (!claimsAttachChord(e.target)) return;
+				e.preventDefault();
+				if (!e.repeat) openImagePicker();
+				return;
+			}
+			const action = (e.shiftKey ? shiftChords : chords)[key];
 			if (!action) return;
 			e.preventDefault();
 			// A held chord auto-repeats; acting on each repeat flips a toggle back.
@@ -706,6 +629,9 @@ function QuickChatWindow() {
 		togglePinned,
 		cycleThinking,
 		openInMaestro,
+		openImagePicker,
+		voice.enabled,
+		voice.toggle,
 		zoomOpen,
 		adjustFontScale,
 		resetFontScale,
@@ -721,7 +647,7 @@ function QuickChatWindow() {
 		[theme]
 	);
 	const agentName = snapshot.agentName ?? 'your agent';
-	const shownError = error ?? snapshot.error;
+	const shownError = error ?? voice.error ?? snapshot.error;
 	const c = theme.colors;
 
 	// The switcher sits at the TOP in both shapes. The window grows downward
@@ -767,11 +693,16 @@ function QuickChatWindow() {
 			: next.kind === 'new'
 				? 'Your next message starts a new tab, and the chat continues there.'
 				: 'Maestro finds the tab that fits your message. Pick one to choose it yourself.';
+	// Before the first message, a second Cmd+N flips between the two defaults.
+	const tabHintWithToggle =
+		!hasConversation && next.kind !== 'tab'
+			? `${tabHint} Press ${shortcutText(['Meta', QUICK_CHAT_KEYS.newChat])} again to switch between Choose tab and New tab.`
+			: tabHint;
 	const tabButton = (
 		<QuickChatTooltip
 			theme={theme}
 			label="Choose the tab"
-			hint={tabHint}
+			hint={tabHintWithToggle}
 			shortcut={tabPickerShortcut}
 			triggerClassName="inline-flex min-w-0"
 		>
@@ -805,14 +736,14 @@ function QuickChatWindow() {
 	);
 
 	const composer = (
-		<div
+		<ChatComposerSurface
+			theme={theme}
+			compact={!expanded}
 			ref={composerRef}
 			// Composer only, its height is its content's (never stretched to the
 			// window): the window follows it, so it must not follow the window.
-			className={`rounded-3xl px-4 pb-2 flex flex-col gap-2 ${expanded ? 'pt-3' : 'justify-between'}`}
+			className={`${expanded ? 'pt-3' : 'justify-between'}`}
 			style={{
-				backgroundColor: expanded ? c.bgActivity : c.bgSidebar,
-				border: expanded ? 'none' : `1px solid ${c.border}`,
 				...(expanded ? {} : { minHeight: QUICK_CHAT_COMPACT_HEIGHT }),
 				...NO_DRAG_REGION,
 			}}
@@ -861,7 +792,10 @@ function QuickChatWindow() {
 				// the draft. A second row would sit empty under the first line.
 				rows={1}
 				value={draft}
-				onChange={(e) => setDraft(e.target.value)}
+				onChange={(e) => {
+					freshChatRef.current = false;
+					setDraft(e.target.value);
+				}}
 				onPaste={onPaste}
 				onKeyDown={(e) => {
 					if (e.key === 'Enter' && !e.shiftKey && !isImeComposing(e)) {
@@ -893,8 +827,9 @@ function QuickChatWindow() {
 				<IconButton
 					theme={theme}
 					label="Attach images"
-					hint="Or paste or drop them here."
-					onClick={() => fileInputRef.current?.click()}
+					hint="Or paste or drop them here. With text in the draft, the chord selects it instead."
+					shortcut={['Meta', QUICK_CHAT_KEYS.attach]}
+					onClick={openImagePicker}
 				>
 					<ImagePlus className="w-4 h-4" />
 				</IconButton>
@@ -923,30 +858,6 @@ function QuickChatWindow() {
 						className="w-4 h-4"
 						style={picker === 'history' ? { color: c.accent } : undefined}
 					/>
-				</IconButton>
-				<IconButton
-					theme={theme}
-					label={THINKING_LABELS[snapshot.thinking].label}
-					hint={THINKING_LABELS[snapshot.thinking].hint}
-					shortcut={['Meta', 'Shift', QUICK_CHAT_SHIFT_KEYS.thinking]}
-					onClick={cycleThinking}
-				>
-					<span className="relative flex">
-						<Brain
-							className="w-4 h-4"
-							style={
-								snapshot.thinking === 'off'
-									? undefined
-									: { color: snapshot.thinking === 'sticky' ? c.warning : c.accent }
-							}
-						/>
-						{snapshot.thinking === 'sticky' && (
-							<Pin
-								className="w-2.5 h-2.5 absolute -right-1 -bottom-1"
-								style={{ color: c.warning }}
-							/>
-						)}
-					</span>
 				</IconButton>
 				<IconButton
 					theme={theme}
@@ -982,6 +893,16 @@ function QuickChatWindow() {
 						<PinOff className="w-4 h-4" />
 					)}
 				</IconButton>
+				{/* Beside Send, as in the main composer: speaking is a way of
+				    submitting a message. */}
+				{voice.enabled && (
+					<QuickChatVoiceButton
+						theme={theme}
+						voice={voice}
+						agentName={agentName}
+						shortcut={['Meta', QUICK_CHAT_KEYS.mic]}
+					/>
+				)}
 				{/* Stop sits BESIDE Send while something is in motion, not in its
 				    place: the next message can go out before the last is answered. */}
 				{snapshot.busy && (
@@ -1002,19 +923,10 @@ function QuickChatWindow() {
 					</QuickChatTooltip>
 				)}
 				<QuickChatTooltip label="Send" shortcut="Enter" theme={theme}>
-					<button
-						type="button"
-						aria-label="Send"
-						onClick={() => void send()}
-						disabled={!canSend}
-						className="w-9 h-9 rounded-full flex items-center justify-center disabled:opacity-40"
-						style={{ backgroundColor: c.accent, color: c.accentForeground }}
-					>
-						<ArrowUp className="w-4 h-4" />
-					</button>
+					<ChatSendButton theme={theme} onClick={() => void send()} disabled={!canSend} />
 				</QuickChatTooltip>
 			</div>
-		</div>
+		</ChatComposerSurface>
 	);
 
 	return (
@@ -1122,12 +1034,38 @@ function QuickChatWindow() {
 									onMoveToNewTab={moveMessageToNewTab}
 									onSteer={steerMessage}
 								/>
-								{turn?.status === 'running' && (
-									<QuickChatWorkingLine since={turn.since} theme={theme} />
-								)}
+								{turn?.status === 'running' && <ChatWorkingLine since={turn.since} theme={theme} />}
 							</Fragment>
 						);
 					})}
+					{voice.active &&
+						(voice.partialTranscript ? (
+							// What is being heard, drawn where the sent message will land.
+							// Dashed and dim: it is a hypothesis, not yet a message.
+							<div className="flex justify-end" data-testid="quick-chat-voice-partial">
+								<div
+									className="max-w-[85%] rounded-2xl px-4 py-2 whitespace-pre-wrap break-words italic"
+									style={{ border: `1px dashed ${c.border}`, color: c.textDim }}
+								>
+									{voice.partialTranscript}
+								</div>
+							</div>
+						) : (
+							!snapshot.busy && (
+								<div
+									className="text-sm"
+									style={{ color: c.textDim }}
+									data-testid="quick-chat-voice-status"
+								>
+									{VOICE_HUD_STATE_DESCRIPTIONS[voice.visualState]}
+								</div>
+							)
+						))}
+				</div>
+			)}
+			{voice.active && !pickerOpen && (
+				<div className="px-2 shrink-0" style={NO_DRAG_REGION}>
+					<VoiceHeldNotice theme={theme} />
 				</div>
 			)}
 			{shownError && (

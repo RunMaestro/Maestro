@@ -112,6 +112,8 @@ function subtitleFor(task: ScheduledTask): string {
 	// where it goes rather than the storage detail.
 	if (task.tabId) parts.push(`into tab ${task.tabId.slice(0, 8)}`);
 	else if (task.action !== 'prompt') parts.push(task.action);
+	// A gate decides whether a fire runs at all, so the row says it has one.
+	if (task.gate) parts.push('gated');
 	const model = formatCueTurnSettings(task);
 	if (model) parts.push(model);
 	if (!task.enabled) parts.push('paused');

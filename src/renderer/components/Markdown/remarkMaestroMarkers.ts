@@ -30,6 +30,7 @@ import {
 	hasMaestroMarker,
 	type ScannedMarker,
 } from '../../../shared/autorunMarkers';
+import type { ModelTier } from '../../../shared/modelTiers';
 
 /** Attribute names the pill component reads back off the rendered element. */
 export const MARKER_DATA_ATTRIBUTES = {
@@ -42,12 +43,22 @@ export const MARKER_DATA_ATTRIBUTES = {
 	reason: 'dataMaestroMarkerReason',
 } as const;
 
+export interface MaestroMarkersOptions {
+	/**
+	 * Names where a tier launches for the agent this document runs under
+	 * (`low · qwen3.5-4b · Maestro`), from `tierPillLabel`. Passed only by a
+	 * surface that knows the agent (the Auto Run panel). Without it, or when it
+	 * answers `undefined`, a model pill names the tier alone (`low model`).
+	 */
+	describeTier?: (tier: ModelTier) => string | undefined;
+}
+
 /**
  * The pill's visible label. Deliberately says what the marker DOES rather than
  * naming the marker: "Pauses here" is actionable, "HITL" is jargon the reader
  * has to have already learned.
  */
-function labelFor(marker: ScannedMarker): string {
+function labelFor(marker: ScannedMarker, options: MaestroMarkersOptions): string {
 	if (marker.kind === 'halt') return 'Halted';
 	if (marker.kind === 'hitl') return marker.status === 'live' ? 'Pauses here' : 'Approved';
 	if (marker.status === 'invalid') return 'Unknown setting';
@@ -55,7 +66,11 @@ function labelFor(marker: ScannedMarker): string {
 	const parts: string[] = [];
 	// `default` reads as an explicit opt-out rather than a level, so it is shown
 	// as such instead of being silently dropped.
-	if (marker.hint?.tier) parts.push(`${marker.hint.tier} model`);
+	const tier = marker.hint?.tier;
+	if (tier) {
+		const target = tier === 'default' ? undefined : options.describeTier?.(tier);
+		parts.push(target ?? `${tier} model`);
+	}
 	if (marker.hint?.effort) parts.push(`${marker.hint.effort} effort`);
 	return parts.length > 0 ? parts.join(', ') : 'Agent default';
 }
@@ -92,7 +107,7 @@ function markerKindOf(value: string): ScannedMarker['kind'] | undefined {
 	return undefined;
 }
 
-export function remarkMaestroMarkers() {
+export function remarkMaestroMarkers(options: MaestroMarkersOptions = {}) {
 	return (tree: Root, file: VFile) => {
 		const source = String(file?.value ?? '');
 		if (!source || !hasMaestroMarker(source)) return;
@@ -120,7 +135,7 @@ export function remarkMaestroMarkers() {
 				[MARKER_DATA_ATTRIBUTES.kind]: marker.kind,
 				[MARKER_DATA_ATTRIBUTES.status]: marker.status,
 				[MARKER_DATA_ATTRIBUTES.scope]: marker.scope,
-				[MARKER_DATA_ATTRIBUTES.label]: labelFor(marker),
+				[MARKER_DATA_ATTRIBUTES.label]: labelFor(marker, options),
 			};
 			if (detail) properties[MARKER_DATA_ATTRIBUTES.detail] = detail;
 			if (marker.artifact) properties[MARKER_DATA_ATTRIBUTES.artifact] = marker.artifact;

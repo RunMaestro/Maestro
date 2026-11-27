@@ -609,6 +609,8 @@ describe('the launch request (PA2, PA8, PA9)', () => {
 		expect(launch.maestroEnvVars).toEqual({
 			MAESTRO_CALLER_AGENT_ID: 'agent-1',
 			MAESTRO_CALLER_TAB_ID: 'tab-1',
+			// A hosted agent's `maestro-cli ask` / `dispatch` refuses targets off the host by name.
+			MAESTRO_HOSTED_TURN: '1',
 			MAESTRO_USER_DATA: '/data/maestro',
 		});
 	});

@@ -10,7 +10,7 @@ import { AlertTriangle } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { CueSessionStatus } from '../../hooks/useCue';
 import type { CuePipeline, CueGraphSession } from '../../../shared/cue-pipeline-types';
-import type { CueRunResult } from '../../../shared/cue/contracts';
+import { isCueRunSkipped, type CueRunResult } from '../../../shared/cue/contracts';
 import { CUE_COLOR } from '../../../shared/cue-pipeline-types';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { SessionsTable } from './SessionsTable';
@@ -78,7 +78,11 @@ export function CueDashboard({
 	// entries (durationMs is final-state only). null when no finished runs are
 	// available so the stat card can render an em dash instead of "0ms".
 	const averageRuntimeMs = useMemo(() => {
-		const finished = activityLog.filter((r) => r.status !== 'running');
+		// A gated entry is an event its gate skipped, not a run: its duration
+		// is the gate check, which would drag the average toward zero.
+		const finished = activityLog.filter(
+			(r) => r.status !== 'running' && !isCueRunSkipped(r.status)
+		);
 		if (finished.length === 0) return null;
 		const total = finished.reduce((sum, r) => sum + r.durationMs, 0);
 		return total / finished.length;

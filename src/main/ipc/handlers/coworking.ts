@@ -8,6 +8,10 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { coworkingRegistry } from '../../coworking/coworking-registry';
+import type {
+	CoworkingBrowserCaller,
+	CoworkingBrowserPolicies,
+} from '../../../shared/coworkingBrowser';
 import { setBrowserResolver, setTerminalBufferResolver } from '../../coworking/coworking-tools';
 import {
 	getInstallStatus,
@@ -126,14 +130,16 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 				inputs: CoworkingBrowserInput[],
 				interactionEnabled: boolean,
 				agentType?: string,
-				confirmPolicy?: BrowserConfirmPolicy
+				confirmPolicy?: BrowserConfirmPolicy,
+				providerPolicies?: CoworkingBrowserPolicies
 			): Promise<void> => {
 				coworkingRegistry.syncSessionBrowsers(
 					sessionId,
 					inputs,
 					interactionEnabled,
 					agentType,
-					confirmPolicy
+					confirmPolicy,
+					providerPolicies
 				);
 			}
 		)
@@ -220,7 +226,12 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 	// mounted hidden webview and only activates the tab as a fallback) and await
 	// the BrowserOpResult on a unique, sender-validated responseChannel.
 	setBrowserResolver(
-		async (sessionId: string, tabUuid: string, op: BrowserOp): Promise<BrowserOpResult> => {
+		async (
+			sessionId: string,
+			tabUuid: string,
+			op: BrowserOp,
+			caller?: CoworkingBrowserCaller
+		): Promise<BrowserOpResult> => {
 			const win = deps.getMainWindow();
 			if (!win || win.isDestroyed()) {
 				throw new Error('Coworking: main window is not available to drive browser tab');
@@ -231,13 +242,14 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 				op.kind === 'type'
 					? deps.settingsStore.get('coworkingBrowserTypingWithoutConfirmation')
 					: undefined;
-			const provider = coworkingRegistry.getAgentType(sessionId);
+			// The caller's own launch identity wins: an agent can run more than one provider.
+			const provider = caller?.provider ?? coworkingRegistry.getAgentType(sessionId);
 			const allowTyping =
 				provider !== undefined &&
 				Array.isArray(typingProviders) &&
 				typingProviders.includes(provider);
 			const needsConfirm = browserOpNeedsConfirm(
-				coworkingRegistry.getBrowserConfirmPolicy(sessionId),
+				coworkingRegistry.getBrowserConfirmPolicy(sessionId, caller?.provider),
 				op.kind,
 				allowTyping
 			);
@@ -278,7 +290,8 @@ export function registerCoworkingHandlers(deps: CoworkingHandlerDependencies): v
 					sessionId,
 					op,
 					responseChannel,
-					needsConfirm
+					needsConfirm,
+					caller
 				);
 			} catch (err) {
 				clearTimeout(timer);

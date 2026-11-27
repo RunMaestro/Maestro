@@ -28,16 +28,25 @@
  * Left Bar group (each machine has its own groups), the SSH settings (the host agent runs there),
  * and the maestro-p binary path (a path on this machine).
  *
+ * Peer grants name agents by id, and ids differ per machine. The sync compares a pointer's rows in
+ * the host's ids (`splitPeerRowsForHost()`): a row for an agent lifted to the same host is
+ * rewritten to its host id, a row for an agent the host holds is kept, and a row for an agent on
+ * any other machine is never sent (the host cannot honor it) and stays on the pointer.
+ *
  * Pure: no I/O, no clock. The caller runs the actions, applies the pull, and keeps the baseline.
  */
 
 import { isSecretEnvKey, isBlankEnvKey, isBlankEnvValue } from '../../agentEnvironment';
+import { canonicalJson } from '../../canonicalJson';
 import { isCodexTransport } from '../../codexTransport';
+import { normalizePeerAgents, parsePeerAgentRows, parsePeerGrantValue } from '../../peerAgents';
+import type { PeerAccess, PeerAgent } from '../../types';
 import type { PeerAgentAction } from '../client/peer-actions';
 import type { AgentPatch, AgentPatchField, TabPatch, TurnOverrides } from '../client/types';
 import { isHarnessControlMode } from '../providers/native-control';
 import { visibleAiTabsOf } from '../store/read-stores';
 import type { AgentRecord, AITabRecord } from '../store/records';
+import { readLiftedTo } from './lift-pointer';
 import { liftedAutoRunFolder, liftRemoteCwd } from './lift-plan';
 
 /** A setting's value, normalized so "unset" has one spelling on both sides. */
@@ -86,6 +95,8 @@ export interface LiftSyncConflict {
 export interface LiftSyncInput {
 	local: AgentRecord;
 	host: AgentRecord;
+	/** How `local` names agents on the host; omit when `local` already uses the host's ids. */
+	peerIds?: LiftPeerIdMap;
 	baseline?: LiftSyncBaseline;
 	awaiting?: Readonly<Record<string, LiftSyncEcho>>;
 	resolutions?: Readonly<Record<string, LiftSyncResolution>>;
@@ -142,9 +153,142 @@ interface AgentFieldSpec {
 	field: AgentPatchField;
 	label: string;
 	mergeable?: boolean;
-	read(record: AgentRecord): SyncValue;
+	/** `peerIds` is set when the record names agents by this machine's ids (a pointer). */
+	read(record: AgentRecord, peerIds?: LiftPeerIdMap): SyncValue;
 	/** The patch for a value, or undefined when that value cannot be sent. */
 	toPatch(value: SyncValue): AgentPatch | undefined;
+	/**
+	 * The record value a synced value stands for, when it is not the value itself (a list or an
+	 * object carried as text). Without it, the value is written as is.
+	 */
+	toRecord?(value: SyncValue, record: AgentRecord, peerIds?: LiftPeerIdMap): unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Peer grants across machines
+// ---------------------------------------------------------------------------
+
+/** How a conductor's records name the agents of one host. */
+export interface LiftPeerIdMap {
+	/** A local agent id to its id on the host, for every agent lifted to that host. */
+	toHost: Readonly<Record<string, string>>;
+	/** Every agent id the host holds. */
+	hostIds: ReadonlySet<string>;
+}
+
+/**
+ * The id map for one host: the local agents lifted to `peerId` (their pointers), and the agents
+ * the host holds.
+ */
+export function buildLiftPeerIdMap(
+	localAgents: readonly Pick<AgentRecord, 'id' | 'liftedTo'>[],
+	peerId: string,
+	hostAgentIds: Iterable<string>
+): LiftPeerIdMap {
+	const toHost: Record<string, string> = {};
+	for (const agent of localAgents) {
+		const pointer = readLiftedTo(agent.liftedTo);
+		if (pointer?.peer === peerId) toHost[agent.id] = pointer.agentId;
+	}
+	return { toHost, hostIds: new Set(hostAgentIds) };
+}
+
+/** The id the host knows a peer row's agent by, or undefined when the agent is not on the host. */
+export function hostPeerId(sessionId: string, peerIds: LiftPeerIdMap): string | undefined {
+	return peerIds.toHost[sessionId] ?? (peerIds.hostIds.has(sessionId) ? sessionId : undefined);
+}
+
+/**
+ * A pointer's explicit peer rows split by whether the host can honor them: `honored` rewritten to
+ * the host's ids, `unhonored` (an agent on this or another machine the host does not hold) as is.
+ */
+export function splitPeerRowsForHost(
+	rows: readonly PeerAgent[] | undefined,
+	peerIds: LiftPeerIdMap
+): { honored: PeerAgent[]; unhonored: PeerAgent[] } {
+	const honored: PeerAgent[] = [];
+	const unhonored: PeerAgent[] = [];
+	for (const row of rows ?? []) {
+		const id = hostPeerId(row.sessionId, peerIds);
+		if (id) honored.push({ ...row, sessionId: id });
+		else unhonored.push(row);
+	}
+	return { honored, unhonored };
+}
+
+/**
+ * The host's rows as a pointer stores them: an agent lifted from here gets its local id back, any
+ * other host agent keeps its host id, and the rows the host could not honor are kept after them.
+ */
+export function peerRowsFromHost(
+	hostRows: readonly PeerAgent[] | undefined,
+	peerIds: LiftPeerIdMap,
+	keep: readonly PeerAgent[]
+): PeerAgent[] | undefined {
+	const toLocal = new Map(Object.entries(peerIds.toHost).map(([local, host]) => [host, local]));
+	const rows = (hostRows ?? []).map((row) => ({
+		...row,
+		sessionId: toLocal.get(row.sessionId) ?? row.sessionId,
+	}));
+	return normalizePeerAgents([...rows, ...keep]);
+}
+
+function peerRowsOf(record: AgentRecord): PeerAgent[] | undefined {
+	const rows = parsePeerAgentRows(record.peerAgents ?? null);
+	return rows.ok ? (rows.peerAgents ?? undefined) : undefined;
+}
+
+/** Rows as one text, in id order, so the same rows always compare equal. */
+function encodePeerRows(rows: readonly PeerAgent[] | undefined): SyncValue {
+	const clean = normalizePeerAgents(rows ? [...rows] : undefined);
+	if (!clean) return undefined;
+	return canonicalJson([...clean].sort((a, b) => a.sessionId.localeCompare(b.sessionId)));
+}
+
+function decodePeerRows(value: SyncValue): PeerAgent[] | undefined {
+	if (typeof value !== 'string') return undefined;
+	try {
+		const rows = parsePeerAgentRows(JSON.parse(value) as unknown);
+		return rows.ok ? (rows.peerAgents ?? undefined) : undefined;
+	} catch {
+		// Never written by this module: a damaged value reads as no rows.
+		return undefined;
+	}
+}
+
+/** A grant as a person reads it; the conflict list shows this text. */
+const PEER_GRANT_TEXT = {
+	read: 'Consult',
+	write: 'Delegate',
+	both: 'Consult + Delegate',
+} as const;
+
+function encodePeerGrant(value: unknown): SyncValue {
+	const grant = parsePeerGrantValue(value ?? null);
+	if (!grant.ok || !grant.access) return undefined;
+	const { read, write } = grant.access;
+	return read && write ? PEER_GRANT_TEXT.both : read ? PEER_GRANT_TEXT.read : PEER_GRANT_TEXT.write;
+}
+
+function decodePeerGrant(value: SyncValue): PeerAccess | undefined {
+	if (value === PEER_GRANT_TEXT.both) return { read: true, write: true };
+	if (value === PEER_GRANT_TEXT.read) return { read: true, write: false };
+	if (value === PEER_GRANT_TEXT.write) return { read: false, write: true };
+	return undefined;
+}
+
+function peerGrantSpec(
+	key: 'groupPeerAccess' | 'worktreePeerAccess',
+	label: string
+): AgentFieldSpec {
+	return {
+		key,
+		field: key,
+		label,
+		read: (record) => encodePeerGrant(record[key]),
+		toPatch: (value) => ({ [key]: decodePeerGrant(value) ?? null }) as AgentPatch,
+		toRecord: (value) => decodePeerGrant(value),
+	};
 }
 
 /** A field cleared with `null` on the host. */
@@ -223,6 +367,29 @@ const AGENT_FIELDS: readonly AgentFieldSpec[] = [
 	nullable('harnessControlMode', 'harnessControlMode', 'Harness control mode', (value) =>
 		isHarnessControlMode(value) && value !== 'current' ? value : undefined
 	),
+	{
+		key: 'peerAgents',
+		field: 'peerAgents',
+		label: 'Peer agents',
+		// Only the rows the host can honor, in its ids; the rest never leave this machine.
+		read: (record, peerIds) => {
+			const rows = peerRowsOf(record);
+			return encodePeerRows(peerIds ? splitPeerRowsForHost(rows, peerIds).honored : rows);
+		},
+		toPatch: (value) => ({ peerAgents: decodePeerRows(value) ?? null }),
+		toRecord: (value, record, peerIds) => {
+			const rows = decodePeerRows(value);
+			if (!peerIds) return rows;
+			return peerRowsFromHost(
+				rows,
+				peerIds,
+				splitPeerRowsForHost(peerRowsOf(record), peerIds).unhonored
+			);
+		},
+	},
+	peerGrantSpec('groupPeerAccess', 'Group peer grant'),
+	peerGrantSpec('worktreePeerAccess', 'Worktree peer grant'),
+	nullable('peerDescription', 'peerDescription', 'How peers see this agent', str, true),
 ];
 
 const AGENT_FIELD_BY_KEY = new Map(AGENT_FIELDS.map((spec) => [spec.key, spec]));
@@ -293,6 +460,19 @@ export const AGENT_PATCH_FEDERATION: Readonly<Record<AgentPatchField, Federation
 	maestroPPath: { scope: 'machine', why: 'A binary path on one machine.' },
 	codexTransport: { scope: 'shared', why: 'How the host runs Codex turns.' },
 	harnessControlMode: { scope: 'shared', why: 'How the host drives the provider.' },
+	peerAgents: {
+		scope: 'shared',
+		why: "Only rows for agents on the host, in the host's ids; a row for an agent elsewhere stays here, not honored.",
+	},
+	groupPeerAccess: {
+		scope: 'shared',
+		why: "The host's turns reach the other agents in its group of this agent.",
+	},
+	worktreePeerAccess: {
+		scope: 'shared',
+		why: "The host's turns reach this agent's worktree family on the host.",
+	},
+	peerDescription: { scope: 'shared', why: 'Every agent that reaches this one reads it.' },
 };
 
 /**
@@ -334,17 +514,175 @@ export const TURN_OVERRIDE_FIELDS: Readonly<Record<keyof TurnOverrides, keyof Ta
  * them, so they stay on this machine and a hosted agent runs without them. Each is a gap to close
  * by adding the field to `AgentPatch`, the host, and `AGENT_PATCH_FEDERATION`.
  */
-export const HOSTED_SETTINGS_NOT_YET_SYNCED: Readonly<Record<string, string>> = {
+export const HOSTED_SETTINGS_NOT_YET_SYNCED = {
 	additionalDirectories: 'Extra directories the provider may read; no host field yet.',
 	retryOnAvailabilityErrors: 'Agent Resilience retry on 529 and outages; no host field yet.',
 	retryOnTokenExhaustion: 'Agent Resilience retry on quota; no host field yet.',
 	codexAutoResetOnExhaustion: "Spends this machine's Codex reset credits; no host field yet.",
 	customEnvVarsDisabled: 'Env vars parked with the eye button; the host keeps only live ones.',
-};
+	tierTargets:
+		"Where a low, medium or high task launches; a tier can name this machine's Local Models sources, and the host has no field yet.",
+} as const satisfies Readonly<Record<string, string>>;
+
+export type NotYetSyncedSetting = keyof typeof HOSTED_SETTINGS_NOT_YET_SYNCED;
+
+/**
+ * Agent settings a conductor keeps that `agents.update` has no field for, on purpose: each means
+ * something only to this conductor or this machine, so it is never sent. Edit Agent shows them on
+ * a hosted agent with their scope, so a person knows the host does not use them.
+ */
+export const CONDUCTOR_ONLY_SETTINGS = {
+	gatewayUrl: {
+		scope: 'machine',
+		why: 'A Local Models gateway is a server address as this machine reaches it.',
+	},
+	runOn: {
+		scope: 'machine',
+		why: "A model source is one of this machine's Local Models sources.",
+	},
+	tokenProxyMode: {
+		scope: 'machine',
+		why: "The Maestro token proxy runs in this machine's Maestro.",
+	},
+	backgroundRequests: {
+		scope: 'machine',
+		why: "Routed by this machine's token proxy.",
+	},
+	tokenProxyRetrieval: {
+		scope: 'machine',
+		why: "Served by this machine's token proxy.",
+	},
+	systemOneOptOut: {
+		scope: 'machine',
+		why: "Governs System One requests made on this machine; a hosted agent's turns ask the host.",
+	},
+	voiceWakePhrase: {
+		scope: 'machine',
+		why: "Heard by this machine's microphone.",
+	},
+	providerConfig: {
+		scope: 'machine',
+		why: 'Provider options Maestro keeps per provider on this machine, for every agent of it.',
+	},
+} as const satisfies Readonly<Record<string, FederationSettingRule>>;
+
+export type ConductorOnlySetting = keyof typeof CONDUCTOR_ONLY_SETTINGS;
 
 /** The `agents.update` fields this sync sends and takes (the `shared` rows that have a spec). */
 export function syncedAgentPatchFields(): AgentPatchField[] {
 	return [...new Set<AgentPatchField>([...AGENT_FIELDS.map((spec) => spec.field), 'env'])];
+}
+
+// ---------------------------------------------------------------------------
+// Where each setting of a hosted agent lives, for a badge or `show agent --json`
+// ---------------------------------------------------------------------------
+
+/** A setting a hosted agent's settings form can show: one row of the three tables above. */
+export type FederationFieldId = AgentPatchField | NotYetSyncedSetting | ConductorOnlySetting;
+
+/** A field's scope, or `not-synced` for a setting the host should hold but has no field for. */
+export type FederationFieldScope = FederationSettingScope | 'not-synced';
+
+/** What a badge says for each scope. The CLI prints the same words. */
+export const FEDERATION_SCOPE_LABELS: Readonly<Record<FederationFieldScope, string>> = {
+	shared: 'From host',
+	personal: 'Yours only',
+	machine: 'This machine',
+	'not-synced': 'Not synced yet',
+};
+
+/** One setting of a hosted agent: where it lives, and whether it waits on the host or a person. */
+export interface FederationFieldStatus {
+	field: FederationFieldId;
+	scope: FederationFieldScope;
+	why: string;
+	/** An edit made here that the host has not taken yet. */
+	pending: boolean;
+	/** This machine and the host both changed it; a person picks (`setConflictsOpen`). */
+	conflict: boolean;
+}
+
+/** Every field id, in table order: what `show agent --json` reports. */
+export const FEDERATION_FIELD_IDS: readonly FederationFieldId[] = [
+	...(Object.keys(AGENT_PATCH_FEDERATION) as AgentPatchField[]),
+	...(Object.keys(HOSTED_SETTINGS_NOT_YET_SYNCED) as NotYetSyncedSetting[]),
+	...(Object.keys(CONDUCTOR_ONLY_SETTINGS) as ConductorOnlySetting[]),
+];
+
+function isAgentPatchField(field: string): field is AgentPatchField {
+	return Object.prototype.hasOwnProperty.call(AGENT_PATCH_FEDERATION, field);
+}
+
+/** A field's scope and the reason, read from the tables. */
+export function federationFieldRule(field: FederationFieldId): {
+	scope: FederationFieldScope;
+	why: string;
+} {
+	if (isAgentPatchField(field)) return AGENT_PATCH_FEDERATION[field];
+	if (field in HOSTED_SETTINGS_NOT_YET_SYNCED) {
+		return {
+			scope: 'not-synced',
+			why: HOSTED_SETTINGS_NOT_YET_SYNCED[field as NotYetSyncedSetting],
+		};
+	}
+	return CONDUCTOR_ONLY_SETTINGS[field as ConductorOnlySetting];
+}
+
+/** Whether a sync field id (`customModel`, `env:FOO`, `tab:t1:name`) belongs to a field. */
+function carriesSyncId(field: FederationFieldId, id: string): boolean {
+	if (field === 'env') return id.startsWith(ENV_PREFIX);
+	return AGENT_FIELD_BY_KEY.get(id)?.field === field;
+}
+
+/**
+ * Where one setting of a hosted agent lives, and whether it waits. `pendingIds` and `conflictIds`
+ * are sync field ids, as the settings sync keeps them.
+ */
+export function describeFederationField(
+	field: FederationFieldId,
+	state: { pendingIds?: Iterable<string>; conflictIds?: Iterable<string> } = {}
+): FederationFieldStatus {
+	const rule = federationFieldRule(field);
+	const has = (ids: Iterable<string> | undefined) => {
+		for (const id of ids ?? []) if (carriesSyncId(field, id)) return true;
+		return false;
+	};
+	return {
+		field,
+		scope: rule.scope,
+		why: rule.why,
+		pending: rule.scope === 'shared' && has(state.pendingIds),
+		conflict: rule.scope === 'shared' && has(state.conflictIds),
+	};
+}
+
+/** Every setting of a hosted agent, in table order. */
+export function describeFederationFields(
+	state: { pendingIds?: Iterable<string>; conflictIds?: Iterable<string> } = {}
+): FederationFieldStatus[] {
+	const pendingIds = [...(state.pendingIds ?? [])];
+	const conflictIds = [...(state.conflictIds ?? [])];
+	return FEDERATION_FIELD_IDS.map((field) =>
+		describeFederationField(field, { pendingIds, conflictIds })
+	);
+}
+
+/**
+ * The sync field ids of a pointer that changed here and have not reached the host: each differs
+ * from the value both sides last agreed on. A field never compared is not counted (the first sync
+ * asks about it as a conflict instead).
+ */
+export function liftSyncPendingIds(
+	local: AgentRecord,
+	baseline: LiftSyncBaseline | undefined,
+	peerIds?: LiftPeerIdMap
+): string[] {
+	if (!baseline) return [];
+	const values = liftSyncAgentValues(local, peerIds);
+	const ids = new Set([...Object.keys(values), ...baseline.envKeys.map(envId)]);
+	return [...ids].filter(
+		(id) => id in baseline.values && values[id] !== fromStored(baseline.values[id])
+	);
 }
 
 /** The settings an import cannot carry; a lift sends them right after it (`liftFollowUpPatch`). */
@@ -355,18 +693,26 @@ const IMPORT_GAP_KEYS: ReadonlySet<string> = new Set([
 	'codexTransport',
 	'harnessControlMode',
 	'contextWindowSource',
+	'peerAgents',
+	'groupPeerAccess',
+	'worktreePeerAccess',
+	'peerDescription',
 ]);
 
 /**
  * The part of an agent's settings `agents.import` does not carry, as the update a lift sends right
  * after the import, so the hosted copy starts complete and the first sync finds nothing to ask.
+ * `peerIds` rewrites peer rows to the host's ids (a row the host cannot honor stays here).
  * Undefined when the agent sets none of them.
  */
-export function liftFollowUpPatch(agent: AgentRecord): AgentPatch | undefined {
+export function liftFollowUpPatch(
+	agent: AgentRecord,
+	peerIds?: LiftPeerIdMap
+): AgentPatch | undefined {
 	let patch: AgentPatch = {};
 	for (const spec of AGENT_FIELDS) {
 		if (!IMPORT_GAP_KEYS.has(spec.key)) continue;
-		const value = spec.read(agent);
+		const value = spec.read(agent, peerIds);
 		if (value === undefined) continue;
 		const part = spec.toPatch(value);
 		if (part) patch = { ...patch, ...part };
@@ -422,10 +768,14 @@ export function toStored(value: SyncValue): StoredSyncValue {
 /**
  * Every shared agent setting of a record by field id (`env:NAME` for env vars), normalized. A
  * caller that edits a hosted agent compares the edited record with the host's through this.
+ * `peerIds`: the record names agents by this machine's ids (a pointer).
  */
-export function liftSyncAgentValues(record: AgentRecord): Record<string, SyncValue> {
+export function liftSyncAgentValues(
+	record: AgentRecord,
+	peerIds?: LiftPeerIdMap
+): Record<string, SyncValue> {
 	const values: Record<string, SyncValue> = {};
-	for (const spec of AGENT_FIELDS) values[spec.key] = spec.read(record);
+	for (const spec of AGENT_FIELDS) values[spec.key] = spec.read(record, peerIds);
 	for (const [key, value] of Object.entries(envOf(record))) values[envId(key)] = value;
 	return values;
 }
@@ -562,7 +912,7 @@ export function planLiftedSettingsSync(input: LiftSyncInput): LiftSyncPlan {
 	const agentIds: string[] = [];
 	const fieldIds: Partial<Record<AgentPatchField, string[]>> = {};
 	for (const spec of AGENT_FIELDS) {
-		const l = spec.read(local);
+		const l = spec.read(local, input.peerIds);
 		const r = spec.read(host);
 		const { decision, value } = decide(
 			spec.key,
@@ -676,14 +1026,23 @@ export function settleLiftSyncBaseline(
 	return { values, envKeys: baseline.envKeys };
 }
 
-/** Write values onto a local agent record (the Session in the renderer). */
-export function applyLiftSyncPull<T extends AgentRecord>(agent: T, pull: LiftSyncPull): T {
+/**
+ * Write values onto a local agent record (the Session in the renderer). `peerIds`: the record
+ * names agents by this machine's ids (a pointer), so the host's peer rows are translated back.
+ */
+export function applyLiftSyncPull<T extends AgentRecord>(
+	agent: T,
+	pull: LiftSyncPull,
+	peerIds?: LiftPeerIdMap
+): T {
 	const next: Record<string, unknown> = { ...agent };
 	const setOrDelete = (target: Record<string, unknown>, key: string, value: unknown) => {
 		if (value === undefined) delete target[key];
 		else target[key] = value;
 	};
-	for (const [key, value] of Object.entries(pull.agent)) {
+	for (const [key, synced] of Object.entries(pull.agent)) {
+		const spec = AGENT_FIELD_BY_KEY.get(key);
+		const value = spec?.toRecord ? spec.toRecord(synced, agent, peerIds) : synced;
 		if (key === 'cwd') {
 			// The working directory lives where `liftRemoteCwd()` read it: the SSH override if set.
 			const ssh = next.sessionSshRemoteConfig as Record<string, unknown> | undefined;

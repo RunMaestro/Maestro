@@ -1,84 +1,79 @@
 /**
  * @file session-command.test.ts
- * @description Tests for the agent resolution helpers desktop-driving CLI
- * verbs share: `resolveAgentOrActive` and the `active` keyword of
- * `resolveTabEntry`, which is built on it.
+ * @description The shared failure reporters every bridge verb ends in:
+ * `failCommand` prints the error in the verb's output mode and exits with the
+ * code it is given, and `failFromError` picks that code from the failure.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
+import {
+	MAESTRO_NOT_RUNNING_CODE,
+	MAESTRO_NOT_RUNNING_MESSAGE,
+} from '../../../cli/services/maestro-not-running';
+import { ExitCode } from '../../../cli/exit-codes';
+import {
+	CommandTimeoutError,
+	MaestroNotRunningError,
+	UnsupportedCommandError,
+} from '../../../cli/services/maestro-bridge-errors';
+import { failCommand, failFromError } from '../../../cli/services/session-command';
 
-vi.mock('../../../cli/services/maestro-client', () => ({
-	withMaestroClient: vi.fn(),
-}));
+describe('failCommand and failFromError', () => {
+	let logSpy: MockInstance;
+	let errorSpy: MockInstance;
 
-vi.mock('../../../cli/services/storage', () => ({
-	resolveAgentId: vi.fn((id: string) => `resolved-${id}`),
-	readActiveAgentId: vi.fn((): string | null => 'active-agent'),
-}));
-
-import { resolveAgentOrActive, resolveTabEntry } from '../../../cli/services/session-command';
-import { withMaestroClient } from '../../../cli/services/maestro-client';
-import { readActiveAgentId, resolveAgentId } from '../../../cli/services/storage';
-
-/** Stub the desktop's open-tab list. */
-function stubTabs(sessions: Array<{ agentId: string; tabId: string; active: boolean }>) {
-	vi.mocked(withMaestroClient).mockImplementation(async (fn) =>
-		fn({ sendCommand: vi.fn(async () => ({ sessions })) } as never)
-	);
-}
-
-beforeEach(() => {
-	vi.clearAllMocks();
-});
-
-describe('resolveAgentOrActive', () => {
-	it('resolves --agent by ID, prefix or name', () => {
-		expect(resolveAgentOrActive('agent-7', 'whose composer you mean')).toBe('resolved-agent-7');
-		expect(resolveAgentId).toHaveBeenCalledWith('agent-7');
-		expect(readActiveAgentId).not.toHaveBeenCalled();
+	beforeEach(() => {
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+			throw new Error(`exit:${code}`);
+		}) as never);
 	});
 
-	it('falls back to the agent the desktop has selected', () => {
-		expect(resolveAgentOrActive(undefined, 'whose composer you mean')).toBe('active-agent');
-		expect(resolveAgentOrActive('', 'whose composer you mean')).toBe('active-agent');
-		expect(resolveAgentId).not.toHaveBeenCalled();
+	afterEach(() => {
+		vi.restoreAllMocks();
 	});
 
-	it('throws, saying what the agent was wanted for, when none is recorded', () => {
-		vi.mocked(readActiveAgentId).mockReturnValueOnce(null);
-		expect(() => resolveAgentOrActive(undefined, 'whose composer you mean')).toThrow(
-			'No active agent recorded. Pass --agent <id> to say whose composer you mean.'
+	it('prints the error on stderr for a person and exits with the general failure', () => {
+		expect(() => failCommand('Nope', false)).toThrow(`exit:${ExitCode.GeneralError}`);
+		expect(errorSpy.mock.calls[0][0]).toContain('Nope');
+		expect(logSpy).not.toHaveBeenCalled();
+	});
+
+	it('prints one JSON object on stdout under --json', () => {
+		expect(() => failCommand('Nope', true, ExitCode.InvalidUsage)).toThrow(
+			`exit:${ExitCode.InvalidUsage}`
 		);
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({ success: false, error: 'Nope' });
+		expect(errorSpy).not.toHaveBeenCalled();
 	});
 
-	it('lets an --agent that names nothing fail with its own message', () => {
-		vi.mocked(resolveAgentId).mockImplementationOnce(() => {
-			throw new Error('Agent not found: ghost');
+	it('uses the same not-running class through both CLI error modules', () => {
+		expect(() => failFromError(new MaestroNotRunningError('connect-failed'), true)).toThrow(
+			`exit:${ExitCode.NotRunning}`
+		);
+		expect(JSON.parse(String(logSpy.mock.calls[0][0]))).toEqual({
+			success: false,
+			error: MAESTRO_NOT_RUNNING_MESSAGE,
+			code: MAESTRO_NOT_RUNNING_CODE,
 		});
-		expect(() => resolveAgentOrActive('ghost', 'whose composer you mean')).toThrow(
-			'Agent not found: ghost'
-		);
-	});
-});
-
-describe('resolveTabEntry with the active keyword', () => {
-	const tabs = [
-		{ agentId: 'active-agent', tabId: 'tab-a', active: false },
-		{ agentId: 'active-agent', tabId: 'tab-b', active: true },
-		{ agentId: 'resolved-agent-7', tabId: 'tab-c', active: true },
-	];
-
-	it("finds the selected tab of the desktop's agent, or of --agent", async () => {
-		stubTabs(tabs);
-		await expect(resolveTabEntry('active')).resolves.toMatchObject({ tabId: 'tab-b' });
-		await expect(resolveTabEntry('ACTIVE', 'agent-7')).resolves.toMatchObject({ tabId: 'tab-c' });
 	});
 
-	it('keeps its message when no agent is recorded', async () => {
-		stubTabs(tabs);
-		vi.mocked(readActiveAgentId).mockReturnValueOnce(null);
-		await expect(resolveTabEntry('active')).rejects.toThrow(
-			'No active agent recorded. Pass --agent <id> to say whose active tab you mean.'
+	it('exits with the code the failure names', () => {
+		expect(() => failFromError(new MaestroNotRunningError('no-discovery-file'), true)).toThrow(
+			`exit:${ExitCode.NotRunning}`
 		);
+		expect(() => failFromError(new UnsupportedCommandError('x'), true)).toThrow(
+			`exit:${ExitCode.Unsupported}`
+		);
+		expect(() => failFromError(new CommandTimeoutError('x_result'), true)).toThrow(
+			`exit:${ExitCode.Timeout}`
+		);
+		expect(() => failFromError(new Error('plain'), true)).toThrow(`exit:${ExitCode.GeneralError}`);
+		expect(() => failFromError('a string', true)).toThrow(`exit:${ExitCode.GeneralError}`);
+		expect(JSON.parse(String(logSpy.mock.calls.at(-1)?.[0]))).toEqual({
+			success: false,
+			error: 'a string',
+		});
 	});
 });

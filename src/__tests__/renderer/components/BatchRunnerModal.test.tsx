@@ -3520,22 +3520,26 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 				await act(async () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
-				expect(models).toHaveBeenLastCalledWith(
+				// A Grok draft asks with its discovery context; any other provider with
+				// acappella's (provider, forceRefresh, sshRemoteId) form.
+				expect(models.mock.lastCall).toEqual(
 					toolType === 'grok'
-						? {
-								providerId: 'grok',
-								context: {
-									kind: 'draft',
-									cwd: child.cwd,
-									customPath: child.customPath,
-									customEnvVars: child.customEnvVars,
-									model: 'child-model',
-									effort: 'high',
-									sshRemoteId: child.sshRemoteId,
-									sessionSshRemoteConfig: child.sessionSshRemoteConfig,
+						? [
+								{
+									providerId: 'grok',
+									context: {
+										kind: 'draft',
+										cwd: child.cwd,
+										customPath: child.customPath,
+										customEnvVars: child.customEnvVars,
+										model: 'child-model',
+										effort: 'high',
+										sshRemoteId: child.sshRemoteId,
+										sessionSshRemoteConfig: child.sessionSshRemoteConfig,
+									},
 								},
-							}
-						: 'codex'
+							]
+						: ['codex', false, undefined]
 				);
 				await act(async () => {
 					resolveParent({ status: 'discovered', options: ['parent-only'] });
@@ -3819,7 +3823,11 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 				});
 				const model = valid ? 'shared-model' : 'child-model';
 				const effort = valid ? 'shared-effort' : 'child-effort';
-				fireEvent.change(screen.getByLabelText('Model for this run'), { target: { value: model } });
+				// The open child is Grok, so this is its typed field. The model moves to
+				// the picker (a tier-target spelling) when the owner becomes `provider`.
+				fireEvent.change(screen.getByLabelText('Model for this run'), {
+					target: { value: model },
+				});
 				fireEvent.change(screen.getByLabelText('Reasoning effort for this run'), {
 					target: { value: effort },
 				});
@@ -3853,8 +3861,9 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 					await vi.advanceTimersByTimeAsync(300);
 				});
 				expect(models).toHaveBeenCalled();
-				expect(models).toHaveBeenCalledWith(provider);
-				for (const args of models.mock.calls) expect(args).toEqual([provider]);
+				// acappella's discovery call: (provider, forceRefresh, sshRemoteId).
+				expect(models).toHaveBeenCalledWith(provider, false, undefined);
+				for (const args of models.mock.calls) expect(args).toEqual([provider, false, undefined]);
 				expect(efforts).toHaveBeenCalledWith(provider, 'effort');
 				expect(efforts).toHaveBeenCalledWith(provider, 'reasoningEffort');
 				for (const args of efforts.mock.calls) {
@@ -3867,7 +3876,9 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 					resolveModels(['shared-model']);
 					resolveEfforts(['shared-effort']);
 				});
-				expect(screen.getByLabelText('Model for this run')).toHaveValue(valid ? model : '');
+				expect(screen.getByLabelText('Model for this run')).toHaveValue(
+					valid ? `provider:${model}` : 'default'
+				);
 				expect(screen.getByLabelText('Reasoning effort for this run')).toHaveValue(
 					valid ? effort : ''
 				);
@@ -3886,6 +3897,42 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 				}
 			}
 		);
+
+		it("hands a picked provider model to a Grok worktree's typed field", async () => {
+			const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+			useSessionStore.setState({
+				sessions: useSessionStore
+					.getState()
+					.sessions.map((session) =>
+						session.id === 'session-123' ? { ...session, toolType: 'claude-code' } : session
+					),
+			});
+			// The parent asks by provider name; the Grok child by its own context.
+			window.maestro.agents.getModels = vi
+				.fn()
+				.mockImplementation(async (request) =>
+					typeof request === 'string'
+						? ['known-model']
+						: { status: 'discovered', options: ['child-model'] }
+				);
+			render(<BatchRunnerModal {...createDefaultProps()} />);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(300);
+			});
+			fireEvent.change(screen.getByLabelText('Model for this run'), {
+				target: { value: 'provider:known-model' },
+			});
+			expect(screen.getByLabelText('Model for this run')).toHaveValue('provider:known-model');
+
+			fireEvent.click(screen.getByText('Dispatch to a separate worktree'));
+			fireEvent.change(screen.getByRole('option', { name: /Child/ }).closest('select')!, {
+				target: { value: 'child' },
+			});
+			expect(screen.getByLabelText('Model for this run')).toHaveValue('known-model');
+		});
 	});
 
 	it('omits model and effort from the launched config when both pickers are untouched', async () => {
@@ -3893,7 +3940,7 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 		render(<BatchRunnerModal {...props} />);
 
 		await waitFor(() => {
-			expect(screen.getByLabelText('Model for this run')).toHaveValue('');
+			expect(screen.getByLabelText('Model for this run')).toHaveValue('default');
 		});
 		expect(screen.getByLabelText('Reasoning effort for this run')).toHaveValue('');
 
@@ -3912,7 +3959,9 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 			expect(screen.getByLabelText('Model for this run')).toBeInTheDocument();
 		});
 
-		fireEvent.change(screen.getByLabelText('Model for this run'), { target: { value: 'opus' } });
+		fireEvent.change(screen.getByLabelText('Model for this run'), {
+			target: { value: 'provider:opus' },
+		});
 		fireEvent.change(screen.getByLabelText('Reasoning effort for this run'), {
 			target: { value: 'high' },
 		});
@@ -3932,12 +3981,101 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 			expect(screen.getByLabelText('Model for this run')).toBeInTheDocument();
 		});
 
-		fireEvent.change(screen.getByLabelText('Model for this run'), { target: { value: 'opus' } });
+		fireEvent.change(screen.getByLabelText('Model for this run'), {
+			target: { value: 'provider:opus' },
+		});
 		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
 
 		const config = (props.onGo as ReturnType<typeof vi.fn>).mock.calls[0][0];
 		expect(config.model).toBe('opus');
 		expect(config).not.toHaveProperty('effort');
+	});
+
+	describe('Local Models sources', () => {
+		const OLLAMA_ROW = {
+			harness: 'claude-code',
+			name: 'Claude Code',
+			installed: true,
+			catalog: [],
+			runOn: { supported: true },
+			sources: [{ endpointId: 'ep-ollama', name: 'Ollama', models: ['deepseek-v4.1-flash:cloud'] }],
+			problems: [],
+		};
+
+		beforeEach(() => {
+			vi.mocked(window.maestro.localModels.tiers.options).mockResolvedValue([OLLAMA_ROW] as never);
+		});
+		// The setup mock is shared by every test after this block.
+		afterEach(() => {
+			vi.mocked(window.maestro.localModels.tiers.options).mockResolvedValue([]);
+		});
+
+		it('offers each source model and runs the picked one on its source', async () => {
+			const props = createDefaultProps();
+			render(<BatchRunnerModal {...props} />);
+
+			const option = await screen.findByRole('option', { name: 'deepseek-v4.1-flash:cloud' });
+			expect(option.closest('optgroup')).toHaveAttribute('label', 'Ollama');
+			fireEvent.change(screen.getByLabelText('Model for this run'), {
+				target: { value: 'ep-ollama:deepseek-v4.1-flash:cloud' },
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+			expect(props.onGo).toHaveBeenCalledWith(
+				expect.objectContaining({
+					model: 'deepseek-v4.1-flash:cloud',
+					runOn: expect.objectContaining({
+						type: 'source',
+						endpointId: 'ep-ollama',
+						model: 'deepseek-v4.1-flash:cloud',
+					}),
+				})
+			);
+		});
+
+		it("sends a source-backed agent's provider pick to the provider", async () => {
+			const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+			useSessionStore.setState({
+				sessions: useSessionStore.getState().sessions.map((session) => ({
+					...session,
+					runOn: { type: 'source', endpointId: 'ep-ollama', model: 'deepseek-v4.1-flash:cloud' },
+				})),
+			});
+			const props = createDefaultProps();
+			render(<BatchRunnerModal {...props} />);
+
+			await screen.findByRole('option', { name: 'opus' });
+			fireEvent.change(screen.getByLabelText('Model for this run'), {
+				target: { value: 'provider:opus' },
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+			expect(props.onGo).toHaveBeenCalledWith(
+				expect.objectContaining({ model: 'opus', runOn: { type: 'provider' } })
+			);
+		});
+
+		it("sends nothing when the agent's own source model is picked", async () => {
+			const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+			useSessionStore.setState({
+				sessions: useSessionStore.getState().sessions.map((session) => ({
+					...session,
+					runOn: { type: 'source', endpointId: 'ep-ollama', model: 'deepseek-v4.1-flash:cloud' },
+				})),
+			});
+			const props = createDefaultProps();
+			render(<BatchRunnerModal {...props} />);
+
+			await screen.findByRole('option', { name: 'deepseek-v4.1-flash:cloud' });
+			fireEvent.change(screen.getByLabelText('Model for this run'), {
+				target: { value: 'ep-ollama:deepseek-v4.1-flash:cloud' },
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+			const config = (props.onGo as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			expect(config).not.toHaveProperty('model');
+			expect(config).not.toHaveProperty('runOn');
+		});
 	});
 
 	it('leaves document model hints in charge unless the toggle is switched on', async () => {
@@ -3960,7 +4098,9 @@ describe('BatchRunnerModal - per-run model/effort override', () => {
 		await waitFor(() => {
 			expect(screen.getByLabelText('Model for this run')).toBeInTheDocument();
 		});
-		fireEvent.change(screen.getByLabelText('Model for this run'), { target: { value: 'opus' } });
+		fireEvent.change(screen.getByLabelText('Model for this run'), {
+			target: { value: 'provider:opus' },
+		});
 		fireEvent.click(screen.getByRole('switch', { name: 'Ignore model hints in documents' }));
 		fireEvent.click(screen.getByRole('button', { name: 'Go' }));
 

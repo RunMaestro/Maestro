@@ -144,6 +144,17 @@ describe.skipIf(!canLoadNodeSqlite())('getCueHistoryEntries (real SQLite)', () =
 		expect(ids).not.toContain('silent-ok');
 	});
 
+	// A gated row is an event its subscription's gate skipped. Gated events
+	// are the bulk of what a gate sees; History is for runs.
+	it('keeps gated events out of History', () => {
+		seedRun({ id: 'chatty', status: 'completed', outputExcerpt: 'Synced 4 notes.' });
+		seedRun({ id: 'gated', status: 'gated', outputExcerpt: null });
+
+		const ids = idsOf(getCueHistoryEntries({ sessionId: AGENT_ID }));
+
+		expect(ids).toEqual(['chatty']);
+	});
+
 	it('maps every HistoryEntry field off the row', () => {
 		seedRun({
 			id: 'mapped',
@@ -495,6 +506,22 @@ describe.skipIf(!canLoadNodeSqlite())('getCueHistoryGroups (real SQLite)', () =>
 		// is what lets the renderer draw a group of one as an ordinary row.
 		const [ungrouped] = getCueHistoryEntries({ sessionId: AGENT_ID, sessionName: 'rc' });
 		expect(groups[0].latestEntry).toEqual(ungrouped);
+	});
+
+	it('counts gated events as neither runs nor failures', () => {
+		seedRun({
+			id: 'ran',
+			subscriptionName: 'Triage',
+			status: 'completed',
+			outputExcerpt: 'Opened a fix.',
+		});
+		seedRun({ id: 'skipped-1', subscriptionName: 'Triage', status: 'gated', outputExcerpt: null });
+		seedRun({ id: 'skipped-2', subscriptionName: 'Triage', status: 'gated', outputExcerpt: null });
+
+		const groups = getCueHistoryGroups({ sessionId: AGENT_ID, sessionName: 'rc' });
+
+		expect(groups).toHaveLength(1);
+		expect(groups[0]).toMatchObject({ key: 'Triage', runCount: 1, failureCount: 0 });
 	});
 
 	it('collapses a many-run trigger to one row carrying the newest run', () => {

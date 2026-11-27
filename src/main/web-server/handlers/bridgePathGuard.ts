@@ -197,6 +197,15 @@ export function findProtectedPathArg(
 	return null;
 }
 
+/**
+ * The raw `encoreFeatures` setting, as the bridge reads it. For a handler that
+ * has to know whether a feature is on before it asks the renderer for something
+ * (`open_modal` refuses a surface whose feature is off).
+ */
+export function currentEncoreFeatures(ctx: BridgeGuardContext = contextProvider()): unknown {
+	return ctx.encoreFeatures;
+}
+
 /** The current resolved Computer History flag. */
 export function currentComputerHistoryFlag(ctx: BridgeGuardContext = contextProvider()): boolean {
 	return resolveEncoreFeatures(ctx.encoreFeatures).computerHistory === true;

@@ -6,6 +6,7 @@ import {
 } from '../../../renderer/services/codexAutoReset';
 import { useCodexResetCreditsStore } from '../../../renderer/stores/codexResetCreditsStore';
 import type { AgentError, Session } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({
 	notifyToast: vi.fn(),
@@ -80,6 +81,56 @@ describe('maybeAutoResetCodexUsage', () => {
 	it('does nothing for a provider with no reset credits', async () => {
 		await expect(
 			maybeAutoResetCodexUsage(session({ toolType: 'claude-code' }), limitError())
+		).resolves.toBe(false);
+		expect(loadMock).not.toHaveBeenCalled();
+	});
+
+	it('resets the failed Codex tab account after a switch back to Claude', async () => {
+		loadMock.mockImplementation(async () => seedCredits({ available: 2, applicable: 2 }));
+		const target = session({
+			toolType: 'claude-code',
+			agentErrorTabId: 'failed',
+			customEnvVars: { CODEX_HOME: '/wrong-default' },
+			providerOverrides: { codex: { customEnvVars: { CODEX_HOME: CODEX_HOME_KEY } } },
+			aiTabs: [
+				createMockAITab({ id: 'failed', tabProvider: 'claude-code', turnProvider: 'codex' }),
+			],
+		});
+		await expect(maybeAutoResetCodexUsage(target, limitError())).resolves.toBe(true);
+		expect(loadMock).toHaveBeenCalledWith(CODEX_HOME_KEY);
+		expect(redeemMock).toHaveBeenCalledWith(CODEX_HOME_KEY);
+	});
+
+	it('does not spend Codex credits for a failed Claude turn on a Codex agent', async () => {
+		const target = session({
+			agentErrorTabId: 'failed',
+			aiTabs: [createMockAITab({ id: 'failed', turnProvider: 'claude-code' })],
+		});
+		await expect(
+			maybeAutoResetCodexUsage(target, limitError({ agentId: 'claude-code' }))
+		).resolves.toBe(false);
+		expect(loadMock).not.toHaveBeenCalled();
+	});
+
+	it('does not fall back to the default account when a named failure tab is missing', async () => {
+		await expect(
+			maybeAutoResetCodexUsage(session({ agentErrorTabId: 'gone', aiTabs: [] }), limitError())
+		).resolves.toBe(false);
+		expect(loadMock).not.toHaveBeenCalled();
+	});
+
+	it('refuses a reset when provider account lookup fails', async () => {
+		vi.mocked(window.maestro.agents.getCustomEnvVars).mockRejectedValue(new Error('unavailable'));
+		await expect(maybeAutoResetCodexUsage(session(), limitError())).resolves.toBe(false);
+		expect(loadMock).not.toHaveBeenCalled();
+	});
+
+	it('does not reset plan quota for an API-key account', async () => {
+		await expect(
+			maybeAutoResetCodexUsage(
+				session({ customEnvVars: { OPENAI_API_KEY: 'test-key' } }),
+				limitError()
+			)
 		).resolves.toBe(false);
 		expect(loadMock).not.toHaveBeenCalled();
 	});

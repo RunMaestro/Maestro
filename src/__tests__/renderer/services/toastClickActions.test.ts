@@ -1,3 +1,4 @@
+import { selectModalData, useModalStore } from '../../../renderer/stores/modalStore';
 /**
  * Tests for renderer/services/toastClickActions.ts
  *
@@ -72,6 +73,24 @@ describe('dispatchToastClickAction', () => {
 		return match?.[0] as CustomEvent | undefined;
 	}
 
+	it('opens the exact tab translation review in Edit Agent', () => {
+		const session = createMockSession({ id: 's1' });
+		seedSessions([session]);
+		expect(
+			dispatchToastClickAction({
+				kind: 'review-translation',
+				sessionId: 's1',
+				tabId: 't1',
+				provider: 'codex',
+			})
+		).toBe(true);
+		expect(selectModalData('editAgent')(useModalStore.getState())).toEqual({
+			session,
+			initialTab: 'provider',
+			translationReview: { tabId: 't1', provider: 'codex' },
+		});
+		useModalStore.getState().closeModal('editAgent');
+	});
 	it('jump-session delegates to the App-provided handler', () => {
 		const onSessionClick = vi.fn();
 		dispatchToastClickAction(
@@ -216,6 +235,14 @@ describe('dispatchToastClickAction', () => {
 		dispatchToastClickAction({ kind: 'open-url', url: 'https://example.com/logs' });
 		expect(globalThis.window.maestro.shell.openExternal).toHaveBeenCalledWith(
 			'https://example.com/logs'
+		);
+	});
+
+	it('undo-group-publish reports a publish that is no longer there, never a silent click', async () => {
+		dispatchToastClickAction({ kind: 'undo-group-publish', publishId: 'gone' });
+
+		await vi.waitFor(() =>
+			expect(useNotificationStore.getState().toasts[0]?.title).toBe('Nothing to undo')
 		);
 	});
 

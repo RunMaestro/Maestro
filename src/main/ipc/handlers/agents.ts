@@ -264,12 +264,15 @@ interface DiscoveredCommand {
  * frontmatter are omitted rather than returned as empty strings, so the renderer
  * can fall back to its built-in description table.
  */
-async function readClaudeSkillDescriptions(cwd: string): Promise<Map<string, string>> {
+async function readClaudeSkillDescriptions(
+	cwd: string,
+	configDir?: string
+): Promise<Map<string, string>> {
 	const descriptions = new Map<string, string>();
 	const homeDir = os.homedir();
 	const skillDirs = [
 		path.join(cwd, '.claude', 'skills'), // project-local (wins)
-		path.join(homeDir, '.claude', 'skills'), // user-level
+		path.join(configDir || path.join(homeDir, '.claude'), 'skills'), // user-level
 	];
 
 	// Extract the YAML frontmatter block from a file so we don't pick up a
@@ -2202,6 +2205,9 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					return found.commands;
 				}
 
+				// Every other SSH agent: only OpenCode, Claude Code and Codex have a remote
+				// discovery implementation. Never read local accounts for SSH.
+				if (sshRemoteId) return null;
 				const agent = await agentDetector.getAgent(agentId);
 				if (agentId === 'codex') {
 					let commandPath = agent?.available ? agent.path || agent.command : undefined;
@@ -2262,13 +2268,10 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						customEnvVars,
 						agentConfigsStore.get('configs', {})['claude-code']?.customEnvVars
 					);
-					const names = Object.keys(agentEnv).length
-						? await probeClaudeSlashCommands(
-								commandPath,
-								cwd,
-								buildChildProcessEnv(agentEnv, false, settingsStore?.get('shellEnvVars', {}))
-							)
-						: await probeClaudeSlashCommands(commandPath, cwd);
+					// Probed in the environment a turn gets (the shell vars too); the skill
+					// descriptions below read the same account's config dir.
+					const env = buildChildProcessEnv(agentEnv, false, settingsStore?.get('shellEnvVars', {}));
+					const names = await probeClaudeSlashCommands(commandPath, cwd, env);
 					if (!names) return null;
 					logger.info(`Discovered ${names.length} slash commands for ${agentId}`, LOG_CONTEXT);
 					// Description enrichment is best-effort: a permission/IO
@@ -2277,7 +2280,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					// Sentry and fall back to names-only.
 					let skillDescriptions = new Map<string, string>();
 					try {
-						skillDescriptions = await readClaudeSkillDescriptions(cwd);
+						skillDescriptions = await readClaudeSkillDescriptions(cwd, env.CLAUDE_CONFIG_DIR);
 					} catch (err) {
 						void captureException(err);
 						logger.warn(

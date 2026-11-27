@@ -57,6 +57,7 @@
 					"agent-collaboration",
 					"group-chat",
 					"cross-agent-mentions",
+					"agent-delegation",
 					"codex-directives",
 					"image-annotator",
 					"media-player",
@@ -67,6 +68,7 @@
 					"remote-control",
 					"ssh-remote-execution",
 					"agent-resilience",
+					"local-models",
 					"feedback",
 					"configuration"
 				]
@@ -88,6 +90,7 @@
 				"icon": "flask",
 				"pages": [
 					"encore-features",
+					"voice-mode",
 					"director-notes",
 					"usage-dashboard",
 					"symphony",
@@ -138,6 +141,10 @@
 		{
 			"source": "/multi-claude",
 			"destination": "/multi-provider"
+		},
+		{
+			"source": "/peer-agents",
+			"destination": "/agent-delegation"
 		}
 	],
 	"navbar": {

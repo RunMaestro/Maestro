@@ -1,3 +1,4 @@
+import { useModalStore } from '../stores/modalStore';
 /**
  * toastClickActions - the single place that turns a toast's data-driven
  * `clickAction` into navigation.
@@ -21,6 +22,7 @@ import { notifyToast, type Toast } from '../stores/notificationStore';
 import { resolveTerminalTab } from '../utils/terminalTabHelpers';
 import { browserTabFocusFields, terminalTabFocusFields } from '../utils/tabFocusFields';
 import { openUrl } from '../utils/openUrl';
+import { undoGroupDefaultsPublish } from './groupDefaultsPublish';
 import { logger } from '../utils/logger';
 
 export interface ToastClickActionHandlers {
@@ -65,6 +67,20 @@ export function dispatchToastClickAction(
 	handlers: ToastClickActionHandlers = {}
 ): boolean {
 	switch (action.kind) {
+		case 'review-translation': {
+			const session = useSessionStore.getState().sessions.find((s) => s.id === action.sessionId);
+			if (!session) {
+				reportMiss('Agent not found', 'The agent this notification points at is gone.');
+				return false;
+			}
+			switchToSession(session.id);
+			useModalStore.getState().openModal('editAgent', {
+				session,
+				initialTab: 'provider',
+				translationReview: { tabId: action.tabId, provider: action.provider },
+			});
+			return true;
+		}
 		case 'jump-session': {
 			if (!handlers.onSessionClick) return false;
 			const jumped = handlers.onSessionClick(action.sessionId, action.tabId);
@@ -159,6 +175,12 @@ export function dispatchToastClickAction(
 
 		case 'open-url':
 			openUrl(action.url);
+			return true;
+
+		case 'undo-group-publish':
+			// The service says what it restored, or that there is nothing left to
+			// undo, so this click never ends in silence either.
+			void undoGroupDefaultsPublish(action.publishId);
 			return true;
 
 		default: {

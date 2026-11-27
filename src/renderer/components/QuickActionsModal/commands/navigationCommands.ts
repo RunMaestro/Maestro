@@ -3,6 +3,7 @@ import type { QuickAction } from '../types';
 import { areUnreadFiltersActive, toggleAllUnreadFilters } from '../../../services/unreadFilters';
 import { getSessionSshRemoteId } from '../../../utils/sessionHelpers';
 import { openFolderInFileManager } from '../../../services/fileActions';
+import { hostShellAvailable } from '../../../services/hostShell';
 
 interface BuildNavigationCommandsArgs {
 	activeSession: Session | undefined;
@@ -156,9 +157,10 @@ export function buildNavigationCommands({
 		});
 	}
 
-	// The same command in every mode. A remote working directory has no location
-	// on this computer, so the service shows it in the Files panel and says so.
-	if (activeSession) {
+	// The same command in every mode on the desktop. A remote working directory has no location
+	// on this computer, so the service shows it in the Files panel and says so. A browser has
+	// no file manager on the host to open.
+	if (activeSession && hostShellAvailable()) {
 		commands.push({
 			id: 'openWorkingDirectory',
 			label: `${getOpenInLabel(platform)}: Working Directory`,

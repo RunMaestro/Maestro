@@ -1,6 +1,7 @@
 /**
- * tabContextOps - the renderer end of `summarize_context`, `merge_context` and
- * `transfer_context` (`maestro-cli tab compact|merge|transfer`).
+ * tabContextOps - the renderer end of `summarize_context`, `merge_context`,
+ * `transfer_context` and `continuity_preview`
+ * (`maestro-cli tab compact|merge|transfer|continuity`).
  *
  * A remote request runs the AI tab overlay menu's own handlers, not a copy:
  * `summarizeTab()` behind Context: Compact, `mergeTabContext()` behind Context:
@@ -12,7 +13,8 @@
  * tab), and the target rules the two modals enforce by what they list.
  *
  * Context moved by Merge Into and Send to Agent is raw, never groomed. Only
- * Compact summarizes, because summarizing is what Compact is.
+ * Compact summarizes, because summarizing is what Compact is. The continuity
+ * preview reads and reports: it moves, sends and summarizes nothing.
  */
 
 import type { MergeOptions } from '../components/MergeSessionModal';
@@ -48,6 +50,7 @@ export interface TabContextOpHandlers {
 		tabId: string,
 		options?: { background?: boolean }
 	) => Promise<TabContextOpResult>;
+	previewContinuity: (sessionId: string, tabId: string) => Promise<TabContextOpResult>;
 	mergeTabContext: (
 		sourceSessionId: string,
 		sourceTabId: string,
@@ -133,6 +136,11 @@ export async function runRemoteTabContextOp(
 
 	if (request.op === 'compact') {
 		const result = await handlers.summarizeTab(subject.sessionId, subject.tabId, { background });
+		return { ...result, ...subject };
+	}
+
+	if (request.op === 'continuity') {
+		const result = await handlers.previewContinuity(subject.sessionId, subject.tabId);
 		return { ...result, ...subject };
 	}
 

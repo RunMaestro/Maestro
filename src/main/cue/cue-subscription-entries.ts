@@ -14,6 +14,7 @@
 
 import { composeCueSubscriptionId } from '../../shared/cue/subscription-id';
 import { cueTurnSettingsOf } from '../../shared/cue/turn-settings';
+import { readCueGateSetting } from '../../shared/cue/gate';
 import type { CueGraphSession } from '../../shared/cue/contracts';
 import type { CueSubscriptionInfo } from '../web-server/types';
 import type { CueSubscriptionTriggerStat } from './cue-db';
@@ -77,6 +78,7 @@ export function toCueSubscriptionInfos(
 	const subs: CueSubscriptionInfo[] = [];
 	for (const session of filtered) {
 		for (const sub of session.subscriptions) {
+			const gate = readCueGateSetting(sub);
 			const stat = statsByKey.get(`${session.sessionId}\u0000${sub.name}`);
 			subs.push({
 				// No stable per-subscription id in YAML; compose one from
@@ -95,6 +97,14 @@ export function toCueSubscriptionInfos(
 				sessionId: session.sessionId,
 				sessionName: session.sessionName,
 				enabled: sub.enabled !== false,
+				...(gate ? { gate: gate.condition } : {}),
+				...(gate?.onUnavailable ? { gateOnUnavailable: gate.onUnavailable } : {}),
+				...(typeof sub.screen_injection === 'boolean'
+					? { screenInjection: sub.screen_injection }
+					: {}),
+				...(typeof sub.injection_threshold === 'number'
+					? { injectionThreshold: sub.injection_threshold }
+					: {}),
 				// No journal rows = genuinely never fired; the CLI renders
 				// "never triggered" for an absent `lastTriggered`.
 				triggerCount: stat?.triggerCount ?? 0,

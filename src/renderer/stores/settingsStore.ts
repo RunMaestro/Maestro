@@ -40,6 +40,31 @@ import {
 } from '../../shared/typography';
 import { parseTypographySnapshot } from '../../shared/typographySnapshot';
 import {
+	DEFAULT_DOWNLOAD_BASE,
+	resolveDownloadBase,
+} from '../../shared/local-models/download-base';
+import {
+	parseLocalModelEndpoints,
+	type LocalModelEndpoint,
+} from '../../shared/local-models/endpoints';
+import {
+	parseLocalModelAssignments,
+	type LocalModelAssignments,
+} from '../../shared/local-models/tasks';
+import {
+	DEFAULT_MODEL_MAP,
+	parseModelMap,
+	readModelMap,
+	type ModelMap,
+} from '../../shared/local-models/model-map';
+import { parseHarnessTierDefaults, type HarnessTierDefaults } from '../../shared/modelTiers';
+import { asTokenProxyMode, type TokenProxyMode } from '../../shared/local-models/token-proxy';
+import {
+	DEFAULT_MAX_CONSULTATIONS_PER_TURN,
+	MAX_CONSULTATIONS_PER_TURN_SETTING,
+	normalizeMaxConsultationsPerTurn,
+} from '../../shared/consultBudget';
+import {
 	QUICK_CHAT_SETTINGS_KEY,
 	resolveQuickChatSettings,
 	type QuickChatSettings,
@@ -89,6 +114,11 @@ import type { AnnotatorState, AnnotatorActions } from './settingsAnnotatorSlice'
 import { createAnnotatorSlice, hydrateAnnotatorSettings } from './settingsAnnotatorSlice';
 import type { WakatimeState, WakatimeActions } from './settingsWakatimeSlice';
 import { createWakatimeSlice, hydrateWakatimeSettings } from './settingsWakatimeSlice';
+import type { DelegationGraphState, DelegationGraphActions } from './settingsDelegationGraphSlice';
+import {
+	createDelegationGraphSlice,
+	hydrateDelegationGraphSettings,
+} from './settingsDelegationGraphSlice';
 import type { FileExplorerState, FileExplorerActions } from './settingsFileExplorerSlice';
 import { createFileExplorerSlice, hydrateFileExplorerSettings } from './settingsFileExplorerSlice';
 import type { NotificationsState, NotificationsActions } from './settingsNotificationsSlice';
@@ -343,6 +373,7 @@ export interface SettingsStoreState
 	extends
 		AnnotatorState,
 		WakatimeState,
+		DelegationGraphState,
 		FileExplorerState,
 		NotificationsState,
 		LeftPanelDisplayState,
@@ -363,6 +394,37 @@ export interface SettingsStoreState
 	 * value for later. Never merge this into a spawn env.
 	 */
 	shellEnvVarsDisabled: Record<string, string>;
+	/**
+	 * Local Models endpoints the user runs (Ollama, LM Studio, OpenAI-compatible).
+	 * API keys are referenced by env-var name and resolved from `shellEnvVars`
+	 * at call time; see shared/local-models/endpoints.ts.
+	 */
+	localModelEndpoints: LocalModelEndpoint[];
+	/** Copied to new eligible agents unless their creation supplies explicit routing. */
+	defaultTokenProxyMode: TokenProxyMode;
+	/**
+	 * Which source each Local Models task runs on. Sparse: a task with no entry
+	 * uses its registry default; read through `resolveLocalModelAssignment()`.
+	 * See shared/local-models/tasks.ts.
+	 */
+	localModelAssignments: LocalModelAssignments;
+	/**
+	 * Where each harness launches a model tier for an agent that does not set
+	 * the tier itself. Sparse: an absent tier uses the built-in table. Read
+	 * through `resolveTierTarget()`; see shared/modelTiers.ts.
+	 */
+	harnessTierDefaults: HarnessTierDefaults;
+	/**
+	 * Where model files are downloaded from: Hugging Face, or a mirror of it for
+	 * networks that block it. Always a valid base (the default when unset); see
+	 * shared/local-models/download-base.ts.
+	 */
+	localModelsDownloadBase: string;
+	/**
+	 * Include Cue runs in the semantic index. Off by default: Cue runs are most
+	 * of History by volume and mostly repeat. Read by the main-process indexer.
+	 */
+	semanticIndexCue: boolean;
 	ghPath: string;
 	mediaModelDirectory: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
@@ -386,6 +448,8 @@ export interface SettingsStoreState
 	sendButtonMenu: boolean;
 	/** When true, agents consulted via @-mention may write; when false (default), consults are read-only. */
 	crossAgentMentionsWritable: boolean;
+	/** Peer consults and delegations one user message may spend, whole chain. See shared/consultBudget.ts. */
+	maxConsultationsPerTurn: number;
 	crossAgentHandoffsWritable: boolean;
 	relayArchiveHours: number;
 	defaultSaveToHistory: boolean;
@@ -463,8 +527,7 @@ export interface SettingsStoreState
 	disableConfetti: boolean;
 	suppressWindowsWarning: boolean;
 	userMessageAlignment: 'left' | 'right';
-	utilityAgentId: string | null;
-	utilityModelId: string | null;
+	modelMap: ModelMap;
 	primaryAgentId: string | null;
 	encoreFeatures: EncoreFeatureFlags;
 	symphonyRegistryUrls: string[];
@@ -511,6 +574,7 @@ export interface SettingsStoreActions
 	extends
 		AnnotatorActions,
 		WakatimeActions,
+		DelegationGraphActions,
 		FileExplorerActions,
 		NotificationsActions,
 		LeftPanelDisplayActions,
@@ -525,6 +589,12 @@ export interface SettingsStoreActions
 	setShellArgs: (value: string) => void;
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
+	setDefaultTokenProxyMode: (value: TokenProxyMode) => Promise<void>;
+	setLocalModelEndpoints: (value: LocalModelEndpoint[]) => void;
+	setLocalModelAssignments: (value: LocalModelAssignments) => void;
+	setHarnessTierDefaults: (value: HarnessTierDefaults) => void;
+	setLocalModelsDownloadBase: (value: string) => void;
+	setSemanticIndexCue: (value: boolean) => void;
 	setGhPath: (value: string) => void;
 	setMediaModelDirectory: (value: string) => Promise<boolean>;
 	setMediaPlaybackRate: (value: number) => void;
@@ -535,6 +605,7 @@ export interface SettingsStoreActions
 	setForcedParallelAlways: (value: boolean) => void;
 	setSendButtonMenu: (value: boolean) => void;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
+	setMaxConsultationsPerTurn: (value: number) => void;
 	setCrossAgentHandoffsWritable: (value: boolean) => void;
 	setRelayArchiveHours: (value: number) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
@@ -595,9 +666,8 @@ export interface SettingsStoreActions
 	setDisableConfetti: (value: boolean) => void;
 	setSuppressWindowsWarning: (value: boolean) => void;
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
-	setUtilityAgentId: (value: string | null) => void;
+	setModelMap: (value: ModelMap) => void;
 	setPrimaryAgentId: (value: string | null) => void;
-	setUtilityModelId: (value: string | null) => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setSymphonyRegistryUrls: (value: string[]) => void;
 	setCoworkingBrowserInteraction: (value: string[]) => void;
@@ -711,6 +781,11 @@ export type SettingsStore = SettingsStoreState & SettingsStoreActions;
 export const selectGroupsPlusEnabled = (state: SettingsStore) =>
 	state.encoreFeatures.groupsPlus === true;
 
+/** Shared renderer selector for every A Cappella surface (HUD, dev harness,
+ * Voice Setup). One owner so the voice gate cannot drift between them. */
+export const selectACappellaEnabled = (state: SettingsStore) =>
+	state.encoreFeatures.aCappella === true;
+
 // ============================================================================
 // Auto Run watchdog helpers
 // ============================================================================
@@ -787,6 +862,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellArgs: '',
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
+		localModelEndpoints: [],
+		defaultTokenProxyMode: 'off',
+		localModelAssignments: {},
+		harnessTierDefaults: {},
+		localModelsDownloadBase: DEFAULT_DOWNLOAD_BASE,
+		semanticIndexCue: false,
 		ghPath: '',
 		mediaModelDirectory: '',
 		hasPriorInstallation: false,
@@ -798,6 +879,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		forcedParallelAlways: false,
 		sendButtonMenu: true,
 		crossAgentMentionsWritable: false,
+		maxConsultationsPerTurn: DEFAULT_MAX_CONSULTATIONS_PER_TURN,
 		crossAgentHandoffsWritable: true,
 		relayArchiveHours: 24,
 		defaultSaveToHistory: true,
@@ -865,8 +947,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		disableConfetti: false,
 		suppressWindowsWarning: false,
 		userMessageAlignment: 'right',
-		utilityAgentId: null,
-		utilityModelId: null,
+		modelMap: DEFAULT_MODEL_MAP,
 		primaryAgentId: null,
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
 		symphonyRegistryUrls: [],
@@ -906,6 +987,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 
 		...createAnnotatorSlice(set, get, api),
 		...createWakatimeSlice(set, get, api),
+		...createDelegationGraphSlice(set, get, api),
 		...createFileExplorerSlice(set, get, api),
 		...createNotificationsSlice(set, get, api),
 		...createLeftPanelDisplaySlice(set, get, api),
@@ -951,6 +1033,41 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setShellEnvVarsDisabled: (value) => {
 			set({ shellEnvVarsDisabled: value });
 			window.maestro.settings.set('shellEnvVarsDisabled', value);
+		},
+
+		setLocalModelEndpoints: (value) => {
+			set({ localModelEndpoints: value });
+			window.maestro.settings.set('localModelEndpoints', value);
+		},
+
+		setDefaultTokenProxyMode: async (value) => {
+			const mode = asTokenProxyMode(value) ?? 'off';
+			await window.maestro.settings.set('defaultTokenProxyMode', mode);
+			set({ defaultTokenProxyMode: mode });
+		},
+
+		setLocalModelAssignments: (value) => {
+			set({ localModelAssignments: value });
+			window.maestro.settings.set('localModelAssignments', value);
+		},
+
+		setHarnessTierDefaults: (value) => {
+			// Stored in the one form every reader parses, so a harness left with no
+			// tier set is dropped and the record stays sparse.
+			const defaults = parseHarnessTierDefaults(value);
+			set({ harnessTierDefaults: defaults });
+			window.maestro.settings.set('harnessTierDefaults', defaults);
+		},
+
+		setLocalModelsDownloadBase: (value) => {
+			const base = resolveDownloadBase(value);
+			set({ localModelsDownloadBase: base });
+			window.maestro.settings.set('localModelsDownloadBase', base);
+		},
+
+		setSemanticIndexCue: (value) => {
+			set({ semanticIndexCue: value });
+			window.maestro.settings.set('semanticIndexCue', value);
 		},
 
 		setGhPath: (value) => {
@@ -1004,6 +1121,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setCrossAgentMentionsWritable: (value) => {
 			set({ crossAgentMentionsWritable: value });
 			window.maestro.settings.set('crossAgentMentionsWritable', value);
+		},
+
+		setMaxConsultationsPerTurn: (value) => {
+			// 0 is a real value (peer consults off), so normalize rather than `|| default`.
+			const normalized = normalizeMaxConsultationsPerTurn(value);
+			set({ maxConsultationsPerTurn: normalized });
+			window.maestro.settings.set(MAX_CONSULTATIONS_PER_TURN_SETTING, normalized);
 		},
 
 		setCrossAgentHandoffsWritable: (value) => {
@@ -1404,19 +1528,15 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('userMessageAlignment', value);
 		},
 
-		setUtilityAgentId: (value) => {
-			set({ utilityAgentId: value });
-			window.maestro.settings.set('utilityAgentId', value);
-		},
-
 		setPrimaryAgentId: (value) => {
 			set({ primaryAgentId: value });
 			window.maestro.settings.set('primaryAgentId', value);
 		},
 
-		setUtilityModelId: (value) => {
-			set({ utilityModelId: value });
-			window.maestro.settings.set('utilityModelId', value);
+		setModelMap: (value) => {
+			const modelMap = parseModelMap(value) ?? DEFAULT_MODEL_MAP;
+			set({ modelMap });
+			window.maestro.settings.set('modelMap', modelMap);
 		},
 
 		setEncoreFeatures: (value) => {
@@ -2144,6 +2264,25 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['shellEnvVarsDisabled'] !== undefined)
 			patch.shellEnvVarsDisabled = allSettings['shellEnvVarsDisabled'] as Record<string, string>;
 
+		if (allSettings['localModelEndpoints'] !== undefined)
+			patch.localModelEndpoints = parseLocalModelEndpoints(allSettings['localModelEndpoints']);
+
+		patch.defaultTokenProxyMode = asTokenProxyMode(allSettings['defaultTokenProxyMode']) ?? 'off';
+
+		if (allSettings['localModelAssignments'] !== undefined)
+			patch.localModelAssignments = parseLocalModelAssignments(
+				allSettings['localModelAssignments']
+			);
+
+		if (allSettings['harnessTierDefaults'] !== undefined)
+			patch.harnessTierDefaults = parseHarnessTierDefaults(allSettings['harnessTierDefaults']);
+
+		if (allSettings['localModelsDownloadBase'] !== undefined)
+			patch.localModelsDownloadBase = resolveDownloadBase(allSettings['localModelsDownloadBase']);
+
+		if (allSettings['semanticIndexCue'] !== undefined)
+			patch.semanticIndexCue = allSettings['semanticIndexCue'] === true;
+
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 
 		hydrateThemeSettings(allSettings, patch);
@@ -2199,6 +2338,11 @@ export async function loadAllSettings(): Promise<void> {
 			patch.crossAgentMentionsWritable = allSettings['crossAgentMentionsWritable'] as boolean;
 		if (allSettings['crossAgentHandoffsWritable'] !== undefined)
 			patch.crossAgentHandoffsWritable = allSettings['crossAgentHandoffsWritable'] as boolean;
+
+		if (allSettings[MAX_CONSULTATIONS_PER_TURN_SETTING] !== undefined)
+			patch.maxConsultationsPerTurn = normalizeMaxConsultationsPerTurn(
+				allSettings[MAX_CONSULTATIONS_PER_TURN_SETTING]
+			);
 
 		if (
 			typeof allSettings['relayArchiveHours'] === 'number' &&
@@ -2680,11 +2824,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['userMessageAlignment'] !== undefined)
 			patch.userMessageAlignment = allSettings['userMessageAlignment'] as 'left' | 'right';
 
-		if (allSettings['utilityAgentId'] !== undefined)
-			patch.utilityAgentId = allSettings['utilityAgentId'] as string | null;
-
-		if (allSettings['utilityModelId'] !== undefined)
-			patch.utilityModelId = allSettings['utilityModelId'] as string | null;
+		// Reads the old Utility source into the Housekeeping slot until a map is saved.
+		patch.modelMap = readModelMap((key) => allSettings[key]);
 
 		if (allSettings['primaryAgentId'] !== undefined)
 			patch.primaryAgentId = allSettings['primaryAgentId'] as string | null;
@@ -2770,6 +2911,7 @@ export async function loadAllSettings(): Promise<void> {
 		}
 
 		hydrateWakatimeSettings(allSettings, patch);
+		hydrateDelegationGraphSettings(allSettings, patch);
 		// Cue history retention. A stored value that isn't a usable day count
 		// falls back to the default rather than being shown as-is: the number in
 		// the UI is a promise about what the prune keeps, so it must never read
@@ -2986,6 +3128,8 @@ export function getSettingsActions() {
 		setShellArgs: state.setShellArgs,
 		setShellEnvVars: state.setShellEnvVars,
 		setShellEnvVarsDisabled: state.setShellEnvVarsDisabled,
+		setDefaultTokenProxyMode: state.setDefaultTokenProxyMode,
+		setLocalModelEndpoints: state.setLocalModelEndpoints,
 		setGhPath: state.setGhPath,
 		setFontFamily: state.setFontFamily,
 		setTerminalFontFamily: state.setTerminalFontFamily,
@@ -3007,6 +3151,7 @@ export function getSettingsActions() {
 		setCustomThemeColors: state.setCustomThemeColors,
 		setCustomThemeBaseId: state.setCustomThemeBaseId,
 		setEnterToSendAI: state.setEnterToSendAI,
+		setMaxConsultationsPerTurn: state.setMaxConsultationsPerTurn,
 		setDefaultSaveToHistory: state.setDefaultSaveToHistory,
 		setSynopsisDebounceSeconds: state.setSynopsisDebounceSeconds,
 		setDefaultShowThinking: state.setDefaultShowThinking,
@@ -3110,9 +3255,8 @@ export function getSettingsActions() {
 		setOpenedFilePlacement: state.setOpenedFilePlacement,
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
 		setSuppressWindowsWarning: state.setSuppressWindowsWarning,
-		setUtilityAgentId: state.setUtilityAgentId,
+		setModelMap: state.setModelMap,
 		setPrimaryAgentId: state.setPrimaryAgentId,
-		setUtilityModelId: state.setUtilityModelId,
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setQuickChatSettings: state.setQuickChatSettings,
@@ -3120,6 +3264,8 @@ export function getSettingsActions() {
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
+		setDelegationScopeLayout: state.setDelegationScopeLayout,
+		resetDelegationScopeLayout: state.resetDelegationScopeLayout,
 		setUseNativeTitleBar: state.setUseNativeTitleBar,
 		setAutoHideMenuBar: state.setAutoHideMenuBar,
 		setShowAgentName: state.setShowAgentName,

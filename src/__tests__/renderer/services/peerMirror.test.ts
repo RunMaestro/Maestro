@@ -13,6 +13,7 @@ vi.mock('../../../renderer/stores/notificationStore', async (importOriginal) => 
 
 import {
 	callMirroredAgentAction,
+	reconnectPeer,
 	cancelMirrorConsult,
 	removeMirrorQueuedItem,
 	setMirrorQueuedItemPaused,
@@ -155,6 +156,31 @@ describe('services/peerMirror', () => {
 			expect(
 				await callMirroredAgentAction('box', 'a1', { kind: 'update-agent', patch: { name: 'x' } })
 			).toBeNull();
+		});
+	});
+	describe('reconnectPeer', () => {
+		it('resolves true when the host answers, with no toast', async () => {
+			maestro.federation = { reconnect: vi.fn(async () => ({ ok: true })) };
+			expect(await reconnectPeer('tome')).toBe(true);
+			expect(notifyToast).not.toHaveBeenCalled();
+		});
+
+		it('raises a toast on failure', async () => {
+			maestro.federation = { reconnect: vi.fn(async () => ({ ok: false, error: 'down' })) };
+			expect(await reconnectPeer('tome')).toBe(false);
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					color: 'red',
+					title: 'Could not reconnect to tome',
+					message: 'down',
+				})
+			);
+		});
+
+		it('says nothing on failure when quiet (a retry the user did not ask for)', async () => {
+			maestro.federation = { reconnect: vi.fn(async () => ({ ok: false, error: 'down' })) };
+			expect(await reconnectPeer('tome', { quiet: true })).toBe(false);
+			expect(notifyToast).not.toHaveBeenCalled();
 		});
 	});
 });

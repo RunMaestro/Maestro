@@ -89,6 +89,32 @@ describe('encore commands', () => {
 		expect((getPayload().value as Record<string, boolean>).groupsPlus).toBe(true);
 	});
 
+	it('omits the retired Ensemble plugin from the feature list', () => {
+		vi.mocked(readSettingValue).mockReturnValue({ ensemble: true });
+		encoreList({ json: true });
+		expect(JSON.parse(consoleSpy.mock.calls[0][0]).features).not.toHaveProperty('ensemble');
+	});
+
+	// A Cappella is an Encore tile like the others. Until it was listed here the
+	// only way to switch voice on from a terminal was to hand-write the whole
+	// `encoreFeatures` object, which `encore enable` exists to prevent.
+	it('lists A Cappella, off until it is switched on', () => {
+		encoreList({ json: true });
+		expect(JSON.parse(consoleSpy.mock.calls[0][0]).features.aCappella).toBe(false);
+	});
+
+	it.each(['aCappella', 'voice', 'a-cappella', 'acappella'])(
+		'enables A Cappella when asked as "%s"',
+		async (name) => {
+			const getPayload = mockSend({ success: true });
+			await encoreSet(name, true, {});
+			const value = getPayload().value as Record<string, boolean>;
+			expect(value.aCappella).toBe(true);
+			// The flags the user already had travel with it, untouched.
+			expect(value.symphony).toBe(true);
+		}
+	);
+
 	describe('a macOS-only feature (MaestroRun)', () => {
 		const realPlatform = process.platform;
 		const setPlatform = (value: string) =>

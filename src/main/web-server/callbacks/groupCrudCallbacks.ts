@@ -6,6 +6,10 @@ import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { createRemoteRequest } from './remoteRequest';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
+import type {
+	GroupSettingsUpdateRequest,
+	GroupSettingsUpdateResult,
+} from '../../../shared/groupSettingsUpdate';
 
 export function registerGroupCrudCallbacks(
 	server: WebServer,
@@ -69,6 +73,28 @@ export function registerGroupCrudCallbacks(
 		remoteRequest<boolean>('updateGroup', 'updateGroup', false, (mainWindow, responseChannel) =>
 			mainWindow.webContents.send('remote:updateGroup', groupId, update, responseChannel)
 		)
+	);
+
+	// Set up callback for web server to write a group's Group Settings profile
+	// and pill label. The renderer owns the group list and the validator the
+	// dialog saves with, so the request goes there; its reply is a result
+	// object (what was stored, and what a publish reached), not a boolean.
+	server.setUpdateGroupSettingsCallback(
+		async (groupId: string, request: GroupSettingsUpdateRequest) =>
+			remoteRequest<GroupSettingsUpdateResult>(
+				'updateGroupSettings',
+				'updateGroupSettings',
+				{ success: false, error: 'Renderer did not respond in time' },
+				(mainWindow, responseChannel) =>
+					mainWindow.webContents.send(
+						'remote:updateGroupSettings',
+						groupId,
+						request,
+						responseChannel
+					),
+				// A publish writes every member and flushes each to the main store.
+				30000
+			)
 	);
 
 	// Set up callback for web server to rename a group

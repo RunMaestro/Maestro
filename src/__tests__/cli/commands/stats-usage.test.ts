@@ -127,13 +127,18 @@ describe('stats usage verbs', () => {
 			const send = replyWith({});
 			await expect(statsDelegation({ range: 'fortnight', json: true })).rejects.toThrow('exit');
 			expect(send).not.toHaveBeenCalled();
-			expect(String(error.mock.calls[0][0])).toContain('Invalid range');
+			// failCommand: a --json failure is one JSON line on stdout.
+			expect(JSON.parse(output())).toMatchObject({
+				success: false,
+				error: expect.stringContaining('Invalid range'),
+			});
 		});
 
 		it('fails on an error frame instead of printing an empty result', async () => {
 			replyWith({ type: 'error', message: 'Database not initialized' });
 			await expect(statsDelegation({ json: true })).rejects.toThrow('exit');
-			expect(JSON.parse(String(error.mock.calls[0][0]))).toEqual({
+			expect(JSON.parse(output())).toEqual({
+				success: false,
 				error: 'Database not initialized',
 			});
 		});

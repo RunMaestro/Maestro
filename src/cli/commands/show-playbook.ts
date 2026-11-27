@@ -4,7 +4,8 @@
 import { findPlaybookById } from '../services/playbooks';
 import { getSessionById } from '../services/storage';
 import { readDocAndGetTasks } from '../services/agent-spawner';
-import { formatPlaybookDetail, formatError } from '../output/formatter';
+import { formatPlaybookDetail } from '../output/formatter';
+import { failCommand } from '../services/session-command';
 
 interface ShowPlaybookOptions {
 	json?: boolean;
@@ -68,11 +69,6 @@ export function showPlaybook(playbookId: string, options: ShowPlaybookOptions): 
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(message));
-		}
-		process.exit(1);
+		failCommand(message, options.json);
 	}
 }

@@ -17,6 +17,7 @@
 
 import * as path from 'path';
 import { buildCallerIdentityEnv } from '../../agentDelegation';
+import { hostedTurnEnv } from '../agents/lift-pointer';
 import { resolveTabPermissionMode } from '../../agentMetadata';
 import { prependNewSessionMessageOnFirstTurn } from '../../newSessionMessage';
 import { buildSideQuestionPrompt, sideQuestionForkRefusal } from '../../sideQuestion';
@@ -75,6 +76,7 @@ export interface TurnAgent {
 }
 
 export interface TurnTab {
+	tabProvider?: import('../../types').ToolType;
 	id: string;
 	agentSessionId?: string | null;
 	customModel?: string;
@@ -388,6 +390,8 @@ export function assembleTurn(
 	// What Maestro states about this spawn.
 	const maestroEnvVars: Record<string, string> = {
 		...buildCallerIdentityEnv(agent.id, tab.id),
+		// Only a runtime without a desktop assembles turns here: its agents are hosted agents.
+		...hostedTurnEnv(),
 		...(agent.isPianola && context.pianolaEnabled === true && context.maestroCliPath
 			? { MAESTRO_CLI_JS: context.maestroCliPath, MAESTRO_AGENT_ID: agent.id }
 			: {}),

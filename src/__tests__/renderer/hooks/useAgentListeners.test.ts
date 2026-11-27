@@ -893,7 +893,7 @@ describe('useAgentListeners', () => {
 			expect(updated?.contextUsage).toBe(48);
 		});
 
-		it('stores session ID at session level when tab was closed (not on another tab)', () => {
+		it('ignores a closed tab session ID when its provider owner is no longer known', () => {
 			const deps = createMockDeps();
 			// Tab B exists but Tab A (from the process session ID) was closed
 			const tabB = createMockTab({
@@ -918,8 +918,8 @@ describe('useAgentListeners', () => {
 			onSessionIdHandler?.('sess-1-ai-tab-a', 'orphan-session-id');
 
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
-			// Session-level agentSessionId should be set
-			expect(updated?.agentSessionId).toBe('orphan-session-id');
+			// Without the tab's captured provider, the ID cannot be assigned safely.
+			expect(updated?.agentSessionId).toBe(session.agentSessionId);
 			// Tab B should NOT have been assigned the orphaned session ID
 			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
 			expect(updatedTabB?.agentSessionId).toBeNull();
@@ -986,8 +986,8 @@ describe('useAgentListeners', () => {
 			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
 			expect(updatedTabB?.agentSessionId).toBeNull();
 			expect(updatedTabB?.awaitingSessionId).toBe(true);
-			// Session level gets the orphaned ID
-			expect(updated?.agentSessionId).toBe('tab-a-session');
+			// The unowned ID must not replace the session's current resume identity.
+			expect(updated?.agentSessionId).toBe(session.agentSessionId);
 		});
 
 		it('still binds correctly to existing tab when tab ID matches', () => {
@@ -1052,8 +1052,8 @@ describe('useAgentListeners', () => {
 			// Tab B must NOT be contaminated
 			const updatedTabB = updated?.aiTabs.find((t) => t.id === 'tab-b');
 			expect(updatedTabB?.agentSessionId).toBeNull();
-			// Session level gets the ID
-			expect(updated?.agentSessionId).toBe('fp-session');
+			// A forced-parallel suffix does not establish the missing provider owner.
+			expect(updated?.agentSessionId).toBe(session.agentSessionId);
 		});
 	});
 

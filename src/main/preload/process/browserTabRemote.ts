@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 export function createBrowserTabRemoteApi() {
@@ -244,6 +245,7 @@ export function createBrowserTabRemoteApi() {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => void
@@ -259,11 +261,21 @@ export function createBrowserTabRemoteApi() {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				control?: import('../../../shared/pianola/pianola-dispatch').PianolaNewTabControl
 			) => {
 				try {
-					callback(sessionId, prompt, responseChannel, background, hidden, mentionRouting, control);
+					callback(
+						sessionId,
+						prompt,
+						responseChannel,
+						background,
+						hidden,
+						consultChain,
+						mentionRouting,
+						control
+					);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;

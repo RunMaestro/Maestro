@@ -10,6 +10,20 @@ import { describe, it, expect } from 'vitest';
 import { parseToastClickAction, TOAST_CLICK_ACTION_KINDS } from '../../shared/toastClickAction';
 
 describe('parseToastClickAction', () => {
+	it('validates a tab translation review destination', () => {
+		const action = {
+			kind: 'review-translation',
+			sessionId: 'agent',
+			tabId: 'tab',
+			provider: 'codex',
+		};
+		expect(parseToastClickAction(action)).toEqual({ action });
+		for (const patch of [{ sessionId: '' }, { tabId: '' }, { provider: 'unknown' }]) {
+			expect(parseToastClickAction({ ...action, ...patch }).error).toContain(
+				'requires sessionId, tabId and a valid provider'
+			);
+		}
+	});
 	it('returns nothing for an absent action', () => {
 		expect(parseToastClickAction(undefined)).toEqual({});
 		expect(parseToastClickAction(null)).toEqual({});
@@ -121,6 +135,20 @@ describe('parseToastClickAction', () => {
 
 		it('requires url', () => {
 			expect(parseToastClickAction({ kind: 'open-url' }).error).toContain('requires url');
+		});
+	});
+
+	describe('undo-group-publish', () => {
+		it('accepts a publishId', () => {
+			expect(
+				parseToastClickAction({ kind: 'undo-group-publish', publishId: 'publish-1' }).action
+			).toEqual({ kind: 'undo-group-publish', publishId: 'publish-1' });
+		});
+
+		it('requires publishId', () => {
+			expect(parseToastClickAction({ kind: 'undo-group-publish' }).error).toContain(
+				'requires publishId'
+			);
 		});
 	});
 });

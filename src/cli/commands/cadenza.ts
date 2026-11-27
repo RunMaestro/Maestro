@@ -13,6 +13,7 @@ import {
 	type CadenzaPayload,
 	type CadenzaDecisionOption,
 } from '../../shared/cadenza-types';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface ViewOpenOptions {
@@ -96,7 +97,7 @@ function resolveBody(body: string | undefined, bodyFile: string | undefined): st
 			console.error(
 				`Error: could not read --body-file: ${error instanceof Error ? error.message : String(error)}`
 			);
-			process.exit(1);
+			exitWith(exitCodeForError(error));
 		}
 	}
 	return body;
@@ -127,14 +128,14 @@ async function sendCadenza(
 			const error = result.error || 'Failed to update cadenza view';
 			if (json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
@@ -145,20 +146,20 @@ function resolveOptionalAgent(agent: string | undefined): string | undefined {
 		return resolveAgentId(agent);
 	} catch (error) {
 		console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
 export async function cadenzaOpen(id: string, options: ViewOpenOptions): Promise<void> {
 	if (!id.trim()) {
 		console.error('Error: id cannot be empty');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	const viewType: CadenzaViewType = (options.type ?? 'tracker') as CadenzaViewType;
 	if (!CADENZA_VIEW_TYPES.includes(viewType)) {
 		console.error(`Error: --type must be one of: ${CADENZA_VIEW_TYPES.join(', ')}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	let color: CadenzaColor | undefined;
@@ -166,20 +167,20 @@ export async function cadenzaOpen(id: string, options: ViewOpenOptions): Promise
 		const candidate = options.color.toLowerCase() as CadenzaColor;
 		if (!CADENZA_COLORS.includes(candidate)) {
 			console.error(`Error: --color must be one of: ${CADENZA_COLORS.join(', ')}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		color = candidate;
 	}
 
 	if ((viewType === 'file' || viewType === 'image') && !options.path) {
 		console.error(`Error: --path is required for --type ${viewType}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	let body = resolveBody(options.body, options.bodyFile);
 	if ((viewType === 'markdown' || viewType === 'view' || viewType === 'html') && !body) {
 		console.error(`Error: --body or --body-file is required for --type ${viewType}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// `code` renders as a syntax-highlighted snippet: pull from --path (a file) or
@@ -195,13 +196,13 @@ export async function cadenzaOpen(id: string, options: ViewOpenOptions): Promise
 				console.error(
 					`Error: could not read --path: ${error instanceof Error ? error.message : String(error)}`
 				);
-				process.exit(1);
+				exitWith(exitCodeForError(error));
 			}
 			if (!lang) lang = extToLang(options.path);
 		}
 		if (!code) {
 			console.error('Error: --type code requires --path, --body, or --body-file');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		// Fence longer than any backtick run inside the code, so displaying a file
 		// that itself contains ``` cannot close the fence early.
@@ -225,11 +226,11 @@ export async function cadenzaOpen(id: string, options: ViewOpenOptions): Promise
 		decisionOptions = parseDecisionOptions(options.option);
 		if (decisionOptions.length === 0) {
 			console.error('Error: --type decision requires at least one --option "Label:value"');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		if (!sessionId) {
 			console.error('Error: --agent is required for --type decision (the reply target)');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	}
 
@@ -253,7 +254,7 @@ export async function cadenzaOpen(id: string, options: ViewOpenOptions): Promise
 export async function cadenzaUpdate(id: string, options: ViewUpdateOptions): Promise<void> {
 	if (!id.trim()) {
 		console.error('Error: id cannot be empty');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	let color: CadenzaColor | undefined;
@@ -261,7 +262,7 @@ export async function cadenzaUpdate(id: string, options: ViewUpdateOptions): Pro
 		const candidate = options.color.toLowerCase() as CadenzaColor;
 		if (!CADENZA_COLORS.includes(candidate)) {
 			console.error(`Error: --color must be one of: ${CADENZA_COLORS.join(', ')}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		color = candidate;
 	}
@@ -285,7 +286,7 @@ export async function cadenzaUpdate(id: string, options: ViewUpdateOptions): Pro
 export async function cadenzaClose(id: string, options: ViewCloseOptions): Promise<void> {
 	if (!id.trim()) {
 		console.error('Error: id cannot be empty');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	await sendCadenza({ op: 'close', id }, options.json, `Cadenza '${id}' closed`);

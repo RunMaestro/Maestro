@@ -23,10 +23,10 @@ import type { FilePreviewToolbarVisibility } from '../../stores/settingsStore';
 import { Spinner } from '../ui/Spinner';
 import { HoverTooltip } from '../ui/HoverTooltip';
 import { captureException } from '../../utils/sentry';
-import { isWebDesktop } from '../../utils/runtimeContext';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { getRevealLabel } from '../../utils/platformUtils';
+import { hostShellAvailable, openFileForUserLabel } from '../../services/hostShell';
 import { formatFileSize, formatDateTime, countLines } from './filePreviewUtils';
 import { formatNumber } from '../../../shared/formatters';
 import type { PreviewTier } from './filePreviewUtils';
@@ -362,24 +362,24 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			onClick: onOpenInGraph,
 		});
 	}
-	// "Open in Default App" hands the file to the HOST machine's OS opener via
-	// the shell bridge; a remote file is fetched to this machine first. In the
-	// web-desktop build the host is not the browser user's device, so hide it
-	// there.
-	if (toolbarVisibility.openInDefault && hasDiskPath && !isWebDesktop()) {
+	// "Open in Default App" hands the file to the host's OS opener on the
+	// desktop (a remote file is fetched to this machine first), and downloads
+	// it to this device from a browser, whose user is not at the host. See
+	// services/fileActions.ts and services/hostShell.ts.
+	if (toolbarVisibility.openInDefault && hasDiskPath) {
 		actions.push({
 			kind: 'button',
 			key: 'openInDefault',
 			icon: ExternalLink,
-			label: 'Open in Default App',
+			label: openFileForUserLabel(),
 			onClick: () => {
 				void openFileInDefaultApp({ path: file.path, sshRemoteId });
 			},
 		});
 	}
 	// Reveal in Finder / Explorer / File Manager. A remote file reveals its
-	// fetched copy.
-	if (toolbarVisibility.revealInFolder && hasDiskPath) {
+	// fetched copy. The host's file manager, so desktop only.
+	if (toolbarVisibility.revealInFolder && hasDiskPath && hostShellAvailable()) {
 		actions.push({
 			kind: 'button',
 			key: 'revealInFolder',
@@ -518,6 +518,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 												style={{
 													color: action.active ? theme.colors.accent : theme.colors.textDim,
 												}}
+												aria-pressed={action.pressed}
 												data-testid={action.testId}
 											>
 												<Icon className={headerIconClass} />

@@ -14,6 +14,7 @@ import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionInfo } from '../../../shared/types';
 import type { TimelineEvent } from '../../../shared/timeline';
+import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
 
 const mockReadLiveSessions = vi.fn<() => SessionInfo[]>();
 const encore = { computerHistory: false };
@@ -64,6 +65,7 @@ function jsonOutput(): {
 }
 
 beforeEach(() => {
+	vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, alpha.id);
 	dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-cli-'));
 	priorDataDir = process.env.MAESTRO_USER_DATA;
 	process.env.MAESTRO_USER_DATA = dataDir;
@@ -107,6 +109,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.unstubAllEnvs();
 	mockReadLiveSessions.mockReset();
 	if (priorDataDir === undefined) delete process.env.MAESTRO_USER_DATA;
 	else process.env.MAESTRO_USER_DATA = priorDataDir;
@@ -115,7 +118,7 @@ afterEach(() => {
 
 describe('timeline --json', () => {
 	it('merges every agent oldest first inside the default day, with names and ISO times', async () => {
-		await timeline({ json: true });
+		await timeline({ global: true, json: true });
 		const result = jsonOutput();
 		expect(result.success).toBe(true);
 		expect(result.events?.map((e) => [e.source, e.agentName, e.text])).toEqual([
@@ -126,7 +129,7 @@ describe('timeline --json', () => {
 		expect(result.events?.[0]).toMatchObject({
 			ref: 'h-alpha',
 			time: new Date(NOW - 30 * MIN).toISOString(),
-			more: 'timeline show h-alpha',
+			more: `timeline show h-alpha --agent ${alpha.id}`,
 		});
 		// A journey line is the whole record: nothing more to read.
 		expect(result.events?.[2].more).toBeUndefined();
@@ -135,6 +138,43 @@ describe('timeline --json', () => {
 });
 
 describe('timeline filters', () => {
+	it('defaults to the calling agent, excluding other agents and their journey entries', async () => {
+		writeJsonl(path.join(dataDir, 'journey', `${beta.id}.jsonl`), [
+			{ ts: NOW - MIN, agentId: beta.id, kind: 'file.save', target: `${beta.cwd}/private.ts` },
+		]);
+		await timeline({ json: true });
+		expect(jsonOutput().events?.map((event) => event.agentId)).toEqual([alpha.id, alpha.id]);
+		expect(output()).not.toContain('ran docs');
+		expect(output()).not.toContain('private.ts');
+	});
+
+	it('requires explicit scope without a caller, even when only one agent exists', async () => {
+		vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, '');
+		mockReadLiveSessions.mockReturnValue([alpha]);
+		await timeline({ json: true });
+		expect(jsonOutput()).toMatchObject({
+			success: false,
+			error: expect.stringContaining('--global'),
+		});
+		log.mockClear();
+		await timeline({ agent: alpha.id, json: true });
+		expect(jsonOutput().success).toBe(true);
+	});
+
+	it('refuses a stale caller instead of falling back to every agent', async () => {
+		vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, 'missing-agent');
+		await timeline({ json: true });
+		expect(jsonOutput().success).toBe(false);
+		log.mockClear();
+		await timeline({ global: true, json: true });
+		expect(jsonOutput().events?.some((event) => event.agentId === beta.id)).toBe(true);
+	});
+
+	it('rejects combining --agent and --global', async () => {
+		await timeline({ agent: alpha.id, global: true, json: true });
+		expect(jsonOutput().error).toContain('cannot be combined');
+	});
+
 	it('--agent narrows to one agent by name', async () => {
 		await timeline({ agent: 'Beta', json: true });
 		expect(jsonOutput().events?.map((e) => e.ref)).toEqual(['h-beta']);
@@ -167,7 +207,7 @@ describe('timeline filters', () => {
 	});
 
 	it('--per-source keeps the newest N of each source', async () => {
-		await timeline({ perSource: '1', json: true });
+		await timeline({ global: true, perSource: '1', json: true });
 		expect(jsonOutput().events?.map((e) => [e.source, e.ref])).toEqual([
 			['history', 'h-beta'],
 			['journey', undefined],
@@ -207,10 +247,17 @@ describe('timeline Computer History', () => {
 
 	it('reads the computer source while the feature is on (an empty store reads as nothing)', async () => {
 		encore.computerHistory = true;
-		await timeline({ sources: 'computer,history', agent: alpha.id, json: true });
+		await timeline({ sources: 'computer,history', global: true, json: true });
 		const result = jsonOutput();
 		expect(result.success).toBe(true);
-		expect(result.events?.map((e) => e.source)).toEqual(['history']);
+		expect(result.events?.map((e) => e.source)).toEqual(['history', 'history']);
+	});
+
+	it('refuses device-wide Computer History in an agent-scoped timeline', async () => {
+		encore.computerHistory = true;
+		await timeline({ sources: 'computer,history', json: true });
+		expect(jsonOutput().error).toContain('device-wide');
+		expect(jsonOutput().events).toBeUndefined();
 	});
 });
 
@@ -233,7 +280,7 @@ describe('timeline text output', () => {
 	});
 
 	it('names the agent on each line when the timeline spans agents', async () => {
-		await timeline({});
+		await timeline({ global: true });
 		expect(output()).toMatch(/history Beta: AUTO: ran docs/);
 	});
 
@@ -263,7 +310,7 @@ describe('timeline show', () => {
 	}
 
 	it('finds an entry by an id prefix across every agent', async () => {
-		await timelineShow('h-bet', { json: true });
+		await timelineShow('h-bet', { global: true, json: true });
 		expect(showJson()).toMatchObject({
 			success: true,
 			agentId: beta.id,
@@ -284,7 +331,7 @@ describe('timeline show', () => {
 	});
 
 	it('prints the summary apart when the reply does not open with it', async () => {
-		await timelineShow('h-beta', {});
+		await timelineShow('h-beta', { agent: beta.id });
 		expect(output()).toContain('Summary: ran docs');
 		expect(output()).not.toContain('session show');
 	});
@@ -292,6 +339,23 @@ describe('timeline show', () => {
 	it('searches one agent with --agent', async () => {
 		await timelineShow('h-beta', { agent: 'Alpha', json: true });
 		expect(showJson().success).toBe(false);
+	});
+
+	it("does not show another agent's entry unless explicitly scoped", async () => {
+		await timelineShow('h-beta', { json: true });
+		expect(showJson().success).toBe(false);
+		log.mockClear();
+		await timelineShow('h-beta', { agent: beta.id, json: true });
+		expect(showJson()).toMatchObject({ success: true, agentId: beta.id });
+	});
+
+	it('requires scope when the caller is unknown and rejects conflicting flags', async () => {
+		vi.stubEnv(CALLER_AGENT_ID_ENV_VAR, '');
+		await timelineShow('h-alpha', { json: true });
+		expect(showJson().error).toContain('Caller agent is unknown');
+		log.mockClear();
+		await timelineShow('h-alpha', { agent: alpha.id, global: true, json: true });
+		expect(showJson().error).toContain('cannot be combined');
 	});
 
 	it('refuses a short, unknown, or ambiguous id', async () => {
@@ -306,7 +370,7 @@ describe('timeline show', () => {
 		writeJsonl(path.join(dataDir, 'history', `${beta.id}.jsonl`), [
 			{ id: 'h-alpha-copy', type: 'USER', timestamp: NOW, summary: 'copy', projectPath: beta.cwd },
 		]);
-		await timelineShow('h-alpha', { json: true });
+		await timelineShow('h-alpha', { global: true, json: true });
 		expect(showJson().error).toContain('matches 2 entries');
 		expect(exit).toHaveBeenCalledTimes(3);
 	});

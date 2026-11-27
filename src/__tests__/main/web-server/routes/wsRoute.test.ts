@@ -346,6 +346,40 @@ describe('WsRoute', () => {
 				})
 			);
 		});
+
+		it('records normalized remoteAddress on WebClient and omits loopback behind a proxy', () => {
+			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+
+			route!.handler(
+				createMockConnection(),
+				createMockRequest(undefined, { ip: '::ffff:192.168.1.25' })
+			);
+			expect(
+				(callbacks.onClientConnect as ReturnType<typeof vi.fn>).mock.calls[0][0].remoteAddress
+			).toBe('192.168.1.25');
+
+			route!.handler(
+				createMockConnection(),
+				createMockRequest(undefined, {
+					ip: '127.0.0.1',
+					headers: { host: 'localhost:3000', 'x-forwarded-for': '203.0.113.10' },
+				})
+			);
+			expect(
+				(callbacks.onClientConnect as ReturnType<typeof vi.fn>).mock.calls[1][0].remoteAddress
+			).toBeUndefined();
+
+			route!.handler(
+				createMockConnection(),
+				createMockRequest(undefined, {
+					ip: '::1',
+					headers: { host: 'localhost:3000', 'cf-connecting-ip': '203.0.113.10' },
+				})
+			);
+			expect(
+				(callbacks.onClientConnect as ReturnType<typeof vi.fn>).mock.calls[2][0].remoteAddress
+			).toBeUndefined();
+		});
 	});
 
 	describe('Initial Sync Messages', () => {

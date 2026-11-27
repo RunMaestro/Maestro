@@ -540,33 +540,36 @@ describe('media SDK contract', () => {
 		expect(bridge.log).toHaveBeenCalledWith('info', 'remaining:0');
 		expect(bridge.log).toHaveBeenCalledWith('info', 'cancelled:true');
 	});
-	it('sends opaque media params and preserves machine-readable failure codes in the sandbox realm', async () => {
-		const sent: string[] = [];
-		const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });
-		const realm = bootRealm(bridge);
-		realm.runScript(
-			`module.exports = { activate: function (maestro) {
-			return maestro.media.run('job', 'audio', { profile: 'whisper-cli', model: 'base', language: 'de' }).catch(function (error) {
+	it.each(['run', 'transcribe'] as const)(
+		'sends opaque media %s params and preserves failure codes in the sandbox realm',
+		async (method) => {
+			const sent: string[] = [];
+			const bridge = makeBridge({ send: vi.fn((json: string) => sent.push(json)) });
+			const realm = bootRealm(bridge);
+			realm.runScript(
+				`module.exports = { activate: function (maestro) {
+			return maestro.media.${method}('job', 'audio', ${JSON.stringify(method === 'run' ? { profile: 'whisper-cli', model: 'base', language: 'de' } : { language: 'de' })}).catch(function (error) {
 				console.log(error.code + ':' + (error instanceof Error));
 			});
 		} };`,
-			'media-roundtrip'
-		);
-		const activated = realm.activate();
-		const request = JSON.parse(sent[0]);
-		expect(request).toMatchObject({
-			method: 'media.run',
-			params: { jobId: 'job', audioId: 'audio', options: { model: 'base', language: 'de' } },
-		});
-		realm.deliverResponse(
-			JSON.stringify({
-				id: request.id,
-				ok: false,
-				error: 'MediaTimeout',
-				errorCode: 'MediaTimeout',
-			})
-		);
-		await activated;
-		expect(bridge.log).toHaveBeenCalledWith('info', 'MediaTimeout:true');
-	});
+				'media-roundtrip'
+			);
+			const activated = realm.activate();
+			const request = JSON.parse(sent[0]);
+			expect(request).toMatchObject({
+				method: `media.${method}`,
+				params: { jobId: 'job', audioId: 'audio', options: { language: 'de' } },
+			});
+			realm.deliverResponse(
+				JSON.stringify({
+					id: request.id,
+					ok: false,
+					error: 'MediaTimeout',
+					errorCode: 'MediaTimeout',
+				})
+			);
+			await activated;
+			expect(bridge.log).toHaveBeenCalledWith('info', 'MediaTimeout:true');
+		}
+	);
 });

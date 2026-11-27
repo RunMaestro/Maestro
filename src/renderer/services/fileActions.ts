@@ -17,6 +17,11 @@
  *
  * A remote DIRECTORY has no location on this machine at all. The nearest honest
  * thing is the Files panel at that folder, with a center flash that says so.
+ *
+ * A browser on the web interface has no operating system on this side of the
+ * bridge (`hostShell.ts`): Open downloads the file to the device instead, and
+ * Reveal / Open Folder say they are not available there rather than reaching
+ * the bridge, which refuses them.
  */
 
 import { joinPath } from '../../shared/formatters';
@@ -29,6 +34,7 @@ import {
 import { notifyToast } from '../stores/notificationStore';
 import { pathToFileUrl } from '../utils/openFileUrl';
 import { captureException } from '../utils/sentry';
+import { hostShellAvailable, openFileForUser } from './hostShell';
 import { revealPathInFileTree } from './fileTreeReveal';
 
 /** A path on the machine that owns it: this one, or the agent's SSH remote. */
@@ -337,6 +343,10 @@ async function handOverFile(
  * copy, and a change saved there goes back to the remote file.
  */
 export function openFileInDefaultApp(target: FileActionTarget): Promise<boolean> {
+	// A browser downloads the file to its own device: the default app is there.
+	if (!hostShellAvailable()) {
+		return openFileForUser(target.path, { sshRemoteId: target.sshRemoteId });
+	}
 	return handOverFile('Open failed', target, (localPath) =>
 		window.maestro.shell.openPath(localPath)
 	);
@@ -384,6 +394,16 @@ function showRemoteFolderInFilesPanel(sessionId: string | undefined, path: strin
 	});
 }
 
+/** Reveal and Open Folder act on the host computer's file manager, which a browser cannot reach. */
+function flashNoFileManager(): void {
+	notifyCenterFlash({
+		message: 'Not available in a browser',
+		detail: 'The file manager is on the computer that runs Maestro, not on this device.',
+		color: 'theme',
+		duration: 3000,
+	});
+}
+
 /**
  * Reveal a file or folder in this machine's file manager.
  *
@@ -398,6 +418,10 @@ export async function revealInFileManager(
 	if (isRemote(target) && target.isDirectory) {
 		showRemoteFolderInFilesPanel(options.sessionId, target.path);
 		return true;
+	}
+	if (!hostShellAvailable()) {
+		flashNoFileManager();
+		return false;
 	}
 	return handOverFile('Reveal failed', target, (localPath) =>
 		window.maestro.shell.showItemInFolder(localPath)
@@ -414,6 +438,10 @@ export async function openFolderInFileManager(
 ): Promise<void> {
 	if (isRemote(target)) {
 		showRemoteFolderInFilesPanel(options.sessionId, target.path);
+		return;
+	}
+	if (!hostShellAvailable()) {
+		flashNoFileManager();
 		return;
 	}
 	await window.maestro.shell.openPath(target.path);

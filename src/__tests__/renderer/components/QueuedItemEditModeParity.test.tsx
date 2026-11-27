@@ -154,7 +154,12 @@ describe('Edit Queued Message: a save that did not land (P6)', () => {
 		expect(act).toHaveBeenLastCalledWith('box', 'h1', {
 			kind: 'edit-queued',
 			itemId: 'q1',
-			edit: { text: 'new text', images: [], turnSettings: {} },
+			// The edit keeps the settings codified when it was queued, pinned to its provider.
+			edit: {
+				text: 'new text',
+				images: [],
+				turnSettings: expect.objectContaining({ provider: 'claude-code' }),
+			},
 		});
 	});
 });
@@ -177,7 +182,12 @@ describe('Edit Queued Message: text typed while the save waits on the host', () 
 		expect(act).toHaveBeenLastCalledWith('box', 'h1', {
 			kind: 'edit-queued',
 			itemId: 'q1',
-			edit: { text: 'later text', images: [], turnSettings: {} },
+			// The edit keeps the settings codified when it was queued, pinned to its provider.
+			edit: {
+				text: 'later text',
+				images: [],
+				turnSettings: expect.objectContaining({ provider: 'claude-code' }),
+			},
 		});
 	});
 });
@@ -210,11 +220,14 @@ describe('Edit Queued Message: a message whose images are not here yet (M28)', (
 		);
 		await waitFor(() => expect(onClose).toHaveBeenCalled());
 		if (mode === 'hosted') {
-			// No images named: the host keeps its own.
+			// No images named: the host keeps its own. The settings stay pinned to the provider.
 			expect(act).toHaveBeenLastCalledWith('box', 'h1', {
 				kind: 'edit-queued',
 				itemId: 'q1',
-				edit: { text: 'new text', turnSettings: {} },
+				edit: {
+					text: 'new text',
+					turnSettings: expect.objectContaining({ provider: 'claude-code' }),
+				},
 			});
 		} else {
 			const queued = useSessionStore.getState().sessions[0].executionQueue?.[0];

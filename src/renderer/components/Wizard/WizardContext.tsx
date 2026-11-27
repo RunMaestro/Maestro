@@ -7,7 +7,13 @@ import {
 	useRef,
 	useMemo,
 } from 'react';
-import type { AdditionalDirectory, ToolType, AgentConfig } from '../../types';
+import type {
+	AdditionalDirectory,
+	AgentConfig,
+	PeerAccess,
+	PeerAgent,
+	ToolType,
+} from '../../types';
 import { captureException } from '../../utils/sentry';
 import type { CodexTransport } from '../../../shared/codexTransport';
 import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
@@ -211,6 +217,18 @@ export function WizardProvider({ children }: WizardProviderProps) {
 		dispatch({ type: 'SET_ADDITIONAL_DIRECTORIES', directories });
 	}, []);
 
+	const setPeerAgents = useCallback((peers: PeerAgent[]) => {
+		dispatch({ type: 'SET_PEER_AGENTS', peers });
+	}, []);
+
+	const setGroupPeerAccess = useCallback((access: PeerAccess | undefined) => {
+		dispatch({ type: 'SET_GROUP_PEER_ACCESS', access });
+	}, []);
+
+	const setWorktreePeerAccess = useCallback((access: PeerAccess | undefined) => {
+		dispatch({ type: 'SET_WORKTREE_PEER_ACCESS', access });
+	}, []);
+
 	const setIsGitRepo = useCallback((isGitRepo: boolean) => {
 		dispatch({ type: 'SET_IS_GIT_REPO', isGitRepo });
 	}, []);
@@ -386,6 +404,9 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setSessionSshRemoteConfig,
 			setDirectoryPath,
 			setAdditionalDirectories,
+			setPeerAgents,
+			setGroupPeerAccess,
+			setWorktreePeerAccess,
 			setIsGitRepo,
 			setDetectedAgentPath,
 			setDirectoryError,
@@ -438,6 +459,9 @@ export function WizardProvider({ children }: WizardProviderProps) {
 			setSessionSshRemoteConfig,
 			setDirectoryPath,
 			setAdditionalDirectories,
+			setPeerAgents,
+			setGroupPeerAccess,
+			setWorktreePeerAccess,
 			setIsGitRepo,
 			setDetectedAgentPath,
 			setDirectoryError,

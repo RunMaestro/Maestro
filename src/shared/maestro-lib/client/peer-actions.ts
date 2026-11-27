@@ -41,6 +41,7 @@ import {
 } from '../autorun/launch';
 import { asThinkingMode } from '../../types';
 import { isHarnessControlMode } from '../providers/native-control';
+import { parsePeerAgentRows, parsePeerGrantValue } from '../../peerAgents';
 import type { AgentRecord } from '../store/records';
 import type {
 	AgentPatch,
@@ -855,6 +856,10 @@ const AGENT_PATCH_CHECKS: Partial<Record<AgentPatchField, FieldCheck>> = {
 	maestroPPath: orNull(isString),
 	codexTransport: orNull(isCodexTransport),
 	harnessControlMode: orNull(isHarnessControlMode),
+	peerAgents: (value) => parsePeerAgentRows(value).ok,
+	groupPeerAccess: (value) => parsePeerGrantValue(value).ok,
+	worktreePeerAccess: (value) => parsePeerGrantValue(value).ok,
+	peerDescription: orNull(isString),
 };
 
 const TAB_PATCH_CHECKS: Record<keyof TabPatch, FieldCheck> = {

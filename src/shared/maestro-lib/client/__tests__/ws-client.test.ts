@@ -963,6 +963,15 @@ describe('createWsMaestroClient', () => {
 			expect(sent[2]).not.toHaveProperty('originHost');
 		});
 
+		it('marks every send as a hosted agent turn, so a desktop host stamps MAESTRO_HOSTED_TURN', async () => {
+			bridge.typed.set(
+				'enqueue_command',
+				reply('enqueue_command_result', { tabId: A1_TAB, queued: false })
+			);
+			await client.turns.send(A1, A1_TAB, { text: 'one' });
+			expect(bridge.sent('enqueue_command')[0]).toMatchObject({ hostedTurn: true });
+		});
+
 		it('sends the entry a message already is (entryId), and leaves out an id the host cannot take (R13)', async () => {
 			bridge.typed.set(
 				'enqueue_command',
@@ -3010,6 +3019,7 @@ describe('createWsMaestroClient', () => {
 					question: 'which branch?',
 					fromAgentId: A1,
 					fromTabId: 't1',
+					consultChain: { chainId: 'chain-existing', depth: 2 },
 				})
 			).toEqual({ ok: true, value: { answer: 'Use main.', agentName: 'Beta' } });
 			expect(bridge.sent('cross_agent_ask')).toEqual([
@@ -3018,6 +3028,7 @@ describe('createWsMaestroClient', () => {
 					question: 'which branch?',
 					fromSessionId: A1,
 					fromTabId: 't1',
+					consultChain: { chainId: 'chain-existing', depth: 2 },
 					withContext: false,
 					timeoutMs: 600_000,
 				}),

@@ -7,6 +7,7 @@
 
 import { logger } from '../../../utils/logger';
 import { readBackgroundField } from '../../../../shared/focusPlacement';
+import { parseConsultChain } from '../../../../shared/consultBudget';
 import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
 import {
 	armDispatchCallback,
@@ -187,6 +188,11 @@ export function handleSendCommand(
 	const images = Array.isArray(message.images)
 		? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
 		: undefined;
+	// The place in a consult chain `maestro-cli dispatch` admitted this prompt
+	// at. The CLI has already spent for it; here it only has to reach the turn
+	// the prompt starts, which the renderer spawns. Anything that is not a chain
+	// reads as none.
+	const consultChain = parseConsultChain(message.consultChain);
 
 	logger.info(
 		`[Web Command] Received: sessionId=${sessionId}, inputMode=${clientInputMode}, command=${command?.substring(0, 50)}, images=${images?.length ?? 0}`,
@@ -303,6 +309,7 @@ export function handleSendCommand(
 					background,
 					hidden: false,
 					images,
+					consultChain,
 					mentionRouting,
 				},
 				(tabId) => {
@@ -411,6 +418,7 @@ export function handleSendCommand(
 				force,
 				images,
 				background,
+				consultChain,
 				mentionRouting
 			)
 			.then((outcome) => {
@@ -710,6 +718,9 @@ export function handleCrossAgentAsk(
 	// renderer put the consult pill in the conversation that asked.
 	const fromTabId = typeof message.fromTabId === 'string' ? message.fromTabId : undefined;
 	const withContext = message.withContext === true;
+	// The consulted agent's place in a consult chain, admitted and paid for by
+	// `maestro-cli ask`. Anything that is not a chain reads as none.
+	const consultChain = parseConsultChain(message.consultChain);
 	// `ask --btw`: answer from a throwaway fork of the target's tab instead.
 	const sideQuestion = message.sideQuestion === true;
 	const targetTabId = typeof message.targetTabId === 'string' ? message.targetTabId : undefined;
@@ -766,6 +777,7 @@ export function handleCrossAgentAsk(
 			...(askerKey ? { askerKey } : {}),
 			...(handoffAnswer !== undefined ? { handoffAnswer } : {}),
 			timeoutMs,
+			...(consultChain ? { consultChain } : {}),
 		})
 		.then((result) => reply({ ...result }))
 		.catch((error) => {

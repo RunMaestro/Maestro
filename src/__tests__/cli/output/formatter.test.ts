@@ -27,7 +27,9 @@ import {
 	formatSessions,
 	formatSshRemotes,
 	formatDirectorNotesHistory,
+	formatDelegationGraph,
 	formatTextTable,
+	formatAppStats,
 	type GroupDisplay,
 	type AgentDisplay,
 	type PlaybookDisplay,
@@ -38,6 +40,14 @@ import {
 	type SessionDisplay,
 	type SshRemoteDisplay,
 } from '../../../cli/output/formatter';
+import {
+	buildDelegationGraph,
+	delegationAdjacency,
+	delegationGraphStats,
+	type DelegationGraphScope,
+} from '../../../shared/delegationGraph';
+import type { PeerRosterInput } from '../../../shared/peerAgents';
+import { createAppStatsSnapshot, createLocalModelResources } from '../../helpers/appStatsSnapshot';
 
 // Store original process.stdout.isTTY
 const originalIsTTY = process.stdout.isTTY;
@@ -227,9 +237,9 @@ describe('formatter', () => {
 			const lines = result.split('\n');
 			const shown = lines.find((line) => line.includes('Shown'))!;
 			const parked = lines.find((line) => line.includes('Parked'))!;
-			expect(shown).toContain('in Active');
+			expect(shown).toContain('[Active]');
 			expect(shown).not.toContain('[hidden group]');
-			expect(parked).toContain('in Retired');
+			expect(parked).toContain('[Retired]');
 			expect(parked).toContain('[hidden group]');
 		});
 
@@ -295,6 +305,65 @@ describe('formatter', () => {
 
 			expect(result).toContain('moved to build-box:host-1');
 			expect(result.match(/moved to/g)).toHaveLength(1);
+		});
+
+		it('names the group on each row and marks a hidden group', () => {
+			const agents: AgentDisplay[] = [
+				{ id: 'a1', name: 'Docs', toolType: 'claude-code', cwd: '/p', groupName: 'Core' },
+				{
+					id: 'a2',
+					name: 'Infra',
+					toolType: 'claude-code',
+					cwd: '/q',
+					groupName: 'Parked',
+					groupHidden: true,
+				},
+			];
+
+			const result = formatAgents(agents);
+
+			expect(result).toContain('[Core]');
+			expect(result).toContain('[Parked]');
+			expect(result.match(/\[hidden group\]/g)).toHaveLength(1);
+		});
+
+		it('leaves the per-row group out when the whole list is one group', () => {
+			const agents: AgentDisplay[] = [
+				{ id: 'a1', name: 'Docs', toolType: 'claude-code', cwd: '/p', groupName: 'Core' },
+			];
+
+			expect(formatAgents(agents, 'Core')).not.toContain('[Core]');
+		});
+
+		it('prints the peer description only with descriptions on, on one clean line', () => {
+			const agents: AgentDisplay[] = [
+				{
+					id: 'a1',
+					name: 'Docs',
+					toolType: 'claude-code',
+					cwd: '/p',
+					peerDescription: 'Owns the docs\nsite\u001b[31m',
+				},
+			];
+
+			expect(formatAgents(agents)).not.toContain('Owns the docs');
+			const result = formatAgents(agents, undefined, { descriptions: true });
+			expect(result).toContain('Owns the docs site');
+			expect(result).not.toContain('\u001b[31m');
+		});
+
+		it('shows the access label and titles a --reachable list with the caller', () => {
+			const agents: AgentDisplay[] = [
+				{ id: 'a1', name: 'Infra', toolType: 'codex', cwd: '/p', access: 'Consult only' },
+			];
+
+			const result = formatAgents(agents, undefined, { reachableFrom: 'Caller' });
+
+			expect(result).toContain('reachable from Caller');
+			expect(result).toContain('(Consult only)');
+			expect(formatAgents([], undefined, { reachableFrom: 'Caller' })).toContain(
+				'No agents reachable from Caller.'
+			);
 		});
 
 		it('should show group name in title when provided', () => {
@@ -1056,6 +1125,46 @@ describe('formatter', () => {
 			recentHistory: [],
 		};
 
+		it("lists what waits on a hosted agent's settings, and what the host cannot take", () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				federation: {
+					host: 'box:host-1',
+					stateKnown: true,
+					fields: {
+						model: { scope: 'shared', label: 'From host', why: 'w', pending: true, conflict: false },
+						nudgeMessage: {
+							scope: 'shared',
+							label: 'From host',
+							why: 'w',
+							pending: false,
+							conflict: true,
+						},
+						tierTargets: {
+							scope: 'not-synced',
+							label: 'Not synced yet',
+							why: 'w',
+							pending: false,
+							conflict: false,
+						},
+					},
+				},
+			});
+			expect(result).toContain('FEDERATION');
+			expect(result).toContain('box:host-1');
+			expect(result).toMatch(/Pending.*model/);
+			expect(result).toMatch(/Conflict.*nudgeMessage/);
+			expect(result).toContain('tierTargets');
+		});
+
+		it('says when the desktop could not report what waits', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				federation: { host: 'box:host-1', stateKnown: false, stateError: 'not running', fields: {} },
+			});
+			expect(result).toContain('unknown (not running)');
+		});
+
 		it('should format basic agent details', () => {
 			const result = formatAgentDetail(baseAgent);
 
@@ -1082,6 +1191,12 @@ describe('formatter', () => {
 			expect(result).toContain('My Group');
 		});
 
+		it("shows the agent's advertised specialty", () => {
+			expect(formatAgentDetail({ ...baseAgent, peerDescription: 'Builds labs' })).toContain(
+				'Builds labs'
+			);
+		});
+
 		it('should tag a hidden group', () => {
 			expect(
 				formatAgentDetail({ ...baseAgent, groupName: 'Retired', groupHidden: true })
@@ -1102,6 +1217,175 @@ describe('formatter', () => {
 
 			const claude = formatAgentDetail({ ...baseAgent, codexTransport: 'app-server' });
 			expect(claude).not.toContain('Codex transport:');
+		});
+
+		it('should show the model source only for an agent on a source', () => {
+			const onSource = formatAgentDetail({
+				...baseAgent,
+				runOn: { type: 'source', endpointId: 'ep-ollama', model: 'qwen3', contextTokens: 65536 },
+				runOnLabel: 'qwen3 on Ollama',
+			});
+			expect(onSource).toContain('Model source:');
+			expect(onSource).toContain('qwen3 on Ollama');
+			expect(onSource).toContain('(context 65536 tokens)');
+
+			// The provider's own model is the default, like any unset setting.
+			const onProvider = formatAgentDetail({ ...baseAgent, runOn: { type: 'provider' } });
+			expect(onProvider).not.toContain('Model source:');
+		});
+
+		it('should say why a stored model source cannot be used', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				runOn: { type: 'source' },
+				runOnProblem: 'A model source names a source.',
+			});
+
+			expect(result).toContain('Model source:');
+			expect(result).toContain('unusable: A model source names a source.');
+		});
+
+		it('should show every tier with the layer its value came from', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				tiers: [
+					{ tier: 'low', spec: 'ep-ollama:qwen3', source: 'agent' },
+					{ tier: 'medium', spec: 'provider:sonnet', source: 'built-in' },
+					{ tier: 'high', spec: null, source: null, note: 'No "high" tier model is mapped.' },
+				],
+			});
+
+			expect(result).toMatch(/Tier low:\s+ep-ollama:qwen3 .*\(Agent\)/);
+			expect(result).toMatch(/Tier medium:\s+provider:sonnet .*\(Built-in\)/);
+			expect(result).toMatch(/Tier high:\s+- .*\(Not mapped\)/);
+		});
+
+		it('should say why a tier target cannot be used', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				tiers: [
+					{
+						tier: 'high',
+						spec: null,
+						source: 'agent',
+						problem: 'This agent\'s "high" tier target cannot be used.',
+					},
+				],
+			});
+
+			expect(result).toContain('Tier high:');
+			expect(result).toContain('unusable target: This agent\'s "high" tier target cannot be used.');
+		});
+
+		it('should print the stored peer configuration and the roster it resolves to', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				groupId: 'group-1',
+				peers: {
+					rows: [
+						{
+							sessionId: 'a-1',
+							name: 'Reviewer',
+							read: true,
+							write: false,
+							access: 'Consult only',
+							description: 'Knows the auth module',
+						},
+						{
+							sessionId: 'gone',
+							name: null,
+							read: false,
+							write: false,
+							access: 'No access',
+							description: null,
+						},
+					],
+					groupGrant: { on: true, read: true, write: true, access: 'Consult + Delegate' },
+					worktreeGrant: { on: false, read: false, write: false, access: 'Off' },
+					roster: [
+						{
+							sessionId: 'a-1',
+							name: 'Reviewer',
+							read: true,
+							write: false,
+							access: 'Consult only',
+							description: 'Knows the auth module',
+							source: 'explicit',
+						},
+						{
+							sessionId: 'a-2',
+							name: 'Builder',
+							read: true,
+							write: true,
+							access: 'Consult + Delegate',
+							description: null,
+							source: 'group',
+						},
+					],
+				},
+			});
+
+			expect(result).toContain('PEERS');
+			expect(result).toMatch(/Group peers:\s+Consult \+ Delegate/);
+			expect(result).toMatch(/Worktree peers:\s+off/);
+			expect(result).toContain('Knows the auth module');
+			expect(result).toContain('(no live agent)');
+			expect(result).toContain('Can reach:');
+			expect(result).toContain('[explicit]');
+			expect(result).toContain('[group]');
+			expect(result).not.toContain('agent is in no group');
+		});
+
+		it('should say so when a group grant is on for an agent in no group', () => {
+			const result = formatAgentDetail({
+				...baseAgent,
+				peers: {
+					rows: [],
+					groupGrant: { on: true, read: true, write: false, access: 'Consult only' },
+					worktreeGrant: { on: false, read: false, write: false, access: 'Off' },
+					roster: [],
+				},
+			});
+
+			expect(result).toContain('agent is in no group');
+			expect(result).toMatch(/Can reach:\s+nobody/);
+		});
+
+		it('should omit the peers block for an agent with no peer configuration', () => {
+			const none = {
+				rows: [],
+				groupGrant: { on: false, read: false, write: false, access: 'Off' },
+				worktreeGrant: { on: false, read: false, write: false, access: 'Off' },
+				roster: [],
+			};
+			expect(formatAgentDetail(baseAgent)).not.toContain('PEERS');
+			expect(formatAgentDetail({ ...baseAgent, peers: none })).not.toContain('PEERS');
+		});
+
+		it('should show the System One switch only when it is off for the agent', () => {
+			expect(formatAgentDetail(baseAgent)).not.toContain('System One:');
+			expect(formatAgentDetail({ ...baseAgent, systemOneOptOut: false })).not.toContain(
+				'System One:'
+			);
+			expect(formatAgentDetail({ ...baseAgent, systemOneOptOut: true })).toMatch(
+				/System One:\s+off for this agent/
+			);
+		});
+
+		it('should show the background requests target only when one is set or broken', () => {
+			expect(formatAgentDetail(baseAgent)).not.toContain('Background requests:');
+
+			const set = formatAgentDetail({
+				...baseAgent,
+				backgroundRequestsLabel: 'qwen3:4b on Ollama',
+			});
+			expect(set).toMatch(/Background requests:\s+qwen3:4b on Ollama/);
+
+			const broken = formatAgentDetail({
+				...baseAgent,
+				backgroundRequestsProblem: 'A model source names a model.',
+			});
+			expect(broken).toContain('unusable target: A model source names a model.');
 		});
 
 		it('should show auto run folder when provided', () => {
@@ -1540,6 +1824,123 @@ describe('formatter', () => {
 		});
 	});
 
+	// ============================================================================
+	// formatDelegationGraph Tests
+	// ============================================================================
+
+	describe('formatDelegationGraph', () => {
+		const view = (
+			scope: DelegationGraphScope,
+			sessions: PeerRosterInput[],
+			group: { id: string; name: string; emoji?: string } | null = null
+		) => {
+			const model = buildDelegationGraph(scope, sessions);
+			return formatDelegationGraph({
+				group,
+				stats: delegationGraphStats(model),
+				agents: delegationAdjacency(model),
+			});
+		};
+		const ALL: DelegationGraphScope = { kind: 'all' };
+
+		it('names the scope and counts the graph in the words the legend uses', () => {
+			const result = view(ALL, [
+				{ id: 'a', name: 'Alice', peerAgents: [{ sessionId: 'b', read: true, write: false }] },
+				{ id: 'b', name: 'Bob' },
+			]);
+
+			expect(result).toContain('DELEGATION GRAPH');
+			expect(result).toContain('All agents');
+			expect(result).toContain('2 agents, 1 edge');
+		});
+
+		it('prints an edge once, under its source, with the access label and the grant', () => {
+			const result = view(ALL, [
+				{ id: 'a', name: 'Alice', peerAgents: [{ sessionId: 'b', read: false, write: true }] },
+				{ id: 'b', name: 'Bob' },
+			]);
+
+			expect(result).toContain('-> Bob (b)  Delegate only [explicit]');
+			expect(result.match(/->/g)).toHaveLength(1);
+			expect(result).toContain('reached by: Alice');
+			expect(result).toContain('reached by nobody');
+			expect(result).toContain('reaches nobody');
+		});
+
+		it('marks each edge of a pair as mutual and keeps the access of each direction', () => {
+			const result = view(ALL, [
+				{ id: 'm', name: 'Manager', peerAgents: [{ sessionId: 'e', read: true, write: true }] },
+				{ id: 'e', name: 'Employee', peerAgents: [{ sessionId: 'm', read: true, write: false }] },
+			]);
+
+			expect(result).toContain('-> Employee (e)  Consult + Delegate [explicit] (mutual)');
+			expect(result).toContain('-> Manager (m)  Consult only [explicit] (mutual)');
+		});
+
+		it('prints the note of an edge, cut to one line', () => {
+			const result = view(ALL, [
+				{
+					id: 'a',
+					name: 'Alice',
+					peerAgents: [{ sessionId: 'b', read: true, write: false, description: 'x'.repeat(200) }],
+				},
+				{ id: 'b', name: 'Bob' },
+			]);
+
+			expect(result).toContain(' - xxx');
+			expect(result).not.toContain('x'.repeat(61));
+		});
+
+		it('says an agent with no edge has no peers in either direction', () => {
+			const result = view(ALL, [{ id: 'l', name: 'Loner' }]);
+
+			expect(result).toContain('Loner (l)');
+			expect(result).toContain('no peers in either direction');
+			expect(result).toContain('1 with no peers');
+		});
+
+		it('marks an agent outside the group, and says its "nobody" is about the group', () => {
+			const result = view(
+				{ kind: 'group', groupId: 'g1' },
+				[
+					{
+						id: 'a',
+						name: 'Alice',
+						groupId: 'g1',
+						peerAgents: [{ sessionId: 'x', read: true, write: false }],
+					},
+					{ id: 'x', name: 'Xavier', groupId: 'g2' },
+				],
+				{ id: 'g1', name: 'Backend', emoji: '🛠' }
+			);
+
+			expect(result).toContain('🛠 Backend (g1)');
+			expect(result).toContain('Xavier (x) [outside the group]');
+			expect(result).toContain('reaches nobody in this group');
+			expect(result).toContain('1 outside this scope');
+		});
+
+		it('names the group with no emoji when it has none', () => {
+			const result = view(
+				{ kind: 'group', groupId: 'g1' },
+				[{ id: 'a', name: 'Alice', groupId: 'g1' }],
+				{
+					id: 'g1',
+					name: 'Backend',
+				}
+			);
+
+			expect(result).toContain('Backend (g1)');
+		});
+
+		it('says so for a group with no agent, and for a fleet with none', () => {
+			expect(view({ kind: 'group', groupId: 'g1' }, [], { id: 'g1', name: 'Backend' })).toContain(
+				'No agents in this group.'
+			);
+			expect(view(ALL, [])).toContain('No agents found.');
+		});
+	});
+
 	describe('formatTextTable', () => {
 		const headers = ['NAME', 'ROLE', 'NOTE'];
 		const rows = [
@@ -1577,6 +1978,45 @@ describe('formatter', () => {
 			expect(formatTextTable(['A', 'B'], [['one\ntwo', 'x\ty'], ['z']])).toBe(
 				['A        B', 'one two  x y', 'z'].join('\n')
 			);
+		});
+	});
+
+	describe('formatAppStats', () => {
+		it('reports totals, the model server, in-process models and disk per model', () => {
+			const out = formatAppStats(createAppStatsSnapshot());
+			expect(out).toContain('APPLICATION STATS');
+			expect(out).toMatch(/Maestro\s+6\.\d+ GB/);
+			expect(out).toContain('7 processes');
+			expect(out).toContain('18.5% CPU');
+			expect(out).toContain('pid 7000, 1 of 1 loaded');
+			// A resident model is named from the disk list, with where it lives.
+			expect(out).toContain('Parakeet TDT (speech)');
+			expect(out).toContain('LOCAL MODELS DISK');
+			expect(out).toMatch(/Qwen3 4B\s+text-gen\s+3\.0 GB/);
+		});
+
+		it('says when nothing is loaded and the server is stopped', () => {
+			const resources = createLocalModelResources();
+			const out = formatAppStats(
+				createAppStatsSnapshot({
+					localModels: {
+						...resources,
+						inProcess: { textModel: null, encoders: [], speechToText: [] },
+						modelServer: { ...resources.modelServer, state: 'stopped', pid: null, usage: null },
+					},
+				})
+			);
+			expect(out).toContain('no models loaded');
+			expect(out).toMatch(/Model server\s+stopped/);
+		});
+
+		it('warns when the process trees could not be measured', () => {
+			const snapshot = createAppStatsSnapshot();
+			const out = formatAppStats({
+				...snapshot,
+				totals: { ...snapshot.totals, processTreesMeasured: false },
+			});
+			expect(out).toContain('could not be measured');
 		});
 	});
 });

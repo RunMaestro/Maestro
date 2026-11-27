@@ -152,7 +152,7 @@ export function HamburgerMenuContent({
 			{notificationCenterEnabled && (
 				<button
 					onClick={() => {
-						openUiSurface('notification-center');
+						openUiSurface({ surface: 'notification-center' });
 						setMenuOpen(false);
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"

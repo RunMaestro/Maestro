@@ -16,6 +16,7 @@ import type { MediaOpenMode } from '../tabs/internal/types';
 import { logger } from '../../utils/logger';
 import { notifyToast } from '../../stores/notificationStore';
 import { openFileInDefaultApp, resolveOpenSource } from '../../services/fileActions';
+import { hostShellAvailable } from '../../services/hostShell';
 
 /**
  * If a remote-file loading tab is still in flight in the target session,
@@ -381,7 +382,9 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			// first (openFileInDefaultApp), so the prompt means the same thing.
 			if (shouldOpenExternally(node.name)) {
 				useModalStore.getState().openModal('confirm', {
-					message: `Open "${node.name}" in external application?`,
+					message: hostShellAvailable()
+						? `Open "${node.name}" in external application?`
+						: `Download "${node.name}" to this client?`,
 					onConfirm: async () => {
 						await openFileInDefaultApp({ path: fullPath, sshRemoteId });
 					},

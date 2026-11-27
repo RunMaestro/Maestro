@@ -115,6 +115,10 @@ describe('DisplayTab section components', () => {
 		);
 
 		expect(screen.queryByText('Show Cue indicator')).not.toBeInTheDocument();
+		// The full-label toggle points at the per-group override.
+		expect(
+			screen.getByText(/abbreviated badge can be overridden per group in Group Settings/)
+		).toBeInTheDocument();
 
 		fireEvent.click(
 			screen.getByRole('switch', {

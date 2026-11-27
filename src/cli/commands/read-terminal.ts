@@ -11,6 +11,7 @@
 
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface ReadTerminalOptions {
@@ -43,7 +44,7 @@ export async function readTerminal(options: ReadTerminalOptions): Promise<void> 
 	const fail = (error: string): never => {
 		if (options.json) console.log(JSON.stringify({ success: false, error }));
 		else console.error(`Error: ${error}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	};
 
 	let tail = DEFAULT_TAIL_LINES;
@@ -61,7 +62,7 @@ export async function readTerminal(options: ReadTerminalOptions): Promise<void> 
 			sessionId = resolveAgentId(options.agent);
 		} catch (error) {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-			process.exit(1);
+			exitWith(exitCodeForError(error));
 		}
 	} else {
 		sessionId = resolveSessionId({});

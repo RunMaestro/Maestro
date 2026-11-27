@@ -1,6 +1,8 @@
 /**
- * `maestro-cli open <surface> [--tab <tab>]` - open one of Maestro's modals
- * or dashboards in the running desktop app, optionally on a specific tab.
+ * `maestro-cli open <surface> [--tab <tab> [--sub-tab <sub-tab>]] [--group <id>] [--agent <id>]` -
+ * open one of Maestro's modals or dashboards in the running desktop app, optionally on a specific
+ * tab, on one agent group for a surface that takes one (the Delegation Graph), or for one agent
+ * when the surface is that agent's (Edit Agent).
  *
  * The point is teaching, not just navigating: an agent answering "where do I
  * see my scheduled tasks?" can open the surface AND relay the manual paths
@@ -9,6 +11,8 @@
  */
 
 import { withMaestroClient } from '../services/maestro-client';
+import { getSessionById, readGroups, resolveAgentId, resolveGroupId } from '../services/storage';
+import { groupSettingsBlocker } from '../services/group-settings';
 import { isMacOS } from '../../shared/platformDetection';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS } from '../../renderer/constants/shortcuts';
@@ -17,15 +21,20 @@ import {
 	UI_SURFACES,
 	describeSurfaceAccess,
 	resolveUiSurface,
-	resolveUiSurfaceTab,
+	resolveUiSurfaceTarget,
+	surfaceSubTabIds,
 	surfaceTabIds,
 	type UiSurface,
 } from '../../shared/uiSurfaces';
-import { exitIfMaestroNotRunning } from '../services/session-command';
+import { ExitCode, exitWith } from '../exit-codes';
+import { failCommand, failFromError } from '../services/session-command';
 import { readEncoreFlags, requireEncore } from '../utils/encore-gate';
 
 interface OpenModalOptions {
 	tab?: string;
+	subTab?: string;
+	group?: string;
+	agent?: string;
 	list?: boolean;
 	json?: boolean;
 }
@@ -68,9 +77,16 @@ function printSurfaceList(options: OpenModalOptions): void {
 					aliases: surface.aliases ?? [],
 					description: surface.description,
 					tabs: surfaceTabIds(surface),
+					sub_tabs: Object.fromEntries(
+						(surface.tabs ?? [])
+							.filter((tab) => surfaceSubTabIds(tab).length > 0)
+							.map((tab) => [tab.id, surfaceSubTabIds(tab)])
+					),
 					shortcut: shortcutFor(surface) ?? '',
 					command_palette: surface.commandPalette ?? '',
 					encore: surface.encore ?? '',
+					group_scoped: !!surface.groupClick,
+					agent_scoped: !!surface.agentClick,
 				}))
 			)
 		);
@@ -80,9 +96,15 @@ function printSurfaceList(options: OpenModalOptions): void {
 	for (const surface of surfaces) {
 		const shortcut = shortcutFor(surface);
 		const tabs = surfaceTabIds(surface);
+		const subTabs = (surface.tabs ?? [])
+			.filter((tab) => surfaceSubTabIds(tab).length > 0)
+			.map((tab) => `${tab.id}: ${surfaceSubTabIds(tab).join(', ')}`);
 		const extras = [
 			shortcut ? `key: ${shortcut}` : null,
 			tabs.length > 0 ? `tabs: ${tabs.join(', ')}` : null,
+			subTabs.length > 0 ? `sub-tabs (--sub-tab), ${subTabs.join('; ')}` : null,
+			surface.groupClick ? 'one group: --group <id>' : null,
+			surface.agentClick ? 'one agent: --agent <id>' : null,
 		]
 			.filter(Boolean)
 			.join('  |  ');
@@ -100,7 +122,7 @@ export async function openModal(
 		printSurfaceList(options);
 		if (!surfaceName && !options.list) {
 			console.error('\nError: missing <surface>. Pick one of the ids above.');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		return;
 	}
@@ -110,41 +132,64 @@ export async function openModal(
 		const valid = availableSurfaces()
 			.map((entry) => entry.id)
 			.join(', ');
-		fail(`Unknown surface "${surfaceName}". Valid surfaces: ${valid}`, options);
+		failCommand(`Unknown surface "${surfaceName}". Valid surfaces: ${valid}`, options.json);
 	}
 	if (surface.encore) requireEncore(surface.encore, options.json);
 
-	let tabId: string | undefined;
-	if (options.tab !== undefined) {
-		const tab = resolveUiSurfaceTab(surface, options.tab);
-		if (tab?.encore) requireEncore(tab.encore, options.json);
-		if (!tab) {
-			const valid = surfaceTabIds(
-				availableSurfaces().find((entry) => entry.id === surface.id) ?? surface
-			);
-			fail(
-				valid.length > 0
-					? `Unknown tab "${options.tab}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
-					: `${surface.label} has no tabs, so --tab does not apply.`,
-				options
-			);
-		}
-		tabId = tab.id;
+	// Whether the surface takes a group or an agent is checked before either is
+	// looked up, so `--group` on the wrong surface says that and not "Group not
+	// found".
+	const accepted = resolveUiSurfaceTarget(surface, {
+		tab: options.tab,
+		subTab: options.subTab,
+		group: options.group,
+		agent: options.agent,
+	});
+	if ('error' in accepted) failCommand(accepted.error, options.json);
+	if (accepted.tab?.encore) requireEncore(accepted.tab.encore, options.json);
+	if (accepted.subTab?.encore) requireEncore(accepted.subTab.encore, options.json);
+	let groupId: string | undefined;
+	let agentId: string | undefined;
+	try {
+		if (options.group !== undefined) groupId = resolveGroupId(options.group);
+		if (options.agent !== undefined) agentId = resolveAgentId(options.agent);
+	} catch (error) {
+		failFromError(error, options.json);
 	}
+	// Group Settings is refused for a worktree group, in the words the Group
+	// Settings verbs use, before the app is asked to open a dialog with nothing
+	// in it.
+	if (surface.groupRequired && groupId) {
+		const group = readGroups().find((candidate) => candidate.id === groupId);
+		const blocker = group ? groupSettingsBlocker(group) : undefined;
+		if (blocker) failCommand(blocker, options.json);
+	}
+	const target = { ...accepted, group: groupId, agent: agentId };
+	const tabId = target.tab?.id;
+	const subTabId = target.subTab?.id;
+	const groupName = groupId ? readGroups().find((group) => group.id === groupId)?.name : undefined;
+	const agentName = agentId ? getSessionById(agentId)?.name : undefined;
 
 	try {
 		const result = await withMaestroClient(async (client) =>
 			client.sendCommand<{ type: string; success: boolean; error?: string }>(
-				{ type: 'open_modal', surface: surface.id, tab: tabId },
+				{
+					type: 'open_modal',
+					surface: surface.id,
+					tab: tabId,
+					subTab: subTabId,
+					group: groupId,
+					agent: agentId,
+				},
 				'open_modal_result'
 			)
 		);
 
 		if (!result.success) {
-			fail(result.error || `Failed to open ${surface.label}`, options);
+			failCommand(result.error || `Failed to open ${surface.label}`, options.json);
 		}
 
-		const hint = describeSurfaceAccess(surface, shortcutFor(surface));
+		const hint = describeSurfaceAccess(surface, shortcutFor(surface), target);
 		if (options.json) {
 			console.log(
 				JSON.stringify({
@@ -152,6 +197,9 @@ export async function openModal(
 					surface: surface.id,
 					label: surface.label,
 					tab: tabId ?? '',
+					sub_tab: subTabId ?? '',
+					group: groupId ?? '',
+					agent: agentId ?? '',
 					shortcut: shortcutFor(surface) ?? '',
 					command_palette: surface.commandPalette ?? '',
 					click: surface.click ?? '',
@@ -160,17 +208,12 @@ export async function openModal(
 			);
 			return;
 		}
-		const tabSuffix = tabId ? ` (${tabId} tab)` : '';
-		console.log(`Opened ${surface.label}${tabSuffix} in Maestro.`);
+		const tabSuffix = tabId ? ` (${[tabId, subTabId].filter(Boolean).join(' > ')} tab)` : '';
+		const groupSuffix = groupId ? ` on the group ${groupName ?? groupId}` : '';
+		const agentSuffix = agentId ? ` for the agent ${agentName ?? agentId}` : '';
+		console.log(`Opened ${surface.label}${tabSuffix}${groupSuffix}${agentSuffix} in Maestro.`);
 		if (hint) console.log(hint);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		fail(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
-}
-
-function fail(message: string, options: OpenModalOptions): never {
-	if (options.json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	process.exit(1);
 }

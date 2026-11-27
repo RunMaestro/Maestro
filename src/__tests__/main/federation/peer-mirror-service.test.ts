@@ -207,6 +207,8 @@ function harness(
 			return timers.length;
 		},
 		clearTimer: () => undefined,
+		// The quick retries have their own tests; elsewhere they would add dials to the counts.
+		retryDelaysMs: [],
 		...extra,
 	};
 	const service = new PeerMirrorService(deps);
@@ -1034,6 +1036,112 @@ describe('PeerMirrorService', () => {
 			} finally {
 				vi.useRealTimers();
 			}
+		});
+
+		describe('quick retries', () => {
+			/** Timer seam that records each delay, so a test fires one retry at a time. */
+			const retryTimers = () => {
+				const armed: Array<{ ms: number; fire: () => void }> = [];
+				return {
+					armed,
+					setTimer: (cb: () => void, ms: number) => armed.push({ ms, fire: cb }),
+					fireNext: async () => {
+						armed.shift()?.fire();
+						await settle();
+					},
+				};
+			};
+
+			it('tries a peer that should answer again on a short backoff, then stops', async () => {
+				const timers = retryTimers();
+				const hosts = { a: fakeHost('a', { manualReady: true }) };
+				const h = harness([remoteOf('a')], hosts, {
+					reprobeIntervalMs: 0,
+					retryDelaysMs: [10, 20],
+					setTimer: timers.setTimer,
+				});
+				h.service.start();
+				await settle();
+				hosts.a.fail(new Error('tunnel busy'));
+				await settle();
+				expect(h.service.peers()[0].connection).toBe('forward-failed');
+				expect(timers.armed.map((t) => t.ms)).toEqual([10]);
+
+				await timers.fireNext();
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(2);
+				expect(timers.armed.map((t) => t.ms)).toEqual([20]);
+
+				await timers.fireNext();
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(3);
+				// The backoff ran out: the slow re-probe takes over.
+				expect(timers.armed).toEqual([]);
+			});
+
+			it('connects on a retry and starts the count again', async () => {
+				const timers = retryTimers();
+				const hosts: Record<string, FakeHost> = { a: fakeHost('a', { manualReady: true }) };
+				const h = harness([remoteOf('a')], hosts, {
+					reprobeIntervalMs: 0,
+					retryDelaysMs: [10, 20],
+					setTimer: timers.setTimer,
+				});
+				h.service.start();
+				await settle();
+				hosts.a.fail(new Error('tunnel busy'));
+				await settle();
+
+				// The host answers by the first retry.
+				hosts.a = fakeHost('a');
+				await timers.fireNext();
+				expect(h.service.peers()[0]).toMatchObject({ connection: 'connected', agentCount: 1 });
+
+				// A later drop starts from the first delay again.
+				hosts.a.reconnect.mockResolvedValueOnce({
+					ok: false,
+					error: { code: 'host-unavailable', message: 'gone' },
+				});
+				hosts.a.setState('disconnected');
+				await h.service.reconnect('a');
+				expect(h.service.peers()[0].connection).toBe('lost');
+				expect(
+					timers.armed.filter((t) => t.ms !== MIRROR_TURN_COALESCE_MS).map((t) => t.ms)
+				).toEqual([10]);
+			});
+
+			it('never quick-retries a remote with no Maestro host', async () => {
+				const timers = retryTimers();
+				const hosts = { a: fakeHost('a', { manualReady: true }) };
+				const h = harness([remoteOf('a')], hosts, {
+					reprobeIntervalMs: 0,
+					retryDelaysMs: [10],
+					setTimer: timers.setTimer,
+				});
+				h.service.start();
+				await settle();
+				hosts.a.fail(new SshForwardError('not-installed', 'Install maestro-cli.'));
+				await settle();
+				expect(h.service.peers()[0].connection).toBe('not-installed');
+				expect(timers.armed).toEqual([]);
+			});
+
+			it('disarms a pending retry on stop', async () => {
+				const timers = retryTimers();
+				const cleared: unknown[] = [];
+				const hosts = { a: fakeHost('a', { manualReady: true }) };
+				const h = harness([remoteOf('a')], hosts, {
+					reprobeIntervalMs: 0,
+					retryDelaysMs: [10],
+					setTimer: timers.setTimer,
+					clearTimer: (handle) => cleared.push(handle),
+				});
+				h.service.start();
+				await settle();
+				hosts.a.fail(new Error('tunnel busy'));
+				await settle();
+				expect(timers.armed).toHaveLength(1);
+				await h.service.stop();
+				expect(cleared).toHaveLength(1);
+			});
 		});
 
 		it('runs an exclusive task after the dials queued before it, never beside one', async () => {

@@ -12,7 +12,7 @@ import {
 	countTasksUnderActiveHint,
 	describeSegmentLimit,
 } from '../../shared/autorunModelHints';
-import { resolveTurnSettings } from '../../shared/autorunTurnSettings';
+import { resolveTurnSettings, turnRunOnTarget } from '../../shared/autorunTurnSettings';
 
 describe('findActiveModelHint', () => {
 	it('returns null when the document sets no hint', () => {
@@ -341,12 +341,12 @@ describe('resolveTurnSettings', () => {
 	});
 
 	it('honors the axis it can and warns about the one it cannot', () => {
-		// Codex has an effort ladder but no tier map, so a marker setting both
-		// must not be all-or-nothing.
+		// Copilot-CLI has an effort ladder but no tier map, so a marker setting
+		// both must not be all-or-nothing.
 		const hint = findActiveModelHint(`<!-- MAESTRO:MODEL tier="high" effort="high" -->\n- [ ] x`);
-		const resolved = resolveTurnSettings('codex', hint, 'gpt-5.3-codex', undefined);
+		const resolved = resolveTurnSettings('copilot-cli', hint, 'gpt-5.3', undefined);
 		expect(resolved.effort).toBe('xhigh');
-		expect(resolved.model).toBe('gpt-5.3-codex');
+		expect(resolved.model).toBe('gpt-5.3');
 		expect(resolved.warnings).toHaveLength(1);
 	});
 
@@ -368,18 +368,26 @@ describe('resolveTurnSettings', () => {
 
 	it('keeps the agent model and names the tier model an account does not offer', () => {
 		const hint = findActiveModelHint(`<!-- MAESTRO:MODEL tier="high" -->\n- [ ] x`);
-		const resolved = resolveTurnSettings(
-			'antigravity',
-			hint,
-			'gemini-4-hydrogen',
-			undefined,
-			undefined,
-			['gemini-4-hydrogen', 'gemini-3.8-flash']
-		);
+		const resolved = resolveTurnSettings('antigravity', hint, 'gemini-4-hydrogen', undefined, {
+			offeredModels: ['gemini-4-hydrogen', 'gemini-3.8-flash'],
+		});
 		// agy would refuse gemini-4-carbon by name and fail the task.
 		expect(resolved.model).toBe('gemini-4-hydrogen');
+		expect(resolved.refusal).toBeUndefined();
 		expect(resolved.warnings.join(' ')).toContain('gemini-4-carbon');
 		expect(resolved.warnings.join(' ')).toContain('does not offer');
+	});
+
+	it("checks the catalogue against the built-in table only, never the agent's own tier target", () => {
+		const hint = findActiveModelHint(`<!-- MAESTRO:MODEL tier="high" -->\n- [ ] x`);
+		const resolved = resolveTurnSettings('antigravity', hint, 'gemini-4-hydrogen', undefined, {
+			tierTargets: { high: { type: 'provider-model', model: 'gemini-4-neon' } },
+			offeredModels: ['gemini-4-hydrogen'],
+		});
+		// The user picked this target; the launch reports a refusal if the provider does.
+		expect(resolved.model).toBe('gemini-4-neon');
+		expect(resolved.tierSource).toBe('agent');
+		expect(resolved.warnings).toEqual([]);
 	});
 
 	it('falls back for an Antigravity model that refused the level, and warns, without touching other models', () => {
@@ -465,6 +473,138 @@ describe('resolveTurnSettings', () => {
 		expect(resolved.warnings.join(' ')).toContain('hihg');
 		expect(resolved.effort).toBeUndefined();
 	});
+
+	describe('tier targets', () => {
+		const LOCAL = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+		const hintFor = (tier: string) =>
+			findActiveModelHint(`<!-- MAESTRO:MODEL tier="${tier}" -->\n- [ ] x`);
+
+		it('says which layer a built-in tier came from and leaves the place alone', () => {
+			const resolved = resolveTurnSettings('claude-code', hintFor('high'), 'sonnet', 'medium');
+			expect(resolved.model).toBe('opus');
+			expect(resolved.tierSource).toBe('built-in');
+			expect(resolved.runOn).toBeUndefined();
+			expect(resolved.refusal).toBeUndefined();
+			expect(resolved.notes).toEqual(['tier="high" (document) -> model opus (Built-in)']);
+		});
+
+		it('launches a low task on a local source and a high task on the provider', () => {
+			const routing = {
+				tierTargets: { low: LOCAL },
+				harnessDefaults: {
+					'claude-code': { high: { type: 'provider-model' as const, model: 'opus[1m]' } },
+				},
+			};
+			const low = resolveTurnSettings('claude-code', hintFor('low'), 'sonnet', 'medium', routing);
+			expect(low).toMatchObject({ model: 'qwen3.5-4b', runOn: LOCAL, tierSource: 'agent' });
+			expect(low.notes).toEqual([
+				'tier="low" (document) -> model qwen3.5-4b on source maestro-server (Agent)',
+			]);
+
+			const high = resolveTurnSettings('claude-code', hintFor('high'), 'sonnet', 'medium', routing);
+			expect(high).toMatchObject({
+				model: 'opus[1m]',
+				runOn: { type: 'provider' },
+				tierSource: 'harness-default',
+			});
+			expect(high.notes).toEqual([
+				'tier="high" (document) -> model opus[1m] on the provider (Harness default)',
+			]);
+			// Effort is a separate axis and is untouched by where the tier launches.
+			expect(low.effort).toBe('medium');
+		});
+
+		it('resolves a tier on a provider with no built-in table through its harness default', () => {
+			const resolved = resolveTurnSettings('opencode', hintFor('low'), 'big', undefined, {
+				harnessDefaults: {
+					opencode: { low: { type: 'provider-model', model: 'ollama/qwen3:8b' } },
+				},
+			});
+			expect(resolved.model).toBe('ollama/qwen3:8b');
+			expect(resolved.warnings).toEqual([]);
+		});
+
+		it('refuses a target that cannot be used instead of running on the agent model', () => {
+			const resolved = resolveTurnSettings('claude-code', hintFor('low'), 'sonnet', 'medium', {
+				tierTargets: { low: { type: 'source' } as never },
+			});
+			expect(resolved.refusal).toMatchObject({ code: 'tier-invalid-target' });
+			expect(resolved.warnings).toEqual([resolved.refusal?.message]);
+			expect(resolved.runOn).toBeUndefined();
+			expect(resolved.tierSource).toBeUndefined();
+		});
+
+		it('warns, without a refusal, when the built-in tier meets an agent on a source', () => {
+			const resolved = resolveTurnSettings('claude-code', hintFor('high'), 'sonnet', 'medium', {
+				runOn: LOCAL,
+			});
+			expect(resolved.model).toBe('sonnet');
+			expect(resolved.runOn).toBeUndefined();
+			expect(resolved.refusal).toBeUndefined();
+			expect(resolved.warnings).toHaveLength(1);
+			expect(resolved.warnings[0]).toContain('model source');
+		});
+
+		it("keeps an agent's model outside the built-in families, and says so", () => {
+			// A Daybreak Blue agent with tier="medium" used to launch on gpt-6.1-sol,
+			// which carries no Daybreak access and refused the task.
+			const resolved = resolveTurnSettings(
+				'codex',
+				hintFor('medium'),
+				'gpt-daybreak-blue-latest',
+				'medium'
+			);
+			expect(resolved.model).toBe('gpt-daybreak-blue-latest');
+			expect(resolved.refusal).toBeUndefined();
+			expect(resolved.notes).toEqual([]);
+			expect(resolved.warnings).toHaveLength(1);
+			expect(resolved.warnings[0]).toContain('gpt-daybreak-blue-latest');
+		});
+
+		it('does not consult the layers for tier="default" or no tier', () => {
+			const routing = { tierTargets: { low: { type: 'source' } as never } };
+			for (const hint of [null, hintFor('default')]) {
+				const resolved = resolveTurnSettings('claude-code', hint, 'sonnet', 'medium', routing);
+				expect(resolved).toMatchObject({ model: 'sonnet', warnings: [] });
+				expect(resolved.refusal).toBeUndefined();
+			}
+		});
+	});
+});
+
+describe('turnRunOnTarget', () => {
+	const OWN = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+
+	it("is the agent's own target for a turn whose tier names no place", () => {
+		// No hint, and a tier only the built-in table maps: both leave `runOn` unset.
+		expect(turnRunOnTarget(resolveTurnSettings('claude-code', null, 'sonnet'), OWN)).toBe(OWN);
+		const builtIn = resolveTurnSettings('claude-code', { tier: 'high', line: 0 }, 'sonnet');
+		expect(turnRunOnTarget(builtIn, undefined)).toBeUndefined();
+	});
+
+	it("is the tier's target when a layer the user wrote names the place", () => {
+		const toProvider = resolveTurnSettings(
+			'claude-code',
+			{ tier: 'high', line: 0 },
+			'sonnet',
+			undefined,
+			{ runOn: OWN, tierTargets: { high: { type: 'provider-model', model: 'opus' } } }
+		);
+		// A source agent's `high` task goes to the provider, not to its own source.
+		expect(turnRunOnTarget(toProvider, OWN)).toEqual({ type: 'provider' });
+
+		const local = { type: 'source' as const, endpointId: 'ep-lm', model: 'qwen3.5-4b' };
+		const toSource = resolveTurnSettings(
+			'claude-code',
+			{ tier: 'low', line: 0 },
+			'sonnet',
+			undefined,
+			{
+				tierTargets: { low: local },
+			}
+		);
+		expect(turnRunOnTarget(toSource, undefined)).toEqual(local);
+	});
 });
 
 describe('countTasksUnderActiveHint', () => {
@@ -507,7 +647,7 @@ describe('countTasksUnderActiveHint', () => {
 	});
 
 	// The whole reason this compares resolved settings instead of tier words:
-	// codex has no tier table, so both tiers fall back to the agent's own model.
+	// copilot-cli has no tier table, so both tiers fall back to the agent's own model.
 	// Splitting here would end one dispatch and start another at exactly the
 	// same configuration.
 	it('does not split on tier words that resolve to identical settings', () => {
@@ -516,7 +656,7 @@ describe('countTasksUnderActiveHint', () => {
 			'- [ ] one',
 			'- [ ] two <!-- MAESTRO:MODEL tier="high" -->',
 		].join('\n');
-		expect(countTasksUnderActiveHint(content, 'codex', 'gpt-5', 'medium')).toEqual({
+		expect(countTasksUnderActiveHint(content, 'copilot-cli', 'gpt-5', 'medium')).toEqual({
 			count: 2,
 			total: 2,
 		});
@@ -540,6 +680,43 @@ describe('countTasksUnderActiveHint', () => {
 
 	it('reports nothing for a document with no unchecked tasks', () => {
 		expect(countTasksUnderActiveHint('- [x] done', 'claude-code')).toEqual({ count: 0, total: 0 });
+	});
+});
+
+describe('countTasksUnderActiveHint with tier targets', () => {
+	const LOCAL = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+	const content = [
+		'- [ ] one <!-- MAESTRO:MODEL tier="low" -->',
+		'- [ ] two <!-- MAESTRO:MODEL tier="low" -->',
+		'- [ ] three <!-- MAESTRO:MODEL tier="high" -->',
+	].join('\n');
+
+	it('splits where the target changes on a provider with no built-in table', () => {
+		// Without routing both tiers run on the agent's own model: one segment.
+		expect(countTasksUnderActiveHint(content, 'opencode', 'big')).toEqual({ count: 3, total: 3 });
+		expect(
+			countTasksUnderActiveHint(content, 'opencode', 'big', undefined, {
+				harnessDefaults: { opencode: { low: LOCAL } },
+			})
+		).toEqual({ count: 2, total: 3 });
+	});
+
+	it('does not split when a tier names the model and place the agent already has', () => {
+		const sameAsAgent = ['- [ ] one <!-- MAESTRO:MODEL tier="medium" -->', '- [ ] two'].join('\n');
+		expect(
+			countTasksUnderActiveHint(sameAsAgent, 'claude-code', 'sonnet', undefined, {
+				tierTargets: { medium: { type: 'provider-model', model: 'sonnet' } },
+			})
+		).toEqual({ count: 2, total: 2 });
+	});
+
+	it('keeps a refused tier out of a dispatch that runs', () => {
+		const mixed = ['- [ ] one', '- [ ] two <!-- MAESTRO:MODEL tier="low" -->'].join('\n');
+		expect(
+			countTasksUnderActiveHint(mixed, 'claude-code', 'sonnet', undefined, {
+				tierTargets: { low: { type: 'source' } as never },
+			})
+		).toEqual({ count: 1, total: 2 });
 	});
 });
 
@@ -650,12 +827,15 @@ describe('Grok hints with selected-model effort evidence', () => {
 				findActiveModelHint(doc),
 				'chosen-model',
 				'high',
+				undefined,
 				menu
 			);
 			expect(resolved).toMatchObject({ model: 'chosen-model', effort: step.effort, warnings: [] });
 			expect(resolved.notes).toHaveLength(1);
 			expect(resolved.notes[0]).toContain(`(${step.scope}) -> ${step.effort}`);
-			expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'high', menu)).toEqual({
+			expect(
+				countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'high', undefined, menu)
+			).toEqual({
 				count: step.count,
 				total: step.total,
 			});
@@ -665,10 +845,12 @@ describe('Grok hints with selected-model effort evidence', () => {
 			}
 		}
 		expect(findActiveModelHint(doc)).toBeNull();
-		expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'high', menu)).toEqual({
-			count: 0,
-			total: 0,
-		});
+		expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'high', undefined, menu)).toEqual(
+			{
+				count: 0,
+				total: 0,
+			}
+		);
 	});
 
 	it.each([
@@ -693,14 +875,16 @@ describe('Grok hints with selected-model effort evidence', () => {
 			'- [ ] design <!-- MAESTRO:MODEL effort="high" -->',
 		].join('\n');
 		for (const hint of findAllModelHints(doc)) {
-			const resolved = resolveTurnSettings('grok', hint, 'chosen-model', 'xhigh', menu);
+			const resolved = resolveTurnSettings('grok', hint, 'chosen-model', 'xhigh', undefined, menu);
 			expect(resolved).toMatchObject({ model: 'chosen-model', effort: 'xhigh', notes: [] });
 			expect(resolved.warnings).toHaveLength(1);
 			expect(resolved.warnings[0]).toContain(warning);
 			expect(resolved.warnings[0]).toContain(`effort="${hint.effort}"`);
 			expect(resolved.warnings[0]).toContain("using the agent's configured effort");
 		}
-		expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'xhigh', menu)).toEqual({
+		expect(
+			countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'xhigh', undefined, menu)
+		).toEqual({
 			count: 3,
 			total: 3,
 		});
@@ -719,15 +903,18 @@ describe('Grok hints with selected-model effort evidence', () => {
 			findActiveModelHint(doc),
 			'chosen-model',
 			'high',
+			undefined,
 			menu
 		);
 		expect(resolved).toMatchObject({ model: 'chosen-model', effort: 'high', notes: [] });
 		expect(resolved.warnings).toHaveLength(1);
 		expect(resolved.warnings[0]).toContain('does not include the rung');
-		expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'high', menu)).toEqual({
-			count: 2,
-			total: 2,
-		});
+		expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'high', undefined, menu)).toEqual(
+			{
+				count: 2,
+				total: 2,
+			}
+		);
 	});
 
 	it.each(['low', 'medium', 'high'])(
@@ -742,6 +929,7 @@ describe('Grok hints with selected-model effort evidence', () => {
 				findActiveModelHint(doc),
 				'chosen-model',
 				'medium',
+				undefined,
 				['medium']
 			);
 			expect(resolved).toMatchObject({
@@ -753,7 +941,9 @@ describe('Grok hints with selected-model effort evidence', () => {
 			expect(resolved.warnings[0]).toContain(
 				`grok has no model tier mapping, so tier="${tier}" was ignored`
 			);
-			expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'medium', ['medium'])).toEqual({
+			expect(
+				countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'medium', undefined, ['medium'])
+			).toEqual({
 				count: 2,
 				total: 2,
 			});
@@ -802,14 +992,16 @@ describe('Grok hints with selected-model effort evidence', () => {
 		const menu = ['minimal', 'medium', 'max'];
 		const hint = findActiveModelHint(doc);
 		expect(hint?.scopes).toEqual(entry.scopes);
-		const resolved = resolveTurnSettings('grok', hint, 'chosen-model', 'xhigh', menu);
+		const resolved = resolveTurnSettings('grok', hint, 'chosen-model', 'xhigh', undefined, menu);
 		expect(resolved).toMatchObject({
 			model: 'chosen-model',
 			effort: entry.effort,
 			notes: entry.notes,
 		});
 		expect(resolved.warnings).toHaveLength(entry.warnings);
-		expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'xhigh', menu)).toEqual({
+		expect(
+			countTasksUnderActiveHint(doc, 'grok', 'chosen-model', 'xhigh', undefined, menu)
+		).toEqual({
 			count: entry.count,
 			total: 2,
 		});
@@ -819,7 +1011,14 @@ describe('Grok hints with selected-model effort evidence', () => {
 			effort: 'document',
 		});
 		expect(
-			resolveTurnSettings('grok', findActiveModelHint(remaining), 'chosen-model', 'xhigh', menu)
+			resolveTurnSettings(
+				'grok',
+				findActiveModelHint(remaining),
+				'chosen-model',
+				'xhigh',
+				undefined,
+				menu
+			)
 		).toMatchObject({
 			model: 'chosen-model',
 			effort: 'max',
@@ -859,40 +1058,114 @@ describe('Grok hints with selected-model effort evidence', () => {
 				findActiveModelHint(doc),
 				'chosen-model',
 				effort,
+				undefined,
 				menu
 			);
 			expect(resolved).toMatchObject({ model: 'chosen-model', effort, notes: [] });
 			expect(resolved.warnings).toHaveLength(1);
 			expect(resolved.warnings[0]).toContain('grok rejected effort "MAX" for other-model');
 			expect(resolved.warnings[0]).not.toContain('advertised effort menu');
-			expect(countTasksUnderActiveHint(doc, 'grok', 'chosen-model', effort, menu)).toEqual({
+			expect(
+				countTasksUnderActiveHint(doc, 'grok', 'chosen-model', effort, undefined, menu)
+			).toEqual({
 				count: 2,
 				total: 2,
 			});
 		}
 	});
 
+	// The agent model sits in one of the harness's tier families, so the built-in
+	// table applies; a model outside them keeps itself (tier-agent-model-pinned).
 	it.each([
-		{ provider: 'claude-code' as const, model: 'opus', effort: 'max', count: 1 },
-		{ provider: 'codex' as const, model: 'chosen-model', effort: 'xhigh', count: 1 },
-		{ provider: 'opencode' as const, model: 'chosen-model', effort: 'high', count: 2 },
+		{
+			provider: 'claude-code' as const,
+			agentModel: 'sonnet',
+			model: 'opus',
+			effort: 'max',
+			count: 1,
+		},
+		// acappella's built-in Codex tier table resolves `high` to its own model.
+		{
+			provider: 'codex' as const,
+			agentModel: 'gpt-6-sol',
+			model: 'gpt-6-astra',
+			effort: 'xhigh',
+			count: 1,
+		},
+		{
+			provider: 'opencode' as const,
+			agentModel: 'chosen-model',
+			model: 'chosen-model',
+			effort: 'high',
+			count: 2,
+		},
 	])(
 		'leaves $provider dispatch and inspection unchanged when supplied a Grok menu',
-		({ provider, model, effort, count }) => {
+		({ provider, agentModel, model, effort, count }) => {
 			const doc = [
 				'- [ ] hinted <!-- MAESTRO:MODEL tier="high" effort="high" -->',
 				'- [ ] baseline',
 			].join('\n');
 			const hint = findActiveModelHint(doc);
-			const baseline = resolveTurnSettings(provider, hint, 'chosen-model', 'high');
+			const baseline = resolveTurnSettings(provider, hint, agentModel, 'high');
 			expect(baseline).toMatchObject({ model, effort });
 			for (const menu of [[], ['minimal', 'medium', 'max']]) {
-				expect(resolveTurnSettings(provider, hint, 'chosen-model', 'high', menu)).toEqual(baseline);
-				expect(countTasksUnderActiveHint(doc, provider, 'chosen-model', 'high', menu)).toEqual({
+				expect(resolveTurnSettings(provider, hint, agentModel, 'high', undefined, menu)).toEqual(
+					baseline
+				);
+				expect(
+					countTasksUnderActiveHint(doc, provider, agentModel, 'high', undefined, menu)
+				).toEqual({
 					count,
 					total: 2,
 				});
 			}
 		}
 	);
+
+	it('agrees between countTasksUnderActiveHint and resolveTurnSettings when a per-model Antigravity effort refusal is recorded for the tier model', () => {
+		// Task 1 asks for tier="high" effort="high" (gemini-4-carbon, whose "high"
+		// effort was refused, so effort falls back to baseline "low").
+		// Task 2 asks for tier="high" with no effort (inherits baseline "low").
+		// Because both tasks resolve to the same {model: gemini-4-carbon, effort: low},
+		// countTasksUnderActiveHint must group both tasks into one dispatch.
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gemini-4-carbon',
+			supported: ['low', 'medium'],
+		});
+		try {
+			const doc = [
+				'- [ ] task 1 <!-- MAESTRO:MODEL tier="high" effort="high" -->',
+				'- [ ] task 2 <!-- MAESTRO:MODEL tier="high" -->',
+				'- [ ] task 3 <!-- MAESTRO:MODEL tier="medium" effort="high" -->',
+			].join('\n');
+			const first = resolveTurnSettings(
+				'antigravity',
+				findActiveModelHint(doc),
+				'gemini-4-neon',
+				'low'
+			);
+			expect(first).toMatchObject({ model: 'gemini-4-carbon', effort: 'low' });
+			expect(first.warnings[0]).toContain('gemini-4-carbon');
+
+			// Task 3 runs on gemini-4-neon (not refused for high), so it still gets effort="high".
+			const thirdDoc = '- [ ] task 3 <!-- MAESTRO:MODEL tier="medium" effort="high" -->';
+			const third = resolveTurnSettings(
+				'antigravity',
+				findActiveModelHint(thirdDoc),
+				'gemini-4-neon',
+				'low'
+			);
+			expect(third).toMatchObject({ model: 'gemini-4-neon', effort: 'high' });
+			expect(third.warnings).toEqual([]);
+
+			expect(countTasksUnderActiveHint(doc, 'antigravity', 'gemini-4-neon', 'low')).toEqual({
+				count: 2,
+				total: 3,
+			});
+		} finally {
+			resetEffortRejections();
+		}
+	});
 });

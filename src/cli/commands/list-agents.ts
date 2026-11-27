@@ -2,14 +2,21 @@
 // Lists all agents/sessions from Maestro storage, and, with Federation on, the agents a peer's
 // host owns (`--peer <name>`, `--all-peers`). Peer agents are read from the host every time and
 // never written to the local store.
+//
+// The list is a DISCOVERY surface: each row says what the agent is for (`peerDescription`), its
+// group, and whether that group is hidden. `--reachable` narrows it to the agents the caller may
+// reach right now, resolved live by `resolvePeerRoster()`, the resolver the prompt's Peer Agents
+// table and the Delegation Graph read. Listing an agent never grants access to it.
 
+import { readCallerIdentity } from '../../shared/agentDelegation';
+import { agentGroupLookup, type AgentGroupInfo } from '../../shared/groupHierarchy';
 import {
 	liftedAgentRef,
 	readLiftedTo,
 	type LiftedToPointer,
 } from '../../shared/maestro-lib/agents/lift-pointer';
-import { agentGroupLookup, type AgentGroupInfo } from '../../shared/groupHierarchy';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
+import { peerAccessLabel, resolvePeerRoster, type ResolvedPeer } from '../../shared/peerAgents';
 import type { SessionInfo } from '../../shared/types';
 import { ExitCode } from '../exit-codes';
 import {
@@ -17,6 +24,7 @@ import {
 	readGroups,
 	getSessionsByGroup,
 	readPrimaryAgentId,
+	resolveAgentId,
 	resolveGroupId,
 } from '../services/storage';
 import {
@@ -26,6 +34,7 @@ import {
 	listHostAgents,
 } from '../services/peer-resolver';
 import { formatAgents, formatError, AgentDisplay } from '../output/formatter';
+import { failCommand } from '../services/session-command';
 
 interface ListAgentsOptions {
 	group?: string;
@@ -34,13 +43,29 @@ interface ListAgentsOptions {
 	peer?: string;
 	/** Federation: list local agents, then every opted-in peer's, one peer at a time. */
 	allPeers?: boolean;
-	/** Only agents whose group is NOT hidden (ungrouped agents count as visible). */
+	/** Text output: print each agent's `peerDescription` under it. JSON always carries it. */
+	descriptions?: boolean;
+	/** Leave out agents whose group is hidden (or sits under a hidden parent). */
 	visibleOnly?: boolean;
 	/** Only agents in a hidden group (or under a hidden parent group). */
 	hiddenOnly?: boolean;
+	/** Keep only the agents the caller may reach, each with its access. Local agents only. */
+	reachable?: boolean;
+	/** The caller `--reachable` resolves for; defaults to `MAESTRO_CALLER_AGENT_ID`. */
+	from?: string;
 }
 
-type GroupLookup = (groupId: string | undefined) => AgentGroupInfo;
+/** What the caller may do with a row's agent. Present only under `--reachable`. */
+interface AgentAccess {
+	read: boolean;
+	write: boolean;
+	/** `peerAccessLabel`: "Consult only", "Delegate only", "Consult + Delegate". */
+	label: string;
+	/** Which grant gave it: an explicit row, the group grant, or the worktree family grant. */
+	source: ResolvedPeer['source'];
+	/** The caller's own note on this peer (its explicit row), or null. */
+	note: string | null;
+}
 
 /** One `list agents --json` row. `peer` is present only when a peer flag was passed. */
 interface AgentJsonRow {
@@ -49,13 +74,15 @@ interface AgentJsonRow {
 	toolType: string;
 	cwd: string;
 	groupId?: string;
-	/** The group's name; null when the agent has no group (or the peer could not list groups). */
+	/** The group's name; null when the agent has no group or the group is gone. */
 	groupName: string | null;
 	/**
-	 * True when the agent's group, or that group's parent, is hidden from the Left Bar. Null only
-	 * on a peer's agent whose host could not list its groups.
+	 * True when the group is hidden, or sits under a hidden parent. Hiding never blocks access.
+	 * Null only on a peer's agent whose host could not list its groups.
 	 */
 	groupHidden: boolean | null;
+	/** What the agent is for, as its owner wrote it for peers; null when unset. */
+	peerDescription: string | null;
 	autoRunFolderPath?: string;
 	worktreeBasePath: string | null;
 	bookmarked: boolean;
@@ -66,6 +93,15 @@ interface AgentJsonRow {
 	liftedTo: LiftedToPointer | null;
 	/** The peer whose host owns the agent; null for a local agent in an `--all-peers` list. */
 	peer?: string | null;
+	access?: AgentAccess;
+}
+
+/** A store's group name and hidden state, by `groupId`. */
+type GroupLookup = (groupId: string | undefined) => AgentGroupInfo;
+
+/** A stored description, trimmed; null when unset or blank. */
+function readPeerDescription(value: unknown): string | null {
+	return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 /** A local agent as a JSON row. */
@@ -81,6 +117,7 @@ function localJsonRow(
 		cwd: s.cwd,
 		groupId: s.groupId,
 		...groupOf(s.groupId),
+		peerDescription: readPeerDescription(s.peerDescription),
 		autoRunFolderPath: s.autoRunFolderPath,
 		// Where this agent's worktrees go, so a caller can honor it instead of
 		// inventing a location the desktop never sees. Null when unset.
@@ -102,6 +139,7 @@ function hostJsonRow(record: AgentRecord, peer: string, groupOf: GroupLookup | n
 		cwd: record.cwd ?? '',
 		groupId: record.groupId,
 		...(groupOf ? groupOf(record.groupId) : { groupName: null, groupHidden: null }),
+		peerDescription: readPeerDescription(record.peerDescription),
 		autoRunFolderPath: record.autoRunFolderPath,
 		worktreeBasePath: worktree?.basePath ?? null,
 		bookmarked: !!record.bookmarked,
@@ -120,11 +158,13 @@ function displayRow(row: AgentJsonRow): AgentDisplay {
 		toolType: row.toolType,
 		cwd: row.cwd,
 		groupId: row.groupId,
-		...(row.groupName ? { groupName: row.groupName } : {}),
-		...(row.groupHidden ? { groupHidden: true } : {}),
 		autoRunFolderPath: row.autoRunFolderPath,
 		bookmarked: row.bookmarked,
 		primary: row.primary,
+		...(row.groupName ? { groupName: row.groupName } : {}),
+		...(row.groupHidden ? { groupHidden: true } : {}),
+		...(row.peerDescription ? { peerDescription: row.peerDescription } : {}),
+		...(row.access ? { access: row.access.label } : {}),
 		...(row.peer ? { peer: row.peer } : {}),
 		...(row.liftedTo ? { liftedTo: liftedAgentRef(row) } : {}),
 	};
@@ -135,25 +175,77 @@ function displayRow(row: AgentJsonRow): AgentDisplay {
  * not list its groups) passes neither filter: a caller asking for visible agents only is asking
  * NOT to touch what the user put away, so an unknown is left out.
  */
-function filterByGroupVisibility(rows: AgentJsonRow[], options: ListAgentsOptions): AgentJsonRow[] {
+function applyVisibility(rows: AgentJsonRow[], options: ListAgentsOptions): AgentJsonRow[] {
 	if (options.visibleOnly) return rows.filter((row) => row.groupHidden === false);
 	if (options.hiddenOnly) return rows.filter((row) => row.groupHidden === true);
 	return rows;
 }
 
+/** A usage error, reported in the caller's format, then exit. */
+function usageError(message: string, json?: boolean): never {
+	reportFailure({ message, exitCode: ExitCode.InvalidUsage }, json);
+	process.exit(ExitCode.InvalidUsage);
+}
+
+/**
+ * `--reachable`: keep the rows the caller may reach, each with its access. The roster is
+ * resolved from the live agent list now, not read from a prompt snapshot, so a grant changed
+ * mid-turn shows at once.
+ */
+function applyReachable(
+	rows: AgentJsonRow[],
+	live: readonly SessionInfo[],
+	callerId: string
+): AgentJsonRow[] {
+	const caller = live.find((s) => s.id === callerId);
+	if (!caller) return [];
+	const roster = new Map(resolvePeerRoster(caller, live).map((peer) => [peer.sessionId, peer]));
+	return rows.flatMap((row) => {
+		const peer = roster.get(row.id);
+		if (!peer) return [];
+		const access: AgentAccess = {
+			read: peer.read,
+			write: peer.write,
+			label: peerAccessLabel(peer),
+			source: peer.source,
+			note: peer.description ?? null,
+		};
+		return [{ ...row, access }];
+	});
+}
+
+/** The agent `--reachable` resolves for: `--from`, else the shell's own agent. */
+function resolveReachableCaller(options: ListAgentsOptions): string {
+	if (options.from !== undefined) {
+		try {
+			return resolveAgentId(options.from);
+		} catch (error) {
+			usageError(`--from: ${error instanceof Error ? error.message : String(error)}`, options.json);
+		}
+	}
+	const callerId = readCallerIdentity(process.env)?.agentId;
+	if (!callerId) {
+		usageError(
+			'--reachable needs a caller: pass --from <agent>, or run it from an agent shell (MAESTRO_CALLER_AGENT_ID).',
+			options.json
+		);
+	}
+	return callerId;
+}
+
 export function listAgents(options: ListAgentsOptions): void | Promise<void> {
 	if (options.visibleOnly && options.hiddenOnly) {
-		const message = 'Pass --visible-only or --hidden-only, not both.';
-		if (options.json) console.error(JSON.stringify({ error: message }));
-		else console.error(formatError(message));
-		process.exit(ExitCode.InvalidUsage);
+		usageError('Pass --visible-only or --hidden-only, not both.', options.json);
+	}
+	if (options.from !== undefined && !options.reachable) {
+		usageError('--from names the caller for --reachable; pass --reachable too.', options.json);
 	}
 	if (options.peer !== undefined || options.allPeers) return listAgentsWithPeers(options);
+	const callerId = options.reachable ? resolveReachableCaller(options) : undefined;
 	try {
 		let sessions;
 		let groupName: string | undefined;
-		const groups = readGroups();
-		const groupOf = agentGroupLookup(groups);
+		const groupOf = agentGroupLookup(readGroups());
 
 		if (options.group) {
 			// Resolve partial group ID
@@ -166,10 +258,17 @@ export function listAgents(options: ListAgentsOptions): void | Promise<void> {
 		}
 
 		const primaryAgentId = readPrimaryAgentId();
-		const rows = filterByGroupVisibility(
+		let rows = applyVisibility(
 			sessions.map((s) => localJsonRow(s, groupOf, primaryAgentId)),
 			options
 		);
+		let reachableFrom: string | undefined;
+		if (callerId) {
+			const live = options.group ? readLiveSessions() : sessions;
+			rows = applyReachable(rows, live, callerId);
+			reachableFrom = live.find((s) => s.id === callerId)?.name ?? callerId;
+		}
+
 		if (options.json) {
 			// JSON array output. Include sessionSshRemoteConfig so SSH execution
 			// state is verifiable without reading raw store files.
@@ -177,16 +276,16 @@ export function listAgents(options: ListAgentsOptions): void | Promise<void> {
 		} else {
 			// Human-readable output
 			const displayAgents: AgentDisplay[] = rows.map(displayRow);
-			console.log(formatAgents(displayAgents, groupName));
+			console.log(
+				formatAgents(displayAgents, groupName, {
+					descriptions: options.descriptions,
+					reachableFrom,
+				})
+			);
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : 'Unknown error';
-		if (options.json) {
-			console.error(JSON.stringify({ error: message }));
-		} else {
-			console.error(formatError(`Failed to list agents: ${message}`));
-		}
-		process.exit(1);
+		failCommand(`Failed to list agents: ${message}`, options.json);
 	}
 }
 
@@ -247,32 +346,33 @@ async function readPeerRows(peerRef: string): Promise<{ peer: string; rows: Agen
 	}
 }
 
-function printRows(allRows: AgentJsonRow[], options: ListAgentsOptions, peer?: string): void {
-	const rows = filterByGroupVisibility(allRows, options);
+function printRows(rows: AgentJsonRow[], options: ListAgentsOptions, peer?: string): void {
+	const shown = applyVisibility(rows, options);
 	if (options.json) {
-		console.log(JSON.stringify(rows, null, 2));
+		console.log(JSON.stringify(shown, null, 2));
 	} else {
-		console.log(formatAgents(rows.map(displayRow), undefined, { peer }));
+		console.log(
+			formatAgents(shown.map(displayRow), undefined, { peer, descriptions: options.descriptions })
+		);
 	}
 }
 
 async function listAgentsWithPeers(options: ListAgentsOptions): Promise<void> {
 	if (options.peer !== undefined && options.allPeers) {
-		reportFailure(
-			{ message: 'Pass --peer <name> or --all-peers, not both.', exitCode: ExitCode.InvalidUsage },
-			options.json
-		);
-		process.exit(ExitCode.InvalidUsage);
+		usageError('Pass --peer <name> or --all-peers, not both.', options.json);
 	}
 	if (options.group) {
-		reportFailure(
-			{
-				message: '--group filters local agents and cannot be combined with --peer or --all-peers.',
-				exitCode: ExitCode.InvalidUsage,
-			},
+		usageError(
+			'--group filters local agents and cannot be combined with --peer or --all-peers.',
 			options.json
 		);
-		process.exit(ExitCode.InvalidUsage);
+	}
+	if (options.reachable) {
+		// Peer grants name local agents; a peer's host resolves its own agents' grants.
+		usageError(
+			'--reachable lists the local agents the caller may reach and cannot be combined with --peer or --all-peers.',
+			options.json
+		);
 	}
 
 	if (options.peer !== undefined) {
