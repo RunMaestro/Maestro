@@ -23,7 +23,7 @@ import type { AgentImportInput, AgentImportQueuedMessage, AgentImportTab } from 
 import { aiTabsOf, visibleAiTabsOf } from '../store/read-stores';
 import type { AgentRecord, AITabRecord } from '../store/records';
 import { transcriptOf } from '../store/transcript';
-import { inlineImageList, withInlineEntryImages } from '../launch/image-refs';
+import { inlineEntryImages, inlineImageList } from '../launch/image-refs';
 import { liftBusyReason, peerAgentRef, readLiftedTo } from './lift-pointer';
 import { planLiftEnv, type SessionDirSelector } from './lift-env';
 import { sshRecordOf } from './rules';
@@ -123,10 +123,18 @@ export interface LiftPlanTab {
 
 /** Something that stays on this machine, and why. */
 export interface LiftPlanStay {
-	kind: 'secret-env' | 'queued-command' | 'queued-image' | 'hidden-tab' | 'auto-run-folder';
+	kind:
+		| 'secret-env'
+		| 'queued-command'
+		| 'queued-image'
+		| 'transcript-image'
+		| 'hidden-tab'
+		| 'auto-run-folder';
 	/** The env key, queue item id, or tab id. */
 	ref: string;
 	reason: string;
+	/** `transcript-image`: how many images of that tab's transcript stay. */
+	count?: number;
 }
 
 /** What a lift sends and keeps. Holds no env value and no transcript text: safe to print. */
@@ -222,22 +230,35 @@ function usageStatsOf(value: unknown): UsageStats | undefined {
 		: undefined;
 }
 
-function importTabOf(tab: AITabRecord): AgentImportTab {
+/**
+ * One tab as the host imports it, and how many images of its transcript this machine's image store
+ * could not read: those are left out of the host's copy (the refs stay on this machine's record).
+ */
+function importTabOf(tab: AITabRecord): { tab: AgentImportTab; unresolvedImages: number } {
 	const showThinking = asThinkingMode(tab.showThinking);
 	const usageStats = usageStatsOf(tab.usageStats);
+	let unresolvedImages = 0;
+	const logs = transcriptOf(tab).map((entry) => {
+		const inlined = inlineEntryImages(entry);
+		unresolvedImages += inlined.unresolved;
+		return inlined.entry;
+	});
 	return {
-		id: tab.id,
-		...(tab.name !== undefined ? { name: tab.name } : {}),
-		...(typeof tab.starred === 'boolean' ? { starred: tab.starred } : {}),
-		agentSessionId: stringField(tab.agentSessionId) ?? null,
-		...(typeof tab.createdAt === 'number' ? { createdAt: tab.createdAt } : {}),
-		...(typeof tab.saveToHistory === 'boolean' ? { saveToHistory: tab.saveToHistory } : {}),
-		...(showThinking ? { showThinking } : {}),
-		...(typeof tab.readOnlyMode === 'boolean' ? { readOnlyMode: tab.readOnlyMode } : {}),
-		...(stringField(tab.customModel) ? { model: tab.customModel } : {}),
-		...(stringField(tab.customEffort) ? { effort: tab.customEffort } : {}),
-		...(usageStats ? { usageStats } : {}),
-		logs: transcriptOf(tab).map(withInlineEntryImages),
+		tab: {
+			id: tab.id,
+			...(tab.name !== undefined ? { name: tab.name } : {}),
+			...(typeof tab.starred === 'boolean' ? { starred: tab.starred } : {}),
+			agentSessionId: stringField(tab.agentSessionId) ?? null,
+			...(typeof tab.createdAt === 'number' ? { createdAt: tab.createdAt } : {}),
+			...(typeof tab.saveToHistory === 'boolean' ? { saveToHistory: tab.saveToHistory } : {}),
+			...(showThinking ? { showThinking } : {}),
+			...(typeof tab.readOnlyMode === 'boolean' ? { readOnlyMode: tab.readOnlyMode } : {}),
+			...(stringField(tab.customModel) ? { model: tab.customModel } : {}),
+			...(stringField(tab.customEffort) ? { effort: tab.customEffort } : {}),
+			...(usageStats ? { usageStats } : {}),
+			logs,
+		},
+		unresolvedImages,
 	};
 }
 
@@ -324,7 +345,8 @@ export function planAgentLift(input: PlanAgentLiftInput): LiftPlan {
 
 	const tabs = visibleAiTabsOf(agent);
 	const tabIds = new Set(tabs.map((tab) => tab.id));
-	const importTabs = tabs.map(importTabOf);
+	const imported = tabs.map(importTabOf);
+	const importTabs = imported.map(({ tab }) => tab);
 	const activeTabId =
 		typeof agent.activeTabId === 'string' && tabIds.has(agent.activeTabId)
 			? agent.activeTabId
@@ -344,6 +366,18 @@ export function planAgentLift(input: PlanAgentLiftInput): LiftPlan {
 			reason: 'A hidden consult tab belongs to the consult that opened it on this machine.',
 		});
 	}
+	// An image of a transcript that this machine's image store cannot read does not move: said
+	// per tab, with the count, so the plan the person confirms names it (R52).
+	imported.forEach(({ tab, unresolvedImages }) => {
+		if (unresolvedImages === 0) return;
+		const name = tab.name ? `"${tab.name}"` : tab.id;
+		stays.push({
+			kind: 'transcript-image',
+			ref: tab.id,
+			count: unresolvedImages,
+			reason: `${unresolvedImages} image(s) in the conversation ${name} could not be read from this machine's image store and do not move. They stay in this machine's copy.`,
+		});
+	});
 	stays.push(...queueStays);
 
 	const autoRunFolder = stringField(agent.autoRunFolderPath);

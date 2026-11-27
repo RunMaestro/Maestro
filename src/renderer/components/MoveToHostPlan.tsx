@@ -68,6 +68,16 @@ export function groupLiftStays(stays: LiftPlanStay[]): LiftStayRow[] {
 			case 'auto-run-folder':
 				rows.push({ kind, title: 'Auto Run folder', detail: `${group[0].ref}. ${reasons}` });
 				break;
+			case 'transcript-image':
+				rows.push({
+					kind,
+					title: plural(
+						group.reduce((total, stay) => total + (stay.count ?? 1), 0),
+						'conversation image'
+					),
+					detail: reasons,
+				});
+				break;
 			default:
 				rows.push({ kind, title: plural(group.length, 'queued message'), detail: reasons });
 		}

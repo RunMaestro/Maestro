@@ -8,6 +8,7 @@ import type { SshRemoteConfig } from '../../../types';
 import { setMaestroLibImageRefResolver } from '../../host';
 import type { AgentRecord } from '../../store/records';
 import { liftRefusal, liftRemoteCwd, liftSshRemoteId, planAgentLift } from '../lift-plan';
+import { formatLiftPlan } from '../lift-run';
 
 const remote = { id: 'remote-1', name: 'build-box', federation: true } as SshRemoteConfig;
 
@@ -287,6 +288,19 @@ describe('planAgentLift', () => {
 			const logs = plan.input.tabs[0].logs;
 			expect(logs[0].images).toEqual([STORED_DATA, 'data:image/png;base64,AA']);
 			expect(logs[1]).not.toHaveProperty('images');
+			// Parity R52: the plan the person confirms names the image that does not move, by tab.
+			expect(plan.summary.stays).toEqual(
+				expect.arrayContaining([
+					{
+						kind: 'transcript-image',
+						ref: 'tab-1',
+						count: 1,
+						reason:
+							'1 image(s) in the conversation "Main" could not be read from this machine\'s image store and do not move. They stay in this machine\'s copy.',
+					},
+				])
+			);
+			expect(formatLiftPlan(plan.summary, true)).toContain('Images of tab tab-1: 1 image(s)');
 		});
 	});
 

@@ -170,7 +170,9 @@ export function formatLiftPlan(summary: LiftPlanSummary, dryRun: boolean): strin
 					? `Hidden tab ${stay.ref}`
 					: stay.kind === 'auto-run-folder'
 						? `Auto Run folder ${stay.ref}`
-						: `Queue item ${stay.ref}`;
+						: stay.kind === 'transcript-image'
+							? `Images of tab ${stay.ref}`
+							: `Queue item ${stay.ref}`;
 		lines.push(`  ${what}: ${stay.reason}`);
 	}
 	return lines.join('\n');

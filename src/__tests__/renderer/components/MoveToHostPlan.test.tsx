@@ -64,6 +64,23 @@ describe('groupLiftStays', () => {
 	});
 });
 
+// Parity R52: transcript images that cannot move are one row, counted by image.
+describe('groupLiftStays: transcript images (R52)', () => {
+	it('counts the images of every tab whose transcript keeps some here', () => {
+		const rows = groupLiftStays([
+			{ kind: 'transcript-image', ref: 't1', count: 2, reason: '2 image(s) in "Main" stay.' },
+			{ kind: 'transcript-image', ref: 't2', count: 1, reason: '1 image(s) in "Notes" stay.' },
+		]);
+		expect(rows).toEqual([
+			{
+				kind: 'transcript-image',
+				title: '3 conversation images',
+				detail: '2 image(s) in "Main" stay. 1 image(s) in "Notes" stay.',
+			},
+		]);
+	});
+});
+
 describe('liftPlanOneLine', () => {
 	it('names the counts and where they go', () => {
 		const line = liftPlanOneLine(
