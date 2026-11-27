@@ -1524,6 +1524,22 @@ describe('isUserTurnStart', () => {
 		expect(turnFateAfter(answered, 2, 'desktop')).toBe('answered');
 	});
 
+	// Parity R53 (a): a headless host writes the first turn's answer and its end stamp only at the
+	// end, so both land AFTER the queued steer. A clean finish of the first turn reads ended, and the
+	// steer is the later turn, not begun until then.
+	it("reads a headless host's clean finish past a queued steer as ended, and the steer as the later turn (R53)", () => {
+		const running = [u1, steer];
+		expect(turnFateAfter(running, 0, 'headless')).toBe('unended');
+		expect(userTurnSpan(running, 1)).toBeNull();
+		const finishedA = [u1, steer, { ...endA, text: 'The docs say...' }];
+		expect(turnFateAfter(finishedA, 0, 'headless')).toBe('answered');
+		expect(userTurnSpan(finishedA, 1)).toEqual({ from: 3, to: 3 });
+		expect(turnFateAfter(finishedA, 1, 'headless')).toBe('unended');
+		const finishedB = [...finishedA, { ...partialB, turnEnded: true }];
+		expect(turnFateAfter(finishedB, 0, 'headless')).toBe('answered');
+		expect(turnFateAfter(finishedB, 1, 'headless')).toBe('answered');
+	});
+
 	it("has the steer's turn not begun while the turn it was sent into still runs", () => {
 		const logs = [u1, partialA, steer];
 		expect(userTurnSpan(logs, 2)).toBeNull();

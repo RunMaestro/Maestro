@@ -1147,6 +1147,97 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(sends()[0][2]).toMatchObject({ text: STEER.text });
 	});
 
+	// Parity R53: the steer rule never fires early. A queued steer is written, and its verdict
+	// stamped, while the turn it was sent into still runs; its own turn starts only after that turn's
+	// end. Both host kinds: a headless host writes the first turn's answer only at its end.
+	const R53_STEER: LogEntry = {
+		id: 'b1',
+		timestamp: 12,
+		source: 'user',
+		text: 'Also the README',
+		steered: true,
+		steerState: 'queued',
+	};
+	const R53_PARTIAL: LogEntry = { id: 'a0', timestamp: 11, source: 'stdout', text: 'The docs' };
+	const R53_ANSWER: LogEntry = {
+		id: 'a1',
+		timestamp: 13,
+		source: 'stdout',
+		text: 'The docs say...',
+		turnEnded: true,
+	};
+	async function r53HostBack(hostKind: 'desktop' | 'headless', entries: LogEntry[]) {
+		act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+		transcript.mockResolvedValue(entries);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		usePeerMirrorStore.setState((current) => ({
+			peers: { ...current.peers, box: { ...peerWith('idle', 'connected'), hostKind } },
+		}));
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+	}
+
+	// (b) Cut during the first turn, with the steer stamped queued but its turn not begun: the first
+	// message is the cut one, kept and sent again once; the steer stays in the transcript behind it,
+	// never sent in its place.
+	it.each([
+		['desktop', [QUESTION, R53_PARTIAL, R53_STEER]],
+		['headless', [QUESTION, R53_STEER]],
+	] as const)(
+		'keeps the first message when the link is cut before a queued steer began, on a %s host (R53)',
+		async (hostKind, entries) => {
+			updateSessionWith('row', (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [...entries] })),
+			}));
+			cut();
+			expect(queue().map((item) => item.hostEntryId)).toEqual(['u1']);
+			await r53HostBack(hostKind, [...entries]);
+			expect(sends().map(([, , action]) => action.entryId)).toEqual(['u1']);
+			expect(sends()[0][2]).toMatchObject({ text: QUESTION.text });
+			expect(tab().logs.find((entry) => entry.id === 'b1')).toMatchObject({
+				steered: true,
+				steerState: 'queued',
+			});
+		}
+	);
+
+	// (c) on a headless host: the first turn ended (its answer and stamp after the steer), and the
+	// link is cut during the steer's follow-up: the steer is kept and sent, the first never again.
+	it("keeps the queued steer's message when the link is cut during its follow-up on a headless host (R53)", async () => {
+		const entries = [QUESTION, R53_STEER, R53_ANSWER];
+		updateSessionWith('row', (s) => ({
+			...s,
+			aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [...entries] })),
+		}));
+		cut();
+		expect(queue().map((item) => item.hostEntryId)).toEqual(['b1']);
+		await r53HostBack('headless', [...entries]);
+		expect(sends().map(([, , action]) => action.entryId)).toEqual(['b1']);
+	});
+
+	// (a) The first turn finished with the steer inside it, and the steer's follow-up finished too,
+	// while the link was down: both read ended, and nothing is sent again.
+	it.each(['desktop', 'headless'] as const)(
+		'sends nothing for a turn and its queued steer that both finished while cut, on a %s host (R53)',
+		async (hostKind) => {
+			updateSessionWith('row', (s) => ({
+				...s,
+				aiTabs: s.aiTabs.map((t) => ({ ...t, logs: [QUESTION, R53_STEER] })),
+			}));
+			cut();
+			await r53HostBack(hostKind, [
+				QUESTION,
+				R53_STEER,
+				R53_ANSWER,
+				{ id: 'a2', timestamp: 16, source: 'stdout', text: 'The README...', turnEnded: true },
+			]);
+			expect(sends()).toHaveLength(0);
+		}
+	);
+
 	// CodeRabbit on #2167: the retry of an errored turn was stopped. A later send of the same entry
 	// asks the host's transcript again, never going straight out on the stale record.
 	it('asks the host again for an errored entry once its retry was stopped (R37)', async () => {
