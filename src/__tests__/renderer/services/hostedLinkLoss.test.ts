@@ -774,6 +774,46 @@ describe('projectHostedSession with the link lost', () => {
 		expect(during.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'o1', 'card']);
 	});
 
+	it.each([
+		['5 s ahead, the bound itself', 5_050],
+		['under the bound', 4_000],
+	])(
+		'keeps the cut message above the card once the host saves it, with the host clock %s (R59)',
+		(_how, hostAt) => {
+			const card: LogEntry = {
+				id: 'card',
+				timestamp: 50,
+				source: 'system',
+				text: 'Connection lost',
+				retryOutageId: 'o1',
+			};
+			const local = createModeSession('hosted', {
+				id: 'row',
+				activeTabId: 't1',
+				aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'on', logs: [card] })],
+			});
+			const message = { ...QUESTION, timestamp: hostAt };
+			const liveTurns = {
+				[liveTurnKey('h1', 't1')]: { startedAt: hostAt, busy: true, entries: [message] },
+			} as never;
+			const during = projectHostedSession(local, {
+				agent,
+				liveTurns,
+				linkLost,
+				keptCuts: new Set(['t1']),
+			});
+			expect(during.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'card']);
+			// The host is back and its transcript holds the message, nothing after it.
+			const back = projectHostedSession(during, {
+				agent: peerWith('idle', 'connected').agents[0],
+				transcripts: {
+					[liveTurnKey('h1', 't1')]: { loaded: true, entries: [message] },
+				} as never,
+			});
+			expect(back.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'card']);
+		}
+	);
+
 	it('never draws reasoning as a reply row at the cut (R58)', () => {
 		const local = createModeSession('hosted', {
 			id: 'row',

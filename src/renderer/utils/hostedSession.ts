@@ -174,11 +174,28 @@ function cutTurnLogs(
  * the cut turn's rows below the card the cut raised (CodeRabbit on #2177).
  */
 function insertByTime(logs: LogEntry[], entry: LogEntry): LogEntry[] {
-	const at = logs.findIndex((other) => {
-		const ownNote = other.retryOutageId !== undefined || other.agentError?.source === 'host-link';
-		return other.timestamp + (ownNote ? HOST_COPY_CLOCK_SKEW_MS : 0) > entry.timestamp;
-	});
-	return at === -1 ? [...logs, entry] : [...logs.slice(0, at), entry, ...logs.slice(at)];
+	const at = logs.findIndex((other) => !writtenBefore(other, entry.timestamp));
+	if (at === -1) return [...logs, entry];
+	// The turn's message keeps that place once the host's saved copy takes over from this one
+	// (`keptPlace`, as a kept bubble's does, R33): drawn by the host's time, a clock ahead of this
+	// one would put it below the card again (CodeRabbit on #2177).
+	const next = logs[at];
+	const placed =
+		entry.source === 'user' && next.timestamp < entry.timestamp
+			? { ...entry, keptPlace: next.timestamp }
+			: entry;
+	return [...logs.slice(0, at), placed, ...logs.slice(at)];
+}
+
+/**
+ * Whether the entry `local` comes before a cut turn's host row stamped `hostAt` by the host's
+ * clock. A card or note this machine wrote about the cut (the retry card, the link note) comes
+ * after any such row stamped up to `HOST_COPY_CLOCK_SKEW_MS` after it, the bound included: a host
+ * clock ahead of this one never draws the cut turn's rows below it (CodeRabbit on #2177).
+ */
+function writtenBefore(local: LogEntry, hostAt: number): boolean {
+	const ownNote = local.retryOutageId !== undefined || local.agentError?.source === 'host-link';
+	return ownNote ? local.timestamp + HOST_COPY_CLOCK_SKEW_MS < hostAt : local.timestamp <= hostAt;
 }
 
 /**
