@@ -378,4 +378,57 @@ describe('New Tab while the link is down (R15)', () => {
 		expect(patch).toMatchObject({ tabId, patch: { thinking: 'off' } });
 		expect(current().aiTabs.find((tab) => tab.id === tabId)?.showThinking).toBe('off');
 	});
+
+	it('keeps the host id in one tile when the drawn copy was tiled too (CodeRabbit on #2161)', async () => {
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'lost');
+		let tabId = '';
+		await act(async () => {
+			tabId = (await openHostedTabOrHere(session)) as string;
+		});
+		const pair = (id: string, a: string, b: string) => ({
+			id,
+			name: id,
+			focusedPaneId: null,
+			createdAt: 1,
+			layout: {
+				kind: 'split' as const,
+				id: `${id}-split`,
+				direction: 'row' as const,
+				sizes: [50, 50],
+				children: [
+					{ kind: 'leaf' as const, id: `${id}-a`, tab: { type: 'ai' as const, id: a } },
+					{ kind: 'leaf' as const, id: `${id}-b`, tab: { type: 'ai' as const, id: b } },
+				],
+			},
+		});
+		hydrateHost(['t1'], 'connected');
+		act$.mockImplementation(async (_peer: string, _agent: string, action: { kind: string }) => {
+			if (action.kind !== 'new-tab') return { ok: true, result: { kind: action.kind } };
+			// The host's copy lands first, and is tiled with t1 before the answer arrives.
+			const drawn = projectHostedSession(current(), { agent: hostAgent(['t1', 'host-own']) });
+			useSessionStore.setState({
+				sessions: [
+					{
+						...drawn,
+						aiTabs: [...drawn.aiTabs, createMockAITab({ id: 't9', logs: [] })],
+						tabGroups: [pair('g1', 't1', 'host-own'), pair('g2', 't9', tabId)],
+					},
+				],
+			});
+			return { ok: true, result: { kind: 'new-tab', tabId: 'host-own' } };
+		});
+
+		createPendingHostTabs(current());
+		await flush();
+
+		const leaves = current().tabGroups.flatMap((group) =>
+			group.layout.kind === 'split'
+				? group.layout.children.map((leaf) => (leaf.kind === 'leaf' ? leaf.tab.id : ''))
+				: [group.layout.tab.id]
+		);
+		expect(leaves.filter((id) => id === 'host-own')).toHaveLength(1);
+		const live = new Set(current().aiTabs.map((tab) => tab.id));
+		expect(leaves.every((id) => live.has(id))).toBe(true);
+	});
 });

@@ -49,7 +49,12 @@ import { closeTab, insertAiTabAtUnifiedIndex, setActiveTab } from '../utils/tabH
 import { generateId } from '../utils/ids';
 import { getRetryEntry } from '../stores/retryStore';
 import { insertAfterActiveInUnifiedTabOrder } from '../utils/unifiedTabOrderUtils';
-import { retargetLeafTab } from '../utils/panelLayout';
+import {
+	collectLeafTabRefs,
+	normalizeTabGroups,
+	removeLeafByTabRef,
+	retargetLeafTab,
+} from '../utils/panelLayout';
 import {
 	actOnMirroredAgent,
 	actOnMirroredAgentQuietly,
@@ -417,7 +422,19 @@ function adoptHostTabId(sessionId: string, tabId: string, hostTabId: string): st
 		);
 		if (keyed) return { ...session, aiTabs: tabs };
 		adopted = hostTabId;
-		return {
+		const from = { type: 'ai' as const, id: tabId };
+		const to = { type: 'ai' as const, id: hostTabId };
+		// The drawn copy goes, its tile too, so the host's id is in one leaf at most: this tab's.
+		const tabGroups = (session.tabGroups ?? []).flatMap((group) => {
+			const inTile = collectLeafTabRefs(group.layout).some(
+				(ref) => ref.type === 'ai' && ref.id === hostTabId
+			);
+			const without = inTile ? removeLeafByTabRef(group.layout, to) : group.layout;
+			if (!without) return [];
+			const layout = retargetLeafTab(without, from, to);
+			return layout === group.layout ? [group] : [{ ...group, layout }];
+		});
+		return normalizeTabGroups({
 			...session,
 			aiTabs: tabs,
 			unifiedTabOrder: (session.unifiedTabOrder ?? [])
@@ -425,15 +442,8 @@ function adoptHostTabId(sessionId: string, tabId: string, hostTabId: string): st
 				.map((ref) => (ref.type === 'ai' && ref.id === tabId ? { ...ref, id: hostTabId } : ref)),
 			activeTabId: session.activeTabId === tabId ? hostTabId : session.activeTabId,
 			// A tile that shows the tab keeps showing it under its new id.
-			tabGroups: (session.tabGroups ?? []).map((group) => {
-				const layout = retargetLeafTab(
-					group.layout,
-					{ type: 'ai', id: tabId },
-					{ type: 'ai', id: hostTabId }
-				);
-				return layout === group.layout ? group : { ...group, layout };
-			}),
-		};
+			tabGroups,
+		});
 	});
 	return adopted;
 }
