@@ -7,50 +7,6 @@ import {
 	rowTimestampMs,
 } from '../../maestro-p/turn-start';
 
-describe('provesTurnStarted', () => {
-	const at = '2026-11-27T17:15:50.945Z';
-
-	it('counts the timestamped prompt echo, reply and tool rows', () => {
-		expect(provesTurnStarted({ type: 'user', timestamp: at, message: { content: 'hi' } })).toBe(
-			true
-		);
-		expect(provesTurnStarted({ type: 'assistant', timestamp: at, message: { content: [] } })).toBe(
-			true
-		);
-		expect(
-			provesTurnStarted({
-				type: 'attachment',
-				timestamp: at,
-				attachment: { type: 'hook_success', hookEvent: 'PreToolUse' },
-			})
-		).toBe(true);
-	});
-
-	// The rows a resumed Pedsidian turn tailed while claude was still booting,
-	// before its SessionStart hook ran or its prompt was read (2026-11-27).
-	it('never counts untimestamped bookkeeping rows', () => {
-		for (const row of [
-			{ type: 'last-prompt', lastPrompt: 'earlier', sessionId: 's' },
-			{ type: 'tools-used', tools: ['Bash'], sessionId: 's' },
-			{ type: 'file-history-snapshot', messageId: 'm', snapshot: {} },
-			{ type: 'mode', mode: 'normal', sessionId: 's' },
-			{ type: 'permission-mode', permissionMode: 'default', sessionId: 's' },
-		]) {
-			expect(provesTurnStarted(row)).toBe(false);
-		}
-	});
-
-	it('never counts a SessionStart hook row, even timestamped', () => {
-		expect(
-			provesTurnStarted({
-				type: 'attachment',
-				timestamp: at,
-				attachment: { type: 'hook_success', hookEvent: 'SessionStart' },
-			})
-		).toBe(false);
-	});
-});
-
 describe('isPreTurnRow', () => {
 	it('treats the SessionStart hook result claude logs at resume as pre-turn', () => {
 		expect(
@@ -155,5 +111,87 @@ describe('rowTimestampMs', () => {
 	it('is null for rows claude writes without one', () => {
 		expect(rowTimestampMs({ type: 'file-history-snapshot' })).toBeNull();
 		expect(rowTimestampMs('row')).toBeNull();
+	});
+});
+
+describe('provesTurnStarted', () => {
+	const runStartedAt = Date.parse('2026-11-27T16:59:11.000Z');
+
+	it('counts the stamped prompt echo and reply made after the run started', () => {
+		expect(
+			provesTurnStarted(
+				{ type: 'user', timestamp: '2026-11-27T16:59:12.000Z', message: { content: 'hi' } },
+				runStartedAt
+			)
+		).toBe(true);
+		expect(
+			provesTurnStarted(
+				{ type: 'assistant', timestamp: '2026-11-27T16:59:11.000Z', message: { content: [] } },
+				runStartedAt
+			)
+		).toBe(true);
+	});
+
+	it("ignores a previous claude's all-unstamped exit flush", () => {
+		// The block a synopsis claude flushed after the next turn began tailing:
+		// none of it is stamped, and its tools-used row once stopped the Enter
+		// resubmit loop with the user's prompt still parked in the editor.
+		for (const row of [
+			{ type: 'cost-state' },
+			{ type: 'tools-used' },
+			{ type: 'file-history-snapshot' },
+			{ type: 'last-prompt', lastPrompt: 'Give a brief synopsis' },
+		]) {
+			expect(provesTurnStarted(row, runStartedAt)).toBe(false);
+		}
+	});
+
+	it('ignores stamped rows made before the run started', () => {
+		expect(
+			provesTurnStarted(
+				{ type: 'system', subtype: 'turn_duration', timestamp: '2026-11-27T16:59:10.453Z' },
+				runStartedAt
+			)
+		).toBe(false);
+	});
+
+	it('ignores the SessionStart rows claude writes at boot', () => {
+		expect(
+			provesTurnStarted(
+				{
+					type: 'attachment',
+					timestamp: '2026-11-27T16:59:12.000Z',
+					attachment: { type: 'hook_success', hookEvent: 'SessionStart' },
+				},
+				runStartedAt
+			)
+		).toBe(false);
+	});
+
+	it('counts a stamped non-SessionStart hook row', () => {
+		expect(
+			provesTurnStarted(
+				{
+					type: 'attachment',
+					timestamp: '2026-11-27T16:59:12.000Z',
+					attachment: { type: 'hook_success', hookEvent: 'PreToolUse' },
+				},
+				runStartedAt
+			)
+		).toBe(true);
+	});
+
+	// The rows a resumed Pedsidian turn tailed while claude was still booting,
+	// before its SessionStart hook ran or its prompt was read (2026-11-27).
+	it('ignores the unstamped rows a --resume boot tails', () => {
+		for (const row of [
+			{ type: 'last-prompt', lastPrompt: 'earlier', sessionId: 's' },
+			{ type: 'tools-used', tools: ['Bash'], sessionId: 's' },
+			{ type: 'file-history-snapshot', messageId: 'm', snapshot: {} },
+			{ type: 'mode', mode: 'normal', sessionId: 's' },
+			{ type: 'permission-mode', permissionMode: 'default', sessionId: 's' },
+		]) {
+			expect(provesTurnStarted(row, runStartedAt)).toBe(false);
+		}
 	});
 });
