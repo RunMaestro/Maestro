@@ -84,6 +84,7 @@ import {
 	hostHandOverClock,
 	nextHostHandOverDeadline,
 	onHostedTabLineChanged,
+	pruneHostHandOvers,
 } from '../utils/hostedTabLine';
 
 /** The mirror's view of the agent a record points at, or undefined when it holds none. */
@@ -264,6 +265,7 @@ export function syncHostedAgents(): void {
 		dropStaleAutoRuns(new Set());
 		pruneHostStartedMentions(new Set());
 		pruneHostedLinkLoss(new Set());
+		pruneHostHandOvers(new Set());
 		pruneHostedTabBooks(useSessionStore.getState().sessions);
 		hostConnected.clear();
 		releaseHostedAgents();
@@ -278,6 +280,7 @@ export function syncHostedAgents(): void {
 	);
 	if (!usePeerMirrorStore.getState().enabled) {
 		pruneHostedLinkLoss(new Set());
+		pruneHostHandOvers(new Set());
 		pruneHostedTabBooks(useSessionStore.getState().sessions);
 		hostConnected.clear();
 		return;
@@ -356,6 +359,8 @@ export function syncHostedAgents(): void {
 	dropStaleAutoRuns(hostedIds);
 	// A deleted agent, one moved back, or one whose peer was removed lets go of its cut turns.
 	pruneHostedLinkLoss(hostedIds);
+	// ...and of the host-queue hand-overs, whose limits arm the recheck (U6).
+	pruneHostHandOvers(hostedIds);
 	// ...and of what the pending-tab path keeps for its tabs (R28).
 	pruneHostedTabBooks(sessions);
 	for (const id of hostConnected.keys()) if (!hostedIds.has(id)) hostConnected.delete(id);

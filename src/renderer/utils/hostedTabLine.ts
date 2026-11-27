@@ -146,6 +146,17 @@ export function nextHostHandOverDeadline(): number | undefined {
 	return soonest;
 }
 
+/**
+ * Forget the hand-overs of agents the sync no longer draws (deleted, moved back, hosting off, no
+ * mirror): only a drawn agent's limit may arm the recheck, or a record no projection reads again
+ * would re-arm it at once, for ever (CodeRabbit on #2166).
+ */
+export function pruneHostHandOvers(drawnSessionIds: ReadonlySet<string>): void {
+	for (const sessionId of [...handOversSeen.keys()]) {
+		if (!drawnSessionIds.has(sessionId)) handOversSeen.delete(sessionId);
+	}
+}
+
 /** Test only: forget every line and every hand-over seen. */
 export function resetHostedTabLinesForTest(): void {
 	lines.clear();
