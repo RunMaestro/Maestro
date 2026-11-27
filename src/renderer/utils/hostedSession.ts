@@ -247,12 +247,14 @@ export const HOST_COPY_CLOCK_SKEW_MS = 5_000;
  * cleared when the host refuses), so an earlier message with the same words, read in now, is not
  * this one. The mirror holds no reading of the host's clock, so the bound absorbs a host clock
  * that runs behind this one (an older desktop host, a retry the moment the link is back). A kept
- * bubble waits for its own copy.
+ * bubble waits for its own copy. Each copy that takes a bubble's place is recorded in `placed`,
+ * under the copy's id, at the bubble's time, so it is drawn where the bubble was (R33).
  */
 function withoutKeptCopies(
 	older: LogEntry[],
 	host: readonly LogEntry[],
-	local: readonly LogEntry[]
+	local: readonly LogEntry[],
+	placed: Map<string, number>
 ): LogEntry[] {
 	if (!older.some((entry) => entry.keptForHost)) return older;
 	const drawn = new Set(local.map((entry) => entry.id));
@@ -270,10 +272,61 @@ function withoutKeptCopies(
 				copy.timestamp >= Math.max(entry.timestamp, sentAt) - HOST_COPY_CLOCK_SKEW_MS
 		);
 		if (at === -1) return true;
+		placed.set(copies[at].id, entry.timestamp);
 		copies.splice(at, 1);
 		return false;
 	});
 }
+
+/**
+ * Where this tab drew each kept message, by id: a bubble still kept (the host may take it under
+ * the same id) and an entry an earlier pass drew at a kept bubble's place (`keptPlace`).
+ */
+function keptPlaces(local: readonly LogEntry[]): Map<string, number> {
+	const places = new Map<string, number>();
+	for (const entry of local) {
+		if (entry.keptPlace !== undefined) places.set(entry.id, entry.keptPlace);
+		else if (entry.keptForHost) places.set(entry.id, entry.timestamp);
+	}
+	return places;
+}
+
+/**
+ * The host's copies of kept messages drawn where their bubbles were, as an SSH agent's kept message
+ * stays above its retry card and the "Connection restored" note (R33). The host stamps its copy
+ * when it takes the resend, after the card: drawn at that time it would sit below the card. A user
+ * entry with a place (`placed` this pass, or `drawnAt` from an earlier one) earlier than its own
+ * time is drawn at that place (`keptPlace`). Answers the entries that keep the host's time and the
+ * ones moved, in their own order.
+ */
+function atKeptPlace(
+	entries: readonly LogEntry[],
+	drawnAt: ReadonlyMap<string, number>,
+	placed: ReadonlyMap<string, number>
+): { stay: readonly LogEntry[]; moved: LogEntry[] } {
+	if (drawnAt.size === 0 && placed.size === 0) return { stay: entries, moved: [] };
+	const stay: LogEntry[] = [];
+	const moved: LogEntry[] = [];
+	for (const entry of entries) {
+		const at =
+			entry.source === 'user' ? (placed.get(entry.id) ?? drawnAt.get(entry.id)) : undefined;
+		if (at === undefined || at >= entry.timestamp) stay.push(entry);
+		else moved.push(atPlace(entry, at));
+	}
+	return { stay, moved };
+}
+
+/** `entry` drawn at `at`, as one object per entry and place across merges (R29). */
+function atPlace(entry: LogEntry, at: number): LogEntry {
+	const cached = placedCopies.get(entry);
+	if (cached?.keptPlace === at) return cached;
+	const copy = { ...entry, timestamp: at, keptPlace: at };
+	placedCopies.set(entry, copy);
+	return copy;
+}
+
+/** The copies `atPlace()` made of a host entry. */
+const placedCopies = new WeakMap<LogEntry, LogEntry>();
 
 /**
  * A tab's transcript with the host's folded in. `persisted` undefined (never read) keeps the local
@@ -300,7 +353,13 @@ export function mergeHostedLogs(
 		.map(rewritten)
 		.map((entry) =>
 			entry.keptForHost && hostHolds(entry)
-				? { ...entry, keptForHost: undefined, keptSentAt: undefined }
+				? {
+						...entry,
+						keptForHost: undefined,
+						keptSentAt: undefined,
+						// Still drawn where it was kept once the host saves it under this id (R33).
+						keptPlace: entry.keptPlace ?? entry.timestamp,
+					}
 				: entry
 		);
 	const hostEntries = persisted ? persistedView(persisted).map(rewritten) : [];
@@ -314,15 +373,25 @@ export function mergeHostedLogs(
 		live.push({ ...mirrorLogEntry(record), hostLive: true });
 	}
 	const fromHost = new Set([...hostIds, ...live.map((entry) => entry.id)]);
-	const shown = withoutKeptCopies(older, [...hostEntries, ...live], local);
-	const next = withAnswerDelivery([...byTime(shown, hostEntries), ...live], fromHost);
+	const placed = new Map<string, number>();
+	const shown = withoutKeptCopies(older, [...hostEntries, ...live], local, placed);
+	// A kept message's host copy is drawn where its bubble was, above the retry card (R33).
+	const drawnAt = keptPlaces(local);
+	const saved = atKeptPlace(hostEntries, drawnAt, placed);
+	const tailed = atKeptPlace(live, drawnAt, placed);
+	const moved = [...saved.moved, ...tailed.moved].sort((a, b) => a.timestamp - b.timestamp);
+	// A tie goes to the moved copy: its bubble was drawn before the card raised in the same moment.
+	const here = moved.length > 0 ? byTime(moved, shown) : shown;
+	const next = withAnswerDelivery([...byTime(here, saved.stay), ...tailed.stay], fromHost);
 	if (sameIds(next, local)) {
 		// Same entries in the same order: keep the old array unless a live entry's text moved on,
 		// its tool card did, or a message's delivered tick did. `mirrorLogEntry()` builds a new
 		// `metadata` object on every pass, so a tool card is compared by value: by identity it would
 		// never match, every pass would write, and the sync that follows the store would never settle.
-		const liveChanged = live.some((entry, i) => {
-			const prior = local[older.length + hostEntries.length + i];
+		// Same ids at the same places, so each live entry's prior is at its own index in `next`.
+		const liveChanged = next.some((entry, i) => {
+			if (!entry.hostLive) return false;
+			const prior = local[i];
 			return prior?.text !== entry.text || !sameMetadata(prior?.metadata, entry.metadata);
 		});
 		const tickChanged = next.some((entry, i) => !!entry.delivered !== !!local[i].delivered);

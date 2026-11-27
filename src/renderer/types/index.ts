@@ -255,6 +255,11 @@ export interface LogEntry {
 	 * message with the same words be taken as its copy; cleared when the host refused it again.
 	 */
 	keptSentAt?: number;
+	/**
+	 * The time a kept message's bubble was drawn: the host's entry that replaced it is drawn there,
+	 * above the retry card, as an SSH agent's kept message is, not at the host's later time.
+	 */
+	keptPlace?: number;
 	// One union shared with the on-disk record (`LogEntryRecord`) every client reads.
 	source: LogEntrySource;
 	text: string;
