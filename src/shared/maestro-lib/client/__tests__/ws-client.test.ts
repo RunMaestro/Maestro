@@ -1755,18 +1755,29 @@ describe('createWsMaestroClient', () => {
 				expect(bridge.sent('list_queue')).toHaveLength(1);
 			});
 
-			it('reads again when its read answers older than a change that came while it was out', async () => {
+			it('applies the changes that came while its whole read was out over the answer, so the last list is at the newest change (CodeRabbit on #2162)', async () => {
 				await connect();
-				bridge.typed.set('list_queue', listAt(1, [item]));
-				const change = (seq: number) => ({
+				bridge.typed.set('list_queue', listAt(4, [item]));
+				// A change this client cannot apply, then one sent while its read is out.
+				bridge.push({
 					type: 'queue_changed',
 					sessionId: A1,
-					changes: { seq, base: seq - 1, order: ['q1'], changed: [] },
+					changes: { seq: 4, base: 3, order: ['q1'], changed: [] },
 				});
-				bridge.push(change(5));
-				bridge.push(change(6));
-				await vi.waitFor(() => expect(queueEvents()).toHaveLength(1));
-				expect(bridge.sent('list_queue')).toHaveLength(2);
+				bridge.push({
+					type: 'queue_changed',
+					sessionId: A1,
+					namesExits: true,
+					changes: { seq: 5, base: 4, order: ['q1', 'q2'], changed: [{ ...item, id: 'q2' }] },
+				});
+				await vi.waitFor(() => expect(queueEvents()).toHaveLength(2));
+				expect(queueEvents()[0]).toMatchObject({ items: [{ itemId: 'q1' }] });
+				expect(queueEvents()[0]).not.toHaveProperty('namesExits');
+				expect(queueEvents()[1]).toMatchObject({
+					namesExits: true,
+					items: [{ itemId: 'q1' }, { itemId: 'q2' }],
+				});
+				expect(bridge.sent('list_queue')).toHaveLength(1);
 			});
 
 			it('never applies a change from a frame it cannot read, and keeps reading whole frames', async () => {
