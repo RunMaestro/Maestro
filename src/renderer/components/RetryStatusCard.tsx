@@ -19,7 +19,14 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Check, RefreshCw, X, Zap } from 'lucide-react';
 
-import { useRetryStore, useRetryStatus, retryNow, cancelRetry } from '../stores/retryStore';
+import {
+	useRetryStore,
+	useRetryStatus,
+	retryNow,
+	cancelRetry,
+	HOST_HAD_MESSAGE_TEXT,
+	notOnHostText,
+} from '../stores/retryStore';
 import { formatDurationHuman } from '../../shared/formatters';
 import { describeQuotaWindow } from '../../shared/quotaLimitDetail';
 import { activeStatusHalo, getConnectingColor } from '../utils/theme';
@@ -150,9 +157,13 @@ export function RetryStatusCard({
 				<span>
 					<span className="font-medium">{headline}</span>{' '}
 					<span style={{ color: theme.colors.textDim }}>
-						{connectionLost
-							? `Sent after ${retries}${over}, once the link was back.`
-							: `${strategyLabel} cleared after ${retries}${over}.`}
+						{connectionLost && outage.settledByHost
+							? outage.notOnHost
+								? notOnHostText(outage.notOnHost)
+								: HOST_HAD_MESSAGE_TEXT
+							: connectionLost
+								? `Sent after ${retries}${over}, once the link was back.`
+								: `${strategyLabel} cleared after ${retries}${over}.`}
 					</span>
 				</span>
 			</div>

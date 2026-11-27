@@ -600,6 +600,12 @@ export interface QueuedItem {
 	 * never run here. Remove and Hold / Resume act on the host.
 	 */
 	hostQueued?: boolean;
+	/**
+	 * A hosted agent's message that is already an entry in its host's transcript (or drawn here):
+	 * the send names it (`TurnInput.entryId`), so the message is drawn once. Set on the message of a
+	 * turn a lost link cut, kept for a resend (`noteHostedTurnsCut()`).
+	 */
+	hostEntryId?: string;
 	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
 	pendingAdmissionId?: string;
 	/** Host-journaled release revision. Pending ID remains provenance and a

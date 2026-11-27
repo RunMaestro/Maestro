@@ -726,6 +726,69 @@ export interface TurnBegin {
 	consumedMergedContext: boolean;
 }
 
+/** A user message as a resend names it (`TurnInput.entryId`): its entry id, text, and images. */
+export interface SentUserEntry {
+	id: string;
+	text: string;
+	images?: readonly string[];
+}
+
+/**
+ * Whether `candidate` is the user message `entry`: the same id, a user entry, and the same text and
+ * images. A resend of it is that entry. A stored entry is not checked on load: a malformed
+ * `images` reads as another message. An id alone never matches.
+ */
+export function isSameUserEntry(candidate: unknown, entry: SentUserEntry): boolean {
+	const existing = candidate as Partial<LogEntryRecord> | null;
+	if (!existing || existing.id !== entry.id || existing.source !== 'user') return false;
+	if (existing.images !== undefined && !Array.isArray(existing.images)) return false;
+	const held = existing.images ?? [];
+	const sent = entry.images ?? [];
+	return (
+		existing.text === entry.text &&
+		held.length === sent.length &&
+		held.every((image, i) => image === sent[i])
+	);
+}
+
+/** The transcript sources that say a turn ended: its answer, or its own error. */
+export const TURN_ENDED_SOURCES: ReadonlySet<string> = new Set(['stdout', 'ai', 'error']);
+
+/**
+ * Whether the turn of the user message at `at` in `logs` ended: an answer or an error follows it
+ * before the next user message. An answer after a LATER user message is that message's, never
+ * this one's: a message whose turn died, followed by another that was answered, did not run.
+ */
+export function turnEndedAfter(logs: readonly unknown[], at: number): boolean {
+	for (let i = at + 1; i < logs.length; i += 1) {
+		const source = (logs[i] as Partial<LogEntryRecord> | null)?.source;
+		if (source === 'user') return false;
+		if (typeof source === 'string' && TURN_ENDED_SOURCES.has(source)) return true;
+	}
+	return false;
+}
+
+/**
+ * Whether `logs` hold the user message `entry` with the end of its own turn after it (an answer or
+ * an error before the next user message, `turnEndedAfter()`): that message already ran, so a
+ * resend of it must not run again.
+ */
+export function userEntryAnswered(logs: readonly unknown[], entry: SentUserEntry): boolean {
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
+	return at !== -1 && turnEndedAfter(logs, at);
+}
+
+/**
+ * `logs` with the message a turn starts on. A resend of a message the transcript already holds
+ * (`TurnInput.entryId`: the same id, and the same user message, text and images) is that entry:
+ * the transcript stays as it is. An id alone never drops a message.
+ */
+function withUserEntry(logs: readonly unknown[], entry: LogEntryRecord): unknown[] {
+	const sent: SentUserEntry = { id: entry.id, text: entry.text, images: entry.images };
+	const held = logs.some((candidate) => isSameUserEntry(candidate, sent));
+	return held ? [...logs] : [...logs, entry];
+}
+
 /**
  * A tab with a turn started on it: the message is in the transcript (so a crash cannot cost the
  * person what they typed), `turnProvider` names who owns the turn's late events, and a merged
@@ -738,7 +801,7 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 		...base,
 		turnProvider: begin.provider,
 		runtimeTurnId: begin.turnId,
-		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), begin.userEntry],
+		logs: withUserEntry(Array.isArray(tab.logs) ? tab.logs : [], begin.userEntry),
 	};
 }
 
