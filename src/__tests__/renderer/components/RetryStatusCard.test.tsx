@@ -90,6 +90,23 @@ describe('RetryStatusCard', () => {
 		expect(screen.queryByText(/overloaded/i)).not.toBeInTheDocument();
 	});
 
+	it('says the host already had the message when it was not sent again (R13)', () => {
+		setOutage({
+			cause: 'connection',
+			status: 'recovered',
+			settledByHost: true,
+			attempts: 0,
+			startedAt: NOW,
+			resolvedAt: NOW + 5_000,
+		});
+		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);
+		expect(screen.getByText('Connection restored.')).toBeInTheDocument();
+		expect(
+			screen.getByText('The host already had this message, so it was not sent again.')
+		).toBeInTheDocument();
+		expect(screen.queryByText(/Sent after/)).not.toBeInTheDocument();
+	});
+
 	it('says the link was still down when a connection retry is stopped (R6)', () => {
 		setOutage({ cause: 'connection', status: 'stopped', attempts: 2, resolvedAt: NOW + 1 });
 		render(<RetryStatusCard outageId="o1" theme={mockTheme} />);

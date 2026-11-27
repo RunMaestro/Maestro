@@ -183,10 +183,35 @@ export interface OutageRecord {
 	 * instead of "Service overloaded". Undefined for a provider outage.
 	 */
 	cause?: OutageCause;
+	/**
+	 * The kept message was not sent again because the hosted agent's host already had it: the turn
+	 * a lost link cut was still running there, or had finished (`settleRetryOnHost()`). The card
+	 * says so instead of "Sent after n retries".
+	 */
+	settledByHost?: boolean;
+	/**
+	 * Set with `settledByHost` when the kept message was not sent because the host no longer has
+	 * what it named: its tab was closed there (`tab`), or the message is gone from that tab (a
+	 * clear, `message`). Nothing was sent, and the message stays held in the queue to send again.
+	 */
+	notOnHost?: NotOnHost;
 }
 
 /** See `OutageRecord.cause`. */
 export type OutageCause = 'connection';
+
+/** See `OutageRecord.notOnHost`. */
+export type NotOnHost = 'tab' | 'message';
+
+/** What the card and the toast say when a kept message was not sent: the host had it. */
+export const HOST_HAD_MESSAGE_TEXT = 'The host already had this message, so it was not sent again.';
+
+/** What the card and the toast say when a kept message was not sent: the host lost what it named. */
+export function notOnHostText(notOnHost: NotOnHost): string {
+	return notOnHost === 'tab'
+		? 'Its tab is no longer on the host, so the message was not sent. It is held in the queue for you to send again.'
+		: 'The message is no longer on the host (its tab was cleared), so it was not sent. It is held in the queue for you to send again.';
+}
 
 /** The cause an outage card names for `error`: the link (SSH or hosted host), or the provider. */
 export function outageCauseOf(error: AgentError): OutageCause | undefined {
@@ -644,6 +669,15 @@ function resolveStrategy(sessionId: string, error: ClassifiableError): RetryStra
 		return null;
 	}
 	return strategy;
+}
+
+/**
+ * Whether `error` on this agent would be taken over by an automatic retry (the error is retryable
+ * and the agent's resilience toggle for it is on), without scheduling anything. A caller that keeps
+ * a message only when the retry card will stand for it asks this first.
+ */
+export function wouldAutoRetry(sessionId: string, error: ClassifiableError): boolean {
+	return resolveStrategy(sessionId, error) !== null;
 }
 
 /**
@@ -1749,6 +1783,40 @@ export function clearRetryIfSettled(sessionId: string, tabId: string): void {
  */
 export function noteRetryProgress(sessionId: string, tabId: string): void {
 	recoverInFlightRetry(sessionId, tabId, 'Resend is producing output; outage recovered');
+}
+
+/**
+ * End this tab's outage because the message it keeps is not owed any more: a hosted agent's host
+ * already had it (the turn a lost link cut was still running there, or had finished). Nothing is
+ * sent again: the held copy leaves the queue, the retry ends as recovered with the card saying the
+ * host had it (`OutageRecord.settledByHost`), and the tab's retryable error clears. Works whether
+ * the retry is still counting down or its resend is waiting for this answer. Answers whether there
+ * was an outage to end.
+ *
+ * With `notOnHost` the host no longer has the tab or the message the kept copy named: nothing is
+ * sent there either, but the copy is NOT released. The caller parks it held, so the user can send
+ * it again, and the card says what happened (`OutageRecord.notOnHost`).
+ */
+export function settleRetryOnHost(
+	sessionId: string,
+	tabId: string,
+	notOnHost?: NotOnHost
+): boolean {
+	const key = keyFor(sessionId, tabId);
+	const entry = useRetryStore.getState().retries[key];
+	if (!entry) return false;
+	logger.info('[retry] The host already had the kept message; not sending it again', undefined, {
+		key,
+		notOnHost,
+	});
+	if (entry.heldItemId && !notOnHost) releaseHeldItemFromQueue(sessionId, entry.heldItemId);
+	useRetryStore
+		.getState()
+		.patchOutage(entry.outageId, { settledByHost: true, ...(notOnHost ? { notOnHost } : {}) });
+	resolveOutage(entry.outageId, 'recovered');
+	removeEntry(key);
+	clearTabAgentError(sessionId, tabId, entry.lastMessage);
+	return true;
 }
 
 /**
