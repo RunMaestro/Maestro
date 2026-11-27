@@ -9,6 +9,7 @@ import {
 	turnFateAfter,
 	isUserTurnStart,
 	userTurnSpan,
+	runningTurnMessageIndex,
 	agentsMovingWithParent,
 	withAgentInGroup,
 	applyAgentConfigPatch,
@@ -1540,6 +1541,68 @@ describe('isUserTurnStart', () => {
 		expect(turnFateAfter(finishedB, 0, 'headless')).toBe('answered');
 		expect(turnFateAfter(finishedB, 1, 'headless')).toBe('answered');
 	});
+
+	// Parity R63 (a): the first turn's end landed on the steer, then the steer's own follow-up
+	// answered with nothing that stays: the host stamps that end on the steer as the follow-up's
+	// message, and the reader takes it as the steer's own empty end, never as unended for good.
+	it("reads a queued steer's own empty end on top of the earlier turn's end on it (R63)", () => {
+		const endedOn = markTurnEnded([u1, partialA, steer], 0, 10);
+		expect(endedOn[2]).toMatchObject({ turnEnded: true, turnEndedAt: 10 });
+		expect(endedOn[2]).not.toHaveProperty('steerTurnEnded');
+		expect(turnFateAfter(endedOn, 2, 'desktop')).toBe('unended');
+		// The follow-up is the turn that runs now, and its empty end goes on the steer.
+		expect(runningTurnMessageIndex(endedOn)).toBe(2);
+		const ownEnd = markTurnEnded(endedOn, runningTurnMessageIndex(endedOn), 20);
+		expect(ownEnd[2]).toMatchObject({ turnEnded: true, turnEndedAt: 20, steerTurnEnded: true });
+		for (const hostKind of ['desktop', 'headless'] as const) {
+			expect(turnFateAfter(ownEnd, 0, hostKind)).toBe('answered');
+			expect(turnFateAfter(ownEnd, 2, hostKind)).toBe('answered');
+		}
+		expect(userTurnSpan(ownEnd, 0)).toEqual({ from: 1, to: 3 });
+		// A later queued steer's answer, stamped after the steer's own end, is never the first turn's.
+		const later = {
+			...steer,
+			id: 'c',
+			timestamp: 30,
+			text: 'And the tests',
+		};
+		const afterOwn = [
+			...ownEnd,
+			later,
+			{ ...partialB, id: 'oc', timestamp: 31, turnEnded: true, turnEndedAt: 32 },
+		];
+		expect(userTurnSpan(afterOwn, 0)).toEqual({ from: 1, to: 3 });
+		expect(turnFateAfter(afterOwn, 2, 'desktop')).toBe('answered');
+		expect(turnFateAfter(afterOwn, 3, 'desktop')).toBe('answered');
+	});
+
+	it('keeps the first turn running and the steer not begun until the first turn ends (R63)', () => {
+		expect(runningTurnMessageIndex([u1, partialA, steer])).toBe(0);
+		expect(runningTurnMessageIndex([u1, partialA, steer, endA])).toBe(2);
+		// A steer folded into the turn never runs a turn of its own.
+		expect(runningTurnMessageIndex([u1, partialA, { ...steer, steerState: 'absorbed' }])).toBe(0);
+		expect(runningTurnMessageIndex([partialA])).toBe(-1);
+	});
+
+	// Parity R63 (b): a steer written just after the first turn ended, behind its trailing thinking
+	// or tool cards (a tab that keeps them), starts its turn there: the stamp is before the cards.
+	it.each(['thinking', 'tool'] as const)(
+		"reads the earlier turn's end behind trailing %s cards as before the steer (R63)",
+		(source) => {
+			const card = { id: 'k', timestamp: 2.5, source, text: 'Reading files' };
+			const logs = [
+				u1,
+				// The stamp went on the text when the turn exited, after the card.
+				{ ...partialA, turnEnded: true, turnEndedAt: 2.6 },
+				card,
+				steer,
+				{ ...partialB, turnEnded: true },
+			];
+			expect(userTurnSpan(logs, 3)).toEqual({ from: 4, to: 5 });
+			expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+			expect(turnFateAfter(logs, 3, 'desktop')).toBe('answered');
+		}
+	);
 
 	it("has the steer's turn not begun while the turn it was sent into still runs", () => {
 		const logs = [u1, partialA, steer];

@@ -811,6 +811,12 @@ export function markTurnEnded<T extends object>(
 			...entries[i],
 			turnEnded: true,
 			...(endedAt !== undefined ? { turnEndedAt: endedAt } : {}),
+			// A queued steer stamped as its own turn's message: that follow-up ended with nothing of
+			// its own that stays. Its stamp may already be the end of the turn it was steered into
+			// (`steerParentEnd()`), so the reader is told which (R63 a).
+			...(i === from && queuedSteer(entries[i] as Partial<LogEntryRecord>)
+				? { steerTurnEnded: true }
+				: {}),
 		};
 		return next;
 	};
@@ -886,6 +892,21 @@ export function userTurnSpan(
 }
 
 /**
+ * The index of the user message whose turn runs now in `logs`, or -1: the latest that starts a
+ * turn (`isUserTurnStart()`) whose turn has begun (`userTurnSpan()`). A queued steer written while
+ * the turn before it runs is not it until that turn's end is stamped; from then on its follow-up
+ * is, so a host stamps that follow-up's end on the steer's turn, never the earlier one (R63 a).
+ */
+export function runningTurnMessageIndex(logs: readonly unknown[]): number {
+	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	for (let i = entries.length - 1; i >= 0; i -= 1) {
+		if (!isUserTurnStart(entries[i])) continue;
+		if (!queuedSteer(entries[i]) || userTurnSpan(entries, i) !== null) return i;
+	}
+	return -1;
+}
+
+/**
  * Where the turn a queued steer at `at` was steered into ended, relative to the steer: `before`
  * (it had ended when the steer was written: its last entry before the steer is stamped), the
  * index of its stamp after the steer (it ran on past the steer, the usual order), `on` (its end
@@ -899,18 +920,42 @@ function steerParentEnd(
 ): 'before' | 'on' | 'running' | number {
 	for (let i = at - 1; i >= 0; i -= 1) {
 		const entry = entries[i];
-		// A note this machine or the host writes is about a turn, never part of one.
-		if (entry?.source === 'system' && entry.turnEnded !== true) continue;
+		// A note this machine or the host writes is about a turn, never part of one; a thinking or
+		// tool card is never stamped (`markTurnEnded()` steps over it), so the stamp is before it
+		// (R63 b).
+		if (
+			(entry?.source === 'system' || entry?.source === 'thinking' || entry?.source === 'tool') &&
+			entry.turnEnded !== true
+		) {
+			continue;
+		}
 		if (entry?.turnEnded === true) return 'before';
 		break;
 	}
-	if (entries[at]?.turnEnded === true) return 'on';
+	const steer = entries[at];
+	// The steer's own follow-up ended on it (`steerTurnEnded`): its stamp says nothing about the
+	// turn before it, which then ended on it too, unless a stamp after it from before that end is
+	// that turn's (R63 a).
+	const ownEndAt = steer?.steerTurnEnded === true ? stampedAt(steer) : undefined;
+	if (steer?.turnEnded === true && ownEndAt === undefined) return 'on';
 	for (let i = at + 1; i < entries.length; i += 1) {
 		const entry = entries[i];
 		if (entry?.source === 'user' && entry.steered !== true) break;
-		if (entry?.turnEnded === true && !queuedSteer(entry)) return i;
+		if (entry?.turnEnded === true && !queuedSteer(entry)) {
+			// A stamp after the steer's own end belongs to a later turn.
+			return ownEndAt !== undefined && stampedAt(entry) > ownEndAt ? 'on' : i;
+		}
 	}
-	return 'running';
+	return ownEndAt !== undefined ? 'on' : 'running';
+}
+
+/** When a stamped entry's turn ended: its `turnEndedAt`, else its own time. */
+function stampedAt(entry: Partial<LogEntryRecord>): number {
+	return typeof entry.turnEndedAt === 'number'
+		? entry.turnEndedAt
+		: typeof entry.timestamp === 'number'
+			? entry.timestamp
+			: Number.NEGATIVE_INFINITY;
 }
 
 /**
@@ -934,10 +979,12 @@ export function turnFateAfter(
 ): TurnFate {
 	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
 	// A queued steer's stamp is the end of the turn it was steered into when that turn's end
-	// landed on it (`steerParentEnd()`), never its own then.
+	// landed on it (`steerParentEnd()`), never its own then, unless its own follow-up ended on it
+	// as well (`steerTurnEnded`, R63 a).
 	const ownStamp =
 		entries[at]?.turnEnded === true &&
-		!(queuedSteer(entries[at]) && steerParentEnd(entries, at) === 'on');
+		(entries[at]?.steerTurnEnded === true ||
+			!(queuedSteer(entries[at]) && steerParentEnd(entries, at) === 'on'));
 	let ended: TurnFate | undefined = ownStamp ? 'answered' : undefined;
 	// The message itself stamped as ended after every entry of its turn: an attempt that answered
 	// with nothing that stays, after the attempts before it (`markTurnEnded()` with `endedAt`).
@@ -984,12 +1031,7 @@ export function turnFateAfter(
 		if (entry?.turnEnded === true) {
 			ended = errored ? 'errored' : stopped ? 'stopped' : 'answered';
 			errored = stopped = output = pending = false;
-			lastEndAt =
-				typeof entry.turnEndedAt === 'number'
-					? entry.turnEndedAt
-					: typeof entry.timestamp === 'number'
-						? entry.timestamp
-						: Number.NEGATIVE_INFINITY;
+			lastEndAt = stampedAt(entry);
 		}
 	}
 	if (typeof emptyEndAt === 'number' && emptyEndAt >= latestAt) return 'answered';

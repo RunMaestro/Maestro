@@ -293,6 +293,9 @@ export interface LogEntry {
 	turnEnded?: boolean;
 	// On a user message: when its turn's latest attempt ended with nothing of its own that stays
 	turnEndedAt?: number;
+	// On a queued steer: its own follow-up turn ended on it with nothing of its own that stays
+	// (`markTurnEnded()`); its `turnEnded` may also be the end of the turn it was steered into
+	steerTurnEnded?: boolean;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
 	// For user messages - the sender's own save to History choice for this turn (Federation

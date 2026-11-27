@@ -90,6 +90,12 @@ export interface LogEntryRecord extends UnknownFields {
 	 */
 	turnEndedAt?: number;
 	/**
+	 * On a queued steer (`steerState: 'queued'`): its own follow-up turn ended with nothing of its
+	 * own that stays, so the end went on the steer (`markTurnEnded()`). Its `turnEnded` may also be
+	 * the end of the turn it was steered into; this tells the reader the steer's own turn ended too.
+	 */
+	steerTurnEnded?: boolean;
+	/**
 	 * A desktop's Agent Resilience card: the turn's error was taken over by that desktop's own
 	 * automatic retry, and this is the id of its outage (`RetryStatusCard`). A Federation client
 	 * reading a hosted tab tells from it that the host retries the message itself (`hostRetriesTurn()`).
