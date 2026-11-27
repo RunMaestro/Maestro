@@ -1596,6 +1596,192 @@ describe('runtime turns', () => {
 				expect(argvFiles).toHaveLength(1);
 			});
 
+			// Parity R37: the turn ended on the provider's own error. Its resend is the retry of that
+			// error (the sender retries it by the error's rule, as a local agent does): it runs, into the
+			// same entry. A turn the person stopped never runs again.
+			it('runs the resend of a message whose turn ended on a provider error, into its entry', async () => {
+				const FAILED = {
+					id: 'e1',
+					timestamp: 2,
+					source: 'error',
+					text: 'API Error: 529 overloaded',
+					turnEnded: true,
+				};
+				const runtime = await start([cutTab([QUESTION, FAILED])]);
+				const turn = watch(runtime);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).not.toEqual({ status: 'answered' });
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+				const entries = await transcript(runtime);
+				expect(entries.filter((entry) => entry.source === 'user').map((e) => e.id)).toEqual(['u1']);
+			});
+
+			it('answers "already ran" for the resend of a message whose turn the person stopped', async () => {
+				const STOPPED = {
+					id: 's1',
+					timestamp: 2,
+					source: 'system',
+					text: 'Canceled by user',
+					turnEnded: true,
+				};
+				const runtime = await start([cutTab([QUESTION, STOPPED])]);
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(argvFiles).toHaveLength(0);
+			});
+
+			// Parity R31: the sender lost the link while the turn ran, and the turn still runs here.
+			it('answers "already ran" for the resend of the message the tab is running now', async () => {
+				hold = true;
+				const runtime = await start([cutTab([])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.started();
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
+			// Greptile on #2167: the message's saved entry is reused by a recovery turn (the host
+			// restarted with it unanswered). A resend while that turn runs is the message it runs.
+			it('answers "already ran" for the resend of a saved message its recovery turn is running', async () => {
+				hold = true;
+				const runtime = await start([cutTab([{ ...QUESTION, queuedItemId: 'old-turn' }])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }));
+				await turn.started();
+				expect(
+					value(await runtime.turns.send('a1', 't1', { text: 'Summarize the docs', entryId: 'u1' }))
+				).toEqual({ status: 'answered' });
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome();
+				expect(argvFiles).toHaveLength(1);
+			});
+
+			/** How many provider turns ran a message with these words (a History synopsis is not one). */
+			const runsOf = (text: string) =>
+				launched.filter((turn) => (turn as { entry?: { text?: string } }).entry?.text === text)
+					.length;
+
+			// CodeRabbit on #2167: two resends of a message that wait behind another turn. The first
+			// runs it; the second, when its turn comes, never runs the message again.
+			it('never runs a waiting resend of a message an earlier copy ran while it waited', async () => {
+				hold = true;
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Something else first' }));
+				await turn.started();
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				expect(value(await runtime.turns.send('a1', 't1', resend))).toMatchObject({
+					status: 'queued',
+				});
+				expect(value(await runtime.turns.send('a1', 't1', resend))).toMatchObject({
+					status: 'queued',
+				});
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(2);
+				// Long enough for the second resend to have started a third run, were it to run.
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				// One run for the other message, one for this one: never a second for this one.
+				expect(turn.outcomes()).toHaveLength(2);
+				expect(runsOf('Summarize the docs')).toBe(1);
+			});
+
+			// CodeRabbit on #2167: copy A of a message ends on its own error while a held copy C still
+			// waits. The retry of that error is admitted (an errored turn is not answered) and must run
+			// into the entry, not be dropped as a copy of a message that already ran.
+			it('runs the retry of a copy that ended on its own error while a held copy waits', async () => {
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				// C waits, held; A runs at once and ends on its own error.
+				value(await runtime.turns.send('a1', 't1', { ...resend, held: true }));
+				const answers = recordings['claude-code'];
+				recordings['claude-code'] = writeFakeTurn(work, {
+					chunks: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-x' }) + '\n'],
+					close: { code: 1, signal: null },
+				});
+				value(await runtime.turns.send('a1', 't1', resend));
+				await turn.outcome(1);
+				expect(
+					(await transcript(runtime)).map((entry) => [entry.source, !!entry.turnEnded])
+				).toEqual([
+					['user', false],
+					['error', true],
+				]);
+				recordings['claude-code'] = answers;
+				// The retry of that error: admitted, and it runs into the entry.
+				expect(value(await runtime.turns.send('a1', 't1', resend))).not.toEqual({
+					status: 'answered',
+				});
+				await turn.outcome(2);
+				expect(runsOf('Summarize the docs')).toBe(2);
+			});
+
+			// CodeRabbit on #2167: copies A, B and C of a message wait behind another turn, and B is
+			// edited. A runs the message; B is another message now and runs as its own entry; C, when
+			// its turn comes, is still known as the message A ran.
+			it('never runs a later copy of a message again after an edited copy ran between them', async () => {
+				hold = true;
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Something else first' }));
+				await turn.started();
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				value(await runtime.turns.send('a1', 't1', resend));
+				const edited = value(await runtime.turns.send('a1', 't1', resend)) as { itemId: string };
+				value(await runtime.turns.send('a1', 't1', resend));
+				value(
+					await runtime.turns.queue.edit('a1', edited.itemId, {
+						text: 'Summarize the docs, briefly',
+					})
+				);
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(3);
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				expect(runsOf('Summarize the docs')).toBe(1);
+				expect(runsOf('Summarize the docs, briefly')).toBe(1);
+				expect(turn.outcomes()).toHaveLength(3);
+			});
+
+			// CodeRabbit on #2167: a held copy keeps the record of the copy that ran, through other
+			// turns, and still never runs the message when it is resumed.
+			it('never runs a held resend of a message an earlier copy ran, resumed after other turns', async () => {
+				hold = true;
+				const runtime = await start([cutTab([QUESTION])]);
+				const turn = watch(runtime);
+				value(await runtime.turns.send('a1', 't1', { text: 'Something else first' }));
+				await turn.started();
+				const resend = { text: 'Summarize the docs', entryId: 'u1' };
+				value(await runtime.turns.send('a1', 't1', resend));
+				const held = value(await runtime.turns.send('a1', 't1', { ...resend, held: true }));
+				value(await runtime.turns.send('a1', 't1', { text: 'And then this' }));
+				hold = false;
+				value(await runtime.turns.interrupt('a1', 't1'));
+				await turn.outcome(3);
+				expect(runsOf('Summarize the docs')).toBe(1);
+				const heldId = (held as { itemId?: string }).itemId as string;
+				value(await runtime.turns.queue.setPaused('a1', heldId, false));
+				await new Promise((resolve) => setTimeout(resolve, 250));
+				expect(value(await runtime.turns.queue.list('a1'))).toEqual([]);
+				expect(turn.outcomes()).toHaveLength(3);
+				expect(runsOf('Summarize the docs')).toBe(1);
+			});
+
 			// Parity R23: an answer after a LATER message is that message's. The resend of a message
 			// whose own turn died runs, though the tab holds an answer further down.
 			it('runs the resend of a message when only a later message of the tab was answered', async () => {

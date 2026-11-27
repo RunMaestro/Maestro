@@ -70,6 +70,23 @@ export interface LogEntryRecord extends UnknownFields {
 	 * never by text or position (two messages with the same text, or an image-only message).
 	 */
 	queuedItemId?: string;
+	/**
+	 * The turn this entry belongs to ended here (answered, on its own error, or stopped): stamped by
+	 * the host on the turn's last entry when the turn ends (`markTurnEnded()`). A turn with no stamp
+	 * on a host that stamps did not end: it runs, or died with its host (`turnFateAfter()`).
+	 */
+	turnEnded?: boolean;
+	/**
+	 * On a user message: when its turn's latest attempt ended with nothing of its own that stays
+	 * (a retry into the same entry that answered empty), epoch ms (`markTurnEnded()`).
+	 */
+	turnEndedAt?: number;
+	/**
+	 * A desktop's Agent Resilience card: the turn's error was taken over by that desktop's own
+	 * automatic retry, and this is the id of its outage (`RetryStatusCard`). A Federation client
+	 * reading a hosted tab tells from it that the host retries the message itself (`hostRetriesTurn()`).
+	 */
+	retryOutageId?: string;
 	/** A custom AI command (`/commit`) this user message invoked. */
 	aiCommand?: { command: string; description: string };
 	metadata?: UnknownFields & {

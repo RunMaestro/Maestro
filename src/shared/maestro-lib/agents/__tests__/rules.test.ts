@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
 	activeAgentAfterRemoval,
 	addTabRecord,
+	hostRetriesTurn,
+	markTurnEnded,
+	tabRunsUserEntry,
+	turnFateAfter,
 	agentsMovingWithParent,
 	withAgentInGroup,
 	applyAgentConfigPatch,
@@ -38,6 +42,7 @@ import {
 	type RuleContext,
 } from '../rules';
 import type { AgentRecord, GroupRecord } from '../../store/records';
+import { TURN_CANCELED_NOTE } from '../../store/transcript';
 import type { NativeSessionBinding, ProviderTabSession } from '../providerSwap';
 
 function makeContext(): RuleContext {
@@ -1283,5 +1288,223 @@ describe('consult tab records', () => {
 		// The live slot belongs to codex now; the old provider's token is parked.
 		expect(after.agentSessionId).toBeNull();
 		expect(JSON.stringify(after.providerSessions)).toContain('sess-claude');
+	});
+});
+
+// Parity R36: one reader of how a message's turn ended, for both host kinds.
+describe('turnFateAfter', () => {
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
+	const partial = { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' };
+	const stamped = (entry: object) => ({ ...entry, turnEnded: true });
+	const error = { id: 'e1', timestamp: 3, source: 'error', text: 'Rate limited' };
+	const stop = { id: 's1', timestamp: 3, source: 'system', text: 'Canceled by user' };
+	const u2 = { id: 'u2', timestamp: 4, source: 'user', text: 'And the tests?' };
+	const a2 = stamped({ id: 'a2', timestamp: 5, source: 'ai', text: 'The tests...' });
+
+	it.each([
+		['an answer stamped', [u1, stamped(partial)], 'desktop', 'answered'],
+		['its own error stamped', [u1, partial, stamped(error)], 'desktop', 'errored'],
+		['the Stop note stamped', [u1, stamped(stop)], 'headless', 'stopped'],
+		['the message itself stamped (nothing of its own)', [stamped(u1)], 'headless', 'answered'],
+		['streamed text, no stamp, desktop', [u1, partial], 'desktop', 'unended'],
+		// Its text, then a later message: a turn written before the host stamped (CodeRabbit on #2167).
+		['streamed text, no stamp, then a later turn', [u1, partial, u2, a2], 'desktop', 'answered'],
+		[
+			'a headless turn from before stamping, then a stamped turn',
+			[u1, partial, u2, a2],
+			'headless',
+			'answered',
+		],
+		// A retry runs into the same entry: the LAST attempt decides (CodeRabbit on #2167).
+		[
+			'an errored attempt, then a retry answered',
+			[u1, stamped(error), stamped(partial)],
+			'desktop',
+			'answered',
+		],
+		[
+			'an answered attempt, then a retry that errored',
+			[u1, stamped(partial), stamped(error)],
+			'headless',
+			'errored',
+		],
+		[
+			'an errored attempt, then a retry mid-stream',
+			[u1, stamped(error), partial],
+			'desktop',
+			'unended',
+		],
+		// An empty retry after an errored attempt: its end is on the message, timed after it.
+		[
+			'an errored attempt, then a retry that answered empty',
+			[{ ...stamped(u1), turnEndedAt: 9 }, stamped(error)],
+			'headless',
+			'answered',
+		],
+		[
+			'an empty attempt, then a retry that errored',
+			[{ ...stamped(u1), turnEndedAt: 2 }, stamped(error)],
+			'headless',
+			'errored',
+		],
+		// CodeRabbit on #2167: a retry's thinking or tool card after an earlier end is that retry,
+		// running or lost; a card of the same attempt written before its end is not.
+		[
+			'an errored attempt, then a retry that streamed a tool card',
+			[
+				u1,
+				{ ...stamped(error), turnEndedAt: 3 },
+				{ id: 't9', timestamp: 4, source: 'tool', text: '' },
+			],
+			'desktop',
+			'unended',
+		],
+		[
+			'an answer stamped before a card of the same attempt',
+			[
+				u1,
+				{ ...stamped(partial), turnEndedAt: 9 },
+				{ id: 't9', timestamp: 8, source: 'tool', text: '' },
+			],
+			'desktop',
+			'answered',
+		],
+		// CodeRabbit on #2167: a note written after a turn (a steering note) is not a later attempt.
+		[
+			'an answer stamped, then a note about the turn',
+			[
+				u1,
+				{ ...stamped(partial), turnEndedAt: 3 },
+				{ id: 'n1', timestamp: 4, source: 'system', text: 'Auto Run paused' },
+			],
+			'desktop',
+			'answered',
+		],
+		// CodeRabbit on #2167: a note after an empty retry's end does not undo that end.
+		[
+			'an errored attempt, an empty retry, then a note',
+			[
+				{ ...stamped(u1), turnEndedAt: 30 },
+				{ ...stamped(error), timestamp: 10 },
+				{ id: 'n2', timestamp: 40, source: 'system', text: 'Auto Run paused' },
+			],
+			'headless',
+			'answered',
+		],
+		['nothing after it', [u1], 'headless', 'unended'],
+		['only a later message answered', [u1, u2, a2], 'headless', 'unended'],
+		['a host too old to stamp: headless text is its answer', [u1, partial], 'headless', 'answered'],
+		[
+			'a host too old to stamp: desktop text, then another message',
+			[u1, partial, u2],
+			'desktop',
+			'answered',
+		],
+		['a host too old to stamp: its own error', [u1, error], 'desktop', 'errored'],
+		[
+			'a steer into it is part of it',
+			[u1, { ...u2, steered: true }, stamped(partial)],
+			'desktop',
+			'answered',
+		],
+	] as const)('%s', (_how, logs, hostKind, fate) => {
+		expect(turnFateAfter(logs, 0, hostKind)).toBe(fate);
+	});
+
+	it('stamps an entry a later exit keeps, never a thinking or tool card (CodeRabbit on #2167)', () => {
+		const tool = { id: 't1', timestamp: 2, source: 'tool', text: 'ran' };
+		expect(markTurnEnded([u1, tool])).toEqual([{ ...u1, turnEnded: true }, tool]);
+		expect(markTurnEnded([tool])).toEqual([tool]);
+	});
+
+	it('stamps only the last entry, once', () => {
+		const logs = [u1, partial];
+		const once = markTurnEnded(logs);
+		expect(once).toEqual([u1, { ...partial, turnEnded: true }]);
+		expect(markTurnEnded(once)).toBe(once);
+		expect(markTurnEnded([])).toEqual([]);
+	});
+});
+
+// Parity R41: one side owns a retry. A desktop host's own Agent Resilience writes its retry card
+// (`retryOutageId`) in the turn; a client that kept a copy sends nothing while it stands.
+describe('hostRetriesTurn', () => {
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
+	const card = {
+		id: 'r1',
+		timestamp: 2,
+		source: 'system',
+		text: 'Rate limited',
+		retryOutageId: 'o1',
+		turnEnded: true,
+	};
+	const answer = { id: 'a1', timestamp: 3, source: 'ai', text: 'The docs say...', turnEnded: true };
+	const error = {
+		id: 'e1',
+		timestamp: 3,
+		source: 'error',
+		text: 'Invalid API key',
+		turnEnded: true,
+	};
+	const u2 = { id: 'u2', timestamp: 4, source: 'user', text: 'And the tests?' };
+
+	it.each([
+		['the host retry card is the last word', [u1, card], true],
+		['the host retry answered after its card', [u1, card, answer], false],
+		['a later error after the card', [u1, card, error], false],
+		[
+			'the Stop note after the card',
+			[u1, card, { id: 's1', timestamp: 3, source: 'system', text: TURN_CANCELED_NOTE }],
+			false,
+		],
+		['no card, an error of its own', [u1, error], false],
+		["a card in a LATER message's turn", [u1, answer, u2, card], false],
+		['a steer into the turn after the card', [u1, card, { ...u2, steered: true }], true],
+	])('%s', (_what, logs, retries) => {
+		expect(hostRetriesTurn(logs, 0)).toBe(retries);
+		// The shared reader of the turn's end reads the stamped card as ended, never errored.
+		if (retries) expect(turnFateAfter(logs, 0, 'desktop')).not.toBe('errored');
+	});
+});
+
+// Parity R38: one check, on both host kinds, that a resend is the message running now.
+describe('tabRunsUserEntry', () => {
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize', queuedItemId: 'q1' };
+	const sent = { id: 'u1', text: 'Summarize' };
+	const partial = { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' };
+
+	it.each([
+		['a desktop tab running it, mid-stream', [u1, partial], { busy: true }, true],
+		['a desktop tab that is idle', [u1, partial], { busy: false }, false],
+		[
+			'a desktop tab whose turn ended (stamped)',
+			[u1, { ...partial, turnEnded: true }],
+			{ busy: true },
+			false,
+		],
+		[
+			'a desktop tab running a LATER message',
+			[u1, { id: 'u2', timestamp: 3, source: 'user', text: 'Next' }],
+			{ busy: true },
+			false,
+		],
+		['a headless tab running its item', [u1], { busy: true, itemId: 'q1' }, true],
+		['a headless tab running another item', [u1], { busy: true, itemId: 'q2' }, false],
+		['a tab without the message', [partial], { busy: true }, false],
+		// A turn that writes no message of its own (a command) started after it (CodeRabbit on #2167).
+		[
+			'a desktop tab whose running turn began after the message',
+			[u1, partial],
+			{ busy: true, startedAt: 60_000 },
+			false,
+		],
+		[
+			'a desktop tab whose running turn began with the message',
+			[u1, partial],
+			{ busy: true, startedAt: 1 },
+			true,
+		],
+	] as const)('%s', (_how, logs, running, runs) => {
+		expect(tabRunsUserEntry(logs, sent, running)).toBe(runs);
 	});
 });

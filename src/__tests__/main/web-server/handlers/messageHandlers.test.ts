@@ -12,6 +12,10 @@ vi.mock(
 	async () => await import('../../../helpers/pluginScan')
 );
 import {
+	noteAiTabRetryPending,
+	resetAiTabRetryStateForTests,
+} from '../../../../main/utils/ai-tab-retry-state';
+import {
 	recordFramedQueue,
 	resetQueueChangeFrames,
 } from '../../../../main/web-server/queue-change-frames';
@@ -4079,7 +4083,11 @@ describe('WebSocketMessageHandler', () => {
 
 			it('answers "already ran" and queues nothing when an answer follows the entry', async () => {
 				bridgeRead.invokeAsBridge.mockResolvedValue({
-					logs: [QUESTION, { id: 'a1', timestamp: 2, source: 'ai', text: 'The docs say...' }],
+					logs: [
+						QUESTION,
+						// This desktop stamps a turn's end when its process exits (R36).
+						{ id: 'a1', timestamp: 2, source: 'ai', text: 'The docs say...', turnEnded: true },
+					],
 				});
 				resend();
 				await vi.waitFor(() =>
@@ -4100,8 +4108,149 @@ describe('WebSocketMessageHandler', () => {
 				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
 			});
 
+			// Parity R37: a turn that ended on the provider's own error is retried by that error's rule
+			// (the client's retry sends it): the resend runs. A turn the person stopped never runs again.
+			it("runs the resend when the entry's turn ended on a provider error", async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{
+							id: 'e1',
+							timestamp: 2,
+							source: 'error',
+							text: 'API Error: 529 overloaded',
+							turnEnded: true,
+						},
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			// Parity R38: a resend that arrives while this desktop still runs the message's turn (its
+			// sender lost the link and cannot see that) is the message running: never queued to run
+			// a second time, as a headless host refuses it.
+			it.each([
+				['runs it right now', 'busy', true],
+				['is idle (the turn died with the host)', 'idle', false],
+			])('answers "already ran" only when the tab %s (R38)', async (_how, state, answered) => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }],
+					transcriptSnapshots: [{ sessionId: 'session-1', tabId: 'tab-1', runtime: { state } }],
+				});
+				resend();
+				if (answered) {
+					await vi.waitFor(() => expect(lastSend()).toMatchObject({ answered: true }));
+					expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+				} else {
+					await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+					expect(lastSend()).not.toHaveProperty('answered');
+				}
+			});
+
+			// Parity R41: one side owns a retry. When this desktop's own Agent Resilience holds the
+			// tab's failed turn for a resend, a client's resend of that message would run it twice:
+			// it is refused as "the host retries it" (`answered` too, for an older client).
+			it.each([
+				['holds a retry of the turn', true, true],
+				['holds no retry', false, false],
+			])(
+				'answers "the host retries it" only when the tab %s (R41)',
+				async (_how, pending, retrying) => {
+					noteAiTabRetryPending('session-1', 'tab-1', pending);
+					bridgeRead.invokeAsBridge.mockResolvedValue({
+						logs: [
+							QUESTION,
+							{ id: 'e1', timestamp: 2, source: 'error', text: 'API Error: 529', turnEnded: true },
+						],
+					});
+					resend();
+					try {
+						if (retrying) {
+							await vi.waitFor(() =>
+								expect(lastSend()).toMatchObject({ answered: true, retrying: true, queued: false })
+							);
+							expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+						} else {
+							await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+							expect(lastSend()).not.toHaveProperty('retrying');
+						}
+					} finally {
+						resetAiTabRetryStateForTests();
+					}
+				}
+			);
+
+			it("runs a resend of an earlier message while the tab's retry holds a later one (R41)", async () => {
+				noteAiTabRetryPending('session-1', 'tab-1', true);
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{ id: 'e1', timestamp: 2, source: 'error', text: 'API Error: 529', turnEnded: true },
+						{ id: 'u2', timestamp: 3, source: 'user', text: 'Next' },
+					],
+				});
+				resend();
+				try {
+					await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+					expect(lastSend()).not.toHaveProperty('retrying');
+				} finally {
+					resetAiTabRetryStateForTests();
+				}
+			});
+
+			// CodeRabbit on #2167: a busy tab whose turn began after the message (a command that writes
+			// no message of its own) is not running this message: the resend runs.
+			it('runs the resend when the tab is busy with a turn that began after the message', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }],
+					transcriptSnapshots: [
+						{
+							sessionId: 'session-1',
+							tabId: 'tab-1',
+							runtime: { state: 'busy', thinkingStartTime: 600_000 },
+						},
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			it('answers "already ran" when the entry\'s turn was stopped by the person', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{ id: 's1', timestamp: 2, source: 'system', text: 'Canceled by user', turnEnded: true },
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(lastSend()).toMatchObject({ answered: true }));
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			});
+
 			it.each([
 				['the turn died before an answer', { logs: [QUESTION] }, 'Summarize the docs'],
+				// Parity R36: this desktop writes streamed text as it arrives, so text with no end stamp
+				// is a turn that died with the host part way through, never an answer.
+				[
+					'the turn streamed some text and died with the host (no end stamp, R36)',
+					{
+						logs: [
+							{ id: 'u0', timestamp: 0, source: 'user', text: 'Hello' },
+							{ id: 'a0', timestamp: 0, source: 'ai', text: 'Hi', turnEnded: true },
+							QUESTION,
+							{ id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' },
+						],
+					},
+					'Summarize the docs',
+				],
+				[
+					'the turn streamed some text and died, on a host too old to stamp (R36)',
+					{ logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }] },
+					'Summarize the docs',
+				],
 				// Parity R23: a2 answers the later u2, never u1, whose own turn died.
 				[
 					'only a later message was answered',

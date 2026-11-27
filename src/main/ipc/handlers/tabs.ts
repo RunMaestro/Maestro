@@ -10,11 +10,14 @@
  * against a tab that the user then closes would otherwise sit armed until its
  * timeout and wake the caller with a bogus `timeout` up to an hour later (W1).
  * It also hears when Agent Resilience holds a tab's failed turn for a retry, so
- * a callback waits for the resend instead of reporting the first refusal.
+ * a callback waits for the resend instead of reporting the first refusal, and a
+ * Federation client's resend of a message that retry holds is refused
+ * (`isAiTabRetryPending()`).
  */
 
 import { ipcMain } from 'electron';
 import { getDispatchCallbackRegistry } from '../../dispatch-callbacks';
+import { forgetAiTabRetryState, noteAiTabRetryPending } from '../../utils/ai-tab-retry-state';
 import { logger } from '../../utils/logger';
 
 const LOG_CONTEXT = '[IPC:Tabs]';
@@ -27,6 +30,7 @@ export function registerTabsHandlers(): void {
 			logger.warn(`Ignoring malformed tabs:aiTabClosed notification`, LOG_CONTEXT);
 			return;
 		}
+		forgetAiTabRetryState(agentId, tabId);
 		const cancelled = getDispatchCallbackRegistry()?.cancelForTab(agentId, tabId) ?? 0;
 		if (cancelled > 0) {
 			logger.info(
@@ -40,7 +44,7 @@ export function registerTabsHandlers(): void {
 	// retry of this tab's failed turn, false once that retry is gone.
 	ipcMain.on(
 		'tabs:aiTabRetryState',
-		(_event, agentId: unknown, tabId: unknown, pending: unknown) => {
+		(event, agentId: unknown, tabId: unknown, pending: unknown) => {
 			if (
 				typeof agentId !== 'string' ||
 				typeof tabId !== 'string' ||
@@ -51,6 +55,8 @@ export function registerTabsHandlers(): void {
 				logger.warn(`Ignoring malformed tabs:aiTabRetryState notification`, LOG_CONTEXT);
 				return;
 			}
+			// The renderer that holds the retry: a reload or crash of it ends its claims.
+			noteAiTabRetryPending(agentId, tabId, pending, event?.sender);
 			getDispatchCallbackRegistry()?.noteRetryState(agentId, tabId, pending);
 		}
 	);

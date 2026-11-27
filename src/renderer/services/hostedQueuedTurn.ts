@@ -26,7 +26,9 @@
  * the host: a leading mention (`crossAgentOnly`) consults and sends nothing, a parallel consult
  * holds the tab as it does locally, a hand-off is armed for when the host's turn ends. The turn
  * carries the agent-only notes and a released consult's replies (`agentContext`) to the host, so
- * its transcript shows what a local one shows. A host that refuses the turn consults nobody.
+ * its transcript shows what a local one shows. A host that refuses the turn consults nobody. A
+ * host that is down (nothing was sent, the message is kept) consults at once, here, as an SSH
+ * agent's dispatch consults before its spawn fails, and the kept message carries the notes.
  */
 
 import type { AgentError, LogEntry, QueuedItem, Session } from '../types';
@@ -52,8 +54,9 @@ import {
 	settleRetryOnHost,
 	useRetryStore,
 	HOST_HAD_MESSAGE_TEXT,
+	HOST_RETRIES_TEXT,
 	notOnHostText,
-	type NotOnHost,
+	type HeldOnHost,
 	wouldAutoRetry,
 } from '../stores/retryStore';
 import {
@@ -217,13 +220,14 @@ function queueBehind(sessionId: string, item: QueuedItem): void {
  *
  * Answers whether the message is kept. False (Agent Resilience off for the agent, or no listener):
  * the caller keeps it its own way. `opts.onlyIfRetried` raises nothing at all when no retry would
- * take the message (the caller draws the failure its own way instead).
+ * take the message (the caller draws the failure its own way instead). `opts.keepMention` keeps
+ * the item's `@mention` on the resend, for a mention that has not run yet (a hand-off).
  */
 export function keepTurnForHost(
 	sessionId: string,
 	item: QueuedItem,
 	message: string,
-	opts: { onlyIfRetried?: boolean } = {}
+	opts: { onlyIfRetried?: boolean; keepMention?: boolean } = {}
 ): boolean {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	if (!session) return false;
@@ -248,7 +252,7 @@ export function keepTurnForHost(
 		updateAiTab(sessionId, item.tabId, (tab) => ({ ...tab, logs: [...tab.logs, bubble] }));
 	}
 	// The prompt the retry resends. A resend of this same item keeps its snapshot.
-	noteDirectDispatch(sessionId, kept);
+	noteDirectDispatch(sessionId, kept, { keepMention: opts.keepMention });
 	const raised = raiseAgentError(`${sessionId}-ai-${item.tabId}`, error);
 	const held = raised && getRetryEntry(sessionId, item.tabId)?.heldItemId === item.id;
 	if (bubble && !held) {
@@ -362,29 +366,81 @@ export function queuedItemHostOverrides(item: QueuedItem): TurnOverrides | undef
  * (Force Send of a copy parked by Stop) says it with a toast, so it never vanishes unexplained.
  *
  * With `notOnHost` the host no longer has the tab or the message the copy named (closed, or
- * cleared): nothing is sent there, and the copy is parked held, no longer naming that entry, so
- * the user can send it again as a new message. The card or the toast says which.
+ * cleared), or the copy's own turn ended there on an error no retry takes (`{ error }`): nothing
+ * is sent there, and the copy is parked held, no longer naming that entry, so the user can send it
+ * again as a new message. The card or the toast says which.
  */
 function notHostedAgain(
 	sessionId: string,
 	item: QueuedItem,
 	index: number,
 	retryOutage: string | undefined,
-	notOnHost?: NotOnHost
+	notOnHost?: HeldOnHost | 'host-retries'
 ): void {
 	const owned =
 		retryOutage !== undefined && getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
 	if (owned) settleRetryOnHost(sessionId, item.tabId, notOnHost);
-	if (notOnHost) holdRefusedItem(sessionId, { ...item, hostEntryId: undefined }, index);
+	// The host's own retry holds it (`host-retries`): it is the host's to send, as one it had.
+	const held = notOnHost === 'host-retries' ? undefined : notOnHost;
+	if (held) holdRefusedItem(sessionId, { ...item, hostEntryId: undefined }, index);
 	// Its retry's card says it (settled here, or already by the cut's own read): told once.
 	if (owned || (retryOutage && useRetryStore.getState().outages[retryOutage]?.settledByHost)) {
 		return;
 	}
 	notifyToast({
 		color: 'theme',
-		title: notOnHost ? 'Not sent' : 'Not sent again',
-		message: notOnHost ? notOnHostText(notOnHost) : HOST_HAD_MESSAGE_TEXT,
+		title: held ? 'Not sent' : 'Not sent again',
+		message: held
+			? notOnHostText(held)
+			: notOnHost === 'host-retries'
+				? HOST_RETRIES_TEXT
+				: HOST_HAD_MESSAGE_TEXT,
 	});
+}
+
+/**
+ * A message whose host is down runs its `@mention` here at once, as an SSH agent's dispatch
+ * consults before its spawn fails: the consult runs from this machine and needs no host. The item
+ * comes back carrying the consult's notes (`agentNotes`) and no longer its mention, so its resend
+ * (the retry, Force Send after a Stop, or the parked copy after a restart) consults nobody again.
+ * A hand-off is left as it is: it consults nobody until the host's turn ends, and is armed when
+ * the host takes that turn.
+ */
+function consultWhileHostDown(
+	sessionId: string,
+	item: QueuedItem,
+	mention: CrossAgentMentionPlan | null,
+	agentNotes: string | undefined
+): QueuedItem {
+	if (!mention || mention.routing === 'handoff') return item;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tabId = item.tabId || session?.activeTabId;
+	if (!session || !tabId) return item;
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	return {
+		...item,
+		crossAgentMention: undefined,
+		mentionRouting: undefined,
+		...(agentNotes ? { agentNotes } : {}),
+	};
+}
+
+/**
+ * A consult-first message whose host is down consults here at once, as a local or SSH drain does,
+ * and waits on the consult's hold with the message: the hold releases it, with the replies, as a
+ * plain message, so it is sent once. Answers whether it went to that hold.
+ */
+function consultFirstWhileHostDown(
+	sessionId: string,
+	item: QueuedItem,
+	mention: CrossAgentMentionPlan | null
+): boolean {
+	if (mention?.routing !== 'consult-first') return false;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tabId = item.tabId || session?.activeTabId;
+	if (!session || !tabId) return false;
+	dispatchCrossAgentMentions(mention, item.text ?? '', session, tabId, item.images);
+	return true;
 }
 
 /** Send one item that is no longer in this queue to the host. Resolves the host's receipt. */
@@ -410,6 +466,9 @@ function forwardToHost(
 		item.agentNotes && mentionNotes
 			? appendAgentNotes(item.agentNotes, mentionNotes)
 			: (item.agentNotes ?? mentionNotes);
+	// The item as it stands now: once a host that is down made the consult run here, it carries the
+	// consult's notes and no longer its mention, so no resend, Stop, or restart consults again.
+	let current = item;
 	// The model, effort, and read-only it was queued with, as the local drain runs it on them.
 	const overrides = queuedItemHostOverrides(item);
 	// The retry this resend belongs to: a Stop while it waits ends that retry, and then nothing goes.
@@ -433,7 +492,18 @@ function forwardToHost(
 				? {}
 				: {
 						onHostUnavailable: (message: string) => {
-							kept = keepTurnForHost(sessionId, item, message);
+							// Consult first: its hold, which the consult places with the message, owns the
+							// send and releases it once the replies are in (then kept for the host, if it is
+							// still down). A retry kept here as well would send it before the replies and
+							// again after them (CodeRabbit on #2167).
+							if (consultFirstWhileHostDown(sessionId, item, mention)) {
+								kept = true;
+								return;
+							}
+							current = consultWhileHostDown(sessionId, item, mention, agentNotes);
+							kept = keepTurnForHost(sessionId, current, message, {
+								keepMention: !!current.crossAgentMention,
+							});
 						},
 					}),
 		}).then(
@@ -441,6 +511,11 @@ function forwardToHost(
 				if (receipt?.status === 'answered') {
 					// The host had already answered this message: it ran once, and nothing ran now.
 					notHostedAgain(sessionId, item, index, retryOutage);
+					return null;
+				}
+				if (receipt?.status === 'retrying') {
+					// The host's own retry holds this message (its Agent Resilience): it sends it.
+					notHostedAgain(sessionId, item, index, retryOutage, 'host-retries');
 					return null;
 				}
 				if (receipt) {
@@ -452,13 +527,13 @@ function forwardToHost(
 					// is not handed over (CodeRabbit on #2161), and a resend ends its outage here.
 					markKeptBubble(sessionId, item, false);
 					failInFlightRetry(sessionId, item.tabId, 'The host did not take the message.');
-					holdRefusedItem(sessionId, item, index);
+					holdRefusedItem(sessionId, current, index);
 				}
 				return receipt;
 			},
 			(error: unknown) => {
 				failInFlightRetry(sessionId, item.tabId, 'The message could not be sent to the host.');
-				holdRefusedItem(sessionId, item, index);
+				holdRefusedItem(sessionId, current, index);
 				throw error;
 			}
 		);
@@ -473,8 +548,22 @@ function forwardToHost(
 				const stillOwned =
 					retryOutage !== undefined &&
 					getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
-				if (decided === 'answered') {
-					notHostedAgain(sessionId, item, index, retryOutage);
+				if (decided === 'answered' || decided === 'host-retries') {
+					notHostedAgain(
+						sessionId,
+						item,
+						index,
+						retryOutage,
+						decided === 'host-retries' ? decided : undefined
+					);
+					return null;
+				}
+				// Ended on its own error there: the retry of that error holds it now, and sends it.
+				if (decided === 'errored') return null;
+				// Ended on its own error there, and no retry takes it: held with that error, never
+				// dropped as answered.
+				if (typeof decided === 'object') {
+					notHostedAgain(sessionId, item, index, retryOutage, decided);
 					return null;
 				}
 				if (decided === 'tab-gone' || decided === 'entry-gone') {

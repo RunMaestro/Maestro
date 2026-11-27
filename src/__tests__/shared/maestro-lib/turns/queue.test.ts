@@ -963,6 +963,25 @@ describe('createExecutionQueue interrupt', () => {
 		expect(h.turnFor('a').interrupted).toBe(true);
 	});
 
+	// CodeRabbit on #2167: a headless host asks which item holds a tab, not only whether one does,
+	// so a turn still starting is never taken for the one the tab record names.
+	it('names the item running or starting on a tab', async () => {
+		const h = harness();
+		expect(h.queue.busyItemId('t1')).toBeUndefined();
+		h.queue.submit(item('a', 't1'));
+		h.queue.submit(item('b', 't1'));
+		// Starting: the tab is reserved before `start` resolved.
+		expect(h.queue.busyItemId('t1')).toBe('a');
+		await h.flush();
+		expect(h.queue.busyItemId('t1')).toBe('a');
+		h.turnFor('a').end();
+		await h.flush();
+		expect(h.queue.busyItemId('t1')).toBe('b');
+		h.turnFor('b').end();
+		await h.queue.settled();
+		expect(h.queue.busyItemId('t1')).toBeUndefined();
+	});
+
 	it('does not drop or reorder items waiting behind an interrupt', async () => {
 		const h = harness();
 		h.queue.submit(item('a', 't1'));

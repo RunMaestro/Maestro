@@ -195,6 +195,19 @@ export interface OutageRecord {
 	 * clear, `message`). Nothing was sent, and the message stays held in the queue to send again.
 	 */
 	notOnHost?: NotOnHost;
+	/**
+	 * Set with `settledByHost` when the kept message was not sent because its own turn ended on an
+	 * error on the host that no retry takes (an auth failure, or Agent Resilience off): that error's
+	 * text. Nothing was sent, and the message stays held in the queue to send again.
+	 */
+	hostError?: string;
+	/**
+	 * Set with `settledByHost` when the kept message was not sent because of a retry: the host's
+	 * own Agent Resilience holds it and sends it itself (`host`), or its turn ended on a provider
+	 * error there and this machine's retry of that error takes it from here (`here`, a new card,
+	 * `scheduleRetryForError()`'s `freshOutage`).
+	 */
+	hostRetry?: 'host' | 'here';
 }
 
 /** See `OutageRecord.cause`. */
@@ -203,11 +216,48 @@ export type OutageCause = 'connection';
 /** See `OutageRecord.notOnHost`. */
 export type NotOnHost = 'tab' | 'message';
 
+/**
+ * Why a kept message is held for the user instead of sent: the host no longer has what it named
+ * (`NotOnHost`), or its own turn ended there on an error no retry takes (`{ error }`).
+ */
+export type HeldOnHost = NotOnHost | { error: string };
+
+/**
+ * Why a kept message's retry ends on the host's word (`settleRetryOnHost()`): held for the user
+ * (`HeldOnHost`), or the host's own retry sends it (`host-retries`).
+ */
+export type HostSettle = HeldOnHost | 'host-retries';
+
+/** What the card and the toast say when a kept message was not sent: the host retries it itself. */
+export const HOST_RETRIES_TEXT =
+	'Its turn on the host ended on an error the host retries itself, so it was not sent again from here.';
+
+/** What the card says when a kept message's turn ended on a provider error retried from here. */
+export const HOST_TURN_ERRORED_TEXT =
+	"Its turn on the host ended on an error; that error's own retry takes the message from here.";
+
+/** What a settled-by-host outage card says (`OutageRecord.settledByHost`). */
+export function hostSettledText(outage: OutageRecord): string {
+	if (outage.hostRetry === 'host') return HOST_RETRIES_TEXT;
+	if (outage.hostRetry === 'here') return HOST_TURN_ERRORED_TEXT;
+	const held = heldOnHostOf(outage);
+	return held ? notOnHostText(held) : HOST_HAD_MESSAGE_TEXT;
+}
+
+/** The reason an outage record holds its kept message for the user, if it does. */
+export function heldOnHostOf(outage: OutageRecord): HeldOnHost | undefined {
+	return outage.hostError !== undefined ? { error: outage.hostError } : outage.notOnHost;
+}
+
 /** What the card and the toast say when a kept message was not sent: the host had it. */
 export const HOST_HAD_MESSAGE_TEXT = 'The host already had this message, so it was not sent again.';
 
 /** What the card and the toast say when a kept message was not sent: the host lost what it named. */
-export function notOnHostText(notOnHost: NotOnHost): string {
+export function notOnHostText(notOnHost: HeldOnHost): string {
+	if (typeof notOnHost === 'object') {
+		const error = notOnHost.error.trim();
+		return `Its turn on the host ended on an error${error ? ` (${error})` : ''} that is not retried, so the message was not sent again. It is held in the queue for you to send again.`;
+	}
 	return notOnHost === 'tab'
 		? 'Its tab is no longer on the host, so the message was not sent. It is held in the queue for you to send again.'
 		: 'The message is no longer on the host (its tab was cleared), so it was not sent. It is held in the queue for you to send again.';
@@ -319,6 +369,11 @@ export function resetPersistedSnapshotsForTests(): void {
 	persistedSnapshots = null;
 }
 
+/** Forget every prompt snapshot held in memory, as a reload does, between unit tests. */
+export function resetDispatchSnapshotsForTests(): void {
+	snapshots.clear();
+}
+
 async function loadPersistedSnapshots(): Promise<Record<string, PersistedSnapshot>> {
 	if (persistedSnapshots) return persistedSnapshots;
 	try {
@@ -417,9 +472,14 @@ export function getDispatchDeps(): ProcessQueuedItemDeps | null {
  *
  * `crossAgentMention` is stripped for the same reason `processQueuedItem` strips
  * it: the consult already fired with the original send, and a replay must not
- * fan it out a second time.
+ * fan it out a second time. `opts.keepMention` keeps it for a send whose mention has NOT run yet
+ * (a hosted hand-off kept while its host was down: it is armed only once the host takes the turn).
  */
-export function noteDirectDispatch(sessionId: string, item: QueuedItem): void {
+export function noteDirectDispatch(
+	sessionId: string,
+	item: QueuedItem,
+	opts: { keepMention?: boolean } = {}
+): void {
 	if (!dispatchDepsProvider) {
 		logger.warn('[retry] No dispatch deps provider registered; prompt not snapshotted', undefined, {
 			sessionId,
@@ -427,7 +487,11 @@ export function noteDirectDispatch(sessionId: string, item: QueuedItem): void {
 		});
 		return;
 	}
-	noteDispatch(sessionId, { ...item, crossAgentMention: undefined }, dispatchDepsProvider());
+	noteDispatch(
+		sessionId,
+		opts.keepMention ? item : { ...item, crossAgentMention: undefined },
+		dispatchDepsProvider()
+	);
 }
 
 /**
@@ -690,7 +754,17 @@ export function scheduleRetryForError(
 	sessionId: string,
 	tabId: string,
 	error: AgentError,
-	opts?: { batch?: boolean }
+	opts?: {
+		batch?: boolean;
+		/**
+		 * The tab's retry still holds the message, but its outage is over and `error` is a new one:
+		 * the old outage ends as recovered with this patch on its record (its card's words), and
+		 * the new one starts at its first attempt, under its own card. One write of the retry map,
+		 * so main never hears the tab's retry dropped in between (a dispatch callback parked on
+		 * that retry keeps waiting for the resend).
+		 */
+		freshOutage?: Partial<OutageRecord>;
+	}
 ): boolean {
 	// An Auto Run task is not compacted: the batch owns that turn and its error.
 	if (!opts?.batch && scheduleContextCompaction(sessionId, tabId, error)) return true;
@@ -717,7 +791,13 @@ export function scheduleRetryForError(
 	// record and no card, so counting from its attempt would schedule a retry
 	// the transcript never shows.
 	const prior = useRetryStore.getState().retries[key];
-	const existing = prior?.compaction ? undefined : prior;
+	if (prior && !prior.compaction && opts?.freshOutage) {
+		useRetryStore.getState().patchOutage(prior.outageId, opts.freshOutage);
+		resolveOutage(prior.outageId, 'recovered');
+		stopProviderWatch(key);
+		clearTabAgentError(sessionId, tabId, prior.lastMessage);
+	}
+	const existing = prior?.compaction || opts?.freshOutage ? undefined : prior;
 	// Continue the existing backoff when a resend failed again; otherwise start
 	// at attempt 0. `existing.attempt` was the attempt we just tried, so +1.
 	const attempt = existing ? existing.attempt + 1 : 0;
@@ -1819,14 +1899,15 @@ export function noteRetryProgress(sessionId: string, tabId: string): void {
  * the retry is still counting down or its resend is waiting for this answer. Answers whether there
  * was an outage to end.
  *
- * With `notOnHost` the host no longer has the tab or the message the kept copy named: nothing is
- * sent there either, but the copy is NOT released. The caller parks it held, so the user can send
- * it again, and the card says what happened (`OutageRecord.notOnHost`).
+ * With `notOnHost` the host no longer has the tab or the message the kept copy named, or the
+ * copy's own turn ended there on an error no retry takes: nothing is sent either, but the copy is
+ * NOT released. The caller parks it held, so the user can send it again, and the card says what
+ * happened (`OutageRecord.notOnHost`, `OutageRecord.hostError`).
  */
 export function settleRetryOnHost(
 	sessionId: string,
 	tabId: string,
-	notOnHost?: NotOnHost
+	notOnHost?: HostSettle
 ): boolean {
 	const key = keyFor(sessionId, tabId);
 	const entry = useRetryStore.getState().retries[key];
@@ -1835,10 +1916,21 @@ export function settleRetryOnHost(
 		key,
 		notOnHost,
 	});
-	if (entry.heldItemId && !notOnHost) releaseHeldItemFromQueue(sessionId, entry.heldItemId);
-	useRetryStore
-		.getState()
-		.patchOutage(entry.outageId, { settledByHost: true, ...(notOnHost ? { notOnHost } : {}) });
+	// Released when the host holds it (it had it, or its own retry sends it); kept for the caller
+	// to park when the user sends it again, or for the retry of its error here.
+	if (entry.heldItemId && (!notOnHost || notOnHost === 'host-retries')) {
+		releaseHeldItemFromQueue(sessionId, entry.heldItemId);
+	}
+	useRetryStore.getState().patchOutage(entry.outageId, {
+		settledByHost: true,
+		...(typeof notOnHost === 'object'
+			? { hostError: notOnHost.error }
+			: notOnHost === 'host-retries'
+				? { hostRetry: 'host' as const }
+				: notOnHost
+					? { notOnHost }
+					: {}),
+	});
 	resolveOutage(entry.outageId, 'recovered');
 	removeEntry(key);
 	clearTabAgentError(sessionId, tabId, entry.lastMessage);
