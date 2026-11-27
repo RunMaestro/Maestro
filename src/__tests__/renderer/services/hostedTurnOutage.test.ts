@@ -27,6 +27,7 @@ import {
 	registerDispatchDepsProvider,
 	retryConnectionOutagesNow,
 	scheduleRetryForError,
+	settleRetryOnHost,
 	stopRetriesForAgent,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
@@ -713,6 +714,82 @@ describe('a message sent while the link is down is kept for a retry', () => {
 			expect(useNotificationStore.getState().toasts.map((toast) => toast.title)).toContain(
 				'Message not sent'
 			);
+		});
+
+		it("never holds again a kept message whose retry the host's answer settled while the probe ran (CodeRabbit on #2180)", async () => {
+			const session = seed('hosted');
+			hostDown();
+			keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+			const entry = getRetryEntry(session.id, 't1')!;
+			useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+			let found!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						found = () => {
+							hydrateHost();
+							resolve({ ok: true });
+						};
+					})
+			);
+
+			const sent = sendTakenItemToHost(session.id, message('m1', 'hello'));
+			await flush();
+			// The host is back and its report says the turn ran: the cut's own read settles the retry.
+			settleRetryOnHost(session.id, 't1');
+			found();
+			await sent;
+			await flush();
+
+			expect(act$).not.toHaveBeenCalled();
+			expect(queue().map((queued) => queued.id)).not.toContain('m1');
+			expect(useRetryStore.getState().outages[entry.outageId]?.settledByHost).toBe(true);
+		});
+
+		it('sends nothing to a host the agent moved away from while the send waited (CodeRabbit on #2180)', async () => {
+			const session = seed('hosted');
+			hostDown();
+			let found!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						found = () => {
+							hydrateHost();
+							resolve({ ok: true });
+						};
+					})
+			);
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+
+			const sending = sendHostedTurn(session, 't1', 'hello', [], { onHostUnavailable: vi.fn() });
+			await flush();
+			// Move Back while the host was being reached: this machine no longer assigns that host.
+			useSessionStore.setState((state) => ({
+				sessions: state.sessions.map((row) => ({ ...row, liftedTo: undefined })),
+			}));
+			found();
+
+			expect(await sending).toBeNull();
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(0);
+			expect(useNotificationStore.getState().toasts.map((toast) => toast.message)).toContain(
+				'The agent moved while its Maestro host was being reached. Nothing was sent.'
+			);
+		});
+
+		it("probes on Stop that only ends a kept message's retry (CodeRabbit on #2180)", async () => {
+			const session = seed('hosted');
+			hostDown();
+			keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+			reconnect$.mockResolvedValue({ ok: false });
+
+			await interruptTurn(session.id, { tabId: 't1' });
+
+			expect(reconnect$).toHaveBeenCalledWith('box');
+			// An idle tab sends the host no interrupt.
+			expect(act$).not.toHaveBeenCalled();
 		});
 
 		it('shares one probe among ten kept messages of the burst', async () => {

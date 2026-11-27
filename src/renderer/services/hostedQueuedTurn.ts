@@ -626,6 +626,11 @@ function forwardToHost(
 				const owned =
 					retryOutage === undefined ||
 					getRetryEntry(sessionId, item.tabId)?.outageId === retryOutage;
+				// The host's own answer settled the retry meanwhile (`settleRetryOnHost()`): the turn ran
+				// once there, and its item already left this queue. Never held again (CodeRabbit on #2180).
+				if (!owned && retryOutage && useRetryStore.getState().outages[retryOutage]?.settledByHost) {
+					return null;
+				}
 				if (!owned || hostedStoppedSince(sessionId, lineTabId, stopMark)) {
 					// Stopped while it waited: parked held, one click from Force Send, as Stop parks it.
 					holdRefusedItem(sessionId, item, index);

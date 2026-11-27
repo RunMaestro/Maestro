@@ -774,6 +774,21 @@ export async function sendHostedTurn(
 			? 'connected'
 			: usePeerMirrorStore.getState().peers[target.peerId]?.connection;
 	}
+	// The agent may have moved while this send waited (for discovery, or for a cut turn's fate on
+	// the queued path): a send goes only to the host this machine assigns the agent now, never to
+	// a copy the user moved away from (CodeRabbit on #2180).
+	const live = selectSessionById(session.id)(useSessionStore.getState());
+	if (live && live !== session) {
+		const now = hostedTargetOf(live);
+		if (!now || now.peerId !== target.peerId || now.agentId !== target.agentId) {
+			notifyToast({
+				color: 'red',
+				title: 'Message not sent',
+				message: 'The agent moved while its Maestro host was being reached. Nothing was sent.',
+			});
+			return null;
+		}
+	}
 	if (!target.agent || (opts.onHostUnavailable && connection !== 'connected')) {
 		// Nothing is sent to a host that is not connected, including the steps ahead of the send
 		// (a new host tab, merged context): the caller keeps the message for a retry, or it is told.

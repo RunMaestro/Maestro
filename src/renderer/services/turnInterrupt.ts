@@ -187,14 +187,15 @@ export async function interruptTurn(
 		// A consult whose message may be a turn Stop ends goes with it, also before any await.
 		const hostStop = dropStoppedHostStartMentions(sessionId, stopHere);
 		const hostNotTold = !!peer && peer.connection !== 'connected' && stopHere.length > 0;
+		// Stop is an explicit act, also when it only ends a kept message's retry: a host started
+		// after the last probe is found now (R68), and a cut turn's fate is read from it once the
+		// link is up. An idle tab still sends no interrupt to the host.
+		if (peer && peer.connection !== 'connected') void reachPeerNow(peer.peerId);
 		let hostAnswer: HostStopAnswer | undefined;
 		try {
 			if (hostNotTold) {
 				// The host cannot be told: the turn ends here, as a local Stop ends it, and says so.
 				endHostedTurnsHere(sessionId, stopHere, peer.name);
-				// Stop is an explicit act: a host started after the last probe is found now (R68),
-				// and the cut turns' fate is read from it once the link is up.
-				void reachPeerNow(peer.peerId);
 			} else {
 				markHostedTurnsStopped(sessionId, cutTabs, peer?.name ?? '');
 				if (forward) hostAnswer = await interruptHostedTurn(session, scopeTabId);
