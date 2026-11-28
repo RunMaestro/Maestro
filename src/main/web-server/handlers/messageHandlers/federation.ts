@@ -12,7 +12,11 @@
  */
 
 import { logger } from '../../../utils/logger';
-import { getAutoFederation, getPeerMirrorService } from '../../../federation';
+import {
+	autoFederationSnapshot,
+	getPeerMirrorService,
+	runAutoFederationNow,
+} from '../../../federation';
 import { requestFederationWindow } from '../../../federation/federation-window';
 import { findMirrorPeer } from '../../../../shared/maestro-lib/client/peer-mirror';
 import {
@@ -48,29 +52,27 @@ export async function handleFederationCommand(
 		return;
 	}
 
-	const service = getPeerMirrorService();
-	if (!service) {
-		reply({ success: false, error: FEDERATION_NOT_RUNNING_MESSAGE });
-		return;
-	}
-
 	logger.info(`[Web] federation_command: ${action}`, LOG_CONTEXT);
 
 	try {
-		if (action === 'peers') {
-			reply({ success: true, peers: service.peers() });
-			return;
-		}
+		// Automatic Federation answers whether or not it runs: while hosted agents are off, the
+		// idle snapshot, exactly as the desktop's Settings shows it. Nothing dials.
 		if (action === 'auto-status' || action === 'auto-run') {
-			const auto = getAutoFederation();
-			if (!auto) {
-				reply({ success: false, error: FEDERATION_NOT_RUNNING_MESSAGE });
-				return;
-			}
 			reply({
 				success: true,
-				auto: action === 'auto-run' ? await auto.runNow() : auto.snapshot(),
+				auto: action === 'auto-run' ? await runAutoFederationNow() : autoFederationSnapshot(),
 			});
+			return;
+		}
+
+		const service = getPeerMirrorService();
+		if (!service) {
+			reply({ success: false, error: FEDERATION_NOT_RUNNING_MESSAGE });
+			return;
+		}
+
+		if (action === 'peers') {
+			reply({ success: true, peers: service.peers() });
 			return;
 		}
 		if (action === 'conflicts') {

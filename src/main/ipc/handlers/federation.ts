@@ -20,13 +20,16 @@ import type { MirrorPeerSummary } from '../../../shared/maestro-lib/client/peer-
 import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
 import {
 	FEDERATION_AUTO_CHANNEL,
+	autoFederationSnapshot,
 	getPeerMirrorService,
+	runAutoFederationNow,
 	onMirrorPush,
 	setAutoFederation,
 	type PeerMirrorService,
 } from '../../federation';
 import { AutoFederationCoordinator } from '../../federation/auto-federation';
 import type { AutoFederationSnapshot } from '../../../shared/federationAuto';
+import { followHostingSetting, type HostingSetting } from '../../federation/hosting-gate';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { isAgentBusy } from '../../utils/agent-busy';
@@ -71,6 +74,8 @@ import type { HistoryGraphData } from '../../utils/history-bucket-builder';
 export type FederationHandlerDeps = Omit<DesktopLiftRuntime, 'service'> & {
 	/** The `federationAutoMove` setting (off by default; on only once the person opts in). */
 	readAutoMove(): boolean;
+	/** The hosted agents setting: the coordinator runs only while it is on. */
+	hosting: HostingSetting;
 	/** Call `onChange` when the stored agents change. Returns the unsubscribe. */
 	watchSessions?(onChange: () => void): () => void;
 	/** The all-windows push, for the automatic Federation snapshot. */
@@ -306,52 +311,72 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 		resolveCliFile: resolveBundledCliPathSync,
 		appVersion: () => app.getVersion(),
 	});
-	// Automatic Federation: keep hosts running, install where SSH agents want one, move SSH agents
-	// once every sanity check passes. Same setup and lift as the two ipc channels above.
-	const auto = new AutoFederationCoordinator({
-		readRemotes: () => {
-			const remotes = deps.readSshRemotes();
-			return Array.isArray(remotes) ? (remotes as SshRemoteConfig[]) : [];
+	// Automatic Federation: with automatic moves on, keep hosts running, install where SSH agents
+	// want one, and move SSH agents once every sanity check passes; off, it only reports. Same
+	// setup and lift as the two ipc channels above. It runs only while hosted agents are on: built
+	// when the setting turns on, stopped and forgotten when it turns off.
+	const buildAuto = () =>
+		new AutoFederationCoordinator({
+			readRemotes: () => {
+				const remotes = deps.readSshRemotes();
+				return Array.isArray(remotes) ? (remotes as SshRemoteConfig[]) : [];
+			},
+			readAgents: () => {
+				const sessions = deps.readSessions();
+				return Array.isArray(sessions) ? (sessions as AgentRecord[]) : [];
+			},
+			isAutoMoveEnabled: () => deps.readAutoMove(),
+			peers: () => getPeerMirrorService()?.peers() ?? [],
+			setupHost: (remoteId, stillWanted) =>
+				setupHostFromDesktop(remoteId, { stillWanted }, setupDeps),
+			lift: (agentId, options) => liftAgentFromDesktop(agentId, options, liftDeps),
+			isAgentBusy: (agent) => isAgentBusy(agent, deps.getProcessManager()),
+			hostProviders: async (remoteId) => {
+				const service = getPeerMirrorService();
+				if (!service) return null;
+				try {
+					const listed = await service.hostClient(remoteId).client.providers.list();
+					return listed.ok ? listed.value : null;
+				} catch {
+					return null;
+				}
+			},
+			publish: (snapshot) => deps.safeSend?.(FEDERATION_AUTO_CHANNEL, snapshot),
+			onError: (error, operation) => void captureException(error, { operation }),
+		});
+	let auto: AutoFederationCoordinator | null = null;
+	followHostingSetting(deps.hosting, {
+		start: () => {
+			auto = buildAuto();
+			setAutoFederation(auto);
+			auto.start();
 		},
-		readAgents: () => {
-			const sessions = deps.readSessions();
-			return Array.isArray(sessions) ? (sessions as AgentRecord[]) : [];
+		stop: () => {
+			auto?.stop();
+			auto = null;
+			setAutoFederation(null);
+			deps.safeSend?.(FEDERATION_AUTO_CHANNEL, autoFederationSnapshot());
 		},
-		isAutoMoveEnabled: () => deps.readAutoMove(),
-		peers: () => getPeerMirrorService()?.peers() ?? [],
-		setupHost: (remoteId) => setupHostFromDesktop(remoteId, {}, setupDeps),
-		lift: (agentId, options) => liftAgentFromDesktop(agentId, options, liftDeps),
-		isAgentBusy: (agent) => isAgentBusy(agent, deps.getProcessManager()),
-		hostProviders: async (remoteId) => {
-			const service = getPeerMirrorService();
-			if (!service) return null;
-			try {
-				const listed = await service.hostClient(remoteId).client.providers.list();
-				return listed.ok ? listed.value : null;
-			} catch {
-				return null;
-			}
-		},
-		publish: (snapshot) => deps.safeSend?.(FEDERATION_AUTO_CHANNEL, snapshot),
-		onError: (error, operation) => void captureException(error, { operation }),
 	});
-	setAutoFederation(auto);
 	// A peer that connected or went down, or an edited agent, is worth a pass soon.
 	onMirrorPush((push) => {
-		if (push.event.type === 'peer.state') auto.nudge();
+		if (push.event.type === 'peer.state') auto?.nudge();
 	});
-	deps.watchSessions?.(() => auto.nudge());
-	auto.start();
+	deps.watchSessions?.(() => auto?.nudge());
 	ipcMain.handle(
 		'federation:autoStatus',
 		withIpcErrorLogging(
 			opts('autoStatus'),
-			async (): Promise<AutoFederationSnapshot> => auto.snapshot()
+			async (): Promise<AutoFederationSnapshot> => autoFederationSnapshot()
 		)
 	);
+	// With hosting off there is nothing to run: the answer is the idle snapshot, and nothing dials.
 	ipcMain.handle(
 		'federation:autoRun',
-		withIpcErrorLogging(opts('autoRun'), async (): Promise<AutoFederationSnapshot> => auto.runNow())
+		withIpcErrorLogging(
+			opts('autoRun'),
+			async (): Promise<AutoFederationSnapshot> => runAutoFederationNow()
+		)
 	);
 	ipcMain.handle(
 		'federation:setupHost',

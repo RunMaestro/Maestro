@@ -27,7 +27,17 @@ export interface DesktopSetupHostOptions {
 	restart?: boolean;
 	/** Install over a `maestro-cli` Maestro did not install (`--force`). */
 	force?: boolean;
+	/**
+	 * Automatic setup only: read when the setup leaves the mirror's queue, right before it touches
+	 * the remote. False answers `SETUP_NOT_WANTED_CODE` and changes nothing.
+	 */
+	stillWanted?: () => boolean;
 }
+
+/** The setup did not run: whoever asked for it no longer wants it (automatic moves turned off). */
+export const SETUP_NOT_WANTED_CODE = 'SETUP_NOT_WANTED';
+
+class SetupNotWantedError extends Error {}
 
 export type DesktopSetupHostAnswer =
 	| { ok: true; result: RemoteHostSetupResult; peer?: MirrorPeerSummary; reconnectError?: string }
@@ -68,16 +78,25 @@ export async function setupHostFromDesktop(
 	try {
 		const bundle = deps.localBundle();
 		const setup = deps.setup ?? setupRemoteHost;
-		result = await service.exclusive(() =>
-			setup(remote, bundle, {
+		result = await service.exclusive(() => {
+			if (options.stillWanted && !options.stillWanted()) throw new SetupNotWantedError();
+			return setup(remote, bundle, {
 				start: true,
 				// Move to Host's setup keeps the host running across reboots too.
 				service: true,
 				restart: options.restart === true,
 				force: options.force === true,
-			})
-		);
+			});
+		});
 	} catch (error) {
+		if (error instanceof SetupNotWantedError) {
+			return {
+				ok: false,
+				code: SETUP_NOT_WANTED_CODE,
+				error:
+					'Automatic moves turned off before the setup started. Nothing changed on the remote.',
+			};
+		}
 		const code =
 			error instanceof RemoteInstallError || error instanceof RemoteDiscoveryError
 				? error.code

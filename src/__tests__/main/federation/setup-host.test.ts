@@ -5,6 +5,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import {
+	SETUP_NOT_WANTED_CODE,
 	buildDesktopSetupHostDeps,
 	setupHostFromDesktop,
 	type DesktopSetupHostDeps,
@@ -116,6 +117,19 @@ describe('setupHostFromDesktop', () => {
 			code: 'PEER_FEDERATION_OFF',
 		});
 		expect(optedOut.setup).not.toHaveBeenCalled();
+	});
+
+	it('skips an automatic setup no longer wanted when it leaves the queue, and changes nothing', async () => {
+		const { deps, setup, service } = depsWith();
+		expect(await setupHostFromDesktop('r1', { stillWanted: () => false }, deps)).toMatchObject({
+			ok: false,
+			code: SETUP_NOT_WANTED_CODE,
+		});
+		expect(setup).not.toHaveBeenCalled();
+		expect(service.reconnectRemote).not.toHaveBeenCalled();
+		expect(
+			await setupHostFromDesktop('r1', { stillWanted: () => true }, depsWith().deps)
+		).toMatchObject({ ok: true });
 	});
 
 	it('answers an installer refusal with its own code and message, and reloads nothing', async () => {
