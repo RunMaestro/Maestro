@@ -1,5 +1,6 @@
 // src/main/process-manager/spawners/ChildProcessSpawner.ts
 
+import type { ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as os from 'os';
@@ -36,6 +37,7 @@ import { armStdioCloseWatchdog } from '../utils/stdioCloseWatchdog';
 import {
 	buildPreLaunchReapScript,
 	newRemotePidFilePath,
+	newRemoteTurnDir,
 	reapRemoteAgent,
 	signalRemoteAgent,
 	sshConnectionArgs,
@@ -46,7 +48,16 @@ import { isWindows } from '../../../shared/platformDetection';
 import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/windows-command';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
-import { startTurn } from '../../../shared/maestro-lib/run/start-turn';
+import {
+	startTurn,
+	type TurnExit,
+	type TurnHandlers,
+} from '../../../shared/maestro-lib/run/start-turn';
+import {
+	buildDurableLaunchScript,
+	runDurableSshTurn,
+} from '../../../shared/maestro-lib/control/ssh-durable-turn';
+import { noteSshExit } from '../../ssh-reachability';
 import {
 	INTERACTIVE_STOP_GRACE_MS,
 	stopProcess,
@@ -509,6 +520,20 @@ export class ChildProcessSpawner {
 					? newRemotePidFilePath(remoteArtifactPath !== undefined)
 					: undefined;
 
+			// "Keep turns running when the connection drops" (off by default): the
+			// launch wraps today's script so the agent outlives a lost link, and
+			// this machine reattaches to it. Only for a turn whose stdin ends with
+			// the prompt and whose remote pid record is the plain one; Codex is
+			// left out while its host supervision would read a reconnect's
+			// silence as a hung turn. See ssh-durable-turn.ts.
+			const durableTurnDir =
+				config.sshKeepTurnsOnDisconnect &&
+				sshRemotePidFile &&
+				remoteArtifactPath === undefined &&
+				toolType !== 'codex'
+					? newRemoteTurnDir()
+					: undefined;
+
 			let stdinText: string | undefined;
 			if (config.sshStdinScript) {
 				// An earlier turn on this tab whose connection dropped may still be
@@ -524,6 +549,7 @@ export class ChildProcessSpawner {
 					? orphanReap +
 						withRemotePidRecord(config.sshStdinScript, sshRemotePidFile, remoteArtifactPath)
 					: config.sshStdinScript;
+				if (durableTurnDir) stdinText = buildDurableLaunchScript(stdinText, durableTurnDir);
 				logger.debug('[ProcessManager] Sending SSH stdin script', 'ProcessManager', {
 					sessionId,
 					scriptLength: config.sshStdinScript.length,
@@ -559,91 +585,116 @@ export class ChildProcessSpawner {
 			const isSuperseded = (): boolean =>
 				isSupersededGeneration(sessionId, managedProcess.spawnGeneration);
 
-			const turn = startTurn(
-				{
-					command: spawnCommand,
-					args: spawnArgs,
-					cwd,
-					env,
-					stdin: stdinText,
-					shell: spawnShell,
-					...(promptArtifact?.owner === 'local' ? { promptArtifact } : {}),
+			const turnSpec = {
+				command: spawnCommand,
+				args: spawnArgs,
+				cwd,
+				env,
+				stdin: stdinText,
+				shell: spawnShell,
+				...(promptArtifact?.owner === 'local' ? { promptArtifact } : {}),
+			};
+			const turnHandlers: TurnHandlers = {
+				onStdout: (output) => {
+					if (isSuperseded()) return;
+					// Emit raw stdout before processing for live-streaming consumers (e.g., group chat peek).
+					// Wrapped in try/catch so a failing listener cannot prevent stdoutHandler from running.
+					try {
+						this.emitter.emit('raw-stdout', sessionId, output);
+					} catch (err) {
+						const reported = promptArtifact
+							? new Error('Prompt-file output listener failed.')
+							: err;
+						void captureException(reported);
+						logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
+							sessionId,
+							error: String(reported),
+						});
+					}
+					this.stdoutHandler.handleData(sessionId, output);
 				},
-				{
-					onStdout: (output) => {
-						if (isSuperseded()) return;
-						// Emit raw stdout before processing for live-streaming consumers (e.g., group chat peek).
-						// Wrapped in try/catch so a failing listener cannot prevent stdoutHandler from running.
-						try {
-							this.emitter.emit('raw-stdout', sessionId, output);
-						} catch (err) {
-							const reported = promptArtifact
-								? new Error('Prompt-file output listener failed.')
-								: err;
-							void captureException(reported);
-							logger.error('[ProcessManager] raw-stdout listener error', 'ProcessManager', {
-								sessionId,
-								error: String(reported),
-							});
-						}
-						this.stdoutHandler.handleData(sessionId, output);
-					},
-					onStderr: (stderrData) => {
-						if (isSuperseded()) return;
-						this.stderrHandler.handleData(sessionId, stderrData);
-					},
+				onStderr: (stderrData) => {
+					if (isSuperseded()) return;
+					this.stderrHandler.handleData(sessionId, stderrData);
 				},
-				{
-					// The desktop stops through ProcessManager.interrupt() / kill(),
-					// which run the same ladder on this child; the turn's own stop
-					// methods are not used here.
-					stopGraceMs: INTERACTIVE_STOP_GRACE_MS,
-					keepStdinOpen: stdinText === undefined && !isBatchMode,
-					// The stdout and stderr handlers keep what the desktop needs; a
-					// second copy here would only grow for as long as the process lives.
-					stdoutTailLimit: 0,
-					stderrTailLimit: 0,
-					// The app has no terminal whose Ctrl+C or hangup the agent would
-					// miss, so it gets its own group and a Stop ends every tool it
-					// started, even one started just before it exited (#1689).
-					processGroup: true,
-					sessionId,
-					label: toolType,
-				}
-			);
+			};
+			const turnOptions = {
+				// The desktop stops through ProcessManager.interrupt() / kill(),
+				// which run the same ladder on this child; the turn's own stop
+				// methods are not used here.
+				stopGraceMs: INTERACTIVE_STOP_GRACE_MS,
+				keepStdinOpen: stdinText === undefined && !isBatchMode,
+				// The stdout and stderr handlers keep what the desktop needs; a
+				// second copy here would only grow for as long as the process lives.
+				stdoutTailLimit: 0,
+				stderrTailLimit: 0,
+				// The app has no terminal whose Ctrl+C or hangup the agent would
+				// miss, so it gets its own group and a Stop ends every tool it
+				// started, even one started just before it exited (#1689).
+				processGroup: true,
+				sessionId,
+				label: toolType,
+			};
+			const turn: { child: ChildProcess; done: Promise<TurnExit> } = durableTurnDir
+				? this.startDurableSshTurn({
+						sessionId,
+						stdin: stdinText!,
+						dir: durableTurnDir,
+						pidFile: sshRemotePidFile!,
+						sshRemoteId: config.sshRemoteId,
+						startAttempt: (stdin, bytes) => startTurn({ ...turnSpec, stdin }, bytes, turnOptions),
+						handlers: turnHandlers,
+						onAttempt: (child) => {
+							managedProcess.childProcess = child;
+							managedProcess.pid = child.pid || -1;
+							logStreamErrors(child);
+							// A reattach has no remote agent of its own to stop at a forced close.
+							armStdioCloseWatchdog(child);
+						},
+						stopReason: () =>
+							isSuperseded() || this.processes.get(sessionId) !== managedProcess
+								? 'kill'
+								: managedProcess.interrupted
+									? 'interrupt'
+									: null,
+					})
+				: startTurn(turnSpec, turnHandlers, turnOptions);
 			const childProcess = turn.child;
 
 			// A stream error with no listener is an uncaught exception. stdin's is
 			// the common one: EPIPE, from a prompt written to a process that has
 			// already gone; the exit that follows reports what happened.
-			childProcess.stdin?.on('error', (err) => {
-				const errorCode = (err as NodeJS.ErrnoException).code;
-				if (errorCode === 'EPIPE') {
-					logger.debug(
-						'[ProcessManager] stdin EPIPE - process closed before write completed',
-						'ProcessManager',
-						{ sessionId }
-					);
-				} else {
-					logger.error('[ProcessManager] stdin error', 'ProcessManager', {
+			const logStreamErrors = (child: ChildProcess): void => {
+				child.stdin?.on('error', (err) => {
+					const errorCode = (err as NodeJS.ErrnoException).code;
+					if (errorCode === 'EPIPE') {
+						logger.debug(
+							'[ProcessManager] stdin EPIPE - process closed before write completed',
+							'ProcessManager',
+							{ sessionId }
+						);
+					} else {
+						logger.error('[ProcessManager] stdin error', 'ProcessManager', {
+							sessionId,
+							error: promptArtifact ? 'Prompt-file process stdin failed.' : String(err),
+							code: errorCode,
+						});
+					}
+				});
+				child.stdout?.on('error', (err) => {
+					logger.error('[ProcessManager] stdout error', 'ProcessManager', {
 						sessionId,
-						error: promptArtifact ? 'Prompt-file process stdin failed.' : String(err),
-						code: errorCode,
+						error: promptArtifact ? 'Prompt-file process stdout failed.' : String(err),
 					});
-				}
-			});
-			childProcess.stdout?.on('error', (err) => {
-				logger.error('[ProcessManager] stdout error', 'ProcessManager', {
-					sessionId,
-					error: promptArtifact ? 'Prompt-file process stdout failed.' : String(err),
 				});
-			});
-			childProcess.stderr?.on('error', (err) => {
-				logger.error('[ProcessManager] stderr error', 'ProcessManager', {
-					sessionId,
-					error: promptArtifact ? 'Prompt-file process stderr failed.' : String(err),
+				child.stderr?.on('error', (err) => {
+					logger.error('[ProcessManager] stderr error', 'ProcessManager', {
+						sessionId,
+						error: promptArtifact ? 'Prompt-file process stderr failed.' : String(err),
+					});
 				});
-			});
+			};
+			logStreamErrors(childProcess);
 
 			logger.debug('[ProcessManager] Child process spawned', 'ProcessManager', {
 				sessionId,
@@ -806,6 +857,21 @@ export class ChildProcessSpawner {
 			}
 			void Promise.race([turn.done, forced]).then((completed) => {
 				disposeSupervision();
+				// A durable turn has settled (or was given up): its remote dir goes,
+				// with the agent if one still runs, retried until the host answers.
+				// After a Stop the agent first gets the grace a Stop gives it.
+				if (durableTurnDir && sshRemotePidFile) {
+					const cleanup = () =>
+						reapRemoteAgent({
+							sshCommand: command,
+							sshArgs: finalArgs,
+							pidFile: sshRemotePidFile,
+							sessionId,
+							turnDir: durableTurnDir,
+						});
+					if (managedProcess.interrupted) setTimeout(cleanup, INTERACTIVE_STOP_GRACE_MS).unref?.();
+					else cleanup();
+				}
 				const exit = completed
 					? { ...completed, exitCode: supervisionFailed ? 1 : completed.exitCode }
 					: {
@@ -871,6 +937,7 @@ export class ChildProcessSpawner {
 				if (
 					sshRemotePidFile &&
 					!remoteArtifactPath &&
+					!durableTurnDir &&
 					!managedProcess.interrupted &&
 					((exit.exitCode ?? 0) !== 0 || exit.signal)
 				) {
@@ -965,7 +1032,8 @@ export class ChildProcessSpawner {
 						// For SSH the open stdio usually means the remote agent is still
 						// running behind a ControlMaster. Settling the turn while it keeps
 						// working would put a second writer on the session next turn.
-						if (sshRemotePidFile) {
+						// A durable turn's agent is meant to outlive this channel.
+						if (sshRemotePidFile && !durableTurnDir) {
 							signalRemoteAgent(
 								{
 									sshCommand: command,
@@ -996,6 +1064,67 @@ export class ChildProcessSpawner {
 				error: reported instanceof Error ? reported.message : String(reported),
 			};
 		}
+	}
+
+	/**
+	 * Start a durable SSH turn ("Keep turns running when the connection
+	 * drops"): the launch, then a reattach after each lost link, as one turn.
+	 * The caller's handlers hear one continuous stream; the turn's entry stays
+	 * registered, so the tab stays busy and nothing else starts on its session
+	 * until the agent ends or the user stops it.
+	 */
+	private startDurableSshTurn(input: {
+		sessionId: string;
+		stdin: string;
+		dir: string;
+		pidFile: string;
+		sshRemoteId: string | undefined;
+		startAttempt: Parameters<typeof runDurableSshTurn>[1]['startAttempt'];
+		handlers: TurnHandlers;
+		onAttempt: (child: ChildProcess) => void;
+		stopReason: () => 'interrupt' | 'kill' | null;
+	}): { child: ChildProcess; done: Promise<TurnExit> } {
+		const { sessionId, handlers } = input;
+		const durable = runDurableSshTurn(input.stdin, {
+			dir: input.dir,
+			pidFile: input.pidFile,
+			startAttempt: input.startAttempt,
+			onStdout: (text) => handlers.onStdout?.(text),
+			onStderr: (text) => handlers.onStderr?.(text),
+			onAttempt: (child) => {
+				logger.info('[ProcessManager] Reattached to a durable SSH turn', 'ProcessManager', {
+					sessionId,
+					pid: child.pid,
+				});
+				input.onAttempt(child);
+			},
+			onLinkLost: (exit) => {
+				logger.warn(
+					'[ProcessManager] SSH link lost under a running turn; reattaching',
+					'ProcessManager',
+					{
+						sessionId,
+						exitCode: exit.exitCode,
+						signal: exit.signal,
+					}
+				);
+				// The existing outage path: probe the host, raise the unreachable state.
+				noteSshExit(input.sshRemoteId, exit.exitCode ?? 255);
+			},
+			onAttemptError: (error) => {
+				void captureException(error);
+			},
+			stopReason: input.stopReason,
+		});
+		const done = durable.done.then((exit) => {
+			logger.info('[ProcessManager] Durable SSH turn settled', 'ProcessManager', {
+				sessionId,
+				outcome: exit.outcome,
+				exitCode: exit.exitCode,
+			});
+			return exit;
+		});
+		return { child: durable.first.child, done };
 	}
 }
 

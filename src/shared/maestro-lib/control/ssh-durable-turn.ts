@@ -28,7 +28,7 @@
  * script then exits with the recorded code.
  *
  * The remote never deletes `<dir>` itself: only this machine knows when the
- * last bytes arrived. {@link buildRemoteTurnCleanupScript} removes it after
+ * last bytes arrived. `buildRemoteTurnCleanupScript()` removes it after
  * the turn settles, and each durable launch sweeps finished dirs older than a
  * day that a crash left behind.
  *
@@ -36,12 +36,15 @@
  * `kill -0`, `sleep`), and bash, which every SSH spawn already requires.
  */
 
-import { randomUUID } from 'crypto';
+import type { ChildProcess } from 'child_process';
+import { StringDecoder } from 'string_decoder';
 import { shellEscape } from '../launch/shell-escape';
-import { SSH_STDIN_REMOTE_SHELL } from './ssh-remote-signal';
-
-/** The line the envelope writes to stderr once the agent is started. */
-export const DURABLE_TURN_STARTED_MARKER = '__maestro_durable_turn_started__';
+import type { TurnExit } from '../run/start-turn';
+import {
+	assertRemoteTurnDir,
+	REMOTE_REAP_RETRY_DELAYS_MS,
+	SSH_STDIN_REMOTE_SHELL,
+} from './ssh-remote-signal';
 
 /**
  * What a reattach exits with when the remote proves the turn is gone: no
@@ -55,27 +58,36 @@ const STREAM_POLL_SECONDS = '0.2';
 /** Finished turn dirs older than this are swept by the next durable launch. */
 const TURN_DIR_MAX_AGE_MIN = 24 * 60;
 
-const TURN_DIR_PATTERN = /^\/tmp\/maestro-turn-[0-9a-f-]{36}$/;
 const PID_FILE_PATTERN = /^\/tmp\/maestro-agent-[0-9a-f-]{36}\.pid$/;
 
-/** A fresh remote turn dir for one durable SSH turn. */
-export function newRemoteTurnDir(): string {
-	return `/tmp/maestro-turn-${randomUUID()}`;
-}
-
-function assertTurnDir(dir: string): void {
-	if (!TURN_DIR_PATTERN.test(dir)) throw new Error('Invalid remote turn directory.');
-}
+/*
+ * The remote side frames everything it writes to stderr, so this machine can
+ * tell the agent's stderr from ssh's own messages (a host-key warning at
+ * connect, "Broken pipe" at a drop) and count the agent's bytes exactly.
+ * stdout is never framed: it is the agent's stdout, byte for byte.
+ *
+ *   RS 'S' LF                 the agent runs (launch) or still runs (reattach)
+ *   RS 'D' <len> LF <len bytes> US   that many bytes of the agent's stderr
+ *   RS 'E' <code> LF          the agent ended with <code>; every byte was sent
+ *   RS 'G' LF                 the turn is gone (reattach only)
+ *
+ * A data frame cut by a drop is discarded whole and sent again by the
+ * reattach, which starts from the last complete frame.
+ */
+const RS = 0x1e;
+const US = 0x1f;
+const LF = 0x0a;
 
 function assertOffset(offset: number): void {
 	if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid remote turn offset.');
 }
 
 /**
- * The loop that copies `<dir>/out` to stdout and `<dir>/err` to stderr from
- * byte offsets `outOffset` and `errOffset`, then exits with the recorded code.
- * Each pass notes whether the exit file exists BEFORE it copies, so the pass
- * that ends the loop copied everything the agent wrote.
+ * The loop that copies `<dir>/out` to stdout and `<dir>/err` (framed) to
+ * stderr from byte offsets `outOffset` and `errOffset`, then sends the end
+ * frame and exits with the recorded code. Each pass notes whether the exit
+ * file exists BEFORE it copies, so the pass that ends the loop copied
+ * everything the agent wrote.
  */
 function streamLoop(outOffset: number, errOffset: number): string[] {
 	assertOffset(outOffset);
@@ -86,14 +98,23 @@ function streamLoop(outOffset: number, errOffset: number): string[] {
 		'  f=0; [ -e "$d/exit" ] && f=1',
 		'  m=0',
 		'  n=$(wc -c < "$d/out" 2>/dev/null) || n=$o; n=$((n+0))',
-		'  if [ "$n" -gt "$o" ]; then tail -c +$((o+1)) "$d/out" | head -c $((n-o)); o=$n; m=1; fi',
+		// A copy that cannot write means the channel is gone: a stale loop
+		// must not outlive its link.
+		'  if [ "$n" -gt "$o" ]; then tail -c +$((o+1)) "$d/out" | head -c $((n-o)) || exit 1; o=$n; m=1; fi',
 		'  n=$(wc -c < "$d/err" 2>/dev/null) || n=$e; n=$((n+0))',
-		'  if [ "$n" -gt "$e" ]; then tail -c +$((e+1)) "$d/err" | head -c $((n-e)) >&2; e=$n; m=1; fi',
+		'  if [ "$n" -gt "$e" ]; then',
+		"    printf '\\036D%d\\n' $((n-e)) >&2",
+		'    tail -c +$((e+1)) "$d/err" | head -c $((n-e)) >&2 || exit 1',
+		"    printf '\\037' >&2; e=$n; m=1",
+		'  fi',
 		'  [ "$f" = 1 ] && break',
+		// Removed by a cleanup or a reap: nobody reads this turn any more.
+		`  [ -d "$d" ] || exit ${DURABLE_TURN_GONE_EXIT_CODE}`,
 		`  [ "$m" = 1 ] || sleep ${STREAM_POLL_SECONDS}`,
 		'done',
 		'c=1; read -r c < "$d/exit" 2>/dev/null',
 		'case "$c" in ""|*[!0-9]*) c=1 ;; esac',
+		'printf \'\\036E%d\\n\' "$c" >&2',
 		'exit "$c"',
 	];
 }
@@ -107,7 +128,7 @@ function streamLoop(outOffset: number, errOffset: number): string[] {
  * byte at a time, so `cat` receives exactly the bytes after the envelope.
  */
 export function buildDurableLaunchScript(innerStdin: string, dir: string): string {
-	assertTurnDir(dir);
+	assertRemoteTurnDir(dir);
 	const shell = SSH_STDIN_REMOTE_SHELL.join(' ');
 	const sweep =
 		`find /tmp -maxdepth 2 -path '/tmp/maestro-turn-*/exit' -mmin +${TURN_DIR_MAX_AGE_MIN} 2>/dev/null` +
@@ -131,7 +152,7 @@ export function buildDurableLaunchScript(innerStdin: string, dir: string): strin
 		'  printf \'%s\\n\' "$c" > "$d/exit.tmp" && mv -f "$d/exit.tmp" "$d/exit"',
 		') < /dev/null > /dev/null 2>&1 &',
 		'printf \'%s %s\\n\' "$!" "$(ps -o lstart= -p $! 2>/dev/null)" > "$d/sup"',
-		`printf '%s\\n' ${shellEscape(DURABLE_TURN_STARTED_MARKER)} >&2`,
+		"printf '\\036S\\n' >&2",
 		...streamLoop(0, 0),
 		'}',
 	];
@@ -139,10 +160,10 @@ export function buildDurableLaunchScript(innerStdin: string, dir: string): strin
 }
 
 /**
- * The script that resumes a durable turn's stream after a lost link. It exits
- * {@link DURABLE_TURN_GONE_EXIT_CODE} when the remote proves the turn is
- * gone; otherwise it streams from the given offsets and exits with the
- * agent's code once the agent has ended and the files are drained.
+ * The script that resumes a durable turn's stream after a lost link. It sends
+ * the gone frame and exits {@link DURABLE_TURN_GONE_EXIT_CODE} when the
+ * remote proves the turn is gone; otherwise it streams from the given offsets
+ * and ends as the launch does.
  */
 export function buildDurableReattachScript(
 	dir: string,
@@ -150,13 +171,13 @@ export function buildDurableReattachScript(
 	outOffset: number,
 	errOffset: number
 ): string {
-	assertTurnDir(dir);
+	assertRemoteTurnDir(dir);
 	if (!PID_FILE_PATTERN.test(pidFile)) throw new Error('Invalid remote pid file.');
-	const gone = DURABLE_TURN_GONE_EXIT_CODE;
+	const gone = `{ printf '\\036G\\n' >&2; exit ${DURABLE_TURN_GONE_EXIT_CODE}; }`;
 	const lines = [
 		'{',
 		`d=${shellEscape(dir)}; pf=${shellEscape(pidFile)}`,
-		`[ -d "$d" ] || exit ${gone}`,
+		`[ -d "$d" ] || ${gone}`,
 		// A record names a live process only while its start time still matches,
 		// so a recycled pid never counts as the agent or its supervisor.
 		'_alive() {',
@@ -168,58 +189,271 @@ export function buildDurableReattachScript(
 		'}',
 		'if [ ! -e "$d/exit" ] && ! _alive "$d/sup" && ! _alive "$pf"; then',
 		// The supervisor may have finished between the first check and the probe.
-		`  [ -e "$d/exit" ] || exit ${gone}`,
+		`  [ -e "$d/exit" ] || ${gone}`,
 		'fi',
+		"printf '\\036S\\n' >&2",
 		...streamLoop(outOffset, errOffset),
 		'}',
 	];
 	return lines.join('\n') + '\n';
 }
 
-/** The script that removes a settled durable turn's dir. */
-export function buildRemoteTurnCleanupScript(dir: string): string {
-	assertTurnDir(dir);
-	return `rm -rf -- ${shellEscape(dir)}\n`;
-}
-
 /**
- * Removes the launch marker from a durable turn's stderr, passing every other
- * byte through. Text before the marker is held only until its line ends, so
- * ssh's own warnings still reach the stderr handler in order.
+ * Reads a durable turn's framed stderr across every ssh attempt of the turn.
+ *
+ * {@link push} takes raw stderr bytes and returns the text to pass on: ssh's
+ * own lines as they complete, and the agent's stderr, decoded with one decoder
+ * for the whole turn so a character split by a drop still decodes whole.
+ * {@link errOffset} counts the agent's stderr bytes received in complete
+ * frames: the offset the next reattach resumes from.
  */
-export class DurableStartMarkerFilter {
-	private pending = '';
-	private seen = false;
+export class DurableStderrReader {
+	private buf: Buffer = Buffer.alloc(0);
+	private payloadLen = -1;
+	private readonly payloadDecoder = new StringDecoder('utf8');
+	private offset = 0;
+	private startedNow = false;
+	private everStarted = false;
+	private ended: number | null = null;
+	private goneNow = false;
 
-	/** True once the envelope reported the agent started. */
-	get started(): boolean {
-		return this.seen;
+	/** The agent's stderr bytes received so far. */
+	get errOffset(): number {
+		return this.offset;
 	}
 
-	/** The text to pass on for one decoded stderr chunk. */
-	push(text: string): string {
-		if (this.seen) return text;
-		this.pending += text;
+	/** True once any attempt reported the agent running. */
+	get launched(): boolean {
+		return this.everStarted;
+	}
+
+	/** True once THIS attempt reported the agent running (it reached the host). */
+	get attached(): boolean {
+		return this.startedNow;
+	}
+
+	/** The agent's exit code, once the end frame arrived. */
+	get endCode(): number | null {
+		return this.ended;
+	}
+
+	/** True when a reattach reported the turn gone. */
+	get gone(): boolean {
+		return this.goneNow;
+	}
+
+	push(chunk: Uint8Array): string {
+		this.buf = this.buf.length ? Buffer.concat([this.buf, chunk]) : Buffer.from(chunk);
 		let out = '';
 		for (;;) {
-			const nl = this.pending.indexOf('\n');
-			if (nl < 0) return out;
-			const line = this.pending.slice(0, nl);
-			this.pending = this.pending.slice(nl + 1);
-			if (line === DURABLE_TURN_STARTED_MARKER) {
-				this.seen = true;
-				out += this.pending;
-				this.pending = '';
-				return out;
+			if (this.payloadLen >= 0) {
+				if (this.buf.length < this.payloadLen + 1) return out;
+				const payload = this.buf.subarray(0, this.payloadLen);
+				if (this.buf[this.payloadLen] === US) {
+					out += this.payloadDecoder.write(payload);
+					this.offset += this.payloadLen;
+					this.buf = this.buf.subarray(this.payloadLen + 1);
+				} else {
+					// ssh wrote into a frame the drop cut: drop it, the reattach resends it.
+					const next = this.buf.indexOf(RS, 1);
+					this.buf = next < 0 ? Buffer.alloc(0) : this.buf.subarray(next);
+				}
+				this.payloadLen = -1;
+				continue;
 			}
-			out += line + '\n';
+			if (this.buf.length === 0) return out;
+			const nl = this.buf.indexOf(LF);
+			if (nl < 0) return out;
+			const line = this.buf.subarray(0, nl);
+			this.buf = this.buf.subarray(nl + 1);
+			if (line[0] !== RS) {
+				out += line.toString('utf8') + '\n';
+				continue;
+			}
+			const header = line.subarray(1).toString('latin1');
+			if (header === 'S') {
+				this.startedNow = true;
+				this.everStarted = true;
+			} else if (header === 'G') {
+				this.goneNow = true;
+			} else if (/^E\d+$/.test(header)) {
+				this.ended = Number(header.slice(1));
+			} else if (/^D\d+$/.test(header)) {
+				this.payloadLen = Number(header.slice(1));
+			}
+			// Any other header is not ours: drop it.
 		}
 	}
 
-	/** Whatever is still held, at the end of a stream. */
-	flush(): string {
-		const rest = this.pending;
-		this.pending = '';
+	/**
+	 * The end of one ssh attempt: ssh's last partial line is passed on, a cut
+	 * frame is dropped, and the next attempt starts unattached.
+	 */
+	endAttempt(): string {
+		const rest = this.payloadLen < 0 && this.buf[0] !== RS ? this.buf.toString('utf8') : '';
+		this.buf = Buffer.alloc(0);
+		this.payloadLen = -1;
+		this.startedNow = false;
 		return rest;
 	}
+}
+
+/**
+ * Waits before each reattach while the host does not answer. The first is
+ * short, for a blip; the rest are the reap's pacing, about 25 minutes in all,
+ * which outlasts an OpenSSH PerSourcePenalties refusal. A reattach that
+ * reaches the host starts the count again. After the last one the turn is
+ * given up as a lost link, and the reap takes over.
+ */
+export const DURABLE_REATTACH_DELAYS_MS: readonly number[] = [
+	2_000,
+	...REMOTE_REAP_RETRY_DELAYS_MS,
+];
+
+/** How often a wait between attempts checks for a Stop. */
+const STOP_POLL_MS = 250;
+
+/** One ssh process of a durable turn. */
+export interface DurableAttempt {
+	readonly child: ChildProcess;
+	readonly done: Promise<TurnExit>;
+}
+
+/** The raw byte handlers an attempt must be started with. */
+export interface DurableAttemptHandlers {
+	onStdoutBytes(chunk: Uint8Array): void;
+	onStderrBytes(chunk: Uint8Array): void;
+}
+
+export interface DurableSshTurnOptions {
+	/** The turn dir and pid file the launch script names. */
+	dir: string;
+	pidFile: string;
+	/** Start one ssh process with this stdin (closed behind it) and these handlers. */
+	startAttempt(stdin: string, handlers: DurableAttemptHandlers): DurableAttempt;
+	/** The agent's stdout and stderr, decoded, as one stream across every attempt. */
+	onStdout(text: string): void;
+	onStderr(text: string): void;
+	/** A reattach took over the turn; `child` is now the process to stop. */
+	onAttempt?(child: ChildProcess): void;
+	/** The link dropped under a running agent (the ssh exit, for reachability). */
+	onLinkLost?(exit: TurnExit): void;
+	/** A reattach could not even start its ssh process. */
+	onAttemptError?(error: unknown): void;
+	/** `'interrupt'` after a Stop, `'kill'` once nobody owns the turn, else null. */
+	stopReason(): 'interrupt' | 'kill' | null;
+	delaysMs?: readonly number[];
+}
+
+/**
+ * How a durable turn ended. `ended`: the agent ended, with its own code.
+ * `stopped`: the user stopped it. `gone`: the remote proved the agent gone
+ * with no exit code. `unreachable`: the host never answered again.
+ * `not-started`: the launch never reached the agent; settle as today.
+ */
+export type DurableTurnOutcome = 'ended' | 'stopped' | 'gone' | 'unreachable' | 'not-started';
+
+export interface DurableTurnExit extends TurnExit {
+	outcome: DurableTurnOutcome;
+}
+
+/** What a lost link reports when the turn cannot be recovered: today's ssh failure. */
+const LOST_LINK_EXIT_CODE = 255;
+
+/**
+ * Run a durable SSH turn: the launch, then a reattach after every lost link,
+ * until the agent ends, the user stops it, or the remote cannot recover it.
+ * Every byte reaches `onStdout` / `onStderr` exactly once and in order.
+ */
+export function runDurableSshTurn(
+	launchStdin: string,
+	options: DurableSshTurnOptions
+): { first: DurableAttempt; done: Promise<DurableTurnExit> } {
+	const delays = options.delaysMs ?? DURABLE_REATTACH_DELAYS_MS;
+	const stderr = new DurableStderrReader();
+	const stdoutDecoder = new StringDecoder('utf8');
+	let outOffset = 0;
+	const handlers: DurableAttemptHandlers = {
+		onStdoutBytes: (chunk) => {
+			outOffset += chunk.length;
+			const text = stdoutDecoder.write(Buffer.from(chunk));
+			if (text) options.onStdout(text);
+		},
+		onStderrBytes: (chunk) => {
+			const text = stderr.push(chunk);
+			if (text) options.onStderr(text);
+		},
+	};
+
+	const stopped = (exit: TurnExit, reason: 'interrupt' | 'kill'): DurableTurnExit => ({
+		...exit,
+		interrupted: true,
+		exitCode: null,
+		signal: reason === 'interrupt' ? 'SIGINT' : 'SIGTERM',
+		outcome: 'stopped',
+	});
+
+	const waitOrStop = (ms: number): Promise<void> =>
+		new Promise((resolve) => {
+			const started = Date.now();
+			const tick = () => {
+				if (options.stopReason() !== null || Date.now() - started >= ms) resolve();
+				else setTimeout(tick, Math.min(STOP_POLL_MS, ms - (Date.now() - started)));
+			};
+			tick();
+		});
+
+	const first = options.startAttempt(launchStdin, handlers);
+	const done = (async (): Promise<DurableTurnExit> => {
+		let attempt = first;
+		let failures = 0;
+		for (;;) {
+			const exit = await attempt.done;
+			const attached = stderr.attached;
+			const rest = stderr.endAttempt();
+			if (rest) options.onStderr(rest);
+			// A character a drop split stays in the decoder until the turn ends.
+			const finish = (result: DurableTurnExit): DurableTurnExit => {
+				const tail = stdoutDecoder.end();
+				if (tail) options.onStdout(tail);
+				return result;
+			};
+			if (stderr.endCode !== null)
+				return finish({ ...exit, exitCode: stderr.endCode, signal: null, outcome: 'ended' });
+			if (!stderr.launched || exit.spawnError) return finish({ ...exit, outcome: 'not-started' });
+			const reason = options.stopReason();
+			if (reason) return finish(stopped(exit, reason));
+			if (stderr.gone)
+				return finish({ ...exit, exitCode: LOST_LINK_EXIT_CODE, signal: null, outcome: 'gone' });
+			if (attached) failures = 0;
+			options.onLinkLost?.(exit);
+			if (failures >= delays.length)
+				return finish({
+					...exit,
+					exitCode: LOST_LINK_EXIT_CODE,
+					signal: null,
+					outcome: 'unreachable',
+				});
+			await waitOrStop(delays[failures++]);
+			const during = options.stopReason();
+			if (during) return finish(stopped(exit, during));
+			try {
+				attempt = options.startAttempt(
+					buildDurableReattachScript(options.dir, options.pidFile, outOffset, stderr.errOffset),
+					handlers
+				);
+			} catch (error) {
+				// ssh itself could not be started: no later attempt would do better.
+				options.onAttemptError?.(error);
+				return finish({
+					...exit,
+					exitCode: LOST_LINK_EXIT_CODE,
+					signal: null,
+					outcome: 'unreachable',
+				});
+			}
+			options.onAttempt?.(attempt.child);
+		}
+	})();
+	return { first, done };
 }

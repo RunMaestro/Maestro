@@ -16,14 +16,14 @@ import * as fs from 'fs';
 import {
 	buildDurableLaunchScript,
 	buildDurableReattachScript,
-	buildRemoteTurnCleanupScript,
 	DURABLE_TURN_GONE_EXIT_CODE,
-	DURABLE_TURN_STARTED_MARKER,
-	DurableStartMarkerFilter,
-	newRemoteTurnDir,
+	DurableStderrReader,
 } from '../../../../shared/maestro-lib/control/ssh-durable-turn';
 import {
+	buildPreLaunchReapScript,
 	buildRemoteSignalScript,
+	buildRemoteTurnCleanupScript,
+	newRemoteTurnDir,
 	SSH_STDIN_REMOTE_SHELL,
 	withRemotePidRecord,
 } from '../../../../shared/maestro-lib/control/ssh-remote-signal';
@@ -32,7 +32,7 @@ const posixOnly = describe.skipIf(process.platform === 'win32');
 
 interface ShellRun {
 	out: Buffer;
-	err: string;
+	err: Buffer;
 	code: number | null;
 }
 
@@ -42,13 +42,13 @@ function runShell(script: string, killAfterBytes = 0): Promise<ShellRun> {
 		const [shell, ...args] = SSH_STDIN_REMOTE_SHELL;
 		const child = spawn(shell, args, { stdio: ['pipe', 'pipe', 'pipe'] });
 		let out = Buffer.alloc(0);
-		let err = '';
+		let err = Buffer.alloc(0);
 		child.stdout.on('data', (chunk: Buffer) => {
 			out = Buffer.concat([out, chunk]);
 			if (killAfterBytes && out.length >= killAfterBytes) child.kill('SIGKILL');
 		});
 		child.stderr.on('data', (chunk: Buffer) => {
-			err += chunk.toString();
+			err = Buffer.concat([err, chunk]);
 		});
 		child.on('close', (code) => resolve({ out, err, code }));
 		child.stdin.end(script);
@@ -109,25 +109,71 @@ describe('script text', () => {
 	});
 });
 
-describe('DurableStartMarkerFilter', () => {
-	it('drops the marker line and passes everything else in order', () => {
-		const filter = new DurableStartMarkerFilter();
-		expect(filter.push('Warning: added host\n__maestro_')).toBe('Warning: added host\n');
-		expect(filter.started).toBe(false);
-		expect(filter.push(`${DURABLE_TURN_STARTED_MARKER.slice(10)}\nagent err`)).toBe('agent err');
-		expect(filter.started).toBe(true);
-		expect(filter.push(`${DURABLE_TURN_STARTED_MARKER}\n`)).toBe(
-			`${DURABLE_TURN_STARTED_MARKER}\n`
+const RS = '\x1e';
+const US = '\x1f';
+
+describe('DurableStderrReader', () => {
+	it("passes ssh's own lines and the agent's framed stderr in order, and counts only the agent's", () => {
+		const reader = new DurableStderrReader();
+		expect(reader.push(Buffer.from('Warning: added host\n' + RS))).toBe('Warning: added host\n');
+		expect(reader.launched).toBe(false);
+		expect(reader.push(Buffer.from(`S\n${RS}D4\nab`))).toBe('');
+		expect(reader.launched).toBe(true);
+		expect(reader.attached).toBe(true);
+		expect(reader.push(Buffer.from(`cd${US}`))).toBe('abcd');
+		expect(reader.errOffset).toBe(4);
+		expect(reader.push(Buffer.from(`${RS}E3\nShared connection closed.\n`))).toBe(
+			'Shared connection closed.\n'
 		);
+		expect(reader.endCode).toBe(3);
 	});
 
-	it('hands back a partial line at the end of a stream', () => {
-		const filter = new DurableStartMarkerFilter();
-		expect(filter.push('ssh: connect to host x port 22: Connection refused')).toBe('');
-		expect(filter.flush()).toBe('ssh: connect to host x port 22: Connection refused');
-		expect(filter.started).toBe(false);
+	it('drops a frame a drop cut, even when ssh wrote into it, and decodes a split character whole', () => {
+		const reader = new DurableStderrReader();
+		const e = Buffer.from('é');
+		reader.push(Buffer.from(`${RS}S\n`));
+		expect(
+			reader.push(Buffer.concat([Buffer.from(`${RS}D1\n`), e.subarray(0, 1), Buffer.from(US)]))
+		).toBe('');
+		expect(reader.errOffset).toBe(1);
+		// The next frame is cut; ssh's disconnect message lands where its bytes were due.
+		reader.push(Buffer.from(`${RS}D9\nxyclient_loop: send disconnect: Broken pipe\n`));
+		expect(reader.errOffset).toBe(1);
+		reader.endAttempt();
+		expect(reader.attached).toBe(false);
+		// The reattach resends from offset 1: the rest of the character, then the cut frame.
+		reader.push(Buffer.from(`${RS}S\n`));
+		expect(
+			reader.push(Buffer.concat([Buffer.from(`${RS}D1\n`), e.subarray(1), Buffer.from(US)]))
+		).toBe('é');
+		expect(reader.errOffset).toBe(2);
+	});
+
+	it("hands back ssh's partial last line at the end of an attempt", () => {
+		const reader = new DurableStderrReader();
+		expect(reader.push(Buffer.from('ssh: connect to host x port 22: Connection refused'))).toBe('');
+		expect(reader.endAttempt()).toBe('ssh: connect to host x port 22: Connection refused');
+		expect(reader.launched).toBe(false);
+	});
+
+	it('reports a gone turn', () => {
+		const reader = new DurableStderrReader();
+		reader.push(Buffer.from(`${RS}G\n`));
+		expect(reader.gone).toBe(true);
+		expect(reader.endCode).toBeNull();
 	});
 });
+
+/** The agent's stderr as this machine reads it from one or more attempts. */
+function readStderr(...attempts: Buffer[]): { text: string; reader: DurableStderrReader } {
+	const reader = new DurableStderrReader();
+	let text = '';
+	for (const err of attempts) {
+		text += reader.push(err);
+		text += reader.endAttempt();
+	}
+	return { text, reader };
+}
 
 posixOnly('against a real shell', () => {
 	it('a healthy turn streams exactly what the agent wrote, with its exit code', async () => {
@@ -139,7 +185,10 @@ posixOnly('against a real shell', () => {
 		expect(durable.out.toString()).toBe(expectedLines(10));
 		expect(durable.code).toBe(plain.code);
 		expect(durable.code).toBe(3);
-		expect(durable.err).toBe(`${DURABLE_TURN_STARTED_MARKER}\nwarn\n`);
+		const { text, reader } = readStderr(durable.err);
+		expect(text).toBe('warn\n');
+		expect(text).toBe(plain.err.toString());
+		expect(reader.endCode).toBe(3);
 	}, 20_000);
 
 	it('three lost links lose and repeat no byte', async () => {
@@ -148,22 +197,31 @@ posixOnly('against a real shell', () => {
 		const first = await runShell(buildDurableLaunchScript(todaysStdin(pidFile), dir), 200);
 		expect(first.code).toBeNull();
 		let got = first.out;
-		let err = first.err;
+		const reader = new DurableStderrReader();
+		let err = reader.push(first.err) + reader.endAttempt();
 		let code: number | null = null;
 		for (let hop = 0; code === null; hop++) {
 			expect(hop).toBeLessThan(10);
 			const next = await runShell(
-				buildDurableReattachScript(dir, pidFile, got.length, 0),
+				buildDurableReattachScript(dir, pidFile, got.length, reader.errOffset),
 				hop < 3 ? 200 : 0
 			);
 			got = Buffer.concat([got, next.out]);
-			err += next.err;
+			err += reader.push(next.err) + reader.endAttempt();
 			code = next.code;
 		}
 		expect(got.toString()).toBe(expectedLines());
 		expect(code).toBe(3);
-		expect(err).toBe(`${DURABLE_TURN_STARTED_MARKER}\nwarn\n`);
+		expect(reader.endCode).toBe(3);
+		expect(err).toBe('warn\n');
 	}, 30_000);
+
+	it('an agent that exits 255 itself sends its end frame, so it is not a lost link', async () => {
+		const pidFile = newPidFile();
+		const run = await runShell(buildDurableLaunchScript(todaysStdin(pidFile, 1, 255), newDir()));
+		expect(run.code).toBe(255);
+		expect(readStderr(run.err).reader.endCode).toBe(255);
+	}, 20_000);
 
 	it("Stop through today's signal script ends the agent group while the link is down", async () => {
 		const pidFile = newPidFile();
@@ -190,6 +248,26 @@ posixOnly('against a real shell', () => {
 		expect(fs.existsSync(dir)).toBe(false);
 		const gone = await runShell(buildDurableReattachScript(dir, pidFile, 0, 0));
 		expect(gone.code).toBe(DURABLE_TURN_GONE_EXIT_CODE);
+		expect(readStderr(gone.err).reader.gone).toBe(true);
+	}, 20_000);
+
+	it('a reap carrying the turn dir stops the agent, then removes the dir', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		const inner = withRemotePidRecord("exec /bin/bash -c 'sleep 30'\n", pidFile);
+		const launch = runShell(buildDurableLaunchScript(inner, dir));
+		for (let i = 0; i < 50 && !fs.existsSync(pidFile); i++)
+			await new Promise((r) => setTimeout(r, 50));
+		const [pid] = fs.readFileSync(pidFile, 'utf8').split(' ');
+		await runShell(
+			buildPreLaunchReapScript([
+				{ sshCommand: 'ssh', sshArgs: [], pidFile, sessionId: 's', turnDir: dir },
+			])
+		);
+		expect(() => process.kill(-Number(pid), 0)).toThrow();
+		// The stream it fed ends too: with the agent's code, or as gone once the dir is removed.
+		expect([143, DURABLE_TURN_GONE_EXIT_CODE]).toContain((await launch).code);
+		expect(fs.existsSync(dir)).toBe(false);
 	}, 20_000);
 
 	it('a dir whose agent and supervisor are dead with no exit file is gone', async () => {

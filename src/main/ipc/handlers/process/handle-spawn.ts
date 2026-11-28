@@ -1702,6 +1702,8 @@ async function handleProcessSpawnImpl(
 		sshRemoteHost: sshRemoteUsed?.host,
 		// SSH stdin script - the entire command is sent via stdin to /bin/bash on remote
 		sshStdinScript,
+		// The remote's switch: the turn outlives a lost link (off by default).
+		sshKeepTurnsOnDisconnect: sshRemoteUsed?.keepTurnsOnDisconnect === true,
 		// Human-readable remote agent invocation (shown in Process Details)
 		sshRemoteCommand,
 		// Extra dirs to prepend to spawn PATH (local non-SSH only)

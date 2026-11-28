@@ -162,6 +162,9 @@ export interface ProcessConfig {
 	promptAlreadyInArgs?: boolean;
 	/** Script to send via stdin for SSH execution (bypasses shell escaping) */
 	sshStdinScript?: string;
+	/** The remote's "Keep turns running when the connection drops" switch
+	 *  (`SshRemoteConfig.keepTurnsOnDisconnect`). See ssh-durable-turn.ts. */
+	sshKeepTurnsOnDisconnect?: boolean;
 	/** Human-readable remote command line (the actual agent invocation running on the
 	 *  remote host). Surfaced in Process Details above the local SSH command. */
 	sshRemoteCommand?: string;

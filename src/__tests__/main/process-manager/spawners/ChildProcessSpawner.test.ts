@@ -152,7 +152,10 @@ import * as turnRunner from '../../../../shared/maestro-lib/run/start-turn';
 import * as agentDefinitions from '../../../../main/agents/definitions';
 import * as sentry from '../../../../main/utils/sentry';
 import { POSIX_PROMPT_ARGV_MAX_BYTES } from '../../../../shared/maestro-lib/launch/prompt-delivery';
-import { __resetPendingRemoteReapsForTest } from '../../../../main/utils/ssh-remote-signal';
+import {
+	__resetPendingRemoteReapsForTest,
+	withRemotePidRecord,
+} from '../../../../main/utils/ssh-remote-signal';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -965,6 +968,129 @@ describe('ChildProcessSpawner', () => {
 				expect(mockSpawn).toHaveBeenCalledTimes(1);
 			});
 		});
+	});
+
+	describe('durable SSH turns (keepTurnsOnDisconnect)', () => {
+		const SSH_ARGS = [
+			'-o',
+			'BatchMode=yes',
+			'user@host',
+			'/bin/bash',
+			'--norc',
+			'--noprofile',
+			'-s',
+		];
+		const SCRIPT = 'cd /project\nexec claude --print\n';
+		const sshConfig = (keep?: boolean) =>
+			createBaseConfig({
+				command: '/usr/bin/ssh',
+				args: SSH_ARGS,
+				sshStdinScript: SCRIPT,
+				...(keep === undefined ? {} : { sshKeepTurnsOnDisconnect: keep }),
+			});
+		const RS = '\x1e';
+
+		function closeWith(child: any, code: number | null, signal: string | null = null) {
+			childHandlers(child).get('close')?.(code, signal);
+		}
+
+		afterEach(() => {
+			__resetPendingRemoteReapsForTest();
+		});
+
+		// D1: with the switch off, the wire is exactly today's.
+		it.each([undefined, false])("sends today's launch unchanged when the switch is %s", (keep) => {
+			const { processes, spawner } = createTestContext();
+			spawner.spawn(sshConfig(keep));
+			const pidFile = processes.get('test-session')!.sshRemotePidFile!;
+			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(written).toBe(withRemotePidRecord(SCRIPT, pidFile));
+			expect(written).not.toContain('maestro-turn-');
+		});
+
+		it("wraps today's launch, unchanged, in the durable envelope when the switch is on", () => {
+			const { processes, spawner } = createTestContext();
+			spawner.spawn(sshConfig(true));
+			const pidFile = processes.get('test-session')!.sshRemotePidFile!;
+			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(written).toMatch(/^\{\n/);
+			expect(written).toMatch(/d='\/tmp\/maestro-turn-[0-9a-f-]{36}'/);
+			expect(written.endsWith(`\n}\n${withRemotePidRecord(SCRIPT, pidFile)}`)).toBe(true);
+		});
+
+		it('leaves Codex on the plain launch while its host supervision would misread a reconnect', () => {
+			const { spawner } = createTestContext();
+			spawner.spawn({ ...sshConfig(true), toolType: 'codex', command: '/usr/bin/ssh' });
+			expect(mockChildProcess.stdin.write.mock.calls[0][0]).not.toContain('maestro-turn-');
+		});
+
+		// D4: a lost link does not settle the turn; the entry stays, so the tab
+		// stays busy and the queue waits. The reattach resumes from the offsets
+		// received, and the turn settles with the agent's own code.
+		it('keeps the turn through a lost link, reattaches from the offsets, and settles with the agent', async () => {
+			const { processes, spawner, emitter } = createTestContext();
+			const onExit = vi.fn();
+			const onData = vi.fn();
+			emitter.on('exit', onExit);
+			spawner.spawn(sshConfig(true));
+			const managed = processes.get('test-session')!;
+			const launch = mockChildProcess;
+			launch.stderr.emit('data', Buffer.from(`${RS}S\n`));
+			launch.stdout.emit('data', Buffer.from('first line\nsecond li'));
+			closeWith(launch, 255);
+
+			await new Promise((r) => setTimeout(r, 300));
+			expect(onExit).not.toHaveBeenCalled();
+			expect(processes.get('test-session')).toBe(managed);
+			expect(reapSpawns()).toHaveLength(0);
+
+			await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2), { timeout: 5000 });
+			const reattach = mockChildProcess;
+			expect(managed.childProcess).toBe(reattach);
+			const script = reattach.stdin.end.mock.calls[0]?.[0] ?? reattach.stdin.write.mock.calls[0][0];
+			expect(script).toContain(`o=${'first line\nsecond li'.length}; e=0`);
+			emitter.on('raw-stdout', onData);
+			reattach.stdout.emit('data', Buffer.from('ne\n'));
+			reattach.stderr.emit('data', Buffer.from(`${RS}S\n${RS}E0\n`));
+			closeWith(reattach, 0);
+
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+			expect(onExit.mock.calls[0].slice(0, 2)).toEqual(['test-session', 0]);
+			expect(onData).toHaveBeenCalledWith('test-session', 'ne\n');
+			// The settled turn's dir is removed on the host.
+			await vi.waitFor(() => expect(reapSpawns()).toHaveLength(1));
+			expect(reapSpawns()[0]).toContain("rm -rf -- '/tmp/maestro-turn-");
+		}, 10_000);
+
+		// D5: Stop while reconnecting settles the turn as stopped and hands the
+		// agent to the reap, which retries until the host answers.
+		it('a Stop while reconnecting settles the turn and reaps the agent with its dir', async () => {
+			const { processes, spawner, emitter } = createTestContext();
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			spawner.spawn(sshConfig(true));
+			const managed = processes.get('test-session')!;
+			mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n`));
+			closeWith(mockChildProcess, 255);
+			await new Promise((r) => setTimeout(r, 100));
+			managed.interrupted = true;
+
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalled(), { timeout: 2000 });
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			await vi.waitFor(() => expect(reapSpawns()).toHaveLength(1), { timeout: 5000 });
+			expect(reapSpawns()[0]).toContain('kill -TERM');
+			expect(reapSpawns()[0]).toContain(managed.sshRemotePidFile!);
+		}, 10_000);
+
+		/** The terminate scripts sent to the host (detached signal ssh processes). */
+		function reapSpawns(): string[] {
+			return mockSpawn.mock.results
+				.map((r) => r.value)
+				.filter((child) => child.stdin.end.mock.calls.length > 0)
+				.map((child) => child.stdin.end.mock.calls[0][0])
+				.filter((script): script is string => typeof script === 'string')
+				.filter((script) => script.includes('maestro-turn-') && script.includes('rm -rf'));
+		}
 	});
 
 	describe('local prompt-file sink', () => {

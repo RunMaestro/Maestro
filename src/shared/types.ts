@@ -1282,6 +1282,15 @@ export interface SshRemoteConfig {
 	 * Maestro never probes it for a host. See `isFederationRemote()`.
 	 */
 	federation?: boolean;
+
+	/**
+	 * "Keep turns running when the connection drops". When true, an agent's
+	 * turn on this remote runs under a supervisor that outlives the ssh
+	 * channel, and Maestro reattaches to it after a lost link. Absent or false
+	 * (the default): every byte on the wire and every file on the remote is as
+	 * before. See `src/shared/maestro-lib/control/ssh-durable-turn.ts`.
+	 */
+	keepTurnsOnDisconnect?: boolean;
 }
 
 /**

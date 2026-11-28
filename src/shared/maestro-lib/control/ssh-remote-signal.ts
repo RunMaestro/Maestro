@@ -49,6 +49,38 @@ export function newRemotePidFilePath(promptArtifact = false): string {
 	return `/tmp/maestro-${promptArtifact ? 'prompt-owner' : 'agent'}-${randomUUID()}.pid`;
 }
 
+const TURN_DIR_PATTERN = /^\/tmp\/maestro-turn-[0-9a-f-]{36}$/;
+
+/**
+ * A fresh remote dir for one durable SSH turn (see `ssh-durable-turn.ts`):
+ * the agent's output, its exit code, and its supervisor's pid live there.
+ */
+export function newRemoteTurnDir(): string {
+	return `/tmp/maestro-turn-${randomUUID()}`;
+}
+
+/** Refuse a turn dir Maestro did not name: it goes into `rm -rf`. */
+export function assertRemoteTurnDir(dir: string): void {
+	if (!TURN_DIR_PATTERN.test(dir)) throw new Error('Invalid remote turn directory.');
+}
+
+/** The script that removes a settled durable turn's dir. */
+export function buildRemoteTurnCleanupScript(dir: string): string {
+	assertRemoteTurnDir(dir);
+	return `rm -rf -- ${shellEscape(dir)}\n`;
+}
+
+/**
+ * The terminate script for `target`. A durable turn's dir goes with it, after
+ * the agent is gone: the subshell keeps the signal script's early `exit`s
+ * from skipping the removal.
+ */
+function terminateScriptFor(target: RemoteSignalTarget): string {
+	const signal = buildRemoteSignalScript(target.pidFile, 'terminate', target.promptArtifactPath);
+	if (target.turnDir === undefined) return signal;
+	return `(\n${signal}) </dev/null >/dev/null 2>&1\n${buildRemoteTurnCleanupScript(target.turnDir)}`;
+}
+
 /**
  * Prefix a stdin launch script with the line that records the agent's pid.
  *
@@ -257,6 +289,8 @@ export interface RemoteSignalTarget {
 	sessionId: string;
 	/** Remote-owned file; enables descriptor-preserving cancellation. */
 	promptArtifactPath?: string;
+	/** A durable turn's dir, which a terminate removes once the agent is gone. */
+	turnDir?: string;
 }
 
 /**
@@ -283,7 +317,10 @@ export function signalRemoteAgent(
 	};
 
 	try {
-		const script = buildRemoteSignalScript(target.pidFile, mode, target.promptArtifactPath);
+		const script =
+			mode === 'terminate'
+				? terminateScriptFor(target)
+				: buildRemoteSignalScript(target.pidFile, mode, target.promptArtifactPath);
 		const child = spawn(target.sshCommand, [...connection, ...SSH_STDIN_REMOTE_SHELL], {
 			stdio: ['pipe', 'ignore', 'ignore'],
 			detached: true,
@@ -434,10 +471,7 @@ export function takePendingRemoteReaps(sessionId: string): RemoteSignalTarget[] 
  */
 export function buildPreLaunchReapScript(targets: readonly RemoteSignalTarget[]): string {
 	return targets
-		.map(
-			(target) =>
-				`(\n${buildRemoteSignalScript(target.pidFile, 'terminate')}) </dev/null >/dev/null 2>&1\n`
-		)
+		.map((target) => `(\n${terminateScriptFor(target)}) </dev/null >/dev/null 2>&1\n`)
 		.join('');
 }
 
