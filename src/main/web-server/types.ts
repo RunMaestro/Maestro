@@ -676,6 +676,10 @@ export interface QueuedItemSnapshot {
 	commandArgs?: string;
 	tabName?: string;
 	paused?: boolean;
+	/** Whether the item runs read-only when it is dispatched (`queuedItemRunsReadOnly()`). */
+	readOnly?: boolean;
+	/** The sender's save to History choice for this one message (`turnSaveToHistory`). */
+	saveToHistory?: boolean;
 	/** The `@mention` routing picked for this item (strip or `dispatch --routing`). */
 	mentionRouting?: MentionRouting;
 }

@@ -14,7 +14,7 @@ import { readLiftedTo, type LiftedToPointer } from './lift-pointer';
 /** A message that waited in the host's queue, to wait in the local queue once the agent is back. */
 export type ReturnedQueuedMessage = Pick<
 	QueuedTurn,
-	'itemId' | 'tabId' | 'queuedAt' | 'text' | 'paused'
+	'itemId' | 'tabId' | 'queuedAt' | 'text' | 'paused' | 'readOnly' | 'saveToHistory'
 > & {
 	/** Absent: a message (a value written before the kind was carried). */
 	kind?: QueuedTurn['kind'];
@@ -31,6 +31,12 @@ function asLocalQueueItem(item: ReturnedQueuedMessage, tabId: string): Record<st
 		timestamp: item.queuedAt,
 		tabId,
 		...(item.paused ? { paused: true } : {}),
+		// The sender's own choices replace the local tab's chips for this message
+		// (`queuedItemRunsReadOnly()`), so a message sent read-only runs read-only here too.
+		...(item.readOnly !== undefined
+			? { turnReadOnly: item.readOnly, readOnlyMode: item.readOnly }
+			: {}),
+		...(item.saveToHistory !== undefined ? { turnSaveToHistory: item.saveToHistory } : {}),
 	};
 	const commandText = item.text.trim();
 	if (item.kind !== 'command' || !commandText.startsWith('/')) {
@@ -335,6 +341,8 @@ function readReturnedQueue(value: unknown): ReturnedQueuedMessage[] | undefined 
 			queuedAt: raw.queuedAt,
 			text: raw.text,
 			paused: raw.paused === true,
+			...(typeof raw.readOnly === 'boolean' ? { readOnly: raw.readOnly } : {}),
+			...(typeof raw.saveToHistory === 'boolean' ? { saveToHistory: raw.saveToHistory } : {}),
 			...(raw.kind === 'command' ? { kind: 'command' as const } : {}),
 		});
 	}

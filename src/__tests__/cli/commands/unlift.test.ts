@@ -70,6 +70,19 @@ function depsWith(overrides: Partial<UnliftDeps> = {}) {
 	return { deps, remove };
 }
 
+/** A host queue that keeps what Hold / Resume set, as a real host does. */
+function hostQueue(items: Array<Record<string, unknown> & { itemId: string; paused: boolean }>) {
+	const paused = new Map<string, boolean>();
+	const setPaused = vi.fn(async (_agentId: string, itemId: string, value: boolean) => {
+		paused.set(itemId, value);
+		return ok({ found: true, paused: value });
+	});
+	const list = vi.fn(async () =>
+		ok(items.map((item) => ({ ...item, paused: paused.get(item.itemId) ?? item.paused })))
+	);
+	return { list, setPaused };
+}
+
 let logs: string[];
 
 beforeEach(() => {
@@ -143,6 +156,58 @@ describe('maestro-cli unlift', () => {
 		const kept = depsWith();
 		await unlift('agent-1', { json: true, keepHostCopy: true }, kept.deps);
 		expect(kept.remove).not.toHaveBeenCalled();
+	});
+
+	it('a desktop that did not answer in time may still save the restore: nothing held on the host is released (#2195)', async () => {
+		const queued = {
+			itemId: 'q1',
+			tabId: 'tab-1',
+			queuedAt: 1,
+			kind: 'message',
+			text: 'next',
+			paused: false,
+			readOnly: false,
+		};
+		for (const answer of [
+			() => Promise.resolve({ success: false, error: 'Renderer did not respond in time' }),
+			() => Promise.reject(new Error('socket closed')),
+		]) {
+			const { connection } = fakeConnection();
+			const client = (connection as unknown as { client: { turns: { queue: unknown } } }).client;
+			const queue = hostQueue([queued]);
+			const setPaused = queue.setPaused;
+			client.turns.queue = queue;
+			const { deps, remove } = depsWith({
+				connect: vi.fn().mockResolvedValue(connection),
+				restoreInDesktop: vi.fn(answer),
+			});
+			await unlift('agent-1', { json: true }, deps);
+			expect(lastJson()).toMatchObject({
+				success: false,
+				error: expect.stringMatching(/stays held there, so it cannot run twice/),
+			});
+			expect(setPaused.mock.calls).toEqual([['host-1', 'q1', true]]);
+			expect(remove).not.toHaveBeenCalled();
+		}
+	});
+
+	it('a desktop that refuses the restore lets the host run what it held again', async () => {
+		const { connection } = fakeConnection();
+		const client = (connection as unknown as { client: { turns: { queue: unknown } } }).client;
+		const queue = hostQueue([
+			{ itemId: 'q1', tabId: 'tab-1', queuedAt: 1, kind: 'message', text: 'n', paused: false },
+		]);
+		const setPaused = queue.setPaused;
+		client.turns.queue = queue;
+		const { deps } = depsWith({
+			connect: vi.fn().mockResolvedValue(connection),
+			restoreInDesktop: vi.fn().mockResolvedValue({ success: false, error: 'Agent is not hosted' }),
+		});
+		await unlift('agent-1', { json: true }, deps);
+		expect(setPaused.mock.calls).toEqual([
+			['host-1', 'q1', true],
+			['host-1', 'q1', false],
+		]);
 	});
 
 	it('refuses an agent that is not hosted', async () => {

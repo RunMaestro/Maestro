@@ -1015,6 +1015,15 @@ describe('createWsMaestroClient', () => {
 							items: [
 								{ id: 'q1', timestamp: 5, tabId: A1_TAB, type: 'message', text: 'hi' },
 								{
+									id: 'q3',
+									timestamp: 7,
+									tabId: A1_TAB,
+									type: 'message',
+									text: 'ro',
+									readOnly: true,
+									saveToHistory: false,
+								},
+								{
 									id: 'q2',
 									timestamp: 6,
 									tabId: A1_TAB,
@@ -1033,7 +1042,18 @@ describe('createWsMaestroClient', () => {
 			expect(await client.turns.queue.list(A1)).toEqual({
 				ok: true,
 				value: [
+					// No read-only field: an older host, so it stays unknown.
 					{ itemId: 'q1', tabId: A1_TAB, queuedAt: 5, kind: 'message', text: 'hi', paused: false },
+					{
+						itemId: 'q3',
+						tabId: A1_TAB,
+						queuedAt: 7,
+						kind: 'message',
+						text: 'ro',
+						paused: false,
+						readOnly: true,
+						saveToHistory: false,
+					},
 					{
 						itemId: 'q2',
 						tabId: A1_TAB,

@@ -34,7 +34,10 @@ import {
 	setQueuedItemPaused,
 	mergeQueuedItemIntoAbove,
 } from '../../services/queuedPrompt';
-import { withQueuedTurnOverrides } from '../../../shared/queuedTurnSettings';
+import {
+	queuedItemRunsReadOnly,
+	withQueuedTurnOverrides,
+} from '../../../shared/queuedTurnSettings';
 import type { TurnOverrides } from '../../../shared/maestro-lib/client/types';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSideQuestion } from '../../services/sideQuestion';
@@ -1609,6 +1612,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
 							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
 							...(item.paused !== undefined ? { paused: item.paused } : {}),
+							// What the item runs with here, so a Move Back keeps it (Federation).
+							readOnly: queuedItemRunsReadOnly(
+								item,
+								s.aiTabs?.find((tab) => tab.id === item.tabId)
+							),
+							...(item.turnSaveToHistory !== undefined
+								? { saveToHistory: item.turnSaveToHistory }
+								: {}),
 							...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
 						})),
 					}));

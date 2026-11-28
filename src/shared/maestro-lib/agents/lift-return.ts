@@ -61,6 +61,25 @@ export {
  */
 export const RETURN_TRANSCRIPT_RETRY_TIMEOUT_MS = 120_000;
 
+/**
+ * How many times a return reads the host queue again after the restore, to bring home a message
+ * the host took meanwhile, before it removes the copy. A host that keeps taking messages past this
+ * keeps its copy (marked), and the next return finishes it.
+ */
+export const RETURN_LATE_QUEUE_PASSES = 3;
+
+/**
+ * Thrown by `ReturnRunDeps.restore` when it cannot tell whether the restore was written (the window
+ * did not answer, and may still write it). The return then releases nothing on the host: a message
+ * it held there stays held, so it can never run there and here both.
+ */
+export class RestoreUnsettledError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'RestoreUnsettledError';
+	}
+}
+
 export interface ReturnRunOptions {
 	/** The host cannot be reached: restore from this machine's copy only, and keep the host's. */
 	offline?: boolean;
@@ -198,6 +217,14 @@ export async function runReturnFromHost(
 		let returned: ReturnedFromHost = { tabs: [] };
 		/** Messages this return held on the host: released again when the return fails. */
 		const heldIds: string[] = [];
+		/** Release what this return held, then throw `error`, naming any message still held there. */
+		const failReleasing = async (error: Error): Promise<never> => {
+			const stuck = await releaseHeld(connection, pointer.agentId, heldIds);
+			if (stuck.length > 0) {
+				error.message += ` ${stuck.length === 1 ? 'A message' : `${stuck.length} messages`} this return held on the host (${from}) could not be released and still ${stuck.length === 1 ? 'waits' : 'wait'} there, held: resume ${stuck.length === 1 ? 'it' : 'them'} on the host.`;
+			}
+			throw error;
+		};
 		/** Items an earlier return brought home that still wait, held, in the host copy. */
 		let carriedOnHost: string[] = [];
 		const hostAgent = await connection.client.agents.get(pointer.agentId);
@@ -205,6 +232,27 @@ export async function runReturnFromHost(
 		if (!hostAgent.ok && !hostGone) throw hostError(connection.peer, hostAgent.error);
 		/** Queue items an earlier return of this agent brought home already. */
 		const carried = new Set(left?.carried ?? []);
+		/** Re-reads the host queue and holds what waits there (set once the host agent is read). */
+		let holdWaiting: (() => Promise<NonNullable<ReturnedFromHost['queue']>>) | undefined;
+		/** A desktop host does not send a queued message's images: its messages come home held. */
+		let imagesUnread = false;
+		/**
+		 * How a host message waits here. Held when the host held it, when its images may be missing,
+		 * or when the host did not say whether it was sent read-only (a host older than that field):
+		 * it must not run here with writes allowed when it was sent without.
+		 */
+		const asHomeItem = (item: NonNullable<ReturnedFromHost['queue']>[number]) => ({
+			...item,
+			paused: item.paused || imagesUnread || item.readOnly === undefined,
+		});
+		/** A notice for the messages whose read-only choice the host did not send, or none. */
+		const readOnlyUnknownNotice = (
+			items: NonNullable<ReturnedFromHost['queue']>
+		): string | undefined => {
+			const unknown = items.filter((item) => item.readOnly === undefined && !item.paused);
+			if (unknown.length === 0 || imagesUnread) return undefined;
+			return `${from} did not say whether ${unknown.length === 1 ? 'the message from its queue was' : `the ${unknown.length} messages from its queue were`} sent read-only, so ${unknown.length === 1 ? 'it waits' : 'they wait'} here, held: check the tab's read-only setting, then resume ${unknown.length === 1 ? 'it' : 'each one'}.`;
+		};
 
 		if (hostAgent.ok) {
 			const busy = (hostAgent.value.aiTabs ?? []).some((tab) => tab.state === 'busy');
@@ -220,35 +268,33 @@ export async function runReturnFromHost(
 			 * The host's waiting messages, less those an earlier return carried, each held on the host
 			 * so it cannot start there while it moves here.
 			 */
-			const holdWaiting = async (): Promise<NonNullable<ReturnedFromHost['queue']>> => {
+			holdWaiting = async (): Promise<NonNullable<ReturnedFromHost['queue']>> => {
 				const listed = await connection.client.turns.queue.list(pointer.agentId);
-				if (!listed.ok) {
-					await releaseHeld(connection, pointer.agentId, heldIds);
-					throw hostError(connection.peer, listed.error);
-				}
+				if (!listed.ok) return await failReleasing(hostError(connection.peer, listed.error));
 				carriedOnHost = listed.value
 					.filter((item) => carried.has(item.itemId))
 					.map((item) => item.itemId);
 				const waiting = listed.value.filter((item) => !carried.has(item.itemId));
 				for (const item of waiting) {
-					if (item.paused || heldIds.includes(item.itemId)) continue;
+					// Held already, by the user or by this return. One this return held that the latest
+					// list shows running again (resumed on the host meanwhile) is held again: it must not
+					// run there while it comes home.
+					if (item.paused) continue;
 					const held = await connection.client.turns.queue.setPaused(
 						pointer.agentId,
 						item.itemId,
 						true
 					);
-					if (!held.ok) {
-						await releaseHeld(connection, pointer.agentId, heldIds);
-						throw hostError(connection.peer, held.error);
-					}
+					if (!held.ok) return await failReleasing(hostError(connection.peer, held.error));
 					if (!held.value.found) {
-						await releaseHeld(connection, pointer.agentId, heldIds);
-						throw new LiftRunError(
-							'RETURN_BUSY',
-							`"${agent.name}" started a queued message on its host. Wait for it to finish, then move it back.`
+						return await failReleasing(
+							new LiftRunError(
+								'RETURN_BUSY',
+								`"${agent.name}" started a queued message on its host. Wait for it to finish, then move it back.`
+							)
 						);
 					}
-					heldIds.push(item.itemId);
+					if (!heldIds.includes(item.itemId)) heldIds.push(item.itemId);
 				}
 				return waiting.map((item) => ({
 					itemId: item.itemId,
@@ -257,14 +303,14 @@ export async function runReturnFromHost(
 					text: item.text,
 					// Held by this return or by the user: `paused` is the user's own hold only.
 					paused: item.paused && !heldIds.includes(item.itemId),
+					...(item.readOnly !== undefined ? { readOnly: item.readOnly } : {}),
+					...(item.saveToHistory !== undefined ? { saveToHistory: item.saveToHistory } : {}),
 					...(item.kind === 'command' ? { kind: item.kind } : {}),
 				}));
 			};
 			let queue = await holdWaiting();
-			const failRead = async (error: Pick<ClientError, 'code' | 'message'>): Promise<never> => {
-				await releaseHeld(connection, pointer.agentId, heldIds);
-				throw hostError(connection.peer, error);
-			};
+			const failRead = (error: Pick<ClientError, 'code' | 'message'>): Promise<never> =>
+				failReleasing(hostError(connection.peer, error));
 			const tabs = await connection.client.tabs.list(pointer.agentId);
 			if (!tabs.ok) return await failRead(tabs.error);
 			const withLogs: AITabRecord[] = [];
@@ -283,10 +329,11 @@ export async function runReturnFromHost(
 			const recheck = await connection.client.agents.get(pointer.agentId);
 			if (!recheck.ok) return await failRead(recheck.error);
 			if ((recheck.value.aiTabs ?? []).some((tab) => tab.state === 'busy')) {
-				await releaseHeld(connection, pointer.agentId, heldIds);
-				throw new LiftRunError(
-					'RETURN_BUSY',
-					`"${agent.name}" started a turn on its host. Wait for it to finish, then move it back.`
+				return await failReleasing(
+					new LiftRunError(
+						'RETURN_BUSY',
+						`"${agent.name}" started a turn on its host. Wait for it to finish, then move it back.`
+					)
 				);
 			}
 			// A message queued on the host while its transcripts were read comes home too, held.
@@ -294,8 +341,7 @@ export async function runReturnFromHost(
 			// Neither host sends a queued message's images (`list_queue` carries its text only), and a
 			// headless host takes none. A desktop host may hold some: its messages come home held, so
 			// none runs without the image it was sent with.
-			const imagesUnread =
-				queue.length > 0 && connection.client.connection?.host()?.kind === 'desktop';
+			imagesUnread = queue.length > 0 && connection.client.connection?.host()?.kind === 'desktop';
 			returned = {
 				tabs: withLogs,
 				...(options.keepHostCopy
@@ -309,7 +355,7 @@ export async function runReturnFromHost(
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
 				...(queue.length > 0
 					? {
-							queue: queue.map((item) => ({ ...item, paused: item.paused || imagesUnread })),
+							queue: queue.map(asHomeItem),
 						}
 					: {}),
 			};
@@ -323,6 +369,8 @@ export async function runReturnFromHost(
 					`${from} is a Maestro desktop, which does not send the images attached to queued messages. The ${queue.length === 1 ? 'message' : `${queue.length} messages`} from its queue wait here, held: attach any image again, then resume ${queue.length === 1 ? 'it' : 'each one'}.`
 				);
 			}
+			const unknownReadOnly = readOnlyUnknownNotice(queue);
+			if (unknownReadOnly) notices.push(unknownReadOnly);
 		} else if (!left) {
 			notices.push(
 				`The host no longer has ${from}: the agent comes back with this machine's copy.`
@@ -335,15 +383,60 @@ export async function runReturnFromHost(
 			// A restore that answered late (the window timed out) may have been written anyway: the
 			// messages it carried then wait here, and releasing them on the host would run them twice.
 			if (!restoreLanded(deps, agent.id, left !== undefined, heldIds)) {
-				await releaseHeld(connection, pointer.agentId, heldIds);
-				throw error;
+				// The window may still write it: release nothing, so no message can run in both places.
+				// A held message comes home held at the next return.
+				if (error instanceof LiftRunError && error.code === 'RETURN_RESTORE_UNSETTLED') {
+					throw new LiftRunError(
+						'RETURN_RESTORE_FAILED',
+						heldIds.length > 0
+							? `${error.message} ${heldIds.length === 1 ? 'The message it held on the host stays held there, so it cannot run twice; it comes' : `The ${heldIds.length} messages it held on the host stay held there, so none runs twice; they come`} back held at the next try.`
+							: error.message
+					);
+				}
+				return await failReleasing(error as Error);
 			}
 		}
 
 		// The agent is home from here on: a failure is the host copy's, reported, never the agent's.
 		let hostCopyRemoved = false;
 		try {
-			if (hostAgent.ok && !options.keepHostCopy) {
+			// The messages the restore carried are home: none of them is ever released on the host.
+			heldIds.length = 0;
+			// A message the host took after the last read is in neither the restore nor the held set:
+			// bring it home (held on the host first) before the copy goes, or keep the copy (marked)
+			// for the next return when the host keeps taking them.
+			let lateQueueSettled = !holdWaiting || options.keepHostCopy === true;
+			let lateNotice = `The agent is back, but its host (${from}) kept taking new messages, so its copy stays for now. Each message it took came back here. Maestro removes the copy at the next launch.`;
+			if (holdWaiting && !lateQueueSettled) {
+				const home = new Set([...(returned.queue ?? []).map((item) => item.itemId), ...carried]);
+				for (let pass = 0; pass < RETURN_LATE_QUEUE_PASSES; pass++) {
+					const late = (await holdWaiting()).filter((item) => !home.has(item.itemId));
+					if (late.length === 0) {
+						lateQueueSettled = true;
+						break;
+					}
+					try {
+						await restoreOrThrow(deps, agent, {
+							tabs: [],
+							queue: late.map(asHomeItem),
+							hostCopyLeft: copyLeft(true, [...home, ...late.map((item) => item.itemId)]),
+						});
+					} catch (error) {
+						// Not released: the window may still write it. Held on the host, the message
+						// comes back held at the next return.
+						lateNotice = `The agent is back, but ${late.length === 1 ? 'a message' : `${late.length} messages`} its host (${from}) took during the return could not be saved here (${errorText(error)}). ${late.length === 1 ? 'It waits' : 'They wait'} there, held, and ${late.length === 1 ? 'comes' : 'come'} back at the next launch, with the rest of the host copy.`;
+						break;
+					}
+					for (const item of late) home.add(item.itemId);
+					heldIds.length = 0;
+					const unknownReadOnly = readOnlyUnknownNotice(late);
+					if (unknownReadOnly) notices.push(unknownReadOnly);
+					returned = { ...returned, queue: [...(returned.queue ?? []), ...late] };
+				}
+			}
+			if (hostAgent.ok && !options.keepHostCopy && !lateQueueSettled) {
+				notices.push(lateNotice);
+			} else if (hostAgent.ok && !options.keepHostCopy) {
 				const removed = await connection.client.agents.remove(pointer.agentId);
 				if (removed.ok) {
 					hostCopyRemoved = true;
@@ -441,18 +534,25 @@ function restoreLanded(
 }
 
 /**
- * Let the host run the messages this return held, because the return failed. A failure to release
- * one is not reported over the error the caller is about to see: that message stays held on the
- * host, where Hold / Resume reaches it.
+ * Let the host run the messages this return held, because the return failed. Answers the ids it
+ * could not release: those stay held on the host, where Hold / Resume reaches them, and the caller
+ * names them beside its own error.
  */
 async function releaseHeld(
 	connection: ReturnHostConnection,
 	hostAgentId: string,
 	heldIds: string[]
-): Promise<void> {
+): Promise<string[]> {
+	const stuck: string[] = [];
 	for (const itemId of heldIds) {
-		await connection.client.turns.queue.setPaused(hostAgentId, itemId, false);
+		try {
+			const released = await connection.client.turns.queue.setPaused(hostAgentId, itemId, false);
+			if (!released.ok) stuck.push(itemId);
+		} catch {
+			stuck.push(itemId);
+		}
 	}
+	return stuck;
 }
 
 async function restoreOrThrow(
@@ -464,6 +564,12 @@ async function restoreOrThrow(
 		await deps.restore(agent.id, returned);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
+		if (error instanceof RestoreUnsettledError) {
+			throw new LiftRunError(
+				'RETURN_RESTORE_UNSETTLED',
+				`Could not move "${agent.name}" back: ${message}.`
+			);
+		}
 		throw new LiftRunError(
 			'RETURN_RESTORE_FAILED',
 			`Could not move "${agent.name}" back: ${message}. Nothing changed on the host.`

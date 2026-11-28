@@ -1909,9 +1909,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// before the ack, so the host's copy is removed only once this is on disk.
 		if ('returnedFromHost' in patchObj) {
 			const returned = readReturnedFromHost(patchObj.returnedFromHost);
+			// Main stops waiting at `restoreBy` and may then release what the return held on the
+			// host: a restore that reaches this window later is refused, never applied.
+			const restoreBy = typeof patchObj.restoreBy === 'number' ? patchObj.restoreBy : undefined;
 			const refusal = !returned
 				? "Invalid value for field 'returnedFromHost'"
-				: returnRestoreRefusal(session);
+				: restoreBy !== undefined && Date.now() > restoreBy
+					? 'The move back reached this window after Maestro stopped waiting for it'
+					: returnRestoreRefusal(session);
 			if (refusal || !returned) {
 				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 					success: false,
@@ -1925,7 +1930,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					returned
 				) as unknown as Session;
 			const restored = applyReturn(session);
-			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyReturn(s) : s)));
+			// Saved first, shown second: a save that fails leaves nothing applied here, so the
+			// return may let the host run what it held without it running here too.
 			try {
 				await window.maestro.sessions.setMany([restored as any], []);
 			} catch (persistErr) {
@@ -1935,6 +1941,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				});
 				return;
 			}
+			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyReturn(s) : s)));
 			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 				success: true,
 			});

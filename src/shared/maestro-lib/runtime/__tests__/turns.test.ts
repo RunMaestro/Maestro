@@ -607,7 +607,14 @@ describe('runtime turns', () => {
 			const receipt = value(await runtime.turns.send('a1', 't1', { text: 'second' }));
 			expect(receipt).toMatchObject({ status: 'queued', position: 1, queueLength: 1 });
 			expect(value(await runtime.turns.queue.list('a1'))).toEqual([
-				expect.objectContaining({ tabId: 't1', text: 'second', kind: 'message', paused: false }),
+				// `readOnly` says what it runs with, so a Move Back keeps it (#2195).
+				expect.objectContaining({
+					tabId: 't1',
+					text: 'second',
+					kind: 'message',
+					paused: false,
+					readOnly: false,
+				}),
 			]);
 
 			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: true });
