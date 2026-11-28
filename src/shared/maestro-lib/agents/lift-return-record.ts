@@ -328,10 +328,29 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 		...(order ? { unifiedTabOrder: order } : {}),
 		...(activeTabId !== undefined ? { activeTabId } : {}),
 		...(Array.isArray(record.executionQueue) || fromHost.length > 0
-			? { executionQueue: [...fromHost, ...localQueue] }
+			? { executionQueue: withHostBatch(localQueue, fromHost, record.hostCopyLeft) }
 			: {}),
 		hostedOptOut: true,
 	} as unknown as T;
+}
+
+/**
+ * The local queue with a batch of host messages in it. Host messages go before the ones typed
+ * here, in the host's order: a later batch (one the host took while the agent came home) goes
+ * right after the host messages that came home before it (`HostCopyLeft.carried`), so no message
+ * runs ahead of an earlier one it may depend on.
+ */
+function withHostBatch<T extends { id?: unknown }>(
+	localQueue: T[],
+	fromHost: unknown[],
+	hostCopyLeft: unknown
+): unknown[] {
+	const earlier = new Set(readHostCopyLeft(hostCopyLeft)?.carried ?? []);
+	let at = 0;
+	localQueue.forEach((item, index) => {
+		if (typeof item.id === 'string' && earlier.has(item.id)) at = index + 1;
+	});
+	return [...localQueue.slice(0, at), ...fromHost, ...localQueue.slice(at)];
 }
 
 function readReturnedQueue(value: unknown): ReturnedQueuedMessage[] | undefined {

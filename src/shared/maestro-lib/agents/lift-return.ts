@@ -221,9 +221,13 @@ export async function runReturnFromHost(
 		let returned: ReturnedFromHost = { tabs: [] };
 		/** Messages this return held on the host: released again when the return fails. */
 		const heldIds: string[] = [];
+		/** The restore is written: the agent is home, and this return releases nothing any more. */
+		let home = false;
 		/** Release what this return held, then throw `error`, naming any message still held there. */
 		const failReleasing = async (error: Error): Promise<never> => {
-			const stuck = await releaseHeld(connection, pointer.agentId, heldIds);
+			// Once the agent is home, nothing is released: a message held on the host then comes home
+			// (held) at the next return, and never runs there while this machine owns the agent.
+			const stuck = home ? [] : await releaseHeld(connection, pointer.agentId, heldIds);
 			if (stuck.length > 0) {
 				error.message += ` ${stuck.length === 1 ? 'A message' : `${stuck.length} messages`} this return held on the host (${from}) could not be released and still ${stuck.length === 1 ? 'waits' : 'wait'} there, held: resume ${stuck.length === 1 ? 'it' : 'them'} on the host.`;
 			}
@@ -289,10 +293,18 @@ export async function runReturnFromHost(
 		}
 		/** Queue items an earlier return of this agent brought home already. */
 		const carried = new Set(left?.carried ?? []);
+		/** The host tabs a late batch needs that were not read yet (set once the tabs are read). */
+		let readNewTabs:
+			| ((items: NonNullable<ReturnedFromHost['queue']>) => Promise<AITabRecord[]>)
+			| undefined;
 		/** Re-reads the host queue and holds what waits there (set once the host agent is read). */
 		let holdWaiting: (() => Promise<NonNullable<ReturnedFromHost['queue']>>) | undefined;
-		/** A desktop host does not send a queued message's images: its messages come home held. */
-		let imagesUnread = false;
+		/**
+		 * Neither host sends a queued message's images (`list_queue` carries its text only), and a
+		 * headless host takes none. A desktop host may hold some: each of its messages comes home held,
+		 * in every batch, so none runs without the image it was sent with.
+		 */
+		const desktopHost = connection.client.connection?.host()?.kind === 'desktop';
 		/**
 		 * How a host message waits here. Held when the host held it, when its images may be missing,
 		 * or when the host did not say whether it was sent read-only (a host older than that field):
@@ -300,16 +312,21 @@ export async function runReturnFromHost(
 		 */
 		const asHomeItem = (item: NonNullable<ReturnedFromHost['queue']>[number]) => ({
 			...item,
-			paused: item.paused || imagesUnread || item.readOnly === undefined,
+			paused: item.paused || desktopHost || item.readOnly === undefined,
 		});
 		/** A notice for the messages whose read-only choice the host did not send, or none. */
 		const readOnlyUnknownNotice = (
 			items: NonNullable<ReturnedFromHost['queue']>
 		): string | undefined => {
 			const unknown = items.filter((item) => item.readOnly === undefined && !item.paused);
-			if (unknown.length === 0 || imagesUnread) return undefined;
+			if (unknown.length === 0 || desktopHost) return undefined;
 			return `${from} did not say whether ${unknown.length === 1 ? 'the message from its queue was' : `the ${unknown.length} messages from its queue were`} sent read-only, so ${unknown.length === 1 ? 'it waits' : 'they wait'} here, held: check the tab's read-only setting, then resume ${unknown.length === 1 ? 'it' : 'each one'}.`;
 		};
+		/** A notice for messages from a desktop host, which come home held without their images. */
+		const imagesNotice = (items: NonNullable<ReturnedFromHost['queue']>): string | undefined =>
+			desktopHost && items.length > 0
+				? `${from} is a Maestro desktop, which does not send the images attached to queued messages. The ${items.length === 1 ? 'message' : `${items.length} messages`} from its queue ${items.length === 1 ? 'waits' : 'wait'} here, held: attach any image again, then resume ${items.length === 1 ? 'it' : 'each one'}.`
+				: undefined;
 
 		if (hostAgent.ok) {
 			const busy = (hostAgent.value.aiTabs ?? []).some((tab) => tab.state === 'busy');
@@ -370,8 +387,8 @@ export async function runReturnFromHost(
 				failReleasing(hostError(connection.peer, error));
 			const tabs = await connection.client.tabs.list(pointer.agentId);
 			if (!tabs.ok) return await failRead(tabs.error);
-			const withLogs: AITabRecord[] = [];
-			for (const tab of tabs.value) {
+			/** A host tab with its transcript; a read that times out is tried once more, for longer. */
+			const withTranscript = async (tab: AITabRecord): Promise<AITabRecord> => {
 				let transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id);
 				if (!transcript.ok && transcript.error.code === 'timeout') {
 					transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id, {
@@ -379,8 +396,31 @@ export async function runReturnFromHost(
 					});
 				}
 				if (!transcript.ok) return await failRead(transcript.error);
-				withLogs.push({ ...tab, logs: transcript.value });
-			}
+				return { ...tab, logs: transcript.value };
+			};
+			const withLogs: AITabRecord[] = [];
+			for (const tab of tabs.value) withLogs.push(await withTranscript(tab));
+			/**
+			 * The host tabs a late batch of messages belongs to that this return did not read yet (a tab
+			 * opened on the host during the return), read now, so each message reaches its own
+			 * conversation and not the tab the user is on.
+			 */
+			readNewTabs = async (items) => {
+				const known = new Set([
+					...returned.tabs.map((tab) => tab.id),
+					...(agent.aiTabs ?? []).map((tab) => tab.id),
+				]);
+				if (items.every((item) => known.has(item.tabId))) return [];
+				const listed = await connection.client.tabs.list(pointer.agentId);
+				if (!listed.ok) return await failRead(listed.error);
+				const wanted = new Set(items.map((item) => item.tabId));
+				const fresh: AITabRecord[] = [];
+				for (const tab of listed.value) {
+					if (known.has(tab.id) || !wanted.has(tab.id)) continue;
+					fresh.push(await withTranscript(tab));
+				}
+				return fresh;
+			};
 			// A turn may have started on the host since the first look (a message that left the queue
 			// before it was held, or a send typed on the host): look again before anything is written.
 			const recheck = await connection.client.agents.get(pointer.agentId);
@@ -395,11 +435,6 @@ export async function runReturnFromHost(
 			}
 			// A message queued on the host while its transcripts were read comes home too, held.
 			queue = await holdWaiting();
-			// Neither host sends a queued message's images (`list_queue` carries its text only), and a
-			// headless host takes none. A desktop host may hold some: its messages come home held, so
-			// none runs without the image it was sent with.
-			const desktopHost = connection.client.connection?.host()?.kind === 'desktop';
-			imagesUnread = queue.length > 0 && desktopHost;
 			/** Kept copy: the messages that come home, still to take out of its queue. */
 			keptQueue = [...queue.map((item) => item.itemId), ...carriedOnHost];
 			returned = {
@@ -426,11 +461,8 @@ export async function runReturnFromHost(
 					`A draft typed on the host in tab "${kept.tabName ?? kept.tabId}" was not put in that tab, because it has a draft of its own here. The host's draft was: ${kept.draft}`
 				);
 			}
-			if (imagesUnread) {
-				notices.push(
-					`${from} is a Maestro desktop, which does not send the images attached to queued messages. The ${queue.length === 1 ? 'message' : `${queue.length} messages`} from its queue wait here, held: attach any image again, then resume ${queue.length === 1 ? 'it' : 'each one'}.`
-				);
-			}
+			const images = imagesNotice(queue);
+			if (images) notices.push(images);
 			// A desktop host sends a tab's draft text but never the images staged with it, and no call
 			// fetches them: name each draft that came back as text only, so the user attaches again.
 			const draftTabs = desktopHost
@@ -471,6 +503,7 @@ export async function runReturnFromHost(
 		}
 
 		// The agent is home from here on: a failure is the host copy's, reported, never the agent's.
+		home = true;
 		let hostCopyRemoved = false;
 		try {
 			// The messages the restore carried are home: none of them is ever released on the host.
@@ -481,18 +514,22 @@ export async function runReturnFromHost(
 			let lateQueueSettled = !holdWaiting || options.keepHostCopy === true;
 			let lateNotice = `The agent is back, but its host (${from}) kept taking new messages, so its copy stays for now. Each message it took came back here. Maestro removes the copy at the next launch.`;
 			if (holdWaiting && !lateQueueSettled) {
-				const home = new Set([...(returned.queue ?? []).map((item) => item.itemId), ...carried]);
+				const cameHome = new Set([
+					...(returned.queue ?? []).map((item) => item.itemId),
+					...carried,
+				]);
 				for (let pass = 0; pass < RETURN_LATE_QUEUE_PASSES; pass++) {
-					const late = (await holdWaiting()).filter((item) => !home.has(item.itemId));
+					const late = (await holdWaiting()).filter((item) => !cameHome.has(item.itemId));
 					if (late.length === 0) {
 						lateQueueSettled = true;
 						break;
 					}
+					const newTabs = readNewTabs ? await readNewTabs(late) : [];
 					try {
 						await restoreOrThrow(deps, agent, {
-							tabs: [],
+							tabs: newTabs,
 							queue: late.map(asHomeItem),
-							hostCopyLeft: copyLeft(true, [...home, ...late.map((item) => item.itemId)]),
+							hostCopyLeft: copyLeft(true, [...cameHome, ...late.map((item) => item.itemId)]),
 						});
 					} catch (error) {
 						// Not released: the window may still write it. Held on the host, the message
@@ -500,11 +537,17 @@ export async function runReturnFromHost(
 						lateNotice = `The agent is back, but ${late.length === 1 ? 'a message' : `${late.length} messages`} its host (${from}) took during the return could not be saved here (${errorText(error)}). ${late.length === 1 ? 'It waits' : 'They wait'} there, held, and ${late.length === 1 ? 'comes' : 'come'} back at the next launch, with the rest of the host copy.`;
 						break;
 					}
-					for (const item of late) home.add(item.itemId);
+					for (const item of late) cameHome.add(item.itemId);
 					heldIds.length = 0;
 					const unknownReadOnly = readOnlyUnknownNotice(late);
 					if (unknownReadOnly) notices.push(unknownReadOnly);
-					returned = { ...returned, queue: [...(returned.queue ?? []), ...late] };
+					const images = imagesNotice(late);
+					if (images) notices.push(images);
+					returned = {
+						...returned,
+						tabs: [...returned.tabs, ...newTabs],
+						queue: [...(returned.queue ?? []), ...late],
+					};
 				}
 			}
 			if (hostAgent.ok && !options.keepHostCopy && !lateQueueSettled) {

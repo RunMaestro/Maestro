@@ -182,4 +182,16 @@ describe('remoteUpdateSessionConfig - a Move Back restore (#2195)', () => {
 		expect(reply).toEqual({ success: false, error: 'Could not save the agent: disk full' });
 		expect(setSessions).not.toHaveBeenCalled();
 	});
+
+	it('a save that answers false (the write did not happen) is refused the same way (#2197)', async () => {
+		vi.mocked(window.maestro.sessions.setMany).mockResolvedValueOnce(false as never);
+		const { setSessions, reply } = await dispatchRestore(moved(), {
+			returnedFromHost: { tabs: [] },
+		});
+		expect(reply).toEqual({
+			success: false,
+			error: 'Could not save the agent: the write did not reach the disk',
+		});
+		expect(setSessions).not.toHaveBeenCalled();
+	});
 });

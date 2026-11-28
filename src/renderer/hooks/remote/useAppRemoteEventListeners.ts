@@ -1932,12 +1932,19 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			const restored = applyReturn(session);
 			// Saved first, shown second: a save that fails leaves nothing applied here, so the
 			// return may let the host run what it held without it running here too.
+			// `setMany` answers false for a write it could not make (a full disk): a refusal too.
+			let saveError: string | undefined;
 			try {
-				await window.maestro.sessions.setMany([restored as any], []);
+				if ((await window.maestro.sessions.setMany([restored as any], [])) === false) {
+					saveError = 'the write did not reach the disk';
+				}
 			} catch (persistErr) {
+				saveError = persistErr instanceof Error ? persistErr.message : String(persistErr);
+			}
+			if (saveError !== undefined) {
 				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 					success: false,
-					error: `Could not save the agent: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+					error: `Could not save the agent: ${saveError}`,
 				});
 				return;
 			}
