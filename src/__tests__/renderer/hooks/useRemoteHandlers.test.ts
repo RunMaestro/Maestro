@@ -565,6 +565,21 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
+			it('refuses a managed dispatch: its admission identity is not dropped into a plain queue item', async () => {
+				useSettingsStore.setState({ federationHostedAgents: false } as any);
+				const session = createMockSession({ inputMode: 'ai', liftedTo } as any);
+
+				await sendTo(session, { pianolaDispatchId: 'dispatch-1' });
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].executionQueue ?? []).toHaveLength(0);
+				expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+					'receipt-1',
+					false,
+					'DispatchTargetUnavailable'
+				);
+			});
+
 			it('queues a forced dispatch too: force lifts a busy tab, not the host owning the session', async () => {
 				useSettingsStore.setState({ federationHostedAgents: false } as any);
 				const session = createMockSession({ inputMode: 'ai', liftedTo } as any);

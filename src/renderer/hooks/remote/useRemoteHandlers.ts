@@ -240,6 +240,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					!requestedTabId ||
 					session.state === 'busy' ||
 					session.agentErrorPaused ||
+					// A managed dispatch carries an admission identity the come-home queue
+					// below does not keep: refuse it while the agent is coming home, as a busy
+					// target is refused, so its sender keeps it and sends it again.
+					isAwaitingComeHome(session) ||
 					!session.aiTabs.some(
 						(t) => t.id === requestedTabId && t.state !== 'busy' && !t.agentError
 					))
