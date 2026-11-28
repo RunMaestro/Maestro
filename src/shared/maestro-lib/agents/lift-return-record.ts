@@ -16,7 +16,14 @@ import { readLiftedTo, type LiftedToPointer } from './lift-pointer';
 /** A message that waited in the host's queue, to wait in the local queue once the agent is back. */
 export type ReturnedQueuedMessage = Pick<
 	QueuedTurn,
-	'itemId' | 'tabId' | 'queuedAt' | 'text' | 'paused' | 'readOnly' | 'saveToHistory'
+	| 'itemId'
+	| 'tabId'
+	| 'queuedAt'
+	| 'text'
+	| 'paused'
+	| 'readOnly'
+	| 'readOnlyChoice'
+	| 'saveToHistory'
 > & {
 	/** Absent: a message (a value written before the kind was carried). */
 	kind?: QueuedTurn['kind'];
@@ -25,6 +32,21 @@ export type ReturnedQueuedMessage = Pick<
 	/** Model and effort captured when it was queued, when the host sent them. */
 	turnSettings?: { model?: string; effort?: string };
 };
+
+/**
+ * A host message's read-only as local queue fields (`queuedItemRunsReadOnly()`). Only the sender's
+ * own choice (`readOnlyChoice: 'sender'`) replaces the local tab's chip, so a message sent
+ * writable on purpose runs writable here. Without one, the host's value is only the tab state it
+ * saw: a read-only value still holds (`readOnlyMode`, which nothing lifts), and a writable one
+ * leaves the decision to the local tab when the message runs, so a tab made read-only while the
+ * message waited stays read-only for it.
+ */
+function returnedReadOnly(item: ReturnedQueuedMessage): Record<string, boolean> {
+	if (item.readOnlyChoice === 'sender' && item.readOnly !== undefined) {
+		return { turnReadOnly: item.readOnly, readOnlyMode: item.readOnly };
+	}
+	return item.readOnly === true ? { readOnlyMode: true } : {};
+}
 
 /**
  * A host queue item as a local queue item. A slash command keeps its kind, split into command and
@@ -40,11 +62,7 @@ function asLocalQueueItem(item: ReturnedQueuedMessage, tabId: string): Record<st
 		...(item.images && item.images.length > 0 ? { images: item.images } : {}),
 		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
 		...(item.paused ? { paused: true } : {}),
-		// The sender's own choices replace the local tab's chips for this message
-		// (`queuedItemRunsReadOnly()`), so a message sent read-only runs read-only here too.
-		...(item.readOnly !== undefined
-			? { turnReadOnly: item.readOnly, readOnlyMode: item.readOnly }
-			: {}),
+		...returnedReadOnly(item),
 		...(item.saveToHistory !== undefined ? { turnSaveToHistory: item.saveToHistory } : {}),
 	};
 	const commandText = item.text.trim();
@@ -707,6 +725,7 @@ function readReturnedQueue(value: unknown): ReturnedQueuedMessage[] | undefined 
 			text: raw.text,
 			paused: raw.paused === true,
 			...(typeof raw.readOnly === 'boolean' ? { readOnly: raw.readOnly } : {}),
+			...(raw.readOnlyChoice === 'sender' ? { readOnlyChoice: 'sender' as const } : {}),
 			...(typeof raw.saveToHistory === 'boolean' ? { saveToHistory: raw.saveToHistory } : {}),
 			...(raw.kind === 'command' ? { kind: 'command' as const } : {}),
 			...(images.length > 0 ? { images } : {}),

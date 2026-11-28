@@ -7335,8 +7335,170 @@ describe('persistence IPC handlers', () => {
 			const result = await handler!({} as any, [{ ...baseSession }], []);
 
 			expect(result).toBe(false);
-			expect(mockSessionsStore.set).toHaveBeenCalledOnce();
+			// Written, then put back: a refused revision is not left for a later save (#2199).
+			expect(mockSessionsStore.set.mock.calls).toEqual([
+				['sessions', [expect.objectContaining({ id: 's1' })]],
+				['sessions', []],
+			]);
 			expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
+		});
+
+		it.each([
+			['a recoverable', 'ENOSPC', false],
+			['an unexpected', 'EIO', true],
+		])(
+			'%s flush failure leaves the store as it was, so a later save does not write the refused record (#2199)',
+			async (_label, code, throws) => {
+				let stored: Array<Record<string, unknown>> = [{ ...baseSession, name: 'Before' }];
+				mockSessionsStore.get.mockImplementation(
+					(_key: string, fallback: unknown) => stored ?? fallback
+				);
+				mockSessionsStore.set.mockImplementation((_key: string, value: typeof stored) => {
+					stored = value;
+				});
+				mockFlushSessionWrites.mockRejectedValueOnce(
+					Object.assign(new Error(`${code}: refused`), { code })
+				);
+				const handler = handlers.get('sessions:setMany')!;
+				const refused = handler({} as any, [{ ...baseSession, name: 'Refused' }], []);
+				if (throws) await expect(refused).rejects.toThrow('refused');
+				else expect(await refused).toBe(false);
+				expect(stored).toEqual([expect.objectContaining({ id: 's1', name: 'Before' })]);
+
+				// A later save of another agent writes what the store holds: not the refused record.
+				expect(await handler({} as any, [{ ...baseSession, id: 's2', name: 'Other' }], [])).toBe(
+					true
+				);
+				expect(stored).toEqual([
+					expect.objectContaining({ id: 's1', name: 'Before' }),
+					expect.objectContaining({ id: 's2', name: 'Other' }),
+				]);
+			}
+		);
+
+		it('a refused save takes back only its own records: an edit another writer made during the flush stays (#2199)', async () => {
+			let stored: Array<Record<string, unknown>> = [
+				{ ...baseSession, name: 'Before' },
+				{ ...baseSession, id: 's2', name: 'Other' },
+				{ ...baseSession, id: 's3', name: 'Closed by this save' },
+			];
+			mockSessionsStore.get.mockImplementation(
+				(_key: string, fallback: unknown) => stored ?? fallback
+			);
+			mockSessionsStore.set.mockImplementation((_key: string, value: typeof stored) => {
+				stored = value;
+			});
+			mockFlushSessionWrites.mockImplementationOnce(async () => {
+				// A plugin action writes the store directly, outside the save queue.
+				stored = stored.map((s) => (s.id === 's2' ? { ...s, name: 'Renamed by plugin' } : s));
+				throw Object.assign(new Error('ENOSPC: refused'), { code: 'ENOSPC' });
+			});
+			const handler = handlers.get('sessions:setMany')!;
+			expect(
+				await handler(
+					{} as any,
+					[
+						{ ...baseSession, name: 'Refused' },
+						{ ...baseSession, id: 's4', name: 'New' },
+					],
+					['s3']
+				)
+			).toBe(false);
+			expect(stored).toEqual([
+				expect.objectContaining({ id: 's1', name: 'Before' }),
+				expect.objectContaining({ id: 's2', name: 'Renamed by plugin' }),
+				expect.objectContaining({ id: 's3', name: 'Closed by this save' }),
+			]);
+		});
+
+		it('a refused save on an agent another writer edited during the flush takes back only its own fields (#2203)', async () => {
+			let stored: Array<Record<string, unknown>> = [
+				{ ...baseSession, name: 'Before', liftedTo: { peer: 'box', agentId: 'h1', at: 1 } },
+			];
+			mockSessionsStore.get.mockImplementation(
+				(_key: string, fallback: unknown) => stored ?? fallback
+			);
+			mockSessionsStore.set.mockImplementation((_key: string, value: typeof stored) => {
+				stored = value;
+			});
+			mockFlushSessionWrites.mockImplementationOnce(async () => {
+				// A plugin renames the agent the refused Move Back restore wrote.
+				stored = stored.map((s) => ({ ...s, name: 'Renamed by plugin' }));
+				throw Object.assign(new Error('ENOSPC: refused'), { code: 'ENOSPC' });
+			});
+			const returned = { id: 'q-home', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'hi' };
+			const handler = handlers.get('sessions:setMany')!;
+			expect(
+				await handler({} as any, [{ ...baseSession, name: 'Before', executionQueue: [returned] }])
+			).toBe(false);
+			expect(stored).toHaveLength(1);
+			expect(stored[0]).toMatchObject({
+				name: 'Renamed by plugin',
+				liftedTo: { peer: 'box', agentId: 'h1', at: 1 },
+			});
+			expect(stored[0].executionQueue ?? []).toEqual(
+				(baseSession as Record<string, unknown>).executionQueue ?? []
+			);
+		});
+
+		it('a refused save sends the queue frames that take its queue change back (#2203)', async () => {
+			const queued = { id: 'q-wait', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'wait' };
+			let stored: Array<Record<string, unknown>> = [{ ...baseSession, executionQueue: [queued] }];
+			mockSessionsStore.get.mockImplementation(
+				(_key: string, fallback: unknown) => stored ?? fallback
+			);
+			mockSessionsStore.set.mockImplementation((_key: string, value: typeof stored) => {
+				stored = value;
+			});
+			const frames: Array<Record<string, unknown>> = [];
+			Object.assign(mockWebServer, {
+				getWebClientCount: vi.fn().mockReturnValue(1),
+				broadcastToCliClients: vi.fn((message: Record<string, unknown>) => frames.push(message)),
+			});
+			mockFlushSessionWrites.mockRejectedValueOnce(
+				Object.assign(new Error('ENOSPC: refused'), { code: 'ENOSPC' })
+			);
+			const handler = handlers.get('sessions:setMany')!;
+			expect(await handler({} as any, [{ ...baseSession, executionQueue: [] }])).toBe(false);
+			// The save's frame said the queue emptied; the rollback's frame puts the item back.
+			await vi.waitFor(() => {
+				const whole = frames.filter((f) => f.type === 'queue_changed' && Array.isArray(f.items));
+				expect(whole.length).toBeGreaterThanOrEqual(2);
+				expect(whole[0].items).toEqual([]);
+				expect(whole.at(-1)!.items).toEqual([expect.objectContaining({ id: 'q-wait' })]);
+			});
+			expect(stored[0].executionQueue).toEqual([queued]);
+		});
+
+		it('a refused save leaves removed a row whose admission it cancelled, and keeps the rest of the queue (#2203)', async () => {
+			const held = {
+				id: 'q-held',
+				timestamp: 1,
+				tabId: 'tab-1',
+				type: 'message',
+				text: 'held',
+				pendingAdmissionId: 'dispatch-1',
+			};
+			const plain = { id: 'q-plain', timestamp: 2, tabId: 'tab-1', type: 'message', text: 'plain' };
+			let stored: Array<Record<string, unknown>> = [
+				{ ...baseSession, aiTabs: [{ id: 'tab-1', logs: [] }], executionQueue: [held, plain] },
+			];
+			mockSessionsStore.get.mockImplementation(
+				(_key: string, fallback: unknown) => stored ?? fallback
+			);
+			mockSessionsStore.set.mockImplementation((_key: string, value: typeof stored) => {
+				stored = value;
+			});
+			mockFlushSessionWrites.mockRejectedValueOnce(
+				Object.assign(new Error('ENOSPC: refused'), { code: 'ENOSPC' })
+			);
+			const handler = handlers.get('sessions:setMany')!;
+			expect(
+				await handler({} as any, [
+					{ ...baseSession, aiTabs: [{ id: 'tab-1', logs: [] }], executionQueue: [] },
+				])
+			).toBe(false);
+			expect(stored[0].executionQueue).toEqual([plain]);
 		});
 
 		it('does not acknowledge an unexpected deferred write failure', async () => {
@@ -7348,7 +7510,8 @@ describe('persistence IPC handlers', () => {
 			const handler = handlers.get('sessions:setMany');
 
 			await expect(handler!({} as any, [{ ...baseSession }], [])).rejects.toBe(error);
-			expect(mockSessionsStore.set).toHaveBeenCalledOnce();
+			// Written, then put back (#2199).
+			expect(mockSessionsStore.set).toHaveBeenLastCalledWith('sessions', []);
 			expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
 		});
 

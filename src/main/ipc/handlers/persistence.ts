@@ -103,6 +103,55 @@ function cliActivityChanged(
 }
 
 /**
+ * The agent list with one refused `sessions:setMany` taken back out (#2199): each record that save
+ * wrote is put back as it was before it (or dropped, if the save added it), and each record it
+ * removed is put back in its old place. A record another writer changed since (a plugin action,
+ * which does not wait in the save queue) is kept as that writer left it, and so is every record
+ * the save did not touch.
+ */
+export function undoRefusedSessionsSave<T extends { id: string }>(
+	current: readonly T[],
+	previous: readonly T[],
+	written: readonly T[],
+	touchedIds: ReadonlySet<string>
+): T[] {
+	const previousById = new Map(previous.map((session) => [session.id, session]));
+	const writtenById = new Map(written.map((session) => [session.id, canonicalJson(session)]));
+	const writtenRecords = new Map(written.map((session) => [session.id, session]));
+	const result = current.flatMap((session) => {
+		const mine = writtenById.get(session.id);
+		if (!touchedIds.has(session.id) || mine === undefined) return [session];
+		const before = previousById.get(session.id);
+		if (mine === canonicalJson(session)) return before ? [before] : [];
+		// Another writer changed this record since: take back only the fields this save wrote and
+		// nobody changed after it (a refused Move Back's `liftedTo` and queue), keep the rest.
+		if (!before) return [session];
+		const ours = writtenRecords.get(session.id) as Record<string, unknown>;
+		const prior = before as Record<string, unknown>;
+		const merged: Record<string, unknown> = { ...(session as Record<string, unknown>) };
+		for (const key of new Set([...Object.keys(ours), ...Object.keys(prior)])) {
+			const now = merged[key];
+			const wrote = ours[key];
+			const same =
+				now === undefined || wrote === undefined
+					? now === wrote
+					: canonicalJson(now) === canonicalJson(wrote);
+			if (!same) continue;
+			if (key in prior) merged[key] = prior[key];
+			else delete merged[key];
+		}
+		return [merged as T];
+	});
+	// What the save removed and no writer added back since, in its old place.
+	const present = new Set(current.map((session) => session.id));
+	previous.forEach((session, index) => {
+		if (writtenById.has(session.id) || present.has(session.id)) return;
+		result.splice(Math.min(index, result.length), 0, session);
+	});
+	return result;
+}
+
+/**
  * Tell every OTHER window that settings changed on disk.
  *
  * The settings file watcher deliberately ignores writes the app makes itself
@@ -345,8 +394,12 @@ export function registerPersistenceHandlers(
 		});
 	};
 
-	/** Cancel pending admissions when their queue row or owning tab disappears. */
-	const noteQueueRemovals = (previous: StoredSession[], next: StoredSession[]) => {
+	/**
+	 * Cancel pending admissions when their queue row or owning tab disappears. Returns the rows
+	 * cancelled, as `agentId/itemId`, so a refused save does not restore a row it can no longer release.
+	 */
+	const noteQueueRemovals = (previous: StoredSession[], next: StoredSession[]): Set<string> => {
+		const cancelled = new Set<string>();
 		for (const agent of previous) {
 			const current = next.find((s) => s.id === agent.id);
 			for (const item of agent.executionQueue ?? []) {
@@ -355,6 +408,7 @@ export function registerPersistenceHandlers(
 					(!current?.aiTabs?.some((tab: { id: string }) => tab.id === item.tabId) ||
 						!current?.executionQueue?.some((row: { id: string }) => row.id === item.id))
 				) {
+					cancelled.add(`${agent.id}/${item.id}`);
 					if (deps.cancelQueueItem)
 						deps.cancelQueueItem(agent.id, item.tabId, item.pendingAdmissionId);
 					else
@@ -368,6 +422,7 @@ export function registerPersistenceHandlers(
 				}
 			}
 		}
+		return cancelled;
 	};
 
 	const releaseQueueItem: ReleaseQueueItem = (input, commit) => {
@@ -1164,19 +1219,51 @@ export function registerPersistenceHandlers(
 					}
 				}
 
+				let storeChanged = false;
+				let cancelledRows = new Set<string>();
 				try {
 					await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
 					const persistedBefore = sessionsStore.get('sessions', []);
-					noteQueueRemovals(persistedBefore, sessionsToPersist);
+					cancelledRows = noteQueueRemovals(persistedBefore, sessionsToPersist);
 					sessionsStore.set('sessions', sessionsToPersist);
+					storeChanged = true;
 					broadcastDesktopQueueChanges(getWebServer(), persistedBefore, sessionsToPersist);
 					// Preserve the renderer acknowledgement contract: true means this
 					// revision reached disk, not merely the in-memory cache.
 					await flushSessionWrites();
 				} catch (err) {
+					// A refused save leaves the store as it was: false (or a throw) tells the
+					// caller this revision is not written, so a later save must not write it
+					// either. A Move Back whose restore was refused releases the host's held
+					// messages; the record must not reach disk home afterwards (#2199).
+					if (storeChanged) {
+						const refused = sessionsStore.get('sessions', []);
+						// A row whose admission this save cancelled stays removed: its hold can no
+						// longer be released, so restoring it would leave it stuck (#2203).
+						const restored = undoRefusedSessionsSave(
+							refused,
+							previousSessions,
+							sessionsToPersist,
+							touchedIds
+						).map((session) =>
+							session.executionQueue?.some((row: { id: string }) =>
+								cancelledRows.has(`${session.id}/${row.id}`)
+							)
+								? {
+										...session,
+										executionQueue: session.executionQueue.filter(
+											(row: { id: string }) => !cancelledRows.has(`${session.id}/${row.id}`)
+										),
+									}
+								: session
+						);
+						sessionsStore.set('sessions', restored);
+						// The queue frames this save sent are taken back too.
+						broadcastDesktopQueueChanges(getWebServer(), refused, restored);
+					}
 					const code = (err as NodeJS.ErrnoException).code;
-					// Recoverable filesystem errors - the next debounced flush will
-					// retry when conditions improve. Log warn and return false so
+					// Recoverable filesystem errors - the renderer still holds its
+					// changes and saves them again. Log warn and return false so
 					// the renderer's flush path can mark the write as unconfirmed.
 					if (code === 'ENOSPC' || code === 'ENFILE' || code === 'EMFILE') {
 						logger.warn(`Failed to persist sessions (setMany): ${code}`, 'Sessions');

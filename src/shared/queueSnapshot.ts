@@ -25,6 +25,8 @@ export interface QueuedItemSnapshot {
 	paused?: boolean;
 	/** Whether the item runs read-only when it is dispatched (`queuedItemRunsReadOnly()`). */
 	readOnly?: boolean;
+	/** `'sender'`: `readOnly` is the sender's own choice (`turnReadOnly`), not the tab's. */
+	readOnlyChoice?: 'sender';
 	/** The sender's save to History choice for this one message (`turnSaveToHistory`). */
 	saveToHistory?: boolean;
 	/**
@@ -45,7 +47,10 @@ export interface QueuedItemSnapshot {
 
 /** The fields of a queued item the snapshot reads (the renderer's `QueuedItem`, or its stored copy). */
 export type QueuedItemSource = Pick<QueuedItemSnapshot, 'id' | 'timestamp' | 'tabId' | 'type'> &
-	Partial<Omit<QueuedItemSnapshot, 'id' | 'timestamp' | 'tabId' | 'type'>>;
+	Partial<Omit<QueuedItemSnapshot, 'id' | 'timestamp' | 'tabId' | 'type'>> & {
+		/** The sender's own read-only choice (`turnReadOnly`), when it made one. */
+		turnReadOnly?: boolean;
+	};
 
 /** One queued item as a snapshot: only the fields it has, images as held (store refs). */
 export function toQueuedItemSnapshot(item: QueuedItemSource): QueuedItemSnapshot {
@@ -59,6 +64,10 @@ export function toQueuedItemSnapshot(item: QueuedItemSource): QueuedItemSnapshot
 		...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
 		...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
 		...(item.paused !== undefined ? { paused: item.paused } : {}),
+		// The sender's own choice, either way: it stands over the tab's read-only after a Move Back.
+		...(typeof item.turnReadOnly === 'boolean'
+			? { readOnly: item.turnReadOnly, readOnlyChoice: 'sender' as const }
+			: {}),
 		handOver: false,
 		...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
 		// A client's hosted queued card draws the model and effort it runs with.

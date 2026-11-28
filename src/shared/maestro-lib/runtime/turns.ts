@@ -270,6 +270,7 @@ function toQueuedTurn(item: TurnItem, handOver: HandOver | undefined): QueuedTur
 		// store refs, which name this machine's disk: the client gets the bytes (M10).
 		...(item.images?.length ? inlineQueuedImages(item.images) : {}),
 		readOnly: item.readOnly === true,
+		...(item.overrides?.readOnly !== undefined ? { readOnlyChoice: 'sender' as const } : {}),
 		...(item.overrides?.saveToHistory !== undefined
 			? { saveToHistory: item.overrides.saveToHistory }
 			: {}),

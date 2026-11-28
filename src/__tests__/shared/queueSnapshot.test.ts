@@ -42,6 +42,20 @@ describe('toQueuedItemSnapshot', () => {
 		expect(toQueuedItemSnapshot(message('q2', 'hi', { images: [] }))).not.toHaveProperty('images');
 	});
 
+	it("carries the sender's own read-only choice, either way, and nothing when it made none (#2203)", () => {
+		expect(toQueuedItemSnapshot({ ...message('q1', 'hi'), turnReadOnly: false })).toMatchObject({
+			readOnly: false,
+			readOnlyChoice: 'sender',
+		});
+		expect(toQueuedItemSnapshot({ ...message('q2', 'hi'), turnReadOnly: true })).toMatchObject({
+			readOnly: true,
+			readOnlyChoice: 'sender',
+		});
+		const none = toQueuedItemSnapshot(message('q3', 'hi'));
+		expect(none).not.toHaveProperty('readOnly');
+		expect(none).not.toHaveProperty('readOnlyChoice');
+	});
+
 	it('says every desktop item waits for more than its tab alone: no hand-over (U6)', () => {
 		// A desktop starts a tab's next message in the moment the turn before ends, so a client never
 		// draws a tab busy from a desktop host's queue, where its Stop would do nothing.

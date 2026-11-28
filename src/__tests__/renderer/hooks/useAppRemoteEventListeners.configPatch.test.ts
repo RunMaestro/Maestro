@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { useAppRemoteEventListeners } from '../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import type { Session } from '../../../renderer/types';
+import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 
 const RESPONSE_CHANNEL = 'remote:updateSessionConfig:response:test';
 
@@ -162,14 +163,31 @@ describe('remoteUpdateSessionConfig - a Move Back restore (#2195)', () => {
 	});
 
 	it('applies a restore in time, saved before it is shown', async () => {
-		const { setSessions, reply } = await dispatchRestore(moved(), {
+		// The save is still on its way: nothing is shown and nothing is answered until it lands (#2199).
+		let landSave!: (written: boolean) => void;
+		vi.mocked(window.maestro.sessions.setMany).mockImplementationOnce(
+			() => new Promise<boolean>((resolve) => (landSave = resolve))
+		);
+		const respond = (
+			window.maestro.process as unknown as {
+				sendRemoteUpdateSessionConfigResponse: ReturnType<typeof vi.fn>;
+			}
+		).sendRemoteUpdateSessionConfigResponse;
+		const answersBefore = respond.mock.calls.length;
+		const { setSessions } = await dispatchRestore(moved(), {
 			returnedFromHost: { tabs: [] },
 			restoreBy: Date.now() + 60_000,
 		});
-		expect(reply).toEqual({ success: true });
-		expect(vi.mocked(window.maestro.sessions.setMany).mock.invocationCallOrder[0]).toBeLessThan(
-			setSessions.mock.invocationCallOrder[0]
-		);
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledOnce();
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(respond.mock.calls.length).toBe(answersBefore);
+		await act(async () => {
+			landSave(true);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		expect(respond.mock.calls.at(-1)?.[1]).toEqual({ success: true });
+		expect(setSessions).toHaveBeenCalled();
 		const updater = setSessions.mock.calls[0][0] as (prev: Session[]) => Session[];
 		expect((updater([moved()])[0] as unknown as { liftedTo?: unknown }).liftedTo).toBeUndefined();
 	});
@@ -193,5 +211,38 @@ describe('remoteUpdateSessionConfig - a Move Back restore (#2195)', () => {
 			error: 'Could not save the agent: the write did not reach the disk',
 		});
 		expect(setSessions).not.toHaveBeenCalled();
+	});
+});
+
+describe('remoteRenameSession during a Move Back restore (#2199)', () => {
+	it('writes only the name: a restore saved meanwhile keeps its cleared host pointer', async () => {
+		(window.maestro.process as unknown as Record<string, unknown>).sendRemoteRenameSessionResponse =
+			vi.fn();
+		const moved = makeSession({
+			liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+		} as unknown as Partial<Session>);
+		renderHook(() => useAppRemoteEventListeners(makeDeps(moved)));
+		await act(async () => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:remoteRenameSession', {
+					detail: { sessionId: moved.id, newName: 'Renamed', responseChannel: 'rename:test' },
+				})
+			);
+			await Promise.resolve();
+		});
+		const [updates, removeIds, baselines] = vi
+			.mocked(window.maestro.sessions.setMany)
+			.mock.calls.at(-1) as unknown as [Session[], string[], Session[]];
+		expect(removeIds).toEqual([]);
+		expect(baselines).toEqual([moved]);
+		// What main's merge makes of it, with the restore already on disk.
+		const { liftedTo: _pointer, ...restored } = moved as unknown as Record<string, unknown>;
+		const written = mergeSessionPersistenceChanges(
+			updates[0] as unknown as Record<string, unknown>,
+			restored,
+			baselines[0] as unknown as Record<string, unknown>
+		);
+		expect(written.name).toBe('Renamed');
+		expect(written.liftedTo).toBeUndefined();
 	});
 });

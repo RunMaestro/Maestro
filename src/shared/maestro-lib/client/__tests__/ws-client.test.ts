@@ -1290,6 +1290,7 @@ describe('createWsMaestroClient', () => {
 									type: 'message',
 									text: 'ro',
 									readOnly: true,
+									readOnlyChoice: 'sender',
 									saveToHistory: false,
 								},
 								{
@@ -1321,6 +1322,7 @@ describe('createWsMaestroClient', () => {
 						text: 'ro',
 						paused: false,
 						readOnly: true,
+						readOnlyChoice: 'sender',
 						saveToHistory: false,
 					},
 					{

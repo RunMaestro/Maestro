@@ -6,6 +6,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRecord, AITabRecord } from '../../store/records';
+import { queuedItemRunsReadOnly } from '../../../queuedTurnSettings';
 import { LiftRunError } from '../lift-run';
 import {
 	hostDraftsNotKept,
@@ -639,8 +640,6 @@ describe('runReturnFromHost', () => {
 					tabId: 'tab-1',
 					type: 'message',
 					text: 'next',
-					turnReadOnly: false,
-					readOnlyMode: false,
 				},
 				{
 					id: 'q2',
@@ -649,8 +648,6 @@ describe('runReturnFromHost', () => {
 					type: 'message',
 					text: 'later',
 					paused: true,
-					turnReadOnly: false,
-					readOnlyMode: false,
 				},
 			]);
 			// A second run finds it home and touches nothing.
@@ -1383,6 +1380,38 @@ describe('runReturnFromHost', () => {
 			expect(result.hostCopyRemoved).toBe(true);
 		});
 
+		it('a message queued in a tab the host opened before the second queue read comes home in that tab in the first restore (#2199)', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			const opened = { id: 'tab-late', name: 'Opened on host', agentSessionId: 'sess-9' };
+			client.turns.queue.list
+				.mockResolvedValueOnce(ok([item('q1')]))
+				.mockResolvedValue(
+					ok([item('q1', { paused: true }), item('q2', { tabId: 'tab-late', paused: true })])
+				);
+			client.tabs.list
+				.mockResolvedValueOnce(
+					ok([{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1' }] as AITabRecord[])
+				)
+				.mockResolvedValue(
+					ok([{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1' }, opened] as AITabRecord[])
+				);
+			client.tabs.transcript.mockImplementation(async (_agentId: string, tabId: string) =>
+				ok(tabId === 'tab-late' ? [log('late-1')] : [log('l1')])
+			);
+			const d = storedDeps(client);
+			await runReturnFromHost('agent-1', {}, d.value);
+			const first = d.restore.mock.calls[0][1];
+			expect(first.tabs.map((tab: AITabRecord) => tab.id)).toContain('tab-late');
+			expect(first.queue?.find((queued: { itemId: string }) => queued.itemId === 'q2')?.tabId).toBe(
+				'tab-late'
+			);
+			const done = d.store.get('agent-1') as AgentRecord & {
+				executionQueue?: Array<{ id: string; tabId: string }>;
+			};
+			expect(done.aiTabs?.find((tab) => tab.id === 'tab-late')?.logs).toEqual([log('late-1')]);
+			expect(done.executionQueue?.find((queued) => queued.id === 'q2')?.tabId).toBe('tab-late');
+		});
+
 		it('once the agent is home, a failed hold releases nothing on the host, so a message that came home never runs there (#2197)', async () => {
 			const client = hostClient({ queue: ok([item('q1')]) });
 			client.turns.queue.list
@@ -1428,8 +1457,13 @@ describe('runReturnFromHost', () => {
 
 		it('a host that keeps taking messages keeps its copy, marked, and every message it took is here', async () => {
 			const client = hostClient();
-			let next = 0;
-			client.turns.queue.list.mockImplementation(async () => ok([item(`n${next++}`)]));
+			// Every read lists what the host took before, plus one new message (#2199): the
+			// messages it accepted are recorded here, apart from what the return reports.
+			const accepted: string[] = [];
+			client.turns.queue.list.mockImplementation(async () => {
+				accepted.push(`n${accepted.length}`);
+				return ok(accepted.map((id) => item(id)));
+			});
 			const d = storedDeps(client);
 			const result = await runReturnFromHost('agent-1', {}, d.value);
 			expect(client.agents.remove).not.toHaveBeenCalled();
@@ -1437,8 +1471,10 @@ describe('runReturnFromHost', () => {
 			expect(result.notices?.join(' ')).toMatch(/kept taking new messages, so its copy stays/);
 			// The two reads before the restore, then one per pass after it.
 			expect(client.turns.queue.list).toHaveBeenCalledTimes(2 + RETURN_LATE_QUEUE_PASSES);
+			expect(accepted).toHaveLength(2 + RETURN_LATE_QUEUE_PASSES);
+			expect(d.queueIds()).toEqual(accepted);
 			const marker = d.store.get('agent-1')?.hostCopyLeft as { carried?: string[] };
-			expect(new Set(marker.carried)).toEqual(new Set(d.queueIds()));
+			expect(new Set(marker.carried)).toEqual(new Set(accepted));
 		});
 
 		it('a copy that stays because the host kept taking messages keeps its pointer through the late restores (#2199)', async () => {
@@ -1473,7 +1509,7 @@ describe('runReturnFromHost', () => {
 
 		it('a message sent read-only comes home read-only; save to History comes with it', async () => {
 			const client = hostClient({
-				queue: ok([item('q1', { readOnly: true, saveToHistory: false })]),
+				queue: ok([item('q1', { readOnly: true, readOnlyChoice: 'sender', saveToHistory: false })]),
 			});
 			const d = storedDeps(client);
 			await runReturnFromHost('agent-1', {}, d.value);
@@ -1487,6 +1523,40 @@ describe('runReturnFromHost', () => {
 				turnSaveToHistory: false,
 			});
 			expect(queued.paused).toBeUndefined();
+		});
+
+		describe('read-only: only the sender choice lifts the tab read-only (#2199)', () => {
+			const homeItem = async (from: Record<string, unknown>) => {
+				const d = storedDeps(hostClient({ queue: ok([item('q1', from)]) }));
+				await runReturnFromHost('agent-1', {}, d.value);
+				return (
+					d.store.get('agent-1') as unknown as {
+						executionQueue: Array<Parameters<typeof queuedItemRunsReadOnly>[0]>;
+					}
+				).executionQueue[0];
+			};
+			const readOnlyTab = { readOnlyMode: true };
+			const writableTab = { readOnlyMode: false };
+
+			it('a message queued while the tab was writable keeps the read-only the tab has when it runs here', async () => {
+				const queued = await homeItem({ readOnly: false });
+				expect(queued?.turnReadOnly).toBeUndefined();
+				// The tab was made read-only while the message waited: it runs read-only.
+				expect(queuedItemRunsReadOnly(queued, readOnlyTab)).toBe(true);
+				expect(queuedItemRunsReadOnly(queued, writableTab)).toBe(false);
+			});
+
+			it('a message the tab made read-only stays read-only, even on a writable tab here', async () => {
+				const queued = await homeItem({ readOnly: true });
+				expect(queued?.turnReadOnly).toBeUndefined();
+				expect(queuedItemRunsReadOnly(queued, writableTab)).toBe(true);
+			});
+
+			it('a sender who chose writable for this one message keeps that choice', async () => {
+				const queued = await homeItem({ readOnly: false, readOnlyChoice: 'sender' });
+				expect(queued?.turnReadOnly).toBe(false);
+				expect(queuedItemRunsReadOnly(queued, readOnlyTab)).toBe(false);
+			});
 		});
 
 		it('a message from a host that does not say whether it was sent read-only comes home held, and says why', async () => {
