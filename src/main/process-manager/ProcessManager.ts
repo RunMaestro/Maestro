@@ -346,10 +346,14 @@ export class ProcessManager extends EventEmitter {
 				//
 				// SDK-backed turns have no OS child of their own, so a liveness probe
 				// would be meaningless (and could match an unrelated recycled PID);
-				// they keep the strict refusal.
+				// they keep the strict refusal. So does a durable SSH turn: its agent
+				// runs on the remote, and one restored at launch has no ssh yet (D4).
 				const nodeObservedExit = existing.childProcess !== undefined && !childProcessRunning;
 				const isStaleEntry =
-					!nodeObservedExit && existing.sdkController === undefined && !isPidAlive(existing.pid);
+					!nodeObservedExit &&
+					existing.sdkController === undefined &&
+					existing.durableSshTurn !== true &&
+					!isPidAlive(existing.pid);
 
 				if (!isStaleEntry) {
 					logger.warn(

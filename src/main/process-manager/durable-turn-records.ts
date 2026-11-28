@@ -9,14 +9,17 @@
  * received. The next launch reads the file once and reattaches every turn it
  * names (see `ChildProcessSpawner.reattachRecordedDurableTurns()`).
  *
- * Writes are synchronous: the file is small, changes once per turn start and
- * settle, and the write at quit must land before the process exits.
+ * Writes are synchronous: the file is small, changes at a turn's start and
+ * settle and at most every few seconds between, and the write at quit must
+ * land before the process exits.
  *
  * What a record holds is what a reattach needs and nothing secret: the ssh
  * binary and its connection arguments (the agent's command and env travel on
  * stdin, never in argv), the remote turn dir and pid file, the offsets, and
- * the tab's identity. A crash (no quit) leaves the offsets of the turn's start
- * or its last detach, so the reattach can repeat output the tab already had.
+ * the tab's identity. While a turn runs, its offsets are rewritten every few
+ * seconds ({@link keepDurableOffsetsCurrent}), so after a crash (no quit) the
+ * reattach repeats at most those last seconds of output, which the tab's log
+ * merge already holds; it never replays the turn from its start.
  */
 
 import { readFileSync, unlinkSync } from 'fs';
@@ -158,4 +161,37 @@ export function recordedDurableTurns(): DurableTurnRecord[] {
 /** For tests: forget the in-memory copy so the next call reads the file. */
 export function __resetDurableTurnRecordsForTests(): void {
 	records = null;
+}
+
+/** How often a running durable turn's offsets are written to its record. */
+export const DURABLE_OFFSETS_PERSIST_MS = 5_000;
+
+/**
+ * Rewrite a running durable turn's record with its offsets every
+ * {@link DURABLE_OFFSETS_PERSIST_MS} while they move, until the turn settles
+ * or is detached. `write` gets the offsets; `isDetached` stops it at quit,
+ * where the detach writes the last record itself.
+ */
+export function keepDurableOffsetsCurrent(
+	turn: { done: Promise<unknown>; restartOffsets: () => DurableTurnOffsets },
+	from: DurableTurnOffsets,
+	write: (offsets: DurableTurnOffsets) => void,
+	isDetached: () => boolean
+): void {
+	let last = `${from.outOffset}:${from.errOffset}`;
+	let settled = false;
+	const timer = setInterval(() => {
+		if (settled || isDetached()) return;
+		const offsets = turn.restartOffsets();
+		const key = `${offsets.outOffset}:${offsets.errOffset}`;
+		if (key === last) return;
+		last = key;
+		write(offsets);
+	}, DURABLE_OFFSETS_PERSIST_MS);
+	timer.unref?.();
+	const stop = () => {
+		settled = true;
+		clearInterval(timer);
+	};
+	turn.done.then(stop, stop);
 }

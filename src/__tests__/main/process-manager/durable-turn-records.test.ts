@@ -17,7 +17,9 @@ vi.mock('../../../main/utils/logger', () => ({
 
 import {
 	__resetDurableTurnRecordsForTests,
+	DURABLE_OFFSETS_PERSIST_MS,
 	forgetDurableTurn,
+	keepDurableOffsetsCurrent,
 	noteDurableTurn,
 	recordedDurableTurns,
 	type DurableTurnRecord,
@@ -93,5 +95,64 @@ describe('durable SSH turn records', () => {
 			])
 		);
 		expect(recordedDurableTurns().map((r) => r.sessionId)).toEqual(['kept']);
+	});
+
+	describe('keepDurableOffsetsCurrent', () => {
+		beforeEach(() => vi.useFakeTimers());
+		afterEach(() => vi.useRealTimers());
+
+		function running() {
+			let settle!: () => void;
+			const done = new Promise<void>((resolve) => (settle = resolve));
+			const offsets = { outOffset: 0, errOffset: 0 };
+			return { turn: { done, restartOffsets: () => ({ ...offsets }) }, offsets, settle };
+		}
+
+		it('writes the offsets while they move, and stops when the turn settles', async () => {
+			const { turn, offsets, settle } = running();
+			const write = vi.fn();
+			keepDurableOffsetsCurrent(turn, { outOffset: 0, errOffset: 0 }, write, () => false);
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
+			expect(write).not.toHaveBeenCalled();
+			offsets.outOffset = 120;
+			offsets.errOffset = 4;
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
+			expect(write).toHaveBeenCalledExactlyOnceWith({ outOffset: 120, errOffset: 4 });
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
+			expect(write).toHaveBeenCalledTimes(1);
+			settle();
+			await Promise.resolve();
+			offsets.outOffset = 200;
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS * 3);
+			expect(write).toHaveBeenCalledTimes(1);
+		});
+
+		it('leaves the record to the detach once the app quits', () => {
+			const { turn, offsets } = running();
+			const write = vi.fn();
+			let detached = false;
+			keepDurableOffsetsCurrent(turn, { outOffset: 0, errOffset: 0 }, write, () => detached);
+			detached = true;
+			offsets.outOffset = 50;
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS * 2);
+			expect(write).not.toHaveBeenCalled();
+		});
+
+		it('a crash keeps the last offsets written: the next launch resumes there, not at 0', () => {
+			const { turn, offsets } = running();
+			noteDurableTurn(record());
+			keepDurableOffsetsCurrent(
+				turn,
+				{ outOffset: 0, errOffset: 0 },
+				(o) => noteDurableTurn(record(o)),
+				() => false
+			);
+			offsets.outOffset = 4096;
+			offsets.errOffset = 9;
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
+			// The app dies here: nothing settles, nothing detaches.
+			__resetDurableTurnRecordsForTests();
+			expect(recordedDurableTurns()[0]).toMatchObject({ outOffset: 4096, errOffset: 9 });
+		});
 	});
 });

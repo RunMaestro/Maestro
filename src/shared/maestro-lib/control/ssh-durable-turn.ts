@@ -119,6 +119,36 @@ function streamLoop(outOffset: number, errOffset: number): string[] {
 	];
 }
 
+const HEX = '[0-9a-f]';
+/** The `find -name` glob of a turn dir's name: `maestro-turn-` and a UUID. */
+const TURN_DIR_NAME_GLOB = 'maestro-turn-' + [8, 4, 4, 4, 12].map((n) => HEX.repeat(n)).join('-');
+
+const SWEEP_ROOT_PATTERN = /^\/[A-Za-z0-9._/-]*$/;
+
+/**
+ * The script that removes finished turn dirs a crash left behind: dirs this
+ * user owns, named exactly as Maestro names them, whose `exit` file is older
+ * than a day. A shared `/tmp` is hostile ground, so nothing here splits on
+ * newlines or follows a link: `find` hands each path to `rm` as one argument,
+ * the name glob admits only hex and dashes, `-type d` and `-type f` refuse a
+ * symlink, and `rm` gets only an absolute path under `<root>/maestro-turn-`.
+ * `-H` because `/tmp` is itself a link on macOS.
+ *
+ * `root` is for tests; the launch sweeps `/tmp`.
+ */
+export function buildTurnDirSweepScript(root = '/tmp'): string {
+	if (!SWEEP_ROOT_PATTERN.test(root)) throw new Error('Invalid turn dir sweep root.');
+	const each =
+		'r=$1; shift; for x do' +
+		' case "$x" in "$r"/maestro-turn-*) ;; *) continue ;; esac;' +
+		` [ -n "$(find "$x/exit" -type f -mmin +${TURN_DIR_MAX_AGE_MIN} 2>/dev/null)" ] || continue;` +
+		' rm -rf -- "$x"; done';
+	return (
+		`find -H ${shellEscape(root)} -maxdepth 1 -type d -user "$(id -u)" -name '${TURN_DIR_NAME_GLOB}'` +
+		` -exec sh -c '${each}' sh ${shellEscape(root)} {} + 2>/dev/null`
+	);
+}
+
 /**
  * The durable launch script. `innerStdin` is exactly what a normal launch
  * would send (pid record, script, prompt); the envelope must come first on
@@ -130,27 +160,32 @@ function streamLoop(outOffset: number, errOffset: number): string[] {
 export function buildDurableLaunchScript(innerStdin: string, dir: string): string {
 	assertRemoteTurnDir(dir);
 	const shell = SSH_STDIN_REMOTE_SHELL.join(' ');
-	const sweep =
-		`find /tmp -maxdepth 2 -path '/tmp/maestro-turn-*/exit' -mmin +${TURN_DIR_MAX_AGE_MIN} 2>/dev/null` +
-		` | while read -r x; do rm -rf -- "\${x%/exit}"; done`;
 	const lines = [
 		'{',
-		sweep,
+		buildTurnDirSweepScript(),
 		`d=${shellEscape(dir)}`,
-		'(umask 077; mkdir "$d") || exit 1',
-		'cat > "$d/in" || exit 1',
-		': > "$d/out"; : > "$d/err"',
+		// The files hold the launch script (env values, keys) and the agent's
+		// output: only this user reads them. The umask stays in this subshell,
+		// so the agent runs with the user's own, as today.
+		'(umask 077; mkdir "$d" && : > "$d/out" && : > "$d/err" && cat > "$d/in") || exit 1',
+		// Held open on fd 3 and unlinked at once: the script and its secrets
+		// leave the disk before the agent starts.
+		'exec 3< "$d/in" || exit 1',
+		'rm -f -- "$d/in"',
 		'set -m',
 		'(',
 		'  set -m',
 		// From a pipe, not the file: bash reads a seekable script in blocks and
 		// would swallow the prompt that today's `exec`ed agent reads after it.
 		// The subshell leads the job's process group and `exec`s that bash, so
-		// the pid record inside it still names the group.
-		`  ( exec ${shell} < <(cat "$d/in") > "$d/out" 2> "$d/err" ) &`,
+		// the pid record inside it still names the group. Only the `cat` keeps
+		// fd 3; the agent never sees it.
+		`  ( exec ${shell} < <(exec cat <&3) 3<&- > "$d/out" 2> "$d/err" ) &`,
+		'  exec 3<&-',
 		'  wait $!; c=$?',
 		'  printf \'%s\\n\' "$c" > "$d/exit.tmp" && mv -f "$d/exit.tmp" "$d/exit"',
 		') < /dev/null > /dev/null 2>&1 &',
+		'exec 3<&-',
 		'printf \'%s %s\\n\' "$!" "$(ps -o lstart= -p $! 2>/dev/null)" > "$d/sup"',
 		"printf '\\036S\\n' >&2",
 		...streamLoop(0, 0),

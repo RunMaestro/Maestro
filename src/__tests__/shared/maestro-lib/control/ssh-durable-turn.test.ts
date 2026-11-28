@@ -9,13 +9,16 @@
  * POSIX only: the remote shell is bash.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 import {
 	buildDurableLaunchScript,
 	buildDurableReattachScript,
+	buildTurnDirSweepScript,
 	DURABLE_TURN_GONE_EXIT_CODE,
 	DurableStderrReader,
 } from '../../../../shared/maestro-lib/control/ssh-durable-turn';
@@ -280,5 +283,81 @@ posixOnly('against a real shell', () => {
 		const gone = await runShell(buildDurableReattachScript(dir, pidFile, 0, 0));
 		expect(gone.code).toBe(DURABLE_TURN_GONE_EXIT_CODE);
 		expect(gone.out.length).toBe(0);
+	});
+
+	it('the launch script and its secrets leave the disk before the agent runs; the files are private', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		// The agent reports whether `in` is still there, whether it holds the
+		// envelope's fd 3, and its umask (which must be the user's, as today).
+		const agent =
+			`exec /bin/bash -c 'read -r p; [ -e ${dir}/in ] && echo in-present || echo in-gone; ` +
+			`{ : <&3; } 2>/dev/null && echo fd3-open || echo fd3-closed; umask'`;
+		const stdin = withRemotePidRecord(`${agent}\n`, pidFile) + 'API_KEY=secret\n';
+		const plain = await runShell(stdin);
+		const durable = await runShell(buildDurableLaunchScript(stdin, dir));
+		expect(durable.out.toString()).toContain('in-gone\nfd3-closed\n');
+		expect(durable.out.toString()).toBe(plain.out.toString());
+		expect(fs.existsSync(`${dir}/in`)).toBe(false);
+		for (const name of ['out', 'err']) {
+			expect(fs.statSync(`${dir}/${name}`).mode & 0o777).toBe(0o600);
+		}
+		expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+	}, 20_000);
+});
+
+posixOnly('the sweep of finished turn dirs', () => {
+	const scratch: string[] = [];
+	afterEach(() => {
+		for (const dir of scratch.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+	});
+	const mkScratch = (): string => {
+		const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-sweep-')));
+		scratch.push(dir);
+		return dir;
+	};
+	const old = new Date('2020-01-01T00:00:00Z');
+	const turnDir = (root: string, name: string, exitAge: Date | null): string => {
+		const dir = path.join(root, name);
+		fs.mkdirSync(dir);
+		if (exitAge) {
+			fs.writeFileSync(path.join(dir, 'exit'), '0\n');
+			fs.utimesSync(path.join(dir, 'exit'), exitAge, exitAge);
+		}
+		return dir;
+	};
+
+	it('removes only old turn dirs named as Maestro names them, never a hostile name or a link', () => {
+		const root = mkScratch(); // stands in for /tmp
+		const home = mkScratch(); // the remote user's home: the sweep's cwd
+		fs.mkdirSync(path.join(home, 'Documents'));
+		fs.writeFileSync(path.join(home, 'Documents', 'keep'), 'mine');
+		const outside = mkScratch();
+		fs.writeFileSync(path.join(outside, 'exit'), '0\n');
+		fs.utimesSync(path.join(outside, 'exit'), old, old);
+
+		const stale = turnDir(root, `maestro-turn-${randomUUID()}`, old);
+		const fresh = turnDir(root, `maestro-turn-${randomUUID()}`, new Date());
+		const running = turnDir(root, `maestro-turn-${randomUUID()}`, null);
+		// Another local user's traps: a newline that a `read` loop would split
+		// into `Documents`, a name that is not a UUID, and a link to elsewhere.
+		const hostile = turnDir(root, 'maestro-turn-a\nDocuments', old);
+		const notUuid = turnDir(root, 'maestro-turn-x', old);
+		const link = path.join(root, `maestro-turn-${randomUUID()}`);
+		fs.symlinkSync(outside, link);
+
+		execFileSync('/bin/bash', ['-c', buildTurnDirSweepScript(root)], { cwd: home });
+
+		expect(fs.existsSync(stale)).toBe(false);
+		for (const kept of [fresh, running, hostile, notUuid, link])
+			expect(fs.existsSync(kept)).toBe(true);
+		expect(fs.readFileSync(path.join(home, 'Documents', 'keep'), 'utf8')).toBe('mine');
+		expect(fs.existsSync(path.join(outside, 'exit'))).toBe(true);
+	});
+
+	it('refuses a sweep root that is not a plain absolute path', () => {
+		expect(() => buildTurnDirSweepScript('tmp')).toThrow();
+		expect(() => buildTurnDirSweepScript("/tmp'; rm -rf ~; '")).toThrow();
+		expect(buildDurableLaunchScript('', newRemoteTurnDir())).toContain(buildTurnDirSweepScript());
 	});
 });

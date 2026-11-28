@@ -144,7 +144,10 @@ vi.mock('../../../../main/process-manager/durable-turn-records', () => ({
 		if (durableRecords.get(sessionId)?.dir === dir) durableRecords.delete(sessionId);
 	}),
 	recordedDurableTurns: vi.fn(() => [...durableRecords.values()]),
+	// The timer is tested with the records; here a test calls its write itself.
+	keepDurableOffsetsCurrent: vi.fn(),
 }));
+import { keepDurableOffsetsCurrent } from '../../../../main/process-manager/durable-turn-records';
 import { isPidAlive } from '../../../../main/process-manager/utils/childProcessInfo';
 import { createOutputParser } from '../../../../main/parsers';
 import { isWindows } from '../../../../shared/platformDetection';
@@ -242,6 +245,36 @@ describe('ChildProcessSpawner', () => {
 			close(0);
 			expect(cleanupTempFiles).toHaveBeenCalledTimes(1);
 			expect(successor.tempFiles).toEqual(['/tmp/new-prompt.md']);
+		});
+
+		it('never reclaims a durable SSH turn restored at launch: a second writer is refused until it settles', () => {
+			vi.mocked(isPidAlive).mockReturnValue(false);
+			durableRecords.set('test-session', {
+				sessionId: 'test-session',
+				toolType: 'claude-code',
+				cwd: '/tmp/test',
+				sshCommand: '/usr/bin/ssh',
+				sshArgs: ['me@host', '/bin/bash', '--norc', '--noprofile', '-s'],
+				dir: '/tmp/maestro-turn-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e',
+				pidFile: '/tmp/maestro-agent-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e.pid',
+				outOffset: 0,
+				errOffset: 0,
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				startTime: 1,
+			});
+			try {
+				const manager = new ProcessManager();
+				expect(manager.restoreRecordedDurableTurns()).toBe(1);
+				const restored = manager.get('test-session')!;
+				// No ssh yet and pid -1: the window before the reattach starts.
+				expect(restored.pid).toBe(-1);
+				expect(() => manager.spawn(createBaseConfig({ prompt: 'second writer' }))).toThrow();
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(manager.get('test-session')).toBe(restored);
+			} finally {
+				durableRecords.clear();
+			}
 		});
 	});
 
@@ -1113,6 +1146,23 @@ describe('ChildProcessSpawner', () => {
 				closeWith(mockChildProcess, 0);
 				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
 				expect(durableRecords.size).toBe(0);
+			});
+
+			it('rewrites the record with the offsets while the turn runs, so a crash resumes near the tab', () => {
+				const { spawner } = createTestContext();
+				spawner.spawn(sshConfig(true));
+				const [turn, from, write, isDetached] = vi
+					.mocked(keepDurableOffsetsCurrent)
+					.mock.calls.at(-1)!;
+				expect(from).toEqual({ outOffset: 0, errOffset: 0 });
+				expect(isDetached()).toBe(false);
+				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}D3\nabc\x1f`));
+				mockChildProcess.stdout.emit('data', Buffer.from('line one\nline tw'));
+				write(turn.restartOffsets());
+				expect(durableRecords.get('test-session')).toMatchObject({
+					outOffset: 'line one\n'.length,
+					errOffset: 3,
+				});
 			});
 
 			it('a quit detaches the turn: recorded at the last line end, not settled, not stopped on the host', async () => {

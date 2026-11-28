@@ -317,6 +317,13 @@ export interface ManagedProcess {
 	 */
 	detachDurableTurn?: () => void;
 	/**
+	 * A durable SSH turn owns this entry. Its agent lives on the remote, so a
+	 * local pid that is gone (between reattaches, or a turn restored at launch
+	 * that has no ssh yet) never makes the entry stale: only its settle frees
+	 * the session.
+	 */
+	durableSshTurn?: boolean;
+	/**
 	 * Steering channel of a Claude TUI turn on an SSH remote, copied from the spawn
 	 * config. `steer()` delivers through it instead of the local socket.
 	 */

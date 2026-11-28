@@ -290,7 +290,7 @@ Switch **Keep turns running when the connection drops** on for a remote (in its 
 
 The switch is off by default. With it off, Maestro sends the same commands and writes the same files on the remote as before.
 
-**What it does on the remote.** Nothing is installed. The turn runs in a private folder, `/tmp/maestro-turn-<id>`, that holds the turn's input, its output, and its exit code. A supervisor process (plain `sh` and standard tools) runs the agent, so the agent no longer depends on the ssh connection. Maestro removes the folder once the turn has ended and the whole reply has arrived. If a folder is left behind (the remote rebooted, or Maestro never came back), the next turn on that remote removes finished folders older than one day.
+**What it does on the remote.** Nothing is installed. The turn runs in a private folder, `/tmp/maestro-turn-<id>`, that only your remote user can read. It holds the turn's output and its exit code. The turn's input (its command, environment, and prompt) is written there only until the agent starts, then removed. A supervisor process (plain `sh` and standard tools) runs the agent, so the agent no longer depends on the ssh connection. Maestro removes the folder once the turn has ended and the whole reply has arrived. If a folder is left behind (the remote rebooted, or Maestro never came back), the next turn on that remote removes finished folders older than one day. It removes only folders that your remote user owns and that carry the exact name Maestro gives them.
 
 **When Maestro gives up.** A turn ends only when the agent ends, when you press **Stop**, when the remote shows that the agent is gone, or when the remote has not answered for about 25 minutes. After that, the turn ends as a lost connection, as it would with the switch off.
 
@@ -299,7 +299,7 @@ The switch is off by default. With it off, Maestro sends the same commands and w
 - Codex turns, and agents that keep talking to the provider on stdin during a turn (Codex app-server, ACP agents such as Grok, SDK-based agents, and turns with tool permission prompts). These keep the default behavior.
 - Terminal (TUI) agents.
 - Windows remotes.
-- A crash of Maestro (as opposed to quitting it). The turn is still picked up at the next launch, but the tab can show part of the reply twice.
+- A crash of Maestro (as opposed to quitting it). The turn is still picked up at the next launch, from where it stood a few seconds before the crash. The tab can show the last few seconds of the reply twice.
 
 From the CLI, `maestro-cli update-ssh-remote <remote-id> --keep-turns on` (or `off`) changes the switch, and `create-ssh-remote --keep-turns on` sets it on a new remote. `maestro-cli list ssh-remotes --json` reports it as `keepTurnsOnDisconnect`.
 

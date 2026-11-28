@@ -60,6 +60,7 @@ import {
 } from '../../../shared/maestro-lib/control/ssh-durable-turn';
 import {
 	forgetDurableTurn,
+	keepDurableOffsetsCurrent,
 	noteDurableTurn,
 	recordedDurableTurns,
 	type DurableTurnRecord,
@@ -822,10 +823,18 @@ export class ChildProcessSpawner {
 					querySource: config.querySource,
 					startTime: managedProcess.startTime,
 				});
+				managedProcess.durableSshTurn = true;
 				noteDurableTurn(record({ outOffset: 0, errOffset: 0 }));
+				const restartOffsets = () => turn.restartOffsets?.() ?? { outOffset: 0, errOffset: 0 };
+				keepDurableOffsetsCurrent(
+					{ done: turn.done, restartOffsets },
+					{ outOffset: 0, errOffset: 0 },
+					(offsets) => noteDurableTurn(record(offsets)),
+					() => durableDetached
+				);
 				managedProcess.detachDurableTurn = () => {
 					durableDetached = true;
-					noteDurableTurn(record(turn.restartOffsets?.() ?? { outOffset: 0, errOffset: 0 }));
+					noteDurableTurn(record(restartOffsets()));
 				};
 			}
 
@@ -1212,6 +1221,7 @@ export class ChildProcessSpawner {
 				sshRemoteHost: record.sshRemoteHost,
 				sshRemotePidFile: record.pidFile,
 				agentSessionId: record.agentSessionId,
+				durableSshTurn: true,
 			};
 			managedProcess.spawnGeneration = nextSpawnGeneration(record.sessionId);
 			this.processes.set(record.sessionId, managedProcess);
@@ -1312,13 +1322,20 @@ export class ChildProcessSpawner {
 		managedProcess.childProcess = turn.child;
 		managedProcess.pid = turn.child.pid || -1;
 		armStdioCloseWatchdog(turn.child);
+		const recordAt = (offsets: DurableTurnOffsets): DurableTurnRecord => ({
+			...record,
+			...offsets,
+			agentSessionId: managedProcess.agentSessionId,
+		});
+		keepDurableOffsetsCurrent(
+			turn,
+			{ outOffset: record.outOffset, errOffset: record.errOffset },
+			(offsets) => noteDurableTurn(recordAt(offsets)),
+			() => detached
+		);
 		managedProcess.detachDurableTurn = () => {
 			detached = true;
-			noteDurableTurn({
-				...record,
-				...turn.restartOffsets(),
-				agentSessionId: managedProcess.agentSessionId,
-			});
+			noteDurableTurn(recordAt(turn.restartOffsets()));
 		};
 		void turn.done.then((exit) => {
 			if (detached) return;
