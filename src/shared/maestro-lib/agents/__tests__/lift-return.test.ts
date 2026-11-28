@@ -788,7 +788,11 @@ describe('runReturnFromHost', () => {
 		expect(d.connect).not.toHaveBeenCalled();
 		expect(d.restore).toHaveBeenCalledWith('agent-1', { tabs: [], hostCopyLeft: copyLeft(false) });
 		expect(result.hostCopyRemoved).toBe(false);
-		expect(result.notices?.[0]).toMatch(/maestro-cli remove-agent host-1/);
+		// The limit on the automatic recovery, and the queue that may still hold work (#2195).
+		expect(result.notices?.[0]).toMatch(/for the next 14 days, Maestro tries the host again/);
+		expect(result.notices?.[0]).toMatch(
+			/After that, nothing is brought home: the copy \(agent host-1 there\) may still hold messages in its queue/
+		);
 	});
 
 	it.each([

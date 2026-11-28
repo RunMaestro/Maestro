@@ -342,6 +342,32 @@ describe('runComeHome', () => {
 			]);
 		});
 
+		it('host copies left behind: a busy copy on one remote does not hold up another remote (#2195)', async () => {
+			const left = (id: string, remoteId: string) =>
+				({
+					...on(id, remoteId),
+					liftedTo: undefined,
+					hostCopyLeft: {
+						peer: 'build-box',
+						agentId: `host-${id}`,
+						at: MOVED_AT,
+						fetched: true,
+						returnedAt: MOVED_AT,
+					},
+				}) as unknown as AgentRecord;
+			const { deps, calls, store } = world(
+				[left('a', 'remote-1'), left('c', 'remote-2')],
+				(id, _o, call) => (id === 'a' && call <= 2 ? refused('RETURN_BUSY') : ok())
+			);
+			deps.readRemotes = () => [REMOTE, REMOTE_2];
+			await runComeHome(deps, { busyWaitMs: 10 });
+			// c (remote-2) is finished while a (remote-1) waits out its busy copy.
+			expect(calls[1].id).toBe('c');
+			expect(calls.map((c) => c.id)).toEqual(['a', 'c', 'a', 'a']);
+			expect(store.get('a')?.hostCopyLeft).toBeUndefined();
+			expect(store.get('c')?.hostCopyLeft).toBeUndefined();
+		});
+
 		it('a remote that did not answer is not dialed again for its other agents in the same run', async () => {
 			const { deps, calls } = world(
 				[on('a', 'remote-1'), on('b', 'remote-1'), on('c', 'remote-2')],
@@ -465,5 +491,20 @@ describe('createComeHomeRunner', () => {
 		await vi.waitFor(() => expect(deps.returnAgent).toHaveBeenCalledTimes(2));
 		release();
 		await third;
+	});
+
+	it('drops a failed outcome once its agent is home by another way, so `federation auto` stops asking (#2195)', async () => {
+		const { deps, store } = world([agent('a')], (_id, options) =>
+			options.offline
+				? refused('RETURN_RESTORE_FAILED', 'the window did not answer')
+				: refused('PEER_NOT_CONNECTED')
+		);
+		const runner = createComeHomeRunner(deps, { onlineAttempts: 1 });
+		await runner.run();
+		expect(runner.lastReport()?.agents.map((outcome) => outcome.result)).toEqual(['failed']);
+		// The user moved it back with `maestro-cli unlift`.
+		const moved = store.get('a') as AgentRecord;
+		store.set('a', { ...moved, liftedTo: undefined } as AgentRecord);
+		expect(runner.lastReport()?.agents).toEqual([]);
 	});
 });

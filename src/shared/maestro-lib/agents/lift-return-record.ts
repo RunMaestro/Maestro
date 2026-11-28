@@ -52,6 +52,13 @@ function asLocalQueueItem(item: ReturnedQueuedMessage, tabId: string): Record<st
 }
 
 /**
+ * How long after an agent came home its leftover host copy is still dialed for, one try per
+ * launch (the desktop's come-home job). A remote that is gone for good is not dialed at every
+ * launch forever. Here, so the return's own notice can name the limit.
+ */
+export const HOST_COPY_RETRY_MS = 14 * 24 * 60 * 60_000;
+
+/**
  * The host's copy of an agent that is home again but was not removed yet: the restore is written
  * first, the copy removed after it, so a crash, a lost link, or a host that did not answer in
  * between leaves this on the record, and the next come-home run finishes the job.

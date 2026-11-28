@@ -39,6 +39,7 @@ import type { AITabRecord, AgentRecord } from '../store/records';
 import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
 import { LiftRunError } from './lift-run';
 import {
+	HOST_COPY_RETRY_MS,
 	hostDraftsNotKept,
 	readHostCopyLeft,
 	type HostCopyLeft,
@@ -46,6 +47,7 @@ import {
 } from './lift-return-record';
 
 export {
+	HOST_COPY_RETRY_MS,
 	hostDraftsNotKept,
 	readHostCopyLeft,
 	readReturnedFromHost,
@@ -196,7 +198,7 @@ export async function runReturnFromHost(
 			newTabs: 0,
 			hostCopyRemoved: false,
 			notices: [
-				`The host was not reached, so conversations started there after the move stay there, and its copy (${from}) still exists. Remove it on the host when it is back: maestro-cli remove-agent ${pointer.agentId}`,
+				`The host was not reached, so conversations started there after the move stay there, and its copy (${from}) still exists. At each launch for the next ${Math.round(HOST_COPY_RETRY_MS / 86_400_000)} days, Maestro tries the host again and brings home what it wrote and the messages waiting in its queue. After that, nothing is brought home: the copy (agent ${pointer.agentId} there) may still hold messages in its queue, so look at them on the host before you remove it.`,
 			],
 		};
 	}
