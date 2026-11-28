@@ -17,10 +17,33 @@ const isAgentBusy = vi.fn((..._args: unknown[]) => false);
 vi.mock('../../../main/utils/agent-busy', () => ({
 	isAgentBusy: (...args: unknown[]) => isAgentBusy(...args),
 }));
+// The SSH forward and the WebSocket client behind `connectHostForReturn()`: each lease is one
+// `ssh` of ours, live from `acquire()` until its `release()`.
+const liveLeases = new Set<object>();
+const forwardAcquire = vi.fn((_remote: unknown) => {
+	const lease = {
+		ready: vi.fn().mockResolvedValue({ port: 4100 }),
+		onChange: vi.fn(() => () => {}),
+		release: vi.fn(async () => {
+			liveLeases.delete(lease);
+		}),
+	};
+	liveLeases.add(lease);
+	return lease;
+});
+vi.mock('../../../shared/maestro-lib/client/ssh-forward', () => ({
+	getSshForwardManager: () => ({ acquire: (remote: unknown) => forwardAcquire(remote) }),
+}));
+const wsConnect = vi.fn();
+const wsClose = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../shared/maestro-lib/client/ws-client', () => ({
+	createWsMaestroClient: () => ({ connection: { connect: wsConnect, close: wsClose } }),
+}));
 
 import {
 	LIFT_POINTER_TIMEOUT_MS,
 	buildDesktopLiftDeps,
+	connectHostForReturn,
 	liftAgentFromDesktop,
 	returnAgentFromDesktop,
 	setLiftPointerInWindow,
@@ -267,6 +290,40 @@ describe('returnAgentFromDesktop', () => {
 		expect((await returnAgentFromDesktop('agent-1', {}, deps)).ok).toBe(true);
 		expect(service.hostClient).toHaveBeenCalledWith('remote-1');
 		expect(connectHost).not.toHaveBeenCalled();
+	});
+});
+
+describe('connectHostForReturn', () => {
+	beforeEach(() => {
+		liveLeases.clear();
+		forwardAcquire.mockClear();
+		wsClose.mockClear();
+		wsConnect.mockReset();
+	});
+
+	it('holds one forward while connected, and no ssh of its own is left after release()', async () => {
+		wsConnect.mockResolvedValue({ ok: true, value: undefined });
+		const connection = await connectHostForReturn([remote], 'remote-1', 'build-box');
+		expect(forwardAcquire).toHaveBeenCalledTimes(1);
+		expect(liveLeases.size).toBe(1);
+		await connection.release();
+		await connection.release();
+		expect(wsClose).toHaveBeenCalledTimes(1);
+		expect(liveLeases.size).toBe(0);
+	});
+
+	it('leaves no forward running when the host does not attach', async () => {
+		wsConnect.mockResolvedValue({ ok: false, error: { code: 'timeout', message: 'no answer' } });
+		await expect(connectHostForReturn([remote], 'remote-1', 'build-box')).rejects.toThrow();
+		expect(forwardAcquire).toHaveBeenCalledTimes(1);
+		expect(liveLeases.size).toBe(0);
+	});
+
+	it('opens nothing for a remote this machine does not know', async () => {
+		await expect(connectHostForReturn([remote], 'gone', 'build-box')).rejects.toThrow(
+			/not configured/
+		);
+		expect(forwardAcquire).not.toHaveBeenCalled();
 	});
 });
 
