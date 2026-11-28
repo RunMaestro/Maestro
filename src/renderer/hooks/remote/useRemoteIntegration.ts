@@ -23,6 +23,7 @@ import {
 	focusAiTabInSession,
 	reopenClosedAiTabById,
 	hasActiveWizard,
+	isAwaitingComeHome,
 	syncAgentStateToTabs,
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
@@ -1720,9 +1721,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// that tab's turn runs beside this one, as desktop tabs do. Respect
 					// the dispatch --focus opt-in via `background`. A held send (Queue
 					// Held, `dispatch --queue --held`) never dispatches now: it waits paused.
-					const lineForTab = (session.executionQueue ?? []).some(
-						(item) => item.tabId === resolvedTabId
-					);
+					// An agent coming home from a host (hosting off) is a line of its own: its
+					// turns wait in the queue until it is home, as the composer's do. Sending now
+					// would only be refused by main, and the prompt lost.
+					const lineForTab =
+						isAwaitingComeHome(session) ||
+						(session.executionQueue ?? []).some((item) => item.tabId === resolvedTabId);
 					// One of the user's own slash commands (custom AI, speckit, openspec, bmad) is queued
 					// as a command, so the drain expands it, as the composer and the plain remote-command
 					// path do. A provider's own `/compact` stays a message, as typed.

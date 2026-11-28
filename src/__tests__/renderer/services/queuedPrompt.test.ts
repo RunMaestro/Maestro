@@ -814,6 +814,20 @@ describe('sendQueuedItemNow', () => {
 		});
 	}
 
+	// F11: Force Send on a queued card (and `dispatch --force` of a slash command) must
+	// not start a turn on an agent coming home from a host: main refuses it and the
+	// prompt would be lost. The item stays queued for the drain.
+	it('leaves the item queued while its agent is coming home from a host', () => {
+		useSettingsStore.setState({ federationHostedAgents: false } as any);
+		seed({ liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 } } as any);
+		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
+		const dispatch = vi.fn().mockResolvedValue(true);
+
+		expect(sendQueuedItemNow('session-1', item.id, dispatch)).toBe(false);
+		expect(dispatch).not.toHaveBeenCalled();
+		expect(currentQueue()).toHaveLength(1);
+	});
+
 	it('dequeues the item, marks its tab running, and dispatches it', () => {
 		seed();
 		const item = enqueuePromptForTab({ sessionId: 'session-1', tabId: 'b', text: 'hi' })!;
