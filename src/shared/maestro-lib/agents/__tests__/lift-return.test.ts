@@ -1285,8 +1285,13 @@ describe('runReturnFromHost', () => {
 
 		it('a host that keeps taking messages keeps its copy, marked, and every message it took is here', async () => {
 			const client = hostClient();
-			let next = 0;
-			client.turns.queue.list.mockImplementation(async () => ok([item(`n${next++}`)]));
+			// Every read lists what the host took before, plus one new message (#2199): the
+			// messages it accepted are recorded here, apart from what the return reports.
+			const accepted: string[] = [];
+			client.turns.queue.list.mockImplementation(async () => {
+				accepted.push(`n${accepted.length}`);
+				return ok(accepted.map((id) => item(id)));
+			});
 			const d = storedDeps(client);
 			const result = await runReturnFromHost('agent-1', {}, d.value);
 			expect(client.agents.remove).not.toHaveBeenCalled();
@@ -1294,8 +1299,10 @@ describe('runReturnFromHost', () => {
 			expect(result.notices?.join(' ')).toMatch(/kept taking new messages, so its copy stays/);
 			// The two reads before the restore, then one per pass after it.
 			expect(client.turns.queue.list).toHaveBeenCalledTimes(2 + RETURN_LATE_QUEUE_PASSES);
+			expect(accepted).toHaveLength(2 + RETURN_LATE_QUEUE_PASSES);
+			expect(d.queueIds()).toEqual(accepted);
 			const marker = d.store.get('agent-1')?.hostCopyLeft as { carried?: string[] };
-			expect(new Set(marker.carried)).toEqual(new Set(d.queueIds()));
+			expect(new Set(marker.carried)).toEqual(new Set(accepted));
 		});
 
 		it('a late message the window could not save stays held on the host, and the copy stays', async () => {

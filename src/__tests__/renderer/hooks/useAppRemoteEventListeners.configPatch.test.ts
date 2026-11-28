@@ -162,14 +162,31 @@ describe('remoteUpdateSessionConfig - a Move Back restore (#2195)', () => {
 	});
 
 	it('applies a restore in time, saved before it is shown', async () => {
-		const { setSessions, reply } = await dispatchRestore(moved(), {
+		// The save is still on its way: nothing is shown and nothing is answered until it lands (#2199).
+		let landSave!: (written: boolean) => void;
+		vi.mocked(window.maestro.sessions.setMany).mockImplementationOnce(
+			() => new Promise<boolean>((resolve) => (landSave = resolve))
+		);
+		const respond = (
+			window.maestro.process as unknown as {
+				sendRemoteUpdateSessionConfigResponse: ReturnType<typeof vi.fn>;
+			}
+		).sendRemoteUpdateSessionConfigResponse;
+		const answersBefore = respond.mock.calls.length;
+		const { setSessions } = await dispatchRestore(moved(), {
 			returnedFromHost: { tabs: [] },
 			restoreBy: Date.now() + 60_000,
 		});
-		expect(reply).toEqual({ success: true });
-		expect(vi.mocked(window.maestro.sessions.setMany).mock.invocationCallOrder[0]).toBeLessThan(
-			setSessions.mock.invocationCallOrder[0]
-		);
+		expect(window.maestro.sessions.setMany).toHaveBeenCalledOnce();
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(respond.mock.calls.length).toBe(answersBefore);
+		await act(async () => {
+			landSave(true);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+		expect(respond.mock.calls.at(-1)?.[1]).toEqual({ success: true });
+		expect(setSessions).toHaveBeenCalled();
 		const updater = setSessions.mock.calls[0][0] as (prev: Session[]) => Session[];
 		expect((updater([moved()])[0] as unknown as { liftedTo?: unknown }).liftedTo).toBeUndefined();
 	});
