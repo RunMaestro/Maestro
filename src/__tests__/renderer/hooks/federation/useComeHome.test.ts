@@ -7,8 +7,10 @@ import { renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	COME_HOME_START_DELAY_MS,
+	showComeHomeNotice,
 	useComeHome,
 } from '../../../../renderer/hooks/federation/useComeHome';
+import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
 
 const maestro = window.maestro as unknown as Record<string, unknown>;
 const report = { startedAt: 1, finishedAt: 2, agents: [] };
@@ -58,5 +60,44 @@ describe('useComeHome', () => {
 		renderHook(() => useComeHome({ enabled: true, sessionsLoaded: true }));
 		await vi.advanceTimersByTimeAsync(COME_HOME_START_DELAY_MS * 2);
 		expect(comeHome).not.toHaveBeenCalled();
+	});
+});
+
+describe('showComeHomeNotice', () => {
+	beforeEach(() => {
+		useNotificationStore.setState({ toasts: [] });
+	});
+
+	it('shows nothing when no agent was moved', () => {
+		showComeHomeNotice(report);
+		expect(useNotificationStore.getState().toasts).toHaveLength(0);
+	});
+
+	it('shows one dismissible notice naming every agent, and no button', () => {
+		showComeHomeNotice({
+			startedAt: 1,
+			finishedAt: 2,
+			agents: [
+				{ id: 'a1', name: 'Docs', from: 'box:h1', result: 'online', notices: [] },
+				{
+					id: 'a2',
+					name: 'Api',
+					from: 'box:h2',
+					result: 'offline',
+					missing: { peer: 'box', hostAgentId: 'h2', movedAt: 1 },
+					notices: [],
+				},
+			],
+		});
+		const toasts = useNotificationStore.getState().toasts;
+		expect(toasts).toHaveLength(1);
+		expect(toasts[0]).toMatchObject({
+			color: 'yellow',
+			title: '2 agents moved back from their hosts',
+			dismissible: true,
+		});
+		expect(toasts[0].message).toMatch(/"Docs" is an SSH agent again/);
+		expect(toasts[0].message).toMatch(/"Api" .*still on box, as agent h2/);
+		expect(toasts[0].actionUrl).toBeUndefined();
 	});
 });

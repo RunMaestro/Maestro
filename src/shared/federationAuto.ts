@@ -9,6 +9,8 @@
  * ends as `blocked` with a `fix`: the one thing a person has to do.
  */
 
+import type { ComeHomeReport } from './federationComeHome';
+
 /** The setting that turns automatic moves on or off (on by default). */
 export const FEDERATION_AUTO_MOVE_SETTING = 'federationAutoMove';
 
@@ -71,6 +73,8 @@ export interface AutoFederationSnapshot {
 	running: boolean;
 	remotes: AutoFederationRemoteStatus[];
 	agents: AutoFederationAgentStatus[];
+	/** The last run of the job that brought moved agents home, when one ran this launch. */
+	comeHome?: ComeHomeReport;
 }
 
 export function emptyAutoFederationSnapshot(autoMove = false): AutoFederationSnapshot {

@@ -16,6 +16,7 @@ import { captureException } from '../utils/sentry';
 import type { SafeSendFn } from '../utils/safe-send';
 import { PeerMirrorService, type PeerMirrorServiceDeps } from './peer-mirror-service';
 import type { AutoFederationCoordinator } from './auto-federation';
+import type { ComeHomeRunner } from './come-home';
 
 export { PeerMirrorService } from './peer-mirror-service';
 
@@ -41,6 +42,17 @@ export function getAutoFederation(): AutoFederationCoordinator | null {
 
 export function setAutoFederation(next: AutoFederationCoordinator | null): void {
 	autoFederation = next;
+}
+
+let comeHomeRunner: ComeHomeRunner | null = null;
+
+/** The job that brings moved agents home, once the IPC handlers built it (`federation auto` reads it). */
+export function getComeHomeRunner(): ComeHomeRunner | null {
+	return comeHomeRunner;
+}
+
+export function setComeHomeRunner(next: ComeHomeRunner | null): void {
+	comeHomeRunner = next;
 }
 
 /** Pushes the automatic Federation snapshot to every window. */

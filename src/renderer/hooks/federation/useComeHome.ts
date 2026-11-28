@@ -7,11 +7,28 @@
  */
 
 import { useEffect, useRef } from 'react';
-import type { ComeHomeReport } from '../../../main/federation/come-home';
+import { summarizeComeHomeReport, type ComeHomeReport } from '../../../shared/federationComeHome';
+import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
 
 /** A short beat after the agents load, so the window's request handlers are wired. */
 export const COME_HOME_START_DELAY_MS = 2_000;
+
+/**
+ * The one notice after the job: which agents came home, and for one that came back offline, what
+ * may be missing and where it still is. Dismissible, with no button: nothing here turns hosting or
+ * automatic moves on. Nothing to say (no agent was moved) shows nothing.
+ */
+export function showComeHomeNotice(report: ComeHomeReport): void {
+	const summary = summarizeComeHomeReport(report);
+	if (!summary) return;
+	notifyToast({
+		color: summary.needsReview ? 'yellow' : 'green',
+		title: summary.title,
+		message: summary.lines.join('\n'),
+		dismissible: true,
+	});
+}
 
 export interface UseComeHomeOptions {
 	enabled: boolean;

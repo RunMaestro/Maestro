@@ -23,6 +23,9 @@ import type { ReturnRunOptions } from '../../shared/maestro-lib/agents/lift-retu
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { DesktopReturnAnswer } from './lift';
+import type { ComeHomeAgentOutcome, ComeHomeReport } from '../../shared/federationComeHome';
+
+export type { ComeHomeAgentOutcome, ComeHomeReport } from '../../shared/federationComeHome';
 
 /** How many times the online return is tried before the agent comes back offline. */
 export const COME_HOME_ONLINE_ATTEMPTS = 3;
@@ -40,38 +43,6 @@ const RETRYABLE_CODES = new Set([
 	'RETURN_RESTORE_FAILED',
 	'RETURN_FAILED',
 ]);
-
-/** One agent the job settled, or could not. */
-export interface ComeHomeAgentOutcome {
-	id: string;
-	name: string;
-	/** `peer:agentId` it was hosted as. */
-	from: string;
-	/**
-	 * `online`: back with the host's tabs and transcripts. `offline`: back with only this machine's
-	 * copy (see `missing`). `failed`: still moved; the next launch tries again.
-	 */
-	result: 'online' | 'offline' | 'failed';
-	/** A turn on the host held this agent back until it ended. */
-	waitedForHostTurn?: boolean;
-	/** Offline only: what the host may hold that this machine does not, and where it is. */
-	missing?: {
-		peer: string;
-		hostAgentId: string;
-		/** When the agent moved. Anything the host wrote after this may be missing here. */
-		movedAt: number;
-		/** The newest transcript row this machine holds, if any. */
-		lastLocalRowAt?: number;
-	};
-	/** What the return reported (host copy left behind, a failure's reason). */
-	notices: string[];
-}
-
-export interface ComeHomeReport {
-	startedAt: number;
-	finishedAt: number;
-	agents: ComeHomeAgentOutcome[];
-}
 
 export interface ComeHomeDeps {
 	readAgents(): AgentRecord[];

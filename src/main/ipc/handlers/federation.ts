@@ -23,6 +23,7 @@ import {
 	getPeerMirrorService,
 	onMirrorPush,
 	setAutoFederation,
+	setComeHomeRunner,
 	type PeerMirrorService,
 } from '../../federation';
 import { AutoFederationCoordinator } from '../../federation/auto-federation';
@@ -295,6 +296,7 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 		now: () => Date.now(),
 	});
+	setComeHomeRunner(comeHome);
 	ipcMain.handle(
 		'federation:comeHome',
 		withIpcErrorLogging(opts('comeHome'), async (): Promise<ComeHomeReport> => comeHome.run())

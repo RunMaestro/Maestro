@@ -19,7 +19,7 @@ import type {
 	DesktopReturnAnswer,
 } from '../federation/lift';
 import type { DesktopSetupHostAnswer, DesktopSetupHostOptions } from '../federation/setup-host';
-import type { ComeHomeReport } from '../federation/come-home';
+import type { ComeHomeReport } from '../../shared/federationComeHome';
 import {
 	FEDERATION_WINDOW_REQUEST_CHANNEL,
 	type FederationWindowReply,

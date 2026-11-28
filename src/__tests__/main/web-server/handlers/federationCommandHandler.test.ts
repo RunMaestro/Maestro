@@ -59,9 +59,11 @@ const hosted = vi.hoisted(() => ({
 vi.mock('../../../../main/federation/federation-window', () => ({
 	requestFederationWindow: hosted.request,
 }));
+const comeHome = vi.hoisted(() => ({ report: null as unknown }));
 vi.mock('../../../../main/federation', () => ({
 	getPeerMirrorService: () => (running.on ? service : null),
 	getAutoFederation: () => (running.on ? auto : null),
+	getComeHomeRunner: () => ({ lastReport: () => comeHome.report }),
 }));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
@@ -95,6 +97,7 @@ describe('federation_command handler', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		running.on = true;
+		comeHome.report = null;
 		handler = new WebSocketMessageHandler();
 		handler.setCallbacks({} as never);
 	});
@@ -164,6 +167,28 @@ describe('federation_command handler', () => {
 			auto: { lastPassAt: 5 },
 		});
 		expect(auto.runNow).toHaveBeenCalledTimes(1);
+	});
+
+	it('answers federation auto with hosting off, with what the come-home job did', async () => {
+		running.on = false;
+		const report = {
+			startedAt: 1,
+			finishedAt: 2,
+			agents: [{ id: 'a1', name: 'Docs', from: 'box:h1', result: 'online', notices: [] }],
+		};
+		comeHome.report = report;
+		expect(await send(client(true), { action: 'auto-status' })).toMatchObject({
+			success: true,
+			auto: { autoMove: false, remotes: [], agents: [], comeHome: report },
+		});
+		// Running a pass still needs the coordinator.
+		expect(await send(client(true), { action: 'auto-run' })).toMatchObject({ success: false });
+
+		running.on = true;
+		expect(await send(client(true), { action: 'auto-status' })).toMatchObject({
+			success: true,
+			auto: { autoMove: true, comeHome: report },
+		});
 	});
 
 	it('answers the not-running message while no service runs', async () => {

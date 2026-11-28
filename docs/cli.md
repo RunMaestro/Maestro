@@ -2624,6 +2624,8 @@ maestro-cli settings set federationAutoMove true    # turn automatic moves on (o
 
 Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) with its service, and each SSH agent's state (`moved`, `pending`, `waiting`, `blocked`, `manual`) with its reason. Anything `blocked` carries a `To fix:` line. Both exit `1` when something needs a person: a `blocked` remote or agent, or a running host whose service still needs one step (lingering off, or a service that failed to register). A remote that can never have a service (Windows, Linux without a user session, a Mac with Maestro.app) shows its workaround as a note and does not make them exit `1`. `--json` prints the same snapshot. They need the desktop app: a headless host mirrors no peers.
 
+With hosted agents off, the desktop brings every agent an earlier release moved onto a host back at launch, with no question. `federation auto` then reports that run under **Moved back from a host this launch**, with the same text as the notice the desktop shows: each agent that came home, and for one that came back with only this machine's copy, what may be missing and where it still is (`comeHome` in `--json`). An agent still on its host makes it exit `1`.
+
 ### Hosted agents in the Left Bar
 
 Your Left Bar shows the hosted agents you moved from this machine and the ones you added. A host's other agents stay out of it until you add them, the same as **Add Hosted Agent** in the desktop app:

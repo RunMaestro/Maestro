@@ -12,7 +12,8 @@
  */
 
 import { logger } from '../../../utils/logger';
-import { getAutoFederation, getPeerMirrorService } from '../../../federation';
+import { getAutoFederation, getComeHomeRunner, getPeerMirrorService } from '../../../federation';
+import { emptyAutoFederationSnapshot } from '../../../../shared/federationAuto';
 import { requestFederationWindow } from '../../../federation/federation-window';
 import { findMirrorPeer } from '../../../../shared/maestro-lib/client/peer-mirror';
 import {
@@ -48,6 +49,17 @@ export async function handleFederationCommand(
 		return;
 	}
 
+	// `federation auto` answers with hosting off too (no mirror, no coordinator): it reports what
+	// the job that brings moved agents home did this launch.
+	const comeHome = getComeHomeRunner()?.lastReport() ?? undefined;
+	if (action === 'auto-status' && !getAutoFederation()) {
+		reply({
+			success: true,
+			auto: { ...emptyAutoFederationSnapshot(false), ...(comeHome ? { comeHome } : {}) },
+		});
+		return;
+	}
+
 	const service = getPeerMirrorService();
 	if (!service) {
 		reply({ success: false, error: FEDERATION_NOT_RUNNING_MESSAGE });
@@ -67,10 +79,8 @@ export async function handleFederationCommand(
 				reply({ success: false, error: FEDERATION_NOT_RUNNING_MESSAGE });
 				return;
 			}
-			reply({
-				success: true,
-				auto: action === 'auto-run' ? await auto.runNow() : auto.snapshot(),
-			});
+			const snapshot = action === 'auto-run' ? await auto.runNow() : auto.snapshot();
+			reply({ success: true, auto: comeHome ? { ...snapshot, comeHome } : snapshot });
 			return;
 		}
 		if (action === 'conflicts') {
