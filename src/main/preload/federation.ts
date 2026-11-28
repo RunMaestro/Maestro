@@ -20,6 +20,7 @@ import type {
 } from '../federation/lift';
 import type { DesktopSetupHostAnswer, DesktopSetupHostOptions } from '../federation/setup-host';
 import type { ComeHomeReport } from '../../shared/federationComeHome';
+import type { DesktopStopHostAnswer, DesktopStopHostOptions } from '../federation/stop-host';
 import {
 	FEDERATION_WINDOW_REQUEST_CHANNEL,
 	type FederationWindowReply,
@@ -154,6 +155,16 @@ export function createFederationApi() {
 			options?: DesktopSetupHostOptions
 		): Promise<DesktopSetupHostAnswer> =>
 			ipcRenderer.invoke('federation:setupHost', remoteId, options ?? {}),
+		/**
+		 * Settings > SSH Hosts Stop Host (and, with `uninstall`, Remove Host): disable the boot service
+		 * and stop the host on an SSH remote, and for Remove Host take away Maestro's install there.
+		 * The same `stopRemoteHost()` as `maestro-cli remote-host stop` / `uninstall`.
+		 */
+		stopHost: (
+			remoteId: string,
+			options?: DesktopStopHostOptions
+		): Promise<DesktopStopHostAnswer> =>
+			ipcRenderer.invoke('federation:stopHost', remoteId, options ?? {}),
 		/** What automatic Federation did, waits on, or could not do, per remote and per agent. */
 		autoStatus: (): Promise<AutoFederationSnapshot> => ipcRenderer.invoke('federation:autoStatus'),
 		/** Run an automatic Federation pass now and answer what it left behind. */

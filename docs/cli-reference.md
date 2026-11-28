@@ -1750,7 +1750,7 @@ Stop the host (refuses while a turn, Auto Run or Cue run is in flight, unless --
 
 ## `maestro-cli remote-host`
 
-Install, check, and start the maestro-cli host on an SSH remote (Federation)
+Install, check, start, stop, and remove the maestro-cli host on an SSH remote (Federation)
 
 ## `maestro-cli remote-host status <ssh-remote>`
 
@@ -1782,6 +1782,27 @@ Start the host on the remote (as the SSH user) when none runs, then report statu
 | --------------------- | ------------------------------------------------------------- | ------- |
 | `--timeout <seconds>` | Give up on each SSH call after this many seconds (default 60) | -       |
 | `--json`              | Output as JSON (for scripting)                                | -       |
+
+## `maestro-cli remote-host stop <ssh-remote>`
+
+Stop the host on the remote and disable its boot service, so it does not come back after a reboot; the install and its data stay
+
+| Option                | Description                                                               | Default |
+| --------------------- | ------------------------------------------------------------------------- | ------- |
+| `--force`             | Stop even though agents live on the host (their data stays on the remote) | -       |
+| `--timeout <seconds>` | Give up on each SSH call after this many seconds (default 60)             | -       |
+| `--json`              | Output as JSON (for scripting)                                            | -       |
+
+## `maestro-cli remote-host uninstall <ssh-remote>`
+
+Stop the host, then remove its boot service and Maestro's own install under ~/.maestro; a maestro-cli Maestro did not install is left alone
+
+| Option                | Description                                                                  | Default |
+| --------------------- | ---------------------------------------------------------------------------- | ------- |
+| `--force`             | Remove even though agents live on the host (their data stays on the remote)  | -       |
+| `--purge-data`        | Also remove the host's data directory; refused while the host holds an agent | -       |
+| `--timeout <seconds>` | Give up on each SSH call after this many seconds (default 60)                | -       |
+| `--json`              | Output as JSON (for scripting)                                               | -       |
 
 ## `maestro-cli lift <agent>`
 

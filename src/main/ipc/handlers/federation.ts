@@ -44,6 +44,11 @@ import {
 	type DesktopSetupHostOptions,
 } from '../../federation/setup-host';
 import { resolveBundledCliPathSync } from '../../maestro-cli-manager';
+import {
+	stopHostFromDesktop,
+	type DesktopStopHostAnswer,
+	type DesktopStopHostOptions,
+} from '../../federation/stop-host';
 import { parsePeerAgentAction } from '../../../shared/maestro-lib/client/peer-actions';
 import type {
 	PeerActionAnswer,
@@ -85,6 +90,8 @@ export type FederationHandlerDeps = Omit<DesktopLiftRuntime, 'service'> & {
 	watchSessions?(onChange: () => void): () => void;
 	/** The all-windows push, for the automatic Federation snapshot. */
 	safeSend?: SafeSendFn;
+	/** Store the SSH remote list: Stop Host and Remove Host switch the remote's Federation off. */
+	writeSshRemotes?(remotes: SshRemoteConfig[]): void;
 };
 
 const LOG_CONTEXT = '[Federation]';
@@ -411,6 +418,29 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				)
 		)
 	);
+	// Settings > SSH Hosts Stop Host / Remove Host: the same `stopRemoteHost()` as
+	// `maestro-cli remote-host stop` and `remote-host uninstall`. Needs no peer mirror.
+	ipcMain.handle(
+		'federation:stopHost',
+		withIpcErrorLogging(
+			opts('stopHost'),
+			async (remoteId: unknown, options?: unknown): Promise<DesktopStopHostAnswer> =>
+				stopHostFromDesktop(requireId(remoteId, 'SSH remote id'), readStopOptions(options), {
+					readRemotes: () => {
+						const remotes = deps.readSshRemotes();
+						return Array.isArray(remotes) ? (remotes as SshRemoteConfig[]) : [];
+					},
+					service: getPeerMirrorService,
+					writeRemotes: (remotes) => deps.writeSshRemotes?.(remotes),
+				})
+		)
+	);
+}
+
+function readStopOptions(options: unknown): DesktopStopHostOptions {
+	if (!options || typeof options !== 'object') return {};
+	const { uninstall, force } = options as Record<string, unknown>;
+	return { uninstall: uninstall === true, force: force === true };
 }
 
 function readSetupOptions(options: unknown): DesktopSetupHostOptions {
