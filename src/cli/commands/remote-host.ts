@@ -53,7 +53,8 @@ import {
 	findPeerRemote,
 	requireFederationRemote,
 } from '../services/peer-resolver';
-import { readSshRemotes, resolveSshRemoteId } from '../services/storage';
+import { readSshRemotes, resolveSshRemoteId, writeSshRemotes } from '../services/storage';
+import { federationTurnedOffNote, withFederationOff } from '../../shared/federationRemote';
 import { nudgeDesktopReconnect } from './federation';
 
 export interface RemoteHostOptions {
@@ -100,6 +101,8 @@ export interface RemoteHostDeps {
 	setup: typeof setupRemoteHost;
 	survey: typeof surveyRemoteHost;
 	stop: typeof stopRemoteHost;
+	/** Store the SSH remote list: stop and uninstall switch the remote's Federation off. */
+	writeRemotes(remotes: SshRemoteConfig[]): void;
 	/** This CLI's own bundle: the file the running process loaded, and its prompts beside it. */
 	localBundle(version: string): LocalCliBundle;
 	/** Tell a running desktop to reload the peer. */
@@ -114,6 +117,7 @@ const defaultDeps: RemoteHostDeps = {
 	setup: setupRemoteHost,
 	survey: surveyRemoteHost,
 	stop: stopRemoteHost,
+	writeRemotes: (remotes) => writeSshRemotes(remotes),
 	localBundle: (version) => resolveLocalCliBundle(__filename, version),
 	nudgeDesktop: nudgeDesktopReconnect,
 };
@@ -570,6 +574,12 @@ async function runRemoteHostStop(
 			result.outcome === 'desktop-host' ||
 			result.outcome === 'agents-held' ||
 			result.outcome === 'purge-refused';
+		// Automatic Federation honors the remote's own switch: off, it never starts this host again.
+		const switched =
+			result.outcome === 'done' ? withFederationOff(deps.readRemotes(), remote.id) : null;
+		if (switched) deps.writeRemotes(switched);
+		// --purge-data that the last check on the remote turned down is not the success asked for.
+		const purgeKept = result.outcome === 'done' && options.purgeData === true && !result.purged;
 		if (options.json) {
 			const { survey, ...rest } = result;
 			console.log(
@@ -583,6 +593,7 @@ async function runRemoteHostStop(
 						foreign: survey.foreign,
 						service: survey.service,
 						...(survey.dataDir ? { dataDir: survey.dataDir } : {}),
+						...(switched ? { federationOff: true } : {}),
 					},
 					null,
 					2
@@ -601,8 +612,9 @@ async function runRemoteHostStop(
 			const text = formatRemoteHostStop(remote, result, uninstall);
 			if (refused) console.error(text);
 			else console.log(text);
+			if (switched) console.log(federationTurnedOffNote(remote.name));
 		}
-		if (refused) process.exitCode = ExitCode.GeneralError;
+		if (refused || purgeKept) process.exitCode = ExitCode.GeneralError;
 	} catch (error) {
 		if (error instanceof RemoteHostStopError) {
 			const code = error.code === 'timeout' ? ExitCode.Timeout : ExitCode.GeneralError;

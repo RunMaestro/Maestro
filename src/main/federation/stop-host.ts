@@ -17,6 +17,7 @@ import {
 	type RemoteHostAgent,
 	type RemoteHostStopResult,
 } from '../../shared/maestro-lib/client/remote-uninstall';
+import { federationTurnedOffNote, withFederationOff } from '../../shared/federationRemote';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { PeerMirrorService } from './peer-mirror-service';
 
@@ -35,12 +36,16 @@ export type DesktopStopHostAnswer =
 			message: string;
 			/** `agents-held`: the agents the host holds, for the "stop anyway" confirmation. */
 			agents?: RemoteHostAgent[] | 'unknown';
+			/** The remote's Federation switch was turned off, so nothing starts the host again. */
+			federationOff?: boolean;
 	  }
 	| { ok: false; code: string; error: string };
 
 export interface DesktopStopHostDeps {
 	readRemotes(): SshRemoteConfig[];
 	service(): PeerMirrorService | null;
+	/** Store the remote list (the Federation switch). */
+	writeRemotes(remotes: SshRemoteConfig[]): void;
 	stop?: typeof stopRemoteHost;
 }
 
@@ -68,10 +73,19 @@ export async function stopHostFromDesktop(
 		}
 		throw error;
 	}
+	// Automatic Federation would start a stopped host again, and register its service again: the
+	// remote's own Federation switch is what it honors, so the stop turns it off.
+	const switched =
+		result.outcome === 'done' ? withFederationOff(deps.readRemotes(), remote.id) : null;
+	if (switched) deps.writeRemotes(switched);
+	const message = describeRemoteHostStop(remote, result, uninstall);
 	return {
 		ok: true,
 		outcome: result.outcome,
-		message: describeRemoteHostStop(remote, result, uninstall),
+		message: switched
+			? `${message} ${federationTurnedOffNote(remote.name || remote.host)}`
+			: message,
 		...(result.outcome === 'agents-held' ? { agents: result.agents } : {}),
+		...(switched ? { federationOff: true } : {}),
 	};
 }

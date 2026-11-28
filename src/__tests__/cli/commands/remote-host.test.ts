@@ -104,7 +104,16 @@ function depsWith(
 	});
 	const survey = vi.fn<RemoteHostDeps['survey']>().mockResolvedValue(surveyOf());
 	const stop = vi.fn<RemoteHostDeps['stop']>();
-	return { discover, start, survey, stop, readRemotes: () => remotes, resolveRemoteId };
+	const writeRemotes = vi.fn<RemoteHostDeps['writeRemotes']>();
+	return {
+		discover,
+		start,
+		survey,
+		stop,
+		writeRemotes,
+		readRemotes: () => remotes,
+		resolveRemoteId,
+	};
 }
 
 describe('maestro-cli remote-host', () => {
@@ -521,6 +530,7 @@ describe('maestro-cli remote-host', () => {
 				serviceDisabled: true,
 				removed: [],
 				kept: [],
+				purged: false,
 				warnings: [],
 				...overrides,
 			}) as RemoteHostStopResult;
@@ -535,6 +545,9 @@ describe('maestro-cli remote-host', () => {
 				purgeData: false,
 			});
 			expect(everything()).toContain('Host: stopped (pid 812)');
+			// Automatic Federation would start it again: the remote's switch goes off, and says so.
+			expect(deps.writeRemotes).toHaveBeenCalledWith([remoteOf({ federation: false })]);
+			expect(everything()).toContain('Federation is now off for Build box');
 			expect(everything()).toContain(
 				'Service: disabled, so the host does not come back after a reboot'
 			);
@@ -552,6 +565,7 @@ describe('maestro-cli remote-host', () => {
 				],
 			});
 			await remoteHostStop('r1', {}, deps);
+			expect(deps.writeRemotes).not.toHaveBeenCalled();
 			expect(everything()).toContain(
 				'The host on Build box holds 2 agents: "Backend", "Docs". Nothing was changed.'
 			);
@@ -615,6 +629,16 @@ describe('maestro-cli remote-host', () => {
 			expect(everything()).toContain(
 				'The host\'s data was kept: the host on Build box holds 1 agent: "Backend"'
 			);
+			expect(process.exitCode).toBe(ExitCode.GeneralError);
+		});
+
+		it('exits 1 when the last check on the remote kept the data --purge-data asked to remove', async () => {
+			const deps = depsWith([]);
+			deps.stop.mockResolvedValue(
+				done({ purged: false, warnings: ['The data directory was kept: an agent appeared.'] })
+			);
+			await remoteHostUninstall('r1', { purgeData: true }, deps);
+			expect(everything()).toContain('an agent appeared');
 			expect(process.exitCode).toBe(ExitCode.GeneralError);
 		});
 

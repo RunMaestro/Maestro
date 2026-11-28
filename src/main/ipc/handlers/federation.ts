@@ -80,6 +80,8 @@ export type FederationHandlerDeps = Omit<DesktopLiftRuntime, 'service'> & {
 	watchSessions?(onChange: () => void): () => void;
 	/** The all-windows push, for the automatic Federation snapshot. */
 	safeSend?: SafeSendFn;
+	/** Store the SSH remote list: Stop Host and Remove Host switch the remote's Federation off. */
+	writeSshRemotes?(remotes: SshRemoteConfig[]): void;
 };
 
 const LOG_CONTEXT = '[Federation]';
@@ -383,6 +385,7 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 						return Array.isArray(remotes) ? (remotes as SshRemoteConfig[]) : [];
 					},
 					service: getPeerMirrorService,
+					writeRemotes: (remotes) => deps.writeSshRemotes?.(remotes),
 				})
 		)
 	);

@@ -53,6 +53,7 @@ const configs: SshRemoteConfig[] = [
 	remote('4', 'HVM JR', 'jennifer-tailcat', 'Jennifer'),
 ];
 
+const refresh = vi.fn(async () => {});
 vi.mock('../../../hooks', () => ({
 	useSshRemotes: () => ({
 		configs,
@@ -64,6 +65,7 @@ vi.mock('../../../hooks', () => ({
 		setDefaultId: vi.fn(),
 		testConnection: vi.fn(),
 		testingConfigId: null,
+		refresh,
 	}),
 }));
 
@@ -142,6 +144,7 @@ describe('Stop Host and Remove Host', () => {
 			ok: true,
 			outcome: 'done',
 			message: 'The host on NeeMAC is stopped.',
+			federationOff: true,
 		});
 		render(<SshRemotesSection theme={theme} />);
 		fireEvent.click(within(rowOf('NeeMAC')).getByLabelText('Remove Host'));
@@ -160,6 +163,8 @@ describe('Stop Host and Remove Host', () => {
 			)
 		);
 		expect(stopRemoteHostFromWindow).toHaveBeenCalledWith('2', { uninstall: true, force: false });
+		// The remote's Federation switch changed in main: the list reloads so an edit keeps it off.
+		expect(refresh).toHaveBeenCalled();
 	});
 
 	it('asks again, naming the agents, before it stops a host that holds them', async () => {

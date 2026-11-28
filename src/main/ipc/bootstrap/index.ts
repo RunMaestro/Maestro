@@ -150,6 +150,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 			deps.settingsStore.get('federationHostedAgents', false) === true,
 		watchSessions: (onChange) => deps.sessionsStore.onDidChange('sessions', () => onChange()),
 		safeSend: deps.safeSend,
+		writeSshRemotes: (remotes) => deps.settingsStore.set('sshRemotes', remotes),
 	});
 
 	// MaestroRun - install, grant walkthrough, and the readiness that gates its

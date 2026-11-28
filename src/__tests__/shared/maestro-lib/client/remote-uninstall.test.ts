@@ -67,6 +67,10 @@ interface RemoteSetup {
 	data?: 'host' | 'desktop';
 	/** `host stop` fails. */
 	stopFails?: boolean;
+	/** What `list agents --json` prints once `host stop` ran: an agent that arrived meanwhile. */
+	agentsAfterStop?: string;
+	/** The contents of `~/.maestro/host.env`. */
+	hostEnv?: string;
 }
 
 /** A fresh HOME and stub bin directory shaped like a remote Maestro set up. */
@@ -93,7 +97,7 @@ function makeRemote(setup: RemoteSetup): Remote {
 		`  "host endpoint") if [ -f "${state}" ]; then printf '{\\n  "running": true,\\n  "port": 4100,\\n  "token": "${TOKEN}",\\n  "pid": 812\\n}\\n'; else echo '{ "running": false }'; fi;;`,
 		`  "version --json") ${setup.desktop ? `echo '{ "cliVersion": "1.1.2", "appRunning": true }'` : `echo '{ "cliVersion": "1.1.2", "appRunning": false, "hostKind": "headless", "hostPid": 812 }'`};;`,
 		`  "list agents") ${agents === null ? 'exit 1' : `cat "${agentsFile}"`};;`,
-		`  "host stop") ${setup.stopFails ? 'echo "Error: work in flight (1 turn)" >&2; exit 5' : `rm -f "${state}"; echo "Host stopped (pid 812)."`};;`,
+		`  "host stop") ${setup.stopFails ? 'echo "Error: work in flight (1 turn)" >&2; exit 5' : `rm -f "${state}";${setup.agentsAfterStop ? ` printf '%s\\n' '${setup.agentsAfterStop}' > "${agentsFile}";` : ''} echo "Host stopped (pid 812)."`};;`,
 		'esac',
 	].join('\n');
 	const root = path.join(home, '.maestro');
@@ -105,7 +109,7 @@ function makeRemote(setup: RemoteSetup): Remote {
 		fs.mkdirSync(path.join(root, 'cli', 'prompts'), { recursive: true });
 		fs.writeFileSync(path.join(root, 'cli', 'maestro-cli.js'), '');
 		fs.mkdirSync(path.join(root, 'node', 'bin'), { recursive: true });
-		fs.writeFileSync(path.join(root, 'host.env'), 'EXTRA=1\n');
+		fs.writeFileSync(path.join(root, 'host.env'), setup.hostEnv ?? 'EXTRA=1\n');
 	}
 	if (setup.foreign) {
 		// Foreign only: it answers for the host when Maestro's own launcher is gone.
@@ -540,5 +544,95 @@ describe('ssh failures', () => {
 		await expect(stopRemoteHost(remote, { exec: late, sshPath: 'ssh' })).rejects.toMatchObject({
 			code: 'timeout',
 		});
+	});
+});
+
+describe('purgeData safety', () => {
+	it.skipIf(!onPosix)(
+		'never removes the home folder, however MAESTRO_USER_DATA spells it',
+		async () => {
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				hostEnv: 'export MAESTRO_USER_DATA="$HOME/"\n',
+			});
+			// Make home look like Maestro data, so only the path check stands in the way.
+			fs.writeFileSync(path.join(r.home, 'maestro-sessions.json'), '{}');
+			const result = await stopRemoteHost(remote, {
+				exec: execOn(r),
+				sshPath: 'ssh',
+				uninstall: true,
+				purgeData: true,
+			});
+			expect(result).toMatchObject({ outcome: 'done', purged: false });
+			if (result.outcome === 'done') expect(result.warnings.join(' ')).toContain('home folder');
+			expect(fs.existsSync(path.join(r.home, 'maestro-sessions.json'))).toBe(true);
+			expect(fs.existsSync(r.log)).toBe(true);
+		}
+	);
+
+	it.skipIf(!onPosix)('treats a data directory no CLI can read as holding agents', async () => {
+		// An earlier `uninstall --force` took the CLI and left the agents' data.
+		const r = makeRemote({ os: 'Linux', data: 'host' });
+		const survey = parseRemoteHostSurvey(
+			runScript(r, buildRemoteHostSurveyScript({ agents: true })).stdout
+		);
+		expect(survey?.agents).toBe('unknown');
+		const result = await stopRemoteHost(remote, {
+			exec: execOn(r),
+			sshPath: 'ssh',
+			uninstall: true,
+			purgeData: true,
+			force: true,
+		});
+		expect(result).toMatchObject({ outcome: 'purge-refused', reason: 'agents-held' });
+		expect(fs.existsSync(dataDirOf(r, 'Linux'))).toBe(true);
+	});
+
+	it.skipIf(!onPosix)(
+		'checks the agents again after the host stops, and keeps the data when one arrived',
+		async () => {
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				running: true,
+				data: 'host',
+				agentsAfterStop: '[{ "id": "late", "name": "Imported" }]',
+			});
+			const result = await stopRemoteHost(remote, {
+				exec: execOn(r),
+				sshPath: 'ssh',
+				uninstall: true,
+				purgeData: true,
+			});
+			expect(result).toMatchObject({ outcome: 'done', hostStopped: true, purged: false });
+			if (result.outcome === 'done')
+				expect(result.warnings.join(' ')).toContain('an agent appeared');
+			expect(fs.existsSync(path.join(dataDirOf(r, 'Linux'), 'maestro-sessions.json'))).toBe(true);
+		}
+	);
+});
+
+describe('a run cut off part way', () => {
+	it.skipIf(!onPosix)('is never reported as done', async () => {
+		const r = makeRemote({ os: 'Linux', installed: true, running: true, service: true });
+		const real = execOn(r);
+		const cut = vi.fn<RemoteExec>(async (command, args, options) => {
+			const result = await real(command, args, options);
+			// The act's output stops before its last line, as a dropped connection leaves it.
+			return args[args.length - 1].includes('UNINSTALL=')
+				? { ...result, stdout: result.stdout.replace(/MAESTRO_HOST=done\n?/, ''), exitCode: 255 }
+				: result;
+		});
+		await expect(stopRemoteHost(remote, { exec: cut, sshPath: 'ssh' })).rejects.toMatchObject({
+			code: 'incomplete',
+		});
+	});
+
+	it.skipIf(!onPosix)('never trusts a survey that did not finish', async () => {
+		const r = makeRemote({ os: 'Linux', installed: true, data: 'host' });
+		const { stdout } = runScript(r, buildRemoteHostSurveyScript({ agents: true }));
+		const cut = stdout.slice(0, stdout.indexOf('MAESTRO_HOST=data='));
+		expect(parseRemoteHostSurvey(cut)).toBeNull();
 	});
 });

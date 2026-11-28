@@ -110,6 +110,8 @@ function surveyPreamble(): string[] {
 		'  [ ! -d "$data" ] && [ -d "$base/$alt" ] && data="$base/$alt"',
 		'fi',
 		'if [ -d "$data" ]; then say "data=$data"; [ -f "$data/maestro-window-state.json" ] && say data-desktop=1; fi',
+		// The last survey line: output without it was cut off, and is never trusted.
+		'say surveyed=1',
 	];
 }
 
@@ -122,7 +124,9 @@ export function buildRemoteHostSurveyScript(options: { agents?: boolean } = {}):
 	const lines = surveyPreamble();
 	if (options.agents) {
 		lines.push(
-			'if [ "$have" = 0 ] || [ ! -d "$data" ]; then say agents-begin; echo "[]"; say agents-end;',
+			// No data directory: no agents. A data directory no CLI can read: unknown, never "none".
+			'if [ ! -d "$data" ]; then say agents-begin; echo "[]"; say agents-end;',
+			'elif [ "$have" = 0 ]; then say agents=unknown;',
 			'elif _list=$(_mc list agents --json 2>/dev/null); then say agents-begin; printf \'%s\\n\' "$_list"; say agents-end;',
 			'else say agents=unknown; fi'
 		);
@@ -170,6 +174,22 @@ export function buildRemoteHostStopScript(options: RemoteHostStopScriptOptions =
 		'if [ "$have" = 1 ]; then',
 		`  _mc host endpoint --json 2>/dev/null | grep -q '"running": *true' && { say error=still-running; exit 0; }`,
 		'fi',
+		// 4. Is the data directory safe to remove? Decided here, with the host stopped and the CLI
+		// still in place: its real path is not home, an ancestor of home, or /; it holds Maestro's own
+		// files and not the desktop app's; and it holds no agent now (one may have arrived since the
+		// survey). Anything less keeps the data.
+		'purge_ok=0',
+		'if [ "$PURGE" = 1 ]; then',
+		'  real=$(cd "$data" 2>/dev/null && pwd -P); home_real=$(cd "$HOME" 2>/dev/null && pwd -P)',
+		'  under_home=0; case "$home_real/" in "$real/"*) under_home=1;; esac',
+		'  if [ -z "$real" ] || [ "$real" = / ] || [ -z "$home_real" ] || [ "$under_home" = 1 ]; then say refused=purge-path',
+		'  elif [ -f "$real/maestro-window-state.json" ]; then say refused=purge-desktop',
+		'  elif [ ! -f "$real/maestro-settings.json" ] && [ ! -f "$real/maestro-sessions.json" ] && [ ! -f "$real/maestro-agent-configs.json" ]; then say refused=purge-path',
+		'  elif [ "$have" = 0 ]; then say refused=purge-agents-unknown',
+		'  elif ! _left=$(_mc list agents --json 2>/dev/null); then say refused=purge-agents-unknown',
+		`  elif printf '%s\n' "$_left" | grep -q '"id"'; then say refused=purge-agents`,
+		'  else purge_ok=1; fi',
+		'fi',
 		'if [ "$UNINSTALL" = 1 ]; then',
 		'  if [ "$service" = systemd ]; then rm -f "$unit" && say "removed=$unit"; systemctl --user daemon-reload >/dev/null 2>&1; fi',
 		// A disabled label stays disabled after its plist is gone, and would block a later install.
@@ -182,12 +202,8 @@ export function buildRemoteHostStopScript(options: RemoteHostStopScriptOptions =
 		'  [ -f "$root/host.env" ] && say "kept=$root/host.env"',
 		'  rmdir "$root" 2>/dev/null && say "removed=$root"',
 		'fi',
-		'if [ "$PURGE" = 1 ]; then',
-		// The laptop checked these before it asked; checked again where the files are.
-		'  if [ -z "$data" ] || [ "$data" = "$HOME" ] || [ "$data" = / ]; then say refused=purge-path',
-		'  elif [ -f "$data/maestro-window-state.json" ]; then say refused=purge-desktop',
-		'  elif [ -d "$data" ]; then if rm -rf "$data"; then say "removed=$data"; else say error=purge; exit 0; fi',
-		'  fi',
+		'if [ "$purge_ok" = 1 ]; then',
+		'  if rm -rf "$real"; then say "removed=$data"; else say error=purge; exit 0; fi',
 		'fi',
 		'say done',
 		'exit 0',
@@ -311,7 +327,7 @@ function surveyFrom(parsed: ParsedOutput): RemoteHostSurvey | null {
 	const { markers } = parsed;
 	const os = first(markers, 'os');
 	const serviceKind = first(markers, 'service');
-	if (!os || !serviceKind) return null;
+	if (!os || !serviceKind || first(markers, 'surveyed') !== '1') return null;
 	const hostRaw = first(markers, 'host');
 	const host: RemoteHostKind = hostRaw === 'headless' || hostRaw === 'desktop' ? hostRaw : 'none';
 	const pid = Number(first(markers, 'pid'));
@@ -360,7 +376,9 @@ export type RemoteHostStopErrorCode =
 	/** A file could not be removed. */
 	| 'remove'
 	/** The data directory could not be removed. */
-	| 'purge';
+	| 'purge'
+	/** The connection ended before the remote said it was done. */
+	| 'incomplete';
 
 export class RemoteHostStopError extends Error {
 	readonly code: RemoteHostStopErrorCode;
@@ -410,6 +428,8 @@ export type RemoteHostStopResult =
 			removed: string[];
 			/** What was deliberately left: `~/.maestro/host.env`, a foreign `maestro-cli`, the data directory. */
 			kept: string[];
+			/** `purgeData` only: the data directory is gone. False when the last check kept it. */
+			purged: boolean;
 			warnings: string[];
 	  };
 
@@ -526,6 +546,14 @@ export async function stopRemoteHost(
 		throw new RemoteHostStopError(code, message);
 	}
 
+	// Every finished run ends with `done`. Without it the connection dropped part way, and what was
+	// stopped or removed is not known: never report that as success.
+	if (!markers.has('done')) {
+		throw new RemoteHostStopError(
+			'incomplete',
+			`The connection to ${label} ended before the ${uninstall ? 'removal' : 'stop'} finished. Run \`maestro-cli remote-host status ${remote.name || remote.id}\` to see what is left, then run it again.`
+		);
+	}
 	const did = markers.get('did') ?? [];
 	const removed = markers.get('removed') ?? [];
 	const kept = [...(markers.get('kept') ?? []), ...after.foreign];
@@ -545,7 +573,13 @@ export async function stopRemoteHost(
 		);
 	} else if (purgeRefusal === 'purge-path') {
 		warnings.push(
-			'The data directory was kept: its path did not look like a Maestro data directory.'
+			'The data directory was kept: it is not a Maestro data directory, or it is your home folder or one above it.'
+		);
+	} else if (purgeRefusal === 'purge-agents') {
+		warnings.push('The data directory was kept: an agent appeared on the host while it stopped.');
+	} else if (purgeRefusal === 'purge-agents-unknown') {
+		warnings.push(
+			'The data directory was kept: its agents could not be read to make sure it holds none.'
 		);
 	}
 	return {
@@ -555,6 +589,7 @@ export async function stopRemoteHost(
 		serviceDisabled: did.includes('service-disabled'),
 		removed,
 		kept,
+		purged: after.dataDir !== undefined && removed.includes(after.dataDir),
 		warnings,
 	};
 }

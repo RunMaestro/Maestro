@@ -53,7 +53,8 @@ function deps(result: RemoteHostStopResult | Error, service: PeerMirrorService |
 	const stop = vi.fn<typeof stopRemoteHost>();
 	if (result instanceof Error) stop.mockRejectedValue(result);
 	else stop.mockResolvedValue(result);
-	return { readRemotes: () => [remote], service: () => service, stop };
+	const writeRemotes = vi.fn();
+	return { readRemotes: () => [remote], service: () => service, stop, writeRemotes };
 }
 
 describe('stopHostFromDesktop', () => {
@@ -61,12 +62,15 @@ describe('stopHostFromDesktop', () => {
 		const d = deps(done);
 		const answer = await stopHostFromDesktop('r1', {}, d);
 		expect(d.stop).toHaveBeenCalledWith(remote, { uninstall: false, force: false });
-		expect(answer).toEqual({
-			ok: true,
-			outcome: 'done',
-			message:
-				'The host on build is stopped. Its boot service is disabled, so it does not come back after a reboot.',
-		});
+		expect(answer).toMatchObject({ ok: true, outcome: 'done', federationOff: true });
+		if (answer.ok) {
+			expect(answer.message).toContain(
+				'The host on build is stopped. Its boot service is disabled, so it does not come back after a reboot.'
+			);
+			expect(answer.message).toContain('Federation is now off for build');
+		}
+		// Automatic Federation skips a remote whose switch is off, so it does not start the host again.
+		expect(d.writeRemotes).toHaveBeenCalledWith([{ ...remote, federation: false }]);
 	});
 
 	it('runs inside the mirror SSH queue when the mirror runs', async () => {
@@ -79,11 +83,10 @@ describe('stopHostFromDesktop', () => {
 
 	it('hands back the agents a host holds, for the stop-anyway confirmation', async () => {
 		const agents = [{ id: 'a1', name: 'Backend' }];
-		const answer = await stopHostFromDesktop(
-			'r1',
-			{},
-			deps({ outcome: 'agents-held', survey, agents })
-		);
+		const d = deps({ outcome: 'agents-held', survey, agents });
+		const answer = await stopHostFromDesktop('r1', {}, d);
+		// A refusal changed nothing, the Federation switch included.
+		expect(d.writeRemotes).not.toHaveBeenCalled();
 		expect(answer).toMatchObject({ ok: true, outcome: 'agents-held', agents });
 		if (answer.ok)
 			expect(answer.message).toContain('holds 1 agent: "Backend". Nothing was changed.');

@@ -113,6 +113,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 		setDefaultId,
 		testConnection,
 		testingConfigId,
+		refresh,
 	} = useSshRemotes();
 
 	// Local UI state
@@ -207,6 +208,8 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 			});
 			return;
 		}
+		// Main switched the remote's Federation off: reload, so an edit here does not switch it back.
+		if (answer.ok && answer.federationOff) await refresh();
 		const success = answer.ok && (answer.outcome === 'done' || answer.outcome === 'nothing');
 		setHostResults((prev) => ({
 			...prev,
