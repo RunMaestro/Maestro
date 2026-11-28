@@ -15,6 +15,10 @@ import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../shared/chatSteering';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import { groupChatModeratorRefusal } from '../../shared/group-chat-types';
 import { hasCapability } from '../../shared/maestro-lib/providers/capabilities';
+import type {
+	GroupChatWorkflowAction,
+	GroupChatWorkflowRun,
+} from '../../shared/group-chat-workflow-types';
 
 // Starting a chat spawns a moderator and every participant before the app
 // answers; the desktop allows itself 60s, so the CLI waits a little longer.
@@ -51,6 +55,11 @@ interface ListOptions extends JsonOption {
 
 interface ArchiveOptions extends JsonOption {
 	restore?: boolean;
+}
+
+interface WorkflowOptions extends JsonOption {
+	approve?: boolean;
+	cancel?: boolean;
 }
 
 type BridgeReply = { type: string; success?: boolean; error?: string; message?: string };
@@ -409,6 +418,69 @@ export async function groupChatStop(chatRef: string, options: JsonOption): Promi
 		}
 		if (options.json) console.log(JSON.stringify({ success: true, chatId }));
 		else console.log(`Stopped group chat ${chatId}`);
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+}
+
+/** A workflow run as the terminal reads it: title and status, then one line per stage. */
+export function formatWorkflowRun(run: GroupChatWorkflowRun | null): string {
+	if (!run) return 'No workflow run.';
+	const { plan } = run;
+	const lines = [`${plan.title} (${run.status})`];
+	if (run.status === 'running' && plan.stages[run.currentStageIndex]) {
+		lines.push(
+			`Stage ${run.currentStageIndex + 1} of ${plan.stages.length}: ${plan.stages[run.currentStageIndex].name}`
+		);
+	}
+	if (run.abortReason) lines.push(`Reason: ${run.abortReason}`);
+	plan.stages.forEach((stage, index) => {
+		const assignees = [
+			...stage.agents.map((agent) => `@${agent}`),
+			...(stage.autoRun ? [`Auto Run @${stage.autoRun.participantName}`] : []),
+		].join(', ');
+		lines.push(
+			`  ${index + 1}. [${run.stageStatuses[stage.id] ?? 'pending'}] ${stage.name} (${assignees})`
+		);
+	});
+	return lines.join('\n');
+}
+
+/**
+ * Read a chat's staged workflow run, approve its plan (--approve), or cancel it
+ * (--cancel): the Stage Strip's Start and Cancel buttons.
+ */
+export async function groupChatWorkflow(chatRef: string, options: WorkflowOptions): Promise<void> {
+	if (options.approve && options.cancel) fail('Pass --approve or --cancel, not both', options.json);
+	const action: GroupChatWorkflowAction = options.approve
+		? 'approve'
+		: options.cancel
+			? 'cancel'
+			: 'show';
+	try {
+		const { chatId, reply } = await withMaestroClient(async (client) => {
+			const id = resolveChatRef(chatRef, await listChats(client));
+			const res = await client.sendCommand<BridgeReply & { run?: GroupChatWorkflowRun | null }>(
+				{ type: 'group_chat_workflow', chatId: id, action },
+				'group_chat_workflow_result'
+			);
+			return { chatId: id, reply: res };
+		});
+		const error =
+			bridgeError(reply) ?? (reply.success ? undefined : reply.error || 'Workflow action refused');
+		const run = reply.run ?? null;
+		if (error) {
+			if (options.json) console.log(JSON.stringify({ success: false, error, chatId, action, run }));
+			else console.error(`Error: ${error}`);
+			process.exit(1);
+		}
+		if (options.json) console.log(JSON.stringify({ success: true, chatId, action, run }));
+		else {
+			if (action === 'approve') console.log(`Approved the workflow plan in ${chatId}`);
+			if (action === 'cancel') console.log(`Cancelled the workflow in ${chatId}`);
+			console.log(formatWorkflowRun(run));
+		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error), options.json);

@@ -20,7 +20,15 @@
  */
 
 import { useCallback, useState } from 'react';
-import { safeLocalStorage, safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
+
+/** `localStorage`, or null where there isn't one. */
+function storage(): Storage | null {
+	try {
+		return typeof localStorage === 'undefined' ? null : localStorage;
+	} catch {
+		return null;
+	}
+}
 
 function clampSize(value: number, minSize: number, maxSize: number): number {
 	return Math.round(Math.max(minSize, Math.min(maxSize, value)));
@@ -28,7 +36,7 @@ function clampSize(value: number, minSize: number, maxSize: number): number {
 
 /** The stored size, or null when nothing usable is stored. */
 function readStored(storageKey: string): number | null {
-	const raw = safeStorageGet(storageKey);
+	const raw = storage()?.getItem(storageKey) ?? null;
 	if (raw === null) return null;
 	const parsed = Number.parseFloat(raw);
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -62,18 +70,14 @@ export function usePersistedPanelSize(
 	const setSize = useCallback(
 		(next: number) => {
 			const clamped = clampSize(next, minSize, maxSize);
-			safeStorageSet(storageKey, String(clamped));
+			storage()?.setItem(storageKey, String(clamped));
 			setStored(clamped);
 		},
 		[storageKey, minSize, maxSize]
 	);
 
 	const reset = useCallback(() => {
-		try {
-			safeLocalStorage()?.removeItem(storageKey);
-		} catch {
-			/* storage blocked or unavailable - the in-memory size still resets */
-		}
+		storage()?.removeItem(storageKey);
 		setStored(null);
 	}, [storageKey]);
 

@@ -8,7 +8,7 @@ import { describe, expect, test } from 'vitest';
 import {
 	extractWorkflowPlanBlock,
 	parseWorkflowPlan,
-} from '../../main/group-chat/workflow-plan-parser';
+} from '../../shared/maestro-lib/groupchat/workflow/plan';
 
 const PROMPT_PATH = path.join(__dirname, '../../prompts/group-chat-workflow-planning.md');
 const prompt = readFileSync(PROMPT_PATH, 'utf-8');

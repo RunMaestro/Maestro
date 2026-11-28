@@ -6,8 +6,7 @@ import type { GroupChatWorkflowRun } from '../../../shared/group-chat-workflow-t
 import { mockTheme } from '../../helpers/mockTheme';
 import { resetStore } from '../../helpers/resetStores';
 
-const approveWorkflowPlan = vi.fn().mockResolvedValue(undefined);
-const cancelWorkflowRun = vi.fn().mockResolvedValue(null);
+const workflowAction = vi.fn().mockResolvedValue({ ok: true, run: null });
 
 const stages = [
 	{
@@ -63,8 +62,7 @@ describe('WorkflowStageStrip', () => {
 		vi.clearAllMocks();
 		Object.assign(window.maestro, {
 			groupChat: {
-				approveWorkflowPlan,
-				cancelWorkflowRun,
+				workflowAction,
 			},
 		});
 	});
@@ -83,10 +81,10 @@ describe('WorkflowStageStrip', () => {
 		expect(screen.getByText('3 stages')).toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole('button', { name: 'Start' }));
-		await waitFor(() => expect(approveWorkflowPlan).toHaveBeenCalledWith('chat-1'));
+		await waitFor(() => expect(workflowAction).toHaveBeenCalledWith('chat-1', 'approve'));
 
 		fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
-		await waitFor(() => expect(cancelWorkflowRun).toHaveBeenCalledWith('chat-1'));
+		await waitFor(() => expect(workflowAction).toHaveBeenCalledWith('chat-1', 'cancel'));
 	});
 
 	it('shows the current stage and each running-stage pip status', () => {

@@ -9,7 +9,7 @@ import {
 	HANDOFF_INLINE_MAX_CHARS,
 	classifyHandoff,
 	formatHandoffForPrompt,
-} from '../../../main/group-chat/workflow-handoff';
+} from '../workflow/handoff';
 
 describe('classifyHandoff', () => {
 	it('keeps content just under the inline threshold inline', () => {

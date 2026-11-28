@@ -1,3 +1,7 @@
+import type {
+	GroupChatWorkflowAction,
+	GroupChatWorkflowRun,
+} from '../../group-chat-workflow-types';
 import type { ClosedTabSummary } from '../../closedTabCommands';
 import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
 /**
@@ -128,6 +132,7 @@ export type ClientMethod =
 	| 'groupChats.create'
 	| 'groupChats.send'
 	| 'groupChats.stop'
+	| 'groupChats.workflow'
 	| 'groupChats.rename'
 	| 'groupChats.remove'
 	| 'consults.ask'
@@ -963,6 +968,15 @@ export interface GroupChatsApi {
 	send(chatId: string, message: string): Promise<ClientResult<void>>;
 	/** GC-3. Stop the moderator, every participant, and any Auto Run the chat started. */
 	stop(chatId: string): Promise<ClientResult<void>>;
+	/**
+	 * The chat's staged workflow run (null: none): read it, approve its plan (the
+	 * moderator is sent `go`, so the chat must be idle), or cancel it. A plan that
+	 * is not waiting, or no run to cancel, is `rejected`.
+	 */
+	workflow(
+		chatId: string,
+		action: GroupChatWorkflowAction
+	): Promise<ClientResult<GroupChatWorkflowRun | null>>;
 	/** GC-1. The desktop's Left Bar reads the new name after its next load (gap G15). */
 	rename(chatId: string, name: string): Promise<ClientResult<void>>;
 	/**

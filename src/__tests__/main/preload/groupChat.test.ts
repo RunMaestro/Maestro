@@ -240,19 +240,18 @@ describe('GroupChat Preload API', () => {
 		});
 
 		describe('workflow runs', () => {
-			it.each([
-				['getWorkflowRun', 'groupChat:getWorkflowRun'],
-				['approveWorkflowPlan', 'groupChat:approveWorkflowPlan'],
-				['cancelWorkflowRun', 'groupChat:cancelWorkflowRun'],
-			] as const)('should route %s through its IPC channel', async (method, channel) => {
-				const response = { status: 'running' };
-				mockInvoke.mockResolvedValue(response);
+			it.each(['show', 'approve', 'cancel'] as const)(
+				'should route the %s action through groupChat:workflowAction',
+				async (action) => {
+					const response = { ok: true, run: null };
+					mockInvoke.mockResolvedValue(response);
 
-				const result = await api[method]('gc-123');
+					const result = await api.workflowAction('gc-123', action);
 
-				expect(mockInvoke).toHaveBeenCalledWith(channel, 'gc-123');
-				expect(result).toBe(response);
-			});
+					expect(mockInvoke).toHaveBeenCalledWith('groupChat:workflowAction', 'gc-123', action);
+					expect(result).toBe(response);
+				}
+			);
 		});
 	});
 

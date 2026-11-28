@@ -89,6 +89,12 @@ vi.mock('../../../../main/group-chat/group-chat-router', () => ({
 	markParticipantResponded: vi.fn(),
 	spawnModeratorSynthesis: vi.fn(),
 	steerRunningRound: vi.fn(),
+	forgetWorkflow: vi.fn().mockResolvedValue(undefined),
+	noteWorkflowParticipantRemoved: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../../../main/group-chat/group-chat-workflow', () => ({
+	runDesktopGroupChatWorkflowAction: vi.fn().mockResolvedValue({ ok: true, run: null }),
 }));
 
 // Mock agent-detector
@@ -130,6 +136,7 @@ import * as groupChatLog from '../../../../main/group-chat/group-chat-log';
 import * as groupChatModerator from '../../../../main/group-chat/group-chat-moderator';
 import * as groupChatAgent from '../../../../main/group-chat/group-chat-agent';
 import * as groupChatRouter from '../../../../main/group-chat/group-chat-router';
+import { runDesktopGroupChatWorkflowAction } from '../../../../main/group-chat/group-chat-workflow';
 import { broadcastBridgeEvent } from '../../../../main/web-server/handlers/bridgeHandlers';
 
 describe('groupChat IPC handlers', () => {
@@ -218,9 +225,7 @@ describe('groupChat IPC handlers', () => {
 				'groupChat:queueReorder',
 				'groupChat:queueResume',
 				'groupChat:queueSteer',
-				'groupChat:getWorkflowRun',
-				'groupChat:approveWorkflowPlan',
-				'groupChat:cancelWorkflowRun',
+				'groupChat:workflowAction',
 				'groupChat:stopModerator',
 				'groupChat:stopAll',
 				'groupChat:reportAutoRunComplete',
@@ -472,6 +477,7 @@ describe('groupChat IPC handlers', () => {
 				mockProcessManager
 			);
 			expect(groupChatRouter.clearPendingParticipants).toHaveBeenCalledWith('gc-delete');
+			expect(groupChatRouter.forgetWorkflow).toHaveBeenCalledWith('gc-delete');
 			expect(groupChatStorage.deleteGroupChat).toHaveBeenCalledWith('gc-delete');
 			expect(result).toBe(true);
 		});
@@ -498,6 +504,21 @@ describe('groupChat IPC handlers', () => {
 				undefined
 			);
 			expect(result).toBe(true);
+		});
+	});
+
+	describe('groupChat:workflowAction', () => {
+		it('runs a known action through the shared desktop workflow function', async () => {
+			const result = await handlers.get('groupChat:workflowAction')!({} as any, 'gc-1', 'approve');
+			expect(runDesktopGroupChatWorkflowAction).toHaveBeenCalledWith('gc-1', 'approve');
+			expect(result).toEqual({ ok: true, run: null });
+		});
+
+		it('refuses an unknown action', async () => {
+			await expect(
+				handlers.get('groupChat:workflowAction')!({} as any, 'gc-1', 'delete')
+			).rejects.toThrow('Unknown workflow action');
+			expect(runDesktopGroupChatWorkflowAction).not.toHaveBeenCalled();
 		});
 	});
 

@@ -204,12 +204,12 @@ Plan parsing is a control-plane boundary. The first `maestro-plan` block is extr
 
 ### Control Directives
 
-| Directive         | Sender    | Effect                                                                                                                                                                                                                                |
-| ----------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `!go`             | User      | Approves a run in `awaiting-approval`, changes the first stage to `running`, and starts its moderator turn. Short approval phrases such as `go`, `start`, and `approved` use the same path.                                           |
-| `!cancel`         | User      | Cancels an active run. While awaiting approval, the registry entry is cleared. While running, the run becomes `aborted`, pending work is cleared, and disposable artifacts are removed. Short cancellation phrases use the same path. |
-| `!stage-complete` | Moderator | Completes the current stage. Prose following the directive becomes its handoff summary. The next stage starts automatically, or the run becomes `complete` after the final stage.                                                     |
-| `!stage-failed`   | Moderator | Marks the current stage `failed`, stores the following prose as the failure reason, and changes the run to `aborted`. No later stage starts.                                                                                          |
+| Directive         | Sender    | Effect                                                                                                                                                                                      |
+| ----------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `!go`             | User      | Approves a run in `awaiting-approval`, changes the first stage to `running`, and starts its moderator turn. Short approval phrases such as `go`, `start`, and `approved` use the same path. |
+| `!cancel`         | User      | Cancels an active run: it becomes `aborted` and its artifacts are removed. A round already in flight finishes as an ordinary round. `cancel` and `never mind` use the same path.            |
+| `!stage-complete` | Moderator | Completes the current stage. Prose following the directive becomes its handoff summary. The next stage starts automatically, or the run becomes `complete` after the final stage.           |
+| `!stage-failed`   | Moderator | Marks the current stage `failed`, stores the following prose as the failure reason, and changes the run to `aborted`. No later stage starts.                                                |
 
 `!stage-complete` and `!stage-failed` must appear on their own lines. Auto Run stages use a separate `!autorun @Participant:file.md` control line generated from the current stage. The Auto Run completion result returns as that stage's participant response, after which the moderator emits a stage directive in a later turn.
 
@@ -219,30 +219,55 @@ Plan parsing is a control-plane boundary. The first `maestro-plan` block is extr
 stateDiagram-v2
 	[*] --> awaiting_approval: valid maestro-plan
 	awaiting_approval --> running: !go
-	awaiting_approval --> cleared: !cancel
+	awaiting_approval --> aborted: !cancel
 	running --> running: !stage-complete and next stage
 	running --> complete: !stage-complete on final stage
 	running --> aborted: !stage-failed
-	running --> aborted: !cancel or lifecycle abort
+	running --> aborted: !cancel, or the stage stalled past its nudges
 	complete --> [*]
 	aborted --> [*]
-	cleared --> [*]
 ```
 
 The workflow state machine is implemented as pure transitions. `createRun()` initializes every stage as `pending`. `approveRun()` marks the current stage `running`. `completeStage()` marks it `complete`, records or merges its handoff, advances the cursor, and either starts the next stage or ends the run. `failStage()` marks the current stage `failed` and aborts. `abortRun()` ends an active run without rewriting the current stage status.
 
-The registry may retain a terminal `complete` or `aborted` snapshot so the renderer can display the last outcome. A new plan replaces that snapshot. Deleting or archiving the chat clears its registry entry.
+A chat keeps its terminal `complete` or `aborted` run so the Stage Strip can show the last outcome. A new plan replaces it. Deleting or archiving the chat forgets it.
+
+### Where It Runs
+
+The workflow lives in the library engine, not a host: `src/shared/maestro-lib/groupchat/workflow/controller.ts` (`createGroupChatWorkflows()`), created by `createGroupChatEngine()`. The engine asks it at four points, so a desktop and a headless host (`maestro-cli host`) run the same workflow:
+
+| Engine step                                    | Workflow call         | Effect                                                                                    |
+| ---------------------------------------------- | --------------------- | ----------------------------------------------------------------------------------------- |
+| `routeUserMessage`                             | `onUserMessage`       | A pasted plan or a cancel is consumed; an approval starts the run and the turn continues. |
+| `routeModeratorResponse`, before routing       | `onModeratorResponse` | A plan becomes a waiting run; a stage directive ends the stage or the run.                |
+| `routeModeratorResponse`, no participant began | `onIdleModeratorTurn` | A stalled stage gets up to `MAX_WORKFLOW_STAGE_NUDGES` (2) corrections, then aborts.      |
+| `routeAgentResponse`                           | `recordStageResponse` | A stage reply becomes the stage's handoff (inline or artifact).                           |
+
+Every moderator and synthesis prompt carries `promptSection(run)`: the planning fragment when no run is active (so the moderator knows it can propose a plan), the revision context while a plan waits, and the stage fragment plus plan and current-stage context while a stage runs.
+
+A turn that times out does not end the run: the timeout notice tells the user to send another message, and the stage continues from there. Stop does not end it either, and neither does a headless host shutting down: the run survives so the user can continue it or cancel it. A stage whose Auto Run directive cannot start (no Auto Run folder, no such participant) fails at once, since asking again cannot fix it. A plan made in read-only mode carries `readOnly: true`, and an approval that names no mode (the Start button, the CLI) runs it read-only.
+
+### Actions: UI and CLI
+
+`runGroupChatWorkflowAction()` in `src/shared/maestro-lib/groupchat/workflow/actions.ts` is the one implementation of show, approve, and cancel. An approval sends `go` the way the host sends a typed message, so it is queued behind earlier messages on the desktop and refused while the room works on a headless host.
+
+| Surface                                  | Path                                                                                            |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Stage Strip (Start, Discard, Cancel)     | `window.maestro.groupChat.workflowAction()` -> IPC `groupChat:workflowAction`                   |
+| `maestro-cli group-chat workflow <chat>` | Bridge `group_chat_workflow` (`--approve`, `--cancel`) -> `runDesktopGroupChatWorkflowAction()` |
+| Headless host (`maestro-cli host`)       | `group_chat_workflow` -> `client.groupChats.workflow()` in `runtime/group-chats.ts`             |
+| Renderer updates                         | `GroupChatEventSink.workflowRun` -> `groupChat:workflowRunChanged`                              |
 
 ### State and Artifact Lifetime
 
-Run state lives only in the module-level `Map` in `src/main/group-chat/workflow-run-registry.ts`, keyed by group chat ID. It is disposable and is never written to `metadata.json`, the chat log, or another persisted run-state file. Restarting Maestro loses active run state by design.
+A chat's run is saved as `workflow-run.json` in its folder through the chat store (`loadWorkflowRun()`, `saveWorkflowRun()` in `src/shared/maestro-lib/groupchat/storage.ts`), so a restart resumes it. The headless runtime's write fence applies to it like any other chat write.
 
-Participant output is measured in Unicode code points by `src/main/group-chat/workflow-handoff.ts`:
+Participant output is measured in Unicode code points by `src/shared/maestro-lib/groupchat/workflow/handoff.ts`:
 
 - Up to and including `HANDOFF_INLINE_MAX_CHARS`, currently 4000 characters, remains inline in the next moderator prompt.
 - Larger output is written as Markdown and represented by a digest capped at `HANDOFF_DIGEST_CHARS`, currently 800 characters, plus its absolute file path.
 
-Artifacts land at `<userData>/group-chats/<groupChatId>/workflow-runs/<runId>/<stageId>/<participantName>.md`. Participant-derived filenames use the group chat filesystem sanitizer. The run directory is removed after completion, failure, cancellation, replacement, chat deletion, or archive. Startup also sweeps any orphaned `workflow-runs` directories because no persisted run can own them after a restart.
+Artifacts land at `<group-chats>/<groupChatId>/workflow-runs/<runId>/<stageId>/<participantName>-<hash>.md` (`writeWorkflowArtifact()`). Participant-derived filenames use `sanitizeGroupChatFileName()`. A run's directory is removed when it completes, fails, is cancelled or replaced, and when the chat is deleted or archived. The first read of a chat's run also removes every artifact directory no active run points at.
 
 ### Prompts and Customization
 
@@ -693,26 +718,27 @@ Group chat uses four prompt templates from `src/prompts/`:
 
 ## Key Source Files
 
-| File                                             | Purpose                                                                    |
-| ------------------------------------------------ | -------------------------------------------------------------------------- |
-| `src/main/group-chat/group-chat-router.ts`       | Message routing engine                                                     |
-| `src/main/group-chat/group-chat-moderator.ts`    | Moderator lifecycle management                                             |
-| `src/main/group-chat/group-chat-agent.ts`        | Participant agent management                                               |
-| `src/main/group-chat/group-chat-storage.ts`      | File-based CRUD with write serialization                                   |
-| `src/main/group-chat/group-chat-log.ts`          | Pipe-delimited log I/O                                                     |
-| `src/main/group-chat/group-chat-config.ts`       | Shared Windows spawn config                                                |
-| `src/main/group-chat/output-buffer.ts`           | Streaming output buffering                                                 |
-| `src/main/group-chat/output-parser.ts`           | Agent JSON/JSONL text extraction                                           |
-| `src/main/group-chat/session-parser.ts`          | Session ID parsing                                                         |
-| `src/main/group-chat/session-recovery.ts`        | Session-not-found recovery                                                 |
-| `src/main/group-chat/workflow-plan-parser.ts`    | Workflow plan and control-directive parsing and validation                 |
-| `src/main/group-chat/workflow-state-machine.ts`  | Pure workflow run and stage state transitions                              |
-| `src/main/group-chat/workflow-run-registry.ts`   | Disposable per-chat run ownership, transitions, and renderer notifications |
-| `src/main/group-chat/workflow-artifacts.ts`      | Run-scoped storage and cleanup for large stage handoffs                    |
-| `src/main/group-chat/workflow-handoff.ts`        | Unicode-aware handoff sizing, digesting, and prompt formatting             |
-| `src/main/group-chat/workflow-prompt-context.ts` | Active-plan, stage, and prior-handoff prompt context generation            |
-| `src/main/ipc/handlers/groupChat.ts`             | IPC handler registration and emitters                                      |
-| `src/shared/group-chat-types.ts`                 | Shared type definitions                                                    |
-| `src/shared/symphony-types.ts`                   | Symphony type definitions                                                  |
-| `src/shared/symphony-constants.ts`               | Symphony constants                                                         |
-| `src/prompts/group-chat-*.md`                    | Prompt templates                                                           |
+| File                                                          | Purpose                                                                        |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `src/main/group-chat/group-chat-router.ts`                    | Message routing engine                                                         |
+| `src/main/group-chat/group-chat-moderator.ts`                 | Moderator lifecycle management                                                 |
+| `src/main/group-chat/group-chat-agent.ts`                     | Participant agent management                                                   |
+| `src/main/group-chat/group-chat-storage.ts`                   | File-based CRUD with write serialization                                       |
+| `src/main/group-chat/group-chat-log.ts`                       | Pipe-delimited log I/O                                                         |
+| `src/main/group-chat/group-chat-config.ts`                    | Shared Windows spawn config                                                    |
+| `src/main/group-chat/output-buffer.ts`                        | Streaming output buffering                                                     |
+| `src/main/group-chat/output-parser.ts`                        | Agent JSON/JSONL text extraction                                               |
+| `src/main/group-chat/session-parser.ts`                       | Session ID parsing                                                             |
+| `src/main/group-chat/session-recovery.ts`                     | Session-not-found recovery                                                     |
+| `src/shared/maestro-lib/groupchat/workflow/controller.ts`     | The run inside a round: plans, approval, stages, nudges, handoffs, persistence |
+| `src/shared/maestro-lib/groupchat/workflow/actions.ts`        | Show, approve, and cancel, shared by every host and surface                    |
+| `src/shared/maestro-lib/groupchat/workflow/plan.ts`           | Workflow plan and control-directive parsing and validation                     |
+| `src/shared/maestro-lib/groupchat/workflow/state.ts`          | Pure workflow run and stage state transitions                                  |
+| `src/shared/maestro-lib/groupchat/workflow/handoff.ts`        | Unicode-aware handoff sizing, digesting, and prompt formatting                 |
+| `src/shared/maestro-lib/groupchat/workflow/prompt-context.ts` | Active-plan, stage, and prior-handoff prompt context generation                |
+| `src/main/group-chat/group-chat-workflow.ts`                  | The desktop's workflow actions (approval through the chat queue)               |
+| `src/main/ipc/handlers/groupChat.ts`                          | IPC handler registration and emitters                                          |
+| `src/shared/group-chat-types.ts`                              | Shared type definitions                                                        |
+| `src/shared/symphony-types.ts`                                | Symphony type definitions                                                      |
+| `src/shared/symphony-constants.ts`                            | Symphony constants                                                             |
+| `src/prompts/group-chat-*.md`                                 | Prompt templates                                                               |

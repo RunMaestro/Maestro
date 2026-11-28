@@ -1,5 +1,5 @@
 /**
- * @file workflow-state-machine.test.ts
+ * @file workflow-state.test.ts
  * @description Unit tests for pure Group Chat workflow run transitions.
  */
 
@@ -12,11 +12,11 @@ import {
 	failStage,
 	getCurrentStage,
 	isRunActive,
-} from '../../../main/group-chat/workflow-state-machine';
+} from '../workflow/state';
 import type {
 	GroupChatWorkflowHandoff,
 	GroupChatWorkflowPlan,
-} from '../../../shared/group-chat-workflow-types';
+} from '../../../group-chat-workflow-types';
 
 function createPlan(): GroupChatWorkflowPlan {
 	return {

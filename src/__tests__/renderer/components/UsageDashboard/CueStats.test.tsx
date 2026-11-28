@@ -24,7 +24,6 @@ import { averageRunMs } from '../../../../renderer/components/UsageDashboard/Cue
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { THEMES } from '../../../../shared/themes';
 import type { CueStatsAggregation, CueStatsTotals } from '../../../../shared/cue-stats-types';
-import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 
 const theme = THEMES['dracula'];
 
@@ -324,9 +323,9 @@ const mockGetAggregation = vi.fn();
 beforeEach(() => {
 	mockGetAggregation.mockReset();
 	// The exclusion set persists to localStorage, so a test that toggles a chip
-	// would otherwise leak its filter into the next test. A fresh shared mock
-	// both supplies Storage where jsdom lacks it and resets the filter per test.
-	installLocalStorageMock();
+	// would otherwise leak its filter into the next test. jsdom in this repo can
+	// be Storage-less, hence the guard.
+	window.localStorage?.clear();
 	(window as unknown as { maestro: Record<string, unknown> }).maestro = {
 		...((window as unknown as { maestro: Record<string, unknown> }).maestro ?? {}),
 		cueStats: {

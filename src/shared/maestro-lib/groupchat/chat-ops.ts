@@ -36,6 +36,7 @@ export interface GroupChatOperationsOptions {
 		| 'clearAllParticipantSessions'
 		| 'clearPendingParticipants'
 		| 'routeUserMessage'
+		| 'forgetWorkflow'
 	>;
 	/** How a turn starts. Absent: a message is logged and nothing runs, which a caller words. */
 	launcher(): GroupChatLauncher | undefined;
@@ -96,6 +97,7 @@ export function createGroupChatOperations(options: GroupChatOperationsOptions) {
 	/** Stop everything a chat has running, then delete it. */
 	async function deleteChat(chatId: string): Promise<void> {
 		await stopRound(chatId);
+		await engine.forgetWorkflow(chatId);
 		await store.deleteGroupChat(chatId);
 	}
 
@@ -111,7 +113,10 @@ export function createGroupChatOperations(options: GroupChatOperationsOptions) {
 
 	/** Archiving stops the chat's processes: an archived room does not work. */
 	async function archiveChat(chatId: string, archived: boolean): Promise<GroupChat> {
-		if (archived) await stopRound(chatId);
+		if (archived) {
+			await stopRound(chatId);
+			await engine.forgetWorkflow(chatId);
+		}
 		return store.updateGroupChat(chatId, { archived });
 	}
 

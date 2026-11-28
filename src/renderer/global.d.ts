@@ -3867,14 +3867,11 @@ interface MaestroAPI {
 			summary: string
 		) => Promise<void>;
 		getModeratorSessionId: (id: string) => Promise<string | null>;
-		// Workflow runs
-		getWorkflowRun: (
-			id: string
-		) => Promise<import('../shared/group-chat-workflow-types').GroupChatWorkflowRun | null>;
-		approveWorkflowPlan: (id: string) => Promise<void>;
-		cancelWorkflowRun: (
-			id: string
-		) => Promise<import('../shared/group-chat-workflow-types').GroupChatWorkflowRun | null>;
+		// Staged workflow runs
+		workflowAction: (
+			id: string,
+			action: import('../shared/group-chat-workflow-types').GroupChatWorkflowAction
+		) => Promise<import('../shared/group-chat-workflow-types').GroupChatWorkflowActionResult>;
 		// Participants
 		addParticipant: (
 			id: string,

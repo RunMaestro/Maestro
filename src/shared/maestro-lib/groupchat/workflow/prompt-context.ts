@@ -1,5 +1,5 @@
 /**
- * @file workflow-prompt-context.ts
+ * @file groupchat/workflow/prompt-context.ts
  * @description Compact prompt context for an active Group Chat workflow run.
  */
 
@@ -7,9 +7,9 @@ import type {
 	GroupChatWorkflowHandoff,
 	GroupChatWorkflowRun,
 	GroupChatWorkflowStage,
-} from '../../shared/group-chat-workflow-types';
-import { normalizeMentionName } from '../../shared/group-chat-types';
-import { formatHandoffForPrompt } from './workflow-handoff';
+} from '../../../group-chat-workflow-types';
+import { normalizeMentionName } from '../../../group-chat-types';
+import { formatHandoffForPrompt } from './handoff';
 
 function asOneLine(value: string): string {
 	return value.replace(/\s+/g, ' ').trim();
@@ -65,7 +65,7 @@ export function buildPlanContextBlock(run: GroupChatWorkflowRun): string {
 			: `complete (${stageCount} of ${stageCount})`;
 	const stages = run.plan.stages.map((stage, index) => {
 		const status = run.stageStatuses[stage.id] ?? 'pending';
-		return `${index + 1}. [${status}] ${stage.name} — Agents: ${formatStageTargets(stage)} — ${asOneLine(stage.instruction)}`;
+		return `${index + 1}. [${status}] ${stage.name} (Agents: ${formatStageTargets(stage)}) - ${asOneLine(stage.instruction)}`;
 	});
 	const handoffs = run.handoffs
 		.filter((handoff) => handoff.summary)

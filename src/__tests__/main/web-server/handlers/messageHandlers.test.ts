@@ -308,6 +308,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			verdict: 'delivered',
 			targets: ['Moderator'],
 		}),
+		groupChatWorkflow: vi.fn().mockResolvedValue({ ok: true, run: null }),
 		tabContextOp: vi.fn().mockResolvedValue({ success: true }),
 		createGist: vi.fn().mockResolvedValue({ success: true, gistUrl: 'https://gist.example' }),
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
@@ -3231,6 +3232,66 @@ describe('WebSocketMessageHandler', () => {
 				type: 'error',
 				message: 'Missing chatId',
 				requestId: 'req-4',
+			});
+		});
+
+		describe('group_chat_workflow', () => {
+			it('runs the action in main and answers with the run', async () => {
+				const run = { status: 'running' };
+				(callbacks.groupChatWorkflow as any).mockResolvedValue({ ok: true, run });
+				handler.handleMessage(client, {
+					type: 'group_chat_workflow',
+					chatId: 'chat-1',
+					action: 'approve',
+					requestId: 'req-w1',
+				});
+
+				await vi.waitFor(() => {
+					expect(lastResponse()).toMatchObject({
+						type: 'group_chat_workflow_result',
+						success: true,
+						chatId: 'chat-1',
+						action: 'approve',
+						run,
+						requestId: 'req-w1',
+					});
+				});
+				expect(callbacks.groupChatWorkflow).toHaveBeenCalledWith('chat-1', 'approve');
+			});
+
+			it('answers a refusal as a result with its reason', async () => {
+				(callbacks.groupChatWorkflow as any).mockResolvedValue({
+					ok: false,
+					error: 'Nothing to cancel.',
+					run: null,
+				});
+				handler.handleMessage(client, {
+					type: 'group_chat_workflow',
+					chatId: 'chat-1',
+					action: 'cancel',
+					requestId: 'req-w2',
+				});
+
+				await vi.waitFor(() => {
+					expect(lastResponse()).toMatchObject({
+						type: 'group_chat_workflow_result',
+						success: false,
+						error: 'Nothing to cancel.',
+						requestId: 'req-w2',
+					});
+				});
+			});
+
+			it('refuses an unknown action without calling main', () => {
+				handler.handleMessage(client, {
+					type: 'group_chat_workflow',
+					chatId: 'chat-1',
+					action: 'delete',
+					requestId: 'req-w3',
+				});
+
+				expect(lastResponse()).toMatchObject({ type: 'error', requestId: 'req-w3' });
+				expect(callbacks.groupChatWorkflow).not.toHaveBeenCalled();
 			});
 		});
 

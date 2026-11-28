@@ -35,7 +35,7 @@ type ChatMessageHandler = (chatId: string, message: GroupChatMessage) => void;
 const mockGroupChat = {
 	load: vi.fn().mockResolvedValue(null),
 	getMessages: vi.fn().mockResolvedValue([]),
-	getWorkflowRun: vi.fn().mockResolvedValue(null),
+	workflowAction: vi.fn().mockResolvedValue({ ok: true, run: null }),
 	create: vi.fn().mockResolvedValue({ id: 'gc-new', name: 'New Chat' }),
 	delete: vi.fn().mockResolvedValue(undefined),
 	rename: vi.fn().mockResolvedValue(undefined),
@@ -244,14 +244,14 @@ describe('useGroupChatHandlers', () => {
 				handoffs: [],
 			};
 			mockGroupChat.load.mockResolvedValueOnce({ id: 'gc-1', name: 'Chat', participants: [] });
-			mockGroupChat.getWorkflowRun.mockResolvedValueOnce(run);
+			mockGroupChat.workflowAction.mockResolvedValueOnce({ ok: true, run });
 
 			const { result } = renderHook(() => useGroupChatHandlers());
 			await act(async () => {
 				await result.current.handleOpenGroupChat('gc-1');
 			});
 
-			expect(mockGroupChat.getWorkflowRun).toHaveBeenCalledWith('gc-1');
+			expect(mockGroupChat.workflowAction).toHaveBeenCalledWith('gc-1', 'show');
 			expect(useGroupChatStore.getState().workflowRun).toBe(run);
 		});
 

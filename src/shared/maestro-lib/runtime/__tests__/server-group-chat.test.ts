@@ -242,6 +242,47 @@ describe('group chats and consults over the wire', () => {
 		expect(value(await client.groupChats.get(chatId)).state).toBe('idle');
 	});
 
+	it('reads, approves, and runs a staged workflow over the wire', async () => {
+		const plan = [
+			'One review stage.',
+			'```maestro-plan',
+			JSON.stringify({
+				title: 'Review it',
+				stages: [{ id: 'review', name: 'Review', agents: ['Alpha'], instruction: 'Review it' }],
+			}),
+			'```',
+		].join('\n');
+		let moderatorTurns = 0;
+		script = (call) => {
+			if (call.role === 'moderator') {
+				moderatorTurns++;
+				return { text: moderatorTurns === 1 ? plan : '@Alpha please review it' };
+			}
+			if (call.role === 'synthesis') return { text: '!stage-complete\nReviewed.' };
+			return ROUND(call);
+		};
+		const watch = watchChat();
+		const { chatId } = value(
+			await client.groupChats.create({ name: 'Staged', participantIds: ['a1'] })
+		);
+		await watch.idle();
+		expect(value(await client.groupChats.workflow(chatId, 'show'))?.status).toBe(
+			'awaiting-approval'
+		);
+		expect(provider.callsFor('participant')).toHaveLength(0);
+
+		value(await client.groupChats.workflow(chatId, 'approve'));
+		await vi.waitFor(
+			async () =>
+				expect(value(await client.groupChats.workflow(chatId, 'show'))?.status).toBe('complete'),
+			{ timeout: 10_000, interval: 20 }
+		);
+		expect(provider.callsFor('participant')).toHaveLength(1);
+		// Nothing is left to cancel or approve.
+		expect(errorOf(await client.groupChats.workflow(chatId, 'cancel')).code).toBe('rejected');
+		expect(errorOf(await client.groupChats.workflow(chatId, 'approve')).code).toBe('rejected');
+	});
+
 	it('renames and deletes through the channels the desktop’s own UI calls', async () => {
 		const watch = watchChat();
 		const { chatId } = value(

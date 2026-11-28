@@ -1,5 +1,5 @@
 /**
- * @file workflow-state-machine.ts
+ * @file groupchat/workflow/state.ts
  * @description Pure state transitions for Group Chat workflow runs.
  */
 
@@ -8,7 +8,7 @@ import type {
 	GroupChatWorkflowPlan,
 	GroupChatWorkflowRun,
 	GroupChatWorkflowStage,
-} from '../../shared/group-chat-workflow-types';
+} from '../../../group-chat-workflow-types';
 
 function copyRun(run: GroupChatWorkflowRun): GroupChatWorkflowRun {
 	return {

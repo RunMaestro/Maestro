@@ -58,6 +58,7 @@ function harness(
 		),
 		clearPendingParticipants: vi.fn(() => void log('clearPendingParticipants')),
 		routeUserMessage: vi.fn(async () => void log('routeUserMessage')),
+		forgetWorkflow: vi.fn(async () => void log('forgetWorkflow')),
 	};
 	const events = {
 		participantState: vi.fn(
@@ -98,6 +99,7 @@ describe('group chat operations', () => {
 			'killModerator',
 			'clearAllParticipantSessions',
 			'clearPendingParticipants',
+			'forgetWorkflow',
 			'deleteGroupChat',
 		]);
 		// The runner is what stops a process, by its full id.
@@ -138,6 +140,7 @@ describe('group chat operations', () => {
 			'killModerator',
 			'clearAllParticipantSessions',
 			'clearPendingParticipants',
+			'forgetWorkflow',
 			'updateGroupChat',
 		]);
 		expect(archive.store.updateGroupChat).toHaveBeenCalledWith('c1', { archived: true });

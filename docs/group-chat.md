@@ -199,3 +199,31 @@ message stays queued and a notice says why.
 
 From the CLI, `maestro-cli group-chat steer <chat> "<message>"` steers new text,
 and `--item <id>` steers a queued message (the ids are in `group-chat status`).
+
+## Staged Workflows
+
+Some requests are a sequence: first review, then fix, then publish. Describe the
+order ("have Alice and Bob review, then Carol merges") and the moderator proposes
+a **plan** instead of starting work: a walkthrough, a diagram, and a numbered
+list of stages, each with its agents. Nothing runs until you approve it.
+
+- **Start** the plan with the **Start** button on the strip above the composer,
+  or type `go`.
+- **Change** it by telling the moderator what to change. It answers with a
+  revised plan, which again waits for you.
+- **Drop** it with **Discard**, or type `cancel`.
+
+Once started, the stages run one at a time. The moderator engages only the
+current stage's agents, and the strip shows which stage is running. When a
+stage's agents finish, the moderator hands their results to the next stage. A
+long result is saved to a file in the chat's folder, and the next stage is given
+its path. A stage can also run an agent's Auto Run document. The workflow ends
+when the last stage completes, when a stage fails, or when you press **Cancel**.
+
+A plan made in read-only mode runs read-only. The plan is saved with the chat, so
+quitting Maestro does not lose it: send another message to continue the stage.
+Stopping the room stops the agents but keeps the plan, so you can continue or
+cancel it.
+
+From the CLI, `maestro-cli group-chat workflow <chat>` shows the plan and its
+stages, `--approve` starts it, and `--cancel` ends it.

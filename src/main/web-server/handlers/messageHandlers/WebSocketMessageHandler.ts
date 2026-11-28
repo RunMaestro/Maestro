@@ -201,6 +201,7 @@ import {
 	handleSendGroupChatMessage,
 	handleSteerGroupChat,
 	handleStopGroupChat,
+	handleGroupChatWorkflow,
 	handleArchiveGroupChat,
 	handleSetGroupChatUnread,
 	handleAddGroupChatParticipant,
@@ -840,6 +841,10 @@ export class WebSocketMessageHandler {
 
 			case 'stop_group_chat':
 				handleStopGroupChat(this.ctx, client, message);
+				break;
+
+			case 'group_chat_workflow':
+				handleGroupChatWorkflow(this.ctx, client, message);
 				break;
 
 			case 'archive_group_chat':

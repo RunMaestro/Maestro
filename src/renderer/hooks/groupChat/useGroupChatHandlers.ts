@@ -303,7 +303,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			}
 		);
 
-		const unsubWorkflowRun = window.maestro.groupChat.onWorkflowRunChanged?.((id, run) => {
+		const unsubWorkflowRun = window.maestro.groupChat.onWorkflowRunChanged((id, run) => {
 			if (id === useGroupChatStore.getState().activeGroupChatId) {
 				setWorkflowRun(run);
 			}
@@ -471,7 +471,10 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			setWorkflowRun(null);
 			const [messages, workflowRun] = await Promise.all([
 				window.maestro.groupChat.getMessages(id),
-				window.maestro.groupChat.getWorkflowRun?.(id) ?? Promise.resolve(null),
+				window.maestro.groupChat
+					.workflowAction(id, 'show')
+					.then((result) => result.run)
+					.catch(() => null),
 			]);
 			setGroupChatMessages(messages);
 			setWorkflowRun(workflowRun);

@@ -532,6 +532,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Where a pipeline is drawn (its one home agent):** `resolvePipelineHomes()` in `src/renderer/components/CuePipelineEditor/utils/pipelineMembership.ts`; cluster box geometry `agentClusterBounds()` in `nodeFootprint.ts`
 - **What a group chat does with a message it cannot send yet:** pure rules in `src/shared/groupChatQueueModel.ts`, driven by `src/main/group-chat/group-chat-queue.ts` (the queue is owned by MAIN; the renderer holds a mirror)
 - **Refusing an image-bearing group chat send:** `moderatorImagesRefusal()`, `MODERATOR_CANNOT_READ_IMAGES_REASON` in `src/shared/maestro-lib/groupchat/image-gate.ts`
+- **A group chat's staged workflow (plan, approval, stages, handoffs):** `createGroupChatWorkflows()` in `src/shared/maestro-lib/groupchat/workflow/controller.ts`; `runGroupChatWorkflowAction()` in `src/shared/maestro-lib/groupchat/workflow/actions.ts`; `loadWorkflowRun()`, `saveWorkflowRun()` in `groupchat/storage.ts`
 - **How much work happened in a group chat:** `computeGroupChatActivity(entries)` in `src/shared/groupChatActivity.ts` (never the first-to-last message span)
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()`, `shouldRenderBuckets()`, `buildNarrativeGroupLookup()` in `src/shared/directorNotesGrouping.ts`
 - **Which agent a persisted group chat participant came from:** `findSessionForParticipantName(participantName, sessions)` in `src/shared/group-chat-types.ts`

@@ -838,6 +838,16 @@ Add an agent (ID, ID prefix, or name) to a group chat without an @mention; linke
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat workflow <chat>`
+
+Show a group chat's staged workflow run; --approve starts its plan, --cancel ends it
+
+| Option      | Description                                                      | Default |
+| ----------- | ---------------------------------------------------------------- | ------- |
+| `--approve` | Approve the plan waiting for approval (sends the moderator "go") | -       |
+| `--cancel`  | Cancel the workflow that is running or waiting for approval      | -       |
+| `--json`    | Output as JSON (for scripting)                                   | -       |
+
 ## `maestro-cli group-chat archive <chat>`
 
 Archive a group chat (stops its moderator and participants); --restore brings it back

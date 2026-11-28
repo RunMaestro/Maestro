@@ -1,15 +1,15 @@
 /**
- * @file workflow-plan-parser.ts
+ * @file groupchat/workflow/plan.ts
  * @description Extraction, validation, and rendering for Group Chat workflow plans.
  */
 
-import { normalizeMentionName } from '../../shared/group-chat-types';
+import { normalizeMentionName } from '../../../group-chat-types';
 import {
 	MAX_WORKFLOW_STAGES,
 	WORKFLOW_PLAN_FENCE_LANG,
 	type GroupChatWorkflowPlan,
 	type GroupChatWorkflowStage,
-} from '../../shared/group-chat-workflow-types';
+} from '../../../group-chat-workflow-types';
 
 type ParseWorkflowPlanResult = { plan: GroupChatWorkflowPlan } | { error: string };
 
@@ -69,16 +69,25 @@ export function isWorkflowApproval(text: string): boolean {
 	return WORKFLOW_APPROVAL_INTENTS.has(normalized);
 }
 
-/** Extract the first `maestro-plan` fenced block from Markdown text. */
-export function extractWorkflowPlanBlock(text: string): string | null {
-	const pattern = new RegExp(
+/** A `maestro-plan` fenced block: its whole fence, with the JSON body as group 1. */
+function workflowPlanFencePattern(flags: string): RegExp {
+	return new RegExp(
 		'^[\\t ]*```' +
 			WORKFLOW_PLAN_FENCE_LANG +
 			'[\\t ]*\\r?\\n([\\s\\S]*?)^[\\t ]*```[\\t ]*(?:\\r?$)',
-		'm'
+		flags
 	);
-	const match = pattern.exec(text);
+}
+
+/** Extract the first `maestro-plan` fenced block from Markdown text. */
+export function extractWorkflowPlanBlock(text: string): string | null {
+	const match = workflowPlanFencePattern('m').exec(text);
 	return match ? match[1].trim() : null;
+}
+
+/** The text around every `maestro-plan` block, without the blocks: what the chat shows. */
+export function stripWorkflowPlanBlock(text: string): string {
+	return text.replace(workflowPlanFencePattern('gm'), '').trim();
 }
 
 function parseAgents(
@@ -244,8 +253,14 @@ function stageAssignees(stage: GroupChatWorkflowStage): string[] {
 	return agents;
 }
 
-/** Render a chat-visible stage list and Mermaid flowchart for a validated plan. */
-export function renderWorkflowPlanSummary(plan: GroupChatWorkflowPlan): string {
+/**
+ * Render a chat-visible stage list and, unless `diagram` is false, a Mermaid
+ * flowchart for a validated plan.
+ */
+export function renderWorkflowPlanSummary(
+	plan: GroupChatWorkflowPlan,
+	options: { diagram?: boolean } = {}
+): string {
 	const lines = [`## ${plan.title}`, ''];
 	for (let index = 0; index < plan.stages.length; index++) {
 		const stage = plan.stages[index];
@@ -253,6 +268,7 @@ export function renderWorkflowPlanSummary(plan: GroupChatWorkflowPlan): string {
 		lines.push(`${index + 1}. **${stage.name}** (${assignees})`);
 		lines.push(`   Produces: ${stage.expects ?? stage.instruction}`);
 	}
+	if (options.diagram === false) return lines.join('\n').trimEnd();
 
 	lines.push('', '```mermaid', 'flowchart LR');
 	let previousExit: string | null = null;

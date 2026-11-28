@@ -1,5 +1,5 @@
 /**
- * @file workflow-handoff.ts
+ * @file groupchat/workflow/handoff.ts
  * @description Pure sizing and prompt formatting for Group Chat workflow handoffs.
  */
 
@@ -52,7 +52,13 @@ function buildDigest(content: string): string {
 	if (boundary >= 0) return prefix.slice(0, boundary).trimEnd();
 
 	const characters = Array.from(prefix);
-	const lastWhitespace = characters.findLastIndex((character) => /\s/u.test(character));
+	let lastWhitespace = -1;
+	for (let index = characters.length - 1; index >= 0; index--) {
+		if (/\s/u.test(characters[index])) {
+			lastWhitespace = index;
+			break;
+		}
+	}
 	return lastWhitespace >= 0 ? characters.slice(0, lastWhitespace).join('').trimEnd() : '';
 }
 

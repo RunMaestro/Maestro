@@ -1,3 +1,7 @@
+import type {
+	GroupChatWorkflowAction,
+	GroupChatWorkflowRun,
+} from '../../group-chat-workflow-types';
 import { generateUUID } from '../../uuid';
 import type { PianolaDispatchReceipt } from '../../pianola/pianola-dispatch';
 /**
@@ -600,6 +604,8 @@ class WsMaestroClient implements MaestroClient {
 		create: (input: GroupChatCreateInput) => this.groupChatsCreate(input),
 		send: (chatId: string, message: string) => this.groupChatsSend(chatId, message),
 		stop: (chatId: string) => this.groupChatsStop(chatId),
+		workflow: (chatId: string, action: GroupChatWorkflowAction) =>
+			this.groupChatsWorkflow(chatId, action),
 		rename: (chatId: string, name: string) => this.groupChatsRename(chatId, name),
 		remove: (chatId: string) => this.groupChatsRemove(chatId),
 	};
@@ -2858,6 +2864,26 @@ class WsMaestroClient implements MaestroClient {
 		if (!sent.ok) return sent;
 		const result = this.checkResult(method, sent.value);
 		return result.ok ? ok(undefined) : result;
+	}
+
+	private async groupChatsWorkflow(
+		chatId: string,
+		action: GroupChatWorkflowAction
+	): Promise<ClientResult<GroupChatWorkflowRun | null>> {
+		const method: ClientMethod = 'groupChats.workflow';
+		const sent = await this.send(
+			method,
+			{ type: 'group_chat_workflow', chatId, action },
+			'group_chat_workflow_result'
+		);
+		if (!sent.ok) return sent;
+		const reply = sent.value as Reply & { run?: GroupChatWorkflowRun | null };
+		if (reply.success === true) return ok(reply.run ?? null);
+		return this.fail(
+			method,
+			'rejected',
+			asString(reply.error) ?? 'The workflow action was refused.'
+		);
 	}
 
 	/** The host has no message for these two (gap G15), so they ride the IPC handlers the desktop's own UI calls. */

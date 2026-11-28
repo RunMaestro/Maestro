@@ -9,7 +9,11 @@
 
 import { ipcRenderer } from 'electron';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
-import type { GroupChatWorkflowRun } from '../../shared/group-chat-workflow-types';
+import type {
+	GroupChatWorkflowAction,
+	GroupChatWorkflowActionResult,
+	GroupChatWorkflowRun,
+} from '../../shared/group-chat-workflow-types';
 
 /**
  * Moderator configuration
@@ -158,15 +162,12 @@ export function createGroupChatApi() {
 		getModeratorSessionId: (id: string) =>
 			ipcRenderer.invoke('groupChat:getModeratorSessionId', id),
 
-		// Workflow runs
-		getWorkflowRun: (id: string): Promise<GroupChatWorkflowRun | null> =>
-			ipcRenderer.invoke('groupChat:getWorkflowRun', id),
-
-		approveWorkflowPlan: (id: string): Promise<void> =>
-			ipcRenderer.invoke('groupChat:approveWorkflowPlan', id),
-
-		cancelWorkflowRun: (id: string): Promise<GroupChatWorkflowRun | null> =>
-			ipcRenderer.invoke('groupChat:cancelWorkflowRun', id),
+		// Staged workflow runs: read the run, approve its plan, or cancel it
+		workflowAction: (
+			id: string,
+			action: GroupChatWorkflowAction
+		): Promise<GroupChatWorkflowActionResult> =>
+			ipcRenderer.invoke('groupChat:workflowAction', id, action),
 
 		// Participants
 		addParticipant: (id: string, name: string, agentId: string, cwd?: string) =>

@@ -19,6 +19,7 @@
  * No Electron, and nothing from `src/main`, `src/renderer`, or `src/cli`.
  */
 
+import { randomUUID } from 'crypto';
 import * as os from 'os';
 import * as path from 'path';
 import { createIdleWatchdog, type IdleWatchdog } from '../control/idle-watchdog';
@@ -59,6 +60,8 @@ import type { AgentConfig } from '../providers/definitions';
 import { calculateContextTokens } from '../parsers/usage-aggregator';
 import { logger, captureException } from '../host';
 import { appendToLog, readLog, saveImage } from './log';
+import { createGroupChatWorkflows } from './workflow/controller';
+import type { GroupChatWorkflowRun } from '../../group-chat-workflow-types';
 import { createGroupChatModerators, type GroupChatProcessControl } from './moderator';
 import { createGroupChatParticipants } from './participants';
 import { createSessionRecovery, needsSessionRecovery } from './session-recovery';
@@ -427,6 +430,10 @@ export interface GroupChatEngineOptions {
 		| 'getParticipant'
 		| 'addGroupChatHistoryEntry'
 		| 'getGroupChatDir'
+		| 'loadWorkflowRun'
+		| 'saveWorkflowRun'
+		| 'writeWorkflowArtifact'
+		| 'clearWorkflowArtifacts'
 	>;
 	/** Where UI updates go. Called synchronously and may drop an update the host does not render. */
 	events: GroupChatEventSink;
@@ -457,17 +464,6 @@ export interface GroupChatEngineOptions {
 		 */
 		forModerator(input: { isSsh: boolean }): string | undefined;
 	};
-	/** Host-owned, transient context appended to every moderator and synthesis prompt. */
-	promptSupplement?: (groupChatId: string) => string | undefined;
-	/** Host-owned projection of the moderator's chat history, when raw history is unsuitable. */
-	projectHistory?: (groupChatId: string, history: GroupChatRoomMessage[]) => string | undefined;
-	/** Gives a host a chance to own terminal workflow cleanup after a turn times out. */
-	onTurnTimeout?: (input: {
-		groupChatId: string;
-		participantName?: string;
-		reason: string;
-		timeoutMs: number;
-	}) => boolean | Promise<boolean>;
 }
 
 /**
@@ -495,18 +491,7 @@ export interface AddParticipantByAgentIdResult {
  * its own.
  */
 export function createGroupChatEngine(options: GroupChatEngineOptions) {
-	const {
-		store,
-		events,
-		agents,
-		prompts,
-		power,
-		metrics,
-		systemPrompts,
-		promptSupplement,
-		projectHistory,
-		onTurnTimeout,
-	} = options;
+	const { store, events, agents, prompts, power, metrics, systemPrompts } = options;
 	const { loadGroupChat, updateParticipant, addGroupChatHistoryEntry, getGroupChatDir } = store;
 
 	const moderators = createGroupChatModerators({ store, prompts, power });
@@ -530,6 +515,23 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 		wasParticipantRecentlyRemoved,
 	} = participantRegistry;
 	const recovery = createSessionRecovery({ store });
+	// Staged workflows: a plan the user approves, run one stage per round. Every
+	// routing step below asks it first, so a desktop and a headless host run alike.
+	const workflows = createGroupChatWorkflows({
+		store,
+		prompts,
+		announce: (groupChatId, logPath, content) => announceToChat(groupChatId, logPath, content),
+		postModeratorMessage: async (groupChatId, logPath, content) => {
+			await appendToLog(logPath, 'moderator', content);
+			events.message(groupChatId, {
+				timestamp: new Date().toISOString(),
+				from: 'moderator',
+				content,
+			});
+		},
+		runChanged: (groupChatId, run) => events.workflowRun?.(groupChatId, run),
+		newRunId: options.newId ?? randomUUID,
+	});
 	// Keep provider lookups and card updates ordered, including across replacement turns.
 	const usageUpdates = createKeyedWriteQueue();
 
@@ -681,7 +683,7 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 	): void {
 		clearModeratorResponseTimeout(groupChatId);
 
-		const giveUp = async (reason: string, budgetMs: number): Promise<void> => {
+		const giveUp = (reason: string, budgetMs: number): void => {
 			moderatorTimeouts.delete(groupChatId);
 			console.warn(
 				`[GroupChat:Debug] Moderator ${reason} after ${budgetMs / 1000}s for ${groupChatId} - killing and resetting to idle`
@@ -710,20 +712,9 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 				from: 'system',
 				content: `⚠️ Moderator ${reason} after ${budgetMs / 60000} minutes and was stopped. Resetting to idle. You can send another message to retry.`,
 			});
-			try {
-				await (onTurnTimeout?.({ groupChatId, reason, timeoutMs: budgetMs }) ?? false);
-			} catch (error) {
-				logger.error('Group chat timeout cleanup failed', LOG_CONTEXT, { groupChatId, error });
-			}
 
 			events.stateChange(groupChatId, 'idle');
 			power.unblock(`groupchat:${groupChatId}`);
-		};
-
-		const fire = (reason: string, budgetMs: number): void => {
-			void giveUp(reason, budgetMs).catch((error) =>
-				logger.error('Moderator timeout handler failed', LOG_CONTEXT, { groupChatId, error })
-			);
 		};
 
 		moderatorTimeouts.set(
@@ -731,8 +722,8 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 			createIdleWatchdog({
 				idleMs: MODERATOR_RESPONSE_TIMEOUT_MS,
 				maxMs: MODERATOR_MAX_DURATION_MS,
-				onIdle: () => fire('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
-				onMax: () => fire('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
+				onIdle: () => giveUp('went silent', MODERATOR_RESPONSE_TIMEOUT_MS),
+				onMax: () => giveUp('exceeded the single-turn limit', MODERATOR_MAX_DURATION_MS),
 			})
 		);
 	}
@@ -850,17 +841,6 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 				events.autoRunBatchComplete(groupChatId, participantName);
 				autoRunSet.delete(participantName);
 				if (autoRunSet.size === 0) autoRunParticipantTracker.delete(groupChatId);
-			}
-
-			const timeoutHandled = await (onTurnTimeout?.({
-				groupChatId,
-				participantName,
-				reason,
-				timeoutMs: budgetMs,
-			}) ?? false);
-			if (timeoutHandled) {
-				settleGroupChatToIdle(groupChatId);
-				return;
 			}
 
 			// Same close-out as a normal reply, via the shared helper: a timed-out
@@ -1255,6 +1235,18 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 
 		logger.debug(`[GroupChat:Debug] Moderator is active: true`);
 
+		// A plan the user pasted, or a cancel, is the workflow's: it is recorded and
+		// no moderator turn runs. An approval starts the run and falls through, so the
+		// moderator's turn runs the first stage.
+		if (!routingRetry && (await workflows.onUserMessage(chat, message, readOnly))) {
+			await recordUserMessage(groupChatId, chat.logPath, message, { readOnly });
+			settleGroupChatToIdle(groupChatId);
+			return;
+		}
+		// A message that names no mode (an approval from a button or the CLI) runs in
+		// the mode its read-only plan was made in.
+		readOnly = await workflows.readOnlyFor(groupChatId, readOnly);
+
 		// Auto-add participants mentioned by the user if they match available sessions.
 		// A routing retry reuses the already-resolved participant set and must not
 		// reinterpret its correction prompt as a new user turn.
@@ -1428,8 +1420,9 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 				const chatHistory = await readLog(chat.logPath);
 				logger.debug(`[GroupChat:Debug] Chat history entries: ${chatHistory.length}`);
 
+				const workflowRun = await workflows.get(groupChatId);
 				const historyContext =
-					projectHistory?.(groupChatId, chatHistory) ??
+					workflows.projectHistory(workflowRun, chatHistory, 20) ??
 					chatHistory
 						.slice(-20)
 						.map((m) => `[${m.from}]: ${m.content}`)
@@ -1470,7 +1463,9 @@ Rejected response:
 ${routingRetry.previousResponse}`
 					: message;
 
-				const fullPrompt = `${baseSystemPrompt}${promptSupplement?.(groupChatId) ? `\n\n${promptSupplement(groupChatId)}` : ''}
+				const fullPrompt = `${baseSystemPrompt}
+
+${workflows.promptSection(workflowRun)}
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}
@@ -2034,6 +2029,23 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 
 		logger.debug(`[GroupChat:Debug] Chat loaded: "${chat.name}"`);
 
+		// A plan or a stage directive is the workflow's: it posts the reply itself, and
+		// either the room settles or the next stage's moderator turn starts.
+		const workflowStep = await workflows.onModeratorResponse(
+			chat,
+			message,
+			readOnly ?? getGroupChatReadOnlyState(groupChatId)
+		);
+		if (workflowStep.kind !== 'continue') {
+			pendingExplicitParticipantHandoffs.delete(groupChatId);
+			if (workflowStep.kind === 'next-stage' && launcher) {
+				await spawnModeratorSynthesis(groupChatId, launcher);
+			} else {
+				settleGroupChatToIdle(groupChatId);
+			}
+			return;
+		}
+
 		// Strip internal !autorun directives from the message before logging/display.
 		// These are machine-to-machine commands; storing them in the chat log causes
 		// the synthesis moderator to see them in history and potentially re-trigger them.
@@ -2128,6 +2140,7 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 		logger.debug(
 			`[GroupChat:Debug] Valid participant mentions found: ${mentions.join(', ') || '(none)'}`
 		);
+		await workflows.noteOffRosterMentions(updatedChat, mentions);
 
 		const pendingExplicitHandoff = pendingExplicitParticipantHandoffs.get(groupChatId);
 		// `extractMentions` has already resolved these names against the live participant
@@ -2625,7 +2638,18 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 
 		// If no actionable participant work was started (all directives invalid/skipped, no mentions),
 		// clean up lifecycle state so power blocks don't leak.
-		if (participantsToRespond.size === 0) {
+		// A running stage whose moderator started nothing has stalled: tell it to act
+		// instead of ending the round (the workflow aborts after its retries).
+		const idleStep =
+			participantsToRespond.size === 0 && launcher
+				? await workflows.onIdleModeratorTurn(updatedChat, {
+						autoRunAttempted: autoRunDirectives.length > 0,
+						queuedForBusyAgents: busyQueuedParticipants.length > 0,
+					})
+				: ({ kind: 'none' } as const);
+		if (idleStep.kind === 'retry' && launcher) {
+			await spawnModeratorSynthesis(groupChatId, launcher, idleStep.correction);
+		} else if (participantsToRespond.size === 0) {
 			logger.debug(
 				`[GroupChat:Debug] No actionable participant work started - moderator response is final`
 			);
@@ -2722,6 +2746,9 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 			`[GroupChat:Debug] Participant verified: ${participantName} (agent: ${participant.agentId})`
 		);
 
+		// A reply during a running stage is that stage's handoff to the next one.
+		await workflows.recordStageResponse(groupChatId, participantName, message);
+
 		// Log the message as coming from the participant
 		await appendToLog(chat.logPath, participantName, message);
 		logger.debug(`[GroupChat:Debug] Message appended to log`);
@@ -2779,6 +2806,28 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 		// Note: The moderator runs in batch mode (one-shot per message), so we can't write to it.
 		// Instead, we track pending responses and spawn a synthesis round after all participants respond.
 		// The synthesis is triggered from index.ts when the last pending participant exits.
+	}
+
+	/**
+	 * End a chat's active workflow run: the user cancelled it, or stopped the room.
+	 * The round in flight, if any, finishes as an ordinary round. Returns the ended
+	 * run, or null when the chat held no active run.
+	 */
+	async function cancelWorkflow(
+		groupChatId: string,
+		reason = 'user-cancelled'
+	): Promise<GroupChatWorkflowRun | null> {
+		const chat = await loadGroupChat(groupChatId);
+		return chat ? workflows.cancel(chat, reason) : null;
+	}
+
+	/** A participant left: warn when a workflow stage still lists it. */
+	async function noteWorkflowParticipantRemoved(
+		groupChatId: string,
+		participantName: string
+	): Promise<void> {
+		const chat = await loadGroupChat(groupChatId);
+		if (chat) await workflows.noteParticipantRemoved(chat, participantName);
 	}
 
 	/**
@@ -2863,8 +2912,9 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 		const chatHistory = await readLog(chat.logPath);
 		logger.debug(`[GroupChat:Debug] Chat history entries for synthesis: ${chatHistory.length}`);
 
+		const workflowRun = await workflows.get(groupChatId);
 		const historyContext =
-			projectHistory?.(groupChatId, chatHistory) ??
+			workflows.projectHistory(workflowRun, chatHistory, 30) ??
 			chatHistory
 				.slice(-30)
 				.map((m) => `[${m.from}]: ${m.content}`)
@@ -2892,7 +2942,9 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 			synthModeratorSettings.conductorProfile || '(No conductor profile set)'
 		);
 
-		const synthesisPrompt = `${synthBasePrompt}${promptSupplement?.(groupChatId) ? `\n\n${promptSupplement(groupChatId)}` : ''}${workflowCorrection ? `\n\n${workflowCorrection}` : ''}
+		const synthesisPrompt = `${synthBasePrompt}
+
+${workflows.promptSection(workflowRun)}${workflowCorrection ? `\n\n${workflowCorrection}` : ''}
 
 ${getModeratorSynthesisPrompt()}
 
@@ -3716,6 +3768,11 @@ Review the agent responses above. Either:
 		clearPendingParticipants,
 		clearActiveParticipantTaskSession,
 		markParticipantResponded,
+		// Staged workflows
+		getWorkflowRun: (groupChatId: string) => workflows.get(groupChatId),
+		cancelWorkflow,
+		forgetWorkflow: (groupChatId: string) => workflows.forget(groupChatId),
+		noteWorkflowParticipantRemoved,
 	};
 }
 

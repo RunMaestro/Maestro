@@ -544,7 +544,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 					.reportAutoRunComplete(
 						gcAutoRun.groupChatId,
 						gcAutoRun.participantName,
-					info.result || summary
+						info.result || summary
 					)
 					.catch((err) => {
 						logger.error('[GroupChat] Failed to report auto run complete:', undefined, err);

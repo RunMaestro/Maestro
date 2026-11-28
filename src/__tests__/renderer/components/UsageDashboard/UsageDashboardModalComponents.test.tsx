@@ -436,7 +436,6 @@ describe('UsageDashboardModal view modules', () => {
 			colorBlindMode: false,
 			sessions: [session],
 			layout,
-			delegationByDay: [],
 			...navigation,
 		};
 		const { rerender } = render(<AgentOverviewView {...common} />);

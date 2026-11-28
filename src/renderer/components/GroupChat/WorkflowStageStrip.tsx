@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { GroupChatWorkflowStageStatus } from '../../../shared/group-chat-workflow-types';
 import type { Theme } from '../../types';
 import { selectWorkflowRun, useGroupChatStore } from '../../stores/groupChatStore';
-import { logger } from '../../utils/logger';
+import { notifyToast } from '../../stores/notificationStore';
+import { ipcErrorMessage } from '../../../shared/serializeError';
 
 interface WorkflowStageStripProps {
 	theme: Theme;
@@ -55,13 +56,27 @@ export function WorkflowStageStrip({
 		if (pendingAction) return;
 		setPendingAction(action);
 		try {
-			if (action === 'start') {
-				await window.maestro.groupChat.approveWorkflowPlan(groupChatId);
-			} else {
-				await window.maestro.groupChat.cancelWorkflowRun(groupChatId);
+			const result = await window.maestro.groupChat.workflowAction(
+				groupChatId,
+				action === 'start' ? 'approve' : 'cancel'
+			);
+			// The run's change also arrives on `workflowRunChanged`; a refusal arrives only here.
+			if (!result.ok) {
+				notifyToast({
+					color: 'yellow',
+					title:
+						action === 'start' ? 'Could not start the workflow' : 'Could not cancel the workflow',
+					message: result.error,
+					flashWhenToastsOff: true,
+				});
 			}
 		} catch (error) {
-			logger.error(`[WorkflowStageStrip] Failed to ${action} workflow run`, undefined, error);
+			notifyToast({
+				color: 'red',
+				title: 'Workflow action failed',
+				message: ipcErrorMessage(error),
+				flashWhenToastsOff: true,
+			});
 		} finally {
 			setPendingAction(null);
 		}

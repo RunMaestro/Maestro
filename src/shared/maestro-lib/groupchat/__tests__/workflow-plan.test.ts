@@ -1,5 +1,5 @@
 /**
- * @file workflow-plan-parser.test.ts
+ * @file workflow-plan.test.ts
  * @description Unit tests for Group Chat workflow plan extraction, validation, and rendering.
  */
 
@@ -10,8 +10,10 @@ import {
 	parseWorkflowPlan,
 	renderWorkflowPlanSummary,
 	stripStageDirectives,
-} from '../../../main/group-chat/workflow-plan-parser';
-import { MAX_WORKFLOW_STAGES } from '../../../shared/group-chat-workflow-types';
+	isWorkflowApproval,
+	stripWorkflowPlanBlock,
+} from '../workflow/plan';
+import { MAX_WORKFLOW_STAGES } from '../../../group-chat-workflow-types';
 
 function validBody(overrides: Record<string, unknown> = {}): string {
 	return JSON.stringify({
@@ -274,5 +276,69 @@ describe('workflow-plan-parser', () => {
 			expect(mermaid).not.toContain('[the]');
 			expect(mermaid).not.toContain('"patch"');
 		});
+	});
+});
+
+describe('workflow directives and approvals', () => {
+	describe('stage directives', () => {
+		it.each([
+			['!stage-complete\nBuilt and tested the feature.', 'complete'],
+			['   !stage-failed\nThe dependency is unavailable.', 'failed'],
+			['**!stage-complete**\nReview passed.', 'complete'],
+			['\t__!stage-failed__\nReview failed.', 'failed'],
+		])('extracts %s', (text, kind) => {
+			expect(extractStageDirective(text)).toEqual({
+				kind,
+				body: text.split('\n').slice(1).join('\n'),
+			});
+		});
+
+		it('extracts a directive at the start of a later line', () => {
+			expect(
+				extractStageDirective('Review is finished.\n!stage-complete\nPass the patch to QA.')
+			).toEqual({ kind: 'complete', body: 'Pass the patch to QA.' });
+		});
+
+		it('does not match absent, inline, or extended directives', () => {
+			expect(extractStageDirective('No directive here.')).toBeNull();
+			expect(extractStageDirective('Result: !stage-complete')).toBeNull();
+			expect(extractStageDirective('!stage-complete later')).toBeNull();
+		});
+
+		it('strips only directive lines and keeps handoff prose', () => {
+			const text = [
+				'Review is finished.',
+				' **!stage-complete** ',
+				'The tested patch is ready for QA.',
+			].join('\n');
+
+			expect(stripStageDirectives(text)).toBe(
+				'Review is finished.\n\nThe tested patch is ready for QA.'
+			);
+		});
+	});
+
+	describe('isWorkflowApproval', () => {
+		it.each(['go', 'Run it!', 'START.', 'approved', 'yes, go!', 'ship it', '!go'])(
+			'accepts %s',
+			(text) => {
+				expect(isWorkflowApproval(text)).toBe(true);
+			}
+		);
+
+		it.each([
+			'We should go back and revise the rollout before starting anything.',
+			'good plan',
+			'not approved',
+			'go with a different agent',
+			'',
+		])('rejects %s', (text) => {
+			expect(isWorkflowApproval(text)).toBe(false);
+		});
+	});
+
+	it('strips the plan block and keeps the prose around it', () => {
+		const text = 'Walkthrough.\n\n```maestro-plan\n{"stages": []}\n```\n\nAfter.';
+		expect(stripWorkflowPlanBlock(text)).toBe('Walkthrough.\n\n\n\nAfter.');
 	});
 });

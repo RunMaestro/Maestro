@@ -67,4 +67,26 @@ export interface GroupChatWorkflowRun {
 	startedAt?: number;
 	endedAt?: number;
 	abortReason?: string;
+	/**
+	 * The plan was made in read-only mode. Its stages run read-only too, so an approval
+	 * that names no mode (the Start button, `maestro-cli group-chat workflow --approve`)
+	 * cannot turn a read-only plan into a read-write run.
+	 */
+	readOnly?: boolean;
 }
+
+/** What a caller can do to a chat's workflow run: the Stage Strip's buttons, and the CLI's flags. */
+export const GROUP_CHAT_WORKFLOW_ACTIONS = ['show', 'approve', 'cancel'] as const;
+export type GroupChatWorkflowAction = (typeof GROUP_CHAT_WORKFLOW_ACTIONS)[number];
+
+export function isGroupChatWorkflowAction(value: unknown): value is GroupChatWorkflowAction {
+	return (GROUP_CHAT_WORKFLOW_ACTIONS as readonly unknown[]).includes(value);
+}
+
+/**
+ * The answer to a workflow action, on every surface (IPC, the bridge, a headless host). `run` is
+ * the chat's run after the action, or null when it holds none; a refusal says why in `error`.
+ */
+export type GroupChatWorkflowActionResult =
+	| { ok: true; run: GroupChatWorkflowRun | null }
+	| { ok: false; error: string; run: GroupChatWorkflowRun | null };
