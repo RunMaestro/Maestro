@@ -521,6 +521,145 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
+		describe('an agent coming home from a host (F11)', () => {
+			const liftedTo = { peer: 'build-box', agentId: 'host-1', at: 1 };
+
+			async function sendTo(session: Session, extra: Record<string, unknown> = {}) {
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as any);
+				renderHook(() =>
+					useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } }))
+				);
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+				await act(async () => {
+					await handler(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: {
+								sessionId: session.id,
+								tabId: session.aiTabs[0].id,
+								command: 'run the tests',
+								inputMode: 'ai',
+								receiptChannel: 'receipt-1',
+								...extra,
+							},
+						})
+					);
+				});
+			}
+
+			it('queues a dispatch while hosting is off, never spawns, and reports delivery', async () => {
+				useSettingsStore.setState({ federationHostedAgents: false } as any);
+				const session = createMockSession({ inputMode: 'ai', liftedTo } as any);
+
+				await sendTo(session);
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				const queue = useSessionStore.getState().sessions[0].executionQueue ?? [];
+				expect(queue).toHaveLength(1);
+				expect(queue[0]).toMatchObject({ tabId: session.aiTabs[0].id, text: 'run the tests' });
+				expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+					'receipt-1',
+					true,
+					undefined
+				);
+			});
+
+			it('queues a forced dispatch too: force lifts a busy tab, not the host owning the session', async () => {
+				useSettingsStore.setState({ federationHostedAgents: false } as any);
+				const session = createMockSession({ inputMode: 'ai', liftedTo } as any);
+
+				await sendTo(session, { force: true });
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].executionQueue ?? []).toHaveLength(1);
+			});
+
+			it('queues a saved slash command as that command, not as plain text', async () => {
+				useSettingsStore.setState({ federationHostedAgents: false } as any);
+				const session = createMockSession({ inputMode: 'ai', liftedTo } as any);
+				useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as any);
+				renderHook(() =>
+					useRemoteHandlers(
+						createMockDeps({
+							sessionsRef: { current: [session] },
+							customAICommandsRef: {
+								current: [{ command: '/deploy', description: 'Deploy', prompt: 'Deploy it' }],
+							},
+						} as any)
+					)
+				);
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+				await act(async () => {
+					await handler(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: {
+								sessionId: session.id,
+								tabId: session.aiTabs[0].id,
+								command: '/deploy now',
+								inputMode: 'ai',
+								receiptChannel: 'receipt-1',
+							},
+						})
+					);
+				});
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				const queue = useSessionStore.getState().sessions[0].executionQueue ?? [];
+				expect(queue).toHaveLength(1);
+				expect(queue[0]).toMatchObject({ type: 'command' });
+			});
+
+			it('refuses when its pinned tab is gone, never queues into another tab', async () => {
+				useSettingsStore.setState({ federationHostedAgents: false } as any);
+				const session = createMockSession({ inputMode: 'ai', liftedTo } as any);
+				// The store no longer has the tab the sender pinned (it closed meanwhile).
+				useSessionStore.setState({
+					sessions: [{ ...session, aiTabs: [{ ...session.aiTabs[0], id: 'other-tab' }] }],
+					activeSessionId: session.id,
+				} as any);
+				renderHook(() =>
+					useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } }))
+				);
+				const handler = (window.addEventListener as any).mock.calls.find(
+					(call: any[]) => call[0] === 'maestro:remoteCommand'
+				)[1];
+				await act(async () => {
+					await handler(
+						new CustomEvent('maestro:remoteCommand', {
+							detail: {
+								sessionId: session.id,
+								tabId: session.aiTabs[0].id,
+								command: 'run the tests',
+								inputMode: 'ai',
+								receiptChannel: 'receipt-1',
+							},
+						})
+					);
+				});
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].executionQueue ?? []).toHaveLength(0);
+				expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+					'receipt-1',
+					false,
+					'command-target-unavailable'
+				);
+			});
+
+			it('leaves an agent that was never moved alone: it spawns at once', async () => {
+				useSettingsStore.setState({ federationHostedAgents: false } as any);
+				const session = createMockSession({ inputMode: 'ai' });
+
+				await sendTo(session);
+
+				expect(window.maestro.process.spawn).toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].executionQueue ?? []).toHaveLength(0);
+			});
+		});
+
 		it('dispatches AI commands via spawn', async () => {
 			const session = createMockSession({ inputMode: 'ai' });
 			const deps = createMockDeps({

@@ -23,6 +23,7 @@ import {
 	focusAiTabInSession,
 	reopenClosedAiTabById,
 	hasActiveWizard,
+	isAwaitingComeHome,
 	syncAgentStateToTabs,
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
@@ -1473,9 +1474,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// that tab's turn runs beside this one, as desktop tabs do. Respect
 					// the dispatch --focus opt-in via `background`. A held send (Queue
 					// Held, `dispatch --queue --held`) never dispatches now: it waits paused.
-					const lineForTab = (session.executionQueue ?? []).some(
-						(item) => item.tabId === resolvedTabId
-					);
+					// An agent coming home from a host (hosting off) is a line of its own: its
+					// turns wait in the queue until it is home, as the composer's do. Sending now
+					// would only be refused by main, and the prompt lost.
+					const lineForTab =
+						isAwaitingComeHome(session) ||
+						(session.executionQueue ?? []).some((item) => item.tabId === resolvedTabId);
 					// The plain remote-command path spawns on the live tab's settings, so a message
 					// carrying the sender's own chips goes through the queue instead and is sent at
 					// once from there (Force Send): the queued item is what carries them.
