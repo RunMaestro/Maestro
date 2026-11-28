@@ -285,8 +285,12 @@ export async function runReturnFromHost(
 		try {
 			await restoreOrThrow(deps, agent, returned);
 		} catch (error) {
-			await releaseHeld(connection, pointer.agentId, heldIds);
-			throw error;
+			// A restore that answered late (the window timed out) may have been written anyway: the
+			// messages it carried then wait here, and releasing them on the host would run them twice.
+			if (!restoreLanded(deps, agent.id, left !== undefined, heldIds)) {
+				await releaseHeld(connection, pointer.agentId, heldIds);
+				throw error;
+			}
 		}
 
 		// The agent is home from here on: a failure is the host copy's, reported, never the agent's.
@@ -367,6 +371,26 @@ async function clearHostCopyLeft(
 			`The host copy is removed, but "${agent.name}" could not be saved without its note of it (${message}). Maestro clears it at the next launch.`
 		);
 	}
+}
+
+/**
+ * Whether the restore was written although it reported a failure: the stored record is home, and
+ * (for a record that was home already, finishing an earlier return) every message this return held
+ * on the host is in its queue or in its note of the host copy.
+ */
+function restoreLanded(
+	deps: ReturnRunDeps,
+	agentId: string,
+	finishing: boolean,
+	heldIds: readonly string[]
+): boolean {
+	const current = deps.readAgents().find((record) => record.id === agentId);
+	if (!current || readLiftedTo(current.liftedTo)) return false;
+	if (!finishing) return true;
+	const carried = new Set(readHostCopyLeft(current.hostCopyLeft)?.carried ?? []);
+	const queue = (current as { executionQueue?: Array<{ id?: unknown }> }).executionQueue;
+	const queued = new Set((Array.isArray(queue) ? queue : []).map((item) => item?.id));
+	return heldIds.length > 0 && heldIds.every((id) => carried.has(id) || queued.has(id));
 }
 
 /**

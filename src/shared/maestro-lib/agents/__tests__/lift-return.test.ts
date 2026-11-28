@@ -350,6 +350,28 @@ describe('runReturnFromHost', () => {
 			expect(client.agents.remove).not.toHaveBeenCalled();
 		});
 
+		it('a restore that reports a failure but was written (a late window): the host keeps them held, nothing runs twice (R8)', async () => {
+			const client = hostClient({ queue: ok([waiting, held]) });
+			const d = deps(hostedAgent(), client);
+			const store = new Map<string, AgentRecord>([['agent-1', hostedAgent()]]);
+			d.value.readAgents = () => [...store.values()];
+			d.restore.mockImplementationOnce(async (id: string, returned) => {
+				const record = store.get(id) as unknown as Record<string, unknown>;
+				store.set(id, withReturnedFromHost(record, returned) as unknown as AgentRecord);
+				throw new Error('The window did not answer in time');
+			});
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.turns.queue.setPaused.mock.calls).toEqual([['host-1', 'q1', true]]);
+			expect(client.agents.remove).toHaveBeenCalledWith('host-1');
+			expect(result.hostCopyRemoved).toBe(true);
+			const home = store.get('agent-1') as unknown as {
+				liftedTo?: unknown;
+				executionQueue: Array<{ id: string }>;
+			};
+			expect(home.liftedTo).toBeUndefined();
+			expect(home.executionQueue.map((item) => item.id)).toEqual(['q1', 'q2']);
+		});
+
 		it('a turn that starts on the host during the return: nothing is written here, and what it held is released', async () => {
 			const client = hostClient({ queue: ok([waiting]) });
 			client.agents.get
