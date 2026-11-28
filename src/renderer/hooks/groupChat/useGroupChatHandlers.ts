@@ -857,6 +857,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 			// the steer, so the message is still queued; say so instead of nothing.
 			logger.error('[GroupChat] Steer failed:', undefined, error);
 			notifyToast({
+				flashWhenToastsOff: true,
 				color: 'red',
 				title: 'Could not steer this round',
 				message: 'The request did not reach the app. The message stays queued.',

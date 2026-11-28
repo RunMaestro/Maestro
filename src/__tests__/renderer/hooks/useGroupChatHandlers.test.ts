@@ -1006,6 +1006,7 @@ describe('useGroupChatHandlers', () => {
 			});
 
 			expect(notifyToast).toHaveBeenCalledWith({
+				flashWhenToastsOff: true,
 				color: 'red',
 				title: 'Could not steer this round',
 				message: 'The request did not reach the app. The message stays queued.',
