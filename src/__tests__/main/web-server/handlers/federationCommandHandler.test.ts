@@ -59,9 +59,11 @@ const hosted = vi.hoisted(() => ({
 vi.mock('../../../../main/federation/federation-window', () => ({
 	requestFederationWindow: hosted.request,
 }));
+const idle = vi.hoisted(() => ({ autoMove: false, running: false, remotes: [], agents: [] }));
 vi.mock('../../../../main/federation', () => ({
 	getPeerMirrorService: () => (running.on ? service : null),
-	getAutoFederation: () => (running.on ? auto : null),
+	autoFederationSnapshot: () => (running.on ? auto.snapshot() : idle),
+	runAutoFederationNow: async () => (running.on ? auto.runNow() : idle),
 }));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
@@ -164,6 +166,19 @@ describe('federation_command handler', () => {
 			auto: { lastPassAt: 5 },
 		});
 		expect(auto.runNow).toHaveBeenCalledTimes(1);
+	});
+
+	it('answers the idle automatic Federation snapshot while it does not run (hosted agents off)', async () => {
+		running.on = false;
+		expect(await send(client(true), { action: 'auto-status' })).toMatchObject({
+			success: true,
+			auto: idle,
+		});
+		expect(await send(client(true), { action: 'auto-run' })).toMatchObject({
+			success: true,
+			auto: idle,
+		});
+		expect(auto.runNow).not.toHaveBeenCalled();
 	});
 
 	it('answers the not-running message while no service runs', async () => {

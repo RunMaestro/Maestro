@@ -114,7 +114,7 @@ export function FederationAutomationSection({ theme }: { theme: Theme }) {
 		<div>
 			<SettingsSectionHeading
 				icon={Network}
-				description="Every SSH remote is checked for a Maestro host. Maestro keeps those hosts running across reboots, starts a stopped one, and, with the switch on, installs a host where an SSH agent needs one and moves the agent onto it once every check passes."
+				description="Both switches are off by default. With them off, Maestro changes nothing on your SSH remotes and every SSH agent stays a plain SSH agent."
 			>
 				Federation automation
 			</SettingsSectionHeading>
@@ -122,7 +122,7 @@ export function FederationAutomationSection({ theme }: { theme: Theme }) {
 				<ToggleSettingRow
 					theme={theme}
 					title="Run hosted agents on their host"
-					description="Off by default. Off: every hosted agent works as the SSH agent it was, from this machine. Nothing on the host or in the agent changes, so turning it on restores hosting."
+					description="Off by default: on, Maestro connects to each SSH remote to find its Maestro host and runs hosted agents there; off, it opens no connection to a remote on its own."
 					checked={hostedAgents}
 					onChange={setHostedAgents}
 					ariaLabel="Run hosted agents on their host"
@@ -130,7 +130,7 @@ export function FederationAutomationSection({ theme }: { theme: Theme }) {
 				<ToggleSettingRow
 					theme={theme}
 					title="Move SSH agents to their host automatically"
-					description="Off by default. Off: Move to Host stays a right-click. Hosts are kept running either way."
+					description="Off by default: on, Maestro installs, upgrades, and starts the Maestro host on a remote by itself and moves SSH agents onto it; off, it changes nothing on a remote unless you use Move to Host or Start Host."
 					checked={autoMove}
 					onChange={setAutoMove}
 					ariaLabel="Move SSH agents to their host automatically"

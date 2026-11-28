@@ -102,7 +102,7 @@ A blocked agent is tried again when its record or its remote changes, or after a
 
 Maestro never replaces a running host on its own to upgrade it, because that would interrupt its work. A host on an older version keeps running and gets agents, and the status names the upgrade command.
 
-An agent you moved back with **Move Back from Host** is never moved automatically again. Turn **Move SSH agents to their host automatically** off and the moves stop: **Move to Host** stays a right-click. Maestro still keeps the hosts you already have running. To keep one remote out of all of this, turn its **Federation** switch off.
+An agent you moved back with **Move Back from Host** is never moved automatically again. Turn **Move SSH agents to their host automatically** off and the moves stop: **Move to Host** stays a right-click, and Maestro changes nothing on a remote by itself (a stopped host stays stopped until you use **Start Host**). With **Run hosted agents on their host** off, Maestro opens no connection to a remote for Federation at all. To keep one remote out of all of this, turn its **Federation** switch off.
 
 ### When Maestro needs you
 

@@ -20,14 +20,16 @@
 
 import type Store from 'electron-store';
 
-import { FEDERATION_AUTO_MOVE_SETTING } from '../../../shared/federationAuto';
+import {
+	FEDERATION_AUTO_MOVE_SETTING,
+	FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER,
+} from '../../../shared/federationAuto';
 import { HOSTED_AGENTS_SETTING } from '../../../shared/maestro-lib/agents/lift-pointer';
 import { logger } from '../../utils/logger';
 import type { MaestroSettings } from '../types';
 
-/** Settings key marking the one-time Federation default-off reset as done. */
-export const FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER =
-	'migration_federationHostingDefaultOffV1';
+/** Settings key marking the one-time Federation default-off reset as done (shared with the CLI). */
+export { FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER };
 
 /** Turn hosted agents and automatic moves off once, on every existing install. */
 export function migrateFederationHostingDefaultOff(store: Store<MaestroSettings>): void {

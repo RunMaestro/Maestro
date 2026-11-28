@@ -23,6 +23,7 @@ import {
 import { resolveSyncDir } from '../../shared/syncPath';
 import { resolveMaestroPaths } from '../../shared/maestro-lib/paths/resolve';
 import { PRIMARY_AGENT_SETTING_KEY } from '../../shared/primaryAgent';
+import { withFederationHostingDefaultOff } from '../../shared/federationAuto';
 import type { ReadJourneyOptions, UserJourneyEntry } from '../../shared/userJourney';
 import { journeyFilePath, readJourneyFile } from '../../shared/maestro-lib/store/read-journey';
 import {
@@ -432,7 +433,8 @@ export function getTimelinePaths(): { userDataDir: string; historyDir: string } 
  */
 export function readSettings(): SettingsStore {
 	const data = readStoreFile<SettingsStore>('maestro-settings.json');
-	return data || {};
+	// Before the desktop's first launch of this version, an old default's `true` is not an opt-in.
+	return withFederationHostingDefaultOff(data || {});
 }
 
 /**
