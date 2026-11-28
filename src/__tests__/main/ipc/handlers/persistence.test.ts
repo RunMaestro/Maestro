@@ -7332,9 +7332,46 @@ describe('persistence IPC handlers', () => {
 			const result = await handler!({} as any, [{ ...baseSession }], []);
 
 			expect(result).toBe(false);
-			expect(mockSessionsStore.set).toHaveBeenCalledOnce();
+			// Written, then put back: a refused revision is not left for a later save (#2199).
+			expect(mockSessionsStore.set.mock.calls).toEqual([
+				['sessions', [expect.objectContaining({ id: 's1' })]],
+				['sessions', []],
+			]);
 			expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
 		});
+
+		it.each([
+			['a recoverable', 'ENOSPC', false],
+			['an unexpected', 'EIO', true],
+		])(
+			'%s flush failure leaves the store as it was, so a later save does not write the refused record (#2199)',
+			async (_label, code, throws) => {
+				let stored: Array<Record<string, unknown>> = [{ ...baseSession, name: 'Before' }];
+				mockSessionsStore.get.mockImplementation(
+					(_key: string, fallback: unknown) => stored ?? fallback
+				);
+				mockSessionsStore.set.mockImplementation((_key: string, value: typeof stored) => {
+					stored = value;
+				});
+				mockFlushSessionWrites.mockRejectedValueOnce(
+					Object.assign(new Error(`${code}: refused`), { code })
+				);
+				const handler = handlers.get('sessions:setMany')!;
+				const refused = handler({} as any, [{ ...baseSession, name: 'Refused' }], []);
+				if (throws) await expect(refused).rejects.toThrow('refused');
+				else expect(await refused).toBe(false);
+				expect(stored).toEqual([expect.objectContaining({ id: 's1', name: 'Before' })]);
+
+				// A later save of another agent writes what the store holds: not the refused record.
+				expect(await handler({} as any, [{ ...baseSession, id: 's2', name: 'Other' }], [])).toBe(
+					true
+				);
+				expect(stored).toEqual([
+					expect.objectContaining({ id: 's1', name: 'Before' }),
+					expect.objectContaining({ id: 's2', name: 'Other' }),
+				]);
+			}
+		);
 
 		it('does not acknowledge an unexpected deferred write failure', async () => {
 			const error = new Error('EIO: input/output error') as NodeJS.ErrnoException;
@@ -7345,7 +7382,8 @@ describe('persistence IPC handlers', () => {
 			const handler = handlers.get('sessions:setMany');
 
 			await expect(handler!({} as any, [{ ...baseSession }], [])).rejects.toBe(error);
-			expect(mockSessionsStore.set).toHaveBeenCalledOnce();
+			// Written, then put back (#2199).
+			expect(mockSessionsStore.set).toHaveBeenLastCalledWith('sessions', []);
 			expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
 		});
 

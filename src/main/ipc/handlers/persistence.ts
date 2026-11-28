@@ -1163,17 +1163,24 @@ export function registerPersistenceHandlers(
 					}
 				}
 
+				let storeChanged = false;
 				try {
 					await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
 					noteQueueRemovals(sessionsStore.get('sessions', []), sessionsToPersist);
 					sessionsStore.set('sessions', sessionsToPersist);
+					storeChanged = true;
 					// Preserve the renderer acknowledgement contract: true means this
 					// revision reached disk, not merely the in-memory cache.
 					await flushSessionWrites();
 				} catch (err) {
+					// A refused save leaves the store as it was: false (or a throw) tells the
+					// caller this revision is not written, so a later save must not write it
+					// either. A Move Back whose restore was refused releases the host's held
+					// messages; the record must not reach disk home afterwards (#2199).
+					if (storeChanged) sessionsStore.set('sessions', previousSessions);
 					const code = (err as NodeJS.ErrnoException).code;
-					// Recoverable filesystem errors - the next debounced flush will
-					// retry when conditions improve. Log warn and return false so
+					// Recoverable filesystem errors - the renderer still holds its
+					// changes and saves them again. Log warn and return false so
 					// the renderer's flush path can mark the write as unconfirmed.
 					if (code === 'ENOSPC' || code === 'ENFILE' || code === 'EMFILE') {
 						logger.warn(`Failed to persist sessions (setMany): ${code}`, 'Sessions');
