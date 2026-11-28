@@ -1137,6 +1137,9 @@ describe('runReturnFromHost', () => {
 				homeTabIds: ['tab-1', 'tab-old', 'tab-new'],
 				keep: true,
 			});
+			// The copy is still on the host: the smaller retry marker keeps its pointer (#2199).
+			const copyOnHost = { peer: 'build-box', agentId: 'host-1', at: 1 };
+			expect(home.leftOnHost).toEqual(copyOnHost);
 			// The offline return has nothing to do for it.
 			await expect(runReturnFromHost('agent-1', { offline: true }, d.value)).rejects.toThrow(
 				/The host keeps its copy/
@@ -1150,6 +1153,8 @@ describe('runReturnFromHost', () => {
 			expect(client.agents.remove).not.toHaveBeenCalled();
 			expect(result).toMatchObject({ hostCopyRemoved: false, tabs: 0 });
 			expect(d.store.get('agent-1')?.hostCopyLeft).toBeUndefined();
+			// Its queue is clean, but the copy is kept: a later Move to Host still replaces it.
+			expect(d.store.get('agent-1')?.leftOnHost).toEqual(copyOnHost);
 			expect(d.release).toHaveBeenCalledTimes(2);
 			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
 				code: 'RETURN_NOT_HOSTED',
@@ -1161,6 +1166,7 @@ describe('runReturnFromHost', () => {
 				...hostedAgent(),
 				liftedTo: undefined,
 				hostCopyLeft: { ...copyLeft(true, ['q1']), keep: true },
+				leftOnHost: { peer: 'build-box', agentId: 'host-1', at: 1 },
 			};
 			const client = hostClient({ agent: fail('not-found') });
 			const d = stored(home as AgentRecord, client);
@@ -1169,6 +1175,8 @@ describe('runReturnFromHost', () => {
 			expect(client.turns.queue.remove).not.toHaveBeenCalled();
 			expect(client.agents.remove).not.toHaveBeenCalled();
 			expect(d.store.get('agent-1')?.hostCopyLeft).toBeUndefined();
+			// The host confirmed the copy is gone: nothing is left to replace (#2199).
+			expect(d.store.get('agent-1')?.leftOnHost).toBeUndefined();
 		});
 
 		it('a copy kept on purpose loses the messages that came home earlier too', async () => {
@@ -1431,6 +1439,20 @@ describe('runReturnFromHost', () => {
 			expect(client.turns.queue.list).toHaveBeenCalledTimes(2 + RETURN_LATE_QUEUE_PASSES);
 			const marker = d.store.get('agent-1')?.hostCopyLeft as { carried?: string[] };
 			expect(new Set(marker.carried)).toEqual(new Set(d.queueIds()));
+		});
+
+		it('a copy that stays because the host kept taking messages keeps its pointer through the late restores (#2199)', async () => {
+			const client = hostClient();
+			let next = 0;
+			client.turns.queue.list.mockImplementation(async () => ok([item(`n${next++}`)]));
+			const d = storedDeps(client);
+			await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			expect(d.store.get('agent-1')?.leftOnHost).toEqual({
+				peer: 'build-box',
+				agentId: 'host-1',
+				at: 1,
+			});
 		});
 
 		it('a late message the window could not save stays held on the host, and the copy stays', async () => {
