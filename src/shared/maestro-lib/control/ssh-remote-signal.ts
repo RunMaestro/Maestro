@@ -49,6 +49,134 @@ export function newRemotePidFilePath(promptArtifact = false): string {
 	return `/tmp/maestro-${promptArtifact ? 'prompt-owner' : 'agent'}-${randomUUID()}.pid`;
 }
 
+const TURN_DIR_PATTERN = /^\/tmp\/maestro-turn-[0-9a-f-]{36}$/;
+
+/**
+ * A fresh remote dir for one durable SSH turn (see `ssh-durable-turn.ts`):
+ * the agent's output, its exit code, and its supervisor's pid live there.
+ */
+export function newRemoteTurnDir(): string {
+	return `/tmp/maestro-turn-${randomUUID()}`;
+}
+
+/** Refuse a turn dir Maestro did not name: it goes into `rm -rf`. */
+export function assertRemoteTurnDir(dir: string): void {
+	if (!TURN_DIR_PATTERN.test(dir)) throw new Error('Invalid remote turn directory.');
+}
+
+/** The script that removes a settled durable turn's dir. */
+export function buildRemoteTurnCleanupScript(dir: string): string {
+	assertRemoteTurnDir(dir);
+	return `rm -rf -- ${shellEscape(dir)}\n`;
+}
+
+/**
+ * What a durable turn's terminate exits with when it cannot prove the agent
+ * gone: the dir names no agent yet (a Stop that reached the host before the
+ * supervisor recorded it), or the agent outlived SIGKILL's wait. The dir and
+ * the agent's record stay, and the reap tries again.
+ */
+export const DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE = 75;
+
+/**
+ * What a durable turn's terminate exits with when the agent is gone but its
+ * dir could not be removed: the reap tries the removal again.
+ */
+export const DURABLE_CLEANUP_FAILED_EXIT_CODE = 74;
+
+/**
+ * What a launch exits with, before its own agent starts, when an earlier
+ * turn's agent it had to stop first could not be proven gone. The new agent
+ * never runs beside it on the same session.
+ */
+export const PRE_LAUNCH_REAP_REFUSED_EXIT_CODE = 248;
+
+/** The stderr line of a launch refused by {@link PRE_LAUNCH_REAP_REFUSED_EXIT_CODE}. */
+export const PRE_LAUNCH_REAP_REFUSED_MESSAGE =
+	'An earlier turn of this tab is still running on the remote and could not be stopped yet. Maestro keeps trying; send again in a moment.';
+
+/**
+ * Lines that find a durable turn's agent: `ap` / `as` from the copy of its
+ * record in the turn dir (which the day-old pid sweep never touches), else
+ * from the pid file; `_same` while that process still runs with the recorded
+ * start time; `t` the target to signal (its group when it leads one).
+ */
+function durableAgentLines(dir: string, pidFile: string): string[] {
+	assertRemoteTurnDir(dir);
+	const pf = shellEscape(pidFile);
+	return [
+		`d=${shellEscape(dir)}; ap=; as=`,
+		'[ -r "$d/agent" ] && read -r ap as < "$d/agent"',
+		`[ -n "$ap" ] || { [ -r ${pf} ] && read -r ap as < ${pf}; }`,
+		'case "$ap" in ""|*[!0-9]*) ap= ;; esac',
+		// Signal only a proven match: the start time agrees, or none was recorded
+		// (the pid alone, as today's pid record allows). A `ps` that prints nothing
+		// now proves nothing, so `_maybe` (may the agent still run?) counts it as live.
+		'_same() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null || return 1; [ -z "$as" ] || [ "$(echo $(ps -o lstart= -p "$ap" 2>/dev/null))" = "$(echo $as)" ]; }',
+		'_maybe() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null || return 1; n=$(ps -o lstart= -p "$ap" 2>/dev/null); [ -z "$n" ] || [ -z "$as" ] || [ "$(echo $n)" = "$(echo $as)" ]; }',
+		't="$ap"; [ -n "$ap" ] && [ "$(ps -o pgid= -p "$ap" 2>/dev/null | tr -d " ")" = "$ap" ] && t="-$ap"',
+	];
+}
+
+/**
+ * The terminate script for `target`. A durable turn's dir goes with it, but
+ * only once the agent is proven gone: the agent wrote its exit, or its record
+ * names no live process after the terminate. Without that proof the dir and
+ * the record stay and the script exits
+ * {@link DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}, so the reap tries again: a
+ * dir removed under a live agent leaves a writer nobody can find again.
+ *
+ * Where no dir exists the script creates one, finished (`exit` reads
+ * `reaped`), and leaves it: a launch still on its way (its script already on
+ * the host, running an earlier reap) then fails its own `mkdir` and never
+ * starts its agent after this reap reported it gone. `mkdir` is the one
+ * atomic choice between the two: whoever makes the dir owns it. A later reap
+ * leaves that marker in place; the sweep of finished dirs removes it.
+ */
+function terminateScriptFor(target: RemoteSignalTarget): string {
+	if (target.turnDir === undefined)
+		return buildRemoteSignalScript(target.pidFile, 'terminate', target.promptArtifactPath);
+	if (target.promptArtifactPath !== undefined)
+		throw new Error('A durable turn has no prompt artifact.');
+	return [
+		...durableAgentLines(target.turnDir, target.pidFile),
+		// A marker that could not be written leaves an empty dir: still a barrier,
+		// and the next reap finishes nothing until it proves something.
+		`if ( umask 077; mkdir "$d" 2>/dev/null ); then printf 'reaped\\n' > "$d/exit" || exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}; rm -f -- ${shellEscape(target.pidFile)}; exit 0; fi`,
+		// One look at the exit record decides: the marker stays; the agent's own
+		// code (always written whole) proves it ended; nothing proves nothing.
+		'x=$(cat "$d/exit" 2>/dev/null)',
+		'[ "$x" = reaped ] && exit 0',
+		'if _same; then',
+		'  kill -TERM -- "$t" 2>/dev/null',
+		'  i=0; while [ "$i" -lt 6 ] && _maybe; do sleep 0.5; i=$((i+1)); done',
+		'  _same && kill -KILL -- "$t" 2>/dev/null',
+		// Its supervisor reaps it: give the zombie a moment to go.
+		'  i=0; while [ "$i" -lt 10 ] && _maybe; do sleep 0.1; i=$((i+1)); done',
+		'fi',
+		'case "$x" in',
+		'  ""|*[!0-9]*)',
+		`    { [ -z "$ap" ] || _maybe; } && exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE} ;;`,
+		'esac',
+		`rm -f -- ${shellEscape(target.pidFile)}`,
+		`rm -rf -- "$d" 2>/dev/null; [ -d "$d" ] && exit ${DURABLE_CLEANUP_FAILED_EXIT_CODE}`,
+		'exit 0',
+	]
+		.join('\n')
+		.concat('\n');
+}
+
+/**
+ * A durable turn's interrupt: SIGINT to the agent its record names, the dir
+ * copy first, so a Stop still reaches an agent whose pid file the day-old
+ * sweep removed. Nothing is removed: the terminate needs the record.
+ */
+export function buildDurableInterruptScript(dir: string, pidFile: string): string {
+	return [...durableAgentLines(dir, pidFile), '_same && kill -INT -- "$t" 2>/dev/null', 'exit 0']
+		.join('\n')
+		.concat('\n');
+}
+
 /**
  * Prefix a stdin launch script with the line that records the agent's pid.
  *
@@ -257,6 +385,11 @@ export interface RemoteSignalTarget {
 	sessionId: string;
 	/** Remote-owned file; enables descriptor-preserving cancellation. */
 	promptArtifactPath?: string;
+	/**
+	 * A durable turn's dir: an interrupt or terminate finds the agent through
+	 * the record copy in it, and a terminate removes it once the agent is gone.
+	 */
+	turnDir?: string;
 }
 
 /**
@@ -283,7 +416,12 @@ export function signalRemoteAgent(
 	};
 
 	try {
-		const script = buildRemoteSignalScript(target.pidFile, mode, target.promptArtifactPath);
+		const script =
+			mode === 'terminate'
+				? terminateScriptFor(target)
+				: target.turnDir !== undefined && target.promptArtifactPath === undefined
+					? buildDurableInterruptScript(target.turnDir, target.pidFile)
+					: buildRemoteSignalScript(target.pidFile, mode, target.promptArtifactPath);
 		const child = spawn(target.sshCommand, [...connection, ...SSH_STDIN_REMOTE_SHELL], {
 			stdio: ['pipe', 'ignore', 'ignore'],
 			detached: true,
@@ -366,10 +504,15 @@ const pendingReaps = new Map<string, PendingReap>();
  * {@link REMOTE_REAP_RETRY_DELAYS_MS} only while ssh itself fails (exit 255,
  * a timeout, or no start). Any other exit means the host ran the script, which
  * ends quietly when the agent is already gone.
+ *
+ * `firstDelayMs` holds the first attempt back (the grace a Stop gives the
+ * agent) while the reap is already registered, so the next launch on the tab
+ * takes and runs it before its own agent starts, even inside that grace.
  */
 export function reapRemoteAgent(
 	target: RemoteSignalTarget,
-	delaysMs: readonly number[] = REMOTE_REAP_RETRY_DELAYS_MS
+	delaysMs: readonly number[] = REMOTE_REAP_RETRY_DELAYS_MS,
+	firstDelayMs = 0
 ): void {
 	const previous = pendingReaps.get(target.pidFile);
 	if (previous?.timer) clearTimeout(previous.timer);
@@ -383,12 +526,22 @@ export function reapRemoteAgent(
 		if (!isCurrent()) return;
 		const started = signalRemoteAgent(target, 'terminate', (exitCode) => {
 			if (!isCurrent()) return;
-			if (exitCode !== null && !isSshConnectionFailure(exitCode)) {
+			if (
+				exitCode !== null &&
+				!isSshConnectionFailure(exitCode) &&
+				!(
+					target.turnDir !== undefined &&
+					(exitCode === DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE ||
+						exitCode === DURABLE_CLEANUP_FAILED_EXIT_CODE)
+				)
+			) {
 				pendingReaps.delete(target.pidFile);
 				return;
 			}
 			if (attempt >= delaysMs.length) {
-				pendingReaps.delete(target.pidFile);
+				// The agent may still run. The next launch on its tab still carries
+				// the reap and runs it before its own agent; only the timer stops.
+				if (target.promptArtifactPath !== undefined) pendingReaps.delete(target.pidFile);
 				logger.warn('Gave up stopping a remote agent: its host never answered', LOG_CONTEXT, {
 					sessionId: target.sessionId,
 					attempts: attempt + 1,
@@ -402,41 +555,87 @@ export function reapRemoteAgent(
 		// later attempt would do better.
 		if (!started) pendingReaps.delete(target.pidFile);
 	};
-	run();
+	if (firstDelayMs > 0) {
+		entry.timer = setTimeout(run, firstDelayMs);
+		entry.timer.unref?.();
+	} else run();
+}
+
+/** The host a stdin-script ssh reaches: its destination and port, not its other options. */
+function sshEndpointKey(sshCommand: string, sshArgs: readonly string[]): string | undefined {
+	const connection = sshConnectionArgs(sshArgs);
+	if (!connection?.length) return undefined;
+	const port = connection.indexOf('-p');
+	return [
+		sshCommand,
+		connection[connection.length - 1],
+		port >= 0 ? connection[port + 1] : '',
+	].join('\0');
 }
 
 /**
  * Take the reaps still pending for `sessionId` that its next launch can carry.
+ * They stop retrying on their own; the launch ends each by
+ * {@link confirmCarriedRemoteReaps} (it ran them) or by handing it back to
+ * {@link reapRemoteAgent} (it may not have).
  *
  * The next turn on a tab resumes the same provider session, so an orphan still
  * running there is a second writer. The launch script runs the terminate
  * itself, over the connection that just proved the host answers, before it
- * starts the new agent. Prompt-owner records stay with their retry loop: their
- * script reads its own descriptors through `/proc/$$`, which a subshell of the
- * launch script would point at the wrong process.
+ * starts the new agent. Only reaps for the same ssh endpoint (destination and
+ * port; other options may change between turns) go: a launch on another host
+ * cannot reach them, so they stay with their own retry loop.
+ * Prompt-owner records stay with their retry loop too: their script reads its
+ * own descriptors through `/proc/$$`, which a subshell of the launch script
+ * would point at the wrong process.
  */
-export function takePendingRemoteReaps(sessionId: string): RemoteSignalTarget[] {
+export function takePendingRemoteReaps(
+	sessionId: string,
+	sshCommand: string,
+	sshArgs: readonly string[]
+): RemoteSignalTarget[] {
+	const endpoint = sshEndpointKey(sshCommand, sshArgs);
 	const taken: RemoteSignalTarget[] = [];
-	for (const [pidFile, entry] of pendingReaps) {
+	for (const entry of pendingReaps.values()) {
 		if (entry.target.sessionId !== sessionId) continue;
 		if (entry.target.promptArtifactPath !== undefined) continue;
+		if (
+			endpoint === undefined ||
+			sshEndpointKey(entry.target.sshCommand, entry.target.sshArgs) !== endpoint
+		)
+			continue;
+		// Kept, without its timer, until the launch confirms it ran: a launch that
+		// is stopped before its script runs must not leave its successor nothing
+		// to carry. Both may run it; a reap that already ran ends quietly.
 		if (entry.timer) clearTimeout(entry.timer);
-		pendingReaps.delete(pidFile);
+		entry.timer = null;
 		taken.push(entry.target);
 	}
 	return taken;
+}
+
+/** A launch ran the reaps it carried (it reached its agent): they are done. */
+export function confirmCarriedRemoteReaps(targets: readonly RemoteSignalTarget[]): void {
+	for (const target of targets) pendingReaps.delete(target.pidFile);
 }
 
 /**
  * Launch-script lines that terminate earlier agents before this one starts.
  * Each runs in a subshell, so its `exit` and variables stay out of the launch
  * script, with stdin closed so it cannot read the script bash is still reading.
+ * An earlier durable agent that cannot be proven gone ends the launch before
+ * its own agent starts ({@link PRE_LAUNCH_REAP_REFUSED_EXIT_CODE}); the caller
+ * hands the reaps back to their retry loop.
  */
 export function buildPreLaunchReapScript(targets: readonly RemoteSignalTarget[]): string {
+	const refuse =
+		`[ "$?" != ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE} ] || ` +
+		`{ printf '%s\\n' ${shellEscape(PRE_LAUNCH_REAP_REFUSED_MESSAGE)} >&2; exit ${PRE_LAUNCH_REAP_REFUSED_EXIT_CODE}; }\n`;
 	return targets
 		.map(
 			(target) =>
-				`(\n${buildRemoteSignalScript(target.pidFile, 'terminate')}) </dev/null >/dev/null 2>&1\n`
+				`(\n${terminateScriptFor(target)}) </dev/null >/dev/null 2>&1\n` +
+				(target.turnDir !== undefined ? refuse : '')
 		)
 		.join('');
 }

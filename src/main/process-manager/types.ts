@@ -162,6 +162,9 @@ export interface ProcessConfig {
 	promptAlreadyInArgs?: boolean;
 	/** Script to send via stdin for SSH execution (bypasses shell escaping) */
 	sshStdinScript?: string;
+	/** The remote's "Keep turns running when the connection drops" switch
+	 *  (`SshRemoteConfig.keepTurnsOnDisconnect`). See ssh-durable-turn.ts. */
+	sshKeepTurnsOnDisconnect?: boolean;
 	/** Human-readable remote command line (the actual agent invocation running on the
 	 *  remote host). Surfaced in Process Details above the local SSH command. */
 	sshRemoteCommand?: string;
@@ -307,6 +310,35 @@ export interface ManagedProcess {
 	/** Private remote prompt cleanup metadata, bound to sshRemotePidFile ownership.
 	 *  Never expose in Process Details, capture events or persisted diagnostics. */
 	sshRemotePromptArtifactPath?: string;
+	/**
+	 * Set on a durable SSH turn ("Keep turns running when the connection
+	 * drops"). Called when the app quits instead of the remote Stop: the turn
+	 * is recorded for the next launch and its remote agent keeps running.
+	 */
+	detachDurableTurn?: () => void;
+	/**
+	 * Set on a durable SSH turn. A kill registers its reap (agent and turn dir,
+	 * retried until the host answers) BEFORE the entry is released, so the
+	 * next launch on the tab carries it even while the old ssh still closes.
+	 */
+	reapDurableTurn?: () => void;
+	/**
+	 * A durable SSH turn owns this entry. Its agent lives on the remote, so a
+	 * local pid that is gone (between reattaches, or a turn restored at launch
+	 * that has no ssh yet) never makes the entry stale: only its settle frees
+	 * the session.
+	 */
+	durableSshTurn?: boolean;
+	/** A durable SSH turn's remote dir: a Stop finds the agent through the record in it. */
+	durableTurnDir?: string;
+	/**
+	 * Set on a durable SSH turn restored at launch until it reattaches (it has
+	 * no ssh process yet). Stop and close end it here: `interrupt` and `kill`
+	 * forget its record and reap its remote agent (a Stop also settles the
+	 * turn); `shutdown` (the app quitting) keeps the record and the remote turn
+	 * for the next launch.
+	 */
+	stopPendingDurableTurn?: (how: 'interrupt' | 'kill' | 'shutdown') => void;
 	/**
 	 * Steering channel of a Claude TUI turn on an SSH remote, copied from the spawn
 	 * config. `steer()` delivers through it instead of the local socket.

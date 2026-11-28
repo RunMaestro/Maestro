@@ -237,6 +237,81 @@ describe('ProcessManager synthetic SSH prompt artifact stops', () => {
 		vi.restoreAllMocks();
 	});
 
+	it('quitting detaches a durable SSH turn: recorded, its agent left running, only the local ssh stopped', () => {
+		const detach = vi.fn();
+		managed.sshRemotePromptArtifactPath = undefined;
+		managed.sshRemotePidFile = '/tmp/maestro-agent-11111111-1111-4111-8111-111111111111.pid';
+		managed.detachDurableTurn = detach;
+		manager.killAll({ shutdown: true });
+		expect(detach).toHaveBeenCalledOnce();
+		expect(remoteSignal.signalRemoteAgent).not.toHaveBeenCalled();
+		expect(termination.stopProcess).toHaveBeenCalledWith({ child }, expect.anything());
+		expect(processes.has(SESSION_ID)).toBe(false);
+	});
+
+	it.each([
+		['interrupt', 'interrupt'],
+		['kill', 'kill'],
+		['shutdown', 'shutdown'],
+	] as const)(
+		'%s of a durable SSH turn restored at launch, before it reattached, goes to its pending stop (%s)',
+		(action, how) => {
+			const stopPending = vi.fn();
+			managed.childProcess = undefined;
+			managed.pid = -1;
+			managed.durableSshTurn = true;
+			managed.stopPendingDurableTurn = stopPending;
+			if (action === 'shutdown') manager.killAll({ shutdown: true });
+			else expect(manager[action](SESSION_ID)).toBe(true);
+			expect(stopPending).toHaveBeenCalledExactlyOnceWith(how);
+			// No ssh exists yet: nothing local to stop, and the remote is the pending stop's job.
+			expect(termination.stopProcess).not.toHaveBeenCalled();
+			expect(remoteSignal.signalRemoteAgent).not.toHaveBeenCalled();
+		}
+	);
+
+	it('closing the tab of a durable SSH turn registers its reap before the tab is released', () => {
+		const detach = vi.fn();
+		managed.sshRemotePromptArtifactPath = undefined;
+		managed.sshRemotePidFile = '/tmp/maestro-agent-11111111-1111-4111-8111-111111111111.pid';
+		managed.detachDurableTurn = detach;
+		// The reap (agent and turn dir, retried until the host answers) is
+		// registered while the entry still owns the session: a replacement
+		// launched before the old ssh closes carries it.
+		const ownedAtReap: boolean[] = [];
+		managed.reapDurableTurn = vi.fn(() => ownedAtReap.push(processes.has(SESSION_ID)));
+		expect(manager.kill(SESSION_ID)).toBe(true);
+		expect(detach).not.toHaveBeenCalled();
+		expect(ownedAtReap).toEqual([true]);
+		expect(processes.has(SESSION_ID)).toBe(false);
+		expect(remoteSignal.signalRemoteAgent).not.toHaveBeenCalled();
+	});
+
+	it("a Stop of an attached durable SSH turn finds its agent through the turn dir's record", () => {
+		managed.sshRemotePromptArtifactPath = undefined;
+		managed.sshRemotePidFile = '/tmp/maestro-agent-11111111-1111-4111-8111-111111111111.pid';
+		managed.durableTurnDir = '/tmp/maestro-turn-11111111-1111-4111-8111-111111111111';
+		expect(manager.interrupt(SESSION_ID)).toBe(true);
+		expect(remoteSignal.signalRemoteAgent).toHaveBeenCalledWith(
+			expect.objectContaining({ turnDir: managed.durableTurnDir }),
+			'interrupt'
+		);
+	});
+
+	it('quitting right after a Stop does not keep the stopped durable turn for the next launch', () => {
+		const detach = vi.fn();
+		const reap = vi.fn();
+		managed.sshRemotePromptArtifactPath = undefined;
+		managed.sshRemotePidFile = '/tmp/maestro-agent-11111111-1111-4111-8111-111111111111.pid';
+		managed.detachDurableTurn = detach;
+		managed.reapDurableTurn = reap;
+		// Stop while the link is down: the reconnect loop has not seen it yet.
+		managed.interrupted = true;
+		manager.killAll({ shutdown: true });
+		expect(detach).not.toHaveBeenCalled();
+		expect(reap).toHaveBeenCalledOnce();
+	});
+
 	it.each(['interrupt', 'kill', 'shutdown'] as const)(
 		'%s forwards the exact remote owner and private cleanup path',
 		(action) => {

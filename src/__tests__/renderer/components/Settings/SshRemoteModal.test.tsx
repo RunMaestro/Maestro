@@ -98,3 +98,32 @@ describe('SshRemoteModal federation toggle', () => {
 		expect(await save(onSave)).toMatchObject({ enabled: false });
 	});
 });
+
+describe('SshRemoteModal keep-turns toggle', () => {
+	const label = 'Keep turns running when the connection drops';
+
+	it('is off for a new remote and for one with no field, and saves nothing', async () => {
+		renderModal();
+		expect(screen.getByRole('switch', { name: label })).toHaveAttribute('aria-checked', 'false');
+		cleanup();
+
+		const { onSave } = renderModal(existing);
+		expect(screen.getByRole('switch', { name: label })).toHaveAttribute('aria-checked', 'false');
+		expect((await save(onSave)).keepTurnsOnDisconnect).toBeUndefined();
+	});
+
+	it('saves true when switched on', async () => {
+		const { onSave } = renderModal(existing);
+		fireEvent.click(screen.getByRole('switch', { name: label }));
+		expect(await save(onSave)).toMatchObject({ id: 'r1', keepTurnsOnDisconnect: true });
+	});
+
+	it('reflects a stored on and clears the field when switched off', async () => {
+		const { onSave } = renderModal({ ...existing, keepTurnsOnDisconnect: true });
+		const toggle = screen.getByRole('switch', { name: label });
+		expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+		fireEvent.click(toggle);
+		expect((await save(onSave)).keepTurnsOnDisconnect).toBeUndefined();
+	});
+});

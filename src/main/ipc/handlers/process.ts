@@ -678,6 +678,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				});
 			}
 
+			// A renderer asking for the live turns has restored its tabs and can
+			// hear their output: durable SSH turns from the last run reattach once
+			// this answer, which shows their tabs busy, is built and on its way.
+			setImmediate(() => processManager.startRestoredDurableTurns());
 			return result;
 		})
 	);

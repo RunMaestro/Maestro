@@ -35,6 +35,8 @@ interface UpdateSshRemoteOptions {
 	enabled?: string;
 	/** `on` / `off`: Federation for this remote; `off` is the only value stored */
 	federation?: string;
+	/** `on` / `off`: keep turns running when the connection drops; only `on` is stored */
+	keepTurns?: string;
 	setDefault?: boolean;
 	json?: boolean;
 }
@@ -162,6 +164,15 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 		}
 	}
 
+	if (options.keepTurns !== undefined) {
+		try {
+			// Stored only when on, so a remote that never opted in carries no trace.
+			updated.keepTurnsOnDisconnect = parseCliBool(options.keepTurns, '--keep-turns') || undefined;
+		} catch (error) {
+			fail(error instanceof Error ? error.message : String(error), options.json);
+		}
+	}
+
 	// Env and -o options MERGE by default so a single edit does not silently drop
 	// the rest of the set; --clear-* is the explicit way to start over.
 	// --clear-* wipes BOTH records: "remove all" that left parked entries behind
@@ -228,6 +239,7 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 				// overrides would not answer "did my ConnectTimeout take effect?"
 				resolvedSshOptions: resolveSshOptions(updated.sshOptions),
 				federation: isFederationRemote(updated),
+				keepTurnsOnDisconnect: updated.keepTurnsOnDisconnect === true,
 			})
 		);
 		return;
@@ -252,6 +264,9 @@ export function updateSshRemote(remoteId: string, options: UpdateSshRemoteOption
 	}
 	if (!isFederationRemote(updated)) {
 		console.log(`  Federation: off`);
+	}
+	if (updated.keepTurnsOnDisconnect) {
+		console.log(`  Keep turns: on`);
 	}
 	if (options.setDefault) {
 		console.log(`  Set as default`);

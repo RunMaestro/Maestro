@@ -20,6 +20,8 @@ interface CreateSshRemoteOptions {
 	setDefault?: boolean;
 	/** `on` / `off`: Federation for this remote; `off` is the only value stored */
 	federation?: string;
+	/** `on` / `off`: keep turns running when the connection drops; only `on` is stored */
+	keepTurns?: string;
 	json?: boolean;
 }
 
@@ -82,9 +84,15 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 	}
 
 	let federation: boolean | undefined;
-	if (options.federation !== undefined) {
+	let keepTurnsOnDisconnect = false;
+	if (options.federation !== undefined || options.keepTurns !== undefined) {
 		try {
-			federation = parseCliBool(options.federation, '--federation');
+			if (options.federation !== undefined) {
+				federation = parseCliBool(options.federation, '--federation');
+			}
+			if (options.keepTurns !== undefined) {
+				keepTurnsOnDisconnect = parseCliBool(options.keepTurns, '--keep-turns');
+			}
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
 			if (options.json) {
@@ -111,6 +119,8 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		// Stored only when on, so a remote that never opted in carries no trace.
 		// Federation is opportunistic: only an opt-out is stored.
 		federation: federationFieldFor(federation !== false),
+		// Off by default, and stored only when on.
+		keepTurnsOnDisconnect: keepTurnsOnDisconnect || undefined,
 	};
 
 	// Validate: name and host must be non-empty
@@ -152,6 +162,7 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 				name: config.name,
 				host: config.host,
 				federation: isFederationRemote(config),
+				keepTurnsOnDisconnect: config.keepTurnsOnDisconnect === true,
 			})
 		);
 	} else {
@@ -168,6 +179,9 @@ export function createSshRemote(name: string, options: CreateSshRemoteOptions): 
 		}
 		if (!isFederationRemote(config)) {
 			console.log(`  Federation: off`);
+		}
+		if (config.keepTurnsOnDisconnect) {
+			console.log(`  Keep turns: on`);
 		}
 		if (options.setDefault) {
 			console.log(`  Set as default`);

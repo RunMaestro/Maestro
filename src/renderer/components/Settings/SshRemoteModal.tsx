@@ -128,6 +128,8 @@ export function SshRemoteModal({
 	const [sshConfigHost, setSshConfigHost] = useState<string | undefined>(undefined);
 	// Federation is opportunistic: on unless the remote opted out.
 	const [federation, setFederation] = useState(true);
+	// Off by default: a turn ends with the ssh channel, as it always has.
+	const [keepTurnsOnDisconnect, setKeepTurnsOnDisconnect] = useState(false);
 
 	// SSH config state
 	const [sshConfigHosts, setSshConfigHosts] = useState<SshConfigHost[]>([]);
@@ -262,6 +264,7 @@ export function SshRemoteModal({
 				setUseSshConfig(initialConfig.useSshConfig || false);
 				setSshConfigHost(initialConfig.sshConfigHost);
 				setFederation(isFederationRemote(initialConfig));
+				setKeepTurnsOnDisconnect(initialConfig.keepTurnsOnDisconnect === true);
 			} else {
 				// Reset to defaults for new config
 				setName('');
@@ -279,6 +282,7 @@ export function SshRemoteModal({
 				setUseSshConfig(false);
 				setSshConfigHost(undefined);
 				setFederation(true);
+				setKeepTurnsOnDisconnect(false);
 			}
 			setError(null);
 			setTestResult(null);
@@ -335,6 +339,8 @@ export function SshRemoteModal({
 			sshConfigHost,
 			// Only an opt-out is stored.
 			federation: federationFieldFor(federation),
+			// Stored only when on, so a remote that never opted in carries no trace.
+			keepTurnsOnDisconnect: keepTurnsOnDisconnect || undefined,
 		};
 	}, [
 		initialConfig,
@@ -349,6 +355,7 @@ export function SshRemoteModal({
 		useSshConfig,
 		sshConfigHost,
 		federation,
+		keepTurnsOnDisconnect,
 	]);
 
 	// Handle selecting an SSH config host
@@ -831,6 +838,15 @@ export function SshRemoteModal({
 					checked={federation}
 					onChange={setFederation}
 					testId="ssh-remote-federation-toggle"
+				/>
+
+				<SwitchRow
+					theme={theme}
+					label="Keep turns running when the connection drops"
+					description="A turn keeps running on the remote when the link is lost, and Maestro picks its output up again when the link is back. Off: a lost link ends the turn, as before."
+					checked={keepTurnsOnDisconnect}
+					onChange={setKeepTurnsOnDisconnect}
+					testId="ssh-remote-keep-turns-toggle"
 				/>
 			</div>
 		</Modal>

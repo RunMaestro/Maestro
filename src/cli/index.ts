@@ -3043,6 +3043,13 @@ const federationOption = (): Option =>
 		'Look for a Maestro host on this remote (on, the default) or never (off)'
 	);
 
+/** The SSH remote editor's "Keep turns running when the connection drops" switch. */
+const keepTurnsOption = (): Option =>
+	new Option(
+		'--keep-turns <on|off>',
+		'Keep a turn running on this remote when the connection drops, and pick it up again (off, the default)'
+	);
+
 // Create SSH remote command - add a new SSH remote configuration
 program
 	.command('create-ssh-remote <name>')
@@ -3069,6 +3076,7 @@ program
 	.option('--ssh-config', 'Use ~/.ssh/config for connection settings (host becomes Host pattern)')
 	.option('--disabled', 'Create in disabled state')
 	.addOption(federationOption())
+	.addOption(keepTurnsOption())
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(createSshRemote);
@@ -3123,6 +3131,7 @@ program
 	.option('--ssh-config <bool>', 'Use ~/.ssh/config for connection settings (true/false)')
 	.option('--enabled <bool>', 'Enable or disable this remote (true/false)')
 	.addOption(federationOption())
+	.addOption(keepTurnsOption())
 	.option('--set-default', 'Set as the global default SSH remote')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(updateSshRemote);

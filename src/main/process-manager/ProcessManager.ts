@@ -346,10 +346,14 @@ export class ProcessManager extends EventEmitter {
 				//
 				// SDK-backed turns have no OS child of their own, so a liveness probe
 				// would be meaningless (and could match an unrelated recycled PID);
-				// they keep the strict refusal.
+				// they keep the strict refusal. So does a durable SSH turn: its agent
+				// runs on the remote, and one restored at launch has no ssh yet (D4).
 				const nodeObservedExit = existing.childProcess !== undefined && !childProcessRunning;
 				const isStaleEntry =
-					!nodeObservedExit && existing.sdkController === undefined && !isPidAlive(existing.pid);
+					!nodeObservedExit &&
+					existing.sdkController === undefined &&
+					existing.durableSshTurn !== true &&
+					!isPidAlive(existing.pid);
 
 				if (!isStaleEntry) {
 					logger.warn(
@@ -817,6 +821,10 @@ export class ProcessManager extends EventEmitter {
 				this.signalRemote(sessionId, process, 'interrupt');
 				this.scheduleRemoteTerminate(sessionId, process, process.childProcess);
 				return true;
+			} else if (process.stopPendingDurableTurn) {
+				// A durable SSH turn restored at launch that has not reattached yet.
+				process.stopPendingDurableTurn('interrupt');
+				return true;
 			}
 			return false;
 		} catch (error) {
@@ -867,6 +875,8 @@ export class ProcessManager extends EventEmitter {
 		const proc = this.processes.get(sessionId);
 		if (!proc) return this.copilotSdkSpawner.closeSession(sessionId);
 
+		// A Stop the user pressed before this kill: a quit must not keep that turn.
+		const stoppedBefore = proc.interrupted === true;
 		// A kill is a stop Maestro asked for (a closed tab, the Process Monitor, a
 		// watchdog), so the exit it causes is not a crash. The resolver reads any
 		// signal it is not told about as an outside kill, which it is not here.
@@ -900,7 +910,12 @@ export class ProcessManager extends EventEmitter {
 					}
 				);
 			} else if (proc.childProcess) {
-				this.signalRemote(sessionId, proc, 'terminate');
+				// The app quitting leaves a durable SSH turn running on its remote
+				// and records it for the next launch; only the local ssh goes. A
+				// turn the user already stopped is not kept: it is reaped as a close.
+				if (shutdown && proc.detachDurableTurn && !stoppedBefore) proc.detachDurableTurn();
+				else if (proc.reapDurableTurn) proc.reapDurableTurn();
+				else this.signalRemote(sessionId, proc, 'terminate');
 				stopProcess(
 					{ child: proc.childProcess },
 					{
@@ -914,6 +929,9 @@ export class ProcessManager extends EventEmitter {
 						label: 'kill',
 					}
 				);
+			} else if (proc.stopPendingDurableTurn) {
+				// A durable SSH turn restored at launch that has not reattached yet.
+				proc.stopPendingDurableTurn(shutdown ? 'shutdown' : 'kill');
 			}
 			this.processes.delete(sessionId);
 			return true;
@@ -950,6 +968,12 @@ export class ProcessManager extends EventEmitter {
 				sessionId,
 				...(proc.sshRemotePromptArtifactPath !== undefined
 					? { promptArtifactPath: proc.sshRemotePromptArtifactPath }
+					: {}),
+				// A durable turn's Stop reaches its agent through the record in its
+				// dir, which outlives the day-old pid sweep. The dir itself is the
+				// settle's reap to remove, never a Stop's.
+				...(mode === 'interrupt' && proc.durableTurnDir !== undefined
+					? { turnDir: proc.durableTurnDir }
 					: {}),
 			},
 			mode
@@ -1008,6 +1032,20 @@ export class ProcessManager extends EventEmitter {
 			});
 		});
 	}
+	/**
+	 * Register the durable SSH turns the last run of the app left running at
+	 * quit. Their tabs read busy at once; {@link startRestoredDurableTurns}
+	 * reattaches them. Returns how many were restored.
+	 */
+	restoreRecordedDurableTurns(): number {
+		return this.childProcessSpawner.restoreRecordedDurableTurns();
+	}
+
+	/** Reattach the restored durable SSH turns, once a renderer can hear them. */
+	startRestoredDurableTurns(): void {
+		this.childProcessSpawner.startRestoredDurableTurns();
+	}
+
 	/** Stop every active turn for an agent and dispose retained native runtimes. */
 	closeAgent(agentId: string): void {
 		for (const proc of [...this.processes.values()]) {

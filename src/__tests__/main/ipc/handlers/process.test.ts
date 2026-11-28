@@ -441,6 +441,7 @@ describe('process IPC handlers', () => {
 			resize: vi.fn(),
 			getAll: vi.fn().mockReturnValue([]),
 			get: vi.fn(),
+			startRestoredDurableTurns: vi.fn(),
 			on: vi.fn(),
 			off: vi.fn(),
 			runCommand: vi.fn(),
@@ -3262,6 +3263,27 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:getActiveProcesses', () => {
+		it('starts the durable SSH turns restored from the last run once a renderer asks, after it answers', async () => {
+			// A terminal whose child lookup is slow: the answer is not built yet.
+			let finishLookup!: (children: never[]) => void;
+			vi.mocked(getChildProcesses).mockImplementationOnce(
+				() => new Promise((resolve) => (finishLookup = resolve))
+			);
+			mockProcessManager.getAll.mockReturnValue([
+				{ sessionId: 'agent-1-terminal-1', toolType: 'terminal', pid: 77, isTerminal: true },
+			]);
+			const handler = handlers.get('process:getActiveProcesses')!;
+			const answer = handler({}, {});
+			await new Promise((resolve) => setImmediate(resolve));
+			await new Promise((resolve) => setImmediate(resolve));
+			expect(mockProcessManager.startRestoredDurableTurns).not.toHaveBeenCalled();
+			finishLookup([]);
+			const result = await answer;
+			expect(result).toEqual([expect.objectContaining({ sessionId: 'agent-1-terminal-1' })]);
+			await new Promise((resolve) => setImmediate(resolve));
+			expect(mockProcessManager.startRestoredDurableTurns).toHaveBeenCalledOnce();
+		});
+
 		it('reattaches queued and running Host Relay turns and stops them by real tab identity', async () => {
 			writerGate.enabled = true;
 			let owner: any = {

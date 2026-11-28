@@ -164,4 +164,19 @@ describe('list-ssh-remotes command', () => {
 			expect(JSON.parse(consoleSpy.mock.calls[2][0]).federation).toBe(false);
 		});
 	});
+
+	describe('keepTurnsOnDisconnect field', () => {
+		it('reports the switch off unless the remote turned it on', () => {
+			vi.mocked(readSshRemotes).mockReturnValue([
+				mockRemote({ id: 'r1' }),
+				mockRemote({ id: 'r2', keepTurnsOnDisconnect: true }),
+			]);
+			vi.mocked(readSettingValue).mockReturnValue(null);
+
+			listSshRemotes({ json: true });
+
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).keepTurnsOnDisconnect).toBe(false);
+			expect(JSON.parse(consoleSpy.mock.calls[1][0]).keepTurnsOnDisconnect).toBe(true);
+		});
+	});
 });

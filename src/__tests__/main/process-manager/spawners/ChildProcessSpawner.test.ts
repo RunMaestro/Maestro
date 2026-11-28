@@ -136,6 +136,23 @@ vi.mock('../../../../main/process-manager/utils/childProcessInfo', () => ({
 vi.mock('../../../../main/coworking/coworking-socket-path', () => ({
 	getBridgeSocketPath: () => '/tmp/maestro-test-coworking.sock',
 }));
+// The restart record of durable SSH turns, in memory (the real one writes to userData).
+const durableRecords = vi.hoisted(() => new Map<string, any>());
+vi.mock('../../../../main/process-manager/durable-turn-records', () => ({
+	noteDurableTurn: vi.fn((record: any) => durableRecords.set(record.sessionId, record)),
+	forgetDurableTurn: vi.fn((sessionId: string, dir: string) => {
+		if (durableRecords.get(sessionId)?.dir === dir) durableRecords.delete(sessionId);
+	}),
+	updateDurableTurn: vi.fn((record: any) => {
+		if (durableRecords.get(record.sessionId)?.dir === record.dir)
+			durableRecords.set(record.sessionId, record);
+		return true;
+	}),
+	recordedDurableTurns: vi.fn(() => [...durableRecords.values()]),
+	// The timer is tested with the records; here a test calls its write itself.
+	keepDurableOffsetsCurrent: vi.fn(),
+}));
+import { keepDurableOffsetsCurrent } from '../../../../main/process-manager/durable-turn-records';
 import { isPidAlive } from '../../../../main/process-manager/utils/childProcessInfo';
 import { createOutputParser } from '../../../../main/parsers';
 import { isWindows } from '../../../../shared/platformDetection';
@@ -152,7 +169,15 @@ import * as turnRunner from '../../../../shared/maestro-lib/run/start-turn';
 import * as agentDefinitions from '../../../../main/agents/definitions';
 import * as sentry from '../../../../main/utils/sentry';
 import { POSIX_PROMPT_ARGV_MAX_BYTES } from '../../../../shared/maestro-lib/launch/prompt-delivery';
-import { __resetPendingRemoteReapsForTest } from '../../../../main/utils/ssh-remote-signal';
+import {
+	__resetPendingRemoteReapsForTest,
+	PRE_LAUNCH_REAP_REFUSED_EXIT_CODE,
+	reapRemoteAgent,
+	takePendingRemoteReaps,
+	withRemotePidRecord,
+} from '../../../../main/utils/ssh-remote-signal';
+import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
+import { DURABLE_STDOUT_START } from '../../../../shared/maestro-lib/control/ssh-durable-turn';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -230,6 +255,36 @@ describe('ChildProcessSpawner', () => {
 			close(0);
 			expect(cleanupTempFiles).toHaveBeenCalledTimes(1);
 			expect(successor.tempFiles).toEqual(['/tmp/new-prompt.md']);
+		});
+
+		it('never reclaims a durable SSH turn restored at launch: a second writer is refused until it settles', () => {
+			vi.mocked(isPidAlive).mockReturnValue(false);
+			durableRecords.set('test-session', {
+				sessionId: 'test-session',
+				toolType: 'claude-code',
+				cwd: '/tmp/test',
+				sshCommand: '/usr/bin/ssh',
+				sshArgs: ['me@host', '/bin/bash', '--norc', '--noprofile', '-s'],
+				dir: '/tmp/maestro-turn-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e',
+				pidFile: '/tmp/maestro-agent-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e.pid',
+				outOffset: 0,
+				errOffset: 0,
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				startTime: 1,
+			});
+			try {
+				const manager = new ProcessManager();
+				expect(manager.restoreRecordedDurableTurns()).toBe(1);
+				const restored = manager.get('test-session')!;
+				// No ssh yet and pid -1: the window before the reattach starts.
+				expect(restored.pid).toBe(-1);
+				expect(() => manager.spawn(createBaseConfig({ prompt: 'second writer' }))).toThrow();
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(manager.get('test-session')).toBe(restored);
+			} finally {
+				durableRecords.clear();
+			}
 		});
 	});
 
@@ -933,8 +988,9 @@ describe('ChildProcessSpawner', () => {
 				expect(launch.indexOf(orphanPidFile)).toBeLessThan(launch.indexOf(nextPidFile));
 				expect(launch.endsWith('exec codex exec --json\n')).toBe(true);
 
-				// Taken once: a third launch carries no reap.
+				// Confirmed by a launch that ended cleanly: a third launch carries no reap.
 				closeWith(0);
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalledTimes(2));
 				spawner.spawn(sshConfig());
 				const third = mockChildProcess.stdin.write.mock.calls[0][0] as string;
 				expect(third).not.toContain(orphanPidFile);
@@ -965,6 +1021,485 @@ describe('ChildProcessSpawner', () => {
 				expect(mockSpawn).toHaveBeenCalledTimes(1);
 			});
 		});
+	});
+
+	describe('durable SSH turns (keepTurnsOnDisconnect)', () => {
+		const SSH_ARGS = [
+			'-o',
+			'BatchMode=yes',
+			'user@host',
+			'/bin/bash',
+			'--norc',
+			'--noprofile',
+			'-s',
+		];
+		const SCRIPT = 'cd /project\nexec claude --print\n';
+		const sshConfig = (keep?: boolean) =>
+			createBaseConfig({
+				command: '/usr/bin/ssh',
+				args: SSH_ARGS,
+				sshStdinScript: SCRIPT,
+				...(keep === undefined ? {} : { sshKeepTurnsOnDisconnect: keep }),
+			});
+		const RS = '\x1e';
+		/** Each attempt's stdout marker, which comes before the agent's first byte. */
+		const OUT_START = DURABLE_STDOUT_START.toString('latin1');
+
+		function closeWith(child: any, code: number | null, signal: string | null = null) {
+			childHandlers(child).get('close')?.(code, signal);
+		}
+
+		afterEach(() => {
+			__resetPendingRemoteReapsForTest();
+		});
+
+		// D1: with the switch off, the wire is exactly today's.
+		it.each([undefined, false])("sends today's launch unchanged when the switch is %s", (keep) => {
+			const { processes, spawner } = createTestContext();
+			spawner.spawn(sshConfig(keep));
+			const pidFile = processes.get('test-session')!.sshRemotePidFile!;
+			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(written).toBe(withRemotePidRecord(SCRIPT, pidFile));
+			expect(written).not.toContain('maestro-turn-');
+		});
+
+		it("wraps today's launch, unchanged, in the durable envelope when the switch is on", () => {
+			const { processes, spawner } = createTestContext();
+			spawner.spawn(sshConfig(true));
+			const pidFile = processes.get('test-session')!.sshRemotePidFile!;
+			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(written).toMatch(/^\{\n/);
+			expect(written).toMatch(/d='\/tmp\/maestro-turn-[0-9a-f-]{36}'/);
+			expect(written.endsWith(`\n}\n${withRemotePidRecord(SCRIPT, pidFile)}`)).toBe(true);
+		});
+
+		it('leaves Codex on the plain launch while its host supervision would misread a reconnect', () => {
+			const { spawner } = createTestContext();
+			spawner.spawn({ ...sshConfig(true), toolType: 'codex', command: '/usr/bin/ssh' });
+			expect(mockChildProcess.stdin.write.mock.calls[0][0]).not.toContain('maestro-turn-');
+		});
+
+		// D4: a lost link does not settle the turn; the entry stays, so the tab
+		// stays busy and the queue waits. The reattach resumes from the offsets
+		// received, and the turn settles with the agent's own code.
+		it('keeps the turn through a lost link, reattaches from the offsets, and settles with the agent', async () => {
+			const { processes, spawner, emitter } = createTestContext();
+			const onExit = vi.fn();
+			const onData = vi.fn();
+			emitter.on('exit', onExit);
+			spawner.spawn(sshConfig(true));
+			const managed = processes.get('test-session')!;
+			const launch = mockChildProcess;
+			launch.stderr.emit('data', Buffer.from(`${RS}S\n`));
+			launch.stdout.emit('data', Buffer.from(OUT_START + 'first line\nsecond li'));
+			closeWith(launch, 255);
+
+			await new Promise((r) => setTimeout(r, 300));
+			expect(onExit).not.toHaveBeenCalled();
+			expect(processes.get('test-session')).toBe(managed);
+			expect(reapSpawns()).toHaveLength(0);
+
+			await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalledTimes(2), { timeout: 5000 });
+			const reattach = mockChildProcess;
+			expect(managed.childProcess).toBe(reattach);
+			const script = reattach.stdin.end.mock.calls[0]?.[0] ?? reattach.stdin.write.mock.calls[0][0];
+			expect(script).toContain(`o=${'first line\nsecond li'.length}; e=0`);
+			emitter.on('raw-stdout', onData);
+			reattach.stdout.emit('data', Buffer.from(OUT_START + 'ne\n'));
+			reattach.stderr.emit('data', Buffer.from(`${RS}S\n${RS}E0\n`));
+			closeWith(reattach, 0);
+
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+			expect(onExit.mock.calls[0].slice(0, 2)).toEqual(['test-session', 0]);
+			expect(onData).toHaveBeenCalledWith('test-session', 'ne\n');
+			// The settled turn's dir is removed on the host.
+			await vi.waitFor(() => expect(reapSpawns()).toHaveLength(1));
+			expect(reapSpawns()[0]).toMatch(/^d='\/tmp\/maestro-turn-[0-9a-f-]{36}'/);
+			expect(reapSpawns()[0]).toContain('rm -rf -- "$d"');
+		}, 10_000);
+
+		// D5: Stop while reconnecting settles the turn as stopped and hands the
+		// agent to the reap, which retries until the host answers.
+		it('a Stop while reconnecting settles the turn and reaps the agent with its dir', async () => {
+			const { processes, spawner, emitter } = createTestContext();
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			spawner.spawn(sshConfig(true));
+			const managed = processes.get('test-session')!;
+			mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n`));
+			closeWith(mockChildProcess, 255);
+			await new Promise((r) => setTimeout(r, 100));
+			managed.interrupted = true;
+
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalled(), { timeout: 2000 });
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			await vi.waitFor(() => expect(reapSpawns()).toHaveLength(1), { timeout: 5000 });
+			expect(reapSpawns()[0]).toContain('kill -TERM');
+			expect(reapSpawns()[0]).toContain(managed.sshRemotePidFile!);
+		}, 10_000);
+
+		it("registers a stopped turn's reap before the tab is released, so a send inside the grace runs it first", async () => {
+			const { processes, spawner, emitter } = createTestContext();
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			spawner.spawn(sshConfig(true));
+			const managed = processes.get('test-session')!;
+			mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n`));
+			managed.interrupted = true;
+			closeWith(mockChildProcess, null, 'SIGINT');
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+			// Still inside the Stop's grace: nothing sent to the host yet, but the
+			// next launch on this tab takes the reap and runs it before its agent.
+			expect(reapSpawns()).toHaveLength(0);
+			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([
+				expect.objectContaining({
+					pidFile: managed.sshRemotePidFile,
+					turnDir: expect.stringMatching(/^\/tmp\/maestro-turn-/),
+				}),
+			]);
+		});
+
+		it("runs an earlier turn's reap before staging, and keeps it pending when the launch never ran", async () => {
+			const { processes, spawner, emitter } = createTestContext();
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			const orphan = {
+				sshCommand: '/usr/bin/ssh',
+				sshArgs: SSH_ARGS,
+				pidFile: '/tmp/maestro-agent-22222222-2222-4222-8222-222222222222.pid',
+				sessionId: 'test-session',
+				turnDir: '/tmp/maestro-turn-22222222-2222-4222-8222-222222222222',
+			};
+			// An unreachable host keeps the orphan's reap pending, on its retry timer.
+			reapRemoteAgent(orphan, [60_000]);
+			childHandlers(mockSpawn.mock.results[0].value).get('exit')?.(255);
+			mockSpawn.mockClear();
+			spawner.spawn(sshConfig(true));
+			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			// The reap comes first, outside the envelope: a staging failure cannot skip it.
+			expect(written.indexOf(orphan.pidFile)).toBeGreaterThanOrEqual(0);
+			expect(written.indexOf(orphan.pidFile)).toBeLessThan(written.indexOf('\n{\n'));
+			// Still visible to a successor launch until this one confirms it ran.
+			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([
+				expect.objectContaining({ pidFile: orphan.pidFile }),
+			]);
+			// The host never ran the launch (no started marker): the reap goes back.
+			closeWith(mockChildProcess, 255);
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+			expect(processes.has('test-session')).toBe(false);
+			await vi.waitFor(() =>
+				expect(reapSpawns().some((script) => script.includes(orphan.pidFile))).toBe(true)
+			);
+		});
+
+		it('hands the carried reaps back when the host refused to start a second agent beside an earlier one', async () => {
+			const { spawner, emitter } = createTestContext();
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			const orphan = {
+				sshCommand: '/usr/bin/ssh',
+				sshArgs: SSH_ARGS,
+				pidFile: '/tmp/maestro-agent-33333333-3333-4333-8333-333333333333.pid',
+				sessionId: 'test-session',
+				turnDir: '/tmp/maestro-turn-33333333-3333-4333-8333-333333333333',
+			};
+			reapRemoteAgent(orphan, [60_000]);
+			childHandlers(mockSpawn.mock.results[0].value).get('exit')?.(255);
+			mockSpawn.mockClear();
+			// Switch off: today's launch, which still carries the earlier durable turn's reap.
+			spawner.spawn(sshConfig(false));
+			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(written).toContain(`exit ${PRE_LAUNCH_REAP_REFUSED_EXIT_CODE}`);
+			expect(written.indexOf(orphan.turnDir)).toBeLessThan(written.indexOf('exec claude'));
+			// Still visible to a successor launch until this one confirms it ran.
+			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([
+				expect.objectContaining({ pidFile: orphan.pidFile }),
+			]);
+			closeWith(mockChildProcess, PRE_LAUNCH_REAP_REFUSED_EXIT_CODE);
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+			await vi.waitFor(() =>
+				expect(reapSpawns().some((script) => script.includes(orphan.turnDir))).toBe(true)
+			);
+		});
+
+		it.each([
+			['its ssh never reached the host', 255, null],
+			['it was stopped before its script ran', null, 'SIGINT'],
+		] as const)(
+			"hands the carried reaps back when a plain launch's %s",
+			async (_why, code, signal) => {
+				const { spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				const orphan = {
+					sshCommand: '/usr/bin/ssh',
+					sshArgs: SSH_ARGS,
+					pidFile: '/tmp/maestro-agent-44444444-4444-4444-8444-444444444444.pid',
+					sessionId: 'test-session',
+					turnDir: '/tmp/maestro-turn-44444444-4444-4444-8444-444444444444',
+				};
+				reapRemoteAgent(orphan, [60_000]);
+				childHandlers(mockSpawn.mock.results[0].value).get('exit')?.(255);
+				mockSpawn.mockClear();
+				spawner.spawn(sshConfig(false));
+				// Still visible to a successor launch until this one confirms it ran.
+				expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([
+					expect.objectContaining({ pidFile: orphan.pidFile }),
+				]);
+				closeWith(mockChildProcess, code, signal);
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				await vi.waitFor(() =>
+					expect(reapSpawns().some((script) => script.includes(orphan.turnDir))).toBe(true)
+				);
+			}
+		);
+
+		it('a successor launched before a stopped launch settles still carries the earlier reap', () => {
+			const { processes, spawner } = createTestContext();
+			const orphan = {
+				sshCommand: '/usr/bin/ssh',
+				sshArgs: SSH_ARGS,
+				pidFile: '/tmp/maestro-agent-55555555-5555-4555-8555-555555555555.pid',
+				sessionId: 'test-session',
+				turnDir: '/tmp/maestro-turn-55555555-5555-4555-8555-555555555555',
+			};
+			reapRemoteAgent(orphan, [60_000]);
+			childHandlers(mockSpawn.mock.results[0].value).get('exit')?.(255);
+			mockSpawn.mockClear();
+			spawner.spawn(sshConfig(false));
+			const first = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(first).toContain(orphan.turnDir);
+			// Stopped and released before its ssh closed: the next send starts now.
+			processes.delete('test-session');
+			spawner.spawn(sshConfig(false));
+			const second = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(second).toContain(orphan.turnDir);
+			expect(second.indexOf(orphan.turnDir)).toBeLessThan(second.indexOf('exec claude'));
+		});
+
+		it('a closed durable turn forgets its record and registers its reap at once', () => {
+			const { processes, spawner } = createTestContext();
+			spawner.spawn(sshConfig(true));
+			const managed = processes.get('test-session')!;
+			mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n`));
+			expect(durableRecords.has('test-session')).toBe(true);
+			managed.reapDurableTurn!();
+			// A quit right behind the close finds nothing to restore.
+			expect(durableRecords.has('test-session')).toBe(false);
+			expect(reapSpawns()).toHaveLength(1);
+			expect(reapSpawns()[0]).toContain(managed.sshRemotePidFile!);
+			durableRecords.clear();
+		});
+
+		// Stage 4: the app quits mid-turn and the next launch picks the turn up.
+		describe('across an app restart', () => {
+			afterEach(() => durableRecords.clear());
+
+			it('records the turn at its start and forgets it once it settles', async () => {
+				const { processes, spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				spawner.spawn(sshConfig(true));
+				const managed = processes.get('test-session')!;
+				const record = durableRecords.get('test-session');
+				expect(record).toMatchObject({
+					sshCommand: '/usr/bin/ssh',
+					pidFile: managed.sshRemotePidFile,
+					outOffset: 0,
+					errOffset: 0,
+				});
+				expect(record.dir).toMatch(/^\/tmp\/maestro-turn-/);
+				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}E0\n`));
+				closeWith(mockChildProcess, 0);
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				expect(durableRecords.size).toBe(0);
+			});
+
+			it('rewrites the record with the offsets while the turn runs, so a crash resumes near the tab', () => {
+				const { spawner } = createTestContext();
+				spawner.spawn(sshConfig(true));
+				const [turn, from, write, isDetached] = vi
+					.mocked(keepDurableOffsetsCurrent)
+					.mock.calls.at(-1)!;
+				expect(from).toEqual({ outOffset: 0, errOffset: 0 });
+				expect(isDetached()).toBe(false);
+				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}D3\nabc\x1f`));
+				mockChildProcess.stdout.emit('data', Buffer.from(OUT_START + 'line one\nline tw'));
+				write(turn.restartOffsets());
+				expect(durableRecords.get('test-session')).toMatchObject({
+					outOffset: 'line one\n'.length,
+					errOffset: 3,
+				});
+			});
+
+			it('a quit detaches the turn: recorded at the last line end, not settled, not stopped on the host', async () => {
+				const { processes, spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				spawner.spawn(sshConfig(true));
+				const managed = processes.get('test-session')!;
+				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}D3\nabc\x1f`));
+				mockChildProcess.stdout.emit('data', Buffer.from(OUT_START + 'line one\nline tw'));
+				managed.detachDurableTurn!();
+				processes.delete('test-session');
+				closeWith(mockChildProcess, null, 'SIGTERM');
+				await new Promise((r) => setTimeout(r, 300));
+				expect(durableRecords.get('test-session')).toMatchObject({
+					outOffset: 'line one\n'.length,
+					errOffset: 3,
+				});
+				expect(onExit).not.toHaveBeenCalled();
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				expect(reapSpawns()).toHaveLength(0);
+			});
+
+			it('the next launch shows the turn busy at once, reattaches from its offsets, and settles with the agent', async () => {
+				const { processes, spawner, emitter } = createTestContext();
+				const dir = '/tmp/maestro-turn-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e';
+				const pidFile = '/tmp/maestro-agent-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e.pid';
+				durableRecords.set('agent-1-ai-tab-1', {
+					sessionId: 'agent-1-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/tmp/test',
+					sshCommand: '/usr/bin/ssh',
+					sshArgs: SSH_ARGS,
+					dir,
+					pidFile,
+					outOffset: 120,
+					errOffset: 4,
+					isStreamJsonMode: true,
+					isBatchMode: true,
+					tabId: 'tab-1',
+					startTime: 1,
+				});
+				const onExit = vi.fn();
+				const onData = vi.fn();
+				emitter.on('exit', onExit);
+				emitter.on('raw-stdout', onData);
+
+				expect(spawner.restoreRecordedDurableTurns()).toBe(1);
+				// Busy (and refusing a second writer) before anything reaches the host.
+				const managed = processes.get('agent-1-ai-tab-1')!;
+				expect(managed).toMatchObject({ sshRemotePidFile: pidFile, tabId: 'tab-1' });
+				expect(mockSpawn).not.toHaveBeenCalled();
+
+				const handled = vi.spyOn(StdoutHandler.prototype, 'handleData');
+				spawner.startRestoredDurableTurns();
+				spawner.startRestoredDurableTurns();
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				const script =
+					mockChildProcess.stdin.end.mock.calls[0]?.[0] ??
+					mockChildProcess.stdin.write.mock.calls[0][0];
+				expect(script).toContain(`d='${dir}'`);
+				// stdout from its first byte (the replay), stderr from its offset.
+				expect(script).toContain('o=0; e=4');
+				expect(managed.childProcess).toBe(mockChildProcess);
+
+				// The 120 bytes the tab already has rebuild the parser's state in a
+				// handler that emits nothing; only the rest reaches the tab.
+				const before = 'x'.repeat(119) + '\n';
+				mockChildProcess.stdout.emit('data', Buffer.from(OUT_START + before + 'rest\n'));
+				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}E0\n`));
+				closeWith(mockChildProcess, 0);
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				expect(onExit.mock.calls[0].slice(0, 2)).toEqual(['agent-1-ai-tab-1', 0]);
+				expect(onData.mock.calls).toEqual([['agent-1-ai-tab-1', 'rest\n']]);
+				const calls = handled.mock.calls.map((call, i) => ({
+					text: call[1],
+					handler: handled.mock.contexts[i],
+				}));
+				expect(calls.map((c) => c.text)).toEqual([before, 'rest\n']);
+				// Two handlers: the silent replay one, then the live one.
+				expect(calls[0].handler).not.toBe(calls[1].handler);
+				handled.mockRestore();
+				expect(durableRecords.size).toBe(0);
+				await vi.waitFor(() => expect(reapSpawns()).toHaveLength(1));
+				expect(reapSpawns()[0]).toContain(`d='${dir}'`);
+				expect(reapSpawns()[0]).toContain('rm -rf -- "$d"');
+			});
+
+			const restoredRecord = (dir = '/tmp/maestro-turn-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e') => ({
+				sessionId: 'agent-1-ai-tab-1',
+				toolType: 'claude-code',
+				cwd: '/tmp/test',
+				sshCommand: '/usr/bin/ssh',
+				sshArgs: SSH_ARGS,
+				dir,
+				pidFile: '/tmp/maestro-agent-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e.pid',
+				outOffset: 0,
+				errOffset: 0,
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				startTime: 1,
+			});
+
+			it('a restored turn closed before a renderer asked is forgotten and reaped at once, never reattached', async () => {
+				const { processes, spawner } = createTestContext();
+				durableRecords.set('agent-1-ai-tab-1', restoredRecord());
+				spawner.restoreRecordedDurableTurns();
+				processes.get('agent-1-ai-tab-1')!.stopPendingDurableTurn!('kill');
+				processes.delete('agent-1-ai-tab-1');
+				// Gone from the record now: a quit right after cannot bring it back.
+				expect(durableRecords.size).toBe(0);
+				await vi.waitFor(() => expect(reapSpawns()).toHaveLength(1));
+				expect(reapSpawns()[0]).toContain('kill -TERM');
+				spawner.startRestoredDurableTurns();
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+			});
+
+			it('a quit before a restored turn reattaches keeps its record and leaves its remote turn alone', () => {
+				const { processes, spawner } = createTestContext();
+				durableRecords.set('agent-1-ai-tab-1', restoredRecord());
+				spawner.restoreRecordedDurableTurns();
+				processes.get('agent-1-ai-tab-1')!.stopPendingDurableTurn!('shutdown');
+				processes.delete('agent-1-ai-tab-1');
+				// A late renderer query after the quit starts nothing.
+				spawner.startRestoredDurableTurns();
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(durableRecords.get('agent-1-ai-tab-1')).toMatchObject({ outOffset: 0 });
+				expect(
+					takePendingRemoteReaps('agent-1-ai-tab-1', '/usr/bin/ssh', restoredRecord().sshArgs)
+				).toEqual([]);
+			});
+
+			it('a Stop before a restored turn reattaches stops the agent, settles the turn, and never attaches', async () => {
+				const { processes, spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				durableRecords.set('agent-1-ai-tab-1', restoredRecord());
+				spawner.restoreRecordedDurableTurns();
+				const managed = processes.get('agent-1-ai-tab-1')!;
+				managed.interrupted = true;
+				managed.stopPendingDurableTurn!('interrupt');
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				expect(processes.has('agent-1-ai-tab-1')).toBe(false);
+				expect(durableRecords.size).toBe(0);
+				// SIGINT now, as a Stop asks; the reap (registered already) after the grace.
+				const interrupt = mockSpawn.mock.results
+					.map((r) => r.value.stdin.end.mock.calls[0]?.[0] as string | undefined)
+					.find((script) => script?.includes('kill -INT'));
+				expect(interrupt).toContain('/tmp/maestro-agent-0b5c6a52');
+				expect(interrupt).toContain(restoredRecord().dir);
+				expect(
+					takePendingRemoteReaps('agent-1-ai-tab-1', '/usr/bin/ssh', restoredRecord().sshArgs)
+				).toEqual([expect.objectContaining({ turnDir: restoredRecord().dir })]);
+				const spawnsBefore = mockSpawn.mock.calls.length;
+				spawner.startRestoredDurableTurns();
+				// No attach after the Stop: not even an ssh process.
+				expect(mockSpawn.mock.calls.length).toBe(spawnsBefore);
+				expect(reapSpawns()).toHaveLength(0);
+			});
+		});
+
+		/** The terminate scripts sent to the host (detached signal ssh processes). */
+		function reapSpawns(): string[] {
+			return mockSpawn.mock.results
+				.map((r) => r.value)
+				.filter((child) => child.stdin.end.mock.calls.length > 0)
+				.map((child) => child.stdin.end.mock.calls[0][0])
+				.filter((script): script is string => typeof script === 'string')
+				.filter((script) => script.includes('maestro-turn-') && script.includes('rm -rf'));
+		}
 	});
 
 	describe('local prompt-file sink', () => {

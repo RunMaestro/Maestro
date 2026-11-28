@@ -21,7 +21,11 @@ import {
 	__resetPendingRemoteReapsForTest,
 	buildPreLaunchReapScript,
 	buildRemoteSignalScript,
+	confirmCarriedRemoteReaps,
+	DURABLE_CLEANUP_FAILED_EXIT_CODE,
+	DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE,
 	newRemotePidFilePath,
+	newRemoteTurnDir,
 	reapRemoteAgent,
 	signalRemoteAgent,
 	sshConnectionArgs,
@@ -220,7 +224,7 @@ describe('reapRemoteAgent', () => {
 		children[1].emit('exit', 0);
 		vi.advanceTimersByTime(60_000);
 		expect(children).toHaveLength(2);
-		expect(takePendingRemoteReaps(target.sessionId)).toEqual([]);
+		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([]);
 	});
 
 	it('treats a timed-out signal ssh as unreached', () => {
@@ -237,19 +241,89 @@ describe('reapRemoteAgent', () => {
 		expect(children).toHaveLength(1);
 	});
 
-	it('gives up when every delay is spent', () => {
+	it('stops retrying when every delay is spent, but the next launch on the tab still carries it', () => {
 		reapRemoteAgent(target, [1_000]);
 		children[0].emit('exit', 255);
 		vi.advanceTimersByTime(1_000);
 		children[1].emit('exit', 255);
 		vi.advanceTimersByTime(60_000);
 		expect(children).toHaveLength(2);
-		expect(takePendingRemoteReaps(target.sessionId)).toEqual([]);
 		expect(logger.warn).toHaveBeenCalledWith(
 			'Gave up stopping a remote agent: its host never answered',
 			expect.any(String),
 			expect.objectContaining({ sessionId: target.sessionId })
 		);
+		// The agent may still run: a same-session launch must stop it first.
+		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([
+			target,
+		]);
+	});
+
+	it('never carries a given-up prompt-owner reap into a launch', () => {
+		const promptOwner = {
+			...target,
+			pidFile: newRemotePidFilePath(true),
+			promptArtifactPath: '/tmp/private-prompt-fixture.json',
+		};
+		reapRemoteAgent(promptOwner, []);
+		children[0].emit('exit', 255);
+		reapRemoteAgent(target, []);
+		children[1].emit('exit', 0);
+		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([]);
+	});
+
+	it('retries a durable terminate that could not prove its agent gone', () => {
+		const durable = { ...target, turnDir: newRemoteTurnDir() };
+		reapRemoteAgent(durable, [1_000]);
+		children[0].emit('exit', DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE);
+		vi.advanceTimersByTime(1_000);
+		expect(children).toHaveLength(2);
+		children[1].emit('exit', 0);
+		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([]);
+	});
+
+	it('retries a durable cleanup whose agent is gone but whose dir could not be removed', () => {
+		const durable = { ...target, turnDir: newRemoteTurnDir() };
+		reapRemoteAgent(durable, [1_000]);
+		children[0].emit('exit', DURABLE_CLEANUP_FAILED_EXIT_CODE);
+		vi.advanceTimersByTime(1_000);
+		expect(children).toHaveLength(2);
+	});
+
+	it('carries a same-host reap when only other ssh options changed between turns', () => {
+		const before = {
+			...target,
+			sshArgs: ['-o', 'ServerAliveInterval=30', '-p', '2222', 'u@h', ...STDIN_SHELL],
+		};
+		reapRemoteAgent(before, [1_000]);
+		children[0].emit('exit', 255);
+		const now = ['-o', 'ServerAliveInterval=60', '-p', '2222', 'u@h', ...STDIN_SHELL];
+		expect(
+			takePendingRemoteReaps(target.sessionId, 'ssh', ['-p', '2200', 'u@h', ...STDIN_SHELL])
+		).toEqual([]);
+		expect(takePendingRemoteReaps(target.sessionId, 'ssh', now)).toEqual([before]);
+	});
+
+	it('carries only the reaps of the endpoint the launch reaches', () => {
+		const hostB = {
+			...target,
+			pidFile: '/tmp/maestro-agent-b.pid',
+			sshArgs: ['u@b', ...STDIN_SHELL],
+		};
+		reapRemoteAgent(target, [1_000]);
+		reapRemoteAgent(hostB, [1_000]);
+		for (const child of children) child.emit('exit', 255);
+		expect(takePendingRemoteReaps(target.sessionId, 'ssh', ['u@b', ...STDIN_SHELL])).toEqual([
+			hostB,
+		]);
+		confirmCarriedRemoteReaps([hostB]);
+		expect(takePendingRemoteReaps(target.sessionId, 'ssh', ['u@b', ...STDIN_SHELL])).toEqual([]);
+		// Host A's reap stays with its own retry loop.
+		vi.advanceTimersByTime(1_000);
+		expect(children).toHaveLength(3);
+		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([
+			target,
+		]);
 	});
 
 	it('hands a pending reap to the next launch and stops retrying it', () => {
@@ -268,11 +342,18 @@ describe('reapRemoteAgent', () => {
 		reapRemoteAgent(otherTab, [1_000]);
 		for (const child of children) child.emit('exit', 255);
 
-		expect(takePendingRemoteReaps(target.sessionId)).toEqual([target]);
-		expect(takePendingRemoteReaps(target.sessionId)).toEqual([]);
+		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([
+			target,
+		]);
+		// Until the launch confirms it ran, a successor launch still carries it.
+		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([
+			target,
+		]);
+		confirmCarriedRemoteReaps([target]);
+		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([]);
 
 		vi.advanceTimersByTime(1_000);
-		// The taken reap is gone; the prompt owner and the other tab still retry.
+		// The taken reap no longer retries; the prompt owner and the other tab still do.
 		expect(children).toHaveLength(5);
 	});
 
