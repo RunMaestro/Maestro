@@ -2,16 +2,19 @@
  * Automatic Federation: the desktop's coordinator that turns "Federation is possible here" into
  * "it is done", and says plainly when it cannot.
  *
- * Every pass, one remote and one agent at a time:
+ * It runs only while hosted agents are on (the gate in `src/main/ipc/handlers/federation.ts`). With
+ * automatic moves off it only reports: no pass ever changes a remote (no host start, no service
+ * registration, no install or upgrade). Those run only when a person asks (Move to Host, Start
+ * Host, `maestro-cli remote-host`). With automatic moves on (an explicit opt-in), every pass, one
+ * remote and one agent at a time:
  *
  * 1. **Keep hosts running.** A remote whose `maestro-cli` is installed but whose host is down gets
  *    its host started (through its service when it has one). A connected remote gets its service
- *    registered once per app run, so the host comes back after a reboot. Both happen whether or
- *    not automatic moves are on.
- * 2. **Install where it is needed.** With automatic moves on, a remote with no `maestro-cli`, or
- *    one too old to run a host, that has at least one SSH agent gets this app's CLI, its service,
- *    and a running host. A remote with no SSH agent is left alone: nothing asked for a host there.
- * 3. **Move SSH agents onto their host**, with automatic moves on, once every sanity check passes:
+ *    registered once per app run, so the host comes back after a reboot.
+ * 2. **Install where it is needed.** A remote with no `maestro-cli`, or one too old to run a host,
+ *    that has at least one SSH agent gets this app's CLI, its service, and a running host. A
+ *    remote with no SSH agent is left alone: nothing asked for a host there.
+ * 3. **Move SSH agents onto their host** once every sanity check passes:
  *    - the record may be lifted at all (`runLift()`'s own refusals, through a dry run);
  *    - no turn is running (else `waiting`, and it moves on a later pass);
  *    - the host can run the agent's provider (`providers.list()` on the host), unless the agent
@@ -344,7 +347,7 @@ export class AutoFederationCoordinator {
 				}
 				continue;
 			}
-			const ready = await this.ensureHost(remote, agents.length > 0 && autoMove);
+			const ready = await this.ensureHost(remote, autoMove, agents.length > 0);
 			for (const agent of agents) {
 				if (this.stopped) return;
 				// The person moved it back from its host: leave it an SSH agent.
@@ -361,7 +364,7 @@ export class AutoFederationCoordinator {
 					this.setAgent(agent, remote.id, {
 						state: 'manual',
 						reason: 'Automatic moves are off.',
-						fix: 'Right-click the agent > Move to Host, or turn on "Move SSH agents to their host automatically" in Settings > SSH Hosts.',
+						fix: 'Right-click the agent > Move to Host.',
 					});
 					continue;
 				}
@@ -389,11 +392,21 @@ export class AutoFederationCoordinator {
 
 	/**
 	 * Make sure `remote` runs a connected host when it should. Returns true when the mirror is
-	 * connected to it after this call.
+	 * connected to it after this call. With automatic moves off it changes nothing on the remote:
+	 * it only reports what it sees.
 	 */
-	private async ensureHost(remote: SshRemoteConfig, hostWanted: boolean): Promise<boolean> {
+	private async ensureHost(
+		remote: SshRemoteConfig,
+		autoMove: boolean,
+		hasSshAgents: boolean
+	): Promise<boolean> {
 		const peer = this.deps.peers().find((candidate) => candidate.remoteId === remote.id);
 		const connection = peer?.connection;
+
+		if (!autoMove) {
+			this.reportHost(remote, connection, peer?.error);
+			return connection === 'connected';
+		}
 
 		if (connection === 'connected') {
 			// Once per app run: make sure the host comes back after a reboot. A failed attempt stays
@@ -409,13 +422,12 @@ export class AutoFederationCoordinator {
 			return this.isConnected(remote.id);
 		}
 
-		// The CLI is there but no host runs: start it (A2), whatever automatic moves say.
+		// The CLI is there but no host runs: start it (A2).
 		const startWanted = connection === 'host-down';
 		// No CLI, or one too old to run a host: install this app's only where an SSH agent wants a
-		// host and automatic moves are on. An outdated CLI runs no host this app can reach, so the
-		// upgrade interrupts nothing.
+		// host. An outdated CLI runs no host this app can reach, so the upgrade interrupts nothing.
 		const needsInstall = connection === 'not-installed' || connection === 'outdated';
-		const installWanted = needsInstall && hostWanted;
+		const installWanted = needsInstall && hasSshAgents;
 		if (!startWanted && !installWanted) {
 			if (connection === 'not-installed') {
 				this.setRemote(remote, {
@@ -444,6 +456,49 @@ export class AutoFederationCoordinator {
 		if (this.setupBackingOff(remote)) return false;
 		await this.runSetup(remote, false);
 		return this.isConnected(remote.id);
+	}
+
+	/**
+	 * Automatic moves are off: say what the remote has, and change nothing there. A host that is
+	 * down or a CLI that is missing or too old stays so until a person starts or installs it.
+	 */
+	private reportHost(
+		remote: SshRemoteConfig,
+		connection: MirrorPeerSummary['connection'] | undefined,
+		error: string | undefined
+	): void {
+		const manual =
+			'Use Start Host (right-click one of its agents > Move to Host), or run maestro-cli remote-host install <ssh-remote> --start.';
+		if (connection === 'connected') {
+			this.setRemote(remote, { state: 'ready' });
+		} else if (connection === 'host-down') {
+			this.setRemote(remote, {
+				state: 'waiting',
+				reason:
+					'The Maestro host here is not running. Automatic moves are off, so Maestro does not start it.',
+				fix: manual,
+			});
+		} else if (connection === 'not-installed') {
+			this.setRemote(remote, { state: 'waiting', reason: 'No Maestro host here.' });
+		} else if (connection === 'outdated') {
+			this.setRemote(remote, {
+				state: 'waiting',
+				reason:
+					'The maestro-cli here is too old to run a host. Automatic moves are off, so Maestro does not upgrade it.',
+				fix: manual,
+			});
+		} else if (
+			connection === undefined ||
+			connection === 'connecting' ||
+			connection === 'reconnecting'
+		) {
+			this.setRemote(remote, { state: 'waiting', reason: 'Checking the remote for a host.' });
+		} else {
+			this.setRemote(remote, {
+				state: 'waiting',
+				reason: error ?? `The remote is not reachable right now (${connection}).`,
+			});
+		}
 	}
 
 	/** A setup of this remote failed recently, against the same remote record. */
@@ -635,7 +690,7 @@ export class AutoFederationCoordinator {
 			this.setAgent(agent, remote.id, {
 				state: 'manual',
 				reason: 'Automatic moves are off.',
-				fix: 'Right-click the agent > Move to Host, or turn on "Move SSH agents to their host automatically" in Settings > SSH Hosts.',
+				fix: 'Right-click the agent > Move to Host.',
 			});
 			return;
 		}

@@ -238,13 +238,40 @@ describe('AutoFederationCoordinator: an agent moved back from its host', () => {
 });
 
 describe('AutoFederationCoordinator: keeping hosts', () => {
-	it('starts a stopped host even with automatic moves off, and leaves the agents manual', async () => {
-		const w = world({ autoMove: false, peers: [peer('r1', 'host-down')] });
+	it('starts a stopped host with automatic moves on', async () => {
+		const w = world({ peers: [peer('r1', 'host-down')] });
 		const snapshot = await w.coordinator.runNow({ force: false });
 		expect(w.deps.setupHost).toHaveBeenCalledWith('r1');
+		expect(snapshot.agents[0].state).toBe('moved');
+	});
+
+	it('with automatic moves off, changes nothing on any remote across three passes', async () => {
+		const w = world({
+			autoMove: false,
+			remotes: [remote('down'), remote('old'), remote('up')],
+			agents: [agent('a1', 'down'), agent('a2', 'old'), agent('a3', 'up')],
+			peers: [peer('down', 'host-down'), peer('old', 'outdated'), peer('up', 'connected')],
+		});
+		let snapshot = await w.coordinator.runNow();
+		for (let pass = 0; pass < 2; pass++) {
+			w.advance(SETUP_RETRY_MS + 1);
+			snapshot = await w.coordinator.runNow();
+		}
+		// No host start, no service registration, no install or upgrade, no move.
+		expect(w.deps.setupHost).not.toHaveBeenCalled();
 		expect(w.deps.lift).not.toHaveBeenCalled();
-		expect(snapshot.agents[0]).toMatchObject({ state: 'manual' });
-		expect(snapshot.agents[0].fix).toContain('Move to Host');
+		expect(w.deps.hostProviders).not.toHaveBeenCalled();
+		const byId = new Map(snapshot.remotes.map((status) => [status.remoteId, status]));
+		expect(byId.get('down')).toMatchObject({ state: 'waiting' });
+		expect(byId.get('down')?.reason).toContain('does not start it');
+		expect(byId.get('down')?.fix).toContain('Start Host');
+		expect(byId.get('old')?.reason).toContain('does not upgrade it');
+		expect(byId.get('up')).toMatchObject({ state: 'ready' });
+		for (const status of snapshot.agents) {
+			expect(status.state).toBe('manual');
+			// Never a prompt to turn automatic moves on.
+			expect(status.fix).not.toMatch(/turn on|automatically/i);
+		}
 	});
 
 	it('installs only where an SSH agent wants a host, and only with automatic moves on', async () => {

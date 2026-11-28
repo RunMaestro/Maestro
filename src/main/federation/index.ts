@@ -1,11 +1,12 @@
 /**
  * The Federation peer mirror's place in the main process: the one service instance, the runtime
- * that starts it at boot and stops it on quit, and the push channels.
+ * that starts it while hosted agents are on and stops it when they turn off or the app quits, and
+ * the push channels.
  *
- * Federation is always on and opportunistic: the service probes every enabled SSH remote that has
- * not opted out (`federation: false`), one at a time, and mirrors the ones that run a host. A
- * remote without a host is probed once and left alone until something changes (see
- * `PeerMirrorService`).
+ * Federation runs only while hosted agents are on (`followHostingSetting()`). Then the service
+ * probes every enabled SSH remote that has not opted out (`federation: false`), one at a time, and
+ * mirrors the ones that run a host. A remote without a host is probed once and left alone until
+ * something changes (see `PeerMirrorService`). Off, nothing of it runs and no remote is dialed.
  */
 
 import { getSshForwardManager } from '../../shared/maestro-lib/client/ssh-forward';
@@ -16,6 +17,7 @@ import { captureException } from '../utils/sentry';
 import type { SafeSendFn } from '../utils/safe-send';
 import { PeerMirrorService, type PeerMirrorServiceDeps } from './peer-mirror-service';
 import type { AutoFederationCoordinator } from './auto-federation';
+import { followHostingSetting, type HostingSetting } from './hosting-gate';
 
 export { PeerMirrorService } from './peer-mirror-service';
 
@@ -105,6 +107,16 @@ export function createFederationRuntime(deps: FederationRuntimeDeps): Federation
 				.catch((error) => void captureException(error, { operation: 'federation:stop' }));
 		},
 	};
+}
+
+/**
+ * The boot start site: build the runtime and run it only while hosted agents are on. Returns the
+ * dispose the app calls on quit (stops a running service).
+ */
+export function startFederationWhileHosting(
+	deps: FederationRuntimeDeps & { hosting: HostingSetting }
+): () => void {
+	return followHostingSetting(deps.hosting, createFederationRuntime(deps));
 }
 
 /** Test seam. */

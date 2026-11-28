@@ -10,6 +10,7 @@
  * - History entry writing
  */
 
+import { hostedAgentsEnabled } from '../../../shared/maestro-lib/agents/lift-pointer';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -540,6 +541,31 @@ describe('storage service', () => {
 			const result = readSettings();
 
 			expect(result).toEqual({});
+		});
+
+		it('reads hosted agents and automatic moves as off until the desktop ran the default-off migration', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({ federationHostedAgents: true, federationAutoMove: true, other: 1 })
+			);
+			const result = readSettings();
+			expect(result.federationHostedAgents).toBe(false);
+			expect(result.federationAutoMove).toBe(false);
+			expect(result.other).toBe(1);
+			// The send gates read the same answer.
+			expect(hostedAgentsEnabled(result)).toBe(false);
+		});
+
+		it('keeps an opt-in made after the migration', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				JSON.stringify({
+					federationHostedAgents: true,
+					federationAutoMove: true,
+					migration_federationHostingDefaultOffV1: true,
+				})
+			);
+			const result = readSettings();
+			expect(result.federationHostedAgents).toBe(true);
+			expect(result.federationAutoMove).toBe(true);
 		});
 	});
 
