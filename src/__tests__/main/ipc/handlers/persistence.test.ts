@@ -7411,6 +7411,65 @@ describe('persistence IPC handlers', () => {
 			]);
 		});
 
+		it('a refused save on an agent another writer edited during the flush takes back only its own fields (#2203)', async () => {
+			let stored: Array<Record<string, unknown>> = [
+				{ ...baseSession, name: 'Before', liftedTo: { peer: 'box', agentId: 'h1', at: 1 } },
+			];
+			mockSessionsStore.get.mockImplementation(
+				(_key: string, fallback: unknown) => stored ?? fallback
+			);
+			mockSessionsStore.set.mockImplementation((_key: string, value: typeof stored) => {
+				stored = value;
+			});
+			mockFlushSessionWrites.mockImplementationOnce(async () => {
+				// A plugin renames the agent the refused Move Back restore wrote.
+				stored = stored.map((s) => ({ ...s, name: 'Renamed by plugin' }));
+				throw Object.assign(new Error('ENOSPC: refused'), { code: 'ENOSPC' });
+			});
+			const returned = { id: 'q-home', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'hi' };
+			const handler = handlers.get('sessions:setMany')!;
+			expect(
+				await handler({} as any, [{ ...baseSession, name: 'Before', executionQueue: [returned] }])
+			).toBe(false);
+			expect(stored).toHaveLength(1);
+			expect(stored[0]).toMatchObject({
+				name: 'Renamed by plugin',
+				liftedTo: { peer: 'box', agentId: 'h1', at: 1 },
+			});
+			expect(stored[0].executionQueue ?? []).toEqual(
+				(baseSession as Record<string, unknown>).executionQueue ?? []
+			);
+		});
+
+		it('a refused save sends the queue frames that take its queue change back (#2203)', async () => {
+			const queued = { id: 'q-wait', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'wait' };
+			let stored: Array<Record<string, unknown>> = [{ ...baseSession, executionQueue: [queued] }];
+			mockSessionsStore.get.mockImplementation(
+				(_key: string, fallback: unknown) => stored ?? fallback
+			);
+			mockSessionsStore.set.mockImplementation((_key: string, value: typeof stored) => {
+				stored = value;
+			});
+			const frames: Array<Record<string, unknown>> = [];
+			Object.assign(mockWebServer, {
+				getWebClientCount: vi.fn().mockReturnValue(1),
+				broadcastToCliClients: vi.fn((message: Record<string, unknown>) => frames.push(message)),
+			});
+			mockFlushSessionWrites.mockRejectedValueOnce(
+				Object.assign(new Error('ENOSPC: refused'), { code: 'ENOSPC' })
+			);
+			const handler = handlers.get('sessions:setMany')!;
+			expect(await handler({} as any, [{ ...baseSession, executionQueue: [] }])).toBe(false);
+			// The save's frame said the queue emptied; the rollback's frame puts the item back.
+			await vi.waitFor(() => {
+				const whole = frames.filter((f) => f.type === 'queue_changed' && Array.isArray(f.items));
+				expect(whole.length).toBeGreaterThanOrEqual(2);
+				expect(whole[0].items).toEqual([]);
+				expect(whole.at(-1)!.items).toEqual([expect.objectContaining({ id: 'q-wait' })]);
+			});
+			expect(stored[0].executionQueue).toEqual([queued]);
+		});
+
 		it('does not acknowledge an unexpected deferred write failure', async () => {
 			const error = new Error('EIO: input/output error') as NodeJS.ErrnoException;
 			error.code = 'EIO';

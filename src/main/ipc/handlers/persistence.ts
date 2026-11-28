@@ -117,13 +117,30 @@ export function undoRefusedSessionsSave<T extends { id: string }>(
 ): T[] {
 	const previousById = new Map(previous.map((session) => [session.id, session]));
 	const writtenById = new Map(written.map((session) => [session.id, canonicalJson(session)]));
+	const writtenRecords = new Map(written.map((session) => [session.id, session]));
 	const result = current.flatMap((session) => {
 		const mine = writtenById.get(session.id);
-		if (!touchedIds.has(session.id) || mine === undefined || mine !== canonicalJson(session)) {
-			return [session];
-		}
+		if (!touchedIds.has(session.id) || mine === undefined) return [session];
 		const before = previousById.get(session.id);
-		return before ? [before] : [];
+		if (mine === canonicalJson(session)) return before ? [before] : [];
+		// Another writer changed this record since: take back only the fields this save wrote and
+		// nobody changed after it (a refused Move Back's `liftedTo` and queue), keep the rest.
+		if (!before) return [session];
+		const ours = writtenRecords.get(session.id) as Record<string, unknown>;
+		const prior = before as Record<string, unknown>;
+		const merged: Record<string, unknown> = { ...(session as Record<string, unknown>) };
+		for (const key of new Set([...Object.keys(ours), ...Object.keys(prior)])) {
+			const now = merged[key];
+			const wrote = ours[key];
+			const same =
+				now === undefined || wrote === undefined
+					? now === wrote
+					: canonicalJson(now) === canonicalJson(wrote);
+			if (!same) continue;
+			if (key in prior) merged[key] = prior[key];
+			else delete merged[key];
+		}
+		return [merged as T];
 	});
 	// What the save removed and no writer added back since, in its old place.
 	const present = new Set(current.map((session) => session.id));
@@ -1213,15 +1230,16 @@ export function registerPersistenceHandlers(
 					// either. A Move Back whose restore was refused releases the host's held
 					// messages; the record must not reach disk home afterwards (#2199).
 					if (storeChanged) {
-						sessionsStore.set(
-							'sessions',
-							undoRefusedSessionsSave(
-								sessionsStore.get('sessions', []),
-								previousSessions,
-								sessionsToPersist,
-								touchedIds
-							)
+						const refused = sessionsStore.get('sessions', []);
+						const restored = undoRefusedSessionsSave(
+							refused,
+							previousSessions,
+							sessionsToPersist,
+							touchedIds
 						);
+						sessionsStore.set('sessions', restored);
+						// The queue frames this save sent are taken back too.
+						broadcastDesktopQueueChanges(getWebServer(), refused, restored);
 					}
 					const code = (err as NodeJS.ErrnoException).code;
 					// Recoverable filesystem errors - the renderer still holds its
