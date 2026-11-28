@@ -154,6 +154,16 @@ describe('Stop Host and Remove Host', () => {
 		expect(removeHostConfirmMessage('NeeMAC')).toContain(
 			"keeps ~/.maestro/host.env, any maestro-cli Maestro did not install, and the host's data directory"
 		);
+		// Everything that goes, the boot service files included, and what --force does to agents.
+		expect(removeHostConfirmMessage('NeeMAC')).toContain(
+			'~/.config/systemd/user/maestro-host.service and its default.target.wants link'
+		);
+		expect(removeHostConfirmMessage('NeeMAC')).toContain(
+			'~/Library/LaunchAgents/sh.maestro.host.plist'
+		);
+		expect(removeHostConfirmMessage('NeeMAC')).toContain(
+			'removing it anyway leaves those agents behind on the remote, with no host to run them'
+		);
 		expect(stopRemoteHostFromWindow).not.toHaveBeenCalled();
 
 		fireEvent.click(within(dialog).getByText('Remove Host'));
@@ -186,7 +196,7 @@ describe('Stop Host and Remove Host', () => {
 			within(screen.getByRole('dialog', { name: 'Stop Host' })).getByText('Stop Host')
 		);
 		const again = await screen.findByText(
-			/holds 1 agent: "Backend"\. Nothing was changed\. Stop it anyway\?/
+			/holds 1 agent: "Backend"\. Nothing was changed\. Stopping it anyway leaves those agents behind on the remote until a host runs there again\. Stop it anyway\?/
 		);
 		expect(stopRemoteHostFromWindow).toHaveBeenLastCalledWith('1', {
 			uninstall: false,
@@ -203,6 +213,45 @@ describe('Stop Host and Remove Host', () => {
 			})
 		);
 		expect(await screen.findByTestId('ssh-remote-host-result')).toHaveTextContent('is stopped');
+	});
+
+	it('warns that removing anyway leaves the agents behind with no host to run them', async () => {
+		stopRemoteHostFromWindow.mockResolvedValueOnce({
+			ok: true,
+			outcome: 'agents-held',
+			message: 'The host on pedtome holds 1 agent: "Backend". Nothing was changed.',
+			agents: [{ id: 'a1', name: 'Backend' }],
+		});
+		render(<SshRemotesSection theme={theme} />);
+		fireEvent.click(within(rowOf('pedtome')).getByLabelText('Remove Host'));
+		fireEvent.click(
+			within(screen.getByRole('dialog', { name: 'Remove Host' })).getByText('Remove Host')
+		);
+		expect(
+			await screen.findByText(
+				/Removing it anyway leaves those agents behind on the remote, with no host to run them\. Remove it anyway\?/
+			)
+		).toBeInTheDocument();
+	});
+
+	it('shows a boot service that could not be disabled as a failure, and reloads the switch', async () => {
+		stopRemoteHostFromWindow.mockResolvedValue({
+			ok: false,
+			code: 'service-disable',
+			error: 'Its boot service could not be disabled, so the host comes back at the next boot.',
+			federationOff: true,
+		});
+		render(<SshRemotesSection theme={theme} />);
+		fireEvent.click(within(rowOf('HVM JR')).getByLabelText('Stop Host'));
+		fireEvent.click(
+			within(screen.getByRole('dialog', { name: 'Stop Host' })).getByText('Stop Host')
+		);
+		await waitFor(() =>
+			expect(screen.getByTestId('ssh-remote-host-result')).toHaveTextContent(
+				'comes back at the next boot'
+			)
+		);
+		expect(refresh).toHaveBeenCalled();
 	});
 
 	it('shows a failure on the row', async () => {

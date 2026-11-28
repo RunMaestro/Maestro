@@ -531,6 +531,7 @@ describe('maestro-cli remote-host', () => {
 				removed: [],
 				kept: [],
 				purged: false,
+				serviceLeftAtBoot: false,
 				warnings: [],
 				...overrides,
 			}) as RemoteHostStopResult;
@@ -577,6 +578,37 @@ describe('maestro-cli remote-host', () => {
 				expect.anything(),
 				expect.objectContaining({ force: true })
 			);
+		});
+
+		it('exits non-zero when the boot service could not be disabled: the host comes back at boot', async () => {
+			const deps = depsWith([]);
+			deps.stop.mockResolvedValue(
+				done({
+					serviceDisabled: false,
+					serviceLeftAtBoot: true,
+					warnings: [
+						'Its boot service could not be disabled, so the host comes back at the next boot.',
+					],
+				})
+			);
+			await remoteHostStop('r1', {}, deps);
+			expect(everything()).toContain('Service: NOT disabled: the host comes back at boot');
+			expect(everything()).toContain('comes back at the next boot');
+			expect(everything()).not.toContain('Host stopped on Build box');
+			expect(process.exitCode).toBe(ExitCode.GeneralError);
+		});
+
+		it('refuses a host it cannot tell from the desktop app without --force', async () => {
+			const deps = depsWith([]);
+			deps.stop.mockResolvedValue({
+				outcome: 'host-unknown',
+				survey: surveyOf({ host: 'unknown', pid: 812 }),
+			});
+			await remoteHostStop('r1', {}, deps);
+			expect(everything()).toContain('could not be told whether it is the desktop app');
+			expect(everything()).toContain('Stop it anyway with --force.');
+			expect(deps.writeRemotes).not.toHaveBeenCalled();
+			expect(process.exitCode).toBe(ExitCode.GeneralError);
 		});
 
 		it('says the desktop app is the host and that quitting it there stops it', async () => {

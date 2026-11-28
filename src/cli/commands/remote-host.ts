@@ -519,8 +519,11 @@ export function formatRemoteHostStop(
 	if (result.outcome !== 'done') {
 		lines.push(describeRemoteHostStop(remote, result, uninstall));
 		if (result.outcome === 'agents-held') {
-			lines.push('Move them back with `maestro-cli unlift <agent>`, or pass --force.');
+			lines.push(
+				'Move them back with `maestro-cli unlift <agent>`, or pass --force to leave them behind.'
+			);
 		}
+		if (result.outcome === 'host-unknown') lines.push('Stop it anyway with --force.');
 		return lines.join('\n');
 	}
 	lines.push(
@@ -528,7 +531,7 @@ export function formatRemoteHostStop(
 	);
 	if (result.survey.service.kind !== 'none') {
 		lines.push(
-			`Service: ${result.serviceDisabled ? 'disabled, so the host does not come back after a reboot' : colorize('yellow', 'not disabled')}`
+			`Service: ${result.serviceLeftAtBoot ? colorize('red', 'NOT disabled: the host comes back at boot') : result.serviceDisabled ? 'disabled, so the host does not come back after a reboot' : 'removed'}`
 		);
 	}
 	for (const item of result.removed) lines.push(`Removed: ${item}`);
@@ -572,6 +575,7 @@ async function runRemoteHostStop(
 		});
 		const refused =
 			result.outcome === 'desktop-host' ||
+			result.outcome === 'host-unknown' ||
 			result.outcome === 'agents-held' ||
 			result.outcome === 'purge-refused';
 		// Automatic Federation honors the remote's own switch: off, it never starts this host again.
@@ -580,6 +584,8 @@ async function runRemoteHostStop(
 		if (switched) deps.writeRemotes(switched);
 		// --purge-data that the last check on the remote turned down is not the success asked for.
 		const purgeKept = result.outcome === 'done' && options.purgeData === true && !result.purged;
+		// A boot service that could not be disabled brings the host back: a failure, not a stop.
+		const bootLeft = result.outcome === 'done' && result.serviceLeftAtBoot;
 		if (options.json) {
 			const { survey, ...rest } = result;
 			console.log(
@@ -600,7 +606,7 @@ async function runRemoteHostStop(
 				)
 			);
 		} else {
-			if (result.outcome === 'done') {
+			if (result.outcome === 'done' && !bootLeft) {
 				console.log(
 					formatSuccess(
 						uninstall
@@ -610,11 +616,11 @@ async function runRemoteHostStop(
 				);
 			}
 			const text = formatRemoteHostStop(remote, result, uninstall);
-			if (refused) console.error(text);
+			if (refused || bootLeft) console.error(text);
 			else console.log(text);
 			if (switched) console.log(federationTurnedOffNote(remote.name));
 		}
-		if (refused || purgeKept) process.exitCode = ExitCode.GeneralError;
+		if (refused || purgeKept || bootLeft) process.exitCode = ExitCode.GeneralError;
 	} catch (error) {
 		if (error instanceof RemoteHostStopError) {
 			const code = error.code === 'timeout' ? ExitCode.Timeout : ExitCode.GeneralError;

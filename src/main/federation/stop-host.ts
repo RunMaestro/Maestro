@@ -39,7 +39,13 @@ export type DesktopStopHostAnswer =
 			/** The remote's Federation switch was turned off, so nothing starts the host again. */
 			federationOff?: boolean;
 	  }
-	| { ok: false; code: string; error: string };
+	| {
+			ok: false;
+			code: string;
+			error: string;
+			/** The remote's Federation switch was turned off (the host stopped, its service did not). */
+			federationOff?: boolean;
+	  };
 
 export interface DesktopStopHostDeps {
 	readRemotes(): SshRemoteConfig[];
@@ -79,6 +85,17 @@ export async function stopHostFromDesktop(
 		result.outcome === 'done' ? withFederationOff(deps.readRemotes(), remote.id) : null;
 	if (switched) deps.writeRemotes(switched);
 	const message = describeRemoteHostStop(remote, result, uninstall);
+	// A host that comes back at boot is not the stop that was asked for, even with the host stopped now.
+	if (result.outcome === 'done' && result.serviceLeftAtBoot) {
+		return {
+			ok: false,
+			code: 'service-disable',
+			error: switched
+				? `${message} ${federationTurnedOffNote(remote.name || remote.host)}`
+				: message,
+			...(switched ? { federationOff: true } : {}),
+		};
+	}
 	return {
 		ok: true,
 		outcome: result.outcome,

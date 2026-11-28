@@ -40,6 +40,8 @@ beforeAll(() => {
 	tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-uninstall-'));
 });
 afterAll(() => {
+	// A locked `default.target.wants` would stop the cleanup.
+	spawnSync('chmod', ['-R', 'u+w', tmp]);
 	fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -71,6 +73,16 @@ interface RemoteSetup {
 	agentsAfterStop?: string;
 	/** The contents of `~/.maestro/host.env`. */
 	hostEnv?: string;
+	/** What `version --json` prints, in place of the headless or desktop answer. */
+	version?: string;
+	/** What `ps -o args= -p <pid>` prints for the host's pid. */
+	ps?: string;
+	/** No user bus: every `systemctl --user` call fails; `launchctl disable` fails. */
+	disableFails?: boolean;
+	/** The `default.target.wants` link `systemctl enable` made (Linux). */
+	wantsLink?: boolean;
+	/** The `default.target.wants` directory is read-only, so the link cannot be removed. */
+	wantsLocked?: boolean;
 }
 
 /** A fresh HOME and stub bin directory shaped like a remote Maestro set up. */
@@ -85,8 +97,13 @@ function makeRemote(setup: RemoteSetup): Remote {
 		});
 	};
 	stub(bin, 'uname', `[ "$1" = -s ] && echo ${setup.os} || echo x86_64`);
-	stub(bin, 'systemctl', 'case "$2" in is-enabled|is-active) exit 0;; *) exit 0;; esac');
-	stub(bin, 'launchctl', `case "$1" in print-disabled) exit 0;; print) exit 0;; *) exit 0;; esac`);
+	stub(bin, 'systemctl', setup.disableFails ? 'exit 1' : 'exit 0');
+	stub(
+		bin,
+		'launchctl',
+		`case "$1" in print-disabled) exit 0;; print) exit 0;; disable) exit ${setup.disableFails ? 1 : 0};; *) exit 0;; esac`
+	);
+	if (setup.ps !== undefined) stub(bin, 'ps', `printf '%s\\n' '${setup.ps}'`);
 	const state = path.join(home, 'host-running');
 	if (setup.running) fs.writeFileSync(state, '');
 	const agents = setup.agents === undefined ? '[]' : setup.agents;
@@ -95,7 +112,7 @@ function makeRemote(setup: RemoteSetup): Remote {
 	const launcher = [
 		`case "$1 $2" in`,
 		`  "host endpoint") if [ -f "${state}" ]; then printf '{\\n  "running": true,\\n  "port": 4100,\\n  "token": "${TOKEN}",\\n  "pid": 812\\n}\\n'; else echo '{ "running": false }'; fi;;`,
-		`  "version --json") ${setup.desktop ? `echo '{ "cliVersion": "1.1.2", "appRunning": true }'` : `echo '{ "cliVersion": "1.1.2", "appRunning": false, "hostKind": "headless", "hostPid": 812 }'`};;`,
+		`  "version --json") ${setup.version !== undefined ? `echo '${setup.version}'` : setup.desktop ? `echo '{ "cliVersion": "1.1.2", "appRunning": true }'` : `echo '{ "cliVersion": "1.1.2", "appRunning": false, "hostKind": "headless", "hostPid": 812 }'`};;`,
 		`  "list agents") ${agents === null ? 'exit 1' : `cat "${agentsFile}"`};;`,
 		`  "host stop") ${setup.stopFails ? 'echo "Error: work in flight (1 turn)" >&2; exit 5' : `rm -f "${state}";${setup.agentsAfterStop ? ` printf '%s\\n' '${setup.agentsAfterStop}' > "${agentsFile}";` : ''} echo "Host stopped (pid 812)."`};;`,
 		'esac',
@@ -120,6 +137,15 @@ function makeRemote(setup: RemoteSetup): Remote {
 			const dir = path.join(home, '.config', 'systemd', 'user');
 			fs.mkdirSync(dir, { recursive: true });
 			fs.writeFileSync(path.join(dir, 'maestro-host.service'), '[Unit]\n');
+			if (setup.wantsLink) {
+				const wants = path.join(dir, 'default.target.wants');
+				fs.mkdirSync(wants, { recursive: true });
+				fs.symlinkSync(
+					path.join(dir, 'maestro-host.service'),
+					path.join(wants, 'maestro-host.service')
+				);
+				if (setup.wantsLocked) fs.chmodSync(wants, 0o555);
+			}
 		} else {
 			const dir = path.join(home, 'Library', 'LaunchAgents');
 			fs.mkdirSync(dir, { recursive: true });
@@ -167,6 +193,7 @@ function execOn(r: Remote): RemoteExec & { scripts: string[] } {
 			? buildRemoteHostStopScript({
 					uninstall: wrapped.includes('UNINSTALL=1'),
 					purgeData: wrapped.includes('PURGE=1'),
+					force: wrapped.includes('FORCE=1'),
 				})
 			: buildRemoteHostSurveyScript({ agents: wrapped.includes('agents-begin') });
 		scripts.push(script);
@@ -526,6 +553,15 @@ describe('parseRemoteAgentList', () => {
 		expect(parseRemoteAgentList('Error: no data')).toBeNull();
 		expect(parseRemoteAgentList('[{"name":"no id"}]')).toBeNull();
 	});
+
+	it('drops control characters from what the remote sent, so a name cannot drive the terminal', () => {
+		expect(
+			parseRemoteAgentList('[{"id":"a1\\u0007","name":"Back\\u001b[2Jend\\r\\n\\u009b"}]')
+		).toEqual([{ id: 'a1', name: 'Back[2Jend' }]);
+		expect(parseRemoteAgentList('[{"id":"a1","name":"\\u001b\\u0007"}]')).toEqual([
+			{ id: 'a1', name: 'a1' },
+		]);
+	});
 });
 
 describe('ssh failures', () => {
@@ -635,4 +671,189 @@ describe('a run cut off part way', () => {
 		const cut = stdout.slice(0, stdout.indexOf('MAESTRO_HOST=data='));
 		expect(parseRemoteHostSurvey(cut)).toBeNull();
 	});
+});
+
+describe('a running host is asked for its agents', () => {
+	it.skipIf(!onPosix)(
+		'refuses without force when the host serves a data directory the guess missed',
+		async () => {
+			// No `data`: the directory the survey guesses is not there, but the host runs and holds one.
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				running: true,
+				service: true,
+				agents: '[{ "id": "a1", "name": "Backend" }]',
+			});
+			const exec = execOn(r);
+			const result = await stopRemoteHost(remote, { exec, sshPath: 'ssh' });
+			expect(result).toMatchObject({
+				outcome: 'agents-held',
+				agents: [{ id: 'a1', name: 'Backend' }],
+			});
+			expect(exec).toHaveBeenCalledTimes(1);
+			expect(fs.readFileSync(r.log, 'utf8')).not.toContain('host stop');
+		}
+	);
+
+	it.skipIf(!onPosix)(
+		'reads agents=unknown when the running host cannot list them, and refuses without force',
+		async () => {
+			const r = makeRemote({ os: 'Linux', installed: true, running: true, agents: null });
+			const exec = execOn(r);
+			expect(await stopRemoteHost(remote, { exec, sshPath: 'ssh' })).toMatchObject({
+				outcome: 'agents-held',
+				agents: 'unknown',
+			});
+			expect(fs.readFileSync(r.log, 'utf8')).not.toContain('host stop');
+			expect(
+				await stopRemoteHost(remote, { exec: execOn(r), sshPath: 'ssh', force: true })
+			).toMatchObject({ outcome: 'done', hostStopped: true });
+		}
+	);
+});
+
+describe('a boot service that could not be disabled', () => {
+	it.skipIf(!onPosix)(
+		'systemd with no user bus: removes the default.target.wants link and counts it disabled',
+		async () => {
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				running: true,
+				service: true,
+				wantsLink: true,
+				disableFails: true,
+			});
+			const survey = parseRemoteHostSurvey(runScript(r, buildRemoteHostSurveyScript()).stdout);
+			// `is-enabled` cannot answer with no bus; the link still says the unit starts at boot.
+			expect(survey?.service).toMatchObject({ kind: 'systemd', enabled: true });
+			const result = await stopRemoteHost(remote, { exec: execOn(r), sshPath: 'ssh' });
+			expect(result).toMatchObject({
+				outcome: 'done',
+				serviceDisabled: true,
+				serviceLeftAtBoot: false,
+			});
+			expect(
+				fs.existsSync(
+					path.join(
+						r.home,
+						'.config',
+						'systemd',
+						'user',
+						'default.target.wants',
+						'maestro-host.service'
+					)
+				)
+			).toBe(false);
+		}
+	);
+
+	it.skipIf(!onPosix || process.getuid?.() === 0)(
+		'systemd: a link that cannot be removed fails the stop and says the host comes back at boot',
+		async () => {
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				running: true,
+				service: true,
+				wantsLink: true,
+				wantsLocked: true,
+				disableFails: true,
+			});
+			const { stdout } = runScript(r, buildRemoteHostStopScript());
+			expect(stdout).toContain('MAESTRO_HOST=warn=service-disable-failed');
+			expect(stdout).toContain('MAESTRO_HOST=boot=on');
+			const result = await stopRemoteHost(remote, { exec: execOn(r), sshPath: 'ssh' });
+			expect(result).toMatchObject({
+				outcome: 'done',
+				serviceDisabled: false,
+				serviceLeftAtBoot: true,
+			});
+			if (result.outcome === 'done') {
+				expect(result.warnings.join(' ')).toMatch(/comes back at the next boot/);
+			}
+		}
+	);
+
+	it.skipIf(!onPosix)(
+		'launchd: a failed disable leaves the host at login on stop; uninstall removes the plist',
+		async () => {
+			const r = makeRemote({
+				os: 'Darwin',
+				installed: true,
+				running: true,
+				service: true,
+				disableFails: true,
+			});
+			const stopped = await stopRemoteHost(remote, { exec: execOn(r), sshPath: 'ssh' });
+			expect(stopped).toMatchObject({ outcome: 'done', serviceLeftAtBoot: true });
+			if (stopped.outcome === 'done') {
+				expect(stopped.warnings.join(' ')).toMatch(/comes back at the next login/);
+			}
+
+			const removed = await stopRemoteHost(remote, {
+				exec: execOn(r),
+				sshPath: 'ssh',
+				uninstall: true,
+			});
+			expect(removed).toMatchObject({ outcome: 'done', serviceLeftAtBoot: false });
+			expect(exists(r, 'Library', 'LaunchAgents', 'sh.maestro.host.plist')).toBe(false);
+		}
+	);
+});
+
+describe('a running host whose CLI does not say what it is', () => {
+	const noKind = '{ "cliVersion": "1.1.1" }';
+
+	it.skipIf(!onPosix)('is a headless host when its process is maestro-cli', async () => {
+		const r = makeRemote({
+			os: 'Linux',
+			installed: true,
+			running: true,
+			service: true,
+			version: noKind,
+			ps: '/usr/bin/node /home/u/.maestro/cli/maestro-cli.js host start --foreground',
+		});
+		const survey = parseRemoteHostSurvey(runScript(r, buildRemoteHostSurveyScript()).stdout);
+		expect(survey?.host).toBe('headless');
+		expect(await stopRemoteHost(remote, { exec: execOn(r), sshPath: 'ssh' })).toMatchObject({
+			outcome: 'done',
+			hostStopped: true,
+		});
+	});
+
+	it.skipIf(!onPosix)('is the desktop app when its process is the app', () => {
+		const r = makeRemote({
+			os: 'Linux',
+			installed: true,
+			running: true,
+			version: noKind,
+			ps: '/opt/Maestro/maestro --no-sandbox',
+		});
+		const survey = parseRemoteHostSurvey(runScript(r, buildRemoteHostSurveyScript()).stdout);
+		expect(survey?.host).toBe('desktop');
+	});
+
+	it.skipIf(!onPosix)(
+		'is unknown otherwise: never taken for the desktop app, stopped only with force',
+		async () => {
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				running: true,
+				service: true,
+				version: noKind,
+				ps: 'something-else',
+			});
+			const exec = execOn(r);
+			expect(await stopRemoteHost(remote, { exec, sshPath: 'ssh' })).toMatchObject({
+				outcome: 'host-unknown',
+			});
+			expect(fs.readFileSync(r.log, 'utf8')).not.toContain('host stop');
+			expect(
+				await stopRemoteHost(remote, { exec: execOn(r), sshPath: 'ssh', force: true })
+			).toMatchObject({ outcome: 'done', hostStopped: true });
+		}
+	);
 });

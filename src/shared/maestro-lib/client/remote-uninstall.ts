@@ -69,24 +69,39 @@ function surveyPreamble(): string[] {
 		'else have=0; fi',
 		// Is a host serving the data directory, and is it the desktop app? The endpoint holds the
 		// token, so it is grepped here and never printed.
-		'running=0; headless=0; pid=""',
+		'running=0; kind=unknown; pid=""',
 		'if [ "$have" = 1 ]; then',
 		'  ep=$(_mc host endpoint --json 2>/dev/null)',
 		`  printf '%s\\n' "$ep" | grep -q '"running": *true' && running=1`,
 		`  pid=$(printf '%s\\n' "$ep" | sed -n 's/^ *"pid": *\\([0-9][0-9]*\\).*/\\1/p' | head -n 1)`,
 		'  ep=""',
-		`  [ "$running" = 1 ] && _mc version --json 2>/dev/null | grep -q '"hostKind": *"headless"' && headless=1`,
+		'  if [ "$running" = 1 ]; then',
+		'    _ver=$(_mc version --json 2>/dev/null)',
+		// A headless host names itself; the desktop app answers `get_app_info`. A CLI that says neither
+		// (an earlier release) is not taken for the desktop app: the process decides.
+		`    if printf '%s\\n' "$_ver" | grep -q '"hostKind": *"headless"'; then kind=headless`,
+		`    elif printf '%s\\n' "$_ver" | grep -q '"appRunning": *true'; then kind=desktop`,
+		'    elif [ -n "$pid" ]; then',
+		'      case "$(ps -o args= -p "$pid" 2>/dev/null)" in',
+		'        *maestro-cli*|*maestro-host-service*|*" host start"*|*" host run"*) kind=headless;;',
+		'        *Maestro.app/Contents/MacOS/*|*[Ee]lectron*|*/maestro|*/maestro\\ *|*/Maestro|*/Maestro\\ *) kind=desktop;;',
+		'      esac',
+		'    fi',
+		'    _ver=""',
+		'  fi',
 		'fi',
-		'if [ "$running" = 0 ]; then say host=none; elif [ "$headless" = 1 ]; then say host=headless; else say host=desktop; fi',
+		'if [ "$running" = 0 ]; then say host=none; else say "host=$kind"; fi',
 		'[ -n "$pid" ] && say "pid=$pid"',
 		// The boot service.
 		'service=none',
 		'if [ "$os" = linux ]; then',
 		'  [ -n "${XDG_RUNTIME_DIR:-}" ] || { [ -d "/run/user/$(id -u)" ] && export XDG_RUNTIME_DIR="/run/user/$(id -u)"; }',
 		`  unit="\${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${REMOTE_SERVICE_UNIT}.service"`,
+		// The link `enable` made: what starts the unit at boot, readable with no user bus.
+		`  wants="\${unit%/*}/default.target.wants/${REMOTE_SERVICE_UNIT}.service"`,
 		'  if [ -f "$unit" ]; then',
 		'    service=systemd; say "service-file=$unit"',
-		`    if systemctl --user is-enabled --quiet ${REMOTE_SERVICE_UNIT} 2>/dev/null; then say service-enabled=1; else say service-enabled=0; fi`,
+		`    if systemctl --user is-enabled --quiet ${REMOTE_SERVICE_UNIT} 2>/dev/null || [ -e "$wants" ] || [ -L "$wants" ]; then say service-enabled=1; else say service-enabled=0; fi`,
 		`    if systemctl --user is-active --quiet ${REMOTE_SERVICE_UNIT} 2>/dev/null; then say service-active=1; else say service-active=0; fi`,
 		'  fi',
 		'elif [ "$os" = darwin ]; then',
@@ -124,8 +139,10 @@ export function buildRemoteHostSurveyScript(options: { agents?: boolean } = {}):
 	const lines = surveyPreamble();
 	if (options.agents) {
 		lines.push(
-			// No data directory: no agents. A data directory no CLI can read: unknown, never "none".
-			'if [ ! -d "$data" ]; then say agents-begin; echo "[]"; say agents-end;',
+			// A running host is always asked: it may serve a data directory the guess above missed
+			// (`--data-dir`, or MAESTRO_USER_DATA set outside host.env). No host and no data
+			// directory: no agents. Anything that cannot be read: unknown, never "none".
+			'if [ "$running" = 0 ] && [ ! -d "$data" ]; then say agents-begin; echo "[]"; say agents-end;',
 			'elif [ "$have" = 0 ]; then say agents=unknown;',
 			'elif _list=$(_mc list agents --json 2>/dev/null); then say agents-begin; printf \'%s\\n\' "$_list"; say agents-end;',
 			'else say agents=unknown; fi'
@@ -140,6 +157,8 @@ export interface RemoteHostStopScriptOptions {
 	uninstall?: boolean;
 	/** Uninstall only: also remove the host's data directory. */
 	purgeData?: boolean;
+	/** Stop a host the survey could not tell from the desktop app (`host=unknown`). */
+	force?: boolean;
 }
 
 /**
@@ -155,12 +174,19 @@ export function buildRemoteHostStopScript(options: RemoteHostStopScriptOptions =
 		...surveyPreamble(),
 		`UNINSTALL=${uninstall ? 1 : 0}`,
 		`PURGE=${purge ? 1 : 0}`,
-		'[ "$running" = 1 ] && [ "$headless" = 0 ] && { say refused=desktop; exit 0; }',
+		`FORCE=${options.force ? 1 : 0}`,
+		'[ "$running" = 1 ] && [ "$kind" = desktop ] && { say refused=desktop; exit 0; }',
+		'[ "$running" = 1 ] && [ "$kind" = unknown ] && [ "$FORCE" = 0 ] && { say refused=unknown; exit 0; }',
 		// 1. The service first, so nothing starts the host again behind the stop.
 		'if [ "$service" = systemd ]; then',
-		`  if systemctl --user disable ${REMOTE_SERVICE_UNIT} >/dev/null 2>&1; then say did=service-disabled; else say warn=service-disable-failed; fi`,
+		`  if systemctl --user disable ${REMOTE_SERVICE_UNIT} >/dev/null 2>&1; then say did=service-disabled`,
+		// No user bus (no linger): `disable` cannot run, but the link it would remove is a plain file.
+		'  else',
+		'    rm -f "$wants" 2>/dev/null',
+		'    if [ -e "$wants" ] || [ -L "$wants" ]; then say warn=service-disable-failed; else say did=service-disabled; fi',
+		'  fi',
 		'elif [ "$service" = launchd ]; then',
-		`  if launchctl disable "$domain/${label}" >/dev/null 2>&1; then say did=service-disabled; else say warn=service-disable-failed; fi`,
+		`  if launchctl disable "$domain/${label}" >/dev/null 2>&1; then say did=service-disabled; ld_off=1; else say warn=service-disable-failed; fi`,
 		'fi',
 		// 2. The host, drained: `host stop --wait` lets work in flight finish first.
 		'if [ "$running" = 1 ]; then',
@@ -191,7 +217,7 @@ export function buildRemoteHostStopScript(options: RemoteHostStopScriptOptions =
 		'  else purge_ok=1; fi',
 		'fi',
 		'if [ "$UNINSTALL" = 1 ]; then',
-		'  if [ "$service" = systemd ]; then rm -f "$unit" && say "removed=$unit"; systemctl --user daemon-reload >/dev/null 2>&1; fi',
+		'  if [ "$service" = systemd ]; then rm -f "$unit" && say "removed=$unit"; rm -f "$wants" 2>/dev/null; systemctl --user daemon-reload >/dev/null 2>&1; fi',
 		// A disabled label stays disabled after its plist is gone, and would block a later install.
 		`  if [ "$service" = launchd ]; then rm -f "$plist" && say "removed=$plist"; launchctl enable "$domain/${label}" >/dev/null 2>&1; fi`,
 		'  for p in "$root/cli" "$root/cli.old" "$root/node" "$root/npm-cache" "$ours" "$bin/maestro-cli.new" "$bin/maestro-host-service" "$bin/maestro-host-service.new" "$root"/cli.stage.* "$root"/node.dl.*; do',
@@ -205,14 +231,22 @@ export function buildRemoteHostStopScript(options: RemoteHostStopScriptOptions =
 		'if [ "$purge_ok" = 1 ]; then',
 		'  if rm -rf "$real"; then say "removed=$data"; else say error=purge; exit 0; fi',
 		'fi',
+		// The last check: does anything still start the host at boot (systemd) or login (launchd)?
+		'boot=off',
+		'[ "$service" = systemd ] && [ -f "$unit" ] && { [ -e "$wants" ] || [ -L "$wants" ]; } && boot=on',
+		'[ "$service" = launchd ] && [ -f "$plist" ] && [ "${ld_off:-0}" != 1 ] && boot=on',
+		'[ "$service" != none ] && say "boot=$boot"',
 		'say done',
 		'exit 0',
 	];
 	return lines.join('\n');
 }
 
-/** Who answers for the host on the remote. */
-export type RemoteHostKind = 'none' | 'headless' | 'desktop';
+/**
+ * Who answers for the host on the remote. `unknown`: a host runs, but neither its CLI nor its
+ * process says whether it is the desktop app or a headless host (an earlier release).
+ */
+export type RemoteHostKind = 'none' | 'headless' | 'desktop' | 'unknown';
 
 /** The remote's boot service, as the survey found it. */
 export type RemoteServiceStatus =
@@ -288,13 +322,21 @@ function readMarkers(stdout: string): ParsedOutput {
 	return { markers, ...(sawAgents ? { agentsJson: agentLines.join('\n') } : {}) };
 }
 
-/** `list agents --json` rows (an array, or one object per line), reduced to id and name. */
+/** Control characters (C0, DEL, C1): a remote's agent name must not drive the local terminal. */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/**
+ * `list agents --json` rows (an array, or one object per line), reduced to id and name. Both come
+ * from the remote and are printed here, so their control characters are dropped.
+ */
 export function parseRemoteAgentList(raw: string): RemoteHostAgent[] | null {
 	const toAgent = (row: unknown): RemoteHostAgent | null => {
 		if (!row || typeof row !== 'object') return null;
 		const { id, name } = row as Record<string, unknown>;
 		if (typeof id !== 'string' || !id) return null;
-		return { id, name: typeof name === 'string' && name ? name : id };
+		const cleanId = id.replace(CONTROL_CHARS, '');
+		const cleanName = typeof name === 'string' ? name.replace(CONTROL_CHARS, '').trim() : '';
+		return { id: cleanId || id, name: cleanName || cleanId || '(unnamed)' };
 	};
 	const text = raw.trim();
 	if (!text) return [];
@@ -329,7 +371,8 @@ function surveyFrom(parsed: ParsedOutput): RemoteHostSurvey | null {
 	const serviceKind = first(markers, 'service');
 	if (!os || !serviceKind || first(markers, 'surveyed') !== '1') return null;
 	const hostRaw = first(markers, 'host');
-	const host: RemoteHostKind = hostRaw === 'headless' || hostRaw === 'desktop' ? hostRaw : 'none';
+	const host: RemoteHostKind =
+		hostRaw === 'headless' || hostRaw === 'desktop' || hostRaw === 'unknown' ? hostRaw : 'none';
 	const pid = Number(first(markers, 'pid'));
 	const file = first(markers, 'service-file');
 	const service: RemoteServiceStatus =
@@ -392,7 +435,10 @@ export class RemoteHostStopError extends Error {
 export interface StopRemoteHostOptions {
 	/** Also remove the service file and Maestro's own files under `~/.maestro`. */
 	uninstall?: boolean;
-	/** Stop even though the host holds agents. Never lets `purgeData` past them. */
+	/**
+	 * Stop even though the host holds agents (or they could not be read), or a host runs that could
+	 * not be told from the desktop app. Never lets `purgeData` past agents.
+	 */
 	force?: boolean;
 	/** Uninstall only: also remove the host's data directory. */
 	purgeData?: boolean;
@@ -406,6 +452,8 @@ export interface StopRemoteHostOptions {
 export type RemoteHostStopResult =
 	/** The desktop app on the remote is the host: quitting it there stops it. Nothing changed. */
 	| { outcome: 'desktop-host'; survey: RemoteHostSurvey }
+	/** A host runs that could not be told from the desktop app, and `force` was not given. Nothing changed. */
+	| { outcome: 'host-unknown'; survey: RemoteHostSurvey }
 	/** The host holds agents (or they could not be read) and `force` was not given. Nothing changed. */
 	| { outcome: 'agents-held'; survey: RemoteHostSurvey; agents: RemoteHostAgent[] | 'unknown' }
 	/** `purgeData` was refused: the host holds agents, or the desktop app uses the directory. Nothing changed. */
@@ -430,6 +478,11 @@ export type RemoteHostStopResult =
 			kept: string[];
 			/** `purgeData` only: the data directory is gone. False when the last check kept it. */
 			purged: boolean;
+			/**
+			 * The boot service could not be disabled (no systemd user bus, a launchd domain error):
+			 * the host comes back at boot or login. The CLI exits non-zero and Stop Host fails on it.
+			 */
+			serviceLeftAtBoot: boolean;
 			warnings: string[];
 	  };
 
@@ -504,6 +557,7 @@ export async function stopRemoteHost(
 	const survey = await surveyRemoteHost(remote, { ...options, agents: true });
 
 	if (survey.host === 'desktop') return { outcome: 'desktop-host', survey };
+	if (survey.host === 'unknown' && !options.force) return { outcome: 'host-unknown', survey };
 	const uninstall = options.uninstall === true;
 	if (
 		survey.host === 'none' &&
@@ -524,23 +578,40 @@ export async function stopRemoteHost(
 	}
 	if (holds && !options.force) return { outcome: 'agents-held', survey, agents };
 
-	const script = buildRemoteHostStopScript({ uninstall, purgeData: options.purgeData });
+	const script = buildRemoteHostStopScript({
+		uninstall,
+		purgeData: options.purgeData,
+		force: options.force,
+	});
 	const actTimeout = surveyTimeout + REMOTE_HOST_STOP_WAIT_SECONDS * 1000;
 	const { parsed, survey: after, stderr } = await runScript(remote, script, actTimeout, options);
 	const { markers } = parsed;
 	if (first(markers, 'refused') === 'desktop') return { outcome: 'desktop-host', survey: after };
+	if (first(markers, 'refused') === 'unknown') return { outcome: 'host-unknown', survey: after };
 
+	const did = markers.get('did') ?? [];
+	// The script's last check (`boot=`) when it got that far; before it, whether `disable` worked.
+	const boot = first(markers, 'boot');
+	const serviceLeftAtBoot =
+		after.service.kind !== 'none' &&
+		(boot !== undefined ? boot === 'on' : !did.includes('service-disabled'));
 	const error = first(markers, 'error');
 	if (error) {
 		const detail = safeText(stderr);
+		const bootNote =
+			after.service.kind === 'none'
+				? ''
+				: serviceLeftAtBoot
+					? ` ${serviceLeftAtBootMessage(after.service.kind)}`
+					: ' Its boot service is disabled, so it does not come back after a reboot.';
 		const message =
 			error === 'host-stop'
-				? `The host on ${label} did not stop${detail ? `: ${detail}` : '.'} Its boot service is disabled, so it does not come back after a reboot.`
+				? `The host on ${label} did not stop${detail ? `: ${detail}` : '.'}${bootNote}`
 				: error === 'still-running'
-					? `The host on ${label} still answers after it was stopped. Stop it there with: maestro-cli host stop`
+					? `The host on ${label} still answers after it was stopped. Stop it there with: maestro-cli host stop${bootNote}`
 					: error === 'purge'
 						? `The host's data directory on ${label} could not be removed${detail ? `: ${detail}` : '.'}`
-						: `A file under ~/${REMOTE_INSTALL_ROOT} on ${label} could not be removed${detail ? `: ${detail}` : '.'}`;
+						: `A file under ~/${REMOTE_INSTALL_ROOT} on ${label} could not be removed${detail ? `: ${detail}` : '.'}${bootNote}`;
 		const code: RemoteHostStopErrorCode =
 			error === 'host-stop' || error === 'still-running' || error === 'purge' ? error : 'remove';
 		throw new RemoteHostStopError(code, message);
@@ -554,17 +625,12 @@ export async function stopRemoteHost(
 			`The connection to ${label} ended before the ${uninstall ? 'removal' : 'stop'} finished. Run \`maestro-cli remote-host status ${remote.name || remote.id}\` to see what is left, then run it again.`
 		);
 	}
-	const did = markers.get('did') ?? [];
 	const removed = markers.get('removed') ?? [];
 	const kept = [...(markers.get('kept') ?? []), ...after.foreign];
 	if (after.dataDir && !removed.includes(after.dataDir)) kept.push(after.dataDir);
 	const warnings: string[] = [];
-	if ((markers.get('warn') ?? []).includes('service-disable-failed')) {
-		warnings.push(
-			after.service.kind === 'launchd'
-				? `launchd did not disable ${REMOTE_SERVICE_LABEL}: run \`launchctl disable gui/$(id -u)/${REMOTE_SERVICE_LABEL}\` on the remote.`
-				: `systemd did not disable the user unit: run \`systemctl --user disable ${REMOTE_SERVICE_UNIT}\` on the remote.`
-		);
+	if (serviceLeftAtBoot && after.service.kind !== 'none') {
+		warnings.push(serviceLeftAtBootMessage(after.service.kind));
 	}
 	const purgeRefusal = first(markers, 'refused');
 	if (purgeRefusal === 'purge-desktop') {
@@ -590,8 +656,16 @@ export async function stopRemoteHost(
 		removed,
 		kept,
 		purged: after.dataDir !== undefined && removed.includes(after.dataDir),
+		serviceLeftAtBoot,
 		warnings,
 	};
+}
+
+/** What a boot service that could not be disabled means, and the command that disables it. */
+export function serviceLeftAtBootMessage(kind: 'systemd' | 'launchd'): string {
+	return kind === 'launchd'
+		? `Its boot service could not be disabled, so the host comes back at the next login. Run \`launchctl disable gui/$(id -u)/${REMOTE_SERVICE_LABEL}\` on the remote.`
+		: `Its boot service could not be disabled, so the host comes back at the next boot. Run \`systemctl --user disable ${REMOTE_SERVICE_UNIT}\` on the remote (it needs a user session: \`loginctl enable-linger\`, or log in there).`;
 }
 
 /** The agents, as a person reads them: `3 agents: "A", "B", "C"`. */
@@ -622,10 +696,15 @@ export function describeRemoteHostStop(
 	switch (result.outcome) {
 		case 'desktop-host':
 			return desktopHostMessage(remote, result.survey.pid);
+		case 'host-unknown':
+			return (
+				`A Maestro host runs on ${label}${result.survey.pid ? ` (pid ${result.survey.pid})` : ''}, but it could not be told whether it is the desktop app or a headless host. ` +
+				'Nothing was changed.'
+			);
 		case 'agents-held':
 			return (
 				`The host on ${label} holds ${describeHeldAgents(result.agents)}. Nothing was changed. ` +
-				'Move them back first, or stop the host anyway; their data stays on the remote.'
+				'Move them back first. Stopping the host anyway leaves them behind on the remote: their data stays there, and nothing runs them.'
 			);
 		case 'purge-refused':
 			return result.reason === 'desktop-data'

@@ -46,6 +46,8 @@ const done: RemoteHostStopResult = {
 	serviceDisabled: true,
 	removed: [],
 	kept: [],
+	purged: false,
+	serviceLeftAtBoot: false,
 	warnings: [],
 };
 
@@ -113,6 +115,29 @@ describe('stopHostFromDesktop', () => {
 			ok: false,
 			code: 'REMOTE_NOT_FOUND',
 		});
+	});
+
+	it('fails when the boot service could not be disabled, saying the host comes back at boot', async () => {
+		const d = deps({
+			...done,
+			serviceDisabled: false,
+			serviceLeftAtBoot: true,
+			warnings: [
+				'Its boot service could not be disabled, so the host comes back at the next boot.',
+			],
+		} as RemoteHostStopResult);
+		const answer = await stopHostFromDesktop('r1', {}, d);
+		expect(answer).toMatchObject({ ok: false, code: 'service-disable', federationOff: true });
+		if (!answer.ok) expect(answer.error).toContain('comes back at the next boot');
+		// The host did stop: the switch still goes off, so automatic Federation does not restart it.
+		expect(d.writeRemotes).toHaveBeenCalledWith([{ ...remote, federation: false }]);
+	});
+
+	it('hands back a host that could not be told from the desktop app, for the stop-anyway ask', async () => {
+		const d = deps({ outcome: 'host-unknown', survey: { ...survey, host: 'unknown' } });
+		const answer = await stopHostFromDesktop('r1', {}, d);
+		expect(answer).toMatchObject({ ok: true, outcome: 'host-unknown' });
+		expect(d.writeRemotes).not.toHaveBeenCalled();
 	});
 
 	it('lets an unexpected error through to Sentry', async () => {

@@ -59,12 +59,27 @@ export function stopHostConfirmMessage(name: string): string {
 }
 
 export function removeHostConfirmMessage(name: string): string {
+	// The paths `buildRemoteHostStopScript()` removes (REMOTE_SERVICE_UNIT, REMOTE_SERVICE_LABEL).
 	return (
-		`Remove the Maestro host from ${name}? Maestro stops the host, removes its boot service, and ` +
-		'deletes its own install under ~/.maestro (cli, node, npm-cache, the launcher and the service ' +
-		'wrapper). It keeps ~/.maestro/host.env, any maestro-cli Maestro did not install, and the ' +
-		"host's data directory."
+		`Remove the Maestro host from ${name}? Maestro stops the host, then removes its boot service ` +
+		'(the systemd user unit ~/.config/systemd/user/maestro-host.service and its ' +
+		'default.target.wants link, or the launchd agent ~/Library/LaunchAgents/sh.maestro.host.plist) ' +
+		'and its own install under ~/.maestro (cli, node, npm-cache, the maestro-cli launcher and the ' +
+		'maestro-host-service wrapper). It keeps ~/.maestro/host.env, any maestro-cli Maestro did not ' +
+		"install, and the host's data directory. If the host holds agents, Maestro names them and asks " +
+		'again: removing it anyway leaves those agents behind on the remote, with no host to run them.'
 	);
+}
+
+/** The second ask: what going ahead anyway does to the agents the host holds. */
+function forceConfirmMessage(message: string, action: HostAction, unknownHost: boolean): string {
+	const verb = action === 'remove' ? 'Remove' : 'Stop';
+	if (unknownHost) return `${message} ${verb} it anyway?`;
+	const left =
+		action === 'remove'
+			? 'Removing it anyway leaves those agents behind on the remote, with no host to run them.'
+			: 'Stopping it anyway leaves those agents behind on the remote until a host runs there again.';
+	return `${message} ${left} ${verb} it anyway?`;
 }
 
 type HostAction = 'stop' | 'remove';
@@ -198,18 +213,22 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 			const { [config.id]: _, ...rest } = prev;
 			return rest;
 		});
-		if (answer.ok && answer.outcome === 'agents-held' && !force) {
+		if (
+			answer.ok &&
+			(answer.outcome === 'agents-held' || answer.outcome === 'host-unknown') &&
+			!force
+		) {
 			setHostConfirm({
 				config,
 				action,
 				force: true,
 				// Main's message names the agents and their count (`describeRemoteHostStop()`).
-				message: `${answer.message} ${action === 'remove' ? 'Remove' : 'Stop'} it anyway?`,
+				message: forceConfirmMessage(answer.message, action, answer.outcome === 'host-unknown'),
 			});
 			return;
 		}
 		// Main switched the remote's Federation off: reload, so an edit here does not switch it back.
-		if (answer.ok && answer.federationOff) await refresh();
+		if (answer.federationOff) await refresh();
 		const success = answer.ok && (answer.outcome === 'done' || answer.outcome === 'nothing');
 		setHostResults((prev) => ({
 			...prev,
