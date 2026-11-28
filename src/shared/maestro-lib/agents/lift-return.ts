@@ -20,7 +20,9 @@
  * The restore in 3 records the copy still to remove (`hostCopyLeft`), and a second write clears it
  * once 4 is done. A crash, a lost link, or a refused removal in between leaves the agent home with
  * the marker, and the next return of that agent (the come-home job at the next launch) finishes:
- * it removes the copy, nothing more, because its tabs and queue already came home.
+ * the copy may have taken turns or messages since, so it is read again (transcripts merge row by
+ * row, so nothing comes twice), the queue items that came home already (`carried`) are skipped,
+ * and then the copy is removed.
  *
  * `offline` skips 2 and 4 for a host that cannot be reached: the agent comes back with only what
  * this machine kept, and the result says the host's copy is still there. The marker says so too
@@ -140,13 +142,17 @@ export async function runReturnFromHost(
 	const from = peerAgentRef(pointer.peer, pointer.agentId);
 	const summary = { id: agent.id, name: agent.name };
 	const now = deps.now ?? Date.now;
-	const copyLeft = (fetched: boolean): HostCopyLeft => ({
-		peer: pointer.peer,
-		agentId: pointer.agentId,
-		at: pointer.at,
-		fetched,
-		returnedAt: left?.returnedAt ?? now(),
-	});
+	const copyLeft = (fetched: boolean, carried: readonly string[] = []): HostCopyLeft => {
+		const all = [...new Set([...(left?.carried ?? []), ...carried])];
+		return {
+			peer: pointer.peer,
+			agentId: pointer.agentId,
+			at: pointer.at,
+			fetched: fetched || left?.fetched === true,
+			returnedAt: left?.returnedAt ?? now(),
+			...(all.length > 0 ? { carried: all } : {}),
+		};
+	};
 
 	if (options.offline) {
 		if (left) {
@@ -175,31 +181,32 @@ export async function runReturnFromHost(
 		let returned: ReturnedFromHost = { tabs: [] };
 		/** Messages this return held on the host: released again when the return fails. */
 		const heldIds: string[] = [];
+		/** Items an earlier return brought home that still wait, held, in the host copy. */
+		let carriedOnHost: string[] = [];
 		const hostAgent = await connection.client.agents.get(pointer.agentId);
 		const hostGone = !hostAgent.ok && hostAgent.error.code === 'not-found';
 		if (!hostAgent.ok && !hostGone) throw hostError(connection.peer, hostAgent.error);
-		/** Finishing a return whose tabs and queue already came home: only the removal is left. */
-		const onlyRemove = left?.fetched === true;
+		/** Queue items an earlier return of this agent brought home already. */
+		const carried = new Set(left?.carried ?? []);
 
-		if (hostAgent.ok && onlyRemove) {
-			if ((hostAgent.value.aiTabs ?? []).some((tab) => tab.state === 'busy')) {
-				throw new LiftRunError(
-					'RETURN_BUSY',
-					`The old copy of "${agent.name}" on its host is running a turn. Wait for it to finish, then it is removed.`
-				);
-			}
-		} else if (hostAgent.ok) {
+		if (hostAgent.ok) {
 			const busy = (hostAgent.value.aiTabs ?? []).some((tab) => tab.state === 'busy');
 			if (busy) {
 				throw new LiftRunError(
 					'RETURN_BUSY',
-					`"${agent.name}" is running a turn on its host. Wait for it to finish, or stop it, then move it back.`
+					left
+						? `The old copy of "${agent.name}" on its host is running a turn. Wait for it to finish, then it is removed.`
+						: `"${agent.name}" is running a turn on its host. Wait for it to finish, or stop it, then move it back.`
 				);
 			}
-			const queue = await connection.client.turns.queue.list(pointer.agentId);
-			if (!queue.ok) throw hostError(connection.peer, queue.error);
+			const listed = await connection.client.turns.queue.list(pointer.agentId);
+			if (!listed.ok) throw hostError(connection.peer, listed.error);
+			const queue = listed.value.filter((item) => !carried.has(item.itemId));
+			carriedOnHost = listed.value
+				.filter((item) => carried.has(item.itemId))
+				.map((item) => item.itemId);
 			// Hold each waiting message on the host, so it cannot start there while it moves here.
-			for (const item of queue.value) {
+			for (const item of queue) {
 				if (item.paused) continue;
 				const held = await connection.client.turns.queue.setPaused(
 					pointer.agentId,
@@ -233,11 +240,18 @@ export async function runReturnFromHost(
 			}
 			returned = {
 				tabs: withLogs,
-				...(options.keepHostCopy ? {} : { hostCopyLeft: copyLeft(true) }),
+				...(options.keepHostCopy
+					? {}
+					: {
+							hostCopyLeft: copyLeft(
+								true,
+								queue.map((item) => item.itemId)
+							),
+						}),
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
-				...(queue.value.length > 0
+				...(queue.length > 0
 					? {
-							queue: queue.value.map((item) => ({
+							queue: queue.map((item) => ({
 								itemId: item.itemId,
 								tabId: item.tabId,
 								queuedAt: item.queuedAt,
@@ -247,20 +261,17 @@ export async function runReturnFromHost(
 						}
 					: {}),
 			};
-		} else if (!onlyRemove) {
+		} else if (!left) {
 			notices.push(
 				`The host no longer has ${from}: the agent comes back with this machine's copy.`
 			);
 		}
 
-		// A finish whose host data already came home has nothing to write before the removal.
-		if (!(hostAgent.ok && onlyRemove)) {
-			try {
-				await restoreOrThrow(deps, agent, returned);
-			} catch (error) {
-				await releaseHeld(connection, pointer.agentId, heldIds);
-				throw error;
-			}
+		try {
+			await restoreOrThrow(deps, agent, returned);
+		} catch (error) {
+			await releaseHeld(connection, pointer.agentId, heldIds);
+			throw error;
 		}
 
 		let hostCopyRemoved = false;
@@ -276,9 +287,9 @@ export async function runReturnFromHost(
 			}
 		} else if (hostAgent.ok) {
 			notices.push(`The host keeps its copy (${from}). Do not send to both.`);
-			if (onlyRemove) await clearHostCopyLeft(deps, agent, notices);
-			for (const item of returned.queue ?? []) {
-				const removed = await connection.client.turns.queue.remove(pointer.agentId, item.itemId);
+			const cameHome = [...(returned.queue ?? []).map((item) => item.itemId), ...carriedOnHost];
+			for (const itemId of cameHome) {
+				const removed = await connection.client.turns.queue.remove(pointer.agentId, itemId);
 				if (!removed.ok) {
 					notices.push(
 						`A message that came back still waits, held, in the host's queue (${from}): ${removed.error.message} Remove it there so it does not run twice.`

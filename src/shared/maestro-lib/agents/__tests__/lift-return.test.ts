@@ -24,12 +24,13 @@ const fail = (code: string, message = 'nope') => ({
 const log = (id: string, timestamp = 1) => ({ id, timestamp, source: 'user', text: id });
 const NOW = 5_000;
 /** The marker a restore writes for the host copy still to remove. */
-const copyLeft = (fetched: boolean) => ({
+const copyLeft = (fetched: boolean, carried?: string[]) => ({
 	peer: 'build-box',
 	agentId: 'host-1',
 	at: 1,
 	fetched,
 	returnedAt: NOW,
+	...(carried ? { carried } : {}),
 });
 
 function hostedAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
@@ -428,7 +429,7 @@ describe('runReturnFromHost', () => {
 			return { ...d, store };
 		}
 
-		it('a crash after the restore leaves the agent home and marked; the next return removes the copy and nothing more', async () => {
+		it('a crash after the restore leaves the agent home and marked; the next return removes the copy and brings nothing twice', async () => {
 			const waiting = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: false };
 			const client = hostClient({ queue: ok([waiting]) });
 			const d = stored(hostedAgent(), client);
@@ -438,15 +439,14 @@ describe('runReturnFromHost', () => {
 			expect(d.release).toHaveBeenCalledTimes(1);
 			const home = d.store.get('agent-1') as AgentRecord & { executionQueue?: unknown[] };
 			expect(home.liftedTo).toBeUndefined();
-			expect(home.hostCopyLeft).toEqual(copyLeft(true));
+			expect(home.hostCopyLeft).toEqual(copyLeft(true, ['q1']));
 			expect(home.executionQueue).toHaveLength(1);
 
-			// The next launch: the copy is removed, its tabs and queue are not read again.
-			client.tabs.list.mockClear();
-			client.turns.queue.list.mockClear();
+			// The next launch: the copy is read again, the message that came home is not held or
+			// carried a second time, and the copy is removed.
+			client.turns.queue.setPaused.mockClear();
 			const result = await runReturnFromHost('agent-1', {}, d.value);
-			expect(client.tabs.list).not.toHaveBeenCalled();
-			expect(client.turns.queue.list).not.toHaveBeenCalled();
+			expect(client.turns.queue.setPaused).not.toHaveBeenCalled();
 			expect(client.agents.remove).toHaveBeenLastCalledWith('host-1');
 			expect(result.hostCopyRemoved).toBe(true);
 			const done = d.store.get('agent-1') as AgentRecord & { executionQueue?: unknown[] };
@@ -457,6 +457,63 @@ describe('runReturnFromHost', () => {
 			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
 				code: 'RETURN_NOT_HOSTED',
 			});
+		});
+
+		it('a copy left behind that took turns and messages since: they come home, the carried message does not come twice', async () => {
+			const first = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'first', paused: false };
+			const client = hostClient({
+				queue: ok([first]),
+				transcripts: { 'tab-1': [log('l1')], 'tab-new': [log('n1')] },
+			});
+			const d = stored(hostedAgent(), client);
+			// The removal is refused: the agent is home, the copy stays on the host.
+			client.agents.remove.mockResolvedValueOnce(fail('rejected'));
+			const back = await runReturnFromHost('agent-1', {}, d.value);
+			expect(back.hostCopyRemoved).toBe(false);
+			expect(d.store.get('agent-1')?.hostCopyLeft).toEqual(copyLeft(true, ['q1']));
+			// The carried message runs here, and leaves the local queue.
+			const home = d.store.get('agent-1') as AgentRecord & { executionQueue?: unknown[] };
+			d.store.set('agent-1', { ...home, executionQueue: [] } as AgentRecord);
+
+			// Meanwhile the host copy ran a turn and took a new message; the carried one still waits
+			// there, held.
+			client.tabs.transcript.mockImplementation(async (_agentId: string, tabId: string) =>
+				ok(tabId === 'tab-1' ? [log('l1'), log('h2', 2)] : [log('n1')])
+			);
+			const later = { itemId: 'q2', tabId: 'tab-1', queuedAt: 20, text: 'later', paused: false };
+			client.turns.queue.list.mockResolvedValue(ok([{ ...first, paused: true }, later]));
+			client.turns.queue.setPaused.mockClear();
+
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(result.hostCopyRemoved).toBe(true);
+			expect(result.queued).toBe(1);
+			expect(client.turns.queue.setPaused).toHaveBeenCalledTimes(1);
+			expect(client.turns.queue.setPaused).toHaveBeenCalledWith('host-1', 'q2', true);
+			const done = d.store.get('agent-1') as AgentRecord & {
+				executionQueue?: { id: string; text: string }[];
+			};
+			expect(done.hostCopyLeft).toBeUndefined();
+			expect(done.aiTabs?.find((tab) => tab.id === 'tab-1')?.logs).toEqual([
+				log('l1'),
+				log('h2', 2),
+			]);
+			expect(done.executionQueue?.map((item) => [item.id, item.text])).toEqual([['q2', 'later']]);
+		});
+
+		it('a copy kept on purpose loses the messages that came home earlier too', async () => {
+			const home = {
+				...hostedAgent(),
+				liftedTo: undefined,
+				hostCopyLeft: copyLeft(true, ['q1']),
+			};
+			const held = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'first', paused: true };
+			const client = hostClient({ queue: ok([held]) });
+			const d = stored(home as AgentRecord, client);
+			const result = await runReturnFromHost('agent-1', { keepHostCopy: true }, d.value);
+			expect(result.hostCopyRemoved).toBe(false);
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			expect(client.turns.queue.remove).toHaveBeenCalledWith('host-1', 'q1');
+			expect(d.store.get('agent-1')?.hostCopyLeft).toBeUndefined();
 		});
 
 		it('a copy left behind that runs a turn is waited out, never removed mid-turn', async () => {

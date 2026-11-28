@@ -23,22 +23,38 @@ export type ReturnedQueuedMessage = Pick<
  */
 export interface HostCopyLeft extends LiftedToPointer {
 	/**
-	 * The host's tabs, transcripts, and queue already came home: only the copy is left to remove.
-	 * False after an offline return: the host may hold rows this machine does not.
+	 * The host's tabs, transcripts, and queue came home once. False after an offline return. Either
+	 * way the host may have written rows or taken messages since, so finishing reads it again.
 	 */
 	fetched: boolean;
 	/** When the agent came home, in epoch milliseconds. */
 	returnedAt: number;
+	/**
+	 * The host queue items that came home already (they wait, held, in the host copy until it is
+	 * removed). Finishing skips them, so none comes home twice, even one that has run here since.
+	 */
+	carried?: string[];
 }
 
 /** The stored marker, or undefined when the field is absent or malformed. */
 export function readHostCopyLeft(value: unknown): HostCopyLeft | undefined {
 	const pointer = readLiftedTo(value);
 	if (!pointer) return undefined;
-	const { fetched, returnedAt } = value as Record<string, unknown>;
+	const { fetched, returnedAt, carried } = value as Record<string, unknown>;
 	if (typeof fetched !== 'boolean') return undefined;
 	if (typeof returnedAt !== 'number' || !Number.isFinite(returnedAt)) return undefined;
-	return { ...pointer, fetched, returnedAt };
+	if (
+		carried !== undefined &&
+		!(Array.isArray(carried) && carried.every((id) => typeof id === 'string' && id.length > 0))
+	) {
+		return undefined;
+	}
+	return {
+		...pointer,
+		fetched,
+		returnedAt,
+		...(Array.isArray(carried) && carried.length > 0 ? { carried: [...carried] } : {}),
+	};
 }
 
 /** What the host held, to merge into the local record. Each tab carries its transcript. */
@@ -150,8 +166,9 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 		: undefined;
 	if (order) for (const tab of added) order.push({ type: 'ai', id: tab.id });
 
+	// An agent already home keeps the tab the user is on.
 	const activeTabId =
-		returned.activeTabId && aiTabs.some((tab) => tab.id === returned.activeTabId)
+		wasMoved && returned.activeTabId && aiTabs.some((tab) => tab.id === returned.activeTabId)
 			? returned.activeTabId
 			: record.activeTabId;
 
