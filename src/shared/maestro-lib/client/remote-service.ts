@@ -217,6 +217,9 @@ export function buildRemoteServiceScript(): string {
 		'mv -f "$plist.new" "$plist" || skip write-failed',
 		'say kind=launchd',
 		'uid=$(id -u); domain="gui/$uid"; launchctl print "$domain" >/dev/null 2>&1 || domain="user/$uid"',
+		// `remote-host stop` disables the label, and launchd refuses to load a disabled one: an install
+		// is the person asking for the service again.
+		`launchctl enable "$domain/${REMOTE_SERVICE_LABEL}" >/dev/null 2>&1`,
 		`if launchctl print "$domain/${REMOTE_SERVICE_LABEL}" >/dev/null 2>&1; then`,
 		'  if [ "$running" = 1 ]; then say state=active;',
 		`  elif launchctl kickstart "$domain/${REMOTE_SERVICE_LABEL}" >/dev/null 2>&1; then say state=started; else say state=start-failed; fi`,

@@ -103,7 +103,13 @@ import {
 } from './commands/cue-engine';
 import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './commands/bundle';
 import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
-import { remoteHostInstall, remoteHostStart, remoteHostStatus } from './commands/remote-host';
+import {
+	remoteHostInstall,
+	remoteHostStart,
+	remoteHostStatus,
+	remoteHostStop,
+	remoteHostUninstall,
+} from './commands/remote-host';
 import { lift } from './commands/lift';
 import { unlift } from './commands/unlift';
 import {
@@ -2281,7 +2287,9 @@ host
 // Remote host commands - the `maestro-cli host` on an SSH remote (Federation, #1716)
 const remoteHost = program
 	.command('remote-host')
-	.description('Install, check, and start the maestro-cli host on an SSH remote (Federation)');
+	.description(
+		'Install, check, start, stop, and remove the maestro-cli host on an SSH remote (Federation)'
+	);
 
 remoteHost
 	.command('status <ssh-remote>')
@@ -2314,6 +2322,30 @@ remoteHost
 	.option('--timeout <seconds>', 'Give up on each SSH call after this many seconds (default 60)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((ref: string, options) => remoteHostStart(ref, options, cliVersion));
+
+remoteHost
+	.command('stop <ssh-remote>')
+	.description(
+		'Stop the host on the remote and disable its boot service, so it does not come back after a reboot; the install and its data stay'
+	)
+	.option('--force', 'Stop even though agents live on the host (their data stays on the remote)')
+	.option('--timeout <seconds>', 'Give up on each SSH call after this many seconds (default 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((ref: string, options) => remoteHostStop(ref, options));
+
+remoteHost
+	.command('uninstall <ssh-remote>')
+	.description(
+		"Stop the host, then remove its boot service and Maestro's own install under ~/.maestro; a maestro-cli Maestro did not install is left alone"
+	)
+	.option('--force', 'Remove even though agents live on the host (their data stays on the remote)')
+	.option(
+		'--purge-data',
+		"Also remove the host's data directory; refused while the host holds an agent"
+	)
+	.option('--timeout <seconds>', 'Give up on each SSH call after this many seconds (default 60)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((ref: string, options) => remoteHostUninstall(ref, options));
 
 // Lift - move an SSH remote agent onto the maestro-cli host on its remote (Federation, #1716)
 program
