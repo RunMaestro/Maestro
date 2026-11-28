@@ -24,6 +24,7 @@ import {
 	reopenClosedAiTabById,
 	hasActiveWizard,
 	isAwaitingComeHome,
+	resolveQueuedItemTarget,
 	syncAgentStateToTabs,
 	visibleAiTabs,
 } from '../../utils/tabHelpers';
@@ -1602,6 +1603,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const relevant = sessionId
 						? sessions.filter((s) => s.id === sessionId)
 						: sessions.filter((s) => (s.executionQueue?.length ?? 0) > 0);
+					const dispatchTabOf = (s: Session, item: QueuedItem) => {
+						const target = resolveQueuedItemTarget(s, item);
+						if (!target) return undefined;
+						return [...(s.aiTabs ?? []), ...(s.orphanedThinkingTabs ?? [])].find(
+							(tab) => tab.id === target.tabId
+						);
+					};
 					const queues = relevant.map((s) => ({
 						sessionId: s.id,
 						name: s.name,
@@ -1616,11 +1624,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
 							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
 							...(item.paused !== undefined ? { paused: item.paused } : {}),
-							// What the item runs with here, so a Move Back keeps it (Federation).
-							readOnly: queuedItemRunsReadOnly(
-								item,
-								s.aiTabs?.find((tab) => tab.id === item.tabId)
-							),
+							// What the item runs with here, so a Move Back keeps it (Federation): its
+							// tab as dispatch resolves it (a closed tab's orphan, else the active tab).
+							readOnly: queuedItemRunsReadOnly(item, dispatchTabOf(s, item)),
 							// Only the sender's own choice may lift a tab's read-only after a Move Back.
 							...(typeof item.turnReadOnly === 'boolean'
 								? { readOnlyChoice: 'sender' as const }

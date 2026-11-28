@@ -3288,6 +3288,33 @@ describe('useRemoteIntegration', () => {
 			expect(answer.queues[0].items[0]).not.toHaveProperty('readOnlyChoice');
 		});
 
+		it('says read-only for an item whose tab is gone when the tab dispatch runs it in is read-only (#2199)', () => {
+			const active = createMockTab({ id: 'tab-1', readOnlyMode: true });
+			const orphan = createMockTab({ id: 'tab-closed', readOnlyMode: true });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [active],
+				activeTabId: 'tab-1',
+				orphanedThinkingTabs: [orphan],
+				executionQueue: [
+					{ id: 'q1', timestamp: 5, tabId: 'tab-gone', type: 'message' as const, text: 'a' },
+					{ id: 'q2', timestamp: 6, tabId: 'tab-closed', type: 'message' as const, text: 'b' },
+				],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			act(() => {
+				onRemoteListQueueHandler?.('session-1', 'chan-target');
+			});
+			const answer = mockProcess.sendRemoteListQueueResponse.mock.calls.find(
+				(call: unknown[]) => call[0] === 'chan-target'
+			)?.[1] as { queues: Array<{ items: Array<Record<string, unknown>> }> };
+			expect(answer.queues[0].items).toEqual([
+				expect.objectContaining({ id: 'q1', readOnly: true }),
+				expect.objectContaining({ id: 'q2', readOnly: true }),
+			]);
+		});
+
 		it('removes a queued item by id and acks removed:true', () => {
 			const tab = createMockTab({ id: 'tab-1' });
 			const item = { id: 'q1', timestamp: 1, tabId: 'tab-1', type: 'message' as const, text: 'x' };
