@@ -14,7 +14,35 @@ import { readLiftedTo, type LiftedToPointer } from './lift-pointer';
 export type ReturnedQueuedMessage = Pick<
 	QueuedTurn,
 	'itemId' | 'tabId' | 'queuedAt' | 'text' | 'paused'
->;
+> & {
+	/** Absent: a message (a value written before the kind was carried). */
+	kind?: QueuedTurn['kind'];
+};
+
+/**
+ * A host queue item as a local queue item. A slash command keeps its kind, split into command and
+ * arguments the way the composer queues one (`buildQueuedMessageItem()`), so the local queue runs
+ * it through its command path rather than sending its text as a prompt.
+ */
+function asLocalQueueItem(item: ReturnedQueuedMessage, tabId: string): Record<string, unknown> {
+	const base = {
+		id: item.itemId,
+		timestamp: item.queuedAt,
+		tabId,
+		...(item.paused ? { paused: true } : {}),
+	};
+	const commandText = item.text.trim();
+	if (item.kind !== 'command' || !commandText.startsWith('/')) {
+		return { ...base, type: 'message', text: item.text };
+	}
+	const space = commandText.search(/\s/);
+	return {
+		...base,
+		type: 'command',
+		command: space === -1 ? commandText : commandText.slice(0, space),
+		commandArgs: space === -1 ? '' : commandText.slice(space + 1).trim(),
+	};
+}
 
 /**
  * The host's copy of an agent that is home again but was not removed yet: the restore is written
@@ -149,7 +177,11 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 		const localLogs = Array.isArray(local.logs) ? local.logs : [];
 		return {
 			...local,
-			agentSessionId: host.agentSessionId ?? local.agentSessionId ?? null,
+			// A moved tab resumes the session the host advanced; a tab already home may have run
+			// turns here since, so its own session stays and the host's only fills a gap.
+			agentSessionId: wasMoved
+				? (host.agentSessionId ?? local.agentSessionId ?? null)
+				: (local.agentSessionId ?? host.agentSessionId ?? null),
 			name: host.name ?? local.name ?? null,
 			starred: host.starred === true,
 			logs: mergeLogs(hostLogs, localLogs),
@@ -190,16 +222,7 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 		const tabId = aiTabs.some((tab) => tab.id === item.tabId) ? item.tabId : fallbackTabId;
 		if (!tabId) return [];
 		queuedIds.add(item.itemId);
-		return [
-			{
-				id: item.itemId,
-				timestamp: item.queuedAt,
-				tabId,
-				type: 'message',
-				text: item.text,
-				...(item.paused ? { paused: true } : {}),
-			},
-		];
+		return [asLocalQueueItem(item, tabId)];
 	});
 
 	const { liftedTo: _liftedTo, hostCopyLeft: _hostCopyLeft, ...rest } = record;
@@ -237,6 +260,7 @@ function readReturnedQueue(value: unknown): ReturnedQueuedMessage[] | undefined 
 			queuedAt: raw.queuedAt,
 			text: raw.text,
 			paused: raw.paused === true,
+			...(raw.kind === 'command' ? { kind: 'command' as const } : {}),
 		});
 	}
 	return queue;

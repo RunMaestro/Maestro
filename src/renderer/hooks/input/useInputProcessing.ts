@@ -681,9 +681,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							activeSession.id,
 							activeTab?.id || activeSession.activeTabId
 						);
+						// Still moved onto a host: queue it like a message, it runs once the agent is home.
 						const sessionIsIdle =
 							!options?.hold &&
 							!retryHoldsTab &&
+							!isAwaitingComeHome(activeSession) &&
 							(forceParallel
 								? activeTab?.state !== 'busy'
 								: activeSession.state !== 'busy' && !isAutoRunActive);

@@ -163,6 +163,29 @@ describe('withReturnedFromHost', () => {
 		expect(merged.hostCopyLeft).toBeUndefined();
 	});
 
+	it('on an agent already home, a tab keeps its own provider session and the active tab stays', () => {
+		const record = {
+			...hostedAgent(),
+			liftedTo: undefined,
+			hostCopyLeft: copyLeft(false),
+			activeTabId: 'tab-1',
+			aiTabs: [
+				{ id: 'tab-1', agentSessionId: 'sess-here', logs: [] },
+				{ id: 'tab-2', agentSessionId: null, logs: [] },
+			],
+		} as unknown as Record<string, unknown>;
+		const merged = withReturnedFromHost(record, {
+			activeTabId: 'tab-2',
+			tabs: [
+				{ id: 'tab-1', agentSessionId: 'sess-host', logs: [] },
+				{ id: 'tab-2', agentSessionId: 'sess-host-2', logs: [] },
+			],
+		});
+		const tabs = merged.aiTabs as AITabRecord[];
+		expect(tabs.map((tab) => tab.agentSessionId)).toEqual(['sess-here', 'sess-host-2']);
+		expect(merged.activeTabId).toBe('tab-1');
+	});
+
 	it('keeps a local transcript the host has less of', () => {
 		const record = hostedAgent() as unknown as Record<string, unknown>;
 		const merged = withReturnedFromHost(record, { tabs: [{ id: 'tab-1', logs: [] }] });
@@ -327,6 +350,42 @@ describe('runReturnFromHost', () => {
 			expect(client.agents.remove).not.toHaveBeenCalled();
 		});
 
+		it('a turn that starts on the host during the return: nothing is written here, and what it held is released', async () => {
+			const client = hostClient({ queue: ok([waiting]) });
+			client.agents.get
+				.mockResolvedValueOnce(ok({ id: 'host-1', aiTabs: [{ id: 'tab-1', state: 'idle' }] }))
+				.mockResolvedValueOnce(ok({ id: 'host-1', aiTabs: [{ id: 'tab-1', state: 'busy' }] }));
+			const d = deps(hostedAgent(), client);
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_BUSY',
+			});
+			expect(d.restore).not.toHaveBeenCalled();
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			expect(client.turns.queue.setPaused.mock.calls).toEqual([
+				['host-1', 'q1', true],
+				['host-1', 'q1', false],
+			]);
+		});
+
+		it('a host read that fails releases what it held before the connection closes', async () => {
+			const client = hostClient({ queue: ok([waiting]) });
+			client.tabs.list.mockResolvedValue(fail('timeout'));
+			const order: string[] = [];
+			client.turns.queue.setPaused.mockImplementation(
+				async (_agentId: string, itemId: string, paused: boolean) => {
+					await Promise.resolve();
+					order.push(`${itemId}:${paused}`);
+					return ok({ found: true, paused });
+				}
+			);
+			const d = deps(hostedAgent(), client);
+			d.release.mockImplementation(async () => {
+				order.push('release');
+			});
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toThrow();
+			expect(order).toEqual(['q1:true', 'q1:false', 'release']);
+		});
+
 		it('takes the messages out of a kept host copy, so they cannot run twice', async () => {
 			const client = hostClient({ queue: ok([waiting, held]) });
 			const d = deps(hostedAgent(), client);
@@ -368,6 +427,54 @@ describe('runReturnFromHost', () => {
 				{ id: 'q2', timestamp: 20, tabId: 'tab-1', type: 'message', text: 'later', paused: true },
 				{ id: 'local-1', timestamp: 50, tabId: 'tab-1', type: 'message', text: 'held here' },
 			]);
+		});
+
+		it('a slash command from the host queue comes home as a command, not as prompt text', () => {
+			const merged = withReturnedFromHost(hostedAgent() as unknown as Record<string, unknown>, {
+				tabs: [],
+				queue: [
+					{
+						itemId: 'c1',
+						tabId: 'tab-1',
+						queuedAt: 10,
+						text: '/speckit.plan the login page',
+						paused: false,
+						kind: 'command',
+					},
+					{
+						itemId: 'c2',
+						tabId: 'tab-1',
+						queuedAt: 11,
+						text: '/commit',
+						paused: true,
+						kind: 'command',
+					},
+				],
+			});
+			expect(merged.executionQueue).toEqual([
+				{
+					id: 'c1',
+					timestamp: 10,
+					tabId: 'tab-1',
+					type: 'command',
+					command: '/speckit.plan',
+					commandArgs: 'the login page',
+				},
+				{
+					id: 'c2',
+					timestamp: 11,
+					tabId: 'tab-1',
+					paused: true,
+					type: 'command',
+					command: '/commit',
+					commandArgs: '',
+				},
+			]);
+			const stored = readReturnedFromHost({
+				tabs: [],
+				queue: [{ itemId: 'c1', tabId: 'tab-1', queuedAt: 10, text: '/commit', kind: 'command' }],
+			});
+			expect(stored?.queue?.[0]?.kind).toBe('command');
 		});
 
 		it('readReturnedFromHost keeps a valid queue and refuses a malformed one', () => {
@@ -433,9 +540,11 @@ describe('runReturnFromHost', () => {
 			const waiting = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: false };
 			const client = hostClient({ queue: ok([waiting]) });
 			const d = stored(hostedAgent(), client);
-			// The app dies while removing the host copy.
-			client.agents.remove.mockRejectedValueOnce(new Error('app quit'));
-			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toThrow('app quit');
+			// The link dies while removing the host copy: the agent is home, and says so.
+			client.agents.remove.mockRejectedValueOnce(new Error('link lost'));
+			const first = await runReturnFromHost('agent-1', {}, d.value);
+			expect(first.hostCopyRemoved).toBe(false);
+			expect(first.notices?.join(' ')).toMatch(/stopped answering before its copy was removed/);
 			expect(d.release).toHaveBeenCalledTimes(1);
 			const home = d.store.get('agent-1') as AgentRecord & { executionQueue?: unknown[] };
 			expect(home.liftedTo).toBeUndefined();
@@ -498,6 +607,19 @@ describe('runReturnFromHost', () => {
 				log('h2', 2),
 			]);
 			expect(done.executionQueue?.map((item) => [item.id, item.text])).toEqual([['q2', 'later']]);
+		});
+
+		it('a cleanup call that throws after the restore is a notice, and the connection is released once', async () => {
+			const waiting = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: false };
+			const client = hostClient({ queue: ok([waiting]) });
+			client.turns.queue.remove.mockRejectedValueOnce(new Error('socket closed'));
+			const d = stored(hostedAgent(), client);
+			d.release.mockRejectedValueOnce(new Error('forward stuck'));
+			const result = await runReturnFromHost('agent-1', { keepHostCopy: true }, d.value);
+			expect(d.store.get('agent-1')?.liftedTo).toBeUndefined();
+			expect(result.notices?.join(' ')).toMatch(/stopped answering before the messages/);
+			expect(result.notices?.join(' ')).toMatch(/did not close: forward stuck/);
+			expect(d.release).toHaveBeenCalledTimes(1);
 		});
 
 		it('a copy kept on purpose loses the messages that came home earlier too', async () => {

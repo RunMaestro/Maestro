@@ -147,6 +147,34 @@ describe('runComeHome', () => {
 		expect(store.get('a')?.liftedTo).toBeUndefined();
 	});
 
+	it('a remote opted out during a retry wait is not dialed again: offline, and the notice says why', async () => {
+		const { deps, calls } = world([agent('a')], (_id, options) =>
+			options.offline ? ok() : refused('PEER_NOT_CONNECTED', 'host-down')
+		);
+		let remote: SshRemoteConfig = REMOTE;
+		deps.readRemotes = () => [remote];
+		deps.sleep = vi.fn(async () => {
+			remote = { ...REMOTE, federation: false } as SshRemoteConfig;
+		});
+		const report = await runComeHome(deps, { onlineAttempts: 3, retryWaitMs: 7 });
+		expect(calls.map((c) => c.options.offline === true)).toEqual([false, true]);
+		expect(report.agents[0].result).toBe('offline');
+		expect(report.agents[0].notices.join(' ')).toContain('opted out of Federation');
+	});
+
+	it('hosting turned on during a wait: no further return call, the agent stays where it is', async () => {
+		const { deps, store, calls } = world([agent('a')], () => refused('RETURN_BUSY'));
+		let hosting = false;
+		deps.hostingEnabled = () => hosting;
+		deps.sleep = vi.fn(async () => {
+			hosting = true;
+		});
+		const report = await runComeHome(deps, { busyWaitMs: 5, busyMaxWaitMs: 1_000 });
+		expect(calls).toHaveLength(1);
+		expect(report.agents).toEqual([]);
+		expect(store.get('a')?.liftedTo).toBeDefined();
+	});
+
 	it('a host that answers on the second try comes back online', async () => {
 		const { deps } = world([agent('a')], (_id, _o, call) =>
 			call === 1 ? refused('RETURN_HOST_FAILED') : ok()

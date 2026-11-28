@@ -175,6 +175,7 @@ export async function runReturnFromHost(
 	}
 
 	const connection = await deps.connect(remoteId, pointer.peer);
+	let released = false;
 	try {
 		const hostError = deps.hostCallError ?? defaultHostCallError;
 		const notices: string[] = [];
@@ -231,12 +232,23 @@ export async function runReturnFromHost(
 				throw hostError(connection.peer, error);
 			};
 			const tabs = await connection.client.tabs.list(pointer.agentId);
-			if (!tabs.ok) return failRead(tabs.error);
+			if (!tabs.ok) return await failRead(tabs.error);
 			const withLogs: AITabRecord[] = [];
 			for (const tab of tabs.value) {
 				const transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id);
-				if (!transcript.ok) return failRead(transcript.error);
+				if (!transcript.ok) return await failRead(transcript.error);
 				withLogs.push({ ...tab, logs: transcript.value });
+			}
+			// A turn may have started on the host since the first look (a message that left the queue
+			// before it was held, or a send typed on the host): look again before anything is written.
+			const recheck = await connection.client.agents.get(pointer.agentId);
+			if (!recheck.ok) return await failRead(recheck.error);
+			if ((recheck.value.aiTabs ?? []).some((tab) => tab.state === 'busy')) {
+				await releaseHeld(connection, pointer.agentId, heldIds);
+				throw new LiftRunError(
+					'RETURN_BUSY',
+					`"${agent.name}" started a turn on its host. Wait for it to finish, then move it back.`
+				);
 			}
 			returned = {
 				tabs: withLogs,
@@ -257,6 +269,7 @@ export async function runReturnFromHost(
 								queuedAt: item.queuedAt,
 								text: item.text,
 								paused: item.paused,
+								...(item.kind === 'command' ? { kind: item.kind } : {}),
 							})),
 						}
 					: {}),
@@ -274,28 +287,45 @@ export async function runReturnFromHost(
 			throw error;
 		}
 
+		// The agent is home from here on: a failure is the host copy's, reported, never the agent's.
 		let hostCopyRemoved = false;
-		if (hostAgent.ok && !options.keepHostCopy) {
-			const removed = await connection.client.agents.remove(pointer.agentId);
-			if (removed.ok) {
-				hostCopyRemoved = true;
-				await clearHostCopyLeft(deps, agent, notices);
-			} else {
-				notices.push(
-					`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} Maestro removes it at the next launch, or on the remote run: maestro-cli remove-agent ${pointer.agentId}`
-				);
-			}
-		} else if (hostAgent.ok) {
-			notices.push(`The host keeps its copy (${from}). Do not send to both.`);
-			const cameHome = [...(returned.queue ?? []).map((item) => item.itemId), ...carriedOnHost];
-			for (const itemId of cameHome) {
-				const removed = await connection.client.turns.queue.remove(pointer.agentId, itemId);
-				if (!removed.ok) {
+		try {
+			if (hostAgent.ok && !options.keepHostCopy) {
+				const removed = await connection.client.agents.remove(pointer.agentId);
+				if (removed.ok) {
+					hostCopyRemoved = true;
+					await clearHostCopyLeft(deps, agent, notices);
+				} else {
 					notices.push(
-						`A message that came back still waits, held, in the host's queue (${from}): ${removed.error.message} Remove it there so it does not run twice.`
+						`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} Maestro removes it at the next launch, or on the remote run: maestro-cli remove-agent ${pointer.agentId}`
 					);
 				}
+			} else if (hostAgent.ok) {
+				notices.push(`The host keeps its copy (${from}). Do not send to both.`);
+				const cameHome = [...(returned.queue ?? []).map((item) => item.itemId), ...carriedOnHost];
+				for (const itemId of cameHome) {
+					const removed = await connection.client.turns.queue.remove(pointer.agentId, itemId);
+					if (!removed.ok) {
+						notices.push(
+							`A message that came back still waits, held, in the host's queue (${from}): ${removed.error.message} Remove it there so it does not run twice.`
+						);
+					}
+				}
 			}
+		} catch (error) {
+			notices.push(
+				options.keepHostCopy
+					? `The agent is back, but the host (${from}) stopped answering before the messages that came back left its queue: ${errorText(error)} Remove them there so they do not run twice.`
+					: `The agent is back, but the host (${from}) stopped answering before its copy was removed: ${errorText(error)} Maestro removes it at the next launch.`
+			);
+		}
+		released = true;
+		try {
+			await connection.release();
+		} catch (error) {
+			notices.push(
+				`The agent is back, but the connection to ${from} did not close: ${errorText(error)}`
+			);
 		}
 
 		const localIds = new Set((agent.aiTabs ?? []).map((tab) => tab.id));
@@ -309,8 +339,12 @@ export async function runReturnFromHost(
 			...(notices.length > 0 ? { notices } : {}),
 		};
 	} finally {
-		await connection.release();
+		if (!released) await connection.release();
 	}
+}
+
+function errorText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 /**

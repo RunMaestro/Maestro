@@ -144,6 +144,8 @@ async function finishHostCopy(
 	};
 	let waitedMs = 0;
 	for (;;) {
+		// Settings can change during a wait: no dial once hosting is on or the remote may not be dialed.
+		if (deps.hostingEnabled() || onlineSkipReason(agent, deps.readRemotes())) return null;
 		const answer = await deps.returnAgent(agent.id, {});
 		if (answer.ok) {
 			if (answer.result.hostCopyRemoved) {
@@ -177,8 +179,13 @@ async function bringHome(
 	let attempts = 0;
 	let waitedMs = 0;
 	let lastError = '';
-	const skipReason = onlineSkipReason(agent, deps.readRemotes());
-	while (!skipReason && attempts < timing.onlineAttempts) {
+	let skipReason: string | undefined;
+	while (attempts < timing.onlineAttempts) {
+		// Read before every try, since a wait can be long: hosting turned on leaves the agent where
+		// the person now wants it, and a remote disabled or opted out meanwhile is not dialed.
+		if (deps.hostingEnabled()) return null;
+		skipReason = onlineSkipReason(agent, deps.readRemotes());
+		if (skipReason) break;
 		const answer = await deps.returnAgent(agent.id, {});
 		if (answer.ok) {
 			outcome.result = 'online';
@@ -209,6 +216,7 @@ async function bringHome(
 	}
 
 	// The host did not answer: come back with this machine's copy, so the agent works now.
+	if (deps.hostingEnabled()) return null;
 	const offline = await deps.returnAgent(agent.id, { offline: true });
 	if (!offline.ok) {
 		if (offline.code === 'RETURN_NOT_HOSTED') return null;
