@@ -398,7 +398,8 @@ export async function runReturnFromHost(
 			// Neither host sends a queued message's images (`list_queue` carries its text only), and a
 			// headless host takes none. A desktop host may hold some: its messages come home held, so
 			// none runs without the image it was sent with.
-			imagesUnread = queue.length > 0 && connection.client.connection?.host()?.kind === 'desktop';
+			const desktopHost = connection.client.connection?.host()?.kind === 'desktop';
+			imagesUnread = queue.length > 0 && desktopHost;
 			/** Kept copy: the messages that come home, still to take out of its queue. */
 			keptQueue = [...queue.map((item) => item.itemId), ...carriedOnHost];
 			returned = {
@@ -428,6 +429,17 @@ export async function runReturnFromHost(
 			if (imagesUnread) {
 				notices.push(
 					`${from} is a Maestro desktop, which does not send the images attached to queued messages. The ${queue.length === 1 ? 'message' : `${queue.length} messages`} from its queue wait here, held: attach any image again, then resume ${queue.length === 1 ? 'it' : 'each one'}.`
+				);
+			}
+			// A desktop host sends a tab's draft text but never the images staged with it, and no call
+			// fetches them: name each draft that came back as text only, so the user attaches again.
+			const draftTabs = desktopHost
+				? withLogs.filter((tab) => typeof tab.inputValue === 'string' && tab.inputValue.trim())
+				: [];
+			if (draftTabs.length > 0) {
+				const names = draftTabs.map((tab) => `"${tab.name ?? tab.id}"`).join(', ');
+				notices.push(
+					`${from} is a Maestro desktop, which does not send the images staged with a draft. The draft in ${draftTabs.length === 1 ? 'tab' : 'tabs'} ${names} came back as text only: any image attached to it there is not here, so attach it again before you send.`
 				);
 			}
 			const unknownReadOnly = readOnlyUnknownNotice(queue);

@@ -521,6 +521,34 @@ describe('runReturnFromHost', () => {
 			);
 		});
 
+		it('a draft from a desktop host comes home as text, and the notice says its staged images do not (#2195)', async () => {
+			const client = hostClient({
+				tabs: [
+					{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1', inputValue: 'see the screenshot' },
+					{ id: 'tab-new', name: 'Started on host', agentSessionId: 'sess-2', inputValue: '  ' },
+				],
+			});
+			const desktop = {
+				...client,
+				connection: { host: () => ({ kind: 'desktop' as const, label: 'desktop pid 1' }) },
+			};
+			const d = deps(hostedAgent(), desktop as unknown as typeof client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(d.restore.mock.calls[0][1].tabs[0].inputValue).toBe('see the screenshot');
+			const said = result.notices?.join(' ') ?? '';
+			expect(said).toMatch(
+				/build-box:host-1 is a Maestro desktop, which does not send the images staged with a draft\. The draft in tab "Main" came back as text only/
+			);
+			expect(said).not.toMatch(/Started on host/);
+			// The same drafts from a headless host: it sends what it holds, so there is nothing to say.
+			const headless = {
+				...client,
+				connection: { host: () => ({ kind: 'headless' as const, label: 'headless pid 1' }) },
+			};
+			const h = deps(hostedAgent(), headless as unknown as typeof client);
+			expect((await runReturnFromHost('agent-1', {}, h.value)).notices).toBeUndefined();
+		});
+
 		it('messages from a headless host keep their state: it takes no images (R2)', async () => {
 			const client = hostClient({ queue: ok([waiting]) });
 			const headless = {
