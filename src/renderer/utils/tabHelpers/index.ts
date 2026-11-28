@@ -885,12 +885,15 @@ export function resolveQueuedItemTarget(
 }
 
 /**
- * True while the agent still points at a Federation host (`liftedTo`). Its local queue holds: a
- * turn spawned here would resume the provider session the host owns. With hosting off the
+ * True while hosting is off and the agent still points at a Federation host (`liftedTo`). Its
+ * local queue holds: a turn spawned here would resume the provider session the host owns. The
  * come-home job (`src/main/federation/come-home.ts`) clears the pointer, and the queue drains then.
- * With hosting on, sends go to the host (`hostedTargetOf()`) and nothing local should drain either.
+ * With hosting on, nothing is held: sends go to the host (`hostedTargetOf()`) as before. Same
+ * reading of the setting as `hostingEnabled()` in `services/hostedTurns.ts` (not imported: that
+ * module imports this one).
  */
 export function isAwaitingComeHome(session: Pick<Session, 'liftedTo'>): boolean {
+	if (useSettingsStore.getState().federationHostedAgents === true) return false;
 	return readLiftedTo(session.liftedTo) !== undefined;
 }
 

@@ -92,6 +92,8 @@ import {
 	isSessionIdLabel,
 	visibleAiTabs,
 	hasUnreadVisibleTab,
+	isAwaitingComeHome,
+	isQueuedItemTargetBusy,
 } from '../../../renderer/utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import type { LogEntry } from '../../../renderer/types';
@@ -7301,5 +7303,31 @@ describe('markTabBusyFromOutput', () => {
 		expect(error.state).toBe('error');
 		expect(shell.aiTabs[0].state).toBe('busy');
 		expect(shell.busySource).toBe('terminal');
+	});
+});
+
+describe('isAwaitingComeHome (a moved agent on its way home)', () => {
+	const liftedTo = { peer: 'build-box', agentId: 'host-1', at: 1 };
+
+	afterEach(() => {
+		useSettingsStore.setState({ federationHostedAgents: false });
+	});
+
+	it('holds a moved agent while hosting is off, and its queue reads as busy', () => {
+		useSettingsStore.setState({ federationHostedAgents: false });
+		const session = createMockSession({ liftedTo });
+		expect(isAwaitingComeHome(session)).toBe(true);
+		expect(isQueuedItemTargetBusy(session, { tabId: session.activeTabId })).toBe(true);
+	});
+
+	it('holds nothing while hosting is on: a moved agent sends to its host as before (R4)', () => {
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const session = createMockSession({ liftedTo });
+		expect(isAwaitingComeHome(session)).toBe(false);
+		expect(isQueuedItemTargetBusy(session, { tabId: session.activeTabId })).toBe(false);
+	});
+
+	it('holds nothing for an agent that is home', () => {
+		expect(isAwaitingComeHome(createMockSession())).toBe(false);
 	});
 });
