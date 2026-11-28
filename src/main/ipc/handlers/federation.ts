@@ -327,7 +327,8 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 			},
 			isAutoMoveEnabled: () => deps.readAutoMove(),
 			peers: () => getPeerMirrorService()?.peers() ?? [],
-			setupHost: (remoteId) => setupHostFromDesktop(remoteId, {}, setupDeps),
+			setupHost: (remoteId, stillWanted) =>
+				setupHostFromDesktop(remoteId, { stillWanted }, setupDeps),
 			lift: (agentId, options) => liftAgentFromDesktop(agentId, options, liftDeps),
 			isAgentBusy: (agent) => isAgentBusy(agent, deps.getProcessManager()),
 			hostProviders: async (remoteId) => {

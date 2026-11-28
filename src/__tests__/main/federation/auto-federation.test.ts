@@ -241,7 +241,7 @@ describe('AutoFederationCoordinator: keeping hosts', () => {
 	it('starts a stopped host with automatic moves on', async () => {
 		const w = world({ peers: [peer('r1', 'host-down')] });
 		const snapshot = await w.coordinator.runNow({ force: false });
-		expect(w.deps.setupHost).toHaveBeenCalledWith('r1');
+		expect(w.deps.setupHost).toHaveBeenCalledWith('r1', expect.any(Function));
 		expect(snapshot.agents[0].state).toBe('moved');
 	});
 
@@ -517,6 +517,55 @@ describe('AutoFederationCoordinator: Run Now', () => {
 });
 
 describe('AutoFederationCoordinator: scheduling', () => {
+	it('reads automatic moves again before each remote, and passes setup a check of its own', async () => {
+		const w = world({
+			remotes: [remote('r1'), remote('r2')],
+			agents: [agent('a1', 'r1'), agent('a2', 'r2')],
+			peers: [peer('r1', 'host-down'), peer('r2', 'host-down')],
+		});
+		// Turned off while the first remote's setup ran.
+		w.deps.setupHost.mockImplementationOnce(
+			async (_remoteId: string, stillWanted: () => boolean) => {
+				expect(stillWanted()).toBe(true);
+				w.deps.isAutoMoveEnabled.mockReturnValue(false);
+				expect(stillWanted()).toBe(false);
+				return setupOk;
+			}
+		);
+		await w.coordinator.runNow();
+		expect(w.deps.setupHost).toHaveBeenCalledTimes(1);
+		expect(w.deps.setupHost).toHaveBeenCalledWith('r1', expect.any(Function));
+	});
+
+	it('treats a setup skipped as no longer wanted as no failure, and tries again at once', async () => {
+		const w = world({
+			peers: [peer('r1', 'host-down')],
+			setup: { ok: false, code: 'SETUP_NOT_WANTED', error: 'Automatic moves turned off.' },
+		});
+		const snapshot = await w.coordinator.runNow({ force: false });
+		expect(snapshot.remotes[0]).toMatchObject({ state: 'waiting' });
+		await w.coordinator.runNow({ force: false });
+		expect(w.deps.setupHost).toHaveBeenCalledTimes(2);
+	});
+
+	it('once stopped, a pass in flight starts no setup, publishes nothing, and answers idle', async () => {
+		const w = world({ peers: [peer('r1', 'host-down')] });
+		let stillWanted: (() => boolean) | undefined;
+		let publishedAtStop = -1;
+		w.deps.setupHost.mockImplementationOnce(async (_remoteId: string, check: () => boolean) => {
+			stillWanted = check;
+			w.coordinator.stop();
+			publishedAtStop = w.deps.publish.mock.calls.length;
+			return setupOk;
+		});
+		const snapshot = await w.coordinator.runNow({ force: false });
+		expect(stillWanted?.()).toBe(false);
+		expect(w.deps.lift).not.toHaveBeenCalled();
+		expect(snapshot).toEqual({ autoMove: false, running: false, remotes: [], agents: [] });
+		// Nothing after the stop: the pass's own results never reach the windows.
+		expect(w.deps.publish.mock.calls.length).toBe(publishedAtStop);
+	});
+
 	it('debounces nudges into one pass and stops cleanly', () => {
 		const w = world({});
 		w.coordinator.nudge();

@@ -31,19 +31,9 @@ import type { LiftedToPointer } from '../../shared/maestro-lib/agents/lift-point
 import {
 	runReturnFromHost,
 	type ReturnedFromHost,
-	type ReturnHostConnection,
 	type ReturnResult,
 	type ReturnRunOptions,
 } from '../../shared/maestro-lib/agents/lift-return';
-import { isFederationRemote } from '../../shared/federationRemote';
-import {
-	connectPeerClient,
-	federationOffMessage,
-	peerIdFor,
-	type PeerClientDeps,
-} from '../../shared/maestro-lib/client/peer-connection';
-import { getSshForwardManager } from '../../shared/maestro-lib/client/ssh-forward';
-import { createWsMaestroClient } from '../../shared/maestro-lib/client/ws-client';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
 import { isAgentBusy, type ProcessLivenessProbe } from '../utils/agent-busy';
@@ -69,13 +59,8 @@ export interface DesktopLiftDeps {
 	readAgentConfigs(): Record<string, Record<string, unknown> | undefined>;
 	/** A turn is running on any of the agent's tabs right now. */
 	isAgentRunning(agent: AgentRecord): boolean;
-	/** The running mirror, or null while hosted agents are off. */
+	/** The running mirror, or null before boot started it. */
 	service(): PeerMirrorService | null;
-	/**
-	 * One connection to one host for one call, when the mirror does not run (hosted agents off).
-	 * The caller releases it; nothing of the mirror or the coordinator starts.
-	 */
-	connectOnce?(remoteId: string): Promise<ReturnHostConnection>;
 	setPointer(agentId: string, pointer: LiftedToPointer, movedQueueItemIds: string[]): Promise<void>;
 	/** Move Back: make the agent an SSH agent again with the host's tabs merged in. */
 	restore(agentId: string, returned: ReturnedFromHost): Promise<void>;
@@ -89,8 +74,7 @@ export type DesktopReturnAnswer =
 
 /**
  * Move a hosted agent back from its host (Move Back from Host, `maestro-cli unlift`). The host is
- * reached over the mirror's held client, as for Move to Host, or, while the mirror does not run
- * (hosted agents off), over one connection opened for this call and closed after it. Never throws.
+ * reached over the mirror's held client, as for Move to Host. Never throws.
  */
 export async function returnAgentFromDesktop(
 	agentId: string,
@@ -98,7 +82,7 @@ export async function returnAgentFromDesktop(
 	deps: DesktopLiftDeps
 ): Promise<DesktopReturnAnswer> {
 	const service = deps.service();
-	if (!service && !deps.connectOnce && !options.offline) {
+	if (!service && !options.offline) {
 		return { ok: false, code: 'FEDERATION_NOT_RUNNING', error: FEDERATION_NOT_RUNNING_MESSAGE };
 	}
 	try {
@@ -106,10 +90,7 @@ export async function returnAgentFromDesktop(
 			readAgents: deps.readAgents,
 			connect: async (remoteId) => {
 				try {
-					if (!service) {
-						if (!deps.connectOnce) throw new Error(FEDERATION_NOT_RUNNING_MESSAGE);
-						return await deps.connectOnce(remoteId);
-					}
+					if (!service) throw new Error(FEDERATION_NOT_RUNNING_MESSAGE);
 					const { peer, client } = service.hostClient(remoteId);
 					return { peer, client, release: async () => {} };
 				} catch (error) {
@@ -252,28 +233,6 @@ export interface DesktopLiftRuntime {
 	service(): PeerMirrorService | null;
 }
 
-/**
- * Open one SSH forward and one client to the host on `remoteId`, for one user action while the
- * mirror does not run. A remote that is unknown, disabled, or opted out of Federation is refused
- * before anything dials. On success the caller must `release()` it.
- */
-export async function connectHostOnce(
-	remoteId: string,
-	remotes: SshRemoteConfig[],
-	transport: PeerClientDeps = {
-		acquireForward: (remote) => getSshForwardManager().acquire(remote),
-		createClient: (endpoint) => createWsMaestroClient({ endpoint }),
-	}
-): Promise<ReturnHostConnection> {
-	const remote = remotes.find((candidate) => candidate.id === remoteId);
-	if (!remote) throw new Error(`SSH remote ${remoteId} not found`);
-	if (remote.enabled === false) throw new Error(`SSH remote "${remote.name}" is disabled.`);
-	if (!isFederationRemote(remote)) throw new Error(federationOffMessage(remote));
-	const peer = peerIdFor(remote, remotes);
-	const { client, release } = await connectPeerClient(peer, remote, transport);
-	return { peer, client, release };
-}
-
 function arrayOf<T>(value: unknown): T[] {
 	return Array.isArray(value) ? (value as T[]) : [];
 }
@@ -291,8 +250,6 @@ export function buildDesktopLiftDeps(runtime: DesktopLiftRuntime): DesktopLiftDe
 		},
 		isAgentRunning: (agent) => isAgentBusy(agent, runtime.getProcessManager()),
 		service: runtime.service,
-		connectOnce: (remoteId) =>
-			connectHostOnce(remoteId, arrayOf<SshRemoteConfig>(runtime.readSshRemotes())),
 		setPointer: (agentId, pointer, moved) =>
 			setLiftPointerInWindow(runtime.getMainWindow(), agentId, pointer, moved),
 		restore: (agentId, returned) =>

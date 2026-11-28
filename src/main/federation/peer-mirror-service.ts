@@ -33,6 +33,7 @@
 import * as os from 'os';
 
 import { generateUUID } from '../../shared/uuid';
+import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../shared/federationCommands';
 import {
 	PeerConnectError,
 	connectPeerClient,
@@ -421,7 +422,11 @@ export class PeerMirrorService {
 	 * it, so a call that opens its own ssh (installing or starting a host) never dials beside a probe.
 	 */
 	exclusive<T>(task: () => Promise<T>): Promise<T> {
-		const run = this.queue.then(task);
+		// A task still queued when the service stopped (hosting turned off) never runs.
+		const run = this.queue.then(() => {
+			if (this.stopped) throw new Error(FEDERATION_NOT_RUNNING_MESSAGE);
+			return task();
+		});
 		this.queue = run.then(
 			() => undefined,
 			() => undefined

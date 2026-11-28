@@ -46,7 +46,7 @@ import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { DesktopLiftAnswer } from './lift';
-import type { DesktopSetupHostAnswer } from './setup-host';
+import { SETUP_NOT_WANTED_CODE, type DesktopSetupHostAnswer } from './setup-host';
 
 /** How often a pass runs on its own. Peer changes and agent edits also start one. */
 export const AUTO_FEDERATION_INTERVAL_MS = 5 * 60_000;
@@ -68,8 +68,11 @@ export interface AutoFederationDeps {
 	isAutoMoveEnabled(): boolean;
 	/** The mirror's view of every probed remote. Empty before the mirror runs. */
 	peers(): MirrorPeerSummary[];
-	/** Move to Host's setup step / Start Host: install when needed, register the service, start the host. */
-	setupHost(remoteId: string): Promise<DesktopSetupHostAnswer>;
+	/**
+	 * Move to Host's setup step / Start Host: install when needed, register the service, start the
+	 * host. `stillWanted` is read right before the setup touches the remote; false skips it.
+	 */
+	setupHost(remoteId: string, stillWanted: () => boolean): Promise<DesktopSetupHostAnswer>;
 	/** Move to Host, with or without `dryRun`. */
 	lift(agentId: string, options: { dryRun: boolean }): Promise<DesktopLiftAnswer>;
 	/** A turn of this agent runs right now. */
@@ -218,6 +221,8 @@ export class AutoFederationCoordinator {
 	}
 
 	snapshot(): AutoFederationSnapshot {
+		// Stopped (hosting turned off): a pass still in flight must not bring old statuses back.
+		if (this.stopped) return emptyAutoFederationSnapshot(false);
 		const autoMove = this.deps.isAutoMoveEnabled();
 		return {
 			...emptyAutoFederationSnapshot(autoMove),
@@ -241,6 +246,7 @@ export class AutoFederationCoordinator {
 	}
 
 	private publish(): void {
+		if (this.stopped) return;
 		this.deps.publish(this.snapshot());
 	}
 
@@ -403,7 +409,9 @@ export class AutoFederationCoordinator {
 		const peer = this.deps.peers().find((candidate) => candidate.remoteId === remote.id);
 		const connection = peer?.connection;
 
-		if (!autoMove) {
+		// Read again for each remote: the switch may have turned off, or hosting with it, while an
+		// earlier remote's setup ran.
+		if (!autoMove || !this.setupStillWanted()) {
 			this.reportHost(remote, connection, peer?.error);
 			return connection === 'connected';
 		}
@@ -501,6 +509,11 @@ export class AutoFederationCoordinator {
 		}
 	}
 
+	/** Automatic moves are still on and the coordinator still runs: a setup may change a remote. */
+	private setupStillWanted(): boolean {
+		return !this.stopped && this.deps.isAutoMoveEnabled();
+	}
+
 	/** A setup of this remote failed recently, against the same remote record. */
 	private setupBackingOff(remote: SshRemoteConfig): boolean {
 		if (this.forcing) return false;
@@ -529,13 +542,19 @@ export class AutoFederationCoordinator {
 		this.publish();
 		let answer: DesktopSetupHostAnswer;
 		try {
-			answer = await this.deps.setupHost(remote.id);
+			// Checked again when the setup leaves the mirror's queue, right before it touches the remote.
+			answer = await this.deps.setupHost(remote.id, () => this.setupStillWanted());
 		} catch (error) {
 			answer = {
 				ok: false,
 				code: 'SETUP_FAILED',
 				error: error instanceof Error ? error.message : String(error),
 			};
+		}
+		if (!answer.ok && answer.code === SETUP_NOT_WANTED_CODE) {
+			// Not a failure: automatic moves or hosting turned off first, and nothing ran.
+			this.setRemote(remote, { state: 'waiting', reason: answer.error });
+			return false;
 		}
 		if (!answer.ok) {
 			// An older running host is not replaced on its own: that would interrupt its work.

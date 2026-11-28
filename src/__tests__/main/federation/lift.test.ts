@@ -21,14 +21,10 @@ vi.mock('../../../main/utils/agent-busy', () => ({
 import {
 	LIFT_POINTER_TIMEOUT_MS,
 	buildDesktopLiftDeps,
-	connectHostOnce,
 	liftAgentFromDesktop,
-	returnAgentFromDesktop,
 	setLiftPointerInWindow,
 	type DesktopLiftDeps,
 } from '../../../main/federation/lift';
-import type { SshForwardLease } from '../../../shared/maestro-lib/client/ssh-forward';
-import type { MaestroClient } from '../../../shared/maestro-lib/client/types';
 import type { PeerMirrorService } from '../../../main/federation/peer-mirror-service';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -82,7 +78,6 @@ function depsWith(overrides: Partial<DesktopLiftDeps> = {}, svc = fakeService())
 		isAgentRunning: () => false,
 		service: () => svc.service,
 		setPointer: vi.fn().mockResolvedValue(undefined),
-		restore: vi.fn().mockResolvedValue(undefined),
 		now: () => NOW,
 		...overrides,
 	};
@@ -229,97 +224,5 @@ describe('buildDesktopLiftDeps', () => {
 			expect.objectContaining({ id: 'agent-1' }),
 			processManager
 		);
-	});
-});
-
-describe('returnAgentFromDesktop while the mirror does not run (hosted agents off)', () => {
-	const hosted = () =>
-		sshAgent({
-			liftedTo: { peer: 'build-box', agentId: 'host-1', at: NOW },
-		} as Partial<AgentRecord>);
-
-	it('opens one connection for the call, and releases it after', async () => {
-		const release = vi.fn(async () => undefined);
-		const get = vi.fn(async () => ({ ok: false, error: { code: 'not-found', message: 'gone' } }));
-		const connectOnce = vi.fn(async () => ({
-			peer: 'build-box',
-			client: { agents: { get } } as never,
-			release,
-		}));
-		const restore = vi.fn(async () => undefined);
-		const { deps } = depsWith({
-			service: () => null,
-			connectOnce,
-			restore,
-			readAgents: () => [hosted()],
-		});
-		const answer = await returnAgentFromDesktop('agent-1', {}, deps);
-		expect(answer.ok).toBe(true);
-		expect(connectOnce).toHaveBeenCalledTimes(1);
-		expect(connectOnce).toHaveBeenCalledWith('remote-1');
-		expect(get).toHaveBeenCalledWith('host-1');
-		expect(restore).toHaveBeenCalledWith('agent-1', { tabs: [] });
-		expect(release).toHaveBeenCalledTimes(1);
-	});
-
-	it('reports a host it cannot reach as not connected, and restores nothing', async () => {
-		const restore = vi.fn(async () => undefined);
-		const { deps } = depsWith({
-			service: () => null,
-			connectOnce: vi.fn(async () => {
-				throw new Error('ssh: connect to host build-box port 22: Connection refused');
-			}),
-			restore,
-			readAgents: () => [hosted()],
-		});
-		const answer = await returnAgentFromDesktop('agent-1', {}, deps);
-		expect(answer).toMatchObject({ ok: false, code: 'PEER_NOT_CONNECTED' });
-		expect(restore).not.toHaveBeenCalled();
-	});
-});
-
-describe('connectHostOnce', () => {
-	function transport() {
-		const release = vi.fn(async () => undefined);
-		const close = vi.fn(async () => undefined);
-		const endpoint = { port: 1, remotePort: 2, token: 't', cliSecret: 's', pid: 3 };
-		const acquireForward = vi.fn(
-			(r: SshRemoteConfig) =>
-				({
-					remoteId: r.id,
-					ready: () => Promise.resolve(endpoint),
-					release,
-				}) as unknown as SshForwardLease
-		);
-		const createClient = vi.fn(
-			() =>
-				({
-					connection: { connect: vi.fn(async () => ({ ok: true, value: {} })), close },
-				}) as unknown as MaestroClient
-		);
-		return { acquireForward, createClient, release, close };
-	}
-
-	it('refuses an unknown, disabled, or opted-out remote before anything dials', async () => {
-		const t = transport();
-		await expect(connectHostOnce('nope', [remote], t)).rejects.toThrow('not found');
-		await expect(connectHostOnce('remote-1', [{ ...remote, enabled: false }], t)).rejects.toThrow(
-			'disabled'
-		);
-		await expect(
-			connectHostOnce('remote-1', [{ ...remote, federation: false }], t)
-		).rejects.toThrow();
-		expect(t.acquireForward).not.toHaveBeenCalled();
-	});
-
-	it('opens one forward and one client, and release() closes both', async () => {
-		const t = transport();
-		const connection = await connectHostOnce('remote-1', [remote], t);
-		expect(connection.peer).toBe('build-box');
-		expect(t.acquireForward).toHaveBeenCalledTimes(1);
-		expect(t.createClient).toHaveBeenCalledTimes(1);
-		await connection.release();
-		expect(t.close).toHaveBeenCalledTimes(1);
-		expect(t.release).toHaveBeenCalledTimes(1);
 	});
 });

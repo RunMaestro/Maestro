@@ -85,7 +85,7 @@ import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
 import { getPeerMirrorService, startFederationWhileHosting } from './federation';
-import { hostingSettingOf } from './federation/hosting-gate';
+import { hostingSettingOf, settleHostingAfterExternalChange } from './federation/hosting-gate';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
@@ -734,6 +734,9 @@ const settingsWatcher = createSettingsWatcher({
 		// clear is unconditional because the previous value is not available
 		// here, and the only cost of an unnecessary one is a single `which`.
 		clearGhCache();
+		// `maestro-cli settings set federationHostedAgents ...` writes the file directly: start or
+		// stop Federation now, not at the next launch.
+		settleHostingAfterExternalChange();
 	},
 	onAgentConfigsChangedExternally: () => {
 		// A provider's custom binary set outside the Settings UI (maestro-cli
