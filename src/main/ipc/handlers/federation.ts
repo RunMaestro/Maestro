@@ -20,16 +20,15 @@ import type { MirrorPeerSummary } from '../../../shared/maestro-lib/client/peer-
 import type { LogEntryRecord } from '../../../shared/maestro-lib/store/transcript';
 import {
 	FEDERATION_AUTO_CHANNEL,
+	autoFederationSnapshot,
 	getPeerMirrorService,
+	runAutoFederationNow,
 	onMirrorPush,
 	setAutoFederation,
 	type PeerMirrorService,
 } from '../../federation';
 import { AutoFederationCoordinator } from '../../federation/auto-federation';
-import {
-	emptyAutoFederationSnapshot,
-	type AutoFederationSnapshot,
-} from '../../../shared/federationAuto';
+import type { AutoFederationSnapshot } from '../../../shared/federationAuto';
 import { followHostingSetting, type HostingSetting } from '../../federation/hosting-gate';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -345,8 +344,6 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 			onError: (error, operation) => void captureException(error, { operation }),
 		});
 	let auto: AutoFederationCoordinator | null = null;
-	const idleSnapshot = (): AutoFederationSnapshot =>
-		emptyAutoFederationSnapshot(deps.readAutoMove());
 	followHostingSetting(deps.hosting, {
 		start: () => {
 			auto = buildAuto();
@@ -357,7 +354,7 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 			auto?.stop();
 			auto = null;
 			setAutoFederation(null);
-			deps.safeSend?.(FEDERATION_AUTO_CHANNEL, idleSnapshot());
+			deps.safeSend?.(FEDERATION_AUTO_CHANNEL, autoFederationSnapshot());
 		},
 	});
 	// A peer that connected or went down, or an edited agent, is worth a pass soon.
@@ -369,7 +366,7 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 		'federation:autoStatus',
 		withIpcErrorLogging(
 			opts('autoStatus'),
-			async (): Promise<AutoFederationSnapshot> => auto?.snapshot() ?? idleSnapshot()
+			async (): Promise<AutoFederationSnapshot> => autoFederationSnapshot()
 		)
 	);
 	// With hosting off there is nothing to run: the answer is the idle snapshot, and nothing dials.
@@ -377,7 +374,7 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 		'federation:autoRun',
 		withIpcErrorLogging(
 			opts('autoRun'),
-			async (): Promise<AutoFederationSnapshot> => (auto ? auto.runNow() : idleSnapshot())
+			async (): Promise<AutoFederationSnapshot> => runAutoFederationNow()
 		)
 	);
 	ipcMain.handle(

@@ -17,6 +17,10 @@ import { captureException } from '../utils/sentry';
 import type { SafeSendFn } from '../utils/safe-send';
 import { PeerMirrorService, type PeerMirrorServiceDeps } from './peer-mirror-service';
 import type { AutoFederationCoordinator } from './auto-federation';
+import {
+	emptyAutoFederationSnapshot,
+	type AutoFederationSnapshot,
+} from '../../shared/federationAuto';
 import { followHostingSetting, type HostingSetting } from './hosting-gate';
 
 export { PeerMirrorService } from './peer-mirror-service';
@@ -43,6 +47,22 @@ export function getAutoFederation(): AutoFederationCoordinator | null {
 
 export function setAutoFederation(next: AutoFederationCoordinator | null): void {
 	autoFederation = next;
+}
+
+/**
+ * What automatic Federation reports: the coordinator's snapshot, or, while it does not run (hosted
+ * agents off), the idle one: nothing seen and no automatic moves in effect. The IPC and the CLI
+ * bridge both answer this.
+ */
+export function autoFederationSnapshot(): AutoFederationSnapshot {
+	return autoFederation?.snapshot() ?? emptyAutoFederationSnapshot(false);
+}
+
+/** Run Now: a pass while the coordinator runs; while it does not, the idle snapshot (nothing dials). */
+export function runAutoFederationNow(): Promise<AutoFederationSnapshot> {
+	return autoFederation
+		? autoFederation.runNow()
+		: Promise.resolve(emptyAutoFederationSnapshot(false));
 }
 
 /** Pushes the automatic Federation snapshot to every window. */

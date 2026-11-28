@@ -2611,7 +2611,7 @@ To keep the host running across reboots, have your service manager run `maestro-
 
 ### Automatic Federation from the CLI
 
-The desktop app keeps Federation hosts running and, with **Run hosted agents on their host** and **Move SSH agents to their host automatically** on (both off by default), installs hosts and moves SSH agents onto them by itself ([how it decides](/federation#automatic-moves-and-their-sanity-checks)). Two verbs show and drive it:
+With **Run hosted agents on their host** and **Move SSH agents to their host automatically** on (both off by default), the desktop app keeps Federation hosts running, installs hosts, and moves SSH agents onto them by itself ([how it decides](/federation#automatic-moves-and-their-sanity-checks)). Two verbs show and drive it:
 
 ```bash
 maestro-cli federation auto            # every remote and SSH agent, its state, and what needs you

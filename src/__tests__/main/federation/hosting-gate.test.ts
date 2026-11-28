@@ -321,7 +321,8 @@ describe('with hosted agents off', () => {
 		const handlers = new Map(
 			(ipcMain.handle as Mock).mock.calls.map(([channel, handler]) => [channel, handler])
 		);
-		const idle = { autoMove: true, running: false, remotes: [], agents: [] };
+		// No automatic moves are in effect while hosting is off, whatever the stored switch says.
+		const idle = { autoMove: false, running: false, remotes: [], agents: [] };
 		expect(await handlers.get('federation:autoStatus')({})).toEqual(idle);
 		expect(await handlers.get('federation:autoRun')({})).toEqual(idle);
 		expect(processCalls).toEqual([]);
