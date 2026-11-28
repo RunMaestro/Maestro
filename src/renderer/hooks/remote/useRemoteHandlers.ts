@@ -22,6 +22,7 @@ import { useSessionStore, updateAiTab } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import {
 	getActiveTab,
+	isAwaitingComeHome,
 	settleAgentStateFromTabs,
 	settleTabThinkingState,
 } from '../../utils/tabHelpers';
@@ -398,6 +399,32 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			if (targetTab?.state === 'busy' && !force) {
 				logger.info('[Remote] Target tab is mid-turn, cannot process command');
 				reportDelivery(false, 'tab-busy');
+				return;
+			}
+
+			// An agent an earlier release moved onto a host is coming home (hosting off):
+			// its turns may not start here yet, because the host can still hold its
+			// provider session. Queue the prompt the way the composer does
+			// (`useInputProcessing`, `isAwaitingComeHome`); the queue drain runs it once the
+			// agent is home. Sending now would only be refused by main, and the prompt lost.
+			// `force` does not lift this: the refusal is about the session's owner, not a
+			// busy tab.
+			if (isAwaitingComeHome(session)) {
+				const queued = writeTabId
+					? enqueuePromptForTab({
+							sessionId,
+							tabId: writeTabId,
+							text: command,
+							images,
+							mentionRouting,
+						})
+					: null;
+				if (!queued) {
+					reportDelivery(false, 'command-target-unavailable');
+					return;
+				}
+				logger.info('[Remote] Agent is coming home from its host; queued the command');
+				reportDelivery(true);
 				return;
 			}
 
