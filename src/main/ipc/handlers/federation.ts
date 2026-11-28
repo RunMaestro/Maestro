@@ -26,6 +26,7 @@ import {
 	type PeerMirrorService,
 } from '../../federation';
 import { AutoFederationCoordinator } from '../../federation/auto-federation';
+import { createComeHomeRunner, type ComeHomeReport } from '../../federation/come-home';
 import type { AutoFederationSnapshot } from '../../../shared/federationAuto';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -71,6 +72,8 @@ import type { HistoryGraphData } from '../../utils/history-bucket-builder';
 export type FederationHandlerDeps = Omit<DesktopLiftRuntime, 'service'> & {
 	/** The `federationAutoMove` setting (off by default; on only once the person opts in). */
 	readAutoMove(): boolean;
+	/** The `federationHostedAgents` setting (off by default). Off: every moved agent comes home. */
+	readHostingEnabled(): boolean;
 	/** Call `onChange` when the stored agents change. Returns the unsubscribe. */
 	watchSessions?(onChange: () => void): () => void;
 	/** The all-windows push, for the automatic Federation snapshot. */
@@ -280,6 +283,21 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 			async (agentId: unknown, options?: unknown): Promise<DesktopLiftAnswer> =>
 				liftAgentFromDesktop(requireId(agentId, 'agent id'), readLiftOptions(options), liftDeps)
 		)
+	);
+	// Every moved agent comes home (hosting off): the window calls this once its agent list is
+	// loaded, because each restore is written by that window. One run at a time. Starts no
+	// mirror and no coordinator: each return opens its own connection and releases it.
+	const comeHome = createComeHomeRunner({
+		readAgents: liftDeps.readAgents,
+		readRemotes: liftDeps.readRemotes,
+		hostingEnabled: () => deps.readHostingEnabled(),
+		returnAgent: (agentId, options) => returnAgentFromDesktop(agentId, options, liftDeps),
+		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+		now: () => Date.now(),
+	});
+	ipcMain.handle(
+		'federation:comeHome',
+		withIpcErrorLogging(opts('comeHome'), async (): Promise<ComeHomeReport> => comeHome.run())
 	);
 	// Move Back from Host: the reverse of `federation:lift` (`maestro-cli unlift`).
 	ipcMain.handle(

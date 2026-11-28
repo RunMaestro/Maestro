@@ -148,6 +148,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		readAutoMove: () =>
 			deps.settingsStore.get('federationAutoMove', false) === true &&
 			deps.settingsStore.get('federationHostedAgents', false) === true,
+		readHostingEnabled: () => deps.settingsStore.get('federationHostedAgents', false) === true,
 		watchSessions: (onChange) => deps.sessionsStore.onDidChange('sessions', () => onChange()),
 		safeSend: deps.safeSend,
 	});

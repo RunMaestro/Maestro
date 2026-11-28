@@ -5,12 +5,20 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { movedAgents, runComeHome, type ComeHomeDeps } from '../../../main/federation/come-home';
+import {
+	createComeHomeRunner,
+	movedAgents,
+	onlineSkipReason,
+	runComeHome,
+	type ComeHomeDeps,
+} from '../../../main/federation/come-home';
+import type { SshRemoteConfig } from '../../../shared/types';
 import type { DesktopReturnAnswer } from '../../../main/federation/lift';
 import type { ReturnRunOptions } from '../../../shared/maestro-lib/agents/lift-return';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 
 const MOVED_AT = 1_700_000_000_000;
+const REMOTE = { id: 'remote-1', name: 'build-box', enabled: true } as SshRemoteConfig;
 
 function agent(id: string, moved = true, logsAt: number[] = []): AgentRecord {
 	return {
@@ -51,6 +59,7 @@ function world(
 	const calls: Array<{ id: string; options: ReturnRunOptions }> = [];
 	const deps: ComeHomeDeps = {
 		readAgents: () => [...store.values()],
+		readRemotes: () => [REMOTE],
 		hostingEnabled: () => false,
 		returnAgent: vi.fn(async (id: string, options: ReturnRunOptions) => {
 			calls.push({ id, options });
@@ -177,5 +186,56 @@ describe('runComeHome', () => {
 		});
 		const report = await runComeHome(deps);
 		expect(report.agents.map((o) => o.id)).toEqual(['a']);
+	});
+
+	it.each([
+		['deleted', [] as SshRemoteConfig[], 'no longer configured'],
+		['disabled', [{ ...REMOTE, enabled: false }], 'is disabled'],
+		['opted out of Federation', [{ ...REMOTE, federation: false }], 'opted out of Federation'],
+	])(
+		'a remote that is %s is not dialed: the agent comes home offline and the notice says why',
+		async (_label, remotes, reason) => {
+			const { deps, store, calls } = world([agent('a')], ok);
+			deps.readRemotes = () => remotes;
+			const report = await runComeHome(deps);
+			expect(calls).toEqual([{ id: 'a', options: { offline: true } }]);
+			expect(report.agents[0].result).toBe('offline');
+			expect(report.agents[0].notices.join(' ')).toContain(reason);
+			expect(movedAgents([...store.values()])).toEqual([]);
+			expect(deps.sleep).not.toHaveBeenCalled();
+		}
+	);
+});
+
+describe('onlineSkipReason', () => {
+	it('lets an enabled Federation remote be dialed', () => {
+		expect(onlineSkipReason(agent('a'), [REMOTE])).toBeUndefined();
+	});
+});
+
+describe('createComeHomeRunner', () => {
+	it('runs one job at a time: a second call joins the run in flight, a later call runs again', async () => {
+		let release: () => void = () => {};
+		const { deps } = world([agent('a')], ok);
+		deps.returnAgent = vi.fn(
+			() =>
+				new Promise<DesktopReturnAnswer>((resolve) => {
+					release = () => resolve(refused('RETURN_NOT_HOSTED'));
+				})
+		);
+		const runner = createComeHomeRunner(deps);
+		expect(runner.lastReport()).toBeNull();
+		const first = runner.run();
+		const second = runner.run();
+		expect(second).toBe(first);
+		await vi.waitFor(() => expect(deps.returnAgent).toHaveBeenCalledTimes(1));
+		release();
+		const report = await first;
+		expect(runner.lastReport()).toBe(report);
+		const third = runner.run();
+		expect(third).not.toBe(first);
+		await vi.waitFor(() => expect(deps.returnAgent).toHaveBeenCalledTimes(2));
+		release();
+		await third;
 	});
 });

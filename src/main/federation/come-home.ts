@@ -17,9 +17,11 @@
  * agent is settled it holds no timer and no forward (I6).
  */
 
+import { isFederationRemote } from '../../shared/federationRemote';
 import { peerAgentRef, readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import type { ReturnRunOptions } from '../../shared/maestro-lib/agents/lift-return';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
+import type { SshRemoteConfig } from '../../shared/types';
 import type { DesktopReturnAnswer } from './lift';
 
 /** How many times the online return is tried before the agent comes back offline. */
@@ -73,6 +75,8 @@ export interface ComeHomeReport {
 
 export interface ComeHomeDeps {
 	readAgents(): AgentRecord[];
+	/** The configured SSH remotes: a deleted, disabled, or opted-out one is not dialed. */
+	readRemotes(): SshRemoteConfig[];
 	/** Hosting on means the agent stays moved: the job does nothing. */
 	hostingEnabled(): boolean;
 	/** `returnAgentFromDesktop()` with the desktop's deps. */
@@ -91,6 +95,27 @@ export interface ComeHomeTiming {
 /** The records that still point at a host. */
 export function movedAgents(agents: readonly AgentRecord[]): AgentRecord[] {
 	return agents.filter((agent) => readLiftedTo(agent.liftedTo) !== undefined);
+}
+
+/**
+ * Why the host must not be dialed for this agent, or undefined when it may be. A remote the user
+ * deleted, disabled, or opted out of Federation is not dialed: the agent comes back offline, so it
+ * is never stranded on a host Maestro may not reach.
+ */
+export function onlineSkipReason(
+	agent: AgentRecord,
+	remotes: readonly SshRemoteConfig[]
+): string | undefined {
+	const ssh = (agent as { sessionSshRemoteConfig?: { remoteId?: unknown } }).sessionSshRemoteConfig;
+	const remoteId = typeof ssh?.remoteId === 'string' ? ssh.remoteId : undefined;
+	if (!remoteId) return undefined; // The return refuses it with its own reason (RETURN_NO_SSH).
+	const remote = remotes.find((candidate) => candidate.id === remoteId);
+	if (!remote) return 'Its SSH remote is no longer configured on this machine.';
+	if (remote.enabled === false) return `Its SSH remote "${remote.name}" is disabled.`;
+	if (!isFederationRemote(remote)) {
+		return `Its SSH remote "${remote.name}" is opted out of Federation.`;
+	}
+	return undefined;
 }
 
 function newestRowAt(agent: AgentRecord): number | undefined {
@@ -124,7 +149,8 @@ async function bringHome(
 	let attempts = 0;
 	let waitedMs = 0;
 	let lastError = '';
-	while (attempts < timing.onlineAttempts) {
+	const skipReason = onlineSkipReason(agent, deps.readRemotes());
+	while (!skipReason && attempts < timing.onlineAttempts) {
 		const answer = await deps.returnAgent(agent.id, {});
 		if (answer.ok) {
 			outcome.result = 'online';
@@ -168,7 +194,8 @@ async function bringHome(
 		movedAt: pointer.at,
 		...(newestRowAt(agent) !== undefined ? { lastLocalRowAt: newestRowAt(agent) } : {}),
 	};
-	if (lastError) outcome.notices.push(`The host did not answer: ${lastError}`);
+	if (skipReason) outcome.notices.push(`The host was not contacted. ${skipReason}`);
+	else if (lastError) outcome.notices.push(`The host did not answer: ${lastError}`);
 	outcome.notices.push(...(offline.result.notices ?? []));
 	return outcome;
 }
@@ -199,4 +226,40 @@ export async function runComeHome(
 		}
 	}
 	return { startedAt, finishedAt: deps.now(), agents };
+}
+
+/** The job as main runs it: one run at a time, and the last report kept for the CLI. */
+export interface ComeHomeRunner {
+	/** Start the job, or join the run in flight. */
+	run(): Promise<ComeHomeReport>;
+	/** The report of the last finished run, or null before one finished. */
+	lastReport(): ComeHomeReport | null;
+}
+
+/**
+ * Single flight: a second call while a run is in flight gets that run's promise, so no agent is
+ * ever returned by two runs at once (I5). A later call runs again; agents already home are skipped.
+ */
+export function createComeHomeRunner(
+	deps: ComeHomeDeps,
+	timing: ComeHomeTiming = {}
+): ComeHomeRunner {
+	let inFlight: Promise<ComeHomeReport> | null = null;
+	let last: ComeHomeReport | null = null;
+	return {
+		run() {
+			if (!inFlight) {
+				inFlight = runComeHome(deps, timing)
+					.then((report) => {
+						last = report;
+						return report;
+					})
+					.finally(() => {
+						inFlight = null;
+					});
+			}
+			return inFlight;
+		},
+		lastReport: () => last,
+	};
 }
