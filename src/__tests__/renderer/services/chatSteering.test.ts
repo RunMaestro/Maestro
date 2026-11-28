@@ -125,6 +125,7 @@ describe('steerQueuedItem', () => {
 		expect(result).toMatchObject({ outcome: 'refused', refusal: 'blocking-dialog' });
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
+				flashWhenToastsOff: true,
 				title: 'Could not steer this turn',
 				message:
 					'A permission prompt is waiting for an answer, so the message was not typed. It stays queued.',
@@ -320,7 +321,10 @@ describe('steerQueuedItem', () => {
 		await steerQueuedItem('sess-1', 'item-a');
 
 		expect(notifyToast).toHaveBeenCalledWith(
-			expect.objectContaining({ message: expect.stringMatching(/^Codex has your message/) })
+			expect.objectContaining({
+				flashWhenToastsOff: true,
+				message: expect.stringMatching(/^Codex has your message/),
+			})
 		);
 	});
 });
@@ -375,6 +379,7 @@ describe('steerQueuedItemOrExplain', () => {
 		expect(queue()).toEqual([item()]);
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
+				flashWhenToastsOff: true,
 				title: 'Could not steer this turn',
 				message: expect.stringMatching(/app server.*The message stays queued\.$/),
 				sessionId: 'sess-1',
@@ -392,7 +397,7 @@ describe('steerQueuedItemOrExplain', () => {
 		expect(result).toEqual({ outcome: 'delivered', verdict: 'delivered' });
 		expect(notifyToast).toHaveBeenCalledTimes(1);
 		expect(notifyToast).toHaveBeenCalledWith(
-			expect.objectContaining({ title: 'Sent to the running turn' })
+			expect.objectContaining({ flashWhenToastsOff: true, title: 'Sent to the running turn' })
 		);
 	});
 });
@@ -472,6 +477,7 @@ describe('steerNewestQueuedMessage', () => {
 		expect(queue()).toHaveLength(2);
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
+				flashWhenToastsOff: true,
 				title: 'Could not steer this turn',
 				message: expect.stringContaining('Images cannot be attached'),
 			})
@@ -562,6 +568,7 @@ describe('Grok steering', () => {
 		expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'grok-no-input-op' });
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
+				flashWhenToastsOff: true,
 				title: 'Could not steer this turn',
 				message: expect.stringMatching(/Grok.*The message stays queued\.$/),
 				sessionId: 'sess-1',
@@ -638,7 +645,7 @@ describe('applySteeringVerdict', () => {
 		expect(queue()).toEqual([]);
 		expect(pendingSteerCount()).toBe(0);
 		expect(notifyToast).toHaveBeenCalledWith(
-			expect.objectContaining({ title: 'Steer runs after this turn' })
+			expect.objectContaining({ flashWhenToastsOff: true, title: 'Steer runs after this turn' })
 		);
 		expect(tabLogs()[0]).toMatchObject({ steered: true, steerState: 'queued' });
 	});
@@ -677,6 +684,10 @@ describe('applySteeringVerdict', () => {
 		expect(queue().map((i) => i.id)).toEqual(['item-a', 'item-b']);
 		expect(queue()[0].paused).toBeUndefined();
 		expect(pendingSteerCount()).toBe(0);
+		// With in-app toasts off, the only word that the steer came back is the flash.
+		expect(notifyToast).toHaveBeenLastCalledWith(
+			expect.objectContaining({ flashWhenToastsOff: true, title: 'Steer returned to the queue' })
+		);
 	});
 
 	it('takes the steered bubble back out when the item returns to the queue', async () => {
@@ -844,7 +855,11 @@ describe('steering a hosted agent', () => {
 		expect(steer).not.toHaveBeenCalled();
 		expect(pendingSteerCount()).toBe(0);
 		expect(notifyToast).toHaveBeenCalledWith(
-			expect.objectContaining({ color: 'green', title: 'Sent to the running turn' })
+			expect.objectContaining({
+				flashWhenToastsOff: true,
+				color: 'green',
+				title: 'Sent to the running turn',
+			})
 		);
 	});
 
@@ -864,6 +879,7 @@ describe('steering a hosted agent', () => {
 		expect(result.outcome).toBe('refused');
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
+				flashWhenToastsOff: true,
 				title: 'Could not steer this turn',
 				message: 'The turn just ended. It stays queued.',
 			})
@@ -888,6 +904,7 @@ describe('steering a hosted agent', () => {
 		expect(notifyToast).toHaveBeenCalledTimes(1);
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
+				flashWhenToastsOff: true,
 				title: 'Could not steer this turn',
 				message: expect.stringMatching(/The message stays queued\.$/),
 			})
@@ -923,7 +940,7 @@ describe('steering a hosted agent', () => {
 		expect(result.outcome).toBe('not-steerable');
 		// Explained, as steerQueuedItemOrExplain explains a local one.
 		expect(notifyToast).toHaveBeenCalledWith(
-			expect.objectContaining({ title: 'Could not steer this turn' })
+			expect.objectContaining({ flashWhenToastsOff: true, title: 'Could not steer this turn' })
 		);
 	});
 

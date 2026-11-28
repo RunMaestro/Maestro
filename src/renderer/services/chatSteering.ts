@@ -206,6 +206,7 @@ export function settlePendingSteers(
 
 function notifyDelivered(sessionId: string, tabId: string, name: string): void {
 	notifyToast({
+		flashWhenToastsOff: true,
 		color: 'green',
 		title: 'Sent to the running turn',
 		message: `${name} has your message. If it never takes it, it goes back in the queue.`,
@@ -221,6 +222,7 @@ function notifyRefused(
 	result: Pick<QueueSteerResult, 'refusal' | 'detail'>
 ): void {
 	notifyToast({
+		flashWhenToastsOff: true,
 		color: 'yellow',
 		title: 'Could not steer this turn',
 		message: `${steerRefusalSentence(result, `${name} could not take the message right now.`)} It stays queued.`,
@@ -231,6 +233,7 @@ function notifyRefused(
 
 function notifySteeringUnavailable(detail?: string): void {
 	notifyToast({
+		flashWhenToastsOff: true,
 		color: 'yellow',
 		title: 'Steering unavailable',
 		message: detail ?? 'This client cannot steer a running turn.',
@@ -239,6 +242,7 @@ function notifySteeringUnavailable(detail?: string): void {
 
 function notifyUnconfirmed(sessionId: string, tabId: string): void {
 	notifyToast({
+		flashWhenToastsOff: true,
 		color: 'orange',
 		title: 'Steering result unconfirmed',
 		message: `${labelFor(sessionId)} may or may not have received the message, so it has been paused rather than sent twice. Resume it if the agent never answered it.`,
@@ -524,6 +528,7 @@ function notifySteerBlocked(sessionId: string, tabId: string | undefined, reason
 	// A message with a steer already in flight is parked, not queued.
 	const stays = reason === 'steer-in-flight' ? '' : ' The message stays queued.';
 	notifyToast({
+		flashWhenToastsOff: true,
 		color: 'yellow',
 		title: 'Could not steer this turn',
 		message: `${describeSteerBlocked(reason)}${stays}`,
@@ -616,6 +621,7 @@ export function applySteeringVerdict(processKey: string, verdict: SteeringResult
 		case 'queued':
 			updateSessionWith(sessionId, (s) => settlePendingSteers(s, ids, 'queued'));
 			notifyToast({
+				flashWhenToastsOff: true,
 				color: 'theme',
 				title: 'Steer runs after this turn',
 				message: `${name} could not fold it into the running turn, so it answers it as a follow-up.`,
@@ -629,6 +635,7 @@ export function applySteeringVerdict(processKey: string, verdict: SteeringResult
 			// the verdict asks the caller for.
 			updateSessionWith(sessionId, (s) => returnPendingSteersToQueue(s, ids, false));
 			notifyToast({
+				flashWhenToastsOff: true,
 				color: 'yellow',
 				title: 'Steer returned to the queue',
 				message: `The turn ended before ${name} took your message, so it will send next.`,
