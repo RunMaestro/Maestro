@@ -8,6 +8,8 @@
  * - chat.log: Pipe-delimited message log
  * - images/: Directory for image attachments
  * - history.jsonl: per-chat History entries
+ * - workflow-run.json: the chat's staged workflow run, when it has one
+ * - workflow-runs/<runId>/: large stage outputs handed to the next stage
  *
  * The directory is an INPUT (`options.groupChatsDir`), not something this module
  * resolves: the desktop answers with `customSyncPath` or Electron's userData
@@ -18,12 +20,13 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import {
 	groupChatModeratorRefusal,
 	type GroupChatHistoryEntry,
 	type ModeratorConfig,
 } from '../../group-chat-types';
+import type { GroupChatWorkflowRun } from '../../group-chat-workflow-types';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import { logger } from '../host';
 import { hasCapability } from '../providers/capabilities';
@@ -43,6 +46,39 @@ export type {
 	ParticipantRemovalResult,
 	ParticipantUpdate,
 } from './types';
+
+const WORKFLOW_RUN_FILE = 'workflow-run.json';
+const WORKFLOW_RUNS_DIR = 'workflow-runs';
+
+/** A participant name as a file name every supported filesystem accepts. */
+export function sanitizeGroupChatFileName(name: string): string {
+	const sanitized = name
+		.replace(/[\x00-\x1f<>:"/\\|?*]/g, '-')
+		.trim()
+		.replace(/[. ]+$/g, '')
+		.slice(0, 240);
+	const safeName = sanitized || 'participant';
+	return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(safeName)
+		? `_${safeName}`
+		: safeName;
+}
+
+/** Whether a parsed file is a workflow run this build can drive. */
+function isWorkflowRunRecord(value: unknown): value is GroupChatWorkflowRun {
+	if (typeof value !== 'object' || value === null) return false;
+	const run = value as Partial<GroupChatWorkflowRun>;
+	return (
+		typeof run.plan === 'object' &&
+		run.plan !== null &&
+		typeof run.plan.runId === 'string' &&
+		Array.isArray(run.plan.stages) &&
+		typeof run.status === 'string' &&
+		typeof run.currentStageIndex === 'number' &&
+		typeof run.stageStatuses === 'object' &&
+		run.stageStatuses !== null &&
+		Array.isArray(run.handoffs)
+	);
+}
 
 export interface GroupChatStoreOptions {
 	/**
@@ -634,6 +670,108 @@ export function createGroupChatStore(options: GroupChatStoreOptions) {
 		return getHistoryPath(groupChatId);
 	}
 
+	/** The file that holds a chat's staged workflow run, so a restart resumes it. */
+	function getWorkflowRunPath(groupChatId: string): string {
+		return path.join(getGroupChatDir(groupChatId), WORKFLOW_RUN_FILE);
+	}
+
+	/** The directory of one run's handoff artifacts. */
+	function getWorkflowArtifactsDir(groupChatId: string, runId: string): string {
+		return path.join(getGroupChatDir(groupChatId), WORKFLOW_RUNS_DIR, runId);
+	}
+
+	/**
+	 * The staged workflow run a chat holds, or null when it holds none. A file that
+	 * is not a run (hand-edited, truncated) reads as none rather than failing the
+	 * chat: the run is a convenience the user can recreate, the chat is not.
+	 */
+	async function loadWorkflowRun(groupChatId: string): Promise<GroupChatWorkflowRun | null> {
+		let raw: string;
+		try {
+			raw = await fs.readFile(getWorkflowRunPath(groupChatId), 'utf-8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw error;
+		}
+		try {
+			const value = JSON.parse(raw) as unknown;
+			return isWorkflowRunRecord(value) ? value : null;
+		} catch {
+			logger.warn(
+				`[GroupChatWorkflow] Ignoring a workflow run file that is not JSON: ${groupChatId}`
+			);
+			return null;
+		}
+	}
+
+	/** Save a chat's workflow run, or remove it when `run` is null. */
+	async function saveWorkflowRun(
+		groupChatId: string,
+		run: GroupChatWorkflowRun | null
+	): Promise<void> {
+		return enqueueWrite(groupChatId, async () => {
+			beforeWrite();
+			if (run) {
+				await fs.mkdir(getGroupChatDir(groupChatId), { recursive: true });
+				await atomicWriteJson(getWorkflowRunPath(groupChatId), run);
+				return;
+			}
+			await fs.rm(getWorkflowRunPath(groupChatId), { force: true });
+		});
+	}
+
+	/** Save a participant's full stage output under the run's directory and return its path. */
+	async function writeWorkflowArtifact(input: {
+		groupChatId: string;
+		runId: string;
+		stageId: string;
+		participantName: string;
+		content: string;
+	}): Promise<string> {
+		beforeWrite();
+		const stageDir = path.join(
+			getWorkflowArtifactsDir(input.groupChatId, input.runId),
+			input.stageId
+		);
+		await fs.mkdir(stageDir, { recursive: true });
+		// The hash keeps two names that sanitize alike ("a/b", "a:b") from sharing a file.
+		const suffix = createHash('sha256').update(input.participantName).digest('hex').slice(0, 12);
+		const artifactPath = path.join(
+			stageDir,
+			`${sanitizeGroupChatFileName(input.participantName)}-${suffix}.md`
+		);
+		await fs.writeFile(artifactPath, input.content, 'utf-8');
+		return artifactPath;
+	}
+
+	/**
+	 * Remove a chat's workflow artifacts: one run's when `runId` is given, else every
+	 * run's except `keepRunId` (the orphans a crash or an older build left behind).
+	 */
+	async function clearWorkflowArtifacts(
+		groupChatId: string,
+		options: { runId?: string; keepRunId?: string } = {}
+	): Promise<void> {
+		beforeWrite();
+		const runsDir = path.join(getGroupChatDir(groupChatId), WORKFLOW_RUNS_DIR);
+		if (options.runId) {
+			await fs.rm(path.join(runsDir, options.runId), { recursive: true, force: true });
+			return;
+		}
+		let entries: string[];
+		try {
+			entries = await fs.readdir(runsDir);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+			throw error;
+		}
+		await Promise.all(
+			entries
+				.filter((entry) => entry !== options.keepRunId)
+				.map((entry) => fs.rm(path.join(runsDir, entry), { recursive: true, force: true }))
+		);
+	}
+
 	return {
 		getGroupChatDir,
 		createGroupChat,
@@ -651,6 +789,10 @@ export function createGroupChatStore(options: GroupChatStoreOptions) {
 		deleteGroupChatHistoryEntry,
 		clearGroupChatHistory,
 		getGroupChatHistoryFilePath,
+		loadWorkflowRun,
+		saveWorkflowRun,
+		writeWorkflowArtifact,
+		clearWorkflowArtifacts,
 		/** Resolves once every queued metadata write has landed. Call before the host releases its lock. */
 		drain: () => groupChatWriteQueue.idle(),
 	};

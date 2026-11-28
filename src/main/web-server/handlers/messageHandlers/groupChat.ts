@@ -4,9 +4,10 @@
  * Extracted from WebSocketMessageHandler.ts. Handles: get_group_chats,
  * start_group_chat, get_group_chat_state, send_group_chat_message,
  * steer_group_chat, stop_group_chat, archive_group_chat, set_group_chat_unread,
- * add_group_chat_participant.
+ * add_group_chat_participant, group_chat_workflow.
  */
 
+import { isGroupChatWorkflowAction } from '../../../../shared/group-chat-workflow-types';
 import type { StartGroupChatOptions } from '../../types';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
@@ -231,6 +232,49 @@ export function handleSteerGroupChat(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to steer group chat: ${error.message}`, reply);
+		});
+}
+
+/**
+ * Handle group_chat_workflow message - read, approve, or cancel a chat's staged
+ * workflow run. Answered by MAIN, the same function the Stage Strip calls. A
+ * refusal (no plan waiting, nothing to cancel) is an answer, not an error.
+ */
+export function handleGroupChatWorkflow(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const chatId = message.chatId;
+	const action = message.action ?? 'show';
+	const reply = { requestId: message.requestId };
+	if (!chatId || typeof chatId !== 'string') {
+		ctx.sendError(client, 'Missing chatId', reply);
+		return;
+	}
+	if (!isGroupChatWorkflowAction(action)) {
+		ctx.sendError(client, 'action must be show, approve, or cancel', reply);
+		return;
+	}
+	if (!ctx.callbacks.groupChatWorkflow) {
+		ctx.sendError(client, 'Group chat workflows not configured', reply);
+		return;
+	}
+	ctx.callbacks
+		.groupChatWorkflow(chatId, action)
+		.then((result) => {
+			ctx.send(client, {
+				type: 'group_chat_workflow_result',
+				success: result.ok,
+				chatId,
+				action,
+				run: result.run,
+				...(result.ok ? {} : { error: result.error }),
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(client, `Failed to run the workflow action: ${error.message}`, reply);
 		});
 }
 

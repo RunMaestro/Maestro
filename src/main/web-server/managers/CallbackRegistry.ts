@@ -1,3 +1,7 @@
+import type {
+	GroupChatWorkflowAction,
+	GroupChatWorkflowActionResult,
+} from '../../../shared/group-chat-workflow-types';
 import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
 import type {
@@ -160,6 +164,7 @@ import type {
 	SendGroupChatMessageCallback,
 	SteerGroupChatCallback,
 	SteerGroupChatRequest,
+	GroupChatWorkflowCallback,
 	GroupChatState,
 	TabContextOpCallback,
 	CreateGistCallback,
@@ -338,6 +343,7 @@ export interface WebServerCallbacks {
 	addGroupChatParticipant: AddGroupChatParticipantCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	steerGroupChat: SteerGroupChatCallback | null;
+	groupChatWorkflow: GroupChatWorkflowCallback | null;
 	tabContextOp: TabContextOpCallback | null;
 	createGist: CreateGistCallback | null;
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
@@ -462,6 +468,7 @@ export class CallbackRegistry {
 		addGroupChatParticipant: null,
 		sendGroupChatMessage: null,
 		steerGroupChat: null,
+		groupChatWorkflow: null,
 		tabContextOp: null,
 		createGist: null,
 		getCueSubscriptions: null,
@@ -1256,6 +1263,16 @@ export class CallbackRegistry {
 		return this.callbacks.steerGroupChat(chatId, request);
 	}
 
+	async groupChatWorkflow(
+		chatId: string,
+		action: GroupChatWorkflowAction
+	): Promise<GroupChatWorkflowActionResult> {
+		if (!this.callbacks.groupChatWorkflow) {
+			return { ok: false, error: 'Group chat workflows are not configured', run: null };
+		}
+		return this.callbacks.groupChatWorkflow(chatId, action);
+	}
+
 	async tabContextOp(request: TabContextOpRequest): Promise<TabContextOpResult> {
 		if (!this.callbacks.tabContextOp) {
 			return { success: false, error: 'Context operations not configured' };
@@ -1800,6 +1817,10 @@ export class CallbackRegistry {
 
 	setSteerGroupChatCallback(callback: SteerGroupChatCallback): void {
 		this.callbacks.steerGroupChat = callback;
+	}
+
+	setGroupChatWorkflowCallback(callback: GroupChatWorkflowCallback): void {
+		this.callbacks.groupChatWorkflow = callback;
 	}
 
 	setTabContextOpCallback(callback: TabContextOpCallback): void {

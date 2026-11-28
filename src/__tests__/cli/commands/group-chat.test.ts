@@ -26,6 +26,8 @@ import {
 	groupChatSteer,
 	groupChatStatus,
 	groupChatStop,
+	groupChatWorkflow,
+	formatWorkflowRun,
 	groupChatArchive,
 	groupChatUnread,
 	groupChatAdd,
@@ -479,6 +481,95 @@ describe('group-chat commands', () => {
 
 			expect(sent[1]).toEqual({ type: 'stop_group_chat', chatId: 'abc123' });
 			expect(logSpy).toHaveBeenCalledWith('Stopped group chat abc123');
+		});
+	});
+
+	describe('workflow', () => {
+		const run = {
+			plan: {
+				runId: 'run-1',
+				title: 'Ship it',
+				createdAt: 1,
+				stages: [
+					{ id: 'a', name: 'Review', agents: ['Alice'], mode: 'serial', instruction: 'Review' },
+					{
+						id: 'b',
+						name: 'Publish',
+						agents: [],
+						mode: 'serial',
+						instruction: 'Publish',
+						autoRun: { participantName: 'Bot' },
+					},
+				],
+			},
+			status: 'running',
+			currentStageIndex: 0,
+			stageStatuses: { a: 'running', b: 'pending' },
+			handoffs: [],
+		} as const;
+
+		it('shows the run of the resolved chat', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				group_chat_workflow: { type: 'group_chat_workflow_result', success: true, run },
+			});
+
+			await groupChatWorkflow('Release', {});
+
+			expect(sent[1]).toEqual({ type: 'group_chat_workflow', chatId: 'abc123', action: 'show' });
+			expect(logSpy).toHaveBeenCalledWith(formatWorkflowRun(run as never));
+		});
+
+		it('approves with --approve and prints JSON', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				group_chat_workflow: { type: 'group_chat_workflow_result', success: true, run },
+			});
+
+			await groupChatWorkflow('abc123', { approve: true, json: true });
+
+			expect(sent[1]).toMatchObject({ action: 'approve' });
+			expect(JSON.parse(logSpy.mock.calls[0][0])).toMatchObject({
+				success: true,
+				action: 'approve',
+				run: { status: 'running' },
+			});
+		});
+
+		it('exits non-zero on a refusal', async () => {
+			mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				group_chat_workflow: {
+					type: 'group_chat_workflow_result',
+					success: false,
+					error: 'This chat has no workflow running or waiting for approval.',
+					run: null,
+				},
+			});
+
+			await expect(groupChatWorkflow('Release', { cancel: true })).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Error: This chat has no workflow running or waiting for approval.'
+			);
+		});
+
+		it('refuses --approve with --cancel', async () => {
+			await expect(groupChatWorkflow('Release', { approve: true, cancel: true })).rejects.toThrow(
+				'process.exit'
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('formats each stage with its status and assignees', () => {
+			expect(formatWorkflowRun(run as never)).toBe(
+				[
+					'Ship it (running)',
+					'Stage 1 of 2: Review',
+					'  1. [running] Review (@Alice)',
+					'  2. [pending] Publish (Auto Run @Bot)',
+				].join('\n')
+			);
+			expect(formatWorkflowRun(null)).toBe('No workflow run.');
 		});
 	});
 

@@ -10,6 +10,7 @@
  */
 
 import type { HostedLaunchFeature } from '../agents/hosted-launch';
+import type { GroupChatWorkflowRun } from '../../group-chat-workflow-types';
 import type {
 	GroupChatHistoryEntry,
 	GroupChatMessage as GroupChatRoomMessage,
@@ -187,7 +188,9 @@ export type GroupChatPromptId =
 	| 'group-chat-moderator-synthesis'
 	| 'group-chat-participant'
 	| 'group-chat-participant-request'
-	| 'group-chat-participant-continuation';
+	| 'group-chat-participant-continuation'
+	| 'group-chat-workflow-planning'
+	| 'group-chat-workflow-stage';
 
 /**
  * One spawn as the router describes it. The runner turns it into a process
@@ -289,6 +292,8 @@ export interface GroupChatEventSink {
 	autoRunTriggered(chatId: string, name: string, filename?: string, agentId?: string): void;
 	autoRunBatchComplete(chatId: string, name: string): void;
 	participantLiveOutput(chatId: string, name: string, chunk: string): void;
+	/** The chat's staged workflow run changed; null when it no longer holds one. */
+	workflowRun?(chatId: string, run: GroupChatWorkflowRun | null): void;
 }
 
 /**

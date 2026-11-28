@@ -1,3 +1,7 @@
+import type {
+	GroupChatWorkflowAction,
+	GroupChatWorkflowActionResult,
+} from '../../shared/group-chat-workflow-types';
 import type { QueuedItemSnapshot } from '../../shared/queueSnapshot';
 import type { PianolaQueueControl } from '../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
@@ -1677,6 +1681,11 @@ export type SteerGroupChatCallback = (
 	request: SteerGroupChatRequest
 ) => Promise<GroupChatSteerResult>;
 export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
+/** Read, approve, or cancel a chat's staged workflow run (`group_chat_workflow`). */
+export type GroupChatWorkflowCallback = (
+	chatId: string,
+	action: GroupChatWorkflowAction
+) => Promise<GroupChatWorkflowActionResult>;
 
 // =============================================================================
 // Context Management Callback Types

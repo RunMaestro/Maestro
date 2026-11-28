@@ -13,6 +13,7 @@ import {
 	isGroupChatVisibleInWindow,
 	selectActiveGroupChatStagedImages,
 	viewPrefsFor,
+	selectWorkflowRun,
 } from '../../../renderer/stores/groupChatStore';
 import type {
 	GroupChatRightTab,
@@ -20,6 +21,7 @@ import type {
 } from '../../../renderer/stores/groupChatStore';
 import type { GroupChat, GroupChatMessage, GroupChatState } from '../../../renderer/types';
 import type { QueuedItem } from '../../../renderer/types';
+import type { GroupChatWorkflowRun } from '../../../shared/group-chat-workflow-types';
 import { resetStore } from '../../helpers';
 
 // ============================================================================
@@ -66,6 +68,21 @@ function createMockError(overrides: Partial<GroupChatErrorState> = {}): GroupCha
 	} as GroupChatErrorState;
 }
 
+function createMockWorkflowRun(): GroupChatWorkflowRun {
+	return {
+		plan: {
+			runId: 'run-1',
+			title: 'Ship workflow progress',
+			createdAt: 1,
+			stages: [],
+		},
+		status: 'awaiting-approval',
+		currentStageIndex: 0,
+		stageStatuses: {},
+		handoffs: [],
+	};
+}
+
 // ============================================================================
 // Setup
 // ============================================================================
@@ -88,6 +105,7 @@ describe('groupChatStore', () => {
 			expect(state.groupChatState).toBe('idle');
 			expect(state.participantStates).toEqual(new Map());
 			expect(state.moderatorUsage).toBeNull();
+			expect(state.workflowRun).toBeNull();
 			expect(state.groupChatStates).toEqual(new Map());
 			expect(state.allGroupChatParticipantStates).toEqual(new Map());
 			expect(state.unreadGroupChatIds).toEqual(new Set());
@@ -328,6 +346,13 @@ describe('groupChatStore', () => {
 	// ==========================================================================
 
 	describe('active chat state', () => {
+		it('sets and selects the active workflow run', () => {
+			const run = createMockWorkflowRun();
+			useGroupChatStore.getState().setWorkflowRun(run);
+
+			expect(selectWorkflowRun(useGroupChatStore.getState())).toBe(run);
+		});
+
 		it('sets messages with direct value', () => {
 			const msgs = [
 				createMockMessage({ content: 'Hello' }),
@@ -703,6 +728,7 @@ describe('groupChatStore', () => {
 			useGroupChatStore.getState().setGroupChatState('moderator-thinking');
 			useGroupChatStore.getState().setParticipantStates(new Map([['Alice', 'working']]));
 			useGroupChatStore.getState().setGroupChatError(createMockError());
+			useGroupChatStore.getState().setWorkflowRun(createMockWorkflowRun());
 			useGroupChatStore.getState().setInitiatorWindowId('window-2');
 
 			// Also set some state that should NOT be cleared
@@ -719,6 +745,7 @@ describe('groupChatStore', () => {
 			expect(useGroupChatStore.getState().groupChatState).toBe('idle');
 			expect(useGroupChatStore.getState().participantStates).toEqual(new Map());
 			expect(useGroupChatStore.getState().groupChatError).toBeNull();
+			expect(useGroupChatStore.getState().workflowRun).toBeNull();
 			expect(useGroupChatStore.getState().initiatorWindowId).toBeNull();
 
 			// Non-active fields should be preserved
@@ -754,6 +781,7 @@ describe('groupChatStore', () => {
 			expect(after.setGroupChatMessages).toBe(before.setGroupChatMessages);
 			expect(after.setGroupChatState).toBe(before.setGroupChatState);
 			expect(after.setParticipantStates).toBe(before.setParticipantStates);
+			expect(after.setWorkflowRun).toBe(before.setWorkflowRun);
 			expect(after.setGroupChatStates).toBe(before.setGroupChatStates);
 			expect(after.clearGroupChatError).toBe(before.clearGroupChatError);
 			expect(after.resetGroupChatState).toBe(before.resetGroupChatState);
@@ -779,6 +807,7 @@ describe('groupChatStore', () => {
 			expect(typeof state.setGroupChatState).toBe('function');
 			expect(typeof state.setParticipantStates).toBe('function');
 			expect(typeof state.setModeratorUsage).toBe('function');
+			expect(typeof state.setWorkflowRun).toBe('function');
 			expect(typeof state.setGroupChatStates).toBe('function');
 			expect(typeof state.setAllGroupChatParticipantStates).toBe('function');
 			expect(typeof state.setGroupChatQueue).toBe('function');
@@ -832,6 +861,7 @@ describe('groupChatStore', () => {
 			expect(state.groupChatState).toBe('idle');
 			expect(state.participantStates).toEqual(new Map());
 			expect(state.moderatorUsage).toBeNull();
+			expect(state.workflowRun).toBeNull();
 			expect(state.groupChatStates).toEqual(new Map());
 			expect(state.allGroupChatParticipantStates).toEqual(new Map());
 			expect(state.unreadGroupChatIds).toEqual(new Set());

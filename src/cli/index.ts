@@ -74,6 +74,7 @@ import {
 	groupChatStop,
 	groupChatArchive,
 	groupChatAdd,
+	groupChatWorkflow,
 	groupChatUnread,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
@@ -1166,6 +1167,16 @@ groupChat
 	.description("Stop a group chat's moderator and participants")
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatStop);
+
+groupChat
+	.command('workflow <chat>')
+	.description(
+		"Show a group chat's staged workflow run; --approve starts its plan, --cancel ends it"
+	)
+	.option('--approve', 'Approve the plan waiting for approval (sends the moderator "go")')
+	.option('--cancel', 'Cancel the workflow that is running or waiting for approval')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(groupChatWorkflow);
 
 groupChat
 	.command('add <chat> <agent>')

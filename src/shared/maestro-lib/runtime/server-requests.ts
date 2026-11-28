@@ -13,6 +13,7 @@
  * transport answers with the bridge's `echo`, the signal a client reads as "unsupported".
  */
 
+import { isGroupChatWorkflowAction } from '../../group-chat-workflow-types';
 import type { AgentRecord } from '../store/records';
 import {
 	parseWireAgentName,
@@ -1059,6 +1060,17 @@ export function createRequestHandler(
 					'stop_group_chat_result',
 					await client.groupChats.stop(str(message.chatId) ?? '')
 				);
+			case 'group_chat_workflow': {
+				const action = message.action ?? 'show';
+				if (!isGroupChatWorkflowAction(action)) {
+					return refusal('group_chat_workflow_result', 'action must be show, approve, or cancel');
+				}
+				return outcome(
+					'group_chat_workflow_result',
+					await client.groupChats.workflow(str(message.chatId) ?? '', action),
+					(run) => ({ run, action })
+				);
+			}
 
 			// -- consults ----------------------------------------------------
 			// Waits as long as the answer takes: the caller's own timeout bounds it, not a delivery receipt.

@@ -1,3 +1,7 @@
+import type {
+	GroupChatWorkflowAction,
+	GroupChatWorkflowActionResult,
+} from '../../../../shared/group-chat-workflow-types';
 import type { QueuedTurnEdit } from '../../../../shared/maestro-lib/client/types';
 import type { TranslationReport } from '../../../../shared/maestro-lib/translation/types';
 import type {
@@ -460,6 +464,10 @@ export interface MessageHandlerCallbacks {
 		chatId: string,
 		request: SteerGroupChatRequest
 	) => Promise<GroupChatSteerResult>;
+	groupChatWorkflow?: (
+		chatId: string,
+		action: GroupChatWorkflowAction
+	) => Promise<GroupChatWorkflowActionResult>;
 	tabContextOp: TabContextOpCallback;
 	createGist: (
 		sessionId: string,

@@ -122,6 +122,7 @@ const desktopEvents: GroupChatEventSink = {
 	autoRunBatchComplete: (id, name) => groupChatEmitters.emitAutoRunBatchComplete?.(id, name),
 	participantLiveOutput: (id, name, chunk) =>
 		groupChatEmitters.emitParticipantLiveOutput?.(id, name, chunk),
+	workflowRun: (id, run) => groupChatEmitters.emitWorkflowRunChanged?.(id, run),
 };
 
 // ---------------------------------------------------------------------------
@@ -143,6 +144,10 @@ export const desktopGroupChatEngine = createGroupChatEngine({
 		getParticipant: (id, name) => storage.getParticipant(id, name),
 		addGroupChatHistoryEntry: (id, entry) => storage.addGroupChatHistoryEntry(id, entry),
 		getGroupChatDir: (id) => storage.getGroupChatDir(id),
+		loadWorkflowRun: (id) => storage.loadWorkflowRun(id),
+		saveWorkflowRun: (id, run) => storage.saveWorkflowRun(id, run),
+		writeWorkflowArtifact: (input) => storage.writeWorkflowArtifact(input),
+		clearWorkflowArtifacts: (id, options) => storage.clearWorkflowArtifacts(id, options),
 	},
 	events: desktopEvents,
 	agents: desktopAgentDirectory,

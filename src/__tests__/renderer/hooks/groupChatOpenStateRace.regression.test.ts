@@ -87,6 +87,8 @@ describe('opening a group chat does not resurrect a stale busy state', () => {
 			onModeratorUsage: vi.fn().mockReturnValue(() => {}),
 			onParticipantState: vi.fn().mockReturnValue(() => {}),
 			onModeratorSessionIdChanged: vi.fn().mockReturnValue(() => {}),
+			onWorkflowRunChanged: vi.fn().mockReturnValue(() => {}),
+			workflowAction: vi.fn().mockResolvedValue({ ok: true, run: null }),
 		};
 		(window as any).maestro.settings = {
 			get: vi.fn().mockResolvedValue(undefined),

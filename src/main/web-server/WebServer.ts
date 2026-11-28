@@ -1,3 +1,4 @@
+import type { GroupChatWorkflowAction } from '../../shared/group-chat-workflow-types';
 import type { QueuedTurnEdit } from '../../shared/maestro-lib/client/types';
 import type { CliAudience } from './queue-change-broadcast';
 import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
@@ -213,6 +214,7 @@ import type {
 	SendGroupChatMessageCallback,
 	SteerGroupChatCallback,
 	SteerGroupChatRequest,
+	GroupChatWorkflowCallback,
 	GroupChatMessage,
 	GroupChatState,
 	TabContextOpCallback,
@@ -1093,6 +1095,10 @@ export class WebServer {
 		this.callbackRegistry.setSteerGroupChatCallback(callback);
 	}
 
+	setGroupChatWorkflowCallback(callback: GroupChatWorkflowCallback): void {
+		this.callbackRegistry.setGroupChatWorkflowCallback(callback);
+	}
+
 	setTabContextOpCallback(callback: TabContextOpCallback): void {
 		this.callbackRegistry.setTabContextOpCallback(callback);
 	}
@@ -1719,6 +1725,8 @@ export class WebServer {
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
 			steerGroupChat: async (chatId: string, request: SteerGroupChatRequest) =>
 				this.callbackRegistry.steerGroupChat(chatId, request),
+			groupChatWorkflow: async (chatId: string, action: GroupChatWorkflowAction) =>
+				this.callbackRegistry.groupChatWorkflow(chatId, action),
 			tabContextOp: async (request: TabContextOpRequest) =>
 				this.callbackRegistry.tabContextOp(request),
 			createGist: async (

@@ -87,7 +87,15 @@ import {
 	settleGroupChatToIdle,
 	spawnModeratorSynthesis,
 	steerRunningRound,
+	forgetWorkflow,
+	noteWorkflowParticipantRemoved,
 } from '../../group-chat/group-chat-router';
+import { runDesktopGroupChatWorkflowAction } from '../../group-chat/group-chat-workflow';
+import {
+	isGroupChatWorkflowAction,
+	type GroupChatWorkflowActionResult,
+	type GroupChatWorkflowRun,
+} from '../../../shared/group-chat-workflow-types';
 
 // Agent detector import
 import { AgentDetector } from '../../agents';
@@ -403,6 +411,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			await killModerator(id, processManager ?? undefined);
 			await clearAllParticipantSessions(id, processManager ?? undefined);
 			clearPendingParticipants(id);
+			await forgetWorkflow(id);
 
 			// Delete the group chat data
 			await deleteGroupChat(id);
@@ -424,11 +433,27 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					const processManager = getProcessManager();
 					await killModerator(id, processManager ?? undefined);
 					await clearAllParticipantSessions(id, processManager ?? undefined);
+					await forgetWorkflow(id);
 				}
 
 				const updated = await updateGroupChat(id, { archived });
 				logger.info(`${archived ? 'Archived' : 'Unarchived'} group chat: ${id}`, LOG_CONTEXT);
 				return updated;
+			}
+		)
+	);
+
+	// A chat's staged workflow run: read it, approve its plan, or cancel it. The bridge's
+	// `group_chat_workflow` message (maestro-cli group-chat workflow) calls the same function.
+	ipcMain.handle(
+		'groupChat:workflowAction',
+		withIpcErrorLogging(
+			handlerOpts('workflowAction'),
+			async (id: string, action: unknown): Promise<GroupChatWorkflowActionResult> => {
+				if (!isGroupChatWorkflowAction(action)) {
+					throw new Error(`Unknown workflow action: ${String(action)}`);
+				}
+				return runDesktopGroupChatWorkflowAction(id, action);
 			}
 		)
 	);
@@ -981,6 +1006,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				if (removal) {
 					if (removal.removed) {
 						groupChatEmitters.emitParticipantsChanged?.(id, removal.chat.participants);
+						await noteWorkflowParticipantRemoved(id, name);
 					}
 					logger.info(
 						removal.removed
@@ -1412,6 +1438,14 @@ Respond with ONLY the summary text, no additional commentary.`;
 		chunk: string
 	): void => {
 		safeSend('groupChat:participantLiveOutput', groupChatId, participantName, chunk);
+	};
+
+	/** Tell the renderer a chat's staged workflow run changed (null: it holds none now). */
+	groupChatEmitters.emitWorkflowRunChanged = (
+		groupChatId: string,
+		run: GroupChatWorkflowRun | null
+	): void => {
+		safeSend('groupChat:workflowRunChanged', groupChatId, run);
 	};
 
 	logger.info('Registered Group Chat IPC handlers', LOG_CONTEXT);

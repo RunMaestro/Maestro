@@ -3130,6 +3130,24 @@ describe('createWsMaestroClient', () => {
 			expect(bridge.sent('stop_group_chat')).toEqual([expect.objectContaining({ chatId: CHAT })]);
 		});
 
+		it('reads, approves, and cancels a workflow run, and answers a refusal as rejected', async () => {
+			await connect();
+			const run = { status: 'running' };
+			bridge.typed.set('group_chat_workflow', reply('group_chat_workflow_result', { run }));
+			expect(await client.groupChats.workflow(CHAT, 'approve')).toEqual({ ok: true, value: run });
+			expect(bridge.sent('group_chat_workflow')).toEqual([
+				expect.objectContaining({ chatId: CHAT, action: 'approve' }),
+			]);
+			bridge.typed.set(
+				'group_chat_workflow',
+				reply('group_chat_workflow_result', { success: false, error: 'Nothing to cancel.' })
+			);
+			expect(await client.groupChats.workflow(CHAT, 'cancel')).toMatchObject({
+				ok: false,
+				error: { code: 'rejected', message: 'Nothing to cancel.' },
+			});
+		});
+
 		it('renames and deletes through the desktop IPC handlers, since no message exists (gap G15)', async () => {
 			await connect();
 			bridge.invokes.set('groupChat:rename', () => remoteChat());

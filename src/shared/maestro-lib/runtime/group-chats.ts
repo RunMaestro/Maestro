@@ -47,6 +47,7 @@ import {
 	type GroupChatTurnState,
 } from '../groupchat/chat';
 import { createGroupChatOperations } from '../groupchat/chat-ops';
+import { runGroupChatWorkflowAction } from '../groupchat/workflow/actions';
 import { groupChatAutoRunSummary } from '../groupchat/autorun-summary';
 import { readLog } from '../groupchat/log';
 import { createGroupChatEngine, findSessionForParticipantName } from '../groupchat/router';
@@ -589,6 +590,31 @@ export function createRuntimeGroupChats(options: RuntimeGroupChatsOptions): Runt
 			try {
 				await stopChat(chatId);
 				return ok(undefined);
+			} catch (error) {
+				return fail(method, 'failed', errorText(error));
+			}
+		},
+
+		workflow: async (chatId, action) => {
+			const method: ClientMethod = 'groupChats.workflow';
+			if (!(await store.loadGroupChat(chatId).catch(() => null))) {
+				return fail(method, 'not-found', `No group chat ${chatId}.`);
+			}
+			try {
+				const result = await runGroupChatWorkflowAction(
+					{
+						getRun: (id) => engine.getWorkflowRun(id),
+						cancel: (id) => engine.cancelWorkflow(id),
+						// The approval is a message like any other: refused while the chat works.
+						sendApproval: async (id, message) => {
+							const sent = await api.send(id, message);
+							if (!sent.ok) throw new Error(sent.error.message);
+						},
+					},
+					chatId,
+					action
+				);
+				return result.ok ? ok(result.run) : fail(method, 'rejected', result.error);
 			} catch (error) {
 				return fail(method, 'failed', errorText(error));
 			}

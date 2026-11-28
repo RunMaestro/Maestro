@@ -5,6 +5,7 @@ import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { steerNewMessage, steerQueuedItem } from '../../group-chat/group-chat-queue';
+import { runDesktopGroupChatWorkflowAction } from '../../group-chat/group-chat-workflow';
 import { requestFromRenderer } from './remoteRequest';
 
 export function registerGroupChatCallbacks(
@@ -275,4 +276,8 @@ export function registerGroupChatCallbacks(
 			? steerQueuedItem(chatId, request.itemId)
 			: steerNewMessage(chatId, request.message ?? '', request.readOnly)
 	);
+
+	// A chat's staged workflow run. Answered by MAIN directly, as steering is: the
+	// engine holds the run, so the CLI reaches the function the Stage Strip calls.
+	server.setGroupChatWorkflowCallback(runDesktopGroupChatWorkflowAction);
 }

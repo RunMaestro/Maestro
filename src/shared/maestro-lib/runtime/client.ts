@@ -311,6 +311,12 @@ export function createRuntimeClient(deps: RuntimeClientDeps): MaestroClient {
 				Promise.resolve(gate('groupChats.send', true) ?? deps.groupChats.send(chatId, message)),
 			// Stopping only reduces what runs, so it stays available when fenced.
 			stop: (chatId) => guarded('groupChats.stop', () => deps.groupChats.stop(chatId)),
+			// Reading the run is always allowed; approving sends a message and cancelling writes the run.
+			workflow: (chatId, action) =>
+				Promise.resolve(
+					(action === 'show' ? undefined : gate('groupChats.workflow', true)) ??
+						deps.groupChats.workflow(chatId, action)
+				),
 			rename: (chatId, name) =>
 				Promise.resolve(gate('groupChats.rename', true) ?? deps.groupChats.rename(chatId, name)),
 			remove: (chatId) =>

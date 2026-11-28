@@ -26,6 +26,7 @@ import type { IProcessManager } from './group-chat-moderator';
 import type { SteeringResultFrame } from '../../shared/chatSteering';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { AddParticipantByAgentIdResult } from '../../shared/maestro-lib/groupchat/router';
+import type { GroupChatWorkflowRun } from '../../shared/group-chat-workflow-types';
 
 export {
 	extractMentions,
@@ -91,6 +92,32 @@ export function clearModeratorResponseTimeout(groupChatId: string): void {
 /** Gets the current read-only state for a group chat. */
 export function getGroupChatReadOnlyState(groupChatId: string): boolean {
 	return engine.getGroupChatReadOnlyState(groupChatId);
+}
+
+/** The staged workflow run a chat holds, or null. */
+export function getWorkflowRun(groupChatId: string): Promise<GroupChatWorkflowRun | null> {
+	return engine.getWorkflowRun(groupChatId);
+}
+
+/** End a chat's active workflow run (cancelled or stopped). Null when it held none. */
+export function cancelWorkflow(
+	groupChatId: string,
+	reason?: string
+): Promise<GroupChatWorkflowRun | null> {
+	return engine.cancelWorkflow(groupChatId, reason);
+}
+
+/** Forget a chat's workflow run: the chat was deleted or archived. */
+export function forgetWorkflow(groupChatId: string): Promise<void> {
+	return engine.forgetWorkflow(groupChatId);
+}
+
+/** A participant left the chat: warn when a workflow stage still lists it. */
+export function noteWorkflowParticipantRemoved(
+	groupChatId: string,
+	participantName: string
+): Promise<void> {
+	return engine.noteWorkflowParticipantRemoved(groupChatId, participantName);
 }
 
 /** Clears all pending participants for a group chat (and their timeouts). */

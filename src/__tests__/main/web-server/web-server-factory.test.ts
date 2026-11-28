@@ -144,6 +144,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setSetGroupChatUnreadCallback = vi.fn();
 			setSendGroupChatMessageCallback = vi.fn();
 			setSteerGroupChatCallback = vi.fn();
+			setGroupChatWorkflowCallback = vi.fn();
 			setTabContextOpCallback = vi.fn();
 			setCreateGistCallback = vi.fn();
 			setGetCueSubscriptionsCallback = vi.fn();
@@ -241,6 +242,10 @@ vi.mock('../../../main/group-chat/group-chat-queue', () => ({
 	steerNewMessage: vi.fn().mockResolvedValue({ outcome: 'refused', verdict: 'refused' }),
 }));
 
+vi.mock('../../../main/group-chat/group-chat-workflow', () => ({
+	runDesktopGroupChatWorkflowAction: vi.fn().mockResolvedValue({ ok: true, run: null }),
+}));
+
 import {
 	createWebServerFactory,
 	type WebServerFactoryDependencies,
@@ -258,6 +263,7 @@ import {
 } from '../../../main/concerto-html';
 import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
 import { steerNewMessage, steerQueuedItem } from '../../../main/group-chat/group-chat-queue';
+import { runDesktopGroupChatWorkflowAction } from '../../../main/group-chat/group-chat-workflow';
 import {
 	getAutoRunStateTracker,
 	resetAutoRunStateTracker,
@@ -2973,6 +2979,16 @@ describe('web-server/web-server-factory', () => {
 			).resolves.toMatchObject({ outcome: 'refused' });
 			expect(steerNewMessage).toHaveBeenCalledWith('chat-1', 'also docs', true);
 			expect(steerQueuedItem).not.toHaveBeenCalled();
+		});
+
+		it('setGroupChatWorkflowCallback answers in main with the Stage Strip function', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setGroupChatWorkflowCallback.mock.calls[0][0];
+
+			await expect(callback('chat-1', 'cancel')).resolves.toEqual({ ok: true, run: null });
+			expect(runDesktopGroupChatWorkflowAction).toHaveBeenCalledWith('chat-1', 'cancel');
+			expect(mockWebContents.send).not.toHaveBeenCalled();
 		});
 	});
 

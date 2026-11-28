@@ -9,6 +9,11 @@
 
 import { ipcRenderer } from 'electron';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
+import type {
+	GroupChatWorkflowAction,
+	GroupChatWorkflowActionResult,
+	GroupChatWorkflowRun,
+} from '../../shared/group-chat-workflow-types';
 
 /**
  * Moderator configuration
@@ -157,6 +162,13 @@ export function createGroupChatApi() {
 		getModeratorSessionId: (id: string) =>
 			ipcRenderer.invoke('groupChat:getModeratorSessionId', id),
 
+		// Staged workflow runs: read the run, approve its plan, or cancel it
+		workflowAction: (
+			id: string,
+			action: GroupChatWorkflowAction
+		): Promise<GroupChatWorkflowActionResult> =>
+			ipcRenderer.invoke('groupChat:workflowAction', id, action),
+
 		// Participants
 		addParticipant: (id: string, name: string, agentId: string, cwd?: string) =>
 			ipcRenderer.invoke('groupChat:addParticipant', id, name, agentId, cwd),
@@ -290,6 +302,15 @@ export function createGroupChatApi() {
 				callback(groupChatId, sessionId);
 			ipcRenderer.on('groupChat:moderatorSessionIdChanged', handler);
 			return () => ipcRenderer.removeListener('groupChat:moderatorSessionIdChanged', handler);
+		},
+
+		onWorkflowRunChanged: (
+			callback: (groupChatId: string, run: GroupChatWorkflowRun | null) => void
+		) => {
+			const handler = (_: any, groupChatId: string, run: GroupChatWorkflowRun | null) =>
+				callback(groupChatId, run);
+			ipcRenderer.on('groupChat:workflowRunChanged', handler);
+			return () => ipcRenderer.removeListener('groupChat:workflowRunChanged', handler);
 		},
 	};
 }

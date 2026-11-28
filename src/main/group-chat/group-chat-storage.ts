@@ -60,4 +60,8 @@ export const {
 	deleteGroupChatHistoryEntry,
 	clearGroupChatHistory,
 	getGroupChatHistoryFilePath,
+	loadWorkflowRun,
+	saveWorkflowRun,
+	writeWorkflowArtifact,
+	clearWorkflowArtifacts,
 } = store;
