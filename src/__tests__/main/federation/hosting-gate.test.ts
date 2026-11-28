@@ -111,6 +111,7 @@ import {
 import {
 	followHostingSetting,
 	hostingSettingOf,
+	readHostingSwitches,
 	type HostingSettingStore,
 } from '../../../main/federation/hosting-gate';
 import { registerFederationHandlers } from '../../../main/ipc/handlers/federation';
@@ -221,7 +222,11 @@ function bootApp(options: {
 		readAgentConfigs: () => ({}),
 		getMainWindow: () => null,
 		getProcessManager: () => null,
-		readAutoMove: () => settings.get('federationAutoMove') === true && hosting.isOn(),
+		// As the IPC bootstrap reads it.
+		readAutoMove: () => {
+			const switches = readHostingSwitches(settings as unknown as HostingSettingStore);
+			return switches.federationAutoMove && switches.federationHostedAgents;
+		},
 		hosting,
 		watchSessions: (onChange) => sessions.onDidChange('sessions', onChange),
 		safeSend,
@@ -442,6 +447,12 @@ describe('a default-off migration that could not write', () => {
 			operation: 'migration:federationHostingDefaultOff',
 		});
 		expect(settings.get('federationHostedAgents')).toBe(true);
+		// Every desktop reader (the launch guard, the settings the windows read) sees what the gate
+		// sees: a moved agent's turn runs as its SSH turn, never sent to a mirror that is not there.
+		expect(readHostingSwitches(settings as unknown as HostingSettingStore)).toEqual({
+			federationHostedAgents: false,
+			federationAutoMove: false,
+		});
 
 		const app = bootApp({ hosting: true, settings });
 		await vi.advanceTimersByTimeAsync(20 * MINUTE);

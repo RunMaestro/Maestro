@@ -678,9 +678,12 @@ describe('process IPC handlers', () => {
 			mockSessionsStore.get.mockImplementation((key, fallback) =>
 				key === 'sessions' ? [lifted] : fallback
 			);
-			// Hosting is opt-in: the refusal applies only once it is switched on.
+			// Hosting is opt-in: the refusal applies only once it is switched on, after the
+			// default-off migration ran.
 			mockSettingsStore.get.mockImplementation((key, fallback) =>
-				key === 'federationHostedAgents' ? true : fallback
+				key === 'federationHostedAgents' || key === 'migration_federationHostingDefaultOffV1'
+					? true
+					: fallback
 			);
 			mockAgentDetector.getAgent.mockResolvedValue({
 				id: 'claude-code',
@@ -720,6 +723,44 @@ describe('process IPC handlers', () => {
 			};
 			mockSessionsStore.get.mockImplementation((key, fallback) =>
 				key === 'sessions' ? [lifted] : fallback
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+
+			const outcome = await handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'lifted-agent-ai-tab',
+					toolType: 'claude-code',
+					cwd: '/project',
+					command: 'claude',
+					args: [],
+				}
+			).catch((error: Error) => error);
+
+			expect(outcome instanceof Error ? outcome.message : '').not.toContain('build-box');
+		});
+
+		it('runs a lifted agent as its SSH agent while the default-off migration could not write', async () => {
+			// The old `true` is still on disk with no marker: the gate keeps hosting off, so the
+			// launch guard must too, or the agent could neither go to a host nor run here.
+			const lifted = {
+				id: 'lifted-agent',
+				name: 'Lifted',
+				toolType: 'claude-code',
+				cwd: '/project',
+				aiTabs: [{ id: 'tab' }],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [lifted] : fallback
+			);
+			mockSettingsStore.get.mockImplementation((key, fallback) =>
+				key === 'federationHostedAgents' || key === 'federationAutoMove' ? true : fallback
 			);
 			mockAgentDetector.getAgent.mockResolvedValue({
 				id: 'claude-code',
