@@ -275,6 +275,33 @@ Maestro tests the connection again before it records an outage, so one dropped c
 
 From the CLI, `maestro-cli ssh-remote-status` lists the remotes that are down. `maestro-cli ssh-remote-status --check <remote-id>` does the same as **Check Now**.
 
+### Keep Turns Running When the Connection Drops
+
+By default, an SSH turn ends when its connection ends: the agent's output travels on the ssh channel, so a lost link (a Wi-Fi drop, the laptop going to sleep, a broken tunnel) stops the turn, and Maestro stops the agent on the remote so it does not keep writing to a conversation nobody reads.
+
+Switch **Keep turns running when the connection drops** on for a remote (in its editor under **Settings > SSH Hosts**) and a lost link no longer ends the turn:
+
+- The agent keeps running on the remote.
+- The tab stays busy. The usual **Can't reach "&lt;remote&gt;" over SSH** dialog appears if the outage lasts.
+- When the remote answers again, Maestro picks the output up from the exact byte where it stopped. Nothing is shown twice and nothing is lost, and the reply lands in the tab as if the link never dropped.
+- **Stop** works while Maestro is reconnecting. If the remote cannot be reached, Maestro keeps trying to stop the agent until it can.
+- Messages you send in the meantime wait in the queue, as they do for any busy tab.
+
+The switch is off by default. With it off, Maestro sends the same commands and writes the same files on the remote as before.
+
+**What it does on the remote.** Nothing is installed. The turn runs in a private folder, `/tmp/maestro-turn-<id>`, that holds the turn's input, its output, and its exit code. A supervisor process (plain `sh` and standard tools) runs the agent, so the agent no longer depends on the ssh connection. Maestro removes the folder once the turn has ended and the whole reply has arrived. If a folder is left behind (the remote rebooted, or Maestro never came back), the next turn on that remote removes finished folders older than one day.
+
+**When Maestro gives up.** A turn ends only when the agent ends, when you press **Stop**, when the remote shows that the agent is gone, or when the remote has not answered for about 25 minutes. After that, the turn ends as a lost connection, as it would with the switch off.
+
+**Not covered yet:**
+
+- Codex turns, and agents that keep talking to the provider on stdin during a turn (Codex app-server, ACP agents such as Grok, SDK-based agents, and turns with tool permission prompts). These keep the default behavior.
+- Terminal (TUI) agents.
+- Windows remotes.
+- Quitting or restarting Maestro during a turn. The turn keeps running on the remote, but this machine does not pick it up again after a restart yet.
+
+From the CLI, `maestro-cli update-ssh-remote <remote-id> --keep-turns on` (or `off`) changes the switch, and `create-ssh-remote --keep-turns on` sets it on a new remote. `maestro-cli list ssh-remotes --json` reports it as `keepTurnsOnDisconnect`.
+
 ## Keep Working With the Laptop Closed (Federation)
 
 An SSH agent is owned by your local Maestro, so its turns stop when your laptop sleeps or loses the connection. [Federation](./federation) moves the agent onto a Maestro host on the remote instead, and the work keeps going there. It is built in and opportunistic: Maestro checks each SSH remote for a host, one at a time, and mirrors the agents of the ones that run one. A remote without a host stays an ordinary SSH remote.
