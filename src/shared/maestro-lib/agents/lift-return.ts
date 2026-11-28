@@ -487,7 +487,12 @@ export async function runReturnFromHost(
 		} catch (error) {
 			// A restore that answered late (the window timed out) may have been written anyway: the
 			// messages it carried then wait here, and releasing them on the host would run them twice.
-			if (!restoreLanded(deps, agent.id, left !== undefined, heldIds)) {
+			// A restore the window REFUSED (its save failed: a full disk) was not written, whatever
+			// main's in-memory store says (it takes the record before the failed flush), so only a
+			// timed-out restore is checked for having landed. Treating a refused one as home would go
+			// on to remove the host copy and the messages it holds.
+			const unsettled = error instanceof LiftRunError && error.code === 'RETURN_RESTORE_UNSETTLED';
+			if (!unsettled || !restoreLanded(deps, agent.id, left !== undefined, heldIds)) {
 				// The window may still write it: release nothing, so no message can run in both places.
 				// A held message comes home held at the next return.
 				if (error instanceof LiftRunError && error.code === 'RETURN_RESTORE_UNSETTLED') {

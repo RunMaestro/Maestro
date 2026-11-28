@@ -635,7 +635,8 @@ describe('runReturnFromHost', () => {
 			d.restore.mockImplementationOnce(async (id: string, returned) => {
 				const record = store.get(id) as unknown as Record<string, unknown>;
 				store.set(id, withReturnedFromHost(record, returned) as unknown as AgentRecord);
-				throw new Error('The window did not answer in time');
+				// A window that did not answer in time: the timeout main raises (`NO_RESTORE_ANSWER`).
+				throw new RestoreUnsettledError('The window did not answer in time');
 			});
 			const result = await runReturnFromHost('agent-1', {}, d.value);
 			expect(client.turns.queue.setPaused.mock.calls).toEqual([['host-1', 'q1', true]]);
@@ -1328,6 +1329,33 @@ describe('runReturnFromHost', () => {
 			});
 			expect(client.turns.queue.setPaused.mock.calls).toEqual([['host-1', 'q1', true]]);
 			expect(client.agents.remove).not.toHaveBeenCalled();
+		});
+
+		// A save that failed (a full disk) is refused by the window, but main's store already took
+		// the new record before its flush failed, so it reads home. That must not count as landed:
+		// counting it would remove the host copy and the message it holds while nothing was saved.
+		it('a restore the window refused is not taken as landed, even when the store reads home', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			const d = deps(hostedAgent(), client);
+			// Moved until the restore is tried; then the store reads home (it took the record before
+			// the failed flush), as main's does.
+			const homeInMemory = { ...hostedAgent(), liftedTo: undefined } as AgentRecord;
+			let tried = false;
+			d.value.readAgents = () => [tried ? homeInMemory : hostedAgent()];
+			d.restore.mockImplementation(async () => {
+				tried = true;
+				throw new Error('Could not save the agent: the write did not reach the disk');
+			});
+
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_RESTORE_FAILED',
+			});
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			// The held message is released on the host, where it runs: the agent stays moved.
+			expect(client.turns.queue.setPaused.mock.calls).toEqual([
+				['host-1', 'q1', true],
+				['host-1', 'q1', false],
+			]);
 		});
 
 		it('a hold the host would not release is named beside the restore error', async () => {
