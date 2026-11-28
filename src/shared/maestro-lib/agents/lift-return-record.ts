@@ -151,10 +151,54 @@ function mergeLogs(hostLogs: unknown[], localLogs: unknown[]): unknown[] {
 		.map(({ row }) => row);
 }
 
+function draftOf(tab: AITabRecord): string {
+	return typeof tab.inputValue === 'string' ? tab.inputValue : '';
+}
+
+function stagedImagesOf(tab: AITabRecord): unknown[] {
+	return Array.isArray(tab.stagedImages) ? tab.stagedImages : [];
+}
+
+/**
+ * A tab's draft and staged images once the host's are merged in: the host's draft fills an empty
+ * local one (a local draft is never overwritten, see `hostDraftsNotKept()`), and the host's
+ * staged images are added to the local ones, each once.
+ */
+function mergedComposer(host: AITabRecord, local: AITabRecord): Partial<AITabRecord> {
+	const hostDraft = draftOf(host);
+	const localImages = stagedImagesOf(local);
+	const hostImages = stagedImagesOf(host).filter((image) => !localImages.includes(image));
+	return {
+		...(hostDraft.trim() && !draftOf(local).trim() ? { inputValue: hostDraft } : {}),
+		...(hostImages.length > 0 ? { stagedImages: [...localImages, ...hostImages] } : {}),
+	};
+}
+
+/**
+ * The host drafts the merge does not keep, because the same tab has a different draft here: the
+ * caller names each one, with its text, so nothing typed on the host is dropped unseen.
+ */
+export function hostDraftsNotKept(
+	localTabs: readonly AITabRecord[],
+	returned: ReturnedFromHost
+): Array<{ tabId: string; tabName?: string; draft: string }> {
+	const localById = new Map(localTabs.map((tab) => [tab.id, tab]));
+	return returned.tabs.flatMap((host) => {
+		const local = localById.get(host.id);
+		const hostDraft = draftOf(host).trim();
+		if (!local || !hostDraft) return [];
+		const localDraft = draftOf(local).trim();
+		if (!localDraft || localDraft === hostDraft) return [];
+		const tabName = host.name ?? local.name ?? undefined;
+		return [{ tabId: host.id, ...(tabName ? { tabName } : {}), draft: draftOf(host) }];
+	});
+}
+
 /**
  * The local record once the agent is back: no `liftedTo`, `hostedOptOut` set, and the host's tabs
  * merged in by tab id. A tab both sides have takes every transcript row of both (matched by row
- * id, see `mergeLogs()`), plus the host's name, star, and provider session. A host tab this
+ * id, see `mergeLogs()`), plus the host's name, star, provider session, and the draft and staged
+ * images the host has and this machine does not (`mergedComposer()`). A host tab this
  * machine lacks is appended. Local tabs the host closed stay. The host's queued messages go first in
  * the local queue (they were sent before anything this machine held while the agent was away), as
  * messages, held when the host held them; one this queue already has (same id) is not added twice,
@@ -185,6 +229,7 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 			name: host.name ?? local.name ?? null,
 			starred: host.starred === true,
 			logs: mergeLogs(hostLogs, localLogs),
+			...mergedComposer(host, local),
 			...(host.usageStats ? { usageStats: host.usageStats } : {}),
 			...(wasMoved ? { state: 'idle' } : {}),
 		};

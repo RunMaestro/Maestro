@@ -8,7 +8,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentRecord, AITabRecord } from '../../store/records';
 import { LiftRunError } from '../lift-run';
 import {
+	hostDraftsNotKept,
 	readReturnedFromHost,
+	RETURN_TRANSCRIPT_RETRY_TIMEOUT_MS,
 	returnRestoreRefusal,
 	runReturnFromHost,
 	withReturnedFromHost,
@@ -147,6 +149,35 @@ describe('withReturnedFromHost', () => {
 		expect(merged.activeTabId).toBe('tab-new');
 	});
 
+	it('brings the host draft and staged images into a tab that has none here, and never overwrites a local draft (R2)', () => {
+		const record = hostedAgent({
+			aiTabs: [
+				{ id: 'tab-1', name: 'Main', logs: [], inputValue: '', stagedImages: [] },
+				{
+					id: 'tab-old',
+					name: 'Mine',
+					logs: [],
+					inputValue: 'typed here',
+					stagedImages: ['img-a'],
+				},
+			],
+		}) as unknown as Record<string, unknown>;
+		const returned = {
+			tabs: [
+				{ id: 'tab-1', logs: [], inputValue: 'typed on host', stagedImages: ['img-h'] },
+				{ id: 'tab-old', logs: [], inputValue: 'host draft', stagedImages: ['img-a', 'img-b'] },
+			],
+		};
+		const tabs = withReturnedFromHost(record, returned).aiTabs as AITabRecord[];
+		expect(tabs[0]).toMatchObject({ inputValue: 'typed on host', stagedImages: ['img-h'] });
+		// The local draft stays; every image of both sides is kept, each once.
+		expect(tabs[1]).toMatchObject({ inputValue: 'typed here', stagedImages: ['img-a', 'img-b'] });
+		// The host draft that was not put in a tab is named, with its text.
+		expect(hostDraftsNotKept((record as unknown as AgentRecord).aiTabs ?? [], returned)).toEqual([
+			{ tabId: 'tab-old', tabName: 'Mine', draft: 'host draft' },
+		]);
+	});
+
 	it('on an agent already home, keeps the tab running here and every row of both sides', () => {
 		const record = {
 			...hostedAgent(),
@@ -251,6 +282,45 @@ describe('runReturnFromHost', () => {
 		expect(d.release).toHaveBeenCalled();
 	});
 
+	it('names a host draft that a local draft kept out of its tab, so it is not dropped unseen (R2)', async () => {
+		const agent = hostedAgent({
+			aiTabs: [{ id: 'tab-1', name: 'Main', logs: [log('l1')], inputValue: 'mine' }],
+		});
+		const client = hostClient({
+			tabs: [{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1', inputValue: 'from host' }],
+		});
+		const d = deps(agent, client);
+		const result = await runReturnFromHost('agent-1', {}, d.value);
+		expect(result.notices).toEqual([
+			'A draft typed on the host in tab "Main" was not put in that tab, because it has a draft of its own here. The host\'s draft was: from host',
+		]);
+	});
+
+	it('a transcript read that times out is read again with a longer wait, not taken as a host gone (R7)', async () => {
+		const client = hostClient();
+		client.tabs.transcript.mockResolvedValueOnce(fail('timeout') as never);
+		const d = deps(hostedAgent(), client);
+		const result = await runReturnFromHost('agent-1', {}, d.value);
+		expect(client.tabs.transcript).toHaveBeenNthCalledWith(2, 'host-1', 'tab-1', {
+			timeoutMs: RETURN_TRANSCRIPT_RETRY_TIMEOUT_MS,
+		});
+		expect(d.restore.mock.calls[0][1].tabs[0]).toMatchObject({
+			id: 'tab-1',
+			logs: [log('l1'), log('l2')],
+		});
+		expect(result.hostCopyRemoved).toBe(true);
+	});
+
+	it('a transcript read that times out twice fails the return, and the agent is not written here (R7)', async () => {
+		const client = hostClient();
+		client.tabs.transcript.mockResolvedValue(fail('timeout') as never);
+		const d = deps(hostedAgent(), client);
+		await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toThrow();
+		expect(client.tabs.transcript).toHaveBeenCalledTimes(2);
+		expect(d.restore).not.toHaveBeenCalled();
+		expect(client.agents.remove).not.toHaveBeenCalled();
+	});
+
 	it('keeps the host copy when asked, and says so', async () => {
 		const d = deps(hostedAgent());
 		const result = await runReturnFromHost('agent-1', { keepHostCopy: true }, d.value);
@@ -299,6 +369,32 @@ describe('runReturnFromHost', () => {
 			expect(d.restore.mock.calls[0][1].queue).toEqual([waiting, held]);
 			expect(client.agents.remove).toHaveBeenCalledWith('host-1');
 			expect(result.queued).toBe(2);
+		});
+
+		it('messages from a desktop host come home held, because its queue does not send their images (R2)', async () => {
+			const client = hostClient({ queue: ok([waiting, held]) });
+			const desktop = {
+				...client,
+				connection: { host: () => ({ kind: 'desktop' as const, label: 'desktop pid 1' }) },
+			};
+			const d = deps(hostedAgent(), desktop as unknown as typeof client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(d.restore.mock.calls[0][1].queue).toEqual([{ ...waiting, paused: true }, held]);
+			expect(result.notices?.join(' ')).toMatch(
+				/build-box:host-1 is a Maestro desktop.*2 messages from its queue wait here, held/
+			);
+		});
+
+		it('messages from a headless host keep their state: it takes no images (R2)', async () => {
+			const client = hostClient({ queue: ok([waiting]) });
+			const headless = {
+				...client,
+				connection: { host: () => ({ kind: 'headless' as const, label: 'headless pid 1' }) },
+			};
+			const d = deps(hostedAgent(), headless as unknown as typeof client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(d.restore.mock.calls[0][1].queue).toEqual([waiting]);
+			expect(result.notices).toBeUndefined();
 		});
 
 		it('the stored record ends home with both messages queued, the held one still held', async () => {

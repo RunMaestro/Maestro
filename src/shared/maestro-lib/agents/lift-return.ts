@@ -38,9 +38,15 @@ import type { ClientError, MaestroClient } from '../client/types';
 import type { AITabRecord, AgentRecord } from '../store/records';
 import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
 import { LiftRunError } from './lift-run';
-import { readHostCopyLeft, type HostCopyLeft, type ReturnedFromHost } from './lift-return-record';
+import {
+	hostDraftsNotKept,
+	readHostCopyLeft,
+	type HostCopyLeft,
+	type ReturnedFromHost,
+} from './lift-return-record';
 
 export {
+	hostDraftsNotKept,
 	readHostCopyLeft,
 	readReturnedFromHost,
 	returnRestoreRefusal,
@@ -48,6 +54,12 @@ export {
 	type HostCopyLeft,
 	type ReturnedFromHost,
 } from './lift-return-record';
+
+/**
+ * The wait for a host transcript read that timed out once (the client's own wait is 10 s): a
+ * long transcript is a large frame, and a slow answer is not a host that is gone.
+ */
+export const RETURN_TRANSCRIPT_RETRY_TIMEOUT_MS = 120_000;
 
 export interface ReturnRunOptions {
 	/** The host cannot be reached: restore from this machine's copy only, and keep the host's. */
@@ -59,7 +71,9 @@ export interface ReturnRunOptions {
 /** A client attached to the agent's host. `release()` is the caller's. */
 export interface ReturnHostConnection {
 	peer: string;
-	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'>;
+	/** `connection` names the host kind: a desktop host does not send a queued message's images. */
+	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'> &
+		Partial<Pick<MaestroClient, 'connection'>>;
 	release(): Promise<void>;
 }
 
@@ -237,7 +251,12 @@ export async function runReturnFromHost(
 			if (!tabs.ok) return await failRead(tabs.error);
 			const withLogs: AITabRecord[] = [];
 			for (const tab of tabs.value) {
-				const transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id);
+				let transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id);
+				if (!transcript.ok && transcript.error.code === 'timeout') {
+					transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id, {
+						timeoutMs: RETURN_TRANSCRIPT_RETRY_TIMEOUT_MS,
+					});
+				}
 				if (!transcript.ok) return await failRead(transcript.error);
 				withLogs.push({ ...tab, logs: transcript.value });
 			}
@@ -252,6 +271,11 @@ export async function runReturnFromHost(
 					`"${agent.name}" started a turn on its host. Wait for it to finish, then move it back.`
 				);
 			}
+			// Neither host sends a queued message's images (`list_queue` carries its text only), and a
+			// headless host takes none. A desktop host may hold some: its messages come home held, so
+			// none runs without the image it was sent with.
+			const imagesUnread =
+				queue.length > 0 && connection.client.connection?.host()?.kind === 'desktop';
 			returned = {
 				tabs: withLogs,
 				...(options.keepHostCopy
@@ -270,12 +294,22 @@ export async function runReturnFromHost(
 								tabId: item.tabId,
 								queuedAt: item.queuedAt,
 								text: item.text,
-								paused: item.paused,
+								paused: item.paused || imagesUnread,
 								...(item.kind === 'command' ? { kind: item.kind } : {}),
 							})),
 						}
 					: {}),
 			};
+			for (const kept of hostDraftsNotKept(agent.aiTabs ?? [], returned)) {
+				notices.push(
+					`A draft typed on the host in tab "${kept.tabName ?? kept.tabId}" was not put in that tab, because it has a draft of its own here. The host's draft was: ${kept.draft}`
+				);
+			}
+			if (imagesUnread) {
+				notices.push(
+					`${from} is a Maestro desktop, which does not send the images attached to queued messages. The ${queue.length === 1 ? 'message' : `${queue.length} messages`} from its queue wait here, held: attach any image again, then resume ${queue.length === 1 ? 'it' : 'each one'}.`
+				);
+			}
 		} else if (!left) {
 			notices.push(
 				`The host no longer has ${from}: the agent comes back with this machine's copy.`
