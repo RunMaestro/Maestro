@@ -127,6 +127,8 @@ export function registerSshRemoteHandlers(deps: SshRemoteHandlerDependencies): v
 					sshConfigHost: config.sshConfigHost,
 					// Federation is opportunistic: stored only as an opt-out (`false`).
 					federation: federationFieldFor(config.federation !== false),
+					// Off by default, and stored only when on.
+					keepTurnsOnDisconnect: config.keepTurnsOnDisconnect === true || undefined,
 				};
 
 				// Validate the configuration

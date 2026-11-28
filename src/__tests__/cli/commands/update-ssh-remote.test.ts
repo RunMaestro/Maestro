@@ -348,6 +348,32 @@ describe('update-ssh-remote command', () => {
 			expect(processExitSpy).toHaveBeenCalledWith(1);
 		});
 
+		it('stores keep-turns for --keep-turns on, and clears it again for off', () => {
+			updateSshRemote('remote-1', { keepTurns: 'on' });
+			expect(written().keepTurnsOnDisconnect).toBe(true);
+
+			vi.mocked(writeSshRemotes).mockClear();
+			mockStoredRemotes([mockRemote({ keepTurnsOnDisconnect: true })]);
+			updateSshRemote('remote-1', { keepTurns: 'off' });
+			expect(written().keepTurnsOnDisconnect).toBeUndefined();
+		});
+
+		it('keeps keep-turns when --keep-turns is not passed, and reports it in JSON', () => {
+			mockStoredRemotes([mockRemote({ keepTurnsOnDisconnect: true })]);
+
+			updateSshRemote('remote-1', { name: 'Renamed', json: true });
+
+			expect(written()).toMatchObject({ name: 'Renamed', keepTurnsOnDisconnect: true });
+			expect(JSON.parse(consoleSpy.mock.calls[0][0]).keepTurnsOnDisconnect).toBe(true);
+		});
+
+		it('rejects a --keep-turns value that is not on or off', () => {
+			updateSshRemote('remote-1', { keepTurns: 'sometimes' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--keep-turns'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
 		it('reports federation in JSON: on unless the remote opted out', () => {
 			mockStoredRemotes([mockRemote()]);
 			updateSshRemote('remote-1', { json: true });

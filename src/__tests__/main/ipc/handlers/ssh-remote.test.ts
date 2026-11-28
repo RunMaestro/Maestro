@@ -224,6 +224,24 @@ describe('SSH Remote IPC Handlers', () => {
 			expect(off.config?.federation).toBe(false);
 		});
 
+		it('persists keep-turns only when on: off (or absent) stores nothing', async () => {
+			const on = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Durable Box',
+				host: 'box',
+				port: 22,
+				keepTurnsOnDisconnect: true,
+			})) as { success: boolean; config?: SshRemoteConfig };
+			expect(on.config?.keepTurnsOnDisconnect).toBe(true);
+
+			const off = (await invokeHandler('ssh-remote:saveConfig', {
+				name: 'Plain Box',
+				host: 'box',
+				port: 22,
+				keepTurnsOnDisconnect: false,
+			})) as { success: boolean; config?: SshRemoteConfig };
+			expect(off.config?.keepTurnsOnDisconnect).toBeUndefined();
+		});
+
 		it('strips a reserved ssh option before it reaches disk', async () => {
 			const result = (await invokeHandler('ssh-remote:saveConfig', {
 				name: 'Tunnelled',

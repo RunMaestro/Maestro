@@ -269,4 +269,31 @@ describe('create-ssh-remote command', () => {
 			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({ federation: true });
 		});
 	});
+
+	describe('keep turns (off by default, stored only when on)', () => {
+		it('stores nothing by default and reports it off in JSON', () => {
+			createSshRemote('Plain', { host: 'box', json: true });
+
+			expect(vi.mocked(writeSshRemotes).mock.calls[0][0][0].keepTurnsOnDisconnect).toBeUndefined();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				keepTurnsOnDisconnect: false,
+			});
+		});
+
+		it('stores true for --keep-turns on and prints it', () => {
+			createSshRemote('Durable', { host: 'box', keepTurns: 'on' });
+
+			expect(vi.mocked(writeSshRemotes).mock.calls[0][0][0].keepTurnsOnDisconnect).toBe(true);
+			expect(consoleSpy.mock.calls.map((call) => String(call[0])).join('\n')).toContain(
+				'Keep turns: on'
+			);
+		});
+
+		it('rejects a --keep-turns value that is not on or off', () => {
+			createSshRemote('Bad', { host: 'box', keepTurns: 'maybe' });
+
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('--keep-turns'));
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
 });

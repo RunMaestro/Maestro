@@ -35,6 +35,7 @@ export function listSshRemotes(options: ListSshRemotesOptions): void {
 					resolvedSshOptions: resolveSshOptions(remote.sshOptions),
 					isDefault: remote.id === defaultId,
 					federation: isFederationRemote(remote),
+					keepTurnsOnDisconnect: remote.keepTurnsOnDisconnect === true,
 				})
 			);
 		}
