@@ -79,6 +79,12 @@ export function buildRemoteTurnCleanupScript(dir: string): string {
 export const DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE = 75;
 
 /**
+ * What a durable turn's terminate exits with when the agent is gone but its
+ * dir could not be removed: the reap tries the removal again.
+ */
+export const DURABLE_CLEANUP_FAILED_EXIT_CODE = 74;
+
+/**
  * What a launch exits with, before its own agent starts, when an earlier
  * turn's agent it had to stop first could not be proven gone. The new agent
  * never runs beside it on the same session.
@@ -103,7 +109,8 @@ function durableAgentLines(dir: string, pidFile: string): string[] {
 		'[ -r "$d/agent" ] && read -r ap as < "$d/agent"',
 		`[ -n "$ap" ] || { [ -r ${pf} ] && read -r ap as < ${pf}; }`,
 		'case "$ap" in ""|*[!0-9]*) ap= ;; esac',
-		'_same() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null && [ "$(echo $(ps -o lstart= -p "$ap" 2>/dev/null))" = "$(echo $as)" ]; }',
+		// A `ps` that prints nothing proves nothing: the process still answers, so it counts as the agent.
+		'_same() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null || return 1; n=$(ps -o lstart= -p "$ap" 2>/dev/null); [ -z "$n" ] || [ "$(echo $n)" = "$(echo $as)" ]; }',
 		't="$ap"; [ -n "$ap" ] && [ "$(ps -o pgid= -p "$ap" 2>/dev/null | tr -d " ")" = "$ap" ] && t="-$ap"',
 	];
 }
@@ -134,8 +141,20 @@ function terminateScriptFor(target: RemoteSignalTarget): string {
 		`  { [ -z "$ap" ] || _same; } && exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}`,
 		'fi',
 		`rm -f -- ${shellEscape(target.pidFile)}`,
-		buildRemoteTurnCleanupScript(target.turnDir),
-	].join('\n');
+		'if [ -d "$d" ]; then',
+		`  rm -rf -- "$d" 2>/dev/null; [ -d "$d" ] && exit ${DURABLE_CLEANUP_FAILED_EXIT_CODE}`,
+		'  exit 0',
+		'fi',
+		// No dir: the launch never staged, or an earlier reap removed it. Leave
+		// a finished one in its place, so a launch still on its way (its script
+		// already on the host, running an earlier reap) cannot start its agent
+		// after this reap reported it gone. The sweep of finished dirs removes it.
+		`( umask 077; mkdir "$d" 2>/dev/null ) || exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}`,
+		'printf \'reaped\\n\' > "$d/exit"',
+		'exit 0',
+	]
+		.join('\n')
+		.concat('\n');
 }
 
 /**
@@ -501,7 +520,11 @@ export function reapRemoteAgent(
 			if (
 				exitCode !== null &&
 				!isSshConnectionFailure(exitCode) &&
-				!(target.turnDir !== undefined && exitCode === DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE)
+				!(
+					target.turnDir !== undefined &&
+					(exitCode === DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE ||
+						exitCode === DURABLE_CLEANUP_FAILED_EXIT_CODE)
+				)
 			) {
 				pendingReaps.delete(target.pidFile);
 				return;
@@ -529,14 +552,27 @@ export function reapRemoteAgent(
 	} else run();
 }
 
+/** The host a stdin-script ssh reaches: its destination and port, not its other options. */
+function sshEndpointKey(sshCommand: string, sshArgs: readonly string[]): string | undefined {
+	const connection = sshConnectionArgs(sshArgs);
+	if (!connection?.length) return undefined;
+	const port = connection.indexOf('-p');
+	return [
+		sshCommand,
+		connection[connection.length - 1],
+		port >= 0 ? connection[port + 1] : '',
+	].join('\0');
+}
+
 /**
  * Take the reaps still pending for `sessionId` that its next launch can carry.
  *
  * The next turn on a tab resumes the same provider session, so an orphan still
  * running there is a second writer. The launch script runs the terminate
  * itself, over the connection that just proved the host answers, before it
- * starts the new agent. Only reaps for the same ssh endpoint go: a launch on
- * another host cannot reach them, so they stay with their own retry loop.
+ * starts the new agent. Only reaps for the same ssh endpoint (destination and
+ * port; other options may change between turns) go: a launch on another host
+ * cannot reach them, so they stay with their own retry loop.
  * Prompt-owner records stay with their retry loop too: their script reads its
  * own descriptors through `/proc/$$`, which a subshell of the launch script
  * would point at the wrong process.
@@ -546,15 +582,14 @@ export function takePendingRemoteReaps(
 	sshCommand: string,
 	sshArgs: readonly string[]
 ): RemoteSignalTarget[] {
-	const endpoint = sshConnectionArgs(sshArgs)?.join('\0');
+	const endpoint = sshEndpointKey(sshCommand, sshArgs);
 	const taken: RemoteSignalTarget[] = [];
 	for (const [pidFile, entry] of pendingReaps) {
 		if (entry.target.sessionId !== sessionId) continue;
 		if (entry.target.promptArtifactPath !== undefined) continue;
 		if (
 			endpoint === undefined ||
-			entry.target.sshCommand !== sshCommand ||
-			sshConnectionArgs(entry.target.sshArgs)?.join('\0') !== endpoint
+			sshEndpointKey(entry.target.sshCommand, entry.target.sshArgs) !== endpoint
 		)
 			continue;
 		if (entry.timer) clearTimeout(entry.timer);

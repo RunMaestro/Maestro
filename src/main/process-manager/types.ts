@@ -329,6 +329,8 @@ export interface ManagedProcess {
 	 * the session.
 	 */
 	durableSshTurn?: boolean;
+	/** A durable SSH turn's remote dir: a Stop finds the agent through the record in it. */
+	durableTurnDir?: string;
 	/**
 	 * Set on a durable SSH turn restored at launch until it reattaches (it has
 	 * no ssh process yet). Stop and close end it here: `interrupt` and `kill`

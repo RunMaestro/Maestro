@@ -30,7 +30,7 @@
  * The remote never deletes `<dir>` itself: only this machine knows when the
  * last bytes arrived. `buildRemoteTurnCleanupScript()` removes it after
  * the turn settles, and each durable launch sweeps finished dirs older than a
- * day that a crash left behind.
+ * week that a crash left behind.
  *
  * Only POSIX tools are used (`cat`, `wc -c`, `tail -c`, `head -c`, `ps`,
  * `kill -0`, `sleep`), and bash, which every SSH spawn already requires.
@@ -70,8 +70,12 @@ const STREAM_LIVENESS_EVERY_PASSES = 25;
  */
 export const MAX_STDERR_FRAME_BYTES = 64 * 1024;
 
-/** Finished turn dirs older than this are swept by the next durable launch. */
-const TURN_DIR_MAX_AGE_MIN = 24 * 60;
+/**
+ * Finished turn dirs older than this are swept by the next durable launch.
+ * As long as this app keeps a turn's restart record (a week), so a turn that
+ * ended while the app was closed is still there to be read.
+ */
+const TURN_DIR_MAX_AGE_MIN = 7 * 24 * 60;
 
 const PID_FILE_PATTERN = /^\/tmp\/maestro-agent-[0-9a-f-]{36}\.pid$/;
 
@@ -83,7 +87,8 @@ const PID_FILE_PATTERN = /^\/tmp\/maestro-agent-[0-9a-f-]{36}\.pid$/;
  *
  *   RS 'S' LF                 the agent runs (launch) or still runs (reattach)
  *   RS 'D' <len> LF <len bytes> US   that many bytes of the agent's stderr
- *   RS 'E' <code> LF          the agent ended with <code>; every byte was sent
+ *   RS 'E' <code> <out> LF    the agent ended with <code>; every stderr byte was
+ *                             sent, and <out> stdout bytes in all
  *   RS 'G' LF                 the turn is gone (reattach only)
  *
  * A data frame cut by a drop is discarded whole and sent again by the
@@ -121,7 +126,9 @@ const ALIVE_FUNCTION = [
 	'  read -r p started < "$1" || return 1',
 	'  case "$p" in ""|*[!0-9]*) return 1 ;; esac',
 	'  kill -0 "$p" 2>/dev/null || return 1',
-	'  [ "$(echo $(ps -o lstart= -p "$p" 2>/dev/null))" = "$(echo $started)" ]',
+	// A `ps` that prints nothing proves nothing: the process answers, so it lives.
+	'  now=$(ps -o lstart= -p "$p" 2>/dev/null)',
+	'  [ -z "$now" ] || [ "$(echo $now)" = "$(echo $started)" ]',
 	'}',
 ];
 
@@ -170,7 +177,9 @@ function streamLoop(outOffset: number, errOffset: number): string[] {
 		'done',
 		'c=1; read -r c < "$d/exit" 2>/dev/null',
 		'case "$c" in ""|*[!0-9]*) c=1 ;; esac',
-		'printf \'\\036E%d\\n\' "$c" >&2',
+		// With the stdout bytes the agent wrote: stdout and stderr reach this
+		// machine on separate streams, so the end frame can overtake stdout's last bytes.
+		'printf \'\\036E%d %d\\n\' "$c" "$o" >&2',
 		'exit "$c"',
 	];
 }
@@ -184,7 +193,7 @@ const SWEEP_ROOT_PATTERN = /^\/[A-Za-z0-9._/-]*$/;
 /**
  * The script that removes finished turn dirs a crash left behind: dirs this
  * user owns, named exactly as Maestro names them, whose `exit` file is older
- * than a day. A shared `/tmp` is hostile ground, so nothing here splits on
+ * than a week. A shared `/tmp` is hostile ground, so nothing here splits on
  * newlines or follows a link: `find` hands each path to `rm` as one argument,
  * the name glob admits only hex and dashes, `-type d` and `-type f` refuse a
  * symlink, and `rm` gets only an absolute path under `<root>/maestro-turn-`.
@@ -225,10 +234,13 @@ export function buildDurableLaunchScript(innerStdin: string, dir: string, pidFil
 		// The files hold the launch script (env values, keys) and the agent's
 		// output: only this user reads them. The umask stays in this subshell,
 		// so the agent runs with the user's own, as today.
-		'(umask 077; mkdir "$d" && : > "$d/out" && : > "$d/err" && cat > "$d/in") || exit 1',
+		// A staging that fails (a full disk) or receives less than was sent (the
+		// link closed mid-prompt) removes what it made and never starts the agent.
+		'(umask 077; mkdir "$d") || exit 1',
+		`(umask 077; : > "$d/out" && : > "$d/err" && cat > "$d/in") && [ "$(wc -c < "$d/in" | tr -d ' ')" = ${Buffer.byteLength(innerStdin)} ] || { rm -rf -- "$d"; exit 1; }`,
 		// Held open on fd 3 and unlinked at once: the script and its secrets
 		// leave the disk before the agent starts.
-		'exec 3< "$d/in" || exit 1',
+		'exec 3< "$d/in" || { rm -rf -- "$d"; exit 1; }',
 		'rm -f -- "$d/in"',
 		'set -m',
 		'(',
@@ -325,6 +337,7 @@ export class DurableStderrReader {
 	private startedNow = false;
 	private everStarted = false;
 	private ended: number | null = null;
+	private endedOut: number | null = null;
 	private goneNow = false;
 	private diagnostics = '';
 
@@ -366,6 +379,17 @@ export class DurableStderrReader {
 	/** The agent's exit code, once the end frame arrived. */
 	get endCode(): number | null {
 		return this.ended;
+	}
+
+	/** How many stdout bytes the agent wrote in all, per the end frame (null: not said). */
+	get endOutBytes(): number | null {
+		return this.endedOut;
+	}
+
+	/** Forget an end frame whose stdout has not all arrived: the next attempt sends it again. */
+	dropEnd(): void {
+		this.ended = null;
+		this.endedOut = null;
 	}
 
 	/** True when a reattach reported the turn gone. */
@@ -432,8 +456,10 @@ export class DurableStderrReader {
 				this.everStarted = true;
 			} else if (header === 'G') {
 				this.goneNow = true;
-			} else if (/^E\d+$/.test(header)) {
-				this.ended = Number(header.slice(1));
+			} else if (/^E\d+(?: \d+)?$/.test(header)) {
+				const [code, out] = header.slice(1).split(' ');
+				this.ended = Number(code);
+				this.endedOut = out === undefined ? null : Number(out);
 			} else if (/^D\d+$/.test(header)) {
 				this.payloadLen = Number(header.slice(1));
 			}
@@ -592,8 +618,11 @@ export function runDurableSshTurn(
 	// a normal launch does; a reattach drops it. Neither counts it as the agent's.
 	let outHead: Buffer | null = Buffer.alloc(0);
 	let passStartupOutput = !resume;
-	const startupOutput = (bytes: Buffer) => {
-		if (passStartupOutput && bytes.length) options.onStdout(bytes.toString('utf8'));
+	const startupDecoder = new StringDecoder('utf8');
+	const startupOutput = (bytes: Buffer, last = false) => {
+		if (!passStartupOutput) return;
+		const text = startupDecoder.write(bytes) + (last ? startupDecoder.end() : '');
+		if (text) options.onStdout(text);
 	};
 	const handlers: DurableAttemptHandlers = {
 		onStdoutBytes: (chunk) => {
@@ -608,7 +637,7 @@ export function runDurableSshTurn(
 					outHead = Buffer.from(seen.subarray(seen.length - keep));
 					return;
 				}
-				startupOutput(seen.subarray(0, mark));
+				startupOutput(seen.subarray(0, mark), true);
 				outHead = null;
 				bytes = seen.subarray(mark + DURABLE_STDOUT_START.length);
 				if (bytes.length === 0) return;
@@ -662,7 +691,7 @@ export function runDurableSshTurn(
 		let failures = 0;
 		for (;;) {
 			const exit = await attempt.done;
-			if (outHead) startupOutput(outHead);
+			if (outHead) startupOutput(outHead, true);
 			outHead = Buffer.alloc(0);
 			passStartupOutput = false;
 			const attached = stderr.attached;
@@ -682,8 +711,11 @@ export function runDurableSshTurn(
 				if (result.outcome === 'gone') options.onStderr(DURABLE_TURN_GONE_MESSAGE);
 				return result;
 			};
-			if (stderr.endCode !== null)
+			// The end frame counts only once stdout's last byte is here too; a link
+			// that dropped between them is read again from the offsets.
+			if (stderr.endCode !== null && (stderr.endOutBytes ?? outOffset) <= outOffset)
 				return finish({ ...exit, exitCode: stderr.endCode, signal: null, outcome: 'ended' });
+			stderr.dropEnd();
 			if (!stderr.launched || exit.spawnError) return finish({ ...exit, outcome: 'not-started' });
 			const reason = options.stopReason();
 			if (reason) return finish(stopped(exit, reason));

@@ -969,6 +969,12 @@ export class ProcessManager extends EventEmitter {
 				...(proc.sshRemotePromptArtifactPath !== undefined
 					? { promptArtifactPath: proc.sshRemotePromptArtifactPath }
 					: {}),
+				// A durable turn's Stop reaches its agent through the record in its
+				// dir, which outlives the day-old pid sweep. The dir itself is the
+				// settle's reap to remove, never a Stop's.
+				...(mode === 'interrupt' && proc.durableTurnDir !== undefined
+					? { turnDir: proc.durableTurnDir }
+					: {}),
 			},
 			mode
 		);

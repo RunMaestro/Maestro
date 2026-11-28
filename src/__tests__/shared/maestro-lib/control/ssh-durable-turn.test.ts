@@ -140,6 +140,18 @@ const RS = '\x1e';
 const US = '\x1f';
 
 describe('DurableStderrReader', () => {
+	it('reads the stdout byte count of the end frame, and forgets an end frame on request', () => {
+		const reader = new DurableStderrReader();
+		reader.push(Buffer.from(`${RS}S\n${RS}E3 120\n`));
+		expect(reader.endCode).toBe(3);
+		expect(reader.endOutBytes).toBe(120);
+		reader.dropEnd();
+		expect(reader.endCode).toBeNull();
+		reader.push(Buffer.from(`${RS}E0\n`));
+		expect(reader.endCode).toBe(0);
+		expect(reader.endOutBytes).toBeNull();
+	});
+
 	it('finds the start frame behind ssh text that has no line end', () => {
 		const reader = new DurableStderrReader();
 		expect(reader.push(Buffer.from(`Warning: no newline${RS}S\n${RS}D2\nok${US}`))).toBe(
@@ -396,7 +408,14 @@ posixOnly('against a real shell', () => {
 			pidFile
 		);
 		const launch = runShell(buildDurableLaunchScript(inner, dir, pidFile));
-		await waitFor(() => fs.existsSync(pidFile) && fs.existsSync(`${dir}/sup`));
+		// The agent has written both lines before it and its supervisor die.
+		await waitFor(
+			() =>
+				fs.existsSync(pidFile) &&
+				fs.existsSync(`${dir}/sup`) &&
+				fs.existsSync(`${dir}/err`) &&
+				fs.readFileSync(`${dir}/err`, 'utf8') === 'oops\n'
+		);
 		const [agent] = fs.readFileSync(pidFile, 'utf8').split(' ');
 		const [supervisor] = fs.readFileSync(`${dir}/sup`, 'utf8').split(' ');
 		// Out of memory, or a reboot: both go at once and nobody writes `exit`.
@@ -474,20 +493,23 @@ posixOnly('against a real shell', () => {
 		const dir = newDir();
 		const pidFile = newPidFile();
 		fs.mkdirSync(dir, { mode: 0o700 });
-		// A zombie no parent reaps answers `kill -0` and keeps its start time
-		// through SIGKILL: an agent the terminate cannot see go.
-		const zombieFile = path.join(os.tmpdir(), `durable-zombie-${randomUUID()}`);
-		pidFiles.push(zombieFile);
+		// A zombie answers `kill -0` and keeps its start time through SIGKILL: an
+		// agent the terminate cannot see go. Its parent reaps it only when told.
 		const parent = spawn(
-			'/bin/bash',
-			['-c', `sh -c 'echo $$ > ${zombieFile}; exit 0' & exec sleep 30`],
-			{ stdio: 'ignore', detached: true }
+			'perl',
+			[
+				'-e',
+				'$| = 1; my $p = fork(); if (!$p) { exit 0 } print "$p\n"; <STDIN>; waitpid($p, 0); print "reaped\n"; sleep 30',
+			],
+			{ stdio: ['pipe', 'pipe', 'ignore'] }
 		);
+		let said = '';
+		parent.stdout.on('data', (chunk: Buffer) => (said += chunk.toString()));
 		try {
-			for (let i = 0; i < 100 && !fs.existsSync(zombieFile); i++)
+			for (let i = 0; i < 100 && !said.includes('\n'); i++)
 				await new Promise((r) => setTimeout(r, 50));
+			const zombie = said.trim();
 			await new Promise((r) => setTimeout(r, 200));
-			const zombie = fs.readFileSync(zombieFile, 'utf8').trim();
 			const started = execFileSync('ps', ['-o', 'lstart=', '-p', zombie]).toString().trim();
 			fs.writeFileSync(`${dir}/agent`, `${zombie} ${started}\n`);
 			const target = { sshCommand: 'ssh', sshArgs: [], pidFile, sessionId: 's', turnDir: dir };
@@ -496,19 +518,52 @@ posixOnly('against a real shell', () => {
 			expect(first.out.toString()).toBe('');
 			expect(fs.readFileSync(`${dir}/agent`, 'utf8')).toContain(zombie);
 			expect(fs.existsSync(dir)).toBe(true);
-			// Its parent goes, the zombie is reaped: the retry proves it gone.
-			process.kill(parent.pid!, 'SIGKILL');
-			await new Promise((r) => setTimeout(r, 300));
+			// The parent reaps it, and says so: the retry proves it gone.
+			parent.stdin.write('\n');
+			for (let i = 0; i < 100 && !said.includes('reaped'); i++)
+				await new Promise((r) => setTimeout(r, 50));
+			expect(said).toContain('reaped');
 			const retry = await runShell(buildPreLaunchReapScript([target]) + 'echo launched\n');
 			expect(retry.out.toString()).toBe('launched\n');
 			expect(fs.existsSync(dir)).toBe(false);
 		} finally {
-			try {
-				process.kill(parent.pid!, 'SIGKILL');
-			} catch {
-				// Already gone.
-			}
+			parent.kill('SIGKILL');
 		}
+	}, 20_000);
+
+	it('a reap that finds no dir leaves a finished one, so a launch still on its way never starts its agent', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		const ran = path.join(os.tmpdir(), `durable-late-${randomUUID()}`);
+		pidFiles.push(ran);
+		const reap = await runShell(
+			buildPreLaunchReapScript([
+				{ sshCommand: 'ssh', sshArgs: [], pidFile, sessionId: 's', turnDir: dir },
+			]) + 'echo launched\n'
+		);
+		expect(reap.out.toString()).toBe('launched\n');
+		expect(fs.readFileSync(`${dir}/exit`, 'utf8')).toBe('reaped\n');
+		// The envelope that was already on the host runs only now.
+		const late = await runShell(
+			buildDurableLaunchScript(withRemotePidRecord(`exec touch ${ran}\n`, pidFile), dir, pidFile)
+		);
+		expect(late.code).toBe(1);
+		expect(fs.existsSync(ran)).toBe(false);
+	}, 20_000);
+
+	it('a launch whose input arrived short removes what it staged and never starts the agent', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		const ran = path.join(os.tmpdir(), `durable-short-${randomUUID()}`);
+		pidFiles.push(ran);
+		const inner =
+			withRemotePidRecord(`exec /bin/bash -c 'touch ${ran}; cat'\n`, pidFile) +
+			'the whole prompt\n';
+		// The link closed before the prompt's last bytes went out.
+		const run = await runShell(buildDurableLaunchScript(inner, dir, pidFile).slice(0, -6));
+		expect(run.code).toBe(1);
+		expect(fs.existsSync(ran)).toBe(false);
+		expect(fs.existsSync(dir)).toBe(false);
 	}, 20_000);
 
 	it('a Stop reaches the agent through the dir copy once the day-old sweep took its pid record', async () => {

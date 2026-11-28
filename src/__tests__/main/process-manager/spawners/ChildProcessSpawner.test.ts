@@ -1113,7 +1113,8 @@ describe('ChildProcessSpawner', () => {
 			expect(onData).toHaveBeenCalledWith('test-session', 'ne\n');
 			// The settled turn's dir is removed on the host.
 			await vi.waitFor(() => expect(reapSpawns()).toHaveLength(1));
-			expect(reapSpawns()[0]).toContain("rm -rf -- '/tmp/maestro-turn-");
+			expect(reapSpawns()[0]).toMatch(/^d='\/tmp\/maestro-turn-[0-9a-f-]{36}'/);
+			expect(reapSpawns()[0]).toContain('rm -rf -- "$d"');
 		}, 10_000);
 
 		// D5: Stop while reconnecting settles the turn as stopped and hands the
@@ -1208,6 +1209,29 @@ describe('ChildProcessSpawner', () => {
 			expect(written.indexOf(orphan.turnDir)).toBeLessThan(written.indexOf('exec claude'));
 			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([]);
 			closeWith(mockChildProcess, PRE_LAUNCH_REAP_REFUSED_EXIT_CODE);
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+			await vi.waitFor(() =>
+				expect(reapSpawns().some((script) => script.includes(orphan.turnDir))).toBe(true)
+			);
+		});
+
+		it("hands the carried reaps back when a plain launch's ssh never reached the host", async () => {
+			const { spawner, emitter } = createTestContext();
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			const orphan = {
+				sshCommand: '/usr/bin/ssh',
+				sshArgs: SSH_ARGS,
+				pidFile: '/tmp/maestro-agent-44444444-4444-4444-8444-444444444444.pid',
+				sessionId: 'test-session',
+				turnDir: '/tmp/maestro-turn-44444444-4444-4444-8444-444444444444',
+			};
+			reapRemoteAgent(orphan, [60_000]);
+			childHandlers(mockSpawn.mock.results[0].value).get('exit')?.(255);
+			mockSpawn.mockClear();
+			spawner.spawn(sshConfig(false));
+			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([]);
+			closeWith(mockChildProcess, 255);
 			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
 			await vi.waitFor(() =>
 				expect(reapSpawns().some((script) => script.includes(orphan.turnDir))).toBe(true)
@@ -1351,7 +1375,8 @@ describe('ChildProcessSpawner', () => {
 				handled.mockRestore();
 				expect(durableRecords.size).toBe(0);
 				await vi.waitFor(() => expect(reapSpawns()).toHaveLength(1));
-				expect(reapSpawns()[0]).toContain(`rm -rf -- '${dir}'`);
+				expect(reapSpawns()[0]).toContain(`d='${dir}'`);
+				expect(reapSpawns()[0]).toContain('rm -rf -- "$d"');
 			});
 
 			const restoredRecord = (dir = '/tmp/maestro-turn-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e') => ({
@@ -1415,10 +1440,14 @@ describe('ChildProcessSpawner', () => {
 					.map((r) => r.value.stdin.end.mock.calls[0]?.[0] as string | undefined)
 					.find((script) => script?.includes('kill -INT'));
 				expect(interrupt).toContain('/tmp/maestro-agent-0b5c6a52');
+				expect(interrupt).toContain(restoredRecord().dir);
 				expect(
 					takePendingRemoteReaps('agent-1-ai-tab-1', '/usr/bin/ssh', restoredRecord().sshArgs)
 				).toEqual([expect.objectContaining({ turnDir: restoredRecord().dir })]);
+				const spawnsBefore = mockSpawn.mock.calls.length;
 				spawner.startRestoredDurableTurns();
+				// No attach after the Stop: not even an ssh process.
+				expect(mockSpawn.mock.calls.length).toBe(spawnsBefore);
 				expect(reapSpawns()).toHaveLength(0);
 			});
 		});

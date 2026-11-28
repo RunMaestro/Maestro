@@ -21,6 +21,7 @@ import {
 	__resetPendingRemoteReapsForTest,
 	buildPreLaunchReapScript,
 	buildRemoteSignalScript,
+	DURABLE_CLEANUP_FAILED_EXIT_CODE,
 	DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE,
 	newRemotePidFilePath,
 	newRemoteTurnDir,
@@ -257,7 +258,7 @@ describe('reapRemoteAgent', () => {
 		]);
 	});
 
-	it('drops a given-up prompt-owner reap: no launch can carry it', () => {
+	it('never carries a given-up prompt-owner reap into a launch', () => {
 		const promptOwner = {
 			...target,
 			pidFile: newRemotePidFilePath(true),
@@ -278,6 +279,28 @@ describe('reapRemoteAgent', () => {
 		expect(children).toHaveLength(2);
 		children[1].emit('exit', 0);
 		expect(takePendingRemoteReaps(target.sessionId, target.sshCommand, target.sshArgs)).toEqual([]);
+	});
+
+	it('retries a durable cleanup whose agent is gone but whose dir could not be removed', () => {
+		const durable = { ...target, turnDir: newRemoteTurnDir() };
+		reapRemoteAgent(durable, [1_000]);
+		children[0].emit('exit', DURABLE_CLEANUP_FAILED_EXIT_CODE);
+		vi.advanceTimersByTime(1_000);
+		expect(children).toHaveLength(2);
+	});
+
+	it('carries a same-host reap when only other ssh options changed between turns', () => {
+		const before = {
+			...target,
+			sshArgs: ['-o', 'ServerAliveInterval=30', '-p', '2222', 'u@h', ...STDIN_SHELL],
+		};
+		reapRemoteAgent(before, [1_000]);
+		children[0].emit('exit', 255);
+		const now = ['-o', 'ServerAliveInterval=60', '-p', '2222', 'u@h', ...STDIN_SHELL];
+		expect(
+			takePendingRemoteReaps(target.sessionId, 'ssh', ['-p', '2200', 'u@h', ...STDIN_SHELL])
+		).toEqual([]);
+		expect(takePendingRemoteReaps(target.sessionId, 'ssh', now)).toEqual([before]);
 	});
 
 	it('carries only the reaps of the endpoint the launch reaches', () => {

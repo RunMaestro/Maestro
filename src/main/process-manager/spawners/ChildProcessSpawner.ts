@@ -47,6 +47,7 @@ import {
 	type RemoteSignalTarget,
 } from '../../utils/ssh-remote-signal';
 import { isWindows } from '../../../shared/platformDetection';
+import { isSshConnectionFailure } from '../../../shared/sshConnection';
 import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/windows-command';
 import { captureException } from '../../utils/sentry';
 import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
@@ -838,6 +839,7 @@ export class ChildProcessSpawner {
 					startTime: managedProcess.startTime,
 				});
 				managedProcess.durableSshTurn = true;
+				managedProcess.durableTurnDir = durableTurnDir;
 				noteDurableTurn(record({ outOffset: 0, errOffset: 0 }));
 				const restartOffsets = () => turn.restartOffsets?.() ?? { outOffset: 0, errOffset: 0 };
 				keepDurableOffsetsCurrent(
@@ -954,13 +956,17 @@ export class ChildProcessSpawner {
 						managedProcess.interrupted ? INTERACTIVE_STOP_GRACE_MS : 0
 					);
 				}
-				// The launch never reached its agent, or refused to start it beside an
-				// earlier agent it could not stop: the earlier turns' reaps it carried
-				// go back to their retry loop.
+				// The launch never reached its agent, refused to start it beside an
+				// earlier agent it could not stop, or lost its link (it may never have
+				// run them): the earlier turns' reaps it carried go back to their retry
+				// loop. A reap that already ran ends quietly on its next attempt.
 				if (
-					(durableTurnDir &&
-						(completed as DurableTurnExit | undefined)?.outcome === 'not-started') ||
-					completed?.exitCode === PRE_LAUNCH_REAP_REFUSED_EXIT_CODE
+					takenReaps.length > 0 &&
+					(!completed ||
+						completed.spawnError ||
+						(durableTurnDir && (completed as DurableTurnExit).outcome === 'not-started') ||
+						completed.exitCode === PRE_LAUNCH_REAP_REFUSED_EXIT_CODE ||
+						(!durableTurnDir && isSshConnectionFailure(completed.exitCode ?? 0)))
 				)
 					for (const target of takenReaps) reapRemoteAgent(target);
 				const exit = completed
@@ -1262,6 +1268,7 @@ export class ChildProcessSpawner {
 				sshRemotePidFile: record.pidFile,
 				agentSessionId: record.agentSessionId,
 				durableSshTurn: true,
+				durableTurnDir: record.dir,
 			};
 			managedProcess.spawnGeneration = nextSpawnGeneration(record.sessionId);
 			this.processes.set(record.sessionId, managedProcess);

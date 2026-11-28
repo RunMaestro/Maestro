@@ -287,6 +287,17 @@ describe('ProcessManager synthetic SSH prompt artifact stops', () => {
 		expect(remoteSignal.signalRemoteAgent).not.toHaveBeenCalled();
 	});
 
+	it("a Stop of an attached durable SSH turn finds its agent through the turn dir's record", () => {
+		managed.sshRemotePromptArtifactPath = undefined;
+		managed.sshRemotePidFile = '/tmp/maestro-agent-11111111-1111-4111-8111-111111111111.pid';
+		managed.durableTurnDir = '/tmp/maestro-turn-11111111-1111-4111-8111-111111111111';
+		expect(manager.interrupt(SESSION_ID)).toBe(true);
+		expect(remoteSignal.signalRemoteAgent).toHaveBeenCalledWith(
+			expect.objectContaining({ turnDir: managed.durableTurnDir }),
+			'interrupt'
+		);
+	});
+
 	it('quitting right after a Stop does not keep the stopped durable turn for the next launch', () => {
 		const detach = vi.fn();
 		const reap = vi.fn();

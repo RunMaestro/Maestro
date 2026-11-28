@@ -15,7 +15,9 @@
  * POSIX only: the remote shell is bash.
  */
 import { describe, it, expect, afterEach } from 'vitest';
+import type { ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
+import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -34,7 +36,7 @@ import {
 	SSH_STDIN_REMOTE_SHELL,
 	withRemotePidRecord,
 } from '../../../../shared/maestro-lib/control/ssh-remote-signal';
-import { startTurn } from '../../../../shared/maestro-lib/run/start-turn';
+import { startTurn, type TurnExit } from '../../../../shared/maestro-lib/run/start-turn';
 import { createOutputParser } from '../../../../shared/maestro-lib/parsers/parser-factory';
 import type { ParsedEvent } from '../../../../shared/maestro-lib/parsers/agent-output-parser';
 
@@ -141,7 +143,8 @@ function rigAttempt(rig: Rig) {
 					if (lost) return;
 					const pre = Math.min(all.length, ahead);
 					ahead -= pre;
-					if (pre) handlers.onStdoutBytes(all.subarray(0, pre));
+					// One byte at a time: startup text split anywhere still decodes whole.
+					for (let i = 0; i < pre; i++) handlers.onStdoutBytes(all.subarray(i, i + 1));
 					const chunk = all.subarray(pre);
 					if (chunk.length === 0) return;
 					const take = cut ? Math.min(chunk.length, cut - seen) : chunk.length;
@@ -257,7 +260,7 @@ posixOnly('runDurableSshTurn', () => {
 
 	it("a login shell's stdout before each attempt is passed on once and never shifts the offsets", async () => {
 		const fixture = fixtureFile();
-		const noise = 'Welcome to the durable box\n';
+		const noise = 'Welcome to the durable box é ✓\n';
 		const today = await runToday(
 			`printf '%s' '${noise}'\n` + todaysStdin(track(newPid()), fixture)
 		);
@@ -482,7 +485,14 @@ posixOnly('runDurableSshTurn', () => {
 		const inner = withRemotePidRecord("exec /bin/bash -c 'echo started; sleep 60'\n", pidFile);
 		const rig: Rig = { cutAfter: [], hostDown: new Set(), attempts: 0 };
 		const run = runDurable(inner, dir, pidFile, rig);
-		await waitFor(() => fs.existsSync(pidFile) && fs.existsSync(`${dir}/sup`));
+		// The agent has written its line before both die.
+		await waitFor(
+			() =>
+				fs.existsSync(pidFile) &&
+				fs.existsSync(`${dir}/sup`) &&
+				fs.existsSync(`${dir}/out`) &&
+				fs.readFileSync(`${dir}/out`, 'utf8') === 'started\n'
+		);
 		const [agent] = fs.readFileSync(pidFile, 'utf8').split(' ');
 		const [supervisor] = fs.readFileSync(`${dir}/sup`, 'utf8').split(' ');
 		process.kill(Number(supervisor), 'SIGKILL');
@@ -534,3 +544,54 @@ async function waitFor(check: () => boolean, timeoutMs = 10_000): Promise<void> 
 		await new Promise((r) => setTimeout(r, 10));
 	}
 }
+
+describe('runDurableSshTurn end frame', () => {
+	it('an end frame that overtook the last stdout bytes is not the end: the rest is read again', async () => {
+		const RS = '\x1e';
+		const scripts: string[] = [];
+		const exitOf = (exitCode: number): TurnExit => ({
+			exitCode,
+			signal: null,
+			interrupted: false,
+			stderrText: '',
+			stdoutText: '',
+			droppedOutputBytes: 0,
+		});
+		// The agent wrote `one\ntwo\n` (8 bytes). The first link carries the end
+		// frame but drops before `two\n`; the reattach sends the rest.
+		const startAttempt = (stdin: string, handlers: DurableAttemptHandlers): DurableAttempt => {
+			scripts.push(stdin);
+			const first = scripts.length === 1;
+			const done = new Promise<TurnExit>((resolve) =>
+				setImmediate(() => {
+					handlers.onStderrBytes(Buffer.from(`${RS}S\n`));
+					handlers.onStdoutBytes(
+						Buffer.concat([DURABLE_STDOUT_START, Buffer.from(first ? 'one\n' : 'two\n')])
+					);
+					handlers.onStderrBytes(Buffer.from(`${RS}E0 8\n`));
+					resolve(exitOf(first ? 255 : 0));
+				})
+			);
+			return { child: new EventEmitter() as unknown as ChildProcess, done };
+		};
+		let out = '';
+		let linksLost = 0;
+		const turn = runDurableSshTurn('launch\n', {
+			dir: newRemoteTurnDir(),
+			pidFile: `/tmp/maestro-agent-${randomUUID()}.pid`,
+			startAttempt,
+			onStdout: (text) => (out += text),
+			onStderr: () => {},
+			onLinkLost: () => linksLost++,
+			stopReason: () => null,
+			delaysMs: [1],
+		});
+		const exit = await turn.done;
+		expect(scripts).toHaveLength(2);
+		expect(scripts[1]).toContain('o=4; e=0');
+		expect(linksLost).toBe(1);
+		expect(out).toBe('one\ntwo\n');
+		expect(exit.outcome).toBe('ended');
+		expect(exit.exitCode).toBe(0);
+	});
+});

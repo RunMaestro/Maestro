@@ -55,6 +55,8 @@ describe('durable SSH turn records', () => {
 		__resetDurableTurnRecordsForTests();
 	});
 	afterEach(() => {
+		// Clears a write retry before its fixture goes.
+		__resetDurableTurnRecordsForTests();
 		fs.rmSync(dataDir, { recursive: true, force: true });
 	});
 
@@ -188,24 +190,21 @@ describe('durable SSH turn records', () => {
 			expect(recordedDurableTurns()).toEqual([expect.objectContaining({ dir: DIR })]);
 		});
 
-		it.skipIf(process.platform === 'win32')(
-			"is tried again for a settled turn's removal, so the next launch never restores it",
-			() => {
-				noteDurableTurn(record());
-				// The file cannot be removed when the turn settles.
-				fs.chmodSync(dataDir, 0o500);
-				try {
-					forgetDurableTurn('agent-1-ai-tab-1', DIR);
-					expect(fs.existsSync(file())).toBe(true);
-				} finally {
-					fs.chmodSync(dataDir, 0o700);
-				}
-				vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
-				expect(fs.existsSync(file())).toBe(false);
-				__resetDurableTurnRecordsForTests();
-				expect(recordedDurableTurns()).toEqual([]);
-			}
-		);
+		it("is tried again for a settled turn's removal, so the next launch never restores it", () => {
+			noteDurableTurn(record());
+			// The record's path cannot be unlinked when the turn settles (a
+			// directory stands there, which no user, root included, can unlink).
+			fs.rmSync(file());
+			fs.mkdirSync(file());
+			forgetDurableTurn('agent-1-ai-tab-1', DIR);
+			// The stale record is back on disk before the retry runs.
+			fs.rmdirSync(file());
+			fs.writeFileSync(file(), JSON.stringify([record()]));
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
+			expect(fs.existsSync(file())).toBe(false);
+			__resetDurableTurnRecordsForTests();
+			expect(recordedDurableTurns()).toEqual([]);
+		});
 	});
 
 	describe('updateDurableTurn', () => {
