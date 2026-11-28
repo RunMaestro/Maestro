@@ -1208,6 +1208,36 @@ describe('runReturnFromHost', () => {
 			expect(result.hostCopyRemoved).toBe(true);
 		});
 
+		it('a message queued in a tab the host opened before the second queue read comes home in that tab in the first restore (#2199)', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			const opened = { id: 'tab-late', name: 'Opened on host', agentSessionId: 'sess-9' };
+			client.turns.queue.list
+				.mockResolvedValueOnce(ok([item('q1')]))
+				.mockResolvedValue(
+					ok([item('q1', { paused: true }), item('q2', { tabId: 'tab-late', paused: true })])
+				);
+			client.tabs.list
+				.mockResolvedValueOnce(
+					ok([{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1' }] as AITabRecord[])
+				)
+				.mockResolvedValue(
+					ok([{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1' }, opened] as AITabRecord[])
+				);
+			client.tabs.transcript.mockImplementation(async (_agentId: string, tabId: string) =>
+				ok(tabId === 'tab-late' ? [log('late-1')] : [log('l1')])
+			);
+			const d = storedDeps(client);
+			await runReturnFromHost('agent-1', {}, d.value);
+			const first = d.restore.mock.calls[0][1];
+			expect(first.tabs.map((tab: AITabRecord) => tab.id)).toContain('tab-late');
+			expect(first.queue?.find((queued) => queued.itemId === 'q2')?.tabId).toBe('tab-late');
+			const done = d.store.get('agent-1') as AgentRecord & {
+				executionQueue?: Array<{ id: string; tabId: string }>;
+			};
+			expect(done.aiTabs?.find((tab) => tab.id === 'tab-late')?.logs).toEqual([log('late-1')]);
+			expect(done.executionQueue?.find((queued) => queued.id === 'q2')?.tabId).toBe('tab-late');
+		});
+
 		it('once the agent is home, a failed hold releases nothing on the host, so a message that came home never runs there (#2197)', async () => {
 			const client = hostClient({ queue: ok([item('q1')]) });
 			client.turns.queue.list

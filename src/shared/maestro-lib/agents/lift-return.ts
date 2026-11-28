@@ -408,6 +408,7 @@ export async function runReturnFromHost(
 			 */
 			readNewTabs = async (items) => {
 				const known = new Set([
+					...withLogs.map((tab) => tab.id),
 					...returned.tabs.map((tab) => tab.id),
 					...(agent.aiTabs ?? []).map((tab) => tab.id),
 				]);
@@ -434,8 +435,10 @@ export async function runReturnFromHost(
 					)
 				);
 			}
-			// A message queued on the host while its transcripts were read comes home too, held.
+			// A message queued on the host while its transcripts were read comes home too, held, in
+			// its own tab: one the host opened after the tab list was read is read now (#2199).
 			queue = await holdWaiting();
+			withLogs.push(...(await readNewTabs(queue)));
 			/** Kept copy: the messages that come home, still to take out of its queue. */
 			keptQueue = [...queue.map((item) => item.itemId), ...carriedOnHost];
 			returned = {
