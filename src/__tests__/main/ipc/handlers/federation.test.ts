@@ -33,7 +33,12 @@ vi.mock('../../../../main/utils/agent-busy', () => ({
 }));
 
 import { registerFederationHandlers } from '../../../../main/ipc/handlers/federation';
-import { setPeerMirrorServiceForTests, type PeerMirrorService } from '../../../../main/federation';
+import {
+	getAutoFederation,
+	setAutoFederation,
+	setPeerMirrorServiceForTests,
+	type PeerMirrorService,
+} from '../../../../main/federation';
 import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../../../shared/federationCommands';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
 
@@ -50,6 +55,7 @@ const mainWindow = { webContents: {} };
 /** What `readSessions` answers; a test may swap in moved agents. */
 let sessions: AgentRecord[] = [liftableAgent];
 let remotes: Array<Record<string, unknown>> = [];
+let hostingOn = true;
 
 const HOUR = 3_600_000;
 const NOW = Date.now();
@@ -110,6 +116,7 @@ describe('federation IPC handlers', () => {
 		requestFromRenderer.mockReset();
 		sessions = [liftableAgent];
 		remotes = [{ id: 'remote-1', name: 'build-box', enabled: true, federation: true }];
+		hostingOn = true;
 		registerFederationHandlers({
 			readSessions: () => sessions,
 			readSshRemotes: () => remotes,
@@ -117,7 +124,7 @@ describe('federation IPC handlers', () => {
 			getMainWindow: () => mainWindow as never,
 			getProcessManager: () => null,
 			readAutoMove: () => true,
-			readHostingEnabled: () => false,
+			hosting: { isOn: () => hostingOn, watch: () => () => undefined },
 		});
 	});
 
@@ -152,6 +159,10 @@ describe('federation IPC handlers', () => {
 	});
 
 	describe('federation:comeHome (hosting off)', () => {
+		beforeEach(() => {
+			hostingOn = false;
+		});
+
 		it('with no moved agent, reports nothing and asks the window nothing', async () => {
 			const report = (await call('federation:comeHome')) as { agents: unknown[] };
 			expect(report.agents).toEqual([]);
@@ -182,6 +193,24 @@ describe('federation IPC handlers', () => {
 				args: ['agent-1', { returnedFromHost: { tabs: [] } }],
 			});
 		});
+	});
+
+	it('with hosted agents off, builds no coordinator and answers the idle snapshot', async () => {
+		handlers.clear();
+		setAutoFederation(null);
+		registerFederationHandlers({
+			readSessions: () => [liftableAgent],
+			readSshRemotes: () => [],
+			readAgentConfigs: () => ({}),
+			getMainWindow: () => mainWindow as never,
+			getProcessManager: () => null,
+			readAutoMove: () => false,
+			hosting: { isOn: () => false, watch: () => () => undefined },
+		});
+		expect(getAutoFederation()).toBeNull();
+		const idle = { autoMove: false, running: false, remotes: [], agents: [] };
+		expect(await call('federation:autoStatus')).toEqual(idle);
+		expect(await call('federation:autoRun')).toEqual(idle);
 	});
 
 	describe('while the peer mirror is not running', () => {

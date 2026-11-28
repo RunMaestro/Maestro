@@ -111,7 +111,7 @@ export const SSH_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'SSH Hosts',
 		label: 'Federation automation',
 		description:
-			'Run hosted agents on their host (or switch hosting off), move SSH agents to their host automatically, keep Maestro hosts running across reboots, and see what needs you',
+			'Run hosted agents on their host and move SSH agents to their host automatically (both off by default), and see what needs you',
 		keywords: [
 			'federation',
 			'run hosted agents on their host',

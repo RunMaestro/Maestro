@@ -10,9 +10,30 @@
  */
 
 import type { ComeHomeReport } from './federationComeHome';
+import { HOSTED_AGENTS_SETTING } from './maestro-lib/agents/lift-pointer';
 
-/** The setting that turns automatic moves on or off (on by default). */
+/** The setting that turns automatic moves on or off (off by default). */
 export const FEDERATION_AUTO_MOVE_SETTING = 'federationAutoMove';
+
+/**
+ * Settings key the desktop writes once it has turned hosted agents and automatic moves off on an
+ * existing install (`migrateFederationHostingDefaultOff()`).
+ */
+export const FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER =
+	'migration_federationHostingDefaultOffV1';
+
+/**
+ * The settings as a reader outside the desktop must see them (the CLI). Until the desktop has run
+ * the default-off migration, the file can hold the `true` an older default wrote, which is not an
+ * opt-in: both switches read as off until the marker is there.
+ */
+export function withFederationHostingDefaultOff<T extends Record<string, unknown>>(settings: T): T {
+	if (settings[FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER] === true) return settings;
+	if (settings[HOSTED_AGENTS_SETTING] !== true && settings[FEDERATION_AUTO_MOVE_SETTING] !== true) {
+		return settings;
+	}
+	return { ...settings, [HOSTED_AGENTS_SETTING]: false, [FEDERATION_AUTO_MOVE_SETTING]: false };
+}
 
 /**
  * - `ready`: a host runs and the mirror is connected.
@@ -65,7 +86,7 @@ export interface AutoFederationAgentStatus {
 }
 
 export interface AutoFederationSnapshot {
-	/** Automatic moves are on. Hosts are kept running either way. */
+	/** Automatic moves are on. Off, the coordinator only reports and changes nothing on a remote. */
 	autoMove: boolean;
 	/** Epoch ms the last pass finished, if one ran. */
 	lastPassAt?: number;

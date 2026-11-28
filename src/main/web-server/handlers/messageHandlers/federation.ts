@@ -12,8 +12,12 @@
  */
 
 import { logger } from '../../../utils/logger';
-import { getAutoFederation, getComeHomeRunner, getPeerMirrorService } from '../../../federation';
-import { emptyAutoFederationSnapshot } from '../../../../shared/federationAuto';
+import {
+	autoFederationSnapshot,
+	getComeHomeRunner,
+	getPeerMirrorService,
+	runAutoFederationNow,
+} from '../../../federation';
 import { requestFederationWindow } from '../../../federation/federation-window';
 import { findMirrorPeer } from '../../../../shared/maestro-lib/client/peer-mirror';
 import {
@@ -49,38 +53,28 @@ export async function handleFederationCommand(
 		return;
 	}
 
-	// `federation auto` answers with hosting off too (no mirror, no coordinator): it reports what
-	// the job that brings moved agents home did this launch.
-	const comeHome = getComeHomeRunner()?.lastReport() ?? undefined;
-	if (action === 'auto-status' && !getAutoFederation()) {
-		reply({
-			success: true,
-			auto: { ...emptyAutoFederationSnapshot(false), ...(comeHome ? { comeHome } : {}) },
-		});
-		return;
-	}
-
-	const service = getPeerMirrorService();
-	if (!service) {
-		reply({ success: false, error: FEDERATION_NOT_RUNNING_MESSAGE });
-		return;
-	}
-
 	logger.info(`[Web] federation_command: ${action}`, LOG_CONTEXT);
 
 	try {
-		if (action === 'peers') {
-			reply({ success: true, peers: service.peers() });
+		// Automatic Federation answers whether or not it runs: while hosted agents are off, the
+		// idle snapshot, exactly as the desktop's Settings shows it. Nothing dials.
+		if (action === 'auto-status' || action === 'auto-run') {
+			const snapshot =
+				action === 'auto-run' ? await runAutoFederationNow() : autoFederationSnapshot();
+			// It also reports what the job that brought moved agents home did this launch.
+			const comeHome = getComeHomeRunner()?.lastReport() ?? undefined;
+			reply({ success: true, auto: comeHome ? { ...snapshot, comeHome } : snapshot });
 			return;
 		}
-		if (action === 'auto-status' || action === 'auto-run') {
-			const auto = getAutoFederation();
-			if (!auto) {
-				reply({ success: false, error: FEDERATION_NOT_RUNNING_MESSAGE });
-				return;
-			}
-			const snapshot = action === 'auto-run' ? await auto.runNow() : auto.snapshot();
-			reply({ success: true, auto: comeHome ? { ...snapshot, comeHome } : snapshot });
+
+		const service = getPeerMirrorService();
+		if (!service) {
+			reply({ success: false, error: FEDERATION_NOT_RUNNING_MESSAGE });
+			return;
+		}
+
+		if (action === 'peers') {
+			reply({ success: true, peers: service.peers() });
 			return;
 		}
 		if (action === 'conflicts') {

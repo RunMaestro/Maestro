@@ -60,9 +60,11 @@ vi.mock('../../../../main/federation/federation-window', () => ({
 	requestFederationWindow: hosted.request,
 }));
 const comeHome = vi.hoisted(() => ({ report: null as unknown }));
+const idle = vi.hoisted(() => ({ autoMove: false, running: false, remotes: [], agents: [] }));
 vi.mock('../../../../main/federation', () => ({
 	getPeerMirrorService: () => (running.on ? service : null),
-	getAutoFederation: () => (running.on ? auto : null),
+	autoFederationSnapshot: () => (running.on ? auto.snapshot() : idle),
+	runAutoFederationNow: async () => (running.on ? auto.runNow() : idle),
 	getComeHomeRunner: () => ({ lastReport: () => comeHome.report }),
 }));
 
@@ -181,14 +183,32 @@ describe('federation_command handler', () => {
 			success: true,
 			auto: { autoMove: false, remotes: [], agents: [], comeHome: report },
 		});
-		// Running a pass still needs the coordinator.
-		expect(await send(client(true), { action: 'auto-run' })).toMatchObject({ success: false });
+		// Run Now with hosting off dials nothing: the idle snapshot, with the same report.
+		expect(await send(client(true), { action: 'auto-run' })).toMatchObject({
+			success: true,
+			auto: { ...idle, comeHome: report },
+		});
+		expect(auto.runNow).not.toHaveBeenCalled();
 
 		running.on = true;
 		expect(await send(client(true), { action: 'auto-status' })).toMatchObject({
 			success: true,
 			auto: { autoMove: true, comeHome: report },
 		});
+		comeHome.report = null;
+	});
+
+	it('answers the idle automatic Federation snapshot while it does not run (hosted agents off)', async () => {
+		running.on = false;
+		expect(await send(client(true), { action: 'auto-status' })).toMatchObject({
+			success: true,
+			auto: idle,
+		});
+		expect(await send(client(true), { action: 'auto-run' })).toMatchObject({
+			success: true,
+			auto: idle,
+		});
+		expect(auto.runNow).not.toHaveBeenCalled();
 	});
 
 	it('answers the not-running message while no service runs', async () => {

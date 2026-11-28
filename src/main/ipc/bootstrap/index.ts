@@ -90,6 +90,7 @@ import { createCotStateKeyringAnchor } from '../../cot-export/config-store';
 import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
+import { hostingSettingOf } from '../../federation/hosting-gate';
 import { MAX_ENTRIES_PER_SESSION, resolveHistoryEntryLimit } from '../../../shared/history';
 import {
 	setGetSessionsCallback,
@@ -148,7 +149,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		readAutoMove: () =>
 			deps.settingsStore.get('federationAutoMove', false) === true &&
 			deps.settingsStore.get('federationHostedAgents', false) === true,
-		readHostingEnabled: () => deps.settingsStore.get('federationHostedAgents', false) === true,
+		// Automatic Federation runs only while hosted agents are on; off, moved agents come home.
+		hosting: hostingSettingOf(deps.settingsStore),
 		watchSessions: (onChange) => deps.sessionsStore.onDidChange('sessions', () => onChange()),
 		safeSend: deps.safeSend,
 	});
