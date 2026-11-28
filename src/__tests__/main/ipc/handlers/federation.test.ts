@@ -123,7 +123,7 @@ describe('federation IPC handlers', () => {
 		});
 	});
 
-	it('registers the fourteen federation channels', () => {
+	it('registers the fifteen federation channels', () => {
 		expect([...handlers.keys()].sort()).toEqual([
 			'federation:act',
 			'federation:autoRun',
@@ -137,6 +137,7 @@ describe('federation IPC handlers', () => {
 			'federation:setupHost',
 			'federation:snapshot',
 			'federation:status',
+			'federation:stopHost',
 			'federation:transcript',
 			'federation:unlift',
 		]);
@@ -195,6 +196,15 @@ describe('federation IPC handlers', () => {
 			await expect(call('federation:historyPage', 'a', 'x', {})).rejects.toThrow(off);
 			await expect(call('federation:historyGraph', 'a', 'x', 24, null)).rejects.toThrow(off);
 			await expect(call('federation:historyOffset', 'a', 'x', NOW, null)).rejects.toThrow(off);
+		});
+
+		it('still serves Stop Host and Remove Host: they need no peer mirror', async () => {
+			// An unknown remote answers before any ssh call; it is not refused for the missing mirror.
+			expect(await call('federation:stopHost', 'no-such-remote', { uninstall: true })).toEqual({
+				ok: false,
+				code: 'REMOTE_NOT_FOUND',
+				error: 'SSH remote not found',
+			});
 		});
 	});
 
