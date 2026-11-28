@@ -22,7 +22,7 @@ import { newEmptyTranscript } from './sessionTranscript';
 
 import { PLAYBOOKS_DIR } from './maestro-paths';
 import { isAdaptiveModeDefaultOn, resilienceEnabled } from './agentConstants';
-import type { CodexTransport } from './codexTransport';
+import { isCodexTransport, type CodexTransport } from './codexTransport';
 import type { HarnessControlMode } from './maestro-lib/providers/native-control';
 import type { AdditionalDirectory, ThinkingMode } from './types';
 
@@ -203,7 +203,7 @@ export interface DuplicateAgentInput {
 	retryOnAvailabilityErrors: boolean;
 	retryOnTokenExhaustion: boolean;
 	codexAutoResetOnExhaustion: boolean;
-	codexTransport: CodexTransport;
+	codexTransport?: CodexTransport;
 	harnessControlMode?: HarnessControlMode;
 	sessionSshRemoteConfig:
 		| { enabled: true; remoteId: string; workingDirOverride?: string }
@@ -279,7 +279,8 @@ export function buildDuplicateAgentInput(
 		retryOnTokenExhaustion: resilienceEnabled(source.retryOnTokenExhaustion),
 		// A copy must not start spending reset credits the original never did.
 		codexAutoResetOnExhaustion: source.codexAutoResetOnExhaustion === true,
-		codexTransport: source.codexTransport === 'app-server' ? 'app-server' : 'exec',
+		// A stored choice is carried; an unset one stays unset, which is the default for a Codex copy.
+		codexTransport: isCodexTransport(source.codexTransport) ? source.codexTransport : undefined,
 		...(source.harnessControlMode === 'native' ? { harnessControlMode: 'native' as const } : {}),
 		// The override is always the copy's own directory, never the source's
 		// stored one: carrying that pinned the copy's terminals, git and file

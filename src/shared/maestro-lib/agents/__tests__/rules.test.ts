@@ -753,12 +753,15 @@ describe('agent config and location', () => {
 		if (!opted.ok) throw new Error('unreachable');
 		expect(opted.value.codexTransport).toBe('app-server');
 
-		// `exec` is the default: stored the way the Edit Agent form stores it, as no field.
-		for (const cleared of ['exec', null]) {
-			const back = applyAgentConfigPatch(opted.value, { codexTransport: cleared });
-			if (!back.ok) throw new Error('unreachable');
-			expect('codexTransport' in back.value).toBe(false);
-		}
+		// `exec` is an explicit choice (the default is app-server), so it is stored as given.
+		const execPatch = applyAgentConfigPatch(opted.value, { codexTransport: 'exec' });
+		if (!execPatch.ok) throw new Error('unreachable');
+		expect(execPatch.value.codexTransport).toBe('exec');
+
+		// null clears the field, which means the default.
+		const cleared = applyAgentConfigPatch(opted.value, { codexTransport: null });
+		if (!cleared.ok) throw new Error('unreachable');
+		expect('codexTransport' in cleared.value).toBe(false);
 
 		// An unknown transport must never reach the spawner, and nothing beside it is applied.
 		for (const bad of ['websocket', '', 1, true, {}]) {

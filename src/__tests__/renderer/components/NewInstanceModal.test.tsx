@@ -895,7 +895,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				undefined // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 
@@ -952,7 +952,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				undefined // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 
@@ -1009,7 +1009,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				undefined // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 	});
@@ -1067,7 +1067,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				undefined // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 			expect(onClose).toHaveBeenCalled();
 		});
@@ -1662,7 +1662,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				undefined // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 
@@ -1819,7 +1819,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				undefined // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 	});
@@ -2312,7 +2312,7 @@ describe('NewInstanceModal', () => {
 					true,
 					undefined,
 					false,
-					'exec',
+					undefined, // codexTransport: a Grok agent has none
 					undefined, // harnessControlMode
 					expected
 				);
@@ -3838,7 +3838,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				undefined // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 
@@ -4072,7 +4072,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec' // codexTransport: Standard by default (unset permissionMode is not passed)
+				undefined // codexTransport: Standard by default (unset permissionMode is not passed)
 			);
 		});
 
@@ -4385,7 +4385,7 @@ describe('NewInstanceModal', () => {
 				true, // retryOnTokenExhaustion
 				undefined, // additionalDirectories
 				false, // codexAutoResetOnExhaustion: off by default
-				'exec', // codexTransport: Standard by default
+				undefined, // codexTransport: Standard by default
 				undefined, // harnessControlMode
 				'full' // permissionMode: source has no read-only override
 			);

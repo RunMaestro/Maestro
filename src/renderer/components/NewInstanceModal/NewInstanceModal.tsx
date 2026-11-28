@@ -100,9 +100,9 @@ export function NewInstanceModal({
 	// Codex automatic usage resets, per provider. Defaults OFF - unlike the
 	// resilience toggles above, spending a reset credit is irreversible.
 	const [codexAutoResetByAgent, setCodexAutoResetByAgent] = useState<Record<string, boolean>>({});
-	// Codex transport, per provider. Absent means `exec`, the default.
+	// Codex transport, per provider. Absent means the default (app-server).
 	const [codexTransportByAgent, setCodexTransportByAgent] = useState<
-		Record<string, CodexTransport>
+		Partial<Record<string, CodexTransport>>
 	>({});
 	const [harnessControlModeByAgent, setHarnessControlModeByAgent] = useState<
 		Record<string, HarnessControlMode>
@@ -876,7 +876,7 @@ export function NewInstanceModal({
 			retryTokenByAgent[selectedAgent] ?? true,
 			normalizeAdditionalDirectories(additionalDirectories, homeDir),
 			codexAutoResetByAgent[selectedAgent] ?? false,
-			codexTransportByAgent[selectedAgent] ?? 'exec',
+			codexTransportByAgent[selectedAgent],
 			...trailingArgs
 		);
 		onClose();

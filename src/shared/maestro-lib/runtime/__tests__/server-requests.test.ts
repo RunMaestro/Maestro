@@ -146,7 +146,7 @@ describe('update_session_config', () => {
 		}
 	});
 
-	it('takes only a known Codex transport, and stores exec as an unset field', async () => {
+	it('takes only a known Codex transport, and stores exec as an explicit field', async () => {
 		expect(await update({ codexTransport: 'app-server' })).toMatchObject({ success: true });
 		expect((await stored()).codexTransport).toBe('app-server');
 
@@ -158,7 +158,7 @@ describe('update_session_config', () => {
 		expect((await stored()).codexTransport).toBe('app-server');
 
 		expect(await update({ codexTransport: 'exec' })).toMatchObject({ success: true });
-		expect('codexTransport' in (await stored())).toBe(false);
+		expect((await stored()).codexTransport).toBe('exec');
 	});
 
 	it('refuses a patch with nothing a client may write, instead of answering success', async () => {

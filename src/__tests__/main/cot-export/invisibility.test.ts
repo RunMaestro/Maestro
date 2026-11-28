@@ -450,6 +450,9 @@ describe.each(SCENARIOS)('a turn of $label', (scenario) => {
 					cwd: workspace,
 					projectRoot: workspace,
 					aiTabs: [{ id: TAB }],
+					// This is the exec turn the fake child answers; the default app-server
+					// transport speaks JSON-RPC, which the fake does not.
+					...(scenario.toolType === 'codex' ? { codexTransport: 'exec' as const } : {}),
 				},
 			],
 		};

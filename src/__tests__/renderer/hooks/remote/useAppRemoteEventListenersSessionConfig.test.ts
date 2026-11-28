@@ -186,7 +186,7 @@ describe('maestro:remoteUpdateSessionConfig codexTransport', () => {
 		expect(ack).toHaveBeenCalledWith('ch', { success: true });
 	});
 
-	it('stores exec as an unset field, the way the Edit Agent modal does', async () => {
+	it('stores exec as an explicit field, so it is not mistaken for the default', async () => {
 		const sessions = [
 			createMockSession({ id: 'session-1', toolType: 'codex', codexTransport: 'app-server' }),
 		];
@@ -195,7 +195,7 @@ describe('maestro:remoteUpdateSessionConfig codexTransport', () => {
 		dispatchPatch('session-1', { codexTransport: 'exec' });
 		await flush();
 
-		expect(applyUpdate(setSessions, sessions)[0].codexTransport).toBeUndefined();
+		expect(applyUpdate(setSessions, sessions)[0].codexTransport).toBe('exec');
 	});
 
 	it('clears the opt-in on null', async () => {

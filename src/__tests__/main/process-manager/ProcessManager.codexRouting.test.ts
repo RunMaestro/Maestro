@@ -131,11 +131,11 @@ describe('ProcessManager Codex transport routing', () => {
 		expect(captured.appServerOptions).toEqual([{ clientVersion: '9.9.9' }]);
 	});
 
-	it('runs a Codex turn with no transport on exec (the default)', () => {
+	it('routes a Codex turn with no transport to app-server (the default)', () => {
 		pm.spawn(codexTurn({ codexTransport: undefined }));
 
-		expect(captured.child).toHaveLength(1);
-		expect(captured.appServer).toHaveLength(0);
+		expect(captured.appServer).toHaveLength(1);
+		expect(captured.child).toHaveLength(0);
 	});
 
 	it('runs a Codex turn set to exec on exec', () => {

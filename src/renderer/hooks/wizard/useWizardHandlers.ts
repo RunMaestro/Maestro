@@ -1547,9 +1547,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				maestroPMode: resolvedEnableMaestroP ? maestroPMode : undefined,
 				maestroPPath:
 					resolvedEnableMaestroP && maestroPPath?.trim() ? maestroPPath.trim() : undefined,
-				// Only the opt-in is stored; `exec` is the default.
-				codexTransport:
-					selectedAgent === 'codex' && codexTransport === 'app-server' ? 'app-server' : undefined,
+				// Stored for Codex as chosen; an untouched choice stays unset (the default).
+				codexTransport: selectedAgent === 'codex' ? codexTransport : undefined,
 				harnessControlMode:
 					supportsNativeControl(selectedAgent) && harnessControlMode === 'native'
 						? 'native'

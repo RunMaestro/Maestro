@@ -458,7 +458,11 @@ class CodexAppServerTurn {
 					{ type: 'text', text: (config.codexAppServerSsh?.prompt ?? config.prompt) as string },
 				],
 				...(invocation.effort ? { effort: invocation.effort } : {}),
-				...(invocation.summary ? { summary: invocation.summary } : {}),
+				// With the agent's Reasoning Summary left blank, app-server sends the
+				// reasoning item with an empty summary and no deltas (verified against
+				// codex-cli 0.171.0), so the Thinking display stays empty. Request
+				// `auto` here so reasoning streams; an explicit agent choice still wins.
+				summary: invocation.summary ?? 'auto',
 			});
 		} catch (error) {
 			// An error RESPONSE proves the prompt did not start; a timeout or a

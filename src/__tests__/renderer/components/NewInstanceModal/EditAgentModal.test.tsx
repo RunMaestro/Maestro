@@ -2337,20 +2337,30 @@ describe('EditAgentModal', () => {
 		});
 
 		// The transport rides the same Codex-only slot. Load and Save are both
-		// pinned: a Save that dropped the value would silently put an opted-in
-		// agent back on codex exec.
+		// pinned: a Save that dropped the value would silently change the agent's
+		// transport.
 		describe('Codex transport', () => {
 			const appServerButton = () => screen.getByText('codex app-server').closest('button');
 
-			it('loads Standard for an agent that never opted in, and saves exec', async () => {
+			it('loads the app-server default for an agent with no stored transport, and saves it', async () => {
 				renderCodex(codexSession());
+
+				await waitFor(() => expect(screen.getByText('Codex Transport')).toBeInTheDocument());
+				expect(appServerButton()?.className).toContain('ring-2');
+				fireEvent.click(screen.getByText('Save Changes'));
+
+				const args = onSave.mock.calls[0];
+				expect(args[args.length - 1]).toBe('app-server');
+			});
+
+			it('keeps an explicit exec on save rather than collapsing it to the default', async () => {
+				renderCodex(codexSession({ codexTransport: 'exec' }));
 
 				await waitFor(() => expect(screen.getByText('Codex Transport')).toBeInTheDocument());
 				expect(appServerButton()?.className).not.toContain('ring-2');
 				fireEvent.click(screen.getByText('Save Changes'));
 
-				const args = onSave.mock.calls[0];
-				expect(args[args.length - 1]).toBe('exec');
+				expect(onSave.mock.calls[0][onSave.mock.calls[0].length - 1]).toBe('exec');
 			});
 
 			it('reflects a stored app-server choice', async () => {

@@ -34,7 +34,10 @@
  * recorded fixtures. One instance per spawned turn.
  */
 
-import { CODEX_CALL_USAGE_LINE_TYPE } from '../../shared/maestro-lib/parsers/codex-output-parser';
+import {
+	CODEX_CALL_USAGE_LINE_TYPE,
+	CODEX_REASONING_DELTA_LINE_TYPE,
+} from '../../shared/maestro-lib/parsers/codex-output-parser';
 import type {
 	CodexAppServerItem,
 	CodexAppServerNotification,
@@ -171,6 +174,10 @@ export class CodexAppServerEventTranslator {
 	/** Thread total at the most recent usage update, whichever turn it named. */
 	private latestUsageTotal: UsageTotals | null = null;
 	private userMessageListeners = new Set<(message: CodexAppServerUserMessage) => void>();
+	/** Reasoning items whose summary streamed as deltas; their completed item is not re-emitted. */
+	private streamedReasoningItems = new Set<string>();
+	/** Reasoning items whose summary has produced text, so a new summary part is separated from it. */
+	private reasoningItemsWithText = new Set<string>();
 
 	/** The thread id (the provider session id), once known. */
 	get threadId(): string | null {
@@ -245,6 +252,12 @@ export class CodexAppServerEventTranslator {
 					typeof params.turnId === 'string' ? params.turnId : undefined
 				);
 
+			case 'item/reasoning/summaryTextDelta':
+				return this.reasoningSummaryDelta(params);
+
+			case 'item/reasoning/summaryPartAdded':
+				return this.reasoningSummaryPart(params);
+
 			case 'thread/tokenUsage/updated': {
 				const turnId = typeof params.turnId === 'string' ? params.turnId : undefined;
 				const growth = this.recordUsage(
@@ -304,11 +317,37 @@ export class CodexAppServerEventTranslator {
 		];
 	}
 
+	/**
+	 * A live summary delta for the active turn. Only the summary streams: the
+	 * completed item's text prefers the summary (`reasoningText`), so streaming
+	 * the raw content too would show it twice.
+	 */
+	private reasoningSummaryDelta(params: Record<string, unknown>): CodexExecLine[] {
+		const turnId = typeof params.turnId === 'string' ? params.turnId : undefined;
+		const itemId = typeof params.itemId === 'string' ? params.itemId : undefined;
+		const delta = typeof params.delta === 'string' ? params.delta : '';
+		if (!itemId || !delta || !turnId || turnId !== this._activeTurnId) return [];
+		this.streamedReasoningItems.add(itemId);
+		this.reasoningItemsWithText.add(itemId);
+		return [{ type: CODEX_REASONING_DELTA_LINE_TYPE, text: delta }];
+	}
+
+	/** A new summary part of a reasoning item, separated from the text before it the way `reasoningText` joins parts. */
+	private reasoningSummaryPart(params: Record<string, unknown>): CodexExecLine[] {
+		const turnId = typeof params.turnId === 'string' ? params.turnId : undefined;
+		const itemId = typeof params.itemId === 'string' ? params.itemId : undefined;
+		if (!itemId || !turnId || turnId !== this._activeTurnId) return [];
+		if (!this.reasoningItemsWithText.has(itemId)) return [];
+		return [{ type: CODEX_REASONING_DELTA_LINE_TYPE, text: '\n\n' }];
+	}
+
 	private itemCompleted(
 		item: CodexAppServerItem | undefined,
 		turnId: string | undefined
 	): CodexExecLine[] {
 		if (!item) return [];
+		// Already streamed as deltas: emitting the completed item too would show the text twice.
+		if (item.type === 'reasoning' && this.streamedReasoningItems.has(item.id)) return [];
 		switch (item.type) {
 			case 'agentMessage':
 				return [

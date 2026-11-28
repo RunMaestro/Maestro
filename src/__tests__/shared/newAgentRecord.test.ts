@@ -176,7 +176,7 @@ describe('buildDuplicateAgentInput', () => {
 			retryOnAvailabilityErrors: true,
 			retryOnTokenExhaustion: true,
 			codexAutoResetOnExhaustion: false,
-			codexTransport: 'exec',
+			codexTransport: undefined,
 			sessionSshRemoteConfig: { enabled: false, remoteId: null },
 		});
 	});

@@ -90,10 +90,14 @@ describe('getSteerSupport', () => {
 		expect(
 			getSteerSupport(workingSession({ toolType: 'codex', codexTransport: 'app-server' })).kind
 		).toBe('supported');
-		expect(getSteerSupport(workingSession({ toolType: 'codex' }))).toMatchObject({
+		expect(
+			getSteerSupport(workingSession({ toolType: 'codex', codexTransport: 'exec' }))
+		).toMatchObject({
 			kind: 'fixable',
 			reason: 'codex-exec',
 		});
+		// An unset transport is the default app-server.
+		expect(getSteerSupport(workingSession({ toolType: 'codex' }))).toEqual({ kind: 'supported' });
 	});
 
 	it('calls any other harness unsupported', () => {
@@ -157,7 +161,9 @@ describe('getSteerSupport', () => {
 			)
 		).toEqual({ kind: 'supported' });
 		expect(
-			getSteerSupport(workingSession({ sshRemoteId: 'remote-1', toolType: 'codex' }))
+			getSteerSupport(
+				workingSession({ sshRemoteId: 'remote-1', toolType: 'codex', codexTransport: 'exec' })
+			)
 		).toMatchObject({ kind: 'fixable', reason: 'codex-exec' });
 	});
 });
@@ -284,7 +290,7 @@ describe('buildSendMenuModel', () => {
 	});
 
 	it('ghosts Steer with the harness reason on an unsteerable agent', () => {
-		const row = rowFor(workingSession({ toolType: 'codex' }), 'steer');
+		const row = rowFor(workingSession({ toolType: 'codex', codexTransport: 'exec' }), 'steer');
 		expect(row.enabled).toBe(false);
 		expect(row.reason).toMatch(/exec transport/);
 	});

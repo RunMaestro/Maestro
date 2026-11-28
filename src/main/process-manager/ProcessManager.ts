@@ -632,7 +632,7 @@ export class ProcessManager extends EventEmitter {
 
 	/**
 	 * Route a Codex turn through `codex app-server` (steerable mid-turn) instead
-	 * of `codex exec --json`. Opt-in per agent (`codexTransport`), and only for an
+	 * of `codex exec --json`. The default per agent (`codexTransport`), and only for an
 	 * INTERACTIVE turn (`wantsCodexAppServer`, which the SSH spawn handler also
 	 * reads before it builds an app-server launch).
 	 *

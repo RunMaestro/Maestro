@@ -1105,9 +1105,14 @@ describe('getSteerEligibility', () => {
 		expect(shouldOfferSteer(eligibility)).toBe(true);
 	});
 
+	it('steers a Codex agent with no transport set, because app-server is the default', () => {
+		expect(getSteerEligibility(steerableSession({ toolType: 'codex' }), item).canSteer).toBe(true);
+	});
+
 	it('refuses a Codex agent on exec with codex-exec', () => {
-		// `codex exec` is the default and accepts nothing once a turn has started.
-		for (const codexTransport of [undefined, 'exec'] as const) {
+		// `codex exec` accepts nothing once a turn has started. An unset transport is the
+		// default app-server, which does steer (see the next test).
+		for (const codexTransport of ['exec'] as const) {
 			const eligibility = getSteerEligibility(
 				steerableSession({ toolType: 'codex', codexTransport }),
 				item
@@ -1261,7 +1266,7 @@ describe('getSteerEligibility', () => {
 			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', workingDirOverride: undefined },
 		} as Partial<Session>;
 		const appServer = steerableSession({ ...remote, codexTransport: 'app-server' });
-		const exec = steerableSession(remote);
+		const exec = steerableSession({ ...remote, codexTransport: 'exec' });
 		expect(getSteerEligibility(appServer, item).canSteer).toBe(true);
 		expect(getSteerEligibility(exec, item).blockedReason).toBe('codex-exec');
 	});

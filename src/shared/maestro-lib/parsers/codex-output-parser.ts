@@ -53,6 +53,14 @@ import * as os from 'os';
  */
 export const CODEX_CALL_USAGE_LINE_TYPE = 'maestro.call_usage';
 
+/**
+ * A line `codex exec` never writes. The app-server translator emits it for each
+ * live reasoning-summary delta (`item/reasoning/summaryTextDelta`), text in
+ * `text`. Parsed as a partial reasoning event, so the Thinking display grows
+ * while the model reasons instead of appearing only when the item completes.
+ */
+export const CODEX_REASONING_DELTA_LINE_TYPE = 'maestro.reasoning_delta';
+
 const HARD_CLIENT_ERROR_STATUSES: ReadonlySet<number> = new Set([
 	400, 401, 403, 404, 405, 409, 413, 422,
 ]);
@@ -181,8 +189,9 @@ interface CodexRawMessage {
 		| 'turn.completed'
 		| 'turn.failed'
 		| 'error'
-		// Maestro's own (see CODEX_CALL_USAGE_LINE_TYPE)
-		| typeof CODEX_CALL_USAGE_LINE_TYPE;
+		// Maestro's own (see CODEX_CALL_USAGE_LINE_TYPE and CODEX_REASONING_DELTA_LINE_TYPE)
+		| typeof CODEX_CALL_USAGE_LINE_TYPE
+		| typeof CODEX_REASONING_DELTA_LINE_TYPE;
 	// Current format fields
 	timestamp?: string;
 	payload?: CodexPayload;
@@ -193,6 +202,8 @@ interface CodexRawMessage {
 	error?: string | { message?: string; type?: string };
 	/** Text of the bare exec-JSON `error` event (`{"type":"error","message":"..."}`). */
 	message?: string;
+	/** Text of a `maestro.reasoning_delta` line. */
+	text?: string;
 }
 
 /**
@@ -628,6 +639,12 @@ export class CodexOutputParser implements AgentOutputParser {
 		// Handle item.completed events (reasoning, agent_message, tool_call, tool_result, command_execution)
 		if (msg.type === 'item.completed' && msg.item) {
 			return this.transformItemCompleted(msg.item, msg);
+		}
+
+		if (msg.type === CODEX_REASONING_DELTA_LINE_TYPE) {
+			const text = typeof msg.text === 'string' ? msg.text : '';
+			if (!text) return { type: 'system', raw: msg };
+			return { type: 'text', text, isPartial: true, isReasoning: true, raw: msg };
 		}
 
 		if (msg.type === CODEX_CALL_USAGE_LINE_TYPE) {

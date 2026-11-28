@@ -321,9 +321,11 @@ describe('CodexAppServerSpawner', () => {
 			approvalPolicy: 'never',
 			sandbox: 'danger-full-access',
 		});
+		// An unset Reasoning Summary still requests `auto`, or app-server sends no reasoning text.
 		expect(server.sent('turn/start')[0].params).toEqual({
 			threadId: '01a129a3-ae2d-7a03-a717-b7374d497e31',
 			input: [{ type: 'text', text: 'Reply with the word OK' }],
+			summary: 'auto',
 		});
 
 		expect(h.data.join('')).toContain(finalAgentMessage(fixture));

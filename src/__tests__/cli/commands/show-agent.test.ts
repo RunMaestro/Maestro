@@ -448,7 +448,7 @@ describe('show-agent command', () => {
 			expect(parsed.codexTransportStored).toBe('app-server');
 		});
 
-		it('should resolve an unset Codex transport to exec', () => {
+		it('should resolve an unset Codex transport to the app-server default', () => {
 			vi.mocked(getSessionById).mockReturnValue(mockSession({ toolType: 'codex' }));
 			vi.mocked(readGroups).mockReturnValue([]);
 			vi.mocked(readHistory).mockReturnValue([]);
@@ -456,7 +456,7 @@ describe('show-agent command', () => {
 			showAgent('agent-123', { json: true });
 
 			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
-			expect(parsed.codexTransport).toBe('exec');
+			expect(parsed.codexTransport).toBe('app-server');
 			expect(parsed.codexTransportStored).toBeNull();
 		});
 
