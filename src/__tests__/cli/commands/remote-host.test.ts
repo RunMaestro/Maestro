@@ -553,7 +553,7 @@ describe('maestro-cli remote-host', () => {
 			});
 			await remoteHostStop('r1', {}, deps);
 			expect(everything()).toContain(
-				'The host holds 2 agents: "Backend", "Docs". Nothing was changed.'
+				'The host on Build box holds 2 agents: "Backend", "Docs". Nothing was changed.'
 			);
 			expect(everything()).toContain('--force');
 			expect(process.exitCode).toBe(ExitCode.GeneralError);
@@ -612,7 +612,9 @@ describe('maestro-cli remote-host', () => {
 				agents: [{ id: 'a1', name: 'Backend' }],
 			});
 			await remoteHostUninstall('r1', { purgeData: true, force: true }, deps);
-			expect(everything()).toContain('--purge-data refused: the host holds 1 agent: "Backend"');
+			expect(everything()).toContain(
+				'The host\'s data was kept: the host on Build box holds 1 agent: "Backend"'
+			);
 			expect(process.exitCode).toBe(ExitCode.GeneralError);
 		});
 

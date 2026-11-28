@@ -15,6 +15,10 @@
 
 import type { DesktopLiftAnswer, DesktopReturnAnswer } from '../../main/federation/lift';
 import type {
+	DesktopStopHostAnswer,
+	DesktopStopHostOptions,
+} from '../../main/federation/stop-host';
+import type {
 	DesktopSetupHostAnswer,
 	DesktopSetupHostOptions,
 } from '../../main/federation/setup-host';
@@ -73,6 +77,26 @@ export async function setupRemoteHostFromWindow(
 		notifyToast({ color: 'red', title: 'Could not set up the host', message: answer.error });
 	}
 	return answer;
+}
+
+/**
+ * Settings > SSH Hosts Stop Host and Remove Host (`uninstall`): main runs the same
+ * `stopRemoteHost()` as `maestro-cli remote-host stop` / `uninstall`. Works with hosting off: it
+ * needs no peer mirror. The answer carries the message the row shows.
+ */
+export async function stopRemoteHostFromWindow(
+	remoteId: string,
+	options: DesktopStopHostOptions = {}
+): Promise<DesktopStopHostAnswer> {
+	const api = window.maestro?.federation;
+	if (!api) {
+		return { ok: false, code: 'FEDERATION_NOT_RUNNING', error: FEDERATION_NOT_RUNNING_MESSAGE };
+	}
+	try {
+		return await api.stopHost(remoteId, options);
+	} catch (error) {
+		return { ok: false, code: 'STOP_FAILED', error: ipcErrorMessage(error) };
+	}
 }
 
 /** The peer menu's Start Host: set up the host on a peer that is down, with a toast either way. */

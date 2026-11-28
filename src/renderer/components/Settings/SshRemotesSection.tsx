@@ -8,6 +8,8 @@
  * - Deleting SSH remotes
  * - Setting the global default SSH remote
  * - Testing SSH connections
+ * - Stop Host / Remove Host: undo the Maestro host an earlier release set up on the remote
+ *   (the same `stopRemoteHost()` as `maestro-cli remote-host stop` / `uninstall`)
  *
  * Integrates with the useSshRemotes hook for state management and
  * the SshRemoteModal for add/edit operations.
@@ -29,6 +31,8 @@ import {
 	XCircle,
 	Wifi,
 	WifiOff,
+	PowerOff,
+	PackageX,
 } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { FilterInput } from '../ui/FilterInput';
@@ -41,7 +45,37 @@ import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useSshRemotes } from '../../hooks';
 import { SshRemoteModal } from './SshRemoteModal';
 import { SshRemediationNotice } from './SshRemediationNotice';
+import { ConfirmModal } from '../ConfirmModal';
+import { stopRemoteHostFromWindow } from '../../services/agentLift';
 import { logger } from '../../utils/logger';
+
+/** What each confirmation says, so a person knows what goes before anything does. */
+export function stopHostConfirmMessage(name: string): string {
+	return (
+		`Stop the Maestro host on ${name}? Maestro disables its boot service, so it does not come back ` +
+		"after a reboot, then stops the host once its work in flight finishes. Maestro's install and " +
+		"the host's data stay on the remote."
+	);
+}
+
+export function removeHostConfirmMessage(name: string): string {
+	return (
+		`Remove the Maestro host from ${name}? Maestro stops the host, removes its boot service, and ` +
+		'deletes its own install under ~/.maestro (cli, node, npm-cache, the launcher and the service ' +
+		'wrapper). It keeps ~/.maestro/host.env, any maestro-cli Maestro did not install, and the ' +
+		"host's data directory."
+	);
+}
+
+type HostAction = 'stop' | 'remove';
+
+interface HostConfirm {
+	config: SshRemoteConfig;
+	action: HostAction;
+	/** The second ask, after the host named the agents it holds. */
+	force?: boolean;
+	message: string;
+}
 
 /** Name A-Z, with the connection target breaking ties between same-named remotes. */
 export function sortSshRemotes(configs: SshRemoteConfig[]): SshRemoteConfig[] {
@@ -89,6 +123,11 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 		Record<string, { success: boolean; message: string; remediation?: SshRemoteRemediation }>
 	>({});
 	const [filter, setFilter] = useState('');
+	const [hostBusy, setHostBusy] = useState<Record<string, HostAction>>({});
+	const [hostResults, setHostResults] = useState<
+		Record<string, { success: boolean; message: string }>
+	>({});
+	const [hostConfirm, setHostConfirm] = useState<HostConfirm | null>(null);
 
 	const sortedConfigs = useMemo(() => sortSshRemotes(configs), [configs]);
 	const visibleConfigs = useMemo(
@@ -144,6 +183,44 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 				remediation: result.result?.remediation,
 			},
 		}));
+	};
+
+	// Stop Host / Remove Host, after the confirmation. A host that holds agents asks once more,
+	// naming them, before it stops anyway.
+	const runHostAction = async (config: SshRemoteConfig, action: HostAction, force: boolean) => {
+		setHostBusy((prev) => ({ ...prev, [config.id]: action }));
+		const answer = await stopRemoteHostFromWindow(config.id, {
+			uninstall: action === 'remove',
+			force,
+		});
+		setHostBusy((prev) => {
+			const { [config.id]: _, ...rest } = prev;
+			return rest;
+		});
+		if (answer.ok && answer.outcome === 'agents-held' && !force) {
+			setHostConfirm({
+				config,
+				action,
+				force: true,
+				// Main's message names the agents and their count (`describeRemoteHostStop()`).
+				message: `${answer.message} ${action === 'remove' ? 'Remove' : 'Stop'} it anyway?`,
+			});
+			return;
+		}
+		const success = answer.ok && (answer.outcome === 'done' || answer.outcome === 'nothing');
+		setHostResults((prev) => ({
+			...prev,
+			[config.id]: { success, message: answer.ok ? answer.message : answer.error },
+		}));
+	};
+
+	const askHostAction = (config: SshRemoteConfig, action: HostAction) => {
+		const name = config.name || config.host;
+		setHostConfirm({
+			config,
+			action,
+			message: action === 'remove' ? removeHostConfirmMessage(name) : stopHostConfirmMessage(name),
+		});
 	};
 
 	// Handle save from modal
@@ -318,6 +395,26 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 														</span>
 													</div>
 												)}
+												{hostResults[config.id] && (
+													<div
+														data-testid="ssh-remote-host-result"
+														className="mt-2 text-xs flex items-start gap-1"
+														style={{
+															color: hostResults[config.id].success
+																? theme.colors.success
+																: theme.colors.error,
+														}}
+													>
+														{hostResults[config.id].success ? (
+															<CheckCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+														) : (
+															<XCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+														)}
+														<span className="whitespace-pre-wrap break-words min-w-0 select-text">
+															{hostResults[config.id].message}
+														</span>
+													</div>
+												)}
 											</div>
 
 											{/* Actions */}
@@ -354,6 +451,40 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 													title={isDefault ? 'Remove as default' : 'Set as default'}
 												>
 													<Check className="w-4 h-4" />
+												</button>
+
+												{/* Stop Host */}
+												<button
+													type="button"
+													onClick={() => askHostAction(config, 'stop')}
+													disabled={!config.enabled || hostBusy[config.id] !== undefined}
+													className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-50"
+													style={{ color: theme.colors.textDim }}
+													title="Stop Host: stop the Maestro host on this remote and disable its boot service"
+													aria-label="Stop Host"
+												>
+													{hostBusy[config.id] === 'stop' ? (
+														<Spinner size={16} />
+													) : (
+														<PowerOff className="w-4 h-4" />
+													)}
+												</button>
+
+												{/* Remove Host */}
+												<button
+													type="button"
+													onClick={() => askHostAction(config, 'remove')}
+													disabled={!config.enabled || hostBusy[config.id] !== undefined}
+													className="p-1.5 rounded hover:bg-white/10 transition-colors disabled:opacity-50"
+													style={{ color: theme.colors.textDim }}
+													title="Remove Host: stop the Maestro host and remove what Maestro installed on this remote"
+													aria-label="Remove Host"
+												>
+													{hostBusy[config.id] === 'remove' ? (
+														<Spinner size={16} />
+													) : (
+														<PackageX className="w-4 h-4" />
+													)}
 												</button>
 
 												{/* Edit */}
@@ -439,6 +570,29 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 				onTestConnection={handleTestFromModal}
 				initialConfig={editingConfig}
 			/>
+
+			{hostConfirm && (
+				<ConfirmModal
+					theme={theme}
+					title={hostConfirm.action === 'remove' ? 'Remove Host' : 'Stop Host'}
+					message={hostConfirm.message}
+					confirmLabel={
+						hostConfirm.force
+							? hostConfirm.action === 'remove'
+								? 'Remove Anyway'
+								: 'Stop Anyway'
+							: hostConfirm.action === 'remove'
+								? 'Remove Host'
+								: 'Stop Host'
+					}
+					destructive={hostConfirm.action === 'remove' || hostConfirm.force === true}
+					onConfirm={() => {
+						const { config, action, force } = hostConfirm;
+						void runHostAction(config, action, force === true);
+					}}
+					onClose={() => setHostConfirm(null)}
+				/>
+			)}
 		</>
 	);
 }

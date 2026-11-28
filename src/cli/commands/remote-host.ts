@@ -37,7 +37,7 @@ import { peerIdFor } from '../../shared/maestro-lib/client/peer-connection';
 import { describeRemoteService } from '../../shared/maestro-lib/client/remote-service';
 import {
 	RemoteHostStopError,
-	describeHeldAgents,
+	describeRemoteHostStop,
 	desktopHostMessage,
 	stopRemoteHost,
 	surveyRemoteHost,
@@ -512,45 +512,24 @@ export function formatRemoteHostStop(
 	uninstall: boolean
 ): string {
 	const lines = [`Remote: ${remote.name} (${remote.id})`];
-	switch (result.outcome) {
-		case 'desktop-host':
-			lines.push(desktopHostMessage(remote, result.survey.pid));
-			break;
-		case 'agents-held':
-			lines.push(
-				`The host holds ${describeHeldAgents(result.agents)}. Nothing was changed.`,
-				'Move them back first (maestro-cli unlift <agent>), or pass --force to stop the host anyway; their data stays on the remote.'
-			);
-			break;
-		case 'purge-refused':
-			lines.push(
-				result.reason === 'desktop-data'
-					? `--purge-data refused: the Maestro desktop app on ${remote.name} uses that data directory too (${result.survey.dataDir}). Nothing was changed.`
-					: `--purge-data refused: the host holds ${describeHeldAgents(result.agents ?? 'unknown')}, and its data is their only copy until they move back. Nothing was changed.`
-			);
-			break;
-		case 'nothing':
-			lines.push(
-				uninstall
-					? 'Maestro installed nothing there to remove: no host, no boot service, no files under ~/.maestro.'
-					: 'No host is running and no boot service is registered: nothing to stop.'
-			);
-			break;
-		case 'done': {
-			lines.push(
-				`Host: ${result.hostStopped ? `stopped${result.survey.pid ? ` (pid ${result.survey.pid})` : ''}` : 'was not running'}`
-			);
-			if (result.survey.service.kind !== 'none') {
-				lines.push(
-					`Service: ${result.serviceDisabled ? 'disabled, so the host does not come back after a reboot' : colorize('yellow', 'not disabled')}`
-				);
-			}
-			for (const item of result.removed) lines.push(`Removed: ${item}`);
-			for (const item of result.kept) lines.push(`Kept: ${item}`);
-			for (const warning of result.warnings) lines.push(colorize('yellow', warning));
-			break;
+	if (result.outcome !== 'done') {
+		lines.push(describeRemoteHostStop(remote, result, uninstall));
+		if (result.outcome === 'agents-held') {
+			lines.push('Move them back with `maestro-cli unlift <agent>`, or pass --force.');
 		}
+		return lines.join('\n');
 	}
+	lines.push(
+		`Host: ${result.hostStopped ? `stopped${result.survey.pid ? ` (pid ${result.survey.pid})` : ''}` : 'was not running'}`
+	);
+	if (result.survey.service.kind !== 'none') {
+		lines.push(
+			`Service: ${result.serviceDisabled ? 'disabled, so the host does not come back after a reboot' : colorize('yellow', 'not disabled')}`
+		);
+	}
+	for (const item of result.removed) lines.push(`Removed: ${item}`);
+	for (const item of result.kept) lines.push(`Kept: ${item}`);
+	for (const warning of result.warnings) lines.push(colorize('yellow', warning));
 	return lines.join('\n');
 }
 

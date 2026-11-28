@@ -573,3 +573,52 @@ export function desktopHostMessage(remote: SshRemoteConfig, pid?: number): strin
 		'Quit the app on that machine to stop it. Nothing was changed.'
 	);
 }
+
+/**
+ * One paragraph for a person, for every outcome: what changed, or why nothing did. The desktop's
+ * Stop Host and Remove Host show it; the CLI prints its refusals with it.
+ */
+export function describeRemoteHostStop(
+	remote: SshRemoteConfig,
+	result: RemoteHostStopResult,
+	uninstall: boolean
+): string {
+	const label = remoteLabel(remote);
+	switch (result.outcome) {
+		case 'desktop-host':
+			return desktopHostMessage(remote, result.survey.pid);
+		case 'agents-held':
+			return (
+				`The host on ${label} holds ${describeHeldAgents(result.agents)}. Nothing was changed. ` +
+				'Move them back first, or stop the host anyway; their data stays on the remote.'
+			);
+		case 'purge-refused':
+			return result.reason === 'desktop-data'
+				? `The host's data was kept: the Maestro desktop app on ${label} uses that data directory too (${result.survey.dataDir ?? 'unknown'}). Nothing was changed.`
+				: `The host's data was kept: the host on ${label} holds ${describeHeldAgents(result.agents ?? 'unknown')}, and it is their only copy until they move back. Nothing was changed.`;
+		case 'nothing':
+			return uninstall
+				? `Maestro installed nothing on ${label} to remove: no host, no boot service, no files under ~/${REMOTE_INSTALL_ROOT}.`
+				: `No host runs on ${label} and no boot service is registered: nothing to stop.`;
+		case 'done': {
+			const parts = [
+				result.hostStopped
+					? `The host on ${label} is stopped.`
+					: `No host was running on ${label}.`,
+			];
+			if (result.serviceDisabled) {
+				parts.push('Its boot service is disabled, so it does not come back after a reboot.');
+			}
+			if (uninstall) {
+				parts.push(
+					result.removed.length
+						? `Removed ${result.removed.length} item${result.removed.length === 1 ? '' : 's'} Maestro installed.`
+						: 'Nothing was left to remove.'
+				);
+			}
+			if (result.kept.length) parts.push(`Kept: ${result.kept.join(', ')}.`);
+			parts.push(...result.warnings);
+			return parts.join(' ');
+		}
+	}
+}

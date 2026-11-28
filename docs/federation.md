@@ -165,6 +165,17 @@ maestro-cli remote-host start build-box
 
 `remote-host status` reports whether Maestro is installed, whether a host runs, and whether its version differs from yours. `remote-host start` starts a stopped host. Neither prints the host's token or secret. In the desktop app, open a hosted agent whose host went down and choose **Start Host** in the banner above its tabs: it installs or upgrades `maestro-cli` first when it needs to. To keep the host running across reboots, see [Durability](#durability).
 
+### Stop the host or remove it
+
+Open **Settings > SSH Hosts** and use the remote's **Stop Host** or **Remove Host** button. Each asks first and says what changes. From the CLI:
+
+```bash
+maestro-cli remote-host stop build-box
+maestro-cli remote-host uninstall build-box
+```
+
+**Stop Host** (`remote-host stop`) disables the boot service, so the host does not come back after a reboot, and stops the host once its work in flight finishes. The install and the host's data stay. **Remove Host** (`remote-host uninstall`) also removes the service file and everything Maestro put under `~/.maestro`. It keeps `~/.maestro/host.env`, any `maestro-cli` Maestro did not install, and the host's data directory (`--purge-data` on the CLI removes it too). When the host still holds agents, both name them and ask again before they go on; their data stays on the remote. On a remote Mac where the Maestro desktop app is the host, both say so and change nothing: quit the app there to stop it. `remote-host status` shows whether the boot service is still registered.
+
 ### See the host's agents
 
 The Left Bar shows only the hosted agents you keep there: the ones you moved from this machine, and the ones you added. A host's other agents belong to whoever runs that host, so they stay out of your Left Bar, the Thinking pill, and the command palette until you add them.
