@@ -580,6 +580,29 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
+			it('refuses a managed dispatch when hosting turns off while capabilities resolve', async () => {
+				// Hosting is on when the guard runs, so the agent is not coming home yet; it
+				// turns off during the awaited capability read, and the agent is coming home
+				// by the time the hold is reached.
+				useSettingsStore.setState({ federationHostedAgents: true } as any);
+				clearCapabilitiesCache();
+				(window as any).maestro.agents.getCapabilities = vi.fn(async () => {
+					useSettingsStore.setState({ federationHostedAgents: false } as any);
+					return { ...DEFAULT_CAPABILITIES, supportsBatchMode: true };
+				});
+				const session = createMockSession({ inputMode: 'ai', liftedTo } as any);
+
+				await sendTo(session, { pianolaDispatchId: 'dispatch-1' });
+
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(useSessionStore.getState().sessions[0].executionQueue ?? []).toHaveLength(0);
+				expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+					'receipt-1',
+					false,
+					'DispatchTargetUnavailable'
+				);
+			});
+
 			it('queues a forced dispatch too: force lifts a busy tab, not the host owning the session', async () => {
 				useSettingsStore.setState({ federationHostedAgents: false } as any);
 				const session = createMockSession({ inputMode: 'ai', liftedTo } as any);

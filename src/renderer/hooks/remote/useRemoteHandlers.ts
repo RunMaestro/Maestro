@@ -527,6 +527,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// commands, and the drain holds them the same way.
 			const comingHomeSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 			if (comingHomeSession && isAwaitingComeHome(comingHomeSession)) {
+				// A managed dispatch is refused here too, not only by the guard above: the
+				// setting can change while capabilities are awaited, and this queue would drop
+				// its admission identity.
+				if (pianolaDispatchId) {
+					reportDelivery(false, 'DispatchTargetUnavailable');
+					return;
+				}
 				// The pinned tab is read again: it may have closed while capabilities were
 				// resolved above, and the queue would otherwise fall back to another tab.
 				const pinnedTab = writeTabId
