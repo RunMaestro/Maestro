@@ -12,6 +12,12 @@ import {
 	type AutoFederationRemoteStatus,
 	type AutoFederationSnapshot,
 } from '../../shared/federationAuto';
+import {
+	comeHomeFailureFor,
+	comeHomeWaitText,
+	type ComeHomeReport,
+} from '../../shared/federationComeHome';
+import { readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
 import { notifyToast } from './notificationStore';
 
 interface FederationAutoState {
@@ -19,6 +25,9 @@ interface FederationAutoState {
 	/** Replace the snapshot. `announce` toasts what changed since the last one. */
 	applySnapshot: (next: AutoFederationSnapshot, announce?: boolean) => void;
 	reset: () => void;
+	/** The last report of the job that brings moved agents home (`useComeHome`), or null. */
+	comeHomeReport: ComeHomeReport | null;
+	setComeHomeReport: (report: ComeHomeReport | null) => void;
 }
 
 /** The toasts a new snapshot earns against the previous one. Pure, for the tests. */
@@ -82,7 +91,27 @@ export const useFederationAutoStore = create<FederationAutoState>((set, get) => 
 		for (const toast of autoFederationAnnouncements(previous, next)) notifyToast(toast);
 	},
 	reset: () => set({ snapshot: emptyAutoFederationSnapshot() }),
+	comeHomeReport: null,
+	setComeHomeReport: (report) => set({ comeHomeReport: report }),
 }));
+
+/**
+ * Why a moved agent's queued messages wait, while it waits ({@link isAwaitingComeHome}), in the
+ * same words as the spawn refusal: on its way back, or the reason the last run left it moved.
+ * Undefined when it is not waiting.
+ */
+export function useComeHomeWaitText(
+	agentId: string | undefined,
+	liftedTo: unknown,
+	waiting: boolean
+): string | undefined {
+	const failure = useFederationAutoStore((s) =>
+		agentId ? comeHomeFailureFor(s.comeHomeReport, agentId) : undefined
+	);
+	const peer = readLiftedTo(liftedTo)?.peer;
+	if (!waiting || !peer) return undefined;
+	return comeHomeWaitText(peer, failure);
+}
 
 /** One agent's automatic Federation status, or undefined. */
 export function useAutoFederationAgent(

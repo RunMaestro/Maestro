@@ -364,6 +364,8 @@ export interface TranscriptOptions {
 	sinceMs?: number;
 	/** At most this many of the newest entries. 0 returns none. */
 	tail?: number;
+	/** How long to wait for the read, ms. A long transcript is a large frame. */
+	timeoutMs?: number;
 }
 
 export interface TabsApi {

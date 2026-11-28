@@ -13,7 +13,8 @@ import { Loader2 } from 'lucide-react';
 import type { LogEntry } from '../../types';
 import type { TerminalOutputProps } from './types';
 import { useAnsiConverter } from '../../hooks/ui/useAnsiConverter';
-import { getActiveTab } from '../../utils/tabHelpers';
+import { getActiveTab, isAwaitingComeHome } from '../../utils/tabHelpers';
+import { useComeHomeWaitText } from '../../stores/federationAutoStore';
 import { useTranscriptBackfill } from '../../hooks/agent/useTranscriptBackfill';
 import { useDebouncedValue, useProgressiveRenderWindow } from '../../hooks';
 import { jumpToMessageEdge, isTextInputTarget } from '../../utils/messageScrollNavigation';
@@ -121,6 +122,12 @@ export const TerminalOutput = memo(
 			isRecoveringSession,
 			sessionRecoveryError,
 		} = props;
+		// An agent still moved onto a host holds its queue: its queued cards say why.
+		const comeHomeWait = useComeHomeWaitText(
+			session.id,
+			session.liftedTo,
+			isAwaitingComeHome(session)
+		);
 		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);
 		const publishedGists = useMessageGistStore((s) => s.published);
@@ -845,6 +852,7 @@ export const TerminalOutput = memo(
 								shortcutEnabled={forceSendShortcutEnabled}
 								activeTabId={activeTabId || undefined}
 								onOpenLightbox={setLightboxImage}
+								waitingNote={comeHomeWait}
 							/>
 						)}
 					</div>

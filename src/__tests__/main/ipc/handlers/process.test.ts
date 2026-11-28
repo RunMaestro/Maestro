@@ -95,6 +95,7 @@ import {
 	computeOmpCatalogKey,
 } from '../../../../main/agents/omp-model-catalog';
 import { runAsActingUser } from '../../../../main/web-server/auth/acting-user';
+import { setComeHomeRunner } from '../../../../main/federation/come-home';
 import {
 	noteTurnActor,
 	resolveTurnActor,
@@ -712,7 +713,7 @@ describe('process IPC handlers', () => {
 			expect(shell instanceof Error ? shell.message : '').not.toContain('build-box');
 		});
 
-		it('runs a lifted agent as its SSH agent while hosting was never switched on', async () => {
+		it('with hosting off, refuses a lifted agent turn until it is home, but not a shell', async () => {
 			const lifted = {
 				id: 'lifted-agent',
 				name: 'Lifted',
@@ -742,12 +743,66 @@ describe('process IPC handlers', () => {
 				}
 			).catch((error: Error) => error);
 
-			expect(outcome instanceof Error ? outcome.message : '').not.toContain('build-box');
+			// It would resume the provider session its host owns: refused until the come-home job
+			// clears the pointer. The window holds the message in the queue meanwhile.
+			expect(outcome instanceof Error ? outcome.message : '').toContain(
+				'"Lifted" is still on its Federation host. Bringing this agent back from build-box.'
+			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+
+			// R3: once a run could not bring it home, the refusal says why, as its queued card does.
+			setComeHomeRunner({
+				run: vi.fn(),
+				lastReport: () => ({
+					startedAt: 1,
+					finishedAt: 2,
+					agents: [
+						{
+							id: 'lifted-agent',
+							name: 'Lifted',
+							from: 'build-box:host-1',
+							result: 'failed',
+							reason: 'This machine could not restore it: timed out.',
+							notices: [],
+						},
+					],
+				}),
+			});
+			try {
+				const refused = await handlers.get('process:spawn')!(
+					{},
+					{
+						sessionId: 'lifted-agent-ai-tab',
+						toolType: 'claude-code',
+						cwd: '/project',
+						command: 'claude',
+						args: [],
+					}
+				).catch((error: Error) => error);
+				expect(refused instanceof Error ? refused.message : '').toBe(
+					'"Lifted" is still on its Federation host. Waiting to bring this agent back from build-box: This machine could not restore it: timed out. Maestro tries again every 5 minutes. Its messages wait in its queue.'
+				);
+			} finally {
+				setComeHomeRunner(null);
+			}
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+
+			const shell = await handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'lifted-agent-terminal-1',
+					toolType: 'terminal',
+					cwd: '/project',
+					command: 'zsh',
+					args: [],
+				}
+			).catch((error: Error) => error);
+			expect(shell instanceof Error ? shell.message : '').not.toContain('Federation host');
 		});
 
-		it('runs a lifted agent as its SSH agent while the default-off migration could not write', async () => {
+		it('holds a lifted agent for the come-home job while the default-off migration could not write', async () => {
 			// The old `true` is still on disk with no marker: the gate keeps hosting off, so the
-			// launch guard must too, or the agent could neither go to a host nor run here.
+			// launch guard must too, or the agent would be sent to a host no mirror reaches.
 			const lifted = {
 				id: 'lifted-agent',
 				name: 'Lifted',
@@ -795,13 +850,15 @@ describe('process IPC handlers', () => {
 				}
 			).catch((error: Error) => error);
 
-			expect(outcome instanceof Error ? outcome.message : '').not.toContain('build-box');
-			expect(outcome).not.toBeInstanceOf(Error);
-			// It runs here, over SSH on its remote, as it did before it was moved.
-			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
-				expect.objectContaining({ sessionId: 'lifted-agent-ai-tab', command: 'ssh' })
+			// Hosting reads off, as the gate reads it: never the hosted refusal that points at the
+			// host. The agent waits for the come-home job instead, which brings it back to run here
+			// over SSH; until then a turn would resume the provider session its host owns.
+			const message = outcome instanceof Error ? outcome.message : '';
+			expect(message).not.toContain('Send to build-box:host-1 instead.');
+			expect(message).toContain(
+				'"Lifted" is still on its Federation host. Bringing this agent back from build-box.'
 			);
-			expect(mockProcessManager.spawn.mock.calls[0][0].args).toContain('devuser@dev.example.com');
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 		});
 
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {

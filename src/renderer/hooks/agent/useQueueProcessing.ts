@@ -29,6 +29,7 @@ import type {
 import { useSessionStore } from '../../stores/sessionStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../stores/agentStore';
 import {
+	isAwaitingComeHome,
 	isQueuedItemTargetBusy,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
@@ -103,7 +104,12 @@ const QUEUE_DRAIN_RECHECK_MS = 4000;
  */
 export function selectIdleQueuedSignature(state: { sessions: Session[] }): string {
 	return state.sessions
-		.filter((sess) => sess.state === 'idle' && nextQueueDrainItem(sess.executionQueue ?? []))
+		.filter(
+			(sess) =>
+				sess.state === 'idle' &&
+				!isAwaitingComeHome(sess) &&
+				nextQueueDrainItem(sess.executionQueue ?? [])
+		)
 		.map((sess) => {
 			const item = nextQueueDrainItem(sess.executionQueue ?? []);
 			return `${sess.id}:${item?.id ?? ''}`;
@@ -344,6 +350,9 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 
 		for (const session of useSessionStore.getState().sessions) {
 			if (session.state !== 'idle' || !nextQueueDrainItem(session.executionQueue ?? [])) continue;
+			// Still moved onto a host: held, not stuck. The restore that brings it home changes
+			// `idleQueuedSignature`, which drains it then, so no poll is kept alive for it.
+			if (isAwaitingComeHome(session)) continue;
 			const head = nextQueueDrainItem(session.executionQueue);
 			if (loggedStuckHeadRef.current.get(session.id) !== head?.id) {
 				loggedStuckHeadRef.current.set(session.id, head?.id ?? '');

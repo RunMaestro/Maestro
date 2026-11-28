@@ -46,6 +46,7 @@ import {
 	liftedOwnerOfProcess,
 	liftedSendRefusal,
 } from '../../../shared/maestro-lib/agents/lift-pointer';
+import { movedAgentWaitRefusal } from '../../federation/come-home';
 import {
 	initPermissionRelay,
 	resolvePermissionResponse,
@@ -275,11 +276,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	ipcMain.handle('process:spawn', async (event, config: SpawnProcessConfig) => {
 		// A lifted agent runs on its Federation host now. Its local copy keeps every tab, but no turn
 		// of it may start here: it would resume the provider session the host owns. Shell tabs stay.
+		// With hosting off the agent is on its way home (`src/main/federation/come-home.ts`): the
+		// window holds its messages in the queue until then, and this refuses any other path.
 		if (config.toolType !== 'terminal') {
 			const lifted = liftedOwnerOfProcess(deps.sessionsStore.get('sessions', []), config.sessionId);
 			const refusal =
 				lifted &&
-				liftedSendRefusal(lifted, readHostingSwitches(settingsStore)[HOSTED_AGENTS_SETTING]);
+				(liftedSendRefusal(lifted, readHostingSwitches(settingsStore)[HOSTED_AGENTS_SETTING]) ??
+					movedAgentWaitRefusal(lifted));
 			if (refusal) throw new Error(refusal);
 		}
 		// A web/CLI caller cannot assert the native renderer's submitted log boundary.

@@ -15,7 +15,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	resolveSshRemoteId: vi.fn((id: string) => id),
 }));
 
-import { unlift, type UnliftDeps } from '../../../cli/commands/unlift';
+import { unlift, unliftAll, type UnliftDeps } from '../../../cli/commands/unlift';
 import { ExitCode } from '../../../cli/exit-codes';
 import { MaestroNotRunningError } from '../../../cli/services/maestro-not-running';
 import type { PeerConnection } from '../../../cli/services/peer-resolver';
@@ -93,9 +93,16 @@ describe('maestro-cli unlift', () => {
 		const { deps, remove } = depsWith();
 		await unlift('Docs', { json: true }, deps);
 		expect(deps.connect).toHaveBeenCalledWith('remote-1');
-		expect(deps.restoreInDesktop).toHaveBeenCalledWith('agent-1', {
+		expect(deps.restoreInDesktop).toHaveBeenNthCalledWith(1, 'agent-1', {
 			tabs: [{ id: 'tab-1', agentSessionId: 'sess-1', logs: [] }],
+			hostCopyLeft: expect.objectContaining({
+				peer: 'build-box',
+				agentId: 'host-1',
+				fetched: true,
+			}),
 		});
+		// After the host copy is removed, the record is written once more without its marker.
+		expect(deps.restoreInDesktop).toHaveBeenNthCalledWith(2, 'agent-1', { tabs: [] });
 		expect(deps.restoreOnDisk).not.toHaveBeenCalled();
 		expect(remove).toHaveBeenCalledWith('host-1');
 		expect(lastJson()).toMatchObject({
@@ -145,5 +152,91 @@ describe('maestro-cli unlift', () => {
 		await unlift('agent-1', { json: true }, deps);
 		expect(lastJson()).toMatchObject({ success: false, code: 'RETURN_NOT_HOSTED' });
 		expect(deps.connect).not.toHaveBeenCalled();
+	});
+});
+
+describe('maestro-cli unlift --all', () => {
+	const second: AgentRecord = {
+		...hosted,
+		id: 'agent-2',
+		name: 'Docs',
+		liftedTo: { peer: 'build-box', agentId: 'host-2', at: 2 },
+	} as AgentRecord;
+	const plain: AgentRecord = { ...hosted, id: 'agent-3', name: 'Plain', liftedTo: undefined };
+
+	it('moves every moved agent back, one at a time, and reports each one', async () => {
+		let open = 0;
+		let peak = 0;
+		const { connection } = fakeConnection();
+		const { deps } = depsWith({
+			readAgents: () => [hosted, plain, second],
+			connect: vi.fn(async () => {
+				open += 1;
+				peak = Math.max(peak, open);
+				await Promise.resolve();
+				return {
+					...connection,
+					release: async () => {
+						open -= 1;
+					},
+				};
+			}),
+		});
+		await unliftAll({ json: true }, deps);
+		// Two agents share a name: each is returned by its own id, never resolved by name. Each is
+		// written twice: home with its host copy marked, then unmarked once the copy is removed.
+		expect(vi.mocked(deps.restoreInDesktop).mock.calls.map(([id]) => id)).toEqual([
+			'agent-1',
+			'agent-1',
+			'agent-2',
+			'agent-2',
+		]);
+		expect(peak).toBe(1);
+		expect(open).toBe(0);
+		const out = lastJson() as { success: boolean; agents: Array<Record<string, unknown>> };
+		expect(out.success).toBe(true);
+		expect(out.agents.map((agent) => (agent.agent as { id: string }).id)).toEqual([
+			'agent-1',
+			'agent-2',
+		]);
+		expect(out.agents.every((agent) => agent.ok === true)).toBe(true);
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it('leaves an agent whose host does not answer moved, reports it, and still returns the rest', async () => {
+		const { connection } = fakeConnection();
+		const { deps } = depsWith({
+			readAgents: () => [hosted, second],
+			connect: vi
+				.fn()
+				.mockRejectedValueOnce(new Error('host down'))
+				.mockResolvedValueOnce(connection),
+		});
+		await unliftAll({ json: true }, deps);
+		const out = lastJson() as { success: boolean; agents: Array<Record<string, unknown>> };
+		expect(out.success).toBe(false);
+		expect(out.agents[0]).toMatchObject({ ok: false, agent: { id: 'agent-1' } });
+		expect(out.agents[1]).toMatchObject({ ok: true, agent: { id: 'agent-2' } });
+		expect(vi.mocked(deps.restoreInDesktop).mock.calls.map(([id]) => id)).toEqual([
+			'agent-2',
+			'agent-2',
+		]);
+		expect(process.exitCode).toBe(ExitCode.GeneralError);
+	});
+
+	it('with --offline, restores every moved agent without dialing', async () => {
+		const { deps } = depsWith({ readAgents: () => [hosted, second] });
+		await unliftAll({ json: true, offline: true }, deps);
+		expect(deps.connect).not.toHaveBeenCalled();
+		expect(deps.restoreInDesktop).toHaveBeenCalledTimes(2);
+		expect(lastJson()).toMatchObject({ success: true });
+	});
+
+	it('says so when no agent is on a host', async () => {
+		const { deps } = depsWith({ readAgents: () => [plain] });
+		await unliftAll({}, deps);
+		expect(deps.connect).not.toHaveBeenCalled();
+		expect(logs.join('\n')).toMatch(/No agent is on a host/);
+		expect(process.exitCode).toBeUndefined();
 	});
 });

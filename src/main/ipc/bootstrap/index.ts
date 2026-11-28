@@ -151,7 +151,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 			const switches = readHostingSwitches(deps.settingsStore);
 			return switches.federationAutoMove && switches.federationHostedAgents;
 		},
-		// Automatic Federation runs only while hosted agents are on.
+		// Automatic Federation runs only while hosted agents are on; off, moved agents come home.
 		hosting: hostingSettingOf(deps.settingsStore),
 		watchSessions: (onChange) => deps.sessionsStore.onDidChange('sessions', () => onChange()),
 		safeSend: deps.safeSend,
