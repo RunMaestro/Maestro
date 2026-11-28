@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { useAppRemoteEventListeners } from '../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import type { Session } from '../../../renderer/types';
+import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 
 const RESPONSE_CHANNEL = 'remote:updateSessionConfig:response:test';
 
@@ -210,5 +211,38 @@ describe('remoteUpdateSessionConfig - a Move Back restore (#2195)', () => {
 			error: 'Could not save the agent: the write did not reach the disk',
 		});
 		expect(setSessions).not.toHaveBeenCalled();
+	});
+});
+
+describe('remoteRenameSession during a Move Back restore (#2199)', () => {
+	it('writes only the name: a restore saved meanwhile keeps its cleared host pointer', async () => {
+		(window.maestro.process as unknown as Record<string, unknown>).sendRemoteRenameSessionResponse =
+			vi.fn();
+		const moved = makeSession({
+			liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+		} as unknown as Partial<Session>);
+		renderHook(() => useAppRemoteEventListeners(makeDeps(moved)));
+		await act(async () => {
+			window.dispatchEvent(
+				new CustomEvent('maestro:remoteRenameSession', {
+					detail: { sessionId: moved.id, newName: 'Renamed', responseChannel: 'rename:test' },
+				})
+			);
+			await Promise.resolve();
+		});
+		const [updates, removeIds, baselines] = vi
+			.mocked(window.maestro.sessions.setMany)
+			.mock.calls.at(-1) as unknown as [Session[], string[], Session[]];
+		expect(removeIds).toEqual([]);
+		expect(baselines).toEqual([moved]);
+		// What main's merge makes of it, with the restore already on disk.
+		const { liftedTo: _pointer, ...restored } = moved as unknown as Record<string, unknown>;
+		const written = mergeSessionPersistenceChanges(
+			updates[0] as unknown as Record<string, unknown>,
+			restored,
+			baselines[0] as unknown as Record<string, unknown>
+		);
+		expect(written.name).toBe('Renamed');
+		expect(written.liftedTo).toBeUndefined();
 	});
 });
