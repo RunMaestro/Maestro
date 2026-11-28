@@ -240,7 +240,12 @@ describe('the launchd branch', () => {
 			);
 			expect(plist).toContain('&amp; &lt;co&gt;');
 			expect(plist).not.toContain('$xmlwrapper');
-			expect(fs.readFileSync(log, 'utf8')).toMatch(/launchctl bootstrap user\/\d+ /);
+			const calls = fs.readFileSync(log, 'utf8');
+			expect(calls).toMatch(/launchctl bootstrap user\/\d+ /);
+			// A label `remote-host stop` disabled is enabled again before it loads.
+			expect(calls).toMatch(
+				/launchctl enable user\/\d+\/sh\.maestro\.host\n[\s\S]*launchctl bootstrap/
+			);
 		}
 	);
 });
