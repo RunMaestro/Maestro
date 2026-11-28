@@ -24,6 +24,7 @@ import {
 	getTabDisplayName as libGetTabDisplayName,
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
+import { readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
 import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
 import type { MessagePin } from '../../../shared/messagePins';
 import { collectGroupMemberTabKeys } from '../../../shared/tabStripMembership';
@@ -884,7 +885,18 @@ export function resolveQueuedItemTarget(
 }
 
 /**
- * True when the tab a queued item would run on is already mid-turn.
+ * True while the agent still points at a Federation host (`liftedTo`). Its local queue holds: a
+ * turn spawned here would resume the provider session the host owns. With hosting off the
+ * come-home job (`src/main/federation/come-home.ts`) clears the pointer, and the queue drains then.
+ * With hosting on, sends go to the host (`hostedTargetOf()`) and nothing local should drain either.
+ */
+export function isAwaitingComeHome(session: Pick<Session, 'liftedTo'>): boolean {
+	return readLiftedTo(session.liftedTo) !== undefined;
+}
+
+/**
+ * True when the tab a queued item would run on is already mid-turn, or the agent is still moved
+ * onto a host ({@link isAwaitingComeHome}).
  *
  * The agent process is keyed per tab (`${sessionId}-ai-${tabId}`), so an agent can
  * read idle - or a parallel `-batch-` Auto Run task can exit - while that exact tab
@@ -894,6 +906,7 @@ export function resolveQueuedItemTarget(
  * drains it.
  */
 export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 'tabId'>): boolean {
+	if (isAwaitingComeHome(session)) return true;
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) return false;
 	const tab =

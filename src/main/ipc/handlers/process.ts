@@ -274,11 +274,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	ipcMain.handle('process:spawn', async (event, config: SpawnProcessConfig) => {
 		// A lifted agent runs on its Federation host now. Its local copy keeps every tab, but no turn
 		// of it may start here: it would resume the provider session the host owns. Shell tabs stay.
+		// With hosting off the agent is on its way home (`src/main/federation/come-home.ts`): the
+		// window holds its messages in the queue until then, and this refuses any other path.
 		if (config.toolType !== 'terminal') {
 			const lifted = liftedOwnerOfProcess(deps.sessionsStore.get('sessions', []), config.sessionId);
 			const refusal =
 				lifted &&
-				liftedSendRefusal(lifted, settingsStore.get(HOSTED_AGENTS_SETTING, false) === true);
+				(liftedSendRefusal(lifted, settingsStore.get(HOSTED_AGENTS_SETTING, false) === true) ??
+					`"${lifted.name ?? 'This agent'}" is still on its Federation host and is moving back to this machine. Its messages wait in its queue and run once it is back.`);
 			if (refusal) throw new Error(refusal);
 		}
 		// A web/CLI caller cannot assert the native renderer's submitted log boundary.

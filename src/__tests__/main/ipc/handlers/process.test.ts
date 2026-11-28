@@ -709,7 +709,7 @@ describe('process IPC handlers', () => {
 			expect(shell instanceof Error ? shell.message : '').not.toContain('build-box');
 		});
 
-		it('runs a lifted agent as its SSH agent while hosting was never switched on', async () => {
+		it('with hosting off, refuses a lifted agent turn until it is home, but not a shell', async () => {
 			const lifted = {
 				id: 'lifted-agent',
 				name: 'Lifted',
@@ -739,7 +739,24 @@ describe('process IPC handlers', () => {
 				}
 			).catch((error: Error) => error);
 
-			expect(outcome instanceof Error ? outcome.message : '').not.toContain('build-box');
+			// It would resume the provider session its host owns: refused until the come-home job
+			// clears the pointer. The window holds the message in the queue meanwhile.
+			expect(outcome instanceof Error ? outcome.message : '').toContain(
+				'is moving back to this machine'
+			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+
+			const shell = await handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'lifted-agent-terminal-1',
+					toolType: 'terminal',
+					cwd: '/project',
+					command: 'zsh',
+					args: [],
+				}
+			).catch((error: Error) => error);
+			expect(shell instanceof Error ? shell.message : '').not.toContain('moving back');
 		});
 
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {

@@ -24,12 +24,14 @@
  *   - Agent Resilience: holds the queue while a retry counts down for the target tab
  *   - Agent Resilience: drains the held queue once the retry clears
  *   - Busy target tab: does not dequeue or dispatch onto a tab already mid-turn
+ *   - Coming home: a moved agent's queue holds, with no poll, and drains once when it is back
  *   - Failed dispatch: clears only the tab it marked busy, leaving other turns alone
  *   - Return value: exposes processQueuedItem and processQueuedItemRef
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
+import { readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
 
 // ============================================================================
 // Mocks (declared before imports)
@@ -117,8 +119,10 @@ vi.mock('../../../renderer/utils/tabHelpers', () => {
 	return {
 		getActiveTab: (...args: unknown[]) => mockGetActiveTab(...args),
 		resolveQueuedItemTarget,
-		// Mirrors the real helper over the resolver above.
+		// Mirrors the real helpers over the resolver above.
+		isAwaitingComeHome: (session: any) => readLiftedTo(session?.liftedTo) !== undefined,
 		isQueuedItemTargetBusy: (session: any, item: any) => {
+			if (readLiftedTo(session?.liftedTo) !== undefined) return true;
 			const target = resolveQueuedItemTarget(session, item);
 			if (!target) return false;
 			const tab =
@@ -1390,6 +1394,41 @@ describe('runtime recovery — Agent Resilience hold', () => {
 		});
 
 		expect(mockSetSessions).toHaveBeenCalled();
+	});
+});
+
+// ============================================================================
+// Coming home (a record that still points at a Federation host)
+// ============================================================================
+
+describe('dispatch - an agent still moved onto a host', () => {
+	it('holds its queue without a poll, and runs the held message once when it is home', () => {
+		vi.useFakeTimers();
+		mockSessionStoreState.sessionsLoaded = true;
+		const moved = createSession({
+			executionQueue: [createQueuedItem({ id: 'held-1' })],
+			liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+		});
+		mockSessionStoreState.sessions = [moved];
+
+		const { rerender } = renderHook(() => useQueueProcessing(createDeps()));
+		act(() => {
+			vi.advanceTimersByTime(600);
+		});
+		expect(mockAgentStoreProcessQueuedItem).not.toHaveBeenCalled();
+		expect(mockSetSessions).not.toHaveBeenCalled();
+		// Held, not stuck: no recheck poll is kept alive for it.
+		expect(vi.getTimerCount()).toBe(0);
+
+		// The come-home restore drops the pointer and keeps the queue.
+		const { liftedTo: _gone, ...home } = moved;
+		mockSessionStoreState.sessions = [home as Session];
+		rerender();
+		act(() => {
+			vi.advanceTimersByTime(10_000);
+		});
+		expect(mockAgentStoreProcessQueuedItem).toHaveBeenCalledTimes(1);
+		expect(mockAgentStoreProcessQueuedItem.mock.calls[0][1]).toMatchObject({ id: 'held-1' });
 	});
 });
 

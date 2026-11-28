@@ -2386,6 +2386,29 @@ describe('useInputProcessing', () => {
 			expect([first.item?.text, second.item?.text]).toEqual(['A', 'B']);
 		});
 
+		it('holds a send to an agent still moved onto a host in the queue, and spawns nothing', async () => {
+			// Hosting is off, so hostedTargetOf() answers nothing; the agent is on its way home.
+			const session = createMockSession({
+				state: 'idle',
+				executionQueue: [],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'run once I am home',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [updated] = useSessionStore.getState().sessions;
+			expect(updated.executionQueue.map((queued) => queued.text)).toEqual(['run once I am home']);
+		});
+
 		it('keeps queue order when reconciliation releases the hold during a new send', async () => {
 			let resolveProbe!: (value: []) => void;
 			vi.mocked(window.maestro.process.getActiveProcesses).mockReturnValue(
