@@ -17,8 +17,15 @@
  * 4. The host's copy is removed, unless the caller keeps it, so the agent has one owner again. A
  *    kept copy loses the messages that came back, so they cannot run twice.
  *
+ * The restore in 3 records the copy still to remove (`hostCopyLeft`), and a second write clears it
+ * once 4 is done. A crash, a lost link, or a refused removal in between leaves the agent home with
+ * the marker, and the next return of that agent (the come-home job at the next launch) finishes:
+ * it removes the copy, nothing more, because its tabs and queue already came home.
+ *
  * `offline` skips 2 and 4 for a host that cannot be reached: the agent comes back with only what
- * this machine kept, and the result says the host's copy is still there.
+ * this machine kept, and the result says the host's copy is still there. The marker says so too
+ * (`fetched: false`): a later return that reaches the host brings what the host wrote since (the
+ * transcripts merge row by row, so the rows this machine wrote meanwhile stay), then removes it.
  *
  * Tabs are never dropped: a local tab the host no longer has stays, and a host transcript shorter
  * than the local one does not replace it.
@@ -28,12 +35,14 @@ import type { ClientError, MaestroClient } from '../client/types';
 import type { AITabRecord, AgentRecord } from '../store/records';
 import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
 import { LiftRunError } from './lift-run';
-import type { ReturnedFromHost } from './lift-return-record';
+import { readHostCopyLeft, type HostCopyLeft, type ReturnedFromHost } from './lift-return-record';
 
 export {
+	readHostCopyLeft,
 	readReturnedFromHost,
 	returnRestoreRefusal,
 	withReturnedFromHost,
+	type HostCopyLeft,
 	type ReturnedFromHost,
 } from './lift-return-record';
 
@@ -60,6 +69,8 @@ export interface ReturnRunDeps {
 	hostCallError?(peer: string, error: Pick<ClientError, 'code' | 'message'>): Error;
 	/** Write the restored record (see `withReturnedFromHost()`). Throws on failure. */
 	restore(agentId: string, returned: ReturnedFromHost): Promise<void>;
+	/** Epoch milliseconds, for `HostCopyLeft.returnedAt`. Default `Date.now()`. */
+	now?(): number;
 }
 
 export interface ReturnResult {
@@ -108,7 +119,11 @@ export async function runReturnFromHost(
 	}
 	const agent = deps.readAgents().find((record) => record.id === agentId);
 	if (!agent) throw new LiftRunError('AGENT_NOT_FOUND', `Agent not found: ${agentRef}`);
-	const pointer: LiftedToPointer | undefined = readLiftedTo(agent.liftedTo);
+	// Home already, with a host copy an earlier return did not get to remove: finish that return.
+	const left: HostCopyLeft | undefined = readLiftedTo(agent.liftedTo)
+		? undefined
+		: readHostCopyLeft(agent.hostCopyLeft);
+	const pointer: LiftedToPointer | undefined = readLiftedTo(agent.liftedTo) ?? left;
 	if (!pointer) {
 		throw new LiftRunError(
 			'RETURN_NOT_HOSTED',
@@ -124,9 +139,23 @@ export async function runReturnFromHost(
 	}
 	const from = peerAgentRef(pointer.peer, pointer.agentId);
 	const summary = { id: agent.id, name: agent.name };
+	const now = deps.now ?? Date.now;
+	const copyLeft = (fetched: boolean): HostCopyLeft => ({
+		peer: pointer.peer,
+		agentId: pointer.agentId,
+		at: pointer.at,
+		fetched,
+		returnedAt: left?.returnedAt ?? now(),
+	});
 
 	if (options.offline) {
-		await restoreOrThrow(deps, agent, { tabs: [] });
+		if (left) {
+			throw new LiftRunError(
+				'RETURN_NOT_HOSTED',
+				`"${agent.name}" is home already. Its copy on the host (${from}) is removed once the host answers.`
+			);
+		}
+		await restoreOrThrow(deps, agent, { tabs: [], hostCopyLeft: copyLeft(false) });
 		return {
 			agent: summary,
 			from,
@@ -149,8 +178,17 @@ export async function runReturnFromHost(
 		const hostAgent = await connection.client.agents.get(pointer.agentId);
 		const hostGone = !hostAgent.ok && hostAgent.error.code === 'not-found';
 		if (!hostAgent.ok && !hostGone) throw hostError(connection.peer, hostAgent.error);
+		/** Finishing a return whose tabs and queue already came home: only the removal is left. */
+		const onlyRemove = left?.fetched === true;
 
-		if (hostAgent.ok) {
+		if (hostAgent.ok && onlyRemove) {
+			if ((hostAgent.value.aiTabs ?? []).some((tab) => tab.state === 'busy')) {
+				throw new LiftRunError(
+					'RETURN_BUSY',
+					`The old copy of "${agent.name}" on its host is running a turn. Wait for it to finish, then it is removed.`
+				);
+			}
+		} else if (hostAgent.ok) {
 			const busy = (hostAgent.value.aiTabs ?? []).some((tab) => tab.state === 'busy');
 			if (busy) {
 				throw new LiftRunError(
@@ -195,6 +233,7 @@ export async function runReturnFromHost(
 			}
 			returned = {
 				tabs: withLogs,
+				...(options.keepHostCopy ? {} : { hostCopyLeft: copyLeft(true) }),
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
 				...(queue.value.length > 0
 					? {
@@ -208,30 +247,36 @@ export async function runReturnFromHost(
 						}
 					: {}),
 			};
-		} else {
+		} else if (!onlyRemove) {
 			notices.push(
 				`The host no longer has ${from}: the agent comes back with this machine's copy.`
 			);
 		}
 
-		try {
-			await restoreOrThrow(deps, agent, returned);
-		} catch (error) {
-			await releaseHeld(connection, pointer.agentId, heldIds);
-			throw error;
+		// A finish whose host data already came home has nothing to write before the removal.
+		if (!(hostAgent.ok && onlyRemove)) {
+			try {
+				await restoreOrThrow(deps, agent, returned);
+			} catch (error) {
+				await releaseHeld(connection, pointer.agentId, heldIds);
+				throw error;
+			}
 		}
 
 		let hostCopyRemoved = false;
 		if (hostAgent.ok && !options.keepHostCopy) {
 			const removed = await connection.client.agents.remove(pointer.agentId);
-			if (removed.ok) hostCopyRemoved = true;
-			else {
+			if (removed.ok) {
+				hostCopyRemoved = true;
+				await clearHostCopyLeft(deps, agent, notices);
+			} else {
 				notices.push(
-					`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} On the remote, run: maestro-cli remove-agent ${pointer.agentId}`
+					`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} Maestro removes it at the next launch, or on the remote run: maestro-cli remove-agent ${pointer.agentId}`
 				);
 			}
 		} else if (hostAgent.ok) {
 			notices.push(`The host keeps its copy (${from}). Do not send to both.`);
+			if (onlyRemove) await clearHostCopyLeft(deps, agent, notices);
 			for (const item of returned.queue ?? []) {
 				const removed = await connection.client.turns.queue.remove(pointer.agentId, item.itemId);
 				if (!removed.ok) {
@@ -254,6 +299,26 @@ export async function runReturnFromHost(
 		};
 	} finally {
 		await connection.release();
+	}
+}
+
+/**
+ * The host copy is gone: write the record without the marker, so no later run dials for it. A
+ * failure here is not the agent's: it is home, and the next run finds the copy gone and clears the
+ * marker then. Reported as a notice.
+ */
+async function clearHostCopyLeft(
+	deps: ReturnRunDeps,
+	agent: AgentRecord,
+	notices: string[]
+): Promise<void> {
+	try {
+		await deps.restore(agent.id, { tabs: [] });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		notices.push(
+			`The host copy is removed, but "${agent.name}" could not be saved without its note of it (${message}). Maestro clears it at the next launch.`
+		);
 	}
 }
 

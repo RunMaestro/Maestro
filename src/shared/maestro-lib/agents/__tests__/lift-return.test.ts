@@ -21,7 +21,16 @@ const fail = (code: string, message = 'nope') => ({
 	error: { code, message, method: 'agents.get' },
 });
 
-const log = (id: string) => ({ id, timestamp: 1, source: 'user', text: id });
+const log = (id: string, timestamp = 1) => ({ id, timestamp, source: 'user', text: id });
+const NOW = 5_000;
+/** The marker a restore writes for the host copy still to remove. */
+const copyLeft = (fetched: boolean) => ({
+	peer: 'build-box',
+	agentId: 'host-1',
+	at: 1,
+	fetched,
+	returnedAt: NOW,
+});
 
 function hostedAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 	return {
@@ -93,6 +102,7 @@ function deps(agent: AgentRecord, client = hostClient()) {
 		readAgents: () => [agent],
 		connect,
 		restore,
+		now: () => NOW,
 	};
 	return { value, client, connect, restore, release };
 }
@@ -136,6 +146,22 @@ describe('withReturnedFromHost', () => {
 		expect(merged.activeTabId).toBe('tab-new');
 	});
 
+	it('on an agent already home, keeps the tab running here and every row of both sides', () => {
+		const record = {
+			...hostedAgent(),
+			liftedTo: undefined,
+			hostCopyLeft: copyLeft(false),
+			aiTabs: [{ id: 'tab-1', state: 'busy', logs: [log('l1'), log('m2', 3)] }],
+		} as unknown as Record<string, unknown>;
+		const merged = withReturnedFromHost(record, {
+			tabs: [{ id: 'tab-1', logs: [log('l1'), log('h2', 2)] }],
+		});
+		const tab = (merged.aiTabs as AITabRecord[])[0];
+		expect(tab.state).toBe('busy');
+		expect(tab.logs).toEqual([log('l1'), log('h2', 2), log('m2', 3)]);
+		expect(merged.hostCopyLeft).toBeUndefined();
+	});
+
 	it('keeps a local transcript the host has less of', () => {
 		const record = hostedAgent() as unknown as Record<string, unknown>;
 		const merged = withReturnedFromHost(record, { tabs: [{ id: 'tab-1', logs: [] }] });
@@ -150,6 +176,13 @@ describe('readReturnedFromHost and returnRestoreRefusal', () => {
 			tabs: [{ id: 't1' }],
 			activeTabId: 't1',
 		});
+		expect(readReturnedFromHost({ tabs: [], hostCopyLeft: copyLeft(true) })).toEqual({
+			tabs: [],
+			hostCopyLeft: copyLeft(true),
+		});
+		expect(
+			readReturnedFromHost({ tabs: [], hostCopyLeft: { ...copyLeft(true), fetched: 'yes' } })
+		).toBeUndefined();
 		expect(readReturnedFromHost({ tabs: [{ name: 'no id' }] })).toBeUndefined();
 		expect(readReturnedFromHost({ tabs: 'x' })).toBeUndefined();
 		expect(readReturnedFromHost(null)).toBeUndefined();
@@ -158,6 +191,8 @@ describe('readReturnedFromHost and returnRestoreRefusal', () => {
 	it('refuses a record that is not hosted', () => {
 		expect(returnRestoreRefusal({})).toBe('Agent is not hosted');
 		expect(returnRestoreRefusal(hostedAgent())).toBeUndefined();
+		// Home with a host copy still to remove: the finishing restore is accepted.
+		expect(returnRestoreRefusal({ hostCopyLeft: copyLeft(true) })).toBeUndefined();
 	});
 });
 
@@ -167,17 +202,21 @@ describe('runReturnFromHost', () => {
 		const d = deps(agent);
 		const result = await runReturnFromHost('agent-1', {}, d.value);
 		expect(d.connect).toHaveBeenCalledWith('remote-1', 'build-box');
-		expect(d.restore).toHaveBeenCalledWith('agent-1', {
+		expect(d.restore).toHaveBeenNthCalledWith(1, 'agent-1', {
 			tabs: [
 				expect.objectContaining({ id: 'tab-1', logs: [log('l1'), log('l2')] }),
 				expect.objectContaining({ id: 'tab-new', logs: [log('n1')] }),
 			],
 			activeTabId: 'tab-new',
+			hostCopyLeft: copyLeft(true),
 		});
 		expect(d.client.agents.remove).toHaveBeenCalledWith('host-1');
 		expect(d.restore.mock.invocationCallOrder[0]).toBeLessThan(
 			d.client.agents.remove.mock.invocationCallOrder[0]
 		);
+		// Once the copy is gone, the marker is written away.
+		expect(d.restore).toHaveBeenNthCalledWith(2, 'agent-1', { tabs: [] });
+		expect(d.restore).toHaveBeenCalledTimes(2);
 		expect(result).toEqual({
 			agent: { id: 'agent-1', name: 'Docs' },
 			from: 'build-box:host-1',
@@ -362,15 +401,117 @@ describe('runReturnFromHost', () => {
 		expect(d.restore).toHaveBeenCalled();
 		expect(result.hostCopyRemoved).toBe(false);
 		expect(result.notices?.[0]).toMatch(/could not be removed: socket closed/);
+		// The marker stays, so the next launch removes the copy.
+		expect(d.restore).toHaveBeenCalledTimes(1);
+		expect(d.restore.mock.calls[0][1].hostCopyLeft).toEqual(copyLeft(true));
 	});
 
 	it('moves back offline without dialing, and keeps the host copy', async () => {
 		const d = deps(hostedAgent());
 		const result = await runReturnFromHost('agent-1', { offline: true }, d.value);
 		expect(d.connect).not.toHaveBeenCalled();
-		expect(d.restore).toHaveBeenCalledWith('agent-1', { tabs: [] });
+		expect(d.restore).toHaveBeenCalledWith('agent-1', { tabs: [], hostCopyLeft: copyLeft(false) });
 		expect(result.hostCopyRemoved).toBe(false);
 		expect(result.notices?.[0]).toMatch(/maestro-cli remove-agent host-1/);
+	});
+
+	describe('a host copy left behind (I3, I4)', () => {
+		/** A store the restore writes through `withReturnedFromHost()`, as the window does. */
+		function stored(agent: AgentRecord, client = hostClient()) {
+			const store = new Map<string, AgentRecord>([[agent.id, agent]]);
+			const d = deps(agent, client);
+			d.value.readAgents = () => [...store.values()];
+			d.restore.mockImplementation(async (id: string, returned) => {
+				const record = store.get(id) as unknown as Record<string, unknown>;
+				store.set(id, withReturnedFromHost(record, returned) as unknown as AgentRecord);
+			});
+			return { ...d, store };
+		}
+
+		it('a crash after the restore leaves the agent home and marked; the next return removes the copy and nothing more', async () => {
+			const waiting = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: false };
+			const client = hostClient({ queue: ok([waiting]) });
+			const d = stored(hostedAgent(), client);
+			// The app dies while removing the host copy.
+			client.agents.remove.mockRejectedValueOnce(new Error('app quit'));
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toThrow('app quit');
+			expect(d.release).toHaveBeenCalledTimes(1);
+			const home = d.store.get('agent-1') as AgentRecord & { executionQueue?: unknown[] };
+			expect(home.liftedTo).toBeUndefined();
+			expect(home.hostCopyLeft).toEqual(copyLeft(true));
+			expect(home.executionQueue).toHaveLength(1);
+
+			// The next launch: the copy is removed, its tabs and queue are not read again.
+			client.tabs.list.mockClear();
+			client.turns.queue.list.mockClear();
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.tabs.list).not.toHaveBeenCalled();
+			expect(client.turns.queue.list).not.toHaveBeenCalled();
+			expect(client.agents.remove).toHaveBeenLastCalledWith('host-1');
+			expect(result.hostCopyRemoved).toBe(true);
+			const done = d.store.get('agent-1') as AgentRecord & { executionQueue?: unknown[] };
+			expect(done.hostCopyLeft).toBeUndefined();
+			expect(done.executionQueue).toHaveLength(1);
+			expect(d.release).toHaveBeenCalledTimes(2);
+			// Settled: a third run touches nothing.
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_NOT_HOSTED',
+			});
+		});
+
+		it('a copy left behind that runs a turn is waited out, never removed mid-turn', async () => {
+			const home = { ...hostedAgent(), liftedTo: undefined, hostCopyLeft: copyLeft(true) };
+			const busy = hostClient({
+				agent: ok({ id: 'host-1', aiTabs: [{ id: 'tab-1', state: 'busy' }] }),
+			});
+			const d = stored(home as AgentRecord, busy);
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_BUSY',
+			});
+			expect(busy.agents.remove).not.toHaveBeenCalled();
+			expect(d.store.get('agent-1')?.hostCopyLeft).toEqual(copyLeft(true));
+		});
+
+		it('offline, then the host answers: what the host wrote since comes home, rows written here meanwhile stay, and the copy is removed', async () => {
+			const client = hostClient({
+				tabs: [{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1' }],
+				transcripts: { 'tab-1': [log('l1'), log('h2', 2)] },
+			});
+			const d = stored(hostedAgent(), client);
+			await runReturnFromHost('agent-1', { offline: true }, d.value);
+			expect(d.store.get('agent-1')?.hostCopyLeft).toEqual(copyLeft(false));
+			// The agent works here while the host is down: a new row on its tab.
+			const away = d.store.get('agent-1') as AgentRecord;
+			d.store.set('agent-1', {
+				...away,
+				aiTabs: (away.aiTabs ?? []).map((tab) =>
+					tab.id === 'tab-1' ? { ...tab, logs: [...(tab.logs ?? []), log('m3', 3)] } : tab
+				),
+			});
+			// A return offline again does nothing: it is home.
+			await expect(runReturnFromHost('agent-1', { offline: true }, d.value)).rejects.toMatchObject({
+				code: 'RETURN_NOT_HOSTED',
+			});
+
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(result.hostCopyRemoved).toBe(true);
+			const done = d.store.get('agent-1') as AgentRecord;
+			expect(done.hostCopyLeft).toBeUndefined();
+			expect(done.aiTabs?.find((tab) => tab.id === 'tab-1')?.logs).toEqual([
+				log('l1'),
+				log('h2', 2),
+				log('m3', 3),
+			]);
+			expect(done.aiTabs?.map((tab) => tab.id)).toEqual(['tab-1', 'tab-old']);
+		});
+
+		it('a copy the host no longer has clears the marker without a word', async () => {
+			const home = { ...hostedAgent(), liftedTo: undefined, hostCopyLeft: copyLeft(true) };
+			const d = stored(home as AgentRecord, hostClient({ agent: fail('not-found') }));
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(result.notices).toBeUndefined();
+			expect(d.store.get('agent-1')?.hostCopyLeft).toBeUndefined();
+		});
 	});
 
 	it('throws a LiftRunError for an unknown agent', async () => {

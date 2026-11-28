@@ -7,6 +7,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	createComeHomeRunner,
+	HOST_COPY_RETRY_MS,
+	hostCopiesLeft,
 	movedAgents,
 	onlineSkipReason,
 	runComeHome,
@@ -50,7 +52,11 @@ function refused(code: string, error = code): DesktopReturnAnswer {
 	return { ok: false, code, error };
 }
 
-/** A store the fake return writes to, so "home" is asserted on the stored records. */
+/**
+ * A store the fake return writes to, so "home" is asserted on the stored records. Like the real
+ * return: an offline return leaves the host copy marked (`hostCopyLeft`), an online one clears it,
+ * and a home record with a marker can be returned again (to finish), but not offline.
+ */
 function world(
 	agents: AgentRecord[],
 	answer: (id: string, options: ReturnRunOptions, call: number) => DesktopReturnAnswer
@@ -64,11 +70,24 @@ function world(
 		returnAgent: vi.fn(async (id: string, options: ReturnRunOptions) => {
 			calls.push({ id, options });
 			const current = store.get(id);
-			if (!current?.liftedTo) return refused('RETURN_NOT_HOSTED');
+			const pointer = current?.liftedTo;
+			if (!pointer && (!current?.hostCopyLeft || options.offline)) {
+				return refused('RETURN_NOT_HOSTED');
+			}
 			const result = answer(id, options, calls.filter((c) => c.id === id).length);
-			if (result.ok) {
-				const { liftedTo: _gone, ...home } = current as AgentRecord & { liftedTo?: unknown };
-				store.set(id, { ...home, hostedOptOut: true } as AgentRecord);
+			if (result.ok && current) {
+				const {
+					liftedTo: _gone,
+					hostCopyLeft: _left,
+					...home
+				} = current as AgentRecord & { liftedTo?: unknown };
+				store.set(id, {
+					...home,
+					hostedOptOut: true,
+					...(options.offline && pointer
+						? { hostCopyLeft: { ...pointer, fetched: false, returnedAt: MOVED_AT + 1 } }
+						: {}),
+				} as AgentRecord);
 			}
 			return result;
 		}),
@@ -136,17 +155,65 @@ describe('runComeHome', () => {
 		expect(report.agents[0].result).toBe('online');
 	});
 
-	it('host down, then up at the next launch: offline now, and nothing to do the second time', async () => {
+	it('host down, then up at the next launch: offline now, the host copy finished the second time', async () => {
 		let hostUp = false;
-		const { deps, calls } = world([agent('a')], (_id, options) =>
+		const { deps, store, calls } = world([agent('a')], (_id, options) =>
 			options.offline || hostUp ? ok() : refused('PEER_NOT_CONNECTED')
 		);
-		await runComeHome(deps, { onlineAttempts: 2 });
+		const first = await runComeHome(deps, { onlineAttempts: 2 });
+		expect(first.agents[0].result).toBe('offline');
+		// The offline return in this run is not dialed again in the same run.
+		expect(calls.map((c) => c.options.offline === true)).toEqual([false, false, true]);
+		expect(store.get('a')?.hostCopyLeft).toMatchObject({ agentId: 'host-a', fetched: false });
+
 		hostUp = true;
-		const before = calls.length;
 		const second = await runComeHome(deps);
-		expect(second.agents).toEqual([]);
-		expect(calls.length).toBe(before);
+		expect(calls.slice(3)).toEqual([{ id: 'a', options: {} }]);
+		expect(second.agents[0]).toMatchObject({ id: 'a', result: 'online' });
+		expect(second.agents[0].notices.join(' ')).toContain('old copy on build-box is removed');
+		expect(store.get('a')?.hostCopyLeft).toBeUndefined();
+		expect(store.get('a')?.liftedTo).toBeUndefined();
+
+		// Nothing left: a third launch makes no call.
+		const third = await runComeHome(deps);
+		expect(third.agents).toEqual([]);
+		expect(calls).toHaveLength(4);
+	});
+
+	it('a host copy left behind: one try per launch, silent while the host is down, never offline', async () => {
+		const home = {
+			...agent('a', false),
+			hostCopyLeft: {
+				peer: 'build-box',
+				agentId: 'host-a',
+				at: MOVED_AT,
+				fetched: true,
+				returnedAt: MOVED_AT,
+			},
+		} as AgentRecord;
+		const { deps, store, calls } = world([home], () => refused('PEER_NOT_CONNECTED'));
+		const report = await runComeHome(deps);
+		expect(calls).toEqual([{ id: 'a', options: {} }]);
+		expect(deps.sleep).not.toHaveBeenCalled();
+		expect(report.agents).toEqual([]);
+		expect(store.get('a')?.hostCopyLeft).toBeDefined();
+	});
+
+	it('a host copy left behind is not dialed once it is older than the retry window, or on a remote that may not be dialed', async () => {
+		const left = (returnedAt: number) =>
+			({
+				...agent('a', false),
+				hostCopyLeft: { peer: 'build-box', agentId: 'host-a', at: 1, fetched: true, returnedAt },
+			}) as AgentRecord;
+		const now = MOVED_AT + 1;
+		expect(hostCopiesLeft([left(now - HOST_COPY_RETRY_MS)], now)).toEqual([]);
+		expect(hostCopiesLeft([left(now - 1)], now)).toHaveLength(1);
+
+		const { deps } = world([left(now - 1)], ok);
+		deps.readRemotes = () => [{ ...REMOTE, federation: false } as SshRemoteConfig];
+		const report = await runComeHome(deps);
+		expect(deps.returnAgent).not.toHaveBeenCalled();
+		expect(report.agents).toEqual([]);
 	});
 
 	it('waits out a turn running on the host, never interrupting it, then returns the agent', async () => {

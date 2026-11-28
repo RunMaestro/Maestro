@@ -12,6 +12,10 @@
  * - A host that does not answer is tried a small, fixed number of times. Then the agent is
  *   returned offline, so it works now, and the result records what could not be fetched.
  * - An agent already home is skipped, so a crash or a quit mid-way is finished by the next run.
+ * - An agent home with its host copy still there (`hostCopyLeft`: a crash or a lost link between
+ *   the restore and the removal, or an offline return) is finished: the host is tried again, what
+ *   it wrote since comes home, and the copy is removed, so the agent has one owner (I3). A host
+ *   that still does not answer is left for the next launch, for {@link HOST_COPY_RETRY_MS} only.
  *
  * This is the one Federation path that connects with hosting off. It is bounded: when the last
  * agent is settled it holds no timer and no forward (I6).
@@ -19,7 +23,10 @@
 
 import { isFederationRemote } from '../../shared/federationRemote';
 import { peerAgentRef, readLiftedTo } from '../../shared/maestro-lib/agents/lift-pointer';
-import type { ReturnRunOptions } from '../../shared/maestro-lib/agents/lift-return';
+import {
+	readHostCopyLeft,
+	type ReturnRunOptions,
+} from '../../shared/maestro-lib/agents/lift-return';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { DesktopReturnAnswer } from './lift';
@@ -35,6 +42,11 @@ export const COME_HOME_RETRY_WAIT_MS = 5_000;
 export const COME_HOME_BUSY_WAIT_MS = 10_000;
 /** How long a running host turn is waited out before the agent is left for the next launch. */
 export const COME_HOME_BUSY_MAX_WAIT_MS = 30 * 60_000;
+/**
+ * How long after an agent came home its leftover host copy is still dialed for, one try per
+ * launch. A remote that is gone for good is not dialed at every launch forever.
+ */
+export const HOST_COPY_RETRY_MS = 14 * 24 * 60 * 60_000;
 
 /** Refusals that a later attempt can get past: the host did not answer, or the window did not. */
 const RETRYABLE_CODES = new Set([
@@ -66,6 +78,15 @@ export interface ComeHomeTiming {
 /** The records that still point at a host. */
 export function movedAgents(agents: readonly AgentRecord[]): AgentRecord[] {
 	return agents.filter((agent) => readLiftedTo(agent.liftedTo) !== undefined);
+}
+
+/** The records home again whose host copy is still to remove, and still worth a dial at `now`. */
+export function hostCopiesLeft(agents: readonly AgentRecord[], now: number): AgentRecord[] {
+	return agents.filter((agent) => {
+		if (readLiftedTo(agent.liftedTo)) return false;
+		const left = readHostCopyLeft(agent.hostCopyLeft);
+		return left !== undefined && now - left.returnedAt < HOST_COPY_RETRY_MS;
+	});
 }
 
 /**
@@ -100,6 +121,42 @@ function newestRowAt(agent: AgentRecord): number | undefined {
 		}
 	}
 	return newest;
+}
+
+/**
+ * Finish an agent that is home with its host copy still there: one online try (plus waiting out a
+ * turn the copy runs). Null when there is nothing to tell: the remote may not be dialed, or the
+ * host still does not answer (the person was told where the copy is when the agent came home).
+ */
+async function finishHostCopy(
+	agent: AgentRecord,
+	deps: ComeHomeDeps,
+	timing: Required<ComeHomeTiming>
+): Promise<ComeHomeAgentOutcome | null> {
+	const left = readHostCopyLeft(agent.hostCopyLeft);
+	if (!left || onlineSkipReason(agent, deps.readRemotes())) return null;
+	const outcome: ComeHomeAgentOutcome = {
+		id: agent.id,
+		name: agent.name,
+		from: peerAgentRef(left.peer, left.agentId),
+		result: 'online',
+		notices: [],
+	};
+	let waitedMs = 0;
+	for (;;) {
+		const answer = await deps.returnAgent(agent.id, {});
+		if (answer.ok) {
+			if (answer.result.hostCopyRemoved) {
+				outcome.notices.push(`Its old copy on ${left.peer} is removed.`);
+			}
+			outcome.notices.push(...(answer.result.notices ?? []));
+			return outcome;
+		}
+		if (answer.code !== 'RETURN_BUSY' || waitedMs >= timing.busyMaxWaitMs) return null;
+		outcome.waitedForHostTurn = true;
+		await deps.sleep(timing.busyWaitMs);
+		waitedMs += timing.busyWaitMs;
+	}
 }
 
 async function bringHome(
@@ -188,11 +245,20 @@ export async function runComeHome(
 	const startedAt = deps.now();
 	const agents: ComeHomeAgentOutcome[] = [];
 	if (!deps.hostingEnabled()) {
+		/** Agents this run already dialed for: a copy they left is for the next launch. */
+		const tried = new Set<string>();
 		for (const { id } of movedAgents(deps.readAgents())) {
+			tried.add(id);
 			// Re-read: an earlier return or a user's Move Back may have settled it meanwhile.
 			const current = deps.readAgents().find((agent) => agent.id === id);
 			if (!current || deps.hostingEnabled()) continue;
 			const outcome = await bringHome(current, deps, resolved);
+			if (outcome) agents.push(outcome);
+		}
+		for (const { id } of hostCopiesLeft(deps.readAgents(), deps.now())) {
+			const current = deps.readAgents().find((agent) => agent.id === id);
+			if (!current || tried.has(id) || deps.hostingEnabled()) continue;
+			const outcome = await finishHostCopy(current, deps, resolved);
 			if (outcome) agents.push(outcome);
 		}
 	}

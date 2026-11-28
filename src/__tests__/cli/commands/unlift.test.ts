@@ -93,9 +93,16 @@ describe('maestro-cli unlift', () => {
 		const { deps, remove } = depsWith();
 		await unlift('Docs', { json: true }, deps);
 		expect(deps.connect).toHaveBeenCalledWith('remote-1');
-		expect(deps.restoreInDesktop).toHaveBeenCalledWith('agent-1', {
+		expect(deps.restoreInDesktop).toHaveBeenNthCalledWith(1, 'agent-1', {
 			tabs: [{ id: 'tab-1', agentSessionId: 'sess-1', logs: [] }],
+			hostCopyLeft: expect.objectContaining({
+				peer: 'build-box',
+				agentId: 'host-1',
+				fetched: true,
+			}),
 		});
+		// After the host copy is removed, the record is written once more without its marker.
+		expect(deps.restoreInDesktop).toHaveBeenNthCalledWith(2, 'agent-1', { tabs: [] });
 		expect(deps.restoreOnDisk).not.toHaveBeenCalled();
 		expect(remove).toHaveBeenCalledWith('host-1');
 		expect(lastJson()).toMatchObject({
@@ -176,10 +183,12 @@ describe('maestro-cli unlift --all', () => {
 			}),
 		});
 		await unliftAll({ json: true }, deps);
-		// Two agents share a name: each is returned by its own id, never resolved by name.
-		expect(deps.restoreInDesktop).toHaveBeenCalledTimes(2);
+		// Two agents share a name: each is returned by its own id, never resolved by name. Each is
+		// written twice: home with its host copy marked, then unmarked once the copy is removed.
 		expect(vi.mocked(deps.restoreInDesktop).mock.calls.map(([id]) => id)).toEqual([
 			'agent-1',
+			'agent-1',
+			'agent-2',
 			'agent-2',
 		]);
 		expect(peak).toBe(1);
@@ -208,7 +217,10 @@ describe('maestro-cli unlift --all', () => {
 		expect(out.success).toBe(false);
 		expect(out.agents[0]).toMatchObject({ ok: false, agent: { id: 'agent-1' } });
 		expect(out.agents[1]).toMatchObject({ ok: true, agent: { id: 'agent-2' } });
-		expect(vi.mocked(deps.restoreInDesktop).mock.calls.map(([id]) => id)).toEqual(['agent-2']);
+		expect(vi.mocked(deps.restoreInDesktop).mock.calls.map(([id]) => id)).toEqual([
+			'agent-2',
+			'agent-2',
+		]);
 		expect(process.exitCode).toBe(ExitCode.GeneralError);
 	});
 
