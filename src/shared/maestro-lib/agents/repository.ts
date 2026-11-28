@@ -82,6 +82,7 @@ import {
 	agentsMovingWithParent,
 	applyAgentConfigPatch,
 	applyTabPatch,
+	tabStarRefusal,
 	buildAgentConfigPatch,
 	buildAgentRecord,
 	buildGroupRecord,
@@ -1114,7 +1115,12 @@ export function createAgentRepository(options: AgentRepositoryOptions): AgentRep
 		}));
 
 	const starTab = (agentId: string, tabId: string, starred: boolean) =>
-		changeTab('tabs.star', agentId, tabId, (tab) => applyTabPatch(tab, { starred }));
+		changeTab('tabs.star', agentId, tabId, (tab) => {
+			const refusal = tabStarRefusal(tab, starred);
+			return refusal
+				? { ok: false, code: 'rejected', message: refusal }
+				: applyTabPatch(tab, { starred });
+		});
 
 	const updateTab = (agentId: string, tabId: string, patch: TabPatch) => {
 		const record = buildTabConfigPatch(patch);

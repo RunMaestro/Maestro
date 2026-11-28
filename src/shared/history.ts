@@ -347,6 +347,21 @@ export function mergeEntriesById(base: HistoryEntry[], incoming: HistoryEntry[])
 	return sortEntriesByTimestamp(merged);
 }
 
+/**
+ * An agent's History as a host answers a client's `get_history`: the agent's own entries and the
+ * entries other Maestros shared in its project, merged by id, newest first, the first `limit` when
+ * one is given. One rule for a headless host (`runtime/history.ts`) and a desktop host
+ * (`src/main/web-server/handlers/messageHandlers/history.ts`), so a client reads both alike.
+ */
+export function listAgentHistory(
+	own: HistoryEntry[],
+	shared: HistoryEntry[],
+	limit?: number
+): HistoryEntry[] {
+	const merged = sortEntriesByTimestamp(mergeEntriesById(own, shared));
+	return limit !== undefined && limit >= 0 ? merged.slice(0, limit) : merged;
+}
+
 /** The host key of an entry with no `hostname` (one written on this machine). */
 export const LOCAL_HOST_AGG_KEY = '__local__';
 
@@ -483,12 +498,22 @@ export function parseHistoryJsonl(raw: string): ParsedHistoryJsonl {
 }
 
 /**
- * Keep only the newest `limit` entries from a file-order (oldest-first) array.
- * Used by rotation; returns the input untouched when it already fits.
+ * Keep only the newest `limit` entries, by time, oldest first. Used by rotation; returns the input
+ * untouched when it already fits.
+ *
+ * Newest by `timestamp`, not by file position: a file is oldest-first as each turn appends, but a
+ * Federation move brings a host's entries home by appending them (`HistoryManager.importEntries()`),
+ * and those can be OLDER than the entries already at the file's end. Keeping the file's tail would
+ * then drop newer entries and keep older ones. Entries with the same time keep their file order.
  */
 export function trimHistoryEntriesToLimit(entries: HistoryEntry[], limit: number): HistoryEntry[] {
 	if (limit < 1 || entries.length <= limit) return entries;
-	return entries.slice(entries.length - limit);
+	const time = (entry: HistoryEntry) => (Number.isFinite(entry.timestamp) ? entry.timestamp : 0);
+	const byTime = entries
+		.map((entry, index) => ({ entry, index }))
+		.sort((a, b) => time(a.entry) - time(b.entry) || a.index - b.index)
+		.map(({ entry }) => entry);
+	return byTime.slice(byTime.length - limit);
 }
 
 // ─── Legacy single-object format ────────────────────────────────────────────

@@ -742,8 +742,17 @@ interface MaestroAPI {
 			result: { success: boolean; error?: string }
 		) => void;
 		onRemoteStarTab: (
-			callback: (sessionId: string, tabId: string, starred: boolean) => void
+			callback: (
+				sessionId: string,
+				tabId: string,
+				starred: boolean,
+				responseChannel: string
+			) => void
 		) => () => void;
+		sendRemoteStarTabResponse: (
+			responseChannel: string,
+			result: { success: boolean; error?: string }
+		) => void;
 		onRemoteSnoozeCommand: (
 			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
 		) => () => void;

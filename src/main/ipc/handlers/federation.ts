@@ -72,6 +72,7 @@ import {
 	type CueHistoryGroupsQuery,
 } from '../../utils/cue-history-merge';
 import type { HistoryEntry, HistoryEntryType } from '../../../shared/types';
+import { withLocalHistory } from '../../../shared/maestro-lib/agents/lift-history';
 import {
 	pagePeerHistory,
 	peerHistoryGraph,
@@ -258,8 +259,12 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				)
 		)
 	);
-	// A hosted agent's History: the host's entries, and this machine's Cue runs of the agent's
-	// local record (a host serves no Cue runs), merged before the page, graph, and bar jump.
+	// The local records that point at a host agent: this machine's half of its History.
+	const localRecordsOf = (peer: string, agent: string) =>
+		hostedCueScopeAgents(arrayOfRecords(deps.readSessions()), peer, agent).map((scope) => scope.id);
+	// A hosted agent's History: the host's entries, this machine's own entries of the agent's
+	// local record (its History from before the move, `withLocalHistory()`), and this machine's Cue
+	// runs of it (a host serves no Cue runs), merged before the page, graph, and bar jump.
 	const hostedHistory = async (
 		peerId: unknown,
 		agentId: unknown,
@@ -268,8 +273,11 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 	): Promise<HistoryEntry[]> => {
 		const peer = requireId(peerId, 'peer id');
 		const agent = requireId(agentId, 'agent id');
-		const entries = await requireService().history(peer, agent);
+		const hostEntries = await requireService().history(peer, agent);
 		const records = arrayOfRecords(deps.readSessions());
+		const localIds = localRecordsOf(peer, agent);
+		const localEntries = (await Promise.all(localIds.map((id) => deps.history.read(id)))).flat();
+		const entries = withLocalHistory(hostEntries, localEntries);
 		const cutoff = historyLookbackCutoff(lookbackHours);
 		return withHostedCueRuns(
 			entries,
@@ -331,16 +339,41 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 		)
 	);
 	// The History panel's Delete and Validate on a mirrored agent: the same edits `history:delete`
-	// and `history:update` make on a local agent's History, made by its host.
+	// and `history:update` make on a local agent's History, made where the entry lives: an entry
+	// from before the move on this machine, one the host wrote on the host, an id both hold (a kept
+	// host copy) on both. A host that cannot be reached fails only an edit nothing here took.
+	const editHostedEntry = async (
+		peerId: unknown,
+		agentId: unknown,
+		entryId: unknown,
+		local: (localId: string, entry: string) => Promise<boolean> | undefined,
+		host: (peer: string, agent: string, entry: string) => Promise<boolean>
+	): Promise<boolean> => {
+		const peer = requireId(peerId, 'peer id');
+		const agent = requireId(agentId, 'agent id');
+		const entry = requireId(entryId, 'entry id');
+		let done = false;
+		for (const localId of localRecordsOf(peer, agent)) {
+			if (await local(localId, entry)) done = true;
+		}
+		try {
+			if (await host(peer, agent, entry)) done = true;
+		} catch (error) {
+			if (!done) throw error;
+		}
+		return done;
+	};
 	ipcMain.handle(
 		'federation:historyDelete',
 		withIpcErrorLogging(
 			opts('historyDelete'),
 			async (peerId: unknown, agentId: unknown, entryId: unknown): Promise<boolean> =>
-				requireService().historyRemove(
-					requireId(peerId, 'peer id'),
-					requireId(agentId, 'agent id'),
-					requireId(entryId, 'entry id')
+				editHostedEntry(
+					peerId,
+					agentId,
+					entryId,
+					(localId, entry) => deps.history.remove?.(localId, entry),
+					(peer, agent, entry) => requireService().historyRemove(peer, agent, entry)
 				)
 		)
 	);
@@ -359,11 +392,12 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 						? (updates as { validated?: unknown }).validated
 						: undefined;
 				if (typeof validated !== 'boolean') throw new Error('validated must be a boolean');
-				return requireService().historyUpdate(
-					requireId(peerId, 'peer id'),
-					requireId(agentId, 'agent id'),
-					requireId(entryId, 'entry id'),
-					{ validated }
+				return editHostedEntry(
+					peerId,
+					agentId,
+					entryId,
+					(localId, entry) => deps.history.update?.(localId, entry, { validated }),
+					(peer, agent, entry) => requireService().historyUpdate(peer, agent, entry, { validated })
 				);
 			}
 		)
@@ -414,7 +448,11 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 				>;
 				return returnAgentFromDesktop(
 					requireId(agentId, 'agent id'),
-					{ offline: raw.offline === true, keepHostCopy: raw.keepHostCopy === true },
+					{
+						offline: raw.offline === true,
+						keepHostCopy: raw.keepHostCopy === true,
+						dryRun: raw.dryRun === true,
+					},
 					liftDeps
 				);
 			}

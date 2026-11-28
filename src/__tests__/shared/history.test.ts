@@ -172,6 +172,19 @@ describe('shared/history', () => {
 				expect(trimHistoryEntriesToLimit(entries, 2).map((e) => e.id)).toEqual(['c', 'd']);
 			});
 
+			it('keeps the newest by time when an older entry sits at the end of the file (CodeRabbit on #2181)', () => {
+				// A Move Back appends the host's entries, which can be older than the file's tail.
+				const file = [
+					createMockEntry({ id: 'local-20', timestamp: 20 }),
+					createMockEntry({ id: 'local-30', timestamp: 30 }),
+					createMockEntry({ id: 'imported-10', timestamp: 10 }),
+				];
+				expect(trimHistoryEntriesToLimit(file, 2).map((e) => e.id)).toEqual([
+					'local-20',
+					'local-30',
+				]);
+			});
+
 			it('returns the input untouched when it already fits', () => {
 				expect(trimHistoryEntriesToLimit(entries, 4)).toBe(entries);
 				expect(trimHistoryEntriesToLimit(entries, 99)).toBe(entries);

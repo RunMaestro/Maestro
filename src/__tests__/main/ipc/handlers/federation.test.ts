@@ -40,6 +40,11 @@ import { configureImageStore } from '../../../../main/storage/session-image-stor
 import { setPeerMirrorServiceForTests, type PeerMirrorService } from '../../../../main/federation';
 import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../../../shared/federationCommands';
 import type { AgentRecord } from '../../../../shared/maestro-lib/store/records';
+import {
+	createMemoryAgentHistoryStore,
+	type MemoryAgentHistoryStore,
+} from '../../../helpers/agentHistoryStore';
+import type { HistoryEntry } from '../../../../shared/types';
 
 const liftableAgent: AgentRecord = {
 	id: 'agent-1',
@@ -101,8 +106,20 @@ function fakeService() {
 	};
 }
 
+/** The local record of the hosted agent `a:x`: its History from before the move is here. */
+const hostedRecord = {
+	...liftableAgent,
+	id: 'local-x',
+	name: 'Hosted',
+	liftedTo: { peer: 'a', agentId: 'x', at: 1 },
+} as AgentRecord;
+let storedAgents: AgentRecord[] = [liftableAgent];
+let localHistory: MemoryAgentHistoryStore = createMemoryAgentHistoryStore();
+
 describe('federation IPC handlers', () => {
 	beforeEach(() => {
+		storedAgents = [liftableAgent];
+		localHistory = createMemoryAgentHistoryStore();
 		handlers.clear();
 		(ipcMain.handle as Mock).mockImplementation(
 			(channel: string, handler: (...args: unknown[]) => Promise<unknown>) => {
@@ -112,7 +129,8 @@ describe('federation IPC handlers', () => {
 		setPeerMirrorServiceForTests(null);
 		requestFromRenderer.mockReset();
 		registerFederationHandlers({
-			readSessions: () => [liftableAgent],
+			readSessions: () => storedAgents,
+			history: localHistory,
 			readSshRemotes: () => [
 				{ id: 'remote-1', name: 'build-box', enabled: true, federation: true },
 			],
@@ -328,6 +346,90 @@ describe('federation IPC handlers', () => {
 					true
 				);
 				expect(service.historyUpdate).toHaveBeenCalledWith('a', 'x', 'h1', { validated: false });
+			});
+
+			describe('one History across a move (L39)', () => {
+				const before = (id: string, hoursAgo: number, extra: Partial<HistoryEntry> = {}) =>
+					({
+						id,
+						type: 'USER',
+						timestamp: NOW - hoursAgo * HOUR,
+						summary: id,
+						projectPath: '/p',
+						sessionId: 'local-x',
+						...extra,
+					}) as HistoryEntry;
+
+				beforeEach(() => {
+					storedAgents = [liftableAgent, hostedRecord];
+					// Two entries from before the move, one of them also on the host (a shared id).
+					localHistory = createMemoryAgentHistoryStore({
+						'local-x': [before('pre-1', 50), before('h2', 2, { summary: 'local copy' })],
+					});
+					handlers.clear();
+					registerFederationHandlers({
+						readSessions: () => storedAgents,
+						readSshRemotes: () => [],
+						readAgentConfigs: () => ({}),
+						getMainWindow: () => mainWindow as never,
+						getProcessManager: () => null,
+						readAutoMove: () => false,
+						history: localHistory,
+					});
+				});
+
+				it("lists this machine's entries of the local record with the host's, each id once", async () => {
+					const page = (await call('federation:historyPage', 'a', 'x')) as {
+						entries: Array<{ id: string; summary: string }>;
+						total: number;
+					};
+					expect(page.entries.map((entry) => entry.id)).toEqual(['h1', 'h2', 'h3', 'pre-1']);
+					expect(page.total).toBe(4);
+					// The host's copy of a shared id is the one listed.
+					expect(page.entries[1].summary).toBe('b');
+					const graph = (await call('federation:historyGraph', 'a', 'x', 24, null)) as {
+						totalCount: number;
+					};
+					expect(graph.totalCount).toBe(4);
+				});
+
+				it('lists only the host for an agent no local record points at', async () => {
+					const page = (await call('federation:historyPage', 'a', 'other')) as {
+						entries: Array<{ id: string }>;
+					};
+					expect(page.entries.map((entry) => entry.id)).toEqual(['h1', 'h2', 'h3']);
+				});
+
+				it('deletes and validates an entry where it lives: here, on the host, or both', async () => {
+					service.historyUpdate.mockResolvedValue(false);
+					service.historyRemove.mockResolvedValue(false);
+					expect(
+						await call('federation:historyUpdate', 'a', 'x', 'pre-1', { validated: true })
+					).toBe(true);
+					expect(localHistory.entriesOf('local-x').find((e) => e.id === 'pre-1')?.validated).toBe(
+						true
+					);
+					expect(await call('federation:historyDelete', 'a', 'x', 'pre-1')).toBe(true);
+					expect(localHistory.entriesOf('local-x').map((e) => e.id)).toEqual(['h2']);
+
+					// An id both sides hold goes on both, so the panel does not draw it again.
+					service.historyRemove.mockResolvedValue(true);
+					expect(await call('federation:historyDelete', 'a', 'x', 'h2')).toBe(true);
+					expect(localHistory.entriesOf('local-x')).toEqual([]);
+					expect(service.historyRemove).toHaveBeenLastCalledWith('a', 'x', 'h2');
+
+					// A host entry only the host holds: the host answers.
+					service.historyRemove.mockResolvedValue(false);
+					expect(await call('federation:historyDelete', 'a', 'x', 'h1')).toBe(false);
+				});
+
+				it('takes an edit of an entry here while the host is down, and fails one only the host holds', async () => {
+					service.historyRemove.mockRejectedValue(new Error('Peer "a" is not connected'));
+					expect(await call('federation:historyDelete', 'a', 'x', 'pre-1')).toBe(true);
+					await expect(call('federation:historyDelete', 'a', 'x', 'h1')).rejects.toThrow(
+						/not connected/
+					);
+				});
 			});
 
 			it('refuses an edit with no entry id or no boolean validated', async () => {

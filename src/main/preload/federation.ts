@@ -115,11 +115,12 @@ export function createFederationApi() {
 			ipcRenderer.invoke('federation:lift', agentId, options ?? {}),
 		/**
 		 * Move Back from Host: make a hosted agent an SSH agent again, with the host's tabs merged in
-		 * (`maestro-cli unlift`). `offline` restores from this machine's copy without the host.
+		 * (`maestro-cli unlift`). `offline` restores from this machine's copy without the host;
+		 * `dryRun` answers what would come back (tabs, History entries) and moves nothing.
 		 */
 		unlift: (
 			agentId: string,
-			options?: { offline?: boolean; keepHostCopy?: boolean }
+			options?: { offline?: boolean; keepHostCopy?: boolean; dryRun?: boolean }
 		): Promise<DesktopReturnAnswer> =>
 			ipcRenderer.invoke('federation:unlift', agentId, options ?? {}),
 		/**

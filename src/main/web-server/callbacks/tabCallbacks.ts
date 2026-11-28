@@ -5,7 +5,12 @@ import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { createKeyedWriteQueue } from '../../utils/atomic-json-store';
-import { normalizeRenameTabResult, type OpenFileTabOptions, type RenameTabResult } from '../types';
+import {
+	normalizeRenameTabResult,
+	normalizeStarTabResult,
+	type OpenFileTabOptions,
+	type RenameTabResult,
+} from '../types';
 import { requestFromRenderer } from './remoteRequest';
 import {
 	normalizeSnoozeCommandResult,
@@ -265,15 +270,20 @@ export function registerTabCallbacks(
 		const targetWindow = resolveSessionWindow(sessionId);
 		if (!targetWindow) {
 			logger.warn('No owning window is available for starTab', 'WebServer');
-			return false;
+			return { success: false, error: 'No window is open for this agent' };
 		}
 
 		if (!isWebContentsAvailable(targetWindow)) {
 			logger.warn('webContents is not available for starTab', 'WebServer');
-			return false;
+			return { success: false, error: 'No window is open for this agent' };
 		}
-		targetWindow.webContents.send('remote:starTab', sessionId, tabId, starred);
-		return true;
+		// A round trip: the window answers with what the star did, so a refused star (a tab with
+		// no conversation yet, a tab that is gone) reaches the caller with its reason.
+		return requestFromRenderer(targetWindow, 'remote:starTab', {
+			args: [sessionId, tabId, starred],
+			fallback: { success: false, error: 'The desktop did not answer the star' },
+			parse: normalizeStarTabResult,
+		});
 	});
 
 	// Snooze verbs are a ROUND TRIP, not a fire-and-forget send: the CLI's caller

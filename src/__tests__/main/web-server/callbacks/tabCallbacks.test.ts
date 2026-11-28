@@ -31,6 +31,13 @@ function setup() {
 	let reopenCallback:
 		| ((sessionId: string, tabId: string) => Promise<{ tabId: string } | null>)
 		| undefined;
+	let starCallback:
+		| ((
+				sessionId: string,
+				tabId: string,
+				starred: boolean
+		  ) => Promise<{ success: boolean; error?: string }>)
+		| undefined;
 	const webContents = {
 		send: vi.fn(),
 		once: vi.fn(),
@@ -52,7 +59,11 @@ function setup() {
 							? (callback: typeof reopenCallback) => {
 									reopenCallback = callback;
 								}
-							: () => {},
+							: prop === 'setStarTabCallback'
+								? (callback: typeof starCallback) => {
+										starCallback = callback;
+									}
+								: () => {},
 		}
 	);
 
@@ -68,6 +79,7 @@ function setup() {
 		renameCallback: renameCallback!,
 		closeCallback: closeCallback!,
 		reopenCallback: reopenCallback!,
+		starCallback: starCallback!,
 		webContents,
 	};
 }
@@ -140,6 +152,38 @@ describe('tab callbacks', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it('answers a star with what the window did, not with the delivery (L40)', async () => {
+		// The star was fire-and-forget: the caller heard "Starred" for a tab the window refused.
+		const { starCallback, webContents } = setup();
+		const pending = starCallback('session-1', 'tab-1', true);
+		expect(webContents.send).toHaveBeenCalledWith(
+			'remote:starTab',
+			'session-1',
+			'tab-1',
+			true,
+			expect.any(String)
+		);
+		respond(webContents, 0, {
+			success: false,
+			error: 'This tab has no conversation yet, so it cannot be starred',
+		});
+		expect(await pending).toEqual({
+			success: false,
+			error: 'This tab has no conversation yet, so it cannot be starred',
+		});
+
+		const done = starCallback('session-1', 'tab-1', true);
+		respond(webContents, 1, { success: true });
+		expect(await done).toEqual({ success: true });
+	});
+
+	it.each([undefined, true, {}, 'ok'])('never reads a star answer %j as success', async (reply) => {
+		const { starCallback, webContents } = setup();
+		const pending = starCallback('session-1', 'tab-1', true);
+		respond(webContents, 0, reply);
+		expect(await pending).toEqual({ success: false, error: 'The desktop did not star the tab' });
 	});
 
 	it('returns only the desktop-minted reopen identity', async () => {

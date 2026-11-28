@@ -5,6 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createMemoryAgentHistoryStore } from '../../helpers/agentHistoryStore';
 
 vi.mock('../../../cli/services/storage', () => ({
 	getSyncDir: vi.fn(() => '/tmp/maestro'),
@@ -18,7 +19,12 @@ vi.mock('../../../cli/services/storage', () => ({
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { lift, withLiftPointer, type LiftDeps } from '../../../cli/commands/lift';
+import {
+	cliAgentHistoryStore,
+	lift,
+	withLiftPointer,
+	type LiftDeps,
+} from '../../../cli/commands/lift';
 import { getSyncDir } from '../../../cli/services/storage';
 import { createSessionImageStore } from '../../../shared/maestro-lib/store/session-images';
 import { ExitCode } from '../../../cli/exit-codes';
@@ -75,7 +81,10 @@ function fakeConnection(
 	const connection = {
 		peer: 'build-box',
 		remote,
-		client: { agents: { import: importAgent, remove } },
+		client: {
+			agents: { import: importAgent, remove },
+			history: { list: vi.fn().mockResolvedValue({ ok: true, value: [] }) },
+		},
 		release,
 	} as unknown as PeerConnection;
 	return { connection, importAgent, remove, release };
@@ -99,6 +108,7 @@ function depsWith(
 		connect: vi.fn().mockResolvedValue(connection.connection),
 		setPointerInDesktop: vi.fn().mockResolvedValue({ success: true }),
 		setPointerOnDisk: vi.fn().mockResolvedValue(undefined),
+		history: createMemoryAgentHistoryStore(),
 		now: () => NOW,
 		...overrides,
 	};
@@ -418,5 +428,56 @@ describe('withLiftPointer', () => {
 		const pointer = { peer: 'build-box', agentId: 'host-1', at: NOW };
 		const lifted = withLiftPointer({ id: 'agent-1', hostedOptOut: true }, pointer, []);
 		expect(lifted).toEqual({ id: 'agent-1', liftedTo: pointer });
+	});
+});
+
+/**
+ * The History a host copy wrote comes home through whoever owns this machine's store (review on
+ * #2181): an append from the CLI beside a running desktop could land between a rotation's read and
+ * its rename there, and be lost. So it goes through the desktop's write queue, and to the files
+ * only when nothing runs.
+ */
+describe('cliAgentHistoryStore', () => {
+	const coming = [
+		{ id: 'h1', type: 'AUTO', timestamp: 1, summary: 'h1', projectPath: '/p', sessionId: 'a1' },
+	] as never[];
+
+	it('writes through the running desktop, not the files', async () => {
+		const disk = createMemoryAgentHistoryStore();
+		const importInDesktop = vi.fn(async () => ({ success: true, imported: 1 }));
+		const store = cliAgentHistoryStore({ owner: () => 'desktop', importInDesktop, disk });
+		await store.append('a1', coming);
+		expect(importInDesktop).toHaveBeenCalledWith('a1', coming);
+		expect(disk.appends).toEqual([]);
+	});
+
+	it("throws the desktop's refusal, so the move changes nothing", async () => {
+		const store = cliAgentHistoryStore({
+			owner: () => 'desktop',
+			importInDesktop: async () => ({ success: false, error: 'EACCES: permission denied' }),
+			disk: createMemoryAgentHistoryStore(),
+		});
+		await expect(store.append('a1', coming)).rejects.toThrow('EACCES');
+	});
+
+	it('writes the files when nothing runs, or the desktop quit since the check', async () => {
+		const disk = createMemoryAgentHistoryStore();
+		await cliAgentHistoryStore({ owner: () => 'none', disk }).append('a1', coming);
+		await cliAgentHistoryStore({
+			owner: () => 'desktop',
+			importInDesktop: async () => {
+				throw new MaestroNotRunningError();
+			},
+			disk,
+		}).append('a1', coming);
+		expect(disk.appends).toHaveLength(2);
+	});
+
+	it('refuses while a headless host owns the store', async () => {
+		const disk = createMemoryAgentHistoryStore();
+		await expect(
+			cliAgentHistoryStore({ owner: () => 'headless-host', disk }).append('a1', coming)
+		).rejects.toThrow('maestro-cli host owns');
+		expect(disk.appends).toEqual([]);
 	});
 });

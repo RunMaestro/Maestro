@@ -35,7 +35,7 @@ function hydrateHost() {
 	usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
 }
 
-function seed(mode: AgentMode): Session {
+function seed(mode: AgentMode, agentSessionId: string | null = 'sess-1'): Session {
 	const session = createModeSession(mode, {
 		id: 'row',
 		inputMode: 'ai',
@@ -43,6 +43,7 @@ function seed(mode: AgentMode): Session {
 		aiTabs: [
 			createMockAITab({
 				id: 't1',
+				agentSessionId,
 				showThinking: 'sticky',
 				logs: [
 					{ id: 'l1', timestamp: 1, source: 'user', text: 'hi' },
@@ -140,6 +141,57 @@ describe('tab thinking from the CLI (T6)', () => {
 			expect(tab().starred).toBe(true);
 			expect(hostCalls()).toEqual(
 				mode === 'hosted' ? [{ kind: 'star-tab', tabId: 't1', starred: true }] : []
+			);
+		}
+	);
+
+	it.each(AGENT_MODES)(
+		'%s: a star on a tab with no provider session yet is refused with the reason (L40)',
+		async (mode) => {
+			seed(mode, null);
+			mount();
+			patchTab({ starred: true });
+			await vi.waitFor(() =>
+				expect(respond).toHaveBeenCalledWith('ch', {
+					success: false,
+					error:
+						"This tab's provider has not reported a session for it yet, so it cannot be starred",
+				})
+			);
+			expect(tab().starred).toBe(false);
+			expect(hostCalls()).toEqual([]);
+		}
+	);
+
+	it.each(AGENT_MODES)(
+		'%s: a patch that clears the provider session cannot star the tab (CodeRabbit on #2181)',
+		async (mode) => {
+			seed(mode);
+			mount();
+			patchTab({ agentSessionId: null, starred: true });
+			await vi.waitFor(() =>
+				expect(respond).toHaveBeenCalledWith('ch', {
+					success: false,
+					error:
+						"This tab's provider has not reported a session for it yet, so it cannot be starred",
+				})
+			);
+			expect(tab().starred).toBe(false);
+			expect(tab().agentSessionId).toBe('sess-1');
+			expect(hostCalls()).toEqual([]);
+		}
+	);
+
+	it.each(AGENT_MODES)(
+		'%s: a patch that sets a provider session and a star sends the session to the host first (CodeRabbit on #2181)',
+		async (mode) => {
+			seed(mode, null);
+			mount();
+			patchTab({ agentSessionId: 'sess-9', starred: true });
+			await vi.waitFor(() => expect(respond).toHaveBeenCalledWith('ch', { success: true }));
+			expect(tab()).toMatchObject({ agentSessionId: 'sess-9', starred: true });
+			expect(hostCalls().map((call) => (call as { kind: string }).kind)).toEqual(
+				mode === 'hosted' ? ['update-tab', 'star-tab'] : []
 			);
 		}
 	);

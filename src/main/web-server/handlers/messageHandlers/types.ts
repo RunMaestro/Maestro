@@ -52,6 +52,7 @@ import type {
 	ConsultAgentParams,
 	ConsultAgentResult,
 	RenameTabResult,
+	StarTabResult,
 	SnoozeCommandCallback,
 	ClosedTabCommandCallback,
 	MessagePinCommandCallback,
@@ -169,7 +170,7 @@ export interface MessageHandlerCallbacks {
 		tabId: string,
 		newName: string
 	) => Promise<boolean | RenameTabResult>;
-	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
+	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<StarTabResult>;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
 	/** `maestro-cli tab closed` / `tab reopen` - read and reopen the closed-tab stack. */

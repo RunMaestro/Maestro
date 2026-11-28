@@ -10,19 +10,25 @@
 
 import { selectSessionById, updateAiTab, useSessionStore } from '../stores/sessionStore';
 import { persistTabStarred } from '../utils/starredSessions';
+import { tabStarRefusal } from '../../shared/maestro-lib/agents/rules';
 import { starHostedTab } from './hostedTurns';
 
+/** What a star write did: done, or refused with the reason a caller shows. */
+export type TabStarResult = { success: true } | { success: false; error: string };
+
 /**
- * Star or unstar one tab, here and on its host. A tab that is not there is left alone; the
- * provider write is skipped for a tab with no provider session yet. Callers that only star a
- * tab with a conversation check that themselves. Returns whether the tab was found.
+ * Star or unstar one tab, here and on its host. A star marks a conversation, so a tab with no
+ * provider session yet is refused (`tabStarRefusal()`) in every mode, and a tab that is not there
+ * is refused as not found. Nothing is written on a refusal.
  */
-export function setTabStarred(sessionId: string, tabId: string, starred: boolean): boolean {
+export function setTabStarred(sessionId: string, tabId: string, starred: boolean): TabStarResult {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
-	if (!session || !tab) return false;
+	if (!session || !tab) return { success: false, error: `Tab not found: ${tabId}` };
+	const refusal = tabStarRefusal(tab, starred);
+	if (refusal) return { success: false, error: refusal };
 	persistTabStarred(session, tab, starred);
 	starHostedTab(session, tabId, starred);
 	updateAiTab(sessionId, tabId, (current) => ({ ...current, starred }));
-	return true;
+	return { success: true };
 }

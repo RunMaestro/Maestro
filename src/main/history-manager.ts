@@ -123,6 +123,12 @@ export class HistoryManager {
 	 */
 	private writeQueue = createKeyedWriteQueue();
 	/**
+	 * The legacy-to-JSONL migration running for a session, shared by every caller that needs it: a
+	 * read migrates outside the write queue, and an import (inside its queue slot) waiting on the
+	 * same run cannot be overwritten by it afterwards.
+	 */
+	private migrations = new Map<string, Promise<HistoryEntry[] | null>>();
+	/**
 	 * Resolves the user's per-session entry cap (`maxLogBuffer`). Set once at
 	 * startup by the main process so fire-and-forget writers - Cue notify,
 	 * Cue command, Cue agent runs - trim to the SAME cap the IPC path uses.
@@ -385,7 +391,17 @@ export class HistoryManager {
 	 * one-time format change is not worth a destructive step. Returns the
 	 * migrated entries in file order, or null when there was nothing to migrate.
 	 */
-	private async migrateSessionToJsonl(sessionId: string): Promise<HistoryEntry[] | null> {
+	private migrateSessionToJsonl(sessionId: string): Promise<HistoryEntry[] | null> {
+		const running = this.migrations.get(sessionId);
+		if (running) return running;
+		const run = this.runSessionMigration(sessionId).finally(() => {
+			if (this.migrations.get(sessionId) === run) this.migrations.delete(sessionId);
+		});
+		this.migrations.set(sessionId, run);
+		return run;
+	}
+
+	private async runSessionMigration(sessionId: string): Promise<HistoryEntry[] | null> {
 		const legacyPath = this.getLegacySessionFilePath(sessionId);
 		const jsonlPath = this.getSessionFilePath(sessionId);
 
@@ -411,6 +427,12 @@ export class HistoryManager {
 		const fileOrder = [...legacyEntries].reverse();
 		const serialized = fileOrder.map(serializeHistoryEntryLine).join('');
 
+		// A JSONL file written since this read began (another process, or a path that did not share
+		// this run) is never replaced by the legacy snapshot: it is the newer state, and it is what
+		// the caller reads (a failure to read it propagates, as any read failure here does).
+		if (await pathExists(jsonlPath)) {
+			return parseHistoryJsonl(stripJsonBom(await fsp.readFile(jsonlPath, 'utf-8'))).entries;
+		}
 		await atomicWriteFile(jsonlPath, serialized);
 		try {
 			await fsp.rename(legacyPath, `${legacyPath}.migrated`);
@@ -435,7 +457,10 @@ export class HistoryManager {
 	 * `.json` session on first touch. Internal: callers that face the rest of
 	 * the app want newest-first, which is what `getEntries` returns.
 	 */
-	private async readEntriesInFileOrder(sessionId: string): Promise<HistoryEntry[]> {
+	private async readEntriesInFileOrder(
+		sessionId: string,
+		options: { strict?: boolean } = {}
+	): Promise<HistoryEntry[]> {
 		const filePath = this.getSessionFilePath(sessionId);
 		let raw: string;
 		try {
@@ -443,6 +468,7 @@ export class HistoryManager {
 		} catch (error) {
 			const code = (error as NodeJS.ErrnoException).code;
 			if (code !== 'ENOENT') {
+				if (options.strict) throw error;
 				logger.warn(`Failed to read history for session ${sessionId}: ${error}`, LOG_CONTEXT);
 				captureException(error, { operation: 'history:read', sessionId });
 				return [];
@@ -452,6 +478,7 @@ export class HistoryManager {
 			try {
 				return (await this.migrateSessionToJsonl(sessionId)) ?? [];
 			} catch (migrateError) {
+				if (options.strict) throw migrateError;
 				logger.warn(
 					`Failed to migrate history for session ${sessionId}: ${migrateError}`,
 					LOG_CONTEXT
@@ -482,6 +509,32 @@ export class HistoryManager {
 	}
 
 	/**
+	 * `getEntries`, but a file that is there and cannot be read (EACCES, EIO), or a legacy file that
+	 * cannot be migrated, THROWS instead of reading as no History. For a caller that acts on the
+	 * answer (a Federation move removes a host copy after it, a client takes an empty list as the
+	 * truth): an agent that has no History yet still reads `[]`.
+	 */
+	async getEntriesStrict(sessionId: string): Promise<HistoryEntry[]> {
+		const entries = await this.readEntriesInFileOrder(sessionId, { strict: true });
+		return normalizeHistoryEntries(sortEntriesByTimestamp(entries.reverse()));
+	}
+
+	/**
+	 * A stamp of the session's History file that changes with every write to it, from this app or
+	 * any other process (the CLI appends to the same file): its size and modification time. Null
+	 * when the session has no JSONL file (none yet, or a legacy `.json` not migrated). Lets a reader
+	 * keep a parsed list until the file changes (`desktopAgentHistoryStore()`).
+	 */
+	async getFileStamp(sessionId: string): Promise<string | null> {
+		try {
+			const stat = await fsp.stat(this.getSessionFilePath(sessionId));
+			return `${stat.mtimeMs}:${stat.size}`;
+		} catch {
+			return null;
+		}
+	}
+
+	/**
 	 * Read history for a specific session, newest first.
 	 *
 	 * The newest-first contract predates JSONL (the legacy file stored entries
@@ -494,8 +547,9 @@ export class HistoryManager {
 		// type existed) so no consumer has to special-case them. Applied here
 		// rather than in the file-order reader because the trim/prune paths write
 		// what they read back to disk, and a read is not the moment to rewrite
-		// entries the user has not touched.
-		return normalizeHistoryEntries(entries.reverse());
+		// entries the user has not touched. Sorted by time, not only reversed: a Federation move
+		// appends a host's entries, which can be older than the file's tail (`importEntries`).
+		return normalizeHistoryEntries(sortEntriesByTimestamp(entries.reverse()));
 	}
 
 	/**
@@ -549,14 +603,52 @@ export class HistoryManager {
 	}
 
 	/**
+	 * Add entries another machine wrote for this agent (a Federation Move Back brings a host's
+	 * entries home): each id once, appended oldest first in one write on the session's queue, so the
+	 * check for ids already here and the append cannot interleave with a Delete, a Validate, or a
+	 * rotation. Unlike `addEntry`, a failed write THROWS: the caller must not go on (and remove the
+	 * host's copy) as if the entries were saved. Returns how many were new.
+	 */
+	async importEntries(sessionId: string, entries: readonly HistoryEntry[]): Promise<number> {
+		if (entries.length === 0) return 0;
+		const limit = this.resolveMaxEntries();
+		return this.writeQueue.enqueue(sessionId, async () => {
+			// Strict: a legacy `.json` that cannot be migrated would sit beside a new `.jsonl` holding
+			// only these entries, and the reads would no longer list the rest.
+			await this.ensureJsonlFile(sessionId, { strict: true });
+			const here = new Set(
+				(await this.readEntriesInFileOrder(sessionId, { strict: true })).map((e) => e.id)
+			);
+			// Each id once: one already in the file, or twice in this batch, is written once.
+			const fresh = entries.filter((entry) => {
+				if (here.has(entry.id)) return false;
+				here.add(entry.id);
+				return true;
+			});
+			if (fresh.length === 0) return 0;
+			await fsp.appendFile(
+				this.getSessionFilePath(sessionId),
+				fresh.map((entry) => serializeHistoryEntryLine(entry)).join(''),
+				'utf-8'
+			);
+			await this.maybeRotate(sessionId, limit);
+			return fresh.length;
+		});
+	}
+
+	/**
 	 * Ensure a JSONL file exists for this session, migrating a legacy `.json`
 	 * first if one is present. Cheap on the steady-state path (one `access`).
 	 */
-	private async ensureJsonlFile(sessionId: string): Promise<void> {
+	private async ensureJsonlFile(
+		sessionId: string,
+		options: { strict?: boolean } = {}
+	): Promise<void> {
 		if (await pathExists(this.getSessionFilePath(sessionId))) return;
 		try {
 			await this.migrateSessionToJsonl(sessionId);
 		} catch (error) {
+			if (options.strict) throw error;
 			logger.warn(
 				`Failed to migrate history for session ${sessionId} before append: ${error}`,
 				LOG_CONTEXT

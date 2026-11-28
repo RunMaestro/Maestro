@@ -43,6 +43,13 @@ import type { AITabRecord } from '../store/records';
 import { sessionImageContentSha256 } from '../store/session-images';
 import { truncateAtWordBoundary } from '../../formatters';
 import { stripMarkdown } from '../../markdown';
+import {
+	bringHostHistoryHome,
+	historyEntryCount,
+	planHostHistoryHome,
+	type AgentHistoryStore,
+} from './lift-history';
+import type { HistoryEntry } from '../../types';
 
 export interface LiftRunOptions {
 	/** Build and show the plan, then stop. */
@@ -70,7 +77,7 @@ export function liftErrorCode(code: string): string {
 export interface LiftHostConnection {
 	/** The peer id the host is addressed by: the pointer names it. */
 	peer: string;
-	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'> &
+	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns' | 'history'> &
 		Partial<Pick<MaestroClient, 'connection'>>;
 	release(): Promise<void>;
 }
@@ -94,6 +101,8 @@ export interface LiftRunDeps {
 	hostCallError?(peer: string, error: Pick<ClientError, 'code' | 'message'>): Error;
 	/** Make the local agent a pointer and take the moved queue items off its queue. Throws on failure. */
 	setPointer(agentId: string, pointer: LiftedToPointer, movedQueueItemIds: string[]): Promise<void>;
+	/** This machine's History of its agents: counted for the plan; a replaced copy's comes home. */
+	history: AgentHistoryStore;
 	now?(): number;
 }
 
@@ -153,8 +162,9 @@ export function formatLiftPlan(summary: LiftPlanSummary, dryRun: boolean): strin
 	}
 	lines.push(`  Queued messages: ${summary.queued.length}`);
 	if (summary.replaces) {
+		const home = summary.history?.comesHome ?? 0;
 		lines.push(
-			`Replaces the copy an earlier Move Back left on the host (${summary.replaces}): its tabs and transcripts are merged into what moves, its processes are stopped, and its History on the host stays filed under its old id, so the moved agent's History does not show it.`
+			`Replaces the copy an earlier Move Back left on the host (${summary.replaces}): its tabs and transcripts are merged into what moves, its processes are stopped, and its ${historyEntryCount(home)} ${home === 1 ? 'comes' : 'come'} home to this machine first.`
 		);
 		const merge = formatHostTabMerge(summary.tabMerge);
 		if (merge) lines.push(`  ${merge}`);
@@ -163,6 +173,12 @@ export function formatLiftPlan(summary: LiftPlanSummary, dryRun: boolean): strin
 	lines.push(
 		'  Every tab and transcript (the local agent becomes a pointer; sends to it are refused)'
 	);
+	if (summary.history) {
+		const kept = summary.history.here + summary.history.comesHome;
+		lines.push(
+			`  History (${historyEntryCount(kept)}): its History panel lists them with the entries the host writes, and a Move Back brings those home`
+		);
+	}
 	for (const stay of summary.stays) {
 		const what =
 			stay.kind === 'secret-env'
@@ -215,6 +231,8 @@ interface StaleHostCopy {
 	merged: AgentRecord;
 	/** How those tabs merged, for the plan (`LiftPlanSummary.tabMerge`). */
 	tabMerge: NonNullable<LiftPlanSummary['tabMerge']>;
+	/** The History the copy wrote that this machine does not hold yet: it comes home first. */
+	history: HistoryEntry[];
 }
 
 /**
@@ -226,7 +244,8 @@ interface StaleHostCopy {
 async function readStaleHostCopy(
 	agent: AgentRecord,
 	connection: LiftHostConnection,
-	hostError: (peer: string, error: Pick<ClientError, 'code' | 'message'>) => Error
+	hostError: (peer: string, error: Pick<ClientError, 'code' | 'message'>) => Error,
+	history: AgentHistoryStore
 ): Promise<StaleHostCopy | undefined> {
 	const pointer = readLeftOnHost(agent);
 	if (!pointer || pointer.peer !== connection.peer) return undefined;
@@ -284,11 +303,30 @@ async function readStaleHostCopy(
 		},
 		TRANSCRIPT_MATCH
 	) as unknown as AgentRecord;
+	// Its History, filed on the host under the copy's id: read now, so the replace cannot lose it.
+	let historyHome: HistoryEntry[] | null;
+	try {
+		historyHome = await planHostHistoryHome(client.history, pointer.agentId, agent.id, history);
+	} catch (error) {
+		throw new LiftRunError(
+			liftErrorCode('history-failed'),
+			`"${agent.name}" still has a copy on the host (${ref}), and ${error instanceof Error ? error.message : String(error)}. Nothing moved.`
+		);
+	}
+	// A host that does not send an agent's History (an older Maestro): replacing the copy would lose
+	// the History it holds, and the host refuses a second copy beside it. Refused, nothing changed.
+	if (historyHome === null) {
+		throw new LiftRunError(
+			liftErrorCode('history-failed'),
+			`"${agent.name}" still has a copy on the host (${ref}) with History written there, and ${connection.peer} does not send an agent's History (its Maestro is older), so replacing that copy would lose it. Nothing moved. Update Maestro on that host and move again, or, if that History is not needed: maestro-cli remove-agent ${ref}`
+		);
+	}
 	return {
 		pointer,
 		ref,
 		merged,
 		tabMerge: { merged: hostTabs.merged, copies: hostTabs.copies, added: hostTabs.added },
+		history: historyHome,
 	};
 }
 
@@ -554,22 +592,45 @@ export async function runLift(
 	const connection = await deps.connect(remote, peer);
 	try {
 		const hostError = deps.hostCallError ?? defaultHostCallError;
-		const stale = await readStaleHostCopy(agent, connection, hostError);
+		const stale = await readStaleHostCopy(agent, connection, hostError, deps.history);
 		// The record the plan is built from: a stale host copy's tabs merged in can carry a held
 		// message this machine's record does not (R63 c).
 		const planned = stale ? stale.merged : agent;
 		// A held message moves held only to a host that keeps it held; an older one would run it at
 		// once, so it stays here, held, and the plan says so (R57).
 		if (hasHeldQueuedMessage(planned)) hostKeepsHeld = await hostKeepsHeldMessages(connection);
-		const plan = stale
+		const lifted = stale
 			? withReplacement(planFor(planned), stale.ref, stale.pointer.agentId, stale.tabMerge)
 			: planFor(planned);
+		const plan: LiftPlan = {
+			...lifted,
+			summary: {
+				...lifted.summary,
+				history: {
+					here: (await deps.history.read(agent.id)).length,
+					comesHome: stale?.history.length ?? 0,
+				},
+			},
+		};
 		onPlan(plan);
 		if (options.dryRun) return { plan: plan.summary, dryRun: true };
 
+		// The replaced copy's History comes home before the import replaces the copy on the host.
+		if (stale) {
+			try {
+				await bringHostHistoryHome(deps.history, agent.id, stale.history);
+			} catch (error) {
+				throw new LiftRunError(
+					liftErrorCode('history-failed'),
+					`${historyEntryCount(stale.history.length)} of the copy on the host (${stale.ref}) could not be written here (${error instanceof Error ? error.message : String(error)}). Nothing moved.`
+				);
+			}
+		}
+
 		// The queue moves as it was planned: a message held, resumed, or removed since the plan was
 		// read would move in its old state (a held one running on the host). Read it again just
-		// before the import; any change refuses with nothing changed (CodeRabbit on #2171).
+		// before the import, after the replaced copy's History came home (that History is the agent's
+		// own, filed once by id); any change refuses with nothing moved (CodeRabbit on #2171, #2181).
 		const queueChanged = movedQueueChange(planned, deps.readAgents(), plan.movedQueueItemIds);
 		if (queueChanged) throw new LiftRunError('LIFT_QUEUE_CHANGED', queueChanged);
 

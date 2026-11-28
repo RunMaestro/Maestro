@@ -5,6 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createMemoryAgentHistoryStore } from '../../helpers/agentHistoryStore';
 
 const requestFromRenderer = vi.fn();
 vi.mock('../../../main/web-server/callbacks/remoteRequest', () => ({
@@ -60,7 +61,13 @@ function fakeService(connected = true) {
 	const hostClient = vi.fn((remoteId: string) => {
 		if (!connected) throw new Error(`Not connected to peer "build-box" (lost). Nothing moved.`);
 		expect(remoteId).toBe('remote-1');
-		return { peer: 'build-box', client: { agents: { import: importAgent, remove } } };
+		return {
+			peer: 'build-box',
+			client: {
+				agents: { import: importAgent, remove },
+				history: { list: vi.fn().mockResolvedValue({ ok: true, value: [] }) },
+			},
+		};
 	});
 	return {
 		service: { hostClient } as unknown as PeerMirrorService,
@@ -78,6 +85,8 @@ function depsWith(overrides: Partial<DesktopLiftDeps> = {}, svc = fakeService())
 		isAgentRunning: () => false,
 		service: () => svc.service,
 		setPointer: vi.fn().mockResolvedValue(undefined),
+		restore: vi.fn().mockResolvedValue(undefined),
+		history: createMemoryAgentHistoryStore(),
 		now: () => NOW,
 		...overrides,
 	};
@@ -214,6 +223,7 @@ describe('buildDesktopLiftDeps', () => {
 			getMainWindow: () => null,
 			getProcessManager: () => processManager,
 			service: () => null,
+			history: createMemoryAgentHistoryStore(),
 		});
 		expect(deps.readAgents().map((a) => a.id)).toEqual(['agent-1']);
 		expect(deps.readRemotes()).toEqual([]);

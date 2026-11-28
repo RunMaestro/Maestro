@@ -6,6 +6,8 @@
  */
 
 export { isolateAgentEnv, SHELL_OVERRIDABLE_AGENT_ENV_KEYS } from './agentEnvIsolation';
+export { createMemoryAgentHistoryStore } from './agentHistoryStore';
+export type { MemoryAgentHistoryStore } from './agentHistoryStore';
 export { createMockAITab, createMockDesignPick, createMockFileTab } from './mockTab';
 export { AGENT_MODES, agentModeFields, createMockSession, createModeSession } from './mockSession';
 export type { AgentMode } from './mockSession';

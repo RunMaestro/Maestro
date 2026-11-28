@@ -263,6 +263,8 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 
 	it('ignores tab keys outside the allowlist', async () => {
 		const sessions = [twoTabSession()];
+		// A star marks a provider session (L40): the tab has one, so the star is allowed.
+		sessions[0].aiTabs[0] = { ...sessions[0].aiTabs[0], agentSessionId: 'sess-1' };
 		const { setSessions } = setup(sessions);
 
 		dispatchPatch('session-1', { tabId: 'tab-1', starred: true, logs: [], name: 'x' });

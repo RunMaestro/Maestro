@@ -38,6 +38,7 @@ import * as historyManagerModule from '../../../../main/history-manager';
 import { setPeerMirrorServiceForTests, type PeerMirrorService } from '../../../../main/federation';
 import type { CueHistoryGroup, HistoryEntry } from '../../../../shared/types';
 import type { CueHistoryQuery } from '../../../../main/cue/stats/cue-stats-query';
+import { createMemoryAgentHistoryStore } from '../../../helpers/agentHistoryStore';
 
 const AGENT_MODES = ['local', 'ssh', 'hosted'] as const;
 const HOUR = 3_600_000;
@@ -133,6 +134,9 @@ describe('A1.8: a Cue run in a local, SSH, or hosted agent History panel', () =>
 			readAutoMove: () => false,
 			getCueHistoryEntries,
 			getCueHistoryGroups,
+			// This machine's History of the hosted agent's local record: none here, so the hosted
+			// panel lists the host's entries and this machine's Cue runs (L39).
+			history: createMemoryAgentHistoryStore(),
 		});
 	});
 

@@ -48,6 +48,7 @@ import { useSessionRestoration } from '../../../renderer/hooks/session/useSessio
 import { captureException } from '../../../renderer/utils/sentry';
 import { createGroupFromTabRefs } from '../../../renderer/utils/panelLayout';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 
 vi.mock('../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 vi.mock('../../../renderer/utils/sentry', () => ({
@@ -1563,27 +1564,35 @@ describe('useSessionLifecycle', () => {
 			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
 		});
 
-		it('skips persistence when tab has no agentSessionId', () => {
-			const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: null });
-			const session = createMockSession({
-				id: 'session-1',
-				aiTabs: [tab],
-				activeTabId: 'tab-1',
-			});
+		it.each(AGENT_MODES)(
+			'%s: refuses to star a tab with no conversation yet and says why (L40)',
+			(mode) => {
+				// The tab strip offers no star for such a tab; the shortcut used to star it here
+				// (and, for a hosted agent, on its host) anyway.
+				const tab = createMockAITab({ id: 'tab-1', starred: false, agentSessionId: null });
+				const session = createModeSession(mode, {
+					id: 'session-1',
+					inputMode: 'ai',
+					aiTabs: [tab],
+					activeTabId: 'tab-1',
+				});
+				useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				useCenterFlashStore.setState({ active: null });
 
-			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+				const { result } = renderHook(() => useSessionLifecycle(createDeps()));
 
-			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+				act(() => {
+					result.current.toggleTabStar();
+				});
 
-			act(() => {
-				result.current.toggleTabStar();
-			});
-
-			const updated = useSessionStore.getState().sessions[0].aiTabs[0];
-			expect(updated.starred).toBe(true);
-			expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
-			expect(window.maestro.agentSessions.setSessionStarred).not.toHaveBeenCalled();
-		});
+				expect(useSessionStore.getState().sessions[0].aiTabs[0].starred).toBe(false);
+				expect(window.maestro.claude.updateSessionStarred).not.toHaveBeenCalled();
+				expect(window.maestro.agentSessions.setSessionStarred).not.toHaveBeenCalled();
+				expect(useCenterFlashStore.getState().active?.message).toBe(
+					'This tab has no conversation yet, so it cannot be starred'
+				);
+			}
+		);
 
 		it('returns early if no active session', () => {
 			useSessionStore.setState({ sessions: [], activeSessionId: '' });

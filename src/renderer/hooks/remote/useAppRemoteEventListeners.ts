@@ -72,7 +72,11 @@ import {
 } from '../../../shared/groupAppearance';
 import { isCodexTransport } from '../../../shared/codexTransport';
 import { isHarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
-import { TAB_EDITABLE_KEYS, withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import {
+	TAB_EDITABLE_KEYS,
+	tabStarRefusal,
+	withAgentInGroup,
+} from '../../../shared/maestro-lib/agents/rules';
 import { setTabThinkingMode } from '../../services/tabThinkingMode';
 import { starHostedTab, updateHostedTab } from '../../services/hostedTurns';
 import { liftBusyReason, readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
@@ -1994,10 +1998,35 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
-			if (!session.aiTabs?.some((t) => t.id === targetTabId)) {
+			const targetTab = session.aiTabs?.find((t) => t.id === targetTabId);
+			if (!targetTab) {
 				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 					success: false,
 					error: 'Tab not found',
+				});
+				return;
+			}
+			// A star marks a conversation: the same rule as the tab strip and `tab star`, judged on the
+			// tab as the patch leaves it (a patch that clears the provider session cannot star it).
+			const starRefusal =
+				typeof tabPatch.starred === 'boolean'
+					? tabStarRefusal(
+							{
+								agentSessionId:
+									'agentSessionId' in tabPatch
+										? typeof tabPatch.agentSessionId === 'string'
+											? tabPatch.agentSessionId
+											: null
+										: targetTab.agentSessionId,
+								logs: targetTab.logs,
+							},
+							tabPatch.starred
+						)
+					: null;
+			if (starRefusal) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: starRefusal,
 				});
 				return;
 			}
@@ -2032,12 +2061,14 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// The rest of what a hosted tab's host holds goes there as the UI control sends it: a
 			// star through the tab strip's own call, a provider session as a finished wizard hands
 			// it over. The composer settings (read-only, model, effort, history, enter-to-send) and
-			// a merged context ride the next send, as they do from the composer.
-			if (typeof tabPatch.starred === 'boolean') {
-				starHostedTab(session, targetTabId, tabPatch.starred);
-			}
+			// a merged context ride the next send, as they do from the composer. The provider session
+			// goes first: the host judges a star on the tab as it holds it, and a star sent before the
+			// session it marks would be refused there.
 			if (typeof tabPatch.agentSessionId === 'string') {
 				updateHostedTab(session, targetTabId, { agentSessionId: tabPatch.agentSessionId });
+			}
+			if (typeof tabPatch.starred === 'boolean') {
+				starHostedTab(session, targetTabId, tabPatch.starred);
 			}
 
 			try {

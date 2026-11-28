@@ -421,6 +421,9 @@ describe('createMaestroRuntime', () => {
 			const { tabId } = value(await runtime.tabs.create('a1'));
 			expect(value(await runtime.tabs.list('a1')).map((tab) => tab.id)).toContain(tabId);
 			value(await runtime.tabs.rename('a1', tabId, 'scratch'));
+			// A star marks a conversation: refused until the tab has one (L40).
+			expect(errorOf(await runtime.tabs.star('a1', tabId, true)).code).toBe('rejected');
+			value(await runtime.tabs.update('a1', tabId, { agentSessionId: 'sess-scratch' }));
 			value(await runtime.tabs.star('a1', tabId, true));
 			const tab = value(await runtime.tabs.list('a1')).find((entry) => entry.id === tabId);
 			expect(tab).toMatchObject({ name: 'scratch', starred: true });

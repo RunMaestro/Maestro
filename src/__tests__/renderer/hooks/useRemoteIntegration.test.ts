@@ -151,7 +151,7 @@ describe('useRemoteIntegration', () => {
 		  ) => void | Promise<void>)
 		| undefined;
 	let onRemoteStarTabHandler:
-		| ((sessionId: string, tabId: string, starred: boolean) => void)
+		| ((sessionId: string, tabId: string, starred: boolean, responseChannel: string) => void)
 		| undefined;
 	let onRemoteReorderTabHandler:
 		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
@@ -296,6 +296,7 @@ describe('useRemoteIntegration', () => {
 			onRemoteStarTabHandler = handler;
 			return () => {};
 		}),
+		sendRemoteStarTabResponse: vi.fn(),
 		onRemoteReorderTab: vi.fn().mockImplementation((handler) => {
 			onRemoteReorderTabHandler = handler;
 			return () => {};
@@ -5984,13 +5985,11 @@ describe('useRemoteIntegration', () => {
 			useSettingsStore.setState({ federationHostedAgents: false });
 		});
 
-		const seed = (mode: AgentMode) => {
+		const seed = (mode: AgentMode, agentSessionId: string | null = 'sess-1') => {
 			const session = createMockSession({
 				...agentModeFields(mode),
 				id: 'session-1',
-				aiTabs: [
-					createMockTab({ id: 'tab-1', agentSessionId: 'sess-1', name: 'Old', starred: false }),
-				],
+				aiTabs: [createMockTab({ id: 'tab-1', agentSessionId, name: 'Old', starred: false })],
 				activeTabId: 'tab-1',
 			});
 			// `window.maestro` is rebuilt in the outer beforeEach; add the host link after it.
@@ -6070,10 +6069,13 @@ describe('useRemoteIntegration', () => {
 			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
 
 			act(() => {
-				onRemoteStarTabHandler?.('session-1', 'tab-1', true);
+				onRemoteStarTabHandler?.('session-1', 'tab-1', true, 'star-chan');
 			});
 
 			expect(storedTab().starred).toBe(true);
+			expect(mockProcess.sendRemoteStarTabResponse).toHaveBeenLastCalledWith('star-chan', {
+				success: true,
+			});
 			expect(mockClaude.updateSessionStarred).toHaveBeenCalledWith(
 				session.projectRoot,
 				'sess-1',
@@ -6082,6 +6084,42 @@ describe('useRemoteIntegration', () => {
 			expect(hostCalls()).toEqual(
 				mode === 'hosted' ? [{ kind: 'star-tab', tabId: 'tab-1', starred: true }] : []
 			);
+		});
+
+		it.each(AGENT_MODES)(
+			'%s: a star on a tab with no conversation yet answers why and changes nothing (L40)',
+			async (mode) => {
+				// Eighth live pass: a hosted tab answered "Starred" and changed nothing; a local tab
+				// answered "Tab not found". One rule and one reason now, in every mode.
+				const session = seed(mode, null);
+				renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+				act(() => {
+					onRemoteStarTabHandler?.('session-1', 'tab-1', true, 'star-chan');
+				});
+
+				expect(storedTab().starred).toBe(false);
+				expect(mockClaude.updateSessionStarred).not.toHaveBeenCalled();
+				expect(hostCalls()).toEqual([]);
+				expect(mockProcess.sendRemoteStarTabResponse).toHaveBeenLastCalledWith('star-chan', {
+					success: false,
+					error: 'This tab has no conversation yet, so it cannot be starred',
+				});
+			}
+		);
+
+		it('answers a star on a tab that is gone with "Tab not found"', async () => {
+			const session = seed('local');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteStarTabHandler?.('session-1', 'gone', true, 'star-chan');
+			});
+
+			expect(mockProcess.sendRemoteStarTabResponse).toHaveBeenLastCalledWith('star-chan', {
+				success: false,
+				error: 'Tab not found: gone',
+			});
 		});
 	});
 
