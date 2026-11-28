@@ -305,6 +305,25 @@ describe('withReturnedFromHost', () => {
 		).toEqual(['host-a', 'host-turn', 'local-turn']);
 	});
 
+	it('keeps the local transcript whose reply streamed further, though both count the same turns and rows (#2195)', () => {
+		const ask = { id: 'u1', timestamp: 1, source: 'user', text: 'explain' };
+		const reply = { id: 'r1', timestamp: 2, source: 'ai', text: 'The answer is' };
+		const finished = { ...reply, text: 'The answer is 42, because of the tests.' };
+		const record = hostedAgent({
+			aiTabs: [{ id: 'tab-1', logs: [ask, finished] }],
+		} as unknown as Partial<AgentRecord>) as unknown as Record<string, unknown>;
+		const merged = withReturnedFromHost(record, { tabs: [{ id: 'tab-1', logs: [ask, reply] }] });
+		expect((merged.aiTabs as AITabRecord[])[0].logs).toEqual([ask, finished]);
+		// The same the other way round: the host's further reply wins.
+		const back = withReturnedFromHost(
+			hostedAgent({
+				aiTabs: [{ id: 'tab-1', logs: [ask, reply] }],
+			} as unknown as Partial<AgentRecord>) as unknown as Record<string, unknown>,
+			{ tabs: [{ id: 'tab-1', logs: [ask, finished] }] }
+		);
+		expect((back.aiTabs as AITabRecord[])[0].logs).toEqual([ask, finished]);
+	});
+
 	it('when one side holds the other, keeps that side as it was (no reordering, no merge)', () => {
 		const record = hostedAgent({
 			aiTabs: [{ id: 'tab-1', logs: [log('a', 1)] }],

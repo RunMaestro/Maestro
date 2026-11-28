@@ -449,22 +449,23 @@ function mergeLogs(
 }
 
 /**
- * The transcript a returned tab keeps (a Move Back, not a stale-copy merge): when one side holds
- * the other entry for entry (`transcriptContains()`), the one that went further
- * (`furtherTranscript()`, the same side); when both went on, every row of both (`mergeLogs()`), so
- * a turn taken here while the agent was away and one taken on the host both stay.
+ * The transcript a returned tab keeps (a Move Back, not a stale-copy merge): the side that holds
+ * the other entry for entry (`transcriptContains()`), even when the two count the same turns and
+ * rows (a reply that streamed further on one side); when each holds the other (the same
+ * transcript), the one `furtherTranscript()` names; when both went on, every row of both
+ * (`mergeLogs()`), so a turn taken here while the agent was away and one taken on the host both
+ * stay.
  */
 function returnedLogs(
 	hostLogs: unknown[],
 	localLogs: unknown[],
 	options: TranscriptMatchOptions
 ): unknown[] {
-	if (
-		transcriptContains(hostLogs, localLogs, options) ||
-		transcriptContains(localLogs, hostLogs, options)
-	) {
-		return furtherTranscript(hostLogs, localLogs);
-	}
+	const hostHoldsLocal = transcriptContains(hostLogs, localLogs, options);
+	const localHoldsHost = transcriptContains(localLogs, hostLogs, options);
+	if (hostHoldsLocal && localHoldsHost) return furtherTranscript(hostLogs, localLogs);
+	if (localHoldsHost) return localLogs;
+	if (hostHoldsLocal) return hostLogs;
 	return mergeLogs(hostLogs, localLogs, options);
 }
 
