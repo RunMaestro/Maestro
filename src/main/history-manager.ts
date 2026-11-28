@@ -428,8 +428,11 @@ export class HistoryManager {
 		const serialized = fileOrder.map(serializeHistoryEntryLine).join('');
 
 		// A JSONL file written since this read began (another process, or a path that did not share
-		// this run) is never replaced by the legacy snapshot: it is the newer state.
-		if (await pathExists(jsonlPath)) return null;
+		// this run) is never replaced by the legacy snapshot: it is the newer state, and it is what
+		// the caller reads (a failure to read it propagates, as any read failure here does).
+		if (await pathExists(jsonlPath)) {
+			return parseHistoryJsonl(stripJsonBom(await fsp.readFile(jsonlPath, 'utf-8'))).entries;
+		}
 		await atomicWriteFile(jsonlPath, serialized);
 		try {
 			await fsp.rename(legacyPath, `${legacyPath}.migrated`);

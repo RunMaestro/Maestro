@@ -926,6 +926,28 @@ describe('HistoryManager', () => {
 			]);
 		});
 
+		it('reads the JSONL file a migration found already written, not an empty History (CodeRabbit on #2181)', async () => {
+			// The first read finds no JSONL file; by the time the migration would write one, another
+			// writer has: the migration leaves it, and the read answers what that file holds.
+			const legacyFile = sessionFile.replace(/\.jsonl$/, '.json');
+			let jsonlReads = 0;
+			mockExistsSync.mockImplementation(
+				(p: fs.PathLike) => p.toString() === legacyFile || p.toString() === sessionFile
+			);
+			mockReadFileSync.mockImplementation((p: fs.PathLike) => {
+				if (p.toString() === legacyFile) {
+					return JSON.stringify({ version: 1, entries: [createMockEntry({ id: 'legacy' })] });
+				}
+				jsonlReads += 1;
+				if (jsonlReads === 1) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				return createJsonlFileData([createMockEntry({ id: 'written-meanwhile' })]);
+			});
+			expect((await manager.getEntries('session-1')).map((e) => e.id)).toEqual([
+				'written-meanwhile',
+			]);
+			expect(mockWriteFileSync.mock.calls.some((c) => c[0].toString() === sessionFile)).toBe(false);
+		});
+
 		it('writes an id twice in one batch only once (CodeRabbit on #2181)', async () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === sessionFile);
 			mockReadFileSync.mockReturnValue(createJsonlFileData([createMockEntry({ id: 'here' })]));
