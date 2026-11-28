@@ -607,7 +607,13 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					return;
 				}
 				logger.info('[Remote] Agent is coming home from its host; queued the command');
-				reportDelivery(true);
+				// Say it was queued, with its place, so `dispatch` reports queued, not delivered.
+				const waiting =
+					useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.executionQueue ?? [];
+				reportDelivery(true, undefined, {
+					itemId: queued.id,
+					position: waiting.findIndex((item) => item.id === queued.id) + 1,
+				});
 				return;
 			}
 

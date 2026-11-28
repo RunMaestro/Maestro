@@ -568,7 +568,8 @@ describe('useRemoteHandlers', () => {
 				expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
 					'receipt-1',
 					true,
-					undefined
+					undefined,
+					{ itemId: queue[0].id, position: 1 }
 				);
 			});
 
