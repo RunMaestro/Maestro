@@ -660,6 +660,13 @@ export interface QueuedTurn {
 	 * queued). Absent: the host did not say (a host older than this field).
 	 */
 	readOnly?: boolean;
+	/**
+	 * `'sender'`: `readOnly` is the sender's own choice for this one message, and it stands in for
+	 * the tab's setting. Absent: `readOnly` is only the state the host saw, so wherever the message
+	 * runs later its tab decides, and a read-only value still holds (only a sender's choice may lift
+	 * a tab's read-only).
+	 */
+	readOnlyChoice?: 'sender';
 	/** The sender's save to History choice for this one message. Absent: the tab's own chip. */
 	saveToHistory?: boolean;
 	/**

@@ -82,6 +82,8 @@ export interface QueuedTurnWire {
 	turnSettings?: QueuedTurn['turnSettings'];
 	images?: QueuedTurn['images'];
 	readOnly?: boolean;
+	/** `QueuedTurn.readOnlyChoice`. */
+	readOnlyChoice?: 'sender';
 	saveToHistory?: boolean;
 }
 
@@ -102,6 +104,7 @@ export function queuedTurnsToWire(items: readonly QueuedTurn[]): QueuedTurnWire[
 		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
 		...(item.images?.length ? { images: item.images } : {}),
 		...(item.readOnly !== undefined ? { readOnly: item.readOnly } : {}),
+		...(item.readOnlyChoice ? { readOnlyChoice: item.readOnlyChoice } : {}),
 		...(item.saveToHistory !== undefined ? { saveToHistory: item.saveToHistory } : {}),
 	}));
 }

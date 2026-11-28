@@ -25,6 +25,8 @@ export interface QueuedItemSnapshot {
 	paused?: boolean;
 	/** Whether the item runs read-only when it is dispatched (`queuedItemRunsReadOnly()`). */
 	readOnly?: boolean;
+	/** `'sender'`: `readOnly` is the sender's own choice (`turnReadOnly`), not the tab's. */
+	readOnlyChoice?: 'sender';
 	/** The sender's save to History choice for this one message (`turnSaveToHistory`). */
 	saveToHistory?: boolean;
 	/**

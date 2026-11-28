@@ -2068,6 +2068,53 @@ describe('useRemoteIntegration', () => {
 			);
 			expect(useSessionStore.getState().activeSessionId).toBe('other-session');
 		});
+		it('refuses a managed release while the agent is coming home, and keeps it retryable (#2199)', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			} as Partial<Session>);
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other-session' });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			vi.spyOn(window.maestro.sessions, 'setMany').mockResolvedValue(true);
+			renderHook(() => useRemoteIntegration(deps));
+			const control = { phase: 'prepare' as const, dispatchId: 'come-home', tabId: 'host-tab' };
+			const send = (channel: string, phase: 'prepare' | 'release') =>
+				act(async () => {
+					await onRemoteNewAITabWithPromptHandler?.(
+						'session-1',
+						phase === 'prepare' ? '' : 'Hello',
+						channel,
+						true,
+						false,
+						undefined,
+						{ ...control, phase }
+					);
+				});
+			const remoteCommands = () =>
+				dispatchEventSpy.mock.calls.filter(([event]) => event.type === 'maestro:remoteCommand');
+			await send('prepare', 'prepare');
+			await send('held', 'release');
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('held', {
+				success: false,
+				error: 'DispatchTargetUnavailable',
+			});
+			expect(remoteCommands()).toHaveLength(0);
+			// Home: the same release goes through, it was never recorded as released.
+			act(() => {
+				useSessionStore.setState({
+					sessions: useSessionStore
+						.getState()
+						.sessions.map((s) => ({ ...s, liftedTo: undefined }) as Session),
+				});
+			});
+			await send('home', 'release');
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('home', {
+				success: true,
+				tabId: 'host-tab',
+			});
+			expect(remoteCommands()).toHaveLength(1);
+		});
 		it('keeps a prepared tab empty when persistence fails', async () => {
 			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
 			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
@@ -3596,9 +3643,43 @@ describe('useRemoteIntegration', () => {
 			)?.[1] as { queues: Array<{ items: Array<Record<string, unknown>> }> };
 			expect(answer.queues[0].items).toEqual([
 				expect.objectContaining({ id: 'q1', readOnly: true }),
-				expect.objectContaining({ id: 'q2', readOnly: false, saveToHistory: true }),
+				expect.objectContaining({
+					id: 'q2',
+					readOnly: false,
+					readOnlyChoice: 'sender',
+					saveToHistory: true,
+				}),
 			]);
 			expect(answer.queues[0].items[0]).not.toHaveProperty('saveToHistory');
+			// q1 only took the tab's read-only, so a Move Back lets the tab decide (#2199).
+			expect(answer.queues[0].items[0]).not.toHaveProperty('readOnlyChoice');
+		});
+
+		it('says read-only for an item whose tab is gone when the tab dispatch runs it in is read-only (#2199)', () => {
+			const active = createMockTab({ id: 'tab-1', readOnlyMode: true });
+			const orphan = createMockTab({ id: 'tab-closed', readOnlyMode: true });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [active],
+				activeTabId: 'tab-1',
+				orphanedThinkingTabs: [orphan],
+				executionQueue: [
+					{ id: 'q1', timestamp: 5, tabId: 'tab-gone', type: 'message' as const, text: 'a' },
+					{ id: 'q2', timestamp: 6, tabId: 'tab-closed', type: 'message' as const, text: 'b' },
+				],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			act(() => {
+				onRemoteListQueueHandler?.('session-1', 'chan-target');
+			});
+			const answer = mockProcess.sendRemoteListQueueResponse.mock.calls.find(
+				(call: unknown[]) => call[0] === 'chan-target'
+			)?.[1] as { queues: Array<{ items: Array<Record<string, unknown>> }> };
+			expect(answer.queues[0].items).toEqual([
+				expect.objectContaining({ id: 'q1', readOnly: true }),
+				expect.objectContaining({ id: 'q2', readOnly: true }),
+			]);
 		});
 
 		it('removes a queued item by id and acks removed:true', async () => {
