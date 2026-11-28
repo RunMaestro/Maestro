@@ -759,9 +759,23 @@ describe('process IPC handlers', () => {
 			mockSessionsStore.get.mockImplementation((key, fallback) =>
 				key === 'sessions' ? [lifted] : fallback
 			);
-			mockSettingsStore.get.mockImplementation((key, fallback) =>
-				key === 'federationHostedAgents' || key === 'federationAutoMove' ? true : fallback
-			);
+			mockSettingsStore.get.mockImplementation((key: string, fallback: unknown) => {
+				if (key === 'federationHostedAgents' || key === 'federationAutoMove') return true;
+				if (key === 'sshRemotes') {
+					return [
+						{
+							id: 'remote-1',
+							name: 'Dev Server',
+							host: 'dev.example.com',
+							port: 22,
+							username: 'devuser',
+							privateKeyPath: '',
+							enabled: true,
+						},
+					];
+				}
+				return fallback;
+			});
 			mockAgentDetector.getAgent.mockResolvedValue({
 				id: 'claude-code',
 				path: '/usr/bin/claude',
@@ -777,10 +791,17 @@ describe('process IPC handlers', () => {
 					cwd: '/project',
 					command: 'claude',
 					args: [],
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
 				}
 			).catch((error: Error) => error);
 
 			expect(outcome instanceof Error ? outcome.message : '').not.toContain('build-box');
+			expect(outcome).not.toBeInstanceOf(Error);
+			// It runs here, over SSH on its remote, as it did before it was moved.
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sessionId: 'lifted-agent-ai-tab', command: 'ssh' })
+			);
+			expect(mockProcessManager.spawn.mock.calls[0][0].args).toContain('devuser@dev.example.com');
 		});
 
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {
