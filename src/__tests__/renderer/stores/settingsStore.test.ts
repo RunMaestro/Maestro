@@ -235,6 +235,12 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('initial state', () => {
+		it('defaults Federation hosting and automatic moves to off in the store and metadata', () => {
+			expect(_INITIAL_STATE.federationHostedAgents).toBe(false);
+			expect(_INITIAL_STATE.federationAutoMove).toBe(false);
+			expect(SETTINGS_METADATA.federationHostedAgents.default).toBe(false);
+			expect(SETTINGS_METADATA.federationAutoMove.default).toBe(false);
+		});
 		it('defaults worktree provider labels to off in the store and metadata', () => {
 			expect(_INITIAL_STATE.showWorktreeProvider).toBe(false);
 			expect(SETTINGS_METADATA.showWorktreeProvider.default).toBe(false);
@@ -1002,6 +1008,32 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setFileTabAutoRefreshEnabled(true);
 				expect(useSettingsStore.getState().fileTabAutoRefreshEnabled).toBe(true);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('fileTabAutoRefreshEnabled', true);
+			});
+
+			it('keeps designModeCollapsePanels on by default, in step with its metadata', () => {
+				expect(SETTINGS_METADATA.designModeCollapsePanels.default).toBe(true);
+				expect(useSettingsStore.getInitialState().designModeCollapsePanels).toBe(true);
+			});
+
+			it('setDesignModeCollapsePanels updates state and persists', () => {
+				useSettingsStore.getState().setDesignModeCollapsePanels(false);
+				expect(useSettingsStore.getState().designModeCollapsePanels).toBe(false);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('designModeCollapsePanels', false);
+			});
+
+			it('hydrates a saved designModeCollapsePanels and ignores a value that is not a boolean', async () => {
+				useSettingsStore.setState({ designModeCollapsePanels: true });
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					designModeCollapsePanels: false,
+				});
+				await loadAllSettings();
+				expect(useSettingsStore.getState().designModeCollapsePanels).toBe(false);
+
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					designModeCollapsePanels: 'no',
+				});
+				await loadAllSettings();
+				expect(useSettingsStore.getState().designModeCollapsePanels).toBe(false);
 			});
 
 			it('setSuppressWindowsWarning updates state and persists', () => {
@@ -2030,6 +2062,29 @@ describe('settingsStore', () => {
 	});
 
 	describe('loadAllSettings', () => {
+		it('hydrates explicit Coworking typing opt-ins and clears a missing or malformed grant', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+				coworkingBrowserTypingWithoutConfirmation: ['codex', true],
+			});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().coworkingBrowserTypingWithoutConfirmation).toEqual([
+				'codex',
+			]);
+
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+				coworkingBrowserTypingWithoutConfirmation: 'codex',
+			});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().coworkingBrowserTypingWithoutConfirmation).toEqual([]);
+
+			useSettingsStore.setState({ coworkingBrowserTypingWithoutConfirmation: ['codex'] });
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({
+				coworkingBrowserInteractionConfirm: { codex: 'off' },
+			});
+			await loadAllSettings();
+			expect(useSettingsStore.getState().coworkingBrowserTypingWithoutConfirmation).toEqual([]);
+		});
+
 		it.each([true, false])('restores worktree provider visibility: %s', async (enabled) => {
 			useSettingsStore.setState({ showWorktreeProvider: !enabled });
 			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({

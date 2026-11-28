@@ -160,9 +160,12 @@ export function antigravityHome(): string {
 	return path.join(os.homedir(), '.gemini', 'antigravity-cli');
 }
 
-/** Where agy keeps a conversation's store. */
-export function antigravityConversationDbPath(conversationId: string): string {
-	return path.join(antigravityHome(), 'conversations', `${conversationId}.db`);
+/** Where agy keeps a conversation's store (under `home`, agy's own by default). */
+export function antigravityConversationDbPath(
+	conversationId: string,
+	home = antigravityHome()
+): string {
+	return path.join(home, 'conversations', `${conversationId}.db`);
 }
 
 /**

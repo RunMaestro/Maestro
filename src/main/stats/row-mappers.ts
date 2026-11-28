@@ -47,7 +47,7 @@ export interface AutoRunSessionRow {
 	tasks_total: number | null;
 	tasks_completed: number | null;
 	project_path: string | null;
-	/** Added in v14; null only if a row somehow bypassed the column DEFAULT. */
+	/** Added in v15; null only if a row somehow bypassed the column DEFAULT. */
 	kind: string | null;
 }
 

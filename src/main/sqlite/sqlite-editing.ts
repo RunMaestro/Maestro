@@ -1,0 +1,392 @@
+/**
+ * SQLite Editing Unlock
+ *
+ * The safety model of the SQLite viewer's write path. A `.db` inside a project
+ * is often someone's live application database, so the viewer is read-only
+ * until a person deliberately turns editing on, and the switch is per tab:
+ * another tab on the same file stays read-only.
+ *
+ * The switch is enforced HERE, not in the renderer. Enabling editing hands
+ * the tab an opaque `editToken`; every write the viewer will ever make sends
+ * it back, and `requireSqliteEditing()` refuses a write whose token is not
+ * live. A token dies when the tab locks again (`disableSqliteEditing()`), when
+ * its handle is released (the tab closed or the idle reaper closed the
+ * connection), and on app quit. Nothing persists, so a reload starts locked.
+ *
+ * Several tabs on one file share one handle (see sqlite-database.ts), which is
+ * why the grant is a token per tab rather than a flag on the handle.
+ *
+ * Enabling checks, without touching the database, that a write could
+ * succeed at all: the path still names the file the handle opened, the file
+ * is writable, and so is its folder (SQLite writes its journal, or the WAL
+ * and shared-memory files, beside the database). A refusal says which.
+ *
+ * Every write starts with `beginSqliteWrite()` or `beginSqliteWorkerWrite()`,
+ * the ONLY two ways to a writable connection. In order, each: passes the
+ * gate, re-checks that the file can still be written, takes this session's
+ * backup of the file if there is none yet (sqlite-backup.ts: no backup, no
+ * write), and then either hands back the handle's writable connection
+ * (opened on the first write beside the read-only one and closed when no tab
+ * holds a grant any more or the handle is released), or, for a Query-mode
+ * statement that runs in the SQLite child process, the file that child may
+ * open writable (`openWritableSqliteTarget()`), stopped if the grant ends.
+ * A dry run's trial (`beginSqliteWorkerTrial()`) takes the same gate and
+ * file check and no backup: it runs in a transaction that is always rolled
+ * back, so it never commits a change.
+ *
+ * While a tab holds an explicit transaction open in Query mode
+ * (sqlite-transaction.ts, `holdSqliteTransaction()`), that transaction holds
+ * the file's write lock, so every other write to the file, from any tab and
+ * any path, is refused at the file check with
+ * `SQLITE_TRANSACTION_OPEN_MESSAGE` instead of waiting on the lock and
+ * failing as "busy".
+ *
+ * The CLI has no tab. Its write verbs take a per-call unlock flag that
+ * enables editing for that one call and disables it after, through these
+ * same functions.
+ */
+
+import { randomUUID } from 'crypto';
+import { promises as fs, statSync } from 'fs';
+import path from 'path';
+
+import type Database from 'better-sqlite3';
+
+import { SQLITE_TRANSACTION_OPEN_MESSAGE } from '../../shared/sqlite/transaction';
+import type { SqliteBackup, SqliteEditingGrant } from '../../shared/sqlite/types';
+import { ensureSqliteBackup } from './sqlite-backup';
+import {
+	openWritableSqliteConnection,
+	sqliteFileReplacedMessage,
+	type SqliteWriteTarget,
+} from './sqlite-connection';
+import { getSqliteDatabase, type OpenSqliteDatabase } from './sqlite-database';
+
+/** Why a write was refused: this tab never turned editing on, or turned it off. */
+export const SQLITE_EDITING_LOCKED_MESSAGE =
+	'Editing is not enabled for this database. Turn on "Enable editing" first.';
+
+/** Live edit tokens per open handle. An entry is dropped when its handle is released. */
+const grantsByHandle = new Map<string, Set<string>>();
+
+/**
+ * The writable connection per open handle, opened by the first write. Closed
+ * when the handle's last grant is revoked and when the handle is released.
+ */
+const writeConnections = new Map<string, Database.Database>();
+
+/**
+ * What runs when a grant ends, per edit token: a Query-mode write in the
+ * SQLite child process is stopped by its tab's Lock, as no later write of
+ * that tab may land (see `onSqliteEditingRevoked()`).
+ */
+const revocationHooks = new Map<string, Set<(reason: SqliteGrantEndReason) => void>>();
+
+/**
+ * The edit token holding an explicit transaction open, per handle (one file,
+ * one write lock). Set by `holdSqliteTransaction()`, cleared by its release.
+ */
+const transactionHolders = new Map<string, string>();
+
+/** How a grant ended: its tab locked, or its handle was released (tab closed, idle reaper, quit). */
+export type SqliteGrantEndReason = 'locked' | 'closed';
+
+function closeWriteConnection(handle: string): void {
+	const db = writeConnections.get(handle);
+	if (!db) return;
+	writeConnections.delete(handle);
+	db.close();
+}
+
+/** Run and forget the hooks of a grant that ended. */
+function runRevocationHooks(editToken: string, reason: SqliteGrantEndReason): void {
+	const hooks = revocationHooks.get(editToken);
+	if (!hooks) return;
+	revocationHooks.delete(editToken);
+	for (const hook of hooks) hook(reason);
+}
+
+function errorCode(error: unknown): string | undefined {
+	const code = (error as { code?: unknown } | null)?.code;
+	return typeof code === 'string' ? code : undefined;
+}
+
+/**
+ * Why a write to this open database could not succeed, or null when it can.
+ * Reads file metadata only; the database itself is not touched.
+ */
+export async function sqliteEditingRefusal(database: OpenSqliteDatabase): Promise<string | null> {
+	const filePath = database.displayPath;
+
+	let stat;
+	try {
+		stat = await fs.stat(filePath);
+	} catch (error) {
+		if (errorCode(error) === 'ENOENT') return `${filePath} no longer exists.`;
+		throw error;
+	}
+	if (stat.dev !== database.dev || stat.ino !== database.ino) {
+		return sqliteFileReplacedMessage(filePath);
+	}
+
+	try {
+		await fs.access(filePath, fs.constants.W_OK);
+	} catch (error) {
+		const code = errorCode(error);
+		if (code === 'EROFS') return `${filePath} is on a read-only file system.`;
+		if (code === 'EACCES' || code === 'EPERM') {
+			return `You do not have permission to write ${filePath}.`;
+		}
+		throw error;
+	}
+
+	const folder = path.dirname(filePath);
+	try {
+		await fs.access(folder, fs.constants.W_OK);
+	} catch (error) {
+		const code = errorCode(error);
+		if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') {
+			return `SQLite writes its journal beside the database, and ${folder} is not writable.`;
+		}
+		throw error;
+	}
+	return null;
+}
+
+/**
+ * Turn editing on for one tab. Resolves the tab's grant; rejects with the
+ * reason when the file cannot be written, or when the handle is not open.
+ */
+export async function enableSqliteEditing(handle: string): Promise<SqliteEditingGrant> {
+	const database = getSqliteDatabase(handle);
+	const refusal = await sqliteEditingRefusal(database);
+	if (refusal) throw new Error(refusal);
+	// The handle may have been released while the checks ran. A grant on a
+	// connection that no longer exists would never be revoked by its release.
+	if (getSqliteDatabase(handle) !== database) {
+		throw new Error('SQLite database handle is no longer open. Reopen the file to continue.');
+	}
+
+	let grants = grantsByHandle.get(handle);
+	if (!grants) {
+		grants = new Set();
+		grantsByHandle.set(handle, grants);
+		database.releaseHooks.add(() => {
+			const released = grantsByHandle.get(handle);
+			grantsByHandle.delete(handle);
+			closeWriteConnection(handle);
+			for (const token of released ?? []) runRevocationHooks(token, 'closed');
+		});
+	}
+	const editToken = randomUUID();
+	grants.add(editToken);
+	return { handle, editToken };
+}
+
+/**
+ * Turn editing off for the tab holding `editToken`. Safe to call more than
+ * once and after the handle closed. Resolves whether a live grant was revoked.
+ */
+export function disableSqliteEditing(handle: string, editToken: string): boolean {
+	const grants = grantsByHandle.get(handle);
+	const revoked = grants?.delete(editToken) ?? false;
+	// No tab may write any more: drop the writable connection with the grant.
+	if (grants?.size === 0) closeWriteConnection(handle);
+	if (revoked) runRevocationHooks(editToken, 'locked');
+	return revoked;
+}
+
+/**
+ * Run `hook` once when the grant `editToken` ends (Lock, or its handle
+ * released). Resolves a function that unregisters it; call it when the work
+ * the hook guards settles. A token that is not live is refused like a write.
+ */
+export function onSqliteEditingRevoked(
+	handle: string,
+	editToken: unknown,
+	hook: (reason: SqliteGrantEndReason) => void
+): () => void {
+	requireSqliteEditing(handle, editToken);
+	const token = editToken as string;
+	let hooks = revocationHooks.get(token);
+	if (!hooks) {
+		hooks = new Set();
+		revocationHooks.set(token, hooks);
+	}
+	hooks.add(hook);
+	return () => {
+		const current = revocationHooks.get(token);
+		current?.delete(hook);
+		if (current?.size === 0) revocationHooks.delete(token);
+	};
+}
+
+/**
+ * The gate every write passes: the open database, when `editToken` is a live
+ * grant on `handle`. Throws `SQLITE_EDITING_LOCKED_MESSAGE` otherwise, and the
+ * usual "no longer open" error for a released handle.
+ */
+export function requireSqliteEditing(handle: string, editToken: unknown): OpenSqliteDatabase {
+	const database = getSqliteDatabase(handle);
+	if (typeof editToken !== 'string' || !grantsByHandle.get(handle)?.has(editToken)) {
+		throw new Error(SQLITE_EDITING_LOCKED_MESSAGE);
+	}
+	return database;
+}
+
+/** A write in progress: everything `beginSqliteWrite()` hands its caller. */
+export interface SqliteWriteSession {
+	database: OpenSqliteDatabase;
+	/** The handle's writable connection. Use it before the next `await`: a grant can end at any await. */
+	db: Database.Database;
+	/** This session's backup of the file. */
+	backup: SqliteBackup;
+	/** True only for the write that took `backup`, so it is announced once. */
+	backupCreated: boolean;
+}
+
+/**
+ * The handle's writable connection, opened on first use. Gated again here, so
+ * a tab that locked, or a handle that closed, during the backup cannot get one.
+ */
+function openSqliteWriteConnection(handle: string, editToken: unknown): Database.Database {
+	const database = requireSqliteEditing(handle, editToken);
+	const open = writeConnections.get(handle);
+	if (open) return open;
+	// A connection opens a PATH. If the path now names another file, opening
+	// it would write to a file nobody unlocked or backed up.
+	const stat = statSync(database.displayPath);
+	if (stat.dev !== database.dev || stat.ino !== database.ino) {
+		throw new Error(sqliteFileReplacedMessage(database.displayPath));
+	}
+	const db = openWritableSqliteConnection(database.displayPath);
+	writeConnections.set(handle, db);
+	return db;
+}
+
+/**
+ * Start a write: the one way to a writable connection on a user's database.
+ * Every write path, IPC, WebSocket, or CLI, begins here.
+ *
+ *   1. `requireSqliteEditing()`: this tab's grant is live.
+ *   2. `sqliteEditingRefusal()`: the file is still the one opened, and still
+ *      writable (both can change after the unlock).
+ *   3. `ensureSqliteBackup()`: the first write to this file this session waits
+ *      for a `VACUUM INTO` copy beside it; when the copy fails, so does the
+ *      write, and nothing is written.
+ *   4. The writable connection, gated again.
+ */
+export async function beginSqliteWrite(
+	handle: string,
+	editToken: unknown
+): Promise<SqliteWriteSession> {
+	const { database, backup, backupCreated } = await passSqliteWriteGate(handle, editToken);
+	const db = openSqliteWriteConnection(handle, editToken);
+	return { database, db, backup, backupCreated };
+}
+
+/**
+ * Steps 1-2 of a write: the grant is live, no transaction holds the file's
+ * write lock, and the file is still the one opened and still writable.
+ */
+async function passSqliteFileGate(handle: string, editToken: unknown): Promise<OpenSqliteDatabase> {
+	const database = requireSqliteEditing(handle, editToken);
+	if (transactionHolders.has(handle)) throw new Error(SQLITE_TRANSACTION_OPEN_MESSAGE);
+	const refusal = await sqliteEditingRefusal(database);
+	if (refusal) throw new Error(refusal);
+	return database;
+}
+
+/** Steps 1-3 of a write, shared by both ways to a writable connection. */
+async function passSqliteWriteGate(
+	handle: string,
+	editToken: unknown
+): Promise<Omit<SqliteWriteSession, 'db'>> {
+	const database = await passSqliteFileGate(handle, editToken);
+	const { backup, created } = await ensureSqliteBackup(database);
+	return { database, backup, backupCreated: created };
+}
+
+/** The file a child process may open writable: the handle's own, by path, device, and inode. */
+function workerWriteTarget(database: OpenSqliteDatabase): SqliteWriteTarget {
+	return { filePath: database.displayPath, dev: database.dev, ino: database.ino };
+}
+
+/** A write that will run in the SQLite child process: what `beginSqliteWorkerWrite()` hands its caller. */
+export interface SqliteWorkerWriteSession extends Omit<SqliteWriteSession, 'db'> {
+	/** What the child opens, through `openWritableSqliteTarget()`, and nothing else. */
+	target: SqliteWriteTarget;
+}
+
+/**
+ * Start a write that runs in the SQLite child process: the second, and
+ * last, way to a writable connection. Query mode's statements take it,
+ * because SQL a person writes can run for ever and only a child process can
+ * be killed mid-statement (a killed write rolls back: SQLite's journal sees
+ * to that). Passes the same gate, file check, and backup as
+ * `beginSqliteWrite()`, then, gated again, hands back the file the child may
+ * open (path, device, inode) instead of a connection. The caller should stop
+ * the child when the grant ends (`onSqliteEditingRevoked()`).
+ */
+export async function beginSqliteWorkerWrite(
+	handle: string,
+	editToken: unknown
+): Promise<SqliteWorkerWriteSession> {
+	const session = await passSqliteWriteGate(handle, editToken);
+	// A tab that locked, or a handle that closed, during the backup gets no write.
+	const database = requireSqliteEditing(handle, editToken);
+	return { ...session, target: workerWriteTarget(database) };
+}
+
+/** A dry run's trial in the SQLite child process: what `beginSqliteWorkerTrial()` hands its caller. */
+export interface SqliteWorkerTrialSession {
+	database: OpenSqliteDatabase;
+	/** What the child opens, through `openWritableSqliteTarget()`, and nothing else. */
+	target: SqliteWriteTarget;
+}
+
+/**
+ * Start a dry run's trial (Query mode's Dry run): steps 1 and 2 of a write,
+ * the grant and the file check, and then, gated again, the file the child may
+ * open writable, exactly as `beginSqliteWorkerWrite()` hands it, but with NO
+ * backup: the child runs a trial in a transaction and always rolls it back
+ * (`runSqliteWriteTask()` with `dryRun`), so it never commits a change. A
+ * trial killed mid-statement is rolled back by SQLite's journal, as a
+ * stopped write is. The caller should stop the child when the grant ends.
+ */
+export async function beginSqliteWorkerTrial(
+	handle: string,
+	editToken: unknown
+): Promise<SqliteWorkerTrialSession> {
+	await passSqliteFileGate(handle, editToken);
+	// A tab that locked, or a handle that closed, during the check gets no trial.
+	const database = requireSqliteEditing(handle, editToken);
+	return { database, target: workerWriteTarget(database) };
+}
+
+/**
+ * Mark the file's write lock as held by `editToken`'s explicit transaction,
+ * after it passed `beginSqliteWorkerWrite()`: from here every other write to
+ * the file is refused at the gate. Throws when a transaction already holds
+ * it (two tabs racing to begin), or when the grant is not live. Resolves the
+ * release, safe to call more than once.
+ */
+export function holdSqliteTransaction(handle: string, editToken: unknown): () => void {
+	requireSqliteEditing(handle, editToken);
+	if (transactionHolders.has(handle)) throw new Error(SQLITE_TRANSACTION_OPEN_MESSAGE);
+	const token = editToken as string;
+	transactionHolders.set(handle, token);
+	return () => {
+		if (transactionHolders.get(handle) === token) transactionHolders.delete(handle);
+	};
+}
+
+/** Test seam: whether the handle's writable connection is open. */
+export function hasSqliteWriteConnection(handle: string): boolean {
+	return writeConnections.has(handle);
+}
+
+/** Test seam: how many tabs have editing on for this handle. 0 for a closed handle. */
+export function sqliteEditingGrantCount(handle: string): number {
+	return grantsByHandle.get(handle)?.size ?? 0;
+}

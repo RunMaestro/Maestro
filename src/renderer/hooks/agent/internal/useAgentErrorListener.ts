@@ -39,6 +39,11 @@ import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { getErrorTitleForType } from './helpers/errorTitles';
 import { isLimitError } from '../../../../shared/types';
+import { inlineErrorText } from '../../../../shared/failureScreen';
+import {
+	classifyAgentErrorMissingBinary,
+	missingRuntimeLabel,
+} from '../../../../shared/agentInstall';
 import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
 import {
 	scheduleRetryForError,
@@ -46,6 +51,7 @@ import {
 	failInFlightRetry,
 	persistDispatchSnapshotForAuth,
 	registerAgentErrorSurfacer,
+	type RaisedErrorRetry,
 } from '../../../stores/retryStore';
 import { scheduleAutoResume } from '../../../stores/autoRunResumeStore';
 import { reportAuthFailure } from '../../../stores/authOutageStore';
@@ -76,9 +82,12 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 		const getSessions = () => useSessionStore.getState().sessions;
 		const { openModal } = useModalStore.getState();
 
-		const handleAgentError: Parameters<typeof window.maestro.process.onAgentError>[0] = (
-			sessionId,
-			error
+		// `retry` comes only from `raiseAgentError()` (a hosted turn's error raised here): how the
+		// retry it schedules goes on. A process's own error never carries it.
+		const handleAgentError = (
+			sessionId: string,
+			error: Parameters<Parameters<typeof window.maestro.process.onAgentError>[0]>[1],
+			retry?: RaisedErrorRetry
 		) => {
 			// Window scoping: only the owning window handles the error (and pauses
 			// its batch). Events are broadcast to all windows.
@@ -95,6 +104,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 				timestamp: error.timestamp,
 				raw: error.raw,
 				parsedJson: error.parsedJson,
+				failureScreen: error.failureScreen,
 				// Lets an ssh failure defer to the one outage dialog for its remote.
 				sshRemoteId: error.sshRemoteId,
 			};
@@ -272,7 +282,12 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			const willAutoRetryInteractive =
 				canAutoRetry &&
 				!batchOwnsError &&
-				scheduleRetryForError(actualSessionId, tabIdFromSession!, agentError);
+				scheduleRetryForError(
+					actualSessionId,
+					tabIdFromSession!,
+					agentError,
+					retry?.freshOutage ? { freshOutage: retry.freshOutage } : undefined
+				);
 			const willAutoRetryBatch =
 				canAutoRetry &&
 				batchOwnsError &&
@@ -524,6 +539,7 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 
 					if (ownsSideEffects && deps.addHistoryEntryRef.current && session) {
 						const errorTitle = getErrorTitleForType(agentError.type);
+						const missingBinaryReason = classifyAgentErrorMissingBinary(agentError);
 						const errorExplanation = [
 							`**Auto Run Error: ${errorTitle}**`,
 							'',
@@ -537,7 +553,9 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 								: agentError.type === 'auth_expired'
 									? '- Re-authenticate with the provider (e.g., run `claude login` in terminal)'
 									: agentError.type === 'agent_not_installed'
-										? '- Fix the provider CLI as the error message describes, then resume'
+										? missingBinaryReason?.reason === 'runtime-missing'
+											? `- Restore ${missingRuntimeLabel(missingBinaryReason.runtime ?? 'node')} to PATH (follow the steps in the error), then resume`
+											: '- Install the provider CLI (open the error for the install command), then resume'
 										: agentError.type === 'token_exhaustion'
 											? '- Start a new session to reset the context window'
 											: agentError.type === 'rate_limited'
@@ -570,8 +588,8 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 							? `Auto Run: retrying (${errorTitle})`
 							: `Auto Run: ${errorTitle}`,
 						message: willAutoRetryBatch
-							? `${agentError.message} Auto Run will continue automatically.`
-							: agentError.message,
+							? `${inlineErrorText(agentError.message)} Auto Run will continue automatically.`
+							: inlineErrorText(agentError.message),
 						sessionId: actualSessionId,
 					});
 				}
@@ -630,7 +648,9 @@ export function useAgentErrorListener(deps: UseAgentErrorListenerDeps): void {
 			}
 		};
 
-		const unsubscribe = window.maestro.process.onAgentError(handleAgentError);
+		const unsubscribe = window.maestro.process.onAgentError((sessionId, error) =>
+			handleAgentError(sessionId, error)
+		);
 		registerAgentErrorSurfacer(handleAgentError);
 
 		return () => {

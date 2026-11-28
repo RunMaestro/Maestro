@@ -19,6 +19,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { resolveBrowserTabNavigationTarget } from '../../utils/browserTabPersistence';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { DEFAULT_BROWSER_VIEWPORT_PRESET } from '../../../shared/browserViewport';
 import { chunkBrowserRelayText } from '../../../shared/browserRelay';
 
 interface RemoteBrowserTabViewProps {
@@ -146,8 +147,21 @@ export const RemoteBrowserTabView = forwardRef<BrowserTabViewHandle, RemoteBrows
 				},
 				openFind: () => setFindOpen(true),
 				focusWebview: () => keyboardInput.current?.focus(),
+				// Design Mode scripts and crops a live guest; a streamed page has neither.
+				toggleDesignMode: () => {},
+				inspectElement: async () => {
+					throw new Error('Design Mode needs a browser tab running in this window');
+				},
+				inspectRegion: async () => {
+					throw new Error('Design Mode needs a browser tab running in this window');
+				},
+				// The preset is tab state: it is saved here and applied when the tab
+				// opens in a window with a live guest. A streamed page is drawn at the
+				// size this view relays, so it shows no preset of its own.
+				getViewportPreset: () => tab.viewportPreset ?? DEFAULT_BROWSER_VIEWPORT_PRESET,
+				setViewportPreset: (preset) => updateRef.current(tab.id, { viewportPreset: preset }),
 			}),
-			[action, enqueue, navigate, tab.id, tab.title, tab.url]
+			[action, enqueue, navigate, tab.id, tab.title, tab.url, tab.viewportPreset]
 		);
 
 		useEffect(() => {

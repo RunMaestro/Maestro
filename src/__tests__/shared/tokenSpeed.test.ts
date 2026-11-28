@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	CodexTokenSpeedTracker,
+	StreamCallTimer,
 	TOKEN_SPEED_MAX_CALL_MS,
 	TOKEN_SPEED_PEAK_MIN_BUCKET_MS,
 	TokenSpeedBucketer,
@@ -10,8 +11,10 @@ import {
 	extractClaudeSpeedSamples,
 	localHourStart,
 	summarizeTokenSpeed,
-	tokenSpeedGranularityFor,
-	tokenSpeedSliceStart,
+	tokenGranularityFor,
+	tokenSliceEnd,
+	tokenSliceStart,
+	tokenSliceStarts,
 	type TokenSpeedBucket,
 	type TokenSpeedSample,
 	type TokenSpeedSummaryOptions,
@@ -413,11 +416,30 @@ describe('summarizeTokenSpeed', () => {
 		);
 
 		expect(summary.granularity).toBe('day');
-		expect(summary.timeline.map((p) => p.outputTokens)).toEqual([100, 200]);
-		expect(summary.timelineByAgent['claude-code'].map((p) => p.startMs)).toEqual(
-			summary.timeline.map((p) => p.startMs)
-		);
+		// Dense over the window: idle days are explicit empty points, so the axis
+		// keeps every day from the window's start through its end.
+		expect(summary.timeline.map((p) => p.outputTokens)).toEqual([0, 0, 100, 200, 0]);
+		expect(summary.timeline.map((p) => p.calls)).toEqual([0, 0, 1, 1, 0]);
+		// Per-group timelines stay sparse but sit on the same slice starts.
+		const starts = new Set(summary.timeline.map((p) => p.startMs));
+		for (const point of summary.timelineByAgent['claude-code']) {
+			expect(starts.has(point.startMs)).toBe(true);
+		}
 		expect(summary.timelineByModel['claude-opus-5-5']).toHaveLength(2);
+	});
+
+	it('uses the granularity and window start the caller passes', () => {
+		const day = 24 * 3_600_000;
+		const summary = summarizeTokenSpeed(
+			[{ agentType: 'claude-code', buckets: [bucket({ startMs: BASE, outputTokens: 10 })] }],
+			{ ...OPTIONS, granularity: 'week', windowStartMs: BASE - 20 * day, nowMs: BASE + day }
+		);
+		expect(summary.granularity).toBe('week');
+		// Three or four Monday-started weeks cover 21 days, each a slice.
+		expect(summary.timeline.length).toBeGreaterThanOrEqual(3);
+		for (const point of summary.timeline) {
+			expect(new Date(point.startMs).getDay()).toBe(1);
+		}
 	});
 
 	it('returns an empty summary for no data', () => {
@@ -431,17 +453,105 @@ describe('summarizeTokenSpeed', () => {
 describe('granularity helpers', () => {
 	it('chooses a readable slice size for the span', () => {
 		const day = 24 * 3_600_000;
-		expect(tokenSpeedGranularityFor(day)).toBe('hour');
-		expect(tokenSpeedGranularityFor(30 * day)).toBe('day');
-		expect(tokenSpeedGranularityFor(365 * day)).toBe('week');
-		expect(tokenSpeedGranularityFor(800 * day)).toBe('month');
+		expect(tokenGranularityFor(day)).toBe('hour');
+		expect(tokenGranularityFor(7 * day)).toBe('day');
+		expect(tokenGranularityFor(30 * day)).toBe('day');
+		expect(tokenGranularityFor(90 * day)).toBe('day');
+		expect(tokenGranularityFor(365 * day)).toBe('week');
+		expect(tokenGranularityFor(800 * day)).toBe('month');
+	});
+
+	it('ends a slice where the next one starts, by the calendar', () => {
+		const jan31 = new Date(2026, 0, 31).getTime();
+		expect(new Date(tokenSliceEnd(jan31, 'day')).getDate()).toBe(1);
+		const jan1 = new Date(2026, 0, 1).getTime();
+		expect(tokenSliceEnd(jan1, 'month')).toBe(new Date(2026, 1, 1).getTime());
+		const monday = new Date(2026, 9, 12).getTime();
+		expect(tokenSliceEnd(monday, 'week')).toBe(new Date(2026, 9, 19).getTime());
+		const hour = new Date(2026, 9, 12, 13).getTime();
+		expect(tokenSliceEnd(hour, 'hour')).toBe(new Date(2026, 9, 12, 14).getTime());
+	});
+
+	it('lists every slice start across a window, idle slices included', () => {
+		const from = new Date(2026, 9, 12, 15).getTime();
+		const to = new Date(2026, 9, 15, 9).getTime();
+		expect(tokenSliceStarts(from, to, 'day')).toEqual([
+			new Date(2026, 9, 12).getTime(),
+			new Date(2026, 9, 13).getTime(),
+			new Date(2026, 9, 14).getTime(),
+			new Date(2026, 9, 15).getTime(),
+		]);
+		expect(tokenSliceStarts(to, from, 'day')).toEqual([]);
+		expect(tokenSliceStarts(NaN, to, 'day')).toEqual([]);
 	});
 
 	it('starts weeks on Monday and months on the 1st, in local time', () => {
 		const wed = new Date(2026, 9, 14, 15, 30).getTime();
-		expect(tokenSpeedSliceStart(wed, 'hour')).toBe(localHourStart(wed));
-		expect(new Date(tokenSpeedSliceStart(wed, 'day')).getHours()).toBe(0);
-		expect(new Date(tokenSpeedSliceStart(wed, 'week')).getDay()).toBe(1);
-		expect(new Date(tokenSpeedSliceStart(wed, 'month')).getDate()).toBe(1);
+		expect(tokenSliceStart(wed, 'hour')).toBe(localHourStart(wed));
+		expect(new Date(tokenSliceStart(wed, 'day')).getHours()).toBe(0);
+		expect(new Date(tokenSliceStart(wed, 'week')).getDay()).toBe(1);
+		expect(new Date(tokenSliceStart(wed, 'month')).getDate()).toBe(1);
+	});
+});
+
+describe('StreamCallTimer', () => {
+	const T0 = new Date(2026, 10, 15, 10, 0, 0).getTime();
+	const end = (inputTokens: number, outputTokens: number, extra: Record<string, unknown> = {}) =>
+		({ kind: 'end', inputTokens, outputTokens, ...extra }) as const;
+
+	it('times a call from the latest start to its end, wait for the first token included', () => {
+		const t = new StreamCallTimer();
+		expect(t.signal({ kind: 'start' }, T0)).toEqual([]);
+		expect(t.signal(end(1000, 200, { model: 'm' }), T0 + 4_000)).toEqual([
+			{ endMs: T0 + 4_000, durationMs: 4_000, model: 'm', inputTokens: 1000, outputTokens: 200 },
+		]);
+	});
+
+	it('times back-to-back calls from the previous end when no new start arrives', () => {
+		const t = new StreamCallTimer();
+		t.signal({ kind: 'start' }, T0);
+		t.signal(end(10, 10), T0 + 2_000);
+		const [second] = t.signal(end(20, 20), T0 + 5_000);
+		expect(second.durationMs).toBe(3_000);
+	});
+
+	it('folds a keyed end repeated per content block into one call, keeping the largest output', () => {
+		const t = new StreamCallTimer();
+		t.signal({ kind: 'start' }, T0);
+		expect(t.signal(end(500, 40, { key: 'msg_1' }), T0 + 2_000)).toEqual([]);
+		expect(t.signal(end(500, 90, { key: 'msg_1' }), T0 + 3_000)).toEqual([]);
+		// The next start closes the open call at its LAST end.
+		const [call] = t.signal({ kind: 'start' }, T0 + 8_000);
+		expect(call).toMatchObject({ durationMs: 3_000, inputTokens: 500, outputTokens: 90 });
+	});
+
+	it('closes an open keyed call when the process exits', () => {
+		const t = new StreamCallTimer();
+		t.signal({ kind: 'start' }, T0);
+		t.signal(end(100, 50, { key: 'k' }), T0 + 2_500);
+		expect(t.finish()).toHaveLength(1);
+		expect(t.finish()).toEqual([]);
+	});
+
+	it('drops a call it was told to discard, and times nothing until the next start', () => {
+		const t = new StreamCallTimer();
+		t.signal({ kind: 'start' }, T0);
+		t.signal({ kind: 'discard' }, T0 + 1_000);
+		expect(t.signal(end(100, 100), T0 + 30_000)).toEqual([]);
+		t.signal({ kind: 'start' }, T0 + 31_000);
+		expect(t.signal(end(100, 100), T0 + 33_000)).toHaveLength(1);
+	});
+
+	it('times nothing before the first start, and drops calls too short to time', () => {
+		const t = new StreamCallTimer();
+		expect(t.signal(end(100, 100), T0)).toEqual([]);
+		t.signal({ kind: 'start' }, T0 + 1_000);
+		expect(t.signal(end(100, 100), T0 + 1_200)).toEqual([]);
+	});
+
+	it('labels a call with no model with the fallback model', () => {
+		const t = new StreamCallTimer('fallback-model');
+		t.signal({ kind: 'start' }, T0);
+		expect(t.signal(end(1, 1), T0 + 2_000)[0].model).toBe('fallback-model');
 	});
 });

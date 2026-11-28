@@ -148,20 +148,12 @@ export interface TabBarProps {
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
 
-	/** True when the owning agent is running on an SSH remote - hides local-only OS actions in tab menus */
-	sshRemote?: boolean;
+	/** The SSH remote the agent's files live on; file tab OS actions fetch through it */
+	sshRemoteId?: string;
 
 	// === Optional pinned slot (used by Pianola's manager surface) ===
 	/** Pinned content rendered inside the sticky-left group, before the tab
 	 * strip - stays visible while tabs overflow/scroll (e.g. Pianola's
 	 * Dashboard view button). */
 	leadingSlot?: ReactNode;
-
-	/**
-	 * A strip the user can only select tabs in: no close button, no new-tab
-	 * button, no drag, no unread toggle, and no hover menu (rename, star, close,
-	 * and the rest). Used for a Federation peer's mirrored agent, whose tabs live
-	 * on another Maestro. `onTabClose` and `onNewTab` are never called.
-	 */
-	readOnly?: boolean;
 }

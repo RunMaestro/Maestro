@@ -12,7 +12,7 @@
  * - syncFileTreeToTabCompletion
  * - handleMainPanelInputBlur
  * - handleReplayMessage
- * - handlePaste (text trimming + image staging)
+ * - handlePaste (text pastes pass through untouched; image staging)
  * - handleDrop (image staging)
  * - processInputRef tracking
  * - Return value stability
@@ -21,7 +21,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session, BatchRunState } from '../../../renderer/types';
-import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	agentModeFields,
+	createMockSession as baseCreateMockSession,
+} from '../../helpers/mockSession';
 import { resetStores } from '../../helpers/resetStores';
 import { makeGrokCommandObservation } from '../../fixtures/grok-command-observation';
 import type { GrokCommandDiscoveryResult } from '../../../main/agents/grok-skills';
@@ -1047,36 +1051,43 @@ describe('useInputHandlers', () => {
 	// ========================================================================
 
 	describe('handleReplayMessage', () => {
-		it('calls processInput via ref with text', () => {
+		afterEach(() => {
+			mockProcessInput.mockReset();
+		});
+
+		it('sends the replayed text pinned to the active agent and tab', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			act(() => {
 				result.current.handleReplayMessage('replay this');
 			});
 
-			// processInputRef is called via setTimeout
-			act(() => {
-				vi.runAllTimers();
+			expect(mockProcessInput).toHaveBeenCalledWith('replay this', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				images: [],
 			});
-
-			expect(result.current.processInputRef.current).toBeDefined();
 		});
 
-		it('stages images before processing when provided', () => {
+		it('hands the replayed images to processInput instead of staging them', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			act(() => {
 				result.current.handleReplayMessage('describe these', ['img1.png', 'img2.png']);
 			});
 
-			// Check that images were staged
+			expect(mockProcessInput).toHaveBeenCalledWith('describe these', {
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				images: ['img1.png', 'img2.png'],
+			});
+			// The composer's staged images are the draft's, not the replay's.
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
-			expect(tab?.stagedImages).toEqual(['img1.png', 'img2.png']);
+			expect(tab?.stagedImages ?? []).toEqual([]);
 		});
 
-		it('does not stage images when array is empty', () => {
-			const origStagedImages = ['keep-me.png'];
+		it('leaves the draft staged images alone', () => {
 			useSessionStore.setState({
 				sessions: [
 					createMockSession({
@@ -1086,7 +1097,7 @@ describe('useInputHandlers', () => {
 								name: 'Tab 1',
 								inputValue: '',
 								data: [],
-								stagedImages: origStagedImages,
+								stagedImages: ['keep-me.png'],
 							} as any,
 						],
 					}),
@@ -1097,10 +1108,9 @@ describe('useInputHandlers', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			act(() => {
-				result.current.handleReplayMessage('no images', []);
+				result.current.handleReplayMessage('with images', ['replayed.png']);
 			});
 
-			// Images should be unchanged (empty array doesn't trigger setStagedImages)
 			const sessions = useSessionStore.getState().sessions;
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
 			expect(tab?.stagedImages).toEqual(['keep-me.png']);
@@ -1112,39 +1122,28 @@ describe('useInputHandlers', () => {
 	// ========================================================================
 
 	describe('handlePaste', () => {
-		it('trims whitespace from pasted text', () => {
+		it('leaves surrounding whitespace on pasted text (dictation trailing space)', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			const mockPreventDefault = vi.fn();
-			const mockTarget = {
-				selectionStart: 0,
-				selectionEnd: 0,
-				value: '',
-			};
-
 			const pasteEvent = {
 				preventDefault: mockPreventDefault,
 				clipboardData: {
-					items: [],
-					getData: vi.fn().mockReturnValue('  trimmed text  '),
+					items: { length: 0, [Symbol.iterator]: function* () {} },
+					getData: vi.fn().mockReturnValue('dictated text '),
 				},
-				target: mockTarget,
+				target: { selectionStart: 0, selectionEnd: 0, value: '' },
 			} as unknown as React.ClipboardEvent;
-
-			// Patch items to be iterable
-			Object.defineProperty(pasteEvent.clipboardData, 'items', {
-				value: { length: 0, [Symbol.iterator]: function* () {} },
-			});
 
 			act(() => {
 				result.current.handlePaste(pasteEvent);
 			});
 
-			expect(mockPreventDefault).toHaveBeenCalled();
-			expect(inputVal()).toBe('trimmed text');
+			// Native paste runs untouched, so the trailing space survives
+			expect(mockPreventDefault).not.toHaveBeenCalled();
 		});
 
-		it('does not intercept text paste when no trimming needed', () => {
+		it('does not intercept a plain text paste', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			const mockPreventDefault = vi.fn();
@@ -1161,7 +1160,6 @@ describe('useInputHandlers', () => {
 				result.current.handlePaste(pasteEvent);
 			});
 
-			// Should NOT call preventDefault since no trimming was needed
 			expect(mockPreventDefault).not.toHaveBeenCalled();
 		});
 
@@ -2122,7 +2120,7 @@ describe('useInputHandlers', () => {
 			}
 		});
 
-		it('does not call preventDefault for text paste with no whitespace to trim', () => {
+		it('does not call preventDefault for a single-word text paste', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
 			const mockPreventDefault = vi.fn();
@@ -3036,38 +3034,27 @@ describe('useInputHandlers', () => {
 			expect(tab?.stagedImages).toEqual(['existing.png']);
 		});
 
-		it('preserves draft input value after replay sends', () => {
+		it('does not touch the draft text', () => {
 			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
 
-			// Type a draft message
 			act(() => {
 				result.current.setInputValue('my draft message');
 			});
 
-			expect(inputVal()).toBe('my draft message');
-
-			// Simulate processInput clearing the input (as it does in real usage)
-			mockProcessInput.mockImplementation(() => {
-				result.current.setInputValue('');
-			});
-
-			// Replay a previous message
 			act(() => {
 				result.current.handleReplayMessage('replayed message');
 			});
 
-			act(() => {
-				vi.runAllTimers();
-			});
-
-			// Draft should be restored after replay
+			// processInput owns the "leave the composer alone" rule for override
+			// sends (covered in useInputProcessing.test.ts); the handler itself must
+			// neither clear nor rewrite the draft.
 			expect(inputVal()).toBe('my draft message');
 			expect(mockProcessInput).toHaveBeenCalledWith('replayed message', {
 				sessionId: 'session-1',
 				tabId: 'tab-1',
+				images: [],
 			});
 
-			// Clean up mock
 			mockProcessInput.mockReset();
 		});
 	});
@@ -3305,7 +3292,7 @@ describe('Grok completion assembly and real keyboard acceptance', () => {
 					expect(commands.map(({ command }) => command)).toEqual([
 						'/history',
 						'/wizard',
-						...(toolType === 'claude-code' ? ['/skills'] : []),
+						...(toolType === 'claude-code' ? ['/btw', '/skills'] : []),
 						...(supportsProviderCommands ? ['/provider:review'] : []),
 					]);
 					if (supportsProviderCommands) {
@@ -3337,5 +3324,80 @@ describe('Grok completion assembly and real keyboard acceptance', () => {
 			'/history',
 			'/wizard',
 		]);
+	});
+});
+
+// docs/parity/agent-ux-parity.md, Composer "Image paste / drop / attach": a pasted and a
+// dropped image stage on the active tab the same way for a local, an SSH, and a hosted agent.
+describe('useInputHandlers mode parity: image paste and drop', () => {
+	it('stages pasted and dropped images identically in every mode', () => {
+		const originalFileReader = global.FileReader;
+		let reads = 0;
+		class MockFileReaderLocal {
+			result: string | null = null;
+			onload: ((ev: any) => void) | null = null;
+			readAsDataURL = vi.fn(function (this: MockFileReaderLocal) {
+				reads++;
+				this.result = `data:image/png;base64,image${reads}`;
+				this.onload?.({ target: { result: this.result } });
+			});
+		}
+		global.FileReader = MockFileReaderLocal as unknown as typeof FileReader;
+		try {
+			const outcomes = AGENT_MODES.map((mode) => {
+				reads = 0;
+				useSessionStore.setState({
+					sessions: [createMockSession({ ...agentModeFields(mode), inputMode: 'ai' })],
+					activeSessionId: 'session-1',
+				} as any);
+				const { result, unmount } = renderHook(() => useInputHandlers(createMockDeps()));
+				const pasted = {
+					type: 'image/png',
+					getAsFile: () => new Blob(['x'], { type: 'image/png' }),
+				};
+				const pasteEvent = {
+					preventDefault: vi.fn(),
+					clipboardData: {
+						items: {
+							length: 1,
+							0: pasted,
+							[Symbol.iterator]: function* () {
+								yield pasted;
+							},
+						},
+						getData: () => '',
+					},
+				} as unknown as React.ClipboardEvent;
+				const dropEvent = {
+					preventDefault: vi.fn(),
+					dataTransfer: {
+						getData: () => '',
+						files: { length: 1, 0: { type: 'image/jpeg', name: 'shot.jpg' } } as any,
+					},
+				} as unknown as React.DragEvent;
+				act(() => {
+					result.current.handlePaste(pasteEvent);
+				});
+				act(() => {
+					result.current.handleDrop(dropEvent);
+				});
+				const tab = useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === 'tab-1');
+				unmount();
+				return {
+					stagedImages: tab?.stagedImages,
+					pastePrevented: vi.mocked(pasteEvent.preventDefault).mock.calls.length > 0,
+					composer: useComposerInputStore.getState().aiValue,
+				};
+			});
+			expect(outcomes[0]).toEqual({
+				stagedImages: ['data:image/png;base64,image1', 'data:image/png;base64,image2'],
+				pastePrevented: true,
+				composer: '',
+			});
+			expect(outcomes[1]).toEqual(outcomes[0]);
+			expect(outcomes[2]).toEqual(outcomes[0]);
+		} finally {
+			global.FileReader = originalFileReader;
+		}
 	});
 });

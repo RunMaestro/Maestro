@@ -24,6 +24,19 @@ export interface LiftedToPointer {
 	at: number;
 }
 
+/**
+ * The setting that turns hosted agents on for this machine. Off by default: only an explicit `true`
+ * opts in. Off, a lifted record works as the SSH agent it was: its turns run over SSH from here,
+ * nothing is sent to its host, and nothing on the host or in the record changes, so switching it
+ * on again restores hosting.
+ */
+export const HOSTED_AGENTS_SETTING = 'federationHostedAgents';
+
+/** Whether hosted agents are on, from the stored settings (absent means off: only `true` opts in). */
+export function hostedAgentsEnabled(settings: Record<string, unknown> | undefined | null): boolean {
+	return settings?.[HOSTED_AGENTS_SETTING] === true;
+}
+
 /** The error code a refused send reports (`--json` output and bridge replies). */
 export const AGENT_LIFTED_CODE = 'AGENT_LIFTED';
 
@@ -49,14 +62,35 @@ export function liftedAgentRef(agent: { liftedTo?: unknown }): string | undefine
 }
 
 /**
- * The message a send to a lifted agent is refused with, or undefined when the agent was not
- * lifted and the send may go ahead.
+ * Where a hosted agent's turns run: its pointer while hosted agents are on, undefined for an
+ * agent that is not lifted or while they are off (it then works as its SSH agent, from here).
+ * The CLI sends to this peer agent what a local id names (`liftedPeerTarget()`).
  */
-export function liftedSendRefusal(agent: {
-	name?: string;
-	liftedTo?: unknown;
-}): string | undefined {
+export function hostedPointer(
+	agent: { liftedTo?: unknown },
+	/** `HOSTED_AGENTS_SETTING`, or a reader for it: read only for a lifted agent. */
+	hostedEnabled: boolean | (() => boolean) = true
+): LiftedToPointer | undefined {
 	const pointer = readLiftedTo(agent.liftedTo);
+	if (!pointer) return undefined;
+	if (!(typeof hostedEnabled === 'function' ? hostedEnabled() : hostedEnabled)) return undefined;
+	return pointer;
+}
+
+/**
+ * The message a send to a lifted agent is refused with, or undefined when the agent was not
+ * lifted and the send may go ahead. For a place that cannot reach the host (a host's own
+ * runtime holding a stale pointer); the CLI routes such a send to the host instead.
+ */
+export function liftedSendRefusal(
+	agent: {
+		name?: string;
+		liftedTo?: unknown;
+	},
+	/** `HOSTED_AGENTS_SETTING`, or a reader for it: read only for a lifted agent. */
+	hostedEnabled: boolean | (() => boolean) = true
+): string | undefined {
+	const pointer = hostedPointer(agent, hostedEnabled);
 	if (!pointer) return undefined;
 	const ref = peerAgentRef(pointer.peer, pointer.agentId);
 	const who = agent.name ? `"${agent.name}"` : 'This agent';
@@ -82,24 +116,58 @@ export function liftedOwnerOfProcess<T extends { id: string; liftedTo?: unknown 
 	);
 }
 
-/**
- * Why a turn of this agent is running, or null. The agent's own state and every tab's state count,
- * hidden consult tabs included: a consult answering on one of them is a running turn too.
- */
-export function liftBusyReason(agent: {
+/** The live state a host or the desktop's bridge sends for an agent, as far as a running turn reads. */
+export interface RunningTurnProbe {
 	name?: string;
 	state?: string;
 	aiTabs?: readonly { id: string; name?: string | null; state?: string }[];
-}): string | null {
+}
+
+/**
+ * Where a turn of this agent runs now ("tab \"Main\"", "tab t1", or "" for the agent as a whole),
+ * or null when none does. The agent's own state and every tab's state count, hidden consult tabs
+ * included: a consult answering on one of them is a running turn too.
+ */
+export function runningTurnWhere(agent: RunningTurnProbe): string | null {
 	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
 	const busyTab = tabs.find((tab) => tab?.state === 'busy');
+	if (busyTab) return busyTab.name ? `tab "${busyTab.name}"` : `tab ${busyTab.id}`;
+	return agent.state === 'busy' ? '' : null;
+}
+
+/** Why a turn of this agent is running, or null: the refusal a lift shows. */
+export function liftBusyReason(agent: RunningTurnProbe): string | null {
+	const where = runningTurnWhere(agent);
+	if (where === null) return null;
 	const who = agent.name ? `"${agent.name}"` : 'The agent';
-	if (busyTab) {
-		const tab = busyTab.name ? `tab "${busyTab.name}"` : `tab ${busyTab.id}`;
-		return `${who} is running a turn in ${tab}. A running turn cannot move: wait for it to finish, or stop it, then lift again.`;
+	return where
+		? `${who} is running a turn in ${where}. A running turn cannot move: wait for it to finish, or stop it, then lift again.`
+		: `${who} is busy. A running turn cannot move: wait for it to finish, or stop it, then lift again.`;
+}
+
+/**
+ * The `peer:agentId` of every hosted agent the person keeps in their Left Bar: one per local record
+ * with a pointer, whether it moved from here (a lift) or was added from the host's roster. A
+ * peer's other agents belong to whoever runs that host, so the Left Bar, the Thinking pill, and
+ * the command palette leave them out.
+ */
+export function liftedAgentKeys(agents: readonly { liftedTo?: unknown }[]): Set<string> {
+	const keys = new Set<string>();
+	for (const agent of agents) {
+		const pointer = readLiftedTo(agent?.liftedTo);
+		if (pointer) keys.add(peerAgentRef(pointer.peer, pointer.agentId));
 	}
-	if (agent.state === 'busy') {
-		return `${who} is busy. A running turn cannot move: wait for it to finish, or stop it, then lift again.`;
-	}
-	return null;
+	return keys;
+}
+
+/** The local record that points at `peer:agentId`, or undefined when none does. */
+export function findLiftedAgent<T extends { liftedTo?: unknown }>(
+	agents: readonly T[],
+	peer: string,
+	agentId: string
+): T | undefined {
+	return agents.find((agent) => {
+		const pointer = readLiftedTo(agent?.liftedTo);
+		return pointer !== undefined && pointer.peer === peer && pointer.agentId === agentId;
+	});
 }

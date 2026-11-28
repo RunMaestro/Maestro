@@ -7,19 +7,21 @@
  * list, so this window flushes its pending writes first: the plan then lists the tabs and queue the
  * person sees. The pointer comes back through this window's own `remote:updateSessionConfig`
  * handler, the one the CLI's lift reaches too.
+ *
+ * Move Back from Host is the reverse (`window.maestro.federation.unlift`, `runReturnFromHost()`,
+ * the function `maestro-cli unlift` runs): the agent becomes an SSH agent again, with the host's
+ * tabs merged in, and automatic moves leave it here.
  */
 
-import type { DesktopLiftAnswer } from '../../main/federation/lift';
+import type { DesktopLiftAnswer, DesktopReturnAnswer } from '../../main/federation/lift';
 import type {
 	DesktopSetupHostAnswer,
 	DesktopSetupHostOptions,
 } from '../../main/federation/setup-host';
 import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../shared/federationCommands';
-import { useModalStore } from '../stores/modalStore';
+import { getModalActions, useModalStore } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
-import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { ipcErrorMessage } from '../utils/ipcErrorMessage';
-import { liftedMirrorTarget, type LiftableAgent } from '../utils/peerMirrorView';
 import { flushSessionPersistenceNow } from './sessionPersistenceFlush';
 
 /**
@@ -115,25 +117,68 @@ export async function moveAgentToHost(
 	return answer;
 }
 
-/**
- * Show the mirrored agent a lifted agent points at. False (with a toast) when the mirror does not
- * hold it right now: the peer is not connected, or the host removed the agent.
- */
-export function openLiftedAgent(agent: Pick<LiftableAgent, 'liftedTo'>): boolean {
-	const state = usePeerMirrorStore.getState();
-	const target = liftedMirrorTarget(agent, state.peers);
-	if (!target) return false;
-	if (!target.mirrored) {
-		const peer = state.peers[target.peerId];
-		notifyToast({
-			color: 'red',
-			title: `${target.ref} is not available`,
-			message: peer
-				? `Peer "${target.peerId}" does not show that agent right now (${peer.connection}).`
-				: `Peer "${target.peerId}" is not mirrored. Turn Federation on for its SSH remote.`,
-		});
-		return false;
+async function callUnlift(
+	sessionId: string,
+	options: { offline: boolean }
+): Promise<DesktopReturnAnswer> {
+	const api = window.maestro?.federation;
+	if (!api?.unlift)
+		return { ok: false, code: 'FEDERATION_NOT_RUNNING', error: FEDERATION_NOT_RUNNING_MESSAGE };
+	try {
+		await flushSessionPersistenceNow();
+		return await api.unlift(sessionId, options);
+	} catch (error) {
+		return { ok: false, code: 'RETURN_FAILED', error: ipcErrorMessage(error) };
 	}
-	state.selectMirroredAgent(target.peerId, target.agentId);
-	return true;
+}
+
+/** Toast the outcome of a Move Back. */
+function reportUnlift(answer: DesktopReturnAnswer): void {
+	if (!answer.ok) {
+		notifyToast({ color: 'red', title: 'Not moved back', message: answer.error });
+		return;
+	}
+	for (const notice of answer.result.notices ?? []) {
+		notifyToast({ color: 'yellow', title: 'Moved back from host', message: notice });
+	}
+	const { result } = answer;
+	notifyToast({
+		color: 'green',
+		title: `"${result.agent.name}" is an SSH agent again`,
+		message:
+			result.tabs > 0
+				? `${result.tabs} tab(s) came back from ${result.from}${result.newTabs > 0 ? `, ${result.newTabs} of them new` : ''}. Automatic moves leave it here.`
+				: 'Automatic moves leave it here.',
+	});
+}
+
+/**
+ * Move Back from Host (Left Bar right-click, command palette): confirm, then make the hosted
+ * agent an SSH agent again. When its host cannot be reached, a second confirm offers to move it
+ * back with only this machine's copy.
+ */
+export function requestMoveBackFromHost(
+	sessionId: string,
+	agentName: string,
+	peerName: string
+): void {
+	const { showConfirmation } = getModalActions();
+	showConfirmation(
+		`Move "${agentName}" back from ${peerName}? It becomes an SSH agent again: its conversations on ${peerName} come back as tabs here, its copy on ${peerName} is removed, and automatic moves leave it here.`,
+		() => {
+			void (async () => {
+				const answer = await callUnlift(sessionId, { offline: false });
+				if (!answer.ok && answer.code === 'PEER_NOT_CONNECTED') {
+					showConfirmation(
+						`${peerName} cannot be reached. Move "${agentName}" back anyway, with only this machine's copy? Conversations started on ${peerName} after the move stay there, and its copy there is not removed.`,
+						() => {
+							void callUnlift(sessionId, { offline: true }).then(reportUnlift);
+						}
+					);
+					return;
+				}
+				reportUnlift(answer);
+			})();
+		}
+	);
 }

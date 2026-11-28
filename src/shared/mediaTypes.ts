@@ -19,6 +19,8 @@
  * externally" path rather than landing in a player that can only fail.
  */
 
+import { hexToUtf8, utf8ToHex } from './previewMarker';
+
 /** Custom protocol scheme that streams local media files to the renderer. */
 export const MEDIA_SCHEME = 'maestro-media';
 
@@ -155,28 +157,6 @@ export function getMediaMimeType(filePath: string): string | null {
 }
 
 /**
- * Hex-encode a UTF-8 string. Paths are hex-encoded rather than
- * percent-encoded so that Unicode filenames, `#`, `?`, and `%` survive URL
- * normalization intact on both sides of the protocol boundary.
- */
-function toHex(value: string): string {
-	const bytes = new TextEncoder().encode(value);
-	let out = '';
-	for (const byte of bytes) out += byte.toString(16).padStart(2, '0');
-	return out;
-}
-
-/** Inverse of {@link toHex}. Returns `null` for anything that is not clean hex. */
-function fromHex(hex: string): string | null {
-	if (hex.length === 0 || hex.length % 2 !== 0 || !/^[0-9a-f]+$/.test(hex)) return null;
-	const bytes = new Uint8Array(hex.length / 2);
-	for (let i = 0; i < bytes.length; i++) {
-		bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-	}
-	return new TextDecoder().decode(bytes);
-}
-
-/**
  * Build the stream URL for a local media file.
  *
  * The token is minted once per app boot and checked by the protocol handler,
@@ -184,7 +164,7 @@ function fromHex(hex: string): string | null {
  * such as the HTML preview iframe) cannot pull arbitrary media off disk.
  */
 export function buildMediaStreamUrl(token: string, absolutePath: string): string {
-	return `${MEDIA_SCHEME}://${MEDIA_STREAM_HOST}/${token}/${toHex(absolutePath)}`;
+	return `${MEDIA_SCHEME}://${MEDIA_STREAM_HOST}/${token}/${utf8ToHex(absolutePath)}`;
 }
 
 /** Cheap check for "is this `fs:readFile` result a media stream URL". */
@@ -230,7 +210,7 @@ export function parseMediaStreamUrl(url: string, expectedToken: string): string 
 	const [token, hex] = segments;
 	if (token !== expectedToken) return null;
 
-	const filePath = fromHex(hex);
+	const filePath = hexToUtf8(hex);
 	if (!filePath || !isMediaFile(filePath)) return null;
 	return filePath;
 }

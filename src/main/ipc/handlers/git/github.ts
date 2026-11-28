@@ -12,8 +12,18 @@ import { getShellPath } from '../../../runtime/getShellPath';
 import { captureMessage } from '../../../utils/sentry';
 import { getSshRemoteById } from '../../../stores';
 import { execGitRemote } from '../../../utils/remote-git';
-import { buildSshCommand } from '../../../utils/ssh-command-builder';
+import { buildSshCommand, execSshCommand } from '../../../utils/ssh-command-builder';
 import { LOG_CONTEXT, handlerOpts } from './shared';
+
+/**
+ * A push runs the repo's pre-push hook, so its stderr can be megabytes of test
+ * logs. The failure that matters is at the end; keep that and say what was cut.
+ */
+const MAX_PUSH_ERROR_CHARS = 4000;
+function tailOfOutput(text: string): string {
+	if (text.length <= MAX_PUSH_ERROR_CHARS) return text;
+	return `[... ${text.length - MAX_PUSH_ERROR_CHARS} earlier characters omitted]\n${text.slice(-MAX_PUSH_ERROR_CHARS)}`;
+}
 
 /**
  * Register GitHub CLI integration Git IPC handlers: createPR, checkGhCli, createGist.
@@ -45,7 +55,10 @@ export function registerGithubHandlers(): void {
 						remoteCwd: worktreePath,
 					});
 					if (pushResult.exitCode !== 0) {
-						return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
+						return {
+							success: false,
+							error: `Failed to push branch: ${tailOfOutput(pushResult.stderr)}`,
+						};
 					}
 
 					// ghPath points at the local binary, so the remote resolves gh from its own PATH.
@@ -98,7 +111,10 @@ export function registerGithubHandlers(): void {
 					shellEnv
 				);
 				if (pushResult.exitCode !== 0) {
-					return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
+					return {
+						success: false,
+						error: `Failed to push branch: ${tailOfOutput(pushResult.stderr)}`,
+					};
 				}
 
 				// Create the PR using gh CLI
@@ -133,62 +149,68 @@ export function registerGithubHandlers(): void {
 	// Check if GitHub CLI (gh) is installed and authenticated
 	// ghPath parameter allows specifying custom path to gh binary (e.g., /opt/homebrew/bin/gh)
 	// Results are cached for 1 minute to avoid repeated subprocess calls
+	// sshRemoteId runs the same two probes on that remote, where `gh pr create` will run
 	ipcMain.handle(
 		'git:checkGhCli',
-		withIpcErrorLogging(handlerOpts('checkGhCli'), async (ghPath?: string) => {
-			// Resolve gh CLI path (uses cached detection or custom path). This comes
-			// before the cache read because the cached verdict is keyed by the command
-			// it was reached against.
-			const ghCommand = await resolveGhPath(ghPath);
+		withIpcErrorLogging(
+			handlerOpts('checkGhCli'),
+			async (ghPath?: string, sshRemoteId?: string) => {
+				if (sshRemoteId) return checkGhCliRemote(sshRemoteId);
 
-			// Check cache first (skip if custom path provided)
-			if (!ghPath) {
-				const cached = getCachedGhStatus(ghCommand);
-				if (cached !== null) {
-					logger.debug(
-						`Using cached gh CLI status: installed=${cached.installed}, authenticated=${cached.authenticated}`,
+				// Resolve gh CLI path (uses cached detection or custom path). This comes
+				// before the cache read because the cached verdict is keyed by the command
+				// it was reached against.
+				const ghCommand = await resolveGhPath(ghPath);
+
+				// Check cache first (skip if custom path provided)
+				if (!ghPath) {
+					const cached = getCachedGhStatus(ghCommand);
+					if (cached !== null) {
+						logger.debug(
+							`Using cached gh CLI status: installed=${cached.installed}, authenticated=${cached.authenticated}`,
+							LOG_CONTEXT
+						);
+						return cached;
+					}
+				}
+
+				logger.debug(`Checking gh CLI at: ${ghCommand}`, LOG_CONTEXT);
+
+				// Check if gh is installed by running gh --version.
+				// The expanded env is required, not optional: gh is frequently a shim
+				// (asdf, mise, rbenv-style) that re-execs its parent tool, so it only runs
+				// if that parent is on PATH. A GUI-launched Electron process does not
+				// inherit the user's shell PATH, so probing without it reports a perfectly
+				// good install as missing.
+				const env = getExpandedEnv();
+				const versionResult = await execFileNoThrow(ghCommand, ['--version'], undefined, env);
+				if (versionResult.exitCode !== 0) {
+					logger.warn(
+						`gh CLI not found at ${ghCommand}: exit=${versionResult.exitCode}, stderr=${versionResult.stderr}`,
 						LOG_CONTEXT
 					);
-					return cached;
+					const result = { installed: false, authenticated: false };
+					if (!ghPath) setCachedGhStatus(ghCommand, false, false);
+					return result;
 				}
-			}
+				logger.debug(`gh CLI found: ${versionResult.stdout.trim().split('\n')[0]}`, LOG_CONTEXT);
 
-			logger.debug(`Checking gh CLI at: ${ghCommand}`, LOG_CONTEXT);
-
-			// Check if gh is installed by running gh --version.
-			// The expanded env is required, not optional: gh is frequently a shim
-			// (asdf, mise, rbenv-style) that re-execs its parent tool, so it only runs
-			// if that parent is on PATH. A GUI-launched Electron process does not
-			// inherit the user's shell PATH, so probing without it reports a perfectly
-			// good install as missing.
-			const env = getExpandedEnv();
-			const versionResult = await execFileNoThrow(ghCommand, ['--version'], undefined, env);
-			if (versionResult.exitCode !== 0) {
-				logger.warn(
-					`gh CLI not found at ${ghCommand}: exit=${versionResult.exitCode}, stderr=${versionResult.stderr}`,
+				// Check if gh is authenticated by running gh auth status
+				const authResult = await execFileNoThrow(ghCommand, ['auth', 'status'], undefined, env);
+				const authenticated = authResult.exitCode === 0;
+				logger.debug(
+					`gh auth status: ${authenticated ? 'authenticated' : 'not authenticated'}`,
 					LOG_CONTEXT
 				);
-				const result = { installed: false, authenticated: false };
-				if (!ghPath) setCachedGhStatus(ghCommand, false, false);
-				return result;
+
+				// Cache the result (only if not using custom path)
+				if (!ghPath) {
+					setCachedGhStatus(ghCommand, true, authenticated);
+				}
+
+				return { installed: true, authenticated };
 			}
-			logger.debug(`gh CLI found: ${versionResult.stdout.trim().split('\n')[0]}`, LOG_CONTEXT);
-
-			// Check if gh is authenticated by running gh auth status
-			const authResult = await execFileNoThrow(ghCommand, ['auth', 'status'], undefined, env);
-			const authenticated = authResult.exitCode === 0;
-			logger.debug(
-				`gh auth status: ${authenticated ? 'authenticated' : 'not authenticated'}`,
-				LOG_CONTEXT
-			);
-
-			// Cache the result (only if not using custom path)
-			if (!ghPath) {
-				setCachedGhStatus(ghCommand, true, authenticated);
-			}
-
-			return { installed: true, authenticated };
-		})
+		)
 	);
 
 	// Create a GitHub Gist from file content
@@ -255,4 +277,31 @@ export function registerGithubHandlers(): void {
 			}
 		)
 	);
+}
+
+/**
+ * The gh probes of `git:checkGhCli`, run on an SSH remote: the machine a remote
+ * agent's `gh pr create` runs on, so the Create PR form warns about the same two
+ * things for every agent. ghPath names a local binary, so the remote resolves gh
+ * from its own PATH, as `git:createPR` does. Not cached: the one-slot cache holds
+ * the local verdict. A remote that cannot be reached reads as not installed; the
+ * reachability tracker raises its own notice for the outage.
+ */
+async function checkGhCliRemote(
+	sshRemoteId: string
+): Promise<{ installed: boolean; authenticated: boolean }> {
+	const sshRemote = getSshRemoteById(sshRemoteId);
+	if (!sshRemote) return { installed: false, authenticated: false };
+	const probe = async (args: string[]) =>
+		execSshCommand(sshRemote, await buildSshCommand(sshRemote, { command: 'gh', args }));
+	const version = await probe(['--version']);
+	if (version.exitCode !== 0) {
+		logger.warn(
+			`gh CLI not found on ${sshRemote.name || sshRemote.host}: exit=${version.exitCode}`,
+			LOG_CONTEXT
+		);
+		return { installed: false, authenticated: false };
+	}
+	const auth = await probe(['auth', 'status']);
+	return { installed: true, authenticated: auth.exitCode === 0 };
 }

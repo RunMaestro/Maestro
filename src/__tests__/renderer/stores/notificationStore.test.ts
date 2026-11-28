@@ -26,7 +26,9 @@ import {
 	startNotificationHistorySync,
 	NOTIFICATION_HISTORY_LIMIT,
 	NOTIFICATION_HISTORY_STORAGE_KEY,
+	TOAST_FALLBACK_FLASH_MS,
 } from '../../../renderer/stores/notificationStore';
+import { useCenterFlashStore, dismissCenterFlash } from '../../../renderer/stores/centerFlashStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
 import { showOsNotification } from '../../../renderer/stores/notificationStore';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
@@ -320,6 +322,59 @@ describe('notificationStore', () => {
 				expect(mockLoggerToast).toHaveBeenCalled();
 				// OS notification should still fire
 				expect(mockShow).toHaveBeenCalled();
+			});
+
+			describe('flashWhenToastsOff', () => {
+				beforeEach(() => {
+					dismissCenterFlash();
+				});
+
+				it('fires a Center Flash with the title and message when toasts are off', () => {
+					useNotificationStore.getState().setDefaultDuration(-1);
+					notifyToast({
+						color: 'yellow',
+						title: 'Could not steer this round',
+						message: 'More than one agent is working.',
+						flashWhenToastsOff: true,
+					});
+
+					expect(useNotificationStore.getState().toasts).toHaveLength(0);
+					expect(useCenterFlashStore.getState().active).toMatchObject({
+						message: 'Could not steer this round',
+						detail: 'More than one agent is working.',
+						wrapDetail: true,
+						color: 'yellow',
+						duration: TOAST_FALLBACK_FLASH_MS,
+					});
+				});
+
+				it('shows only the toast when toasts are on', () => {
+					notifyToast({ title: 'Sent', message: 'Steered.', flashWhenToastsOff: true });
+
+					expect(useNotificationStore.getState().toasts).toHaveLength(1);
+					expect(useCenterFlashStore.getState().active).toBeNull();
+				});
+
+				it('never flashes without the flag, or for a history-only notification', () => {
+					useNotificationStore.getState().setDefaultDuration(-1);
+					notifyToast({ title: 'Quiet', message: 'No flag.' });
+					notifyToast({
+						title: 'Inbox',
+						message: 'History only.',
+						historyOnly: true,
+						flashWhenToastsOff: true,
+					});
+
+					expect(useCenterFlashStore.getState().active).toBeNull();
+				});
+
+				it('keeps the flag out of the stored toast', () => {
+					notifyToast({ title: 'Sent', message: 'Steered.', flashWhenToastsOff: true });
+
+					expect(useNotificationStore.getState().toasts[0]).not.toHaveProperty(
+						'flashWhenToastsOff'
+					);
+				});
 			});
 
 			it('sets timestamp on toast', () => {

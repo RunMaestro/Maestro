@@ -151,9 +151,12 @@ import { installFeedbackLiveStateHook } from './services/feedbackLiveState';
 import { installAutoRunSnapshotResponder } from './services/debugPackage';
 import { useSessionRecovery } from './hooks/agent/useSessionRecovery';
 import { useAutoResumeCoordinator } from './hooks/agent/useAutoResumeCoordinator';
+import { useAutoRunRestartResume } from './hooks/batch/useAutoRunRestartResume';
+import { useGroupChatAutoRunTrigger } from './hooks/groupChat/useGroupChatAutoRunTrigger';
 import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
+import { usePromptLinksRendererReady } from './hooks/session/usePromptLinksRendererReady';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
 import { useCueBundleAgentSync } from './hooks/cue/useCueBundleAgentSync';
 
@@ -178,8 +181,17 @@ import {
 } from './stores/groupChatStore';
 import { useBatchStore } from './stores/batchStore';
 import { registerBatchResumer } from './services/batchResumer';
-import { registerSessionPersistenceFlush } from './services/sessionPersistenceFlush';
-import { mergeQueuedItemIntoAbove, toggleQueuedItemPaused } from './services/queuedPrompt';
+import { registerMaestroBuiltinCommandHandlers } from './services/maestroBuiltinCommands';
+import {
+	registerBatchedOutputFlush,
+	registerSessionPersistenceFlush,
+} from './services/sessionPersistenceFlush';
+import {
+	mergeQueuedItemIntoAbove,
+	removeQueuedItem,
+	reorderQueuedItems,
+	toggleQueuedItemPaused,
+} from './services/queuedPrompt';
 import {
 	CODEX_FOLLOWUP_EVENT,
 	resolveCodexFollowup,
@@ -226,8 +238,7 @@ import type {
 } from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { reorderQueueItem, applyQueuedItemEdit } from './utils/executionQueue';
-import { resolveQueuedItemEdit } from './services/queuedPrompt';
+import { saveQueuedItemEdit } from './services/queuedPrompt';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -266,6 +277,7 @@ import { filterLiveAgents } from '../shared/agentVisibility';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
 import { usePeerMirrorBridge } from './hooks/federation/usePeerMirrorBridge';
+import { useLiftedAgentSettingsSync } from './hooks/federation/useLiftedAgentSettingsSync';
 
 /** Coordinates the desktop workspace, shared listeners, and app-level surfaces. */
 function MaestroConsoleInner() {
@@ -284,6 +296,7 @@ function MaestroConsoleInner() {
 		duplicatingSessionId,
 		newInstancePresetGroupId,
 		newInstancePresetWorkingDir,
+		newInstancePresetSshRemoteId,
 		// Edit Agent Modal
 		setEditAgentModalOpen,
 		editAgentSession,
@@ -440,6 +453,7 @@ function MaestroConsoleInner() {
 		state: wizardState,
 		openWizard: _baseOpenWizardModal,
 		restoreState: restoreWizardState,
+		resetWizard: resetWizardState,
 		loadResumeState: _loadResumeState,
 		clearResumeState,
 		completeWizard,
@@ -625,6 +639,11 @@ function MaestroConsoleInner() {
 	const batchedUpdater = useBatchedSessionUpdates();
 	const batchedUpdaterRef = useRef(batchedUpdater);
 	batchedUpdaterRef.current = batchedUpdater;
+	// A transcript read answered for another machine lands the batched output first (R29).
+	useEffect(() => {
+		registerBatchedOutputFlush(() => batchedUpdaterRef.current.flushNow());
+		return () => registerBatchedOutputFlush(null);
+	}, []);
 
 	// setActiveSessionId wrapper - flushes batched updates before switching
 	const setActiveSessionIdFromContext = useCallback(
@@ -1102,6 +1121,13 @@ function MaestroConsoleInner() {
 	// mirror must not rescan every project root or toggle that shared engine on
 	// mount; doing so floods the WebSocket bridge and starves interactive calls.
 	useCueAutoDiscovery(encoreFeatures, !isWebDesktop());
+
+	// --- PROMPT LINKS (gated by Encore Feature) ---
+	// A maestro://run link clicked while Maestro was closed waits in main until
+	// the agents are restored. Only the desktop renderer can open its tab.
+	usePromptLinksRendererReady(
+		initialLoadComplete && encoreFeatures.promptLinks === true && !isWebDesktop()
+	);
 
 	// --- PIANOLA AGENT (pinned manager agent, gated by Encore Feature) ---
 	// Ensures the single pinned Pianola agent exists once sessions are loaded and
@@ -1794,17 +1820,23 @@ function MaestroConsoleInner() {
 	// shared entry point that unblocks both spec- and goal-driven Auto Runs.
 	useAutoResumeCoordinator({ resumeAutoRunAfterError });
 
+	// --- AUTO RUN RESUME AFTER UPDATE RESTART ---
+	// Starts the Auto Runs the update modal saved before the app restarted, at
+	// the document and loop pass each one stopped on. Primary window only.
+	useAutoRunRestartResume({ enabled: isLifecycleOwner, sessionsLoaded, startBatchRun });
+	// A group chat moderator's `!autorun` starts the participant's run here.
+	useGroupChatAutoRunTrigger({ enabled: isLifecycleOwner, startBatchRun });
+
 	// --- AGENT CAPABILITY CACHE PRIMING ---
 	// One bulk fetch on mount so synchronous `hasCapabilityCached` callers that
 	// run outside the active session's tree (CLI/web dispatch) see real values
 	// instead of the conservative defaults.
 	useCapabilitiesPriming();
 
+	// The queued card's Remove: the one service `maestro-cli queue remove` reaches too, which
+	// also hands a hosted agent's host-queue item to its host.
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => ({
-			...s,
-			executionQueue: s.executionQueue.filter((item) => item.id !== itemId),
-		}));
+		removeQueuedItem(activeSessionIdRef.current, itemId);
 	}, []);
 
 	const handleToggleQueuedItemPause = useCallback((itemId: string) => {
@@ -1817,33 +1849,23 @@ function MaestroConsoleInner() {
 		mergeQueuedItemIntoAbove(activeSessionIdRef.current, itemId);
 	}, []);
 
-	// Edit a queued message's prompt text and attached images in place.
-	const handleEditQueuedItem = useCallback((itemId: string, patch: QueuedItemEditPatch) => {
-		updateSessionWith(activeSessionIdRef.current, (s) => {
-			const { crossAgent, slashCommand } = resolveQueuedItemEdit(s, patch, itemId);
-			return {
-				...s,
-				executionQueue: applyQueuedItemEdit(
-					s.executionQueue,
-					itemId,
-					patch,
-					crossAgent,
-					slashCommand
-				),
-			};
-		});
-	}, []);
+	// Edit a queued message's prompt text and attached images in place. Same
+	// rules `maestro-cli queue edit` reaches; a hosted card's edit goes to its host,
+	// and the answer comes back so a refused save keeps the modal open.
+	const handleEditQueuedItem = useCallback(
+		(itemId: string, patch: QueuedItemEditPatch) =>
+			saveQueuedItemEdit(activeSessionIdRef.current, itemId, patch),
+		[]
+	);
 
 	// Reorder a queued item within the active session's inline chat list. The
 	// inline list is filtered to a single tab, so fromIndex/toIndex address that
-	// tab's items; reorderQueueItem rearranges them while keeping other tabs'
+	// tab's items; reorderQueuedItems rearranges them while keeping other tabs'
 	// queued items in their absolute positions (see the helper for details).
+	// Same service `maestro-cli queue move` reaches; a hosted card's move goes to its host.
 	const handleReorderQueuedItem = useCallback(
 		(fromIndex: number, toIndex: number, tabId?: string) => {
-			updateSessionWith(activeSessionIdRef.current, (s) => ({
-				...s,
-				executionQueue: reorderQueueItem(s.executionQueue, fromIndex, toIndex, tabId),
-			}));
+			reorderQueuedItems(activeSessionIdRef.current, fromIndex, toIndex, tabId);
 		},
 		[]
 	);
@@ -1922,6 +1944,7 @@ function MaestroConsoleInner() {
 			// after the resume prompt, and openWizardModal would find the saved
 			// state still on disk and raise the same prompt again (#1835).
 			openWizard: _baseOpenWizardModal,
+			resetWizard: resetWizardState,
 			restoreState: restoreWizardState,
 		},
 		spawnBackgroundSynopsis,
@@ -1931,6 +1954,16 @@ function MaestroConsoleInner() {
 		setInputValueRef,
 		inputRef,
 	});
+
+	// A send that names its own tab (a Federation client's hosted agent, `dispatch --queue`) runs
+	// `/history` and `/skills` there, as the composer runs them on the active tab.
+	useEffect(() => {
+		registerMaestroBuiltinCommandHandlers({
+			history: handleHistoryCommand,
+			skills: handleSkillsCommand,
+		});
+		return () => registerMaestroBuiltinCommandHandlers(null);
+	}, [handleHistoryCommand, handleSkillsCommand]);
 
 	// Combine built-in slash commands with custom AI commands, bundled methodology
 	// commands, and agent-specific commands for autocomplete.
@@ -2236,6 +2269,8 @@ function MaestroConsoleInner() {
 
 	// Federation: follow the main-process peer mirror (memory only; nothing while the feature is off).
 	usePeerMirrorBridge();
+	// Federation: a lifted agent's settings changed here reach its host, and the host's come back.
+	useLiftedAgentSettingsSync(isLifecycleOwner);
 
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload
@@ -3581,6 +3616,7 @@ function MaestroConsoleInner() {
 						duplicatingSessionId={duplicatingSessionId}
 						newInstancePresetGroupId={newInstancePresetGroupId}
 						newInstancePresetWorkingDir={newInstancePresetWorkingDir}
+						newInstancePresetSshRemoteId={newInstancePresetSshRemoteId}
 						onCloseEditAgentModal={handleCloseEditAgentModal}
 						onSaveEditAgent={handleSaveEditAgent}
 						editAgentSession={editAgentSession}

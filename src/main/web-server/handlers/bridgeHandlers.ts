@@ -32,6 +32,7 @@ import {
 	sanitizeRemoteConfiguration,
 	sanitizeRemoteResult,
 } from './bridgeDenyList';
+import { withHostAgentEnv } from './remoteSpawnEnv';
 
 const LOG_CONTEXT = 'WebServer:Bridge';
 
@@ -314,7 +315,9 @@ export async function handleBridgeInvoke<
 				throw new Error('Invalid remote spawn configuration');
 			// Admission to the generic bridge proves no human origin for this turn.
 			// Override caller claims before the native handler can mint its proof.
-			args = [{ ...config, querySource: 'auto' }];
+			// The browser never sees the agent's own env vars (stripped from every
+			// reply), so restore them from the host record (#2088).
+			args = [{ ...withHostAgentEnv(config as Record<string, unknown>), querySource: 'auto' }];
 		}
 		if (channel === 'agents:setConfig') {
 			const incoming = args[1];
@@ -347,6 +350,19 @@ export async function handleBridgeInvoke<
 			error,
 		});
 	}
+}
+
+/**
+ * Call a registered `ipcMain` handler as a bridge client's call reaches it, from main code that
+ * serves a bridge client's request, so it reads what that client would read (a tab's live
+ * transcript from the window that owns it, `sessions:getDeferredContent`). Never for a channel a
+ * client could not call itself.
+ */
+export async function invokeAsBridge(channel: string, ...args: unknown[]): Promise<unknown> {
+	const handler = (ipcMain as unknown as IpcMainInternal)._invokeHandlers?.get(channel);
+	if (!handler || !isRemoteMethodAllowed(channel))
+		throw new Error(`No bridge handler for ${channel}`);
+	return handler(FAKE_EVENT, ...args);
 }
 
 export function isBridgeInvokeMessage(message: { type: string }): message is InvokeMessage {

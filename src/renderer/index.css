@@ -575,34 +575,6 @@ textarea::placeholder {
 	opacity: 0;
 }
 
-/* Bouncing dots - three dots that bounce in sequence for loading / thinking */
-.bounce-dots {
-	display: inline-flex;
-	align-items: center;
-}
-
-.bounce-dots span {
-	display: inline-block;
-	width: 6px;
-	height: 6px;
-	border-radius: 9999px;
-	margin: 0 2px;
-	background-color: currentcolor;
-	animation: bounce-dot 1.4s ease-in-out infinite;
-}
-
-.bounce-dots span:nth-child(1) {
-	animation-delay: 0ms;
-}
-
-.bounce-dots span:nth-child(2) {
-	animation-delay: 160ms;
-}
-
-.bounce-dots span:nth-child(3) {
-	animation-delay: 320ms;
-}
-
 .dashboard-section-enter {
 	animation: dashboard-section-enter 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 	opacity: 0;
@@ -1656,6 +1628,33 @@ svg.wand-profiling-active {
    End Sidebar Parent-Child Tree Connectors
    ========================================== */
 
+/* Looping decorative motion stops while the window is unfocused or hidden.
+   `html.motion-paused` is kept current by installMotionPause()
+   (src/renderer/utils/motionPause.ts). A running animation makes Chromium draw
+   every vsync, and a visible-but-unfocused window is where Maestro sits while
+   agents work. Only infinite animations are listed: pausing an entrance
+   animation would freeze a toast or modal at its first keyframe. A new
+   `infinite` animation class belongs in this list too. */
+html.motion-paused
+	:is(
+		.animate-ping,
+		.animate-pulse,
+		.animate-spin,
+		.animate-bounce,
+		.animate-status-pulse,
+		.claude-plan-refresh-sweep,
+		.codex-plan-refresh-sweep,
+		svg.wand-sparkle-active,
+		svg.wand-profiling-active,
+		.wand-glint,
+		.profiling-progress-indeterminate
+	),
+html.motion-paused .animate-status-glow::after,
+html.motion-paused .search-highlight::after,
+html.motion-paused .progress-bar-animated::after {
+	animation-play-state: paused !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.animate-pulse,
 	.animate-spin,
@@ -1699,11 +1698,6 @@ svg.wand-profiling-active {
 	/* Disable chart-clickable hover transition for reduced motion */
 	.chart-clickable {
 		transition: none !important;
-	}
-
-	/* Disable bouncing dots animation for reduced motion users */
-	.bounce-dots span {
-		animation: none !important;
 	}
 
 	/* Disable Document Graph search highlight animations. The ring now lives on
@@ -1808,6 +1802,14 @@ svg.wand-profiling-active {
  * content. Hidden state applies at every breakpoint, including desktop.
  */
 [data-panel='left'][data-hidden='true'] {
+	display: none !important;
+}
+
+/*
+ * Settings search: a matched section shows only its matched controls.
+ * `applySettingFilter()` in settingsSearchView.ts marks the rest.
+ */
+[data-search-hidden] {
 	display: none !important;
 }
 
@@ -2222,22 +2224,20 @@ html[data-runtime='web-desktop'][data-bp='xs'] [data-shortcut-hint] {
 }
 
 /*
- * Readouts leave the main panel header on a phone: the session cost pill, the
- * context-remaining percentage, and the inert LOCAL badge. The container-query
+ * Readouts leave the main panel header on a phone: the session cost pill and the
+ * context-remaining percentage. The container-query
  * rungs above drop these too, but only below 350px / 400px, and a phone header
  * is the full ~390px viewport - so every rung stayed unfired while the row was
  * already crowded enough to clip the agent name and overlap the badges.
  *
- * All three are readouts, not controls, which is what makes them the ones to
- * drop: cost and context are still on the Usage Dashboard and the context
- * timeline panel, and the LOCAL badge has no behavior at all (see the pill's
- * hover handlers in MainPanelHeader). What stays is everything that DOES
- * something - the sidebar toggle, the git pill's icon and its menu, the tab
- * strip, and the panel buttons.
+ * Both are readouts, not controls, which is what makes them the ones to drop:
+ * cost and context are still on the Usage Dashboard and the context timeline
+ * panel. What stays is everything that DOES something - the sidebar toggle, the
+ * git pill's icon and its menu, the tab strip, and the panel buttons - and the
+ * LOCAL / REMOTE / HOSTED mode pill, the one mark of where the agent runs.
  */
 html[data-runtime='web-desktop'][data-bp='xs'] .header-cost-widget,
-html[data-runtime='web-desktop'][data-bp='xs'] .header-context-widget,
-html[data-runtime='web-desktop'][data-bp='xs'] .header-local-badge {
+html[data-runtime='web-desktop'][data-bp='xs'] .header-context-widget {
 	display: none;
 }
 

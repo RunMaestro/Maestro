@@ -4,6 +4,8 @@
 // maestro-p's own business rather than shared/: these read a replayed terminal
 // grid, which only this process ever has.
 
+import { readAddDirDialog } from './add-dir-prompt';
+
 // The input editor renders as a full-width rule, a line opening with the prompt
 // glyph, and another full-width rule. Claude uses `❯` and has used `>`; both are
 // accepted so a glyph change does not silently disable steering.
@@ -69,18 +71,27 @@ export function editorIsAcceptingInput(screen: string): boolean {
 // Named dialogs, used ONLY to explain a refusal the allowlist above already
 // made. Never to decide one: if this list is the gate, a dialog missing from it
 // gets an Enter.
-const DIALOG_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
-	[/trust\s*this\s*folder|Yes,?\s*I\s*trust/i, 'a workspace-trust prompt'],
-	[/Bypass\s*Permissions\s*mode/i, 'the bypass-permissions gate'],
-	[/Do you want to/i, 'a permission prompt'],
-	[/Would you like to proceed|Ready to code\?/i, 'a plan-approval prompt'],
-	[/Esc to cancel\s*·\s*Tab to amend/i, 'a confirmation prompt'],
+//
+// The add-dir dialog is read structurally (readAddDirDialog), not by its
+// wording: the conversation on screen can quote that wording, and a regex would
+// then name the wrong dialog in front of a real one further down the list.
+const DIALOG_PATTERNS: ReadonlyArray<readonly [(screen: string) => boolean, string]> = [
+	[matches(/trust\s*this\s*folder|Yes,?\s*I\s*trust/i), 'a workspace-trust prompt'],
+	[(screen) => readAddDirDialog(screen).kind === 'shown', 'an add-directory prompt'],
+	[matches(/Bypass\s*Permissions\s*mode/i), 'the bypass-permissions gate'],
+	[matches(/Do you want to/i), 'a permission prompt'],
+	[matches(/Would you like to proceed|Ready to code\?/i), 'a plan-approval prompt'],
+	[matches(/Esc to cancel\s*·\s*Tab to amend/i), 'a confirmation prompt'],
 ];
+
+function matches(re: RegExp): (screen: string) => boolean {
+	return (screen) => re.test(screen);
+}
 
 /** Name the dialog on screen, for a refusal message. Null when none is recognized. */
 export function describeBlockingDialog(screen: string): string | null {
-	for (const [re, label] of DIALOG_PATTERNS) {
-		if (re.test(screen)) return label;
+	for (const [shows, label] of DIALOG_PATTERNS) {
+		if (shows(screen)) return label;
 	}
 	return null;
 }

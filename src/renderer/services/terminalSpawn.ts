@@ -65,12 +65,11 @@ export interface SpawnPtyForTabOptions {
 	/** Called with the real PID once the shell is up. */
 	onPid: (tabId: string, pid: number) => void;
 	/**
-	 * Called when the shell could not be started. `isPersistent` means the tab
-	 * carries user intent worth keeping (a startup command, or an SSH session
-	 * whose transport can drop for unrelated reasons) - those become restartable
-	 * exited husks rather than being closed.
+	 * Called when the shell could not be started. The caller keeps the tab as a
+	 * restartable exited tab in every mode (local, remote, hosted): a failed start
+	 * never silently discards a tab and its config.
 	 */
-	onSpawnFailure: (tabId: string, isPersistent: boolean, message: string) => void;
+	onSpawnFailure: (tabId: string, message: string) => void;
 }
 
 /**
@@ -90,14 +89,6 @@ export async function spawnPtyForTab(options: SpawnPtyForTabOptions): Promise<vo
 	)
 		return;
 	spawnInFlight.add(terminalSessionId);
-
-	// "Persistent" tabs carry user intent to keep running: a configured startup
-	// command, or any tab under an SSH/remote session (whose transport can drop
-	// for reasons unrelated to the user). We never silently discard these on
-	// failure - we keep them as a restartable exited husk instead of closing the
-	// tab and losing its config.
-	const isPersistent =
-		!!tab.startupCommand || !!(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId);
 
 	// Build effective SSH config: prefer explicit sessionSshRemoteConfig, then fall back
 	// to sshRemoteId which is set after an AI agent connects. Without this fallback,
@@ -171,7 +162,6 @@ export async function spawnPtyForTab(options: SpawnPtyForTabOptions): Promise<vo
 		} else {
 			onSpawnFailure(
 				tabId,
-				isPersistent,
 				effectiveSshConfig?.enabled
 					? 'SSH terminal could not be started. Check that the SSH remote is enabled and reachable.'
 					: 'The shell process could not be started. Check system PTY availability.'
@@ -181,12 +171,8 @@ export async function spawnPtyForTab(options: SpawnPtyForTabOptions): Promise<vo
 		captureException(err, {
 			extra: { tabId, terminalSessionId, operation: 'spawnTerminalTab' },
 		});
-		// Spawn threw - same persistent-vs-scratch handling as a failed spawn.
-		onSpawnFailure(
-			tabId,
-			isPersistent,
-			err instanceof Error ? err.message : 'An unexpected error occurred.'
-		);
+		// Spawn threw - the same handling as a failed spawn.
+		onSpawnFailure(tabId, err instanceof Error ? err.message : 'An unexpected error occurred.');
 	} finally {
 		spawnInFlight.delete(terminalSessionId);
 	}

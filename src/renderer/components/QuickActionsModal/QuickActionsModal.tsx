@@ -21,6 +21,8 @@ import { buildConcertoCommands } from './commands/concertoCommands';
 import { buildThroughputGaugeCommands } from './commands/throughputGaugeCommands';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { applyThroughputGaugeSettingsPatch } from '../../../shared/throughputGauge';
+import { buildPromptLinksCommands } from './commands/promptLinksCommands';
+import { openPromptLinks, promptLinksAvailable } from '../../services/promptLinks';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -92,12 +94,16 @@ import {
 import { buildStarredSessionCommands } from './commands/starredSessionCommands';
 import { buildFederationCommands } from './commands/federationCommands';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
+import {
+	selectHostedConflictCount,
+	useHostedAgentSettingsStore,
+} from '../../stores/hostedAgentSettingsStore';
 import { canMoveToHost, isPeerFederated } from '../../utils/peerMirrorView';
-import { copyPeerAgentRef, reconnectPeer } from '../../services/peerMirror';
-import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
+import { reconnectPeer } from '../../services/peerMirror';
+import { requestMoveBackFromHost, requestMoveToHost } from '../../services/agentLift';
 import {
 	useAgentFederationStatus,
-	useLiftedMirrorTarget,
+	useAddableHostedAgentCount,
 } from '../../hooks/federation/useAgentLift';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
@@ -120,7 +126,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		sessions,
 		visibleSessions: visibleSessionsProp,
 		setSessions,
-		activeSessionId: localActiveSessionId,
+		activeSessionId,
 		groups,
 		setGroups,
 		shortcuts,
@@ -298,6 +304,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		useSettingsStore((s) => s.encoreFeatures.quickChat !== false) && !isWebDesktop();
 	const quickChatHotkey =
 		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
+	const promptLinksEnabled = useSettingsStore((s) =>
+		promptLinksAvailable(s.encoreFeatures.promptLinks)
+	);
 	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
 	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
@@ -456,11 +465,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const modalRef = useRef<HTMLDivElement>(null);
 	const resetSelectionToFirstRef = useRef<() => void>(() => {});
 	const resetSelectionToFirst = useCallback(() => resetSelectionToFirstRef.current(), []);
-	// While a Federation peer's mirrored agent is on screen the local active agent is hidden, not
-	// gone. Resolve NO active agent then, so every builder below bails out of its agent commands
-	// (rename, move, tabs, git, context, ...) instead of acting on an agent the user cannot see.
-	const mirrorShown = usePeerMirrorStore((s) => s.activeMirror !== null);
-	const activeSessionId = mirrorShown ? '' : localActiveSessionId;
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
 	// The group a "Move Group to ..." command carries: a worktree child is filed
 	// under its parent's group, the same unit the window move relocates.
@@ -590,21 +594,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const mirrorOrder = usePeerMirrorStore((s) => s.order);
 	const mirrorPeers = usePeerMirrorStore((s) => s.peers);
-	const activeMirror = usePeerMirrorStore((s) => s.activeMirror);
 	const federationStatus = useAgentFederationStatus(activeSession);
-	const liftedTarget = useLiftedMirrorTarget(activeSession?.liftedTo);
+	const hostedAgentsOn = useSettingsStore((s) => s.federationHostedAgents === true);
+	const hasHostedAgents = sessions.some((session) => !!session.liftedTo);
+	const addableHostedAgentCount = useAddableHostedAgentCount();
+	const settingsConflictCount = useHostedAgentSettingsStore(selectHostedConflictCount);
 	const federationActions = buildFederationCommands({
 		// Only remotes that run a host: every other SSH remote was probed and is plain SSH.
 		peers: mirrorOrder.flatMap((peerId) =>
 			mirrorPeers[peerId] && isPeerFederated(mirrorPeers[peerId]) ? [mirrorPeers[peerId]] : []
 		),
-		activeMirror,
-		selectMirroredAgent: usePeerMirrorStore.getState().selectMirroredAgent,
 		reconnectPeer,
-		copyPeerAgentRef,
-		// The active LOCAL agent's entries; hidden while the Main Window shows a mirrored one.
 		moveToHost:
-			activeSession && !activeMirror && canMoveToHost(federationStatus)
+			activeSession && !activeSession.liftedTo && canMoveToHost(federationStatus)
 				? {
 						sessionId: activeSession.id,
 						agentName: activeSession.name,
@@ -613,10 +615,26 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					}
 				: undefined,
 		requestMoveToHost,
-		liftedTarget: activeMirror ? undefined : liftedTarget,
-		openLiftedAgent: () => {
-			if (activeSession) openLiftedAgent(activeSession);
-		},
+		moveBackFromHost:
+			activeSession && federationStatus.kind === 'moved'
+				? {
+						sessionId: activeSession.id,
+						agentName: activeSession.name,
+						peerName: federationStatus.peer?.name ?? federationStatus.peerId,
+					}
+				: undefined,
+		requestMoveBackFromHost,
+		// The switch that turns hosting off (and back on), offered while any hosted agent exists.
+		hostedAgents: hasHostedAgents
+			? {
+					enabled: hostedAgentsOn,
+					setEnabled: useSettingsStore.getState().setFederationHostedAgents,
+				}
+			: undefined,
+		settingsConflictCount,
+		openSettingsConflicts: () => useHostedAgentSettingsStore.getState().setConflictsOpen(true),
+		addableHostedAgentCount,
+		openAddHostedAgent: () => openModal('addHostedAgent'),
 		setQuickActionOpen,
 	});
 
@@ -647,6 +665,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			scanActive: statsIndexingActive,
 			showScanProgress: showStatsIndexingProgress,
 			setQuickActionOpen,
+		}),
+		...buildPromptLinksCommands({
+			promptLinksEnabled,
+			activeAgent:
+				activeSession && activeSession.toolType !== 'terminal'
+					? { id: activeSession.id, name: activeSession.name }
+					: undefined,
+			activeDraft:
+				activeTabType === 'ai'
+					? activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId)?.inputValue
+					: undefined,
+			openPromptLinks,
+			setQuickActionOpen,
+			shortcuts: { openPromptLinks: shortcuts.openPromptLinks },
 		}),
 		...buildConcertoCommands({
 			concertoEnabled,
@@ -699,7 +731,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			openWizard,
 			getOpenInLabel,
 			platform: window.maestro?.platform || 'darwin',
-			openPath: window.maestro?.shell?.openPath,
 			onGoToNextUnread,
 			onGoToPreviousUnread,
 			onNavBack,
@@ -933,6 +964,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			mainPanelRef,
 			toggleTabStarShortcut: shortcuts.toggleTabStar,
 			toggleTabUnreadShortcut: tabShortcuts?.toggleTabUnread,
+			toggleDesignModeShortcut: tabShortcuts?.toggleBrowserDesignMode,
 		}),
 		...buildSupportCommands({
 			setQuickActionOpen,
@@ -1030,6 +1062,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			newGroupChatShortcut: shortcuts.newGroupChat,
 			killShortcut: shortcuts.killInstance,
 			moderatorOnlyShortcut: shortcuts.toggleGroupChatModeratorOnly,
+			toggleUnreadShortcut: tabShortcuts?.toggleTabUnread,
 		}),
 		...buildDebugCommands({
 			activeSession,

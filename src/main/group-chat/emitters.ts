@@ -43,7 +43,12 @@ export const groupChatEmitters: {
 	) => void;
 	emitModeratorSessionIdChanged?: (groupChatId: string, sessionId: string) => void;
 	emitParticipantLiveOutput?: (groupChatId: string, participantName: string, chunk: string) => void;
-	emitAutoRunTriggered?: (groupChatId: string, participantName: string, filename?: string) => void;
+	emitAutoRunTriggered?: (
+		groupChatId: string,
+		participantName: string,
+		filename?: string,
+		agentId?: string
+	) => void;
 	/** Tells the renderer to force-complete the batch run for a participant (clears stuck AUTO badge). */
 	emitAutoRunBatchComplete?: (groupChatId: string, participantName: string) => void;
 	emitWorkflowRunChanged?: (groupChatId: string, run: GroupChatWorkflowRun | null) => void;

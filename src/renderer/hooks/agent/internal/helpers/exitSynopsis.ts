@@ -17,6 +17,7 @@
 
 import { logger } from '../../../../utils/logger';
 import { notifyToast } from '../../../../stores/notificationStore';
+import { notifySynopsisSaved } from '../../../../services/historyEntryToast';
 import { formatRelativeTime } from '../../../../../shared/formatters';
 import { parseSynopsis } from '../../../../../shared/synopsis';
 import { hasRunnableQueueItem } from '../../../../utils/executionQueue';
@@ -175,17 +176,14 @@ export async function runExitSynopsis(
 			deps.updateLastSynopsisTime(synopsisData.sessionId, synopsisData.tabId, synopsisTime);
 		}
 
-		notifyToast({
-			type: 'info',
-			title: 'Synopsis',
-			message: parsed.shortSummary,
+		notifySynopsisSaved({
+			summary: parsed.shortSummary,
 			group: synopsisData.groupName,
 			project: synopsisData.projectName,
 			taskDuration: duration,
 			sessionId: synopsisData.sessionId,
 			tabId: synopsisData.tabId,
 			tabName: synopsisData.tabName,
-			skipCustomNotification: true,
 		});
 
 		deps.rightPanelRef.current?.refreshHistoryPanel();
@@ -250,6 +248,7 @@ export function shouldRunSynopsisOnExit(
 				id?: string;
 				agentSessionId?: NonNullable<Session['aiTabs']>[number]['agentSessionId'];
 				saveToHistory?: NonNullable<Session['aiTabs']>[number]['saveToHistory'];
+				logs?: ReadonlyArray<Pick<LogEntry, 'source' | 'saveToHistory'>>;
 		  }
 		| undefined
 ): boolean {
@@ -269,52 +268,36 @@ export function shouldRunSynopsisOnExit(
 	if (tabQueue.some((item) => item.awaitingConsult)) return false;
 	const hasAgentSessionId = !!(completedTab?.agentSessionId || session.agentSessionId);
 	if (!hasAgentSessionId) return false;
-	const optedIn = !!(completedTab?.saveToHistory || session.pendingAICommandForSynopsis);
+	const optedIn = !!(turnSavesToHistory(completedTab) || session.pendingAICommandForSynopsis);
 	return optedIn;
 }
 
 /**
- * Activity gate: did the just-completed turn do work worth synopsizing?
- *
- * A synopsis is a full session-resume spawn (a second agent round-trip), so a
- * turn that only exchanged text - a plain question answered with prose, no tool
- * use - isn't worth the cost or a History entry. We treat "ran at least one
- * tool" as the bar for meaningful work: edits, writes, file reads, searches, and
- * shell commands all surface as `source: 'tool'` log entries (including in
- * maestro-p text-stream turns), so research-only turns still qualify.
- *
- * The "turn" is everything after the last user message in the tab's logs. A
- * custom AI command (`/commit` and friends) always counts as work - it was an
- * explicit action, and its `pendingAICommandForSynopsis` path may not leave a
- * tool log of its own.
- *
- * @param logs The completed tab's full log history.
- * @param isCustomCommand True when this exit was driven by a pending custom AI command.
- * @param toolLogsObservable Whether this tab actually records tool logs. Tabs with
- *   thinking display off never emit `source: 'tool'` entries (see
- *   `thinkingLogsRecorded`), so the scan below cannot distinguish a genuine no-op
- *   turn from a tool-heavy one. When false we record the turn rather than risk
- *   silently dropping its History entry - the pre-activity-gate behavior.
+ * Whether the turn that just finished on `tab` saves to History: the sender's own choice for that
+ * message when it carried one (a Federation conductor's chip, stamped on the user entry by
+ * `markTabRunningQueuedItem`), otherwise the tab's own chip.
  */
-export function turnDidMeaningfulWork(
-	logs: ReadonlyArray<{ source: LogEntry['source'] }>,
-	isCustomCommand = false,
-	toolLogsObservable = true
+export function turnSavesToHistory(
+	tab:
+		| {
+				saveToHistory?: boolean;
+				logs?: ReadonlyArray<Pick<LogEntry, 'source' | 'saveToHistory'>>;
+		  }
+		| undefined
 ): boolean {
-	if (isCustomCommand) return true;
-	if (!toolLogsObservable) return true;
-	let lastUserIdx = -1;
+	const logs = tab?.logs ?? [];
 	for (let i = logs.length - 1; i >= 0; i--) {
-		if (logs[i].source === 'user') {
-			lastUserIdx = i;
-			break;
-		}
+		if (logs[i].source !== 'user') continue;
+		const choice = logs[i].saveToHistory;
+		if (typeof choice === 'boolean') return choice;
+		break;
 	}
-	for (let i = lastUserIdx + 1; i < logs.length; i++) {
-		if (logs[i].source === 'tool') return true;
-	}
-	return false;
+	return tab?.saveToHistory === true;
 }
+
+// The activity gate lives in shared code so a headless Federation host applies the same rule to
+// its per-turn History entry (`createTurnRecorder`'s `summarize`).
+export { turnDidMeaningfulWork } from '../../../../../shared/synopsis';
 
 // Re-export the right-panel handle type for ergonomic test imports.
 export type { RightPanelHandle };

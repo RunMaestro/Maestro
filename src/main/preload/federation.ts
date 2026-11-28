@@ -13,8 +13,17 @@ import { ipcRenderer } from 'electron';
 import type { MirrorPeerSummary, MirrorPush } from '../../shared/maestro-lib/client/peer-mirror';
 import type { PeerAgentAction } from '../../shared/maestro-lib/client/peer-actions';
 import type { LogEntryRecord } from '../../shared/maestro-lib/store/transcript';
-import type { DesktopLiftAnswer, DesktopLiftOptions } from '../federation/lift';
+import type {
+	DesktopLiftAnswer,
+	DesktopLiftOptions,
+	DesktopReturnAnswer,
+} from '../federation/lift';
 import type { DesktopSetupHostAnswer, DesktopSetupHostOptions } from '../federation/setup-host';
+import {
+	FEDERATION_WINDOW_REQUEST_CHANNEL,
+	type FederationWindowReply,
+	type FederationWindowRequest,
+} from '../../shared/federationCommands';
 import type { AutoFederationSnapshot } from '../../shared/federationAuto';
 import type { PeerHistoryPageQuery } from '../federation/peer-history';
 import type { PaginatedResult } from '../../shared/history';
@@ -78,12 +87,23 @@ export function createFederationApi() {
 				lookbackHours,
 				types
 			),
+		/** Delete one entry of a mirrored agent's History on its host. False: no such entry. */
+		historyDelete: (peerId: string, agentId: string, entryId: string): Promise<boolean> =>
+			ipcRenderer.invoke('federation:historyDelete', peerId, agentId, entryId),
+		/** Mark one entry of a mirrored agent's History validated (or not) on its host. */
+		historyUpdate: (
+			peerId: string,
+			agentId: string,
+			entryId: string,
+			updates: { validated: boolean }
+		): Promise<boolean> =>
+			ipcRenderer.invoke('federation:historyUpdate', peerId, agentId, entryId, updates),
 		/** Restart the forward or the client when down, then reload the peer's agents. */
 		reconnect: (peerId: string): Promise<PeerReconnectResult> =>
 			ipcRenderer.invoke('federation:reconnect', peerId),
 		/**
-		 * Drive a mirrored agent: send, Stop, new tab, rename or star a tab. Never queued: a peer
-		 * that is not connected answers `{ ok: false }` at once.
+		 * Drive a mirrored agent: send, Stop, new tab, rename or star a tab, change the agent's or a
+		 * tab's settings. Never queued: a peer that is not connected answers `{ ok: false }` at once.
 		 */
 		act: (peerId: string, agentId: string, action: PeerAgentAction): Promise<PeerActionAnswer> =>
 			ipcRenderer.invoke('federation:act', peerId, agentId, action),
@@ -93,6 +113,43 @@ export function createFederationApi() {
 		 */
 		lift: (agentId: string, options?: DesktopLiftOptions): Promise<DesktopLiftAnswer> =>
 			ipcRenderer.invoke('federation:lift', agentId, options ?? {}),
+		/**
+		 * Move Back from Host: make a hosted agent an SSH agent again, with the host's tabs merged in
+		 * (`maestro-cli unlift`). `offline` restores from this machine's copy without the host.
+		 */
+		unlift: (
+			agentId: string,
+			options?: { offline?: boolean; keepHostCopy?: boolean }
+		): Promise<DesktopReturnAnswer> =>
+			ipcRenderer.invoke('federation:unlift', agentId, options ?? {}),
+		/**
+		 * Answer main's Federation questions for the CLI: the hosted agents' settings conflicts
+		 * (`maestro-cli federation conflicts|resolve`) and the host agents the Left Bar shows or adds
+		 * (`maestro-cli federation agents|add`). Only the main window registers. Returns the
+		 * unsubscribe.
+		 */
+		onFederationWindowRequest: (
+			handler: (
+				request: FederationWindowRequest
+			) => FederationWindowReply | Promise<FederationWindowReply>
+		): (() => void) => {
+			const listener = async (
+				_event: Electron.IpcRendererEvent,
+				request: FederationWindowRequest,
+				responseChannel: string
+			) => {
+				if (!responseChannel.startsWith(`${FEDERATION_WINDOW_REQUEST_CHANNEL}:response:`)) return;
+				let reply: FederationWindowReply;
+				try {
+					reply = await handler(request);
+				} catch (error) {
+					reply = { success: false, error: error instanceof Error ? error.message : String(error) };
+				}
+				ipcRenderer.send(responseChannel, reply);
+			};
+			ipcRenderer.on(FEDERATION_WINDOW_REQUEST_CHANNEL, listener);
+			return () => ipcRenderer.removeListener(FEDERATION_WINDOW_REQUEST_CHANNEL, listener);
+		},
 		/**
 		 * Install this app's maestro-cli on an SSH remote (or upgrade an older one), start the host
 		 * there, and reload the peer: Move to Host's setup step and Start Host. Takes minutes on a first install.

@@ -4026,6 +4026,52 @@ Some text with [x] in it that's not a checkbox
 			expect(mockCheckBinaryExists).not.toHaveBeenCalled();
 		});
 
+		it("runs the agent's own custom path over the provider-level one", async () => {
+			// `maestro-cli send` used to ignore `SessionInfo.customPath`, so an agent
+			// pinned to its own binary ran the provider's (or PATH's) Claude instead,
+			// while the desktop tab ran the pinned one.
+			mockGetAgentCustomPath.mockReturnValue('/provider/bin/claude');
+			vi.mocked(fs.promises.stat).mockResolvedValue({ isFile: () => true } as fs.Stats);
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+
+			const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+			await driveSpawnToCompletion(
+				freshSpawnAgent('claude-code', '/p', 'hi', undefined, {
+					sessionCustomPath: '/agent/bin/claude',
+				}),
+				0,
+				CLAUDE_OK()
+			);
+
+			expect(spawnCall().command).toBe('/agent/bin/claude');
+		});
+
+		it("falls back to the provider's binary, with a warning, when the agent's own path is not executable", async () => {
+			mockGetAgentCustomPath.mockReturnValue('/provider/bin/claude');
+			vi.mocked(fs.promises.stat).mockImplementation(async (p) => {
+				// Windows also probes `missing.exe` / `.cmd`, so match the stem.
+				if (String(p).startsWith('/agent/bin/missing')) throw new Error('ENOENT');
+				return { isFile: () => true } as fs.Stats;
+			});
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+			const warn = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+			const { spawnAgent: freshSpawnAgent } = await freshSpawner();
+			await driveSpawnToCompletion(
+				freshSpawnAgent('claude-code', '/p', 'hi', undefined, {
+					sessionCustomPath: '/agent/bin/missing',
+				}),
+				0,
+				CLAUDE_OK()
+			);
+
+			expect(spawnCall().command).toBe('/provider/bin/claude');
+			expect(warn.mock.calls.some(([line]) => String(line).includes('/agent/bin/missing'))).toBe(
+				true
+			);
+			warn.mockRestore();
+		});
+
 		it('falls back to the bare binaryName when nothing resolves', async () => {
 			// Unchanged behavior on a machine where the probe comes up empty: the
 			// spawn is still attempted so the user gets the real ENOENT, rather

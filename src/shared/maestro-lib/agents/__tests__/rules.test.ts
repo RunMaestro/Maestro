@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
 	activeAgentAfterRemoval,
 	addTabRecord,
+	hostRetriesTurn,
+	hostRetryCardStands,
+	markTurnEnded,
+	tabRunsUserEntry,
+	turnFateAfter,
+	isUserTurnStart,
+	userTurnSpan,
+	runningTurnMessageIndex,
 	agentsMovingWithParent,
 	withAgentInGroup,
 	applyAgentConfigPatch,
@@ -17,6 +25,7 @@ import {
 	checkAgentImportInput,
 	checkAgentName,
 	closeTabRecord,
+	reopenTabRecord,
 	DEFAULT_TAB_DEFAULTS,
 	findConsultTabRecord,
 	groupsWithout,
@@ -37,6 +46,7 @@ import {
 	type RuleContext,
 } from '../rules';
 import type { AgentRecord, GroupRecord } from '../../store/records';
+import { TURN_CANCELED_NOTE } from '../../store/transcript';
 import type { NativeSessionBinding, ProviderTabSession } from '../providerSwap';
 
 function makeContext(): RuleContext {
@@ -374,6 +384,106 @@ describe('tabs', () => {
 		expect(next.activeTabId).toBe(added.id);
 	});
 
+	// G5: a reopen from a Federation peer brings an archived tab back in the background, and never
+	// opens one conversation twice, where a native binding decides what "the same" is.
+	describe('reopenTabRecord', () => {
+		const bound = (account: string): NativeSessionBinding =>
+			({
+				version: 1,
+				state: 'bound',
+				provider: 'grok',
+				nativeSessionId: 's1',
+				accountRef: account,
+				host: { kind: 'local', identity: 'h' },
+				cwd: '/p',
+			}) as NativeSessionBinding;
+		const base = {
+			id: 'a1',
+			aiTabs: [{ id: 't1', agentSessionId: 's1', logs: [] }],
+			unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+			activeTabId: 't1',
+		} as unknown as AgentRecord;
+
+		it('puts the tab back where it sat, in the background', () => {
+			const outcome = reopenTabRecord(
+				{ ...base, aiTabs: [] } as AgentRecord,
+				{ tab: { id: 't9', agentSessionId: 's9', logs: [] }, index: 3, closedAt: 1 } as never,
+				makeContext()
+			);
+			expect(outcome.tabId).toBe('t9');
+			expect(outcome.agent.aiTabs?.map((tab) => tab.id)).toEqual(['t9']);
+			expect(outcome.agent.activeTabId).toBe('t1');
+		});
+
+		it('answers the open tab of the same conversation instead of opening it twice', () => {
+			const outcome = reopenTabRecord(
+				base,
+				{ tab: { id: 't2', agentSessionId: 's1', logs: [] }, index: 1, closedAt: 1 } as never,
+				makeContext()
+			);
+			expect(outcome).toMatchObject({ tabId: 't1', wasDuplicate: true });
+		});
+
+		it('parks the session of the provider it closed under after a provider switch', () => {
+			const outcome = reopenTabRecord(
+				{ ...base, toolType: 'claude-code', aiTabs: [] } as unknown as AgentRecord,
+				{
+					tab: { id: 't2', agentSessionId: 'codex-thread', customModel: 'gpt', logs: [] },
+					index: 0,
+					closedAt: 1,
+					toolType: 'codex',
+				} as never,
+				makeContext()
+			);
+			const tab = outcome.agent.aiTabs![0];
+			expect(tab.agentSessionId).toBeNull();
+			expect(tab.providerSessions?.codex).toMatchObject({
+				agentSessionId: 'codex-thread',
+				customModel: 'gpt',
+			});
+		});
+
+		it('records the provider a tab closes under, for that park', () => {
+			const outcome = closeTabRecord(
+				{ ...agent(), toolType: 'codex' } as AgentRecord,
+				't2',
+				makeContext(),
+				DEFAULT_TAB_DEFAULTS
+			)!;
+			expect(outcome.closed.toolType).toBe('codex');
+		});
+
+		it('matches on the observed binding, not on the session id alone', () => {
+			const withBinding = {
+				...base,
+				aiTabs: [
+					{ id: 't1', agentSessionId: 's1', logs: [], nativeSessionBinding: bound('acct-a') },
+				],
+			} as unknown as AgentRecord;
+			const other = reopenTabRecord(
+				withBinding,
+				{
+					tab: { id: 't2', agentSessionId: 's1', logs: [], nativeSessionBinding: bound('acct-b') },
+					index: 1,
+					closedAt: 1,
+				} as never,
+				makeContext()
+			);
+			expect(other.wasDuplicate).toBeUndefined();
+			expect(other.agent.aiTabs?.map((tab) => tab.id)).toEqual(['t1', 't2']);
+			const same = reopenTabRecord(
+				withBinding,
+				{
+					tab: { id: 't2', agentSessionId: 's1', logs: [], nativeSessionBinding: bound('acct-a') },
+					index: 1,
+					closedAt: 1,
+				} as never,
+				makeContext()
+			);
+			expect(same).toMatchObject({ tabId: 't1', wasDuplicate: true });
+		});
+	});
+
 	describe('closeTabRecord', () => {
 		const ctx = () => makeContext();
 
@@ -482,6 +592,8 @@ describe('tabs', () => {
 					effort: 'high',
 					saveToHistory: false,
 					enterToSend: null,
+					agentSessionId: 'wizard-session',
+					mergedContext: 'Additional context',
 				})
 			).toEqual({
 				readOnlyMode: true,
@@ -490,7 +602,26 @@ describe('tabs', () => {
 				customEffort: 'high',
 				saveToHistory: false,
 				enterToSend: null,
+				agentSessionId: 'wizard-session',
+				pendingMergedContext: 'Additional context',
 			});
+		});
+
+		it("holds a merge's context for the tab's next turn", () => {
+			const held = applyTabPatch(tab('t'), { pendingMergedContext: 'Additional context' });
+			expect(held.ok && held.value.pendingMergedContext).toBe('Additional context');
+			expect(applyTabPatch(tab('t'), { pendingMergedContext: 7 }).ok).toBe(false);
+		});
+
+		it("adopts a provider session and drops the old one's binding", () => {
+			const binding = { provider: 'claude-code' } as never;
+			const source = tab('t', { agentSessionId: 'old', nativeSessionBinding: binding });
+			const adopted = applyTabPatch(source, { agentSessionId: 'wizard-session' });
+			expect(adopted.ok && adopted.value.agentSessionId).toBe('wizard-session');
+			expect(adopted.ok && 'nativeSessionBinding' in adopted.value).toBe(false);
+			// The same session again keeps its binding.
+			const same = applyTabPatch(source, { agentSessionId: 'old' });
+			expect(same.ok && same.value.nativeSessionBinding).toBe(binding);
 		});
 
 		it('writes valid values and clears a field on null, which is not false', () => {
@@ -860,6 +991,31 @@ describe('beginTurnRecord', () => {
 		expect(before.logs).toHaveLength(1);
 	});
 
+	it('writes no second entry for a resend of a message the transcript holds (R13)', () => {
+		const before = tab('t1', { logs: [userEntry] });
+		const after = beginTurnRecord(before, {
+			turnId: 'attempt-2',
+			userEntry,
+			provider: 'claude-code',
+			consumedMergedContext: false,
+		});
+		expect((after.logs as { id: string }[]).map((entry) => entry.id)).toEqual(['u1']);
+		expect(after.runtimeTurnId).toBe('attempt-2');
+	});
+
+	it('never drops a message on its id alone: another message under that id is still written', () => {
+		const before = tab('t1', { logs: [{ ...userEntry, text: 'something else' }] });
+		const after = beginTurnRecord(before, {
+			userEntry,
+			provider: 'claude-code',
+			consumedMergedContext: false,
+		});
+		expect((after.logs as { text: string }[]).map((entry) => entry.text)).toEqual([
+			'something else',
+			'hello',
+		]);
+	});
+
 	it('clears a merged context the prompt carried, and keeps one it did not', () => {
 		const pending = tab('t1', { pendingMergedContext: 'from another tab' });
 		const spent = beginTurnRecord(pending, {
@@ -1136,5 +1292,484 @@ describe('consult tab records', () => {
 		// The live slot belongs to codex now; the old provider's token is parked.
 		expect(after.agentSessionId).toBeNull();
 		expect(JSON.stringify(after.providerSessions)).toContain('sess-claude');
+	});
+});
+
+// Parity R36: one reader of how a message's turn ended, for both host kinds.
+describe('turnFateAfter', () => {
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
+	const partial = { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' };
+	const stamped = (entry: object) => ({ ...entry, turnEnded: true });
+	const error = { id: 'e1', timestamp: 3, source: 'error', text: 'Rate limited' };
+	const stop = { id: 's1', timestamp: 3, source: 'system', text: 'Canceled by user' };
+	const u2 = { id: 'u2', timestamp: 4, source: 'user', text: 'And the tests?' };
+	const a2 = stamped({ id: 'a2', timestamp: 5, source: 'ai', text: 'The tests...' });
+
+	it.each([
+		['an answer stamped', [u1, stamped(partial)], 'desktop', 'answered'],
+		['its own error stamped', [u1, partial, stamped(error)], 'desktop', 'errored'],
+		['the Stop note stamped', [u1, stamped(stop)], 'headless', 'stopped'],
+		['the message itself stamped (nothing of its own)', [stamped(u1)], 'headless', 'answered'],
+		['streamed text, no stamp, desktop', [u1, partial], 'desktop', 'unended'],
+		// Its text, then a later message: a turn written before the host stamped (CodeRabbit on #2167).
+		['streamed text, no stamp, then a later turn', [u1, partial, u2, a2], 'desktop', 'answered'],
+		[
+			'a headless turn from before stamping, then a stamped turn',
+			[u1, partial, u2, a2],
+			'headless',
+			'answered',
+		],
+		// A retry runs into the same entry: the LAST attempt decides (CodeRabbit on #2167).
+		[
+			'an errored attempt, then a retry answered',
+			[u1, stamped(error), stamped(partial)],
+			'desktop',
+			'answered',
+		],
+		[
+			'an answered attempt, then a retry that errored',
+			[u1, stamped(partial), stamped(error)],
+			'headless',
+			'errored',
+		],
+		[
+			'an errored attempt, then a retry mid-stream',
+			[u1, stamped(error), partial],
+			'desktop',
+			'unended',
+		],
+		// An empty retry after an errored attempt: its end is on the message, timed after it.
+		[
+			'an errored attempt, then a retry that answered empty',
+			[{ ...stamped(u1), turnEndedAt: 9 }, stamped(error)],
+			'headless',
+			'answered',
+		],
+		[
+			'an empty attempt, then a retry that errored',
+			[{ ...stamped(u1), turnEndedAt: 2 }, stamped(error)],
+			'headless',
+			'errored',
+		],
+		// CodeRabbit on #2167: a retry's thinking or tool card after an earlier end is that retry,
+		// running or lost; a card of the same attempt written before its end is not.
+		[
+			'an errored attempt, then a retry that streamed a tool card',
+			[
+				u1,
+				{ ...stamped(error), turnEndedAt: 3 },
+				{ id: 't9', timestamp: 4, source: 'tool', text: '' },
+			],
+			'desktop',
+			'unended',
+		],
+		[
+			'an answer stamped before a card of the same attempt',
+			[
+				u1,
+				{ ...stamped(partial), turnEndedAt: 9 },
+				{ id: 't9', timestamp: 8, source: 'tool', text: '' },
+			],
+			'desktop',
+			'answered',
+		],
+		// CodeRabbit on #2167: a note written after a turn (a steering note) is not a later attempt.
+		[
+			'an answer stamped, then a note about the turn',
+			[
+				u1,
+				{ ...stamped(partial), turnEndedAt: 3 },
+				{ id: 'n1', timestamp: 4, source: 'system', text: 'Auto Run paused' },
+			],
+			'desktop',
+			'answered',
+		],
+		// CodeRabbit on #2167: a note after an empty retry's end does not undo that end.
+		[
+			'an errored attempt, an empty retry, then a note',
+			[
+				{ ...stamped(u1), turnEndedAt: 30 },
+				{ ...stamped(error), timestamp: 10 },
+				{ id: 'n2', timestamp: 40, source: 'system', text: 'Auto Run paused' },
+			],
+			'headless',
+			'answered',
+		],
+		['nothing after it', [u1], 'headless', 'unended'],
+		['only a later message answered', [u1, u2, a2], 'headless', 'unended'],
+		['a host too old to stamp: headless text is its answer', [u1, partial], 'headless', 'answered'],
+		[
+			'a host too old to stamp: desktop text, then another message',
+			[u1, partial, u2],
+			'desktop',
+			'answered',
+		],
+		['a host too old to stamp: its own error', [u1, error], 'desktop', 'errored'],
+		[
+			'a steer into it is part of it',
+			[u1, { ...u2, steered: true }, stamped(partial)],
+			'desktop',
+			'answered',
+		],
+	] as const)('%s', (_how, logs, hostKind, fate) => {
+		expect(turnFateAfter(logs, 0, hostKind)).toBe(fate);
+	});
+
+	it('stamps an entry a later exit keeps, never a thinking or tool card (CodeRabbit on #2167)', () => {
+		const tool = { id: 't1', timestamp: 2, source: 'tool', text: 'ran' };
+		expect(markTurnEnded([u1, tool])).toEqual([{ ...u1, turnEnded: true }, tool]);
+		expect(markTurnEnded([tool])).toEqual([tool]);
+	});
+
+	it('stamps only the last entry, once', () => {
+		const logs = [u1, partial];
+		const once = markTurnEnded(logs);
+		expect(once).toEqual([u1, { ...partial, turnEnded: true }]);
+		expect(markTurnEnded(once)).toBe(once);
+		expect(markTurnEnded([])).toEqual([]);
+	});
+});
+
+// Parity R41: one side owns a retry. A desktop host's own Agent Resilience writes its retry card
+// (`retryOutageId`) in the turn; a client that kept a copy sends nothing while it stands.
+// Parity R51: a steer the agent ran as a turn of its own (`queued`) starts that turn; one it
+// folded in (`absorbed`), one with no verdict yet, or one from before the state was recorded does not.
+describe('isUserTurnStart', () => {
+	it.each([
+		['a message', { source: 'user' }, true],
+		[
+			'a steer run as its own follow-up turn',
+			{ source: 'user', steered: true, steerState: 'queued' },
+			true,
+		],
+		[
+			'a steer folded into the turn',
+			{ source: 'user', steered: true, steerState: 'absorbed' },
+			false,
+		],
+		[
+			'a steer with no verdict yet',
+			{ source: 'user', steered: true, steerState: 'pending' },
+			false,
+		],
+		['a steer from before the state was recorded', { source: 'user', steered: true }, false],
+		['an answer', { source: 'ai' }, false],
+	] as const)('%s', (_name, entry, starts) => {
+		expect(isUserTurnStart(entry)).toBe(starts);
+	});
+
+	// The steer is written while the turn it was sent into still runs, before that turn's answer
+	// ends (CodeRabbit on #2171): that turn reads its own answer, and the steer's turn begins after
+	// that answer's end stamp.
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
+	const partialA = { id: 'oa', timestamp: 2, source: 'stdout', text: 'The docs s' };
+	const steer = {
+		id: 'b',
+		timestamp: 3,
+		source: 'user',
+		text: 'And the README',
+		steered: true,
+		steerState: 'queued',
+	};
+	const endA = { id: 'ea', timestamp: 4, source: 'stdout', text: 'ay...', turnEnded: true };
+	const partialB = { id: 'ob', timestamp: 5, source: 'stdout', text: 'The READ' };
+
+	it('reads the first turn to its own end past a queued steer, and the steer from there', () => {
+		const logs = [u1, partialA, steer, endA, partialB];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 4 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 4, to: 5 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('unended');
+		const answeredB = [...logs.slice(0, 4), { ...partialB, turnEnded: true }];
+		expect(turnFateAfter(answeredB, 2, 'desktop')).toBe('answered');
+	});
+
+	// CodeRabbit on #2171: the first turn's end stamp can land on the steer itself (its last entry).
+	it("reads a stamp on the steer as the end of the turn before it, never as the steer's", () => {
+		const logs = [u1, partialA, { ...steer, turnEnded: true }];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 3 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 3, to: 3 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('unended');
+		const answeredB = [...logs, { ...partialB, turnEnded: true }];
+		expect(turnFateAfter(answeredB, 2, 'desktop')).toBe('answered');
+	});
+
+	// CodeRabbit on #2171: the earlier turn's end may be written before the steer (the turn exited
+	// while the steer's socket answer was on its way): the steer then starts its turn at once.
+	it("starts the steer's turn at once when the earlier turn had ended before it was written", () => {
+		const logs = [u1, { ...partialA, turnEnded: true }, steer, { ...partialB, turnEnded: true }];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 2 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 3, to: 4 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('answered');
+	});
+
+	// CodeRabbit on #2171: a stamp on the steer is the earlier turn's end, whatever follows: a later
+	// stamp is the steer's own turn's, and never moves that boundary.
+	it("keeps the earlier turn's end on the steer when the steer's own turn ends after it", () => {
+		const errorB = {
+			id: 'eb',
+			timestamp: 5,
+			source: 'error',
+			text: 'Rate limited',
+			turnEnded: true,
+		};
+		const logs = [u1, partialA, { ...steer, turnEnded: true }, errorB];
+		expect(userTurnSpan(logs, 0)).toEqual({ from: 1, to: 3 });
+		expect(userTurnSpan(logs, 2)).toEqual({ from: 3, to: 4 });
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('errored');
+		// The same for an answer after the steer: both turns read answered.
+		const answered = [u1, partialA, { ...steer, turnEnded: true }, endA];
+		expect(turnFateAfter(answered, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(answered, 2, 'desktop')).toBe('answered');
+	});
+
+	// Parity R53 (a): a headless host writes the first turn's answer and its end stamp only at the
+	// end, so both land AFTER the queued steer. A clean finish of the first turn reads ended, and the
+	// steer is the later turn, not begun until then.
+	it("reads a headless host's clean finish past a queued steer as ended, and the steer as the later turn (R53)", () => {
+		const running = [u1, steer];
+		expect(turnFateAfter(running, 0, 'headless')).toBe('unended');
+		expect(userTurnSpan(running, 1)).toBeNull();
+		const finishedA = [u1, steer, { ...endA, text: 'The docs say...' }];
+		expect(turnFateAfter(finishedA, 0, 'headless')).toBe('answered');
+		expect(userTurnSpan(finishedA, 1)).toEqual({ from: 3, to: 3 });
+		expect(turnFateAfter(finishedA, 1, 'headless')).toBe('unended');
+		const finishedB = [...finishedA, { ...partialB, turnEnded: true }];
+		expect(turnFateAfter(finishedB, 0, 'headless')).toBe('answered');
+		expect(turnFateAfter(finishedB, 1, 'headless')).toBe('answered');
+	});
+
+	// Parity R63 (a): the first turn's end landed on the steer, then the steer's own follow-up
+	// answered with nothing that stays: the host stamps that end on the steer as the follow-up's
+	// message, and the reader takes it as the steer's own empty end, never as unended for good.
+	it("reads a queued steer's own empty end on top of the earlier turn's end on it (R63)", () => {
+		const endedOn = markTurnEnded([u1, partialA, steer], 0, 10);
+		expect(endedOn[2]).toMatchObject({ turnEnded: true, turnEndedAt: 10 });
+		expect(endedOn[2]).not.toHaveProperty('steerTurnEnded');
+		expect(turnFateAfter(endedOn, 2, 'desktop')).toBe('unended');
+		// The follow-up is the turn that runs now, and its empty end goes on the steer.
+		expect(runningTurnMessageIndex(endedOn)).toBe(2);
+		const ownEnd = markTurnEnded(endedOn, runningTurnMessageIndex(endedOn), 20);
+		// The first turn's end stays as it was; the follow-up's end has its own fields.
+		expect(ownEnd[2]).toMatchObject({
+			turnEnded: true,
+			turnEndedAt: 10,
+			steerTurnEnded: true,
+			steerTurnEndedAt: 20,
+		});
+		for (const hostKind of ['desktop', 'headless'] as const) {
+			expect(turnFateAfter(ownEnd, 0, hostKind)).toBe('answered');
+			expect(turnFateAfter(ownEnd, 2, hostKind)).toBe('answered');
+		}
+		expect(userTurnSpan(ownEnd, 0)).toEqual({ from: 1, to: 3 });
+		// A later queued steer's answer, stamped after the steer's own end, is never the first turn's.
+		const later = {
+			...steer,
+			id: 'c',
+			timestamp: 30,
+			text: 'And the tests',
+		};
+		const afterOwn = [
+			...ownEnd,
+			later,
+			{ ...partialB, id: 'oc', timestamp: 31, turnEnded: true, turnEndedAt: 32 },
+		];
+		expect(userTurnSpan(afterOwn, 0)).toEqual({ from: 1, to: 3 });
+		expect(turnFateAfter(afterOwn, 2, 'desktop')).toBe('answered');
+		expect(turnFateAfter(afterOwn, 3, 'desktop')).toBe('answered');
+	});
+
+	// CodeRabbit on #2177: the steer's own follow-up ended on its own error, then a retry of it
+	// answered empty. The turn before it keeps its end on the steer: it reads answered, never the
+	// follow-up's error.
+	it("keeps the earlier turn's end on the steer when the steer's follow-up errs and then answers empty (R63)", () => {
+		const endedOn = markTurnEnded([u1, partialA, steer], 0, 10);
+		const errored = [
+			...endedOn,
+			{
+				id: 'eb',
+				timestamp: 15,
+				source: 'error',
+				text: 'Rate limited',
+				turnEnded: true,
+				turnEndedAt: 16,
+			},
+		];
+		expect(turnFateAfter(errored, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(errored, 2, 'desktop')).toBe('errored');
+		const retried = markTurnEnded(errored, runningTurnMessageIndex(errored), 20);
+		expect(retried[2]).toMatchObject({ turnEndedAt: 10, steerTurnEndedAt: 20 });
+		expect(userTurnSpan(retried, 0)).toEqual({ from: 1, to: 3 });
+		expect(turnFateAfter(retried, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(retried, 2, 'desktop')).toBe('answered');
+	});
+
+	// CodeRabbit on #2177: two steers queued behind one turn run their follow-ups in the order they
+	// were sent. The first turn's end lands on the second; each follow-up's end goes on its own steer.
+	it('stamps each queued follow-up on its own steer when two are queued behind one turn (R63)', () => {
+		const s1 = { ...steer, id: 's1', timestamp: 3 };
+		const s2 = { ...steer, id: 's2', timestamp: 4, text: 'And the tests' };
+		const endedOn = markTurnEnded([u1, s1, s2], 0, 10);
+		expect(endedOn[2]).toMatchObject({ turnEnded: true });
+		expect(runningTurnMessageIndex(endedOn)).toBe(1);
+		const firstDone = markTurnEnded(endedOn, runningTurnMessageIndex(endedOn), 20);
+		expect(firstDone[1]).toMatchObject({ turnEnded: true, steerTurnEnded: true });
+		expect(firstDone[2]).not.toHaveProperty('steerTurnEnded');
+		expect(turnFateAfter(firstDone, 1, 'desktop')).toBe('answered');
+		expect(turnFateAfter(firstDone, 2, 'desktop')).toBe('unended');
+		expect(runningTurnMessageIndex(firstDone)).toBe(2);
+		const bothDone = markTurnEnded(firstDone, runningTurnMessageIndex(firstDone), 30);
+		expect(bothDone[2]).toMatchObject({
+			turnEndedAt: 10,
+			steerTurnEnded: true,
+			steerTurnEndedAt: 30,
+		});
+		expect(turnFateAfter(bothDone, 0, 'desktop')).toBe('answered');
+		expect(turnFateAfter(bothDone, 1, 'desktop')).toBe('answered');
+		expect(turnFateAfter(bothDone, 2, 'desktop')).toBe('answered');
+	});
+
+	// Greptile and CodeRabbit on #2177: a thinking or tool card written AFTER the stamp before the
+	// steer is a retry of that turn running: the steer has not begun, and the retry is the turn.
+	it.each(['thinking', 'tool'] as const)(
+		'keeps the steer not begun behind a %s card of a retry after the earlier end (R63)',
+		(source) => {
+			const answered = { ...partialA, turnEnded: true, turnEndedAt: 3 };
+			const card = { id: 'k', timestamp: 4, source, text: 'Reading files' };
+			const logs = [u1, answered, card, { ...steer, timestamp: 5 }];
+			expect(userTurnSpan(logs, 3)).toBeNull();
+			expect(turnFateAfter(logs, 3, 'desktop')).toBe('unended');
+			expect(runningTurnMessageIndex(logs)).toBe(0);
+		}
+	);
+
+	it('keeps the first turn running and the steer not begun until the first turn ends (R63)', () => {
+		expect(runningTurnMessageIndex([u1, partialA, steer])).toBe(0);
+		expect(runningTurnMessageIndex([u1, partialA, steer, endA])).toBe(2);
+		// A steer folded into the turn never runs a turn of its own.
+		expect(runningTurnMessageIndex([u1, partialA, { ...steer, steerState: 'absorbed' }])).toBe(0);
+		expect(runningTurnMessageIndex([partialA])).toBe(-1);
+	});
+
+	// Parity R63 (b): a steer written just after the first turn ended, behind its trailing thinking
+	// or tool cards (a tab that keeps them), starts its turn there: the stamp is before the cards.
+	it.each(['thinking', 'tool'] as const)(
+		"reads the earlier turn's end behind trailing %s cards as before the steer (R63)",
+		(source) => {
+			const card = { id: 'k', timestamp: 2.5, source, text: 'Reading files' };
+			const logs = [
+				u1,
+				// The stamp went on the text when the turn exited, after the card.
+				{ ...partialA, turnEnded: true, turnEndedAt: 2.6 },
+				card,
+				steer,
+				{ ...partialB, turnEnded: true },
+			];
+			expect(userTurnSpan(logs, 3)).toEqual({ from: 4, to: 5 });
+			expect(turnFateAfter(logs, 0, 'desktop')).toBe('answered');
+			expect(turnFateAfter(logs, 3, 'desktop')).toBe('answered');
+		}
+	);
+
+	it("has the steer's turn not begun while the turn it was sent into still runs", () => {
+		const logs = [u1, partialA, steer];
+		expect(userTurnSpan(logs, 2)).toBeNull();
+		expect(turnFateAfter(logs, 0, 'desktop')).toBe('unended');
+		expect(turnFateAfter(logs, 2, 'desktop')).toBe('unended');
+		expect(hostRetriesTurn(logs, 2)).toBe(false);
+	});
+});
+
+describe('hostRetriesTurn', () => {
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize' };
+	const card = {
+		id: 'r1',
+		timestamp: 2,
+		source: 'system',
+		text: 'Rate limited',
+		retryOutageId: 'o1',
+		turnEnded: true,
+	};
+	const answer = { id: 'a1', timestamp: 3, source: 'ai', text: 'The docs say...', turnEnded: true };
+	const error = {
+		id: 'e1',
+		timestamp: 3,
+		source: 'error',
+		text: 'Invalid API key',
+		turnEnded: true,
+	};
+	const u2 = { id: 'u2', timestamp: 4, source: 'user', text: 'And the tests?' };
+
+	it.each([
+		['the host retry card is the last word', [u1, card], true],
+		['the host retry answered after its card', [u1, card, answer], false],
+		['a later error after the card', [u1, card, error], false],
+		[
+			'the Stop note after the card',
+			[u1, card, { id: 's1', timestamp: 3, source: 'system', text: TURN_CANCELED_NOTE }],
+			false,
+		],
+		['no card, an error of its own', [u1, error], false],
+		["a card in a LATER message's turn", [u1, answer, u2, card], false],
+		['a steer into the turn after the card', [u1, card, { ...u2, steered: true }], true],
+		// Parity R45: the user stopped the host's own retry there; the message waits paused.
+		['the host retry card stopped on the host', [u1, { ...card, retryStopped: true }], false],
+	])('%s', (_what, logs, retries) => {
+		expect(hostRetriesTurn(logs, 0)).toBe(retries);
+		// Parity R56: a host that reports a pending retry reads the same; one that reports none
+		// holds nothing, whatever its card says (the retry went with a restart of the host).
+		expect(hostRetriesTurn(logs, 0, true)).toBe(retries);
+		expect(hostRetriesTurn(logs, 0, false)).toBe(false);
+		// The card is the turn's last word whether or not a retry still runs behind it.
+		expect(hostRetryCardStands(logs, 0)).toBe(
+			retries || _what === 'the host retry card stopped on the host'
+		);
+		// The shared reader of the turn's end reads the stamped card as ended, never errored.
+		if (retries) expect(turnFateAfter(logs, 0, 'desktop')).not.toBe('errored');
+	});
+});
+
+// Parity R38: one check, on both host kinds, that a resend is the message running now.
+describe('tabRunsUserEntry', () => {
+	const u1 = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize', queuedItemId: 'q1' };
+	const sent = { id: 'u1', text: 'Summarize' };
+	const partial = { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' };
+
+	it.each([
+		['a desktop tab running it, mid-stream', [u1, partial], { busy: true }, true],
+		['a desktop tab that is idle', [u1, partial], { busy: false }, false],
+		[
+			'a desktop tab whose turn ended (stamped)',
+			[u1, { ...partial, turnEnded: true }],
+			{ busy: true },
+			false,
+		],
+		[
+			'a desktop tab running a LATER message',
+			[u1, { id: 'u2', timestamp: 3, source: 'user', text: 'Next' }],
+			{ busy: true },
+			false,
+		],
+		['a headless tab running its item', [u1], { busy: true, itemId: 'q1' }, true],
+		['a headless tab running another item', [u1], { busy: true, itemId: 'q2' }, false],
+		['a tab without the message', [partial], { busy: true }, false],
+		// A turn that writes no message of its own (a command) started after it (CodeRabbit on #2167).
+		[
+			'a desktop tab whose running turn began after the message',
+			[u1, partial],
+			{ busy: true, startedAt: 60_000 },
+			false,
+		],
+		[
+			'a desktop tab whose running turn began with the message',
+			[u1, partial],
+			{ busy: true, startedAt: 1 },
+			true,
+		],
+	] as const)('%s', (_how, logs, running, runs) => {
+		expect(tabRunsUserEntry(logs, sent, running)).toBe(runs);
 	});
 });

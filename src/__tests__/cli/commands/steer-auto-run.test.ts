@@ -6,8 +6,9 @@
  *  - A note that cannot be sent (empty, over the limit) fails BEFORE a round
  *    trip, and is never cut to fit.
  *  - `--background` reaches the wire only when asked, and `--focus` wins.
- *  - `cancel` resolves a unique id prefix against the pending list, so the far
- *    side is always handed a whole id.
+ *  - `cancel` resolves a unique id prefix against the pending list, and
+ *    `dismiss` against the delivered list, so the far side is always handed a
+ *    whole id.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -34,8 +35,18 @@ vi.mock('../../../cli/services/storage', () => ({
 	getSessionHistoryMtimeMs: vi.fn(() => 0),
 }));
 
+const cliActivity = vi.hoisted(() => ({
+	busy: false,
+	activity: undefined as { playbookName: string; pid: number } | undefined,
+}));
+vi.mock('../../../shared/cli-activity', () => ({
+	isSessionBusyWithCli: vi.fn(() => cliActivity.busy),
+	getCliActivityForSession: vi.fn(() => cliActivity.activity),
+}));
+
 import {
 	steerAutoRunCancel,
+	steerAutoRunDismiss,
 	steerAutoRunList,
 	steerAutoRunSend,
 } from '../../../cli/commands/steer-auto-run';
@@ -89,6 +100,13 @@ function stubDesktop(
 					};
 				}
 				if (options.fail) return { success: false, error: options.fail };
+				if (msg.action === 'dismiss') {
+					const deliveries = options.deliveries ?? DELIVERIES;
+					return {
+						success: true,
+						delivery: deliveries.find((d) => d.deliveryId === msg.deliveryId) ?? deliveries[0],
+					};
+				}
 				if (msg.action === 'cancel') {
 					return { success: true, note: pending.find((n) => n.id === msg.noteId) ?? PENDING[0] };
 				}
@@ -109,6 +127,8 @@ describe('maestro-cli steer-auto-run', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		sent = [];
+		cliActivity.busy = false;
+		cliActivity.activity = undefined;
 		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 		// The real `process.exit` never returns, and `failCommand` is typed
@@ -143,6 +163,26 @@ describe('maestro-cli steer-auto-run', () => {
 				sessionId: 'agent-1',
 				note: { id: 'note-new' },
 			});
+		});
+
+		// A headless run's loop is in a maestro-cli process the desktop's notes never
+		// reach: queuing the note would leave it waiting through every iteration.
+		it('refuses a note for a run that runs headless in maestro-cli', async () => {
+			cliActivity.busy = true;
+			cliActivity.activity = { playbookName: 'Goal: ship it', pid: 4242 };
+			const errors = vi.mocked(console.error);
+
+			await expectExit(steerAutoRunSend('use the v3 endpoint', { agent: 'alpha', json: true }));
+
+			expect(sent).toHaveLength(0);
+			const output = [...errors.mock.calls, ...logSpy.mock.calls].map(String).join('\n');
+			expect(output).toContain('running headless in maestro-cli (PID 4242)');
+			expect(output).toContain('--visible');
+		});
+
+		it('says the note opens the next task or goal iteration', async () => {
+			await steerAutoRunSend('use the v3 endpoint', { agent: 'alpha' });
+			expect(printed(logSpy)).toContain('it opens the next Auto Run task or goal iteration');
 		});
 
 		it('refuses an empty note without talking to the desktop', async () => {
@@ -265,5 +305,52 @@ describe('maestro-cli steer-auto-run', () => {
 			expect(sent[1]).toMatchObject({ action: 'cancel', noteId: 'note-old' });
 			expect(printed(logSpy)).toContain('already delivered');
 		});
+	});
+
+	describe('dismiss', () => {
+		const TWO: SteeringDeliverySummary[] = [
+			{ ...DELIVERIES[0], deliveryId: 'dlv-aaa111' },
+			{
+				deliveryId: 'dlv-bbb222',
+				notes: [{ id: 'note-x', text: 'watchdog correction', timestamp: 3 }],
+			},
+		];
+
+		it('resolves a unique prefix to the whole delivery id before dismissing', async () => {
+			stubDesktop({ deliveries: TWO });
+
+			await steerAutoRunDismiss('dlv-bbb', { agent: 'alpha', json: true });
+
+			expect(sent.map((m) => m.action)).toEqual(['list', 'dismiss']);
+			expect(sent[1]).toMatchObject({ sessionId: 'agent-1', deliveryId: 'dlv-bbb222' });
+			expect(printed(logSpy)).toContain('watchdog correction');
+		});
+
+		it('refuses an ambiguous prefix rather than guessing', async () => {
+			stubDesktop({ deliveries: TWO });
+
+			await expectExit(steerAutoRunDismiss('dlv-', { agent: 'alpha', json: true }));
+			expect(sent.map((m) => m.action)).toEqual(['list']);
+		});
+
+		it('refuses an empty id without talking to the desktop', async () => {
+			await expectExit(steerAutoRunDismiss('  ', { agent: 'alpha', json: true }));
+			expect(sent).toHaveLength(0);
+		});
+
+		it('lets the desktop explain an id that is not a delivery', async () => {
+			stubDesktop({
+				fail: 'That is a pending note, not a delivery; take it back with steer-auto-run cancel',
+			});
+
+			await expectExit(steerAutoRunDismiss('note-aaa111', { agent: 'alpha', json: true }));
+			expect(sent[1]).toMatchObject({ action: 'dismiss', deliveryId: 'note-aaa111' });
+		});
+	});
+
+	it('list prints each delivery id so a human can dismiss it', async () => {
+		await steerAutoRunList({ agent: 'alpha' });
+
+		expect(printed(logSpy)).toContain('delivery d1');
 	});
 });

@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import React from 'react';
 import { RenameTabModal } from '../../../renderer/components/RenameTabModal';
+import { MODAL_SAVE_CHANGED_REASON } from '../../../renderer/hooks/ui/useModalSave';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme } from '../../../renderer/types';
 
@@ -24,7 +25,7 @@ describe('RenameTabModal', () => {
 
 	beforeEach(() => {
 		mockOnClose = vi.fn();
-		mockOnRename = vi.fn();
+		mockOnRename = vi.fn(async () => ({ saved: true as const }));
 	});
 
 	afterEach(() => {
@@ -183,7 +184,7 @@ describe('RenameTabModal', () => {
 			expect(mockOnRename).not.toHaveBeenCalled();
 		});
 
-		it('calls onRename and onClose when Rename button is clicked', () => {
+		it('calls onRename and onClose when Rename button is clicked', async () => {
 			render(
 				<TestWrapper>
 					<RenameTabModal
@@ -198,7 +199,85 @@ describe('RenameTabModal', () => {
 			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
 
 			expect(mockOnRename).toHaveBeenCalledWith('My Tab');
-			expect(mockOnClose).toHaveBeenCalledTimes(1);
+			await waitFor(() => expect(mockOnClose).toHaveBeenCalledTimes(1));
+		});
+
+		it('stays open with the typed name and the reason when the rename is refused (P6)', async () => {
+			mockOnRename.mockResolvedValueOnce({ saved: false, reason: 'The host is offline.' });
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Typed name' } });
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+			await waitFor(() =>
+				expect(screen.getByRole('alert')).toHaveTextContent('Not saved: The host is offline.')
+			);
+			expect(mockOnClose).not.toHaveBeenCalled();
+			expect(screen.getByRole('textbox')).toHaveValue('Typed name');
+			expect(screen.getByRole('button', { name: 'Rename' })).not.toBeDisabled();
+		});
+
+		it('stays open with a name typed while the rename was saving', async () => {
+			let answer!: (outcome: { saved: true }) => void;
+			mockOnRename.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'First' } });
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Second' } });
+			answer({ saved: true });
+
+			await waitFor(() =>
+				expect(screen.getByRole('alert')).toHaveTextContent(
+					`Not saved: ${MODAL_SAVE_CHANGED_REASON}`
+				)
+			);
+			expect(mockOnClose).not.toHaveBeenCalled();
+			expect(screen.getByRole('textbox')).toHaveValue('Second');
+
+			mockOnRename.mockResolvedValueOnce({ saved: true });
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+			await waitFor(() => expect(mockOnClose).toHaveBeenCalled());
+			expect(mockOnRename).toHaveBeenLastCalledWith('Second');
+		});
+
+		it('stays open and shows the error when the rename throws', async () => {
+			mockOnRename.mockRejectedValueOnce(new Error('IPC closed'));
+			render(
+				<TestWrapper>
+					<RenameTabModal
+						theme={mockTheme}
+						initialName="My Tab"
+						onClose={mockOnClose}
+						onRename={mockOnRename}
+					/>
+				</TestWrapper>
+			);
+
+			fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+
+			await waitFor(() =>
+				expect(screen.getByRole('alert')).toHaveTextContent('Not saved: IPC closed')
+			);
+			expect(mockOnClose).not.toHaveBeenCalled();
 		});
 
 		it('calls onClose when X button is clicked', () => {
@@ -243,7 +322,7 @@ describe('RenameTabModal', () => {
 			expect(input).toHaveValue('New Name');
 		});
 
-		it('submits on Enter key', () => {
+		it('submits on Enter key', async () => {
 			render(
 				<TestWrapper>
 					<RenameTabModal
@@ -259,7 +338,7 @@ describe('RenameTabModal', () => {
 			fireEvent.keyDown(input, { key: 'Enter' });
 
 			expect(mockOnRename).toHaveBeenCalledWith('My Tab');
-			expect(mockOnClose).toHaveBeenCalledTimes(1);
+			await waitFor(() => expect(mockOnClose).toHaveBeenCalledTimes(1));
 		});
 
 		it('trims whitespace when submitting', () => {

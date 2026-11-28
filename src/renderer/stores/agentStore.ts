@@ -41,8 +41,10 @@ import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMess
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
 import { createTab, getActiveTab, markTabRunningQueuedItem } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
+import { queuedItemRunsReadOnly } from '../../shared/queuedTurnSettings';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
+import { withoutDesignPickPageText } from '../utils/designModePicker';
 import {
 	useSessionStore,
 	selectSessionById,
@@ -54,10 +56,16 @@ import { probeSessionAiProcesses } from '../services/process';
 // with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
 import { noteDispatch } from './retryStore';
-import { expandCommandArguments } from '../../shared/maestro-lib/turns/prompt';
+import {
+	appendAgentNotes,
+	expandCommandArguments,
+	withTurnAgentText,
+} from '../../shared/maestro-lib/turns/prompt';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
+import { hostedTargetOf, openHostedTab } from '../services/hostedTurns';
+import { isQueuedItemForHost, sendTakenItemToHost } from '../services/hostedQueuedTurn';
 import {
 	dispatchCrossAgentMentionsForMessage,
 	dispatchCrossAgentMentions,
@@ -77,7 +85,7 @@ import {
 	SPAWN_COLLISION_MAX_ATTEMPTS,
 } from '../utils/executionQueue';
 import { logger } from '../utils/logger';
-import { requestTabAutoNameForMessage } from '../services/tabAutoNaming';
+import { queuedItemNamingText, requestTabAutoNameForMessage } from '../services/tabAutoNaming';
 import { admitGrokNativeCommand, getGrokSlashCommandRefusal } from '../slashCommands';
 import type { GrokAcpNativeCommandIntent } from '../../shared/maestro-lib/grok/acp-turn';
 import {
@@ -320,6 +328,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			const updatedAiTabs = targetTabId
 				? s.aiTabs.map((tab) => (tab.id === targetTabId ? { ...tab, agentError: undefined } : tab))
 				: s.aiTabs;
+			// When a specific tabId is provided and the session-level error belongs
+			// to a different tab, only clear that tab's error and leave the newer
+			// session-level error intact.
+			const clearsSessionError = !tabId || !s.agentErrorTabId || s.agentErrorTabId === tabId;
+			if (!clearsSessionError) {
+				return {
+					...s,
+					aiTabs: updatedAiTabs,
+				};
+			}
 			// Clearing the error must not claim the AGENT is idle while one of its
 			// tabs is still mid-turn. A re-authentication resumes blocked agents one
 			// after another (see `resolveAuthOutage`), so this runs while an earlier
@@ -358,6 +376,18 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 		// Clear the error state
 		get().clearAgentError(sessionId);
+
+		// A hosted agent's tabs live on its host: the host opens the new tab, as New Tab does, with
+		// the same Save to History and thinking a local new tab gets here.
+		if (hostedTargetOf(session)) {
+			void openHostedTab(session, {
+				fields: {
+					...(options?.saveToHistory !== undefined ? { saveToHistory: options.saveToHistory } : {}),
+					...(options?.showThinking !== undefined ? { showThinking: options.showThinking } : {}),
+				},
+			});
+			return;
+		}
 
 		// Create a new tab in the session
 		updateSession(sessionId, (s) => {
@@ -425,6 +455,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		)
 			return false;
 		if (migrationHoldsTurns(session.providerMigration)) return false;
+
+		// A hosted agent's turns run on its Federation host, and main refuses a spawn here. Whatever
+		// queued this item (a snooze, a review, a web client, one left from before the move), it goes
+		// to the host the way the composer's send does, releasing the tab the dequeue marked running
+		// (the host's update draws the turn). Its `@mentions` consult from here, as below.
+		if (isQueuedItemForHost(session, item)) return sendTakenItemToHost(sessionId, item);
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
 		// The item carries its intended tabId from when it was queued. A tab that
@@ -559,14 +595,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// way the composer does. A released consult hold (`agentContext`) is
 		// skipped: its text is Maestro's own "X replied" note, not something the
 		// user asked for, and the message it continues was named when it was sent.
-		if (
-			!managedQueue &&
-			item.type === 'message' &&
-			item.text?.trim() &&
-			!item.agentContext &&
-			!item.awaitingConsult
-		) {
-			requestTabAutoNameForMessage(session, targetTab.id, item.text, 'queue');
+		const namingText = managedQueue ? undefined : queuedItemNamingText(item);
+		if (namingText) {
+			requestTabAutoNameForMessage(session, targetTab.id, namingText, 'queue');
 		}
 
 		// Cross-agent `@mentions` inside a QUEUED message fire HERE, as the message
@@ -578,12 +609,19 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		// is what the turn's prompt has to be told about either.
 		let mentionDispatch: CrossAgentMentionDispatch | undefined;
 		if (!managedQueue && item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
+			// Resolved without the page text of the Design Mode chips the send
+			// expanded in: page content must not consult an agent the user never named.
 			mentionDispatch = dispatchCrossAgentMentionsForMessage(
 				item.text,
 				session,
 				targetTab.id,
 				item.images,
-				item.mentionRouting
+				{
+					routingOverride: item.mentionRouting,
+					planText: withoutDesignPickPageText(item.text, item.designPickPageText),
+					// The hold, and the turn it releases into, run on what the message was queued with.
+					settings: item,
+				}
 			);
 
 			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole
@@ -625,7 +663,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		if (plainQueueKey && pendingPlainQueueDispatches.has(plainQueueKey)) return false;
 		if (plainQueueKey) pendingPlainQueueDispatches.add(plainQueueKey);
 		try {
-			if (managedQueue && (item.type !== 'message' || item.agentContext))
+			// A managed spawn's prompt must equal the item text, so agent-only text (a consult's
+			// replies ahead, a Federation sender's @mention notes behind) cannot ride on it.
+			if (managedQueue && (item.type !== 'message' || item.agentContext || item.agentNotes))
 				throw new Error('DispatchQueueRoutingUnsupported');
 			if (managedQueue && item.crossAgentMention && !deps.managedStepId) {
 				if (deps.isCancelled?.()) return false;
@@ -666,7 +706,13 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					session,
 					targetTab.id,
 					item.images,
-					{ dispatchId: item.pendingAdmissionId!, generation: prepared.generation, starts }
+					{
+						managedQueue: {
+							dispatchId: item.pendingAdmissionId!,
+							generation: prepared.generation,
+							starts,
+						},
+					}
 				);
 				await Promise.all(starts);
 				if (prepared.routing === 'only' || prepared.routing === 'consult-first') return true; // no local AgentRun, retry snapshot or spawn
@@ -677,10 +723,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 			// Get the TARGET TAB's agentSessionId for session continuity
 			const tabAgentSessionId = targetTab.agentSessionId;
-			const isReadOnly =
-				item.readOnlyMode === true ||
-				targetTab.readOnlyMode === true ||
-				targetTab.permissionMode === 'readonly';
+			const isReadOnly = queuedItemRunsReadOnly(item, targetTab);
 			const effectivePermissionMode = isReadOnly ? 'readonly' : resolveTabPermissionMode(targetTab);
 
 			// Filter out YOLO/skip-permissions flags when read-only mode is active
@@ -699,7 +742,9 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// Process a message - spawn agent with the message text
 				const messagePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 				// `agentContext` is agent-only text the transcript never shows (a
-				// released consult hold carries the replies verbatim in it).
+				// released consult hold carries the replies verbatim in it), and
+				// `agentNotes` (a Federation sender's `@mention` notes) goes behind.
+				// Both are laid out as a host lays them (`withTurnAgentText()`).
 				// A queued message that is the tab's FIRST turn opens a new provider
 				// session, so it carries the New Session Message like a typed one does.
 				// A message queued behind a running turn resumes, and gets nothing.
@@ -709,19 +754,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 							session.newSessionMessage,
 							tabAgentSessionId
 						)
-					: withMentionTurnNotes(
-							takePendingMergedContext(
-								sessionId,
-								targetTab.id,
-								prependNewSessionMessageOnFirstTurn(
-									item.agentContext
-										? `${item.agentContext}\n\n---\n\n${messagePrompt}`
-										: messagePrompt,
-									session.newSessionMessage,
-									tabAgentSessionId
-								)
+					: appendAgentNotes(
+							withMentionTurnNotes(
+								takePendingMergedContext(
+									sessionId,
+									targetTab.id,
+									prependNewSessionMessageOnFirstTurn(
+										withTurnAgentText(messagePrompt, { agentContext: item.agentContext }),
+										session.newSessionMessage,
+										tabAgentSessionId
+									)
+								),
+								mentionDispatch
 							),
-							mentionDispatch
+							item.agentNotes
 						);
 
 				// NOTE: The user-visible log entry for this message is appended by the
@@ -856,6 +902,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					// new process must advertise the same entry before it is submitted.
 					const nativeText = slashInput!;
 					if (await refuseChangedCommand()) return false;
+					// The native command must reach Grok exactly as typed, so it has no place for a
+					// Federation sender's agent-only text: refuse it rather than run without it.
+					if (item.agentContext || item.agentNotes) {
+						await settleUnsentCommand(
+							`${item.command} is a Grok command that runs exactly as typed, so it cannot carry a consult's replies or the @mention notes. Send it without an @mention, or as a message.`
+						);
+						return false;
+					}
 					const expectedGrokSpawnSelection = await getQueuedCommandSpawnSelection(sessionId, item);
 					if (deps.isCancelled?.()) {
 						await settleUnsentCommand();
@@ -1001,11 +1055,15 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						command: commandToUse,
 						args: spawnArgs,
 						// Agent-only, like the message branch: the log entry above keeps
-						// the bare command prompt.
-						prompt: prependNewSessionMessageOnFirstTurn(
-							substitutedPrompt,
-							session.newSessionMessage,
-							tabAgentSessionId
+						// the bare command prompt. A Federation sender's agent-only text
+						// lays around it as a headless host lays it (`assembleTurn()`).
+						prompt: appendAgentNotes(
+							prependNewSessionMessageOnFirstTurn(
+								withTurnAgentText(substitutedPrompt, { agentContext: item.agentContext }),
+								session.newSessionMessage,
+								tabAgentSessionId
+							),
+							item.agentNotes
 						),
 						images: hasImages ? item.images : undefined,
 						appendSystemPrompt: appendSystemPromptForCommand,

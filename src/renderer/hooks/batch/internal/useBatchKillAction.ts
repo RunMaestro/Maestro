@@ -9,6 +9,7 @@ import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
 import type { ErrorResolutionEntry } from './useBatchControlActions';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
 import { aggregateAutoRunHistoryTotals, mergeFinalSummaryTotals } from './batchFinalSummary';
+import { abortAutoRunTurns } from './autoRunTurnAbort';
 
 interface TimeTrackingApi {
 	getElapsedTime: (sessionId: string) => number;
@@ -234,6 +235,12 @@ export function useBatchKillAction({
 			} catch (error) {
 				logger.error('[BatchProcessor:killBatchRun] Failed to kill process:', undefined, error);
 			}
+
+			// 1b. Release the runner from a turn it may never get back (a missed exit, a queue that
+			// never drains). After the kill, so the loop's own cleanup (its queue drain included)
+			// never runs while the run's process is still alive. An aborted spawn also kills its
+			// own process by its exact key, which covers one that started after the list above.
+			abortAutoRunTurns(sessionId);
 
 			// 2. (Stop flag was set synchronously at the top of this function, before any await.)
 

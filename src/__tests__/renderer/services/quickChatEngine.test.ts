@@ -135,7 +135,11 @@ beforeEach(() => {
 	resetQuickChatEngineForTests();
 	useSessionStore.setState({ sessions: [agent('a'), agent('b')], activeSessionId: 'b' });
 	setQuickChatSettings({});
-	useSettingsStore.setState({ defaultSaveToHistory: true, automaticTabNamingEnabled: true });
+	useSettingsStore.setState({
+		defaultSaveToHistory: true,
+		automaticTabNamingEnabled: true,
+		primaryAgentId: null,
+	});
 	// The queue's last step is the spawn. Everything before it (the dequeue, the
 	// card in the tab, the busy state) is the real code.
 	registerDispatchDepsProvider(() => ({
@@ -208,6 +212,18 @@ describe('agent resolution', () => {
 		expect(buildQuickChatSnapshot().agentId).toBe('b');
 	});
 
+	it('uses the Primary Agent when none is configured, and its own agent over it', () => {
+		useSettingsStore.setState({ primaryAgentId: 'a' });
+		expect(buildQuickChatSnapshot().agentId).toBe('a');
+		setQuickChatSettings({ agentId: 'b' });
+		expect(buildQuickChatSnapshot().agentId).toBe('b');
+	});
+
+	it('falls back to the active agent when the Primary Agent is gone', () => {
+		useSettingsStore.setState({ primaryAgentId: 'deleted' });
+		expect(buildQuickChatSnapshot().agentId).toBe('b');
+	});
+
 	it('never picks a terminal-only agent', () => {
 		useSessionStore.setState({
 			sessions: [agent('t', { toolType: 'terminal' }), agent('a')],
@@ -273,6 +289,26 @@ describe('send', () => {
 
 		found({ kind: 'new' });
 		await vi.waitFor(() => expect(sent()[0].route?.status).toBe('running'));
+	});
+
+	it('follows its tab after the agent moves to another account between messages', async () => {
+		vi.mocked(routeQuickChatMessage).mockResolvedValueOnce({ kind: 'open', tabId: 'b-main' });
+		await send('first');
+		reply('b', 'b-main', 'answer');
+		buildQuickChatSnapshot();
+		// Account rebalancing rewrites CLAUDE_CONFIG_DIR between turns.
+		updateSessionWith('b', (s) => ({
+			...s,
+			customEnvVars: { CLAUDE_CONFIG_DIR: '/fixture/other-account' },
+		}));
+
+		const next = await send('and then?');
+		expect(next.message.route).toMatchObject({ status: 'running', tabId: 'b-main' });
+		expect(routeQuickChatMessage).toHaveBeenCalledTimes(1);
+		// The finished turn keeps its tab and its reply.
+		const [first] = sent(next.snapshot.messages);
+		expect(first.route).toMatchObject({ status: 'done', tabId: 'b-main', tabOpen: true });
+		expect(next.snapshot.messages.map((m) => m.text)).toContain('answer');
 	});
 
 	it('starts a hidden tab in the background and runs the message in it', async () => {
@@ -704,12 +740,17 @@ describe('steer a queued message into the running reply', () => {
 			type: 'steering',
 			id: '',
 			verdict: 'refused',
-			detail: 'The editor is busy.',
+			refusal: 'blocking-dialog',
+			detail: 'a permission prompt',
 		});
 		const { message } = await queueBehindBusyMain();
 		const result = await runQuickChatCommand({ type: 'steer', messageId: message.id });
 
-		expect(result).toMatchObject({ ok: false, error: 'The editor is busy. It stays queued.' });
+		expect(result).toMatchObject({
+			ok: false,
+			error:
+				'A permission prompt is waiting for an answer, so the message was not typed. It stays queued.',
+		});
 		expect(session('b').executionQueue).toHaveLength(1);
 		expect(sent(result.snapshot.messages)[0].route).toMatchObject({ status: 'queued' });
 	});
@@ -1914,6 +1955,20 @@ describe('recent chats', () => {
 				expect(saved.turns[0].reply.map((m) => m.text)).toEqual(['observed reply']);
 			}
 		);
+
+		it('names what changed when it refuses, without showing the value', async () => {
+			patchTab('a', 'a-main', () => ({ agentSessionId: 'conv-a', nativeSessionBinding: binding }));
+			vi.mocked(routeQuickChatMessage).mockResolvedValueOnce({ kind: 'open', tabId: 'a-main' });
+			await send('first turn');
+			reply('a', 'a-main', 'retained reply');
+			buildQuickChatSnapshot();
+			updateSessionWith('a', (s) => ({ ...s, customEnvVars: { GROK_HOME: '/fixture/changed' } }));
+			const { snapshot } = await send('blocked');
+			const refusal = snapshot.messages.map((m) => m.text).find((t) => /changed since/.test(t))!;
+			expect(refusal).toMatch(/Agent a's account \(GROK_HOME\) changed since/);
+			expect(refusal).toMatch(/Pick its tab to continue there/);
+			expect(refusal).not.toContain('/fixture/changed');
+		});
 
 		it('requires explicit same-home selection to recover after repeated refusal', async () => {
 			patchTab('a', 'a-main', () => ({ agentSessionId: 'conv-a', nativeSessionBinding: binding }));

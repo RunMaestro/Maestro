@@ -4,11 +4,16 @@ import { Zap } from 'lucide-react';
 interface CueIndicatorProps {
 	/** Number of Cue subscriptions registered for this session. */
 	subscriptionCount: number;
-	/** Whether a Cue run is currently active (drives the pulse animation). */
+	/** Whether a Cue run is currently active (drives the static glow). */
 	activeRun: boolean;
 }
 
 const ZAP_STYLE = { color: '#2dd4bf' } as const;
+// A running Cue glows instead of pulsing. `animate-pulse` here was one infinite
+// animation per agent with a live run, and any running animation keeps the
+// renderer drawing every frame (1,374 style recalcs on four rows in a 45s idle
+// Nov 2026 trace). A static filter costs one paint, not one per vsync.
+const ZAP_ACTIVE_STYLE = { ...ZAP_STYLE, filter: 'drop-shadow(0 0 3px #2dd4bf)' } as const;
 
 /**
  * Maestro Cue indicator pill rendered next to the session name.
@@ -31,11 +36,8 @@ export const CueIndicator = memo(function CueIndicator({
 	})`;
 
 	return (
-		<span
-			className={`shrink-0 flex items-center${activeRun ? ' animate-pulse' : ''}`}
-			title={tooltip}
-		>
-			<Zap className="w-3 h-3" style={ZAP_STYLE} fill="#2dd4bf" />
+		<span className="shrink-0 flex items-center" title={tooltip}>
+			<Zap className="w-3 h-3" style={activeRun ? ZAP_ACTIVE_STYLE : ZAP_STYLE} fill="#2dd4bf" />
 		</span>
 	);
 });

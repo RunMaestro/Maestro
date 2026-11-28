@@ -662,6 +662,16 @@ Please confirm you've reviewed this context and let me know you're ready to cont
 
 				// Add new session to state
 				setSessions((prev) => [...prev, newSession]);
+				// A new agent in the Left Bar: record it like every other creation path,
+				// so the Usage Dashboard's agent count includes it after it is deleted.
+				void window.maestro.stats.recordSessionCreated({
+					sessionId: newSession.id,
+					agentType: newSession.toolType,
+					projectPath: newSession.projectRoot,
+					createdAt: newSession.createdAt || Date.now(),
+					isRemote: Boolean(newSession.sessionSshRemoteConfig?.enabled),
+					isWorktree: false,
+				});
 
 				// Log transfer operation to history
 				const targetAgentName = getAgentDisplayName(targetAgent);

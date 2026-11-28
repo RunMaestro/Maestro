@@ -3,6 +3,7 @@ import type { Theme } from '../../../../../types';
 import { SettingCheckbox } from '../../../../SettingCheckbox';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
+import { ToggleSettingRow } from '../../DisplayTab/components/ToggleSettingRow';
 import { DEFAULT_BROWSER_HOME_URL } from '../utils';
 import { formatMetaKeyName } from '../../../../../utils/shortcutFormatter';
 
@@ -20,6 +21,8 @@ interface BrowserSectionProps {
 	setBrowserTabKeepAlive: (mode: BrowserKeepAliveMode) => void;
 	browserTabKeepAliveLimit: number;
 	setBrowserTabKeepAliveLimit: (limit: number) => void;
+	designModeCollapsePanels: boolean;
+	setDesignModeCollapsePanels: (enabled: boolean) => void;
 }
 
 export function BrowserSection({
@@ -34,6 +37,8 @@ export function BrowserSection({
 	setBrowserTabKeepAlive,
 	browserTabKeepAliveLimit,
 	setBrowserTabKeepAliveLimit,
+	designModeCollapsePanels,
+	setDesignModeCollapsePanels,
 }: BrowserSectionProps) {
 	return (
 		<div data-setting-id="general-browser">
@@ -149,6 +154,21 @@ export function BrowserSection({
 						/>
 					</div>
 				)}
+			</div>
+			<div
+				data-setting-id="general-design-mode-collapse-panels"
+				className="mt-3 p-3 rounded border"
+				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+			>
+				<ToggleSettingRow
+					theme={theme}
+					title={<span className="font-medium">Collapse side bars in Design Mode</span>}
+					description="Turning on Design Mode folds the Left Bar and Right Bar away so the page gets the full width instead of its mobile layout. Turning it off, or leaving the tab, brings back only the bars Design Mode closed, unless you opened or closed one yourself in the meantime."
+					checked={designModeCollapsePanels}
+					onChange={setDesignModeCollapsePanels}
+					ariaLabel="Collapse side bars in Design Mode"
+					clickableRow
+				/>
 			</div>
 		</div>
 	);

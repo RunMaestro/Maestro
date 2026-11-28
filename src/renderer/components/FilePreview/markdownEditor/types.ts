@@ -1,5 +1,8 @@
+import type { Extension } from '@codemirror/state';
 import type { Theme } from '../../../constants/themes';
 import type { CompletionActivation, CodeEditorShortcutId } from './codeEditing';
+import type { CommentSlotElementCallback, CommentSlotsPayload } from './commentSlots';
+import type { ProblemRange } from './problemMark';
 
 /** The main selection, with its 1-based line span. */
 export interface EditorSelectionDetails {
@@ -88,6 +91,13 @@ export interface MarkdownEditorProps {
 	onChange: (value: string) => void;
 	/** Syntax-highlight language hint from `getLanguageFromFilename()`. */
 	language: string;
+	/**
+	 * A grammar the host built itself, used instead of the one `language`
+	 * would load. For a language configured per document, such as SQL with
+	 * the open database's tables and columns for completion. Keep the value
+	 * stable (memoize it): a new one reconfigures the editor.
+	 */
+	languageExtension?: Extension;
 	theme: Theme;
 	/** Native browser spellcheck (red squiggles on prose). */
 	spellCheck?: boolean;
@@ -135,5 +145,20 @@ export interface MarkdownEditorProps {
 	onShortcutUsed?: (id: CodeEditorShortcutId) => void;
 	/** Right-click on selected text (see `BuildEditorExtensionsOptions`). */
 	onSelectionContextMenu?: (selection: EditorSelectionDetails, event: MouseEvent) => void;
+	/** Right-click on a line's text, off the selection (see `BuildEditorExtensionsOptions`). */
+	onLineContextMenu?: (lineNumber: number, event: MouseEvent) => void;
+	/**
+	 * Review comments drawn under their lines (see `./commentSlots`). The editor
+	 * reserves an element under each slot's last line and hands it to
+	 * `onCommentSlotElement`; the host renders into it with a portal.
+	 */
+	commentSlots?: CommentSlotsPayload;
+	onCommentSlotElement?: CommentSlotElementCallback;
+	/**
+	 * One span the host flags as wrong (the token a SQL error points at),
+	 * painted with a wavy underline in the error color, `message` as its
+	 * tooltip. Offsets are into `value`; null or omitted clears it.
+	 */
+	problemRange?: ProblemRange | null;
 	className?: string;
 }

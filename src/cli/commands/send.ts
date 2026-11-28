@@ -31,7 +31,6 @@ import { readCallerIdentity } from '../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { generateUUID } from '../../shared/uuid';
 import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
-import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
 import type {
 	AgentError,
 	HistoryEntry,
@@ -39,12 +38,17 @@ import type {
 	ToolType,
 	UsageStats,
 } from '../../shared/types';
-import type { TurnEvent } from '../../shared/maestro-lib/client/types';
+import {
+	normalizeTurnOverrides,
+	type TurnEvent,
+	type TurnOverrides,
+} from '../../shared/maestro-lib/client/types';
 import {
 	PeerResolveError,
 	hostCallError,
 	peerAgentRef,
 	peerErrorCode,
+	liftedPeerTarget,
 	routeAgentTarget,
 	watchPeerConnection,
 	withPeerAgent,
@@ -78,6 +82,10 @@ interface SendOptions {
 	// `--no-synopsis` -> `synopsis: false`. Skips the extra summarization turn;
 	// the History entry then carries the response itself.
 	synopsis?: boolean;
+	/** Peer targets only: this turn's model, a sender's own tab choice (`TurnOverrides`). */
+	model?: string;
+	/** Peer targets only: this turn's effort. */
+	effort?: string;
 }
 
 /** Longest summary line kept when the response stands in for a synopsis. */
@@ -344,7 +352,6 @@ export async function send(
 ): Promise<void> {
 	const route = routeAgentTarget(agentIdArg);
 	if (route.kind === 'peer') return sendToPeer(route.target, message, options);
-
 	// Resolve agent ID (supports partial IDs)
 	let agentId: string;
 	try {
@@ -361,11 +368,21 @@ export async function send(
 		process.exit(1);
 	}
 
-	// A lifted agent runs on its host now: a local turn would resume the session the host owns.
-	const liftedRefusal = liftedSendRefusal(agent);
-	if (liftedRefusal) {
-		emitErrorJson(liftedRefusal, AGENT_LIFTED_CODE);
-		process.exit(1);
+	// A hosted agent's turns run on its host: the message goes there, as a desktop send does. A
+	// local turn would resume the session the host owns.
+	const hostRoute = liftedPeerTarget(agent);
+	if (hostRoute) return sendToPeer(hostRoute, message, options);
+
+	// Past this point the turn runs from this machine. `--model` and `--effort` apply to one turn
+	// on a host (a `peer:agent` target, or a hosted agent's own id above); a local agent has no
+	// per-turn override here.
+	if (options.model !== undefined || options.effort !== undefined) {
+		emitErrorJson(
+			`${options.model !== undefined ? '--model' : '--effort'} is for an agent that runs on a host (peer:agent, or a hosted agent's own id), where it applies to this one turn. For a local agent, set the model with update-agent.`,
+			'INVALID_OPTION'
+		);
+		process.exit(ExitCode.InvalidUsage);
+		return;
 	}
 
 	// Validate agent type is supported for CLI spawning
@@ -564,6 +581,8 @@ export async function send(
 					customModel: agent.customModel,
 					customEffort: agent.customEffort,
 					customArgs: agent.customArgs,
+					// The agent's own binary, as a desktop tab spawn uses it.
+					sessionCustomPath: agent.customPath,
 					additionalDirectories: agent.additionalDirectories,
 					customEnvVars: agent.customEnvVars,
 					requiredSecrets: agent.requiredSecrets,
@@ -638,14 +657,25 @@ export async function send(
  * so the flag is refused rather than silently dropped.
  */
 function peerUnsupportedSendFlag(options: SendOptions): string | undefined {
-	if (options.readOnly) return '--read-only';
 	if (options.tab) return '--tab';
 	if (options.requirePluginTools) return '--require-plugin-tools';
 	if (options.requireToolReceipt !== undefined) return '--require-tool-receipt';
 	if (options.systemPrompt === false) return '--no-system-prompt';
-	if (options.history === false) return '--no-history';
 	if (options.synopsis === false) return '--no-synopsis';
 	return undefined;
+}
+
+/**
+ * The sender's own choices for this one turn on a peer's agent, the same `TurnOverrides` the
+ * mirror composer's chips send: never written to the host tab, so other conductors keep theirs.
+ */
+export function peerTurnOverrides(options: SendOptions): TurnOverrides | undefined {
+	return normalizeTurnOverrides({
+		model: options.model,
+		effort: options.effort,
+		...(options.readOnly ? { readOnly: true } : {}),
+		...(options.history === false ? { saveToHistory: false } : {}),
+	});
 }
 
 /** A peer send that stopped short of an outcome. `extra` goes into the JSON as is. */
@@ -746,6 +776,7 @@ async function sendToPeer(
 		return;
 	}
 
+	const overrides = peerTurnOverrides(options);
 	let printed: { response: SendResponse & { peer: string; tabId: string }; ok: boolean } | null =
 		null;
 	try {
@@ -780,7 +811,12 @@ async function sendToPeer(
 				const sent = await runPeerAgentAction(
 					client,
 					agent,
-					{ kind: 'send', tabId, text: message },
+					{
+						kind: 'send',
+						tabId,
+						text: message,
+						...(overrides ? { overrides } : {}),
+					},
 					// The host stamps the turn's History entry with this machine.
 					{ originHost: os.hostname() }
 				);
@@ -796,6 +832,22 @@ async function sendToPeer(
 					throw hostCallError(peer, sent.error);
 				}
 				const receipt = (sent.value as Extract<PeerAgentActionResult, { kind: 'send' }>).receipt;
+				if (receipt.status === 'ran') {
+					// One of Maestro's own commands (`/history`, `/skills`): the host ran it for the tab,
+					// as its composer would. No turn runs, so there is no turn to wait for.
+					const result: SendAgentResult = {
+						success: true,
+						response: `The host on peer "${peer}" ran ${message.trim().split(/\s/, 1)[0]} for tab ${tabId}. What it wrote is in that tab's transcript: maestro-cli show agent ${ref}`,
+					};
+					return {
+						response: {
+							...buildResponse(agent.id, agent.name, result, agent.toolType as ToolType),
+							peer,
+							tabId,
+						},
+						ok: true,
+					};
+				}
 				if (receipt.status === 'queued') {
 					throw new PeerSendFailure(
 						'QUEUED_ON_PEER',

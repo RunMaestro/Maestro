@@ -45,7 +45,6 @@ import {
 } from '../../utils/agentWorkingDirectory';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
 import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
-import { useTabStore } from '../../stores/tabStore';
 import {
 	createTabPidChangeHandler,
 	createTabStateChangeHandler,
@@ -73,8 +72,15 @@ import {
 } from '../../../shared/groupAppearance';
 import { isCodexTransport } from '../../../shared/codexTransport';
 import { isHarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
-import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import { TAB_EDITABLE_KEYS, withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import { setTabThinkingMode } from '../../services/tabThinkingMode';
+import { starHostedTab, updateHostedTab } from '../../services/hostedTurns';
 import { liftBusyReason, readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
+import {
+	readReturnedFromHost,
+	returnRestoreRefusal,
+	withReturnedFromHost,
+} from '../../../shared/maestro-lib/agents/lift-return-record';
 import {
 	TAB_CONTEXT_OP_EVENT,
 	runRemoteTabContextOp,
@@ -548,21 +554,16 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 						});
 					}
 				},
-				onSpawnFailure: (tabId, isPersistent, message) => {
+				onSpawnFailure: (tabId, message) => {
 					// No xterm to write into from here, so report through the store and a
-					// toast. Persistent tabs stay as restartable husks exactly as they do
-					// on the view path; scratch tabs are closed.
+					// toast. The tab stays as a restartable exited tab in every mode, exactly
+					// as it does on the view path.
 					logger.warn('Background terminal PTY spawn failed', 'RemoteEvents', {
 						sessionId,
 						tabId,
-						isPersistent,
 						message,
 					});
-					if (isPersistent) {
-						createTabStateChangeHandler(sessionId)(tabId, 'exited');
-					} else {
-						useTabStore.getState().closeTerminalTab(tabId, 'spawn-failure');
-					}
+					createTabStateChangeHandler(sessionId)(tabId, 'exited');
 					notifyToast({ type: 'error', title: 'Failed to start terminal', message });
 				},
 			});
@@ -1682,6 +1683,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 		}
 
+		// Its playbooks go with it, as the Left Bar's Remove Agent does (`performDeleteSession`).
+		try {
+			await window.maestro.playbooks.deleteAll(sessionId);
+		} catch (error) {
+			captureException(error, { extra: { sessionId, operation: 'remote-delete-playbooks' } });
+		}
+
 		// Remove session
 		setSessions((prev: Session[]) => {
 			const filtered = prev.filter((s) => s.id !== sessionId);
@@ -1883,6 +1891,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			const applyLift = (s: Session): Session => ({
 				...s,
 				liftedTo: pointer,
+				// A manual Move to Host undoes an earlier Move Back's opt-out.
+				hostedOptOut: undefined,
 				executionQueue: (s.executionQueue ?? []).filter((item) => !moved.has(item.id)),
 			});
 			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyLift(s) : s)));
@@ -1890,6 +1900,43 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				await window.maestro.sessions.setMany([applyLift(session) as any], []);
 			} catch (persistErr) {
 				logger.error('[Remote] Failed to persist lift pointer:', undefined, persistErr);
+			}
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: true,
+			});
+			return;
+		}
+
+		// Federation Move Back (`maestro-cli unlift`, Move Back from Host): the pointer goes,
+		// the host's tabs merge in by id, and automatic moves leave the agent here. Flushed
+		// before the ack, so the host's copy is removed only once this is on disk.
+		if ('returnedFromHost' in patchObj) {
+			const returned = readReturnedFromHost(patchObj.returnedFromHost);
+			const refusal = !returned
+				? "Invalid value for field 'returnedFromHost'"
+				: returnRestoreRefusal(session);
+			if (refusal || !returned) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: refusal ?? "Invalid value for field 'returnedFromHost'",
+				});
+				return;
+			}
+			const applyReturn = (s: Session): Session =>
+				withReturnedFromHost(
+					s as unknown as Record<string, unknown>,
+					returned
+				) as unknown as Session;
+			const restored = applyReturn(session);
+			setSessions((prev: Session[]) => prev.map((s) => (s.id === sessionId ? applyReturn(s) : s)));
+			try {
+				await window.maestro.sessions.setMany([restored as any], []);
+			} catch (persistErr) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `Could not save the agent: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+				});
+				return;
 			}
 			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
 				success: true,
@@ -1905,21 +1952,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// persistent state over adding another fire-and-forget renderer channel.
 		const targetTabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined;
 		if (targetTabId !== undefined) {
-			// Everything the composer chips toggle, keyed by the value it accepts.
-			// The type is enforced here rather than trusted from the wire: these
-			// land straight in the persisted tab, so a bad value (a string in
-			// `readOnlyMode`, a typo'd thinking mode) would be a permanently wrong
-			// chip rather than a rejected command.
-			const TAB_EDITABLE_KEYS: Record<string, 'boolean' | 'string' | 'thinking'> = {
-				starred: 'boolean',
-				hasUnread: 'boolean',
-				saveToHistory: 'boolean',
-				readOnlyMode: 'boolean',
-				enterToSend: 'boolean',
-				showThinking: 'thinking',
-				customModel: 'string',
-				customEffort: 'string',
-			};
+			// Everything the composer chips toggle, plus the provider session a wizard
+			// that ran elsewhere hands the tab, keyed by the value it accepts (the
+			// same allowlist a headless host applies). The type is enforced here
+			// rather than trusted from the wire: these land straight in the persisted
+			// tab, so a bad value (a string in `readOnlyMode`, a typo'd thinking mode)
+			// would be a permanently wrong chip rather than a rejected command.
 			const tabPatch: Record<string, unknown> = {};
 			for (const key of Object.keys(patchObj)) {
 				const kind = TAB_EDITABLE_KEYS[key];
@@ -1964,17 +2002,49 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
+			// A Thinking change takes the one write every Thinking control takes
+			// (`setTabThinkingMode()`): it drops the stored reasoning when the mode goes off and
+			// tells a hosted agent's host, which runs the turn. `null` clears it to off.
+			const thinking =
+				'showThinking' in tabPatch ? (asThinkingMode(tabPatch.showThinking) ?? 'off') : undefined;
+			delete tabPatch.showThinking;
+
 			const applyTabPatch = (s: Session): Session => ({
 				...s,
-				aiTabs: s.aiTabs.map((t) => (t.id === targetTabId ? { ...t, ...tabPatch } : t)),
+				aiTabs: s.aiTabs.map((t) => {
+					if (t.id !== targetTabId) return t;
+					const next = { ...t, ...tabPatch };
+					// The binding proves where the old session came from; it says nothing
+					// about a new one (the shared `applyTabPatch()` drops it the same way).
+					if ('agentSessionId' in tabPatch && tabPatch.agentSessionId !== t.agentSessionId) {
+						next.nativeSessionBinding = undefined;
+					}
+					return next;
+				}),
 			});
 
-			setSessions((prev: Session[]) =>
-				prev.map((s) => (s.id === sessionId ? applyTabPatch(s) : s))
-			);
+			if (Object.keys(tabPatch).length > 0) {
+				setSessions((prev: Session[]) =>
+					prev.map((s) => (s.id === sessionId ? applyTabPatch(s) : s))
+				);
+			}
+			if (thinking !== undefined) setTabThinkingMode(sessionId, targetTabId, thinking);
+			// The rest of what a hosted tab's host holds goes there as the UI control sends it: a
+			// star through the tab strip's own call, a provider session as a finished wizard hands
+			// it over. The composer settings (read-only, model, effort, history, enter-to-send) and
+			// a merged context ride the next send, as they do from the composer.
+			if (typeof tabPatch.starred === 'boolean') {
+				starHostedTab(session, targetTabId, tabPatch.starred);
+			}
+			if (typeof tabPatch.agentSessionId === 'string') {
+				updateHostedTab(session, targetTabId, { agentSessionId: tabPatch.agentSessionId });
+			}
 
 			try {
-				await window.maestro.sessions.setMany([applyTabPatch(session) as any], []);
+				// The store's record holds every write above; a window that has not applied the
+				// thinking write yet falls back to the patch.
+				const stored = selectSessionById(sessionId)(useSessionStore.getState());
+				await window.maestro.sessions.setMany([(stored ?? applyTabPatch(session)) as any], []);
 			} catch (persistErr) {
 				logger.error('[Remote] Failed to persist tab config:', undefined, persistErr);
 			}

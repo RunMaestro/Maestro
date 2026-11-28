@@ -13,13 +13,14 @@ import { parseNativeLines } from '../../shared/maestro-lib/translation/native-re
  */
 
 import path from 'path';
+import { isMainThread } from 'node:worker_threads';
 import os from 'os';
 import fs from 'fs/promises';
-import Store from 'electron-store';
+import type Store from 'electron-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
-import { encodeClaudeProjectPath } from '../utils/statsCache';
+import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 import {
 	readFileRemote,
 	listDirWithStatsRemote,
@@ -46,6 +47,7 @@ import type {
 	DeleteMessagePairResult,
 } from '../agents';
 import { MESSAGE_NOT_IN_TRANSCRIPT } from '../agents/session-storage';
+import type { SessionListObserver } from '../agents/session-storage';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
 import type {
 	ClaudeSessionOrigin,
@@ -53,10 +55,9 @@ import type {
 	ClaudeSessionOriginsData,
 } from '../stores/types';
 import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
-import { forEachJsonlLine } from '../utils/jsonl-stream';
+import { forEachLocalTranscriptLine, readRemoteTranscript } from './transcript-read';
 import { setClaudeSessionOrigin } from './claude-session-origins';
 import type { SearchableMessage } from './base-session-storage';
-import { getProviderAccountDirs } from '../agents/provider-account-dirs';
 export type { ClaudeSessionOriginsData } from '../stores/types';
 
 /**
@@ -201,7 +202,9 @@ async function parseSessionFile(
 	filePath: string,
 	sessionId: string,
 	projectPath: string,
-	stats: { size: number; mtimeMs: number }
+	stats: { size: number; mtimeMs: number },
+	/** Called when the file is there but could not be read (never for an oversized one). */
+	onUnreadable?: () => void
 ): Promise<AgentSessionInfo | null> {
 	try {
 		if (stats.size > MAX_SESSION_FILE_SIZE) {
@@ -222,6 +225,8 @@ async function parseSessionFile(
 			mtimeMs: stats.mtimeMs,
 		});
 	} catch (error) {
+		// Left out of every total from here on: say so, unless the file is simply gone.
+		if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') onUnreadable?.();
 		if (error instanceof RangeError) {
 			logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
 			return null;
@@ -278,20 +283,34 @@ async function parseSessionFileRemote(
  * Provides access to Claude Code's local session storage at ~/.claude/projects/
  * Supports both local filesystem access and remote access via SSH.
  */
+/**
+ * Every Claude account tree on this machine, for a session that is not in the
+ * agent's own account.
+ *
+ * Loaded on demand: the lookup reads Maestro's stores, which load `electron`,
+ * and Pianola's memory worker loads this module in a worker thread, where
+ * `electron` does not exist. The worker reads the agent's own tree only.
+ */
+async function otherClaudeAccountDirs(): Promise<string[]> {
+	if (!isMainThread) return [];
+	const { getProviderAccountDirs } = await import('../agents/provider-account-dirs');
+	return getProviderAccountDirs('claude-code');
+}
+
 export class ClaudeSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'claude-code';
 
 	private originsStore: Store<ClaudeSessionOriginsData>;
 
-	constructor(originsStore?: Store<ClaudeSessionOriginsData>) {
+	/**
+	 * `originsStore` is required, never built here: constructing an
+	 * `electron-store` needs `electron`, and Pianola's memory worker loads this
+	 * class in a worker thread, where `electron` does not exist. Main builds the
+	 * store (`initializeSessionStorages`); the worker passes a read-only stand-in.
+	 */
+	constructor(originsStore: Store<ClaudeSessionOriginsData>) {
 		super();
-		// Use provided store or create a new one
-		this.originsStore =
-			originsStore ||
-			new Store<ClaudeSessionOriginsData>({
-				name: 'claude-session-origins',
-				defaults: { origins: {} },
-			});
+		this.originsStore = originsStore;
 	}
 
 	/**
@@ -337,7 +356,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			}
 		};
 		if (await exists(defaultFile)) return defaultFile;
-		for (const accountDir of await getProviderAccountDirs('claude-code')) {
+		for (const accountDir of await otherClaudeAccountDirs()) {
 			const candidate = path.join(
 				this.getEncodedProjectDir(projectPath, accountDir),
 				`${sessionId}.jsonl`
@@ -407,7 +426,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	 * transcript folder yet.
 	 */
 	private async statProjectSessionFiles(
-		projectDir: string
+		projectDir: string,
+		observer?: SessionListObserver
 	): Promise<{ sessionId: string; filePath: string; sizeBytes: number; mtimeMs: number }[]> {
 		let filenames: string[];
 		try {
@@ -449,6 +469,10 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 							mtimeMs: stat.mtimeMs,
 						};
 					} catch (error) {
+						// Listed but not stattable: its usage is missing, unless it is simply gone.
+						if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+							observer?.onSkippedFile?.({ sizeBytes: 0, reason: 'unreadable' });
+						}
 						// The `fs.stat` races the directory listing above, so the entry can
 						// already be gone or unreadable by the time we get here (MAESTRO-YH).
 						if (isExpectedSessionReadError(error)) {
@@ -481,7 +505,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		projectPath: string,
 		projectDir: string,
 		files: { sessionId: string; filePath: string; sizeBytes: number; mtimeMs: number }[],
-		prune: boolean
+		prune: boolean,
+		observer?: SessionListObserver
 	): Promise<AgentSessionInfo[]> {
 		const byPath = new Map(files.map((file) => [file.filePath, file]));
 		const refs: SessionFileRef[] = files.map((file) => ({
@@ -496,12 +521,18 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			async (ref) => {
 				const file = byPath.get(ref.key);
 				if (!file) return null;
+				const unreadable = (): void =>
+					observer?.onSkippedFile?.({ sizeBytes: file.sizeBytes, reason: 'unreadable' });
 				try {
-					return await parseSessionFile(file.filePath, file.sessionId, projectPath, {
-						size: file.sizeBytes,
-						mtimeMs: file.mtimeMs,
-					});
+					return await parseSessionFile(
+						file.filePath,
+						file.sessionId,
+						projectPath,
+						{ size: file.sizeBytes, mtimeMs: file.mtimeMs },
+						unreadable
+					);
 				} catch (error) {
+					if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') unreadable();
 					// Outer half of the same boundary `parseSessionFile` guards: the file
 					// can vanish or become unreadable between the stat and the read.
 					if (isExpectedSessionReadError(error)) {
@@ -533,15 +564,22 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	async listSessions(
 		projectPath: string,
 		sshConfig?: SshRemoteConfig,
-		configDir?: string
+		configDir?: string,
+		observer?: SessionListObserver
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig, configDir);
+			return this.listSessionsRemote(projectPath, sshConfig, configDir, observer);
 		}
 
 		const projectDir = this.getEncodedProjectDir(projectPath, configDir);
-		const files = await this.statProjectSessionFiles(projectDir);
+		const files = await this.statProjectSessionFiles(projectDir, observer);
+		// Past the size cap a transcript is never parsed (`parseSessionFile`): say so.
+		for (const file of files) {
+			if (file.sizeBytes > MAX_SESSION_FILE_SIZE) {
+				observer?.onSkippedFile?.({ sizeBytes: file.sizeBytes, reason: 'too-large' });
+			}
+		}
 
 		if (files.length === 0) {
 			// Still a full listing, so still prune: a project whose transcripts were
@@ -556,7 +594,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			projectPath,
 			projectDir,
 			files,
-			true
+			true,
+			observer
 		);
 
 		logger.info(
@@ -576,7 +615,8 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 	private async listSessionsRemote(
 		projectPath: string,
 		sshConfig: SshRemoteConfig,
-		configDir?: string
+		configDir?: string,
+		observer?: SessionListObserver
 	): Promise<AgentSessionInfo[]> {
 		const projectDir = this.getRemoteEncodedProjectDir(projectPath, configDir);
 
@@ -590,6 +630,11 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		}
 
 		const sessionFiles = (dirResult.data || []).filter((entry) => entry.size > 0);
+		for (const entry of sessionFiles) {
+			if (entry.size > MAX_SESSION_FILE_SIZE) {
+				observer?.onSkippedFile?.({ sizeBytes: entry.size, reason: 'too-large' });
+			}
+		}
 
 		const sessions = await mapWithConcurrency(
 			sessionFiles,
@@ -775,18 +820,13 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			if (message) page.push(message);
 		};
 
+		// A transcript that does not exist is an empty conversation; one that exists and cannot be
+		// read rejects, in every mode (see transcript-read.ts).
 		if (sshConfig) {
 			const projectDir = this.getRemoteEncodedProjectDir(projectPath);
 			const sessionFile = `${projectDir}/${sessionId}.jsonl`;
-			const result = await readFileRemote(sessionFile, sshConfig);
-			if (!result.success || !result.data) {
-				logger.error(
-					`Failed to read remote session messages: ${sessionFile} - ${result.error}`,
-					LOG_CONTEXT
-				);
-				return { messages: [], total: 0, hasMore: false };
-			}
-			for (const line of result.data.split('\n')) {
+			const content = await readRemoteTranscript(sessionFile, sshConfig);
+			for (const line of (content ?? '').split('\n')) {
 				if (line.trim()) collect(line);
 			}
 		} else {
@@ -798,7 +838,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 				}
 			} else {
 				// Streamed, never read whole: a transcript can be hundreds of MB (#1862).
-				await forEachJsonlLine(sessionFile, collect);
+				await forEachLocalTranscriptLine(sessionFile, collect);
 			}
 		}
 

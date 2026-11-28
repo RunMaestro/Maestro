@@ -26,21 +26,20 @@
  */
 
 import * as fs from 'fs';
-import * as fsPromises from 'fs/promises';
 import * as path from 'path';
-import * as crypto from 'crypto';
-import { logger } from '../utils/logger';
-import { getImageMimeType } from '../../shared/gitUtils';
 import {
 	MAX_THUMB_DIMENSION,
 	SESSION_IMAGE_REF_PREFIX,
 	THUMB_HEIGHT_PARAM,
 	THUMB_WIDTH_PARAM,
 	isSessionImageRef,
-	sessionImageRefBasename,
 } from '../../shared/sessionImageRefs';
 import { setMaestroLibImageRefResolver } from '../../shared/maestro-lib/host';
-import { parseBase64DataUrl } from '../../shared/dataUrl';
+import {
+	createSessionImageStore,
+	extFromMediaType as sharedExtFromMediaType,
+	isInlineImageDataUrl as sharedIsInlineImageDataUrl,
+} from '../../shared/maestro-lib/store/session-images';
 
 const IMAGE_DIR_NAME = 'session-images';
 // The reference grammar is shared with the renderer (which rewrites refs to
@@ -49,17 +48,11 @@ const IMAGE_DIR_NAME = 'session-images';
 export const IMAGE_REF_PREFIX = SESSION_IMAGE_REF_PREFIX;
 
 /**
- * mediaType (e.g. 'image/png') -> file extension. Mirrors the split('/')[1]
- * convention already used by process-manager/utils/imageUtils.ts. Exported so
- * the CLI's `image save` names a file after the bytes it actually wrote rather
- * than re-deriving the mapping.
+ * mediaType (e.g. 'image/png') -> file extension. Exported so the CLI's
+ * `image save` names a file after the bytes it actually wrote rather than
+ * re-deriving the mapping. The rule lives with the shared store.
  */
-export function extFromMediaType(mediaType: string): string {
-	const sub = mediaType.split('/')[1]?.toLowerCase() ?? 'png';
-	if (sub === 'svg+xml') return 'svg';
-	if (sub === 'jpeg') return 'jpeg';
-	return sub;
-}
+export const extFromMediaType = sharedExtFromMediaType;
 
 // The media type is derived by the shared `getImageMimeType`, never by
 // `image/${ext}`: `image/jpg` is not a real media type and Electron's
@@ -92,6 +85,11 @@ export function getImageDir(): string {
 	return dir;
 }
 
+// One implementation of the store, shared with the headless host
+// (`src/shared/maestro-lib/store/session-images.ts`); this module owns where the
+// desktop's folder is and the protocol handler's thumbnails.
+const store = createSessionImageStore(getImageDir);
+
 /** True if `value` is a `maestro-image://` reference produced by this store. */
 export function isImageRef(value: string): boolean {
 	return isSessionImageRef(value);
@@ -99,37 +97,17 @@ export function isImageRef(value: string): boolean {
 
 /** True if `value` is an inline base64 image data URL. */
 export function isInlineImageDataUrl(value: string): boolean {
-	return typeof value === 'string' && value.startsWith('data:image/');
-}
-
-/** Parse an inline image data URL into its media type and base64 payload, or null. */
-function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } | null {
-	const parsed = parseBase64DataUrl(dataUrl);
-	return parsed && parsed.mediaType.startsWith('image/') ? parsed : null;
+	return sharedIsInlineImageDataUrl(value);
 }
 
 /**
  * Resolve a ref to its on-disk file path, or null if it isn't a valid ref.
  * Any `?...` query (the thumbnail request the protocol handler understands) is
- * ignored here - it selects a rendition, not a different source file.
+ * ignored here - it selects a rendition, not a different source file. The
+ * shared basename grammar is the traversal guard.
  */
 export function resolveToFilePath(ref: string): string | null {
-	// The query selects a RENDITION, not a different source file, so it comes off
-	// before the ref is validated - a thumbnail URL must resolve to the same file
-	// its bare ref does. Validation is then `sessionImageRefBasename`, the shared
-	// grammar the web route and the renderer also use: only a lowercase-hex
-	// sha256 with a known image extension ever resolves, which is what guards the
-	// protocol handler against path traversal. Stripping first cannot widen that:
-	// a traversal attempt with a query appended still fails the basename test.
-	const basename = sessionImageRefBasename(stripRefQuery(ref));
-	if (!basename) return null;
-	return path.join(getImageDir(), basename);
-}
-
-/** Drop a `?query` / `#fragment` suffix from a ref URL. */
-function stripRefQuery(ref: string): string {
-	const cut = ref.search(/[?#]/);
-	return cut === -1 ? ref : ref.slice(0, cut);
+	return store.resolveToFilePath(ref);
 }
 
 /**
@@ -156,25 +134,8 @@ export function parseThumbnailRequest(ref: string): { maxWidth: number; maxHeigh
  * inline data URL at all), it is returned unchanged - so this is safe to call
  * repeatedly over a mixed array.
  */
-export async function storeInlineImage(value: string): Promise<string> {
-	if (!isInlineImageDataUrl(value)) return value;
-	const parsed = parseDataUrl(value);
-	if (!parsed) return value;
-
-	const buffer = Buffer.from(parsed.base64, 'base64');
-	const sha = crypto.createHash('sha256').update(buffer).digest('hex');
-	const ext = extFromMediaType(parsed.mediaType);
-	const basename = `${sha}.${ext}`;
-	const filePath = path.join(getImageDir(), basename);
-
-	// Content-addressed: identical bytes always hash to the same filename, so
-	// skip the write if we already have it (dedupes repeated pastes).
-	try {
-		await fsPromises.access(filePath);
-	} catch {
-		await fsPromises.writeFile(filePath, buffer);
-	}
-	return `${IMAGE_REF_PREFIX}${basename}`;
+export function storeInlineImage(value: string): Promise<string> {
+	return store.storeInlineImage(value);
 }
 
 /**
@@ -183,19 +144,8 @@ export async function storeInlineImage(value: string): Promise<string> {
  * Used by surfaces that cannot use the `maestro-image` protocol: web/mobile
  * clients, HTML export, clipboard copy.
  */
-export async function resolveToDataUrl(value: string): Promise<string | null> {
-	if (isInlineImageDataUrl(value)) return value;
-	const filePath = resolveToFilePath(value);
-	if (!filePath) return isInlineImageDataUrl(value) ? value : null;
-	try {
-		const buffer = await fsPromises.readFile(filePath);
-		const ext = path.extname(filePath).slice(1);
-		return `data:${getImageMimeType(ext)};base64,${buffer.toString('base64')}`;
-	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-		logger.warn(`Missing session image for ref: ${value}`, 'SessionImageStore');
-		return null;
-	}
+export function resolveToDataUrl(value: string): Promise<string | null> {
+	return store.resolveToDataUrl(value);
 }
 
 /**
@@ -206,22 +156,7 @@ export async function resolveToDataUrl(value: string): Promise<string | null> {
  * inline data URLs through by decoding them.
  */
 export function resolveToBytesSync(value: string): { buffer: Buffer; mediaType: string } | null {
-	if (isInlineImageDataUrl(value)) {
-		const parsed = parseDataUrl(value);
-		if (!parsed) return null;
-		return { buffer: Buffer.from(parsed.base64, 'base64'), mediaType: parsed.mediaType };
-	}
-	const filePath = resolveToFilePath(value);
-	if (!filePath) return null;
-	try {
-		const buffer = fs.readFileSync(filePath);
-		const ext = path.extname(filePath).slice(1);
-		return { buffer, mediaType: getImageMimeType(ext) };
-	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-		logger.warn(`Missing session image for ref: ${value}`, 'SessionImageStore');
-		return null;
-	}
+	return store.resolveToBytesSync(value);
 }
 
 /**
@@ -232,160 +167,22 @@ export function resolveToBytesSync(value: string): { buffer: Buffer; mediaType: 
  * protocol.
  */
 export function resolveToDataUrlSync(value: string): string | null {
-	if (isInlineImageDataUrl(value)) return value;
-	const resolved = resolveToBytesSync(value);
-	if (!resolved) return null;
-	return `data:${resolved.mediaType};base64,${resolved.buffer.toString('base64')}`;
+	return store.resolveToDataUrlSync(value);
 }
 
 /**
  * Replace every inline image data URL found under a session's image-bearing
  * fields with a `maestro-image://` reference, storing the bytes on disk. Only
  * clones the parts of the tree that actually change (reference-stable
- * otherwise), so it is cheap to run on every persistence flush - a scan over
- * already-relocated sessions does no writes and allocates nothing new.
- *
- * Walks `aiTabs[].logs[].images`, `aiTabs[].stagedImages`, the same two fields
- * of every closed AI tab in `unifiedClosedTabHistory`, and
- * `executionQueue[].images` - the fields that carry pasted images.
+ * otherwise), so it is cheap to run on every persistence flush. The walk (which
+ * fields, closed tabs, the queue) is the shared store's.
  *
  * @returns the (possibly new) sessions array plus the number of images relocated.
  */
-export async function relocateSessionImages<T>(
+export function relocateSessionImages<T>(
 	sessions: T[]
 ): Promise<{ sessions: T[]; relocated: number }> {
-	let relocated = 0;
-
-	// Replace inline data URLs in a string[] with refs. Returns the same array
-	// reference when nothing changed so callers can detect no-ops.
-	const relocateArray = async (images: unknown): Promise<string[] | undefined> => {
-		if (!Array.isArray(images) || images.length === 0) return images as undefined;
-		let changed = false;
-		const next: string[] = new Array(images.length);
-		for (let i = 0; i < images.length; i++) {
-			const img = images[i];
-			if (typeof img === 'string' && isInlineImageDataUrl(img)) {
-				const ref = await storeInlineImage(img);
-				next[i] = ref;
-				if (ref !== img) {
-					changed = true;
-					relocated++;
-				}
-			} else {
-				next[i] = img as string;
-			}
-		}
-		return changed ? next : (images as string[]);
-	};
-
-	// One AI tab's `logs[].images` and `stagedImages`. Returns the same tab
-	// reference when nothing changed.
-	const relocateTab = async (tab: Record<string, unknown>): Promise<Record<string, unknown>> => {
-		let tabChanged = false;
-		const tabPatch: Record<string, unknown> = {};
-
-		const logs = tab.logs as Array<Record<string, unknown>> | undefined;
-		if (Array.isArray(logs)) {
-			let logsChanged = false;
-			const nextLogs = await Promise.all(
-				logs.map(async (log) => {
-					const nextImages = await relocateArray(log.images);
-					if (nextImages !== log.images) {
-						logsChanged = true;
-						return { ...log, images: nextImages };
-					}
-					return log;
-				})
-			);
-			if (logsChanged) {
-				tabPatch.logs = nextLogs;
-				tabChanged = true;
-			}
-		}
-
-		const nextStaged = await relocateArray(tab.stagedImages);
-		if (nextStaged !== tab.stagedImages) {
-			tabPatch.stagedImages = nextStaged;
-			tabChanged = true;
-		}
-
-		return tabChanged ? { ...tab, ...tabPatch } : tab;
-	};
-
-	const nextSessions = await Promise.all(
-		sessions.map(async (rawSession) => {
-			const session = rawSession as unknown as Record<string, unknown>;
-			let sessionChanged = false;
-			const patch: Record<string, unknown> = {};
-
-			// aiTabs[].logs[].images + aiTabs[].stagedImages
-			const aiTabs = session.aiTabs as Array<Record<string, unknown>> | undefined;
-			if (Array.isArray(aiTabs)) {
-				let tabsChanged = false;
-				const nextTabs = await Promise.all(
-					aiTabs.map(async (tab) => {
-						const next = await relocateTab(tab);
-						if (next !== tab) tabsChanged = true;
-						return next;
-					})
-				);
-				if (tabsChanged) {
-					patch.aiTabs = nextTabs;
-					sessionChanged = true;
-				}
-			}
-
-			// unifiedClosedTabHistory[].tab (AI entries): a stored closed tab keeps
-			// its draft and, when its provider cannot give the transcript back, its
-			// logs, so a pasted image there must not put base64 back into the file.
-			const closedTabs = session.unifiedClosedTabHistory as
-				| Array<Record<string, unknown>>
-				| undefined;
-			if (Array.isArray(closedTabs)) {
-				let closedChanged = false;
-				const nextClosed = await Promise.all(
-					closedTabs.map(async (entry) => {
-						if (!entry || entry.type !== 'ai' || !entry.tab || typeof entry.tab !== 'object') {
-							return entry;
-						}
-						const tab = entry.tab as Record<string, unknown>;
-						const next = await relocateTab(tab);
-						if (next === tab) return entry;
-						closedChanged = true;
-						return { ...entry, tab: next };
-					})
-				);
-				if (closedChanged) {
-					patch.unifiedClosedTabHistory = nextClosed;
-					sessionChanged = true;
-				}
-			}
-
-			// executionQueue[].images
-			const queue = session.executionQueue as Array<Record<string, unknown>> | undefined;
-			if (Array.isArray(queue)) {
-				let queueChanged = false;
-				const nextQueue = await Promise.all(
-					queue.map(async (item) => {
-						const nextImages = await relocateArray(item.images);
-						if (nextImages !== item.images) {
-							queueChanged = true;
-							return { ...item, images: nextImages };
-						}
-						return item;
-					})
-				);
-				if (queueChanged) {
-					patch.executionQueue = nextQueue;
-					sessionChanged = true;
-				}
-			}
-
-			return sessionChanged ? ({ ...session, ...patch } as unknown as T) : rawSession;
-		})
-	);
-
-	return { sessions: nextSessions, relocated };
+	return store.relocateSessionImages(sessions);
 }
 
 /** Reset cached state. Test-only. */

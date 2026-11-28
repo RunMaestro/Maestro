@@ -5,7 +5,7 @@
  * dropdown but acts on the right-clicked agent rather than the active one.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SessionContextMenu } from '../../../../renderer/components/SessionList/SessionContextMenu';
@@ -17,8 +17,12 @@ import {
 import { usePRCreationStore, prRunKey } from '../../../../renderer/stores/prCreationStore';
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
-import { openLiftedAgent, requestMoveToHost } from '../../../../renderer/services/agentLift';
+import {
+	requestMoveBackFromHost,
+	requestMoveToHost,
+} from '../../../../renderer/services/agentLift';
 import { usePeerMirrorStore } from '../../../../renderer/stores/peerMirrorStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import {
 	createMirroredPeer,
 	replacePeerAgents,
@@ -70,7 +74,7 @@ vi.mock('../../../../renderer/stores/modalStore', async (importOriginal) => ({
 
 vi.mock('../../../../renderer/services/agentLift', () => ({
 	requestMoveToHost: vi.fn(),
-	openLiftedAgent: vi.fn(),
+	requestMoveBackFromHost: vi.fn(),
 }));
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -493,6 +497,19 @@ describe('SessionContextMenu', () => {
 
 		beforeEach(() => {
 			resetStores(usePeerMirrorStore);
+			// Hosting is opt-in: these cases run with it switched on.
+			useSettingsStore.setState({ federationHostedAgents: true });
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ federationHostedAgents: false });
+		});
+
+		it('offers no Move Back for a hosted agent while hosting was never switched on', () => {
+			mirror();
+			useSettingsStore.setState({ federationHostedAgents: undefined as unknown as boolean });
+			renderMenu({ session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }) });
+			expect(screen.queryByTestId('session-menu-move-back-from-host')).not.toBeInTheDocument();
 		});
 
 		it('offers nothing before the mirror knows the remote (opted out, or not loaded yet)', () => {
@@ -533,13 +550,82 @@ describe('SessionContextMenu', () => {
 			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
 		});
 
-		it('offers Open on Host instead once the agent moved', () => {
+		it('offers Move Back from Host for a hosted agent, connected or not', () => {
+			for (const connection of [undefined, 'lost'] as const) {
+				mirror(connection);
+				const props = renderMenu({
+					session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }),
+				});
+				const item = screen.getByTestId('session-menu-move-back-from-host');
+				expect(item).toHaveTextContent('Move Back from Host (Build Box)...');
+				fireEvent.click(item);
+				expect(requestMoveBackFromHost).toHaveBeenLastCalledWith(
+					'session-1',
+					'Test Agent',
+					'Build Box'
+				);
+				expect(props.onDismiss).toHaveBeenCalled();
+				cleanup();
+			}
+		});
+
+		it('offers no Move Back for an SSH or a local agent', () => {
 			mirror();
-			const session = sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } });
-			renderMenu({ session });
-			expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
-			fireEvent.click(screen.getByText('Open on Host (box:h1)'));
-			expect(openLiftedAgent).toHaveBeenCalledWith(session);
+			renderMenu({ session: sshSession() });
+			expect(screen.queryByTestId('session-menu-move-back-from-host')).not.toBeInTheDocument();
+			cleanup();
+			renderMenu({ session: makeSession() });
+			expect(screen.queryByTestId('session-menu-move-back-from-host')).not.toBeInTheDocument();
+		});
+
+		it('local, SSH, and hosted agents get the same rows, but for the one transport toggle', () => {
+			mirror();
+			const transportToggles = new Set([
+				'session-menu-move-to-host',
+				'session-menu-move-back-from-host',
+			]);
+			const rowsFor = (session: Session) => {
+				renderMenu({
+					session: { ...session, worktreeConfig: { basePath: '/test/wt', watchEnabled: false } },
+					onExport: vi.fn(),
+					onQuickCreateWorktree: vi.fn(),
+					onConfigureWorktrees: vi.fn(),
+					onConfigureCue: vi.fn(),
+				});
+				const menu = screen.getByTestId('session-context-menu');
+				const rows = Array.from(menu.querySelectorAll('button'))
+					.filter((button) => !transportToggles.has(button.getAttribute('data-testid') ?? ''))
+					.map((button) => button.textContent?.trim());
+				const toggles = Array.from(menu.querySelectorAll('button')).filter((button) =>
+					transportToggles.has(button.getAttribute('data-testid') ?? '')
+				);
+				cleanup();
+				return { rows, toggles: toggles.length };
+			};
+			const local = rowsFor(makeSession());
+			const ssh = rowsFor(sshSession());
+			const hosted = rowsFor(sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }));
+			expect(local.rows).toContain('Rename');
+			expect(local.rows).toContain('Create Worktree');
+			expect(local.rows).toContain('Configure Maestro Cue');
+			expect(ssh.rows).toEqual(local.rows);
+			expect(hosted.rows).toEqual(local.rows);
+			// The toggle is the transport switch itself: none for local, one for SSH and hosted.
+			expect([local.toggles, ssh.toggles, hosted.toggles]).toEqual([0, 1, 1]);
+		});
+
+		it("gives a hosted agent a local agent's menu: no address, Reconnect, or Start Host rows", () => {
+			for (const connection of [undefined, 'lost'] as const) {
+				mirror(connection);
+				renderMenu({ session: sshSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } }) });
+				expect(screen.queryByText(/Move to Host/)).not.toBeInTheDocument();
+				expect(screen.queryByText(/^Copy box:/)).not.toBeInTheDocument();
+				expect(screen.queryByText(/Reconnect/)).not.toBeInTheDocument();
+				expect(screen.queryByText(/Start Host/)).not.toBeInTheDocument();
+				expect(screen.getByText('Rename')).toBeInTheDocument();
+				expect(screen.getByText('Edit Agent...')).toBeInTheDocument();
+				cleanup();
+			}
 		});
 	});
 });

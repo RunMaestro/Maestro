@@ -183,6 +183,20 @@ describe('coworking-bridge browser dispatch', () => {
 		expect(tools.browserInteract).not.toHaveBeenCalled();
 	});
 
+	it('browserInteract rejects the host-only pick op (agents cannot write the composer)', async () => {
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		await helloAs(conn, 'sess-A');
+		coworkingRegistry.syncSessionBrowsers('sess-A', [], true);
+		const resp = await __testing.dispatch(conn, {
+			id: 2,
+			method: 'browserInteract',
+			params: { id: 'browser:1', op: { kind: 'pick', selector: 'h1', note: 'hi' } },
+		});
+		expect(resp.error?.code).toBe(-32602);
+		expect(tools.browserInteract).not.toHaveBeenCalled();
+	});
+
 	it('browserInteract accepts navigate with a url and rejects it without one', async () => {
 		const conn = newConn();
 		__testing.connections.set(conn, { sessionId: null });

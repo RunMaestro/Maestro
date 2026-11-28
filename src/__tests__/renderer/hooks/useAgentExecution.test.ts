@@ -10,6 +10,7 @@ import {
 	observeEffortRejection,
 } from '../../../renderer/services/effortRejection';
 import { getEffortRejection, resetEffortRejections } from '../../../shared/effortRejection';
+import { AUTO_RUN_TURN_ABORTED } from '../../../renderer/hooks/batch/internal/autoRunTurnAbort';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -132,8 +133,89 @@ describe('useAgentExecution', () => {
 	});
 
 	afterEach(() => {
+		resetEffortRejections();
 		vi.useRealTimers();
 		Object.assign(window.maestro, originalMaestro);
+	});
+
+	it('lets go of an Auto Run turn when its run is force-ended, even one still waiting on the queue', async () => {
+		// The turn exits, but a queued message keeps the agent busy and never drains: before the
+		// abort signal, this spawn polled forever and its Auto Run stayed "stopping".
+		const queued: QueuedItem = {
+			id: 'queued-1',
+			timestamp: 1700000000100,
+			tabId: 'tab-1',
+			type: 'message',
+			text: 'Queued message',
+		};
+		const session = createMockSession({
+			state: 'busy',
+			executionQueue: [queued],
+			aiTabs: [createMockTab({ id: 'tab-1', state: 'busy' })],
+		});
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: vi.fn().mockResolvedValue(undefined) },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+		const controller = new AbortController();
+		let settled = false;
+		const spawnPromise = result.current
+			.spawnAgentForSession(session.id, 'Batch task', undefined, {
+				isAutoRun: true,
+				abortSignal: controller.signal,
+			})
+			.then((value) => {
+				settled = true;
+				return value;
+			});
+
+		await waitFor(() => expect(mockProcess.spawn).toHaveBeenCalledTimes(1));
+		const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+		act(() => {
+			onExitHandler?.(targetSessionId, 0);
+		});
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(settled).toBe(false);
+
+		controller.abort();
+
+		await expect(spawnPromise).resolves.toMatchObject({
+			success: false,
+			error: AUTO_RUN_TURN_ABORTED,
+		});
+		// The run's kill lists live processes only; the aborted turn ends its own by exact key.
+		expect(mockProcess.kill).toHaveBeenCalledWith(targetSessionId);
+	});
+
+	it('does not start a turn for an Auto Run already force-ended', async () => {
+		const session = createMockSession({ aiTabs: [createMockTab({ state: 'idle' })] });
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef: { current: [session] },
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+		const controller = new AbortController();
+		controller.abort();
+
+		await expect(
+			result.current.spawnAgentForSession(session.id, 'Batch task', undefined, {
+				isAutoRun: true,
+				abortSignal: controller.signal,
+			})
+		).resolves.toMatchObject({ success: false, error: AUTO_RUN_TURN_ABORTED });
+		expect(mockProcess.spawn).not.toHaveBeenCalled();
+		expect(mockProcess.kill).not.toHaveBeenCalled();
 	});
 
 	it('spawns a batch agent and returns aggregated results', async () => {
@@ -574,6 +656,315 @@ describe('useAgentExecution', () => {
 		const resultData = await spawnPromise;
 		expect(resultData.success).toBe(false);
 		expect(resultData.error).toBe(reason);
+	});
+
+	it('retries a refused Antigravity synopsis once at the session effort without looping', async () => {
+		const session = createMockSession({ toolType: 'antigravity' });
+		const sessionsRef = { current: [session] };
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'antigravity',
+			command: 'agy',
+			args: [],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-agy',
+			'Summarize session',
+			'antigravity',
+			{ customModel: 'gpt-oss-120b', customEffort: 'medium' }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const firstSpawn = mockProcess.spawn.mock.calls[0][0];
+		expect(firstSpawn.sessionCustomModel).toBe('gpt-oss-120b');
+		expect(firstSpawn.sessionCustomEffort).toBe('low');
+
+		const rejectionError = {
+			agentId: 'antigravity',
+			message:
+				'error: invalid model selection (--model "gpt-oss-120b" --effort "low"): gpt-oss-120b has no "low" effort (available: medium)',
+		};
+		act(() => {
+			observeEffortRejection(firstSpawn.sessionId as string, rejectionError);
+			onAgentErrorHandler?.(firstSpawn.sessionId as string, rejectionError);
+			onExitHandler?.(firstSpawn.sessionId as string, 1);
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+		});
+		const retrySpawn = mockProcess.spawn.mock.calls[1][0];
+		expect(retrySpawn.sessionCustomModel).toBe('gpt-oss-120b');
+		expect(retrySpawn.sessionCustomEffort).toBe('medium');
+
+		// A failure on the retry must not loop.
+		act(() => {
+			onAgentErrorHandler?.(retrySpawn.sessionId as string, { message: 'retry failed' });
+			onExitHandler?.(retrySpawn.sessionId as string, 1);
+		});
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(false);
+		expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+	});
+
+	it('retries a refused Antigravity synopsis when the model comes from agent config', async () => {
+		const session = createMockSession({ toolType: 'antigravity' });
+		const sessionsRef = { current: [session] };
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'antigravity',
+			command: 'agy',
+			args: [],
+			// Real IPC (stripAgentFunctions) strips argBuilder from configOptions.
+			configOptions: [
+				{
+					key: 'model',
+					type: 'select',
+					label: 'Model',
+					default: '',
+				},
+			],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+			model: 'gpt-oss-120b',
+		});
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-agy-agent-cfg',
+			'Summarize session',
+			'antigravity'
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const firstSpawn = mockProcess.spawn.mock.calls[0][0];
+		expect(firstSpawn.sessionCustomModel).toBe('gpt-oss-120b');
+		expect(firstSpawn.sessionCustomEffort).toBe('low');
+
+		const rejectionError = {
+			agentId: 'antigravity',
+			message:
+				'error: invalid model selection (--model "gpt-oss-120b" --effort "low"): gpt-oss-120b has no "low" effort (available: medium)',
+		};
+		act(() => {
+			observeEffortRejection(firstSpawn.sessionId as string, rejectionError);
+			onAgentErrorHandler?.(firstSpawn.sessionId as string, rejectionError);
+			onExitHandler?.(firstSpawn.sessionId as string, 1);
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+		});
+		const retrySpawn = mockProcess.spawn.mock.calls[1][0];
+		expect(retrySpawn.sessionCustomModel).toBe('gpt-oss-120b');
+		expect(retrySpawn.sessionCustomEffort).toBeUndefined();
+
+		act(() => {
+			onDataHandler?.(retrySpawn.sessionId as string, '**Summary:** Done');
+			onExitHandler?.(retrySpawn.sessionId as string, 0);
+		});
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(true);
+		expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+	});
+
+	it('still arms and retries a refused Codex synopsis once', async () => {
+		const session = createMockSession({ toolType: 'codex' });
+		const sessionsRef = { current: [session] };
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'codex',
+			command: 'codex',
+			args: [],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-codex',
+			'Summarize session',
+			'codex',
+			{ customModel: 'gpt-6-astra', customEffort: 'high' }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const firstSpawn = mockProcess.spawn.mock.calls[0][0];
+		expect(firstSpawn.sessionCustomModel).toBe('gpt-6-astra');
+		expect(firstSpawn.sessionCustomEffort).toBe('low');
+
+		const rejectionError = {
+			agentId: 'codex',
+			message:
+				"Unsupported value: 'low' is not supported with the 'gpt-6-astra' model. Supported values are: 'medium', 'high'. (\"param\":\"reasoning.effort\")",
+		};
+		act(() => {
+			observeEffortRejection(firstSpawn.sessionId as string, rejectionError);
+			onAgentErrorHandler?.(firstSpawn.sessionId as string, rejectionError);
+			onExitHandler?.(firstSpawn.sessionId as string, 1);
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+		});
+		const retrySpawn = mockProcess.spawn.mock.calls[1][0];
+		expect(retrySpawn.sessionCustomModel).toBe('gpt-6-astra');
+		expect(retrySpawn.sessionCustomEffort).toBe('high');
+
+		act(() => {
+			onDataHandler?.(retrySpawn.sessionId as string, '**Summary:** Done');
+			onExitHandler?.(retrySpawn.sessionId as string, 0);
+		});
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(true);
+		expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+	});
+
+	it('keeps non-shared provider synopsis settings unchanged when agent config sets a model', async () => {
+		const session = createMockSession({ toolType: 'claude-code' });
+		const sessionsRef = { current: [session] };
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'claude-code',
+			command: 'claude',
+			args: [],
+			configOptions: [
+				{
+					key: 'model',
+					type: 'select',
+					label: 'Model',
+					default: '',
+					argBuilder: (value: unknown) =>
+						typeof value === 'string' && value ? ['--model', value] : [],
+				},
+			],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({
+			model: 'opus[1m]',
+		});
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-claude-agent-cfg',
+			'Summarize session',
+			'claude-code'
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const spawned = mockProcess.spawn.mock.calls[0][0];
+		expect(spawned.sessionCustomModel).toBe('haiku');
+		expect(spawned.sessionCustomEffort).toBe('low');
+
+		act(() => {
+			onDataHandler?.(spawned.sessionId as string, '**Summary:** Done');
+			onExitHandler?.(spawned.sessionId as string, 0);
+		});
+
+		expect((await spawnPromise).success).toBe(true);
+	});
+
+	it('does not spawn a synopsis if cancelPendingSynopsis is called while resolving agent config', async () => {
+		const session = createMockSession({ toolType: 'antigravity' });
+		const sessionsRef = { current: [session] };
+		let resolveConfig!: (value: Record<string, unknown>) => void;
+		vi.mocked(window.maestro.agents.get).mockResolvedValue({
+			id: 'antigravity',
+			command: 'agy',
+			args: [],
+		} as Awaited<ReturnType<typeof window.maestro.agents.get>>);
+		vi.mocked(window.maestro.agents.getConfig).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveConfig = resolve;
+				})
+		);
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef: { current: null },
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-cancelled-during-await',
+			'Summarize session',
+			'antigravity'
+		);
+
+		await waitFor(() => {
+			expect(window.maestro.agents.getConfig).toHaveBeenCalledTimes(1);
+		});
+
+		await act(async () => {
+			await result.current.cancelPendingSynopsis(session.id);
+		});
+		resolveConfig({ model: 'gpt-oss-120b' });
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(false);
+		expect(mockProcess.spawn).not.toHaveBeenCalled();
 	});
 
 	it('includes appendSystemPrompt in batch spawns', async () => {

@@ -124,3 +124,11 @@ class NodeSqliteDatabaseShim {
 export function nodeSqliteBetterSqlite3Mock(): { default: typeof NodeSqliteDatabaseShim } {
 	return { default: NodeSqliteDatabaseShim };
 }
+
+/**
+ * An in-memory database for code that takes a better-sqlite3 handle as an
+ * argument (the stats modules), e.g. `runMigrations(openNodeSqliteDb())`.
+ */
+export function openNodeSqliteDb<T = unknown>(filename = ':memory:'): T {
+	return new NodeSqliteDatabaseShim(filename) as unknown as T;
+}

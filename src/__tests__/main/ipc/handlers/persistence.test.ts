@@ -83,6 +83,7 @@ import {
 import {
 	registerPersistenceHandlers,
 	SESSION_LIFECYCLE_SYNC_CHANNEL,
+	setSessionLifecycleRecipientFilter,
 	PersistenceHandlerDependencies,
 	PersistenceHandlers,
 	MaestroSettings,
@@ -823,6 +824,9 @@ describe('persistence IPC handlers', () => {
 				'setListQueueCallback',
 				'setRemoveQueueItemCallback',
 				'setSetQueueItemPausedCallback',
+				'setEditQueueItemCallback',
+				'setMoveQueueItemCallback',
+				'setSendQueueItemNowCallback',
 				'setMergeQueueItemCallback',
 				'setSteerQueueItemCallback',
 			])
@@ -4471,7 +4475,7 @@ describe('persistence IPC handlers', () => {
 				};
 				try {
 					handleEnqueueCommand(ctx, f.client as WebClient, message);
-					await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+					await vi.waitFor(() => expect(send).toHaveBeenCalledOnce(), { timeout: 5000 });
 					expect(send.mock.calls[0][1]).toMatchObject({
 						success: !failWrite,
 						durable: !failWrite,
@@ -4481,7 +4485,7 @@ describe('persistence IPC handlers', () => {
 					if (failWrite) expect(send.mock.calls[0][1].error).toMatch(/Do not resend/);
 					f.restore();
 					handleEnqueueCommand(ctx, f.client as WebClient, message);
-					await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+					await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2), { timeout: 5000 });
 					expect(f.enqueue).toHaveBeenCalledOnce();
 				} finally {
 					routing.mockRestore();
@@ -5454,6 +5458,27 @@ describe('persistence IPC handlers', () => {
 			expect(result[0]).not.toHaveProperty('closedTabHistory');
 			expect(result[0].unifiedClosedTabHistory[0].tab.logs).toEqual([]);
 			expect(result[1]).not.toHaveProperty('unifiedClosedTabHistory');
+			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', result);
+		});
+
+		it('drops a stored file-tree scan and rewrites the store once', async () => {
+			mockSessionsStore.get.mockReturnValue([
+				{
+					id: 'session-1',
+					toolType: 'claude-code',
+					fileTree: [{ name: 'src', type: 'folder', children: [] }],
+					fileTreeStats: { fileCount: 1, folderCount: 1, totalSize: 1 },
+					fileTreeLoadedCap: 250000,
+				},
+				{ id: 'session-2', toolType: 'claude-code' },
+			]);
+
+			const result = (await handlers.get('sessions:getAll')!({} as any)) as any[];
+
+			expect(result[0].fileTree).toEqual([]);
+			expect(result[0].fileTreeStats).toBeUndefined();
+			expect(result[0].fileTreeLoadedCap).toBeUndefined();
+			expect(result[1]).toEqual({ id: 'session-2', toolType: 'claude-code' });
 			expect(mockSessionsStore.set).toHaveBeenCalledWith('sessions', result);
 		});
 
@@ -6974,6 +6999,31 @@ describe('persistence IPC handlers', () => {
 			expect(output).toContain('[tool output truncated');
 		});
 
+		it.each(['sessions:setAll', 'sessions:setMany'])(
+			'%s never persists a file-tree scan, whichever caller skipped the renderer prep',
+			async (channel) => {
+				mockSessionsStore.get.mockReturnValue([]);
+
+				await handlers.get(channel)!(
+					{} as any,
+					[
+						{
+							...baseSession,
+							fileTree: [{ name: 'src', type: 'folder', children: [] }],
+							fileTreeStats: { fileCount: 1, folderCount: 1, totalSize: 1 },
+							fileTreeLoadedCap: 250000,
+						},
+					],
+					[]
+				);
+
+				const persisted = mockSessionsStore.set.mock.calls.at(-1)![1];
+				expect(persisted[0].fileTree).toEqual([]);
+				expect(persisted[0].fileTreeStats).toBeUndefined();
+				expect(persisted[0].fileTreeLoadedCap).toBeUndefined();
+			}
+		);
+
 		it('returns true on success', async () => {
 			mockSessionsStore.get.mockReturnValue([]);
 			const handler = handlers.get('sessions:setMany');
@@ -7325,6 +7375,31 @@ describe('persistence IPC handlers', () => {
 			);
 			expect(lastBridgePayload()?.added[0].aiTabs[0].logs).toEqual([]);
 			expect(lastBridgePayload()?.added[0].deferredContent.tabIds).toEqual(['t1']);
+		});
+
+		it('skips windows the recipient filter rejects (feature windows never listen)', async () => {
+			const makeWindow = (id: number) => ({
+				isDestroyed: () => false,
+				webContents: { id, isDestroyed: () => false, send: vi.fn() },
+			});
+			const appWindow = makeWindow(7);
+			const featureWindow = makeWindow(8);
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([appWindow, featureWindow] as any);
+			setSessionLifecycleRecipientFilter((win) => win !== (featureWindow as any));
+			try {
+				mockSessionsStore.get.mockReturnValue([]);
+				await handlers.get('sessions:setMany')!({} as any, [{ ...baseSession, id: 'new' }]);
+				expect(appWindow.webContents.send).toHaveBeenCalledWith(
+					SESSION_LIFECYCLE_SYNC_CHANNEL,
+					expect.anything()
+				);
+				expect(featureWindow.webContents.send).not.toHaveBeenCalledWith(
+					SESSION_LIFECYCLE_SYNC_CHANNEL,
+					expect.anything()
+				);
+			} finally {
+				setSessionLifecycleRecipientFilter(() => true);
+			}
 		});
 
 		it('tells peers about an agent another client just closed', async () => {

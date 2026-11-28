@@ -44,6 +44,10 @@ import type {
 } from '../../../shared/parquet/types';
 import type { Theme } from '../../types';
 import { formatCount, formatSize } from '../../../shared/formatters';
+import {
+	TABULAR_EXPORT_FILE_FILTERS,
+	tabularExportFormatForPath,
+} from '../../../shared/tabularExport';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useDebouncedValue } from '../../hooks/utils/useThrottle';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
@@ -328,10 +332,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 			const destination = await window.maestro.dialog.saveFile({
 				title: 'Export matching rows',
 				defaultPath: `${base}${appliedFilter ? '-filtered' : ''}.csv`,
-				filters: [
-					{ name: 'CSV', extensions: ['csv'] },
-					{ name: 'JSON Lines', extensions: ['jsonl'] },
-				],
+				filters: [...TABULAR_EXPORT_FILE_FILTERS],
 			});
 			if (!destination) return;
 			try {
@@ -341,7 +342,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 					columns: projection,
 					sort,
 					destPath: destination,
-					format: destination.toLowerCase().endsWith('.jsonl') ? 'jsonl' : 'csv',
+					format: tabularExportFormatForPath(destination),
 				});
 				notifyToast({
 					color: exported.truncated ? 'yellow' : 'green',
@@ -368,11 +369,11 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 			const row = data.rows[detailRow];
 			if (!row) return [];
 			return data.columns.map((name, index) => {
+				const value = row[index] ?? null;
+				// The grid's dimmed `null`, kept apart from an empty string here too.
+				if (value === null) return { key: name, value: 'null', placeholder: true };
 				const column = info.columns.find((candidate) => candidate.name === name);
-				return {
-					key: name,
-					value: formatCellExact(row[index] ?? null, column?.kind ?? 'string'),
-				};
+				return { key: name, value: formatCellExact(value, column?.kind ?? 'string') };
 			});
 		}, [detailRow, data, info]);
 
@@ -395,10 +396,12 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 		if (!info) {
 			// Two different waits, and conflating them would be a lie in both
 			// directions. Reading a footer is a few kilobytes and effectively
-			// instant, so it gets a spinner. Copying a remote file across SSH
+			// instant, so it gets a spinner. Downloading a remote file across SSH
 			// is megabytes over a network with a known total, so it gets a real
 			// bar - the whole reason remote opens felt broken before was that
-			// this multi-second transfer rendered as an idle spinner.
+			// this multi-second transfer rendered as an idle spinner. The words
+			// name the wait, not the mode (the mode pill already says that), and
+			// match the "Downloading..." wording other file opens use.
 			if (fetchProgress) {
 				return (
 					<div
@@ -406,14 +409,14 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 						data-testid="parquet-fetch-progress"
 					>
 						<div className="text-sm" style={{ color: theme.colors.textMain }}>
-							Copying {fileName} from the remote host
+							Downloading {fileName}...
 						</div>
 						<div className="w-full" style={{ maxWidth: 380 }}>
 							<ProgressBar
 								value={fetchProgress.receivedBytes}
 								total={fetchProgress.totalBytes}
 								theme={theme}
-								label={`Copying ${fileName} from the remote host`}
+								label={`Downloading ${fileName}`}
 								testId="parquet-fetch-progress-bar"
 							/>
 						</div>
@@ -421,8 +424,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 							{formatSize(fetchProgress.receivedBytes)} of {formatSize(fetchProgress.totalBytes)}
 						</div>
 						<div className="text-xs-plus text-center" style={{ color: theme.colors.textDim }}>
-							There is no byte-range channel over SSH, so the whole file has to come across before
-							any of it can be read.
+							The whole file has to arrive before any of it can be read.
 						</div>
 					</div>
 				);
@@ -460,7 +462,7 @@ export const ParquetViewer = forwardRef<ParquetViewerHandle, ParquetViewerProps>
 						{formatSize(info.fileBytes)} - {info.rowGroups.length} row group
 						{info.rowGroups.length === 1 ? '' : 's'}
 						{info.createdBy ? ` - ${info.createdBy}` : ''}
-						{info.fetchedFromRemote ? ' - cached from remote' : ''}
+						{info.fetchedFromRemote ? ' - cached copy' : ''}
 					</span>
 					<div className="flex-1" />
 					<button

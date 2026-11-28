@@ -2,7 +2,7 @@
  * Sessions domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_sessions,
- * create_session, create_worktree_session, delete_session, rename_session,
+ * create_session, import_agent, create_worktree_session, delete_session, rename_session,
  * update_session_cwd, update_session_ssh, update_session_config, provider_translation,
  * list_desktop_sessions, get_session_history.
  */
@@ -10,8 +10,20 @@
 import { AGENT_IDS } from '../../../../shared/agentIds';
 import { isCurrentTurnCursor, type CurrentTurnCursor } from '../../../../shared/currentTurn';
 import { readBackgroundField } from '../../../../shared/focusPlacement';
+import { importInputFromMessage } from '../../../../shared/maestro-lib/runtime/server-requests';
+import {
+	buildDesktopAgentImportDeps,
+	importAgentIntoDesktop,
+	type DesktopAgentImportDeps,
+} from '../../../federation/import-agent';
+import { captureException } from '../../../utils/sentry';
 import type { CreateSessionConfig } from '../../types';
-import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import type {
+	WebClient,
+	WebClientMessage,
+	MessageHandlerCallbacks,
+	MessageHandlerContext,
+} from './types';
 
 /**
  * Known agent types for validation - derived from the canonical AGENT_IDS list.
@@ -147,6 +159,80 @@ export function handleCreateSession(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to create session: ${error.message}`);
+		});
+}
+
+/**
+ * Handle import_agent - a Federation lift onto this desktop, when the remote runs Maestro itself.
+ * The wire is read by the same parser the headless host uses, and the import by the same rule
+ * (`importAgentIntoDesktop()` over `planAgentImport()`). Queued messages reach the renderer
+ * through this bridge's own `enqueueCommand`, in the background.
+ */
+export function handleImportAgent(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const type = 'import_agent_result';
+	const reply = (frame: Record<string, unknown>) =>
+		ctx.send(client, { type, ...frame, requestId: message.requestId });
+
+	const parsed = importInputFromMessage(message);
+	if (!parsed.ok) {
+		reply({ success: false, error: parsed.error });
+		return;
+	}
+	const enqueue: DesktopAgentImportDeps['enqueue'] = (
+		agentId,
+		tabId,
+		text,
+		images,
+		held,
+		overrides
+	) => {
+		if (!ctx.callbacks.enqueueCommand) {
+			return Promise.resolve({ success: false, error: 'Enqueue not configured' });
+		}
+		const args: Parameters<MessageHandlerCallbacks['enqueueCommand']> = [
+			agentId,
+			text,
+			'ai',
+			tabId,
+			images,
+			true,
+			held === true,
+		];
+		// The settings it was queued with ride in the overrides slot, after the routing,
+		// dispatch-callback and admission slots this path leaves empty (R55).
+		if (overrides) args.push(undefined, undefined, undefined, overrides);
+		return ctx.callbacks.enqueueCommand(...args);
+	};
+
+	// The live process table: a replaced copy is read busy from it and stopped on it.
+	const processTable = ctx.callbacks.getDebugPackageDeps?.()?.getProcessManager() ?? null;
+	importAgentIntoDesktop(parsed.input, buildDesktopAgentImportDeps(enqueue, processTable))
+		.then((result) => {
+			if (!result.ok) {
+				reply({
+					success: false,
+					error:
+						result.code === 'not-found' && !/not found/i.test(result.message)
+							? `Not found: ${result.message}`
+							: result.message,
+				});
+				return;
+			}
+			const { agentId, queued, notices } = result.receipt;
+			reply({ success: true, sessionId: agentId, queued, ...(notices ? { notices } : {}) });
+		})
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'import_agent' },
+			});
+			reply({
+				success: false,
+				error: `Failed to import agent: ${error instanceof Error ? error.message : String(error)}`,
+			});
 		});
 }
 

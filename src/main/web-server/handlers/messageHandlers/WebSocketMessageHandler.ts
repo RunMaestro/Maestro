@@ -1,4 +1,5 @@
 import type { ManagedQueueRoutingProgress } from '../../../../shared/crossAgentTypes';
+import { HOST_CAPABILITIES } from '../../../../shared/maestro-lib/client/types';
 /**
  * WebSocket Message Handlers for Web Server
  *
@@ -56,11 +57,13 @@ import {
 	handleSwitchMode,
 	handleSelectSession,
 	handleCrossAgentAsk,
+	handleCrossAgentCancel,
 	handleInterruptTurn,
 } from './commands';
 import {
 	handleGetSessions,
 	handleCreateSession,
+	handleImportAgent,
 	handleCreateWorktreeSession,
 	handleDeleteSession,
 	handleRenameSession,
@@ -87,6 +90,8 @@ import {
 import { handleProfilingStart, handleProfilingStatus, handleProfilingStop } from './profiling';
 import { handleQuickChat } from './quickChat';
 import { handleSshReachabilityCheck, handleSshReachabilityStatus } from './sshReachability';
+import { handleSystemLogsClear, handleSystemLogsRead } from './systemLogs';
+import { handleClaudeCanaryRun, handleClaudeCanaryStatus } from './claudeCanary';
 import {
 	handleSupportPackageCreate,
 	handleFeedbackCheckAuth,
@@ -105,6 +110,7 @@ import {
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool, handlePluginsSendAgent } from './plugins';
 import { handleListAgentModels } from './models';
+import { handleListRollbackTargets, handleRollbackUpdate } from './updates';
 import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
@@ -128,7 +134,26 @@ import { handleLiveCommand } from './live';
 import { handleFederationCommand } from './federation';
 import { handleMaestroRunCommand } from './maestroRun';
 import { handleDataviewCommand } from './dataview';
+import {
+	handleSqliteCountRows,
+	handleSqliteDeleteRow,
+	handleSqliteExportQuery,
+	handleSqliteInsertRow,
+	handleSqliteListObjects,
+	handleSqliteQueryHistory,
+	handleSqliteStatementLog,
+	handleSqliteReadRows,
+	handleSqliteReadSchema,
+	handleSqliteReadSummary,
+	handleSqliteRunQuery,
+	handleSqliteRunTransaction,
+	handleSqliteSaveBlob,
+	handleSqliteUndoEdit,
+	handleSqliteUpdateCell,
+} from './sqlite';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
+import { handleDiffReviewCommand } from './diffReview';
+import { handlePromptLinkCommand } from './promptLinks';
 import { handleWindowCommand } from './windows';
 import { handleThroughputGaugeCommand } from './throughputGauge';
 import {
@@ -147,6 +172,9 @@ import {
 	handleReadTerminalTab,
 	handleListTerminalTabs,
 	handleCloseBrowserTab,
+	handlePickBrowserElement,
+	handleBrowserViewport,
+	handleDesignPickCommand,
 	handleOpenTerminalTab,
 	handleNewAITabWithPrompt,
 } from './tabs';
@@ -174,6 +202,7 @@ import {
 	handleSteerGroupChat,
 	handleStopGroupChat,
 	handleArchiveGroupChat,
+	handleSetGroupChatUnread,
 	handleAddGroupChatParticipant,
 } from './groupChat';
 import {
@@ -201,6 +230,9 @@ import {
 	handleSteerQueueItem,
 	handleSetQueueItemPaused,
 	handleMergeQueueItem,
+	handleEditQueueItem,
+	handleMoveQueueItem,
+	handleSendQueueItemNow,
 } from './queue';
 import {
 	handleListPlaybooks,
@@ -209,14 +241,22 @@ import {
 	handleDeletePlaybook,
 } from './playbooks';
 import {
-	handleGetUsageDashboard,
 	handleGetStatsAggregation,
 	handleGetTokenUsage,
+	handleGetProjectTokenUsage,
 	handleGetStatsIndexing,
 	handleStatsQuery,
 	handleGetAchievements,
 	handleGenerateDirectorNotesSynopsis,
 } from './stats';
+import {
+	handleGetDelegationStats,
+	handleGetCueStats,
+	handleGetPlanUsage,
+	handleGetAgentCountStats,
+	handleGetActivityStats,
+	handleStatsExport,
+} from './usageDashboard';
 
 /**
  * WebSocket Message Handler Class
@@ -357,6 +397,10 @@ export class WebSocketMessageHandler {
 				handleCrossAgentAsk(this.ctx, client, message);
 				break;
 
+			case 'cross_agent_cancel':
+				void handleCrossAgentCancel(this.ctx, client, message);
+				break;
+
 			case 'switch_mode':
 				handleSwitchMode(this.ctx, client, message);
 				break;
@@ -375,6 +419,16 @@ export class WebSocketMessageHandler {
 
 			case 'get_app_info':
 				this.handleGetAppInfo(client, message);
+				break;
+
+			// What this host does beyond the base protocol (the headless host answers the same).
+			case 'host_capabilities':
+				this.send(client, {
+					type: 'host_capabilities_result',
+					requestId: message.requestId,
+					success: true,
+					capabilities: [...HOST_CAPABILITIES],
+				});
 				break;
 
 			case 'select_tab':
@@ -429,8 +483,75 @@ export class WebSocketMessageHandler {
 				void handleDataviewCommand(this.ctx, client, message);
 				break;
 
+			case 'sqlite_read_summary':
+				void handleSqliteReadSummary(this.ctx, client, message);
+				break;
+
+			case 'sqlite_list_objects':
+				void handleSqliteListObjects(this.ctx, client, message);
+				break;
+
+			case 'sqlite_read_schema':
+				void handleSqliteReadSchema(this.ctx, client, message);
+				break;
+
+			case 'sqlite_read_rows':
+				void handleSqliteReadRows(this.ctx, client, message);
+				break;
+
+			case 'sqlite_count_rows':
+				void handleSqliteCountRows(this.ctx, client, message);
+				break;
+
+			case 'sqlite_save_blob':
+				void handleSqliteSaveBlob(this.ctx, client, message);
+				break;
+
+			case 'sqlite_run_query':
+				void handleSqliteRunQuery(this.ctx, client, message);
+				break;
+
+			case 'sqlite_export_query':
+				void handleSqliteExportQuery(this.ctx, client, message);
+				break;
+
+			case 'sqlite_query_history':
+				void handleSqliteQueryHistory(this.ctx, client, message);
+				break;
+			case 'sqlite_statement_log':
+				void handleSqliteStatementLog(this.ctx, client, message);
+				break;
+
+			case 'sqlite_update_cell':
+				void handleSqliteUpdateCell(this.ctx, client, message);
+				break;
+
+			case 'sqlite_insert_row':
+				void handleSqliteInsertRow(this.ctx, client, message);
+				break;
+
+			case 'sqlite_delete_row':
+				void handleSqliteDeleteRow(this.ctx, client, message);
+				break;
+
+			case 'sqlite_undo_edit':
+				void handleSqliteUndoEdit(this.ctx, client, message);
+				break;
+
+			case 'sqlite_run_transaction':
+				void handleSqliteRunTransaction(this.ctx, client, message);
+				break;
+
 			case 'auto_run_steering_command':
 				handleAutoRunSteeringCommand(this.ctx, client, message);
+				break;
+
+			case 'diff_review_command':
+				handleDiffReviewCommand(this.ctx, client, message);
+				break;
+
+			case 'prompt_link_command':
+				void handlePromptLinkCommand(this.ctx, client, message);
 				break;
 
 			case 'window_command':
@@ -481,6 +602,18 @@ export class WebSocketMessageHandler {
 				handleCloseBrowserTab(this.ctx, client, message);
 				break;
 
+			case 'pick_browser_element':
+				handlePickBrowserElement(this.ctx, client, message);
+				break;
+
+			case 'browser_viewport':
+				handleBrowserViewport(this.ctx, client, message);
+				break;
+
+			case 'design_pick_command':
+				handleDesignPickCommand(this.ctx, client, message);
+				break;
+
 			case 'open_terminal_tab':
 				handleOpenTerminalTab(this.ctx, client, message);
 				break;
@@ -511,6 +644,18 @@ export class WebSocketMessageHandler {
 
 			case 'merge_queue_item':
 				handleMergeQueueItem(this.ctx, client, message);
+				break;
+
+			case 'edit_queue_item':
+				handleEditQueueItem(this.ctx, client, message);
+				break;
+
+			case 'move_queue_item':
+				handleMoveQueueItem(this.ctx, client, message);
+				break;
+
+			case 'send_queue_item_now':
+				handleSendQueueItemNow(this.ctx, client, message);
 				break;
 
 			case 'refresh_file_tree':
@@ -605,6 +750,10 @@ export class WebSocketMessageHandler {
 				handleCreateSession(this.ctx, client, message);
 				break;
 
+			case 'import_agent':
+				handleImportAgent(this.ctx, client, message);
+				break;
+
 			case 'delete_session':
 				handleDeleteSession(this.ctx, client, message);
 				break;
@@ -697,6 +846,10 @@ export class WebSocketMessageHandler {
 				handleArchiveGroupChat(this.ctx, client, message);
 				break;
 
+			case 'set_group_chat_unread':
+				handleSetGroupChatUnread(this.ctx, client, message);
+				break;
+
 			case 'add_group_chat_participant':
 				handleAddGroupChatParticipant(this.ctx, client, message);
 				break;
@@ -757,10 +910,6 @@ export class WebSocketMessageHandler {
 				handleCueBundleImport(this.ctx, client, message);
 				break;
 
-			case 'get_usage_dashboard':
-				handleGetUsageDashboard(this.ctx, client, message);
-				break;
-
 			case 'get_achievements':
 				handleGetAchievements(this.ctx, client, message);
 				break;
@@ -773,12 +922,40 @@ export class WebSocketMessageHandler {
 				handleGetTokenUsage(this.ctx, client, message);
 				break;
 
+			case 'get_project_token_usage':
+				handleGetProjectTokenUsage(this.ctx, client, message);
+				break;
+
 			case 'get_stats_indexing':
 				handleGetStatsIndexing(this.ctx, client, message);
 				break;
 
 			case 'stats_query':
 				handleStatsQuery(this.ctx, client, message);
+				break;
+
+			case 'get_delegation_stats':
+				handleGetDelegationStats(this.ctx, client, message);
+				break;
+
+			case 'get_cue_stats':
+				handleGetCueStats(this.ctx, client, message);
+				break;
+
+			case 'get_plan_usage':
+				handleGetPlanUsage(this.ctx, client, message);
+				break;
+
+			case 'get_agent_count_stats':
+				handleGetAgentCountStats(this.ctx, client, message);
+				break;
+
+			case 'get_activity_stats':
+				handleGetActivityStats(this.ctx, client, message);
+				break;
+
+			case 'stats_export':
+				handleStatsExport(this.ctx, client, message);
 				break;
 
 			case 'generate_director_notes_synopsis':
@@ -845,6 +1022,22 @@ export class WebSocketMessageHandler {
 				void handleSshReachabilityCheck(this.ctx, client, message);
 				break;
 
+			case 'system_logs_read':
+				handleSystemLogsRead(this.ctx, client, message);
+				break;
+
+			case 'system_logs_clear':
+				handleSystemLogsClear(this.ctx, client, message);
+				break;
+
+			case 'claude_canary_status':
+				handleClaudeCanaryStatus(this.ctx, client, message);
+				break;
+
+			case 'claude_canary_run':
+				void handleClaudeCanaryRun(this.ctx, client, message);
+				break;
+
 			case 'support_package_create':
 				void handleSupportPackageCreate(this.ctx, client, message);
 				break;
@@ -879,6 +1072,14 @@ export class WebSocketMessageHandler {
 
 			case 'list_agent_models':
 				void handleListAgentModels(this.ctx, client, message);
+				break;
+
+			case 'list_rollback_targets':
+				void handleListRollbackTargets(this.ctx, client, message);
+				break;
+
+			case 'rollback_update':
+				void handleRollbackUpdate(this.ctx, client, message);
 				break;
 
 			case 'marketplace_get_manifest':

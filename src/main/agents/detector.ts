@@ -52,6 +52,11 @@ import {
 	type BuildAgentEnvironmentOptions,
 } from '../../shared/maestro-lib/launch/env';
 import type { SshLaunchTarget } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
+import {
+	antigravityEffortUnion,
+	parseAntigravityModelList,
+	type AntigravityModelCatalog,
+} from '../../shared/antigravityModels';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -96,10 +101,24 @@ export interface GrokModelsCacheRead {
  * Returns null when the file is absent, malformed, or lists no visible model.
  */
 export function readGrokModelsCache(accountDir: string): GrokModelsCacheRead | null {
+	let text: string;
 	try {
-		const cache = parseJsonWithBom<{ models?: unknown }>(
-			fs.readFileSync(path.join(accountDir, 'models_cache.json'), 'utf8')
-		);
+		text = fs.readFileSync(path.join(accountDir, 'models_cache.json'), 'utf8');
+	} catch {
+		logger.debug('Grok models_cache.json unavailable or malformed', LOG_CONTEXT);
+		return null;
+	}
+	return parseGrokModelsCache(text);
+}
+
+/**
+ * Parse the text of a Grok `models_cache.json`, wherever it was read (this
+ * machine's disk, or an SSH remote's through {@link probeRemoteGrokContextWindows}).
+ * Takes the same fields as {@link readGrokModelsCache}; null when malformed.
+ */
+export function parseGrokModelsCache(text: string): GrokModelsCacheRead | null {
+	try {
+		const cache = parseJsonWithBom<{ models?: unknown }>(text);
 		const entries = cache?.models;
 		if (!entries || typeof entries !== 'object' || Array.isArray(entries)) {
 			throw new Error('models_cache.json has no models map');
@@ -132,6 +151,40 @@ export function readGrokModelsCache(accountDir: string): GrokModelsCacheRead | n
 		logger.debug('Grok models_cache.json unavailable or malformed', LOG_CONTEXT);
 		return null;
 	}
+}
+
+/**
+ * Keep a Grok snapshot's per-account windows in step with the account's
+ * models_cache.json: replace that account's entry, or drop it when the cache
+ * is absent, malformed or reports no window, so the gauge goes unknown rather
+ * than keeping a stale size. Only a snapshot already marked ok is patched;
+ * detection owns the readiness status. `remoteId` names the SSH remote whose
+ * snapshot holds the account (absent for this machine), so a remote or hosted
+ * agent's gauge reads the windows its own machine's account reported.
+ */
+export function recordGrokAccountContextWindows(
+	accountKey: string | null,
+	read: GrokModelsCacheRead | null,
+	options: { selectedModel?: string; observedDefaultModel?: string; remoteId?: string } = {}
+): void {
+	const { selectedModel, observedDefaultModel, remoteId } = options;
+	const previous = capabilitySnapshots.get('grok', remoteId);
+	if (!accountKey || previous?.status !== 'ok') return;
+	const all = { ...previous.accountModelContextWindows };
+	const before = ownEntry(all, accountKey);
+	const defaultModel =
+		observedDefaultModel?.trim() || (selectedModel?.trim() ? before?.defaultModel : undefined);
+	if (read && Object.keys(read.contextWindows).length > 0) {
+		all[accountKey] = { windows: read.contextWindows, ...(defaultModel ? { defaultModel } : {}) };
+	} else {
+		delete all[accountKey];
+	}
+	if (canonicalJson(before ?? null) === canonicalJson(ownEntry(all, accountKey) ?? null)) return;
+	capabilitySnapshots.markOk(
+		'grok',
+		{ accountModelContextWindows: Object.keys(all).length > 0 ? all : undefined },
+		remoteId
+	);
 }
 
 /**
@@ -445,6 +498,12 @@ export class AgentDetector {
 	private modelCache: Map<string, { models: string[]; timestamp: number }> = new Map();
 	// Cache for config option discovery: "agentId:optionKey" -> { options, timestamp }
 	private configOptionCache: Map<string, { options: string[]; timestamp: number }> = new Map();
+	/** The last `agy models` read, so effort discovery reuses it instead of a second probe. */
+	private antigravityCatalog: { catalog: AntigravityModelCatalog; timestamp: number } | null = null;
+	/** Bumped by every Antigravity cache clear; a read started before it may not write after. */
+	private antigravityGeneration = 0;
+	/** The one `agy models` read in flight, shared by the model and effort menus. */
+	private antigravityRead: Promise<AntigravityModelCatalog | null> | null = null;
 	// Configurable cache TTL (useful for testing or different environments)
 	private readonly modelCacheTtlMs: number;
 	private readonly deps: AgentDetectorDeps;
@@ -687,6 +746,11 @@ export class AgentDetector {
 	 * Clear the model cache for a specific agent or all agents
 	 */
 	clearModelCache(agentId?: string): void {
+		if (!agentId || agentId === 'antigravity') {
+			this.antigravityCatalog = null;
+			this.antigravityGeneration++;
+			this.antigravityRead = null;
+		}
 		if (agentId) {
 			for (const key of this.modelCache.keys()) {
 				if (key === agentId || key.startsWith(`${agentId}:`)) this.modelCache.delete(key);
@@ -747,18 +811,27 @@ export class AgentDetector {
 			}
 		}
 
-		// Run agent-specific model discovery command
+		// Run agent-specific model discovery command. The model and effort menus
+		// share one `agy models` read, so a forced refresh of either drops both.
+		if (forceRefresh && agentId === 'antigravity') this.clearModelCache('antigravity');
+		const antigravityGeneration = this.antigravityGeneration;
 		const models = await this.runModelDiscovery(agentId, agent);
 
-		// A transient `omp models --json` failure returns an empty list. Don't cache
-		// that, or the picker stays empty for the whole TTL even after the CLI
-		// recovers; let the next call retry. (omp always has a non-empty catalog.)
-		if (agentId === 'omp' && models.length === 0) {
+		// A transient `omp models --json` / `kilo models` failure returns an empty
+		// list. Don't cache that, or the picker stays empty for the whole TTL even
+		// after the CLI recovers; let the next call retry. (Both always have a
+		// non-empty catalog on a working install, so empty means failure.)
+		if ((agentId === 'omp' || agentId === 'kilo') && models.length === 0) {
+			return models;
+		}
+		// Same for a failed `agy models` (signed out, CLI updating), and for a read
+		// a refresh overtook: retry next time rather than cache a stale menu.
+		if (agentId === 'antigravity' && !this.antigravityCatalogCurrent(antigravityGeneration)) {
 			return models;
 		}
 
 		// Cache the results
-		this.modelCache.set(agentId, { models, timestamp: Date.now() });
+		this.modelCache.set(agentId, { models, timestamp: this.menuCacheTimestamp(agentId) });
 
 		return models;
 	}
@@ -810,7 +883,7 @@ export class AgentDetector {
 			env.GROK_HOME = accountDir;
 			const accountKey = resolveAgentAccountKey('grok', { GROK_HOME: accountDir }, os.homedir());
 			const cacheRead = readGrokModelsCache(accountDir);
-			this.recordGrokContextWindows(accountKey, cacheRead, context.model);
+			recordGrokAccountContextWindows(accountKey, cacheRead, { selectedModel: context.model });
 			const discovered = (values: string[]): AgentDiscoveryResult => {
 				const stale = configuredValue && !values.includes(configuredValue);
 				return {
@@ -860,7 +933,9 @@ export class AgentDetector {
 			// The observation names the account's current model; with none configured
 			// it is the default whose cached window the gauge may use.
 			if (!context.model?.trim() && configuration.model?.trim())
-				this.recordGrokContextWindows(accountKey, cacheRead, undefined, configuration.model);
+				recordGrokAccountContextWindows(accountKey, cacheRead, {
+					observedDefaultModel: configuration.model,
+				});
 			// Only hashes/menus enter the existing ephemeral caches. Each read still
 			// requires a current host receipt, even when a matching cache entry exists.
 			const key = `grok:${createHash('sha256')
@@ -901,36 +976,6 @@ export class AgentDetector {
 			logger.debug('Grok discovery unavailable: owned observation unavailable', LOG_CONTEXT);
 			return fallback('discovery-unavailable');
 		}
-	}
-
-	/**
-	 * Keep the Grok snapshot's per-account windows in step with the account's
-	 * models_cache.json: replace that account's entry, or drop it when the cache
-	 * is absent, malformed or reports no window, so the gauge goes unknown rather
-	 * than keeping a stale size. Only a snapshot already marked ok is patched;
-	 * detection owns the readiness status.
-	 */
-	private recordGrokContextWindows(
-		accountKey: string | null,
-		read: GrokModelsCacheRead | null,
-		selectedModel: string | undefined,
-		observedDefaultModel?: string
-	): void {
-		const previous = capabilitySnapshots.get('grok');
-		if (!accountKey || previous?.status !== 'ok') return;
-		const all = { ...previous.accountModelContextWindows };
-		const before = ownEntry(all, accountKey);
-		const defaultModel =
-			observedDefaultModel?.trim() || (selectedModel?.trim() ? before?.defaultModel : undefined);
-		if (read && Object.keys(read.contextWindows).length > 0) {
-			all[accountKey] = { windows: read.contextWindows, ...(defaultModel ? { defaultModel } : {}) };
-		} else {
-			delete all[accountKey];
-		}
-		if (canonicalJson(before ?? null) === canonicalJson(ownEntry(all, accountKey) ?? null)) return;
-		capabilitySnapshots.markOk('grok', {
-			accountModelContextWindows: Object.keys(all).length > 0 ? all : undefined,
-		});
 	}
 
 	/**
@@ -1067,6 +1112,42 @@ export class AgentDetector {
 					return models;
 				}
 
+				case 'kilo': {
+					// Kilo: `kilo models` prints one model per line, same as OpenCode.
+					// Unlike OpenCode this does not also read kilo.json - config-file
+					// discovery is OpenCode-only for now, so a provider defined purely in
+					// config still has to be typed into the Model field by hand.
+					const result = await execFileNoThrow(command, ['models'], undefined, env);
+
+					if (result.exitCode !== 0) {
+						logger.warn(
+							`Model discovery failed for ${agentId}: exit code ${result.exitCode}`,
+							LOG_CONTEXT,
+							{ stderr: result.stderr }
+						);
+						return [];
+					}
+
+					const models = result.stdout
+						.split('\n')
+						.map((line) => line.trim())
+						.filter((line) => line.length > 0);
+
+					logger.info(`Discovered ${models.length} models for ${agentId}`, LOG_CONTEXT, {
+						models,
+					});
+					return models;
+				}
+
+				case 'antigravity': {
+					const catalog = await this.readAntigravityCatalog(command, env);
+					logger.info(
+						`Discovered ${catalog?.models.length ?? 0} models for ${agentId} from \`agy models\``,
+						LOG_CONTEXT
+					);
+					return catalog?.models ?? [];
+				}
+
 				case 'copilot-cli': {
 					// Copilot CLI: fetch available models from models.dev API (github-copilot
 					// provider) and merge with the user's configured model from
@@ -1162,6 +1243,64 @@ export class AgentDetector {
 	}
 
 	/**
+	 * Read `agy models` once per cache window, shared by the model and effort
+	 * menus. A failed or empty read is not cached, so a CLI that was mid-update or
+	 * signed out is asked again next time; an expired catalogue is dropped before
+	 * the refresh so it cannot stand in for a failed one. A read that a cache
+	 * clear overtook does not write its result.
+	 */
+	private readAntigravityCatalog(
+		command: string,
+		env: NodeJS.ProcessEnv
+	): Promise<AntigravityModelCatalog | null> {
+		const cached = this.antigravityCatalog;
+		if (cached && Date.now() - cached.timestamp < this.modelCacheTtlMs) {
+			return Promise.resolve(cached.catalog);
+		}
+		this.antigravityCatalog = null;
+		if (this.antigravityRead) return this.antigravityRead;
+		const generation = this.antigravityGeneration;
+		const read = (async () => {
+			const result = await execFileNoThrow(command, ['models'], undefined, env);
+			if (result.exitCode !== 0) {
+				logger.warn(
+					`CLI model discovery failed for antigravity: exit code ${result.exitCode}`,
+					LOG_CONTEXT,
+					{ stderr: result.stderr }
+				);
+				return null;
+			}
+			const catalog = parseAntigravityModelList(result.stdout);
+			if (catalog.models.length === 0) return null;
+			if (generation === this.antigravityGeneration) {
+				this.antigravityCatalog = { catalog, timestamp: Date.now() };
+			}
+			return catalog;
+		})().finally(() => {
+			if (this.antigravityRead === read) this.antigravityRead = null;
+		});
+		this.antigravityRead = read;
+		return read;
+	}
+
+	/**
+	 * When a menu cache entry starts aging. Antigravity's model and effort menus
+	 * are derived from one `agy models` read, so they carry that read's time and
+	 * expire with it; a menu derived late in the catalogue's window must not
+	 * outlive it while a sibling menu has already moved to a newer read.
+	 */
+	private menuCacheTimestamp(agentId: string): number {
+		return agentId === 'antigravity' && this.antigravityCatalog
+			? this.antigravityCatalog.timestamp
+			: Date.now();
+	}
+
+	/** True when menus read under `generation` came from the current catalogue. */
+	private antigravityCatalogCurrent(generation: number): boolean {
+		return this.antigravityCatalog !== null && generation === this.antigravityGeneration;
+	}
+
+	/**
 	 * Discover available values for a dynamic select config option.
 	 * Returns an array of option values, or empty array if discovery is not supported.
 	 *
@@ -1199,8 +1338,16 @@ export class AgentDetector {
 			}
 		}
 
+		if (forceRefresh && agentId === 'antigravity') this.clearModelCache('antigravity');
+		const antigravityGeneration = this.antigravityGeneration;
 		const options = await this.runConfigOptionDiscovery(agentId, optionKey);
-		this.configOptionCache.set(cacheKey, { options, timestamp: Date.now() });
+		// A failed `agy models` read falls back to the static menu, and a read a
+		// refresh overtook is stale; keep both uncached so the next request asks
+		// the current catalogue.
+		if (agentId === 'antigravity' && !this.antigravityCatalogCurrent(antigravityGeneration)) {
+			return options;
+		}
+		this.configOptionCache.set(cacheKey, { options, timestamp: this.menuCacheTimestamp(agentId) });
 		return options;
 	}
 
@@ -1325,6 +1472,22 @@ export class AgentDetector {
 								LOG_CONTEXT
 							);
 						}
+					}
+					break;
+				}
+
+				case 'antigravity': {
+					if (optionKey === 'effort') {
+						// The efforts any model offers, read off the `agy models` suffixes.
+						// A per-model subset is enforced at launch by the CLI itself, and a
+						// refusal there is recognized by effortRejection.ts.
+						const agent = await this.getAgent(agentId);
+						const catalog = await this.readAntigravityCatalog(
+							agent?.path || agent?.command || 'agy',
+							getExpandedEnv()
+						);
+						const levels = catalog ? antigravityEffortUnion(catalog) : [];
+						if (levels.length > 0) return ['', ...levels];
 					}
 					break;
 				}

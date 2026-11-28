@@ -8,11 +8,12 @@
  */
 
 import type { UpdateInfo, ProgressInfo, AppUpdater } from 'electron-updater';
-import { BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { logger } from './utils/logger';
 import { captureException } from './utils/sentry';
 import { isWebContentsAvailable } from './utils/safe-send';
-import { getReleaseDownloadFeedUrl } from './update-checker';
+import { getReleaseDownloadFeedUrl, rollbackTargetRefusal } from './update-checker';
+import { isRollbackTarget, normalizeReleaseTag } from '../shared/updateRollback';
 
 export interface UpdateStatus {
 	status:
@@ -267,72 +268,16 @@ function setupIpcHandlers(): void {
 		}
 	});
 
-	// Download update
-	ipcMain.handle('updates:download', async (_event, targetTag?: string) => {
-		try {
-			// First, check for updates with electron-updater to tell it which version to download
-			// This is required because the UI uses the GitHub API check, not electron-updater's check.
-			//
-			// When the renderer hands us the exact release tag it's offering, point
-			// electron-updater at that release's CDN-served asset directory via a
-			// generic provider. This bypasses the default GitHub provider's
-			// `releases.atom` lookup, which intermittently (sometimes persistently)
-			// returns 504 Gateway Time-out. Falls back to the bundled GitHub provider
-			// when no tag is supplied (e.g. background auto-update paths).
-			if (targetTag) {
-				const feedUrl = getReleaseDownloadFeedUrl(targetTag);
-				autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl });
-				logger.info(
-					`Pointing electron-updater at CDN release assets for ${targetTag} (bypasses releases.atom): ${feedUrl}`,
-					'AutoUpdater'
-				);
-			} else {
-				logger.info(
-					`Pre-download check via default GitHub provider (allowPrerelease: ${autoUpdater.allowPrerelease}) - no target tag supplied`,
-					'AutoUpdater'
-				);
-			}
-			const checkResult = await withUpdateRetry('pre-download check', () =>
-				autoUpdater.checkForUpdates()
-			);
+	// Download update. The UI uses the GitHub API check, not electron-updater's,
+	// so the renderer hands over the exact release tag it is offering.
+	ipcMain.handle('updates:download', async (_event, targetTag?: string) =>
+		downloadRelease(targetTag)
+	);
 
-			if (!checkResult || !checkResult.updateInfo) {
-				logger.error(
-					'No update found during pre-download check - electron-updater found nothing to download',
-					'AutoUpdater',
-					{ allowPrerelease: autoUpdater.allowPrerelease }
-				);
-				currentStatus = { status: 'error', error: 'No update available to download' };
-				sendStatusToRenderer();
-				return { success: false, error: 'No update available to download' };
-			}
-
-			logger.info(`Starting download of v${checkResult.updateInfo.version}`, 'AutoUpdater', {
-				version: checkResult.updateInfo.version,
-				releaseDate: checkResult.updateInfo.releaseDate,
-				files: checkResult.updateInfo.files?.map((f) => f.url),
-			});
-			currentStatus = {
-				status: 'downloading',
-				progress: { percent: 0, bytesPerSecond: 0, total: 0, transferred: 0, delta: 0 },
-			};
-			sendStatusToRenderer();
-			await withUpdateRetry('download', () => autoUpdater.downloadUpdate());
-			logger.info(
-				`Download of v${checkResult.updateInfo.version} completed successfully`,
-				'AutoUpdater'
-			);
-			return { success: true };
-		} catch (error) {
-			const errorMessage = describeUpdateError(error);
-			logger.error(`Download failed: ${errorMessage}`, 'AutoUpdater', {
-				stack: error instanceof Error ? error.stack : undefined,
-			});
-			currentStatus = { status: 'error', error: errorMessage };
-			sendStatusToRenderer();
-			return { success: false, error: errorMessage };
-		}
-	});
+	// Download an OLDER release so the next restart installs it (rollback).
+	ipcMain.handle('updates:rollback', async (_event, targetTag: string) =>
+		downloadRollback(targetTag)
+	);
 
 	// Install update (quit and install)
 	ipcMain.handle('updates:install', () => {
@@ -361,6 +306,129 @@ function setupIpcHandlers(): void {
 	ipcMain.handle('updates:getStatus', () => {
 		return currentStatus;
 	});
+}
+
+export interface DownloadReleaseResult {
+	success: boolean;
+	/** The version electron-updater downloaded, when it succeeded. */
+	version?: string;
+	error?: string;
+}
+
+/**
+ * Download a release so the next restart installs it. The one download path:
+ * the modal's Download button, its Roll Back button, and `maestro-cli
+ * rollback` all land here, and progress reaches every open modal through
+ * `updates:status`.
+ *
+ * When `targetTag` is given, electron-updater is pointed at that release's
+ * CDN-served asset directory via a generic provider. This bypasses the default
+ * GitHub provider's `releases.atom` lookup, which intermittently (sometimes
+ * persistently) returns 504 Gateway Time-out. Without a tag it falls back to the
+ * bundled GitHub provider (background auto-update paths).
+ *
+ * `allowDowngrade` lets the target be OLDER than the running version. It is
+ * switched on for this one check-and-download and always switched back off, so
+ * an ordinary update check afterwards can never offer a downgrade.
+ */
+export async function downloadRelease(
+	targetTag?: string,
+	options: { allowDowngrade?: boolean } = {}
+): Promise<DownloadReleaseResult> {
+	const autoUpdater = getAutoUpdater();
+	const allowDowngrade = options.allowDowngrade === true;
+	try {
+		if (targetTag) {
+			const feedUrl = getReleaseDownloadFeedUrl(targetTag);
+			autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl });
+			logger.info(
+				`Pointing electron-updater at CDN release assets for ${targetTag} (bypasses releases.atom): ${feedUrl}`,
+				'AutoUpdater'
+			);
+		} else {
+			logger.info(
+				`Pre-download check via default GitHub provider (allowPrerelease: ${autoUpdater.allowPrerelease}) - no target tag supplied`,
+				'AutoUpdater'
+			);
+		}
+		autoUpdater.allowDowngrade = allowDowngrade;
+		// electron-updater only downloads what its own check reported, so the
+		// check runs first even though the UI already knows the version.
+		const checkResult = await withUpdateRetry('pre-download check', () =>
+			autoUpdater.checkForUpdates()
+		);
+
+		// A check that found the running version (or, without allowDowngrade, an
+		// older one) reports `isUpdateAvailable: false` and leaves nothing to download.
+		if (!checkResult?.updateInfo || checkResult.isUpdateAvailable === false) {
+			const error = allowDowngrade
+				? `${targetTag ?? 'That release'} cannot be installed over this version`
+				: 'No update available to download';
+			logger.error(
+				`No update found during pre-download check - electron-updater found nothing to download`,
+				'AutoUpdater',
+				{ allowPrerelease: autoUpdater.allowPrerelease, allowDowngrade, targetTag }
+			);
+			currentStatus = { status: 'error', error };
+			sendStatusToRenderer();
+			return { success: false, error };
+		}
+
+		const version = checkResult.updateInfo.version;
+		logger.info(
+			`Starting download of v${version}${allowDowngrade ? ' (rollback)' : ''}`,
+			'AutoUpdater',
+			{
+				version,
+				releaseDate: checkResult.updateInfo.releaseDate,
+				files: checkResult.updateInfo.files?.map((f) => f.url),
+			}
+		);
+		currentStatus = {
+			status: 'downloading',
+			progress: { percent: 0, bytesPerSecond: 0, total: 0, transferred: 0, delta: 0 },
+		};
+		sendStatusToRenderer();
+		await withUpdateRetry('download', () => autoUpdater.downloadUpdate());
+		logger.info(`Download of v${version} completed successfully`, 'AutoUpdater');
+		return { success: true, version };
+	} catch (error) {
+		const errorMessage = describeUpdateError(error);
+		logger.error(`Download failed: ${errorMessage}`, 'AutoUpdater', {
+			stack: error instanceof Error ? error.stack : undefined,
+		});
+		currentStatus = { status: 'error', error: errorMessage };
+		sendStatusToRenderer();
+		return { success: false, error: errorMessage };
+	} finally {
+		autoUpdater.allowDowngrade = false;
+	}
+}
+
+/**
+ * Download an earlier release so the next restart rolls Maestro back to it.
+ * Accepts `1.0.3` or `v1.0.3`, and refuses anything that is not a release tag
+ * strictly older than the running version: a newer one is an update, not a
+ * rollback, and a malformed one must never reach the feed URL.
+ */
+export async function downloadRollback(version: string): Promise<DownloadReleaseResult> {
+	const currentVersion = app.getVersion();
+	const tag = normalizeReleaseTag(typeof version === 'string' ? version : '');
+	if (!isRollbackTarget(tag, currentVersion)) {
+		const error = `${tag} is not an earlier release than the running v${currentVersion}`;
+		logger.warn(`Rollback refused: ${error}`, 'AutoUpdater');
+		return { success: false, error };
+	}
+	// The cheap tag check above keeps a malformed tag off the network; this one
+	// applies the rollback list's rules (channel file, code signing) to a tag
+	// typed by hand, so a build the updater would reject is never downloaded.
+	const refusal = await rollbackTargetRefusal(tag, currentVersion);
+	if (refusal) {
+		logger.warn(`Rollback refused: ${refusal}`, 'AutoUpdater');
+		return { success: false, error: refusal };
+	}
+	logger.info(`Rolling back from v${currentVersion} to ${tag}`, 'AutoUpdater');
+	return downloadRelease(tag, { allowDowngrade: true });
 }
 
 /**

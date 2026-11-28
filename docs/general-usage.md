@@ -50,6 +50,10 @@ The header pill and the command palette act on the agent you're looking at. The 
 
 Pull and push stream their output as it happens, so you can watch the transfer and read git's error message if it fails. Dismissing the modal leaves the command running; **Cancel** stops it. When a push fails because the branch has no upstream, the modal offers a one-click **Push and Set Upstream** retry.
 
+### Reviewing a diff
+
+You can review an agent's changes like a pull request. In the diff viewer, click or drag line numbers (or use `Down` / `Up` and `C`) to pin a comment to one or more lines, collect comments across files in the **Review** tray, and send them back to the agent as one review. Each comment names its file and lines and quotes its hunk. See [Reviewing Diffs](./diff-review). The same review works on any file: right-click a line in the File Preview or the file editor and pick **Comment on Line**. See [Reviewing Files](./file-review).
+
 Working-tree changes are shown by the **git status widget** beside the pill (`+` additions, `−` deletions, `~` modified). Hover it for a list of changed files with diff bars, plus shortcuts to the full diff and the log.
 
 ## File Explorer and Preview
@@ -447,7 +451,7 @@ Each queued item has a row of controls (hover reveals them, and they stay visibl
 | **Reorder**       | ⠿     | Drag any item by its handle to change the order they'll be sent (available once two or more are queued) |
 | **Remove**        | ✕     | Delete a message from the queue so it's never sent (asks for confirmation)                              |
 
-**Editing** is only offered for messages, not slash commands. See [Merging queued messages](#merging-queued-messages) for when **Merge** appears. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
+**Editing** is only offered for messages, not slash commands. Agents can edit a queued message with `maestro-cli queue edit <item-id> --agent <id> --text "..."`, move one with `maestro-cli queue move <item-id> --agent <id> --to <position>`, and Force Send one with `maestro-cli queue send-now <item-id> --agent <id>`. See [Merging queued messages](#merging-queued-messages) for when **Merge** appears. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
 
 ### Merging queued messages
 
@@ -822,6 +826,8 @@ echo "Preview: maestro+http://localhost:5173"
 ```
 
 Hints work in plain terminal output, in OSC 8 terminal hyperlinks, and in markdown links. In chat markdown, write a hinted URL as a link (`[label](maestro+https://...)`) or in angle brackets (`<maestro+https://...>`); a bare hinted URL in markdown is only partly linked. Only `http` and `https` may follow a hint: `maestro+file://...` or `system+ssh://...` opens nothing.
+
+A `file://` link, **Open in Default App**, or any other path Maestro hands to your OS never runs a program. An app, installer, script, or disk image (for example `.app`, `.exe`, `.sh`, `.dmg`, or a file with the executable bit) is shown in your file manager instead, so you can see it and run it on purpose.
 
 ## Agent Management
 

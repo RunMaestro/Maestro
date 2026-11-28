@@ -92,7 +92,7 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
 
 **Auto Runs are unattended.** The user starts a playbook so they can walk away. Every pause you add is a run that sits idle until they come back. Work down this ladder and stop at the first rung that fits:
 
-1. **Make it agent work.** Most "human" steps are not. Verification becomes a test, a Playwright or CDP check, or a screenshot the agent captures and compares. A precondition ("confirm the branch is merged", "check the file exists", "make sure the dev server is up") is a command the agent runs, and if it fails the agent fixes it (rebase, start the server, create the worktree). A missing credential becomes a mocked client or a stub, so the code and its tests still land.
+1. **Make it agent work.** Most "human" steps are not. Verification becomes a test, a Playwright or CDP check, or a screenshot the agent captures and compares. A precondition ("confirm the branch is merged", "check the file exists", "make sure the dev server is up") is a command the agent runs, and if it fails the agent fixes it (rebase, start the server, create the worktree). A missing credential becomes a mocked client or a stub (code against an environment variable, add the name to `.env.example`, or use a sandbox or test-mode key the agent can create), so the code and its tests still land. A risky change goes behind a flag.
 
 2. **The default for real human work: Manual Follow-Up.** Visual polish, testing on a physical device, sign-off, review of finished work, anything only a person can judge. Put it as plain `-` bullets under a trailing section. The engine never reads these, so the run finishes and the user does them afterwards:
 
@@ -103,7 +103,7 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
    - Get design sign-off on the new empty state.
    ```
 
-3. **A HITL gate - rare.** Emit one only when (a) the user explicitly asked the run to stop at that point, or (b) the very next tasks cannot execute at all without something only a person can supply, and rungs 1 and 2 cannot absorb it. Never gate to have a person review, approve, or eyeball work the run already did; that is Manual Follow-Up. The default is zero gates per playbook. Write the marker on its own line, immediately above the dependent tasks:
+3. **A HITL gate - rare.** Emit one only when (a) the user explicitly asked the run to stop at that point, or (b) the very next tasks cannot execute at all without something only a person can supply, and rungs 1 and 2 cannot absorb it. Never gate to have a person review, approve, or eyeball work the run already did; that is Manual Follow-Up. The default is zero gates per playbook. When one is unavoidable, push it late: order the playbook so every task that does not depend on the person runs first, and collect every human step into ONE gate near the end. A gate at 20% stalls the run for hours while the person is away; the same gate at 80% costs nothing. Write the marker on its own line, immediately above the dependent tasks:
 
    ```markdown
    - [ ] Write the schema migration in `db/migrations/0042_split_accounts.sql` and run it against the local database.
@@ -127,7 +127,7 @@ Before you write any `- [ ]`, ask: _can an AI agent with shell, file, and networ
 
 ```markdown
 - [ ] Add Playwright coverage for the login flow in `e2e/login.spec.ts` (happy path, wrong password, locked account) and run `npm run e2e` until green.
-- [ ] Wire the SendGrid transport in `src/mail/transport.ts` using `process.env.SENDGRID_API_KEY` and add a unit test that mocks the client.
+- [ ] Wire the SendGrid transport in `src/mail/transport.ts` using `process.env.SENDGRID_API_KEY`, add the name to `.env.example`, fail with a clear message when it is unset, and add a unit test that mocks the client.
 
 ## Manual Follow-Up (not executed by Auto Run)
 

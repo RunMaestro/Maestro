@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab } from '../../types';
-import {
-	cycleShowThinkingFields,
-	moveActiveUnifiedTabToEdge,
-	toggleReadOnlyModeFields,
-} from '../../utils/tabHelpers';
+import { moveActiveUnifiedTabToEdge, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
+import { cycleTabThinkingMode } from '../../services/tabThinkingMode';
 import {
 	resolveActiveTabRef,
 	resolveModelEffortTabId,
@@ -14,6 +11,7 @@ import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
+import { isPromptLinksEnabled, openPromptLinks } from '../../services/promptLinks';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
@@ -41,8 +39,6 @@ import { requestSteerSend } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
-import { isMirrorShown } from '../../stores/peerMirrorStore';
-import { gateKeyForMirror } from './mirrorKeyboardGate';
 
 /**
  * Open the floating media player on whatever it should be showing.
@@ -168,9 +164,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// the store so App does not need to push a live Session object onto this ref.
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
-			// A Federation mirror on screen hides the local active agent rather than replacing it:
-			// only shortcuts that never touch the active agent may run (allowlist, see the gate).
-			if (isMirrorShown() && gateKeyForMirror(e, ctx) !== 'pass') return;
 			const activeSession = selectActiveSession(useSessionStore.getState());
 
 			// Terminal focus recovery: if a key event reaches this window handler while in
@@ -553,7 +546,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				// Fire-and-forget. A failed IPC must never block a shortcut from
 				// taking effect; the daily counter is best-effort telemetry.
-				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now(), shortcutId);
 			};
 
 			// Cmd+F while the output find bar is already open: bring focus back to its
@@ -1127,6 +1120,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useThroughputGaugeStore.getState().toggle();
 				trackShortcut('toggleThroughputGauge');
+			} else if (ctx.isShortcut(e, 'openPromptLinks') && isPromptLinksEnabled()) {
+				e.preventDefault();
+				openPromptLinks();
+				trackShortcut('openPromptLinks');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();
@@ -1363,6 +1360,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					trackShortcut('toggleReadOnlyMode');
 					return;
 				}
+				// The room is the "tab" here, so Toggle Tab Unread flips the room's
+				// Left Bar dot. Marking it stays put until the room is opened again.
+				if (ctx.isTabShortcut(e, 'toggleTabUnread')) {
+					e.preventDefault();
+					useGroupChatStore.getState().toggleGroupChatUnread(ctx.activeGroupChatId);
+					trackShortcut('toggleTabUnread');
+					return;
+				}
 			}
 
 			// Unified tab shortcuts - works across ALL tab types (AI, file preview, terminal).
@@ -1405,6 +1410,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.preventDefault();
 					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
 					trackShortcut('focusBrowserAddress');
+				}
+				// Cmd+Shift+C: Design Mode in the active browser tab (Chrome's inspect chord)
+				if (
+					ctx.isTabShortcut(e, 'toggleBrowserDesignMode') &&
+					activeSession?.activeBrowserTabId &&
+					activeSession.inputMode === 'ai'
+				) {
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.toggleBrowserDesignMode();
+					trackShortcut('toggleBrowserDesignMode');
 				}
 				// Cmd+Left / Cmd+Right: Browser history back/forward when a browser
 				// tab is active. We deliberately skip when focus is inside an
@@ -1613,14 +1628,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					}
 					if (ctx.isTabShortcut(e, 'toggleShowThinking')) {
 						e.preventDefault();
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => {
-								if (s.id !== activeSession!.id) return s;
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((tab: AITab) => {
-										if (tab.id !== s.activeTabId) return tab;
-										if (tab.wizardState?.isActive) {
+						const thinkingTab = activeSession!.aiTabs.find(
+							(tab: AITab) => tab.id === activeSession!.activeTabId
+						);
+						if (thinkingTab?.wizardState?.isActive) {
+							ctx.setSessions((prev: Session[]) =>
+								prev.map((s: Session) => {
+									if (s.id !== activeSession!.id) return s;
+									return {
+										...s,
+										aiTabs: s.aiTabs.map((tab: AITab) => {
+											if (tab.id !== s.activeTabId || !tab.wizardState) return tab;
 											return {
 												...tab,
 												wizardState: {
@@ -1631,12 +1649,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 														: tab.wizardState.thinkingContent,
 												},
 											};
-										}
-										return { ...tab, ...cycleShowThinkingFields(tab) };
-									}),
-								};
-							})
-						);
+										}),
+									};
+								})
+							);
+						} else if (thinkingTab) {
+							// The same write the Thinking pill makes, so a hosted tab's host gets it too.
+							cycleTabThinkingMode(activeSession!.id, thinkingTab.id);
+						}
 						trackShortcut('toggleShowThinking');
 					}
 				}
@@ -1841,6 +1861,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				});
 				if (ctx?.isTabShortcut(probe, 'focusBrowserAddress')) {
 					ctx.mainPanelRef?.current?.focusBrowserAddressBar();
+					return;
+				}
+				// Design Mode toggled while the page has focus. Routed directly, like
+				// Cmd+L, so the overlay guard and the re-dispatch never see it.
+				if (ctx?.isTabShortcut(probe, 'toggleBrowserDesignMode')) {
+					ctx.mainPanelRef?.current?.toggleBrowserDesignMode();
+					// Count it for keyboard mastery, as the window path does.
+					const mastery = ctx.recordShortcutUsage?.('toggleBrowserDesignMode');
+					if (mastery && mastery.newLevel !== null) {
+						ctx.onKeyboardMasteryLevelUp?.(mastery.newLevel);
+					}
 					return;
 				}
 				// Cmd+F arrives here when forwarded from the webview guest. Open the

@@ -110,6 +110,15 @@ async function checkLogin(
 		};
 	}
 
+	if (candidate.toolType === 'antigravity') {
+		// agy keeps its credentials in the OS keyring, not a file Maestro can see,
+		// and probing with a CLI call would cost a turn. The first turn decides.
+		return {
+			status: 'unknown',
+			statusDetail: 'Antigravity sign-in is not checked; the first turn shows whether it works',
+		};
+	}
+
 	// OpenCode keeps no per-account dir Maestro can read.
 	return { status: 'unknown' };
 }

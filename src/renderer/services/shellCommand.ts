@@ -145,7 +145,6 @@ export async function runShellCommand(options: RunShellCommandOptions): Promise<
 			// "this command was generated, not typed".
 			...(request && { request }),
 			cwd,
-			remoteName: session.sshRemote?.name,
 			status: 'running',
 		},
 	});

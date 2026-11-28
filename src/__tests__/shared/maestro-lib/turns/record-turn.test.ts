@@ -26,17 +26,19 @@ import { HistoryManager } from '../../../../main/history-manager';
 import { createAgentRepository } from '../../../../shared/maestro-lib/agents/repository';
 import {
 	DEFAULT_TAB_DEFAULTS,
+	turnFateAfter,
 	type RuleContext,
 } from '../../../../shared/maestro-lib/agents/rules';
 import { createEventBus } from '../../../../shared/maestro-lib/client/event-bus';
 import { resolveMaestroPaths } from '../../../../shared/maestro-lib/paths/resolve';
 import type { MaestroPaths } from '../../../../shared/maestro-lib/paths/resolve';
-import { transcriptOf } from '../../../../shared/maestro-lib/store/transcript';
+import { TURN_CANCELED_NOTE, transcriptOf } from '../../../../shared/maestro-lib/store/transcript';
 import {
 	buildTurnTranscript,
 	buildUserTranscriptEntry,
 	createTurnRecorder,
 	type RecordedTurn,
+	type TurnSummaryHandoff,
 } from '../../../../shared/maestro-lib/turns/record-turn';
 import type { StatsRecorder } from '../../../../shared/maestro-lib/turns/stats';
 import type { TurnExit } from '../../../../shared/maestro-lib/run/start-turn';
@@ -113,7 +115,11 @@ describe('turn records', () => {
 		);
 
 	async function recorder(
-		options: { statsRecorder?: StatsRecorder; loadSqlite?: () => never } = {}
+		options: {
+			statsRecorder?: StatsRecorder;
+			loadSqlite?: () => never;
+			summarize?: (handoff: TurnSummaryHandoff) => void;
+		} = {}
 	) {
 		const repository = createAgentRepository({
 			paths,
@@ -137,6 +143,7 @@ describe('turn records', () => {
 				context: context(),
 				// With a loader given, the real recorder runs; otherwise the spy.
 				...(options.loadSqlite ? {} : { statsRecorder }),
+				...(options.summarize ? { summarize: options.summarize } : {}),
 			}),
 		};
 	}
@@ -175,11 +182,127 @@ describe('turn records', () => {
 				text: 'Fixed the login bug in the session handler. Tests pass.',
 				turnModel: 'opus',
 				turnEffort: 'high',
+				// The turn's end, as every host stamps it (R36), with its time.
+				turnEnded: true,
+				turnEndedAt: 1_700_000_004_200,
 			},
 		]);
 		// The desktop reads the same file.
 		const onDisk = JSON.parse(fs.readFileSync(paths.sessionsFile, 'utf-8'));
 		expect(onDisk.sessions[0].aiTabs[0].logs).toHaveLength(2);
+	});
+
+	// Parity R36: a turn that wrote nothing of its own still says it ended, on its message.
+	it("stamps the end on the message's entry when the turn wrote nothing of its own (R36)", async () => {
+		seed({}, { logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug' }] });
+		const { recorder: records, repository } = await recorder();
+		await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(transcriptOf(repository.getTab('a1', 't1')!)).toEqual([
+			{
+				id: 'u1',
+				timestamp: 1,
+				source: 'user',
+				text: 'fix the login bug',
+				turnEnded: true,
+				turnEndedAt: 1_700_000_004_200,
+			},
+		]);
+	});
+
+	// CodeRabbit on #2167: a retry into the same entry that answers empty, after an attempt that
+	// ended on its error, is the last attempt: the message reads answered, never errored again.
+	it('reads an empty retry after an errored attempt as answered (R37)', async () => {
+		seed(
+			{},
+			{
+				logs: [
+					{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug' },
+					{ id: 'e1', timestamp: 2, source: 'error', text: 'Overloaded', turnEnded: true },
+				],
+			}
+		);
+		const { recorder: records, repository } = await recorder();
+		await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(turnFateAfter(transcriptOf(repository.getTab('a1', 't1')!), 0)).toBe('answered');
+	});
+
+	// Parity R41 (b): the end goes on the message as it is when the stamp is written, never on a
+	// copy read when recording began, which would undo a change made to it since (the delivered
+	// tick).
+	it('stamps the message as it is at write time, keeping a change made since the turn began (R41)', async () => {
+		const message = { id: 'u1', timestamp: 1, source: 'user' as const, text: 'fix the login bug' };
+		seed({}, { logs: [{ ...message, delivered: false }] });
+		const { repository } = await recorder();
+		const records = createTurnRecorder({
+			paths,
+			repository: {
+				...repository,
+				// The message is marked delivered while the turn's own entries are written.
+				appendTranscript: async (...args: Parameters<typeof repository.appendTranscript>) => {
+					const appended = await repository.appendTranscript(...args);
+					await repository.replaceTranscriptEntry('a1', 't1', { ...message, delivered: true });
+					return appended;
+				},
+			},
+			loadSqlite: () => {
+				throw new Error('unused');
+			},
+			context: context(),
+			statsRecorder,
+		});
+		await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(transcriptOf(repository.getTab('a1', 't1')!)).toEqual([
+			{ ...message, delivered: true, turnEnded: true, turnEndedAt: 1_700_000_004_200 },
+		]);
+	});
+
+	// CodeRabbit on #2167: a stamp that could not be written is reported, never a silent success.
+	it('reports the transcript failed when the end stamp on the message could not be written', async () => {
+		seed({}, { logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'fix the login bug' }] });
+		const { repository } = await recorder();
+		const records = createTurnRecorder({
+			paths,
+			repository: {
+				getAgent: repository.getAgent,
+				getTab: repository.getTab,
+				appendTranscript: repository.appendTranscript,
+				replaceTranscriptEntry: async () => ({
+					ok: false as const,
+					error: { code: 'rejected' as const, message: 'fenced', method: 'tabs.update' as const },
+				}),
+			},
+			loadSqlite: () => {
+				throw new Error('unused');
+			},
+			context: context(),
+			statsRecorder,
+		});
+		const result = await records.recordTurn(
+			turn({
+				userEntryWritten: true,
+				userEntryId: 'u1',
+				completed: { ...turn().completed, answerText: '' },
+			})
+		);
+		expect(result.transcript).toMatchObject({ ok: false, error: { message: 'fenced' } });
 	});
 
 	it('records usage under the provider the turn was sent to, not the one the agent has now', async () => {
@@ -618,6 +741,27 @@ describe('turn records', () => {
 		expect(statsEvents).toHaveLength(1);
 	});
 
+	it("lets the sender's own save-to-History chip decide in place of the tab's", async () => {
+		seed({}, { saveToHistory: false });
+		const { recorder: kept } = await recorder();
+		const saved = await kept.recordTurn(turn({ saveToHistory: true }));
+		expect(saved.history).toMatchObject({ ok: true });
+		expect(await new HistoryManager().getEntries('a1')).toHaveLength(1);
+	});
+
+	it('writes no History entry when the sender turned it off, though the tab saves', async () => {
+		const { recorder: records, repository } = await recorder();
+		const result = await records.recordTurn(turn({ saveToHistory: false }));
+		expect(result.history).toMatchObject({
+			ok: false,
+			reason: 'not-recorded',
+			message: 'The sender chose not to save this turn to History.',
+		});
+		expect(fs.existsSync(path.join(paths.historyDir, 'a1.jsonl'))).toBe(false);
+		expect(repository.getTab('a1', 't1')?.logs).toHaveLength(2);
+		expect(statsEvents).toHaveLength(1);
+	});
+
 	it('records an interrupted turn as the partial answer and usage, with no History entry', async () => {
 		const { recorder: records, repository } = await recorder();
 		const result = await records.recordTurn(
@@ -631,9 +775,11 @@ describe('turn records', () => {
 			})
 		);
 		expect(result.history).toMatchObject({ ok: false, reason: 'not-recorded' });
-		expect(transcriptOf(repository.getTab('a1', 't1')!).map((e) => e.source)).toEqual([
-			'user',
-			'stdout',
+		// It ends on the note a local Stop writes, so a hosted tab reads the same.
+		expect(transcriptOf(repository.getTab('a1', 't1')!).map((e) => [e.source, e.text])).toEqual([
+			['user', 'fix the login bug'],
+			['stdout', expect.any(String)],
+			['system', TURN_CANCELED_NOTE],
 		]);
 		expect(statsEvents).toHaveLength(1);
 	});
@@ -664,12 +810,34 @@ describe('turn records', () => {
 			['user', 'fix the login bug'],
 			['error', 'Authentication failed. Sign in again.'],
 		]);
+		// The structured error is kept on the entry, as a local error entry keeps it.
+		expect(entries[1].agentError).toMatchObject({ type: 'auth_expired', recoverable: true });
 		// No usage reported: the columns stay NULL rather than becoming 0.
 		expect(statsEvents[0]).not.toHaveProperty('inputTokens');
 	});
 
 	describe('buildTurnTranscript', () => {
 		const ctx = context();
+
+		it('ends a stopped turn on the note a local Stop writes, after its partial answer', () => {
+			const entries = buildTurnTranscript(
+				turn({
+					completed: {
+						...turn().completed,
+						outcome: 'interrupted',
+						answerText: 'Partial answer',
+						exit: { ...CLEAN_EXIT, interrupted: true },
+					},
+				}),
+				ctx
+			);
+			expect(entries.map((e) => [e.source, e.text])).toEqual([
+				['user', 'fix the login bug'],
+				['stdout', 'Partial answer'],
+				['system', TURN_CANCELED_NOTE],
+			]);
+			expect(TURN_CANCELED_NOTE).toBe('Canceled by user');
+		});
 
 		it('words an unclassified crash from the exit facts', () => {
 			const crash = (exit: Partial<TurnExit>) =>
@@ -717,9 +885,52 @@ describe('turn records', () => {
 			});
 		});
 
+		it.each([
+			['sticky', ['user', 'thinking', 'tool', 'stdout']],
+			['on', ['user', 'stdout']],
+			['off', ['user', 'stdout']],
+			[undefined, ['user', 'stdout']],
+		])(
+			'writes what a %s tab keeps of the streamed thinking and tool cards (P7)',
+			(mode, sources) => {
+				const streamed = [
+					{ id: 's1', timestamp: 2, source: 'thinking' as const, text: 'Plan it.' },
+					{
+						id: 'tool-1',
+						timestamp: 3,
+						source: 'tool' as const,
+						text: 'Read',
+						metadata: { toolState: { status: 'completed' as const, output: 'x'.repeat(10_000) } },
+					},
+					{ id: 's2', timestamp: 4, source: 'stdout' as const, text: 'streamed answer' },
+				];
+				const entries = buildTurnTranscript(turn({ streamed }), ctx, mode);
+				expect(entries.map((e) => e.source)).toEqual(sources);
+				if (mode === 'sticky') {
+					// The tool card is capped as a saved tab's is; the answer is the result, written once.
+					const output = entries[2].metadata?.toolState?.output as string;
+					expect(output.length).toBeLessThan(10_000);
+					expect(entries.filter((e) => e.source === 'stdout')).toHaveLength(1);
+				}
+			}
+		);
+
 		it('starts at the answer when the runtime already wrote the message', () => {
 			const entries = buildTurnTranscript(turn({ userEntryWritten: true }), ctx);
 			expect(entries.map((e) => e.source)).toEqual(['stdout']);
+		});
+
+		it.each([
+			['answered', {}, 'stdout'],
+			['crashed', { outcome: 'crashed' as const, answerText: '' }, 'error'],
+			['stopped', { outcome: 'interrupted' as const, answerText: '' }, 'system'],
+		])("stamps the turn's end on its last entry when it %s (R36)", (_how, completed, last) => {
+			const entries = buildTurnTranscript(
+				turn({ userEntryWritten: true, completed: { ...turn().completed, ...completed } }),
+				ctx
+			);
+			expect(entries.at(-1)).toMatchObject({ source: last, turnEnded: true });
+			expect(entries.slice(0, -1).some((entry) => entry.turnEnded)).toBe(false);
 		});
 
 		it('builds the same user entry the recorder would, from the same inputs', () => {
@@ -749,6 +960,87 @@ describe('turn records', () => {
 			);
 			expect(answer).not.toHaveProperty('turnModel');
 			expect(answer).not.toHaveProperty('turnEffort');
+		});
+	});
+
+	// P8: with `summarize` (a host's runtime), a finished turn's History entry comes from a synopsis
+	// turn, by the desktop's exit rule: the turn ran a tool (or its tool cards are not kept, or it
+	// was a custom command) in a provider session.
+	describe('History from a synopsis turn (P8)', () => {
+		const tool = { id: 'tool-1', timestamp: 3, source: 'tool' as const, text: 'Read' };
+
+		it("hands the entry to summarize with the turn's provider, model and effort, and writes none", async () => {
+			const handoffs: TurnSummaryHandoff[] = [];
+			const { recorder: records } = await recorder({ summarize: (h) => handoffs.push(h) });
+			const result = await records.recordTurn(turn({ streamed: [tool] }));
+			expect(result.history).toEqual({ ok: true, synopsis: true });
+			expect(await new HistoryManager().getEntries('a1')).toEqual([]);
+			expect(handoffs).toHaveLength(1);
+			expect(handoffs[0].settings).toEqual({
+				provider: 'claude-code',
+				model: 'opus',
+				effort: 'high',
+			});
+			expect(handoffs[0].entry).toMatchObject({
+				type: 'USER',
+				agentSessionId: 'abcd1234-0000-4000-8000-000000000000',
+				sessionId: 'a1',
+				tabId: 't1',
+				elapsedTimeMs: 4_200,
+				success: true,
+			});
+			// Usage is still recorded for the turn itself.
+			expect(statsEvents).toHaveLength(1);
+		});
+
+		it.each([
+			['a tab that keeps tool cards, after a text-only turn', 'on', [], undefined, false],
+			['a tab that keeps tool cards, after a tool turn', 'on', [tool], undefined, true],
+			['a tab with thinking off, whose tool cards are not kept', 'off', [], undefined, true],
+			['a custom command, whatever it ran', 'on', [], { command: '/commit' }, true],
+		] as const)('%s: summarized=%s', async (_name, showThinking, streamed, aiCommand, handed) => {
+			seed({}, { showThinking });
+			const summarize = vi.fn();
+			const { recorder: records } = await recorder({ summarize });
+			const result = await records.recordTurn(
+				turn({
+					streamed: [...streamed],
+					assembled: {
+						entry: { text: 'do it', ...(aiCommand ? { aiCommand } : {}) },
+						settings: { provider: 'claude-code' },
+					},
+				})
+			);
+			expect(summarize).toHaveBeenCalledTimes(handed ? 1 : 0);
+			expect(result.history).toMatchObject(handed ? { ok: true } : { reason: 'not-recorded' });
+		});
+
+		it('summarizes a tool turn whose cards the host did not fold (P12)', async () => {
+			seed({}, { showThinking: 'on' });
+			const summarize = vi.fn();
+			const { recorder: records } = await recorder({ summarize });
+			const result = await records.recordTurn(turn({ ranTool: true }));
+			expect(summarize).toHaveBeenCalledTimes(1);
+			expect(result.history).toMatchObject({ ok: true });
+		});
+
+		it('summarizes a tool turn whose thinking was folded and whose tool was not (review)', async () => {
+			seed({}, { showThinking: 'on' });
+			const summarize = vi.fn();
+			const { recorder: records } = await recorder({ summarize });
+			const thought = { id: 'th1', timestamp: 1, source: 'thinking', text: 'Plan it.' } as const;
+			await records.recordTurn(turn({ streamed: [thought], ranTool: true }));
+			expect(summarize).toHaveBeenCalledTimes(1);
+		});
+
+		it('summarizes no turn that ran in no provider session, as the desktop does not', async () => {
+			const summarize = vi.fn();
+			const { recorder: records } = await recorder({ summarize });
+			const result = await records.recordTurn(
+				turn({ streamed: [tool], completed: { ...turn().completed, sessionId: undefined } })
+			);
+			expect(summarize).not.toHaveBeenCalled();
+			expect(result.history).toMatchObject({ ok: false, reason: 'not-recorded' });
 		});
 	});
 

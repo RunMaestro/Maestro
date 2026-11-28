@@ -40,7 +40,7 @@ function Footer({
 		<UsageDashboardFooter
 			theme={theme}
 			viewMode={viewMode}
-			rangeLabel="Showing this month data"
+			rangeLabel="Showing Last 30 Days"
 			fallbackSummary={fallbackSummary}
 			databaseSizeLabel={databaseSizeLabel}
 		/>
@@ -57,7 +57,7 @@ describe('UsageDashboardFooter', () => {
 	it('renders the range label, database size, and escape hint', () => {
 		render(<Footer databaseSizeLabel="8.6 MB" />);
 
-		expect(screen.getByText('Showing this month data')).toBeInTheDocument();
+		expect(screen.getByText('Showing Last 30 Days')).toBeInTheDocument();
 		expect(screen.getByTestId('database-size-indicator')).toHaveTextContent('8.6 MB');
 		expect(screen.getByText('Press Esc to close')).toBeInTheDocument();
 	});
@@ -195,7 +195,7 @@ describe('UsageDashboardFooter on a phone', () => {
 		expect(screen.getByTestId('database-size-indicator')).toHaveTextContent('10.0 MB');
 		expect(screen.queryByText('Press Esc to close')).not.toBeInTheDocument();
 		// The range label is redundant with the header's own time-range select.
-		expect(screen.queryByText('Showing this month data')).not.toBeInTheDocument();
+		expect(screen.queryByText('Showing Last 30 Days')).not.toBeInTheDocument();
 	});
 
 	it('falls back to the range label when the tab publishes no summary', () => {
@@ -203,7 +203,7 @@ describe('UsageDashboardFooter on a phone', () => {
 		render(<Footer fallbackSummary={null} />);
 
 		expect(screen.getByTestId('usage-dashboard-footer-summary')).toHaveTextContent(
-			'Showing this month data'
+			'Showing Last 30 Days'
 		);
 	});
 });

@@ -63,6 +63,8 @@ export interface AiCommandHandlerDependencies {
 export interface AiCommandSuggestRequest {
 	/** The user's plain-English description. */
 	request: string;
+	/** The Maestro agent asking, for the hosted-launch check (`checkHostedAgentLaunch`). */
+	ownerAgentId?: string;
 	/** Provider that owns the tab (never hard-coded - the user picks it). */
 	agentType: string;
 	/** Directory the accepted command will run in. */
@@ -189,6 +191,8 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 							// (resolveCommandCwd), so the folder-trust opt-in applies.
 							acceptWorkspaceTrust: true,
 							agentConfigValues,
+							ownerAgentId: config.ownerAgentId,
+							launchFeature: 'ai-command',
 						},
 						processManager,
 						agentDetector

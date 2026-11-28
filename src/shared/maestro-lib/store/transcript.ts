@@ -17,6 +17,8 @@
  * Pure: no file access. Safe to import from the renderer.
  */
 
+import type { SteerBubbleState } from '../../chatSteering';
+import type { AgentError } from '../../types';
 import type { AgentRecord, AITabRecord, SessionsDocument, UnknownFields } from './records';
 import { agentsOf, aiTabsOf } from './read-stores';
 
@@ -34,6 +36,13 @@ export const LOG_ENTRY_SOURCES = [
 
 /** Who or what produced a transcript entry. */
 export type LogEntrySource = (typeof LOG_ENTRY_SOURCES)[number];
+
+/**
+ * The `system` note a turn the person stopped ends on. One string for every mode: the desktop
+ * writes it when Stop ends a local or SSH turn (`turnInterrupt.ts`), and a host writes it into the
+ * transcript of an interrupted turn (`buildTurnTranscript()`), so a hosted tab reads the same.
+ */
+export const TURN_CANCELED_NOTE = 'Canceled by user';
 
 /** A tool call's progress, carried on `source: 'tool'` entries. */
 export interface LogEntryToolState extends UnknownFields {
@@ -54,6 +63,51 @@ export interface LogEntryRecord extends UnknownFields {
 	/** User messages: false while the agent has not accepted the message. */
 	delivered?: boolean;
 	readOnly?: boolean;
+	/** A user message steered into the turn already running (`SteeredMessageHeader`). */
+	steered?: boolean;
+	/**
+	 * A steered message: what the agent did with it. `queued`: it could not fold it in and ran it
+	 * as a turn of its own after the one it was steered into (`isUserTurnStart()`); `absorbed`: it
+	 * took it into that turn; `pending`: no verdict yet. Absent on a steer written before the state
+	 * was recorded, read as joining the turn.
+	 */
+	steerState?: SteerBubbleState;
+	/**
+	 * A user message: the id of the queue item it ran from, on the host that ran it. A client that
+	 * queued the message knows that id from the host's receipt, so it finds this entry by identity,
+	 * never by text or position (two messages with the same text, or an image-only message).
+	 */
+	queuedItemId?: string;
+	/**
+	 * The turn this entry belongs to ended here (answered, on its own error, or stopped): stamped by
+	 * the host on the turn's last entry when the turn ends (`markTurnEnded()`). A turn with no stamp
+	 * on a host that stamps did not end: it runs, or died with its host (`turnFateAfter()`).
+	 */
+	turnEnded?: boolean;
+	/**
+	 * On a user message: when its turn's latest attempt ended with nothing of its own that stays
+	 * (a retry into the same entry that answered empty), epoch ms (`markTurnEnded()`).
+	 */
+	turnEndedAt?: number;
+	/**
+	 * On a queued steer (`steerState: 'queued'`): its own follow-up turn ended with nothing of its
+	 * own that stays, so the end went on the steer (`markTurnEnded()`). Its `turnEnded` may also be
+	 * the end of the turn it was steered into; this tells the reader the steer's own turn ended too.
+	 */
+	steerTurnEnded?: boolean;
+	/** When that follow-up ended, epoch ms; `turnEndedAt` stays the end of the turn before it. */
+	steerTurnEndedAt?: number;
+	/**
+	 * A desktop's Agent Resilience card: the turn's error was taken over by that desktop's own
+	 * automatic retry, and this is the id of its outage (`RetryStatusCard`). A Federation client
+	 * reading a hosted tab tells from it that the host retries the message itself (`hostRetriesTurn()`).
+	 */
+	retryOutageId?: string;
+	/**
+	 * The retry card's outage was stopped by the user (its Stop): the retry no longer holds the
+	 * message, which waits paused. `hostRetriesTurn()` reads a stopped card as no retry (R45).
+	 */
+	retryStopped?: boolean;
 	/** A custom AI command (`/commit`) this user message invoked. */
 	aiCommand?: { command: string; description: string };
 	metadata?: UnknownFields & {
@@ -64,6 +118,16 @@ export interface LogEntryRecord extends UnknownFields {
 	/** The model and effort the turn ran under; absent means the agent default. */
 	turnModel?: string;
 	turnEffort?: string;
+	/**
+	 * A "Session not found" entry's recovery card: the prompt that hit the dead session and the
+	 * tab to re-send it on, with the prior conversation as context.
+	 */
+	recoveryAction?: { lastUserPrompt: string; tabId: string };
+	/**
+	 * An error entry's structured error, as a local error entry carries it: the error card's
+	 * details, and on a hosted record the error banner (`projectHostedSession()`).
+	 */
+	agentError?: AgentError;
 }
 
 function isLogEntryRecord(value: unknown): value is LogEntryRecord {

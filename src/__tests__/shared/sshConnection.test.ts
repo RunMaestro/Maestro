@@ -8,6 +8,7 @@ import {
 	describeSshConnectionError,
 	describeSshUnreachable,
 	isSshConnectionFailure,
+	sshFailedBeforeSession,
 	readSshProbeOutput,
 } from '../../shared/sshConnection';
 import type { SshRemoteConfig } from '../../shared/types';
@@ -121,6 +122,28 @@ describe('describeSshConnectionError', () => {
 		expect(describeSshConnectionError('Could not resolve hostname foo')).toMatch(/resolve/);
 	});
 
+	// When ssh prints nothing, exec stands in Node's "Command failed: <command line>",
+	// and that line carries every -o option, a ProxyCommand credential included.
+	it('never shows the command line Node puts in a failure message', () => {
+		const leaked =
+			'Command failed: /usr/bin/ssh -T -o ProxyCommand=/Users/me/go/bin/tailcat tcoSECRETAUTHKEY 22 user@host /bin/bash -c x';
+		const described = describeSshConnectionError(leaked);
+		expect(described).not.toContain('tcoSECRETAUTHKEY');
+		expect(described).not.toContain('/usr/bin/ssh');
+		expect(described).toMatch(/exited without printing an error/);
+
+		// A word inside the command line is not a diagnosis: `-o ConnectTimeout`
+		// is not "timed out", a key path is not "No such file".
+		expect(
+			describeSshConnectionError('Command failed: /usr/bin/ssh -o ConnectTimeout=45 host timed out')
+		).toMatch(/exited without printing an error/);
+
+		// Real ssh text after the command line is kept.
+		expect(
+			describeSshConnectionError(`${leaked}\nkex_exchange_identification: read: Connection reset`)
+		).toBe('kex_exchange_identification: read: Connection reset');
+	});
+
 	// An exotic transport reports failures this function has never heard of, and
 	// that raw text is the only diagnostic there is. Replacing it with a generic
 	// message would throw away the tunnel's own explanation.
@@ -168,5 +191,38 @@ describe('describeSshUnreachable', () => {
 		expect(describeSshUnreachable({ name: ' ', host: 'box.lan' }, '')).toBe(
 			'Unable to connect to "box.lan" over SSH.'
 		);
+	});
+});
+
+describe('sshFailedBeforeSession', () => {
+	it('is true only for stderr that proves no session opened', () => {
+		for (const stderr of [
+			'ssh: connect to host box port 22: Connection refused',
+			'ssh: Could not resolve hostname box: nodename nor servname provided',
+			'me@box: Permission denied (publickey).',
+			'ssh: connect to host box port 22: No route to host',
+			'Host key verification failed.',
+		]) {
+			expect(sshFailedBeforeSession(stderr), stderr).toBe(true);
+		}
+	});
+
+	it('is false for a connection that dropped after it opened, and for silence', () => {
+		expect(sshFailedBeforeSession('Connection to box closed by remote host.')).toBe(false);
+		expect(sshFailedBeforeSession('client_loop: send disconnect: Broken pipe')).toBe(false);
+		expect(sshFailedBeforeSession('')).toBe(false);
+	});
+
+	it('is false for the same words written by the remote side, not by ssh', () => {
+		// The remote shell and the relay share ssh's stderr; their text proves nothing.
+		expect(sshFailedBeforeSession('bash: /home/me/.maestro/bin/x: Permission denied')).toBe(false);
+		expect(sshFailedBeforeSession('maestro-p: connection refused by the steering socket')).toBe(
+			false
+		);
+		expect(
+			sshFailedBeforeSession(
+				'warning: remote said Host key verification failed. in a log line\nConnection to box closed.'
+			)
+		).toBe(false);
 	});
 });

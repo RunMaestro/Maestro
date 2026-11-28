@@ -9,13 +9,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { webcrypto } from 'node:crypto';
 import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act } from '@testing-library/react';
+import { withTurnAgentText } from '../../../shared/maestro-lib/turns/prompt';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
-import { resetStores } from '../../helpers';
+import { agentModeFields, resetStores } from '../../helpers';
 import { useSessionTranscriptSync } from '../../../renderer/hooks/session/useSessionTranscriptSync';
 import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -138,9 +139,23 @@ vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 
 // Tab auto-naming is fire-and-forget and covered in services/tabAutoNaming.test.ts;
 // here we only assert which queued items the drain hands to it (issue #1531).
-vi.mock('../../../renderer/services/tabAutoNaming', () => ({
+vi.mock('../../../renderer/services/tabAutoNaming', async (importOriginal) => ({
+	// The real rule for which queued items name a tab; only the namer itself is mocked.
+	queuedItemNamingText: (
+		await importOriginal<typeof import('../../../renderer/services/tabAutoNaming')>()
+	).queuedItemNamingText,
 	requestTabAutoNameForMessage: vi.fn(),
 }));
+
+// A hosted agent's new tab is opened on its host; the real routing runs unless a case says so.
+vi.mock('../../../renderer/services/hostedTurns', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../renderer/services/hostedTurns')>();
+	return {
+		...actual,
+		hostedTargetOf: vi.fn(actual.hostedTargetOf),
+		openHostedTab: vi.fn(async () => 'host-tab'),
+	};
+});
 
 beforeEach(() => {
 	resetStores(useAgentStore, useSessionStore);
@@ -445,6 +460,57 @@ describe('agentStore', () => {
 			expect(updated.aiTabs[1].agentError).toBeUndefined();
 		});
 
+		it('leaves a newer session-level error intact when clearing a different tab by tabId', () => {
+			const tab1Error = { type: 'agent_not_installed', message: 'missing' } as any;
+			const tab2Error = { type: 'rate_limited', message: 'limit' } as any;
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: tab2Error,
+				agentErrorTabId: 'tab-2',
+				agentErrorPaused: true,
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						agentError: tab1Error,
+					},
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+						agentError: tab2Error,
+					},
+				],
+				activeTabId: 'tab-2',
+			});
+
+			useSessionStore.getState().setSessions([session]);
+
+			useAgentStore.getState().clearAgentError('session-1', 'tab-1');
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].agentError).toBeUndefined();
+			expect(updated.aiTabs[1].agentError).toEqual(tab2Error);
+			expect(updated.agentError).toEqual(tab2Error);
+			expect(updated.agentErrorTabId).toBe('tab-2');
+			expect(updated.agentErrorPaused).toBe(true);
+			expect(updated.state).toBe('error');
+		});
+
 		it('handles IPC clearError rejection without throwing', () => {
 			mockClearError.mockRejectedValueOnce(new Error('IPC down'));
 			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
@@ -515,6 +581,50 @@ describe('agentStore', () => {
 			const newTab = updated.aiTabs[updated.aiTabs.length - 1];
 			expect(newTab.saveToHistory).toBe(true);
 			expect(newTab.showThinking).toBe('on');
+		});
+
+		it("opens a hosted agent's new tab on its host, as New Tab does", async () => {
+			const { hostedTargetOf, openHostedTab } =
+				await import('../../../renderer/services/hostedTurns');
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: { type: 'agent_crashed', message: 'crash' } as any,
+				liftedTo: { peer: 'box', agentId: 'h1', at: 1 },
+			});
+			useSessionStore.getState().setSessions([session]);
+			vi.mocked(hostedTargetOf).mockReturnValueOnce({ peerId: 'box', agentId: 'h1' });
+
+			useAgentStore.getState().startNewSessionAfterError('session-1');
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.agentError).toBeUndefined();
+			// No local-only tab: the host makes it, and the host sync draws it here.
+			expect(updated.aiTabs).toHaveLength(session.aiTabs.length);
+			expect(openHostedTab).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }), {
+				fields: {},
+			});
+		});
+
+		it("gives a hosted agent's new tab the Save to History and thinking a local one gets", async () => {
+			const { hostedTargetOf, openHostedTab } =
+				await import('../../../renderer/services/hostedTurns');
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: { type: 'agent_crashed', message: 'crash' } as any,
+				liftedTo: { peer: 'box', agentId: 'h1', at: 1 },
+			});
+			useSessionStore.getState().setSessions([session]);
+			vi.mocked(hostedTargetOf).mockReturnValueOnce({ peerId: 'box', agentId: 'h1' });
+
+			useAgentStore
+				.getState()
+				.startNewSessionAfterError('session-1', { saveToHistory: false, showThinking: 'on' });
+
+			expect(openHostedTab).toHaveBeenCalledWith(expect.objectContaining({ id: 'session-1' }), {
+				fields: { saveToHistory: false, showThinking: 'on' },
+			});
 		});
 
 		it('does nothing if session not found', () => {
@@ -1301,6 +1411,28 @@ describe('agentStore', () => {
 			unmount();
 		});
 
+		// A managed spawn's prompt must equal the item text, so agent-only text cannot ride on it:
+		// the item is held with the reason, never run without the notes (CodeRabbit on #2148).
+		it.each([
+			['agentContext', { agentContext: 'Replies: ...' }],
+			['agentNotes', { agentNotes: 'Asked @Backend.' }],
+		] as const)(
+			'holds a managed queue item that carries %s, and spawns nothing',
+			async (_n, extra) => {
+				const item = createQueuedItem({ pendingAdmissionId: 'dispatch-1', ...extra });
+				useSessionStore
+					.getState()
+					.setSessions([createMockSession({ id: 'session-1', executionQueue: [item] })]);
+				await useAgentStore
+					.getState()
+					.processQueuedItem('session-1', item, defaultDeps)
+					.catch(() => undefined);
+				expect(mockSpawn).not.toHaveBeenCalled();
+				const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+				expect(logs.some((log) => log.text.includes('DispatchQueueRoutingUnsupported'))).toBe(true);
+			}
+		);
+
 		it.each(['user', 'auto', undefined] as const)(
 			'preserves queued message and command provenance %s without promoting unknown callers',
 			async (querySource) => {
@@ -1579,6 +1711,106 @@ describe('agentStore', () => {
 			});
 		});
 
+		// A Federation sender's agent-only text (a desktop host running a hosted agent's turn) lays
+		// out as the headless host lays it: one `withTurnAgentText()` for both (M16).
+		// A hosted agent's turn carries the same two fields to its host (hostedQueuedTurn.test.ts),
+		// and a host too old for them gets this same text as its message (ws-client.test.ts).
+		it.each(['local', 'ssh'] as const)(
+			"%s: lays a received turn's agent-only text around the prompt as a headless host does",
+			async (mode) => {
+				const session = createMockSession({
+					...agentModeFields(mode),
+					id: 'session-1',
+					toolType: 'claude-code',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: 'existing-conv-id',
+							name: null,
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'tab-1',
+				});
+				useSessionStore.getState().setSessions([session]);
+
+				await useAgentStore.getState().processQueuedItem(
+					'session-1',
+					createQueuedItem({
+						tabId: 'tab-1',
+						text: 'Finish your answer.',
+						agentContext: 'Replies:\nBackend: fine.',
+						agentNotes: 'Your answer goes to Backend.',
+					}),
+					defaultDeps
+				);
+
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				const prompt = mockSpawn.mock.calls[0][0].prompt;
+				expect(prompt).toBe(
+					withTurnAgentText('Finish your answer.', {
+						agentContext: 'Replies:\nBackend: fine.',
+						agentNotes: 'Your answer goes to Backend.',
+					})
+				);
+				expect(prompt).toBe(
+					'Replies:\nBackend: fine.\n\n---\n\nFinish your answer.\n\n---\n\nYour answer goes to Backend.'
+				);
+			}
+		);
+
+		it("lays a received command's agent-only text around its expanded prompt, as assembleTurn() does (Greptile on #2148)", async () => {
+			useSessionStore.getState().setSessions([
+				createMockSession({
+					id: 'session-1',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: 'existing-conv-id',
+							name: null,
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'tab-1',
+				}),
+			]);
+			await useAgentStore.getState().processQueuedItem(
+				'session-1',
+				createQueuedItem({
+					tabId: 'tab-1',
+					type: 'command',
+					command: '/read',
+					agentContext: 'Replies:\nBackend: fine.',
+					agentNotes: 'Your answer goes to Backend.',
+				}),
+				{
+					...defaultDeps,
+					customAICommands: [
+						{
+							id: 'read',
+							command: '/read',
+							description: 'Read mail',
+							prompt: 'Read authorized mail',
+						},
+					],
+				}
+			);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(mockSpawn.mock.calls[0][0].prompt).toBe(
+				'Replies:\nBackend: fine.\n\n---\n\nRead authorized mail\n\n---\n\nYour answer goes to Backend.'
+			);
+		});
+
 		// A queued message that @mentions another agent must consult that agent HERE,
 		// as the message becomes this agent's turn - not when the user typed it into
 		// a queue that was several messages deep.
@@ -1617,7 +1849,11 @@ describe('agentStore', () => {
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
 				undefined,
-				undefined
+				{
+					routingOverride: undefined,
+					planText: 'now ask @Backend to review',
+					settings: expect.objectContaining({ text: 'now ask @Backend to review' }),
+				}
 			);
 			// The local turn still runs: a trailing mention does not suppress it.
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
@@ -1660,7 +1896,57 @@ describe('agentStore', () => {
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
 				undefined,
-				'parallel'
+				{
+					routingOverride: 'parallel',
+					planText: 'fix it, then send the results to @Backend',
+					settings: expect.objectContaining({ mentionRouting: 'parallel' }),
+				}
+			);
+		});
+
+		// A Design Mode chip's page content rides in the message, but only what the
+		// user typed may name an agent to consult.
+		it('plans the mentions without the Design Mode chip blocks', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const block = '```html\n<a>ping @Other</a>\n```';
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: `${block}\n\nask @Backend about it`,
+				crossAgentMention: true,
+				designPickPageText: [block],
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
+				`${block}\n\nask @Backend about it`,
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1',
+				undefined,
+				{
+					routingOverride: undefined,
+					planText: '(Design Mode pick)\n\nask @Backend about it',
+					settings: expect.objectContaining({ type: 'message' }),
+				}
 			);
 		});
 
@@ -2105,7 +2391,9 @@ describe('agentStore', () => {
 				}
 			);
 
-			it.each(['advertised', 'absent'] as const)(
+			// `agent-text`: a Federation sender's agent-only text cannot ride a command that must reach
+			// Grok exactly as typed, so it is refused, never run without it (CodeRabbit on #2148).
+			it.each(['advertised', 'absent', 'agent-text'] as const)(
 				'drains a native command only as the admitted intent (%s)',
 				async (catalog) => {
 					const session = createMockSession({
@@ -2138,7 +2426,7 @@ describe('agentStore', () => {
 					mockDiscoverSlashCommands.mockResolvedValue({
 						status: 'discovered',
 						commands:
-							catalog === 'advertised'
+							catalog !== 'absent'
 								? [
 										{
 											name: 'review',
@@ -2163,12 +2451,15 @@ describe('agentStore', () => {
 							effort: 'high',
 						},
 					});
-					const item = buildQueuedMessageItem({
-						session,
-						tab: session.aiTabs[0],
-						slashCommand: true,
-						text: '/review src/a.ts',
-					});
+					const item = {
+						...buildQueuedMessageItem({
+							session,
+							tab: session.aiTabs[0],
+							slashCommand: true,
+							text: '/review src/a.ts',
+						}),
+						...(catalog === 'agent-text' ? { agentNotes: 'Your answer goes to Backend.' } : {}),
+					};
 					const expectedGrokSpawnSelection = await getQueuedCommandSpawnSelection(session.id, item);
 					useSessionStore.getState().setSessions([applyQueuedItemDispatch(session, item)]);
 
@@ -2184,6 +2475,18 @@ describe('agentStore', () => {
 							source: 'error',
 							text: expect.stringContaining('not advertised for this Grok conversation'),
 						});
+						return;
+					}
+					if (catalog === 'agent-text') {
+						expect(dispatched).toBe(false);
+						expect(mockSpawn).not.toHaveBeenCalled();
+						expect(updated.aiTabs[0].logs.at(-1)).toMatchObject({
+							source: 'error',
+							text: expect.stringContaining("cannot carry a consult's replies"),
+						});
+						expect(updated.executionQueue.find((queued) => queued.id === item.id)?.paused).toBe(
+							true
+						);
 						return;
 					}
 					expect(dispatched).toBe(true);

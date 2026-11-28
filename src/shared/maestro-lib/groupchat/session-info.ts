@@ -20,6 +20,7 @@ export interface MentionableSession {
 	toolType: string;
 	cwd?: string;
 	fullPath?: string;
+	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
 	customModel?: string;
@@ -55,6 +56,8 @@ export function toGroupChatSessionInfo(
 		name: session.name,
 		toolType: session.toolType,
 		cwd: session.cwd || session.fullPath || context.homeDir || os.homedir(),
+		// The agent's own binary, so a participant runs what its tab runs.
+		customPath: session.customPath,
 		customArgs: session.customArgs,
 		customEnvVars: session.customEnvVars,
 		customModel: session.customModel,

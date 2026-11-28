@@ -19,6 +19,7 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	'claude-code': 200000, // Claude 3.5 Sonnet/Claude 4 default context
 	codex: 200000, // OpenAI o3/o4-mini context window
 	opencode: 128000, // OpenCode (depends on model, 128k is conservative default)
+	kilo: 128000, // Kilo, a fork of OpenCode (same conservative default)
 	'factory-droid': 200000, // Factory Droid (varies by model, defaults to Claude Opus)
 	hermes: 200000, // Conservative fallback until runtime-specific reporting lands
 	pi: 200000, // Conservative fallback until runtime-specific reporting lands
@@ -112,6 +113,20 @@ export const COMBINED_CONTEXT_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'codex',
 	'copilot-cli',
 ]);
+
+/**
+ * Providers whose partial `text` events are token-sized fragments of one reply
+ * (Grok `text` records, Antigravity `step_update.text_delta`), not whole
+ * messages. When a turn has no final result text, readers that rebuild the
+ * answer from partials must concatenate these with no separator: joining them
+ * with `\n` splits words mid-token.
+ */
+const TOKEN_DELTA_TEXT_AGENTS: ReadonlySet<string> = new Set<AgentId>(['grok', 'antigravity']);
+
+/** Whether `toolType`'s partial text events concatenate without a separator. */
+export function streamsTokenDeltaText(toolType: string): boolean {
+	return TOKEN_DELTA_TEXT_AGENTS.has(toolType);
+}
 
 /**
  * Resolve the context window size for an agent, preferring a runtime

@@ -19,7 +19,10 @@
  */
 
 import { stripAnsiCodes } from '../../stringUtils';
+import { describeToolActivity } from '../../toolActivityLabel';
+import { toolCallStatus } from '../turns/turn-events';
 import type { UsageStats } from '../../types';
+import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { AutoRunProgress } from './progress';
 
 /** Lines of output kept. A screen shows the last few; the rest is a buffer for resizing. */
@@ -49,9 +52,39 @@ export interface AutoRunRun {
 }
 
 export type AutoRunRunEvent =
-	| { kind: 'state'; at: number; state: AutoRunProgress | null }
+	| {
+			kind: 'state';
+			at: number;
+			state: AutoRunProgress | null;
+			/**
+			 * The host's frame itself, read field by field (`parseAutoRunBroadcastState()`), when the
+			 * event came over the wire. A client that draws the same Auto Run card the owning window
+			 * draws (a hosted agent's record) needs the fields `state` leaves out.
+			 */
+			frame?: AutoRunBroadcastState | null;
+	  }
 	| { kind: 'output'; at: number; processId: string; text: string }
-	| { kind: 'usage'; at: number; processId: string; usage: UsageStats };
+	| { kind: 'usage'; at: number; processId: string; usage: UsageStats }
+	/**
+	 * A piece of the task's reasoning, as it streams. Not part of the tail: it feeds a client's
+	 * Thought Stream, the way `process:thinking-chunk` feeds the window that runs the task.
+	 */
+	| { kind: 'thinking'; at: number; processId: string; text: string }
+	/**
+	 * One tool call starting or finishing, with the provider's payload (`state`). A call that
+	 * starts adds its one line to the tail; every report feeds a client's Thought Stream.
+	 */
+	| {
+			kind: 'tool';
+			at: number;
+			processId: string;
+			toolName: string;
+			state?: unknown;
+			toolCallId?: string;
+	  };
+
+/** What a run says about its work as it goes: reasoning and tool calls, for a Thought Stream. */
+export type AutoRunActivity = Extract<AutoRunRunEvent, { kind: 'thinking' | 'tool' }>;
 
 export const EMPTY_AUTO_RUN: AutoRunRun = {
 	progress: null,
@@ -104,7 +137,22 @@ export function reduceAutoRun(run: AutoRunRun, event: AutoRunRunEvent): AutoRunR
 				...run,
 				usageByProcess: { ...run.usageByProcess, [event.processId]: event.usage },
 			};
+		case 'thinking':
+			return run;
+		case 'tool': {
+			// A call's finish repeats its start; one line per call is enough.
+			if (toolCallStatus(event.state) !== 'running') return run;
+			const state = isRecord(event.state) ? event.state : undefined;
+			const label = describeToolActivity(event.toolName, state?.input);
+			const line = `${label.verb} ${label.target}`.trim();
+			if (!line) return run;
+			return { ...run, tail: [...run.tail, line].slice(-AUTO_RUN_TAIL_LINES) };
+		}
 	}
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
 }
 
 /** Work time so far: wall time minus every pause, open or closed. `0` before the run is seen. */

@@ -46,15 +46,10 @@ import {
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsStore';
 import { cancelRecoveryForTab, hasPendingRetry, isHeldByRecovery } from '../stores/retryStore';
-import type { AITab, Session } from '../types';
+import type { AITab, LogEntry, Session } from '../types';
 import { nextThinkingMode, THINKING_MODES, type ThinkingMode } from '../../shared/types';
-import {
-	closeTab,
-	createTab,
-	getTabDisplayName,
-	revealAiTab,
-	setShowThinkingFields,
-} from '../utils/tabHelpers';
+import { closeTab, createTab, getTabDisplayName, revealAiTab } from '../utils/tabHelpers';
+import { setTabThinkingMode } from './tabThinkingMode';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { isAiTabHidden, visibleAiTabs } from '../utils/unifiedTabOrderUtils';
 import {
@@ -70,9 +65,19 @@ import { downscaleImageDataUrl } from '../utils/imageData';
 import { captureException } from '../utils/sentry';
 import { jumpToAgent } from './agentNavigation';
 import { enqueuePromptForTab, removeQueuedItem, sendQueuedItemNow } from './queuedPrompt';
+import { queuedItemHostSend } from './hostedQueuedTurn';
+import {
+	closeHostedTab,
+	hostedTargetOf,
+	interruptHostedTurn,
+	openHostedTab,
+	renameHostedTab,
+} from './hostedTurns';
 import { reopenClosedConversation, routeQuickChatMessage } from './quickChatRouter';
 import {
+	describeSelectionChange,
 	matchesNativeSessionBinding,
+	requiresNativeOwnership,
 	resumeSelectionKey,
 	SessionResumeRefusedError,
 } from './resumableSession';
@@ -80,6 +85,7 @@ import type { NativeSessionBinding } from '../../shared/maestro-lib/agents/provi
 import { collectNamingPrompt, requestTabAutoName } from './tabAutoNaming';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { isAgentDormant } from '../../shared/agentVisibility';
+import { steerRefusalSentence } from '../../shared/chatSteering';
 
 /**
  * The name a tab Quick Chat creates carries when automatic tab naming is off.
@@ -119,6 +125,47 @@ interface Turn {
 	nativeSessionBinding?: NativeSessionBinding;
 	/** In-memory fence for observing the native ID allocated after this turn starts. */
 	selectionKey?: string;
+	/**
+	 * Set when the queue handed the turn to the agent's host (a hosted agent). The host's
+	 * transcript does not carry this machine's queue item id, so the turn's card there is the
+	 * first message after `anchor`: the tab's last log entry while the turn still waited (null:
+	 * the tab was empty). `since` is when it last waited, for the moment between the host taking
+	 * it and its transcript showing it.
+	 */
+	host?: { anchor: string | null; since: number };
+}
+
+/**
+ * How long a turn the host took may show as running before its card reaches the tab's transcript.
+ * Past it, with the tab idle and no card, the turn reads as taken out of the queue.
+ */
+const HOST_CARD_GRACE_MS = 15_000;
+
+/** The id of a tab's last log entry, the anchor a host turn's card is found after. */
+function lastLogId(tab: AITab | undefined): string | null {
+	return tab?.logs.at(-1)?.id ?? null;
+}
+
+/** Where a host turn's card is in `logs`: the first message after `anchor`, or -1. */
+function hostCardIndex(logs: LogEntry[], anchor: string | null): number {
+	const start = anchor === null ? 0 : logs.findIndex((log) => log.id === anchor) + 1;
+	if (anchor !== null && start === 0) return -1;
+	return logs.findIndex((log, index) => index >= start && log.source === 'user');
+}
+
+/** Stop the reply running in one tab, on the machine that runs the agent's turns. */
+function interruptTab(session: Session, tabId: string): Promise<unknown> {
+	if (hostedTargetOf(session)) return interruptHostedTurn(session, tabId);
+	return window.maestro.process.interrupt(`${session.id}-ai-${tabId}`).catch(() => false);
+}
+
+/** Wait for every turn of `c` still on its way to a host, so its queue item id is the host's. */
+async function settleHostSends(c: Chat): Promise<void> {
+	await Promise.all(
+		c.turns.map((turn) =>
+			turn.queuedItemId ? queuedItemHostSend(turn.queuedItemId)?.catch(() => null) : undefined
+		)
+	);
 }
 
 /** One chat: a thread of turns on one agent. */
@@ -223,7 +270,8 @@ function canChat(session: Session): boolean {
 
 /**
  * The agent the chat runs on: the one a started chat is on, else the configured
- * agent, else the agent active in the main window, else the first that can chat.
+ * agent, else the Primary Agent, else the agent active in the main window, else
+ * the first that can chat.
  */
 function resolveAgent(): Session | null {
 	const { sessions, activeSessionId } = useSessionStore.getState();
@@ -233,6 +281,7 @@ function resolveAgent(): Session | null {
 		// A chat in progress stays on its agent even if the setting changes.
 		byId(chat.turns.length > 0 ? chat.sessionId : null) ??
 		byId(quickChatSettings().agentId) ??
+		byId(useSettingsStore.getState().primaryAgentId) ??
 		byId(activeSessionId) ??
 		sessions.find(canChat) ??
 		null
@@ -261,15 +310,13 @@ function thinkingMode(): ThinkingMode {
  */
 function applyThinking(c: Chat, sessionId: string, tabId: string, mode: ThinkingMode): void {
 	const owned = c.ownedTabIds.has(tabId);
-	updateSessionWith(sessionId, (s) => {
-		const tab = s.aiTabs.find((t) => t.id === tabId);
-		if (!tab) return s;
-		const current = tab.showThinking ?? 'off';
-		const raise = THINKING_MODES.indexOf(mode) > THINKING_MODES.indexOf(current);
-		if (current === mode || (!owned && !raise)) return s;
-		const fields = setShowThinkingFields(tab, mode);
-		return { ...s, aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, ...fields } : t)) };
-	});
+	const tab = findSession(sessionId)?.aiTabs.find((t) => t.id === tabId);
+	if (!tab) return;
+	const current = tab.showThinking ?? 'off';
+	const raise = THINKING_MODES.indexOf(mode) > THINKING_MODES.indexOf(current);
+	if (current === mode || (!owned && !raise)) return;
+	// The one write every Thinking control goes through: it also tells a hosted agent's host.
+	setTabThinkingMode(sessionId, tabId, mode);
 }
 
 /** Remember the mode, and apply it to every tab the chat has sent into. */
@@ -429,7 +476,9 @@ function turnView(
 	if (
 		tab &&
 		session &&
-		((turn.selectionKey !== undefined && resumeSelectionKey(session) !== turn.selectionKey) ||
+		((turn.selectionKey !== undefined &&
+			requiresNativeOwnership(session.toolType, turn.nativeSessionBinding) &&
+			resumeSelectionKey(session) !== turn.selectionKey) ||
 			(turn.nativeSessionBinding !== undefined &&
 				!matchesNativeSessionBinding(turn.nativeSessionBinding, tab.nativeSessionBinding)) ||
 			(turn.agentSessionId && turn.agentSessionId !== tab.agentSessionId) ||
@@ -442,7 +491,15 @@ function turnView(
 		if (tab.nativeSessionBinding)
 			turn.nativeSessionBinding = structuredClone(tab.nativeSessionBinding);
 	}
-	if (session?.executionQueue?.some((item) => item.id === turn.queuedItemId)) {
+	const waitsForHost = !!turn.queuedItemId && !!queuedItemHostSend(turn.queuedItemId);
+	const waits = !!session?.executionQueue?.some((item) => item.id === turn.queuedItemId);
+	// Nothing of a host turn is in its tab yet while it waits, so its card comes after this.
+	if (turn.host && tab && (waits || waitsForHost))
+		turn.host = { anchor: lastLogId(tab), since: Date.now() };
+	if (waitsForHost && session) {
+		return { route: { ...route('queued', tab), canSteer: false }, reply: [] };
+	}
+	if (waits && session) {
 		// In the queue for one of two reasons. Waiting: it has not run. Or held:
 		// it ran, the provider refused it, and an automatic recovery parked it
 		// here until the resend. That one is still the agent's turn.
@@ -455,14 +512,17 @@ function turnView(
 	}
 	if (!session || !tab) return { route: route('done'), reply: turn.reply };
 
-	const card = tab.logs.findIndex((log) => log.queuedItemId === turn.queuedItemId);
+	const card = turn.host
+		? hostCardIndex(tab.logs, turn.host.anchor)
+		: tab.logs.findIndex((log) => log.queuedItemId === turn.queuedItemId);
 	if (card === -1) {
 		// Its card scrolled out of the tab's log buffer: show what was last read.
 		if (turn.started) return { route: route('done', tab), reply: turn.reply };
 		// Out of the queue with no card yet. A slash command is in that state from
 		// the moment it is dequeued until its prompt is expanded, with the tab
-		// already marked busy. Otherwise someone took it out of the queue.
-		return tab.state === 'busy'
+		// already marked busy. A host turn is in it until the host's transcript
+		// reaches this machine. Otherwise someone took it out of the queue.
+		return tab.state === 'busy' || (turn.host && Date.now() - turn.host.since < HOST_CARD_GRACE_MS)
 			? { route: route('running', tab, tabBusySince(session, tab)), reply: [] }
 			: { route: route('cancelled', tab), reply: [] };
 	}
@@ -563,27 +623,34 @@ export function buildQuickChatSnapshot(error: string | null = null): QuickChatSn
 
 /**
  * Create a tab for `message` on `session`, in the background, hidden unless the
- * chat is kept.
+ * chat is kept. A hosted agent's tabs are its host's: the tab opens there, and
+ * only this record hides it, so the host runs every turn the chat sends to it.
  */
-function createChatTab(c: Chat, session: Session, message: string): string | null {
+async function createChatTab(c: Chat, session: Session, message: string): Promise<string | null> {
 	const persistent = isPersistent(c);
 	const autoName = useSettingsStore.getState().automaticTabNamingEnabled;
+	const name = autoName ? null : QUICK_CHAT_TAB_NAME;
+	const saveToHistory = saveToHistoryFor(persistent);
 	let tabId: string | null = null;
-	updateSessionWith(session.id, (s) => {
-		const created = createTab(s, {
-			name: autoName ? null : QUICK_CHAT_TAB_NAME,
-			saveToHistory: saveToHistoryFor(persistent),
-			activate: false,
+	if (hostedTargetOf(session)) {
+		tabId = await openHostedTab(session, {
+			background: true,
+			fields: { name, saveToHistory, quickChat: true, hidden: !persistent },
 		});
-		if (!created) return s;
-		tabId = created.tab.id;
-		return {
-			...created.session,
-			aiTabs: created.session.aiTabs.map((t) =>
-				t.id === created.tab.id ? { ...t, quickChat: true, hidden: !persistent } : t
-			),
-		};
-	});
+		if (tabId && name) renameHostedTab(session, tabId, name);
+	} else {
+		updateSessionWith(session.id, (s) => {
+			const created = createTab(s, { name, saveToHistory, activate: false });
+			if (!created) return s;
+			tabId = created.tab.id;
+			return {
+				...created.session,
+				aiTabs: created.session.aiTabs.map((t) =>
+					t.id === created.tab.id ? { ...t, quickChat: true, hidden: !persistent } : t
+				),
+			};
+		});
+	}
 	if (!tabId) return null;
 	c.ownedTabIds.add(tabId);
 	// This tab's name is how the chat's next message finds it and what its pill
@@ -685,6 +752,8 @@ function settleEndedChats(): void {
 		if (session && isInMotion(session, ended)) continue;
 		endedChats.delete(ended);
 		for (const tab of ownedTabs(session, ended).filter(isAiTabHidden)) {
+			// A hosted agent's tab is the host's too; left there, its update brings it back.
+			if (session) closeHostedTab(session, tab.id);
 			updateSessionWith(ended.sessionId!, (s) => {
 				// Skip the closed-tab undo stack: a hidden tab reopened by Cmd+Shift+T
 				// would come back as a chip the user never saw.
@@ -767,6 +836,25 @@ function deliverToTab(
 	turn.queuedItemId = item.id;
 	turn.started = false;
 	turn.reply = [];
+	turn.host = undefined;
+
+	// A hosted agent's queue handed the item to its host (see hostedQueuedTurn). The host runs it,
+	// and its receipt says how: a message it queued is followed by the host's queue item id, and
+	// one of Maestro's own commands (`ran`) starts no turn, so there is no reply to wait for.
+	const hostSend = queuedItemHostSend(item.id);
+	if (hostSend) {
+		turn.host = { anchor: lastLogId(tab), since: Date.now() };
+		const settle = (receipt: Awaited<typeof hostSend> | undefined) => {
+			if (turn.queuedItemId === item.id && turn.host) {
+				if (receipt?.status === 'queued') turn.queuedItemId = receipt.itemId;
+				else if (receipt?.status === 'ran') turn.started = true;
+				turn.host = { ...turn.host, since: Date.now() };
+			}
+			notifyChanged();
+		};
+		hostSend.then(settle, () => settle(undefined));
+		return null;
+	}
 
 	if (isTabFreeFor(findSession(sessionId), tabId, item.id)) sendQueuedItemNow(sessionId, item.id);
 	return null;
@@ -869,19 +957,23 @@ async function routeAndDeliver(
 		} else if (c.resumeRefusal) throw new SessionResumeRefusedError(c.resumeRefusal);
 		const previous = [...c.turns].reverse().find((t) => t !== turn && t.tabId === homeTabId);
 		const live = findSession(sessionId);
-		if (
-			!choice &&
-			live &&
-			((c.homeSelectionKey && c.homeSelectionKey !== resumeSelectionKey(live)) ||
+		if (!choice && live && requiresNativeOwnership(live.toolType, previous?.nativeSessionBinding)) {
+			const changed =
+				(c.homeSelectionKey && describeSelectionChange(c.homeSelectionKey, live)) ||
 				(previous?.nativeSessionBinding &&
-					!matchesNativeSessionBinding(
-						previous.nativeSessionBinding,
-						findTab(live, homeTabId)?.nativeSessionBinding
-					)))
-		) {
-			throw new SessionResumeRefusedError(
-				'The agent or conversation ownership changed. Choose a new chat or tab explicitly.'
-			);
+				!matchesNativeSessionBinding(
+					previous.nativeSessionBinding,
+					findTab(live, homeTabId)?.nativeSessionBinding
+				)
+					? 'conversation owner'
+					: null);
+			if (changed) {
+				throw new SessionResumeRefusedError(
+					`${live.name}'s ${changed} changed since this chat's last message, so Quick Chat ` +
+						'will not continue that conversation on its own. Pick its tab to continue there, ' +
+						'or start a new chat.'
+				);
+			}
 		}
 		if (!findSession(sessionId)) {
 			fail(turn, 'The agent is no longer available');
@@ -917,8 +1009,10 @@ async function routeAndDeliver(
 			if (live && turn.selectionKey && turn.selectionKey !== resumeSelectionKey(live)) {
 				throw new SessionResumeRefusedError('The agent selection changed before opening a tab.');
 			}
-			tabId = live ? createChatTab(c, live, turn.text) : null;
+			tabId = live ? await createChatTab(c, live, turn.text) : null;
 			origin = 'new';
+			// Stop pressed while a hosted agent's tab opened. The tab is the chat's and goes with it.
+			if (!stillWanted()) return homeTabId;
 		}
 		if (!tabId) {
 			fail(turn, 'Could not open a tab on this agent');
@@ -1090,6 +1184,10 @@ async function drawPreviews(turn: Turn): Promise<void> {
  * tab only.
  */
 async function stop(): Promise<void> {
+	if (!findSession(chat.sessionId)) return;
+	// A message still on its way to a host has no queue item to take back yet. Once the host
+	// answers, a queued one is withdrawn from the host's queue below, a running one interrupted.
+	await settleHostSends(chat);
 	const session = findSession(chat.sessionId);
 	if (!session) return;
 	const interrupt = new Set<string>();
@@ -1122,11 +1220,7 @@ async function stop(): Promise<void> {
 	}
 	// A reply that finished on its own a moment ago has no process left to
 	// interrupt. That is the outcome asked for, not a failed Stop.
-	await Promise.all(
-		[...interrupt].map((tabId) =>
-			window.maestro.process.interrupt(`${session.id}-ai-${tabId}`).catch(() => false)
-		)
-	);
+	await Promise.all([...interrupt].map((tabId) => interruptTab(session, tabId)));
 }
 
 /**
@@ -1141,6 +1235,8 @@ async function stop(): Promise<void> {
  * Without `messageId`, the latest queued message moves.
  */
 async function moveToNewTab(messageId: string | undefined): Promise<string | null> {
+	// A message on its way to a host is withdrawn or stopped by the id the host gives it.
+	await settleHostSends(chat);
 	const session = findSession(chat.sessionId);
 	const queued = (turn: Turn) => !!session && turnView(session, turn).route.status === 'queued';
 	const turn = messageId
@@ -1168,15 +1264,16 @@ async function moveToNewTab(messageId: string | undefined): Promise<string | nul
 		const fresh = findSession(session.id);
 		if (fresh && turnView(fresh, turn).route.status === 'running') {
 			// A reply that finished on its own a moment ago has nothing to interrupt.
-			await window.maestro.process.interrupt(`${session.id}-ai-${oldTabId}`).catch(() => false);
+			await interruptTab(fresh, oldTabId);
 		}
 		// The chat can end while the interrupt is awaited.
 		if (!chat.turns.includes(turn)) return null;
 	}
 
 	const live = findSession(session.id);
-	const tabId = live ? createChatTab(chat, live, turn.text) : null;
+	const tabId = live ? await createChatTab(chat, live, turn.text) : null;
 	if (!tabId) return fail(turn, 'Could not open a tab on this agent');
+	if (!chat.turns.includes(turn)) return null;
 	turn.selectionKey = undefined;
 	turn.nativeSessionBinding = undefined;
 	turn.agentSessionId = null;
@@ -1225,7 +1322,7 @@ async function steer(messageId: string | undefined): Promise<string | null> {
 		case 'not-found':
 			return 'That message is no longer in the queue';
 		case 'refused':
-			return `${result.detail ?? 'The agent could not take the message right now.'} It stays queued.`;
+			return `${steerRefusalSentence(result, 'The agent could not take the message right now.')} It stays queued.`;
 		case 'unconfirmed':
 			return 'The agent may or may not have the message, so it is paused rather than sent twice.';
 		case 'unavailable':

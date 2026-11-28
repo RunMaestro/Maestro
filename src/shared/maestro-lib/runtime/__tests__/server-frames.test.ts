@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { parseAutoRunProgress } from '../../autorun/progress';
-import { parseProcessFrame } from '../../client/bridge-frames';
+import {
+	parseProcessFrame,
+	parseTranscriptChangedFrame,
+	TRANSCRIPT_CHANGED_CHANNEL,
+} from '../../client/bridge-frames';
 import type { MaestroEvent, QueuedTurn, TurnEvent } from '../../client/types';
 import {
 	makeGroupChatLine,
@@ -91,6 +95,19 @@ describe('framesForEvent', () => {
 			frame: { kind: 'stream', event: { kind: 'text', text: 'hello' } },
 		});
 
+		// Parity R58: a thinking chunk that is also answer text keeps the flag across the wire.
+		const answer = framesForEvent(
+			turn({ kind: 'thinking', at, text: 'Part', answer: true }),
+			state
+		);
+		expect(answer[0].args).toEqual([id, 'Part', true]);
+		expect(parsed(answer[0])?.frame).toEqual({
+			kind: 'stream',
+			event: { kind: 'thinking', text: 'Part', answer: true },
+		});
+		const reasoning = framesForEvent(turn({ kind: 'thinking', at, text: 'Hmm' }), state);
+		expect(reasoning[0].args).toEqual([id, 'Hmm']);
+
 		const tool = framesForEvent(
 			turn({
 				kind: 'tool',
@@ -150,13 +167,42 @@ describe('framesForEvent', () => {
 		expect(lone.map((frame) => frame.channel)).toEqual(['agent:error', 'process:exit']);
 	});
 
-	it('says nothing for a turn start, a gap, or a tab change', () => {
+	it('says nothing for a turn start or a tab change', () => {
 		const state = createFrameState();
 		expect(framesForEvent(turn({ kind: 'started', at: 1 }), state)).toEqual([]);
-		expect(framesForEvent(turn({ kind: 'gap', at: 1 }), state)).toEqual([]);
 		expect(
 			framesForEvent({ type: 'tab.updated', agentId: 'a1', tab: { id: 't1' } }, state)
 		).toEqual([]);
+	});
+
+	it('sends a gap (a tab written outside a turn) as the frame that tells a client to read the tab again (M13)', () => {
+		const frames = framesForEvent(turn({ kind: 'gap', at: 1 }), createFrameState());
+		expect(frames).toHaveLength(1);
+		expect(frames[0].channel).toBe(TRANSCRIPT_CHANGED_CHANNEL);
+		const args = frames[0].args as unknown[];
+		expect(args).toEqual([tabProcessId('a1', 't1'), 'a1', 't1']);
+		expect(parseTranscriptChangedFrame(args)).toEqual({ kind: 'tab', agentId: 'a1', tabId: 't1' });
+		// Not a process frame: an older client, which streams only those, ignores it.
+		expect(parseProcessFrame(TRANSCRIPT_CHANGED_CHANNEL, args)).toBeNull();
+	});
+
+	it("names a tab whose id holds '-ai-' by its own ids, never by splitting the process id (M13)", () => {
+		const [frame] = framesForEvent(
+			{ ...turn({ kind: 'gap', at: 1 }), tabId: 't-ai-1' } as MaestroEvent,
+			createFrameState()
+		);
+		expect(parseTranscriptChangedFrame(frame.args as unknown[])).toEqual({
+			kind: 'tab',
+			agentId: 'a1',
+			tabId: 't-ai-1',
+		});
+		// A frame with only the process id (no ids beside it) still parses as before.
+		expect(parseTranscriptChangedFrame([tabProcessId('a1', 't1')])).toEqual({
+			kind: 'tab',
+			agentId: 'a1',
+			tabId: 't1',
+		});
+		expect(parseTranscriptChangedFrame([42])).toBeNull();
 	});
 
 	it('pushes an agent as a lifecycle upsert and a removal as session_removed', () => {
@@ -205,11 +251,65 @@ describe('framesForEvent', () => {
 		).toEqual({ type: 'bridge.event', channel: 'process:data', args: ['a1-batch-5', 'ticking'] });
 	});
 
+	it("sends a run's reasoning and tool calls on the desktop's own channels", () => {
+		const state = createFrameState();
+		expect(
+			framesForEvent(
+				{
+					type: 'autorun',
+					agentId: 'a1',
+					event: { kind: 'thinking', at: 3, processId: 'a1-batch-5', text: 'Reading first' },
+				},
+				state
+			)
+		).toEqual([
+			{
+				type: 'bridge.event',
+				channel: 'process:thinking-chunk',
+				args: ['a1-batch-5', 'Reading first'],
+			},
+		]);
+		const toolState = { status: 'running', input: { file_path: '/w/a.ts' } };
+		expect(
+			framesForEvent(
+				{
+					type: 'autorun',
+					agentId: 'a1',
+					event: {
+						kind: 'tool',
+						at: 4,
+						processId: 'a1-batch-5',
+						toolName: 'Read',
+						state: toolState,
+						toolCallId: 'c1',
+					},
+				},
+				state
+			)
+		).toEqual([
+			{
+				type: 'bridge.event',
+				channel: 'process:tool-execution',
+				args: [
+					'a1-batch-5',
+					{ toolName: 'Read', state: toolState, toolCallId: 'c1', timestamp: 4 },
+				],
+			},
+		]);
+	});
+
 	it('pushes how a run ended as autorun_ended, so a remote client is told too', () => {
 		const outcome = { status: 'error', reason: 'ENOSPC' } as const;
 		expect(
 			framesForEvent({ type: 'autorun.ended', agentId: 'a1', at: 4, outcome }, createFrameState())
 		).toEqual([{ type: 'autorun_ended', sessionId: 'a1', outcome }]);
+	});
+
+	// L31: the frame a desktop's History watcher sends, so a client reads both host kinds alike.
+	it('pushes a History write as the history:externalChange a desktop host sends', () => {
+		expect(framesForEvent({ type: 'history.changed', agentId: 'a1' }, createFrameState())).toEqual([
+			{ type: 'bridge.event', channel: 'history:externalChange', args: ['a1'] },
+		]);
 	});
 });
 
@@ -299,10 +399,36 @@ describe('queue frames', () => {
 			type: 'queue_changed',
 			sessionId: 'a1',
 			items: wire,
+			namesExits: true,
 		});
 		expect(
 			framesForEvent({ type: 'queue.changed', agentId: 'a1', items: [] }, createFrameState())
-		).toEqual([{ type: 'queue_changed', sessionId: 'a1', items: [] }]);
+		).toEqual([{ type: 'queue_changed', sessionId: 'a1', items: [], namesExits: true }]);
+	});
+
+	it('names how an item left the queue: started or removed (M14)', () => {
+		for (const exit of ['started', 'removed'] as const) {
+			expect(
+				framesForEvent(
+					{
+						type: 'queue.changed',
+						agentId: 'a1',
+						items: [],
+						namesExits: true,
+						exit: { itemId: 'q1', exit },
+					},
+					createFrameState()
+				)
+			).toEqual([
+				{
+					type: 'queue_changed',
+					sessionId: 'a1',
+					items: [],
+					namesExits: true,
+					exit: { itemId: 'q1', exit },
+				},
+			]);
+		}
 	});
 });
 

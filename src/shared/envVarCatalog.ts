@@ -131,6 +131,36 @@ export const PROVIDER_ENV_VAR_SUGGESTIONS: Readonly<Record<string, readonly Cata
 			description: 'Fallback API key when no per-model credential or active login token applies.',
 		},
 	],
+	// agy has no account-dir var (its home is fixed at ~/.gemini/antigravity-cli),
+	// and it ignores GOOGLE_API_KEY. Names from antigravity.google/docs/install.
+	antigravity: [
+		{
+			key: 'GEMINI_API_KEY',
+			description: 'Gemini API key, used when the model provider is set to "gemini".',
+		},
+		{
+			key: 'AGY_ADC_AUTH',
+			description: 'Set to true to sign in with Google Cloud Application Default Credentials.',
+		},
+		{
+			key: 'GOOGLE_CLOUD_QUOTA_PROJECT',
+			description: 'Cloud project billed for ADC sign-in.',
+		},
+		{ key: 'GOOGLE_CLOUD_LOCATION', description: 'Cloud region used with ADC sign-in.' },
+		{
+			key: 'GOOGLE_GEMINI_BASE_URL',
+			description: 'Send requests to a gateway instead of the Gemini API.',
+		},
+		{ key: 'AGY_CLI_DISABLE_AUTO_UPDATE', description: 'Set to true to stop agy updating itself.' },
+		{
+			key: 'ANTIGRAVITY_PYTHON',
+			description: 'Python interpreter for Native SDK mode (needs google-antigravity installed).',
+		},
+		{
+			key: 'GOOGLE_GENAI_USE_VERTEXAI',
+			description: 'Native SDK mode only: send turns to Vertex AI instead of the Gemini API.',
+		},
+	],
 };
 
 /** Names the user has already set, as gathered by `agents:getKnownEnvVarKeys`. */

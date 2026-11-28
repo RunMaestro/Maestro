@@ -17,10 +17,11 @@
 
 import { getClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 import { useSessionStore, selectSessionById, updateAiTab } from '../stores/sessionStore';
+import { renameHostedTab } from './hostedTurns';
 import { useSettingsStore } from '../stores/settingsStore';
 import { extractQuickTabName } from '../utils/tabHelpers';
 import { captureException } from '../utils/sentry';
-import type { AITab, Session } from '../types';
+import type { AITab, QueuedItem, Session } from '../types';
 
 /**
  * Ceiling on the text handed to the namer. Richer context produces names that
@@ -163,6 +164,8 @@ export function requestTabAutoName(options: RequestTabAutoNameOptions): void {
 		}
 		const name = `${prefix}${generatedName}`;
 		updateAiTab(sessionId, tabId, (t) => ({ ...t, name, isGeneratingName: false }));
+		// A hosted tab's name lives on its host (a wizard that runs here names it here).
+		renameHostedTab(selectSessionById(sessionId)(useSessionStore.getState()), tabId, name);
 		window.maestro.logger.log('info', `Tab named (${how}): "${name}"`, 'TabNaming', {
 			tabId,
 			sessionId,
@@ -189,11 +192,14 @@ export function requestTabAutoName(options: RequestTabAutoNameOptions): void {
 	window.maestro.tabNaming
 		.generateTabName({
 			userMessage: prompt,
+			ownerAgentId: sessionId,
 			agentType: session.toolType,
 			cwd: session.cwd,
 			sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 			// Forward session env so naming uses the same provider auth as the chat.
 			sessionCustomEnvVars: session.customEnvVars,
+			// And the agent's own binary, so naming runs the program the chat runs.
+			sessionCustomPath: session.customPath,
 			// Honor the agent's Claude token source for the naming spawn. Shared
 			// extractor guarantees the SAME complete triple the chat spawn forwards -
 			// no partial/drifting forward possible.
@@ -287,6 +293,17 @@ export function requestTabAutoNameForMessage(
 		}
 		captureException(error, { extra: { operation: 'tab-auto-name', label, tabId } });
 	}
+}
+
+/**
+ * The text a queued item names its tab from as it runs, or undefined when it names nothing: a
+ * command (its text is a command name, not a request), a released consult hold (`agentContext`,
+ * Maestro's own "X replied" note), or a turn still waiting on a consult. One rule for every drain:
+ * the local queue drain and a hosted agent's hand-off to its host both ask it.
+ */
+export function queuedItemNamingText(item: QueuedItem): string | undefined {
+	if (item.type !== 'message' || item.agentContext || item.awaitingConsult) return undefined;
+	return item.text?.trim() ? item.text : undefined;
 }
 
 /**

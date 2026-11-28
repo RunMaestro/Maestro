@@ -235,6 +235,25 @@ export interface SessionOriginInfo {
 }
 
 /**
+ * One transcript a listing left out: past the size cap (`too-large`), or there but not readable
+ * (`unreadable`: a permission error, a read that failed, a folder of transcripts that could not be
+ * listed). A transcript that is simply gone is not one of these. `sizeBytes` is 0 when unknown.
+ */
+export interface SkippedSessionFile {
+	sizeBytes: number;
+	reason: 'too-large' | 'unreadable';
+}
+
+/**
+ * Observes one `listSessions` call. A storage that leaves a transcript out
+ * (one past its size cap, or one it could not read) says so here, so a total read from the listing can be
+ * named partial instead of quietly short. A storage with no cap ignores it.
+ */
+export interface SessionListObserver {
+	onSkippedFile?(file: SkippedSessionFile): void;
+}
+
+/**
  * Agent Session Storage Interface
  *
  * Provides an abstraction for accessing agent session data.
@@ -269,12 +288,14 @@ export interface AgentSessionStorage {
 	 * @param projectPath - The project directory path
 	 * @param sshConfig - Optional SSH config for remote access
 	 * @param accountDir - Optional account config/home root to read instead of the default
+	 * @param observer - Optional observer of the listing (see {@link SessionListObserver})
 	 * @returns Array of session metadata sorted by modified date (newest first)
 	 */
 	listSessions(
 		projectPath: string,
 		sshConfig?: SshRemoteConfig,
-		accountDir?: string
+		accountDir?: string,
+		observer?: SessionListObserver
 	): Promise<AgentSessionInfo[]>;
 
 	/**

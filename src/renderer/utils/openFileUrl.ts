@@ -37,10 +37,48 @@ import { shouldOpenExternally } from './fileExplorer';
  * reports by returning - so the click silently does nothing for any path
  * containing a space, a `#`, or a non-ASCII character. Same rule, same
  * reason as `resolveLocalImagePath` in Markdown/components/LocalImage.tsx.
+ *
+ * A Windows file URL puts a slash before the drive (`file:///D:/a.png`), so
+ * stripping the scheme leaves `/D:/a.png`. Windows resolves that against the
+ * current drive and the read fails, so the slash before a drive letter goes.
  */
 export function fileUrlToPath(href: string): string | null {
 	if (!/^file:\/\//.test(href)) return null;
-	return safeDecodeURIComponent(href.replace(/^file:\/\//, ''));
+	const path = safeDecodeURIComponent(href.replace(/^file:\/\//, ''));
+	return /^\/[A-Za-z]:[\\/]/.test(path) ? path.slice(1) : path;
+}
+
+/**
+ * The `file://` URL for a Windows drive-absolute path (`D:\a.png` or
+ * `D:/a.png`), or null when the path has no drive letter.
+ *
+ * Markdown URL sanitizers read `D:` as a URL scheme they do not know and blank
+ * it, so an image written with a bare Windows path never renders. As a
+ * `file:///D:/a.png` URL it passes them, and `fileUrlToPath` turns it back.
+ */
+export function windowsDrivePathToFileUrl(path: string): string | null {
+	if (!/^[A-Za-z]:[\\/]/.test(path)) return null;
+	return `file:///${path.replace(/\\/g, '/')}`;
+}
+
+/**
+ * The `file://` URL for an absolute path on this machine, the inverse of
+ * `fileUrlToPath`. Each segment is percent-encoded so spaces and reserved
+ * characters survive; a Windows drive keeps its colon (`file:///D:/a%20b.html`).
+ *
+ * A backslash separates segments in a Windows path only. A path that starts
+ * with `/` is POSIX, where a backslash is a character in a file name, so it is
+ * kept and encoded (`/tmp/a\b.html` is `file:///tmp/a%5Cb.html`).
+ */
+export function pathToFileUrl(path: string): string {
+	const normalized = path.startsWith('/') ? path : path.replace(/\\/g, '/');
+	const isWindowsDrivePath = /^[A-Za-z]:/.test(normalized);
+	const rooted = isWindowsDrivePath || !normalized.startsWith('/') ? `/${normalized}` : normalized;
+	const encoded = rooted
+		.split('/')
+		.map((seg, index) => (isWindowsDrivePath && index === 1 ? seg : encodeURIComponent(seg)))
+		.join('/');
+	return `file://${encoded}`;
 }
 
 /**

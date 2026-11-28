@@ -28,7 +28,13 @@ import {
 	settleAgentDelegation,
 } from './agentDelegation';
 import type { LogEntry } from '../types';
-import { CROSS_AGENT_ASK_SESSION_ID, CROSS_AGENT_ASK_TAB_ID } from '../../shared/crossAgentTypes';
+import {
+	CROSS_AGENT_ASK_SESSION_ID,
+	CROSS_AGENT_ASK_TAB_ID,
+	parseWireAskerKey,
+	remoteAskerConsultKey,
+	type RemoteAskerContext,
+} from '../../shared/crossAgentTypes';
 
 // The stand-in ids live in shared code: the headless consult keys its tab the same way, so a
 // TUI cannot tell a headless host from a desktop (req-D2).
@@ -37,7 +43,7 @@ export { CROSS_AGENT_ASK_TAB_ID, CROSS_AGENT_ASK_SESSION_ID };
 /** Display name for an unattributed caller (names the target's consult tab). */
 const CROSS_AGENT_ASK_FALLBACK_NAME = 'CLI';
 
-export interface CrossAgentAskRequest {
+export interface CrossAgentAskRequest extends RemoteAskerContext {
 	/** The agent to consult. */
 	targetSessionId: string;
 	/** The self-contained question. */
@@ -150,13 +156,22 @@ export function runCrossAgentAsk(request: CrossAgentAskRequest): Promise<CrossAg
 			});
 		};
 
+		// One consult tab per calling agent here; an asker on another machine (a Federation peer
+		// consulting this desktop's agent) gets one per (machine, agent, tab) it names, under a
+		// prefix no agent here has, so it can reach its own consult tab and no other.
+		const consultKey = source
+			? { sourceSessionId: source.id, sourceTabId: CROSS_AGENT_ASK_TAB_ID }
+			: remoteAskerConsultKey(parseWireAskerKey(request.askerKey));
 		sendCrossAgentRequest({
-			sourceSessionId: source?.id ?? CROSS_AGENT_ASK_SESSION_ID,
-			sourceAgentName: source?.name ?? CROSS_AGENT_ASK_FALLBACK_NAME,
-			sourceTabId: CROSS_AGENT_ASK_TAB_ID,
+			...consultKey,
+			// That remote asker names itself and sends its own context and hand-off, as a typed
+			// mention here would.
+			sourceAgentName: source?.name ?? request.fromAgentName ?? CROSS_AGENT_ASK_FALLBACK_NAME,
 			targetSessionId: request.targetSessionId,
 			userPrompt: request.question,
 			sourceLogs,
+			...(request.transcript ? { contextTranscript: request.transcript } : {}),
+			...(request.handoffAnswer !== undefined ? { handoffAnswer: request.handoffAnswer } : {}),
 			sourceCwd: source?.cwd,
 			onComplete: finish,
 		});

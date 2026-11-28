@@ -13,6 +13,8 @@ import { ipcRenderer } from 'electron';
 export interface TabNamingConfig {
 	/** The user's first message to analyze */
 	userMessage: string;
+	/** The Maestro agent asking, for the hosted-launch check (`checkHostedAgentLaunch`). */
+	ownerAgentId?: string;
 	/** The agent type to use (e.g., 'claude-code') */
 	agentType: string;
 	/** Working directory for the session */
@@ -25,6 +27,8 @@ export interface TabNamingConfig {
 	};
 	/** Session-level custom env vars, forwarded so naming inherits the same provider auth as the chat. */
 	sessionCustomEnvVars?: Record<string, string>;
+	/** The agent's own binary (`Session.customPath`), so naming runs what the chat runs. */
+	sessionCustomPath?: string;
 	/** Claude token-source selection, forwarded so tab naming honors TUI/Dynamic/API. */
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';

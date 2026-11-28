@@ -15,7 +15,10 @@ import {
 	steerGroupChatQueuedItem,
 } from '../../../renderer/services/groupChatSteering';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
-import type { GroupChatSteerResult } from '../../../shared/groupChatSteering';
+import {
+	GROUP_CHAT_STEER_BLOCKED_DETAILS,
+	type GroupChatSteerResult,
+} from '../../../shared/groupChatSteering';
 
 const lastToast = () => vi.mocked(notifyToast).mock.calls.at(-1)![0];
 
@@ -28,10 +31,41 @@ describe('notifyGroupChatSteerResult', () => {
 		notifyGroupChatSteerResult({ outcome: 'delivered', targets: ['Alice'] });
 
 		expect(lastToast()).toEqual({
+			flashWhenToastsOff: true,
 			color: 'green',
 			title: 'Sent to the running round',
 			message: 'Steered to Alice.',
 		});
+	});
+
+	// Every steer answer is the result of a click. With in-app toasts off, a
+	// toast-only refusal left the user looking at a Steer button that did nothing.
+	it.each<GroupChatSteerResult>([
+		{ outcome: 'delivered', targets: ['Alice'] },
+		{ outcome: 'settled', verdict: 'absorbed', targets: ['Moderator'] },
+		{ outcome: 'unconfirmed', verdict: 'unknown' },
+		{ outcome: 'refused' },
+		{ outcome: 'not-steerable', blockedReason: 'ambiguous-target' },
+		{ outcome: 'unavailable' },
+		{ outcome: 'not-found' },
+	])('falls back to a Center Flash when toasts are off ($outcome)', (result) => {
+		notifyGroupChatSteerResult(result);
+		expect(lastToast().flashWhenToastsOff).toBe(true);
+	});
+
+	it('says why a steer into two working participants was refused', () => {
+		notifyGroupChatSteerResult({
+			outcome: 'not-steerable',
+			blockedReason: 'ambiguous-target',
+			detail: GROUP_CHAT_STEER_BLOCKED_DETAILS['ambiguous-target'],
+		});
+
+		expect(lastToast()).toMatchObject({
+			color: 'yellow',
+			title: 'Could not steer this round',
+			message: GROUP_CHAT_STEER_BLOCKED_DETAILS['ambiguous-target'],
+		});
+		expect(lastToast().message).toContain('@mention');
 	});
 
 	it('names the turn for a settled steer too', () => {
@@ -59,6 +93,18 @@ describe('notifyGroupChatSteerResult', () => {
 			title: 'Could not steer this round',
 			message: 'A permission prompt is open. It stays queued.',
 		});
+	});
+
+	it('words a lowercase wire detail as a sentence', () => {
+		notifyGroupChatSteerResult({
+			outcome: 'refused',
+			refusal: 'blocking-dialog',
+			detail: 'a permission prompt',
+		});
+
+		expect(lastToast().message).toBe(
+			'A permission prompt is waiting for an answer, so the message was not typed. It stays queued.'
+		);
 	});
 
 	it('words a refusal with no detail', () => {

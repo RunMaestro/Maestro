@@ -106,7 +106,7 @@ export const DelegationScoreCard = memo(function DelegationScoreCard({
 			style={{ backgroundColor: theme.colors.bgMain }}
 			data-testid="delegation-score-card"
 			role="figure"
-			aria-label={`Delegation score: ${Math.round(percent)} percent of tracked AI time ran without you`}
+			aria-label={`Delegation score, all time: ${Math.round(percent)} percent of tracked AI time ran without you`}
 		>
 			<div className="flex items-start justify-between gap-3 mb-3">
 				<div className="flex items-center gap-2">
@@ -114,6 +114,14 @@ export const DelegationScoreCard = memo(function DelegationScoreCard({
 					<h3 className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
 						Delegation Score
 					</h3>
+					{/* Lifetime, unlike the range-scoped ratio card above it. */}
+					<span
+						className="text-2xs px-1 rounded"
+						style={{ color: theme.colors.textDim, border: `1px solid ${theme.colors.border}` }}
+						data-testid="delegation-score-scope"
+					>
+						all time
+					</span>
 					<HoverTooltip label={TOOLTIP_LABEL} theme={theme} maxWidth={360}>
 						<button
 							type="button"
@@ -151,7 +159,7 @@ export const DelegationScoreCard = memo(function DelegationScoreCard({
 				</span>
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
 					{hasData
-						? 'of tracked AI time ran without you'
+						? 'of all tracked AI time ran without you'
 						: 'no AI time tracked yet - run an agent to start scoring'}
 				</span>
 			</div>

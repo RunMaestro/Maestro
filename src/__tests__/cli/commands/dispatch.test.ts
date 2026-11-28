@@ -7,7 +7,7 @@
  * the same tab on follow-up calls.
  */
 
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import {
 	MaestroNotRunningError,
 	MAESTRO_NOT_RUNNING_MESSAGE,
@@ -22,15 +22,24 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
 	};
 });
 
+// A hosted agent's local id takes the `peer:agent` route; the host link is the seam.
+vi.mock('../../../cli/services/peer-resolver', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../cli/services/peer-resolver')>()),
+	resolvePeerAgent: vi.fn(),
+}));
+
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(() => undefined),
 	readSettingValue: vi.fn(),
 	readLiveSessions: vi.fn(() => []),
 	readGroups: vi.fn(() => []),
+	readSettings: vi.fn(() => ({})),
 }));
 
 import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
+import { PeerResolveError, resolvePeerAgent } from '../../../cli/services/peer-resolver';
+import { ExitCode } from '../../../cli/exit-codes';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import {
 	resolveAgentId,
@@ -38,8 +47,10 @@ import {
 	readSettingValue,
 	readLiveSessions,
 	readGroups,
+	readSettings,
 } from '../../../cli/services/storage';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
+import { AGENT_MODES, agentModeFields, type AgentMode } from '../../helpers/mockSession';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
 
 describe('dispatch command', () => {
@@ -1003,7 +1014,13 @@ describe('dispatch command', () => {
 			expect(withMaestroClient).not.toHaveBeenCalled();
 		});
 
-		it('refuses a lifted agent with AGENT_LIFTED before reaching the desktop', async () => {
+		// Addressed by its local id with no desktop running, a hosted agent's dispatch goes to its
+		// host over the peer route (`peer:agent`), never refused and never queued here.
+		it("sends a hosted agent's dispatch to its host by the local id when no desktop runs", async () => {
+			vi.mocked(readSettings).mockReturnValueOnce({ federationHostedAgents: true });
+			vi.mocked(withMaestroClient).mockRejectedValueOnce(
+				new MaestroNotRunningError('no-discovery-file')
+			);
 			vi.mocked(resolveAgentId).mockReturnValue('lifted-agent');
 			vi.mocked(getSessionById).mockReturnValueOnce({
 				id: 'lifted-agent',
@@ -1013,14 +1030,15 @@ describe('dispatch command', () => {
 				projectRoot: '/p',
 				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
 			});
+			vi.mocked(resolvePeerAgent).mockRejectedValueOnce(
+				new PeerResolveError('host-down', 'No host on build-box.', ExitCode.NotRunning, 'build-box')
+			);
 
-			await dispatch('lifted-agent', 'Hello', {});
+			const result = await runDispatch('lifted-agent', 'Hello', {});
 
-			const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-			expect(output.success).toBe(false);
-			expect(output.code).toBe('AGENT_LIFTED');
-			expect(output.error).toContain('build-box:host-1');
-			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(resolvePeerAgent).toHaveBeenCalledWith({ peer: 'build-box', agent: 'host-1' });
+			expect(result.code).not.toBe('AGENT_LIFTED');
+			expect(result).toMatchObject({ success: false, peer: 'build-box' });
 		});
 	});
 
@@ -1214,6 +1232,103 @@ describe('dispatch command', () => {
 			}
 			// Without the flag the roster is never read.
 			expect(readLiveSessions).not.toHaveBeenCalled();
+		});
+	});
+	// M17: a hosted agent of this desktop is dispatched to through the running desktop, as a local
+	// and an SSH agent are, so its completion callback arms and its routing applies there.
+	describe('a hosted agent of this desktop (M17)', () => {
+		const sessionFor = (mode: AgentMode) => ({
+			id: 'agent-abc-123',
+			name: 'Frontend',
+			toolType: 'claude-code',
+			cwd: '/p',
+			projectRoot: '/p',
+			...agentModeFields(mode),
+		});
+
+		beforeEach(() => {
+			vi.mocked(readSettings).mockReturnValue({ federationHostedAgents: true });
+			vi.mocked(resolveAgentId).mockImplementation((ref: string) =>
+				ref === 'caller' ? 'caller-agent' : 'agent-abc-123'
+			);
+			vi.mocked(readLiveSessions).mockReturnValue([
+				{ id: 'agent-abc-123', name: 'Frontend', toolType: 'claude-code' },
+				{ id: 'agent-backend', name: 'Backend', toolType: 'codex' },
+			] as never);
+			vi.mocked(readGroups).mockReturnValue([]);
+		});
+
+		afterEach(() => {
+			vi.mocked(readSettings).mockReturnValue({});
+			vi.mocked(getSessionById).mockImplementation(() => undefined);
+			vi.mocked(readLiveSessions).mockReturnValue([]);
+			vi.mocked(withMaestroClient).mockReset();
+		});
+
+		const flags = {
+			newTab: true,
+			notifyOnComplete: 'caller',
+			callbackPrompt: 'Review it',
+			routing: 'parallel',
+		};
+
+		it.each(AGENT_MODES)(
+			'%s: --notify-on-complete and --routing reach the desktop, with the same fields and receipt',
+			async (mode) => {
+				vi.mocked(getSessionById).mockImplementation(() => sessionFor(mode) as never);
+				const sendCommand = vi
+					.fn()
+					.mockResolvedValue({ success: true, tabId: 'tab-new', callbackId: 'cb-1' });
+				vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+					action({ sendCommand } as never)
+				);
+
+				await dispatch('agent-abc', 'look at this, @Backend', { ...flags });
+
+				const { dispatchId, ...sent } = sendCommand.mock.calls[0][0];
+				expect(dispatchId).toEqual(expect.any(String));
+				expect(sent).toEqual({
+					type: 'new_ai_tab_with_prompt',
+					sessionId: 'agent-abc-123',
+					prompt: 'look at this, @Backend',
+					background: true,
+					hidden: true,
+					notifyOnComplete: 'caller-agent',
+					callbackPrompt: 'Review it',
+					mentionRouting: 'parallel',
+				});
+				const printed = JSON.parse(consoleSpy.mock.calls[0][0]);
+				expect(printed).toEqual({
+					success: true,
+					agentId: 'agent-abc-123',
+					sessionId: 'tab-new',
+					tabId: 'tab-new',
+					callbackId: 'cb-1',
+					notifyOnComplete: 'caller-agent',
+				});
+				expect(resolvePeerAgent).not.toHaveBeenCalled();
+				expect(processExitSpy).not.toHaveBeenCalled();
+			}
+		);
+
+		it('hosted, no desktop running: refuses the callback and the routing, saying the desktop is needed', async () => {
+			vi.mocked(getSessionById).mockImplementation(() => sessionFor('hosted') as never);
+			vi.mocked(withMaestroClient).mockRejectedValue(
+				new MaestroNotRunningError('no-discovery-file')
+			);
+
+			const callback = await runDispatch('agent-abc', 'look, @Backend', {
+				newTab: true,
+				notifyOnComplete: 'caller',
+			});
+			const routing = await runDispatch('agent-abc', 'look, @Backend', { routing: 'parallel' });
+
+			for (const result of [callback, routing]) {
+				expect(result).toMatchObject({ success: false, code: 'INVALID_OPTIONS', peer: 'box' });
+				expect(result.error).toContain('needs the Maestro desktop running');
+				expect(result.error).not.toContain('cannot reach across');
+			}
+			expect(resolvePeerAgent).not.toHaveBeenCalled();
 		});
 	});
 });

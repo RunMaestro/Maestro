@@ -190,6 +190,36 @@ describe('classifyRetryableError', () => {
 	it('returns null for unrecognized messages', () => {
 		expect(classifyRetryableError(err({ type: 'unknown', message: 'something weird' }))).toBeNull();
 	});
+
+	/** A message as older builds persisted it, with the screen appended. */
+	const legacyScreenMessage = (message: string, screen: string) =>
+		`${message}\n\nWhat Claude Code last showed:\n\n\`\`\`\n${screen}\n\`\`\``;
+
+	it('never lets a legacy failure screen under the message choose the retry', () => {
+		// The screen is evidence for a person: an agent's own output on it can say
+		// "rate limit" or "overloaded" without the provider having refused anything.
+		const message = legacyScreenMessage(
+			'claude exited before the turn started',
+			'> checking the rate limit docs\n  API overloaded handling: done'
+		);
+		expect(classifyRetryableError(err({ type: 'unknown', message }))).toBeNull();
+		const grokMessage = legacyScreenMessage('grok exited', 'Too many requests in the log');
+		expect(
+			classifyRetryableError(
+				err({
+					type: 'unknown',
+					agentId: 'grok',
+					message: grokMessage,
+					terminal: { status: 'failed', kind: 'provider', dispatchState: 'not-dispatched' },
+				})
+			)
+		).toBeNull();
+	});
+
+	it('still classifies the message above a failure screen', () => {
+		const message = legacyScreenMessage('API Error: 529 Overloaded', 'some screen text');
+		expect(classifyRetryableError(err({ message }))).toBe('availability');
+	});
 });
 
 describe('availabilityDelayMs', () => {

@@ -22,6 +22,15 @@ import { parseOsc52 } from '../utils/terminalClipboard';
 import { copyTextWithFlash } from '../utils/inlineCodeCopy';
 import { logger } from '../utils/logger';
 import { URL_ROUTING_HINT_PREFIX_SOURCE, isWebUrl } from '../../shared/urlRoutingHint';
+import { eventMatchesShortcutKeys } from '../utils/shortcutMatch';
+import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
+import {
+	SESSION_JUMP_SLOT_COUNT,
+	sessionJumpShortcut,
+	sessionJumpSlotDigit,
+} from '../utils/sessionJumpSlots';
+import { useSettingsStore } from '../stores/settingsStore';
+import type { Shortcut } from '../../shared/shortcut-types';
 import {
 	createCanvasMeasureAdvance,
 	resolveTerminalFontFamily,
@@ -74,7 +83,29 @@ function getTerminalNavSequence(e: KeyboardEvent): string | null {
 	return null;
 }
 
-export function evaluateCustomKeyEvent(e: KeyboardEvent): XtermKeyAction {
+const SESSION_JUMP_SHORTCUTS: readonly Shortcut[] = Array.from(
+	{ length: SESSION_JUMP_SLOT_COUNT },
+	(_, index) => sessionJumpShortcut(sessionJumpSlotDigit(index)!)
+);
+
+const DEFAULT_BOUND_SHORTCUTS: readonly Shortcut[] = [
+	...Object.values(DEFAULT_SHORTCUTS),
+	...Object.values(TAB_SHORTCUTS),
+	...SESSION_JUMP_SHORTCUTS,
+];
+
+const OPTION_NAV_AND_SCROLL_KEYS = new Set([
+	'ArrowLeft',
+	'ArrowRight',
+	'ArrowUp',
+	'ArrowDown',
+	'Backspace',
+]);
+
+export function evaluateCustomKeyEvent(
+	e: KeyboardEvent,
+	boundShortcuts: readonly Shortcut[] = DEFAULT_BOUND_SHORTCUTS
+): XtermKeyAction {
 	// Terminal navigation shortcuts (word jump, line jump, word delete)
 	// must be checked before the blanket Alt/Meta passthrough rules.
 	const navSeq = getTerminalNavSequence(e);
@@ -92,7 +123,14 @@ export function evaluateCustomKeyEvent(e: KeyboardEvent): XtermKeyAction {
 			if (e.key === 'ArrowUp') return { action: 'scroll', amount: 'top' };
 			if (e.key === 'ArrowDown') return { action: 'scroll', amount: 'bottom' };
 		}
+	} else if (e.altKey && !e.metaKey && !e.ctrlKey && OPTION_NAV_AND_SCROLL_KEYS.has(e.key)) {
+		// Keep keydown/keyup paired for Option+Arrow/Backspace navigation and scroll
+		return 'passthrough';
 	}
+
+	// Let AltGr (Windows/Linux 3rd/4th-level compose, including AltGr+Shift)
+	// reach xterm instead of being treated as a Ctrl+Alt / Ctrl+Shift shortcut.
+	if (e.getModifierState?.('AltGraph')) return 'handle';
 
 	// Let Ctrl+Shift+` through for new-terminal-tab shortcut
 	if (e.ctrlKey && e.shiftKey && e.code === 'Backquote') return 'passthrough';
@@ -100,12 +138,15 @@ export function evaluateCustomKeyEvent(e: KeyboardEvent): XtermKeyAction {
 	if (e.metaKey) return 'passthrough';
 	// Let Ctrl+Shift combos through (cross-platform app shortcuts)
 	if (e.ctrlKey && e.shiftKey) return 'passthrough';
-	// Let Alt key combos through so Maestro shortcuts like Alt+Q (Cue),
-	// Alt+J (jump to terminal), Alt+U (filter unread agents) work.
-	// macOptionIsMeta is not enabled, so Alt doesn't send escape sequences
-	// by default - these events would just produce dead/special characters
-	// that aren't useful in the terminal context.
-	if (e.altKey) return 'passthrough';
+	// Only pass Alt/Option combos through when they match a bound Maestro shortcut
+	// by physical key (e.code), so Option-composed characters on non-US layouts
+	// (e.g. German Option+7 = |, Option+5 = [, Option+L = @) reach xterm.
+	if (e.altKey) {
+		const matchesBoundShortcut = boundShortcuts.some((shortcut) =>
+			eventMatchesShortcutKeys(e, shortcut.keys, { altByCodeOnly: true })
+		);
+		return matchesBoundShortcut ? 'passthrough' : 'handle';
+	}
 	// Let xterm.js handle Escape normally - it sends \x1b through the standard
 	// onData pipeline which writes to the PTY. Previous manual handling (writing
 	// \x1b directly and returning false on keydown) caused xterm's internal key
@@ -697,7 +738,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				}
 			}
 
-			const action = evaluateCustomKeyEvent(e);
+			const { shortcuts, tabShortcuts } = useSettingsStore.getState();
+			const action = evaluateCustomKeyEvent(e, [
+				...Object.values(shortcuts),
+				...Object.values(tabShortcuts),
+				...SESSION_JUMP_SHORTCUTS,
+			]);
 			if (typeof action === 'object' && action.action === 'write') {
 				window.maestro.process.write(sessionId, action.data);
 				return false;
@@ -722,6 +768,16 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 						cancelable: true,
 					})
 				);
+			}
+			if (
+				action === 'handle' &&
+				e.type === 'keydown' &&
+				(e.altKey || e.getModifierState?.('AltGraph'))
+			) {
+				// Prevent handled Option/AltGr compose events from bubbling to window's
+				// useMainKeyboardHandler, where key-first matching could double-fire
+				// (e.g. German Option+5 producing '[' matching a shortcut bound to Alt+[).
+				e.stopPropagation();
 			}
 			return action === 'handle';
 		});

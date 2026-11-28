@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentErrorRecovery } from '../../../renderer/hooks';
 import type { AgentError } from '../../../shared/types';
+import { AGENT_MODES, createModeSession } from '../../helpers';
+import { isSessionRemote } from '../../../renderer/utils/sessionHelpers';
 
 const baseError: AgentError = {
 	type: 'auth_expired',
@@ -178,19 +180,144 @@ describe('useAgentErrorRecovery', () => {
 			message: 'Codex CLI not installed. Install it with: npm install -g @openai/codex',
 			agentId: 'codex',
 		};
+		const originalPlatform = (window as unknown as { maestro: { platform?: string } }).maestro
+			.platform;
 
-		it('offers no recovery action, since no button can install the CLI', () => {
+		afterEach(() => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = originalPlatform;
+		});
+
+		it('offers the install for this platform first, then a retry', () => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'darwin';
+			const onInstall = vi.fn();
+			const onRetry = vi.fn();
+
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: notInstalled,
+					agentId: 'codex',
+					sessionId: 's1',
+					onInstall,
+					onRetry,
+				})
+			);
+
+			const [installAction, retryAction] = result.current.recoveryActions;
+			expect(installAction.id).toBe('install');
+			expect(installAction.label).toBe('Install Codex');
+			expect(installAction.description).toBe('Run "npm install -g @openai/codex" here');
+			expect(installAction.primary).toBe(true);
+			expect(retryAction.id).toBe('retry');
+			expect(retryAction.primary).toBe(false);
+
+			act(() => installAction.onClick());
+			expect(onInstall).toHaveBeenCalledTimes(1);
+		});
+
+		it('falls back to retry alone when there is no install for the platform', () => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'browser';
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: notInstalled,
+					agentId: 'codex',
+					sessionId: 's1',
+					onInstall: vi.fn(),
+					onRetry: vi.fn(),
+				})
+			);
+
+			expect(result.current.recoveryActions.map((a) => a.id)).toEqual(['retry']);
+			expect(result.current.recoveryActions[0].primary).toBe(true);
+		});
+
+		it('never offers a restart, which would fail the same way', () => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'darwin';
 			const { result } = renderHook(() =>
 				useAgentErrorRecovery({
 					error: notInstalled,
 					agentId: 'codex',
 					sessionId: 's1',
 					onRestartAgent: vi.fn(),
+				})
+			);
+			expect(result.current.recoveryActions).toEqual([]);
+		});
+
+		it.each(AGENT_MODES)('offers the same Install action, first, for a %s agent', (mode) => {
+			// The host is Windows, so a remote agent's POSIX command is visibly its own.
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'win32';
+			const session = createModeSession(mode);
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: { ...notInstalled, agentId: 'claude-code' },
+					agentId: 'claude-code',
+					sessionId: 's1',
+					isRemote: isSessionRemote(session),
+					onInstall: vi.fn(),
+					onRetry: vi.fn(),
+				})
+			);
+			const [install, retry] = result.current.recoveryActions;
+			expect(install).toMatchObject({ id: 'install', label: 'Install Claude Code', primary: true });
+			expect(retry).toMatchObject({ id: 'retry', primary: false });
+			// The command is the one for the machine the turn runs on.
+			expect(install.description).toContain(
+				mode === 'local' ? 'install.ps1' : 'curl -fsSL https://claude.ai/install.sh'
+			);
+		});
+
+		it('withholds Install and keeps Try Again as primary when Node.js runtime is missing', () => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'darwin';
+			const onInstall = vi.fn();
+			const onRetry = vi.fn();
+
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: {
+						...notInstalled,
+						raw: { exitCode: 127, stderr: 'env: node: No such file or directory' },
+					},
+					agentId: 'codex',
+					sessionId: 's1',
+					onInstall,
+					onRetry,
+				})
+			);
+
+			expect(result.current.recoveryActions).toHaveLength(1);
+			const [retryAction] = result.current.recoveryActions;
+			expect(retryAction.id).toBe('retry');
+			expect(retryAction.label).toBe('Try Again');
+			expect(retryAction.primary).toBe(true);
+			expect(retryAction.description).toBe('Restore Node.js to PATH, then send again');
+
+			act(() => retryAction.onClick());
+			expect(onRetry).toHaveBeenCalledTimes(1);
+			expect(onInstall).not.toHaveBeenCalled();
+		});
+
+		it('names other missing runtimes such as Bun when withholding Install', () => {
+			(window as unknown as { maestro: { platform?: string } }).maestro.platform = 'darwin';
+
+			const { result } = renderHook(() =>
+				useAgentErrorRecovery({
+					error: {
+						...notInstalled,
+						raw: { exitCode: 127, stderr: 'env: bun: No such file or directory' },
+					},
+					agentId: 'codex',
+					sessionId: 's1',
+					onInstall: vi.fn(),
 					onRetry: vi.fn(),
 				})
 			);
 
-			expect(result.current.recoveryActions).toEqual([]);
+			expect(result.current.recoveryActions).toHaveLength(1);
+			expect(result.current.recoveryActions[0].id).toBe('retry');
+			expect(result.current.recoveryActions[0].primary).toBe(true);
+			expect(result.current.recoveryActions[0].description).toBe(
+				'Restore Bun to PATH, then send again'
+			);
 		});
 	});
 

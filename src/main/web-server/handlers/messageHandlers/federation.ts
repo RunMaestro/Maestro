@@ -1,6 +1,6 @@
 /**
  * Federation WebSocket handler: `federation_command`, the CLI half of the desktop's peer mirror
- * (`maestro-cli federation peers|reconnect`, FED-SSH-05).
+ * (`maestro-cli federation peers|reconnect|agents|add|...`, FED-SSH-05).
  *
  * Routed to the ONE `PeerMirrorService` the `federation:*` IPC handlers and the Left Bar read, so
  * `peers` prints what the desktop shows and `reconnect` runs the same reload as the Left Bar's
@@ -13,6 +13,7 @@
 
 import { logger } from '../../../utils/logger';
 import { getAutoFederation, getPeerMirrorService } from '../../../federation';
+import { requestFederationWindow } from '../../../federation/federation-window';
 import { findMirrorPeer } from '../../../../shared/maestro-lib/client/peer-mirror';
 import {
 	FEDERATION_COMMAND_ACTIONS,
@@ -70,6 +71,61 @@ export async function handleFederationCommand(
 				success: true,
 				auto: action === 'auto-run' ? await auto.runNow() : auto.snapshot(),
 			});
+			return;
+		}
+		if (action === 'conflicts') {
+			reply(await requestFederationWindow({ action: 'list' }));
+			return;
+		}
+		if (action === 'resolve-conflict') {
+			const { agent, field, take, value } = message as Record<string, unknown>;
+			if (typeof agent !== 'string' || !agent.trim()) {
+				reply({ success: false, error: 'Name the hosted agent (peer:agent)' });
+				return;
+			}
+			if (typeof field !== 'string' || !field.trim()) {
+				reply({ success: false, error: 'Name the field to settle' });
+				return;
+			}
+			if (take !== 'host' && take !== 'local' && take !== 'value') {
+				reply({ success: false, error: 'Say which value to take: host, local, or value' });
+				return;
+			}
+			if (take === 'value' && typeof value !== 'string') {
+				reply({ success: false, error: 'A merged value needs the text to use' });
+				return;
+			}
+			reply(
+				await requestFederationWindow({
+					action: 'resolve',
+					agent,
+					field,
+					resolution:
+						take === 'value'
+							? { take: 'value', value: (value as string).trim() || undefined }
+							: { take },
+				})
+			);
+			return;
+		}
+		if (action === 'hosted-agents') {
+			reply(await requestFederationWindow({ action: 'hosted-agents' }));
+			return;
+		}
+		if (action === 'add-agent') {
+			const { agent, group, background } = message as Record<string, unknown>;
+			if (typeof agent !== 'string' || !agent.trim()) {
+				reply({ success: false, error: 'Name the host agent to add (peer:agent)' });
+				return;
+			}
+			reply(
+				await requestFederationWindow({
+					action: 'add-agent',
+					agent: agent.trim(),
+					...(typeof group === 'string' && group.trim() ? { group: group.trim() } : {}),
+					...(background === true ? { background: true } : {}),
+				})
+			);
 			return;
 		}
 		const ref = message.peer;

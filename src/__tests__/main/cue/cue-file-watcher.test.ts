@@ -60,6 +60,23 @@ describe('cue-file-watcher', () => {
 		});
 	});
 
+	it('watches the base-folder chain shallowly, never through a recursive FSEvents stream', () => {
+		createCueFileWatcher({
+			watchGlob: 'src/**/*.ts',
+			projectRoot: '/projects/test',
+			debounceMs: 5000,
+			onEvent: vi.fn(),
+			triggerName: 'test-trigger',
+		});
+
+		// The chain watcher sits on the project root. On macOS FSEvents would
+		// deliver every event under it to JS before `depth` filtered it out.
+		expect(chokidar.watch).toHaveBeenCalledWith(
+			path.resolve('/projects/test'),
+			expect.objectContaining({ depth: 0, useFsEvents: false, usePolling: false })
+		);
+	});
+
 	it('registers change, add, and unlink handlers', () => {
 		createCueFileWatcher({
 			watchGlob: '**/*.ts',

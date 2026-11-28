@@ -23,6 +23,7 @@ import {
 	CAPTURED_OPENCODE_SESSION_ID,
 } from '../../../__tests__/main/process-manager/recordings/captured';
 import type { TurnRecording } from '../../../__tests__/main/process-manager/recordings/fixtures';
+import { ANTIGRAVITY_READ_ONLY_SETTINGS } from '../providers/definitions';
 
 const ENTRY = path.resolve(__dirname, '../bin/run-turn.ts');
 const FAKE_AGENT = path.resolve(__dirname, '../../../__tests__/fixtures/fake-agent.mjs');
@@ -231,12 +232,18 @@ posixOnly('the headless program', () => {
 		expect(run.providerArgs).toBeUndefined();
 	});
 
-	it('exits 2 for a read-only turn the provider cannot enforce', async () => {
-		const run = await runProgram(turnArgs('antigravity', ['--read-only']));
+	it("starts a read-only Antigravity turn with agy's session deny list", async () => {
+		// Only the launch arguments are asserted; the recording just lets the fake
+		// agent start and record them (there is no captured Antigravity turn).
+		const run = await runProgram(
+			turnArgs('antigravity', ['--read-only']),
+			CAPTURED_RECORDINGS['captured-opencode-normal']
+		);
 
-		expect(run.status).toBe(2);
-		expect(run.stderr).toContain('cannot enforce a read-only turn');
-		expect(run.providerArgs).toBeUndefined();
+		const args = run.providerArgs ?? [];
+		const at = args.indexOf('--settings');
+		expect(at).toBeGreaterThanOrEqual(0);
+		expect(args[at + 1]).toBe(ANTIGRAVITY_READ_ONLY_SETTINGS);
 	});
 
 	it('exits 1 and names the failure when the turn crashed', async () => {

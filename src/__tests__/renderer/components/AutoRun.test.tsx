@@ -13,6 +13,8 @@ import type { Theme, BatchRunState, SessionState } from '../../../renderer/types
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
+import { AGENT_MODES, createModeSession } from '../../helpers';
+import { getSessionSshRemoteId } from '../../../renderer/utils/sessionHelpers';
 
 const createMarkdownComponentsCalls = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
@@ -3897,5 +3899,42 @@ describe('Document Selector Task Count Sync', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+
+describe('AutoRun mode parity (local, SSH, hosted)', () => {
+	beforeEach(() => {
+		setupMaestroMock();
+		useBatchStore.setState({ batchRunStates: {} });
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	// RightPanel hands the panel getSessionSshRemoteId(session); a hosted agent keeps its SSH
+	// remote for the files, so its documents are read from this machine the same way.
+	it.each(['edit', 'preview'] as const)(
+		'draws the same %s panel for local, SSH, and hosted agents',
+		(mode) => {
+			const drawn = AGENT_MODES.map((agentMode) => {
+				const sshRemoteId = getSessionSshRemoteId(createModeSession(agentMode));
+				const view = renderWithProvider(<AutoRun {...createDefaultProps({ mode, sshRemoteId })} />);
+				// React's useId differs per mount, never per mode.
+				const html = view.container.innerHTML.replace(/:r[0-9a-z]+:/g, ':id:');
+				view.unmount();
+				return html;
+			});
+
+			expect(drawn[1]).toBe(drawn[0]);
+			expect(drawn[2]).toBe(drawn[0]);
+		}
+	);
+
+	it('hands an SSH and a hosted agent the same remote id', () => {
+		expect(getSessionSshRemoteId(createModeSession('hosted'))).toBe(
+			getSessionSshRemoteId(createModeSession('ssh'))
+		);
+		expect(getSessionSshRemoteId(createModeSession('local'))).toBeUndefined();
 	});
 });

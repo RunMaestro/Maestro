@@ -293,7 +293,12 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	});
 
 	win.setAlwaysOnTop(saved?.pinned !== false, 'floating');
-	win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+	// skipTransformProcessType: without it Electron 41 turns the whole app into a UIElement
+	// process (no Dock icon, no menu bar, no main window) the moment this runs.
+	win.setVisibleOnAllWorkspaces(true, {
+		visibleOnFullScreen: true,
+		skipTransformProcessType: true,
+	});
 	applyLayout(win, layout, win.getBounds());
 
 	const url = withQuickChatFlag(

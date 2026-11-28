@@ -11,6 +11,7 @@ import * as chokidar from 'chokidar';
 import picomatch from 'picomatch';
 import { isMacOS, isWindows } from '../../shared/platformDetection';
 import { createCueEvent, type CueEvent } from './cue-types';
+import { SHALLOW_WATCH_OPTIONS } from '../utils/watcher-ignore';
 
 export interface CueFileWatcherConfig {
 	watchGlob: string;
@@ -88,6 +89,15 @@ export const CUE_POLLING_FALLBACK_INTERVAL_MS = 1000;
 function errorCode(error: unknown): string | undefined {
 	const code = (error as { code?: unknown } | null)?.code;
 	return typeof code === 'string' ? code : undefined;
+}
+
+/**
+ * The `WATCH_LIMIT_ERROR_CODES` code `error` carries, if any: the OS file-watch
+ * limit is used up, which is the host's state and not a Maestro fault.
+ */
+export function watchLimitErrorCode(error: unknown): string | undefined {
+	const code = errorCode(error);
+	return code && WATCH_LIMIT_ERROR_CODES.has(code) ? code : undefined;
 }
 
 /**
@@ -273,11 +283,14 @@ export function createCueFileWatcher(config: CueFileWatcherConfig): () => void {
 			);
 		};
 
+		// SHALLOW_WATCH_OPTIONS keeps "never the tree below" true on macOS too:
+		// FSEvents would stream every event under the project root into JS.
 		const chainWatcher = chokidar.watch(rootAbs, {
 			ignoreInitial: true,
 			persistent: true,
 			depth: segments.length - 1,
 			ignored: (candidate: string) => !chain.has(chainKey(candidate)),
+			...SHALLOW_WATCH_OPTIONS,
 			...pollingOptions(),
 		});
 		chainWatcher.on('addDir', (dirPath: string) => {

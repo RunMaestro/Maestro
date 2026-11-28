@@ -1,7 +1,8 @@
 /**
  * Tests for peerMirrorStore: a window's in-memory copy of the Federation peers the desktop
- * mirrors. Covers push folding, selection exclusivity with local agents and group chats, and the
- * stale-version rule that keeps a racing transcript read from clearing a newer stale mark.
+ * mirrors. Covers push folding, History versions, and the stale-version rule that keeps a racing
+ * transcript read from clearing a newer stale mark. It never holds a view selection: a hosted
+ * agent draws as its own Left Bar record.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -13,13 +14,7 @@ import {
 } from '../../../shared/maestro-lib/client/peer-mirror';
 import { liveTurnKey } from '../../../shared/maestro-lib/client/live-turn';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
-import {
-	isMirrorShown,
-	mirrorDraftKey,
-	reducePeerMirrorPush,
-	selectActiveMirrorKey,
-	usePeerMirrorStore,
-} from '../../../renderer/stores/peerMirrorStore';
+import { reducePeerMirrorPush, usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { resetStores } from '../../helpers';
@@ -61,25 +56,13 @@ describe('peerMirrorStore', () => {
 			expect(state.peers.gpu.agents.map((a) => a.id)).toEqual(['b1']);
 		});
 
-		it('keeps the selection when the agent is still there, drops it when it is not', () => {
-			const store = usePeerMirrorStore.getState();
-			store.hydrate([peerWith('buildbox', [agent('a1')])]);
-			store.selectMirroredAgent('buildbox', 'a1');
-			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1'), agent('a2')])]);
-			expect(selectActiveMirrorKey(usePeerMirrorStore.getState())).toBe('buildbox:a1');
-			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a2')])]);
-			expect(usePeerMirrorStore.getState().activeMirror).toBeNull();
-		});
-
 		it('reset empties everything and turns the mirror off', () => {
 			const store = usePeerMirrorStore.getState();
 			store.hydrate([peerWith('buildbox', [agent('a1')])]);
-			store.selectMirroredAgent('buildbox', 'a1');
 			usePeerMirrorStore.getState().reset();
 			const state = usePeerMirrorStore.getState();
 			expect(state.enabled).toBe(false);
 			expect(state.order).toEqual([]);
-			expect(state.activeMirror).toBeNull();
 		});
 	});
 
@@ -107,30 +90,26 @@ describe('peerMirrorStore', () => {
 			expect(usePeerMirrorStore.getState().order).toEqual(['buildbox']);
 		});
 
-		it('replaces the agent list on peer.agents and drops a selection whose agent left', () => {
+		it('replaces the agent list on peer.agents', () => {
 			const store = usePeerMirrorStore.getState();
 			store.hydrate([peerWith('buildbox', [agent('a1'), agent('a2')])]);
-			store.selectMirroredAgent('buildbox', 'a2');
 			usePeerMirrorStore
 				.getState()
 				.applyPush(push('buildbox', { type: 'peer.agents', agents: [agent('a1')], groups: [] }));
 			expect(usePeerMirrorStore.getState().peers.buildbox.agents.map((a) => a.id)).toEqual(['a1']);
-			expect(usePeerMirrorStore.getState().activeMirror).toBeNull();
 		});
 
-		it('upserts on agent.updated and clears the selection on agent.removed', () => {
+		it('upserts on agent.updated and drops the agent on agent.removed', () => {
 			const store = usePeerMirrorStore.getState();
 			store.hydrate([peerWith('buildbox', [agent('a1')])]);
 			store.applyPush(
 				push('buildbox', { type: 'agent.updated', agent: { ...agent('a1'), name: 'renamed' } })
 			);
 			expect(usePeerMirrorStore.getState().peers.buildbox.agents[0].name).toBe('renamed');
-			usePeerMirrorStore.getState().selectMirroredAgent('buildbox', 'a1');
 			usePeerMirrorStore
 				.getState()
 				.applyPush(push('buildbox', { type: 'agent.removed', agentId: 'a1' }));
 			expect(usePeerMirrorStore.getState().peers.buildbox.agents).toEqual([]);
-			expect(isMirrorShown()).toBe(false);
 		});
 
 		it('folds a live turn, then carries its entries over and marks the tab stale when it ends', () => {
@@ -183,17 +162,13 @@ describe('peerMirrorStore', () => {
 			).toBe(true);
 		});
 
-		it('drops a removed peer with its slots, view state, and selection', () => {
+		it('drops a removed peer with its slots', () => {
 			const store = usePeerMirrorStore.getState();
 			store.hydrate([peerWith('buildbox', [agent('a1')]), peerWith('gpu', [agent('b1')])]);
-			store.selectMirroredAgent('buildbox', 'a1');
-			store.togglePeerCollapsed('buildbox');
 			usePeerMirrorStore.getState().applyPush(push('buildbox', { type: 'peer.removed' }));
 			const state = usePeerMirrorStore.getState();
 			expect(state.order).toEqual(['gpu']);
 			expect(state.peers.buildbox).toBeUndefined();
-			expect(state.collapsedPeerIds.buildbox).toBeUndefined();
-			expect(state.activeMirror).toBeNull();
 		});
 
 		it('replaces an agent queue on agent.queue and drops it when the list empties', () => {
@@ -268,6 +243,52 @@ describe('peerMirrorStore', () => {
 			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1 });
 		});
 
+		// L31: the host wrote a synopsis after the turn's end; an open History panel reads again.
+		it('bumps one agent when its host says it wrote the History (agent.history)', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1'), agent('a2')])]);
+			store.applyPush(push('buildbox', { type: 'agent.history', agentId: 'a1' }));
+			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1 });
+			// A peer this window does not hold yet: nothing to bump.
+			usePeerMirrorStore
+				.getState()
+				.applyPush(push('gpu', { type: 'agent.history', agentId: 'b1' }));
+			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1 });
+		});
+
+		// L34 (b): an older host never says it wrote; the Synopsis watch's find stands in for it.
+		it('bumps one agent once when a History read found a host entry, only for a host that never says it wrote', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([
+				peerWith('buildbox', [agent('a1'), agent('a2')]),
+				peerWith('gpu', [agent('b1')]),
+			]);
+			usePeerMirrorStore.getState().noteHostHistoryEntry('buildbox', 'a1');
+			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1, 'gpu:b1': 1 });
+			// A host that says it wrote already bumped the version: the find adds nothing.
+			usePeerMirrorStore
+				.getState()
+				.applyPush(push('gpu', { type: 'agent.history', agentId: 'b1' }));
+			expect(versions()['gpu:b1']).toBe(2);
+			const announced = usePeerMirrorStore.getState();
+			usePeerMirrorStore.getState().noteHostHistoryEntry('gpu', 'b1');
+			expect(versions()['gpu:b1']).toBe(2);
+			// No change is no new state, so no listener runs (CodeRabbit on #2176).
+			expect(usePeerMirrorStore.getState()).toBe(announced);
+			// A connection that could not resume may reach an older build: the find bumps again.
+			usePeerMirrorStore.getState().applyPush(push('gpu', { type: 'peer.stale' }));
+			expect(versions()['gpu:b1']).toBe(3);
+			usePeerMirrorStore.getState().noteHostHistoryEntry('gpu', 'b1');
+			expect(versions()['gpu:b1']).toBe(4);
+			// A peer this window does not hold: nothing to bump.
+			usePeerMirrorStore.getState().noteHostHistoryEntry('nope', 'x1');
+			expect(versions()).toEqual({ 'buildbox:a1': 2, 'buildbox:a2': 1, 'gpu:b1': 4 });
+			// A peer id that names a prototype key is not taken for an announcement (CodeRabbit on #2176).
+			usePeerMirrorStore.getState().hydrate([peerWith('constructor', [agent('c1')])]);
+			usePeerMirrorStore.getState().noteHostHistoryEntry('constructor', 'c1');
+			expect(versions()).toEqual({ 'constructor:c1': 2 });
+		});
+
 		it('bumps every agent of the peer on peer.stale and on peer.agents', () => {
 			const store = usePeerMirrorStore.getState();
 			store.hydrate([
@@ -340,6 +361,58 @@ describe('peerMirrorStore', () => {
 			expect(slot.stale).toBe(true);
 		});
 
+		// Parity R8: the ended turn's live copy goes once a read that began after the turn ended
+		// lands, even when another stale mark came while it ran; otherwise the reply is drawn
+		// twice (the live copy and the host's), the doubled DOM the soak measured.
+		it('a read that began after the turn ended ends the carryover, even when marked stale again (R8)', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1')])]);
+			const key = liveTurnKey('a1', 't1');
+			const turn = (event: Record<string, unknown>) =>
+				usePeerMirrorStore
+					.getState()
+					.applyPush(
+						push('buildbox', { type: 'turn', agentId: 'a1', tabId: 't1', event } as never)
+					);
+			turn({ kind: 'text', at: 1, text: 'a long reply' });
+			turn({ kind: 'outcome', at: 2, outcome: 'completed', exitCode: 0 });
+			expect(usePeerMirrorStore.getState().transcripts.buildbox[key].carryover).toHaveLength(1);
+
+			const version = usePeerMirrorStore.getState().beginTranscriptRead('buildbox', 'a1', 't1');
+			// Another stale mark while the read runs (the agent was updated after its turn).
+			usePeerMirrorStore.getState().applyPush(push('buildbox', { type: 'peer.stale' }));
+			usePeerMirrorStore
+				.getState()
+				.finishTranscriptRead(
+					'buildbox',
+					'a1',
+					't1',
+					[{ id: 'host-a1', timestamp: 2, source: 'stdout', text: 'a long reply' }],
+					version
+				);
+			const slot = usePeerMirrorStore.getState().transcripts.buildbox[key];
+			expect(slot.stale).toBe(true);
+			expect(slot.carryover).toBeUndefined();
+			expect(slot.entries.map((entry) => entry.id)).toEqual(['host-a1']);
+		});
+
+		it('a read that began before the turn ended keeps the carryover (R8)', () => {
+			const store = usePeerMirrorStore.getState();
+			store.hydrate([peerWith('buildbox', [agent('a1')])]);
+			const key = liveTurnKey('a1', 't1');
+			const version = store.beginTranscriptRead('buildbox', 'a1', 't1');
+			const turn = (event: Record<string, unknown>) =>
+				usePeerMirrorStore
+					.getState()
+					.applyPush(
+						push('buildbox', { type: 'turn', agentId: 'a1', tabId: 't1', event } as never)
+					);
+			turn({ kind: 'text', at: 1, text: 'a long reply' });
+			turn({ kind: 'outcome', at: 2, outcome: 'completed', exitCode: 0 });
+			usePeerMirrorStore.getState().finishTranscriptRead('buildbox', 'a1', 't1', [], version);
+			expect(usePeerMirrorStore.getState().transcripts.buildbox[key].carryover).toHaveLength(1);
+		});
+
 		it('a read with no stale mark in between clears staleness and the carryover', () => {
 			const store = usePeerMirrorStore.getState();
 			store.hydrate([peerWith('buildbox', [agent('a1')])]);
@@ -363,98 +436,6 @@ describe('peerMirrorStore', () => {
 			expect(slot.error).toContain('not connected');
 			expect(slot.stale).toBe(false);
 			expect(slot.loading).toBe(false);
-		});
-	});
-
-	describe('selection', () => {
-		it('selecting a mirrored agent closes the active group chat', () => {
-			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
-			useGroupChatStore.getState().setActiveGroupChatId('chat-1');
-			usePeerMirrorStore.getState().selectMirroredAgent('buildbox', 'a1');
-			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
-			expect(selectActiveMirrorKey(usePeerMirrorStore.getState())).toBe('buildbox:a1');
-		});
-
-		it('ignores an agent the peer does not have', () => {
-			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
-			usePeerMirrorStore.getState().selectMirroredAgent('buildbox', 'nope');
-			expect(usePeerMirrorStore.getState().activeMirror).toBeNull();
-		});
-
-		it('selecting a local agent leaves the mirror, even the one already active', () => {
-			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
-			useSessionStore.setState({ activeSessionId: 'local-1' });
-			usePeerMirrorStore.getState().selectMirroredAgent('buildbox', 'a1');
-			useSessionStore.getState().setActiveSessionId('local-1');
-			expect(isMirrorShown()).toBe(false);
-
-			usePeerMirrorStore.getState().selectMirroredAgent('buildbox', 'a1');
-			useSessionStore.getState().setActiveSessionIdInternal('local-2');
-			expect(isMirrorShown()).toBe(false);
-		});
-
-		it('never puts a mirrored agent into sessionStore', () => {
-			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
-			usePeerMirrorStore.getState().selectMirroredAgent('buildbox', 'a1');
-			usePeerMirrorStore
-				.getState()
-				.applyPush(push('buildbox', { type: 'agent.updated', agent: agent('a2') }));
-			const sessions = useSessionStore.getState();
-			expect(sessions.sessions).toEqual([]);
-			expect(sessions.activeSessionId).not.toBe('buildbox:a1');
-		});
-
-		it('cycles the shown agent tabs, wrapping, skipping hidden tabs', () => {
-			const withHidden: AgentRecord = {
-				...agent('a1', ['t1', 't2', 't3']),
-				aiTabs: [{ id: 't1' }, { id: 't2', hidden: true }, { id: 't3' }],
-			};
-			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [withHidden])]);
-			usePeerMirrorStore.getState().selectMirroredAgent('buildbox', 'a1');
-			usePeerMirrorStore.getState().cycleMirrorTab(1);
-			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('t3');
-			usePeerMirrorStore.getState().cycleMirrorTab(1);
-			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('t1');
-			usePeerMirrorStore.getState().cycleMirrorTab(-1);
-			expect(usePeerMirrorStore.getState().activeTabIds.buildbox.a1).toBe('t3');
-		});
-	});
-
-	describe('composer drafts', () => {
-		it('keeps a draft per mirrored tab and drops it when emptied', () => {
-			const store = usePeerMirrorStore.getState();
-			store.hydrate([peerWith('buildbox', [agent('a1', ['t1', 't2'])])]);
-			store.setMirrorDraft('buildbox', 'a1', 't1', 'half a thought');
-			store.setMirrorDraft('buildbox', 'a1', 't2', 'other tab');
-			expect(usePeerMirrorStore.getState().drafts).toEqual({
-				[mirrorDraftKey('buildbox', 'a1', 't1')]: 'half a thought',
-				[mirrorDraftKey('buildbox', 'a1', 't2')]: 'other tab',
-			});
-			usePeerMirrorStore.getState().setMirrorDraft('buildbox', 'a1', 't1', '');
-			expect(Object.keys(usePeerMirrorStore.getState().drafts)).toEqual([
-				mirrorDraftKey('buildbox', 'a1', 't2'),
-			]);
-		});
-
-		it('survives a fresh snapshot, and goes with a removed peer', () => {
-			const store = usePeerMirrorStore.getState();
-			store.hydrate([peerWith('buildbox', [agent('a1')]), peerWith('gpu', [agent('b1')])]);
-			store.setMirrorDraft('buildbox', 'a1', 't1', 'keep me');
-			store.setMirrorDraft('gpu', 'b1', 't1', 'gpu draft');
-			usePeerMirrorStore
-				.getState()
-				.hydrate([peerWith('buildbox', [agent('a1')]), peerWith('gpu', [agent('b1')])]);
-			expect(Object.keys(usePeerMirrorStore.getState().drafts)).toHaveLength(2);
-			usePeerMirrorStore.getState().applyPush(push('buildbox', { type: 'peer.removed' }));
-			expect(usePeerMirrorStore.getState().drafts).toEqual({
-				[mirrorDraftKey('gpu', 'b1', 't1')]: 'gpu draft',
-			});
-		});
-
-		it('never writes a draft into sessionStore', () => {
-			usePeerMirrorStore.getState().hydrate([peerWith('buildbox', [agent('a1')])]);
-			usePeerMirrorStore.getState().setMirrorDraft('buildbox', 'a1', 't1', 'text');
-			expect(useSessionStore.getState().sessions).toEqual([]);
 		});
 	});
 });

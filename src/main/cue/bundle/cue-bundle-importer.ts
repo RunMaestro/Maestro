@@ -95,6 +95,7 @@ import {
 } from './cue-bundle-validator';
 import { isWithin } from './cue-bundle-exporter';
 import {
+	CLAUDE_SKILLS_DIR,
 	MCP_CONFIG_FILE,
 	isClaudeMemoryFileName,
 	mcpConfigSecretNames,
@@ -588,6 +589,17 @@ function containedTarget(root: string, relPosix: string, what: string): string {
 		);
 	}
 	return target;
+}
+
+/**
+ * Whether a workspace-relative path is a file inside a skill folder (Claude Code or Grok): the only files a
+ * bundle may mark `executable`, because a skill ships scripts its agent runs. Honoring the mark anywhere else
+ * would let a bundle make any file it writes runnable (a git hook, an installer) by saying so in its manifest.
+ */
+function isSkillScriptPath(relPosix: string): boolean {
+	return [CLAUDE_SKILLS_DIR, ...CUE_BUNDLE_GROK_RESOURCE_ROOTS.skill].some((root) =>
+		relPosix.startsWith(`${root}/`)
+	);
 }
 
 /** The current bytes of a target that must be a regular file when it exists. */
@@ -1279,12 +1291,19 @@ async function buildPlan(options: CueBundleImportOptions): Promise<InternalPlan>
 			continue;
 		}
 		if (ws && roots.has(ws[1])) {
+			// The manifest is the bundle's own word, so the mark counts only on a skill's files.
+			const executable = entry.executable === true && isSkillScriptPath(ws[2]);
+			if (entry.executable === true && !executable) {
+				warnings.push(
+					`${source} is marked executable in the bundle. Only skill scripts keep that mark, so it was not set.`
+				);
+			}
 			planFile(
 				'workspace',
 				source,
 				containedTarget(roots.get(ws[1])!, ws[2], source),
 				bytes,
-				entry.executable === true,
+				executable,
 				ws[1]
 			);
 			continue;

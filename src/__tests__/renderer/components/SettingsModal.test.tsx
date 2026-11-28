@@ -2904,22 +2904,15 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// The Display-tab "Local Ignore Patterns" entry was merged into the broader
-			// "File Indexing & File Panel Settings" section (still tagged with the
-			// ignore/gitignore keywords). The SSH-remote entry kept its original label.
-			expect(
-				screen.getByText(
-					(_content, element) =>
-						element?.textContent === 'File Indexing & File Panel Settings' &&
-						element.tagName === 'DIV'
-				)
-			).toBeInTheDocument();
-			expect(
-				screen.getByText(
-					(_content, element) =>
-						element?.textContent === 'SSH Remote Ignore Patterns' && element.tagName === 'DIV'
-				)
-			).toBeInTheDocument();
+			// Results group by section: the Display-tab file-indexing entry has an inline
+			// section, so it renders once as an open panel; the SSH-remote entry has no
+			// inline section, so it stays a row that opens its tab.
+			const panel = document.querySelector('[data-settings-search-panel="fileIndexing"]');
+			expect(panel).not.toBeNull();
+			expect(panel?.textContent).toContain('File Indexing & File Panel Settings');
+			const row = document.querySelector('[data-settings-search-row="ssh-ignore-patterns"]');
+			expect(row).not.toBeNull();
+			expect(row?.textContent).toContain('SSH Remote Ignore Patterns');
 		});
 
 		it('should group results by tab label', async () => {
@@ -2932,11 +2925,13 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Should show tab group headers (h3 elements in search results)
-			const groupHeaders = screen.getAllByRole('heading', { level: 3 });
-			const headerTexts = groupHeaders.map((h) => h.textContent);
-			expect(headerTexts).toContain('Display');
-			expect(headerTexts).toContain('SSH Hosts');
+			// Each result names its tab: a panel in its "Tab › Section" header, a row in
+			// its subtitle.
+			expect(
+				screen.getByLabelText('Open File Indexing & File Panel Settings in Display')
+			).toBeInTheDocument();
+			const row = document.querySelector('[data-settings-search-row="ssh-ignore-patterns"]');
+			expect(row?.getAttribute('title')).toBe('Open in SSH Hosts');
 		});
 	});
 

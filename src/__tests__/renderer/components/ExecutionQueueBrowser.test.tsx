@@ -2310,7 +2310,10 @@ describe('ExecutionQueueBrowser', () => {
 		});
 
 		it('Enter opens the action menu for the selected row', () => {
-			renderWithQueue({ onToggleItemPause: vi.fn(), onEditItem: vi.fn() });
+			renderWithQueue({
+				onToggleItemPause: vi.fn(),
+				onEditItem: vi.fn(async () => ({ saved: true as const })),
+			});
 
 			fireEvent.keyDown(card(), { key: 'ArrowDown' });
 			fireEvent.keyDown(card(), { key: 'Enter' });
@@ -2336,7 +2339,7 @@ describe('ExecutionQueueBrowser', () => {
 					theme={theme}
 					onRemoveItem={mockOnRemoveItem}
 					onSwitchSession={mockOnSwitchSession}
-					onEditItem={vi.fn()}
+					onEditItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			);
 
@@ -2349,7 +2352,10 @@ describe('ExecutionQueueBrowser', () => {
 		});
 
 		it('runs the highlighted action on Enter and closes the menu', () => {
-			renderWithQueue({ onToggleItemPause: vi.fn(), onEditItem: vi.fn() });
+			renderWithQueue({
+				onToggleItemPause: vi.fn(),
+				onEditItem: vi.fn(async () => ({ saved: true as const })),
+			});
 
 			fireEvent.keyDown(card(), { key: 'Enter' });
 			// Edit, Delete, Hold, Copy - step down to Delete.
@@ -2502,5 +2508,176 @@ describe('ExecutionQueueBrowser', () => {
 			expect(within(screen.getByTestId('queue-action-list')).queryByText(/Merge/)).toBeNull();
 			fireEvent.keyDown(document.activeElement ?? card, { key: 'Escape' });
 		});
+	});
+
+	// The same queue in a local, an SSH, and a hosted agent: only the transport differs.
+	const AGENT_MODES = {
+		local: {},
+		ssh: { sessionSshRemoteConfig: { enabled: true, remoteId: 'box' } },
+		hosted: {
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'box' },
+			liftedTo: { peer: 'box', agentId: 'host-agent', at: 1 },
+		},
+	} as const;
+	type AgentMode = keyof typeof AGENT_MODES;
+	const AGENT_MODE_NAMES = Object.keys(AGENT_MODES) as AgentMode[];
+
+	describe('Send Now, reorder, and the action menu in local, SSH, and hosted agents', () => {
+		const modeSession = (mode: AgentMode) => {
+			const hostQueued = mode === 'hosted' ? true : undefined;
+			return createSession({
+				id: 'active-session',
+				...AGENT_MODES[mode],
+				aiTabs: [
+					{ id: 'tab-1', name: 'tab-1', agentSessionId: null, logs: [], state: 'idle' },
+				] as any,
+				activeTabId: 'tab-1',
+				executionQueue: [
+					createQueuedItem({ id: 'q1', text: 'first', hostQueued }),
+					createQueuedItem({ id: 'q2', text: 'second', hostQueued }),
+				],
+			} as Partial<Session>);
+		};
+
+		const renderMode = (
+			mode: AgentMode,
+			handlers: { onForceSendItem?: ReturnType<typeof vi.fn> } = {}
+		) =>
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[modeSession(mode)]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onReorderItems={vi.fn()}
+					onForceSendItem={handlers.onForceSendItem ?? vi.fn()}
+					onMergeItem={vi.fn()}
+					onEditItem={vi.fn(async () => ({ saved: true as const }))}
+					onToggleItemPause={vi.fn()}
+				/>
+			);
+
+		beforeEach(() => {
+			useSettingsStore.setState({ forcedParallelExecution: false });
+		});
+
+		it.each(AGENT_MODE_NAMES)('%s: offers the same Send Now and hands the same ids', (mode) => {
+			const onForceSendItem = vi.fn();
+			renderMode(mode, { onForceSendItem });
+			const buttons = screen.getAllByText('Send Now');
+			expect(buttons).toHaveLength(2);
+			fireEvent.click(buttons[1]);
+			expect(onForceSendItem).toHaveBeenCalledWith('active-session', 'q2');
+		});
+
+		it.each(AGENT_MODE_NAMES)('%s: every item is draggable', (mode) => {
+			const { container } = renderMode(mode);
+			const rows = container.querySelectorAll('.group.select-none');
+			expect(rows.length).toBe(2);
+			rows.forEach((row) => {
+				expect(row).toHaveStyle({ cursor: 'grab' });
+			});
+		});
+
+		it.each(AGENT_MODE_NAMES)('%s: the action menu offers the same actions', (mode) => {
+			renderMode(mode);
+			const card = screen.getByLabelText('Execution Queue');
+			fireEvent.keyDown(card, { key: 'ArrowDown' });
+			fireEvent.keyDown(card, { key: 'Enter' });
+			const offered = Array.from(
+				screen.getByTestId('queue-action-list').querySelectorAll('[data-testid^="queue-action-"]')
+			)
+				.map((node) => node.getAttribute('data-testid'))
+				.filter((id) => id !== 'queue-action-list');
+			expect(offered).toEqual(
+				expect.arrayContaining([
+					'queue-action-send',
+					'queue-action-delete',
+					'queue-action-pause',
+					'queue-action-merge',
+					'queue-action-edit',
+				])
+			);
+		});
+	});
+
+	describe('Merge in local, SSH, and hosted agents', () => {
+		const MERGE_TITLE = /Merge into the earlier message/i;
+		const modes = AGENT_MODES;
+
+		it.each(Object.keys(modes) as Array<keyof typeof modes>)(
+			'%s: offers Merge on the same card and hands the same ids to onMergeItem',
+			async (mode) => {
+				const hostQueued = mode === 'hosted' ? true : undefined;
+				const onMergeItem = vi.fn();
+				render(
+					<ExecutionQueueBrowser
+						isOpen={true}
+						onClose={mockOnClose}
+						sessions={[
+							createSession({
+								id: 'active-session',
+								...modes[mode],
+								executionQueue: [
+									createQueuedItem({ id: 'q1', text: 'upper', tabId: 'tab-a', hostQueued }),
+									createQueuedItem({ id: 'q2', text: 'other', tabId: 'tab-b', hostQueued }),
+									createQueuedItem({ id: 'q3', text: 'lower', tabId: 'tab-a', hostQueued }),
+								],
+							} as Partial<Session>),
+						]}
+						activeSessionId="active-session"
+						theme={theme}
+						onRemoveItem={mockOnRemoveItem}
+						onSwitchSession={mockOnSwitchSession}
+						onMergeItem={onMergeItem}
+					/>
+				);
+				expect(screen.getAllByTitle(MERGE_TITLE)).toHaveLength(1);
+				fireEvent.click(screen.getByTitle(MERGE_TITLE));
+				fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+				expect(onMergeItem).toHaveBeenCalledWith('active-session', 'q3');
+			}
+		);
+
+		it.each(Object.keys(modes) as Array<keyof typeof modes>)(
+			'%s: offers Edit on the same card and hands the same patch to onEditItem',
+			async (mode) => {
+				const hostQueued = mode === 'hosted' ? true : undefined;
+				const onEditItem = vi.fn(async () => ({ saved: true as const }));
+				render(
+					<ExecutionQueueBrowser
+						isOpen={true}
+						onClose={mockOnClose}
+						sessions={[
+							createSession({
+								id: 'active-session',
+								...modes[mode],
+								executionQueue: [
+									createQueuedItem({ id: 'q1', text: 'draft', tabId: 'tab-a', hostQueued }),
+								],
+							} as Partial<Session>),
+						]}
+						activeSessionId="active-session"
+						theme={theme}
+						onRemoveItem={mockOnRemoveItem}
+						onSwitchSession={mockOnSwitchSession}
+						onEditItem={onEditItem}
+					/>
+				);
+				fireEvent.click(screen.getByTitle('Edit message and images'));
+				fireEvent.change(screen.getByPlaceholderText('Message to send…'), {
+					target: { value: 'final' },
+				});
+				fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+				expect(onEditItem).toHaveBeenCalledWith(
+					'active-session',
+					'q1',
+					expect.objectContaining({ text: 'final', images: [] })
+				);
+			}
+		);
 	});
 });

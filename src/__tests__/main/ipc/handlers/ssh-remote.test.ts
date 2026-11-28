@@ -37,7 +37,7 @@ const mockCheckSshRemote = vi.fn();
 const mockGetUnreachable = vi.fn(() => [] as unknown[]);
 const mockNoteSshExit = vi.fn();
 vi.mock('../../../../main/ssh-reachability', () => ({
-	checkSshRemote: (...args: unknown[]) => mockCheckSshRemote(...args),
+	checkRemoteLink: (...args: unknown[]) => mockCheckSshRemote(...args),
 	getUnreachableSshRemotes: () => mockGetUnreachable(),
 	noteSshExit: (...args: unknown[]) => mockNoteSshExit(...args),
 }));

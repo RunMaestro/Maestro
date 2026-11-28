@@ -25,7 +25,7 @@
 // Compact, Merge Into and Send to Agent, sent as summarize_context,
 // merge_context and transfer_context and run by the menu's own handlers.
 //
-// Federation: "tab new", "tab rename", "tab star" and "tab unstar" take
+// Federation: "tab new", "tab close", "tab rename", "tab star" and "tab unstar" take
 // `--agent peer:agent` to act on an agent a peer's host owns. They reach the
 // host over the peer's forward and run the shared `runPeerAgentAction()`, the
 // same function the desktop's mirrored tab strip calls, so nothing here writes
@@ -57,7 +57,7 @@ import {
 	type TabContextOpResult,
 } from '../../shared/tabContextOps';
 import { formatError, formatSuccess } from '../output/formatter';
-import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
+import { asThinkingMode, nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 import { formatRelativeTime } from '../../shared/formatters';
@@ -252,6 +252,18 @@ async function tabAction(
 }
 
 export async function tabClose(tabId: string, options: TabMutateOptions): Promise<void> {
+	const peerTarget = peerTabTarget(options.agent);
+	if (peerTarget) {
+		return peerTabAction(
+			peerTarget,
+			options.json,
+			(agent) => ({
+				kind: 'close-tab',
+				tabId: pickHostTab(agent.aiTabs ?? [], tabId, agent.activeTabId).id,
+			}),
+			(result) => `Closed tab ${'tabId' in result ? result.tabId : tabId}`
+		);
+	}
 	await tabAction(tabId, options, (owner) => ({
 		type: 'close_tab',
 		responseType: 'close_tab_result',
@@ -485,6 +497,23 @@ export async function tabThinking(
 	mode: ThinkingMode | 'cycle',
 	options: TabMutateOptions
 ): Promise<void> {
+	// `--agent peer:agent` sets the mode on the host's tab, which runs the turn (its sibling verbs
+	// route the same way). `cycle` reads the host's current mode.
+	const peerTarget = peerTabTarget(options.agent);
+	if (peerTarget) {
+		let next: ThinkingMode | undefined;
+		return peerTabAction(
+			peerTarget,
+			options.json,
+			(agent) => {
+				const tab = pickHostTab(agent.aiTabs ?? [], tabId, agent.activeTabId);
+				next = mode === 'cycle' ? nextThinkingMode(asThinkingMode(tab.showThinking)) : mode;
+				return { kind: 'update-tab', tabId: tab.id, patch: { thinking: next } };
+			},
+			(result) =>
+				`Thinking for tab ${'tabId' in result ? result.tabId : tabId} is now ${next ?? mode}`
+		);
+	}
 	let entry: DesktopTabEntry;
 	try {
 		entry = await resolveTabEntry(tabId, options.agent);

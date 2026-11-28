@@ -2249,6 +2249,14 @@ describe('group-chat-router', () => {
 				busy = false;
 				await runPollsUntil(() => emitAutoRunTriggered.mock.calls.length > 0);
 				expect(emitAutoRunTriggered).toHaveBeenCalledTimes(1);
+				// The participant's agent id rides along, so the renderer starts the run
+				// on that agent even after a rename.
+				expect(emitAutoRunTriggered).toHaveBeenCalledWith(
+					chat.id,
+					'Client',
+					undefined,
+					'session-client'
+				);
 
 				clearPendingParticipants(chat.id);
 			} finally {
@@ -2560,6 +2568,109 @@ describe('group-chat-router', () => {
 
 			// SSH wrapper should NOT be called for local sessions
 			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+		});
+
+		it("runs an SSH participant on its agent's own remote binary", async () => {
+			const chat = await createTestChatWithModerator('SSH Custom Binary Test');
+			const sshSession: GroupChatSessionInfo = {
+				id: 'ses-ssh-3',
+				name: 'PinnedRemote',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				customPath: '/opt/remote/claude',
+				sshRemoteName: 'PedTome',
+				sshRemoteConfig,
+			};
+			setGetSessionsCallback(() => [sshSession]);
+			setSshStore(mockSshStore);
+			await addParticipant(
+				chat.id,
+				'PinnedRemote',
+				'claude-code',
+				mockProcessManager,
+				'/home/user/project',
+				mockAgentDetector,
+				{},
+				undefined,
+				{ sshRemoteName: 'PedTome', sshRemoteConfig },
+				mockSshStore
+			);
+			mockWrapSpawnWithSsh.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@PinnedRemote: implement the feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+			// The agent's path names a file on the remote, so it is the remote binary.
+			expect(mockWrapSpawnWithSsh.mock.calls[0][0]).toEqual(
+				expect.objectContaining({ agentBinaryName: '/opt/remote/claude' })
+			);
+		});
+	});
+
+	describe("a participant's own custom binary", () => {
+		afterEach(() => {
+			setGetSessionsCallback(() => []);
+		});
+
+		const participantSpawnFor = (chatId: string, name: string) =>
+			mockProcessManager.spawn.mock.calls.find((call) =>
+				call[0]?.sessionId?.includes(`group-chat-${chatId}-participant-${name}-`)
+			)?.[0];
+
+		it('runs the binary its agent names, as its tab would', async () => {
+			// The router used to spawn `agent.path || agent.command` for every
+			// participant, so an agent pinned to its own binary ran the provider's.
+			const chat = await createTestChatWithModerator('Participant Custom Binary Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'ses-pinned',
+					name: 'Pinned',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+					// Any file that exists and is executable on the test machine.
+					customPath: process.execPath,
+				},
+			]);
+			await addParticipant(chat.id, 'Pinned', 'claude-code', mockProcessManager, '/tmp/project');
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Pinned: implement the feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(participantSpawnFor(chat.id, 'Pinned')?.command).toBe(process.execPath);
+		});
+
+		it("falls back to the provider's binary when the agent's own path is not executable", async () => {
+			const chat = await createTestChatWithModerator('Participant Missing Binary Test');
+			setGetSessionsCallback(() => [
+				{
+					id: 'ses-missing',
+					name: 'Missing',
+					toolType: 'claude-code',
+					cwd: '/tmp/project',
+					customPath: '/definitely/not/a/claude-binary',
+				},
+			]);
+			await addParticipant(chat.id, 'Missing', 'claude-code', mockProcessManager, '/tmp/project');
+			mockProcessManager.spawn.mockClear();
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Missing: implement the feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(participantSpawnFor(chat.id, 'Missing')?.command).toBe('/usr/local/bin/claude');
 		});
 	});
 

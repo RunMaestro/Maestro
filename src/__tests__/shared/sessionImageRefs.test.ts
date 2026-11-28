@@ -11,6 +11,7 @@ import {
 	SESSION_IMAGE_REF_PREFIX,
 	isSessionImageRef,
 	sessionImageRefBasename,
+	sessionImageRefSha256,
 	sessionImageHttpPath,
 } from '../../shared/sessionImageRefs';
 
@@ -23,6 +24,13 @@ describe('sessionImageRefs', () => {
 		expect(isSessionImageRef('https://example.com/a.png')).toBe(false);
 		expect(isSessionImageRef(undefined)).toBe(false);
 		expect(isSessionImageRef(42)).toBe(false);
+	});
+
+	it('returns the sha256 a well-formed reference names, and null for anything else', () => {
+		expect(sessionImageRefSha256(`${SESSION_IMAGE_REF_PREFIX}${SHA}.png`)).toBe(SHA);
+		expect(sessionImageRefSha256(`${SESSION_IMAGE_REF_PREFIX}${SHA}.jpeg`)).toBe(SHA);
+		expect(sessionImageRefSha256(`${SESSION_IMAGE_REF_PREFIX}../x.png`)).toBeNull();
+		expect(sessionImageRefSha256('data:image/png;base64,AAAA')).toBeNull();
 	});
 
 	it('returns the basename of a well-formed reference', () => {

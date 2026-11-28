@@ -4,6 +4,7 @@
 
 import { Command, InvalidArgumentError, Option } from 'commander';
 import { asThinkingMode, type ThinkingMode } from '../shared/types';
+import { BROWSER_VIEWPORT_PRESETS } from '../shared/browserViewport';
 import { parseCliBool, parseCliPort, parseCliSeconds, isInheritValue } from './utils/parse';
 import { listGroups } from './commands/list-groups';
 import { listAgents } from './commands/list-agents';
@@ -17,9 +18,12 @@ import { ask } from './commands/ask';
 import {
 	queueHold,
 	queueList,
+	queueEdit,
 	queueMerge,
+	queueMove,
 	queueRemove,
 	queueResume,
+	queueSendNow,
 	queueSteer,
 } from './commands/queue';
 import {
@@ -47,13 +51,20 @@ import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
 import { openGraph } from './commands/open-graph';
-import { openBrowser, closeBrowser } from './commands/open-browser';
+import {
+	openBrowser,
+	closeBrowser,
+	browserPick,
+	browserPicks,
+	browserViewport,
+} from './commands/open-browser';
 import { openModal } from './commands/open-modal';
 import { openTerminal } from './commands/open-terminal';
 import { refreshFiles } from './commands/refresh-files';
 import { refreshAutoRun } from './commands/refresh-auto-run';
 import { status } from './commands/status';
 import { version } from './commands/version';
+import { installCommand } from './commands/install-command';
 import {
 	groupChatList,
 	groupChatSend,
@@ -63,6 +74,7 @@ import {
 	groupChatStop,
 	groupChatArchive,
 	groupChatAdd,
+	groupChatUnread,
 } from './commands/group-chat';
 import { doctor } from './commands/doctor';
 import { completions } from './commands/completions';
@@ -93,11 +105,16 @@ import { bundleExport, bundleImport, bundleInspect, bundleValidate } from './com
 import { hostEndpoint, hostStart, hostStatus, hostStop } from './commands/host';
 import { remoteHostInstall, remoteHostStart, remoteHostStatus } from './commands/remote-host';
 import { lift } from './commands/lift';
+import { unlift } from './commands/unlift';
 import {
+	federationAdd,
+	federationAgents,
 	federationAuto,
 	federationAutoRun,
+	federationConflicts,
 	federationPeers,
 	federationReconnect,
+	federationResolve,
 } from './commands/federation';
 import { createAgent, CREATE_AGENT_TYPES } from './commands/create-agent';
 import { duplicateAgent } from './commands/duplicate-agent';
@@ -109,6 +126,7 @@ import { removeAgent } from './commands/remove-agent';
 import { updateAgent } from './commands/update-agent';
 import { listSshRemotes } from './commands/list-ssh-remotes';
 import { listModels } from './commands/list-models';
+import { rollback } from './commands/rollback';
 import { listTerminals } from './commands/list-terminals';
 import { sendTerminal } from './commands/send-terminal';
 import { readTerminal, DEFAULT_TAIL_LINES } from './commands/read-terminal';
@@ -116,6 +134,8 @@ import { createSshRemote } from './commands/create-ssh-remote';
 import { removeSshRemote } from './commands/remove-ssh-remote';
 import { testSshRemote } from './commands/test-ssh-remote';
 import { sshRemoteStatus } from './commands/ssh-remote-status';
+import { logs } from './commands/logs';
+import { claudeCanary } from './commands/claude-canary';
 import { updateSshRemote } from './commands/update-ssh-remote';
 import { directorNotesHistory } from './commands/director-notes-history';
 import { directorNotesSynopsis } from './commands/director-notes-synopsis';
@@ -154,6 +174,22 @@ import {
 	dataviewIndexStatus,
 	dataviewQuery,
 } from './commands/dataview';
+import {
+	sqliteBlob,
+	sqliteCount,
+	sqliteDelete,
+	sqliteHistory,
+	sqliteLog,
+	sqliteInfo,
+	sqliteInsert,
+	sqliteQuery,
+	sqliteRows,
+	sqliteSchema,
+	sqliteSet,
+	sqliteTables,
+	sqliteTransaction,
+	sqliteUndo,
+} from './commands/sqlite';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -177,7 +213,19 @@ import {
 	feedbackSubmit,
 	feedbackSubscribe,
 } from './commands/feedback';
-import { stats, statsIndexing, statsQuery, statsTokens } from './commands/stats';
+import {
+	stats,
+	statsActivity,
+	statsAgents,
+	statsCue,
+	statsDelegation,
+	statsExport,
+	statsIndexing,
+	statsPlanUsage,
+	statsQuery,
+	statsTokens,
+	statsProjectTokens,
+} from './commands/stats';
 import { renameAgent } from './commands/rename-agent';
 import { renameGroup } from './commands/rename-group';
 import { updateGroup } from './commands/update-group';
@@ -190,7 +238,27 @@ import {
 	autoRunStatus,
 	autoRunFolder,
 } from './commands/auto-run-control';
-import { steerAutoRunCancel, steerAutoRunList, steerAutoRunSend } from './commands/steer-auto-run';
+import {
+	steerAutoRunCancel,
+	steerAutoRunDismiss,
+	steerAutoRunList,
+	steerAutoRunSend,
+} from './commands/steer-auto-run';
+import {
+	diffReviewAdd,
+	diffReviewClear,
+	diffReviewEdit,
+	diffReviewList,
+	diffReviewRemove,
+	diffReviewSend,
+	fileReviewAdd,
+	fileReviewClear,
+	fileReviewEdit,
+	fileReviewList,
+	fileReviewRemove,
+	fileReviewSend,
+} from './commands/diff-review';
+import { promptLinkCreate, promptLinkList, promptLinkRevoke } from './commands/prompt-link';
 import { removePlaybook } from './commands/remove-playbook';
 import { focusAgent, switchMode } from './commands/agent-control';
 import { interrupt } from './commands/interrupt';
@@ -419,6 +487,8 @@ list
 		'--all-peers',
 		'List local agents, then the agents on every SSH remote that runs a Federation host'
 	)
+	.option('--visible-only', 'Only agents whose group is not hidden from the Left Bar')
+	.option('--hidden-only', 'Only agents in a hidden group')
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.action(listAgents);
 
@@ -577,6 +647,7 @@ clean
 	.command('playbooks')
 	.description('Remove playbooks for deleted sessions')
 	.option('--dry-run', 'Show what would be removed without actually removing')
+	.option('--force', 'Remove even when the agent list is empty')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cleanPlaybooks);
 
@@ -605,6 +676,11 @@ program
 		'Do not write a History entry for this turn (written by default, desktop app running or not)'
 	)
 	.option('--no-synopsis', 'Skip the synopsis turn; the History entry carries the response instead')
+	.option(
+		'--model <id>',
+		'peer:agent only: the model for this one turn, your own choice (the host tab and other conductors keep theirs)'
+	)
+	.option('--effort <level>', 'peer:agent only: the effort for this one turn, your own choice')
 	.action(send);
 
 // Dispatch command - hand a prompt to the desktop and return tab/session ID.
@@ -692,6 +768,14 @@ program
 		'--with-context',
 		'Forward your current transcript as context. Off by default: ask sends a self-contained question in a fresh context'
 	)
+	.option(
+		'--btw',
+		"Ask a side question (`/btw`) instead: answered from a throwaway fork of the agent's tab conversation, runs even while that tab is busy, and is never written to it. Claude Code agents only; the answer also shows on that tab's /btw card"
+	)
+	.option(
+		'--tab <tab-id>',
+		'With --btw: the AI tab whose conversation to fork (default: its active tab)'
+	)
 	.option('--timeout <seconds>', 'How long to wait for the answer (default 600, min 10, max 3600)')
 	.option('--json', 'Output the answer as JSON')
 	.action(ask);
@@ -743,6 +827,35 @@ queue
 	)
 	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
 	.action(queueMerge);
+
+queue
+	.command('edit <item-id>')
+	.description(
+		'Rewrite a queued message in place, like the Edit button on its queued card. It keeps its place, hold, and images. --model / --effort replace its own pair (one left out means the default); with neither it keeps them.'
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('-t, --text <text>', 'The new message text (required)')
+	.option('--model <model>', 'Model the message runs with')
+	.option('--effort <effort>', 'Effort the message runs with')
+	.action(queueEdit);
+
+queue
+	.command('move <item-id>')
+	.description(
+		"Move a queued item to another place, like dragging its queued card. --to counts from 0 (the first item that waits); with --tab it counts only that tab's items, as the tab's queue list draws them."
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.option('--to <position>', 'Where the item goes, 0 being the first (required)')
+	.option('--tab <tab-id>', "Count positions among this tab's items only")
+	.action(queueMove);
+
+queue
+	.command('send-now <item-id>')
+	.description(
+		"Run a queued item now instead of in its turn, like the Force Send button on its queued card. It never runs over a turn on its own tab; beside another tab's turn it runs in parallel only when Forced Parallel Execution is on."
+	)
+	.option('-a, --agent <id>', 'Agent whose queue the item belongs to (required)')
+	.action(queueSendNow);
 
 queue
 	.command('steer <item-id>')
@@ -1064,6 +1177,18 @@ groupChat
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(groupChatArchive);
 
+groupChat
+	.command('unread <chat>')
+	.description('Mark a group chat unread (the red dot on its Left Bar row)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options: { json?: boolean }) => groupChatUnread(chat, true, options));
+
+groupChat
+	.command('read <chat>')
+	.description("Clear a group chat's unread dot")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((chat: string, options: { json?: boolean }) => groupChatUnread(chat, false, options));
+
 // Open file command - open a file in the Maestro desktop app.
 //
 // Also the verb that PLAYS media: the renderer's open path recognizes a
@@ -1170,6 +1295,55 @@ program
 	.description('Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(closeBrowser);
+
+// Browser pick command - Design Mode by selector or by region: stage an element
+// of a browser tab (selector, trimmed HTML, computed styles, cropped screenshot),
+// or a region of it (--rect: its screenshot and the outermost elements in it), as
+// a chip in the owning agent's composer, through the same code a click or a drag
+// in Design Mode runs. Exactly one of --selector and --rect. With --queue it is
+// queued as its own message instead, as the pick card's Queue button does.
+program
+	.command('browser-pick <tab>')
+	.description(
+		"Add an element or a region of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)"
+	)
+	.option('-s, --selector <css>', 'CSS selector of the element (the first match is used)')
+	.option('--rect <x,y,w,h>', 'Pick a region: x,y,width,height in viewport CSS px')
+	.option('--note <text>', 'Note added under the pick, as typed in the pick card')
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--background', 'Add it without switching the view to the AI tab')
+	.option('--focus', 'Switch to the AI tab the pick lands in (default)')
+	.option('--queue', 'Queue it as its own message instead of a chip')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPick);
+
+// Browser picks command - the Design Mode chips waiting in an agent's composer:
+// list them, each with the block it adds to the message at send, edit one's
+// note as the chip's note box does, or take one off by id, as the chip's X does.
+program
+	.command('browser-picks')
+	.description(
+		"List the Design Mode chips waiting in an agent's composer, edit one's note, or remove one"
+	)
+	.option('-a, --agent <id>', 'Agent whose composer holds the chips (defaults to active)')
+	.option('--edit <pickId>', "Replace this chip's note (with --note)")
+	.option('--note <text>', 'The new note for --edit (an empty string clears it)')
+	.option('--remove <pickId>', 'Remove this chip (id from the list, or from browser-pick)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserPicks);
+
+// Browser viewport command - the width a browser tab shows its page at (Fit,
+// Desktop 1440, Laptop 1280, Tablet 768, Phone 390), as the toolbar's viewport
+// control sets it. Gives the preset to set it; always reports the one the tab
+// shows afterwards and the one it showed before. Never moves the view.
+program
+	.command('browser-viewport <tab> [preset]')
+	.description(
+		`Set or read the width a browser tab shows its page at (preset: ${BROWSER_VIEWPORT_PRESETS.join(', ')}; omit to read). tab: id from open-browser, or browser:N`
+	)
+	.option('-a, --agent <id>', 'Agent that owns the tab (defaults to active)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(browserViewport);
 
 // Open terminal command - open a new terminal tab in the Maestro desktop app
 program
@@ -1285,7 +1459,7 @@ program
 // complement `auto-run` (which launches) for full lifecycle control.
 program
 	.command('stop-auto-run')
-	.description('Stop the active Auto Run for an agent')
+	.description('Stop the active Auto Run for an agent (on a run already stopping, end it now)')
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => stopAutoRun(options.agent, options));
@@ -1306,7 +1480,7 @@ program
 
 program
 	.command('abort-auto-run')
-	.description('Abort an error-paused Auto Run')
+	.description('Abort an error-paused Auto Run (on a run already stopping, end it now)')
 	.requiredOption('-a, --agent <id>', 'Target agent ID')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => abortAutoRun(options.agent, options));
@@ -1368,6 +1542,186 @@ steerAutoRun
 	.option('--focus', 'Accepted and ignored: cancelling a note raises no notice')
 	.option('--json', 'Output the cancelled note as JSON')
 	.action(steerAutoRunCancel);
+
+steerAutoRun
+	.command('dismiss <delivery-id>')
+	.description(
+		'Clear a delivered note and its task reply from the record (accepts a unique id prefix)'
+	)
+	.requiredOption('-a, --agent <id>', 'Agent that holds the delivered note')
+	.option('--background', 'Accepted and ignored: dismissing a note raises no notice')
+	.option('--focus', 'Accepted and ignored: dismissing a note raises no notice')
+	.option('--json', 'Output the dismissed delivery as JSON')
+	.action(steerAutoRunDismiss);
+
+// Git Diff review comments - the CLI half of the Git Diff viewer's Review tray.
+// Comments are pinned to lines of the agent's current diff and sent to it as
+// one prompt, each with its path:lines and hunk.
+const diffReview = program
+	.command('diff-review')
+	.description("Pin review comments to lines of an agent's git diff and send them as one review");
+
+diffReview
+	.command('list')
+	.description('Show the pending comments, flagging any whose lines changed since')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewList);
+
+diffReview
+	.command('add <path> <lines> <comment>')
+	.description('Pin a comment to path:lines of the current diff (lines: 12 or 12-14)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--side <side>', 'Which version the line numbers are in: new (default) or old', 'new')
+	.option('--background', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--json', 'Output the new comment as JSON')
+	.action(diffReviewAdd);
+
+diffReview
+	.command('edit <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(diffReviewEdit);
+
+diffReview
+	.command('remove <comment-id>')
+	.description('Drop one pending comment (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--json', 'Output the removed comment as JSON')
+	.action(diffReviewRemove);
+
+diffReview
+	.command('clear')
+	.description('Discard every pending comment')
+	.requiredOption('-a, --agent <id>', 'Agent whose diff is being reviewed')
+	.option('--background', 'Accepted and ignored: discarding raises no notice')
+	.option('--focus', 'Accepted and ignored: discarding raises no notice')
+	.option('--json', 'Output as JSON')
+	.action(diffReviewClear);
+
+diffReview
+	.command('send')
+	.description('Send every current comment to the agent as one queued prompt')
+	.requiredOption('-a, --agent <id>', 'Agent to send the review to')
+	.option('--compose', "Put the review in the agent's message box instead of sending it")
+	.option('--background', 'Deliver without switching the view (the default)')
+	.option('--focus', 'Take the user to the agent, as the Send Review button does')
+	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
+	.action(diffReviewSend);
+
+// File review comments - the CLI half of the File Preview's Review tray.
+// Comments are pinned to lines of one file ("Comment on line" on the File
+// Preview's right-click menu) and sent to the agent as one prompt, each with
+// its path:lines and the lines it quotes.
+const fileReview = program
+	.command('file-review')
+	.description('Pin review comments to lines of a file and send them to an agent as one review');
+
+fileReview
+	.command('list <file>')
+	.description('Show the pending comments on a file, flagging any whose lines changed since')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing comments changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(fileReviewList);
+
+fileReview
+	.command('add <file> <lines> <comment>')
+	.description('Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: adding a comment raises no notice')
+	.option('--json', 'Output the new comment as JSON')
+	.action(fileReviewAdd);
+
+fileReview
+	.command('edit <file> <comment-id> <comment>')
+	.description('Reword a pending comment, keeping its id and lines (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: editing a comment raises no notice')
+	.option('--json', 'Output the updated comment as JSON')
+	.action(fileReviewEdit);
+
+fileReview
+	.command('remove <file> <comment-id>')
+	.description('Drop one pending comment (accepts a unique id prefix)')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--focus', 'Accepted and ignored: removing a comment raises no notice')
+	.option('--json', 'Output the removed comment as JSON')
+	.action(fileReviewRemove);
+
+fileReview
+	.command('clear <file>')
+	.description('Discard every pending comment on a file')
+	.requiredOption('-a, --agent <id>', 'Agent the review goes to')
+	.option('--background', 'Accepted and ignored: discarding raises no notice')
+	.option('--focus', 'Accepted and ignored: discarding raises no notice')
+	.option('--json', 'Output as JSON')
+	.action(fileReviewClear);
+
+fileReview
+	.command('send <file>')
+	.description('Send every current comment on a file to the agent as one queued prompt')
+	.requiredOption('-a, --agent <id>', 'Agent to send the review to')
+	.option('--compose', "Put the review in the agent's message box instead of sending it")
+	.option('--background', 'Deliver without switching the view (the default)')
+	.option('--focus', 'Take the user to the agent, as the Send Review button does')
+	.option('--json', 'Output what was sent, what was left behind, and the prompt as JSON')
+	.action(fileReviewSend);
+
+// Prompt Links - `maestro://run/<token>` URLs that open a new tab in one agent
+// and send one stored prompt. The URL carries only a random token; creating a
+// link needs the Prompt Links Encore Feature. Same service as the Prompt Links
+// window (Opt+Cmd+Shift+L).
+const promptLink = program
+	.command('prompt-link')
+	.description(
+		'Create, list, and revoke one-shot maestro://run links (the window: `open prompt-links`)'
+	);
+
+promptLink
+	.command('create <agent> [prompt]')
+	.description('Create a link that runs PROMPT in a new tab of AGENT; prints the URL once')
+	.option('--prompt-file <path>', 'Read the prompt from a file instead of the argument')
+	.option('--uses <n>', 'How many times the link may run: a number, or "unlimited" (default: 1)')
+	.option('--expires <duration>', 'Expire after 12h, 7d, 30d, ... or "never" (default: never)')
+	.option('--label <text>', 'A name to recognize the link by in lists and toasts')
+	.option(
+		'--open <mode>',
+		'Where the tab opens when the link fires: background (default) or foreground'
+	)
+	.option('--background', 'Accepted and ignored: creating a link changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: creating a link changes nothing on screen')
+	.option('--json', 'Output the URL and link as JSON')
+	.action(promptLinkCreate);
+
+promptLink
+	.command('list')
+	.description('List active prompt links (never their URLs: only a hash is stored)')
+	.option('--all', 'Include used, expired, and revoked links')
+	.option('--background', 'Accepted and ignored: listing changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: listing changes nothing on screen')
+	.option('--json', 'Output as JSON')
+	.action(promptLinkList);
+
+promptLink
+	.command('revoke <id>')
+	.description('Revoke a prompt link so it never runs again (accepts a unique id prefix)')
+	.option('--background', 'Accepted and ignored: revoking changes nothing on screen')
+	.option('--focus', 'Accepted and ignored: revoking changes nothing on screen')
+	.option('--json', 'Output the revoked link as JSON')
+	.action(promptLinkRevoke);
 
 // Playbook Exchange - browse and install community playbooks
 const marketplace = program
@@ -1972,6 +2326,17 @@ program
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((agent: string, options) => lift(agent, options));
 
+// Unlift - move a hosted agent back from its host: an SSH agent again (Move Back from Host)
+program
+	.command('unlift <agent>')
+	.description(
+		"Move a hosted agent back from its host: an SSH agent again, with the host's tabs and transcripts; automatic moves then leave it alone"
+	)
+	.option('--offline', "Do not reach the host: restore from this machine's copy only")
+	.option('--keep-host-copy', 'Leave the agent on the host too (it then has two owners)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, options) => unlift(agent, options));
+
 // Federation peer mirror - the peers the desktop mirrors in its Left Bar (FED-SSH-05)
 const federation = program
 	.command('federation')
@@ -2000,10 +2365,73 @@ federationAutoCommand
 	.action((options) => federationAutoRun(options));
 
 federation
+	.command('agents')
+	.description(
+		'List every agent the mirrored hosts run, and which ones the Left Bar shows (a host agent shows only once added)'
+	)
+	.option('--peer <peer>', 'Only this peer')
+	.option('--not-added', 'Only the agents the Left Bar does not show yet')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationAgents(options));
+
+federation
+	.command('add <agent>')
+	.description(
+		"Add a host's agent (peer:agent) to the Left Bar, the same as Add Hosted Agent. Remove it with remove-agent; the host keeps it"
+	)
+	.option('-g, --group <group>', 'Local group id or name for the row (default: ungrouped)')
+	.option('--background', 'Add it without selecting it (Left Bar selection stays put)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, options) => federationAdd(agent, options));
+
+federation
 	.command('reconnect <peer>')
 	.description('Force the desktop to reconnect to a peer and reload its agent list')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((peer: string, options) => federationReconnect(peer, options));
+
+federation
+	.command('conflicts')
+	.description(
+		"List hosted agents' settings that this machine and the host both changed (exit 1 while any wait)"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => federationConflicts(options));
+
+federation
+	.command('resolve <agent> <field>')
+	.description(
+		"Settle one settings conflict of a hosted agent (peer:agent): take the host's value, keep this machine's, or send a merged text"
+	)
+	.option('--take <side>', 'host or local')
+	.option('--value <text>', 'A merged text to use instead (free-text fields only)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((agent: string, field: string, options) => federationResolve(agent, field, options));
+// Install-command - print the install line for a provider CLI (the error dialog's Install action)
+program
+	.command('install-command <provider>')
+	.description(
+		'Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing'
+	)
+	.option(
+		'--platform <platform>',
+		'Target platform: darwin, linux, or win32 (default: this machine)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((provider: string, options) => installCommand(provider, options));
+
+// Rollback - Check for Updates -> Roll Back: list earlier releases, or download one
+program
+	.command('rollback [version]')
+	.description(
+		'List earlier Maestro releases you can roll back to, or download one (e.g. 1.0.3) so the next restart installs it'
+	)
+	.option(
+		'--prerelease',
+		'Include beta and RC releases (default: the "Include pre-release updates" setting)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((version: string | undefined, options) => rollback(version, options));
 
 // Completions command - emit a shell completion script (introspects the program)
 program
@@ -2041,7 +2469,10 @@ program
 	.option('--context-window <size>', 'Context window size in tokens')
 	.option('--provider-path <path>', 'Custom provider path')
 	.option('--ssh-remote <id>', 'SSH remote ID for remote execution')
-	.option('--ssh-cwd <path>', 'Working directory override on SSH remote')
+	.option(
+		'--ssh-cwd <path>',
+		'Working directory on the SSH remote (the agent runs there; defaults to --cwd)'
+	)
 	.option(
 		'--sync-history-to-remote <bool>',
 		'Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)'
@@ -2187,7 +2618,10 @@ program
 // Remove agent command - remove an agent from the Maestro desktop app
 program
 	.command('remove-agent <agent-id>')
-	.description('Remove an agent from the Maestro desktop app')
+	.description(
+		"Remove an agent from the Maestro desktop app, or, given peer:agent, from that peer's host"
+	)
+	.option('--force', 'Remove it even while it runs a turn (the turn stops and its answer is lost)')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(removeAgent);
 
@@ -2671,6 +3105,28 @@ program
 	.option('--check <remote-id>', 'Probe this remote now; exits 2 if it is still unreachable')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(sshRemoteStatus);
+
+// Logs - the running app's system log (the System Log Viewer and its Clear button)
+program
+	.command('logs')
+	.description("Show the running app's system log (the System Log Viewer), or clear it")
+	.option('--level <level>', 'Lowest level to show: debug, info, warn, or error')
+	.option('--context <context>', 'Only entries from this context (e.g. WebServer)')
+	.option('--since <time>', 'Only entries since then: 30m, 2h, ISO-8601, or epoch')
+	.option('--limit <n>', 'Keep the newest N matching entries')
+	.option('--clear', "Clear the log, as the viewer's Clear button does")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(logs);
+
+// Claude TUI canary - did the installed Claude Code pass a maestro-p turn?
+program
+	.command('claude-canary')
+	.description(
+		'Show whether the installed Claude Code passed the TUI canary (one real maestro-p turn the app runs after every Claude Code update); --run runs it now'
+	)
+	.option('--run', 'Run the canary now; exits 2 if Claude Code fails it')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(claudeCanary);
 
 // Display / typography commands
 //
@@ -3637,6 +4093,281 @@ dataviewCmd
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => dataviewTrusted(options));
 
+// SQLite commands - read a database the way the file preview's SQLite viewer
+// shows it. The app opens the file read-only and answers with the viewer's own
+// functions, so the app must be running.
+const sqliteCmd = program
+	.command('sqlite')
+	.description('SQLite: inspect a database the way the file preview shows it (read-only)');
+
+sqliteCmd
+	.command('info <path>')
+	.description(
+		"Show a SQLite database's page size and count, free pages, encoding, journal mode, user_version, and application_id, and optionally check its integrity"
+	)
+	.option(
+		'--check <mode>',
+		'Also check integrity: quick (PRAGMA quick_check) or full (PRAGMA integrity_check, slower); exits 1 when problems are found'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteInfo(file, options));
+
+sqliteCmd
+	.command('tables <path>')
+	.description(
+		'List the tables, views, indexes, and triggers in a SQLite database, with row counts and sizes'
+	)
+	.option(
+		'--internal',
+		'Also list internal objects (sqlite_sequence, autoindexes, FTS shadow tables)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteTables(file, options));
+
+sqliteCmd
+	.command('schema <path> <object>')
+	.description(
+		"Show a table's or view's columns (type, affinity, nullability, default, primary key, foreign keys), an index's key columns, and the object's CREATE SQL"
+	)
+	.option(
+		'--kind <kind>',
+		'Pick table, view, index, or trigger when a trigger shares a name with another object'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteSchema(file, object, options));
+
+sqliteCmd
+	.command('rows <path> <object>')
+	.description(
+		"Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally filtered and sorted in SQLite"
+	)
+	.option('--offset <n>', 'Rows to skip', '0')
+	.option('--limit <n>', 'Rows to show (at most 1000)', '50')
+	.option(
+		'--sort <column>',
+		'Sort by this column (server side, ties broken by rowid or primary key)'
+	)
+	.option('--desc', 'Sort descending (needs --sort)')
+	.option(
+		'--filter <expr>',
+		'Filter rows in SQLite, in the viewer\'s filter language (e.g. "status = active and price > 100", or a bare word to search every column)'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteRows(file, object, options));
+
+sqliteCmd
+	.command('count <path> <object>')
+	.description(
+		"Count a table's or view's rows, or the rows a filter matches, the way the viewer's footer counts them"
+	)
+	.option(
+		'--filter <expr>',
+		"Count only the rows this filter matches, in the viewer's filter language"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, options) => sqliteCount(file, object, options));
+
+sqliteCmd
+	.command('blob <path> <object> <column>')
+	.description(
+		"Save one BLOB cell to a file, whole, the way the viewer's record view saves it (the database is not changed)"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--offset <n>',
+		'The row, by position: what `sqlite rows --offset <n> --limit 1` shows with the same --sort and --filter'
+	)
+	.option('--sort <column>', 'Order used to place --offset (as for `sqlite rows`)')
+	.option('--desc', 'Sort descending (needs --sort)')
+	.option('--filter <expr>', 'Filter used to place --offset (as for `sqlite rows`)')
+	.requiredOption('--output <file>', 'File to write; replaced if it exists')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, object, column, options) => sqliteBlob(file, object, column, options));
+
+sqliteCmd
+	.command('query <path> <sql>')
+	.description(
+		"Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused unless --enable-editing, and an error points at the line and token it is about"
+	)
+	.option(
+		'--param <name=value>',
+		'Bind a parameter (`?1`, `:id`, or `id`) as TEXT (repeatable); values are bound, never spliced into the SQL',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--param-number <name=value>',
+		'Bind a parameter as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--param-null <name>',
+		'Bind a parameter as NULL (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--plan',
+		"Show the statement's EXPLAIN QUERY PLAN as a tree instead of its rows (full scans, index searches, temporary sorts); nothing is read from the tables"
+	)
+	.option('--offset <n>', 'Result rows to skip (not with --plan or --output)', '0')
+	.option('--limit <n>', 'Rows to show (at most 1000; not with --plan or --output)', '50')
+	.option(
+		'--output <file>',
+		"Write EVERY row to this file instead, whole (Query mode's Export): CSV, or JSON Lines for a .jsonl / .ndjson name; the app writes it"
+	)
+	.option('--format <format>', 'Export format: csv or jsonl (default: from the --output name)')
+	.option(
+		'--enable-editing',
+		"Lift the read-only assertion for this one run, as the viewer's Enable editing does in Query mode: a statement that changes the database (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, ...) runs once in a transaction of its own, the session's first change backing the file up beside itself first. ATTACH, DETACH, VACUUM INTO, and BEGIN/COMMIT stay refused"
+	)
+	.option(
+		'--dry-run',
+		"With --enable-editing, Query mode's Dry run: say what kind of statement it is and what it would change, then change nothing. A write is tried once in a transaction and rolled back (no backup); a read is not run; VACUUM and a writing PRAGMA are not tried"
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, sql, options) => sqliteQuery(file, sql, options));
+
+sqliteCmd
+	.command('history <path>')
+	.description(
+		"List the statements run against a database, newest first, as the viewer's Query mode History rail shows them (runs from the viewer and from `sqlite query` alike)"
+	)
+	.option('--forget <id>', 'Forget one entry, by its id or the start of it the listing shows')
+	.option('--clear', "Forget the database's whole query history")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteHistory(file, options));
+
+sqliteCmd
+	.command('log <path>')
+	.description(
+		'List every write made to a database through Maestro, newest first, as the viewer\'s Log shows it: cell edits, inserts, deletes, Undo, Query-mode writes, and transactions, from the viewer and from this CLI alike. Answers "what did I just do to this database"'
+	)
+	.option('--limit <n>', 'Writes to show, newest first', '20')
+	.option('--clear', "Forget the database's whole statement log")
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteLog(file, options));
+
+sqliteCmd
+	.command('set <path> <table> <column>')
+	.description(
+		"Change one cell the way the viewer's table view does: one parameterised UPDATE of the row named by its rowid or primary key. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--key <column=value>',
+		'The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--key-number <column=value>',
+		'A primary-key value given as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option('--value <text>', 'The new value, bound as TEXT (the column affinity converts it)')
+	.option('--value-number <n>', 'The new value, bound as a number')
+	.option('--null', 'Set the cell to NULL')
+	.option(
+		'--if-version <version>',
+		"Change nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a change made since you read it is never overwritten"
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, column, options) => sqliteSet(file, table, column, options));
+
+sqliteCmd
+	.command('insert <path> <table>')
+	.description(
+		"Add one row the way the viewer's Insert row does: one parameterised INSERT, columns not given taking their DEFAULT; a NOT NULL, UNIQUE, CHECK, or FOREIGN KEY failure is reported in SQLite's words. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option(
+		'--value <column=value>',
+		'A column value, bound as TEXT (repeatable; the column affinity must keep it as text)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--value-number <column=value>',
+		'A column value, bound as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--null <column>',
+		'Set a column to NULL (repeatable); a NULL rowid column takes the next rowid',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, options) => sqliteInsert(file, table, options));
+
+sqliteCmd
+	.command('delete <path> <table>')
+	.description(
+		"Remove one row the way the viewer's record view does: one parameterised DELETE of the row named by its rowid or primary key. Foreign keys are enforced, so a row a child still references is refused in SQLite's words, and rows ON DELETE CASCADE or triggers changed are counted. Needs --enable-editing; the session's first change backs the file up beside itself first"
+	)
+	.option('--rowid <id>', "The row, by rowid (`sqlite rows --json` lists each row's rowid)")
+	.option(
+		'--key <column=value>',
+		'The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--key-number <column=value>',
+		'A primary-key value given as a number (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[]
+	)
+	.option(
+		'--if-version <version>',
+		"Delete nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a row changed since you read it is never removed"
+	)
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, table, options) => sqliteDelete(file, table, options));
+
+sqliteCmd
+	.command('undo <path>')
+	.description(
+		"Take back one write the way the viewer's Undo does: apply the `undo` step that sqlite set, insert, or delete printed (with --json, or as the Undo step line): a cell gets its old value back, an inserted row is removed, a deleted row is put back whole with its rowid. Refused, with nothing written, when the row changed since the write. Needs --enable-editing"
+	)
+	.option('--step <json>', 'The undo step as JSON, or @file holding it')
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); nothing is written without it'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => sqliteUndo(file, options));
+
+sqliteCmd
+	.command('transaction <path> <sql...>')
+	.description(
+		"Run several statements in ONE transaction, the way the viewer's Begin transaction, Run, and Commit or Roll back do in Query mode: each statement (one per argument, in order) sees what the ones before it changed, each one's outcome and rows are printed, and nothing reaches the file unless --commit and every statement succeeded. The first failure stops it and rolls everything back. Needs --enable-editing"
+	)
+	.option('--commit', 'Commit at the end, when every statement ran')
+	.option('--rollback', 'Roll back at the end: see what the statements do, keep nothing')
+	.option('--limit <n>', 'Rows to show per statement that returns rows (at most 1000)', '50')
+	.option(
+		'--enable-editing',
+		'Unlock editing for this one call (the tab\'s "Enable editing"); the session\'s first change backs the file up beside itself first'
+	)
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, statements, options) => sqliteTransaction(file, statements, options));
+
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.
 const quickChatCmd = encoreCommand(program, 'quick-chat', 'quickChat', encoreFlags).description(
@@ -4071,6 +4802,23 @@ encoreCommand(program, 'stats-tokens', 'usageStats', encoreFlags)
 	.option('--json', 'Output the full token usage object as JSON')
 	.action(statsTokens);
 
+// Not gated on Usage & Stats: a host answers a peer's dashboard whatever this machine's own
+// dashboard setting is, and this reads exactly what it answers.
+program
+	.command('stats-project-tokens')
+	.description(
+		"Show the token usage this machine's host answers a peer for projects kept here (SSH and hosted agents)"
+	)
+	.requiredOption('--provider <id>', 'Provider id (claude-code, codex, ...)')
+	.requiredOption(
+		'--project <path>',
+		'Working directory on this machine (repeatable)',
+		(value: string, previous: string[]) => [...previous, value],
+		[] as string[]
+	)
+	.option('--json', 'Output the conversations and unreadable providers as JSON')
+	.action(statsProjectTokens);
+
 program
 	.command('stats-indexing')
 	.description(
@@ -4091,6 +4839,62 @@ encoreCommand(program, 'stats-query <sql>', 'usageStats', encoreFlags)
 	)
 	.option('--json', 'Output rows as JSON instead of a tab-separated table')
 	.action(statsQuery);
+
+program
+	.command('stats-delegation')
+	.description(
+		'Show the delegation split (interactive turns vs Auto Run tasks vs Cue runs) for a range and per day'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output totals, delegated share, and the per-day split as JSON')
+	.action(statsDelegation);
+
+program
+	.command('stats-cue')
+	.description(
+		'Show the Usage Dashboard Cue tab: run totals, durations, and per-pipeline breakdowns'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option(
+		'--exclude-trigger <type>',
+		'Leave out a trigger type, like the Cue tab filter chips (repeatable)',
+		(value: string, prev: string[]) => [...prev, value],
+		[] as string[]
+	)
+	.option('--json', 'Output the full Cue statistics object as JSON')
+	.action(statsCue);
+
+program
+	.command('stats-plan-usage')
+	.description('Show the last sampled plan usage per Anthropic (Claude) and OpenAI (Codex) account')
+	.option('--provider <provider>', 'Only one provider: claude or codex')
+	.option('--json', 'Output the accounts as JSON')
+	.action(statsPlanUsage);
+
+program
+	.command('stats-agents')
+	.description('Show Agents Over Time: agents that existed each day, plus created and deleted')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the daily series as JSON')
+	.action(statsAgents);
+
+program
+	.command('stats-activity')
+	.description(
+		'Show Auto Run runs, wizard runs, resilience outages, and shortcut presses for a range and per day'
+	)
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output totals and the daily counts as JSON')
+	.action(statsActivity);
+
+program
+	.command('stats-export')
+	.description('Export everything the Usage Dashboard reads for a range (the Export button)')
+	.requiredOption('-o, --output <path>', 'File to write (a .zip of CSVs, or a .json file)')
+	.option('-f, --format <format>', 'csv (a zip of CSV files) or json (default: csv)')
+	.option('-r, --range <range>', 'Time range: day, week, month, quarter, year, all (default: week)')
+	.option('--json', 'Output the result (path, row counts, notes) as JSON')
+	.action(statsExport);
 
 // Plugin authoring commands - scaffold, validate, sign, and package a Maestro
 // plugin from the command line. The manifest/signature contracts are the shared

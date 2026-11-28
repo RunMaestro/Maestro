@@ -1,175 +1,103 @@
 import type { StatsAggregation } from '../../hooks/stats/useStats';
-import type { Session, Theme } from '../../types';
-import { buildNameMap, findSessionByStatId, getSeriesColor, isWorktreeAgent } from './chartUtils';
+import type { Theme } from '../../types';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
+import { getSeriesColor, rankProvidersByCount } from './chartUtils';
 
-export interface AgentData {
+/** What Provider Comparison plots: queries, total time, or mean time per query. */
+export type ComparisonMode = 'count' | 'duration' | 'average';
+
+export interface ProviderComparisonRow {
+	/** Unique row key: the provider id, plus `__worktree` for its worktree row. */
 	key: string;
 	label: string;
-	agent: string;
+	provider: string;
 	count: number;
 	duration: number;
-	durationPercentage: number;
+	/** Mean time per query in ms (0 when the row has no queries). */
+	average: number;
+	/** The value the active mode plots. */
+	value: number;
+	/** Share of the column total, for count and duration (null for average). */
+	share: number | null;
 	color: string;
 	isWorktree: boolean;
 }
 
-export type AgentSplitAggregation = Record<
-	string,
-	{
-		regular: { count: number; duration: number };
-		worktree: { count: number; duration: number };
-	}
->;
-
-export function getAgentColor(
-	_agentName: string,
-	index: number,
-	theme: Theme,
-	colorBlindMode?: boolean
-): string {
-	return getSeriesColor(index, theme, colorBlindMode);
+function valueFor(mode: ComparisonMode, count: number, duration: number): number {
+	if (mode === 'count') return count;
+	if (mode === 'duration') return duration;
+	return count > 0 ? duration / count : 0;
 }
 
-export function buildAgentSplitAggregation(
-	data: Pick<StatsAggregation, 'bySessionByDay' | 'byAgent'>,
-	sessions?: Session[]
-): AgentSplitAggregation | null {
-	const bySessionByDay = data.bySessionByDay;
-	if (!sessions || sessions.length === 0) return null;
-	if (!bySessionByDay || Object.keys(bySessionByDay).length === 0) return null;
-
-	const result: AgentSplitAggregation = {};
-	let foundWorktree = false;
-
-	for (const [statSessionId, days] of Object.entries(bySessionByDay)) {
-		const session = findSessionByStatId(statSessionId, sessions);
-		if (!session) continue;
-		const provider = session.toolType;
-		const isWt = isWorktreeAgent(session);
-		if (isWt) foundWorktree = true;
-
-		if (!result[provider]) {
-			result[provider] = {
-				regular: { count: 0, duration: 0 },
-				worktree: { count: 0, duration: 0 },
-			};
-		}
-		const bucket = isWt ? result[provider].worktree : result[provider].regular;
-		for (const day of days) {
-			bucket.count += day.count;
-			bucket.duration += day.duration;
-		}
-	}
-
-	if (!foundWorktree) return null;
-
-	for (const [provider, agentTotals] of Object.entries(data.byAgent)) {
-		if (!result[provider]) {
-			result[provider] = {
-				regular: { count: 0, duration: 0 },
-				worktree: { count: 0, duration: 0 },
-			};
-		}
-		const reconstructedCount = result[provider].regular.count + result[provider].worktree.count;
-		const reconstructedDuration =
-			result[provider].regular.duration + result[provider].worktree.duration;
-		const missingCount = Math.max(0, agentTotals.count - reconstructedCount);
-		const missingDuration = Math.max(0, agentTotals.duration - reconstructedDuration);
-		if (missingCount > 0 || missingDuration > 0) {
-			result[provider].regular.count += missingCount;
-			result[provider].regular.duration += missingDuration;
-		}
-	}
-
-	return result;
-}
-
-export function buildAgentComparisonData({
+/**
+ * One row per provider, sorted by the active mode, busiest first.
+ *
+ * When any query in range ran in a worktree agent, each provider with worktree
+ * queries gets a second "(Worktree)" row. The split comes from
+ * `byAgentWorktree`, the flag recorded on each query when it ran, so it stays
+ * exact after the worktree agent is deleted.
+ *
+ * Colors follow `rankProvidersByCount`, the order Provider Trends uses, so a
+ * provider is the same color in both charts whatever the active mode.
+ */
+export function buildProviderComparisonRows({
 	data,
-	splitAggregation,
+	mode,
 	theme,
 	colorBlindMode,
-	sessions,
 }: {
-	data: Pick<StatsAggregation, 'byAgent'>;
-	splitAggregation: AgentSplitAggregation | null;
+	data: Pick<StatsAggregation, 'byAgent' | 'byAgentWorktree'>;
+	mode: ComparisonMode;
 	theme: Theme;
 	colorBlindMode: boolean;
-	sessions?: Session[];
-}): AgentData[] {
-	const totalDuration =
-		(splitAggregation
-			? Object.values(splitAggregation).reduce(
-					(sum, provider) => sum + provider.regular.duration + provider.worktree.duration,
-					0
-				)
-			: Object.values(data.byAgent).reduce((sum, stats) => sum + stats.duration, 0)) || 0;
+}): ProviderComparisonRow[] {
+	const order = rankProvidersByCount(data.byAgent);
+	const split = data.byAgentWorktree ?? {};
+	const hasWorktree = Object.values(split).some((entry) => entry.worktree.count > 0);
 
-	const items: AgentData[] = [];
-	const providerKeys = Array.from(
-		new Set([
-			...Object.keys(data.byAgent),
-			...(splitAggregation ? Object.keys(splitAggregation) : []),
-		])
-	);
-	const nameMap = buildNameMap(providerKeys, sessions);
-	const resolveLabel = (provider: string) => nameMap.get(provider)?.name ?? provider;
-
-	const providerColorIdx: Record<string, number> = {};
-	const assignColor = (provider: string): string => {
-		if (!(provider in providerColorIdx)) {
-			providerColorIdx[provider] = Object.keys(providerColorIdx).length;
-		}
-		return getAgentColor(provider, providerColorIdx[provider], theme, colorBlindMode);
-	};
-
-	if (splitAggregation) {
-		for (const [provider, buckets] of Object.entries(splitAggregation)) {
-			const color = assignColor(provider);
-			const baseLabel = resolveLabel(provider);
-			if (buckets.regular.count > 0 || buckets.regular.duration > 0) {
-				items.push({
-					key: provider,
-					label: baseLabel,
-					agent: provider,
-					count: buckets.regular.count,
-					duration: buckets.regular.duration,
-					durationPercentage:
-						totalDuration > 0 ? (buckets.regular.duration / totalDuration) * 100 : 0,
-					color,
-					isWorktree: false,
-				});
-			}
-			if (buckets.worktree.count > 0 || buckets.worktree.duration > 0) {
-				items.push({
-					key: `${provider}__worktree`,
-					label: `${baseLabel} (Worktree)`,
-					agent: provider,
-					count: buckets.worktree.count,
-					duration: buckets.worktree.duration,
-					durationPercentage:
-						totalDuration > 0 ? (buckets.worktree.duration / totalDuration) * 100 : 0,
-					color,
-					isWorktree: true,
-				});
-			}
-		}
-	} else {
-		for (const [provider, stats] of Object.entries(data.byAgent)) {
-			const color = assignColor(provider);
-			const resolved = nameMap.get(provider);
-			items.push({
+	const raw: Array<Omit<ProviderComparisonRow, 'value' | 'share'>> = [];
+	order.forEach((provider, index) => {
+		const color = getSeriesColor(index, theme, colorBlindMode);
+		const label = getAgentDisplayName(provider);
+		const totals = data.byAgent[provider];
+		const worktree = hasWorktree ? split[provider]?.worktree : undefined;
+		const parentCount = totals.count - (worktree?.count ?? 0);
+		const parentDuration = totals.duration - (worktree?.duration ?? 0);
+		if (parentCount > 0) {
+			raw.push({
 				key: provider,
-				label: resolved?.name ?? provider,
-				agent: provider,
-				count: stats.count,
-				duration: stats.duration,
-				durationPercentage: totalDuration > 0 ? (stats.duration / totalDuration) * 100 : 0,
+				label,
+				provider,
+				count: parentCount,
+				duration: parentDuration,
+				average: parentCount > 0 ? parentDuration / parentCount : 0,
 				color,
-				isWorktree: resolved?.isWorktree ?? false,
+				isWorktree: false,
 			});
 		}
-	}
+		if (worktree && worktree.count > 0) {
+			raw.push({
+				key: `${provider}__worktree`,
+				label: `${label} (Worktree)`,
+				provider,
+				count: worktree.count,
+				duration: worktree.duration,
+				average: worktree.duration / worktree.count,
+				color,
+				isWorktree: true,
+			});
+		}
+	});
 
-	return items.sort((a, b) => b.duration - a.duration);
+	const columnTotal = raw.reduce((sum, row) => sum + valueFor(mode, row.count, row.duration), 0);
+	return raw
+		.map((row) => {
+			const value = valueFor(mode, row.count, row.duration);
+			return {
+				...row,
+				value,
+				share: mode === 'average' || columnTotal <= 0 ? null : (value / columnTotal) * 100,
+			};
+		})
+		.sort((a, b) => b.value - a.value);
 }

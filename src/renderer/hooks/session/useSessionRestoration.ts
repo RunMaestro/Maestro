@@ -282,16 +282,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	);
 
 	// --- reattachLiveAiTurns ---
-	// restoreSession resets every agent to idle because in the Electron app no
-	// spawned process survives a restart. The web-desktop bundle breaks that
-	// assumption: the page is a client of a main process that keeps running, so a
-	// browser reload (or a reconnect after the tab was suspended) drops the
-	// renderer's busy bookkeeping while the agent keeps working - the Left Bar
-	// draws the idle dot and the thinking pill never appears, even as the
-	// transcript fills in, because the output listeners route by process id and
-	// never needed that bookkeeping. Ask main what it is actually running and put
-	// the indicators back. On a cold Electron start the process table is empty, so
-	// this costs one round trip and changes nothing.
+	// restoreSession resets every agent to idle. The main process can outlive
+	// a desktop renderer crash or browser reload, so reconnect the restored tabs
+	// to its running turns and recover the busy indicators. On a cold Electron
+	// start the process table is empty.
 	const reattachLiveAiTurns = useCallback(
 		async (signal?: AbortSignal, requireHostReply = false) => {
 			const turns = await fetchLiveAiTurns();

@@ -1153,15 +1153,24 @@ export function MaestroPromptsTab({
 					}}
 					data-testid="prompt-preview"
 				>
-					<Markdown
-						preset="document"
-						content={isBuildingPreview && !previewContent ? 'Building preview...' : previewContent}
-						theme={theme}
-						containerRef={previewScrollRef}
-						searchHighlight={
-							filterQueryTrimmed ? { query: filterQueryTrimmed, currentMatchIndex: -1 } : undefined
-						}
-					/>
+					{/* The document preset renders bare, and the scoped prose styles
+					    match `.prompt-preview .prose`: without this wrapper headings,
+					    lists, and paragraph spacing fall back to Tailwind's reset. */}
+					<div className="prose max-w-none">
+						<Markdown
+							preset="document"
+							content={
+								isBuildingPreview && !previewContent ? 'Building preview...' : previewContent
+							}
+							theme={theme}
+							containerRef={previewScrollRef}
+							searchHighlight={
+								filterQueryTrimmed
+									? { query: filterQueryTrimmed, currentMatchIndex: -1 }
+									: undefined
+							}
+						/>
+					</div>
 				</div>
 			);
 		}

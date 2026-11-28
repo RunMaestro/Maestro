@@ -1,7 +1,14 @@
 import React from 'react';
+import * as path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { FilePreview } from '../../../renderer/components/FilePreview';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
+
+vi.mock('../../../renderer/stores/notificationStore', async () => {
+	const actual = await vi.importActual('../../../renderer/stores/notificationStore');
+	return { ...actual, notifyToast: vi.fn() };
+});
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
@@ -9,9 +16,33 @@ import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { mockTheme } from '../../helpers/mockTheme';
+import { AGENT_MODES } from '../../helpers';
 import { requestHeadingPalette } from '../../../renderer/services/headingPalette';
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
+	// Icons the SQLite and Parquet viewers draw (FilePreview renders them inline).
+	AlertCircle: () => <span data-testid="alert-circle-icon">AlertCircle</span>,
+	ArrowDown: () => <span data-testid="arrow-down-icon">ArrowDown</span>,
+	ArrowUp: () => <span data-testid="arrow-up-icon">ArrowUp</span>,
+	Check: () => <span data-testid="check-icon">Check</span>,
+	CheckCircle2: () => <span data-testid="check-circle-2-icon">CheckCircle2</span>,
+	Columns3: () => <span data-testid="columns-3-icon">Columns3</span>,
+	Download: () => <span data-testid="download-icon">Download</span>,
+	FlaskConical: () => <span data-testid="flask-conical-icon">FlaskConical</span>,
+	HelpCircle: () => <span data-testid="help-circle-icon">HelpCircle</span>,
+	History: () => <span data-testid="history-icon">History</span>,
+	KeyRound: () => <span data-testid="key-round-icon">KeyRound</span>,
+	Layers: () => <span data-testid="layers-icon">Layers</span>,
+	ListTree: () => <span data-testid="list-tree-icon">ListTree</span>,
+	Lock: () => <span data-testid="lock-icon">Lock</span>,
+	Play: () => <span data-testid="play-icon">Play</span>,
+	Plus: () => <span data-testid="plus-icon">Plus</span>,
+	ScrollText: () => <span data-testid="scroll-text-icon">ScrollText</span>,
+	Search: () => <span data-testid="search-icon">Search</span>,
+	Square: () => <span data-testid="square-icon">Square</span>,
+	Table2: () => <span data-testid="table-2-icon">Table2</span>,
+	Undo2: () => <span data-testid="undo-2-icon">Undo2</span>,
+	Unlock: () => <span data-testid="unlock-icon">Unlock</span>,
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
 	Eye: () => <span data-testid="eye-icon">Eye</span>,
 	ChevronUp: () => <span data-testid="chevron-up">ChevronUp</span>,
@@ -226,6 +257,36 @@ const defaultProps = {
 };
 
 describe('FilePreview', () => {
+	it('shows the complete handler context when a real Save caller rejects', async () => {
+		const filePath = path.join(process.cwd(), 'save-fixture.md');
+		const onSave = vi
+			.fn()
+			.mockRejectedValue(
+				new Error(
+					"Error invoking remote method 'fs:writeFile': TypeError: Save failed: Error: remote rejected"
+				)
+			);
+		render(
+			<FilePreview
+				{...defaultProps}
+				file={{ name: 'save-fixture.md', path: filePath, content: '# Original' }}
+				markdownEditMode={true}
+				externalEditContent="# Edited"
+				onSave={onSave}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+		await waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'error',
+					title: 'Save Failed',
+					message: 'Save failed: Error: remote rejected',
+				})
+			)
+		);
+		expect(onSave).toHaveBeenCalledExactlyOnceWith(filePath, '# Edited');
+	});
 	beforeEach(() => {
 		vi.clearAllMocks();
 		// Default every test to the Electron desktop build; the web-desktop tests
@@ -364,7 +425,7 @@ describe('FilePreview', () => {
 			expect(icon.closest('button')).toBeInTheDocument();
 		});
 
-		it('calls shell.openPath with file path when clicked', () => {
+		it('calls shell.openPath with file path when clicked', async () => {
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -375,13 +436,9 @@ describe('FilePreview', () => {
 			const button = screen.getByTestId('external-link-icon').closest('button')!;
 			fireEvent.click(button);
 
-			expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/readme.md');
-		});
-
-		it('hides Open in Default App button for SSH remote sessions', () => {
-			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
-
-			expect(screen.queryByTestId('external-link-icon')).not.toBeInTheDocument();
+			await waitFor(() =>
+				expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/readme.md')
+			);
 		});
 
 		it('hides the header Open in Default App button in the web-desktop build', () => {
@@ -409,7 +466,7 @@ describe('FilePreview', () => {
 			expect(window.maestro?.shell?.openPath).not.toHaveBeenCalled();
 		});
 
-		it('keeps the binary-file Open in Default App button active on the desktop', () => {
+		it('keeps the binary-file Open in Default App button active on the desktop', async () => {
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -420,7 +477,9 @@ describe('FilePreview', () => {
 			const button = screen.getByRole('button', { name: 'Open in Default App' });
 			expect(button).toBeEnabled();
 			fireEvent.click(button);
-			expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/lib.dll');
+			await waitFor(() =>
+				expect(window.maestro?.shell?.openPath).toHaveBeenCalledWith('/test/lib.dll')
+			);
 		});
 	});
 
@@ -436,7 +495,7 @@ describe('FilePreview', () => {
 			);
 		});
 
-		it('calls shell.showItemInFolder with the file path when clicked', () => {
+		it('calls shell.showItemInFolder with the file path when clicked', async () => {
 			render(
 				<FilePreview
 					{...defaultProps}
@@ -447,14 +506,99 @@ describe('FilePreview', () => {
 			const button = screen.getByTestId('folder-open-icon').closest('button')!;
 			fireEvent.click(button);
 
-			expect(window.maestro?.shell?.showItemInFolder).toHaveBeenCalledWith('/test/readme.md');
+			await waitFor(() =>
+				expect(window.maestro?.shell?.showItemInFolder).toHaveBeenCalledWith('/test/readme.md')
+			);
+		});
+	});
+
+	describe('file actions in every agent mode', () => {
+		// The agent's files are on this disk (local) or on its SSH remote (SSH and
+		// hosted, which keeps its SSH fields). Only the transport differs: a remote
+		// file is fetched to this machine first, then gets the same OS action.
+		const remoteIdFor = (mode: (typeof AGENT_MODES)[number]) =>
+			mode === 'local' ? undefined : 'r1';
+		const localCopy = '/tmp/maestro-remote-downloads/k/readme.md';
+
+		beforeEach(() => {
+			(window.maestro.fs as any).downloadRemoteFile = vi
+				.fn()
+				.mockResolvedValue({ success: true, path: localCopy });
 		});
 
-		it('hides the reveal button for SSH remote sessions', () => {
-			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
-
-			expect(screen.queryByTestId('folder-open-icon')).not.toBeInTheDocument();
+		it('draws the same toolbar file actions in every mode', () => {
+			const toolbars = AGENT_MODES.map((mode) => {
+				const { container, unmount } = render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'page.html', content: '<p>x</p>', path: '/test/page.html' }}
+						onOpenInBrowser={vi.fn()}
+						sshRemoteId={remoteIdFor(mode)}
+					/>
+				);
+				const labels = Array.from(container.querySelectorAll('button'))
+					.map((b) => b.getAttribute('title') ?? b.textContent ?? '')
+					.filter(Boolean);
+				unmount();
+				return labels;
+			});
+			expect(toolbars[1]).toEqual(toolbars[0]);
+			expect(toolbars[2]).toEqual(toolbars[0]);
+			// The icon mocks render their names: Open in Maestro Browser, Open in
+			// Default App, and Reveal are all there in every mode.
+			expect(toolbars[0]).toEqual(
+				expect.arrayContaining(['AppWindow', 'ExternalLink', 'FolderOpen'])
+			);
+			expect(screen.queryByText('Download & Open')).not.toBeInTheDocument();
 		});
+
+		it.each(AGENT_MODES)(
+			'%s: Open in Default App and Reveal act on a copy on this machine',
+			async (mode) => {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'readme.md', content: '# Readme', path: '/test/readme.md' }}
+						sshRemoteId={remoteIdFor(mode)}
+					/>
+				);
+				const expected = mode === 'local' ? '/test/readme.md' : localCopy;
+
+				fireEvent.click(screen.getByTestId('external-link-icon').closest('button')!);
+				await waitFor(() => expect(window.maestro.shell.openPath).toHaveBeenCalledWith(expected));
+				fireEvent.click(screen.getByTestId('folder-open-icon').closest('button')!);
+				await waitFor(() =>
+					expect(window.maestro.shell.showItemInFolder).toHaveBeenCalledWith(expected)
+				);
+				if (mode === 'local') {
+					expect(window.maestro.fs.downloadRemoteFile).not.toHaveBeenCalled();
+				} else {
+					expect(window.maestro.fs.downloadRemoteFile).toHaveBeenCalledWith(
+						'/test/readme.md',
+						'r1'
+					);
+				}
+			}
+		);
+
+		it.each(AGENT_MODES)(
+			'%s: the binary fallback reads "Open in Default App" and opens a local copy',
+			async (mode) => {
+				render(
+					<FilePreview
+						{...defaultProps}
+						file={{ name: 'lib.dll', content: 'MZ binary', path: '/test/lib.dll' }}
+						sshRemoteId={remoteIdFor(mode)}
+					/>
+				);
+				fireEvent.click(screen.getByRole('button', { name: 'Open in Default App' }));
+				await waitFor(() =>
+					expect(window.maestro.shell.openPath).toHaveBeenCalledWith(
+						mode === 'local' ? '/test/lib.dll' : localCopy
+					)
+				);
+			}
+		);
 	});
 
 	describe('Mermaid (.mmd) preview', () => {
@@ -1205,6 +1349,58 @@ describe('FilePreview', () => {
 
 			const textarea = screen.getByRole('textbox');
 			expect(textarea).toHaveValue('preserved content');
+		});
+
+		// What Back used to do: the parent hands the SAME mounted preview another file.
+		// The content effect skips an EMPTY file, so the first file's typed text stayed
+		// on screen as unsaved changes, and Cmd+S wrote it over the file just opened.
+		it('does not carry text typed in one file over to the next, even an empty one', () => {
+			const onSave = vi.fn().mockResolvedValue(true);
+			const fileA = { name: 'a.md', content: 'text of a', path: '/test/a.md' };
+			const fileB = { name: 'b.md', content: '', path: '/test/b.md' };
+			const props = {
+				...defaultProps,
+				markdownEditMode: true,
+				onSave,
+				onEditContentChange: vi.fn(),
+			};
+			const { rerender } = render(<FilePreview {...props} file={fileA} />);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'unsaved edit of a' } });
+			// The file tab keeps the draft and hands it back down.
+			rerender(<FilePreview {...props} file={fileA} externalEditContent="unsaved edit of a" />);
+			expect(screen.getByRole('textbox')).toHaveValue('unsaved edit of a');
+
+			// Back, once the user agreed to drop the edits: another path, no draft.
+			rerender(<FilePreview {...props} file={fileB} externalEditContent={undefined} />);
+
+			const textarea = screen.getByRole('textbox');
+			expect(textarea).toHaveValue('');
+			fireEvent.keyDown(textarea, { key: 's', metaKey: true });
+			expect(onSave).not.toHaveBeenCalled();
+		});
+
+		it('shows the next file, not the previous file text, when that file has content', () => {
+			const fileA = { name: 'a.md', content: 'text of a', path: '/test/a.md' };
+			const fileB = { name: 'b.md', content: 'text of b', path: '/test/b.md' };
+			const props = { ...defaultProps, markdownEditMode: true };
+			const { rerender } = render(<FilePreview {...props} file={fileA} />);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'unsaved edit of a' } });
+
+			rerender(<FilePreview {...props} file={fileB} />);
+
+			expect(screen.getByRole('textbox')).toHaveValue('text of b');
+		});
+
+		it('keeps text typed in a file while that file stays on screen', () => {
+			const fileA = { name: 'a.md', content: 'text of a', path: '/test/a.md' };
+			const props = { ...defaultProps, markdownEditMode: true };
+			const { rerender } = render(<FilePreview {...props} file={fileA} />);
+			fireEvent.change(screen.getByRole('textbox'), { target: { value: 'unsaved edit of a' } });
+
+			// A re-render for any other reason (a new `file` object, same path and bytes).
+			rerender(<FilePreview {...props} file={{ ...fileA }} />);
+
+			expect(screen.getByRole('textbox')).toHaveValue('unsaved edit of a');
 		});
 	});
 

@@ -34,11 +34,15 @@ import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { useQuitWhenIdleStore } from '../../stores/quitWhenIdleStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
+import { isSessionRemote } from '../../utils/sessionHelpers';
 import { resolveActiveTabRef, resolveTabRefRenameValue, sameTabRef } from '../../utils/panelLayout';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
 import { cueService } from '../../services/cue';
 import { resumeSelectionKey } from '../../services/resumableSession';
+import { saveAutoRunsForRestart } from '../../services/autoRunRestartResume';
+import type { QuitConfirmOptions } from '../../components/QuitConfirmModal';
+import { logger } from '../../utils/logger';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 
@@ -80,7 +84,7 @@ export interface ModalHandlersReturn {
 	handleCloseRenameTabModal: () => void;
 
 	// Quit handlers
-	handleConfirmQuit: () => void;
+	handleConfirmQuit: (options?: QuitConfirmOptions) => Promise<void>;
 	handleCancelQuit: () => void;
 	handleQuitWhenIdle: () => void;
 
@@ -296,8 +300,21 @@ export function useModalHandlers(
 	// Group C: Quit Handlers
 	// ====================================================================
 
-	const handleConfirmQuit = useCallback(() => {
+	const handleConfirmQuit = useCallback(async (options?: QuitConfirmOptions) => {
 		getModalActions().setQuitConfirmModalOpen(false);
+		// Save each running Auto Run's place so the next launch continues it,
+		// unless the user unchecked the option: then the quit is an emergency
+		// stop and nothing is saved. The user already chose to quit, so a failed
+		// save is logged and the quit still goes ahead.
+		if (options?.resumeAutoRuns ?? true) {
+			try {
+				await saveAutoRunsForRestart('quit');
+			} catch (error) {
+				logger.error('[Quit] Could not save Auto Runs to resume', undefined, {
+					error: String(error),
+				});
+			}
+		}
 		window.maestro.app.confirmQuit();
 	}, []);
 
@@ -351,7 +368,7 @@ export function useModalHandlers(
 			}
 			// Also bump the daily-firings counter so the Usage Dashboard bar
 			// chart includes shortcuts handled inside the System Log Viewer.
-			void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
+			void window.maestro?.stats?.recordShortcutUsage?.(Date.now(), shortcutId);
 		},
 		[onKeyboardMasteryLevelUp]
 	);
@@ -459,6 +476,18 @@ export function useModalHandlers(
 		if (providerKey) getModalActions().openReauthModal({ providerKey });
 	}, []);
 
+	// The CLI never started, so the fix is an install, not a restart. The install
+	// runs in its own terminal dialog, which replays the failed turn on Retry.
+	const handleInstallAfterError = useCallback((sessionId: string) => {
+		const session = selectSessionById(sessionId)(useSessionStore.getState());
+		getModalActions().setAgentErrorModalSessionId(null);
+		getModalActions().openProviderInstallModal({
+			sessionId,
+			tabId: session?.agentErrorTabId,
+			reason: session?.agentError?.message,
+		});
+	}, []);
+
 	// Determine the effective error: historical wins when explicitly requested (user clicked Details),
 	// otherwise fall back to live session error
 	const isHistorical = !!historicalAgentError;
@@ -488,6 +517,9 @@ export function useModalHandlers(
 			!isHistorical && errorSession
 				? () => handleAuthenticateAfterError(errorSession.id)
 				: undefined,
+		onInstall:
+			!isHistorical && errorSession ? () => handleInstallAfterError(errorSession.id) : undefined,
+		isRemote: isSessionRemote(errorSession),
 	});
 
 	// ====================================================================

@@ -78,7 +78,14 @@ describe('projectClosedTabHistory', () => {
 			[
 				{
 					type: 'file',
-					tab: { id: 'f', path: '/a.md', content: 'big', editContent: 'x', isLoading: true },
+					tab: {
+						id: 'f',
+						path: '/a.md',
+						content: 'big',
+						editContent: 'x',
+						editContentPath: '/a.md',
+						isLoading: true,
+					},
 					unifiedIndex: 0,
 					closedAt: 1,
 				},

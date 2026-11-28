@@ -123,8 +123,8 @@ const desktopEvents: GroupChatEventSink = {
 	participantState: (id, name, state) => groupChatEmitters.emitParticipantState?.(id, name, state),
 	moderatorSessionIdChanged: (id, sessionId) =>
 		groupChatEmitters.emitModeratorSessionIdChanged?.(id, sessionId),
-	autoRunTriggered: (id, name, filename) =>
-		groupChatEmitters.emitAutoRunTriggered?.(id, name, filename),
+	autoRunTriggered: (id, name, filename, agentId) =>
+		groupChatEmitters.emitAutoRunTriggered?.(id, name, filename, agentId),
 	autoRunBatchComplete: (id, name) => groupChatEmitters.emitAutoRunBatchComplete?.(id, name),
 	participantLiveOutput: (id, name, chunk) =>
 		groupChatEmitters.emitParticipantLiveOutput?.(id, name, chunk),

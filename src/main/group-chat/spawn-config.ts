@@ -24,6 +24,7 @@ export function toSpawnGroupChatAgentConfig(
 		agentId: spawn.providerId,
 		agent: spawn.agent,
 		command: spawn.command,
+		remoteCommand: spawn.remoteCommand,
 		args: spawn.args,
 		cwd: spawn.cwd,
 		prompt: spawn.prompt,
@@ -40,5 +41,7 @@ export function toSpawnGroupChatAgentConfig(
 		acceptWorkspaceTrust: spawn.acceptWorkspaceTrust,
 		appendSystemPrompt: spawn.appendSystemPrompt,
 		isResume: spawn.isResume,
+		ownerAgentId: spawn.ownerAgentId,
+		launchFeature: spawn.launchFeature,
 	};
 }

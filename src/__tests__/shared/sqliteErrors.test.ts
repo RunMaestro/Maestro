@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSqliteCorruptionError } from '../../shared/sqliteErrors';
+import { isSqliteBusyError, isSqliteCorruptionError } from '../../shared/sqliteErrors';
 
 function sqliteError(code: string): Error {
 	return Object.assign(new Error(code), { code });
@@ -28,5 +28,23 @@ describe('isSqliteCorruptionError', () => {
 			{ code: 'ERR_DLOPEN_FAILED' }
 		);
 		expect(isSqliteCorruptionError(dlopen)).toBe(false);
+	});
+});
+
+describe('isSqliteBusyError', () => {
+	it('classifies SQLITE_BUSY and its extended codes as busy', () => {
+		expect(isSqliteBusyError(sqliteError('SQLITE_BUSY'))).toBe(true);
+		expect(isSqliteBusyError(sqliteError('SQLITE_BUSY_SNAPSHOT'))).toBe(true);
+		expect(isSqliteBusyError(sqliteError('SQLITE_BUSY_RECOVERY'))).toBe(true);
+		expect(isSqliteBusyError(sqliteError('SQLITE_BUSY_TIMEOUT'))).toBe(true);
+	});
+
+	it('does not classify a lock inside one connection, other codes, or bare text as busy', () => {
+		expect(isSqliteBusyError(sqliteError('SQLITE_LOCKED'))).toBe(false);
+		expect(isSqliteBusyError(sqliteError('SQLITE_BUSYNESS'))).toBe(false);
+		expect(isSqliteBusyError(sqliteError('SQLITE_CORRUPT'))).toBe(false);
+		expect(isSqliteBusyError(new Error('database is locked'))).toBe(false);
+		expect(isSqliteBusyError(null)).toBe(false);
+		expect(isSqliteBusyError('SQLITE_BUSY')).toBe(false);
 	});
 });

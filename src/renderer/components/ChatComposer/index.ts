@@ -23,7 +23,7 @@ export {
 	PhoneComposerHandle,
 	type PhoneComposerHandleProps,
 } from '../InputArea/components/PhoneComposerHandle';
-export { applyTrimmedTextPaste, clipboardHasImage } from './pasteTrim';
+export { clipboardHasImage } from './pasteTrim';
 export {
 	GROUP_CHAT_COMPOSER_CAPABILITIES,
 	MODERATOR_CANNOT_READ_IMAGES_MESSAGE,

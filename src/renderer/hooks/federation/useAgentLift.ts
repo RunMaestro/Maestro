@@ -5,43 +5,59 @@
  */
 
 import { useMemo } from 'react';
+import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { buildHostedAgentListings } from '../../services/hostedAgents';
 import {
 	agentFederationStatus,
-	liftedMirrorTarget,
+	sameFederationStatus,
 	type AgentFederationStatus,
 	type LiftableAgent,
-	type LiftedMirrorTarget,
 } from '../../utils/peerMirrorView';
 
-/**
- * Where a lifted agent's pointer leads, or undefined (never moved, or the feature is off). Takes
- * the stored `liftedTo` value, so a memo'd Left Bar row recomputes only when the pointer changes.
- */
-export function useLiftedMirrorTarget(liftedTo: unknown): LiftedMirrorTarget | undefined {
-	const enabled = usePeerMirrorStore((s) => s.enabled);
-	const peers = usePeerMirrorStore((s) => s.peers);
-	return useMemo(
-		() => (enabled && liftedTo ? liftedMirrorTarget({ liftedTo }, peers) : undefined),
-		[enabled, liftedTo, peers]
-	);
-}
+const LOCAL_STATUS: AgentFederationStatus = { kind: 'local' };
 
-/** How `agent` stands with Federation (`agentFederationStatus()`), kept in step with the mirror. */
+/**
+ * How `agent` stands with Federation (`agentFederationStatus()`), kept in step with the mirror.
+ * Re-renders only when the status draws differently (`sameFederationStatus()`): the mirror
+ * replaces its peer on every frame of a hosted turn, and a subscription to the whole peer map drew
+ * every mode pill again per frame, a commit of its own each time (L36).
+ */
 export function useAgentFederationStatus(
 	agent: LiftableAgent | null | undefined
 ): AgentFederationStatus {
-	const order = usePeerMirrorStore((s) => s.order);
-	const peers = usePeerMirrorStore((s) => s.peers);
-	const liftedTo = agent?.liftedTo;
+	// Hosted agents switched off: a hosted agent stands as the SSH agent it was.
+	const hostingOn = useSettingsStore((s) => s.federationHostedAgents === true);
+	const liftedTo = hostingOn ? agent?.liftedTo : undefined;
 	const ssh = agent?.sessionSshRemoteConfig;
 	const sshEnabled = ssh?.enabled === true;
 	const remoteId = ssh?.remoteId ?? null;
-	return useMemo(() => {
-		if (!liftedTo && (!sshEnabled || !remoteId)) return { kind: 'local' };
-		return agentFederationStatus(
-			{ liftedTo, sessionSshRemoteConfig: { enabled: sshEnabled, remoteId } },
-			order.flatMap((peerId) => (peers[peerId] ? [peers[peerId]] : []))
-		);
-	}, [liftedTo, sshEnabled, remoteId, order, peers]);
+	return useStoreWithEqualityFn(
+		usePeerMirrorStore,
+		(s) => {
+			if (!liftedTo && (!sshEnabled || !remoteId)) return LOCAL_STATUS;
+			return agentFederationStatus(
+				{ liftedTo, sessionSshRemoteConfig: { enabled: sshEnabled, remoteId } },
+				s.order.flatMap((peerId) => (s.peers[peerId] ? [s.peers[peerId]] : []))
+			);
+		},
+		sameFederationStatus
+	);
+}
+
+/**
+ * How many agents the mirrored hosts run that the Left Bar does not show yet: the Add Hosted Agent
+ * entries (palette, hamburger menu) appear only while this is above zero.
+ */
+export function useAddableHostedAgentCount(): number {
+	const order = usePeerMirrorStore((s) => s.order);
+	const peers = usePeerMirrorStore((s) => s.peers);
+	const sessions = useSessionStore((s) => s.sessions);
+	return useMemo(
+		() =>
+			buildHostedAgentListings(peers, order, sessions).filter((listing) => !listing.addedAs).length,
+		[peers, order, sessions]
+	);
 }

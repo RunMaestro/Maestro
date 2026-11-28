@@ -42,6 +42,9 @@ export const MODAL_PRIORITIES = {
 	/** Quit confirmation modal - highest priority, blocks app quit */
 	QUIT_CONFIRM: 1020,
 
+	/** Provider CLI install terminal - above the agent error modal it replaces */
+	PROVIDER_INSTALL: 1016,
+
 	/** Provider re-authentication terminal - above the agent error modal it replaces */
 	REAUTH: 1015,
 
@@ -67,6 +70,11 @@ export const MODAL_PRIORITIES = {
 	 * modals (Auto Run expanded, Director's Notes, file preview), so it sits
 	 * above all of them and Escape closes it first. */
 	ZOOM_VIEWER: 990,
+
+	/** Folder or file picker for an agent whose paths live on a remote (`pickDirectory()`).
+	 * Opens from inside other modals (Edit Agent, Auto Run setup, worktree config), so it
+	 * sits above all of them and Escape closes it first. */
+	PATH_PICKER: 985,
 
 	/** Gist publish confirmation modal - high priority */
 	GIST_PUBLISH: 980,
@@ -121,6 +129,12 @@ export const MODAL_PRIORITIES = {
 
 	/** Move to Host modal (Federation lift: Left Bar right-click or palette on an SSH agent) */
 	MOVE_TO_HOST: 828,
+
+	/** Federation settings conflicts: fields a hosted agent's host and this machine both changed */
+	FEDERATION_SETTINGS_CONFLICTS: 827,
+
+	/** Add Hosted Agent: show an agent a Federation host runs in the Left Bar */
+	ADD_HOSTED_AGENT: 826,
 
 	/** Create new group modal */
 	CREATE_GROUP: 800,
@@ -197,6 +211,9 @@ export const MODAL_PRIORITIES = {
 	 * closed the list instead, which unmounted the history with it.
 	 */
 	SNOOZE_HISTORY: 704,
+
+	/** Prompt Links window (Opt+Cmd+Shift+L): create, copy, and revoke maestro://run links */
+	PROMPT_LINKS: 713,
 
 	/** Prompt composer modal for long prompts */
 	PROMPT_COMPOSER: 725,
@@ -448,10 +465,15 @@ export const MODAL_PRIORITIES = {
 	 * lightbox and annotator, both of which open from inside it. */
 	STAGED_IMAGES_ORGANIZER: 143,
 
+	/** A Design Mode chip's popover in the composer (its block and note). Beside
+	 * the staged-images organizer, its neighbour above the composer; nothing
+	 * opens from inside it. */
+	DESIGN_PICK_POPOVER: 144,
+
 	/**
-	 * Record view for one row of a tabular preview - CSV/TSV and parquet both
-	 * open `<RecordDetailModal>` from the file preview beneath them. One
-	 * constant rather than one per format: they are the same surface at the
+	 * Record view for one row of a tabular preview - CSV/TSV, parquet, and
+	 * SQLite all open `<RecordDetailModal>` from the file preview beneath them.
+	 * One constant rather than one per format: they are the same surface at the
 	 * same tier, and two names at the same number is a distinction the layer
 	 * stack cannot act on.
 	 */

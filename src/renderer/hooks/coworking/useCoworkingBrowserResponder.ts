@@ -21,10 +21,23 @@ import type { BrowserTabViewHandle } from '../../components/MainPanel/BrowserTab
 import type { BrowserOp, BrowserOpResult } from '../../../shared/coworkingBrowser';
 import {
 	browserOpNeedsConfirm,
+	formatBrowserPickRect,
+	isUngatedBrowserOp,
 	DEFAULT_BROWSER_CONFIRM_POLICY,
 	BROWSER_APPROVAL_TIMEOUT_MS,
 } from '../../../shared/coworkingBrowser';
-import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
+import {
+	DEFAULT_BROWSER_VIEWPORT_PRESET,
+	describeBrowserViewport,
+	type BrowserViewportPreset,
+} from '../../../shared/browserViewport';
+import type { DesignPickCapture } from '../../utils/designModePicker';
+import {
+	useSessionStore,
+	selectActiveSession,
+	selectSessionById,
+	updateBrowserTab,
+} from '../../stores/sessionStore';
 import { captureException } from '../../utils/sentry';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { requestCoworkingApproval } from '../../stores/coworkingApprovalStore';
@@ -33,9 +46,10 @@ import {
 	backgroundBrowserKey,
 } from '../../stores/coworkingBackgroundBrowserStore';
 import { useCoworkingBrowserKeepAliveStore } from '../../stores/coworkingBrowserKeepAliveStore';
-import { createBrowserTab } from '../tabs/internal/browserTabHelpers';
+import { createBrowserTab, normalizeBrowserTabUpdates } from '../tabs/internal/browserTabHelpers';
 import { closeBrowserTab } from '../../utils/tabHelpers';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
+import { deliverDesignPick, queueDesignPick } from '../../services/designModePick';
 import {
 	DEFAULT_BROWSER_TAB_URL,
 	resolveBrowserTabNavigationTarget,
@@ -79,7 +93,7 @@ export type BrowserApprovalRequester = (
 ) => Promise<boolean>;
 
 /** Human-readable phrase describing what a browser op will do (for the approval
- *  dialog). Truncates free-form text/code so the dialog stays readable. */
+ *  dialog). Free-form text an op carries is not in it: see browserOpDetail. */
 function describeBrowserOp(op: BrowserOp): string {
 	switch (op.kind) {
 		case 'navigate':
@@ -87,9 +101,9 @@ function describeBrowserOp(op: BrowserOp): string {
 		case 'click':
 			return `click the element ${op.selector}`;
 		case 'type':
-			return `type into ${op.selector}: "${op.text.slice(0, 120)}"`;
+			return `type this text into ${op.selector}`;
 		case 'eval':
-			return `run JavaScript in the page:\n${op.code.slice(0, 300)}`;
+			return 'run this JavaScript in the page';
 		case 'back':
 			return 'navigate the browser back';
 		case 'forward':
@@ -108,27 +122,45 @@ function describeBrowserOp(op: BrowserOp): string {
 			return `open a new${op.ephemeral ? ' incognito' : ''} browser tab${op.url ? ` at ${op.url}` : ''}`;
 		case 'closeTab':
 			return 'close this browser tab';
+		case 'pick':
+			return op.rect !== undefined
+				? `add the region ${formatBrowserPickRect(op.rect)} to the message`
+				: `add the element ${op.selector} to the message`;
 		default:
 			return 'perform a browser action';
 	}
 }
 
+/** The free-form text a browser op carries, which the approval dialog shows
+ *  in full: the dialog must show everything that will run (or be typed). */
+function browserOpDetail(op: BrowserOp): string | undefined {
+	if (op.kind === 'eval') return op.code;
+	if (op.kind === 'type') return op.text;
+	return undefined;
+}
+
 /** Default approval requester: reads the per-agent confirm policy and, when the
  *  op needs approval, shows the confirm dialog and awaits the user's decision. */
-async function defaultRequestApproval(
+export async function defaultRequestApproval(
 	op: BrowserOp,
 	ctx: { agentId: string; sessionId: string; forceConfirm?: boolean }
 ): Promise<boolean> {
-	if (op.kind === 'read') return true;
-	const policyMap = useSettingsStore.getState().coworkingBrowserInteractionConfirm;
-	const policy = policyMap[ctx.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
-	if (!ctx.forceConfirm && !browserOpNeedsConfirm(policy, op.kind)) return true;
+	if (isUngatedBrowserOp(op.kind)) return true;
+	const settings = useSettingsStore.getState();
+	const policy =
+		settings.coworkingBrowserInteractionConfirm[ctx.agentId] ?? DEFAULT_BROWSER_CONFIRM_POLICY;
+	const allowTyping = settings.coworkingBrowserTypingWithoutConfirmation.includes(ctx.agentId);
+	if (!ctx.forceConfirm && !browserOpNeedsConfirm(policy, op.kind, allowTyping)) return true;
+	const detail = browserOpDetail(op);
 	return requestCoworkingApproval(
 		{
 			agentId: ctx.agentId,
 			sessionId: ctx.sessionId,
 			title: 'Allow browser action?',
-			message: `The "${ctx.agentId}" agent wants to ${describeBrowserOp(op)}.`,
+			message: `The "${ctx.agentId}" agent wants to ${describeBrowserOp(op)}${detail === undefined ? '.' : ':'}`,
+			detail,
+			// A script runs with the page's privileges: a stray Enter must decline.
+			focusDeny: op.kind === 'eval',
 		},
 		// Auto-decline before the main resolver's interaction timeout so a late
 		// decision never executes the op after the caller has already given up.
@@ -228,11 +260,134 @@ function closeTabForSession(sessionId: string, tabUuid: string): BrowserOpResult
 		: { ok: false, content: 'Browser tab could not be closed (it may already be closed).' };
 }
 
+/**
+ * Set or read a browser tab's viewport preset (the host-only `viewport` op,
+ * `maestro-cli browser-viewport`). A pure store update, like `closeTab`: the
+ * preset is a saved field of the tab, so it needs no live webview, works for any
+ * agent's tab (focused or not) and never moves the view. A write ends in
+ * updateBrowserTab() + normalizeBrowserTabUpdates(), the route the toolbar
+ * control's `onUpdateTab` takes, so a mounted BrowserTabView lays itself out
+ * from the store exactly as it does after a click. The result is read back from
+ * the store, so it reports what the tab shows, not what was asked for.
+ */
+function viewportForSession(
+	sessionId: string,
+	tabUuid: string,
+	op: Extract<BrowserOp, { kind: 'viewport' }>
+): BrowserOpResult {
+	const read = (): BrowserViewportPreset | null => {
+		const tab = selectSessionById(sessionId)(useSessionStore.getState())?.browserTabs?.find(
+			(t) => t.id === tabUuid
+		);
+		return tab ? (tab.viewportPreset ?? DEFAULT_BROWSER_VIEWPORT_PRESET) : null;
+	};
+	const previous = read();
+	if (!previous) {
+		return {
+			ok: false,
+			content: 'Browser tab not found in your session (it may have been closed).',
+		};
+	}
+	const wanted = op.preset ?? previous;
+	if (wanted !== previous) {
+		updateBrowserTab(sessionId, tabUuid, (tab) =>
+			normalizeBrowserTabUpdates(tab, { viewportPreset: wanted })
+		);
+	}
+	const current = read();
+	if (current !== wanted) {
+		return { ok: false, content: 'The browser tab changed while its viewport was being set.' };
+	}
+	return {
+		ok: true,
+		content: describeBrowserViewport(current),
+		viewportPreset: current,
+		previousViewportPreset: previous,
+	};
+}
+
+/**
+ * What a `pick` op names, captured: the element its selector matches (as a
+ * click describes it) or the region its rect covers (as a drag lists it), or
+ * the reason there is nothing to pick.
+ */
+async function capturePickTarget(
+	handle: BrowserTabViewHandle,
+	op: Extract<BrowserOp, { kind: 'pick' }>
+): Promise<DesignPickCapture | { miss: string }> {
+	if (op.rect !== undefined) {
+		const region = await handle.inspectRegion(op.rect);
+		return (
+			region ?? {
+				miss: `No part of the region ${formatBrowserPickRect(op.rect)} is in the page's viewport (--rect is CSS px from the viewport's top-left corner).`,
+			}
+		);
+	}
+	const capture = await handle.inspectElement(op.selector);
+	if (capture === 'invalid-selector') return { miss: `Not a valid CSS selector: ${op.selector}` };
+	if (capture === 'not-found' || capture === null) {
+		return { miss: `No element matches selector: ${op.selector}` };
+	}
+	return capture;
+}
+
+/**
+ * The host-only `pick` op (`maestro-cli browser-pick`): the same capture,
+ * crop, and composer delivery as Design Mode, for an element by selector (a
+ * click) or a region by rect (a drag). The pick lands as a chip; the result
+ * carries the block it adds at send and the chip's id. With `op.queue` it is
+ * queued as its own message instead, as the pick card's Queue button does (no
+ * chip, no view change, so `background` is not read): the result carries the
+ * same block and the queue item's id.
+ */
+async function pickElement(
+	handle: BrowserTabViewHandle,
+	op: Extract<BrowserOp, { kind: 'pick' }>,
+	sessionId: string
+): Promise<BrowserOpResult> {
+	const capture = await capturePickTarget(handle, op);
+	if ('miss' in capture) return { ok: false, content: capture.miss };
+	const what = 'region' in capture ? 'region' : 'element';
+	const delivery = {
+		...capture,
+		sessionId,
+		browserTabId: handle.getTabId(),
+		note: op.note,
+	};
+	// A chip (`pickId`) or a queued message (`queueItemId`); either way the block
+	// it carries and the AI tab it went to come back the same.
+	const landed = op.queue
+		? await queueDesignPick(delivery)
+		: await deliverDesignPick({ ...delivery, reveal: op.background !== true });
+	if (!landed) {
+		return {
+			ok: false,
+			content: op.queue
+				? `This agent has no AI tab to queue the ${what} into.`
+				: `This agent has no AI tab to add the ${what} to.`,
+		};
+	}
+	const meta = handle.getMeta();
+	return {
+		ok: true,
+		content: landed.text,
+		aiTabId: landed.aiTabId,
+		...('queueItemId' in landed ? { queueItemId: landed.queueItemId } : { pickId: landed.pickId }),
+		...(capture.screenshot ? { dataUrl: capture.screenshot } : {}),
+		url: meta.url,
+		title: meta.title,
+	};
+}
+
 export async function applyBrowserOp(
 	handle: BrowserTabViewHandle,
-	op: BrowserOp
+	op: BrowserOp,
+	sessionId?: string
 ): Promise<BrowserOpResult> {
 	switch (op.kind) {
+		case 'pick':
+			if (!sessionId) return { ok: false, content: 'Design Mode pick needs the owning agent.' };
+			return pickElement(handle, op, sessionId);
 		case 'read': {
 			if (op.selector) {
 				const res = await handle.executeJavaScript(
@@ -276,8 +431,27 @@ export async function applyBrowserOp(
 			return { ok: true, content: `clicked ${op.selector}` };
 		}
 		case 'type': {
+			// React tracks assignments through an instance setter. Use the platform
+			// setter so the bubbling input event delivers the change to React.
 			const res = await handle.executeJavaScript(
-				`(function(){var el=document.querySelector(${JSON.stringify(op.selector)});if(!el)return 'notfound';if(el.focus)el.focus();if('value' in el){el.value=${JSON.stringify(op.text)};el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}else{el.textContent=${JSON.stringify(op.text)};}return 'ok';})()`
+				`(() => {
+					const el = document.querySelector(${JSON.stringify(op.selector)});
+					if (!el) return 'notfound';
+					if (el.focus) el.focus();
+					const text = ${JSON.stringify(op.text)};
+					if ('value' in el) {
+						const prototype = el instanceof HTMLInputElement ? HTMLInputElement.prototype
+							: el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : null;
+						const setter = prototype && Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+						if (setter) setter.call(el, text);
+						else el.value = text;
+						el.dispatchEvent(new Event('input', { bubbles: true }));
+						el.dispatchEvent(new Event('change', { bubbles: true }));
+					} else {
+						el.textContent = text;
+					}
+					return 'ok';
+				})()`
 			);
 			if (res === 'notfound') {
 				return { ok: false, content: `No element matches selector: ${op.selector}` };
@@ -390,7 +564,7 @@ export async function resolveAndRun(
 	// or side effect. read ops are never gated. Uses the REQUESTING agent's
 	// policy, ORed with main's own computation from its mirrored policy - either
 	// side requiring approval forces the dialog.
-	if (op.kind !== 'read') {
+	if (!isUngatedBrowserOp(op.kind)) {
 		const approved = await requestApproval(op, {
 			agentId: requesting.toolType,
 			sessionId,
@@ -409,6 +583,9 @@ export async function resolveAndRun(
 	if (op.kind === 'closeTab') {
 		return closeTabForSession(sessionId, tabUuid);
 	}
+	if (op.kind === 'viewport') {
+		return viewportForSession(sessionId, tabUuid, op);
+	}
 
 	// Focused agent: operate on the live (visible or kept-alive hidden) webview
 	// WITHOUT ever switching the user's visible tab - forcing the view to the
@@ -423,7 +600,7 @@ export async function resolveAndRun(
 			handle = await pollForHandle(browserViewRefs, tabUuid);
 		}
 		if (handle) {
-			return applyBrowserOp(handle, op);
+			return applyBrowserOp(handle, op, sessionId);
 		}
 		return {
 			ok: false,
@@ -443,7 +620,7 @@ export async function resolveAndRun(
 			const key = backgroundBrowserKey(sessionId, tabUuid);
 			store.markOpStart(key);
 			try {
-				return await applyBrowserOp(bgHandle, op);
+				return await applyBrowserOp(bgHandle, op, sessionId);
 			} finally {
 				store.markOpEnd(key);
 			}

@@ -19,6 +19,7 @@ import * as path from 'path';
 import { buildCallerIdentityEnv } from '../../agentDelegation';
 import { resolveTabPermissionMode } from '../../agentMetadata';
 import { prependNewSessionMessageOnFirstTurn } from '../../newSessionMessage';
+import { buildSideQuestionPrompt, sideQuestionForkRefusal } from '../../sideQuestion';
 import { substituteTemplateVariables } from '../../templateVariables';
 import type { AdditionalDirectory, AgentSshRemoteConfig } from '../../types';
 import { filterYoloArgs, getContextWindowValue } from '../launch/agent-args';
@@ -32,6 +33,8 @@ import {
 	buildMessagePrompt,
 	expandCommandArguments,
 	prependMergedContext,
+	appendAgentNotes,
+	PROMPT_LAYER_SEPARATOR,
 } from './prompt';
 
 /** The environment variable that names the data directory a process should use. */
@@ -91,6 +94,29 @@ export interface TurnMessage {
 	turnSettings?: { model?: string; effort?: string };
 	/** The queue item was read-only when it was queued. */
 	readOnly?: boolean;
+	/**
+	 * The sender's own read-only chip for this turn (`TurnOverrides.readOnly`), read in place of
+	 * the tab's `readOnlyMode`, so `false` lifts the host tab's chip for this one turn. Absent: the
+	 * tab's chip decides. An explicit `permissionMode: 'readonly'`, a read-only queue item and an
+	 * Auto Run holding the tree still make the turn read-only.
+	 */
+	tabReadOnly?: boolean;
+	/**
+	 * A `/btw` side question (`assembleSideQuestionTurn`): `text` is the finished prompt, sent as
+	 * it is. The turn is read-only, resumes the tab as a throwaway fork with every tool off, and
+	 * carries no system prompt, as the desktop's `groomContext` runs one.
+	 */
+	sideQuestion?: true;
+	/**
+	 * Agent-only text ahead of the message (`TurnInput.agentContext`): a released consult's
+	 * replies. The prompt carries it; the transcript entry shows `text` alone.
+	 */
+	agentContext?: string;
+	/**
+	 * Agent-only notes behind the message (`TurnInput.agentNotes`): the `@mention` notes of a
+	 * consult that is running or an answer that is handed off. The transcript never shows them.
+	 */
+	agentNotes?: string;
 }
 
 export interface TurnContext {
@@ -193,7 +219,7 @@ export interface AssembledTurn {
 
 export type AssembleTurnResult =
 	| { ok: true; turn: AssembledTurn }
-	| { ok: false; reason: 'empty' | 'no-batch-mode'; message: string };
+	| { ok: false; reason: 'empty' | 'no-batch-mode' | 'no-fork'; message: string };
 
 function stringRecord(value: unknown): Record<string, string> | undefined {
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
@@ -229,13 +255,18 @@ export function assembleTurn(
 
 	const sshEnabled = agent.sessionSshRemoteConfig?.enabled === true;
 
-	// Read-only: the message, the tab, or an Auto Run holding the working tree.
+	// Read-only: the message, the tab (or the sender's own chip in its place), or an Auto Run
+	// holding the working tree.
+	const chipTab =
+		message.tabReadOnly === undefined ? tab : { ...tab, readOnlyMode: message.tabReadOnly };
+	const sideQuestion = message.sideQuestion === true;
 	const readOnly =
+		sideQuestion ||
 		message.readOnly === true ||
-		tab.readOnlyMode === true ||
-		tab.permissionMode === 'readonly' ||
+		chipTab.readOnlyMode === true ||
+		chipTab.permissionMode === 'readonly' ||
 		(context.autoRunHoldsTree === true && context.forceParallel !== true);
-	const permissionMode = readOnly ? 'readonly' : resolveTabPermissionMode(tab);
+	const permissionMode = readOnly ? 'readonly' : resolveTabPermissionMode(chipTab);
 
 	// Model and effort: frozen at queue time when the message carries them, even where a field
 	// inside is undefined (the agent default was chosen then); else the live tab, then the agent.
@@ -251,7 +282,11 @@ export function assembleTurn(
 	let userPrompt: string;
 	let consumedMergedContext = false;
 	let entry: TurnUserEntry;
-	if (message.command) {
+	if (sideQuestion) {
+		// The caller built the whole prompt: no nudge, no new-session message, no read-only layer.
+		userPrompt = message.text;
+		entry = { text: message.text };
+	} else if (message.command) {
 		// A Maestro command follows the desktop's command path: arguments expanded, then template
 		// variables (without the history path, F13). No nudge, no merged context, and no
 		// read-only instruction.
@@ -270,10 +305,15 @@ export function assembleTurn(
 		// A command that is the tab's first turn opens a provider session, so the agent's standing
 		// instructions ride it like a typed message. Agent-only: the transcript keeps the bare
 		// command prompt.
-		userPrompt = prependNewSessionMessageOnFirstTurn(
-			commandPrompt,
-			agent.newSessionMessage,
-			tab.agentSessionId
+		userPrompt = appendAgentNotes(
+			prependNewSessionMessageOnFirstTurn(
+				message.agentContext
+					? `${message.agentContext}${PROMPT_LAYER_SEPARATOR}${commandPrompt}`
+					: commandPrompt,
+				agent.newSessionMessage,
+				tab.agentSessionId
+			),
+			message.agentNotes
 		);
 		entry = {
 			text: commandPrompt,
@@ -290,8 +330,12 @@ export function assembleTurn(
 			agentSessionId: tab.agentSessionId,
 			newSessionMessage: agent.newSessionMessage,
 			readOnly,
+			...(message.agentContext ? { agentContext: message.agentContext } : {}),
 		});
-		userPrompt = prependMergedContext(layered, tab.pendingMergedContext);
+		userPrompt = appendAgentNotes(
+			prependMergedContext(layered, tab.pendingMergedContext),
+			message.agentNotes
+		);
 		consumedMergedContext = !!tab.pendingMergedContext;
 		entry = { text: message.text };
 	}
@@ -302,11 +346,13 @@ export function assembleTurn(
 	// `{{AGENT_SESSION_ID}}` is this tab's provider session, as the desktop's
 	// `prepareMaestroSystemPrompt` reads it: a new tab never inherits another tab's
 	// (or the deprecated agent-level) identity.
-	const systemPrompt = buildAgentSystemPrompt(
-		{ ...agent, agentSessionId: tab.agentSessionId ?? undefined },
-		tab.id,
-		context
-	);
+	const systemPrompt = sideQuestion
+		? undefined
+		: buildAgentSystemPrompt(
+				{ ...agent, agentSessionId: tab.agentSessionId ?? undefined },
+				tab.id,
+				context
+			);
 
 	// Arguments: the provider's own, minus bypass flags when read-only, then the system prompt.
 	const providerArgs = provider.args ?? [];
@@ -324,6 +370,7 @@ export function assembleTurn(
 		sessionCustomEffort: effort,
 		sessionCustomArgs: agent.customArgs,
 		sessionCustomEnvVars: agent.customEnvVars,
+		...(sideQuestion ? { ephemeralFork: true, disableTools: true } : {}),
 	});
 	const placement = applySystemPromptDelivery({
 		systemPrompt,
@@ -451,4 +498,41 @@ export function assembleAutoRunTurn(
 			launch: { ...result.turn.launch, readOnlyMode: false, querySource: 'auto' },
 		},
 	};
+}
+
+/** What a `/btw` side question turn is made of. */
+export interface SideQuestionTurnInput {
+	/** What the person asked, after `/btw`. */
+	question: string;
+	/** The tab's provider session, forked and never written. Absent: a turn that saves none. */
+	resumeSessionId?: string;
+	/** The tab's model and effort, codified when the question was asked. */
+	model?: string;
+	effort?: string;
+}
+
+/**
+ * Assemble a `/btw` side question about a tab: the turn the desktop's `sideQuestion:ask` handler
+ * runs through `groomContext`. The tab's session resumes as a throwaway fork, read-only, with
+ * every tool off and no system prompt, and the prompt is `buildSideQuestionPrompt`, so the model
+ * answers from the conversation and the conversation never sees the question. A provider that
+ * cannot fork is refused (`no-fork`) rather than resumed into the real session.
+ */
+export function assembleSideQuestionTurn(
+	agent: TurnAgent,
+	input: SideQuestionTurnInput,
+	context: TurnContext
+): AssembleTurnResult {
+	const refusal = sideQuestionForkRefusal(context.provider, !!input.resumeSessionId);
+	if (refusal) return { ok: false, reason: 'no-fork', message: refusal };
+	return assembleTurn(
+		{ ...agent, nudgeMessage: undefined, newSessionMessage: undefined },
+		{ id: '', agentSessionId: input.resumeSessionId ?? null, permissionMode: 'readonly' },
+		{
+			text: buildSideQuestionPrompt(input.question),
+			turnSettings: { model: input.model, effort: input.effort },
+			sideQuestion: true,
+		},
+		{ ...context, autoRunHoldsTree: false }
+	);
 }

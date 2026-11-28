@@ -1,7 +1,8 @@
 /**
  * @file federation.test.ts
- * @description Tests for `maestro-cli federation peers|reconnect`, the CLI half of the desktop's
- * Federation peer mirror. Both send `federation_command` to the desktop and print its answer.
+ * @description Tests for `maestro-cli federation peers|reconnect|agents|add|...`, the CLI half of
+ * the desktop's Federation peer mirror. Each sends `federation_command` to the desktop and prints
+ * its answer.
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -15,14 +16,24 @@ import {
 	FEDERATION_AUTO_RUN_TIMEOUT_MS,
 	FEDERATION_HEADLESS_MESSAGE,
 	FEDERATION_RECONNECT_TIMEOUT_MS,
+	federationAdd,
+	federationAgents,
 	federationAuto,
 	federationAutoRun,
+	federationConflicts,
 	federationPeers,
 	federationReconnect,
+	federationResolve,
 	formatFederationPeers,
+	formatHostedAgents,
+	formatSettingsConflicts,
 } from '../../../cli/commands/federation';
 import { UnsupportedCommandError, withMaestroClient } from '../../../cli/services/maestro-client';
-import type { FederationCommandResult } from '../../../shared/federationCommands';
+import type {
+	FederationCommandResult,
+	HostedAgentListing,
+	HostedSettingsConflictSummary,
+} from '../../../shared/federationCommands';
 import type { MirrorPeerSummary } from '../../../shared/maestro-lib/client/peer-mirror';
 
 const BUILDBOX: MirrorPeerSummary = {
@@ -244,6 +255,155 @@ describe('federation command', () => {
 			});
 			expect(lastJson()).toMatchObject({ autoMove: true, agents: [] });
 			expect(process.exitCode).toBeUndefined();
+		});
+	});
+
+	describe('federation conflicts', () => {
+		const waiting: HostedSettingsConflictSummary = {
+			agent: 'buildbox:a1',
+			peerId: 'buildbox',
+			agentId: 'a1',
+			agentName: 'Docs',
+			conflicts: [
+				{
+					id: 'nudgeMessage',
+					label: 'Nudge message',
+					local: 'mine',
+					host: 'theirs',
+					mergeable: true,
+					firstSync: false,
+				},
+			],
+		};
+
+		it('lists the waiting fields with both values, and exits 1', async () => {
+			const sent = mockDesktop({ success: true, conflicts: [waiting] });
+
+			await federationConflicts({});
+
+			expect(sent[0].payload).toEqual({ type: 'federation_command', action: 'conflicts' });
+			expect(printed()).toContain('Docs  (buildbox:a1)');
+			expect(printed()).toContain('nudgeMessage: Nudge message  [mergeable]');
+			expect(printed()).toContain('host:  theirs');
+			expect(printed()).toContain('local: mine');
+			expect(process.exitCode).toBe(1);
+			process.exitCode = undefined;
+		});
+
+		it('says every hosted agent matches when nothing waits', () => {
+			expect(formatSettingsConflicts([])).toBe('Every hosted agent matches its host.');
+		});
+
+		it('settles one field with the side to take', async () => {
+			const sent = mockDesktop({ success: true, conflicts: [{ ...waiting, conflicts: [] }] });
+
+			await federationResolve('buildbox:a1', 'nudgeMessage', { take: 'host' });
+
+			expect(sent[0].payload).toEqual({
+				type: 'federation_command',
+				action: 'resolve-conflict',
+				agent: 'buildbox:a1',
+				field: 'nudgeMessage',
+				take: 'host',
+			});
+			expect(printed()).toContain('Every hosted agent matches its host.');
+			expect(process.exitCode).toBeUndefined();
+		});
+
+		it('sends a merged value', async () => {
+			const sent = mockDesktop({ success: true, conflicts: [] });
+
+			await federationResolve('buildbox:a1', 'nudgeMessage', { value: 'both' });
+
+			expect(sent[0].payload).toMatchObject({ take: 'value', value: 'both' });
+		});
+
+		it('refuses a resolve with no side before asking the desktop', async () => {
+			const sent = mockDesktop({ success: true });
+
+			await expect(federationResolve('buildbox:a1', 'nudgeMessage', {})).rejects.toThrow(
+				'__exit__1'
+			);
+			expect(sent).toEqual([]);
+		});
+	});
+
+	describe('federation agents', () => {
+		const listings: HostedAgentListing[] = [
+			{
+				peerId: 'buildbox',
+				peerName: 'buildbox',
+				agentId: 'a1',
+				ref: 'buildbox:a1',
+				name: 'Docs',
+				toolType: 'claude-code',
+				addedAs: 'local-1',
+			},
+			{
+				peerId: 'buildbox',
+				peerName: 'buildbox',
+				agentId: 'a2',
+				ref: 'buildbox:a2',
+				name: 'Scratch',
+				toolType: 'codex',
+				hostGroupName: 'Experiments',
+			},
+			{
+				peerId: 'remote-2',
+				peerName: 'gpu',
+				agentId: 'g1',
+				ref: 'remote-2:g1',
+				name: 'Trainer',
+				toolType: 'claude-code',
+			},
+		];
+
+		it('lists each host agent per peer, marks the ones in the Left Bar, and says how to add', () => {
+			const text = formatHostedAgents(listings);
+			expect(text).toContain('buildbox');
+			expect(text).toContain('Docs  buildbox:a1');
+			expect(text).toMatch(/Docs {2}buildbox:a1 {2}.*in Left Bar/);
+			expect(text).toMatch(/Scratch {2}buildbox:a2 {2}.*not added.*\[Experiments\]/);
+			expect(text).toContain('(gpu)');
+			expect(text).toContain('maestro-cli federation add <peer:agent>');
+			expect(formatHostedAgents([])).toContain('maestro-cli federation peers');
+		});
+
+		it('filters by peer and to the agents not added, and prints JSON', async () => {
+			const sent = mockDesktop({ success: true, hostedAgents: listings });
+
+			await federationAgents({ json: true, peer: 'buildbox', notAdded: true });
+
+			expect(sent[0].payload).toEqual({ type: 'federation_command', action: 'hosted-agents' });
+			expect(lastJson()).toEqual({ success: true, agents: [listings[1]] });
+		});
+	});
+
+	describe('federation add', () => {
+		it('sends the agent with only the options given and prints the new row', async () => {
+			const sent = mockDesktop({
+				success: true,
+				added: { id: 'local-9', name: 'Scratch', ref: 'buildbox:a2', groupId: 'g1' },
+			});
+
+			await federationAdd('buildbox:a2', { group: 'Work', background: true });
+
+			expect(sent[0].payload).toEqual({
+				type: 'federation_command',
+				action: 'add-agent',
+				agent: 'buildbox:a2',
+				group: 'Work',
+				background: true,
+			});
+			expect(printed()).toContain('Added "Scratch" (buildbox:a2) to the Left Bar');
+			expect(printed()).toContain('local-9');
+		});
+
+		it('exits 1 with the desktop refusal', async () => {
+			mockDesktop({ success: false, error: 'buildbox:a1 is in the Left Bar already, as "Docs".' });
+
+			await expect(federationAdd('buildbox:a1', {})).rejects.toThrow('__exit__1');
+			expect(printedErrors()).toContain('in the Left Bar already');
 		});
 	});
 });

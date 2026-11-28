@@ -53,6 +53,12 @@ const auto = vi.hoisted(() => ({
 		agents: [],
 	})),
 }));
+const hosted = vi.hoisted(() => ({
+	request: vi.fn(async (_request: unknown) => ({ success: true, conflicts: [] })),
+}));
+vi.mock('../../../../main/federation/federation-window', () => ({
+	requestFederationWindow: hosted.request,
+}));
 vi.mock('../../../../main/federation', () => ({
 	getPeerMirrorService: () => (running.on ? service : null),
 	getAutoFederation: () => (running.on ? auto : null),
@@ -165,5 +171,65 @@ describe('federation_command handler', () => {
 		const reply = await send(client(true), { action: 'peers' });
 		expect(reply).toMatchObject({ success: false });
 		expect(String(reply.error)).toContain('Federation is not running yet');
+	});
+
+	it('asks the settings sync window for the conflicts', async () => {
+		expect(await send(client(true), { action: 'conflicts' })).toMatchObject({
+			success: true,
+			conflicts: [],
+		});
+		expect(hosted.request).toHaveBeenCalledWith({ action: 'list' });
+	});
+
+	it('settles a conflict, and refuses one with no agent, field, or side', async () => {
+		await send(client(true), {
+			action: 'resolve-conflict',
+			agent: 'buildbox:a1',
+			field: 'nudgeMessage',
+			take: 'value',
+			value: ' merged ',
+		});
+		expect(hosted.request).toHaveBeenCalledWith({
+			action: 'resolve',
+			agent: 'buildbox:a1',
+			field: 'nudgeMessage',
+			resolution: { take: 'value', value: 'merged' },
+		});
+		hosted.request.mockClear();
+		expect(
+			await send(client(true), { action: 'resolve-conflict', field: 'x', take: 'host' })
+		).toMatchObject({ success: false, error: 'Name the hosted agent (peer:agent)' });
+		expect(
+			await send(client(true), { action: 'resolve-conflict', agent: 'a', field: 'x', take: 'both' })
+		).toMatchObject({ success: false });
+		expect(hosted.request).not.toHaveBeenCalled();
+	});
+
+	it('asks the window for the host agents the Left Bar can show', async () => {
+		await send(client(true), { action: 'hosted-agents' });
+		expect(hosted.request).toHaveBeenCalledWith({ action: 'hosted-agents' });
+	});
+
+	it('adds a host agent through the window, passing only the fields given', async () => {
+		hosted.request.mockClear();
+		await send(client(true), {
+			action: 'add-agent',
+			agent: ' buildbox:a1 ',
+			group: ' Work ',
+			name: '',
+			background: true,
+		});
+		expect(hosted.request).toHaveBeenCalledWith({
+			action: 'add-agent',
+			agent: 'buildbox:a1',
+			group: 'Work',
+			background: true,
+		});
+		hosted.request.mockClear();
+		expect(await send(client(true), { action: 'add-agent' })).toMatchObject({
+			success: false,
+			error: 'Name the host agent to add (peer:agent)',
+		});
+		expect(hosted.request).not.toHaveBeenCalled();
 	});
 });

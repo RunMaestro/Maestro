@@ -1,20 +1,34 @@
 /**
  * Stats domain WebSocket message handlers.
  *
- * Extracted from WebSocketMessageHandler.ts. Handles: get_usage_dashboard,
- * get_stats_aggregation, get_token_usage, get_stats_indexing, stats_query, get_achievements,
- * generate_director_notes_synopsis.
+ * Extracted from WebSocketMessageHandler.ts. Handles:
+ * get_stats_aggregation, get_token_usage, get_project_token_usage, get_stats_indexing,
+ * stats_query, get_achievements, generate_director_notes_synopsis.
  */
 
 import { getStatsDB } from '../../../stats/singleton';
 import { runReadonlyStatsQuery } from '../../../stats/readonly-query';
 import type { StatsTimeRange } from '../../../../shared/stats-types';
 import { tokenUsageQueryForRange } from '../../../../shared/tokenUsage';
-import { getTokenUsageAggregate } from '../../../stats/token-usage/token-usage-accessor';
+import {
+	getProjectTokenUsage,
+	getTokenUsageAggregate,
+} from '../../../stats/token-usage/token-usage-accessor';
+import {
+	MAX_PROJECT_TOKEN_USAGE_PROJECTS,
+	PROJECT_TOKEN_USAGE_FAILED,
+	parseProjectTokenUsageRequest,
+	projectTokenUsageFailureFrame,
+	projectTokenUsageReplyFrame,
+} from '../../../../shared/projectTokenUsage';
 import { getSettingsStore } from '../../../stores';
 import { isEncoreFeatureEnabled } from '../../../../shared/encoreFeatureDefaults';
 import { getStatsIndexingState } from '../../../stats/stats-indexing';
+import { logger } from '../../../utils/logger';
+import { captureException } from '../../../utils/sentry';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+
+const LOG_CONTEXT = '[StatsHandlers]';
 
 /**
  * Refuse a stats read while Usage & Stats is off, the way the desktop never
@@ -32,42 +46,6 @@ function refuseWhenUsageStatsOff(
 		{ requestId: message.requestId }
 	);
 	return true;
-}
-
-/**
- * Handle get_usage_dashboard message - fetch usage analytics data
- */
-export function handleGetUsageDashboard(
-	ctx: MessageHandlerContext,
-	client: WebClient,
-	message: WebClientMessage
-): void {
-	const timeRange = (message.timeRange as string) || 'week';
-	const validRanges = new Set(['day', 'week', 'month', 'all']);
-
-	if (!validRanges.has(timeRange)) {
-		ctx.sendError(client, 'Invalid timeRange. Must be one of: day, week, month, all');
-		return;
-	}
-
-	if (!ctx.callbacks.getUsageDashboard) {
-		ctx.sendError(client, 'Usage dashboard not available');
-		return;
-	}
-
-	ctx.callbacks
-		.getUsageDashboard(timeRange as 'day' | 'week' | 'month' | 'all')
-		.then((data) => {
-			ctx.send(client, {
-				type: 'usage_dashboard',
-				data,
-				requestId: message.requestId,
-				timestamp: Date.now(),
-			});
-		})
-		.catch((error) => {
-			ctx.sendError(client, `Failed to get usage dashboard: ${error.message}`);
-		});
 }
 
 /**
@@ -124,7 +102,11 @@ export function handleGetTokenUsage(
 		return;
 	}
 
-	getTokenUsageAggregate(tokenUsageQueryForRange(range as StatsTimeRange), message.force === true)
+	// A script asking (`maestro-cli stats-tokens`) wants the whole number, so this
+	// read waits for the agents on another computer to be counted.
+	getTokenUsageAggregate(tokenUsageQueryForRange(range as StatsTimeRange), message.force === true, {
+		waitForRemote: true,
+	})
 		.then((data) => {
 			ctx.send(client, {
 				type: 'token_usage',
@@ -138,6 +120,43 @@ export function handleGetTokenUsage(
 				client,
 				`Failed to get token usage: ${error instanceof Error ? error.message : String(error)}`
 			);
+		});
+}
+
+/**
+ * Handle get_project_token_usage - a Federation peer asking for the token usage
+ * of its agents' projects on this machine (`projectTokenUsage()` over this
+ * desktop's own session storages). Only numbers go back, never transcript text.
+ * Not gated on this machine's Usage & Stats: the peer's dashboard is the one
+ * reading, and the read touches no stats table.
+ */
+export function handleGetProjectTokenUsage(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const projects = parseProjectTokenUsageRequest(message as Record<string, unknown>);
+	const reply = (frame: Record<string, unknown>): void => {
+		ctx.send(client, { ...frame, requestId: message.requestId, timestamp: Date.now() });
+	};
+	if (!projects) {
+		reply(
+			projectTokenUsageFailureFrame(
+				`Name 1 to ${MAX_PROJECT_TOKEN_USAGE_PROJECTS} projects, each with a provider and a path.`
+			)
+		);
+		return;
+	}
+	getProjectTokenUsage(projects)
+		.then((usage) => reply(projectTokenUsageReplyFrame(usage)))
+		.catch((error) => {
+			// The message can name this machine's paths: it goes to this machine's log
+			// and Sentry, and the peer gets a generic error.
+			logger.error('Token usage read for a peer failed', LOG_CONTEXT, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+			void captureException(error, { operation: 'tokenUsage:peerAnswer' });
+			reply(projectTokenUsageFailureFrame(PROJECT_TOKEN_USAGE_FAILED));
 		});
 }
 

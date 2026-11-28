@@ -9,10 +9,15 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { CueStatsAggregation, CueStatsTimeRange } from '../../shared/cue-stats-types';
+import type {
+	CueStatsAggregation,
+	CueStatsSourceTotals,
+	CueStatsTimeRange,
+} from '../../shared/cue-stats-types';
 
 export type {
 	CueStatsAggregation,
+	CueStatsSourceTotals,
 	CueStatsTimeRange,
 	CueTriggerTypeOption,
 } from '../../shared/cue-stats-types';
@@ -35,6 +40,21 @@ export function createCueStatsApi() {
 		): Promise<CueStatsAggregation> => {
 			try {
 				return await ipcRenderer.invoke('cue-stats:get-aggregation', range, excludeTriggerTypes);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				if (message.includes('CueStatsDisabled')) {
+					throw new Error('CueStatsDisabled');
+				}
+				throw error;
+			}
+		},
+
+		// Runs, completed-run time and tokens for a range, without the full
+		// rollup (the Overview's source chart). Same 'CueStatsDisabled' contract
+		// as getAggregation.
+		getSourceTotals: async (range: CueStatsTimeRange): Promise<CueStatsSourceTotals> => {
+			try {
+				return await ipcRenderer.invoke('cue-stats:get-source-totals', range);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				if (message.includes('CueStatsDisabled')) {

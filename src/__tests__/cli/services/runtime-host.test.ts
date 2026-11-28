@@ -24,6 +24,11 @@ import {
 	writeCliServerInfoTo,
 } from '../../../shared/maestro-lib';
 import { BridgeConnection } from '../../../shared/maestro-lib/client/bridge-connection';
+import { createHostTokenUsageAnswer } from '../../../cli/services/host-token-usage';
+import {
+	PROJECT_TOKEN_USAGE_REPLY,
+	projectTokenUsageRequest,
+} from '../../../shared/projectTokenUsage';
 
 describe('startRuntimeHost', () => {
 	let dir: string;
@@ -170,6 +175,39 @@ describe('startRuntimeHost', () => {
 		}
 	});
 
+	// L31: the host writes a turn's synopsis after the turn's end; a client that read the History
+	// then holds a list without it until the host says it wrote (`history:externalChange`).
+	it('tells a connected client when it writes an agent History, and the next read has the write', async () => {
+		const historyDir = path.join(dir, 'history');
+		fs.mkdirSync(historyDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(historyDir, 'a1.jsonl'),
+			`${JSON.stringify({ id: 'e1', type: 'USER', timestamp: 1, summary: 'e1', projectPath: dir })}\n`
+		);
+		const host = await start();
+
+		const client = createWsMaestroClient({ userDataDir: dir, reconcileIntervalMs: 0 });
+		try {
+			expect((await client.connection.connect()).ok).toBe(true);
+			const changed: string[] = [];
+			client.events.subscribe((event) => {
+				if (event.type === 'history.changed') changed.push(event.agentId);
+			});
+			const before = await client.history.list('a1');
+			expect(before.ok && before.value.map((entry) => entry.validated)).toEqual([undefined]);
+			// Written on the host, not by this client.
+			expect(await host.runtime.history.update('a1', 'e1', { validated: true })).toEqual({
+				ok: true,
+				value: { updated: true },
+			});
+			await vi.waitFor(() => expect(changed).toEqual(['a1']));
+			const after = await client.history.list('a1');
+			expect(after.ok && after.value.map((entry) => entry.validated)).toEqual([true]);
+		} finally {
+			await client.connection.close();
+		}
+	});
+
 	it('serves the Cue answers of the engine it runs, and echoes the ones it cannot give', async () => {
 		const host = await startRuntimeHost(options(), {
 			...noCue,
@@ -193,6 +231,34 @@ describe('startRuntimeHost', () => {
 			await expect(
 				connection.sendCommand({ type: 'get_cue_activity' }, 'cue_activity')
 			).rejects.toMatchObject({ name: 'UnsupportedCommandError', hostKind: 'headless' });
+		} finally {
+			connection.disconnect();
+		}
+	});
+
+	it('answers a peer dashboard asking for its projects token usage, before Cue', async () => {
+		const read = vi.fn(async () => ({
+			projects: [{ status: 'unsupported' as const, breakdowns: [], complete: false }],
+		}));
+		const host = await startRuntimeHost(options(), {
+			...noCue,
+			createTokenUsage: () => createHostTokenUsageAnswer(read),
+		});
+		running.push(host);
+
+		const connection = new BridgeConnection({ userDataDir: dir });
+		await connection.connect();
+		try {
+			await expect(
+				connection.sendCommand(
+					projectTokenUsageRequest([{ provider: 'opencode', projectPath: dir }]),
+					PROJECT_TOKEN_USAGE_REPLY
+				)
+			).resolves.toMatchObject({
+				success: true,
+				projects: [{ status: 'unsupported', breakdowns: [] }],
+			});
+			expect(read).toHaveBeenCalledWith([{ provider: 'opencode', projectPath: dir }]);
 		} finally {
 			connection.disconnect();
 		}

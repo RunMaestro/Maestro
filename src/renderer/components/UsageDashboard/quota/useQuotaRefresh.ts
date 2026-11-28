@@ -3,9 +3,10 @@
  *
  * Refresh state machine shared by the provider quota panels. Owns the manual
  * Refresh handler, its optional Cmd/Ctrl+R chord, the visual-busy dwell (so a
- * sub-100ms IPC round-trip still animates a full beat), a one-shot auto-sample
- * on first arrival with configured-but-empty accounts, and read/write of the
- * persisted per-provider auto-refresh interval.
+ * sub-100ms IPC round-trip still animates a full beat), and read/write of the
+ * persisted per-provider auto-refresh interval. (Opening the dashboard samples
+ * any provider with no usable snapshot via `useQuotaTabDiscovery`, so the panel
+ * itself does not auto-sample.)
  *
  * The periodic background sampling is NOT driven here - it lives in the main
  * process (`usage-refresh-scheduler.ts`), which reads the same persisted
@@ -34,12 +35,6 @@ export interface UseQuotaRefreshOptions {
 	providerId: string;
 	/** Whether the provider store reports an in-flight pull or sample. */
 	refreshing: boolean;
-	/** Auto-sample once on first arrival with configured-but-empty accounts. */
-	autoRefresh: boolean;
-	/** Configured account count (gates the one-shot auto-sample). */
-	accountCount: number;
-	/** Cached snapshot count (gates the one-shot auto-sample). */
-	snapshotCount: number;
 	/** Provider refresh: trigger the main sampler, then re-pull the store. */
 	doRefresh: () => Promise<void>;
 	/**
@@ -62,14 +57,7 @@ export interface UseQuotaRefreshResult {
 }
 
 export function useQuotaRefresh(opts: UseQuotaRefreshOptions): UseQuotaRefreshResult {
-	const {
-		providerId,
-		refreshing,
-		autoRefresh,
-		accountCount,
-		snapshotCount,
-		refreshHotkey = false,
-	} = opts;
+	const { providerId, refreshing, refreshHotkey = false } = opts;
 
 	// Visual gate kept independent of `refreshing` so a fast sample still
 	// animates the button for a full beat instead of flashing.
@@ -122,21 +110,6 @@ export function useQuotaRefresh(opts: UseQuotaRefreshOptions): UseQuotaRefreshRe
 	// owns the chord while a true modal is up: the app-level handler blocks its
 	// own Cmd+R (read-only toggle) behind `hasOpenModal()`.
 	useCommandKeyShortcut('r', handleRefresh, refreshHotkey);
-
-	// Auto-sample once when opened with configured-but-empty accounts - saves a
-	// manual click. The empty-snapshot CTA still acts as a fallback if the
-	// auto-sample itself fails. Ref-guarded so React Strict-Mode's dev
-	// double-mount doesn't fire two samples back-to-back.
-	const autoRefreshFiredRef = useRef(false);
-	useEffect(() => {
-		if (!autoRefresh) return;
-		if (autoRefreshFiredRef.current) return;
-		if (accountCount === 0) return;
-		if (snapshotCount > 0) return;
-		if (refreshing || visualBusy) return;
-		autoRefreshFiredRef.current = true;
-		void handleRefresh();
-	}, [autoRefresh, accountCount, snapshotCount, refreshing, visualBusy, handleRefresh]);
 
 	return {
 		isBusy: refreshing || visualBusy,

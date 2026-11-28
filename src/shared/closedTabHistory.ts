@@ -33,6 +33,7 @@
 import { MAX_PERSISTED_SESSION_LOGS } from './deferredSessionContent';
 import { isEphemeralBrowserTab } from './browserTabPartition';
 import { hasCapability } from './maestro-lib/providers/capabilities';
+import type { ClosedTabSummary, ClosedTabType } from './closedTabCommands';
 
 /** Closed tabs kept per agent, in memory and on disk. */
 export const MAX_CLOSED_TAB_HISTORY = 25;
@@ -60,6 +61,7 @@ const AI_RUNTIME_KEYS = [
 ];
 const FILE_RUNTIME_KEYS = [
 	'editContent',
+	'editContentPath',
 	'isLoading',
 	'loadRequestId',
 	'navigationHistory',
@@ -244,4 +246,43 @@ export function normalizeStoredClosedTabs<T>(record: T): T {
 	if (projected) next.unifiedClosedTabHistory = projected;
 	else delete next.unifiedClosedTabHistory;
 	return next as T;
+}
+
+/** The longest label a closed-tab summary keeps off the wire (it names a tab and a route). */
+export const MAX_WIRE_CLOSED_TAB_LABEL = 200;
+const WIRE_CLOSED_TAB_TYPES: readonly ClosedTabType[] = ['ai', 'file', 'terminal', 'browser'];
+
+/**
+ * Read another machine's closed-tab stack (`closed_tab_command` list, a Federation host's) off
+ * the wire: well-formed entries only, each bounded, at most {@link MAX_CLOSED_TAB_HISTORY} of
+ * them, as `projectClosedTabHistory()` bounds a stack here. Re-indexed in order, so `index` is a
+ * position in what was kept and nothing the host sent decides where a reopen points.
+ */
+export function parseWireClosedTabs(value: unknown): ClosedTabSummary[] {
+	if (!Array.isArray(value)) return [];
+	const kept: ClosedTabSummary[] = [];
+	for (const raw of value) {
+		if (kept.length >= MAX_CLOSED_TAB_HISTORY) break;
+		if (!raw || typeof raw !== 'object') continue;
+		const entry = raw as Record<string, unknown>;
+		const type = entry.type as ClosedTabType;
+		if (!WIRE_CLOSED_TAB_TYPES.includes(type)) continue;
+		if (typeof entry.tabId !== 'string' || !entry.tabId || entry.tabId.length > 200) continue;
+		const closedAt =
+			typeof entry.closedAt === 'number' && Number.isFinite(entry.closedAt) ? entry.closedAt : 0;
+		kept.push({
+			index: kept.length,
+			type,
+			label: typeof entry.label === 'string' ? entry.label.slice(0, MAX_WIRE_CLOSED_TAB_LABEL) : '',
+			tabId: entry.tabId,
+			closedAt,
+			...(entry.tiled === true ? { tiled: true } : {}),
+			...(typeof entry.agentSessionId === 'string' &&
+			entry.agentSessionId &&
+			entry.agentSessionId.length <= 200
+				? { agentSessionId: entry.agentSessionId }
+				: {}),
+		});
+	}
+	return kept;
 }

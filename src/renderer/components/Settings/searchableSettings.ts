@@ -25,19 +25,6 @@ import {
 import { NOTIFICATION_SETTINGS, AI_COMMANDS_SETTINGS } from './searchableSettingsNotifications';
 import { ENCORE_SETTINGS } from './searchableSettingsEncore';
 import type { EncoreFeatureFlags } from '../../types';
-import type { SettingsStore } from '../../stores/settingsStore';
-
-/**
- * A settings-store key that holds a boolean AND has a matching `set<Key>`
- * setter - the only kind of setting a search result can flip in place.
- */
-export type ToggleSettingKey = {
-	[K in keyof SettingsStore & string]: SettingsStore[K] extends boolean
-		? `set${Capitalize<K>}` extends keyof SettingsStore
-			? K
-			: never
-		: never;
-}[keyof SettingsStore & string];
 
 export interface SearchableSetting {
 	/** Unique id used as data-setting-id on the DOM element */
@@ -94,13 +81,6 @@ export interface SearchableSetting {
 	 * this the jump would land on the grid and give up.
 	 */
 	encoreTile?: keyof EncoreFeatureFlags;
-	/**
-	 * The one boolean this entry's `data-setting-id` wrapper controls. Set it
-	 * only when the wrapper holds that single switch and the section calls the
-	 * plain store setter (no confirm dialog, no dependent control): the search
-	 * result then shows the switch and flips it in place.
-	 */
-	toggle?: ToggleSettingKey;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,13 +100,20 @@ export const ALL_SEARCHABLE_SETTINGS: SearchableSetting[] = [
 	...PROMPTS_SETTINGS,
 ];
 
+const SETTING_BY_ID = new Map(ALL_SEARCHABLE_SETTINGS.map((s) => [s.id, s] as const));
+
+/** The built-in entry with this id (plugin panels are not in the registry). */
+export function findSearchableSetting(settingId: string): SearchableSetting | undefined {
+	return SETTING_BY_ID.get(settingId);
+}
+
 /**
  * The Plugins tile a jump to `settingId` has to open, or undefined when the
  * anchor is not inside one. Sub-settings live in their feature's tile, so
  * `requiresEncore` names it; a tile's own entry names it with `encoreTile`.
  */
 export function encoreTileForSetting(settingId: string): keyof EncoreFeatureFlags | undefined {
-	const entry = ALL_SEARCHABLE_SETTINGS.find((s) => s.id === settingId);
+	const entry = findSearchableSetting(settingId);
 	if (entry?.tab !== 'encore') return undefined;
 	return entry.encoreTile ?? entry.requiresEncore;
 }
@@ -147,8 +134,56 @@ function activeEncoreKeywords(
 }
 
 /**
+ * A query shorter than this matches whole words in a setting's label, tab, or
+ * keywords only. Substring matching starts at this length: one or two letters
+ * occur in nearly every description, and every match opens its section.
+ */
+export const MIN_SUBSTRING_QUERY_LENGTH = 3;
+
+function words(text: string): string[] {
+	return text.split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/**
+ * The settings a short query names outright ("gh", "ai", "ui"): every term must
+ * be a whole word of the label, tab label, or keywords.
+ */
+function searchShortQuery(
+	terms: string[],
+	candidates: SearchableSetting[],
+	encoreFeatures: Partial<EncoreFeatureFlags> | undefined
+): SearchableSetting[] {
+	return candidates
+		.map((setting) => {
+			const label = new Set(words(setting.label.toLowerCase()));
+			const other = new Set(
+				words(
+					[
+						setting.tabLabel,
+						...(setting.keywords || []),
+						...activeEncoreKeywords(setting, encoreFeatures),
+					]
+						.join(' ')
+						.toLowerCase()
+				)
+			);
+			let score = 0;
+			for (const term of terms) {
+				if (label.has(term)) score += 3;
+				else if (other.has(term)) score += 1;
+				else return null;
+			}
+			return { setting, score };
+		})
+		.filter((entry): entry is { setting: SearchableSetting; score: number } => entry !== null)
+		.sort((a, b) => b.score - a.score)
+		.map((entry) => entry.setting);
+}
+
+/**
  * Search settings by query string. Matches against label, description, tab label, and keywords.
  * Returns matching settings sorted by relevance (label match first, then description, then keywords).
+ * A query under `MIN_SUBSTRING_QUERY_LENGTH` characters matches whole words only.
  */
 export function searchSettings(
 	query: string,
@@ -159,13 +194,15 @@ export function searchSettings(
 	const q = query.toLowerCase().trim();
 	const terms = q.split(/\s+/);
 
-	return [...ALL_SEARCHABLE_SETTINGS, ...additional]
-		.filter(
-			(setting) =>
-				!encoreFeatures ||
-				!setting.requiresEncore ||
-				encoreFeatures[setting.requiresEncore] === true
-		)
+	const candidates = [...ALL_SEARCHABLE_SETTINGS, ...additional].filter(
+		(setting) =>
+			!encoreFeatures || !setting.requiresEncore || encoreFeatures[setting.requiresEncore] === true
+	);
+	if (q.length < MIN_SUBSTRING_QUERY_LENGTH) {
+		return searchShortQuery(terms, candidates, encoreFeatures);
+	}
+
+	return candidates
 		.map((setting) => {
 			const label = setting.label.toLowerCase();
 			const desc = (setting.description || '').toLowerCase();

@@ -2,12 +2,13 @@
  * Tests for SummaryCards component
  *
  * Verifies:
- * - Renders all ten metric cards correctly
- * - Displays formatted values (numbers, durations)
- * - Shows correct icons for each metric
- * - Applies theme colors properly
- * - Handles edge cases (empty data, zero values)
- * - Computes derived metrics correctly (most active agent, interactive ratio)
+ * - The metric grid renders every card, in order, with formatted values
+ * - Range-scoped cards read the aggregation; Agents / Open Tabs are marked "now"
+ * - Queries/Agent divides by agents active in the range, not agents that exist
+ * - Top Provider uses the provider display name and the shared ranking
+ * - The streak comes from the all-time `streak` field, not the range's days
+ * - Tokens describes every bucket it sums and its priced coverage
+ * - The ratio card and its Cue retention caption
  */
 
 import { describe, it, expect } from 'vitest';
@@ -15,55 +16,71 @@ import { render, screen } from '@testing-library/react';
 import React from 'react';
 import {
 	AnimatedNumber,
-	BouncingDots,
-	ContextUsageBar,
-	RealtimeMetricsCard,
+	MetricCard,
 	SummaryCards,
-	TokenCostBadge,
+	countActiveDays,
+	findBestDay,
+	getCardStyles,
+	lastDaysSeries,
 } from '../../../../renderer/components/UsageDashboard/SummaryCards';
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
+import type { DelegationTotals } from '../../../../shared/delegation';
 import { THEMES } from '../../../../shared/themes';
 import { emptyPromptCadence } from '../../../../shared/promptCadence';
 
-// Test theme
 const theme = THEMES['dracula'];
 
-// Sample data for testing
-const mockData: StatsAggregation = {
-	totalQueries: 150,
-	totalDuration: 7200000, // 2 hours in ms
-	avgDuration: 48000, // 48 seconds in ms
-	byAgent: {
-		'claude-code': { count: 100, duration: 5000000 },
-		codex: { count: 50, duration: 2200000 },
-	},
-	bySource: { user: 120, auto: 30 },
-	byLocation: { local: 120, remote: 30 },
-	byDay: [
-		{ date: '2024-12-20', count: 50, duration: 2400000 },
-		{ date: '2024-12-21', count: 100, duration: 4800000 },
-	],
-	byHour: [],
-	totalSessions: 25,
-	sessionsByAgent: { 'claude-code': 15, codex: 10 },
-	sessionsByDay: [],
-	avgSessionDuration: 288000,
-	byAgentByDay: {},
-	bySessionByDay: {},
-	bySessionSource: {},
-	worktreeQueries: 0,
-	parentQueries: 150,
-	byWorktreeStatus: {
-		worktree: { count: 0, duration: 0 },
-		parent: { count: 150, duration: 7200000 },
-	},
-	imageAnnotations: 0,
-	prompts: emptyPromptCadence(),
-};
+function makeData(overrides: Partial<StatsAggregation> = {}): StatsAggregation {
+	return {
+		totalQueries: 150,
+		totalDuration: 7200000, // 2 hours
+		avgDuration: 48000, // 48 seconds
+		queryDurationPercentiles: { count: 0, min: 0, p50: 0, p75: 0, p90: 0, p95: 0, p99: 0, max: 0 },
+		queryDurationPercentilesByAgent: {},
+		autoRunTaskDurationPercentiles: {
+			count: 0,
+			min: 0,
+			p50: 0,
+			p75: 0,
+			p90: 0,
+			p95: 0,
+			p99: 0,
+			max: 0,
+		},
+		byAgent: {
+			'claude-code': { count: 100, duration: 5000000 },
+			codex: { count: 50, duration: 2200000 },
+		},
+		bySource: { user: 120, auto: 30 },
+		byLocation: { local: 120, remote: 30 },
+		byDay: [
+			{ date: '2024-12-20', count: 50, duration: 2400000 },
+			{ date: '2024-12-21', count: 100, duration: 4800000 },
+		],
+		byDayHour: [],
+		window: { startYmd: '2024-12-20', endYmd: '2024-12-21' },
+		earliestQueryAt: null,
+		streak: { current: 2, longest: 9 },
+		byHour: [],
+		totalSessions: 25,
+		byAgentByDay: {},
+		bySessionByDay: {},
+		bySessionSource: {},
+		bySessionLastQuery: {},
+		bySessionTokens: {},
+		worktreeQueries: 0,
+		parentQueries: 150,
+		byAgentWorktree: {},
+		imageAnnotations: 0,
+		prompts: emptyPromptCadence(),
+		...overrides,
+	} as StatsAggregation;
+}
 
-// Empty data for edge case testing
-const emptyData: StatsAggregation = {
+const mockData = makeData();
+
+const emptyData = makeData({
 	totalQueries: 0,
 	totalDuration: 0,
 	avgDuration: 0,
@@ -71,84 +88,10 @@ const emptyData: StatsAggregation = {
 	bySource: { user: 0, auto: 0 },
 	byLocation: { local: 0, remote: 0 },
 	byDay: [],
-	byHour: [],
+	streak: { current: 0, longest: 0 },
 	totalSessions: 0,
-	sessionsByAgent: {},
-	sessionsByDay: [],
-	avgSessionDuration: 0,
-	byAgentByDay: {},
-	bySessionByDay: {},
-	bySessionSource: {},
-	worktreeQueries: 0,
-	parentQueries: 0,
-	byWorktreeStatus: {
-		worktree: { count: 0, duration: 0 },
-		parent: { count: 0, duration: 0 },
-	},
-	imageAnnotations: 0,
-	prompts: emptyPromptCadence(),
-};
+});
 
-// Data with large numbers
-const largeNumbersData: StatsAggregation = {
-	totalQueries: 1500000, // 1.5M
-	totalDuration: 360000000, // 100 hours
-	avgDuration: 240000, // 4 minutes
-	byAgent: {
-		'claude-code': { count: 1000000, duration: 200000000 },
-		'openai-codex': { count: 500000, duration: 160000000 },
-	},
-	bySource: { user: 1200000, auto: 300000 },
-	byLocation: { local: 1000000, remote: 500000 },
-	byDay: [],
-	byHour: [],
-	totalSessions: 50000,
-	sessionsByAgent: { 'claude-code': 30000, 'openai-codex': 20000 },
-	sessionsByDay: [],
-	avgSessionDuration: 7200000,
-	byAgentByDay: {},
-	bySessionByDay: {},
-	bySessionSource: {},
-	worktreeQueries: 0,
-	parentQueries: 1500000,
-	byWorktreeStatus: {
-		worktree: { count: 0, duration: 0 },
-		parent: { count: 1500000, duration: 360000000 },
-	},
-	imageAnnotations: 0,
-	prompts: emptyPromptCadence(),
-};
-
-// Single agent data
-const singleAgentData: StatsAggregation = {
-	totalQueries: 50,
-	totalDuration: 1800000, // 30 minutes
-	avgDuration: 36000, // 36 seconds
-	byAgent: {
-		terminal: { count: 50, duration: 1800000 },
-	},
-	bySource: { user: 50, auto: 0 },
-	byLocation: { local: 50, remote: 0 },
-	byDay: [],
-	byHour: [],
-	totalSessions: 5,
-	sessionsByAgent: { terminal: 5 },
-	sessionsByDay: [],
-	avgSessionDuration: 360000,
-	byAgentByDay: {},
-	bySessionByDay: {},
-	bySessionSource: {},
-	worktreeQueries: 0,
-	parentQueries: 50,
-	byWorktreeStatus: {
-		worktree: { count: 0, duration: 0 },
-		parent: { count: 50, duration: 1800000 },
-	},
-	imageAnnotations: 0,
-	prompts: emptyPromptCadence(),
-};
-
-// Mock sessions with tabs for open tab count testing
 const mockSessions = [
 	{
 		id: 's1',
@@ -170,27 +113,90 @@ const mockSessions = [
 	},
 ] as unknown as Session[];
 
+const delegation: DelegationTotals = {
+	interactive: { count: 100, durationMs: 6_000_000 },
+	autoRun: { count: 10, durationMs: 3_000_000 },
+	cue: { count: 5, durationMs: 1_000_000 },
+};
+
+const CARD_ORDER = [
+	'Agents',
+	'Open Tabs',
+	'Total Queries',
+	'Queries/Agent',
+	'Tokens',
+	'Cost',
+	'Total Time',
+	'Avg Duration',
+	'Top Provider',
+	'Current Streak',
+	'Best Day',
+	'Active Days',
+	'Image Annotations',
+];
+
 describe('SummaryCards', () => {
 	describe('Rendering', () => {
 		it('renders the summary cards container', () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
-
 			expect(screen.getByTestId('summary-cards')).toBeInTheDocument();
 		});
 
-		it('renders all fourteen metric cards', () => {
-			// Card count grew to 14: the Tokens and Cost cards were added alongside
-			// the earlier Streak / Best Day / Active Days additions.
+		it('renders the thirteen range cards in order (no peak hour card)', () => {
 			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards).toHaveLength(14);
+			expect(cards).toHaveLength(CARD_ORDER.length);
+			cards.forEach((card, index) => {
+				expect(card.getAttribute('aria-label')).toMatch(new RegExp(`^${CARD_ORDER[index]}`));
+			});
+			// The peak hour is stated once, on the radial Activity by Hour chart.
+			expect(screen.queryByText('Peak Hour')).not.toBeInTheDocument();
+		});
+
+		it('adds the Interactive vs Delegated card when the split is supplied', () => {
+			render(<SummaryCards data={mockData} theme={theme} delegation={delegation} />);
+
+			expect(screen.getAllByTestId('metric-card')).toHaveLength(CARD_ORDER.length + 1);
+			// 4,000,000 of 10,000,000 ms delegated = 40%.
+			expect(
+				screen.getByRole('group', { name: 'Interactive vs Delegated: 60 / 40' })
+			).toBeInTheDocument();
+			expect(screen.getByText('40% ran without you')).toBeInTheDocument();
+		});
+
+		it('hides the ratio card when the split tracked no time', () => {
+			render(
+				<SummaryCards
+					data={mockData}
+					theme={theme}
+					delegation={{
+						interactive: { count: 0, durationMs: 0 },
+						autoRun: { count: 0, durationMs: 0 },
+						cue: { count: 0, durationMs: 0 },
+					}}
+				/>
+			);
+			expect(screen.queryByTestId('summary-delegation-ratio')).not.toBeInTheDocument();
+		});
+
+		it('notes Cue retention on the ratio card only when asked to', () => {
+			const { rerender } = render(
+				<SummaryCards data={mockData} theme={theme} delegation={delegation} />
+			);
+			expect(screen.queryByTestId('summary-cue-retention')).not.toBeInTheDocument();
+
+			rerender(
+				<SummaryCards data={mockData} theme={theme} delegation={delegation} cueRetentionDays={14} />
+			);
+			expect(screen.getByTestId('summary-cue-retention')).toHaveTextContent(
+				'Cue time covers only the last 14 days'
+			);
 		});
 
 		// Regression for issue #1399: the Tokens and Cost cards used to sum each
 		// agent's persisted lifetime `usageStats`, which cannot move when the
-		// dashboard's range selector does. They now read the range-scoped
-		// `bySessionTokens` the aggregation already carries.
+		// dashboard's range selector does.
 		it('reads Tokens and Cost from the range-scoped totals, not lifetime usageStats', () => {
 			const sessionsWithLifetimeUsage = [
 				{
@@ -198,7 +204,6 @@ describe('SummaryCards', () => {
 					toolType: 'claude-code',
 					aiTabs: [],
 					filePreviewTabs: [],
-					// Lifetime counter, deliberately far larger than the range below.
 					usageStats: {
 						inputTokens: 900_000_000,
 						outputTokens: 900_000_000,
@@ -211,21 +216,19 @@ describe('SummaryCards', () => {
 
 			render(
 				<SummaryCards
-					data={
-						{
-							...mockData,
-							bySessionTokens: {
-								s1: {
-									inputTokens: 1_000_000,
-									outputTokens: 500_000,
-									cacheReadTokens: 0,
-									cacheCreationTokens: 0,
-									costUsd: 12.5,
-									pricedQueries: 40,
-								},
+					data={makeData({
+						totalQueries: 40,
+						bySessionTokens: {
+							s1: {
+								inputTokens: 1_000_000,
+								outputTokens: 500_000,
+								cacheReadTokens: 0,
+								cacheCreationTokens: 0,
+								costUsd: 12.5,
+								pricedQueries: 40,
 							},
-						} as StatsAggregation
-					}
+						},
+					})}
 					theme={theme}
 					sessions={sessionsWithLifetimeUsage}
 				/>
@@ -235,37 +238,71 @@ describe('SummaryCards', () => {
 			expect(screen.getByRole('group', { name: 'Cost: $12.50' })).toBeInTheDocument();
 		});
 
-		it('shows a dash for Tokens when the selected range recorded none', () => {
-			const sessionsWithLifetimeUsage = [
-				{
-					id: 's1',
-					toolType: 'claude-code',
-					aiTabs: [],
-					filePreviewTabs: [],
-					usageStats: {
-						inputTokens: 5_000_000,
-						outputTokens: 5_000_000,
-						cacheReadInputTokens: 0,
-						cacheCreationInputTokens: 0,
-						totalCostUsd: 42,
-					},
-				},
-			] as unknown as Session[];
-
+		it('names every bucket the Tokens headline sums, cache included', () => {
 			render(
 				<SummaryCards
-					data={{ ...mockData, bySessionTokens: {} } as StatsAggregation}
+					data={makeData({
+						totalQueries: 10,
+						bySessionTokens: {
+							s1: {
+								inputTokens: 1_000,
+								outputTokens: 2_000,
+								cacheReadTokens: 3_000,
+								cacheCreationTokens: 4_000,
+								costUsd: 1,
+								pricedQueries: 10,
+							},
+						},
+					})}
 					theme={theme}
-					sessions={sessionsWithLifetimeUsage}
 				/>
 			);
 
-			expect(screen.getByRole('group', { name: 'Tokens: \u2014' })).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: 'Tokens: 10.0K' })).toBeInTheDocument();
+			const detail = screen.getByTestId('tokens-card-detail');
+			expect(detail).toHaveTextContent('1.0K in');
+			expect(detail).toHaveTextContent('2.0K out');
+			expect(detail).toHaveTextContent('7.0K cache');
+			// Every query was priced: no coverage line.
+			expect(detail).not.toHaveTextContent('priced');
+		});
+
+		it('says how many queries the token and cost totals cover when some were unpriced', () => {
+			render(
+				<SummaryCards
+					data={makeData({
+						totalQueries: 150,
+						bySessionTokens: {
+							s1: {
+								inputTokens: 1_000,
+								outputTokens: 1_000,
+								cacheReadTokens: 0,
+								cacheCreationTokens: 0,
+								costUsd: 2,
+								pricedQueries: 40,
+							},
+						},
+					})}
+					theme={theme}
+				/>
+			);
+
+			expect(screen.getByTestId('tokens-card-detail')).toHaveTextContent(
+				'40 of 150 queries priced'
+			);
+			expect(screen.getAllByText('40 of 150 queries priced')).toHaveLength(2);
+		});
+
+		it('shows the placeholder for Tokens when the selected range recorded none', () => {
+			render(<SummaryCards data={makeData({ bySessionTokens: {} })} theme={theme} />);
+
+			expect(screen.getByRole('group', { name: 'Tokens: -' })).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: 'Cost: -' })).toBeInTheDocument();
 		});
 
 		// The stats DB only stores provider-REPORTED cost, so a provider that
 		// prices nothing itself would blank the Cost card without the rate-table
-		// fallback the lifetime path used to supply.
+		// fallback.
 		it('estimates Cost from the rate table when the range reported none', () => {
 			const sessions = [
 				{ id: 's1', toolType: 'claude-code', aiTabs: [], filePreviewTabs: [] },
@@ -273,21 +310,18 @@ describe('SummaryCards', () => {
 
 			render(
 				<SummaryCards
-					data={
-						{
-							...mockData,
-							bySessionTokens: {
-								s1: {
-									inputTokens: 1_000_000,
-									outputTokens: 1_000_000,
-									cacheReadTokens: 0,
-									cacheCreationTokens: 0,
-									costUsd: 0,
-									pricedQueries: 10,
-								},
+					data={makeData({
+						bySessionTokens: {
+							s1: {
+								inputTokens: 1_000_000,
+								outputTokens: 1_000_000,
+								cacheReadTokens: 0,
+								cacheCreationTokens: 0,
+								costUsd: 0,
+								pricedQueries: 10,
 							},
-						} as StatsAggregation
-					}
+						},
+					})}
 					theme={theme}
 					sessions={sessions}
 				/>
@@ -299,62 +333,139 @@ describe('SummaryCards', () => {
 
 		it('renders Total Queries metric', async () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
-
 			expect(screen.getByText('Total Queries')).toBeInTheDocument();
 			expect(await screen.findByText('150')).toBeInTheDocument();
 		});
 
 		it('renders Total Time metric', () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
-
 			expect(screen.getByText('Total Time')).toBeInTheDocument();
 			expect(screen.getByText('2h 0m')).toBeInTheDocument();
 		});
 
-		it('renders Avg Duration metric', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
-
-			expect(screen.getByText('Avg Duration')).toBeInTheDocument();
+		it('renders Avg Duration metric, and the placeholder when there are no queries', () => {
+			const { unmount } = render(<SummaryCards data={mockData} theme={theme} />);
 			expect(screen.getByText('48s')).toBeInTheDocument();
-		});
+			unmount();
 
-		it('renders Top Agent metric', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
-
-			expect(screen.getByText('Top Agent')).toBeInTheDocument();
-			expect(screen.getByText('claude-code')).toBeInTheDocument();
-		});
-
-		// Interactive % / Local % cards were removed in favor of streak,
-		// best-day, active-days, and worktree % which surface signal that
-		// actually changes day to day. Confirm the new cards render.
-		it('renders Current Streak metric', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
-			expect(screen.getByText('Current Streak')).toBeInTheDocument();
-		});
-
-		it('renders Best Day metric', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
-			expect(screen.getByText('Best Day')).toBeInTheDocument();
-		});
-
-		it('renders Active Days metric', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
-			expect(screen.getByText('Active Days')).toBeInTheDocument();
+			render(<SummaryCards data={emptyData} theme={theme} />);
+			expect(screen.getByRole('group', { name: 'Avg Duration: -' })).toBeInTheDocument();
 		});
 
 		it('renders Image Annotations metric', () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
 			expect(screen.getByText('Image Annotations')).toBeInTheDocument();
 		});
+	});
 
-		it('renders Open Tabs metric with correct count', () => {
-			// mockSessions has 3+1+1+2+1+0 = 8 total tabs (AI + file preview across all sessions)
+	describe('Scope captions', () => {
+		it('marks the live cards as "now" and the streak as "all time"', () => {
 			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
 
-			expect(screen.getByText('Open Tabs')).toBeInTheDocument();
-			const tabsCard = screen.getByRole('group', { name: /Open Tabs: 8/i });
-			expect(tabsCard).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: /^Agents \(now\): 2/ })).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: /^Open Tabs \(now\): 8/ })).toBeInTheDocument();
+			expect(
+				screen.getByRole('group', { name: /^Current Streak \(all time\): 2d/ })
+			).toBeInTheDocument();
+			const hints = screen.getAllByTestId('metric-card-label-hint').map((el) => el.textContent);
+			expect(hints).toEqual(['now', 'now', 'all time']);
+		});
+
+		it('leaves range-scoped cards without a caption', () => {
+			render(<SummaryCards data={mockData} theme={theme} />);
+			const card = screen.getByRole('group', { name: /^Total Queries/ });
+			expect(card.querySelector('[data-testid="metric-card-label-hint"]')).toBeNull();
+		});
+	});
+
+	describe('Queries/Agent', () => {
+		it('divides by the agents active in the range, not by the agents that exist', () => {
+			// 150 queries over 25 active agents; the 2 live non-terminal agents are irrelevant.
+			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
+			expect(screen.getByRole('group', { name: 'Queries/Agent: 6.0' })).toBeInTheDocument();
+			expect(screen.getByText('across 25 active agents')).toBeInTheDocument();
+		});
+
+		it('shows the placeholder when no agent ran a query', () => {
+			render(<SummaryCards data={emptyData} theme={theme} />);
+			expect(screen.getByRole('group', { name: 'Queries/Agent: -' })).toBeInTheDocument();
+		});
+	});
+
+	describe('Top Provider', () => {
+		it('names the busiest provider by display name with its query count', () => {
+			render(<SummaryCards data={mockData} theme={theme} />);
+			expect(screen.getByRole('group', { name: /^Top Provider: Claude Code/ })).toBeInTheDocument();
+			expect(screen.getByText('100 queries')).toBeInTheDocument();
+		});
+
+		it('ranks by query count even when another provider ran longer', () => {
+			render(
+				<SummaryCards
+					data={makeData({
+						byAgent: {
+							'claude-code': { count: 10, duration: 9_000_000 },
+							codex: { count: 20, duration: 1_000 },
+						},
+					})}
+					theme={theme}
+				/>
+			);
+			expect(screen.getByRole('group', { name: /^Top Provider: Codex/ })).toBeInTheDocument();
+		});
+
+		it('shows the placeholder when no provider ran a query', () => {
+			render(<SummaryCards data={emptyData} theme={theme} />);
+			expect(screen.getByRole('group', { name: 'Top Provider: -' })).toBeInTheDocument();
+		});
+	});
+
+	describe('Streak, best day, active days', () => {
+		it('reads the streak from the all-time field, not the range days', () => {
+			// Only two days in range, but the streak spans further back.
+			render(
+				<SummaryCards data={makeData({ streak: { current: 40, longest: 61 } })} theme={theme} />
+			);
+			expect(
+				screen.getByRole('group', { name: /^Current Streak \(all time\): 40d/ })
+			).toBeInTheDocument();
+			expect(screen.getByText('Best: 61d')).toBeInTheDocument();
+		});
+
+		it('shows a zero streak as 0d', () => {
+			render(<SummaryCards data={emptyData} theme={theme} />);
+			expect(
+				screen.getByRole('group', { name: /^Current Streak \(all time\): 0d/ })
+			).toBeInTheDocument();
+		});
+
+		it('names the best day with the canonical calendar format', () => {
+			render(<SummaryCards data={mockData} theme={theme} />);
+			expect(screen.getByText('Dec 21, 2024')).toBeInTheDocument();
+		});
+
+		it('counts active days out of the days in range', () => {
+			render(
+				<SummaryCards
+					data={makeData({
+						byDay: [
+							{ date: '2024-12-19', count: 0, duration: 0 },
+							{ date: '2024-12-20', count: 3, duration: 1 },
+							{ date: '2024-12-21', count: 0, duration: 0 },
+						],
+					})}
+					theme={theme}
+				/>
+			);
+			expect(screen.getByRole('group', { name: 'Active Days: 1' })).toBeInTheDocument();
+			expect(screen.getByText('of 3 days')).toBeInTheDocument();
+		});
+	});
+
+	describe('Open Tabs', () => {
+		it('renders Open Tabs metric with correct count', () => {
+			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
+			expect(screen.getByRole('group', { name: /Open Tabs \(now\): 8/i })).toBeInTheDocument();
 		});
 
 		it('counts browser and terminal tabs, and skips hidden AI tabs, like the tab strip', () => {
@@ -369,7 +480,7 @@ describe('SummaryCards', () => {
 				},
 			] as unknown as Session[];
 			render(<SummaryCards data={mockData} theme={theme} sessions={sessions} />);
-			expect(screen.getByRole('group', { name: /Open Tabs: 5/i })).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: /Open Tabs \(now\): 5/i })).toBeInTheDocument();
 			expect(screen.getByTestId('open-tab-breakdown')).toHaveTextContent(
 				'1 AI · 1 file · 1 browser · 2 terminal'
 			);
@@ -385,545 +496,126 @@ describe('SummaryCards', () => {
 				},
 			] as unknown as Session[];
 			render(<SummaryCards data={mockData} theme={theme} sessions={sessions} />);
-			expect(screen.getByRole('group', { name: /Open Tabs: 1/i })).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: /Open Tabs \(now\): 1/i })).toBeInTheDocument();
 		});
 
 		it('renders Open Tabs as 0 when no sessions provided', () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
-
-			expect(screen.getByText('Open Tabs')).toBeInTheDocument();
-			const tabsCard = screen.getByRole('group', { name: /Open Tabs: 0/i });
-			expect(tabsCard).toBeInTheDocument();
+			expect(screen.getByRole('group', { name: /Open Tabs \(now\): 0/i })).toBeInTheDocument();
 		});
 	});
 
 	describe('Number Formatting', () => {
 		it('formats thousands with K suffix', async () => {
-			const dataWithThousands: StatsAggregation = {
-				...mockData,
-				totalQueries: 1500,
-			};
-			render(<SummaryCards data={dataWithThousands} theme={theme} />);
-
+			render(<SummaryCards data={makeData({ totalQueries: 1500 })} theme={theme} />);
 			expect(await screen.findByText('1.5K')).toBeInTheDocument();
 		});
 
 		it('formats millions with M suffix', async () => {
-			render(<SummaryCards data={largeNumbersData} theme={theme} />);
-
+			render(<SummaryCards data={makeData({ totalQueries: 1500000 })} theme={theme} />);
 			expect(await screen.findByText('1.5M')).toBeInTheDocument();
 		});
 
-		it('displays small numbers without suffix', async () => {
-			const dataWithSmallNumbers: StatsAggregation = {
-				...mockData,
-				totalQueries: 42,
-			};
-			render(<SummaryCards data={dataWithSmallNumbers} theme={theme} />);
-
-			expect(await screen.findByText('42')).toBeInTheDocument();
-		});
-	});
-
-	describe('Duration Formatting', () => {
-		it('formats hours and minutes correctly', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
-
-			// 2 hours = "2h 0m"
-			expect(screen.getByText('2h 0m')).toBeInTheDocument();
-		});
-
 		it('formats minutes and seconds correctly', () => {
-			const dataWithMinutes: StatsAggregation = {
-				...mockData,
-				avgDuration: 125000, // 2m 5s
-			};
-			render(<SummaryCards data={dataWithMinutes} theme={theme} />);
-
+			render(<SummaryCards data={makeData({ avgDuration: 125000 })} theme={theme} />);
 			expect(screen.getByText('2m 5s')).toBeInTheDocument();
 		});
-
-		it('formats seconds only correctly', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
-
-			// 48 seconds
-			expect(screen.getByText('48s')).toBeInTheDocument();
-		});
-
-		it('displays 0s for zero duration', () => {
-			render(<SummaryCards data={emptyData} theme={theme} />);
-
-			// Should have multiple 0s values
-			const zeroElements = screen.getAllByText('0s');
-			expect(zeroElements.length).toBeGreaterThanOrEqual(2);
-		});
 	});
-
-	describe('Most Active Agent Calculation', () => {
-		it('identifies the most active agent by count', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
-
-			// claude-code has 100 queries, codex has 50
-			expect(screen.getByText('claude-code')).toBeInTheDocument();
-		});
-
-		it('shows N/A when no agents exist', () => {
-			render(<SummaryCards data={emptyData} theme={theme} />);
-
-			// Both Top Agent and Interactive % will be N/A for empty data
-			const naElements = screen.getAllByText('N/A');
-			expect(naElements.length).toBeGreaterThanOrEqual(1);
-
-			// Verify Top Agent specifically shows N/A
-			expect(screen.getByText('Top Agent')).toBeInTheDocument();
-		});
-
-		it('handles single agent correctly', () => {
-			render(<SummaryCards data={singleAgentData} theme={theme} />);
-
-			expect(screen.getByText('terminal')).toBeInTheDocument();
-		});
-	});
-
-	// Interactive Ratio tests removed - the Interactive % card is no longer
-	// rendered. Top Agent / Peak Hour still surface N/A when their inputs are
-	// empty, which the existing "Most Active Agent Calculation > shows N/A"
-	// test already covers.
 
 	describe('Theme Support', () => {
 		it('applies theme background color to cards', () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
-
-			const cards = screen.getAllByTestId('metric-card');
-			cards.forEach((card) => {
-				expect(card).toHaveStyle({
-					backgroundColor: theme.colors.bgActivity,
-				});
+			screen.getAllByTestId('metric-card').forEach((card) => {
+				expect(card).toHaveStyle({ backgroundColor: theme.colors.bgActivity });
 			});
 		});
 
 		it('works with light theme', () => {
-			const lightTheme = THEMES['github-light'];
-			render(<SummaryCards data={mockData} theme={lightTheme} />);
-
-			expect(screen.getByTestId('summary-cards')).toBeInTheDocument();
+			render(<SummaryCards data={mockData} theme={THEMES['github-light']} />);
 			expect(screen.getByText('Total Queries')).toBeInTheDocument();
-		});
-
-		it('works with different dark themes', () => {
-			const nordTheme = THEMES['nord'];
-			render(<SummaryCards data={mockData} theme={nordTheme} />);
-
-			expect(screen.getByTestId('summary-cards')).toBeInTheDocument();
-			const cards = screen.getAllByTestId('metric-card');
-			cards.forEach((card) => {
-				expect(card).toHaveStyle({
-					backgroundColor: nordTheme.colors.bgActivity,
-				});
-			});
-		});
-	});
-
-	describe('Icons', () => {
-		it('renders SVG icons for each metric', () => {
-			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
-
-			// Scope to the metrics grid so the realtime card's icons don't inflate the count.
-			// Subtract sparkline SVGs (rendered for the Total Queries + Total Time cards) so
-			// this assertion stays focused on the per-metric lucide icon.
-			const grid = screen.getByTestId('summary-cards');
-			const svgElements = grid.querySelectorAll('svg');
-			const sparklines = grid.querySelectorAll(
-				'[data-testid="sparkline"], [data-testid="sparkline-empty"]'
-			);
-			expect(svgElements.length - sparklines.length).toBe(14);
 		});
 	});
 
 	describe('Sparklines', () => {
-		const dataWithByDay: StatsAggregation = {
-			...mockData,
+		const sevenDays = makeData({
 			byDay: [
+				{ date: '2024-12-13', count: 99, duration: 99 },
+				{ date: '2024-12-14', count: 99, duration: 99 },
 				{ date: '2024-12-15', count: 10, duration: 600000 },
 				{ date: '2024-12-16', count: 20, duration: 1200000 },
 				{ date: '2024-12-17', count: 15, duration: 800000 },
 				{ date: '2024-12-18', count: 30, duration: 1500000 },
 				{ date: '2024-12-19', count: 25, duration: 1300000 },
-				{ date: '2024-12-20', count: 50, duration: 2400000 },
-				{ date: '2024-12-21', count: 100, duration: 4800000 },
+				{ date: '2024-12-20', count: 0, duration: 0 },
+				{ date: '2024-12-21', count: 0, duration: 0 },
 			],
-		};
+		});
 
-		it('renders sparklines on Total Queries and Total Time cards when byDay has data', () => {
-			render(<SummaryCards data={dataWithByDay} theme={theme} />);
+		it('renders sparklines on Total Queries and Total Time cards', () => {
+			render(<SummaryCards data={sevenDays} theme={theme} />);
 
-			const queriesCard = screen.getByRole('group', { name: /Total Queries: 150/i });
-			const totalTimeCard = screen.getByRole('group', { name: /Total Time: 2h 0m/i });
-
+			const queriesCard = screen.getByRole('group', { name: /^Total Queries/ });
+			const totalTimeCard = screen.getByRole('group', { name: /^Total Time/ });
 			expect(queriesCard.querySelector('[data-testid="sparkline"]')).not.toBeNull();
 			expect(totalTimeCard.querySelector('[data-testid="sparkline"]')).not.toBeNull();
 		});
 
-		it('does not render sparklines on cards without trend data', () => {
-			render(<SummaryCards data={dataWithByDay} theme={theme} sessions={mockSessions} />);
-
-			const agentsCard = screen.getByRole('group', { name: /^Agents:/i });
-			const openTabsCard = screen.getByRole('group', { name: /Open Tabs:/i });
-
+		it('does not render sparklines on live cards', () => {
+			render(<SummaryCards data={sevenDays} theme={theme} sessions={mockSessions} />);
+			const agentsCard = screen.getByRole('group', { name: /^Agents/ });
 			expect(agentsCard.querySelector('[data-testid="sparkline"]')).toBeNull();
-			expect(openTabsCard.querySelector('[data-testid="sparkline"]')).toBeNull();
 		});
 
-		it('renders an empty (dashed-baseline) sparkline when byDay is empty', () => {
-			// emptyData has byDay: [] - left-padded to seven zeros, the Sparkline
-			// collapses to its empty/dashed baseline state.
-			render(<SummaryCards data={emptyData} theme={theme} />);
-
-			const queriesCard = screen.getByRole('group', { name: /Total Queries: 0/i });
-			expect(queriesCard.querySelector('[data-testid="sparkline-empty"]')).not.toBeNull();
+		it('omits the sparkline when the range has fewer than two days', () => {
+			render(
+				<SummaryCards
+					data={makeData({ byDay: [{ date: '2024-12-21', count: 5, duration: 10 }] })}
+					theme={theme}
+				/>
+			);
+			const queriesCard = screen.getByRole('group', { name: /^Total Queries/ });
+			expect(queriesCard.querySelector('[data-testid^="sparkline"]')).toBeNull();
 		});
 	});
 
 	describe('Grid Layout', () => {
-		it('uses 3-column grid layout by default (2 rows × 3 cols)', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
-
-			const container = screen.getByTestId('summary-cards');
-			expect(container).toHaveClass('grid');
-			expect(container).toHaveStyle({
+		it('uses a 3-column grid by default and honors the columns prop', () => {
+			const { rerender } = render(<SummaryCards data={mockData} theme={theme} />);
+			expect(screen.getByTestId('summary-cards')).toHaveStyle({
 				gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
 			});
-		});
-
-		it('supports responsive column configuration', () => {
-			render(<SummaryCards data={mockData} theme={theme} columns={3} />);
-
-			const container = screen.getByTestId('summary-cards');
-			expect(container).toHaveStyle({
-				gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-			});
-		});
-
-		it('supports 2-column layout for narrow screens', () => {
-			render(<SummaryCards data={mockData} theme={theme} columns={2} />);
-
-			const container = screen.getByTestId('summary-cards');
-			expect(container).toHaveStyle({
+			rerender(<SummaryCards data={mockData} theme={theme} columns={2} />);
+			expect(screen.getByTestId('summary-cards')).toHaveStyle({
 				gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
 			});
 		});
 	});
-
-	describe('Edge Cases', () => {
-		it('handles all zero values', () => {
-			render(<SummaryCards data={emptyData} theme={theme} />);
-
-			// Should render without errors
-			expect(screen.getByTestId('summary-cards')).toBeInTheDocument();
-			// Multiple cards show '0' for empty data (Agents, Queries)
-			expect(screen.getAllByText('0').length).toBeGreaterThanOrEqual(1);
-		});
-
-		it('handles very large numbers', async () => {
-			render(<SummaryCards data={largeNumbersData} theme={theme} />);
-
-			expect(await screen.findByText('1.5M')).toBeInTheDocument();
-			expect(screen.getByText('100h 0m')).toBeInTheDocument();
-		});
-
-		it('handles long agent names without truncation', () => {
-			const dataWithLongName: StatsAggregation = {
-				...mockData,
-				byAgent: {
-					'very-long-agent-name-that-might-overflow': { count: 100, duration: 5000000 },
-				},
-			};
-			render(<SummaryCards data={dataWithLongName} theme={theme} />);
-
-			// Long agent names should now wrap to next line instead of truncating
-			const agentValue = screen.getByText('very-long-agent-name-that-might-overflow');
-			expect(agentValue).toBeInTheDocument();
-		});
-	});
-
-	describe('Accessibility', () => {
-		it('has title attribute on value for tooltip', () => {
-			const { container } = render(<SummaryCards data={mockData} theme={theme} />);
-
-			// Values should have title for full value on hover
-			const valueElements = container.querySelectorAll('[title]');
-			expect(valueElements.length).toBeGreaterThan(0);
-		});
-	});
 });
 
-describe('AnimatedNumber', () => {
-	it('renders the final numeric value after the count-up animation completes', async () => {
-		render(<AnimatedNumber value="150" />);
+describe('SummaryCards helpers', () => {
+	const byDay = [
+		{ date: '2024-12-01', count: 1, duration: 10 },
+		{ date: '2024-12-02', count: 0, duration: 0 },
+		{ date: '2024-12-03', count: 7, duration: 70 },
+		{ date: '2024-12-04', count: 2, duration: 20 },
+		{ date: '2024-12-05', count: 0, duration: 0 },
+		{ date: '2024-12-06', count: 3, duration: 30 },
+		{ date: '2024-12-07', count: 0, duration: 0 },
+		{ date: '2024-12-08', count: 4, duration: 40 },
+	];
 
-		expect(await screen.findByText('150')).toBeInTheDocument();
+	it('lastDaysSeries takes the last seven gap-filled days, zeros kept', () => {
+		expect(lastDaysSeries(byDay, (d) => d.count)).toEqual([0, 7, 2, 0, 3, 0, 4]);
+		expect(lastDaysSeries(byDay.slice(0, 2), (d) => d.duration)).toEqual([10, 0]);
 	});
 
-	it('starts numeric values from 0 before the animation runs', () => {
-		const { container } = render(<AnimatedNumber value="150" />);
-
-		// Initial state renders the count-up start, not the final value.
-		expect(container.textContent).toBe('0');
+	it('findBestDay picks the busiest day, or null when idle', () => {
+		expect(findBestDay(byDay)).toEqual({ date: '2024-12-03', count: 7 });
+		expect(findBestDay([{ date: '2024-12-01', count: 0, duration: 0 }])).toBeNull();
 	});
 
-	it('preserves the K suffix and decimal precision while animating', async () => {
-		render(<AnimatedNumber value="1.5K" />);
-
-		expect(await screen.findByText('1.5K')).toBeInTheDocument();
-	});
-
-	it('preserves the M suffix and decimal precision while animating', async () => {
-		render(<AnimatedNumber value="2.0M" />);
-
-		expect(await screen.findByText('2.0M')).toBeInTheDocument();
-	});
-
-	it('preserves the % suffix while animating', async () => {
-		render(<AnimatedNumber value="80%" />);
-
-		expect(await screen.findByText('80%')).toBeInTheDocument();
-	});
-
-	it('renders duration strings immediately without animation', () => {
-		render(<AnimatedNumber value="12h 34m" />);
-
-		// Strings that aren't pure numerics display the final value on the first render.
-		expect(screen.getByText('12h 34m')).toBeInTheDocument();
-	});
-
-	it('renders peak hour strings immediately without animation', () => {
-		render(<AnimatedNumber value="9 AM" />);
-
-		expect(screen.getByText('9 AM')).toBeInTheDocument();
-	});
-
-	it('renders agent name strings immediately without animation', () => {
-		render(<AnimatedNumber value="claude-code" />);
-
-		expect(screen.getByText('claude-code')).toBeInTheDocument();
-	});
-
-	it('renders the N/A placeholder immediately without animation', () => {
-		render(<AnimatedNumber value="N/A" />);
-
-		expect(screen.getByText('N/A')).toBeInTheDocument();
-	});
-
-	it('renders zero values without breaking', () => {
-		const { container } = render(<AnimatedNumber value="0" />);
-
-		// 0 → 0 animation displays 0 throughout, including initial state.
-		expect(container.textContent).toBe('0');
-	});
-});
-
-describe('BouncingDots', () => {
-	it('renders three dot spans inside the bounce-dots container', () => {
-		const { container } = render(<BouncingDots />);
-
-		const root = container.querySelector('.bounce-dots');
-		expect(root).not.toBeNull();
-		expect(root?.querySelectorAll('span').length).toBe(3);
-	});
-
-	it('has a status role with a default loading label for screen readers', () => {
-		render(<BouncingDots />);
-
-		const root = screen.getByTestId('bouncing-dots');
-		expect(root).toHaveAttribute('role', 'status');
-		expect(root).toHaveAttribute('aria-label', 'Loading');
-	});
-
-	it('accepts a custom aria-label', () => {
-		render(<BouncingDots label="Agent thinking" />);
-
-		expect(screen.getByTestId('bouncing-dots')).toHaveAttribute('aria-label', 'Agent thinking');
-	});
-
-	it('applies the color prop as inline color so dots inherit currentColor', () => {
-		render(<BouncingDots color="#ff79c6" />);
-
-		const root = screen.getByTestId('bouncing-dots');
-		expect(root).toHaveStyle({ color: '#ff79c6' });
-	});
-
-	it('omits inline color when no color prop is provided', () => {
-		render(<BouncingDots />);
-
-		const root = screen.getByTestId('bouncing-dots');
-		// Without a color prop, the element falls through to currentColor from CSS.
-		expect(root.getAttribute('style')).toBeFalsy();
-	});
-});
-
-// JSDOM normalises CSS hex colors into `rgb(...)` form when they round-trip
-// through inline `style`, so we compare the normalised form for theme colors.
-function hexToRgb(hex: string): string {
-	const value = hex.replace('#', '');
-	const r = parseInt(value.slice(0, 2), 16);
-	const g = parseInt(value.slice(2, 4), 16);
-	const b = parseInt(value.slice(4, 6), 16);
-	return `rgb(${r}, ${g}, ${b})`;
-}
-
-describe('ContextUsageBar', () => {
-	it('renders the percentage rounded to a whole number', () => {
-		render(<ContextUsageBar percentage={42.7} theme={theme} />);
-
-		expect(screen.getByText('43%')).toBeInTheDocument();
-	});
-
-	it('caps values above 100 at 100% so the bar never overflows', () => {
-		render(<ContextUsageBar percentage={150} theme={theme} />);
-
-		expect(screen.getByText('100%')).toBeInTheDocument();
-		const bar = screen.getByRole('progressbar');
-		expect(bar.getAttribute('aria-valuenow')).toBe('100');
-	});
-
-	it('uses the success color for usage below the warning threshold', () => {
-		render(<ContextUsageBar percentage={40} theme={theme} />);
-
-		const bar = screen.getByRole('progressbar');
-		const fill = bar.firstElementChild as HTMLElement;
-		expect(fill.style.backgroundColor).toBe(hexToRgb(theme.colors.success));
-		// No critical glow under the warning threshold.
-		expect(fill.style.boxShadow).toBe('');
-	});
-
-	it('uses the warning color in the 70-89% band', () => {
-		render(<ContextUsageBar percentage={75} theme={theme} />);
-
-		const bar = screen.getByRole('progressbar');
-		const fill = bar.firstElementChild as HTMLElement;
-		expect(fill.style.backgroundColor).toBe(hexToRgb(theme.colors.warning));
-	});
-
-	it('uses the error color and adds a glow at or above 90%', () => {
-		render(<ContextUsageBar percentage={92} theme={theme} />);
-
-		const bar = screen.getByRole('progressbar');
-		const fill = bar.firstElementChild as HTMLElement;
-		expect(fill.style.backgroundColor).toBe(hexToRgb(theme.colors.error));
-		expect(fill.style.boxShadow).not.toBe('');
-	});
-});
-
-const buildSession = (overrides: Partial<Session>): Session =>
-	({
-		id: 'sess-1',
-		name: 'Agent One',
-		toolType: 'claude-code',
-		state: 'idle',
-		contextUsage: 0,
-		...overrides,
-	}) as Session;
-
-describe('TokenCostBadge', () => {
-	it('aggregates currentCycleTokens across busy sessions only', () => {
-		const sessions = [
-			buildSession({ id: 'a', state: 'busy', currentCycleTokens: 1500, name: 'Alpha' }),
-			buildSession({ id: 'b', state: 'busy', currentCycleTokens: 2500, name: 'Beta' }),
-			// Idle session is ignored even if it reports a token count.
-			buildSession({ id: 'c', state: 'idle', currentCycleTokens: 9999, name: 'Gamma' }),
-		];
-
-		render(<TokenCostBadge sessions={sessions} theme={theme} />);
-
-		// 4000 total → "4.0K"
-		expect(screen.getByText('4.0K')).toBeInTheDocument();
-		expect(screen.getByText(/Alpha/)).toBeInTheDocument();
-		expect(screen.getByText(/Beta/)).toBeInTheDocument();
-		expect(screen.queryByText(/Gamma/)).not.toBeInTheDocument();
-	});
-
-	it('shows $0.00 when there are no busy sessions', () => {
-		render(<TokenCostBadge sessions={[]} theme={theme} />);
-
-		expect(screen.getByTestId('token-cost-estimate').textContent).toBe('$0.00');
-	});
-
-	it('omits the breakdown when no busy session reports tokens', () => {
-		const sessions = [buildSession({ state: 'busy', currentCycleTokens: 0 })];
-		render(<TokenCostBadge sessions={sessions} theme={theme} />);
-
-		expect(screen.queryByTestId('token-cost-breakdown')).not.toBeInTheDocument();
-	});
-});
-
-describe('RealtimeMetricsCard', () => {
-	it('uses the highest contextUsage across active sessions for the bar', () => {
-		const sessions = [
-			buildSession({ id: '1', state: 'idle', contextUsage: 45 }),
-			buildSession({ id: '2', state: 'busy', contextUsage: 88 }),
-			// Error sessions are excluded from "active" so this 99 must NOT win.
-			buildSession({ id: '3', state: 'error', contextUsage: 99 }),
-		];
-
-		render(<RealtimeMetricsCard sessions={sessions} theme={theme} />);
-
-		expect(screen.getByText('88%')).toBeInTheDocument();
-	});
-
-	it('shows the active agent count with correct singular/plural label', () => {
-		const single = [buildSession({ state: 'idle', contextUsage: 10 })];
-		const { unmount } = render(<RealtimeMetricsCard sessions={single} theme={theme} />);
-		expect(screen.getByText('1 active agent')).toBeInTheDocument();
-		unmount();
-
-		const many = [
-			buildSession({ id: 'a', state: 'idle' }),
-			buildSession({ id: 'b', state: 'busy' }),
-		];
-		render(<RealtimeMetricsCard sessions={many} theme={theme} />);
-		expect(screen.getByText('2 active agents')).toBeInTheDocument();
-	});
-
-	it('renders the thinking indicator only when a busy session has thinkingStartTime', () => {
-		const now = Date.now();
-		const sessions = [
-			buildSession({ state: 'busy', thinkingStartTime: now - 5500, contextUsage: 30 }),
-		];
-
-		render(<RealtimeMetricsCard sessions={sessions} theme={theme} />);
-
-		const indicator = screen.getByTestId('realtime-thinking-elapsed');
-		// 5500ms → 5s elapsed
-		expect(indicator.textContent).toContain('5s');
-	});
-
-	it('humanizes the thinking elapsed time past a minute', () => {
-		const now = Date.now();
-		const sessions = [
-			buildSession({ state: 'busy', thinkingStartTime: now - (20 * 60 + 4) * 1000 }),
-		];
-
-		render(<RealtimeMetricsCard sessions={sessions} theme={theme} />);
-
-		const indicator = screen.getByTestId('realtime-thinking-elapsed');
-		expect(indicator.textContent).toContain('20m 4s');
-		expect(indicator).toHaveAttribute('aria-label', 'Thinking for 20 minutes, 4 seconds');
-	});
-
-	it('hides the thinking indicator when no session is actively thinking', () => {
-		const sessions = [buildSession({ state: 'idle', contextUsage: 20 })];
-
-		render(<RealtimeMetricsCard sessions={sessions} theme={theme} />);
-
-		expect(screen.queryByTestId('realtime-thinking-elapsed')).not.toBeInTheDocument();
-	});
-
-	it('applies the animation delay as inline style for staggered entrance', () => {
-		render(<RealtimeMetricsCard sessions={[]} theme={theme} animationDelay={320} />);
-
-		const card = screen.getByTestId('realtime-metrics-card');
-		expect(card.style.animationDelay).toBe('320ms');
-		expect(card.className).toContain('card-enter');
+	it('countActiveDays counts days with a query', () => {
+		expect(countActiveDays(byDay)).toBe(5);
 	});
 });
 
@@ -931,57 +623,107 @@ describe('SummaryCards - active agents in range', () => {
 	it('reports how many agents ran a query in the range beside the status dots', () => {
 		render(
 			<SummaryCards
-				data={{
-					...mockData,
+				data={makeData({
 					bySessionByDay: { s1: [{ date: '2024-12-21', count: 4, duration: 1000 }] },
-				}}
+				})}
 				theme={theme}
 				sessions={mockSessions}
 			/>
 		);
-
-		expect(screen.getByTestId('agent-active-count')).toHaveTextContent('1 active');
+		expect(screen.getByTestId('agent-active-count')).toHaveTextContent('1 active in range');
 	});
 
 	it('excludes terminal sessions from the active count', () => {
 		render(
 			<SummaryCards
-				data={{
-					...mockData,
-					// s3 is a terminal session - it is not an agent, active or otherwise.
+				data={makeData({
 					bySessionByDay: { s3: [{ date: '2024-12-21', count: 9, duration: 1000 }] },
-				}}
+				})}
 				theme={theme}
 				sessions={mockSessions}
 			/>
 		);
-
-		expect(screen.getByTestId('agent-active-count')).toHaveTextContent('0 active');
+		expect(screen.getByTestId('agent-active-count')).toHaveTextContent('0 active in range');
 	});
 
 	it('omits the active count when no sessions are supplied', () => {
 		render(<SummaryCards data={mockData} theme={theme} />);
-
 		expect(screen.queryByTestId('agent-active-count')).not.toBeInTheDocument();
 	});
 });
 
-describe('MetricCard value overflow', () => {
+describe('MetricCard', () => {
 	// A formatted figure carries no spaces, so a value too wide for its column
-	// (`~$39,605.06` in a 176px card on a phone) had nowhere to break and
-	// painted straight out past the card's own edge. It wraps rather than
-	// truncating: the whole number is the point of the card.
+	// (`~$39,605.06` in a 176px card on a phone) had nowhere to break.
 	it('lets a long value wrap inside its card instead of overflowing it', () => {
 		render(<SummaryCards data={mockData} theme={theme} />);
-
 		const values = screen
 			.getAllByTestId('metric-card')
 			.map((card) => card.querySelector('.font-bold'))
 			.filter((el): el is HTMLElement => el instanceof HTMLElement);
-
 		expect(values.length).toBeGreaterThan(0);
 		for (const value of values) {
 			expect(value.style.overflowWrap).toBe('anywhere');
 		}
+	});
+
+	it('renders a subValue line and a custom test id', () => {
+		render(
+			<MetricCard
+				icon={<span />}
+				label="Runs"
+				value="12"
+				subValue="3 failed"
+				theme={theme}
+				testId="runs-card"
+			/>
+		);
+		const card = screen.getByTestId('runs-card');
+		expect(card).toHaveAttribute('aria-label', 'Runs: 12, 3 failed');
+		expect(screen.getByText('3 failed')).toBeInTheDocument();
+	});
+
+	// jsdom drops 8-digit hex colors from inline styles, so the variant is
+	// checked on the style object rather than on the rendered element.
+	it('tints the filled variant with the accent override', () => {
+		expect(getCardStyles('filled', theme, '#112233')).toMatchObject({
+			backgroundColor: '#11223326',
+			border: '1px solid #1122334D',
+		});
+		expect(getCardStyles('elevated', theme)).toMatchObject({
+			backgroundColor: theme.colors.bgActivity,
+			borderTop: `2px solid ${theme.colors.accent}`,
+		});
+	});
+});
+
+describe('AnimatedNumber', () => {
+	it('renders the final numeric value after the count-up animation completes', async () => {
+		render(<AnimatedNumber value="150" />);
+		expect(await screen.findByText('150')).toBeInTheDocument();
+	});
+
+	it('starts numeric values from 0 before the animation runs', () => {
+		const { container } = render(<AnimatedNumber value="150" />);
+		expect(container.textContent).toBe('0');
+	});
+
+	it('preserves the K suffix and decimal precision while animating', async () => {
+		render(<AnimatedNumber value="1.5K" />);
+		expect(await screen.findByText('1.5K')).toBeInTheDocument();
+	});
+
+	it('preserves the % suffix while animating', async () => {
+		render(<AnimatedNumber value="80%" />);
+		expect(await screen.findByText('80%')).toBeInTheDocument();
+	});
+
+	it('renders non-numeric strings (durations, names, the placeholder) immediately', () => {
+		const { rerender } = render(<AnimatedNumber value="12h 34m" />);
+		expect(screen.getByText('12h 34m')).toBeInTheDocument();
+		rerender(<AnimatedNumber value="Claude Code" />);
+		expect(screen.getByText('Claude Code')).toBeInTheDocument();
+		rerender(<AnimatedNumber value="-" />);
+		expect(screen.getByText('-')).toBeInTheDocument();
 	});
 });

@@ -98,6 +98,7 @@ const mockWindowInstance = {
 	loadURL: vi.fn(),
 	loadFile: vi.fn(),
 	maximize: vi.fn(),
+	showInactive: vi.fn(),
 	setFullScreen: vi.fn(),
 	setMinimumSize: vi.fn(),
 	isMaximized: vi.fn().mockReturnValue(false),
@@ -126,6 +127,7 @@ class MockBrowserWindow {
 	loadURL = mockWindowInstance.loadURL;
 	loadFile = mockWindowInstance.loadFile;
 	maximize = mockWindowInstance.maximize;
+	showInactive = mockWindowInstance.showInactive;
 	setFullScreen = mockWindowInstance.setFullScreen;
 	setMinimumSize = mockWindowInstance.setMinimumSize;
 	isMaximized = mockWindowInstance.isMaximized;
@@ -355,6 +357,70 @@ describe('app-lifecycle/window-manager', () => {
 
 			expect(windowManager).toHaveProperty('createWindow');
 			expect(typeof windowManager.createWindow).toBe('function');
+		});
+	});
+
+	describe('demo show-inactive switch', () => {
+		const build = async (showInactive?: boolean) => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			return createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				...(showInactive === undefined ? {} : { showInactive }),
+			});
+		};
+
+		it('creates the window hidden and shows it without activating when set', async () => {
+			(await build(true)).createWindow();
+			expect(lastBrowserWindowOptions?.show).toBe(false);
+			expect(mockWindowInstance.showInactive).toHaveBeenCalledTimes(1);
+		});
+
+		it('shows inactive before a restored maximize, which would otherwise activate it', async () => {
+			mockWindowStateStore.store.isMaximized = true;
+			(await build(true)).createWindow();
+			const showOrder = mockWindowInstance.showInactive.mock.invocationCallOrder[0];
+			const maximizeOrder = mockWindowInstance.maximize.mock.invocationCallOrder[0];
+			expect(showOrder).toBeLessThan(maximizeOrder);
+		});
+
+		it('keeps the default activating show when not set', async () => {
+			(await build()).createWindow();
+			expect(lastBrowserWindowOptions).not.toHaveProperty('show');
+			expect(mockWindowInstance.showInactive).not.toHaveBeenCalled();
+		});
+
+		const restoredWindow = (destroyed = false) => ({
+			focus: vi.fn(),
+			isDestroyed: vi.fn(() => destroyed),
+		});
+		type RestoredWindow = Parameters<Awaited<ReturnType<typeof build>>['focusRestoredWindow']>[0];
+
+		it('does not focus the window a layout restore selected when set', async () => {
+			const win = restoredWindow();
+			(await build(true)).focusRestoredWindow(win as unknown as RestoredWindow);
+			expect(win.focus).not.toHaveBeenCalled();
+		});
+
+		it('focuses the window a layout restore selected when not set', async () => {
+			const win = restoredWindow();
+			(await build()).focusRestoredWindow(win as unknown as RestoredWindow);
+			expect(win.focus).toHaveBeenCalledTimes(1);
+		});
+
+		it('skips a destroyed or missing restored window', async () => {
+			const win = restoredWindow(true);
+			const manager = await build();
+			manager.focusRestoredWindow(win as unknown as RestoredWindow);
+			manager.focusRestoredWindow(undefined);
+			expect(win.focus).not.toHaveBeenCalled();
 		});
 	});
 

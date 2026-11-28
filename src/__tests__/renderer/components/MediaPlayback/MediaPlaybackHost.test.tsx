@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { MediaPlaybackHost } from '../../../../renderer/components/MediaPlayback/MediaPlaybackHost';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
 import type { MediaItem } from '../../../../renderer/utils/mediaItems';
@@ -13,9 +13,12 @@ import { mockTheme } from '../../../helpers/mockTheme';
  * supposed to preserve.
  */
 const mountCount = vi.fn();
+/** The width-floor report the player hands the viewer, captured per render. */
+let reportTransportMinWidth: ((width: number) => void) | undefined;
 
 vi.mock('../../../../renderer/components/FilePreview/MediaViewer', () => ({
-	MediaViewer: () => {
+	MediaViewer: (props: { onTransportMinWidthChange?: (width: number) => void }) => {
+		reportTransportMinWidth = props.onTransportMinWidthChange;
 		// Fires on mount only - a re-render of the same element reuses it.
 		useEffect(() => {
 			mountCount();
@@ -88,6 +91,20 @@ describe('MediaPlaybackHost', () => {
 		const frame = screen.getByTestId('floating-media-player');
 		expect(frame.style.visibility).toBe('');
 		expect(frame.getAttribute('aria-hidden')).toBeNull();
+	});
+
+	// The transport row grows with prev/next and fullscreen. Its measured width
+	// must reach the frame through ActiveMediaPlayer, or the frame keeps its
+	// default width and clips the controls.
+	it('widens the frame to the width the transport reports', () => {
+		render(<MediaPlaybackHost theme={mockTheme} />);
+		const frame = screen.getByTestId('floating-media-player');
+		expect(frame.style.width).toBe('380px');
+		expect(reportTransportMinWidth).toBeTypeOf('function');
+
+		act(() => reportTransportMinWidth?.(520));
+		// 520 of controls plus the frame's 1px left and right border.
+		expect(frame.style.width).toBe('522px');
 	});
 
 	it('renders nothing when no track is loaded', () => {

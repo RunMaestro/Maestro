@@ -18,9 +18,6 @@ describe('useQuotaRefresh', () => {
 			useQuotaRefresh({
 				providerId: 'claude-code',
 				refreshing: false,
-				autoRefresh: false,
-				accountCount: 0,
-				snapshotCount: 0,
 				doRefresh,
 			})
 		);
@@ -49,9 +46,6 @@ describe('useQuotaRefresh', () => {
 			const refresh = useQuotaRefresh({
 				providerId: 'claude-code',
 				refreshing: false,
-				autoRefresh: false,
-				accountCount: 0,
-				snapshotCount: 0,
 				doRefresh,
 			});
 			const startedRef = useRef(false);

@@ -43,6 +43,7 @@ import type {
 	GroupCreateInput,
 	TabPatch,
 } from '../client/types';
+import { readTurnEntryId } from '../client/types';
 import type {
 	AgentRecord,
 	AgentSshRecord,
@@ -51,8 +52,10 @@ import type {
 	GroupRecord,
 	TabRefRecord,
 } from '../store/records';
-import type { LogEntryRecord } from '../store/transcript';
+import { TURN_CANCELED_NOTE, type LogEntryRecord } from '../store/transcript';
+import { switchTabProvider } from '../translation/session';
 import {
+	matchesNativeSessionBinding,
 	switchAgentProvider,
 	updateProviderSlot,
 	type NativeSessionBinding,
@@ -184,6 +187,29 @@ function comparableDirectory(dir: string): string {
 }
 
 /**
+ * The agent already using `name`, compared trimmed (both sides: a stored name
+ * can keep surrounding spaces) and case-insensitively, the same way both
+ * validators below reject a duplicate. A blank name matches nothing.
+ * `excludeAgentId` skips the agent being renamed.
+ *
+ * Exported so a form can flag the clash while the user is still typing,
+ * instead of only at submit (MAESTRO-199: the onboarding wizard took a
+ * duplicate name on step 1 and refused it only at launch, after the whole
+ * planning conversation).
+ */
+export function findAgentWithName<T extends Pick<ValidatedAgent, 'id' | 'name'>>(
+	name: string,
+	existing: readonly T[],
+	excludeAgentId?: string
+): T | undefined {
+	const wanted = name.trim().toLowerCase();
+	if (!wanted) return undefined;
+	return existing.find(
+		(agent) => agent.id !== excludeAgentId && agent.name.trim().toLowerCase() === wanted
+	);
+}
+
+/**
  * Whether a new agent can be created with this name and directory.
  *
  * 1. Names are unique across agents, ignoring case (a hard error).
@@ -198,10 +224,7 @@ export function validateNewAgent(
 	existing: readonly ValidatedAgent[],
 	sshRemoteId?: string | null
 ): AgentValidationResult {
-	const trimmedName = name.trim();
-	const duplicate = existing.find(
-		(agent) => agent.name.toLowerCase() === trimmedName.toLowerCase()
-	);
+	const duplicate = findAgentWithName(name, existing);
 	if (duplicate) {
 		return {
 			valid: false,
@@ -236,10 +259,7 @@ export function validateAgentRename(
 	agentId: string,
 	existing: readonly ValidatedAgent[]
 ): AgentValidationResult {
-	const trimmedName = name.trim();
-	const duplicate = existing.find(
-		(agent) => agent.id !== agentId && agent.name.toLowerCase() === trimmedName.toLowerCase()
-	);
+	const duplicate = findAgentWithName(name, existing, agentId);
 	if (duplicate) {
 		return {
 			valid: false,
@@ -336,9 +356,13 @@ export function insertAfterActiveInUnifiedTabOrder(
 export function addTabRecord(
 	agent: AgentRecord,
 	ctx: RuleContext,
-	defaults: TabDefaults
+	defaults: TabDefaults,
+	requestedId?: string
 ): { agent: AgentRecord; tab: AITabRecord } {
 	const tab = buildTabRecord(ctx, defaults);
+	// The id a client already drew the tab under, when no tab of the agent has it (R15).
+	const taken = (agent.aiTabs ?? []).some((existing) => existing.id === requestedId);
+	if (requestedId && !taken) tab.id = requestedId;
 	const next: AgentRecord = {
 		...agent,
 		aiTabs: [...(Array.isArray(agent.aiTabs) ? agent.aiTabs : []), tab],
@@ -371,6 +395,68 @@ export function findConsultTabRecord(
 	);
 }
 
+/**
+ * How many hidden consult tabs one agent keeps. Each (asking agent, asking tab) pairing gets its
+ * own, and a remote asker sends a key of its own per conversation, so without a cap a peer that
+ * sends many keys grows the agent's tab list without bound. Past the cap the least recently used
+ * idle one gives up its slot to the new pairing.
+ */
+export const MAX_CONSULT_TABS_PER_AGENT = 50;
+
+/** The fields of a tab, desktop (`AITab`) or headless (`AITabRecord`), the consult cap reads. */
+export interface ConsultCapTab {
+	id: string;
+	hidden?: boolean;
+	consultOrigin?: ConsultTabKey;
+	state?: string;
+	logs?: unknown[];
+	createdAt?: number;
+}
+
+/** When a consult tab was last used: its newest transcript entry, or its creation. */
+export function consultTabLastUsedAt(tab: ConsultCapTab): number {
+	let latest = typeof tab.createdAt === 'number' ? tab.createdAt : 0;
+	for (const entry of Array.isArray(tab.logs) ? tab.logs : []) {
+		const at = (entry as { timestamp?: unknown } | null)?.timestamp;
+		if (typeof at === 'number' && at > latest) latest = at;
+	}
+	return latest;
+}
+
+/** What the consult cap must leave alone, and the cap itself. */
+export interface ConsultCapOptions {
+	/**
+	 * Consult tabs a consult is running in now. Neither host stores a consult tab as busy while
+	 * its consult runs (the consult is a background process, not a turn of the tab), so the
+	 * caller names them: the desktop from its in-flight consults, a headless host from its own.
+	 */
+	inUseTabIds?: ReadonlySet<string>;
+	cap?: number;
+}
+
+/**
+ * The hidden consult tab a NEW pairing replaces, or `undefined` when the agent is under the cap
+ * and the new tab is simply added. Only hidden consult tabs count: a consult tab the person
+ * revealed is theirs now. A consult tab in use (named in `inUseTabIds`, or stored busy) is never
+ * chosen, so a consult in flight keeps its tab and its answer lands; when every one is in use the
+ * new tab is added past the cap rather than refused. Both host kinds (the desktop's
+ * `ensureConsultTab` and the headless `openConsultTabRecord`) call this one rule.
+ */
+export function consultTabToReplace<T extends ConsultCapTab>(
+	tabs: readonly T[] | undefined,
+	options: ConsultCapOptions = {}
+): T | undefined {
+	const cap = options.cap ?? MAX_CONSULT_TABS_PER_AGENT;
+	const consultTabs = (tabs ?? []).filter((tab) => tab.consultOrigin && tab.hidden === true);
+	if (consultTabs.length < cap) return undefined;
+	let oldest: T | undefined;
+	for (const tab of consultTabs) {
+		if (tab.state === 'busy' || options.inUseTabIds?.has(tab.id)) continue;
+		if (!oldest || consultTabLastUsedAt(tab) < consultTabLastUsedAt(oldest)) oldest = tab;
+	}
+	return oldest;
+}
+
 /** What opening a consult tab writes: who asked, what the tab is called, and the question. */
 export interface ConsultTabOpen {
 	key: ConsultTabKey;
@@ -378,6 +464,8 @@ export interface ConsultTabOpen {
 	name: string;
 	/** The question, as the first (or next) user entry of the consult tab. */
 	question: LogEntryRecord;
+	/** Consult tabs of this agent a consult is running in now: the cap never replaces them. */
+	inUseTabIds?: ReadonlySet<string>;
 }
 
 /**
@@ -419,12 +507,17 @@ export function openConsultTabRecord(
 		hidden: true,
 		consultOrigin: { ...open.key },
 	};
+	// At the cap, the least recently used hidden consult tab gives up its slot. The new pairing
+	// gets a fresh tab (never the old one's provider session), so no asker resumes another's.
+	const replaced = consultTabToReplace(agent.aiTabs, { inUseTabIds: open.inUseTabIds });
+	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
+	const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
 	return {
 		agent: {
 			...agent,
-			aiTabs: [...(Array.isArray(agent.aiTabs) ? agent.aiTabs : []), tab],
+			aiTabs: [...tabs.filter((entry) => entry.id !== replaced?.id), tab],
 			unifiedTabOrder: [
-				...(Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : []),
+				...order.filter((ref) => !(ref.type === 'ai' && ref.id === replaced?.id)),
 				{ type: 'ai', id: tab.id },
 			],
 		},
@@ -492,7 +585,12 @@ export function closeTabRecord(
 	const index = tabs.findIndex((tab) => tab.id === tabId);
 	if (index === -1 || tabs[index].hidden === true) return null;
 
-	const closed: ClosedTabRecord = { tab: { ...tabs[index] }, index, closedAt: ctx.now() };
+	const closed: ClosedTabRecord = {
+		tab: { ...tabs[index] },
+		index,
+		closedAt: ctx.now(),
+		...(typeof agent.toolType === 'string' ? { toolType: agent.toolType } : {}),
+	};
 	let aiTabs = tabs.filter((tab) => tab.id !== tabId);
 	const visible = aiTabs.filter((tab) => tab.hidden !== true);
 	const otherTabs =
@@ -520,6 +618,72 @@ export function closeTabRecord(
 		agent: { ...agent, aiTabs, unifiedTabOrder: order, activeTabId },
 		closed,
 		...(freshTab ? { freshTab } : {}),
+	};
+}
+
+export interface ReopenTabOutcome {
+	agent: AgentRecord;
+	/** The tab that is open now. */
+	tabId: string;
+	/** The conversation already had a tab: nothing was added, and `tabId` names that tab. */
+	wasDuplicate?: boolean;
+}
+
+/**
+ * Reopen one archived tab (Cmd+Shift+T, a Federation peer's reopen): back where it sat in
+ * `aiTabs`, at the end of the strip order, in the background (the active tab, the other active
+ * ids, and `inputMode` are never touched). A conversation that already has a visible tab is not
+ * opened twice (same session id, and the same observed binding when it has one). The tab keeps its
+ * id unless another tab took it since.
+ */
+export function reopenTabRecord(
+	agent: AgentRecord,
+	closed: ClosedTabRecord,
+	ctx: RuleContext
+): ReopenTabOutcome {
+	const tabs = Array.isArray(agent.aiTabs) ? agent.aiTabs : [];
+	// The live session fields belong to the provider the tab closed under. After a provider switch
+	// they are parked under it, so the next turn never resumes another provider's session.
+	const owner = typeof closed.toolType === 'string' ? closed.toolType : agent.toolType;
+	// The record's fields are the translation tab's, with `agentSessionId` optional on disk.
+	type ParkableTab = Parameters<typeof switchTabProvider>[0];
+	const archived: AITabRecord =
+		typeof owner === 'string' && typeof agent.toolType === 'string'
+			? (switchTabProvider(
+					closed.tab as unknown as ParkableTab,
+					owner as ToolType,
+					agent.toolType as ToolType
+				) as unknown as AITabRecord)
+			: closed.tab;
+	const sessionId = archived.agentSessionId;
+	// A native session id alone does not prove the same conversation: an archived tab that carries
+	// a binding is a duplicate only of a tab with the same observed binding.
+	const binding = archived.nativeSessionBinding;
+	const open = sessionId
+		? tabs.find(
+				(tab) =>
+					tab.hidden !== true &&
+					tab.agentSessionId === sessionId &&
+					(binding === undefined
+						? tab.nativeSessionBinding === undefined
+						: matchesNativeSessionBinding(tab.nativeSessionBinding, binding))
+			)
+		: undefined;
+	if (open) return { agent, tabId: open.id, wasDuplicate: true };
+	const id = tabs.some((tab) => tab.id === archived.id) ? ctx.newId() : archived.id;
+	const tab: AITabRecord = { ...archived, id, state: 'idle' };
+	const at = Math.max(
+		0,
+		Math.min(Number.isInteger(closed.index) ? closed.index : tabs.length, tabs.length)
+	);
+	const order = Array.isArray(agent.unifiedTabOrder) ? agent.unifiedTabOrder : [];
+	return {
+		agent: {
+			...agent,
+			aiTabs: [...tabs.slice(0, at), tab, ...tabs.slice(at)],
+			unifiedTabOrder: [...order, { type: 'ai', id }],
+		},
+		tabId: id,
 	};
 }
 
@@ -567,6 +731,531 @@ export interface TurnBegin {
 	consumedMergedContext: boolean;
 }
 
+/** A user message as a resend names it (`TurnInput.entryId`): its entry id, text, and images. */
+export interface SentUserEntry {
+	id: string;
+	text: string;
+	images?: readonly string[];
+}
+
+/**
+ * Whether `candidate` is the user message `entry`: the same id, a user entry, and the same text and
+ * images. A resend of it is that entry. A stored entry is not checked on load: a malformed
+ * `images` reads as another message. An id alone never matches.
+ */
+export function isSameUserEntry(candidate: unknown, entry: SentUserEntry): boolean {
+	const existing = candidate as Partial<LogEntryRecord> | null;
+	if (!existing || existing.id !== entry.id || existing.source !== 'user') return false;
+	if (existing.images !== undefined && !Array.isArray(existing.images)) return false;
+	const held = existing.images ?? [];
+	const sent = entry.images ?? [];
+	return (
+		existing.text === entry.text &&
+		held.length === sent.length &&
+		held.every((image, i) => image === sent[i])
+	);
+}
+
+/**
+ * The entry id a message may take (`TurnInput.entryId`): one the tab does not hold yet, or the user
+ * entry of this same message (a resend: the same text and images), which then stands for it. An id
+ * that names another entry is dropped, and the message gets a new one: a send never hides or
+ * replaces what is there. Asked when the turn starts, against the entry it writes: a command's
+ * expanded prompt, and a message edited or merged while it waited. Both host kinds read it: a
+ * headless host's turn start and a desktop host's queued message (`markTabRunningQueuedItem()`).
+ */
+export function turnEntryIdFor(
+	tab: { logs?: unknown } | undefined,
+	raw: unknown,
+	text: string,
+	images: readonly string[] | undefined
+): string | undefined {
+	const entryId = readTurnEntryId(raw);
+	if (!entryId) return undefined;
+	const logs = Array.isArray(tab?.logs) ? (tab.logs as LogEntryRecord[]) : [];
+	const existing = logs.find((entry) => entry?.id === entryId);
+	if (!existing) return entryId;
+	return isSameUserEntry(existing, { id: entryId, text, images }) ? entryId : undefined;
+}
+
+/**
+ * How the turn of one user message ended, as its host's transcript records it: `answered`, ended on
+ * its own error (`errored`), stopped by the person (`stopped`), or `unended`: still running, or
+ * lost with a host that died mid-turn.
+ */
+export type TurnFate = 'answered' | 'errored' | 'stopped' | 'unended';
+
+/**
+ * Which kind of host wrote a transcript: what the entries of a turn with no end stamp mean
+ * (`turnFateAfter()`). A headless host writes a turn's answer only when the turn ends; a desktop
+ * host writes streamed text as it arrives.
+ */
+export type TranscriptHostKind = 'headless' | 'desktop';
+
+/**
+ * The one writer of a turn's end stamp (`LogEntryRecord.turnEnded`): `entries` with the last of
+ * them stamped. Every host calls it when a turn ends (answered, on its own error, or stopped):
+ * a headless host on the entries the turn appends, a desktop host on the tab's logs when the
+ * turn's process exits. With no entry from `from` on, nothing is stamped (the same array).
+ */
+export function markTurnEnded<T extends object>(
+	entries: readonly T[],
+	from = 0,
+	endedAt?: number
+): T[] {
+	const stampAt = (i: number): T[] => {
+		const next = [...entries];
+		const entry = entries[i] as Partial<LogEntryRecord>;
+		// A queued steer stamped as its own turn's message: that follow-up ended with nothing of its
+		// own that stays. Its stamp may already be the end of the turn it was steered into
+		// (`steerParentEnd()`): that end stays as it was, and the follow-up's has its own fields, so
+		// neither moves the other's boundary (R63 a; CodeRabbit on #2177).
+		const ownSteerEnd = i === from && queuedSteer(entry);
+		if (ownSteerEnd && entry.turnEnded === true) {
+			next[i] = {
+				...entries[i],
+				steerTurnEnded: true,
+				...(endedAt !== undefined ? { steerTurnEndedAt: endedAt } : {}),
+			};
+			return next;
+		}
+		// Timed, so the reader tells a card of this attempt written after its last text from one of
+		// a retry that came after the end (`turnFateAfter()`).
+		next[i] = {
+			...entries[i],
+			turnEnded: true,
+			...(endedAt !== undefined ? { turnEndedAt: endedAt } : {}),
+			...(ownSteerEnd
+				? { steerTurnEnded: true, ...(endedAt !== undefined ? { steerTurnEndedAt: endedAt } : {}) }
+				: {}),
+		};
+		return next;
+	};
+	for (let i = entries.length - 1; i >= Math.max(from, 0); i -= 1) {
+		const entry = entries[i] as Partial<LogEntryRecord>;
+		// Thinking and tool cards are dropped by a later exit in a tab that does not keep them
+		// (`logsKeptAtTurnEnd()`): the stamp goes on an entry that stays (CodeRabbit on #2167).
+		if (entry.source === 'thinking' || entry.source === 'tool') continue;
+		if (entry.turnEnded !== true) return stampAt(i);
+		// Already stamped: this attempt wrote nothing that stays (a retry into the same entry that
+		// answered empty). With `endedAt`, its message at `from` records the end, timed after the
+		// attempt before it, so the reader takes this attempt as the last (CodeRabbit on #2167).
+		if (endedAt === undefined || from < 0 || from >= entries.length) return entries as T[];
+		return stampAt(from);
+	}
+	return entries as T[];
+}
+
+/**
+ * Whether `entry` starts a user turn of its own: a message steered into the running turn does
+ * not, unless the agent ran it as a turn of its own after that one (`steerState: 'queued'`, the
+ * steer it could not fold in: its follow-up is its own turn, with its own end). Such a steer is
+ * written while the turn it was steered into still runs, so its turn begins only after that
+ * turn's end stamp: read a turn's entries with `userTurnSpan()`, never by this alone.
+ */
+export function isUserTurnStart(
+	entry: Pick<Partial<LogEntryRecord>, 'source' | 'steered' | 'steerState'> | null | undefined
+): boolean {
+	return entry?.source === 'user' && (entry.steered !== true || queuedSteer(entry));
+}
+
+function queuedSteer(
+	entry: Pick<Partial<LogEntryRecord>, 'source' | 'steered' | 'steerState'> | null | undefined
+): boolean {
+	return entry?.source === 'user' && entry.steered === true && entry.steerState === 'queued';
+}
+
+/**
+ * The entries of the turn of the user message at `at` in `logs`, `from` (inclusive) to `to`
+ * (exclusive), or null when that turn has not begun. The one reader of where a turn's entries end
+ * (R51; CodeRabbit on #2171):
+ *
+ * - A turn runs to the next message the person sent. A message steered into it is part of it.
+ * - A steer the agent ran as a turn of its own (`steerState: 'queued'`) is written while the turn
+ *   it was steered into still runs: that turn runs on past it to its next end stamp, and the
+ *   steer's own turn begins right after that stamp (null while it has not). The stamp may sit on
+ *   the steer itself (it was that turn's last entry): it is that turn's end, never the steer's.
+ */
+export function userTurnSpan(
+	logs: readonly unknown[],
+	at: number
+): { from: number; to: number } | null {
+	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	let from = at + 1;
+	if (queuedSteer(entries[at])) {
+		const parentEnd = steerParentEnd(entries, at);
+		if (parentEnd === 'running') return null;
+		if (typeof parentEnd === 'number') from = parentEnd + 1;
+	}
+	for (let i = from; i < entries.length; i += 1) {
+		const entry = entries[i];
+		if (entry?.source === 'user' && entry.steered !== true) return { from, to: i };
+		if (!queuedSteer(entry)) continue;
+		const parentEnd = steerParentEnd(entries, i);
+		// This turn had ended when the steer was written: the steer starts its own turn there.
+		if (parentEnd === 'before') return { from, to: i };
+		// This turn's end landed on the steer.
+		if (parentEnd === 'on') return { from, to: i + 1 };
+		// This turn ran past the steer to its stamp.
+		if (typeof parentEnd === 'number') return { from, to: parentEnd + 1 };
+	}
+	return { from, to: entries.length };
+}
+
+/**
+ * The index of the user message whose turn runs now in `logs`, or -1. The latest message the
+ * person sent, unless the agent ran steers into its turn as follow-ups of their own (`queued`):
+ * once that turn has ended, the earliest such steer whose follow-up has no end yet (they run in
+ * the order they were sent), so a host stamps that follow-up's end on its own steer, never on the
+ * earlier turn or a later steer (R63 a; CodeRabbit on #2177).
+ */
+export function runningTurnMessageIndex(logs: readonly unknown[]): number {
+	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	let message = -1;
+	const steers: number[] = [];
+	for (let i = entries.length - 1; i >= 0; i -= 1) {
+		const entry = entries[i];
+		if (queuedSteer(entry)) steers.unshift(i);
+		else if (isUserTurnStart(entry)) {
+			message = i;
+			break;
+		}
+	}
+	if (steers.length === 0) return message;
+	// The turn the steers were sent into has ended: one of them starts its turn after that end, or
+	// that end landed on one of them.
+	const ended = steers.some(
+		(at) => userTurnSpan(entries, at) !== null || parentEndedOnSteer(entries[at])
+	);
+	if (!ended) return message;
+	for (const at of steers) {
+		if (entries[at]?.steerTurnEnded === true) continue;
+		const span = userTurnSpan(entries, at);
+		const stamped =
+			span !== null &&
+			entries
+				.slice(span.from, span.to)
+				.some((entry) => entry?.turnEnded === true && !queuedSteer(entry));
+		if (!stamped) return at;
+	}
+	return steers[steers.length - 1];
+}
+
+/**
+ * Whether the stamp on a queued steer is the end of the turn it was steered into (that turn's last
+ * entry then): stamped, and not by its own follow-up alone (`steerTurnEnded`, timed after it).
+ */
+function parentEndedOnSteer(steer: Partial<LogEntryRecord> | null | undefined): boolean {
+	if (steer?.turnEnded !== true) return false;
+	if (steer.steerTurnEnded !== true) return true;
+	return (
+		typeof steer.turnEndedAt === 'number' &&
+		typeof steer.steerTurnEndedAt === 'number' &&
+		steer.turnEndedAt < steer.steerTurnEndedAt
+	);
+}
+
+/** When a queued steer's own follow-up ended on it (`steerTurnEnded`), or undefined. */
+function steerOwnEndAt(steer: Partial<LogEntryRecord> | null | undefined): number | undefined {
+	if (steer?.steerTurnEnded !== true) return undefined;
+	return typeof steer.steerTurnEndedAt === 'number' ? steer.steerTurnEndedAt : stampedAt(steer);
+}
+
+/**
+ * Where the turn a queued steer at `at` was steered into ended, relative to the steer: `before`
+ * (it had ended when the steer was written: its last entry before the steer is stamped), the
+ * index of its stamp after the steer (it ran on past the steer, the usual order), `on` (its end
+ * landed on the steer, its last entry then), or `running` (no end yet). A stamp on the steer is
+ * always that turn's end: a later stamp is the steer's own turn's, so it never moves the earlier
+ * turn's boundary (CodeRabbit on #2171).
+ */
+function steerParentEnd(
+	entries: readonly (Partial<LogEntryRecord> | null)[],
+	at: number
+): 'before' | 'on' | 'running' | number {
+	const steer = entries[at];
+	// The newest thinking or tool card stepped over: one written after the stamp below it is a
+	// retry of that turn running, never a turn that had ended (Greptile and CodeRabbit on #2177).
+	let cardAt = Number.NEGATIVE_INFINITY;
+	for (let i = at - 1; i >= 0; i -= 1) {
+		const entry = entries[i];
+		// A note this machine or the host writes is about a turn, never part of one; a thinking or
+		// tool card is never stamped (`markTurnEnded()` steps over it), so the stamp is before it
+		// (R63 b).
+		if (entry?.source === 'system' && entry.turnEnded !== true) continue;
+		if ((entry?.source === 'thinking' || entry?.source === 'tool') && entry.turnEnded !== true) {
+			if (typeof entry.timestamp === 'number') cardAt = Math.max(cardAt, entry.timestamp);
+			continue;
+		}
+		if (entry?.turnEnded === true) {
+			if (typeof entry.turnEndedAt === 'number' && cardAt > entry.turnEndedAt) break;
+			// A steer queued before this one, its own follow-up ended: when the turn both were sent
+			// into ended on this steer, that is where it ended (CodeRabbit on #2177).
+			if (queuedSteer(entry) && steerOwnEndAt(entry) !== undefined && parentEndedOnSteer(steer)) {
+				return 'on';
+			}
+			return 'before';
+		}
+		break;
+	}
+	if (parentEndedOnSteer(steer)) return 'on';
+	// The steer's own follow-up ended on it (`steerTurnEnded`), the turn before it not: that turn
+	// ended at a stamp after the steer from before the follow-up's end, or on the steer (R63 a).
+	const ownEndAt = steerOwnEndAt(steer);
+	for (let i = at + 1; i < entries.length; i += 1) {
+		const entry = entries[i];
+		if (entry?.source === 'user' && entry.steered !== true) break;
+		if (entry?.turnEnded === true && !queuedSteer(entry)) {
+			// A stamp after the steer's own end belongs to a later turn.
+			return ownEndAt !== undefined && stampedAt(entry) > ownEndAt ? 'on' : i;
+		}
+	}
+	return ownEndAt !== undefined ? 'on' : 'running';
+}
+
+/** When a stamped entry's turn ended: its `turnEndedAt`, else its own time. */
+function stampedAt(entry: Partial<LogEntryRecord>): number {
+	return typeof entry.turnEndedAt === 'number'
+		? entry.turnEndedAt
+		: typeof entry.timestamp === 'number'
+			? entry.timestamp
+			: Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * The one reader of how the turn of the user message at `at` in `logs` ended. Its entries run to
+ * the next user message (a steer into it is part of it): an answer after a LATER message is that
+ * message's, never this one's.
+ *
+ * Each stamp (`markTurnEnded()`, on any of them or on the message itself) ends one attempt: a
+ * retry runs into the same entry, so the LAST attempt says how the message stands (CodeRabbit on
+ * #2167). An ended attempt is what its entries say: its own error, the Stop note, or else
+ * answered. Entries after the last stamp are an attempt with no end yet (or the turn of a host too
+ * old to stamp): an error or the Stop note says how it ended; otherwise a headless host's text is
+ * its answer (it writes the answer only when the turn ends, stamped or not, so a turn written
+ * before the host stamped still reads answered), and a desktop host's text is a turn it lost
+ * unless a later message started after it. With nothing after the last stamp, that stamp decides.
+ */
+export function turnFateAfter(
+	logs: readonly unknown[],
+	at: number,
+	hostKind: TranscriptHostKind = 'headless'
+): TurnFate {
+	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	// A queued steer's stamp is the end of the turn it was steered into when that turn's end
+	// landed on it (`steerParentEnd()`), never its own then; its own follow-up's end is its own
+	// field (`steerTurnEnded`, R63 a).
+	const steerOwnEnd = steerOwnEndAt(entries[at]);
+	const ownStamp =
+		steerOwnEnd !== undefined ||
+		(entries[at]?.turnEnded === true &&
+			!(queuedSteer(entries[at]) && steerParentEnd(entries, at) === 'on'));
+	let ended: TurnFate | undefined = ownStamp ? 'answered' : undefined;
+	// The message itself stamped as ended after every entry of its turn: an attempt that answered
+	// with nothing that stays, after the attempts before it (`markTurnEnded()` with `endedAt`).
+	const ownEndAt = steerOwnEnd ?? entries[at]?.turnEndedAt;
+	const emptyEndAt = ownStamp ? ownEndAt : undefined;
+	let latestAt = Number.NEGATIVE_INFINITY;
+	// When the last stamped end was, and whether anything of a later attempt came after it: a retry's
+	// thinking or tool card after an end is that retry running (or lost), never the earlier end.
+	let lastEndAt =
+		ended !== undefined
+			? (ownEndAt ?? entries[at]?.timestamp ?? Number.NEGATIVE_INFINITY)
+			: Number.NEGATIVE_INFINITY;
+	let pending = false;
+	// What the attempt being read says so far; each stamp ends one, and the next starts clean.
+	let errored = false;
+	let stopped = false;
+	let output = false;
+	// A queued steer whose turn has not begun has nothing of its own yet.
+	const span = userTurnSpan(entries, at);
+	if (!span) return 'unended';
+	let next = span.from;
+	for (; next < span.to; next += 1) {
+		const entry = entries[next];
+		// A queued steer is not this turn's output; a stamp on it still ends this turn's attempt
+		// when this turn's end landed on it (its span then ends there).
+		if (queuedSteer(entry) && !(entry?.turnEnded === true && next === span.to - 1)) continue;
+		// What an attempt wrote, for the empty end on the message: never a note about the turn.
+		if (typeof entry?.timestamp === 'number' && entry.source !== 'system' && !queuedSteer(entry)) {
+			latestAt = Math.max(latestAt, entry.timestamp);
+		}
+		// Only what a provider writes starts a later attempt: a thinking or tool card here (text and
+		// errors set their own flags). A note this machine or the host writes after a turn (a
+		// steering note, a retry card) is about a turn, never an attempt (CodeRabbit on #2167).
+		if (
+			ended !== undefined &&
+			entry?.turnEnded !== true &&
+			(entry?.source === 'thinking' || entry?.source === 'tool') &&
+			!(typeof entry.timestamp === 'number' && entry.timestamp <= lastEndAt)
+		) {
+			pending = true;
+		}
+		if (entry?.source === 'error') errored = true;
+		else if (entry?.source === 'system' && entry.text === TURN_CANCELED_NOTE) stopped = true;
+		else if (entry?.source === 'stdout' || entry?.source === 'ai') output = true;
+		if (entry?.turnEnded === true) {
+			ended = errored ? 'errored' : stopped ? 'stopped' : 'answered';
+			errored = stopped = output = pending = false;
+			lastEndAt = stampedAt(entry);
+		}
+	}
+	if (typeof emptyEndAt === 'number' && emptyEndAt >= latestAt) return 'answered';
+	if (errored) return 'errored';
+	if (stopped) return 'stopped';
+	if (!output) return pending ? 'unended' : (ended ?? 'unended');
+	return hostKind === 'headless' || span.to < entries.length ? 'answered' : 'unended';
+}
+
+/** Whether the turn of the user message at `at` in `logs` ended (`turnFateAfter()`). */
+export function turnEndedAfter(
+	logs: readonly unknown[],
+	at: number,
+	hostKind?: TranscriptHostKind
+): boolean {
+	return turnFateAfter(logs, at, hostKind) !== 'unended';
+}
+
+/**
+ * Whether the turn of the user message at `at` in `logs` is held by the host's OWN automatic retry
+ * (a desktop host's Agent Resilience): its latest entry of note is that retry's card
+ * (`LogEntryRecord.retryOutageId`), with no answer or error after it before the next user message.
+ * Such a turn's message is the host's to send again; a client that kept a copy sends nothing. A
+ * card the user stopped on the host (`retryStopped`) holds nothing: the message waits paused in
+ * the host's queue, and is the user's to send (R45).
+ *
+ * `reported` is the host tab's own word on whether its retry holds a failed turn right now
+ * (`AITabRecord.retryPending`): when the host says, a card with no retry behind it (one lost to a
+ * restart of the host) holds nothing. Undefined for a host that does not report it: the card
+ * alone decides (R56).
+ */
+export function hostRetriesTurn(logs: readonly unknown[], at: number, reported?: boolean): boolean {
+	if (reported === false) return false;
+	const card = standingRetryCard(logs, at);
+	return !!card && card.retryStopped !== true;
+}
+
+/**
+ * Whether the turn of the user message at `at` in `logs` ended on the host's OWN retry card, still
+ * the turn's last word (no answer, error, or Stop note after it), whether that retry still runs or
+ * not (stopped there, or lost to a restart of the host). The host's retry put the message back in
+ * the host's queue, where it waits: a client's kept copy is not retried automatically from here.
+ * A deliberate Force Send of the copy still goes (CodeRabbit on #2171).
+ */
+export function hostRetryCardStands(logs: readonly unknown[], at: number): boolean {
+	return standingRetryCard(logs, at) !== undefined;
+}
+
+/** The host retry card that is the turn's last word (`hostRetriesTurn()`), or undefined. */
+function standingRetryCard(
+	logs: readonly unknown[],
+	at: number
+): Partial<LogEntryRecord> | undefined {
+	const entries = logs as readonly (Partial<LogEntryRecord> | null)[];
+	let card: Partial<LogEntryRecord> | undefined;
+	const span = userTurnSpan(entries, at);
+	if (!span) return undefined;
+	for (let next = span.from; next < span.to; next += 1) {
+		const entry = entries[next];
+		if (typeof entry?.retryOutageId === 'string' && entry.retryOutageId) {
+			card = entry;
+		} else if (
+			entry?.source === 'stdout' ||
+			entry?.source === 'ai' ||
+			entry?.source === 'error' ||
+			(entry?.source === 'system' && entry.text === TURN_CANCELED_NOTE)
+		) {
+			card = undefined;
+		}
+	}
+	return card;
+}
+
+/**
+ * How the turn of the user message `entry` in `logs` ended (`turnFateAfter()`), or undefined when
+ * `logs` do not hold it.
+ */
+export function userEntryFate(
+	logs: readonly unknown[],
+	entry: SentUserEntry,
+	hostKind?: TranscriptHostKind
+): TurnFate | undefined {
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
+	return at === -1 ? undefined : turnFateAfter(logs, at, hostKind);
+}
+
+/**
+ * Whether `logs` hold the user message `entry` whose own turn answered it or was stopped by the
+ * person: that message already ran, so a resend of it must not run again. A turn that ended on its
+ * own error is not: its resend is the retry of that error, sent by the error's own rule as a local
+ * agent's is (a client routes it through its retry), and it runs into the same entry.
+ */
+export function userEntryAnswered(
+	logs: readonly unknown[],
+	entry: SentUserEntry,
+	hostKind?: TranscriptHostKind
+): boolean {
+	const fate = userEntryFate(logs, entry, hostKind);
+	return fate === 'answered' || fate === 'stopped';
+}
+
+/**
+ * Whether a tab runs the turn of the user message `entry` right now: a resend that arrives then is
+ * the message running (its sender lost the link and cannot see it), and never runs a second time.
+ * Both host kinds ask it before they take a resend. `running.busy`: the tab runs a turn. With
+ * `running.itemId` (a headless host knows the item its queue runs on the tab), the entry must name
+ * that item; without it (a desktop host), the entry must be the tab's newest turn start, its turn
+ * not ended.
+ */
+export function tabRunsUserEntry(
+	logs: readonly unknown[],
+	entry: SentUserEntry,
+	running: { busy: boolean; itemId?: string; startedAt?: number }
+): boolean {
+	if (!running.busy) return false;
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, entry));
+	if (at === -1) return false;
+	if (running.itemId !== undefined) {
+		return (logs[at] as LogEntryRecord).queuedItemId === running.itemId;
+	}
+	// A later turn began after this one: the tab runs that one, not this.
+	if (userTurnSpan(logs, at)?.to !== logs.length) return false;
+	// The running turn began with this message, not after it: a turn that writes no message of its
+	// own (a command) started later is not this one (CodeRabbit on #2167). A desktop writes the
+	// message at the turn's start, on the same clock (`markTabRunningQueuedItem()`).
+	const written = (logs[at] as LogEntryRecord).timestamp;
+	if (
+		running.startedAt !== undefined &&
+		typeof written === 'number' &&
+		written < running.startedAt - RUNNING_ENTRY_START_SLACK_MS
+	) {
+		return false;
+	}
+	return turnFateAfter(logs, at, 'desktop') === 'unended';
+}
+
+/** How far before a running turn's start its message may be written (`tabRunsUserEntry()`). */
+export const RUNNING_ENTRY_START_SLACK_MS = 2_000;
+
+/**
+ * `logs` with the message a turn starts on. A resend of a message the transcript already holds
+ * (`TurnInput.entryId`: the same id, and the same user message, text and images) is that entry:
+ * the transcript stays as it is, except that the entry now names the turn that runs it
+ * (`queuedItemId`), so a resend while that turn runs is known as the message it runs (R31). An id
+ * alone never drops a message.
+ */
+function withUserEntry(logs: readonly unknown[], entry: LogEntryRecord): unknown[] {
+	const sent: SentUserEntry = { id: entry.id, text: entry.text, images: entry.images };
+	const at = logs.findIndex((candidate) => isSameUserEntry(candidate, sent));
+	if (at === -1) return [...logs, entry];
+	const held = logs[at] as LogEntryRecord;
+	if (entry.queuedItemId === undefined || held.queuedItemId === entry.queuedItemId)
+		return [...logs];
+	const next = [...logs];
+	next[at] = { ...held, queuedItemId: entry.queuedItemId };
+	return next;
+}
+
 /**
  * A tab with a turn started on it: the message is in the transcript (so a crash cannot cost the
  * person what they typed), `turnProvider` names who owns the turn's late events, and a merged
@@ -579,7 +1268,7 @@ export function beginTurnRecord(tab: AITabRecord, begin: TurnBegin): AITabRecord
 		...base,
 		turnProvider: begin.provider,
 		runtimeTurnId: begin.turnId,
-		logs: [...(Array.isArray(tab.logs) ? tab.logs : []), begin.userEntry],
+		logs: withUserEntry(Array.isArray(tab.logs) ? tab.logs : [], begin.userEntry),
 	};
 }
 
@@ -649,6 +1338,8 @@ export const TAB_EDITABLE_KEYS: Readonly<Record<string, 'boolean' | 'string' | '
 	showThinking: 'thinking',
 	customModel: 'string',
 	customEffort: 'string',
+	agentSessionId: 'string',
+	pendingMergedContext: 'string',
 };
 
 /** The record-keyed form of a `TabPatch`: the keys the tab stores, with `null` still meaning "clear". */
@@ -660,6 +1351,8 @@ export function buildTabConfigPatch(patch: TabPatch): Record<string, unknown> {
 	if (patch.effort !== undefined) out.customEffort = patch.effort;
 	if (patch.saveToHistory !== undefined) out.saveToHistory = patch.saveToHistory;
 	if (patch.enterToSend !== undefined) out.enterToSend = patch.enterToSend;
+	if (patch.agentSessionId !== undefined) out.agentSessionId = patch.agentSessionId;
+	if (patch.mergedContext !== undefined) out.pendingMergedContext = patch.mergedContext;
 	return out;
 }
 
@@ -692,6 +1385,8 @@ export function applyTabPatch(
 					? typeof value === 'string'
 					: asThinkingMode(value) !== undefined;
 		if (!valid) return invalid(`Invalid value for tab field '${key}'.`);
+		// The binding proves where the old session came from; it says nothing about a new one.
+		if (key === 'agentSessionId' && value !== tab.agentSessionId) delete next.nativeSessionBinding;
 		next[key] = value;
 	}
 	if (touched === 0) return invalid('No editable tab fields in the patch.');

@@ -6,19 +6,16 @@
  * re-rendered on log streaming; only the leaf that paints the pill updates
  * when busy/orphan/token fields that the pill displays actually change.
  *
- * The local agents' items come first, then the busy tabs of every connected
- * Federation peer (`buildMirrorThinkingItems`), so work running on a host is on
- * the pill the same way local work is. With Federation off the mirror store is
- * empty and adds nothing.
+ * A hosted agent is its own Left Bar record, kept in step with its host
+ * (`startHostedAgentSync()`), so its busy tabs are listed here like any agent's,
+ * and Stop reaches the host through `interruptTurn()`.
  */
 
 import { useMemo } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { Session, ThinkingItem } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
-import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { buildThinkingItems } from '../../utils/thinkingItems';
-import { buildMirrorThinkingItems } from '../../utils/peerMirrorView';
 
 function thinkingSessionEqual(a: Session, b: Session): boolean {
 	if (a === b) return true;
@@ -81,31 +78,10 @@ function thinkingSessionsEquality(a: Session[], b: Session[]): boolean {
 	return true;
 }
 
-/** Same mirrored busy tabs, with the same names and start times: the pill would paint the same. */
-function mirrorItemsEqual(a: ThinkingItem[], b: ThinkingItem[]): boolean {
-	if (a === b) return true;
-	if (a.length !== b.length) return false;
-	for (let i = 0; i < a.length; i++) {
-		const x = a[i];
-		const y = b[i];
-		if (
-			x.session.id !== y.session.id ||
-			x.session.name !== y.session.name ||
-			x.tab?.id !== y.tab?.id ||
-			x.tab?.name !== y.tab?.name ||
-			x.tab?.thinkingStartTime !== y.tab?.thinkingStartTime
-		) {
-			return false;
-		}
-	}
-	return true;
-}
-
 /**
- * Flat list of busy/orphan thinking items for the status pill: local agents, then mirrored ones.
+ * Flat list of busy/orphan thinking items for the status pill.
  *
- * @param ownsSession Optional multi-window ownership predicate (from WindowContext). It scopes
- *   local agents only: a mirrored agent belongs to no window, so every window shows it.
+ * @param ownsSession Optional multi-window ownership predicate (from WindowContext).
  */
 export function useThinkingItems(ownsSession?: (sessionId: string) => boolean): ThinkingItem[] {
 	const sessions = useStoreWithEqualityFn(
@@ -113,19 +89,5 @@ export function useThinkingItems(ownsSession?: (sessionId: string) => boolean): 
 		(s) => s.sessions,
 		thinkingSessionsEquality
 	);
-	// Rebuilt on every mirror push (a streamed turn pushes often), but compared by what the pill
-	// paints, so a chunk of streamed text does not re-render it.
-	const mirrorItems = useStoreWithEqualityFn(
-		usePeerMirrorStore,
-		(s) => buildMirrorThinkingItems(s.peers, s.order),
-		mirrorItemsEqual
-	);
-	const localItems = useMemo(
-		() => buildThinkingItems(sessions, ownsSession),
-		[sessions, ownsSession]
-	);
-	return useMemo(
-		() => (mirrorItems.length ? [...localItems, ...mirrorItems] : localItems),
-		[localItems, mirrorItems]
-	);
+	return useMemo(() => buildThinkingItems(sessions, ownsSession), [sessions, ownsSession]);
 }

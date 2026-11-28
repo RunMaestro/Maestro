@@ -3,38 +3,60 @@
  *
  * Two components:
  *   SettingsSearchInput - the search bar (always visible in the header)
- *   SettingsSearchResults - the results list (shown when search is active, fills remaining space)
+ *   SettingsSearchResults - the results (shown when search is active, fills remaining space)
  *
- * A result can be changed without leaving the search:
- *   - a single on/off setting shows its switch on the row, and flips in place;
- *   - a result backed by a settings section expands to show that section;
- *   - anything else (the theme picker, the shortcut list, ...) jumps to its tab.
+ * A search is a filtered view of Settings. Every matched section appears once,
+ * already open, showing only the controls that matched (`settingsSearchView`);
+ * "Show all" lifts the filter for that section. A match with nothing to change
+ * in place (the theme picker, the shortcut list, a feature that is off) is a
+ * row that opens its tab.
  *
- * Keyboard: Cmd+F focuses the input; Escape clears or blurs. While typing,
- * Enter jumps to the highlighted result and ArrowDown moves focus into the
- * list. In the list: ArrowUp/ArrowDown move (ArrowUp off the top returns to
- * the input), Space acts in place (flip, or expand/collapse), Enter jumps,
- * ArrowRight/ArrowLeft expand/collapse, Escape returns to the input, and
- * typing any character goes back to the input. Space only acts in place when
- * a row has focus, so it still types a space in a multi-word query.
+ * Sections mount as they near the viewport: a broad query can match most of
+ * Settings, and some sections ask the main process for state when they mount.
+ *
+ * Every control shown in a section can be jumped to on its tab: hovering it, or
+ * focusing inside it, shows a "Go to setting" button in the card's left gutter,
+ * and Cmd/Ctrl+Enter inside it does the same. The header opens the section.
+ *
+ * Keyboard: Cmd+F focuses the input; Escape clears or blurs it. Enter in the
+ * input opens the top result's tab. ArrowDown moves into the results, where
+ * Tab walks the controls. Escape on a tab row returns to the input; inside a
+ * section it is left to the section's own controls.
  */
 
-import React, { useState, useRef, useEffect, useCallback, type MutableRefObject } from 'react';
-import { ChevronDown, ChevronRight, CornerDownLeft, Search, X } from 'lucide-react';
+import React, {
+	useState,
+	useRef,
+	useEffect,
+	useLayoutEffect,
+	useCallback,
+	useMemo,
+	type RefObject,
+} from 'react';
+import { ChevronRight, CornerDownLeft, Search, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
-import { ToggleSwitchTrack } from '../ui/ToggleSwitch';
+import { SkeletonBox } from '../ui/SkeletonBox';
 import type { Theme } from '../../types';
 import {
+	findSearchableSetting,
 	searchSettings,
+	MIN_SUBSTRING_QUERY_LENGTH,
 	type SearchableSetting,
-	type ToggleSettingKey,
 } from './searchableSettings';
-import { findSettingsSection, type SettingsSectionDef } from './settingsSections';
+import {
+	applySettingFilter,
+	findJumpAnchor,
+	groupNavigationTarget,
+	SEARCH_HIDDEN_ATTR,
+	groupSearchResults,
+	type SettingsSearchGroup,
+	type SettingsSearchPanel,
+} from './settingsSearchView';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { shortcutSuffix } from '../ui/ShortcutHint';
 import { isImeComposing } from '../../utils/ime';
 import { splitOnMatches } from '../../utils/highlightMatches';
-import { useScrollIntoView } from '../../hooks/ui/useScrollIntoView';
-import { useSettingsStore, type SettingsStore } from '../../stores/settingsStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 export interface SettingsSearchProps {
 	theme: Theme;
@@ -43,45 +65,16 @@ export interface SettingsSearchProps {
 	onSearchActiveChange: (active: boolean) => void;
 }
 
-// ---------------------------------------------------------------------------
-// What a result does in place
-// ---------------------------------------------------------------------------
-
-/**
- * - `toggle`: the row carries the setting's switch; acting flips it.
- * - `expand`: the row opens the section that renders the setting.
- * - `jump`: nothing to change in place; acting opens the setting's tab.
- */
-export type SearchResultMode = 'toggle' | 'expand' | 'jump';
-
-/** The section to show inline for `setting`, when there is one and it is available now. */
-export function inlineSectionFor(
-	setting: SearchableSetting,
-	settings: SettingsStore
-): SettingsSectionDef | undefined {
-	const section = findSettingsSection(setting.id);
-	if (!section) return undefined;
-	return section.isAvailable && !section.isAvailable(settings) ? undefined : section;
-}
-
-export function searchResultMode(
-	setting: SearchableSetting,
-	settings: SettingsStore
-): SearchResultMode {
-	if (setting.toggle) return 'toggle';
-	return inlineSectionFor(setting, settings) ? 'expand' : 'jump';
-}
-
-function toggleSetterName(key: ToggleSettingKey): `set${Capitalize<ToggleSettingKey>}` {
-	return `set${key.charAt(0).toUpperCase()}${key.slice(1)}` as `set${Capitalize<ToggleSettingKey>}`;
-}
-
-/** Flip a toggle through the same store setter the section's own switch calls. */
-export function flipToggleSetting(key: ToggleSettingKey): void {
-	const state = useSettingsStore.getState();
-	const setter = state[toggleSetterName(key)] as (value: boolean) => void;
-	setter(!state[key]);
-}
+/** Sections mounted at once without waiting to scroll near them (the first screen). */
+const EAGER_PANEL_COUNT = 6;
+/** How far below the visible results a section starts mounting. */
+const PANEL_MOUNT_MARGIN = '400px';
+/** Jumps from inside a section's control to that setting on its tab. */
+const GO_TO_SETTING_KEYS = ['Meta', 'Enter'];
+/** Focusable controls, for ArrowDown from the input. */
+const NO_ADDITIONAL_SETTINGS: SearchableSetting[] = [];
+const FOCUSABLE =
+	'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 // ---------------------------------------------------------------------------
 // State + keyboard
@@ -91,49 +84,37 @@ export function useSettingsSearch({
 	isOpen,
 	onSearchActiveChange,
 	onNavigate,
-	additionalSettings = [],
+	additionalSettings = NO_ADDITIONAL_SETTINGS,
 }: Pick<SettingsSearchProps, 'isOpen' | 'onSearchActiveChange'> & {
 	additionalSettings?: SearchableSetting[];
 	onNavigate?: (tab: SearchableSetting['tab'], settingId: string) => void;
 }) {
 	const [query, setQuery] = useState('');
-	const [selectedIndex, setSelectedIndex] = useState(0);
-	// The one result whose section is shown inline (null when none).
-	const [expandedId, setExpandedId] = useState<string | null>(null);
+	// Sections the user opened in full with "Show all" (reset by a new query).
+	const [unfiltered, setUnfiltered] = useState<ReadonlySet<string>>(new Set());
 	const inputRef = useRef<HTMLInputElement>(null);
+	const resultsRef = useRef<HTMLDivElement>(null);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
-	const results = searchSettings(query, additionalSettings, encoreFeatures);
-	const isActive = query.length > 0;
-	// Instant scroll: a held arrow key repeats faster than a smooth scroll animates.
-	const rowRefs = useScrollIntoView<HTMLDivElement>(
-		isActive,
-		selectedIndex,
-		results.length,
-		'auto'
+	// Section availability reads the store; regroup only when the query or the
+	// Encore flags change, not on every settings write a section makes.
+	const results = useMemo(
+		() => searchSettings(query, additionalSettings, encoreFeatures),
+		[query, additionalSettings, encoreFeatures]
 	);
+	const groups = useMemo(() => groupSearchResults(results, useSettingsStore.getState()), [results]);
+	const isActive = query.length > 0;
 
-	// Notify parent when search active state changes
 	useEffect(() => {
 		onSearchActiveChange(isActive);
 	}, [isActive, onSearchActiveChange]);
 
-	// Reset query when modal closes
 	useEffect(() => {
 		if (!isOpen) setQuery('');
 	}, [isOpen]);
 
-	// A new query is a new list: back to the top, nothing expanded
 	useEffect(() => {
-		setSelectedIndex(0);
-		setExpandedId(null);
+		setUnfiltered(new Set());
 	}, [query]);
-
-	// Keep selection in range if results shrink without a query change
-	useEffect(() => {
-		if (selectedIndex > 0 && selectedIndex >= results.length) {
-			setSelectedIndex(Math.max(0, results.length - 1));
-		}
-	}, [results.length, selectedIndex]);
 
 	// Keep latest onNavigate without re-binding the global listener
 	const onNavigateRef = useRef(onNavigate);
@@ -145,34 +126,15 @@ export function useSettingsSearch({
 		onNavigateRef.current?.(setting.tab, setting.jumpToId ?? setting.id);
 	}, []);
 
-	const setExpanded = useCallback((setting: SearchableSetting, expanded: boolean) => {
-		setExpandedId((current) => {
-			if (expanded) return setting.id;
-			return current === setting.id ? null : current;
+	const toggleUnfiltered = useCallback((key: string) => {
+		setUnfiltered((current) => {
+			const next = new Set(current);
+			if (next.has(key)) next.delete(key);
+			else next.add(key);
+			return next;
 		});
 	}, []);
 
-	/** Space / click: flip the switch, open or close the section, or jump. */
-	const activate = useCallback(
-		(setting: SearchableSetting) => {
-			const mode = searchResultMode(setting, useSettingsStore.getState());
-			if (mode === 'toggle' && setting.toggle) flipToggleSetting(setting.toggle);
-			else if (mode === 'expand') setExpandedId((id) => (id === setting.id ? null : setting.id));
-			else navigate(setting);
-		},
-		[navigate]
-	);
-
-	const focusRow = useCallback(
-		(index: number) => {
-			setSelectedIndex(index);
-			rowRefs.current[index]?.focus();
-		},
-		[rowRefs]
-	);
-
-	// Cmd+F focuses the search input; Escape clears or blurs; the rest is the
-	// result-list navigation described in the header comment.
 	useEffect(() => {
 		if (!isOpen) return;
 
@@ -185,94 +147,44 @@ export function useSettingsSearch({
 				return;
 			}
 
-			// An IME composition owns Escape, Enter, Space and the arrows until it ends.
+			// An IME composition owns Escape, Enter and the arrows until it ends.
 			if (isImeComposing(e)) return;
 
 			const active = document.activeElement as HTMLElement | null;
-			const inputFocused = active === inputRef.current;
-			const rowIndex = active ? rowRefs.current.indexOf(active as HTMLDivElement) : -1;
 			const consume = () => {
 				e.preventDefault();
 				e.stopPropagation();
 			};
 
-			if (e.key === 'Escape') {
-				if (inputFocused) {
+			if (active === inputRef.current) {
+				if (e.key === 'Escape') {
 					consume();
 					if (query) setQuery('');
 					else inputRef.current?.blur();
-				} else if (rowIndex >= 0) {
-					consume();
-					inputRef.current?.focus();
-				}
-				// Inside an expanded section Escape is left to the section's own
-				// controls (an open dropdown closes itself), exactly as on its tab.
-				return;
-			}
-
-			if (!isActive || results.length === 0) return;
-
-			if (inputFocused) {
-				if (e.key === 'ArrowDown') {
-					consume();
-					focusRow(Math.min(selectedIndex, results.length - 1));
-				} else if (e.key === 'Enter') {
-					const target = results[selectedIndex] ?? results[0];
-					if (target) {
+				} else if (e.key === 'ArrowDown') {
+					const first = resultsRef.current?.querySelector<HTMLElement>(FOCUSABLE);
+					if (first) {
 						consume();
-						navigate(target);
+						first.focus();
 					}
+				} else if (e.key === 'Enter' && groups.length > 0) {
+					consume();
+					navigate(groupNavigationTarget(groups[0]));
 				}
 				return;
 			}
 
-			if (rowIndex < 0) return;
-			const setting = results[rowIndex];
-			if (!setting) return;
-
-			if (e.key === 'ArrowDown') {
+			// A tab row hands Escape back to the query. Inside a section Escape is
+			// left to the section's own controls, exactly as on its tab.
+			if (e.key === 'Escape' && active?.dataset.settingsSearchRow !== undefined) {
 				consume();
-				focusRow((rowIndex + 1) % results.length);
-			} else if (e.key === 'ArrowUp') {
-				consume();
-				if (rowIndex === 0) inputRef.current?.focus();
-				else focusRow(rowIndex - 1);
-			} else if (e.key === ' ') {
-				consume();
-				activate(setting);
-			} else if (e.key === 'Enter') {
-				consume();
-				navigate(setting);
-			} else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-				if (searchResultMode(setting, useSettingsStore.getState()) !== 'expand') return;
-				consume();
-				setExpanded(setting, e.key === 'ArrowRight');
-			} else if (
-				(e.key.length === 1 || e.key === 'Backspace') &&
-				!e.metaKey &&
-				!e.ctrlKey &&
-				!e.altKey
-			) {
-				// Back to the query. Not prevented, so the keystroke lands in the
-				// input that now has focus.
 				inputRef.current?.focus();
 			}
 		};
 
 		window.addEventListener('keydown', handleKeyDown, true);
 		return () => window.removeEventListener('keydown', handleKeyDown, true);
-	}, [
-		isOpen,
-		query,
-		isActive,
-		results,
-		selectedIndex,
-		rowRefs,
-		focusRow,
-		activate,
-		navigate,
-		setExpanded,
-	]);
+	}, [isOpen, query, groups, navigate]);
 
 	const clear = useCallback(() => {
 		setQuery('');
@@ -283,14 +195,12 @@ export function useSettingsSearch({
 		query,
 		setQuery,
 		inputRef,
-		results,
+		resultsRef,
+		groups,
 		isActive,
 		clear,
-		selectedIndex,
-		setSelectedIndex,
-		expandedId,
-		rowRefs,
-		activate,
+		unfiltered,
+		toggleUnfiltered,
 		navigate,
 	};
 }
@@ -306,7 +216,7 @@ export function SettingsSearchInput({
 	setQuery,
 	inputRef,
 	isActive,
-	results,
+	resultCount,
 	onClear,
 }: {
 	theme: Theme;
@@ -314,7 +224,8 @@ export function SettingsSearchInput({
 	setQuery: (q: string) => void;
 	inputRef: React.RefObject<HTMLInputElement>;
 	isActive: boolean;
-	results: SearchableSetting[];
+	/** Sections and tab rows shown, not raw matching entries. */
+	resultCount: number;
 	onClear: () => void;
 }) {
 	return (
@@ -343,7 +254,7 @@ export function SettingsSearchInput({
 						<span style={{ color: 'transparent' }}>Search settings...</span>
 						<kbd
 							data-shortcut-hint=""
-							className="text-2xs px-1.5 py-0.5 rounded font-mono opacity-40"
+							className="text-2xs px-1.5 py-0.5 rounded font-mono opacity-55"
 							style={{ backgroundColor: theme.colors.bgActivity }}
 						>
 							{formatShortcutKeys(['Meta', 'f'])}
@@ -360,7 +271,7 @@ export function SettingsSearchInput({
 							color: theme.colors.textDim,
 						}}
 					>
-						{results.length}
+						{resultCount}
 					</span>
 					<GhostIconButton onClick={onClear} padding="p-0.5" ariaLabel="Clear search">
 						<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
@@ -375,224 +286,371 @@ export function SettingsSearchInput({
 // Results
 // ---------------------------------------------------------------------------
 
-/** Search results list - renders as a full-height panel replacing the sidebar+content */
+/** Search results - renders as a full-height panel replacing the sidebar+content */
 export function SettingsSearchResults({
 	theme,
 	query,
-	results,
+	groups,
 	isOpen,
-	selectedIndex,
-	setSelectedIndex,
-	expandedId,
-	rowRefs,
-	onActivate,
+	resultsRef,
+	unfiltered,
+	onToggleUnfiltered,
 	onNavigate,
 }: {
 	theme: Theme;
 	query: string;
-	results: SearchableSetting[];
+	groups: SettingsSearchGroup[];
 	isOpen: boolean;
-	selectedIndex: number;
-	setSelectedIndex: (i: number) => void;
-	expandedId: string | null;
-	rowRefs: MutableRefObject<(HTMLDivElement | null)[]>;
-	onActivate: (setting: SearchableSetting) => void;
+	resultsRef: RefObject<HTMLDivElement>;
+	unfiltered: ReadonlySet<string>;
+	onToggleUnfiltered: (key: string) => void;
 	onNavigate: (setting: SearchableSetting) => void;
 }) {
-	// Group results by tab for display while preserving the global flat index
-	// for keyboard selection mapping.
-	const grouped: {
-		tabLabel: string;
-		entries: { setting: SearchableSetting; flatIndex: number }[];
-	}[] = [];
-	const labelToGroup = new Map<string, (typeof grouped)[number]>();
-	results.forEach((setting, flatIndex) => {
-		let group = labelToGroup.get(setting.tabLabel);
-		if (!group) {
-			group = { tabLabel: setting.tabLabel, entries: [] };
-			labelToGroup.set(setting.tabLabel, group);
-			grouped.push(group);
-		}
-		group.entries.push({ setting, flatIndex });
-	});
-
 	const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+	const short = query.trim().length < MIN_SUBSTRING_QUERY_LENGTH;
 
 	return (
 		<div className="flex-1 flex flex-col overflow-hidden">
-			<div className="flex-1 p-4 overflow-y-auto scrollbar-thin">
-				{results.length === 0 ? (
+			<div ref={resultsRef} className="flex-1 p-4 overflow-y-auto scrollbar-thin">
+				{groups.length === 0 ? (
 					<div className="text-center py-8">
 						<p className="text-sm" style={{ color: theme.colors.textDim }}>
-							No settings found for &ldquo;{query}&rdquo;
+							{short
+								? `Keep typing: search starts at ${MIN_SUBSTRING_QUERY_LENGTH} characters`
+								: `No settings found for “${query}”`}
 						</p>
 					</div>
 				) : (
-					<div className="space-y-4">
-						{grouped.map(({ tabLabel, entries }) => (
-							<div key={tabLabel}>
-								<h3
-									className="text-xs font-bold uppercase mb-2 px-1"
-									style={{ color: theme.colors.textDim }}
-								>
-									{tabLabel}
-								</h3>
-								<div className="space-y-1">
-									{entries.map(({ setting, flatIndex }) => (
-										<SearchResultRow
-											key={setting.id}
-											theme={theme}
-											setting={setting}
-											terms={terms}
-											isOpen={isOpen}
-											isSelected={flatIndex === selectedIndex}
-											isExpanded={expandedId === setting.id}
-											rowRef={(el) => {
-												rowRefs.current[flatIndex] = el;
-											}}
-											onHover={() => setSelectedIndex(flatIndex)}
-											onActivate={onActivate}
-											onNavigate={onNavigate}
-										/>
-									))}
-								</div>
-							</div>
-						))}
+					<div className="space-y-3">
+						{groups.map((group, index) =>
+							group.kind === 'panel' ? (
+								<SearchResultPanel
+									key={group.key}
+									theme={theme}
+									panel={group}
+									isOpen={isOpen}
+									eager={index < EAGER_PANEL_COUNT}
+									scrollRoot={resultsRef}
+									filtered={!unfiltered.has(group.key)}
+									onToggleFiltered={() => onToggleUnfiltered(group.key)}
+									onNavigate={onNavigate}
+								/>
+							) : (
+								<SearchResultJumpRow
+									key={group.key}
+									theme={theme}
+									setting={group.setting}
+									terms={terms}
+									onNavigate={onNavigate}
+								/>
+							)
+						)}
 					</div>
 				)}
 			</div>
-			{results.length > 0 && <SearchKeyLegend theme={theme} />}
 		</div>
 	);
 }
 
-function SearchResultRow({
+/**
+ * True once `ref` has come within `margin` of `root`'s visible area. Sticky:
+ * a section that mounted stays mounted while the query keeps it in the list.
+ */
+function useHasBeenNear(
+	ref: RefObject<HTMLElement>,
+	root: RefObject<HTMLElement>,
+	initial: boolean
+): boolean {
+	const [near, setNear] = useState(initial);
+	useEffect(() => {
+		if (near) return;
+		const element = ref.current;
+		if (!element || typeof IntersectionObserver === 'undefined') {
+			setNear(true);
+			return;
+		}
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((entry) => entry.isIntersecting)) setNear(true);
+			},
+			{ root: root.current, rootMargin: PANEL_MOUNT_MARGIN }
+		);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [near, ref, root]);
+	return near;
+}
+
+function SearchResultPanel({
 	theme,
-	setting,
-	terms,
+	panel,
 	isOpen,
-	isSelected,
-	isExpanded,
-	rowRef,
-	onHover,
-	onActivate,
+	eager,
+	scrollRoot,
+	filtered,
+	onToggleFiltered,
 	onNavigate,
 }: {
 	theme: Theme;
-	setting: SearchableSetting;
-	terms: string[];
+	panel: SettingsSearchPanel;
 	isOpen: boolean;
-	isSelected: boolean;
-	isExpanded: boolean;
-	rowRef: (el: HTMLDivElement | null) => void;
-	onHover: () => void;
-	onActivate: (setting: SearchableSetting) => void;
+	eager: boolean;
+	scrollRoot: RefObject<HTMLElement>;
+	filtered: boolean;
+	onToggleFiltered: () => void;
 	onNavigate: (setting: SearchableSetting) => void;
 }) {
-	const mode = useSettingsStore((s) => searchResultMode(setting, s));
-	const toggleOn = useSettingsStore((s) => (setting.toggle ? Boolean(s[setting.toggle]) : false));
-	const [focused, setFocused] = useState(false);
-	const section = mode === 'expand' ? findSettingsSection(setting.id) : undefined;
-	const SectionComponent = isExpanded ? section?.Component : undefined;
+	const cardRef = useRef<HTMLDivElement>(null);
+	const bodyRef = useRef<HTMLDivElement>(null);
+	const mounted = useHasBeenNear(cardRef, scrollRoot, eager);
+	const { section, matches } = panel;
+	const total = section.settingIds.length;
+	const partial = matches.length < total;
+	const matchedKey = matches.map((m) => m.id).join('\n');
+	const SectionComponent = section.Component;
+	// Hovering moves the jump button; keep that from re-rendering the section.
+	const sectionNode = useMemo(
+		() => <SectionComponent theme={theme} isOpen={isOpen} />,
+		[SectionComponent, theme, isOpen]
+	);
+
+	// "Go to setting": the control under the pointer, else the one holding focus.
+	// A filtered section jumps only to its matches; "Show all" opens every
+	// control that has a searchable entry. The tab comes from that entry.
+	const restricted = filtered && partial;
+	const matchedIds = useMemo(() => new Set(matchedKey.split('\n')), [matchedKey]);
+	const settingFor = useCallback(
+		(id: string) => matches.find((m) => m.id === id) ?? findSearchableSetting(id),
+		[matches]
+	);
+	const canJump = useCallback(
+		(id: string) => (!restricted || matchedIds.has(id)) && settingFor(id) !== undefined,
+		[restricted, matchedIds, settingFor]
+	);
+	const anchorFrom = (from: EventTarget | null) =>
+		bodyRef.current && from instanceof Element
+			? findJumpAnchor(bodyRef.current, from, canJump)
+			: null;
+	const [hoveredAnchor, setHoveredAnchor] = useState<HTMLElement | null>(null);
+	const [focusedAnchor, setFocusedAnchor] = useState<HTMLElement | null>(null);
+	const anchor = hoveredAnchor ?? focusedAnchor;
+	const [anchorTop, setAnchorTop] = useState<number | null>(null);
+
+	// The button's offset from the card top, or null when the anchor is gone,
+	// filtered out, or no longer a jump target.
+	const measureAnchor = useCallback(() => {
+		const card = cardRef.current;
+		const id = anchor?.dataset.settingId;
+		if (
+			!anchor ||
+			!card ||
+			!id ||
+			!anchor.isConnected ||
+			anchor.closest(`[${SEARCH_HIDDEN_ATTR}]`) ||
+			!canJump(id)
+		) {
+			setAnchorTop(null);
+			return;
+		}
+		const top = Math.round(anchor.getBoundingClientRect().top - card.getBoundingClientRect().top);
+		setAnchorTop((prev) => (prev === top ? prev : top));
+	}, [anchor, canJump]);
+	const measureAnchorRef = useRef(measureAnchor);
+	measureAnchorRef.current = measureAnchor;
+
+	// Filter before paint, and again whenever the section re-renders its DOM
+	// (a control that appears only in some states, a list that loads later).
+	// A re-render can move the control the jump button points at, so re-measure.
+	useLayoutEffect(() => {
+		const body = bodyRef.current;
+		if (!mounted || !body) return;
+		const matched = filtered && partial ? new Set(matchedKey.split('\n')) : null;
+		applySettingFilter(body, matched);
+		if (typeof MutationObserver === 'undefined') return;
+		const observer = new MutationObserver(() => {
+			applySettingFilter(body, matched);
+			measureAnchorRef.current();
+		});
+		observer.observe(body, { childList: true, subtree: true });
+		return () => observer.disconnect();
+	}, [mounted, filtered, partial, matchedKey]);
+
+	useLayoutEffect(measureAnchor, [measureAnchor]);
+
+	const jumpSetting =
+		anchor?.dataset.settingId && anchorTop !== null
+			? settingFor(anchor.dataset.settingId)
+			: undefined;
+
+	const handleBodyKeyDown = (e: React.KeyboardEvent) => {
+		if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.defaultPrevented) return;
+		if (isImeComposing(e)) return;
+		const id = anchorFrom(e.target)?.dataset.settingId;
+		const setting = id ? settingFor(id) : undefined;
+		if (!setting) return;
+		e.preventDefault();
+		e.stopPropagation();
+		onNavigate(setting);
+	};
+
+	const target = matches[0];
+	const [headerHovered, setHeaderHovered] = useState(false);
+	const [headerFocused, setHeaderFocused] = useState(false);
 
 	return (
 		<div
-			className="rounded border transition-colors"
-			style={{
-				borderColor: isSelected ? theme.colors.accent : theme.colors.border,
-				backgroundColor: isSelected ? theme.colors.bgActivity : theme.colors.bgMain,
-				boxShadow: focused ? `inset 0 0 0 1px ${theme.colors.accent}` : undefined,
-			}}
+			ref={cardRef}
+			data-settings-search-panel={panel.key}
+			className="relative rounded border"
+			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+			onMouseLeave={() => setHoveredAnchor(null)}
 		>
+			{/* The whole header opens the section on its tab; the icon is only the cue. */}
 			<div
-				ref={rowRef}
-				data-settings-search-row={setting.id}
-				role={mode === 'toggle' ? 'switch' : 'button'}
-				aria-checked={mode === 'toggle' ? toggleOn : undefined}
-				aria-expanded={mode === 'expand' ? isExpanded : undefined}
-				tabIndex={isSelected ? 0 : -1}
-				onClick={() => onActivate(setting)}
-				onMouseEnter={onHover}
-				onFocus={() => setFocused(true)}
-				onBlur={() => setFocused(false)}
-				className="flex items-center gap-3 p-3 cursor-pointer outline-none select-none"
+				role="button"
+				tabIndex={0}
+				onClick={() => onNavigate(target)}
+				onKeyDown={onActivationKey(() => onNavigate(target))}
+				onMouseEnter={() => setHeaderHovered(true)}
+				onMouseLeave={() => setHeaderHovered(false)}
+				onFocus={() => setHeaderFocused(true)}
+				onBlur={() => setHeaderFocused(false)}
+				title={`Open ${panel.title} in ${panel.tabLabel}`}
+				aria-label={`Open ${panel.title} in ${panel.tabLabel}`}
+				className="flex items-center gap-2 px-3 py-2 border-b cursor-pointer outline-none select-none rounded-t"
+				style={{
+					borderColor: theme.colors.border,
+					backgroundColor: headerHovered || headerFocused ? theme.colors.bgActivity : 'transparent',
+					boxShadow: headerFocused ? `inset 0 0 0 1px ${theme.colors.accent}` : undefined,
+				}}
 			>
-				<div className="flex-1 min-w-0">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-						<Highlighted text={setting.label} terms={terms} theme={theme} />
-					</div>
-					{setting.description && (
-						<div className="text-xs mt-0.5 opacity-70">
-							<Highlighted text={setting.description} terms={terms} theme={theme} />
-						</div>
-					)}
-				</div>
-				<div className="flex items-center gap-1 flex-shrink-0">
-					{mode === 'toggle' && <ToggleSwitchTrack checked={toggleOn} theme={theme} />}
-					{mode === 'expand' && (
-						<ChevronDown
-							className="w-4 h-4 transition-transform"
-							style={{
-								color: theme.colors.textDim,
-								transform: isExpanded ? 'rotate(180deg)' : undefined,
-							}}
-						/>
-					)}
-					{mode === 'jump' ? (
-						<ChevronRight className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-					) : (
-						<GhostIconButton
-							onClick={(e) => {
-								e.stopPropagation();
-								onNavigate(setting);
-							}}
-							padding="p-1"
-							title={`Open in ${setting.tabLabel} (Enter)`}
-							ariaLabel={`Open ${setting.label} in ${setting.tabLabel}`}
-						>
-							<CornerDownLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-						</GhostIconButton>
-					)}
-				</div>
-			</div>
-			{SectionComponent && (
 				<div
-					data-settings-search-section=""
-					className="px-3 pb-3 pt-3 border-t select-text"
-					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
+					className="flex-1 min-w-0 text-xs font-bold uppercase truncate"
+					style={{ color: theme.colors.textDim }}
 				>
-					<SectionComponent theme={theme} isOpen={isOpen} />
+					{panel.tabLabel} <span className="opacity-55">›</span> {panel.title}
 				</div>
+				{partial && filtered && (
+					<span className="text-xs flex-shrink-0" style={{ color: theme.colors.textDim }}>
+						{matches.length} of {total}
+					</span>
+				)}
+				<CornerDownLeft
+					aria-hidden
+					className="w-3.5 h-3.5 m-1 flex-shrink-0"
+					style={{ color: headerFocused ? theme.colors.accent : theme.colors.textDim }}
+				/>
+			</div>
+			{/* Body is a delegation root: the section's own DOM is never touched. The
+			    left gutter holds the jump button, clear of every control. */}
+			<div
+				ref={bodyRef}
+				data-settings-search-section=""
+				className="pl-7 pr-3 pb-3 select-text"
+				style={{ backgroundColor: theme.colors.bgSidebar }}
+				onMouseOver={(e) => {
+					// The gutter is the body itself: keep the button while the pointer
+					// crosses it on the way to the button.
+					if (e.target !== e.currentTarget) setHoveredAnchor(anchorFrom(e.target));
+				}}
+				onFocus={(e) => setFocusedAnchor(anchorFrom(e.target))}
+				onBlur={(e) => {
+					if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusedAnchor(null);
+				}}
+				onKeyDown={handleBodyKeyDown}
+			>
+				{mounted ? (
+					sectionNode
+				) : (
+					<div className="pt-3">
+						<SkeletonBox theme={theme} className="h-10 w-full" />
+					</div>
+				)}
+			</div>
+			{jumpSetting && (
+				<GhostIconButton
+					onClick={() => onNavigate(jumpSetting)}
+					tabIndex={-1}
+					padding="p-0.5"
+					ariaLabel={`Go to ${jumpSetting.label}`}
+					title={`Go to ${jumpSetting.label} in ${jumpSetting.tabLabel}${shortcutSuffix(GO_TO_SETTING_KEYS)}`}
+					color={theme.colors.accent}
+					className="absolute left-1"
+					style={{ top: (anchorTop ?? 0) + 2 }}
+					testId="settings-search-go-to-setting"
+				>
+					<CornerDownLeft className="w-3.5 h-3.5" />
+				</GhostIconButton>
+			)}
+			{partial && (
+				<button
+					type="button"
+					onClick={onToggleFiltered}
+					className="w-full text-left text-xs px-3 py-2 border-t select-none"
+					style={{ borderColor: theme.colors.border, color: theme.colors.accent }}
+				>
+					{filtered ? `Show all ${total} in ${panel.title}` : 'Show only matches'}
+				</button>
 			)}
 		</div>
 	);
 }
 
-function SearchKeyLegend({ theme }: { theme: Theme }) {
-	const items: [string, string][] = [
-		['↓', 'results'],
-		['Space', 'toggle or expand'],
-		['↵', 'open in tab'],
-	];
+function SearchResultJumpRow({
+	theme,
+	setting,
+	terms,
+	onNavigate,
+}: {
+	theme: Theme;
+	setting: SearchableSetting;
+	terms: string[];
+	onNavigate: (setting: SearchableSetting) => void;
+}) {
+	const [focused, setFocused] = useState(false);
 	return (
 		<div
-			data-shortcut-hint=""
-			className="flex items-center justify-center gap-4 px-4 py-2 border-t text-xs select-none"
-			style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+			data-settings-search-row={setting.id}
+			role="button"
+			tabIndex={0}
+			onClick={() => onNavigate(setting)}
+			onKeyDown={onActivationKey(() => onNavigate(setting))}
+			onFocus={() => setFocused(true)}
+			onBlur={() => setFocused(false)}
+			title={`Open in ${setting.tabLabel}`}
+			className="flex items-center gap-3 p-3 rounded border cursor-pointer outline-none select-none"
+			style={{
+				borderColor: focused ? theme.colors.accent : theme.colors.border,
+				backgroundColor: focused ? theme.colors.bgActivity : theme.colors.bgMain,
+			}}
 		>
-			{items.map(([key, label]) => (
-				<span key={key} className="flex items-center gap-1.5">
-					<kbd
-						className="text-2xs px-1.5 py-0.5 rounded font-mono"
-						style={{ backgroundColor: theme.colors.bgActivity }}
-					>
-						{key}
-					</kbd>
-					{label}
-				</span>
-			))}
+			<div className="flex-1 min-w-0">
+				<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<Highlighted text={setting.label} terms={terms} theme={theme} />
+				</div>
+				<div className="text-xs mt-0.5 opacity-70">
+					{setting.tabLabel}
+					{setting.description && (
+						<>
+							{' · '}
+							<Highlighted text={setting.description} terms={terms} theme={theme} />
+						</>
+					)}
+				</div>
+			</div>
+			<ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.textDim }} />
 		</div>
 	);
+}
+
+/** Enter or Space on a `role="button"` element runs `activate`, as a click would. */
+function onActivationKey(activate: () => void) {
+	return (e: React.KeyboardEvent) => {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			activate();
+		}
+	};
 }
 
 /** Paints the query terms in `text` with the accent color. */

@@ -93,7 +93,14 @@ export function buildSshProbeCommand(agentCommand?: string): string {
  * reach its relay says so in words this function has never heard of.
  */
 export function describeSshConnectionError(stderr: string): string | undefined {
-	const lower = stderr.toLowerCase();
+	// When ssh printed nothing, Node's execFile message stands in for stderr:
+	// "Command failed: <the whole command line>". That line is ours, not ssh's,
+	// and it carries every -o option, a ProxyCommand credential included (a
+	// tailcat auth key reached the Federation peer list this way). Drop it
+	// before anything reads the text, so it is never shown and never matched.
+	const nodeWrapped = stderr.trimStart().startsWith('Command failed:');
+	const text = nodeWrapped ? stderr.trimStart().replace(/^Command failed:[^\n]*\n?/, '') : stderr;
+	const lower = text.toLowerCase();
 
 	if (lower.includes('permission denied')) {
 		return 'Authentication failed. Check username and private key.';
@@ -120,7 +127,10 @@ export function describeSshConnectionError(stderr: string): string | undefined {
 		return 'Private key file not found.';
 	}
 
-	const trimmed = stderr.trim();
+	const trimmed = text.trim();
+	if (nodeWrapped && !trimmed) {
+		return 'ssh exited without printing an error. The host or its ProxyCommand may be down.';
+	}
 	return trimmed || undefined;
 }
 
@@ -137,6 +147,36 @@ export const SSH_CONNECTION_FAILED_EXIT_CODE = 255;
  */
 export function isSshConnectionFailure(exitCode: number | string): boolean {
 	return exitCode === SSH_CONNECTION_FAILED_EXIT_CODE;
+}
+
+/**
+ * Lines only the ssh CLIENT prints, and only when no session opened: the host
+ * refused, timed out or could not be routed to or resolved, the host key did not
+ * verify, or authentication failed. Matched per line, anchored to ssh's own
+ * wording, because the remote side writes to the same stderr: a remote shell's
+ * `bash: x: Permission denied` must never read as ssh's
+ * `me@box: Permission denied (publickey).`.
+ */
+const SSH_PRE_SESSION_LINES: readonly RegExp[] = [
+	/^ssh: connect to host \S+ port \d+: (Connection refused|Connection timed out|Operation timed out|No route to host|Network is unreachable)$/i,
+	/^ssh: Could not resolve hostname \S+: /i,
+	/^\S+: Permission denied \([a-z0-9,-]+\)\.?$/i,
+	/^Host key verification failed\.$/i,
+	/^@\s+WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\s+@$/i,
+];
+
+/**
+ * True only when ssh's stderr PROVES it failed before a session opened, so no
+ * remote command can have run. Exit 255 alone does not say that: ssh exits 255
+ * too when a working connection drops mid-command, after the remote side has
+ * acted. A caller that must never repeat a remote side effect treats anything
+ * this does not recognize as "it may have run".
+ */
+export function sshFailedBeforeSession(stderr: string): boolean {
+	return stderr
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.some((line) => SSH_PRE_SESSION_LINES.some((pattern) => pattern.test(line)));
 }
 
 /**
@@ -175,6 +215,25 @@ export interface SshReachabilityEvent {
 	message?: string;
 	/** Epoch ms the remote entered this state. */
 	since: number;
+	/**
+	 * What is down. `ssh` (also when absent, from an older main process): ssh cannot reach the
+	 * remote, so every agent on it is stuck. `host`: ssh works, but the Maestro host that runs
+	 * this remote's hosted agents does not answer.
+	 */
+	cause?: RemoteOutageCause;
+	/**
+	 * With `reachable`: the outage ended because Maestro stopped tracking it (the remote was
+	 * deleted, or is no longer a Federation peer), not because it answered. No recovery notice.
+	 */
+	cleared?: true;
+}
+
+/** What an outage on a remote is about: the SSH link itself, or the Maestro host behind it. */
+export type RemoteOutageCause = 'ssh' | 'host';
+
+/** The cause of an outage event, reading an absent field as `ssh`. */
+export function outageCause(event: Pick<SshReachabilityEvent, 'cause'>): RemoteOutageCause {
+	return event.cause === 'host' ? 'host' : 'ssh';
 }
 
 /** Parsed form of a probe's stdout. */

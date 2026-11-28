@@ -9,6 +9,7 @@
  *   maestro://session/{sessionId}              - navigate to agent
  *   maestro://session/{sessionId}/tab/{tabId}  - navigate to agent + tab
  *   maestro://group/{groupId}                  - expand group, focus first session
+ *   maestro://run/{token}                      - fire a Prompt Link (main-only, see prompt-links/)
  *
  * Platform behavior:
  *   macOS:         app.on('open-url') delivers the URL
@@ -21,7 +22,8 @@ import { app, BrowserWindow } from 'electron';
 import { logger } from './utils/logger';
 import { isWebContentsAvailable } from './utils/safe-send';
 import type { ParsedDeepLink } from '../shared/types';
-import { parseMaestroDeepLink } from '../shared/deep-link-urls';
+import { parseMaestroDeepLink, redactDeepLinkUrl } from '../shared/deep-link-urls';
+import { firePromptLink } from './prompt-links';
 import { captureException } from './utils/sentry';
 
 // ============================================================================
@@ -53,12 +55,15 @@ export function parseDeepLink(url: string): ParsedDeepLink | null {
 	try {
 		const parsed = parseMaestroDeepLink(url);
 		if (!parsed) {
-			logger.warn(`Unrecognized deep link URL: ${url}`, 'DeepLink');
+			logger.warn(`Unrecognized deep link URL: ${redactDeepLinkUrl(url)}`, 'DeepLink');
 		}
 		return parsed;
 	} catch (error) {
 		void captureException(error);
-		logger.error('Failed to parse deep link URL', 'DeepLink', { url, error: String(error) });
+		logger.error('Failed to parse deep link URL', 'DeepLink', {
+			url: redactDeepLinkUrl(url),
+			error: String(error),
+		});
 		return null;
 	}
 }
@@ -71,10 +76,25 @@ export function parseDeepLink(url: string): ParsedDeepLink | null {
  * Process a deep link URL: parse it, bring window to foreground, and send to renderer.
  */
 function processDeepLink(url: string, getMainWindow: () => BrowserWindow | null): void {
-	logger.info('Processing deep link', 'DeepLink', { url });
+	logger.info('Processing deep link', 'DeepLink', { url: redactDeepLinkUrl(url) });
 
 	const parsed = parseDeepLink(url);
 	if (!parsed) return;
+
+	// A Prompt Link is decided here, in main, and never reaches the renderer: the
+	// token is checked and spent against the store before anything runs. It also
+	// does not raise the window by itself - the link's own `open` setting says
+	// whether this click is allowed to take the user's view. It waits for the
+	// renderer on a cold start, so it is not buffered like a navigation link.
+	if (parsed.action === 'run') {
+		if (parsed.token) {
+			void firePromptLink(parsed.token, getMainWindow).catch((error: unknown) => {
+				void captureException(error);
+				logger.error('Prompt link failed', 'DeepLink', { error: String(error) });
+			});
+		}
+		return;
+	}
 
 	const win = getMainWindow();
 	if (!win) {
@@ -183,7 +203,9 @@ export function setupDeepLinkHandling(getMainWindow: () => BrowserWindow | null)
 	);
 	if (deepLinkArg) {
 		pendingDeepLinkUrl = deepLinkArg;
-		logger.info('Found deep link in process argv (cold start)', 'DeepLink', { url: deepLinkArg });
+		logger.info('Found deep link in process argv (cold start)', 'DeepLink', {
+			url: redactDeepLinkUrl(deepLinkArg),
+		});
 	}
 
 	return true;
@@ -198,7 +220,7 @@ export function flushPendingDeepLink(getMainWindow: () => BrowserWindow | null):
 
 	const url = pendingDeepLinkUrl;
 	pendingDeepLinkUrl = null;
-	logger.info('Flushing pending deep link', 'DeepLink', { url });
+	logger.info('Flushing pending deep link', 'DeepLink', { url: redactDeepLinkUrl(url) });
 	processDeepLink(url, getMainWindow);
 }
 

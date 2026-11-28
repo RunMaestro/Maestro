@@ -3,7 +3,7 @@ import type { HeadlessAgentActivity } from '../../../shared/headlessAgentActivit
 import { ipcRenderer } from 'electron';
 import type { CallUsage, UsageStats } from '../../../shared/types';
 import type { ParsedQuestion } from '../../permission-relay/types';
-import type { SteeringResultFrame } from '../../../shared/chatSteering';
+import type { SteeringResultFrame, SteeringUnavailableReason } from '../../../shared/chatSteering';
 import type {
 	HarnessInteractionRequest,
 	HarnessInteractionResolveResult,
@@ -133,6 +133,9 @@ export interface AgentError {
 		stdout?: string;
 		errorLine?: string;
 	};
+	parsedJson?: unknown;
+	/** The agent's last terminal screen, for the error modal only. */
+	failureScreen?: string;
 }
 
 /**
@@ -303,6 +306,13 @@ export function createProcessCoreApi() {
 
 		broadcastUserInput: (payload: ProcessUserInputBroadcast): Promise<void> =>
 			ipcRenderer.invoke('process:broadcast-user-input', payload),
+
+		/**
+		 * Tell this Maestro's Federation clients that a tab's transcript grew outside a turn, so they
+		 * read it again (a `/skills` or `/history` run for one of them).
+		 */
+		broadcastTranscriptChanged: (sessionId: string, tabId: string): Promise<void> =>
+			ipcRenderer.invoke('process:broadcast-transcript-changed', sessionId, tabId),
 
 		/**
 		 * Send interrupt signal (Ctrl+C) to a process
@@ -559,6 +569,7 @@ export function createProcessCoreApi() {
 					mode: 'interactive' | 'api';
 					reason: 'auto' | 'limit';
 					configDirKey: string;
+					steeringUnavailable?: SteeringUnavailableReason;
 				}
 			) => void
 		): (() => void) => {
@@ -569,6 +580,7 @@ export function createProcessCoreApi() {
 					mode: 'interactive' | 'api';
 					reason: 'auto' | 'limit';
 					configDirKey: string;
+					steeringUnavailable?: SteeringUnavailableReason;
 				}
 			) => callback(sessionId, resolution);
 			ipcRenderer.on('process:claude-mode-resolved', handler);

@@ -13,6 +13,11 @@ import { HamburgerMenuContent } from '../../../../renderer/components/SessionLis
 import { usePhoneLayout } from '../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import {
+	selectModalData,
+	selectModalOpen,
+	useModalStore,
+} from '../../../../renderer/stores/modalStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 vi.mock('../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
@@ -83,5 +88,41 @@ describe('HamburgerMenuContent on a phone', () => {
 		for (const badge of badges) {
 			expect(badge).toHaveAttribute('data-shortcut-hint');
 		}
+	});
+});
+
+describe('HamburgerMenuContent sections', () => {
+	it('keeps the feature section between the two dividers in alphabetical order', () => {
+		const original = useSettingsStore.getState().encoreFeatures;
+		const allOn = { ...original };
+		for (const key of Object.keys(allOn) as (keyof typeof allOn)[]) allOn[key] = true;
+		useSettingsStore.setState({ encoreFeatures: allOn });
+		const { container } = renderMenu();
+		const rows = Array.from(container.firstElementChild!.children);
+		const dividers = rows.flatMap((row, i) => (row.classList.contains('border-t') ? [i] : []));
+		expect(dividers).toHaveLength(2);
+
+		const labelOf = (row: Element) => row.querySelector('.text-sm.font-medium')?.textContent ?? '';
+		const features = rows.slice(dividers[0] + 1, dividers[1]).map(labelOf);
+		expect(features.length).toBeGreaterThan(1);
+		expect(features).toEqual([...features].sort((a, b) => a.localeCompare(b)));
+		// The app-level entries all sit above the first divider.
+		expect(rows.slice(0, dividers[0]).map(labelOf)).toContain('Process Monitor');
+		useSettingsStore.setState({ encoreFeatures: original });
+	});
+});
+
+describe('HamburgerMenuContent update entries', () => {
+	it('opens Check for Updates straight on the rollback list from Roll Back Version', () => {
+		useModalStore.getState().closeModal('updateCheck');
+		const closeMenu = vi.fn();
+		renderMenu(closeMenu);
+
+		fireEvent.click(screen.getByRole('button', { name: /Roll Back Version/ }));
+
+		expect(selectModalOpen('updateCheck')(useModalStore.getState())).toBe(true);
+		expect(selectModalData('updateCheck')(useModalStore.getState())?.initialView).toBe('rollback');
+		expect(closeMenu).toHaveBeenCalledWith(false);
+		useModalStore.getState().closeModal('updateCheck');
 	});
 });

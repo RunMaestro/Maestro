@@ -22,6 +22,7 @@ import {
 	AlertCircle,
 } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
+import { activeStatusHalo } from '../../utils/theme';
 
 import { TerminalOutput, type TerminalOutputProps } from '../TerminalOutput';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
@@ -48,6 +49,7 @@ import { usePointerDrag } from '../../hooks/utils/usePointerDrag';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
+import { inlineErrorText } from '../../../shared/failureScreen';
 import { useSurfaceFontFamily } from '../../hooks/ui/useSurfaceTypography';
 import { useThrottledCallback } from '../../hooks/utils/useThrottle';
 import { useTabStore } from '../../stores/tabStore';
@@ -396,6 +398,8 @@ function TiledFilePane({
 					onShortcutUsed={actions?.onShortcutUsed}
 					onSendSelectionToAgent={actions?.onSendTextToAgent}
 					onQuoteSelection={(text) => quoteIntoAgentComposer(session.id, text)}
+					// Line review comments go to the agent this file tab belongs to.
+					reviewSessionId={session.id}
 					// Scroll + find-query memory, so switching away and back lands where
 					// the user left off instead of jumping to the top with a cleared term.
 					initialScrollTop={fileTab.scrollTop}
@@ -1010,14 +1014,17 @@ function PaneStatusIndicators({
 	return (
 		<>
 			{aiTab.agentError && (
-				<span title={`Error: ${aiTab.agentError.message}`}>
+				<span title={`Error: ${inlineErrorText(aiTab.agentError.message)}`}>
 					<AlertCircle className="w-3 h-3 shrink-0" style={{ color: theme.colors.error }} />
 				</span>
 			)}
 			{aiTab.state === 'busy' && (
 				<span
-					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-					style={{ backgroundColor: theme.colors.warning }}
+					className="w-2 h-2 rounded-full shrink-0"
+					style={{
+						backgroundColor: theme.colors.warning,
+						boxShadow: activeStatusHalo(theme.colors.warning),
+					}}
 					title="Thinking"
 				/>
 			)}

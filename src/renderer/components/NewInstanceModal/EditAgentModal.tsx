@@ -12,7 +12,7 @@ import { ThemedSelect } from '../shared/ThemedSelect';
 import { AgentResilienceSection } from './AgentResilienceSection';
 import { AgentCotExportSection } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
-import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
+import { claudeTurnMayUseTui } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -28,7 +28,9 @@ import type {
 	AgentDiscoveryRequest,
 } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { pickDirectory, usePathPickerStore } from '../../services/pathPicker';
 import { validateEditSession } from '../../utils/sessionValidation';
+import { sharesHistoryInProject } from '../../../shared/historySharing';
 import { FormInput } from '../ui/FormInput';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { AdditionalDirectoriesSection } from '../shared/AdditionalDirectoriesSection';
@@ -63,9 +65,23 @@ export function EditAgentModal({
 	onClose,
 	onSave,
 	theme,
-	session,
+	session: openedSession,
 	existingSessions,
 }: EditAgentModalProps) {
+	// The opener's copy of the agent can be stale. The Left Bar subscribes with
+	// `sidebarSessionEquality`, which ignores fields it does not draw, so after a
+	// save its copy still holds the old Additional Directories, nudge and New
+	// Session Message. Seeding the form from that copy shows the old values, and
+	// saving writes them back over the new ones (#2068). Read the store's copy
+	// once per open instead; the modal unmounts on close, so this never moves
+	// the fields under someone mid-edit.
+	const session = useMemo(
+		() =>
+			openedSession
+				? (selectSessionById(openedSession.id)(useSessionStore.getState()) ?? openedSession)
+				: null,
+		[openedSession]
+	);
 	const [instanceName, setInstanceName] = useState('');
 	const [workingDir, setWorkingDir] = useState('');
 	const [nudgeMessage, setNudgeMessage] = useState('');
@@ -392,7 +408,7 @@ export function EditAgentModal({
 				syncHistory: persisted.syncHistory,
 				shareHistoryToProjectDir: persisted.shareHistoryToProjectDir,
 			});
-		} else if (persisted?.shareHistoryToProjectDir) {
+		} else if (sharesHistoryInProject(persisted)) {
 			setSshRemoteConfig({
 				enabled: false,
 				remoteId: null,
@@ -473,15 +489,6 @@ export function EditAgentModal({
 		return sshRemoteConfig?.enabled;
 	}, [sshRemoteConfig]);
 
-	// Get SSH remote host for display
-	const sshRemoteHost = useMemo(() => {
-		if (!isSshEnabled) return undefined;
-		const remoteId = sshRemoteConfig?.remoteId;
-		if (!remoteId) return undefined;
-		const remote = sshRemotes.find((r) => r.id === remoteId);
-		return remote?.host;
-	}, [isSshEnabled, sshRemoteConfig?.remoteId, sshRemotes]);
-
 	const trimmedWorkingDir = workingDir.trim();
 	// Compared as directories, so a trailing slash is not a move.
 	const workingDirChanged =
@@ -559,7 +566,7 @@ export function EditAgentModal({
 	// then workingDirOverride (user-specified remote path), then session.projectRoot.
 	const remotePathValidation = useRemotePathValidation({
 		isSshEnabled: !!isSshEnabled,
-		validateLocal: workingDirChanged && !isSshEnabled && !localWorkingDirRelative,
+		validateLocal: !isSshEnabled && !localWorkingDirRelative,
 		path: workingDirChanged
 			? trimmedWorkingDir
 			: (sshRemoteConfig?.workingDirOverride ?? session?.projectRoot ?? ''),
@@ -576,24 +583,21 @@ export function EditAgentModal({
 		if (!session) return undefined;
 		if (!trimmedWorkingDir) return 'Working directory is required';
 		if (localWorkingDirRelative) return 'Enter an absolute path';
-		// The SSH status line below the field reports remote failures.
-		if (workingDirChanged && !isSshEnabled && remotePathValidation.error) {
-			return remotePathValidation.error;
-		}
+		// The path status line below the field reports a missing directory, in every mode.
 		return undefined;
-	}, [
-		session,
-		trimmedWorkingDir,
-		localWorkingDirRelative,
-		workingDirChanged,
-		isSshEnabled,
-		remotePathValidation.error,
-	]);
+	}, [session, trimmedWorkingDir, localWorkingDirRelative, workingDirChanged, isSshEnabled]);
 
+	// Where Browse lists folders: this disk, the agent's remote, or `null` for an SSH draft whose
+	// remote is not resolved yet (the picker says so rather than browse the wrong disk).
+	const pickerRemoteId = isSshEnabled ? sshRemoteConfig?.remoteId || null : undefined;
 	const handleSelectFolder = useCallback(async () => {
-		const folder = await window.maestro.dialog.selectFolder();
+		const folder = await pickDirectory({
+			sshRemoteId: pickerRemoteId,
+			title: 'Select Working Directory',
+			startPath: workingDir.trim() || undefined,
+		});
 		if (folder) setWorkingDir(folder);
-	}, []);
+	}, [pickerRemoteId, workingDir]);
 
 	/**
 	 * Advisory note for the context-window control when the stored value is NOT
@@ -870,6 +874,8 @@ export function EditAgentModal({
 	useEffect(() => {
 		if (!isOpen) return;
 		const handler = (e: KeyboardEvent) => {
+			// The folder picker sits above this modal and owns the keyboard while it is open.
+			if (usePathPickerStore.getState().request) return;
 			if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === 's') && !e.shiftKey) {
 				if (isImeComposing(e)) return;
 				e.preventDefault();
@@ -886,12 +892,14 @@ export function EditAgentModal({
 
 	const agentName = getAgentDisplayName(selectedToolType);
 	// Whether a turn of this agent can run through the claude TUI, as the form
-	// stands now. Dynamic counts: it starts on the TUI and leaves it only near a
-	// limit. Read through the one resolver every spawn uses, so an SSH agent
-	// that was never configured (TUI by default) is answered the same way here.
+	// stands now, by the spawn's own rule (`claudeTurnMayUseTui()`): the same
+	// answer for every agent that runs that way, local, SSH or hosted.
 	const usesInteractiveTokenSource =
 		selectedToolType === 'claude-code' &&
-		getClaudeTokenMode({ enableMaestroP, maestroPMode }, { sshEnabled: !!isSshEnabled }) !== 'api';
+		claudeTurnMayUseTui(
+			{ enableMaestroP, maestroPMode, customPath: customPath.trim() || undefined },
+			{ sshEnabled: !!isSshEnabled }
+		);
 
 	return (
 		<Modal
@@ -1129,11 +1137,7 @@ export function EditAgentModal({
 						label="Working Directory"
 						value={workingDir}
 						onChange={setWorkingDir}
-						placeholder={
-							isSshEnabled
-								? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
-								: 'Select directory...'
-						}
+						placeholder="Select directory..."
 						error={workingDirError}
 						helperText={
 							workingDirBlocker ??
@@ -1148,28 +1152,18 @@ export function EditAgentModal({
 							<button
 								type="button"
 								onClick={handleSelectFolder}
-								disabled={isSshEnabled || !!workingDirBlocker}
-								className={`p-2 rounded border transition-colors ${isSshEnabled || workingDirBlocker ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
+								disabled={!!workingDirBlocker}
+								className={`p-2 rounded border transition-colors ${workingDirBlocker ? 'opacity-40 cursor-not-allowed' : 'row-hover'}`}
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								title={
-									isSshEnabled
-										? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
-										: 'Browse folders'
-								}
+								title="Browse folders"
 								aria-label="Browse folders"
 							>
 								<Folder className="w-5 h-5" />
 							</button>
 						}
 					/>
-					{/* Remote path validation status (only shown when SSH is enabled) */}
-					{isSshEnabled && (
-						<RemotePathStatus
-							theme={theme}
-							validation={remotePathValidation}
-							remoteHost={sshRemoteHost || 'remote'}
-						/>
-					)}
+					{/* Path status, drawn the same way for a local and a remote directory */}
+					<RemotePathStatus theme={theme} validation={remotePathValidation} />
 				</div>
 
 				{/* Additional Directories: extra read/write grants beyond the working dir */}
@@ -1177,7 +1171,7 @@ export function EditAgentModal({
 					theme={theme}
 					directories={additionalDirectories}
 					onChange={setAdditionalDirectories}
-					disableBrowse={!!isSshEnabled}
+					sshRemoteId={pickerRemoteId}
 					nativelyEnforced={!!agent?.capabilities?.supportsAdditionalDirectories}
 				/>
 

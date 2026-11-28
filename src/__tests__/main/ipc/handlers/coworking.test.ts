@@ -4,6 +4,7 @@
  * uninstalling stays open so a user can clean up after turning the feature off.
  */
 
+import { ipcMain, type BrowserWindow } from 'electron';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
@@ -35,10 +36,10 @@ vi.mock('../../../../main/coworking/coworking-tools', () => ({
 	setBrowserResolver: vi.fn(),
 	setTerminalBufferResolver: vi.fn(),
 }));
-vi.mock('../../../../main/coworking/coworking-registry', () => ({
-	coworkingRegistry: {},
-}));
 
+import { coworkingRegistry } from '../../../../main/coworking/coworking-registry';
+import { setBrowserResolver } from '../../../../main/coworking/coworking-tools';
+import type { BrowserOp } from '../../../../shared/coworkingBrowser';
 import { registerCoworkingHandlers } from '../../../../main/ipc/handlers/coworking';
 import {
 	installFor,
@@ -49,6 +50,7 @@ import {
 beforeEach(() => {
 	vi.clearAllMocks();
 	h.handlers.clear();
+	coworkingRegistry.reset();
 	h.encoreFeatures = { coworking: true };
 	registerCoworkingHandlers({
 		getMainWindow: () => null,
@@ -77,5 +79,64 @@ describe('coworking IPC install gate', () => {
 
 		await h.handlers.get('coworking:uninstall')!({}, 'claude-code');
 		expect(uninstallFor).toHaveBeenCalledWith('claude-code');
+	});
+});
+
+describe('coworking browser approval from persisted settings', () => {
+	it('requires explicit typing permission for the requesting provider and always confirms eval', async () => {
+		let typingProviders: unknown;
+		const sender = { id: 1 };
+		const send = vi.fn(
+			(
+				_channel: string,
+				_tabUuid: string,
+				_sessionId: string,
+				_op: BrowserOp,
+				response: string
+			) => {
+				const listener = vi
+					.mocked(ipcMain.on)
+					.mock.calls.find(([channel]) => channel === response)?.[1];
+				listener?.({ sender }, { ok: true });
+			}
+		);
+		const win = {
+			isDestroyed: () => false,
+			webContents: { ...sender, send },
+		} as unknown as BrowserWindow;
+		registerCoworkingHandlers({
+			getMainWindow: () => win,
+			settingsStore: {
+				get: (key) =>
+					key === 'coworkingBrowserTypingWithoutConfirmation' ? typingProviders : undefined,
+			},
+		});
+		const resolve = vi.mocked(setBrowserResolver).mock.lastCall![0]!;
+		coworkingRegistry.syncSessionBrowsers('s1', [], true, 'codex', 'off');
+		coworkingRegistry.syncSessionBrowsers('s2', [], true, 'claude-code', 'dangerous');
+		const type: BrowserOp = { kind: 'type', selector: 'textarea', text: 'fixture' };
+		const evalOp: BrowserOp = { kind: 'eval', code: '1 + 1' };
+
+		async function expectApproval(sessionId: string, op: BrowserOp, required: boolean) {
+			await expect(resolve(sessionId, 'tab', op)).resolves.toEqual({ ok: true });
+			expect(send).toHaveBeenLastCalledWith(
+				'coworking:requestBrowserOp',
+				'tab',
+				sessionId,
+				op,
+				expect.any(String),
+				required
+			);
+		}
+
+		await expectApproval('s1', type, true);
+		typingProviders = 'codex';
+		await expectApproval('s1', type, true);
+		typingProviders = ['codex'];
+		await expectApproval('s1', type, false);
+		await expectApproval('s2', type, true);
+		await expectApproval('s1', evalOp, true);
+		typingProviders = [];
+		await expectApproval('s1', type, true);
 	});
 });

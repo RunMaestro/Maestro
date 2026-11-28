@@ -19,6 +19,7 @@ import {
 import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { getActiveTab, hasStagedAttachments } from '../../utils/tabHelpers';
 import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
@@ -29,6 +30,8 @@ import {
 } from '../../utils/shellCommandInput';
 import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
+import { getSideQuestionEntry } from '../../stores/sideQuestionStore';
+import { dismissSideQuestion } from '../../services/sideQuestion';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { isImeComposing } from '../../utils/ime';
 import {
@@ -203,8 +206,10 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		trackShortcutUsage('forcedParallelSend');
 		// Empty draft: open the Force Send confirmation for the most recent
 		// eligible queued item - the keyboard equivalent of clicking that item's
-		// Force Send button. With text in the draft, send the draft in parallel.
-		if (getInputValue().trim().length === 0) {
+		// Force Send button. With a draft (text, staged images, or Design Mode
+		// chips, the same things Enter would send), send the draft in parallel.
+		const activeTab = getActiveTab(activeSession);
+		if (getInputValue().trim().length === 0 && !(activeTab && hasStagedAttachments(activeTab))) {
 			logger.info('[ForcedParallel] Empty input, dispatching triggerForceSendQueued');
 			window.dispatchEvent(new CustomEvent('maestro:triggerForceSendQueued'));
 			return;
@@ -371,6 +376,19 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					// that no longer shows it, to reappear the next time the user
 					// climbs back. Answering the card is the only way past it.
 					e.preventDefault();
+					return;
+				}
+			}
+
+			// Escape on an empty composer closes a `/btw` side-question card first.
+			// stopPropagation for the same reason as below: the window-level Escape
+			// handler would otherwise blur the composer.
+			if (e.key === 'Escape' && !inputValue.trim() && activeSession?.activeTabId) {
+				const sideQuestion = getSideQuestionEntry(activeSession.id, activeSession.activeTabId);
+				if (sideQuestion) {
+					e.preventDefault();
+					e.stopPropagation();
+					dismissSideQuestion(sideQuestion.sessionId, sideQuestion.tabId);
 					return;
 				}
 			}

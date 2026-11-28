@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
 	agentCliLabel,
 	agentNotInstalledMessage,
+	classifyAgentErrorMissingBinary,
 	classifyMissingBinary,
+	agentInstallPlatform,
 	getAgentInstallCommand,
 	getAgentInstallInfo,
 	toInstallPlatform,
@@ -10,6 +12,20 @@ import {
 import { AGENT_IDS } from '../../shared/agentIds';
 
 describe('agentInstall', () => {
+	describe('agentInstallPlatform', () => {
+		it('installs for this machine locally, and for the remote POSIX shell over SSH', () => {
+			expect(agentInstallPlatform(false, 'win32')).toBe('win32');
+			expect(agentInstallPlatform(false, 'browser')).toBeNull();
+			expect(agentInstallPlatform(true, 'win32')).toBe('linux');
+		});
+
+		it('relies on every provider giving darwin and linux the same line', () => {
+			for (const id of AGENT_IDS) {
+				expect(getAgentInstallCommand(id, 'linux')).toBe(getAgentInstallCommand(id, 'darwin'));
+			}
+		});
+	});
+
 	describe('getAgentInstallCommand', () => {
 		it('returns the per-platform install for Codex', () => {
 			expect(getAgentInstallCommand('codex', 'darwin')).toBe('npm install -g @openai/codex');
@@ -20,8 +36,33 @@ describe('agentInstall', () => {
 		it('wraps PowerShell-only Windows installers so cmd.exe can run them too', () => {
 			for (const id of AGENT_IDS) {
 				const command = getAgentInstallCommand(id, 'win32');
+				if (command) {
+					// Outer shells (PowerShell, Git Bash, cmd.exe) expand $VAR / %VAR%
+					// before the inner command sees it, so win32 lines must stay free
+					// of shell-expandable variables.
+					expect(command).not.toContain('$');
+					expect(command).not.toContain('%');
+				}
 				if (command && /\birm\b/.test(command)) {
 					expect(command.startsWith('powershell ')).toBe(true);
+					expect(command).toContain('irm -ErrorAction Stop ');
+				}
+			}
+		});
+
+		it('propagates download failures in piped Unix install commands', () => {
+			for (const id of AGENT_IDS) {
+				for (const platform of ['darwin', 'linux'] as const) {
+					const command = getAgentInstallCommand(id, platform);
+					if (command && command.includes('curl ')) {
+						// Must not be a bare `curl ... | sh` or `curl ... | bash` whose
+						// exit code would be masked by the downstream shell, and must
+						// parse in fish as well as bash/zsh/sh.
+						expect(command).toMatch(/^(bash|sh) -c '/);
+						expect(command.includes('set -o pipefail') || command.includes('&& sh "$f"')).toBe(
+							true
+						);
+					}
 				}
 			}
 		});
@@ -253,7 +294,7 @@ describe('agentInstall', () => {
 				'npm install -g @openai/codex'
 			);
 			expect(agentNotInstalledMessage('claude-code', 'not-found', 'linux')).toContain(
-				'curl -fsSL https://claude.ai/install.sh | bash'
+				"bash -c 'set -o pipefail; curl -fsSL https://claude.ai/install.sh | bash'"
 			);
 		});
 
@@ -267,6 +308,40 @@ describe('agentInstall', () => {
 			const message = agentNotInstalledMessage('grok', 'not-found', 'darwin');
 			expect(message).not.toContain('Install it with:');
 			expect(message).toMatch(/install guide/);
+		});
+	});
+
+	describe('classifyAgentErrorMissingBinary', () => {
+		it('extracts runtime-missing from an agent_not_installed error raw payload', () => {
+			expect(
+				classifyAgentErrorMissingBinary({
+					type: 'agent_not_installed',
+					raw: { exitCode: 127, stderr: 'env: node: No such file or directory' },
+				})
+			).toEqual({ reason: 'runtime-missing', runtime: 'node' });
+
+			expect(
+				classifyAgentErrorMissingBinary({
+					type: 'agent_not_installed',
+					raw: { exitCode: 127, stderr: 'env: bun: No such file or directory' },
+				})
+			).toEqual({ reason: 'runtime-missing', runtime: 'bun' });
+		});
+
+		it('returns null for non-agent_not_installed errors or when raw lacks runtime evidence', () => {
+			expect(
+				classifyAgentErrorMissingBinary({
+					type: 'agent_crashed',
+					raw: { exitCode: 127, stderr: 'env: node: No such file or directory' },
+				})
+			).toBeNull();
+
+			expect(
+				classifyAgentErrorMissingBinary({
+					type: 'agent_not_installed',
+					raw: { exitCode: 127, stderr: 'sh: codex: command not found' },
+				})
+			).toBeNull();
 		});
 	});
 });

@@ -34,16 +34,18 @@ describe('CueIndicator', () => {
 		expect(screen.getByTestId('icon-zap')).toBeInTheDocument();
 	});
 
-	it('adds animate-pulse class when activeRun is true', () => {
+	// A running Cue is a static glow, never a looping animation: one infinite
+	// pulse per row kept the renderer drawing every frame while idle.
+	it('glows the Zap without animating when activeRun is true', () => {
 		const { container } = render(<CueIndicator subscriptionCount={1} activeRun={true} />);
-		const wrapper = container.querySelector('span');
-		expect(wrapper?.className).toMatch(/animate-pulse/);
+		expect(container.querySelector('[class*="animate-"]')).toBeNull();
+		expect(screen.getByTestId('icon-zap').style.filter).toContain('drop-shadow');
 	});
 
-	it('omits animate-pulse class when activeRun is false', () => {
+	it('draws no glow when activeRun is false', () => {
 		const { container } = render(<CueIndicator subscriptionCount={1} activeRun={false} />);
-		const wrapper = container.querySelector('span');
-		expect(wrapper?.className).not.toMatch(/animate-pulse/);
+		expect(container.querySelector('[class*="animate-"]')).toBeNull();
+		expect(screen.getByTestId('icon-zap').style.filter).toBe('');
 	});
 
 	it('tooltip uses singular "subscription" for count of 1 and "active" when not running', () => {

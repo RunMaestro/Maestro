@@ -269,6 +269,8 @@ List all agents
 | `-g, --group <id>` | Filter by group ID                                                                 | -       |
 | `--peer <name>`    | List the agents on one Federation peer (an SSH remote's name)                      | -       |
 | `--all-peers`      | List local agents, then the agents on every SSH remote that runs a Federation host | -       |
+| `--visible-only`   | Only agents whose group is not hidden from the Left Bar                            | -       |
+| `--hidden-only`    | Only agents in a hidden group                                                      | -       |
 | `--json`           | Output as JSON lines (for scripting)                                               | -       |
 
 ## `maestro-cli list playbooks`
@@ -404,6 +406,7 @@ Remove playbooks for deleted sessions
 | Option      | Description                                          | Default |
 | ----------- | ---------------------------------------------------- | ------- |
 | `--dry-run` | Show what would be removed without actually removing | -       |
+| `--force`   | Remove even when the agent list is empty             | -       |
 | `--json`    | Output as JSON (for scripting)                       | -       |
 
 ## `maestro-cli send <agent-id> <message>`
@@ -454,7 +457,7 @@ Ask another agent a question and print its answer (background consult - never to
 | `--timeout <seconds>` | How long to wait for the answer (default 600, min 10, max 3600)                                                                                                                                                                              | -       |
 | `--json`              | Output the answer as JSON                                                                                                                                                                                                                    | -       |
 
-`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history.
+`ask` is a background consult: it prints an answer without touching the target agent's open conversation. `dispatch` hands over work and returns a tab ID; with `--new-tab`, background tabs are hidden unless `--visible` is passed. Ask a self-contained question, or pass `--with-context` to include your transcript. The consult is recorded in the target's history. Pass `--btw` to ask a side question (`/btw`) instead: it is answered from a throwaway fork of the agent's tab conversation (`--tab <tab-id>` picks the tab, default its active tab), runs even while that tab is busy, and is never written to it. Claude Code agents only.
 
 ```bash
 maestro-cli ask "Substrate PedTome" "How does your authentication gate work?" --from "$MY_AGENT_ID"
@@ -499,6 +502,35 @@ Resume a held queued item, like the Resume button on its queued card: it runs wh
 ## `maestro-cli queue merge <item-id>`
 
 Merge a queued message into the message above it on the same tab, like the Merge button on its queued card: the two are sent as one message, in the upper one's place
+
+| Option             | Description                                      | Default |
+| ------------------ | ------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required) | -       |
+
+## `maestro-cli queue edit <item-id>`
+
+Rewrite a queued message in place, like the Edit button on its queued card. It keeps its place, hold, and images. --model / --effort replace its own pair (one left out means the default); with neither it keeps them.
+
+| Option              | Description                                      | Default |
+| ------------------- | ------------------------------------------------ | ------- |
+| `-a, --agent <id>`  | Agent whose queue the item belongs to (required) | -       |
+| `-t, --text <text>` | The new message text (required)                  | -       |
+| `--model <model>`   | Model the message runs with                      | -       |
+| `--effort <effort>` | Effort the message runs with                     | -       |
+
+## `maestro-cli queue move <item-id>`
+
+Move a queued item to another place, like dragging its queued card. --to counts from 0 (the first item that waits); with --tab it counts only that tab's items, as the tab's queue list draws them.
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose queue the item belongs to (required)  | -       |
+| `--to <position>`  | Where the item goes, 0 being the first (required) | -       |
+| `--tab <tab-id>`   | Count positions among this tab's items only       | -       |
+
+## `maestro-cli queue send-now <item-id>`
+
+Run a queued item now instead of in its turn, like the Force Send button on its queued card. It never runs over a turn on its own tab; beside another tab's turn it runs in parallel only when Forced Parallel Execution is on.
 
 | Option             | Description                                      | Default |
 | ------------------ | ------------------------------------------------ | ------- |
@@ -815,6 +847,22 @@ Archive a group chat (stops its moderator and participants); --restore brings it
 | `--restore` | Unarchive the chat instead     | -       |
 | `--json`    | Output as JSON (for scripting) | -       |
 
+## `maestro-cli group-chat unread <chat>`
+
+Mark a group chat unread (the red dot on its Left Bar row)
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli group-chat read <chat>`
+
+Clear a group chat's unread dot
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli open-file <file-path>`
 
 Open a file as a preview tab in the Maestro desktop app (audio and video play in the floating media player instead; an http(s) URL to an MP4 or audio file streams in the player; a folder is revealed in the Files panel)
@@ -894,6 +942,42 @@ Close a browser tab in the Maestro desktop app (owning agent resolved by tab ID)
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli browser-pick <tab>`
+
+Add an element or a region of a browser tab to the agent's message, as Design Mode does (tab: id from open-browser, or browser:N)
+
+| Option                 | Description                                           | Default |
+| ---------------------- | ----------------------------------------------------- | ------- |
+| `-s, --selector <css>` | CSS selector of the element (the first match is used) | -       |
+| `--rect <x,y,w,h>`     | Pick a region: x,y,width,height in viewport CSS px    | -       |
+| `--note <text>`        | Note added under the pick, as typed in the pick card  | -       |
+| `-a, --agent <id>`     | Agent that owns the tab (defaults to active)          | -       |
+| `--background`         | Add it without switching the view to the AI tab       | -       |
+| `--focus`              | Switch to the AI tab the pick lands in (default)      | -       |
+| `--queue`              | Queue it as its own message instead of a chip         | -       |
+| `--json`               | Output as JSON (for scripting)                        | -       |
+
+## `maestro-cli browser-picks`
+
+List the Design Mode chips waiting in an agent's composer, edit one's note, or remove one
+
+| Option              | Description                                               | Default |
+| ------------------- | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Agent whose composer holds the chips (defaults to active) | -       |
+| `--edit <pickId>`   | Replace this chip's note (with --note)                    | -       |
+| `--note <text>`     | The new note for --edit (an empty string clears it)       | -       |
+| `--remove <pickId>` | Remove this chip (id from the list, or from browser-pick) | -       |
+| `--json`            | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli browser-viewport <tab> [preset]`
+
+Set or read the width a browser tab shows its page at (preset: fit, desktop, laptop, tablet, phone; omit to read). tab: id from open-browser, or browser:N
+
+| Option             | Description                                  | Default |
+| ------------------ | -------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that owns the tab (defaults to active) | -       |
+| `--json`           | Output as JSON (for scripting)               | -       |
 
 ## `maestro-cli open-terminal`
 
@@ -980,7 +1064,7 @@ Configure and optionally launch an auto-run with documents
 
 ## `maestro-cli stop-auto-run`
 
-Stop the active Auto Run for an agent
+Stop the active Auto Run for an agent (on a run already stopping, end it now)
 
 | Option             | Description                    | Default |
 | ------------------ | ------------------------------ | ------- |
@@ -1007,7 +1091,7 @@ Skip the current document of an error-paused Auto Run and continue
 
 ## `maestro-cli abort-auto-run`
 
-Abort an error-paused Auto Run
+Abort an error-paused Auto Run (on a run already stopping, end it now)
 
 | Option             | Description                    | Default |
 | ------------------ | ------------------------------ | ------- |
@@ -1077,6 +1161,200 @@ Take back a note no task has read yet (accepts a unique id prefix)
 | `--background`     | Accepted and ignored: cancelling a note raises no notice | -       |
 | `--focus`          | Accepted and ignored: cancelling a note raises no notice | -       |
 | `--json`           | Output the cancelled note as JSON                        | -       |
+
+## `maestro-cli steer-auto-run dismiss <delivery-id>`
+
+Clear a delivered note and its task reply from the record (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that holds the delivered note                      | -       |
+| `--background`     | Accepted and ignored: dismissing a note raises no notice | -       |
+| `--focus`          | Accepted and ignored: dismissing a note raises no notice | -       |
+| `--json`           | Output the dismissed delivery as JSON                    | -       |
+
+## `maestro-cli diff-review`
+
+Pin review comments to lines of an agent's git diff and send them as one review
+
+## `maestro-cli diff-review list`
+
+Show the pending comments, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                               | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli diff-review add <path> <lines> <comment>`
+
+Pin a comment to path:lines of the current diff (lines: 12 or 12-14)
+
+| Option             | Description                                                 | Default |
+| ------------------ | ----------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                          | -       |
+| `--side <side>`    | Which version the line numbers are in: new (default) or old | `"new"` |
+| `--background`     | Accepted and ignored: adding a comment raises no notice     | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice     | -       |
+| `--json`           | Output the new comment as JSON                              | -       |
+
+## `maestro-cli diff-review edit <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                       | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli diff-review remove <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                        | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli diff-review clear`
+
+Discard every pending comment
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent whose diff is being reviewed                | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli diff-review send`
+
+Send every current comment to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
+
+## `maestro-cli file-review`
+
+Pin review comments to lines of a file and send them to an agent as one review
+
+## `maestro-cli file-review list <file>`
+
+Show the pending comments on a file, flagging any whose lines changed since
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                         | -       |
+| `--background`     | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--focus`          | Accepted and ignored: listing comments changes nothing on screen | -       |
+| `--json`           | Output as JSON                                                   | -       |
+
+## `maestro-cli file-review add <file> <lines> <comment>`
+
+Pin a comment to lines of a file (lines: 12 or 12-14), quoting them from disk
+
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                | -       |
+| `--background`     | Accepted and ignored: adding a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: adding a comment raises no notice | -       |
+| `--json`           | Output the new comment as JSON                          | -       |
+
+## `maestro-cli file-review edit <file> <comment-id> <comment>`
+
+Reword a pending comment, keeping its id and lines (accepts a unique id prefix)
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                 | -       |
+| `--background`     | Accepted and ignored: editing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: editing a comment raises no notice | -       |
+| `--json`           | Output the updated comment as JSON                       | -       |
+
+## `maestro-cli file-review remove <file> <comment-id>`
+
+Drop one pending comment (accepts a unique id prefix)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                                  | -       |
+| `--background`     | Accepted and ignored: removing a comment raises no notice | -       |
+| `--focus`          | Accepted and ignored: removing a comment raises no notice | -       |
+| `--json`           | Output the removed comment as JSON                        | -       |
+
+## `maestro-cli file-review clear <file>`
+
+Discard every pending comment on a file
+
+| Option             | Description                                       | Default |
+| ------------------ | ------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent the review goes to                          | -       |
+| `--background`     | Accepted and ignored: discarding raises no notice | -       |
+| `--focus`          | Accepted and ignored: discarding raises no notice | -       |
+| `--json`           | Output as JSON                                    | -       |
+
+## `maestro-cli file-review send <file>`
+
+Send every current comment on a file to the agent as one queued prompt
+
+| Option             | Description                                                        | Default |
+| ------------------ | ------------------------------------------------------------------ | ------- |
+| `-a, --agent <id>` | Agent to send the review to                                        | -       |
+| `--compose`        | Put the review in the agent's message box instead of sending it    | -       |
+| `--background`     | Deliver without switching the view (the default)                   | -       |
+| `--focus`          | Take the user to the agent, as the Send Review button does         | -       |
+| `--json`           | Output what was sent, what was left behind, and the prompt as JSON | -       |
+
+## `maestro-cli prompt-link`
+
+Create, list, and revoke one-shot maestro://run links (the window: `open prompt-links`)
+
+## `maestro-cli prompt-link create <agent> [prompt]`
+
+Create a link that runs PROMPT in a new tab of AGENT; prints the URL once
+
+| Option                 | Description                                                                 | Default |
+| ---------------------- | --------------------------------------------------------------------------- | ------- |
+| `--prompt-file <path>` | Read the prompt from a file instead of the argument                         | -       |
+| `--uses <n>`           | How many times the link may run: a number, or "unlimited" (default: 1)      | -       |
+| `--expires <duration>` | Expire after 12h, 7d, 30d, ... or "never" (default: never)                  | -       |
+| `--label <text>`       | A name to recognize the link by in lists and toasts                         | -       |
+| `--open <mode>`        | Where the tab opens when the link fires: background (default) or foreground | -       |
+| `--background`         | Accepted and ignored: creating a link changes nothing on screen             | -       |
+| `--focus`              | Accepted and ignored: creating a link changes nothing on screen             | -       |
+| `--json`               | Output the URL and link as JSON                                             | -       |
+
+## `maestro-cli prompt-link list`
+
+List active prompt links (never their URLs: only a hash is stored)
+
+| Option         | Description                                             | Default |
+| -------------- | ------------------------------------------------------- | ------- |
+| `--all`        | Include used, expired, and revoked links                | -       |
+| `--background` | Accepted and ignored: listing changes nothing on screen | -       |
+| `--focus`      | Accepted and ignored: listing changes nothing on screen | -       |
+| `--json`       | Output as JSON                                          | -       |
+
+## `maestro-cli prompt-link revoke <id>`
+
+Revoke a prompt link so it never runs again (accepts a unique id prefix)
+
+| Option         | Description                                              | Default |
+| -------------- | -------------------------------------------------------- | ------- |
+| `--background` | Accepted and ignored: revoking changes nothing on screen | -       |
+| `--focus`      | Accepted and ignored: revoking changes nothing on screen | -       |
+| `--json`       | Output the revoked link as JSON                          | -       |
 
 ## `maestro-cli marketplace`
 
@@ -1545,6 +1823,16 @@ Move an SSH remote agent, with its tabs, transcripts, provider sessions and queu
 | `--with-env` | Send secret env vars too (non-secret ones always move) | -       |
 | `--json`     | Output as JSON (for scripting)                         | -       |
 
+## `maestro-cli unlift <agent>`
+
+Move a hosted agent back from its host: an SSH agent again, with the host's tabs and transcripts; automatic moves then leave it alone
+
+| Option             | Description                                                  | Default |
+| ------------------ | ------------------------------------------------------------ | ------- |
+| `--offline`        | Do not reach the host: restore from this machine's copy only | -       |
+| `--keep-host-copy` | Leave the agent on the host too (it then has two owners)     | -       |
+| `--json`           | Output as JSON (for scripting)                               | -       |
+
 ## `maestro-cli federation`
 
 List and reconnect the Federation peers the desktop app mirrors in its Left Bar
@@ -1573,6 +1861,26 @@ Run an automatic Federation pass now: start stopped hosts, install where SSH age
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli federation agents`
+
+List every agent the mirrored hosts run, and which ones the Left Bar shows (a host agent shows only once added)
+
+| Option          | Description                                    | Default |
+| --------------- | ---------------------------------------------- | ------- |
+| `--peer <peer>` | Only this peer                                 | -       |
+| `--not-added`   | Only the agents the Left Bar does not show yet | -       |
+| `--json`        | Output as JSON (for scripting)                 | -       |
+
+## `maestro-cli federation add <agent>`
+
+Add a host's agent (peer:agent) to the Left Bar, the same as Add Hosted Agent. Remove it with remove-agent; the host keeps it
+
+| Option                | Description                                                | Default |
+| --------------------- | ---------------------------------------------------------- | ------- |
+| `-g, --group <group>` | Local group id or name for the row (default: ungrouped)    | -       |
+| `--background`        | Add it without selecting it (Left Bar selection stays put) | -       |
+| `--json`              | Output as JSON (for scripting)                             | -       |
+
 ## `maestro-cli federation reconnect <peer>`
 
 Force the desktop to reconnect to a peer and reload its agent list
@@ -1580,6 +1888,24 @@ Force the desktop to reconnect to a peer and reload its agent list
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli install-command <provider>`
+
+Print the command that installs a provider CLI (e.g. codex) on this platform, for an agent whose CLI is missing
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `--platform <platform>` | Target platform: darwin, linux, or win32 (default: this machine) | -       |
+| `--json`                | Output as JSON (for scripting)                                   | -       |
+
+## `maestro-cli rollback [version]`
+
+List earlier Maestro releases you can roll back to, or download one (e.g. 1.0.3) so the next restart installs it
+
+| Option         | Description                                                                       | Default |
+| -------------- | --------------------------------------------------------------------------------- | ------- |
+| `--prerelease` | Include beta and RC releases (default: the "Include pre-release updates" setting) | -       |
+| `--json`       | Output as JSON (for scripting)                                                    | -       |
 
 ## `maestro-cli completions <shell>`
 
@@ -1613,7 +1939,7 @@ Create a new agent in the Maestro desktop app
 | `--context-window <size>`         | Context window size in tokens                                                                                                      | -               |
 | `--provider-path <path>`          | Custom provider path                                                                                                               | -               |
 | `--ssh-remote <id>`               | SSH remote ID for remote execution                                                                                                 | -               |
-| `--ssh-cwd <path>`                | Working directory override on SSH remote                                                                                           | -               |
+| `--ssh-cwd <path>`                | Working directory on the SSH remote (the agent runs there; defaults to --cwd)                                                      | -               |
 | `--sync-history-to-remote <bool>` | Sync history entries to .maestro/history/ on the remote host (true/false; requires --ssh-remote)                                   | -               |
 | `--auto-run-folder <path>`        | Path to the agent Auto Run / playbooks folder (overrides the default &lt;cwd>/.maestro/playbooks)                                  | -               |
 | `--background`                    | Create the agent without selecting it (Left Bar selection stays put)                                                               | -               |
@@ -2177,6 +2503,39 @@ not.
 | --------------------- | --------------------------------------------------------- | ------- |
 | `--check <remote-id>` | Probe this remote now; exits 2 if it is still unreachable | -       |
 | `--json`              | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli logs`
+
+Show the running app's system log (the System Log Viewer), or clear it
+
+Reads the same in-memory buffer the System Log Viewer shows. `--level` is a
+floor (`warn` shows warnings and errors). `--clear` is the viewer's Clear
+button. Needs the desktop running.
+
+| Option                | Description                                          | Default |
+| --------------------- | ---------------------------------------------------- | ------- |
+| `--level <level>`     | Lowest level to show: debug, info, warn, or error    | -       |
+| `--context <context>` | Only entries from this context (e.g. WebServer)      | -       |
+| `--since <time>`      | Only entries since then: 30m, 2h, ISO-8601, or epoch | -       |
+| `--limit <n>`         | Keep the newest N matching entries                   | -       |
+| `--clear`             | Clear the log, as the viewer's Clear button does     | -       |
+| `--json`              | Output as JSON (for scripting)                       | -       |
+
+## `maestro-cli claude-canary`
+
+Show whether the installed Claude Code passed the TUI canary (one real maestro-p turn the app runs after every Claude Code update); --run runs it now
+
+Claude Code updates itself while Maestro runs, and a release can change the
+TUI that agents on the interactive token source drive. After every Claude Code
+(or Maestro) version change, the running app runs one small maestro-p turn with
+the flags real agents use and raises a toast when it fails. This reads the last
+result, including what Claude Code showed on a failure. Exits 2 when the last
+result is a failure. Needs the desktop running.
+
+| Option   | Description                                         | Default |
+| -------- | --------------------------------------------------- | ------- |
+| `--run`  | Run the canary now; exits 2 if Claude Code fails it | -       |
+| `--json` | Output as JSON (for scripting)                      | -       |
 
 ## `maestro-cli display`
 
@@ -3201,6 +3560,174 @@ List the vault roots whose DataviewJS blocks run without asking
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
+## `maestro-cli sqlite`
+
+SQLite: inspect a database the way the file preview shows it (read-only)
+
+## `maestro-cli sqlite info <path>`
+
+Show a SQLite database's page size and count, free pages, encoding, journal mode, user_version, and application_id, and optionally check its integrity
+
+| Option           | Description                                                                                                                | Default |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--check <mode>` | Also check integrity: quick (PRAGMA quick_check) or full (PRAGMA integrity_check, slower); exits 1 when problems are found | -       |
+| `--json`         | Output as JSON (for scripting)                                                                                             | -       |
+
+## `maestro-cli sqlite tables <path>`
+
+List the tables, views, indexes, and triggers in a SQLite database, with row counts and sizes
+
+| Option       | Description                                                                  | Default |
+| ------------ | ---------------------------------------------------------------------------- | ------- |
+| `--internal` | Also list internal objects (sqlite_sequence, autoindexes, FTS shadow tables) | -       |
+| `--json`     | Output as JSON (for scripting)                                               | -       |
+
+## `maestro-cli sqlite schema <path> <object>`
+
+Show a table's or view's columns (type, affinity, nullability, default, primary key, foreign keys), an index's key columns, and the object's CREATE SQL
+
+| Option          | Description                                                                          | Default |
+| --------------- | ------------------------------------------------------------------------------------ | ------- |
+| `--kind <kind>` | Pick table, view, index, or trigger when a trigger shares a name with another object | -       |
+| `--json`        | Output as JSON (for scripting)                                                       | -       |
+
+## `maestro-cli sqlite rows <path> <object>`
+
+Show one window of a table's or view's rows, paged with LIMIT/OFFSET and optionally filtered and sorted in SQLite
+
+| Option            | Description                                                                                                                            | Default |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--offset <n>`    | Rows to skip                                                                                                                           | `0`     |
+| `--limit <n>`     | Rows to show (at most 1000)                                                                                                            | `50`    |
+| `--sort <column>` | Sort by this column (server side, ties broken by rowid or primary key)                                                                 | -       |
+| `--desc`          | Sort descending (needs --sort)                                                                                                         | -       |
+| `--filter <expr>` | Filter rows in SQLite, in the viewer's filter language (e.g. "status = active and price > 100", or a bare word to search every column) | -       |
+| `--json`          | Output as JSON (for scripting)                                                                                                         | -       |
+
+## `maestro-cli sqlite count <path> <object>`
+
+Count a table's or view's rows, or the rows a filter matches, the way the viewer's footer counts them
+
+| Option            | Description                                                              | Default |
+| ----------------- | ------------------------------------------------------------------------ | ------- |
+| `--filter <expr>` | Count only the rows this filter matches, in the viewer's filter language | -       |
+| `--json`          | Output as JSON (for scripting)                                           | -       |
+
+## `maestro-cli sqlite blob <path> <object> <column>`
+
+Save one BLOB cell to a file, whole, the way the viewer's record view saves it (the database is not changed)
+
+| Option            | Description                                                                                             | Default |
+| ----------------- | ------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`    | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                         | -       |
+| `--offset <n>`    | The row, by position: what `sqlite rows --offset <n> --limit 1` shows with the same --sort and --filter | -       |
+| `--sort <column>` | Order used to place --offset (as for `sqlite rows`)                                                     | -       |
+| `--desc`          | Sort descending (needs --sort)                                                                          | -       |
+| `--filter <expr>` | Filter used to place --offset (as for `sqlite rows`)                                                    | -       |
+| `--output <file>` | File to write; replaced if it exists                                                                    | -       |
+| `--json`          | Output as JSON (for scripting)                                                                          | -       |
+
+## `maestro-cli sqlite query <path> <sql>`
+
+Run one read-only statement (SELECT, WITH, VALUES, EXPLAIN, or a read PRAGMA) the way the viewer's Query mode runs it, and show a window of its result; a statement that would write is refused unless --enable-editing, and an error points at the line and token it is about
+
+| Option                        | Description                                                                                                                                                                                                                                                                                                                                                      | Default |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--param <name=value>`        | Bind a parameter (`?1`, `:id`, or `id`) as TEXT (repeatable); values are bound, never spliced into the SQL                                                                                                                                                                                                                                                       | `[]`    |
+| `--param-number <name=value>` | Bind a parameter as a number (repeatable)                                                                                                                                                                                                                                                                                                                        | `[]`    |
+| `--param-null <name>`         | Bind a parameter as NULL (repeatable)                                                                                                                                                                                                                                                                                                                            | `[]`    |
+| `--plan`                      | Show the statement's EXPLAIN QUERY PLAN as a tree instead of its rows (full scans, index searches, temporary sorts); nothing is read from the tables                                                                                                                                                                                                             | -       |
+| `--offset <n>`                | Result rows to skip (not with --plan or --output)                                                                                                                                                                                                                                                                                                                | `0`     |
+| `--limit <n>`                 | Rows to show (at most 1000; not with --plan or --output)                                                                                                                                                                                                                                                                                                         | `50`    |
+| `--output <file>`             | Write EVERY row to this file instead, whole (Query mode's Export): CSV, or JSON Lines for a .jsonl / .ndjson name; the app writes it                                                                                                                                                                                                                             | -       |
+| `--format <format>`           | Export format: csv or jsonl (default: from the --output name)                                                                                                                                                                                                                                                                                                    | -       |
+| `--enable-editing`            | Lift the read-only assertion for this one run, as the viewer's Enable editing does in Query mode: a statement that changes the database (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, ...) runs once in a transaction of its own, the session's first change backing the file up beside itself first. ATTACH, DETACH, VACUUM INTO, and BEGIN/COMMIT stay refused | -       |
+| `--dry-run`                   | With --enable-editing, Query mode's Dry run: say what kind of statement it is and what it would change, then change nothing. A write is tried once in a transaction and rolled back (no backup); a read is not run; VACUUM and a writing PRAGMA are not tried                                                                                                    | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                                                                                                                                                                                                                                                                   | -       |
+
+## `maestro-cli sqlite history <path>`
+
+List the statements run against a database, newest first, as the viewer's Query mode History rail shows them (runs from the viewer and from `sqlite query` alike)
+
+| Option          | Description                                                      | Default |
+| --------------- | ---------------------------------------------------------------- | ------- |
+| `--forget <id>` | Forget one entry, by its id or the start of it the listing shows | -       |
+| `--clear`       | Forget the database's whole query history                        | -       |
+| `--json`        | Output as JSON (for scripting)                                   | -       |
+
+## `maestro-cli sqlite log <path>`
+
+List every write made to a database through Maestro, newest first, as the viewer's Log shows it: cell edits, inserts, deletes, Undo, Query-mode writes, and transactions, from the viewer and from this CLI alike. Answers "what did I just do to this database"
+
+| Option        | Description                               | Default |
+| ------------- | ----------------------------------------- | ------- |
+| `--limit <n>` | Writes to show, newest first              | `20`    |
+| `--clear`     | Forget the database's whole statement log | -       |
+| `--json`      | Output as JSON (for scripting)            | -       |
+
+## `maestro-cli sqlite set <path> <table> <column>`
+
+Change one cell the way the viewer's table view does: one parameterised UPDATE of the row named by its rowid or primary key. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first
+
+| Option                        | Description                                                                                                                                                         | Default |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`                | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                                                                     | -       |
+| `--key <column=value>`        | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)                                                    | `[]`    |
+| `--key-number <column=value>` | A primary-key value given as a number (repeatable)                                                                                                                  | `[]`    |
+| `--value <text>`              | The new value, bound as TEXT (the column affinity converts it)                                                                                                      | -       |
+| `--value-number <n>`          | The new value, bound as a number                                                                                                                                    | -       |
+| `--null`                      | Set the cell to NULL                                                                                                                                                | -       |
+| `--if-version <version>`      | Change nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a change made since you read it is never overwritten | -       |
+| `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                                                                        | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                                                                      | -       |
+
+## `maestro-cli sqlite insert <path> <table>`
+
+Add one row the way the viewer's Insert row does: one parameterised INSERT, columns not given taking their DEFAULT; a NOT NULL, UNIQUE, CHECK, or FOREIGN KEY failure is reported in SQLite's words. Writes to the database, so it needs --enable-editing; the session's first change backs the file up beside itself first
+
+| Option                          | Description                                                                                  | Default |
+| ------------------------------- | -------------------------------------------------------------------------------------------- | ------- |
+| `--value <column=value>`        | A column value, bound as TEXT (repeatable; the column affinity must keep it as text)         | `[]`    |
+| `--value-number <column=value>` | A column value, bound as a number (repeatable)                                               | `[]`    |
+| `--null <column>`               | Set a column to NULL (repeatable); a NULL rowid column takes the next rowid                  | `[]`    |
+| `--enable-editing`              | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it | -       |
+| `--json`                        | Output as JSON (for scripting)                                                               | -       |
+
+## `maestro-cli sqlite delete <path> <table>`
+
+Remove one row the way the viewer's record view does: one parameterised DELETE of the row named by its rowid or primary key. Foreign keys are enforced, so a row a child still references is refused in SQLite's words, and rows ON DELETE CASCADE or triggers changed are counted. Needs --enable-editing; the session's first change backs the file up beside itself first
+
+| Option                        | Description                                                                                                                                                     | Default |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--rowid <id>`                | The row, by rowid (`sqlite rows --json` lists each row's rowid)                                                                                                 | -       |
+| `--key <column=value>`        | The row, by primary key: one per key column, the value as TEXT (repeatable; for a table with no reachable rowid)                                                | `[]`    |
+| `--key-number <column=value>` | A primary-key value given as a number (repeatable)                                                                                                              | `[]`    |
+| `--if-version <version>`      | Delete nothing unless the row still has this version (`sqlite rows --json` lists each row's `rowVersions`), so a row changed since you read it is never removed | -       |
+| `--enable-editing`            | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it                                                                    | -       |
+| `--json`                      | Output as JSON (for scripting)                                                                                                                                  | -       |
+
+## `maestro-cli sqlite undo <path>`
+
+Take back one write the way the viewer's Undo does: apply the `undo` step that sqlite set, insert, or delete printed (with --json, or as the Undo step line): a cell gets its old value back, an inserted row is removed, a deleted row is put back whole with its rowid. Refused, with nothing written, when the row changed since the write. Needs --enable-editing
+
+| Option             | Description                                                                                  | Default |
+| ------------------ | -------------------------------------------------------------------------------------------- | ------- |
+| `--step <json>`    | The undo step as JSON, or @file holding it                                                   | -       |
+| `--enable-editing` | Unlock editing for this one call (the tab's "Enable editing"); nothing is written without it | -       |
+| `--json`           | Output as JSON (for scripting)                                                               | -       |
+
+## `maestro-cli sqlite transaction <path> <sql...>`
+
+Run several statements in ONE transaction, the way the viewer's Begin transaction, Run, and Commit or Roll back do in Query mode: each statement (one per argument, in order) sees what the ones before it changed, each one's outcome and rows are printed, and nothing reaches the file unless --commit and every statement succeeded. The first failure stops it and rolls everything back. Needs --enable-editing
+
+| Option             | Description                                                                                                                     | Default |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--commit`         | Commit at the end, when every statement ran                                                                                     | -       |
+| `--rollback`       | Roll back at the end: see what the statements do, keep nothing                                                                  | -       |
+| `--limit <n>`      | Rows to show per statement that returns rows (at most 1000)                                                                     | `50`    |
+| `--enable-editing` | Unlock editing for this one call (the tab's "Enable editing"); the session's first change backs the file up beside itself first | -       |
+| `--json`           | Output as JSON (for scripting)                                                                                                  | -       |
+
 ## `maestro-cli quick-chat`
 
 Drive the Quick Chat window: a floating chat with one agent, summoned by a hotkey
@@ -3636,6 +4163,16 @@ Show token usage, cost, and tokens per second (average and peak) per provider an
 | `--refresh`           | Re-read changed transcripts instead of the app's cached result   | -       |
 | `--json`              | Output the full token usage object as JSON                       | -       |
 
+## `maestro-cli stats-project-tokens`
+
+Show the token usage this machine's host answers a peer for projects kept here (SSH and hosted agents)
+
+| Option             | Description                                               | Default |
+| ------------------ | --------------------------------------------------------- | ------- |
+| `--provider <id>`  | Provider id (claude-code, codex, ...)                     | -       |
+| `--project <path>` | Working directory on this machine (repeatable)            | `[]`    |
+| `--json`           | Output the conversations and unreadable providers as JSON | -       |
+
 ## `maestro-cli stats-indexing`
 
 Show progress of a usage-data scan (a one-time re-read after an upgrade, or a first index)
@@ -3654,6 +4191,63 @@ Run a read-only SQL query against the stats database (SELECT / read PRAGMA only)
 | --------------------- | ----------------------------------------------------------------- | ------- |
 | `-p, --param <value>` | Bind a value to a positional ? placeholder (repeatable, in order) | `[]`    |
 | `--json`              | Output rows as JSON instead of a tab-separated table              | -       |
+
+## `maestro-cli stats-delegation`
+
+Show the delegation split (interactive turns vs Auto Run tasks vs Cue runs) for a range and per day
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output totals, delegated share, and the per-day split as JSON    | -       |
+
+## `maestro-cli stats-cue`
+
+Show the Usage Dashboard Cue tab: run totals, durations, and per-pipeline breakdowns
+
+| Option                     | Description                                                          | Default |
+| -------------------------- | -------------------------------------------------------------------- | ------- |
+| `-r, --range <range>`      | Time range: day, week, month, quarter, year, all (default: week)     | -       |
+| `--exclude-trigger <type>` | Leave out a trigger type, like the Cue tab filter chips (repeatable) | `[]`    |
+| `--json`                   | Output the full Cue statistics object as JSON                        | -       |
+
+## `maestro-cli stats-plan-usage`
+
+Show the last sampled plan usage per Anthropic (Claude) and OpenAI (Codex) account
+
+| Option                  | Description                        | Default |
+| ----------------------- | ---------------------------------- | ------- |
+| `--provider <provider>` | Only one provider: claude or codex | -       |
+| `--json`                | Output the accounts as JSON        | -       |
+
+## `maestro-cli stats-agents`
+
+Show Agents Over Time: agents that existed each day, plus created and deleted
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output the daily series as JSON                                  | -       |
+
+## `maestro-cli stats-activity`
+
+Show Auto Run runs, wizard runs, resilience outages, and shortcut presses for a range and per day
+
+| Option                | Description                                                      | Default |
+| --------------------- | ---------------------------------------------------------------- | ------- |
+| `-r, --range <range>` | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`              | Output totals and the daily counts as JSON                       | -       |
+
+## `maestro-cli stats-export`
+
+Export everything the Usage Dashboard reads for a range (the Export button)
+
+| Option                  | Description                                                      | Default |
+| ----------------------- | ---------------------------------------------------------------- | ------- |
+| `-o, --output <path>`   | File to write (a .zip of CSVs, or a .json file)                  | -       |
+| `-f, --format <format>` | csv (a zip of CSV files) or json (default: csv)                  | -       |
+| `-r, --range <range>`   | Time range: day, week, month, quarter, year, all (default: week) | -       |
+| `--json`                | Output the result (path, row counts, notes) as JSON              | -       |
 
 ## `maestro-cli plugin`
 

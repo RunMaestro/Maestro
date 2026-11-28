@@ -59,7 +59,10 @@ export interface ProviderProfileConfig {
  *     surface is `FACTORY_API_KEY`, `FACTORY_API_KEY_HELPER_TTL_MS`,
  *     `FACTORY_DISABLE_KEYRING`, `FACTORY_DROID_AUTO_UPDATE_ENABLED`,
  *     `FACTORY_LOG_FILE`, and `FACTORY_PROJECT_DIR`.
- * If either ships one, the single-line entry here is the whole change.
+ *   - `antigravity` (agy 1.5.16, 2026-11-24) keeps its state in a fixed
+ *     `~/.gemini/antigravity-cli` and its credentials in the OS keyring; no
+ *     documented var relocates either, so two agents cannot hold two accounts.
+ * If any of them ships one, the single-line entry here is the whole change.
  */
 export const PROVIDER_PROFILE_CONFIGS: Readonly<Record<string, ProviderProfileConfig>> = {
 	'claude-code': {
@@ -187,6 +190,14 @@ export function resolveAgentAccountKey(
 	return homeDir ? helpers.normalizeKey(`${homeDir}/${config.defaultSubdir}`) : null;
 }
 
+/**
+ * The home directory an account key is resolved against for an agent whose
+ * turns run on an SSH remote. This machine does not know the remote's real
+ * `$HOME`, so both the main-process probe that records a remote account's data
+ * and the renderer that looks it up name the default account `~/<subdir>`.
+ */
+export const REMOTE_ACCOUNT_HOME_DIR = '~';
+
 /** Dropdown value meaning "do not narrow by provider profile". */
 export const ALL_PROFILES_VALUE = '__all_profiles__';
 
@@ -231,6 +242,38 @@ export function providerProfileShortLabel(toolType: string, accountKey: string |
 	if (!helpers || !accountKey) return provider;
 	if (helpers.deriveShortName(accountKey) === 'default') return `${provider} default`;
 	return helpers.deriveDisplayName(accountKey);
+}
+
+/**
+ * Whether a profile is the provider's implicit `~/<subdir>` account on the
+ * machine the agent runs on: no billed credential, no named config dir. A user
+ * with one account is always on this profile, so naming it tells them nothing;
+ * surfaces that show the account only to tell several apart skip it.
+ *
+ * The default account of an SSH remote is as implicit as the default account
+ * of this machine, so the remote host does not make it worth naming: a local,
+ * an SSH, and a hosted agent on their default account all read the same.
+ */
+export function isImplicitDefaultProfile(
+	toolType: string,
+	profile: Pick<ResolvedAgentProfile, 'accountKey' | 'credential'>
+): boolean {
+	if (profile.credential || !profile.accountKey) return false;
+	return getAccountKeyHelpers(toolType)?.deriveShortName(profile.accountKey) === 'default';
+}
+
+/**
+ * The account alone, without the `@ host` suffix a remote profile's
+ * `shortLabel` carries: the billed credential's label, or the config-dir
+ * account's short name. Surfaces about ONE agent (the Main Window header) name
+ * the account this way, so the same account reads the same whether the agent
+ * runs here or on a remote; where the agent runs is the mode pill's job.
+ */
+export function profileAccountShortLabel(
+	toolType: string,
+	profile: Pick<ResolvedAgentProfile, 'accountKey' | 'credential'>
+): string {
+	return profile.credential?.label ?? providerProfileShortLabel(toolType, profile.accountKey);
 }
 
 /**

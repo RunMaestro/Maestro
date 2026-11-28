@@ -1,28 +1,23 @@
 /**
  * TasksByHourChart
  *
- * Shows when Auto Run tasks are typically triggered throughout the day.
- * Uses task startTime data to build an hourly distribution.
+ * When Auto Run's agent turns start through the day: one bar per local hour,
+ * the three busiest highlighted. A TURN is one agent invocation on a document,
+ * whether or not it ticked a checkbox (the tiles above count checkboxes), so
+ * stalled turns show up here too.
  *
- * Features:
- * - 24-hour bar chart showing task distribution
- * - Highlights peak hours
- * - Shows success rate per hour
- * - Theme-aware styling
+ * Data: `stats.getAutoRunTurnsByHour(range)`, one grouped query in main.
  */
 
-import { memo, useState, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import type { Theme } from '../../types';
-import type { StatsTimeRange, AutoRunTask } from '../../../shared/stats-types';
-import {
-	buildHourlyTaskData,
-	formatHourFull,
-	formatHourShort,
-	getMaxHourlyTaskCount,
-	getPeakHours,
-} from './tasksByHourUtils';
+import type { AutoRunTurnsByHour, StatsTimeRange } from '../../../shared/stats-types';
+import { formatHourOfDay, formatNumber } from '../../../shared/formatters';
+import { ChartTooltip } from '../widgets';
+import { getMaxHourlyTaskCount, getPeakHours } from './tasksByHourUtils';
+import { DashboardPanelState } from './DashboardPanelState';
+import { useBarChartFocus } from './useBarChartFocus';
 import { useDashboardResource } from './useDashboardResource';
-import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface TasksByHourChartProps {
 	/** Current time range for filtering */
@@ -31,120 +26,31 @@ interface TasksByHourChartProps {
 	theme: Theme;
 }
 
-const NO_TASKS: AutoRunTask[] = [];
+const NO_HOURS: AutoRunTurnsByHour[] = [];
+const AXIS_HOURS = [0, 6, 12, 18, 23];
+
+function describeHour(hour: AutoRunTurnsByHour): string {
+	const turns = `${formatNumber(hour.count)} turn${hour.count === 1 ? '' : 's'}`;
+	if (hour.count === 0) return `${formatHourOfDay(hour.hour)}: no turns`;
+	return `${formatHourOfDay(hour.hour)}: ${turns}, ${Math.round((hour.successCount / hour.count) * 100)}% succeeded`;
+}
 
 export const TasksByHourChart = memo(function TasksByHourChart({
 	timeRange,
 	theme,
 }: TasksByHourChartProps) {
-	const {
-		data,
-		loading,
-		error: fetchError,
-		refresh: fetchTasks,
-	} = useDashboardResource(
-		`autorun-tasks:${timeRange}`,
-		async () => {
-			// Every Auto Run session in the range, then each one's tasks.
-			const sessions = await window.maestro.stats.getAutoRunSessions(timeRange);
-			const taskResults = await Promise.all(
-				sessions.map((session) => window.maestro.stats.getAutoRunTasks(session.id))
-			);
-			return taskResults.flat();
-		},
-		'fetchTasksByHour'
+	const { data, loading, error, refresh } = useDashboardResource(
+		`autorun-turns-by-hour:${timeRange}`,
+		() => window.maestro.stats.getAutoRunTurnsByHour(timeRange),
+		'fetchTasksByHour',
+		{ tables: ['auto_run'] }
 	);
-	const tasks = data ?? NO_TASKS;
-	// A failed refresh keeps the last good data on screen.
-	const error = data ? null : fetchError;
-	const [hoveredHour, setHoveredHour] = useState<number | null>(null);
-
-	// Group tasks by hour
-	const hourlyData = useMemo(() => {
-		return buildHourlyTaskData(tasks);
-	}, [tasks]);
-
-	// Find max count for scaling
-	const maxCount = useMemo(() => {
-		return getMaxHourlyTaskCount(hourlyData);
-	}, [hourlyData]);
-
-	// Find peak hours (top 3)
-	const peakHours = useMemo(() => {
-		return getPeakHours(hourlyData);
-	}, [hourlyData]);
-
-	// Total tasks
-	const totalTasks = useMemo(() => tasks.length, [tasks]);
-
-	if (loading) {
-		return (
-			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3
-					className="text-sm font-medium mb-4"
-					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
-				>
-					Tasks by Time of Day
-				</h3>
-				<div
-					className="h-32 flex items-center justify-center"
-					style={{ color: theme.colors.textDim }}
-				>
-					<span className="text-sm">Loading...</span>
-				</div>
-			</div>
-		);
-	}
-
-	if (error) {
-		return (
-			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3
-					className="text-sm font-medium mb-4"
-					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
-				>
-					Tasks by Time of Day
-				</h3>
-				<div
-					className="h-32 flex flex-col items-center justify-center gap-2"
-					style={{ color: theme.colors.textDim }}
-				>
-					<span className="text-sm">Failed to load data</span>
-					<button
-						onClick={fetchTasks}
-						className="px-3 py-1 rounded text-sm"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.bgMain,
-						}}
-					>
-						Retry
-					</button>
-				</div>
-			</div>
-		);
-	}
-
-	if (totalTasks === 0) {
-		return (
-			<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
-				<h3
-					className="text-sm font-medium mb-4"
-					style={{ color: theme.colors.textMain, animation: 'card-enter 0.4s ease both' }}
-				>
-					Tasks by Time of Day
-				</h3>
-				<div
-					className="h-32 flex items-center justify-center"
-					style={{ color: theme.colors.textDim }}
-				>
-					<span className="text-sm">No Auto Run tasks in this time range</span>
-				</div>
-			</div>
-		);
-	}
-
-	const hoveredData = hoveredHour !== null ? hourlyData[hoveredHour] : null;
+	const hourlyData = data ?? NO_HOURS;
+	const maxCount = useMemo(() => getMaxHourlyTaskCount(hourlyData), [hourlyData]);
+	const peakHours = useMemo(() => getPeakHours(hourlyData), [hourlyData]);
+	const totalTurns = useMemo(() => hourlyData.reduce((sum, h) => sum + h.count, 0), [hourlyData]);
+	const { activeIndex, anchor, containerProps, barProps } = useBarChartFocus(hourlyData.length);
+	const active = activeIndex !== null ? hourlyData[activeIndex] : null;
 
 	return (
 		<div
@@ -152,81 +58,62 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 			style={{ backgroundColor: theme.colors.bgMain }}
 			data-testid="tasks-by-hour-chart"
 		>
-			<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
-				Tasks by Time of Day
+			<h3 className="text-sm font-medium mb-1" style={{ color: theme.colors.textMain }}>
+				Agent Turns by Time of Day
 			</h3>
+			<p className="text-xs mb-4" style={{ color: theme.colors.textDim }}>
+				Every agent invocation an Auto Run made, including ones that ticked no checkbox.
+			</p>
 
-			{/* Chart */}
-			<div className="relative">
-				{/* Tooltip */}
-				{hoveredData && (
-					<div
-						className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none"
-						style={{
-							left: `${(hoveredHour! / 24) * 100}%`,
-							bottom: '100%',
-							transform: 'translateX(-50%)',
-							marginBottom: '8px',
-							...elevatedSurfaceStyle(theme),
-							color: theme.colors.textMain,
-						}}
-					>
-						<div className="font-medium mb-1">{formatHourFull(hoveredHour!)}</div>
-						<div style={{ color: theme.colors.textDim }}>
-							<div>{hoveredData.count} tasks</div>
-							{hoveredData.count > 0 && (
-								<div>
-									{Math.round((hoveredData.successCount / hoveredData.count) * 100)}% success
-								</div>
-							)}
-						</div>
-					</div>
-				)}
-
-				{/* Bars */}
-				<div className="flex items-end gap-0.5 h-24" role="img" aria-label="Tasks by hour of day">
-					{hourlyData.map((hourData) => {
+			<DashboardPanelState
+				theme={theme}
+				loading={loading}
+				error={error}
+				empty={totalTurns === 0}
+				emptyMessage="No Auto Run agent turns in this time range"
+				onRetry={() => void refresh()}
+				testId="tasks-by-hour"
+			>
+				<div
+					{...containerProps}
+					className="flex items-end gap-0.5 h-24 outline-none rounded focus-visible:ring-2"
+					role="group"
+					aria-label={`Auto Run agent turns by hour of day, ${formatNumber(totalTurns)} in total`}
+					data-testid="tasks-by-hour-bars"
+				>
+					{hourlyData.map((hourData, i) => {
 						const height = maxCount > 0 ? (hourData.count / maxCount) * 100 : 0;
 						const isPeak = peakHours.includes(hourData.hour);
-						const isHovered = hoveredHour === hourData.hour;
-
+						const isActive = activeIndex === i;
 						return (
 							<div
 								key={hourData.hour}
-								className="flex-1 rounded-t cursor-pointer transition-all duration-150"
+								{...barProps(i)}
+								className="flex-1 rounded-t cursor-default transition-all duration-150"
 								style={{
 									height: `${Math.max(height, 2)}%`,
 									backgroundColor: isPeak ? theme.colors.accent : theme.colors.border,
-									opacity: isHovered ? 1 : isPeak ? 0.9 : 0.5,
+									opacity: isActive ? 1 : isPeak ? 0.9 : 0.5,
 								}}
-								onMouseEnter={() => setHoveredHour(hourData.hour)}
-								onMouseLeave={() => setHoveredHour(null)}
-								title={`${formatHourFull(hourData.hour)}: ${hourData.count} tasks`}
+								data-testid={`tasks-by-hour-bar-${hourData.hour}`}
 							/>
 						);
 					})}
 				</div>
 
-				{/* X-axis labels */}
 				<div className="flex justify-between mt-2 text-2xs" style={{ color: theme.colors.textDim }}>
-					<span>{formatHourShort(0)}</span>
-					<span>{formatHourShort(6)}</span>
-					<span>{formatHourShort(12)}</span>
-					<span>{formatHourShort(18)}</span>
-					<span>{formatHourShort(23)}</span>
+					{AXIS_HOURS.map((hour) => (
+						<span key={hour}>{formatHourOfDay(hour)}</span>
+					))}
 				</div>
-			</div>
 
-			{/* Peak hours summary */}
-			{peakHours.length > 0 && hourlyData[peakHours[0]].count > 0 && (
-				<div
-					className="mt-4 pt-3 border-t text-xs"
-					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-				>
-					Peak hours:{' '}
-					{peakHours
-						.filter((h) => hourlyData[h].count > 0)
-						.map((h) => (
+				{peakHours.length > 0 && (
+					<div
+						className="mt-4 pt-3 border-t text-xs"
+						style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+					>
+						Peak hours:{' '}
+						{peakHours.map((h) => (
 							<span
 								key={h}
 								className="inline-block px-1.5 py-0.5 rounded mx-0.5"
@@ -235,13 +122,29 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 									color: theme.colors.accent,
 								}}
 							>
-								{formatHourFull(h)}
+								{formatHourOfDay(h)}
 							</span>
 						))}
-				</div>
-			)}
+					</div>
+				)}
+
+				<span className="sr-only" aria-live="polite">
+					{active ? describeHour(active) : ''}
+				</span>
+				{active && (
+					<ChartTooltip anchor={anchor} theme={theme} testId="tasks-by-hour-tooltip">
+						<div className="font-medium mb-1">{formatHourOfDay(active.hour)}</div>
+						<div style={{ color: theme.colors.textDim }}>
+							<div>
+								{formatNumber(active.count)} turn{active.count === 1 ? '' : 's'}
+							</div>
+							{active.count > 0 && (
+								<div>{Math.round((active.successCount / active.count) * 100)}% succeeded</div>
+							)}
+						</div>
+					</ChartTooltip>
+				)}
+			</DashboardPanelState>
 		</div>
 	);
 });
-
-export default TasksByHourChart;

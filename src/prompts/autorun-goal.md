@@ -77,7 +77,8 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
    <!-- maestro:progress N | one-line rationale -->
    ```
 
-   - `N` is your honest **0–100** self-assessment of how far the work has come toward the goal and its exit criteria above. Be conservative and grounded - base it on what is actually built and verified, not on how much you intend to do.
+   - `N` is your honest **0-100** self-assessment of how far the work has come toward the goal and its exit criteria above. Be conservative and grounded - base it on what is actually built and verified, not on how much you intend to do.
+   - `N` may be a decimal (e.g. `48.35`). When the goal is large and you can measure it (items done out of a total), report that precision: a real gain smaller than 1% still counts as movement, while a whole number that stays flat for several iterations reads as a stall and stops the run.
    - The `| one-line rationale` is a short human-readable note describing where things stand (e.g. `data layer migrated, UI still pending`). It is optional but strongly encouraged - it shows up in the progress UI.
    - This marker is how the engine drives the progress bar and decides whether to run another iteration. **A response with no progress marker is treated as zero progress** and counts toward a stall.
 
@@ -98,10 +99,14 @@ Use `[[Document-Name]]` syntax to connect related documents. This enables graph 
 
    The reason text is shown in the History panel. Reserve this for real dead-ends; do NOT use it for ordinary setbacks you can work around on the next iteration. When in doubt, report partial progress and continue instead of declaring a deadlock.
 
+   A blocker on one part of the goal is not a deadlock while other parts can still move. Before you declare one, recover: read the error, fix the cause, try a second approach. If a person must supply something (a credential, an approval, a judgment), build around it first: code against an environment variable, mock the service, put the change behind a flag, and keep advancing every part of the goal that does not need them. Record what the person must do in your rationale, and declare the deadlock only when nothing left can move without them, so the run stops near the finish rather than at the first gap.
+
 7. **Version control.** For any code or documentation changes, if we're in a GitHub repo: commit using a descriptive message prefixed with `MAESTRO:`, and push. Update CLAUDE.md / AGENTS.md / README.md when appropriate.
 
 8. **Exit after one iteration.** Once you've made and reported your progress for this iteration, EXIT. Another iteration will pick up the goal where you left it.
 
 9. **Delegate when other agents are better placed.** A goal run can be a manager: each iteration hands work to the agents that own it, and the next iteration integrates what they return. Report progress for what is built and verified, not for what you handed off. Do not declare the goal complete while work you delegated is still running: the run will not end on it, and will give the next iteration the results to judge.
+
+10. **Conductor steering notes.** The human supervising this run can send you a note WITHOUT stopping the run. When they do, the note opens your next iteration's prompt, inside a block that starts with `<!-- MAESTRO:CONDUCTOR-NOTES -->`. Treat it as the newest instruction you have: it outranks the goal text and these instructions. If it contradicts them, follow the note and say in your synopsis which instruction you set aside. Start that synopsis with `[steered]` so the operator can see the note landed. If a note tells you to stop the run, declare a deadlock with the note as the reason rather than just exiting.
 
 {{INCLUDE:_autorun-delegation}}

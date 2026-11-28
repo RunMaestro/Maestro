@@ -103,7 +103,7 @@ export const CREATE_AUTO_RUN_SESSIONS_INDEXES_SQL = `
 `;
 
 /**
- * Auto Run kind column (Migration v14).
+ * Auto Run kind column (Migration v15).
  *
  * Unlike the token columns this one DOES default: every row written before it
  * existed came from the document runner or predates goal runs, so reading those
@@ -181,6 +181,57 @@ export const CREATE_SHORTCUT_USAGE_DAILY_SQL = `
   CREATE TABLE IF NOT EXISTS shortcut_usage_daily (
     date TEXT PRIMARY KEY,
     count INTEGER NOT NULL
+  )
+`;
+
+// ============================================================================
+// Shortcut Usage by Shortcut (Migration v14)
+// ============================================================================
+
+/**
+ * Per-shortcut firing counts, bucketed by local day so the dashboard's range
+ * filter applies to them the same way it applies to `shortcut_usage_daily`.
+ * One row per (day, shortcut id): bounded by days x bound shortcuts.
+ */
+export const CREATE_SHORTCUT_USAGE_BY_ID_SQL = `
+  CREATE TABLE IF NOT EXISTS shortcut_usage_by_id (
+    date TEXT NOT NULL,
+    shortcut_id TEXT NOT NULL,
+    count INTEGER NOT NULL,
+    PRIMARY KEY (date, shortcut_id)
+  )
+`;
+
+// ============================================================================
+// Query events by time and agent (Migration v14)
+// ============================================================================
+
+/** Serves "distinct agents with a query in range" without a table scan. */
+export const CREATE_QUERY_START_SESSION_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_query_start_session ON query_events(start_time, session_id)
+`;
+
+// ============================================================================
+// Token speed from the live stream, hourly (Migration v15)
+// ============================================================================
+
+/**
+ * Model API calls timed off a provider's live stream, summed per local clock
+ * hour, provider and model: the same `TokenSpeedBucket` shape the transcript
+ * path builds in memory, so both feed one summary. Agents measured from their
+ * transcript write here only when they ran on an SSH host. Bounded by hours x
+ * providers x models; peaks are read from these hourly sums.
+ */
+export const CREATE_TOKEN_SPEED_HOURLY_SQL = `
+  CREATE TABLE IF NOT EXISTS token_speed_hourly (
+    hour_start INTEGER NOT NULL,
+    agent_type TEXT NOT NULL,
+    model TEXT NOT NULL,
+    calls INTEGER NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    PRIMARY KEY (hour_start, agent_type, model)
   )
 `;
 

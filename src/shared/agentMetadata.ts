@@ -24,6 +24,7 @@ export const AGENT_DISPLAY_NAMES: Record<AgentId, string> = {
 	antigravity: 'Antigravity CLI',
 	'qwen3-coder': 'Qwen3 Coder',
 	opencode: 'OpenCode',
+	kilo: 'Kilo',
 	'factory-droid': 'Factory Droid',
 	hermes: 'Hermes',
 	pi: 'Pi',
@@ -45,11 +46,15 @@ export function getAgentDisplayName(agentId: AgentId | string): string {
 
 /**
  * Agents that use "plan mode" rather than true read-only mode.
- * Claude Code uses --permission-mode plan, OpenCode uses --agent plan.
+ * Claude Code uses --permission-mode plan, OpenCode and Kilo use --agent plan.
  * These agents can still read files but the CLI calls it "plan mode".
  * Other agents (Codex, Factory Droid) have true read-only enforcement.
  */
-const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>(['claude-code', 'opencode']);
+const PLAN_MODE_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
+	'claude-code',
+	'opencode',
+	'kilo',
+]);
 
 /**
  * Get the UI label for the read-only mode pill based on the agent.
@@ -153,6 +158,12 @@ export function hasStandardApprovalChannel(context: StandardApprovalChannelConte
 		return resolveCodexTransport(context) === 'app-server' && context.hasImages !== true;
 	}
 	if (context.toolType === 'opencode') {
+		// LOCKED (parity B1.13): OpenCode's approvals arrive on the SSE stream of the
+		// LOCAL `opencode serve` server (`OpencodeServerSpawner`, Encore `opencodeServer`).
+		// An SSH turn runs `opencode run` on the remote, and a hosted turn runs on its
+		// host's runtime, which has no server route: neither has a stream to raise an
+		// approval on. The pill is the same in every mode; it skips Standard by the same
+		// channel rule that skips it for a local agent with the server off or an image staged.
 		return (
 			context.opencodeServer === true &&
 			context.hasPrompt !== false &&
@@ -171,6 +182,7 @@ export function hasStandardApprovalChannel(context: StandardApprovalChannelConte
  */
 export const BETA_AGENTS: ReadonlySet<AgentId> = new Set<AgentId>([
 	'opencode',
+	'kilo',
 	'factory-droid',
 	'hermes',
 	'pi',
@@ -224,6 +236,7 @@ export const AGENT_PICKER_META: Record<AgentId, AgentPickerMeta | null> = {
 	'factory-droid': { description: "Factory's AI coding assistant", brandColor: '#3B82F6' },
 	grok: { description: "xAI's AI coding assistant", brandColor: '#B4B8C0' },
 	hermes: { description: "Nous Research's AI coding assistant", brandColor: '#2323FF' },
+	kilo: { description: 'Open-source AI coding assistant', brandColor: '#EAB308' },
 	omp: { description: 'Multi-model coding agent', brandColor: '#9B4DFF' },
 	opencode: { description: 'Open-source AI coding assistant', brandColor: '#F97316' },
 	pi: { description: 'Your own agent harness', brandColor: '#E4E4E7' },
@@ -308,6 +321,7 @@ const AGENT_LOGIN_COMMANDS: Record<AgentId, AgentLoginCommand | null> = {
 	'gemini-cli': { binary: 'gemini', args: '', followUp: '/auth' },
 	'qwen3-coder': { binary: 'qwen', args: '', followUp: '/auth' },
 	opencode: { binary: 'opencode', args: 'auth login' },
+	kilo: { binary: 'kilo', args: 'auth login' },
 	'factory-droid': { binary: 'droid', args: '', followUp: '/login' },
 	'copilot-cli': { binary: 'copilot', args: 'login' },
 	// Antigravity has no login subcommand: headless runs reuse the credentials
@@ -347,9 +361,10 @@ export function getAgentLoginCommand(
  *
  * Only quoting differs, but the difference is not cosmetic: PowerShell parses a
  * line that STARTS with a quoted string as an expression and simply echoes it,
- * so a quoted path runs nothing at all.
+ * so a quoted path runs nothing at all. Fish uses the same quoting as POSIX
+ * shells, but rejects `$?` and exits with `$status` instead.
  */
-export type LoginShellSyntax = 'posix' | 'powershell' | 'cmd';
+export type LoginShellSyntax = 'posix' | 'fish' | 'powershell' | 'cmd';
 
 /**
  * Render an {@link AgentLoginCommand} as the single line typed into a shell.
@@ -383,11 +398,20 @@ export function formatAgentLoginCommand(
  *
  * cmd.exe expands `%ERRORLEVEL%` when the line is parsed, before the command
  * runs, so it uses `&&` / `||` instead.
+ *
+ * PowerShell leaves `$LASTEXITCODE` unset (or stale) when a command is not found
+ * or a cmdlet throws, so `exit $LASTEXITCODE` would exit 0 on failure. Checking
+ * `$?` first preserves a native command's exit code while still exiting 1 when
+ * the command itself could not run.
+ *
+ * fish rejects `$?` before running anything on the line, so it uses `$status`.
  */
 export function exitWithCommandStatus(line: string, syntax: LoginShellSyntax = 'posix'): string {
 	switch (syntax) {
+		case 'fish':
+			return `${line}; exit $status`;
 		case 'powershell':
-			return `${line}; exit $LASTEXITCODE`;
+			return `${line}; if ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 }`;
 		case 'cmd':
 			return `${line} && exit 0 || exit 1`;
 		default:
@@ -399,12 +423,14 @@ export function exitWithCommandStatus(line: string, syntax: LoginShellSyntax = '
  * Map a Maestro shell id to the dialect its command line is written in.
  *
  * Shell ids come from `shellDetector`: on Windows `powershell`, `pwsh`, `cmd`,
- * `bash` (Git Bash), and `wsl`; elsewhere the usual Unix shells. Off Windows
- * every shell is posix, so the platform is checked first.
+ * `bash` (Git Bash), and `wsl`; elsewhere the usual Unix shells (`zsh`, `bash`,
+ * `sh`, `fish`, `tcsh`). Fish gets its own dialect regardless of platform;
+ * everything else off Windows is posix.
  */
 export function loginShellSyntaxFor(shellId: string, isWindows: boolean): LoginShellSyntax {
-	if (!isWindows) return 'posix';
 	const shell = shellId.trim().toLowerCase();
+	if (shell === 'fish') return 'fish';
+	if (!isWindows) return 'posix';
 	// Git Bash and WSL run a posix shell even though the host is Windows.
 	if (shell === 'bash' || shell === 'sh' || shell === 'wsl') return 'posix';
 	if (shell === 'cmd') return 'cmd';

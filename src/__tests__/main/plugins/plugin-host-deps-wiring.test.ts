@@ -196,6 +196,49 @@ describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
 		expect(sessions[1].parentSessionId).toBe('main');
 	});
 
+	// RC-F05: Electron's shell.openExternal on a file: URL launches an app, script
+	// or installer. The plugin sink must go through openExternalUrl, which opens a
+	// file: URL like a clicked link (launchable targets are revealed, never run).
+	it.each([false, true])(
+		'routes a plugin URL through the launch guard, never shell.openExternal (DEMO_MODE %s)',
+		async (demo) => {
+			let callback: ts.ArrowFunction | undefined;
+			const visit = (node: ts.Node): void => {
+				if (
+					ts.isPropertyAssignment(node) &&
+					node.name.getText(sf) === 'openExternal' &&
+					ts.isArrowFunction(node.initializer)
+				)
+					callback = node.initializer;
+				ts.forEachChild(node, visit);
+			};
+			visit(sf);
+			expect(callback).toBeDefined();
+			const js = ts.transpileModule(`const openExternal = ${callback!.getText(sf)}`, {
+				compilerOptions: { target: ts.ScriptTarget.ES2024 },
+			}).outputText;
+			const openExternalUrl = vi.fn(async () => {});
+			const shell = { openExternal: vi.fn(), openPath: vi.fn() };
+			const openExternal = new Function(
+				'DEMO_MODE',
+				'logger',
+				'openExternalUrl',
+				'shell',
+				`${js}\nreturn openExternal;`
+			)(demo, { info: vi.fn() }, openExternalUrl, shell);
+
+			await openExternal('file:///Applications/Calculator.app', { activate: true });
+
+			expect(shell.openExternal).not.toHaveBeenCalled();
+			expect(shell.openPath).not.toHaveBeenCalled();
+			if (demo) expect(openExternalUrl).not.toHaveBeenCalled();
+			else
+				expect(openExternalUrl).toHaveBeenCalledWith('file:///Applications/Calculator.app', {
+					activate: true,
+				});
+		}
+	);
+
 	const keys = depsObjectKeys();
 
 	it('wires the act-verb sinks TOGETHER with the host-owned registry resolver', () => {

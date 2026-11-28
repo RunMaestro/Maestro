@@ -19,6 +19,60 @@ import {
 let lastThemeId: string | null = null;
 
 /**
+ * Sanitized SVG by theme name and source, most recently used last.
+ *
+ * A Nov 2026 field trace caught a second window spending ~0.7s of one minute
+ * redrawing diagrams it had already drawn (mermaid layout plus the getBBox in
+ * `expandSvgViewBoxToContent`), with 1.3s of GC behind it. Nothing cached a
+ * render, so every remount ran mermaid again: a transcript row scrolled back
+ * into view, a tab revisited, the same diagram in another window, and every
+ * `theme` object that arrived with a new identity but the same name.
+ *
+ * The key is the theme NAME because that is already what decides mermaid's
+ * colours (`initMermaid` runs only when the name changes), so a hit can never
+ * differ from what a fresh render would have drawn.
+ */
+const RENDER_CACHE_LIMIT = 64;
+const renderCache = new Map<string, { svg: string; id: string }>();
+
+function newDiagramId(): string {
+	return `mermaid-${Math.random().toString(36).substring(2, 11)}`;
+}
+
+function renderCacheKey(themeName: string, chart: string): string {
+	return `${themeName}\u0000${chart}`;
+}
+
+/**
+ * A cached render under a fresh diagram id. Mermaid scopes the SVG's own styles
+ * and marker references to that id, so two copies on screen must not share it:
+ * an arrowhead `url(#id-...)` resolves to the FIRST match in the document, which
+ * draws nothing when that copy sits in a hidden subtree.
+ */
+function readCachedRender(key: string): string | null {
+	const hit = renderCache.get(key);
+	if (!hit) return null;
+	renderCache.delete(key);
+	renderCache.set(key, hit);
+	return hit.svg.split(hit.id).join(newDiagramId());
+}
+
+function writeCachedRender(key: string, svg: string, id: string): void {
+	renderCache.delete(key);
+	renderCache.set(key, { svg, id });
+	while (renderCache.size > RENDER_CACHE_LIMIT) {
+		const oldest = renderCache.keys().next().value;
+		if (oldest === undefined) break;
+		renderCache.delete(oldest);
+	}
+}
+
+/** Test seam: each test controls the SVG mermaid returns, so none may inherit another's. */
+export function clearMermaidRenderCache(): void {
+	renderCache.clear();
+}
+
+/**
  * DOMPurify config for Mermaid's rendered SVG.
  *
  * Mermaid renders every flowchart/class/state label as HTML inside a
@@ -395,13 +449,23 @@ const initMermaid = (theme: Theme) => {
 
 export function MermaidRenderer({ chart, theme, expandable = true }: MermaidRendererProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
+	// A diagram drawn before starts with its SVG, so a remount shows it on the
+	// first paint instead of a loading state followed by a full mermaid run.
+	const [initialSvg] = useState(() => readCachedRender(renderCacheKey(theme.name, chart)));
+	const renderedKeyRef = useRef<string | null>(
+		initialSvg === null ? null : renderCacheKey(theme.name, chart)
+	);
 	const [error, setError] = useState<string | null>(null);
-	const [isLoading, setIsLoading] = useState(true);
-	const [svgContent, setSvgContent] = useState<string | null>(null);
+	const [isLoading, setIsLoading] = useState(initialSvg === null);
+	const [svgContent, setSvgContent] = useState<string | null>(initialSvg);
 
 	// Use useLayoutEffect to ensure DOM is ready before we try to render
 	useLayoutEffect(() => {
 		let cancelled = false;
+		const key = renderCacheKey(theme.name, chart);
+		// Already showing this diagram: a new `theme` object with the same name
+		// changes nothing mermaid would draw.
+		if (renderedKeyRef.current === key) return;
 
 		const renderChart = async () => {
 			if (!chart.trim()) {
@@ -409,6 +473,16 @@ export function MermaidRenderer({ chart, theme, expandable = true }: MermaidRend
 				return;
 			}
 
+			const cached = readCachedRender(key);
+			if (cached !== null) {
+				renderedKeyRef.current = key;
+				setSvgContent(cached);
+				setError(null);
+				setIsLoading(false);
+				return;
+			}
+
+			renderedKeyRef.current = null;
 			setIsLoading(true);
 			setError(null);
 			setSvgContent(null);
@@ -435,7 +509,7 @@ export function MermaidRenderer({ chart, theme, expandable = true }: MermaidRend
 				}
 
 				// Generate a unique ID for this diagram
-				const id = `mermaid-${Math.random().toString(36).substring(2, 11)}`;
+				const id = newDiagramId();
 
 				// Render the diagram - mermaid.render returns { svg: string }
 				const result = await mermaid.render(id, trimmed);
@@ -445,6 +519,8 @@ export function MermaidRenderer({ chart, theme, expandable = true }: MermaidRend
 				if (result && result.svg) {
 					// Sanitize the SVG before setting it
 					const sanitizedSvg = DOMPurify.sanitize(result.svg, MERMAID_SANITIZE_CONFIG);
+					writeCachedRender(key, sanitizedSvg, id);
+					renderedKeyRef.current = key;
 					setSvgContent(sanitizedSvg);
 					setError(null);
 				} else {

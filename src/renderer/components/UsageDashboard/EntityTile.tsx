@@ -29,7 +29,7 @@
 import { memo, useState } from 'react';
 import type { Theme } from '../../types';
 import { MiniBadge } from '../ui/MiniBadge';
-import { Sparkline } from './Sparkline';
+import { Sparkline } from '../widgets';
 
 /** Per-tile delay of the staggered entrance, in ms. */
 const STAGGER_STEP_MS = 60;
@@ -97,7 +97,7 @@ export type EntityTileSize = keyof typeof SIZE_TOKENS;
 export interface EntityTileStat {
 	/** Short uppercase label, e.g. "Queries". Also used as the React key. */
 	label: string;
-	/** Pre-formatted value. Use an em-dash for "no data" rather than a bare 0. */
+	/** Pre-formatted value. Use "-" for "no data" rather than a bare 0. */
 	value: string;
 	/** When true, the label and value take the accent color. Used to show which
 	 *  stat the grid is currently sorted by. */

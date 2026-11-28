@@ -1,5 +1,6 @@
 import { lazy, Suspense, memo, useCallback, useMemo } from 'react';
 import type React from 'react';
+import type { UpdateCheckView } from '../../../shared/updateRollback';
 import type {
 	Theme,
 	Session,
@@ -11,6 +12,7 @@ import type {
 	BatchRunConfig,
 	SnoozeContent,
 	ThinkingMode,
+	ModalSaveOutcome,
 	QueuedItemEditPatch,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
@@ -33,11 +35,15 @@ import type { CrossTabSearchJumpTarget } from '../CrossTabSearchModal';
 import { SnoozeTabModal } from '../SnoozeTabModal';
 import { ModelEffortModal } from '../ModelEffortModal';
 import { SnoozedTabsModal } from '../SnoozedTabsModal';
+import { PromptLinksModal } from '../PromptLinks/PromptLinksModal';
+import { promptLinksAvailable } from '../../services/promptLinks';
 import { snoozeTabWithMirror } from '../../services/snoozeActions';
+import { canReceiveReview } from '../../services/reviewDelivery';
 import { PromptComposerModal } from '../PromptComposerModal';
 import { ExecutionQueueBrowser } from '../ExecutionQueueBrowser';
 import { BatchRunnerModal } from '../BatchRunnerModal';
 import { AutoRunSetupModal } from '../AutoRun/AutoRunSetupModal';
+import { pathPickerRemoteId } from '../../services/pathPicker';
 import { LightboxModal } from '../LightboxModal';
 
 // Lazy-loaded heavy modals (rarely used, loaded on-demand)
@@ -117,7 +123,7 @@ export interface AppUtilityModalsProps {
 	onDebugReleaseQueuedItem: () => void;
 	markdownEditMode: boolean;
 	onToggleMarkdownEditMode: () => void;
-	setUpdateCheckModalOpen?: (open: boolean) => void;
+	setUpdateCheckModalOpen?: (open: boolean, view?: UpdateCheckView) => void;
 	openWizard: () => void;
 	wizardGoToStep: (step: WizardStep) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;
@@ -298,7 +304,11 @@ export interface AppUtilityModalsProps {
 	onSwitchQueueSession: (sessionId: string, tabId?: string) => void;
 	onReorderQueueItems: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
-	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
+	onEditQueueItem: (
+		sessionId: string,
+		itemId: string,
+		patch: QueuedItemEditPatch
+	) => Promise<ModalSaveOutcome>;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
 	onMergeQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
@@ -566,6 +576,17 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 		[]
 	);
 	const closeSnoozeTab = useCallback(() => useModalStore.getState().closeModal('snoozeTab'), []);
+	// Prompt Links window. Rendered only while its Encore Feature is on, so
+	// turning the feature off with the window open also closes it.
+	const promptLinksOpen = useModalStore(selectModalOpen('promptLinks'));
+	const promptLinksData = useModalStore(selectModalData('promptLinks'));
+	const promptLinksEnabled = useSettingsStore((s) =>
+		promptLinksAvailable(s.encoreFeatures.promptLinks)
+	);
+	const closePromptLinks = useCallback(
+		() => useModalStore.getState().closeModal('promptLinks'),
+		[]
+	);
 	const closeSnoozedTabs = useCallback(
 		() => useModalStore.getState().closeModal('snoozedTabs'),
 		[]
@@ -726,6 +747,10 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						// Falls back to the active agent, matching the cwd fallback
 						// above: the header names whichever agent's repo is on screen.
 						sessionId={gitDiffSessionId ?? activeSession?.id}
+						// Line comments go back to that same agent as one review.
+						enableReview={canReceiveReview(
+							gitDiffSessionId ? sessions.find((s) => s.id === gitDiffSessionId) : activeSession
+						)}
 						theme={theme}
 						onClose={onCloseGitDiff}
 						onOpenFile={onOpenGitFile}
@@ -765,14 +790,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onFolderSelected={onAutoRunFolderSelected}
 					currentFolder={activeSession?.autoRunFolderPath}
 					sessionName={activeSession?.name}
-					sshRemoteId={
-						activeSession?.sshRemoteId ||
-						(activeSession?.sessionSshRemoteConfig?.enabled
-							? activeSession.sessionSshRemoteConfig.remoteId
-							: undefined) ||
-						undefined
-					}
-					sshRemoteHost={activeSession?.sshRemote?.host}
+					sshRemoteId={pathPickerRemoteId(activeSession)}
 				/>
 			)}
 
@@ -905,6 +923,11 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 						closeSnoozeTab();
 					}}
 				/>
+			)}
+
+			{/* --- PROMPT LINKS (create, copy, revoke maestro://run links) --- */}
+			{promptLinksOpen && promptLinksEnabled && (
+				<PromptLinksModal theme={theme} data={promptLinksData} onClose={closePromptLinks} />
 			)}
 
 			{/* --- MODEL & EFFORT (keyboard-only per-tab tuning) --- */}

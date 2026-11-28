@@ -21,6 +21,8 @@ import {
 	normalizeHistoryEntries,
 } from '../../shared/history';
 import { resolveSyncDir } from '../../shared/syncPath';
+import { resolveMaestroPaths } from '../../shared/maestro-lib/paths/resolve';
+import { PRIMARY_AGENT_SETTING_KEY } from '../../shared/primaryAgent';
 import type { ReadJourneyOptions, UserJourneyEntry } from '../../shared/userJourney';
 import { journeyFilePath, readJourneyFile } from '../../shared/maestro-lib/store/read-journey';
 import {
@@ -50,6 +52,41 @@ export function getSyncDir(): string {
 }
 
 /**
+ * Why `getSyncDir()` is NOT the Storage Location the settings name, as a
+ * sentence ready to print, or undefined when it is (or no location is set).
+ *
+ * `resolveSyncDir()` answers the config directory, without a word, when the
+ * named folder is missing (an unmounted drive, a renamed folder) or is one the
+ * desktop refuses. Every agent, group and setting this module reads then comes
+ * from the config directory's own copy, which is empty or out of date. A
+ * command that DELETES on the strength of that list must check this first.
+ * Read-only: it creates nothing.
+ */
+export function getSyncDirFallbackReason(): string | undefined {
+	return resolveMaestroPaths().customSyncPathRejection;
+}
+
+/**
+ * Resolve the sync directory, any custom Storage Location fallback reason, and
+ * the session list in one pass so callers that guard destructive cleanup
+ * against a stale fallback list judge the exact resolution that produced the
+ * list (not a second resolution later).
+ */
+export function readSessionsWithSyncResolution(): {
+	sessions: SessionInfo[];
+	syncDir: string;
+	fallbackReason: string | undefined;
+} {
+	const resolved = resolveMaestroPaths();
+	const syncDir = resolved.syncDir;
+	return {
+		sessions: readSessionsStoreFile(syncDir).sessions,
+		syncDir,
+		fallbackReason: resolved.customSyncPathRejection,
+	};
+}
+
+/**
  * Store files the desktop opens under the sync directory. Must match the
  * stores `initializeStores()` (src/main/stores/instances.ts) gives
  * `cwd: _syncPath`, for every one of them the CLI reads; anything not listed
@@ -63,8 +100,17 @@ const SYNCED_STORE_FILES: ReadonlySet<string> = new Set([
 	'maestro-claude-session-origins.json',
 ]);
 
-function getStoreFileDir(filename: string): string {
-	return SYNCED_STORE_FILES.has(filename) ? getSyncDir() : getConfigDir();
+const SETTINGS_FILE = 'maestro-settings.json';
+
+/**
+ * Directory a store file lives in. `forWrite` resolves a missing custom Storage
+ * Location the way the desktop does at startup (create it and use it), so a
+ * write lands in the file the app will read rather than the stale copy in the
+ * config directory (issue #2082). Reads never create the folder.
+ */
+function getStoreFileDir(filename: string, forWrite = false): string {
+	if (!SYNCED_STORE_FILES.has(filename)) return getConfigDir();
+	return forWrite ? resolveSyncDir(getConfigDir(), { create: true }) : getSyncDir();
 }
 
 /**
@@ -80,8 +126,8 @@ export function getStoreFilePath(filename: string): string {
  * Read and parse an Electron Store JSON file
  * Returns undefined if file doesn't exist
  */
-function readStoreFile<T>(filename: string): T | undefined {
-	const filePath = getStoreFilePath(filename);
+function readStoreFile<T>(filename: string, dir = getStoreFileDir(filename)): T | undefined {
+	const filePath = path.join(dir, filename);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -98,8 +144,11 @@ function readStoreFile<T>(filename: string): T | undefined {
  * Write a JSON value back to an Electron Store JSON file.
  * Creates the file (and parent directory) if it doesn't exist.
  */
-function writeStoreFile<T>(filename: string, data: T): void {
-	const dirPath = getStoreFileDir(filename);
+function writeStoreFile<T>(
+	filename: string,
+	data: T,
+	dirPath = getStoreFileDir(filename, true)
+): void {
 	if (!fs.existsSync(dirPath)) {
 		fs.mkdirSync(dirPath, { recursive: true });
 	}
@@ -166,6 +215,15 @@ function refersToDormantAgent(ref: string): boolean {
  */
 export function readActiveAgentId(): string | null {
 	const id = readSessionsStoreFile(getSyncDir()).data?.activeSessionId;
+	return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+/**
+ * The Primary Agent's id (Settings > General > Primary Agent), or null when
+ * none is set. The stored id is not checked against the agent list here.
+ */
+export function readPrimaryAgentId(): string | null {
+	const id = readSettingValue(PRIMARY_AGENT_SETTING_KEY);
 	return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
@@ -392,10 +450,17 @@ export function readSettingValue(key: string): unknown {
  * Returns true on success.
  */
 export function writeSettingValue(key: string, value: unknown): boolean {
-	const settings = readSettings();
-	setNestedValue(settings, key, value);
-	writeStoreFile('maestro-settings.json', settings);
+	// Read and write the same directory, resolved for a write, so the merge
+	// starts from the file the desktop reads and never from a stale copy.
+	writeSettingValueIn(getStoreFileDir(SETTINGS_FILE, true), key, value);
 	return true;
+}
+
+/** `writeSettingValue` against a settings directory the caller already resolved. */
+export function writeSettingValueIn(dir: string, key: string, value: unknown): void {
+	const settings = readStoreFile<SettingsStore>(SETTINGS_FILE, dir) || {};
+	setNestedValue(settings, key, value);
+	writeStoreFile(SETTINGS_FILE, settings, dir);
 }
 
 /**
@@ -404,10 +469,11 @@ export function writeSettingValue(key: string, value: unknown): boolean {
  * Returns true if the key existed and was removed.
  */
 export function deleteSettingValue(key: string): boolean {
-	const settings = readSettings();
+	const dir = getStoreFileDir(SETTINGS_FILE, true);
+	const settings = readStoreFile<SettingsStore>(SETTINGS_FILE, dir) || {};
 	const removed = deleteNestedValue(settings, key);
 	if (removed) {
-		writeStoreFile('maestro-settings.json', settings);
+		writeStoreFile(SETTINGS_FILE, settings, dir);
 	}
 	return removed;
 }
@@ -854,18 +920,46 @@ export function addHistoryEntry(entry: HistoryEntry): void {
 // ============================================================================
 
 /**
- * Read all SSH remote configurations from settings
+ * Read all SSH remote configurations from settings.
  */
 export function readSshRemotes(): SshRemoteConfig[] {
 	const settings = readSettings();
 	return (settings.sshRemotes as SshRemoteConfig[]) || [];
 }
 
+/** An SSH remote list read for an edit, with the settings directory it came from. */
+export interface SshRemotesEdit {
+	remotes: SshRemoteConfig[];
+	/** `defaultSshRemoteId` from the same settings file as `remotes`. */
+	defaultId: string | null;
+	dir: string;
+}
+
 /**
- * Write SSH remotes array back to settings
+ * Read the SSH remote list for an edit. Resolves the settings file the way a
+ * write does (creating a missing custom Storage Location), so the edit starts
+ * from the list the desktop reads (issue #2082). Pass the returned `dir` to
+ * `writeSshRemotes()` (and `writeSettingValueIn()` for the default remote) so
+ * every write lands in the same store even if a later resolution would pick a
+ * different directory.
  */
-export function writeSshRemotes(remotes: SshRemoteConfig[]): void {
-	writeSettingValue('sshRemotes', remotes);
+export function readSshRemotesForEdit(): SshRemotesEdit {
+	const dir = getStoreFileDir(SETTINGS_FILE, true);
+	const settings = readStoreFile<SettingsStore>(SETTINGS_FILE, dir) || {};
+	return {
+		remotes: (settings.sshRemotes as SshRemoteConfig[]) || [],
+		defaultId: (settings.defaultSshRemoteId as string | null | undefined) ?? null,
+		dir,
+	};
+}
+
+/**
+ * Write SSH remotes array back to settings. `dir` is the directory
+ * `readSshRemotesForEdit()` returned; without it the directory is resolved for
+ * a write.
+ */
+export function writeSshRemotes(remotes: SshRemoteConfig[], dir?: string): void {
+	writeSettingValueIn(dir ?? getStoreFileDir(SETTINGS_FILE, true), 'sshRemotes', remotes);
 }
 
 /**

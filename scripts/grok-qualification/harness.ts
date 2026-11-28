@@ -16387,6 +16387,7 @@ interface MainAccountingConsumers {
 		}) => string;
 	};
 	registerStatsHandlers: (deps: unknown) => void;
+	initializeStores: (options: { productionDataPath: string }) => unknown;
 	flushQueryEventsSync: () => void;
 	invalidateTokenUsageMemo: () => void;
 	initializeSessionStorages: () => void;
@@ -16457,6 +16458,7 @@ async function loadMainAccountingConsumers(
 		[
 			`export { initializeStatsDB, getStatsDB, closeStatsDB } from ${src('stats/singleton.ts')};`,
 			`export { registerStatsHandlers } from ${src('ipc/handlers/stats.ts')};`,
+			`export { initializeStores } from ${src('stores/instances.ts')};`,
 			`export { flushQueryEventsSync } from ${src('stats/query-events-buffer.ts')};`,
 			`export { invalidateTokenUsageMemo } from ${src('stats/token-usage/token-usage-accessor.ts')};`,
 			`export { initializeSessionStorages } from ${src('storage/index.ts')};`,
@@ -17290,6 +17292,8 @@ async function runAccountingConsumers(
 			mod = await loadMainAccountingConsumers(w.workspace, userData);
 			mod.initializeSessionStorages();
 			mod.initializeStatsDB();
+			// The export reads the agent directory (agents.csv) from the stores.
+			mod.initializeStores({ productionDataPath: userData });
 			mod.registerStatsHandlers({ getMainWindow: () => null });
 		} catch (e) {
 			for (const r of legs) settleAccountingConsumer(r, [`consumer-load-failed: ${errorText(e)}`]);
@@ -17746,7 +17750,7 @@ async function runCueLeg(
 				import('../../src/main/cue/cue-shell-executor'),
 				import('../../src/main/cue/cue-cli-executor'),
 				import('../../src/main/cue/cue-process-lifecycle'),
-				import('../../src/main/cue/cue-agent-binary'),
+				import('../../src/shared/maestro-lib/launch/agent-binary'),
 				import('../../src/main/cue/cue-spawn-builder'),
 				import('../../src/shared/cue/turn-settings'),
 				import('../../src/shared/maestro-lib/parsers'),
@@ -17974,7 +17978,7 @@ async function runCueLeg(
 					stopCueRun: executor.stopCueRun,
 					findSession: (id) => (id === record.id ? record : undefined),
 					resolveAgentBinary: ({ session }) =>
-						agentBinary.resolveCueAgentBinary({
+						agentBinary.resolveAgentBinary({
 							sessionCustomPath: session.customPath,
 							providerCustomPath: undefined,
 							sshEnabled: false,

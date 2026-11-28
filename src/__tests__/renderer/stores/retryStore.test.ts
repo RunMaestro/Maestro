@@ -29,12 +29,14 @@ import {
 	noteDirectDispatch,
 	replayAfterAuth,
 	stopRetriesForAgent,
+	resetPersistedSnapshotsForTests,
 	useRetryStore,
 	noteFailedTurnExited,
 	cancelContextCompaction,
 	cancelRecoveryForTab,
 	isAwaitingContextCompaction,
 	registerAgentErrorSurfacer,
+	outageCauseOf,
 } from '../../../renderer/stores/retryStore';
 import {
 	registerContextCompactionSpawner,
@@ -42,7 +44,11 @@ import {
 } from '../../../renderer/services/contextCompaction';
 import { getContextCompactionBlocker } from '../../../shared/contextCompaction';
 import { logger } from '../../../renderer/utils/logger';
-import { useSessionStore, updateSessionWith } from '../../../renderer/stores/sessionStore';
+import {
+	useSessionStore,
+	updateAiTab,
+	updateSessionWith,
+} from '../../../renderer/stores/sessionStore';
 import { settleTabThinkingState } from '../../../renderer/utils/tabHelpers';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
@@ -52,7 +58,8 @@ import {
 	RESET_TIME_BUFFER_MS,
 	TOKEN_EXHAUSTION_POLL_STEPS_MS,
 } from '../../../shared/retryClassification';
-import { createMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, createMockSession, createModeSession } from '../../helpers/mockSession';
+import { getSessionSshRemoteId } from '../../../renderer/utils/sessionHelpers';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { AgentError } from '../../../renderer/types';
 
@@ -206,6 +213,63 @@ describe('scheduleRetryForError - classification gating', () => {
 	it('returns false when the session cannot be found', () => {
 		seedSnapshot('missing', 't1');
 		expect(scheduleRetryForError('missing', 't1', overload())).toBe(false);
+	});
+});
+
+describe('scheduleRetryForError - what the outage card names (R6)', () => {
+	/** The error a turn gets when its link is down: ssh to the remote, or the hosted agent's host. */
+	const linkDown = (remoteId: string) =>
+		err({
+			type: 'network_error',
+			message: 'SSH connection failed: Connection refused',
+			sshRemoteId: remoteId,
+		});
+
+	it.each(AGENT_MODES)('names a provider overload as the provider, in %s mode', (mode) => {
+		useSessionStore.setState({
+			sessions: [
+				createModeSession(mode, {
+					id: 'm1',
+					aiTabs: [createMockAITab({ id: 't1' })],
+					activeTabId: 't1',
+				}),
+			],
+		} as any);
+		seedSnapshot('m1', 't1');
+		expect(scheduleRetryForError('m1', 't1', overload())).toBe(true);
+		const outage = getOutage(getRetryEntry('m1', 't1')!.outageId);
+		expect(outage?.strategy).toBe('availability');
+		expect(outage?.cause).toBeUndefined();
+	});
+
+	it.each(['ssh', 'hosted'] as const)(
+		'names a link that was down as the connection, never an overload, in %s mode',
+		(mode) => {
+			const session = createModeSession(mode, {
+				id: 'm2',
+				aiTabs: [createMockAITab({ id: 't1' })],
+				activeTabId: 't1',
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+			seedSnapshot('m2', 't1');
+			const remoteId = getSessionSshRemoteId(session)!;
+			const error =
+				mode === 'hosted'
+					? { ...linkDown(remoteId), source: 'host-link' as const }
+					: linkDown(remoteId);
+			expect(scheduleRetryForError('m2', 't1', error)).toBe(true);
+			const outage = getOutage(getRetryEntry('m2', 't1')!.outageId);
+			// Same backoff as an availability outage; only the words differ.
+			expect(outage?.strategy).toBe('availability');
+			expect(outage?.cause).toBe('connection');
+		}
+	);
+
+	it('keeps a provider network error with no link as the provider (a local agent)', () => {
+		expect(
+			outageCauseOf(err({ type: 'network_error', message: 'fetch failed: ECONNRESET' }))
+		).toBeUndefined();
+		expect(outageCauseOf(linkDown('r1'))).toBe('connection');
 	});
 });
 
@@ -691,6 +755,44 @@ describe('cancel and settle transitions', () => {
 		vi.advanceTimersByTime(availabilityDelayMs(0));
 		expect(processQueuedItem).toHaveBeenCalledTimes(1);
 		expect(processQueuedItem.mock.calls[0][0]).toBe('stopB');
+	});
+
+	// Parity R45: a stopped card says so on its own transcript entry, so a client that reads this
+	// tab from another machine (a hosted agent's desktop host) knows no retry holds the message.
+	it.each(AGENT_MODES)('%s: Stop marks the card it ends as stopped (R45)', (mode) => {
+		useSessionStore.setState({
+			sessions: [
+				createModeSession(mode, {
+					id: 'stopCard',
+					aiTabs: [
+						createMockAITab({
+							id: 't1',
+							logs: [
+								{ id: 'u1', timestamp: 1, source: 'user', text: 'hi' },
+								{ id: 'old', timestamp: 2, source: 'system', text: 'x', retryOutageId: 'other' },
+							],
+						}),
+					],
+				}),
+			],
+		} as any);
+		seedSnapshot('stopCard', 't1');
+		scheduleRetryForError('stopCard', 't1', overload());
+		const outageId = getRetryEntry('stopCard', 't1')!.outageId;
+		updateAiTab('stopCard', 't1', (tab) => ({
+			...tab,
+			logs: [
+				...tab.logs,
+				{ id: 'card', timestamp: 3, source: 'system', text: 'Overloaded', retryOutageId: outageId },
+			],
+		}));
+
+		stopRetriesForAgent('stopCard');
+
+		const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(logs.find((entry) => entry.id === 'card')?.retryStopped).toBe(true);
+		// Another outage's card is left alone.
+		expect(logs.find((entry) => entry.id === 'old')?.retryStopped).toBeUndefined();
 	});
 
 	// `maestro-cli interrupt --tab` stops one turn: the agent's other tabs keep
@@ -1460,6 +1562,80 @@ describe('replayAfterAuth', () => {
 		expect(session.executionQueue).toHaveLength(1);
 		expect(session.state).not.toBe('busy');
 	});
+
+	it('notes provider CLI install rather than re-auth when replayed with reason install', () => {
+		setupSession('sess-install', 'tab-1');
+		seedSnapshot('sess-install', 'tab-1');
+
+		replayAfterAuth('sess-install', ['tab-1'], 'install');
+
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+		expect(tab.logs.some((l: any) => l.text === 'Re-sent after installing provider CLI.')).toBe(
+			true
+		);
+	});
+
+	// No fallback onto the active tab: processQueuedItem refuses an item whose
+	// own tab is gone, so marking another tab busy for it would leave that tab
+	// pulsing with no turn behind it (see applyReplayDispatch).
+	it('does not move an auth replay onto the active tab when the original tab was closed', () => {
+		setupSession('sess-closed-tab', 'tab-other');
+		seedSnapshot('sess-closed-tab', 'tab-closed');
+
+		replayAfterAuth('sess-closed-tab', ['tab-closed']);
+
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+		expect(tab.id).toBe('tab-other');
+		expect(tab.state).not.toBe('busy');
+		expect(tab.logs.some((l: any) => l.text === 'Re-sent after re-authentication.')).toBe(false);
+	});
+
+	it('notifies and does not fall back to the active tab on install replay if the tab closes during persisted snapshot read', async () => {
+		resetPersistedSnapshotsForTests();
+		setupTabs('sess-persisted-install', ['tab-1', 'tab-other']);
+		useNotificationStore.setState({ toasts: [] } as any);
+
+		let resolveSettingsGet!: (value: unknown) => void;
+		const settingsGet = vi.fn(
+			() =>
+				new Promise((resolve) => {
+					resolveSettingsGet = resolve;
+				})
+		);
+		const settingsSet = vi.fn().mockResolvedValue(undefined);
+		const prevSettings = (window as any).maestro?.settings;
+		(window as any).maestro = {
+			...(window as any).maestro,
+			settings: { get: settingsGet, set: settingsSet },
+		};
+
+		try {
+			replayAfterAuth('sess-persisted-install', ['tab-1'], 'install');
+
+			// Close tab-1 while loadPersistedSnapshots is awaiting settings.get.
+			setupTabs('sess-persisted-install', ['tab-other']);
+			resolveSettingsGet({
+				'sess-persisted-install:tab-1': {
+					item: { id: 'item-p', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'hi' },
+					deps,
+					savedAt: NOW,
+				},
+			});
+
+			await vi.waitFor(() => {
+				const toasts = useNotificationStore.getState().toasts;
+				expect(toasts.some((t) => t.color === 'yellow' && t.title === 'Nothing to resend')).toBe(
+					true
+				);
+			});
+			expect(processQueuedItem).not.toHaveBeenCalled();
+		} finally {
+			resetPersistedSnapshotsForTests();
+			(window as any).maestro = { ...(window as any).maestro, settings: prevSettings };
+		}
+	});
 });
 
 /**
@@ -1571,6 +1747,42 @@ describe('queue durability across an outage', () => {
 		expect(session.agentErrorTabId).toBe('t1');
 		expect(sessionQueue()).toEqual(['item-2']);
 	});
+
+	// Parity R62: Stop on a message kept for a lost link leaves the agent Ready, as a local agent
+	// and a hosted one read: the outage dialog says what is down, nothing in the agent is the
+	// user's to fix. The stopped card stays; the tab's copy of the link error goes with it.
+	it.each(['ssh', 'hosted'] as const)(
+		'leaves a %s agent Ready after Stop on a message kept for a lost link (R62)',
+		(mode) => {
+			const linkDown = err({
+				type: 'network_error',
+				message: 'SSH connection failed: Connection refused',
+				sshRemoteId: 'r1',
+			});
+			useSessionStore.setState({
+				sessions: [
+					createModeSession(mode, {
+						id: 'q7',
+						state: 'idle',
+						activeTabId: 't1',
+						aiTabs: [createMockAITab({ id: 't1', agentError: linkDown })],
+					}),
+				],
+			} as any);
+			seedSnapshot('q7', 't1');
+			expect(scheduleRetryForError('q7', 't1', linkDown)).toBe(true);
+			const outageId = getRetryEntry('q7', 't1')!.outageId;
+
+			cancelRetry('q7', 't1');
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.state).not.toBe('error');
+			expect(session.agentError).toBeUndefined();
+			expect(session.agentErrorTabId).toBeUndefined();
+			expect(session.aiTabs[0].agentError).toBeUndefined();
+			expect(useRetryStore.getState().outages[outageId]?.status).toBe('stopped');
+		}
+	);
 });
 
 /**

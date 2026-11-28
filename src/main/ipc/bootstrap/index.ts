@@ -36,6 +36,7 @@ import {
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
 	registerParquetHandlers,
+	registerSqliteHandlers,
 	registerCodexVisualizationHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
@@ -44,12 +45,14 @@ import {
 	registerFederationHandlers,
 	registerMaestroRunHandlers,
 	registerDataviewHandlers,
+	registerPromptLinkHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerNotificationHistoryHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
 	registerAiCommandHandlers,
+	registerSideQuestionHandlers,
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerCrossAgentHandlers,
@@ -79,9 +82,17 @@ import { wireMultiWindowTelemetry } from '../../stats';
 import { saveWindowState } from '../../window-state-persistence';
 import { startCoworkingService } from '../../coworking/coworking-lifecycle';
 import { isEncoreFeatureEnabled } from '../../../shared/encoreFeatureDefaults';
+import { registerAutoRunRestartResumeHandlers } from '../../autorun-restart-resume';
 import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
+import {
+	getCueHistoryBuckets,
+	getCueHistoryEntries,
+	getCueHistoryFingerprint,
+	getCueHistoryGroupRuns,
+	getCueHistoryGroups,
+} from '../../cue/stats/cue-stats-query';
 import { createCotStateKeyringAnchor } from '../../cot-export/config-store';
 import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
@@ -97,6 +108,8 @@ import {
 	setGetCustomShellPathCallback,
 } from '../../group-chat/group-chat-router';
 import { mapSessionsForMentions } from './session-mention-mapper';
+import { getPeerMirrorService, noteHostedAgentsChanged } from '../../federation';
+import { withHostedAgentsNote } from './sessions-persisted';
 import { resolveSessionWindow } from './session-window';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { IpcBootstrapDependencies } from './types';
@@ -141,9 +154,15 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		readAgentConfigs: () => deps.agentConfigsStore.get('configs', {}),
 		getMainWindow: deps.getMainWindow,
 		getProcessManager: deps.getProcessManager,
-		readAutoMove: () => deps.settingsStore.get('federationAutoMove', true) !== false,
+		// With hosted agents off, nothing moves onto a host on its own either.
+		readAutoMove: () =>
+			deps.settingsStore.get('federationAutoMove', false) === true &&
+			deps.settingsStore.get('federationHostedAgents', false) === true,
 		watchSessions: (onChange) => deps.sessionsStore.onDidChange('sessions', () => onChange()),
 		safeSend: deps.safeSend,
+		// A hosted agent's Cue runs run here: its History panel lists them as a local agent's does.
+		getCueHistoryEntries,
+		getCueHistoryGroups,
 	});
 
 	// MaestroRun - install, grant walkthrough, and the readiness that gates its
@@ -153,6 +172,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Dataview - DQL queries, index status and rebuild, and the `dataview:changed`
 	// push to every window. See src/main/ipc/handlers/dataview.ts.
 	registerDataviewHandlers({ safeSend: deps.safeSend });
+
+	// Prompt Links (`maestro://run/<token>`) - desktop-only, the bridge refuses
+	// every `promptLinks:*` channel. See src/main/ipc/handlers/promptLinks.ts.
+	registerPromptLinkHandlers();
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({
@@ -170,6 +193,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 
+	// Auto Runs saved across an update restart - src/main/autorun-restart-resume.ts
+	registerAutoRunRestartResumeHandlers(deps.app.getPath('userData'));
+
 	// Playbook operations - extracted to src/main/ipc/handlers/playbooks.ts
 	registerPlaybooksHandlers({
 		mainWindow: deps.getMainWindow(),
@@ -179,18 +205,25 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// History operations - extracted to src/main/ipc/handlers/history.ts
 	// Uses HistoryManager singleton for per-session storage
+	const readSessionRecords = (): Array<Record<string, unknown>> =>
+		(deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>).filter(
+			(s) => typeof s === 'object' && s !== null
+		);
 	registerHistoryHandlers({
 		safeSend: deps.safeSend,
 		emitPluginEvent: (event) => deps.getPluginEventBus()?.emit(event),
 		getMaxEntries: () =>
 			resolveHistoryEntryLimit(deps.settingsStore.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION)),
 		getSshRemoteById,
-		getSessionById: (id: string) => {
-			const sessions = (
-				deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>
-			).filter((s) => typeof s === 'object' && s !== null);
-			return sessions.find((s) => s.id === id);
-		},
+		getSessionById: (id: string) => readSessionRecords().find((s) => s.id === id),
+		// Cue runs live in `cue_events`, not the JSONL file: without these the History panel of
+		// every agent (local, SSH, or hosted) lists no Cue run at all.
+		getAllSessions: readSessionRecords,
+		getCueHistoryEntries,
+		getCueHistoryGroups,
+		getCueHistoryGroupRuns,
+		getCueHistoryBuckets,
+		getCueHistoryFingerprint,
 	});
 
 	// Director's Notes - unified history + synopsis generation
@@ -199,6 +232,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
 		getMainWindow: deps.getMainWindow,
+		// Cue runs live in `cue_events`, never in the JSONL History. Without these
+		// Director's Notes reports zero Cue activity and its graph has no CUE bars.
+		getCueHistoryEntries,
+		getCueHistoryBuckets,
+		getCueHistoryFingerprint,
 	});
 
 	// Cross-agent @mention dispatch - streams a target agent's response back
@@ -289,7 +327,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// block the UI thread. Await it here so the handlers' boolean
 		// acknowledgement keeps meaning "this revision reached disk".
 		flushSessionWrites: flushPendingSessionWrites,
-		onSessionsPersisted: pianolaPersistenceConsumer(deps.getPianolaSupervisor),
+		onSessionsPersisted: withHostedAgentsNote(
+			pianolaPersistenceConsumer(deps.getPianolaSupervisor),
+			noteHostedAgentsChanged
+		),
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated
 	// dedupe so the two emit paths share one last-emitted id.
@@ -482,7 +523,6 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register Stats handlers for usage tracking
 	registerStatsHandlers({
-		getMainWindow: deps.getMainWindow,
 		settingsStore: deps.settingsStore,
 	});
 
@@ -515,7 +555,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 				deps.settingsStore.get('encoreFeatures')
 			),
 			getSshRemoteById,
-			deps.getProcessManager()
+			deps.getProcessManager(),
+			{
+				hostingEnabled: () => deps.settingsStore.get('federationHostedAgents', false) === true,
+				peers: () => getPeerMirrorService()?.snapshot().peers ?? [],
+			}
 		)
 	);
 
@@ -541,12 +585,15 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	setupLoggerEventForwarding(deps.getMainWindow);
 
 	// Register filesystem handlers (extracted to handlers/filesystem.ts)
-	registerFilesystemHandlers();
+	registerFilesystemHandlers({ safeSend: deps.safeSend });
 
 	// Parquet preview handlers. Registered HERE, not only in registerAllHandlers()
 	// - that function is dead code, so a registration that lives solely there
 	// never runs and every Parquet preview fails with no handler.
 	registerParquetHandlers();
+
+	// SQLite preview handlers, registered here for the same reason as parquet.
+	registerSqliteHandlers();
 
 	// Codex `visualize` content references rendered inline in the transcript.
 	registerCodexVisualizationHandlers();
@@ -601,6 +648,14 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 
+	// Side question handlers (`/btw`): a throwaway fork of the tab's session.
+	registerSideQuestionHandlers({
+		getProcessManager: deps.getProcessManager,
+		getAgentDetector: deps.getAgentDetector,
+		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
+	});
+
 	// Register WakaTime handlers (CLI check, API key validation)
 	registerWakatimeHandlers(deps.wakatimeManager);
 
@@ -611,5 +666,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerFeedbackHandlers({
 		getProcessManager: deps.getProcessManager,
 		debugPackageDeps: deps.debugPackageDeps,
+		// Lets the feedback conversation prompt say whether maestro-cli is installed.
+		getMaestroCliManager: () => deps.maestroCliManager,
 	});
 }

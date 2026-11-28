@@ -81,6 +81,8 @@ function StatusRow({
 }
 
 export function FederationAutomationSection({ theme }: { theme: Theme }) {
+	const hostedAgents = useSettingsStore((s) => s.federationHostedAgents);
+	const setHostedAgents = useSettingsStore((s) => s.setFederationHostedAgents);
 	const autoMove = useSettingsStore((s) => s.federationAutoMove);
 	const setAutoMove = useSettingsStore((s) => s.setFederationAutoMove);
 	const snapshot = useFederationAutoStore((s) => s.snapshot);
@@ -119,8 +121,16 @@ export function FederationAutomationSection({ theme }: { theme: Theme }) {
 			<SectionCard theme={theme}>
 				<ToggleSettingRow
 					theme={theme}
+					title="Run hosted agents on their host"
+					description="Off by default. Off: every hosted agent works as the SSH agent it was, from this machine. Nothing on the host or in the agent changes, so turning it on restores hosting."
+					checked={hostedAgents}
+					onChange={setHostedAgents}
+					ariaLabel="Run hosted agents on their host"
+				/>
+				<ToggleSettingRow
+					theme={theme}
 					title="Move SSH agents to their host automatically"
-					description="Off: Move to Host stays a right-click. Hosts are kept running either way."
+					description="Off by default. Off: Move to Host stays a right-click. Hosts are kept running either way."
 					checked={autoMove}
 					onChange={setAutoMove}
 					ariaLabel="Move SSH agents to their host automatically"

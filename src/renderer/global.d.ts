@@ -216,7 +216,11 @@ type GroupChatData = {
 
 import type { CueGraphSession, CueRunResult, CueSessionStatus, CueSettings } from '../shared/cue';
 import type { CueLogPayload } from '../shared/cue-log-types';
-import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
+import type {
+	CueStatsAggregation,
+	CueStatsSourceTotals,
+	CueStatsTimeRange,
+} from '../shared/cue-stats-types';
 import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
 import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
@@ -236,6 +240,43 @@ import type {
 	ParquetQueryResult,
 	ParquetSortSpec,
 } from '../shared/parquet/types';
+import type {
+	SqliteBlobRequest,
+	SqliteBlobSaved,
+	SqliteCellUpdateRequest,
+	SqliteCellUpdateResult,
+	SqliteColumnCatalog,
+	SqliteCountRequest,
+	SqliteDatabaseInfo,
+	SqliteDatabaseSummary,
+	SqliteEditingGrant,
+	SqliteIntegrityMode,
+	SqliteIntegrityResult,
+	SqliteObjectKind,
+	SqliteObjectList,
+	SqliteObjectSchema,
+	SqliteObjectStats,
+	SqliteQueryExported,
+	SqliteQueryExportRequest,
+	SqliteQueryHistory,
+	SqliteQueryRequest,
+	SqliteQueryResult,
+	SqliteRowCount,
+	SqliteRowDeleteRequest,
+	SqliteRowDeleteResult,
+	SqliteRowInsertRequest,
+	SqliteRowInsertResult,
+	SqliteRowsPage,
+	SqliteRowsRequest,
+	SqliteStatementLog,
+	SqliteTransactionEnd,
+	SqliteTransactionEndRequest,
+	SqliteTransactionRequest,
+	SqliteTransactionState,
+	SqliteTransactionStatus,
+	SqliteUndoRequest,
+	SqliteUndoResult,
+} from '../shared/sqlite/types';
 import type {
 	GitWorktreeSetupResult,
 	GitWorktreeCheckoutResult,
@@ -288,6 +329,11 @@ import type { FederationApi } from '../main/preload/federation';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
 import type { JourneyApi } from '../main/preload/journey';
 import type { DataviewApi } from '../main/preload/dataview';
+import type {
+	PromptLinkCreateInput,
+	PromptLinkCreated,
+	PromptLinkPublic,
+} from '../shared/promptLinks';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -482,6 +528,7 @@ interface MaestroAPI {
 				forceParallel?: boolean;
 			};
 		}) => Promise<void>;
+		broadcastTranscriptChanged: (sessionId: string, tabId: string) => Promise<void>;
 		interrupt: (sessionId: string) => Promise<boolean>;
 		kill: (sessionId: string) => Promise<boolean>;
 		closeAgent: (agentId: string) => Promise<boolean>;
@@ -619,6 +666,7 @@ interface MaestroAPI {
 					mode: 'interactive' | 'api';
 					reason: 'auto' | 'limit';
 					configDirKey: string;
+					steeringUnavailable?: import('../shared/chatSteering').SteeringUnavailableReason;
 				}
 			) => void
 		) => () => void;
@@ -638,8 +686,14 @@ interface MaestroAPI {
 		) => () => void;
 		/** Answer a `remote:executeCommand` receipt channel. `accepted: true`
 		 *  means the command reached the spawn/queue logic, not that it
-		 *  completed. Drives the CLI's `dispatch` success flag. */
-		sendRemoteCommandReceipt: (receiptChannel: string, accepted: boolean, reason?: string) => void;
+		 *  completed. Drives the CLI's `dispatch` success flag. `queued`: a hosted
+		 *  agent's host queued it behind the running turn. */
+		sendRemoteCommandReceipt: (
+			receiptChannel: string,
+			accepted: boolean,
+			reason?: string,
+			queued?: { itemId: string; position: number }
+		) => void;
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => void
 		) => () => void;
@@ -661,7 +715,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteNewTab: (
-			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
+			callback: (
+				sessionId: string,
+				responseChannel: string,
+				background?: boolean,
+				tabId?: string
+			) => void
 		) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
 		onRemoteCloseTab: (
@@ -976,6 +1035,10 @@ interface MaestroAPI {
 			callback: (chatId: string, archived: boolean, responseChannel: string) => void
 		) => () => void;
 		sendRemoteArchiveGroupChatResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteSetGroupChatUnread: (
+			callback: (chatId: string, unread: boolean, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSetGroupChatUnreadResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteSendGroupChatMessage: (
 			callback: (chatId: string, message: string, responseChannel: string) => void
 		) => () => void;
@@ -1005,7 +1068,10 @@ interface MaestroAPI {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
-				},
+					/** `ask --btw`: answer from a throwaway fork of `targetTabId`. */
+					sideQuestion?: boolean;
+					targetTabId?: string;
+				} & import('../shared/crossAgentTypes').RemoteAskerContext,
 				responseChannel: string
 			) => void
 		) => () => void;
@@ -1036,7 +1102,10 @@ interface MaestroAPI {
 				held?: boolean,
 				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
 				dispatchCallback?: boolean,
-				control?: PianolaQueueControl
+				control?: PianolaQueueControl,
+				turnOverrides?: import('../shared/maestro-lib/client/types').TurnOverrides,
+				agentText?: import('../shared/maestro-lib/client/types').TurnAgentText,
+				entryId?: string
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -1048,6 +1117,8 @@ interface MaestroAPI {
 				queuePosition?: number;
 				queueLength?: number;
 				itemId?: string;
+				/** The text was one of Maestro's own commands, run for the tab: no turn started. */
+				ran?: boolean;
 				error?: string;
 				/** Machine-readable failure cause, so main can react to a specific one
 				 *  (dispatch callbacks retry agent-level on `tab-not-found`). */
@@ -1086,6 +1157,38 @@ interface MaestroAPI {
 		sendRemoteMergeQueueItemResponse: (
 			responseChannel: string,
 			result: { success: boolean; merged: boolean; mergedIntoId?: string; error?: string }
+		) => void;
+		onRemoteEditQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				edit: import('../shared/maestro-lib/client/types').QueuedTurnEdit,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteEditQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; found: boolean; error?: string }
+		) => void;
+		onRemoteMoveQueueItem: (
+			callback: (
+				sessionId: string,
+				itemId: string,
+				toIndex: number,
+				tabId: string | null,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteMoveQueueItemResponse: (
+			responseChannel: string,
+			result: { success: boolean; moved: boolean; error?: string }
+		) => void;
+		onRemoteSendQueueItemNow: (
+			callback: (sessionId: string, itemId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSendQueueItemNowResponse: (
+			responseChannel: string,
+			result: { success: boolean; sent: boolean; error?: string }
 		) => void;
 		onRemoteSteerQueueItem: (
 			callback: (sessionId: string, itemId: string, responseChannel: string) => void
@@ -1185,6 +1288,21 @@ interface MaestroAPI {
 			responseChannel: string,
 			result: SteeringCommandResult
 		) => void;
+		onRemoteDiffReviewCommand: (
+			callback: (
+				request: import('../shared/diffReviewCommands').DiffReviewCommandRequest,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteDiffReviewCommandResponse: (
+			responseChannel: string,
+			result: import('../shared/diffReviewCommands').DiffReviewCommandResult
+		) => void;
+		onRemoteDesignPickCommand: (
+			callback: (
+				request: import('../shared/designPickCommands').DesignPickCommandRequest
+			) => import('../shared/designPickCommands').DesignPickCommandResult
+		) => () => void;
 		onRemoteResetAutoRunDocTasks: (
 			callback: (sessionId: string, filename: string, responseChannel: string) => void
 		) => () => void;
@@ -1353,6 +1471,8 @@ interface MaestroAPI {
 						errorLine?: string;
 					};
 					parsedJson?: unknown;
+					/** The agent's last terminal screen, for the error modal only. */
+					failureScreen?: string;
 					/** Set when the failing process ran over SSH. */
 					sshRemoteId?: string;
 				}
@@ -1773,7 +1893,10 @@ interface MaestroAPI {
 			ref: string,
 			filePath: string
 		) => Promise<{ content?: string; error?: string }>;
-		checkGhCli: (ghPath?: string) => Promise<{ installed: boolean; authenticated: boolean }>;
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		) => Promise<{ installed: boolean; authenticated: boolean }>;
 		createGist: (
 			filename: string,
 			content: string,
@@ -1844,7 +1967,10 @@ interface MaestroAPI {
 			branch?: string;
 			error?: string;
 		}>;
-		checkGhCli: (ghPath?: string) => Promise<{
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		) => Promise<{
 			installed: boolean;
 			authenticated: boolean;
 		}>;
@@ -1942,6 +2068,45 @@ interface MaestroAPI {
 		close: (handle: string) => Promise<void>;
 		onFetchProgress: (callback: (progress: ParquetFetchProgress) => void) => () => void;
 	};
+	/**
+	 * SQLite preview. The database stays open read-only in the main process
+	 * and only names and numbers cross this bridge - see
+	 * src/shared/sqlite/preview.ts for why a SQLite read returns a marker.
+	 */
+	sqlite: {
+		open: (filePath: string) => Promise<SqliteDatabaseInfo>;
+		readSummary: (handle: string) => Promise<SqliteDatabaseSummary>;
+		checkIntegrity: (handle: string, mode: SqliteIntegrityMode) => Promise<SqliteIntegrityResult>;
+		listObjects: (handle: string) => Promise<SqliteObjectList>;
+		readObjectStats: (handle: string, names: string[]) => Promise<SqliteObjectStats[]>;
+		readSchema: (
+			handle: string,
+			name: string,
+			kind?: SqliteObjectKind
+		) => Promise<SqliteObjectSchema>;
+		readColumns: (handle: string) => Promise<SqliteColumnCatalog>;
+		readRows: (request: SqliteRowsRequest) => Promise<SqliteRowsPage>;
+		countRows: (request: SqliteCountRequest) => Promise<SqliteRowCount>;
+		runQuery: (request: SqliteQueryRequest) => Promise<SqliteQueryResult>;
+		cancelQuery: (queryId: string) => Promise<boolean>;
+		exportQuery: (request: SqliteQueryExportRequest) => Promise<SqliteQueryExported>;
+		readQueryHistory: (handle: string) => Promise<SqliteQueryHistory>;
+		forgetQueryHistory: (handle: string, entryId: string | null) => Promise<SqliteQueryHistory>;
+		readStatementLog: (handle: string) => Promise<SqliteStatementLog>;
+		clearStatementLog: (handle: string) => Promise<SqliteStatementLog>;
+		onStatementLogged: (callback: (databasePath: string) => void) => () => void;
+		saveBlob: (request: SqliteBlobRequest) => Promise<SqliteBlobSaved>;
+		enableEditing: (handle: string) => Promise<SqliteEditingGrant>;
+		disableEditing: (handle: string, editToken: string) => Promise<boolean>;
+		updateCell: (request: SqliteCellUpdateRequest) => Promise<SqliteCellUpdateResult>;
+		insertRow: (request: SqliteRowInsertRequest) => Promise<SqliteRowInsertResult>;
+		deleteRow: (request: SqliteRowDeleteRequest) => Promise<SqliteRowDeleteResult>;
+		undoEdit: (request: SqliteUndoRequest) => Promise<SqliteUndoResult>;
+		beginTransaction: (request: SqliteTransactionRequest) => Promise<SqliteTransactionState>;
+		readTransaction: (request: SqliteTransactionRequest) => Promise<SqliteTransactionStatus>;
+		endTransaction: (request: SqliteTransactionEndRequest) => Promise<SqliteTransactionEnd>;
+		close: (handle: string) => Promise<void>;
+	};
 	fs: {
 		homeDir: () => Promise<string>;
 		readDir: (dirPath: string, sshRemoteId?: string) => Promise<DirectoryEntry[]>;
@@ -1986,6 +2151,14 @@ interface MaestroAPI {
 			sshRemoteId: string,
 			localDestPath?: string
 		) => Promise<{ success: boolean; path: string }>;
+		watchRemoteCopy: (
+			remotePath: string,
+			sshRemoteId: string
+		) => Promise<import('../shared/types').RemoteCopyWatchResult>;
+		downloadRemoteFolder: (
+			remotePath: string,
+			sshRemoteId: string
+		) => Promise<{ success: boolean; path: string; fileCount: number }>;
 		writeFile: (
 			filePath: string,
 			content: string,
@@ -2016,6 +2189,7 @@ interface MaestroAPI {
 			totalSize: number;
 			fileCount: number;
 			folderCount: number;
+			fileCountCapped?: boolean;
 		}>;
 		fetchImageAsBase64: (url: string) => Promise<string | null>;
 		rename: (
@@ -2121,6 +2295,17 @@ interface MaestroAPI {
 	 * rebuild, and the `dataview:changed` push). The web-desktop bridge forwards it.
 	 */
 	dataview: DataviewApi;
+	/**
+	 * Prompt Links (`maestro://run/<token>`). Desktop-only: the web-desktop
+	 * bridge refuses every `promptLinks:*` channel. `create` returns the URL
+	 * once; only a hash of its token is stored.
+	 */
+	promptLinks: {
+		list: () => Promise<PromptLinkPublic[]>;
+		create: (input: PromptLinkCreateInput) => Promise<PromptLinkCreated>;
+		revoke: (id: string) => Promise<PromptLinkPublic>;
+		rendererReady: () => Promise<void>;
+	};
 	agents: {
 		translateProvider: (request: TranslationRequest) => Promise<TranslationReport>;
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
@@ -3174,6 +3359,13 @@ interface MaestroAPI {
 			message?: string;
 		}>;
 		unwatchStatus: (projectPath: string, subscriberId: string) => Promise<Record<string, never>>;
+		// Auto Runs saved across an update restart. `take` reads and deletes.
+		saveRestartResume: (
+			entries: import('../shared/autorunRestartResume').AutoRunRestartEntry[]
+		) => Promise<number>;
+		takeRestartResume: () => Promise<
+			import('../shared/autorunRestartResume').AutoRunRestartEntry[]
+		>;
 		onStatusChanged: (
 			handler: (data: {
 				projectPath: string;
@@ -3367,7 +3559,15 @@ interface MaestroAPI {
 			error?: string;
 		}>;
 		checkin: () => Promise<void>;
-		download: (targetTag?: string) => Promise<{ success: boolean; error?: string }>;
+		download: (
+			targetTag?: string
+		) => Promise<{ success: boolean; version?: string; error?: string }>;
+		listRollbackTargets: (
+			includePrerelease?: boolean
+		) => Promise<import('../shared/updateRollback').RollbackTargetsResult>;
+		rollback: (
+			targetTag: string
+		) => Promise<{ success: boolean; version?: string; error?: string }>;
 		install: () => Promise<void>;
 		getStatus: () => Promise<{
 			status:
@@ -3814,7 +4014,12 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onAutoRunTriggered: (
-			callback: (groupChatId: string, participantName: string, filename?: string) => void
+			callback: (
+				groupChatId: string,
+				participantName: string,
+				filename?: string,
+				agentId?: string
+			) => void
 		) => () => void;
 		onAutoRunBatchComplete: (
 			callback: (groupChatId: string, participantName: string) => void
@@ -4141,7 +4346,12 @@ interface MaestroAPI {
 			kind?: AutoRunKind;
 		}) => Promise<string>;
 		// End an Auto Run session (update duration and completed count)
-		endAutoRun: (id: string, duration: number, tasksCompleted: number) => Promise<boolean>;
+		endAutoRun: (
+			id: string,
+			duration: number,
+			tasksCompleted: number,
+			tasksTotal?: number
+		) => Promise<boolean>;
 		// Record an Auto Run task completion
 		recordAutoTask: (task: {
 			autoRunSessionId: string;
@@ -4188,25 +4398,17 @@ interface MaestroAPI {
 				projectPath?: string;
 			}>
 		>;
-		// Get tasks for a specific Auto Run session
-		getAutoRunTasks: (autoRunSessionId: string) => Promise<
-			Array<{
-				id: string;
-				autoRunSessionId: string;
-				sessionId: string;
-				agentType: string;
-				taskIndex: number;
-				taskContent?: string;
-				startTime: number;
-				duration: number;
-				success: boolean;
-			}>
-		>;
+		// Auto Run agent turns per local hour of day (24 entries, zero-filled)
+		getAutoRunTurnsByHour: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<Array<{ hour: number; count: number; successCount: number }>>;
 		// Token & cost usage aggregate for the Tokens tab. Reads agent session
-		// transcripts; `force` bypasses the accessor's in-memory memo.
+		// transcripts; `force` bypasses the accessor's in-memory memo;
+		// `waitForRemote` resolves once agents on another computer are counted.
 		getTokenUsage: (
 			query?: import('../shared/tokenUsage').TokenUsageQuery,
-			force?: boolean
+			force?: boolean,
+			waitForRemote?: boolean
 		) => Promise<import('../shared/tokenUsage').TokenUsageAggregate>;
 		// Progress of the long transcript scans behind the usage caches
 		getIndexingState: () => Promise<import('../shared/statsIndexing').StatsIndexingState>;
@@ -4233,24 +4435,16 @@ interface MaestroAPI {
 			filePath: string
 		) => Promise<import('../shared/stats-types').UsageExportResult>;
 		// Subscribe to stats updates (for real-time dashboard refresh)
-		onStatsUpdate: (callback: () => void) => () => void;
-		// Clear old stats data (older than specified number of days)
-		clearOldData: (olderThanDays: number) => Promise<{
-			success: boolean;
-			deletedQueryEvents: number;
-			deletedAutoRunSessions: number;
-			deletedAutoRunTasks: number;
-			deletedSessionLifecycle: number;
-			error?: string;
-		}>;
+		onStatsUpdate: (
+			callback: (table?: import('../shared/stats-types').StatsTable) => void
+		) => () => void;
 		// Get database size in bytes
 		getDatabaseSize: () => Promise<number>;
-		// Get earliest stat timestamp (null if no entries exist)
-		getEarliestTimestamp: () => Promise<number | null>;
 		// Record an image annotation save event
 		recordImageAnnotation: (createdAt: number) => Promise<string | null>;
 		// Record a keyboard shortcut firing (buckets into local-time day)
-		recordShortcutUsage: (firedAt: number) => Promise<string | null>;
+		// `shortcutId` also bumps that shortcut's own counter
+		recordShortcutUsage: (firedAt: number, shortcutId?: string) => Promise<string | null>;
 		// Get per-day shortcut usage counts within a time range
 		getShortcutUsageByDay: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
@@ -4259,7 +4453,11 @@ interface MaestroAPI {
 		getShortcutUsageTotal: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<number>;
-		// Record session creation (launched)
+		// Firings per shortcut id within a time range, most used first
+		getShortcutUsageByShortcut: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<Array<{ shortcutId: string; count: number }>>;
+		// Record a resolved Agent Resilience outage
 		recordResilience: (event: {
 			id: string;
 			sessionId: string;
@@ -4361,6 +4559,9 @@ interface MaestroAPI {
 			range: CueStatsTimeRange,
 			excludeTriggerTypes?: string[]
 		) => Promise<CueStatsAggregation>;
+		// Runs, completed-run time and tokens only (the Overview's source chart).
+		// Throws 'CueStatsDisabled' under the same gate as getAggregation.
+		getSourceTotals: (range: CueStatsTimeRange) => Promise<CueStatsSourceTotals>;
 		// Conductor time (ms) the retained Cue run history would have credited.
 		// Ungated, unlike getAggregation; resolves 0 when there is no history.
 		getHistoricalConductorCredit: () => Promise<number>;
@@ -4731,6 +4932,7 @@ interface MaestroAPI {
 	tabNaming: {
 		generateTabName: (config: {
 			userMessage: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			sessionSshRemoteConfig?: {
@@ -4741,6 +4943,8 @@ interface MaestroAPI {
 			};
 			// Session-level custom env vars, forwarded so naming inherits the same provider auth as the chat.
 			sessionCustomEnvVars?: Record<string, string>;
+			// The agent's own binary (Session.customPath), so naming runs what the chat runs.
+			sessionCustomPath?: string;
 			// Claude token-source selection, forwarded so tab naming honors TUI/Dynamic/API.
 			enableMaestroP?: boolean;
 			maestroPMode?: 'interactive' | 'dynamic';
@@ -4765,6 +4969,7 @@ interface MaestroAPI {
 	aiCommand: {
 		suggest: (config: {
 			request: string;
+			ownerAgentId?: string;
 			agentType: string;
 			cwd: string;
 			isGitRepo?: boolean;
@@ -4786,6 +4991,27 @@ interface MaestroAPI {
 				status?: 'running' | 'finished' | 'cancelled';
 			}[];
 		}) => Promise<{ success: boolean; command?: string; error?: string }>;
+	};
+
+	// Side question API (`/btw`: ask about a tab through a throwaway session fork)
+	sideQuestion: {
+		ask: (config: {
+			question: string;
+			ownerAgentId?: string;
+			agentType: string;
+			cwd: string;
+			agentSessionId?: string;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+			customEffort?: string;
+		}) => Promise<{ success: boolean; answer?: string; error?: string }>;
 	};
 
 	// Director's Notes API (unified history + synopsis generation)
@@ -5243,6 +5469,8 @@ interface MaestroAPI {
 			agentType?: string,
 			confirmPolicy?: 'off' | 'dangerous' | 'all'
 		) => Promise<void>;
+		/** Coworking `browser:N` id of a browser tab, or null (unknown or hidden from agents). */
+		getBrowserId: (sessionId: string, tabUuid: string) => Promise<string | null>;
 		onRequestBrowserOp: (
 			callback: (
 				tabUuid: string,

@@ -16,11 +16,27 @@ import { formatDurationHuman, formatNumber, formatTokensCompact } from '../../..
 /** Measures a dashboard chart can plot. Not every chart supports every mode. */
 export type ChartMetricMode = 'count' | 'duration' | 'tokens';
 
+/**
+ * Every mode the toggle can offer. `average` (mean time per query) is kept out
+ * of {@link ChartMetricMode} because only a per-entity comparison can plot it:
+ * a day or hour series has no meaningful "average" to stack.
+ */
+export type MetricToggleMode = ChartMetricMode | 'average';
+
 /** Default button labels. Charts that read better with other wording override these. */
-const DEFAULT_LABELS: Record<ChartMetricMode, string> = {
+const DEFAULT_LABELS: Record<MetricToggleMode, string> = {
 	count: 'Count',
 	duration: 'Duration',
 	tokens: 'Tokens',
+	average: 'Avg',
+};
+
+/** The labels the Overview's charts share, so one tab never words a mode two ways. */
+export const OVERVIEW_METRIC_LABELS: Partial<Record<MetricToggleMode, string>> = {
+	count: 'Queries',
+	duration: 'Time',
+	tokens: 'Tokens',
+	average: 'Avg Time',
 };
 
 /**
@@ -28,40 +44,43 @@ const DEFAULT_LABELS: Record<ChartMetricMode, string> = {
  * button ("Time") still announces what it does. These match the names the
  * hand-rolled toggles used before they were consolidated here.
  */
-const ARIA_LABELS: Record<ChartMetricMode, string> = {
+const ARIA_LABELS: Record<MetricToggleMode, string> = {
 	count: 'Show query count',
 	duration: 'Show total duration',
 	tokens: 'Show token usage',
+	average: 'Show average time per query',
 };
 
-interface MetricModeToggleProps {
-	mode: ChartMetricMode;
-	onChange: (mode: ChartMetricMode) => void;
+const DEFAULT_MODES: MetricToggleMode[] = ['count', 'duration', 'tokens'];
+
+interface MetricModeToggleProps<M extends MetricToggleMode> {
+	mode: M;
+	onChange: (mode: M) => void;
 	theme: Theme;
 	/** Modes to offer, in order. Defaults to count + duration + tokens. */
-	modes?: ChartMetricMode[];
+	modes?: M[];
 	/** Per-mode label overrides (e.g. `{ count: 'Queries', duration: 'Time' }`). */
-	labels?: Partial<Record<ChartMetricMode, string>>;
+	labels?: Partial<Record<MetricToggleMode, string>>;
 	/** Show a loading hint on the Tokens button while the series is being derived. */
 	tokensLoading?: boolean;
 	/**
 	 * Two selected-state treatments already existed across the dashboard: the
 	 * trend charts fill the active segment with the accent color (`solid`), while
-	 * the heatmap / distribution / peak-hours charts tint it (`subtle`). Both are
+	 * the heatmap and delegation trend charts tint it (`subtle`). Both are
 	 * kept so adopting this component doesn't restyle existing charts.
 	 */
 	variant?: 'solid' | 'subtle';
 }
 
-export const MetricModeToggle = memo(function MetricModeToggle({
+function MetricModeToggleInner<M extends MetricToggleMode>({
 	mode,
 	onChange,
 	theme,
-	modes = ['count', 'duration', 'tokens'],
+	modes = DEFAULT_MODES as M[],
 	labels,
 	tokensLoading = false,
 	variant = 'solid',
-}: MetricModeToggleProps) {
+}: MetricModeToggleProps<M>) {
 	return (
 		<div className="flex items-center gap-2">
 			<span className="text-xs" style={{ color: theme.colors.textDim }}>
@@ -113,22 +132,26 @@ export const MetricModeToggle = memo(function MetricModeToggle({
 			</div>
 		</div>
 	);
-});
+}
+
+/** Generic over the modes a chart offers, so `onChange` hands back the chart's own mode type. */
+export const MetricModeToggle = memo(MetricModeToggleInner) as typeof MetricModeToggleInner;
 
 /**
  * Format a value for the given metric mode - used for axis ticks, tooltips, and
  * summary figures so a chart never shows raw milliseconds or an unabbreviated
  * nine-digit token count.
  */
-export function formatMetricValue(mode: ChartMetricMode, value: number): string {
-	if (mode === 'duration') return formatDurationHuman(value);
+export function formatMetricValue(mode: MetricToggleMode, value: number): string {
+	if (mode === 'duration' || mode === 'average') return formatDurationHuman(value);
 	if (mode === 'tokens') return formatTokensCompact(value);
 	return formatNumber(value);
 }
 
 /** Human noun for a metric mode, for aria-labels and tooltip rows. */
-export function metricModeNoun(mode: ChartMetricMode): string {
+export function metricModeNoun(mode: MetricToggleMode): string {
 	if (mode === 'duration') return 'time';
+	if (mode === 'average') return 'average time per query';
 	if (mode === 'tokens') return 'tokens';
 	return 'queries';
 }

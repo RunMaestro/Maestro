@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import {
 	ThoughtStreamPanel,
 	SHOW_TOOL_ACTIVITY_KEY,
@@ -84,7 +84,7 @@ beforeEach(() => {
 	useUIStore.setState({ rightPanelOpen: true });
 	useSettingsStore.setState({ rightPanelWidth: 480 } as never);
 	useBatchStore.setState({ batchRunStates: {} } as never);
-	useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
+	useAutoRunSteeringStore.setState({ notes: {}, delivered: {}, returnedDrafts: {} });
 });
 
 /** A run state for SID: the Steer button only exists while one is in flight. */
@@ -477,6 +477,79 @@ describe('ThoughtStreamPanel steering', () => {
 		expect(screen.queryByPlaceholderText(/Steer the Auto Run/)).not.toBeInTheDocument();
 	});
 
+	it('puts a note that never reached the run back in the Steer box (P9)', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		// The host answered after the box had cleared: the service hands the text back.
+		act(() => useAutoRunSteeringStore.getState().returnDraft(SID, 'use the v3 endpoint'));
+
+		expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('use the v3 endpoint');
+		expect(useAutoRunSteeringStore.getState().returnedDrafts[SID]).toBeUndefined();
+	});
+
+	it('takes a returned note only when it fits beside the draft, and never cuts the draft (review)', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.click(steerButton()!);
+		const box = screen.getByPlaceholderText(/Steer the Auto Run/);
+		const typed = 'y'.repeat(3_900);
+		fireEvent.change(box, { target: { value: typed } });
+		const refused = 'r'.repeat(500);
+		act(() => useAutoRunSteeringStore.getState().returnDraft(SID, refused));
+
+		// No room: the draft stays whole and the note waits.
+		expect(box).toHaveValue(typed);
+		expect(useAutoRunSteeringStore.getState().returnedDrafts[SID]).toEqual([refused]);
+
+		// The operator makes room: the note comes in, before what they typed.
+		fireEvent.change(box, { target: { value: 'short' } });
+		expect(box).toHaveValue(`${refused}\n\nshort`);
+		expect(useAutoRunSteeringStore.getState().returnedDrafts[SID]).toBeUndefined();
+	});
+
+	it('keeps a draft with the agent it was typed for when the panel moves to another (review)', () => {
+		const OTHER = `${SID}-other`;
+		runFor(SID);
+		const run = useBatchStore.getState().batchRunStates[SID];
+		useBatchStore.setState({ batchRunStates: { [SID]: run, [OTHER]: run } } as never);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		fireEvent.click(steerButton()!);
+		fireEvent.change(screen.getByPlaceholderText(/Steer the Auto Run/), {
+			target: { value: 'for the first run' },
+		});
+
+		act(() => useThoughtStreamStore.getState().openPanel(OTHER));
+		// Nothing typed for the first run can be sent to this one.
+		expect(screen.queryByPlaceholderText(/Steer the Auto Run/)).not.toBeInTheDocument();
+		fireEvent.click(steerButton()!);
+		expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('');
+
+		act(() => useThoughtStreamStore.getState().openPanel(SID));
+		expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('for the first run');
+	});
+
+	it('keeps an unsent draft for the next run when the run ends (review)', () => {
+		runFor(SID);
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+		fireEvent.click(steerButton()!);
+		fireEvent.change(screen.getByPlaceholderText(/Steer the Auto Run/), {
+			target: { value: 'try the fixtures' },
+		});
+
+		act(() => useBatchStore.setState({ batchRunStates: {} } as never));
+		expect(useAutoRunSteeringStore.getState().returnedDrafts[SID]).toEqual(['try the fixtures']);
+
+		act(() => runFor(SID));
+		expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('try the fixtures');
+	});
+
 	it('sends on Enter and keeps typing on Shift+Enter', () => {
 		runFor(SID);
 		useThoughtStreamStore.getState().openPanel(SID);
@@ -629,6 +702,37 @@ describe('ThoughtStreamPanel steering', () => {
 
 		expect(screen.getAllByTestId('steering-note-delivered')).toHaveLength(2);
 		expect(screen.getAllByTestId('steering-reply')).toHaveLength(1);
+	});
+
+	// The delivered record outlives the run, so it needs a way out other than
+	// waiting for the next run to start.
+	it('dismisses a delivered group from its first note, even after the run ended', () => {
+		deliver('first', 'second');
+		deliver('third');
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		// One X per delivery: the notes one task took share a reply and leave together.
+		const dismissButtons = screen.getAllByTestId('steering-note-dismiss');
+		expect(dismissButtons).toHaveLength(2);
+
+		fireEvent.click(dismissButtons[0]);
+
+		const remaining = screen.getAllByTestId('steering-note-delivered');
+		expect(remaining).toHaveLength(1);
+		expect(remaining[0]).toHaveTextContent('third');
+		expect(useAutoRunSteeringStore.getState().delivered[SID].map((note) => note.text)).toEqual([
+			'third',
+		]);
+	});
+
+	it('offers no dismiss on a pending note, which is cancelled instead', () => {
+		runFor(SID);
+		useAutoRunSteeringStore.getState().addNote(SID, 'waiting');
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		expect(screen.queryByTestId('steering-note-dismiss')).not.toBeInTheDocument();
 	});
 
 	it('marks the reply of a task that failed, and offers nothing to open when there is no more', () => {

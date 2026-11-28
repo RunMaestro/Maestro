@@ -19,6 +19,20 @@
  * host to come back. Any later ssh run that gets through, or a probe that
  * succeeds, marks it reachable and announces the recovery.
  *
+ * A remote that also hosts Federation agents is dialed by Federation too (its
+ * port forward, discovery, re-probes). On a tunnelled transport those dials
+ * collide with Maestro's own git and file-tree ssh, and the loser exits 255.
+ * While Federation holds a live connection to that remote (`hasLiveTransport`),
+ * the host is provably up, so such a 255 costs no probe: without this, a hosted
+ * agent's remote cycled through the unreachable dialog and the "SSH connection
+ * restored" toast over and over while nothing was actually down.
+ *
+ * A hosted agent's turns run on the Maestro host behind its remote, so a host that stops
+ * answering stops that agent the same way a dead link does. The Federation mirror reports its
+ * connection to each host here (`noteHostConnection`); a host one of this machine's agents runs on
+ * that stays down past a short grace is an outage of the same remote with cause `host`: the same
+ * event, dialog, re-check and recovery. ssh itself down outranks it: one remote, one dialog.
+ *
  * The module imports nothing from Electron; the transport (`emit`), the remote
  * lookup and the probe are injected once at startup, so the process manager and
  * remote-fs can call it unconditionally. Before configuration every call is a
@@ -26,6 +40,7 @@
  */
 
 import type { SshRemoteConfig } from '../shared/types';
+import type { PeerMirrorConnection } from '../shared/maestro-lib/client/peer-mirror';
 import {
 	describeSshUnreachable,
 	isSshConnectionFailure,
@@ -63,6 +78,18 @@ export interface SshReachabilityDeps {
 	probe: (remote: SshRemoteConfig) => Promise<SshProbeOutcome>;
 	/** Deliver a state change to every client. */
 	emit: (event: SshReachabilityEvent) => void;
+	/**
+	 * Whether another live connection to this remote proves it is up right now
+	 * (a connected Federation peer). Optional: without it every 255 is suspect.
+	 */
+	hasLiveTransport?: (remoteId: string) => boolean;
+	/**
+	 * Whether an agent on this machine runs on the Maestro host behind `peerId` (a hosted agent).
+	 * Optional: without it no host outage is ever raised.
+	 */
+	hostsAgents?: (peerId: string) => boolean;
+	/** Ask the Federation peer on `remoteId` to reconnect now. Resolves true when it attached. */
+	reconnectHost?: (remoteId: string) => Promise<boolean>;
 }
 
 interface UnreachableState {
@@ -75,6 +102,40 @@ const unreachable = new Map<string, UnreachableState>();
 const probesInFlight = new Map<string, Promise<boolean>>();
 /** Epoch ms of the last probe that found each remote reachable. */
 const lastHealthyProbeAt = new Map<string, number>();
+
+/**
+ * How long a hosted agent's host may stay disconnected before it is an outage. The client's own
+ * reconnect (backoff from 0.5 s) gets this long to bring a dropped connection back, so a blip
+ * raises nothing; an SSH outage is confirmed in about the same time (one probe).
+ */
+export const HOST_OUTAGE_CONFIRM_MS = 8_000;
+
+/** How the Federation mirror stands with the host on one remote (`MirrorPeerSummary`). */
+export interface HostConnectionReport {
+	remoteId: string;
+	peerId: string;
+	/** The remote's name, for the dialog. */
+	name: string;
+	connection: PeerMirrorConnection;
+	/** The mirror's message for a failure, naming the fix. */
+	error?: string;
+}
+
+interface HostOutageState {
+	event: SshReachabilityEvent;
+	peerId: string;
+	timer: ReturnType<typeof setInterval> | null;
+}
+
+/** Host outages by remote id: ssh answers, but the Maestro host behind it does not. */
+const hostDown = new Map<string, HostOutageState>();
+/** Remotes whose host dropped and is being given `HOST_OUTAGE_CONFIRM_MS` to come back. */
+const hostPending = new Map<
+	string,
+	{ report: HostConnectionReport; timer: ReturnType<typeof setTimeout> }
+>();
+/** The last connection each peer reported, so a confirm or an SSH recovery reads the current one. */
+const lastHostReport = new Map<string, HostConnectionReport>();
 
 /** Wire the transport and probe. Called once from main startup. */
 export function configureSshReachability(next: SshReachabilityDeps | null): void {
@@ -112,6 +173,14 @@ export function noteSshExit(
 		if (unreachable.has(remoteId)) return;
 		const healthyAt = lastHealthyProbeAt.get(remoteId);
 		if (healthyAt !== undefined && Date.now() - healthyAt < SUSPICION_COOLDOWN_MS) return;
+		if (deps.hasLiveTransport?.(remoteId)) {
+			logger.debug(
+				`ssh exit ${exitCode} ignored: a live Federation connection holds the remote`,
+				LOG_CONTEXT,
+				{ remoteId }
+			);
+			return;
+		}
 		void checkSshRemote(remoteId);
 		return;
 	}
@@ -196,7 +265,17 @@ function clearUnreachable(remoteId: string, announce: boolean): void {
 	if (state.timer) clearInterval(state.timer);
 	unreachable.delete(remoteId);
 
-	if (!announce) return;
+	if (!announce) {
+		// The remote was deleted: windows drop its outage, with no "restored" toast.
+		deps?.emit({
+			remoteId,
+			remoteName: state.event.remoteName,
+			reachable: true,
+			since: Date.now(),
+			cleared: true,
+		});
+		return;
+	}
 	const event: SshReachabilityEvent = {
 		remoteId,
 		remoteName: state.event.remoteName,
@@ -205,11 +284,238 @@ function clearUnreachable(remoteId: string, announce: boolean): void {
 	};
 	logger.info(`SSH remote reachable again: ${event.remoteName}`, LOG_CONTEXT);
 	deps?.emit(event);
+	recheckHostAfterSshRecovery(remoteId);
 }
 
-/** Every remote currently known to be unreachable, for a client that just connected. */
+/**
+ * A host that dropped while ssh itself was down was never shown: the SSH dialog covered it. Once
+ * ssh is back, the host gets the same grace as a fresh drop, so a host that reconnects with the
+ * link raises nothing and one that stays down gets its own dialog.
+ */
+function recheckHostAfterSshRecovery(remoteId: string): void {
+	const held = hostDown.get(remoteId);
+	if (!held) return;
+	if (held.timer) clearInterval(held.timer);
+	hostDown.delete(remoteId);
+	const report = lastHostReport.get(remoteId);
+	if (report && report.connection !== 'connected') armHostConfirm(report);
+}
+
+/**
+ * Record how the Federation mirror stands with the host on a remote (every `peer.state` push).
+ *
+ * A host that a hosted agent runs on and that stops answering is an outage of that remote, told
+ * the same way as an SSH outage: one event, one dialog, a re-check every
+ * `SSH_RECOVERY_PROBE_INTERVAL_SECONDS`, and one recovery event. A drop gets
+ * `HOST_OUTAGE_CONFIRM_MS` to reconnect first. Before it is raised, ssh is probed: when the remote
+ * itself is down, the SSH outage (which names every agent on the remote) is the one the user
+ * sees, and the host outage is held silently behind it.
+ */
+export function noteHostConnection(report: HostConnectionReport): void {
+	if (!deps) return;
+	lastHostReport.set(report.remoteId, report);
+	if (report.connection === 'connected') {
+		clearHostPending(report.remoteId);
+		clearHostDown(report.remoteId, true);
+		return;
+	}
+	const held = hostDown.get(report.remoteId);
+	if (held) {
+		// Still down: refresh the reason, keep the original `since`.
+		held.event = { ...held.event, message: describeHostUnreachable(report) };
+		return;
+	}
+	// A first connect has not answered yet: nothing was lost.
+	if (report.connection === 'connecting' && !hostPending.has(report.remoteId)) return;
+	armHostConfirm(report);
+}
+
+/** Stop following the host of a peer that is no longer mirrored (deleted, opted out, renamed). */
+export function forgetHostPeer(peerId: string): void {
+	for (const [remoteId, report] of lastHostReport) {
+		if (report.peerId === peerId) forgetHostConnection(remoteId);
+	}
+}
+
+/**
+ * Stop following every host: the Federation mirror stopped and pushes nothing more. Each host
+ * outage is dropped in every window (`cleared`, no toast), and no re-check runs again for it.
+ */
+export function forgetAllHostConnections(): void {
+	const remoteIds = new Set([...lastHostReport.keys(), ...hostDown.keys(), ...hostPending.keys()]);
+	for (const remoteId of remoteIds) forgetHostConnection(remoteId);
+}
+
+/**
+ * Drop a host outage whose host no longer runs an agent of this machine (the last one moved back,
+ * or hosted agents were switched off). Returns true when it was dropped: nothing may re-check a
+ * host that hosts nothing.
+ */
+function dropHostOutageIfUnused(remoteId: string): boolean {
+	const held = hostDown.get(remoteId);
+	if (!held || deps?.hostsAgents?.(held.peerId)) return false;
+	clearHostDown(remoteId, false);
+	return true;
+}
+
+/**
+ * What this machine hosts changed (an agent moved back, `unlift --offline` included, or hosted
+ * agents were switched off): a host outage, or one waiting out its grace, whose host now runs no
+ * agent of this machine is dropped at once, as the 30 s re-check would drop it.
+ */
+export function noteHostedAgentsChanged(): void {
+	for (const remoteId of [...hostDown.keys()]) dropHostOutageIfUnused(remoteId);
+	for (const [remoteId, pending] of [...hostPending]) {
+		if (!deps?.hostsAgents?.(pending.report.peerId)) clearHostPending(remoteId);
+	}
+}
+
+function forgetHostConnection(remoteId: string): void {
+	lastHostReport.delete(remoteId);
+	clearHostPending(remoteId);
+	clearHostDown(remoteId, false);
+}
+
+function armHostConfirm(report: HostConnectionReport): void {
+	const pending = hostPending.get(report.remoteId);
+	if (pending) {
+		pending.report = report;
+		return;
+	}
+	const timer = setTimeout(() => void confirmHostDown(report.remoteId), HOST_OUTAGE_CONFIRM_MS);
+	timer.unref?.();
+	hostPending.set(report.remoteId, { report, timer });
+}
+
+function clearHostPending(remoteId: string): void {
+	const pending = hostPending.get(remoteId);
+	if (!pending) return;
+	clearTimeout(pending.timer);
+	hostPending.delete(remoteId);
+}
+
+async function confirmHostDown(remoteId: string): Promise<void> {
+	const pending = hostPending.get(remoteId);
+	if (!pending || !deps) return;
+	if (!deps.hostsAgents?.(pending.report.peerId)) {
+		// No agent here runs on this host: a remote without one is not an outage.
+		clearHostPending(remoteId);
+		return;
+	}
+	// Tell a stopped host from a dead remote. A failed probe raises the SSH outage.
+	await checkSshRemote(remoteId);
+	const still = hostPending.get(remoteId);
+	// Reconnected while the probe ran, or reconnected and dropped again: a newer drop keeps its
+	// own grace.
+	if (still !== pending) return;
+	clearHostPending(remoteId);
+	// The last hosted agent moved back (or hosted agents were switched off) while the probe ran.
+	if (!deps?.hostsAgents?.(still.report.peerId)) return;
+	markHostDown(still.report);
+}
+
+/** The dialog's reason for a host outage: what is down, and the fix when there is one. */
+export function describeHostUnreachable(report: HostConnectionReport): string {
+	switch (report.connection) {
+		case 'host-down':
+		case 'not-installed':
+		case 'outdated':
+			if (report.error) return report.error;
+			break;
+		default:
+			break;
+	}
+	return `The Maestro host on "${report.name}" stopped answering. The SSH connection to the remote works; the host process there is not running or not responding.`;
+}
+
+function markHostDown(report: HostConnectionReport): void {
+	const event: SshReachabilityEvent = {
+		remoteId: report.remoteId,
+		remoteName: report.name,
+		reachable: false,
+		message: describeHostUnreachable(report),
+		since: Date.now(),
+		cause: 'host',
+	};
+	const timer = setInterval(() => {
+		if (dropHostOutageIfUnused(report.remoteId)) return;
+		// While ssh itself is down its own re-probe runs; the host waits for it.
+		if (!unreachable.has(report.remoteId)) void checkRemoteLink(report.remoteId);
+	}, SSH_RECOVERY_PROBE_INTERVAL_MS);
+	timer.unref?.();
+	hostDown.set(report.remoteId, { event, peerId: report.peerId, timer });
+	if (unreachable.has(report.remoteId)) return;
+	logger.warn(`Maestro host unreachable: ${event.remoteName}`, LOG_CONTEXT, {
+		message: event.message,
+	});
+	deps?.emit(event);
+}
+
+function clearHostDown(remoteId: string, announce: boolean): void {
+	const state = hostDown.get(remoteId);
+	if (!state) return;
+	if (state.timer) clearInterval(state.timer);
+	hostDown.delete(remoteId);
+	// Behind an SSH outage the host was never shown; the SSH recovery announces the remote.
+	if (unreachable.has(remoteId)) return;
+	if (!announce) {
+		// No longer a Federation peer: windows drop the host outage, with no "restored" toast.
+		deps?.emit({
+			remoteId,
+			remoteName: state.event.remoteName,
+			reachable: true,
+			since: Date.now(),
+			cause: 'host',
+			cleared: true,
+		});
+		return;
+	}
+	const event: SshReachabilityEvent = {
+		remoteId,
+		remoteName: state.event.remoteName,
+		reachable: true,
+		since: Date.now(),
+		cause: 'host',
+	};
+	logger.info(`Maestro host reachable again: ${event.remoteName}`, LOG_CONTEXT);
+	deps?.emit(event);
+}
+
+/**
+ * Check everything Maestro needs on a remote: ssh first, then, when its host is held down, the
+ * host (a reconnect). This is the dialog's "Check Now" and `maestro-cli ssh-remote status
+ * --check`. Resolves true when the remote and its host both answer.
+ */
+export async function checkRemoteLink(remoteId: string): Promise<boolean> {
+	dropHostOutageIfUnused(remoteId);
+	// Read before the probe: an SSH recovery re-arms a held host outage (`recheckHostAfterSshRecovery`),
+	// and the host still has to answer before the remote counts as reachable.
+	const hostHeld = hostDown.has(remoteId);
+	const sshUp = await checkSshRemote(remoteId);
+	const hostNeedsCheck = hostHeld || hostDown.has(remoteId) || hostPending.has(remoteId);
+	if (!sshUp || !hostNeedsCheck || !deps?.reconnectHost) return sshUp;
+	try {
+		// The reconnect pushes `peer.state`, which clears the outage through `noteHostConnection`.
+		return await deps.reconnectHost(remoteId);
+	} catch (error) {
+		logger.warn('Maestro host reconnect failed', LOG_CONTEXT, {
+			remoteId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return false;
+	}
+}
+
+/**
+ * Every remote currently known to be unreachable, for a client that just connected: one event per
+ * remote, the SSH outage when ssh itself is down, else the host outage.
+ */
 export function getUnreachableSshRemotes(): SshReachabilityEvent[] {
-	return [...unreachable.values()].map((state) => state.event);
+	const events = [...unreachable.values()].map((state) => state.event);
+	for (const [remoteId, state] of hostDown) {
+		if (!unreachable.has(remoteId)) events.push(state.event);
+	}
+	return events;
 }
 
 /** Test-only: drop all state and timers. */
@@ -220,5 +526,12 @@ export function __resetSshReachabilityForTest(): void {
 	unreachable.clear();
 	probesInFlight.clear();
 	lastHealthyProbeAt.clear();
+	for (const state of hostDown.values()) {
+		if (state.timer) clearInterval(state.timer);
+	}
+	hostDown.clear();
+	for (const pending of hostPending.values()) clearTimeout(pending.timer);
+	hostPending.clear();
+	lastHostReport.clear();
 	deps = null;
 }

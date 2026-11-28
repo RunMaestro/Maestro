@@ -942,6 +942,50 @@ describe('useBatchProcessor hook', () => {
 			useSettingsStore.setState({ autoRunDisabled: false });
 		});
 
+		it('starts a hosted agent run on its host, never here', async () => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			const maestro = window.maestro as unknown as Record<string, unknown>;
+			const actOnHost = vi.fn().mockResolvedValue({ ok: true, result: { kind: 'auto-run' } });
+			maestro.federation = { act: actOnHost };
+			try {
+				const sessions = [createMockSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } })];
+				const groups = [createMockGroup()];
+
+				useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
+				const { result } = renderHook(() =>
+					useBatchProcessor({
+						groups,
+						onUpdateSession: mockOnUpdateSession,
+						onSpawnAgent: mockOnSpawnAgent,
+						onAddHistoryEntry: mockOnAddHistoryEntry,
+					})
+				);
+
+				await act(async () => {
+					await result.current.startBatchRun(
+						sessions[0].id,
+						{
+							documents: [{ filename: 'test', resetOnCompletion: false }],
+							prompt: 'Test prompt',
+							loopEnabled: false,
+						},
+						'/test/folder'
+					);
+				});
+
+				expect(mockOnSpawnAgent).not.toHaveBeenCalled();
+				expect(actOnHost).toHaveBeenCalledWith('box', 'h1', {
+					kind: 'auto-run',
+					launch: { documents: [{ file: '/test/folder/test.md' }], prompt: 'Test prompt' },
+				});
+				// The host's frames draw the run; nothing runs here.
+				expect(result.current.batchRunStates[sessions[0].id]?.isRunning ?? false).toBe(false);
+			} finally {
+				delete maestro.federation;
+				useSettingsStore.setState({ federationHostedAgents: false });
+			}
+		});
+
 		it('should not start if session is not found', async () => {
 			const sessions: Session[] = [];
 			const groups: Group[] = [];
@@ -1475,6 +1519,55 @@ describe('useBatchProcessor hook', () => {
 			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
 		});
 
+		it('ends a stopping document run whose turn never settles on a second stop', async () => {
+			// The same sequence a goal run hung on: stop (waits for the turn), the turn never
+			// settles, then stop again. The second stop is the CLI's way to Force Kill.
+			const sessions = [createMockSession()];
+			mockReadDoc.mockResolvedValue({ success: true, content: '# Tasks\n- [ ] Task 1' });
+			mockOnSpawnAgent.mockReturnValue(new Promise(() => {}));
+			useSessionStore.setState({ sessions, activeSessionId: sessions[0].id });
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+				})
+			);
+			let finished = false;
+			act(() => {
+				void result.current
+					.startBatchRun(
+						'test-session-id',
+						{
+							documents: [{ filename: 'tasks', resetOnCompletion: false }],
+							prompt: 'Test',
+							loopEnabled: false,
+						},
+						'/test/folder'
+					)
+					.then(() => {
+						finished = true;
+					});
+			});
+			await waitFor(() => expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1));
+
+			act(() => result.current.stopBatchRun('test-session-id'));
+			await waitFor(() =>
+				expect(result.current.getBatchState('test-session-id').isStopping).toBe(true)
+			);
+			expect(finished).toBe(false);
+
+			await act(async () => {
+				result.current.stopBatchRun('test-session-id');
+			});
+
+			await waitFor(() => expect(finished).toBe(true));
+			expect(result.current.getBatchState('test-session-id').isRunning).toBe(false);
+			expect(mockOnSpawnAgent.mock.calls[0][3].abortSignal.aborted).toBe(true);
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+
 		it('should fire onComplete with non-zero elapsed time on kill so the leaderboard receives it', async () => {
 			// Regression: killBatchRun used to call timeTracking.stopTracking() before the
 			// loop's natural cleanup ran. The natural cleanup then read getElapsedTime() as 0
@@ -1974,6 +2067,126 @@ describe('useBatchProcessor hook', () => {
 
 			// Should have created a working copy for the reset-on-completion document
 			expect(mockCreateWorkingCopy).toHaveBeenCalledWith('/test/folder', 'tasks', 1, undefined);
+		});
+	});
+
+	describe('resume after an update restart (resumeFrom)', () => {
+		const renderProcessor = () => {
+			useSessionStore.setState({
+				sessions: [createMockSession()],
+				activeSessionId: 'test-session-id',
+			});
+			return renderHook(() =>
+				useBatchProcessor({
+					groups: [createMockGroup()],
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+		};
+
+		it('starts the first pass at the saved document and skips the ones before it', async () => {
+			// `setup` is a reset document whose original always has an unchecked
+			// task, so starting from the top would run it again.
+			let tasksDone = false;
+			mockOnSpawnAgent.mockImplementation(async () => {
+				tasksDone = true;
+				return { success: true, agentSessionId: 'resumed', response: 'done' };
+			});
+			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
+				if (filename === 'setup.md') return { success: true, content: '- [ ] Setup' };
+				if (filename === 'tasks.md') {
+					return { success: true, content: tasksDone ? '- [x] Task' : '- [ ] Task' };
+				}
+				return { success: true, content: '' };
+			});
+
+			const { result } = renderProcessor();
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [
+							{ filename: 'setup', resetOnCompletion: true },
+							{ filename: 'tasks', resetOnCompletion: false },
+						],
+						prompt: 'Process',
+						loopEnabled: false,
+						resumeFrom: { documentIndex: 1, loopIteration: 0 },
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockCreateWorkingCopy).not.toHaveBeenCalled();
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+
+		it('keeps working in the saved working copy instead of copying the original again', async () => {
+			let copyDone = false;
+			mockOnSpawnAgent.mockImplementation(async () => {
+				copyDone = true;
+				return { success: true, agentSessionId: 'resumed', response: 'done' };
+			});
+			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
+				if (filename === 'tasks.md') return { success: true, content: '- [ ] A\n- [ ] B' };
+				if (filename === 'Runs/tasks-loop-1.md') {
+					return {
+						success: true,
+						content: copyDone ? '- [x] A\n- [x] B' : '- [x] A\n- [ ] B',
+					};
+				}
+				return { success: true, content: '' };
+			});
+
+			const { result } = renderProcessor();
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: true }],
+						prompt: 'Process',
+						loopEnabled: false,
+						resumeFrom: {
+							documentIndex: 0,
+							loopIteration: 0,
+							workingCopyPath: 'Runs/tasks-loop-1',
+						},
+					},
+					'/test/folder'
+				);
+			});
+
+			expect(mockCreateWorkingCopy).not.toHaveBeenCalled();
+			expect(mockReadDoc).toHaveBeenCalledWith('/test/folder', 'Runs/tasks-loop-1.md', undefined);
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+
+		it('falls back to a fresh working copy when the saved one is gone', async () => {
+			mockReadDoc.mockImplementation(async (_folder: string, filename: string) => {
+				if (filename === 'tasks.md') return { success: true, content: '- [ ] A' };
+				if (filename === 'Runs/missing.md') return { success: false };
+				return { success: true, content: '- [x] A' };
+			});
+
+			const { result } = renderProcessor();
+			await act(async () => {
+				await result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: true }],
+						prompt: 'Process',
+						loopEnabled: false,
+						resumeFrom: { documentIndex: 0, loopIteration: 2, workingCopyPath: 'Runs/missing' },
+					},
+					'/test/folder'
+				);
+			});
+
+			// Loop number is 1-based: the saved pass index 2 is loop 3.
+			expect(mockCreateWorkingCopy).toHaveBeenCalledWith('/test/folder', 'tasks', 3, undefined);
 		});
 	});
 
@@ -6465,9 +6678,11 @@ describe('useBatchProcessor hook', () => {
 				return { success: true, content: '- [x] Task' };
 			});
 
+			// A failed push reports its whole pre-push log as the error. Only the
+			// first line belongs in the summary; the rest stays in fullResponse.
 			mockCreatePR.mockResolvedValue({
 				success: false,
-				error: 'gh: not authenticated',
+				error: 'gh: not authenticated\n$ prettier --check .\nChecking formatting...',
 			});
 
 			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
@@ -6526,6 +6741,10 @@ describe('useBatchProcessor hook', () => {
 			const prEntry = prHistoryCall![0] as { fullResponse: string };
 			expect(prEntry.fullResponse).toContain('Pull Request Creation Failed');
 			expect(prEntry.fullResponse).toContain('gh: not authenticated');
+			expect(prEntry.fullResponse).toContain('Checking formatting...');
+			expect((prHistoryCall![0] as { summary: string }).summary).toBe(
+				'PR creation failed: gh: not authenticated'
+			);
 		});
 	});
 
@@ -6570,12 +6789,15 @@ describe('useBatchProcessor hook', () => {
 
 		// Every task spawn carries its run's id so a dispatch it makes reports back.
 		const AUTO_RUN_ID = expect.stringMatching(/^autorun-/);
+		// And the signal a force-end aborts, so the run is never stuck on a turn that never settles.
+		const ABORT_SIGNAL = expect.any(AbortSignal);
 
 		it('forwards config.model and config.effort to onSpawnAgent', async () => {
 			await startRun({ model: 'opus', effort: 'high' });
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'opus',
 				effortOverride: 'high',
 			});
@@ -6586,6 +6808,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'opus',
 			});
 		});
@@ -6595,6 +6818,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'opus',
 				effortOverride: undefined,
 			});
@@ -6608,6 +6832,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: 'sonnet',
 				effortOverride: undefined,
 			});
@@ -6621,6 +6846,7 @@ describe('useBatchProcessor hook', () => {
 
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: undefined,
 				effortOverride: undefined,
 			});
@@ -6635,6 +6861,7 @@ describe('useBatchProcessor hook', () => {
 			// the spawn falls through to the agent's own configured values.
 			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', undefined, {
 				autoRunId: AUTO_RUN_ID,
+				abortSignal: ABORT_SIGNAL,
 				modelOverride: undefined,
 				effortOverride: undefined,
 			});

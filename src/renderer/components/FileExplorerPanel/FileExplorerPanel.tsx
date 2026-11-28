@@ -9,7 +9,6 @@ import {
 	EyeOff,
 	Search,
 	FolderOpen,
-	Server,
 	Copy,
 	FolderInput,
 	FolderUp,
@@ -53,11 +52,12 @@ import { FileTreeContextMenu } from './components/FileTreeContextMenu';
 import { useFileTreeFlatten } from './hooks/useFileTreeFlatten';
 import { useFileTreeSelection } from './hooks/useFileTreeSelection';
 import { useFileTreeFilter } from './hooks/useFileTreeFilter';
-import { useAutoRefresh } from './hooks/useAutoRefresh';
+import { fileTreeAutoRefreshSeconds, useAutoRefresh } from './hooks/useAutoRefresh';
 import { useFileOperations } from './hooks/useFileOperations';
 import { useDragToMove } from './hooks/useDragToMove';
 import { useOsFileDragOut } from './hooks/useOsFileDragOut';
 import { useFileContextMenu } from './hooks/useFileContextMenu';
+import { openFolderInFileManager } from '../../services/fileActions';
 
 // Utils
 import { formatBytes } from './utils/pathHelpers';
@@ -190,8 +190,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	// AI and terminal-only SSH sessions.
 	const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 
-	// Get current auto-refresh interval (180s default for unmigrated sessions)
-	const autoRefreshInterval = session.fileTreeAutoRefreshInterval ?? 180;
+	// Current auto-refresh interval (180s default for unmigrated sessions), the same rule in every mode
+	const autoRefreshInterval = fileTreeAutoRefreshSeconds(session);
 
 	// ── Flatten + Selection ────────────────────────────────────────────────────
 
@@ -526,6 +526,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	// "move to root" receptacle - gate on isExternalDrag so the whole-panel import
 	// outline fires only for the former; the receptacle highlights itself.
 	const isRootDropTarget = dragOverFolder === '' && isExternalDrag;
+	// The size walk stopped counting files at its cap: the count and size are at least these.
+	const atLeast = session.fileTreeStats?.fileCountCapped ? '+' : '';
 
 	return (
 		<div
@@ -604,24 +606,26 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 						{!compact && <Search className="w-3 h-3" />}
 						{!iconOnly && 'Find'}
 					</button>
-					{/* Open in file manager - local sessions only */}
-					{!sshRemoteId && (
-						<button
-							onClick={() =>
-								window.maestro?.shell?.openPath(session.fullPath || session.projectRoot)
-							}
-							className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
-							style={{
-								color: theme.colors.accent,
-								border: `1px solid ${theme.colors.accent}40`,
-								backgroundColor: `${theme.colors.accent}15`,
-							}}
-							title={getOpenInLabel(window.maestro?.platform || 'darwin')}
-						>
-							{!compact && <FolderOpen className="w-3 h-3" />}
-							{!iconOnly && 'Open'}
-						</button>
-					)}
+					{/* Open in file manager. A remote working directory has no location on
+					    this computer, so it is shown in the Files panel with a flash. */}
+					<button
+						onClick={() =>
+							void openFolderInFileManager(
+								{ path: session.fullPath || session.projectRoot, sshRemoteId },
+								{ sessionId: session.id }
+							)
+						}
+						className="fx-btn flex-1 flex items-center justify-center gap-1 py-0.5 px-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						style={{
+							color: theme.colors.accent,
+							border: `1px solid ${theme.colors.accent}40`,
+							backgroundColor: `${theme.colors.accent}15`,
+						}}
+						title={getOpenInLabel(window.maestro?.platform || 'darwin')}
+					>
+						{!compact && <FolderOpen className="w-3 h-3" />}
+						{!iconOnly && 'Open'}
+					</button>
 					{/* Show/hide dotfiles */}
 					{!dotfilesToggleHidden && (
 						<button
@@ -716,15 +720,6 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							: undefined
 					}
 				>
-					{session.sshRemote && (
-						<span
-							className="flex-shrink-0"
-							title={`SSH: ${session.sshRemote.name} (${session.sshRemote.host})`}
-							style={{ color: theme.colors.accent }}
-						>
-							<Server className="w-3.5 h-3.5" />
-						</span>
-					)}
 					{showTruncationWarning && truncationCollapsed && (
 						<button
 							type="button"
@@ -756,11 +751,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							textOverflow: 'ellipsis',
 							textAlign: 'center',
 						}}
-						title={
-							session.sshRemote
-								? `${session.sshRemote.host}:${session.projectRoot}`
-								: session.projectRoot
-						}
+						title={session.projectRoot}
 						onDoubleClick={async () => {
 							if (await safeClipboardWrite(session.projectRoot)) {
 								flashCopiedToClipboard(session.projectRoot, 'Path Copied');
@@ -816,22 +807,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				</div>
 			) : (
 				<>
-					{session.fileTreeLoading &&
-						(() => {
-							const isRemote = !!sshRemoteId;
-							return (
-								<FileTreeLoadingProgress
-									theme={theme}
-									progress={session.fileTreeLoadingProgress}
-									isRemote={isRemote}
-									onCancel={
-										isRemote && cancelFileTreeLoad
-											? () => cancelFileTreeLoad(session.id)
-											: undefined
-									}
-								/>
-							);
-						})()}
+					{session.fileTreeLoading && (
+						<FileTreeLoadingProgress
+							theme={theme}
+							progress={session.fileTreeLoadingProgress}
+							onCancel={cancelFileTreeLoad ? () => cancelFileTreeLoad(session.id) : undefined}
+						/>
+					)}
 					{showTruncationWarning && !truncationCollapsed && (
 						<FileTreeTruncatedBanner
 							theme={theme}
@@ -1046,11 +1028,12 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				>
 					<span
 						className="flex items-center gap-1"
-						title={`${session.fileTreeStats.fileCount.toLocaleString()} file${session.fileTreeStats.fileCount !== 1 ? 's' : ''}`}
+						title={`${session.fileTreeStats.fileCount.toLocaleString()}${atLeast} file${session.fileTreeStats.fileCount !== 1 ? 's' : ''}${session.fileTreeStats.fileCountCapped ? ' (counting stops there)' : ''}`}
 					>
 						<FileText className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
 						<span style={{ color: theme.colors.accent }}>
 							{session.fileTreeStats.fileCount.toLocaleString()}
+							{atLeast}
 						</span>
 						<span className="file-stats-label opacity-60">
 							file{session.fileTreeStats.fileCount !== 1 ? 's' : ''},
@@ -1070,12 +1053,13 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					</span>
 					<span
 						className="flex items-center gap-1"
-						title={`Total size: ${formatBytes(session.fileTreeStats.totalSize)}`}
+						title={`Total size: ${formatBytes(session.fileTreeStats.totalSize)}${atLeast}`}
 					>
 						<HardDrive className="file-stats-icon w-3 h-3 shrink-0 opacity-60" />
 						<span className="file-stats-label opacity-60">Size:</span>
 						<span style={{ color: theme.colors.accent }}>
 							{formatBytes(session.fileTreeStats.totalSize)}
+							{atLeast}
 						</span>
 					</span>
 				</div>
@@ -1088,7 +1072,6 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					contextMenu={contextMenu}
 					contextMenuRef={contextMenuRef}
 					contextMenuPos={contextMenuPos}
-					sshRemoteId={sshRemoteId}
 					onFocusFileInGraph={onFocusFileInGraph}
 					onGraphFolder={handleGraphFolder}
 					onGraphSelection={handleGraphSelection}

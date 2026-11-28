@@ -25,6 +25,8 @@ import { UsageGuide } from './UsageGuide';
 import { ToggleSwitchTrack } from '../../ui/ToggleSwitch';
 import { AgentDispatchAllowlist } from './AgentDispatchAllowlist';
 import { WebLoginUsers } from './WebLoginUsers';
+import { PromptLinksPanel } from '../../PromptLinks/PromptLinksPanel';
+import { isWebDesktop } from '../../../utils/runtimeContext';
 import type { PluginGrantsSnapshot } from '../../../../main/ipc/handlers/plugins';
 import type {
 	AggregatedContributions,
@@ -152,6 +154,9 @@ export function ExtensionDetails({
 	// Web Login manages its accounts in its own tile: the channels behind that
 	// pane are desktop-only, so there is nowhere else they could be offered.
 	const isWebLogin = !isPlugin && ext.flag === 'webLogin';
+	// Prompt Links manages its links here too, through the same panel as its
+	// window. Desktop-only for the same reason as Web Login.
+	const isPromptLinks = !isPlugin && ext.flag === 'promptLinks';
 
 	const pluginSettings: SettingContribution[] = contributions
 		? contributions.settings.filter((s) => s.pluginId === ext.id)
@@ -175,6 +180,7 @@ export function ExtensionDetails({
 		Boolean(declared?.settings.length) ||
 		isPianola ||
 		isWebLogin ||
+		isPromptLinks ||
 		settingsPanels.length > 0;
 
 	// Reset transient editor + sub-tab when switching extensions. Something not
@@ -667,6 +673,34 @@ export function ExtensionDetails({
 								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 							>
 								Enable Web Login to manage accounts.
+							</div>
+						))}
+
+					{/* Prompt Links: the links are the configuration. With the flag off no
+					    link can run, so making one there would be a link that does nothing. */}
+					{isPromptLinks &&
+						(isWebDesktop() ? (
+							<div
+								data-testid="extension-settings-disabled-hint"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								Prompt links are managed in the desktop app only.
+							</div>
+						) : ext.state === 'enabled' ? (
+							<div
+								className="rounded-lg border overflow-hidden"
+								style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+							>
+								<PromptLinksPanel theme={theme} />
+							</div>
+						) : (
+							<div
+								data-testid="extension-settings-disabled-hint"
+								className="text-xs rounded-lg border p-3"
+								style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+							>
+								Enable Prompt Links to create and manage links.
 							</div>
 						))}
 

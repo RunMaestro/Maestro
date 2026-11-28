@@ -15,11 +15,11 @@ tablet or a remote desktop. Ship them together, in the same change.
 
 **Three ways in:**
 
-| Way                 | Where it goes                                                                                                                                                                                                                       |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Hotkey**          | `DEFAULT_SHORTCUTS` in `src/renderer/constants/shortcuts.ts`, handled in `useMainKeyboardHandler`                                                                                                                                   |
-| **Command palette** | A `build*Commands()` module under `src/renderer/components/QuickActionsModal/commands/`, wired in `QuickActionsModal.tsx`                                                                                                           |
-| **Menu**            | `HamburgerMenuContent.tsx` for a destination the user navigates to. Skip this one for an in-the-moment toggle (show/hide something already on screen), which belongs on a key and in the palette but not in a menu of places to go. |
+| Way                 | Where it goes                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Hotkey**          | `DEFAULT_SHORTCUTS` in `src/renderer/constants/shortcuts.ts`, handled in `useMainKeyboardHandler`                                                                                                                                                                                                                                                                                 |
+| **Command palette** | A `build*Commands()` module under `src/renderer/components/QuickActionsModal/commands/`, wired in `QuickActionsModal.tsx`                                                                                                                                                                                                                                                         |
+| **Menu**            | `HamburgerMenuContent.tsx` for a destination the user navigates to. Skip this one for an in-the-moment toggle (show/hide something already on screen), which belongs on a key and in the palette but not in a menu of places to go. The menu has three sections: app entries on top, feature surfaces in alphabetical order in the middle, and links/updates/about at the bottom. |
 
 Register the surface in `UI_SURFACES` (`src/shared/uiSurfaces.ts`) at the same
 time. One entry gives you `maestro-cli open <surface>`, the `open_modal` bridge
@@ -856,7 +856,7 @@ Three parts, and all three are required:
 
 `HistoryPanel` and `UnifiedHistoryTab` were the first two to do this, for entry cards whose height depends on how much text is in them. `FileSearchModal` is the newest: its rows stack a file name over a directory, and under a proportional UI font two lines do not fit the 44px estimate, so the text crammed together. A fixed-pitch font, meanwhile, wants the tighter box and should not be padded out to match. One number cannot serve both; measurement serves both.
 
-A fixed `estimateSize` with no `measureElement` is still right for a list whose rows genuinely are one uniform line (`TextPreviewFast`, `ParquetGrid`), and it is cheaper. Reach for measurement when the height is not yours to decide.
+A fixed `estimateSize` with no `measureElement` is still right for a list whose rows genuinely are one uniform line (`TextPreviewFast`, `DataGrid`), and it is cheaper. Reach for measurement when the height is not yours to decide.
 
 Testing this in jsdom cannot assert a height - there is no layout engine, and every element reports zero. Assert the wiring instead: the row carries `data-index`, the ref is `measureElement` itself, and no inline `height` is set. `FileSearchModal.render.test.tsx` does exactly that, and all three assertions fail if any part of the pattern is reverted.
 
@@ -1508,6 +1508,8 @@ Standard cancel/confirm button layout:
 />
 ```
 
+A dialog that can appear on its own while the user types, or one of a queue that replaces the dialog just answered, passes `ignoreHeldKeys`: an Enter or Space that auto-repeats, or that was pressed before the footer mounted, then answers nothing. `<ConfirmModal ignoreHeldKeys>` forwards it and also takes focus in the mount commit, so a held key cannot fall through to the surface behind it while one queued dialog swaps for the next. Key such a dialog by its request id so each one mounts fresh (`CoworkingApprovalHost` is the reference). `ConfirmModal` also takes `cancelLabel`, `initialFocus="cancel"` (a dialog whose stray Enter must decline), `width`, and `children` under the message.
+
 ### `<ShortcutHint>` (`src/renderer/components/ui/ShortcutHint.tsx`)
 
 The keys badge at the right edge of a tab overlay-menu row:
@@ -1579,6 +1581,28 @@ weight.
 - The label is its own accessible name, so pass a real word rather than an abbreviation
   the reader has to decode - unless the abbreviation is the established UI term, in which
   case pass `title` with the long form.
+
+### `<RemoveBadgeButton>` (`src/renderer/components/ui/RemoveBadgeButton.tsx`)
+
+The small red X that takes an attachment off a message before it is sent. A
+staged image's tile and a Design Mode chip both use it, so the two cannot drift
+apart in one composer. Do NOT hand-roll another `bg-red-500 text-white
+rounded-full p-1` button. Three copies are still to migrate:
+`QueuedItemEditModal`, `InlineWizard/WizardInputPanel`, `PromptComposerModal`.
+
+```tsx
+<RemoveBadgeButton
+	label="Remove image 2"
+	onRemove={remove}
+	className="absolute top-0.5 right-0.5"
+/>
+```
+
+- `className` places it: over a thumbnail's corner, or `shrink-0` at the end of a chip's row.
+- The click stops at the button, so the clickable element under it (the image lightbox,
+  the chip's popover) does not also fire. It is `draggable={false}`, because a staged
+  image tile is a drag source.
+- `label` is the tooltip and the accessible name. Name what it removes (`Remove image 2`).
 
 ### `<ProviderAvailabilityBar>` (`src/renderer/components/ui/ProviderAvailabilityBar.tsx`)
 
@@ -2663,7 +2687,7 @@ Three rules for editing it:
 - **`matchedRows` is a lower bound until `complete` is true.** Render it as `1,204+`, never as an exact total. A filtered scan stops as soon as it has filled the requested window; a background pass with `countAll: true` converges the number, and that pass is also what warms the scan for the next page.
 - **Hiding a column changes the projection.** It is a real optimization (the engine stops decoding that column), not a CSS toggle, which is why it invalidates the loaded window.
 
-The grid virtualizes with `@tanstack/react-virtual`. **Its "load the next page" effect must not fire for an unmeasured grid**: with no layout, the virtualizer renders a default window and the last rendered index looks like the end of the data, so the viewer pages the entire match set into memory without the user ever scrolling. `ParquetGrid` guards on `scrollRef.current?.clientHeight` and treats "no rendered rows" as `-1` rather than `0` for exactly this reason. jsdom has no layout engine, so this is the failure mode a render test will catch and a manual pass never will.
+The grid virtualizes with `@tanstack/react-virtual`. **Its "load the next page" effect must not fire for an unmeasured grid**: with no layout, the virtualizer renders a default window and the last rendered index looks like the end of the data, so the viewer pages the entire match set into memory without the user ever scrolling. The shared `<DataGrid>` (`src/renderer/components/ui/DataGrid.tsx`, also behind the SQLite viewer) guards on `scrollRef.current?.clientHeight` and treats "no rendered rows" as `-1` rather than `0` for exactly this reason. jsdom has no layout engine, so this is the failure mode a render test will catch and a manual pass never will.
 
 Column widths are explicit state seeded from each column's type, not measured. Measuring needs cells, cells arrive one page at a time, and a width that jumps when page two lands is worse than one that is merely approximate.
 

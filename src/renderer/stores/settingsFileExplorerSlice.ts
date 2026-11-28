@@ -64,6 +64,8 @@ export interface FileExplorerState {
 	sshRemoteHonorGitignore: boolean;
 	/** Federation: move SSH agents onto their remote's host automatically. */
 	federationAutoMove: boolean;
+	/** Federation: run hosted agents on their host. Off: each works as its SSH agent from here. */
+	federationHostedAgents: boolean;
 }
 
 export interface FileExplorerActions {
@@ -78,6 +80,7 @@ export interface FileExplorerActions {
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 	setFederationAutoMove: (value: boolean) => void;
+	setFederationHostedAgents: (value: boolean) => void;
 }
 
 export type FileExplorerSlice = FileExplorerState & FileExplorerActions;
@@ -95,7 +98,8 @@ export const createFileExplorerSlice: StateCreator<SettingsStore, [], [], FileEx
 	sshReduceEntryCapFraction: DEFAULT_SSH_REDUCE_ENTRY_CAP_FRACTION,
 	sshRemoteIgnorePatterns: ['.git', '*cache*'],
 	sshRemoteHonorGitignore: true,
-	federationAutoMove: true,
+	federationAutoMove: false,
+	federationHostedAgents: false,
 
 	setShowHiddenFiles: (value) => {
 		set({ showHiddenFiles: value });
@@ -166,6 +170,11 @@ export const createFileExplorerSlice: StateCreator<SettingsStore, [], [], FileEx
 	setFederationAutoMove: (value) => {
 		set({ federationAutoMove: value });
 		window.maestro.settings.set('federationAutoMove', value);
+	},
+
+	setFederationHostedAgents: (value) => {
+		set({ federationHostedAgents: value });
+		window.maestro.settings.set('federationHostedAgents', value);
 	},
 });
 
@@ -248,4 +257,7 @@ export function hydrateFileExplorerSettings(
 
 	if (typeof allSettings['federationAutoMove'] === 'boolean')
 		patch.federationAutoMove = allSettings['federationAutoMove'] as boolean;
+
+	if (typeof allSettings['federationHostedAgents'] === 'boolean')
+		patch.federationHostedAgents = allSettings['federationHostedAgents'] as boolean;
 }

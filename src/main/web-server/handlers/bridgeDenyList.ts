@@ -70,7 +70,7 @@ const METHODS: Record<string, string> = {
 	playbooks: 'create delete deleteAll export import list update',
 	plugins: 'contributions get-activity get-grants get-groupings invoke-command invoke-tool list',
 	process:
-		'broadcast-user-input cancelCommand getActiveProcesses getHeadlessActivity interrupt isTerminalBusy kill resize runCommand spawn spawnTerminalTab write',
+		'broadcast-transcript-changed broadcast-user-input cancelCommand getActiveProcesses getHeadlessActivity interrupt isTerminalBusy kill resize runCommand spawn spawnTerminalTab write',
 	prompts:
 		'get getAll getAllIds getBundledDefault getPath getSystemPromptPaths listFiles reset save',
 	sessions:
@@ -79,6 +79,8 @@ const METHODS: Record<string, string> = {
 	shell: 'trashItem',
 	shells: 'detect',
 	speckit: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
+	sqlite:
+		'cancelQuery checkIntegrity close countRows deleteRow disableEditing enableEditing insertRow listObjects open readColumns readObjectStats readRows readSchema readSummary runQuery saveBlob undoEdit updateCell',
 	'ssh-remote':
 		'deleteConfig getConfigs getDefaultId getSshConfigHosts saveConfig setDefaultId test',
 	stats:

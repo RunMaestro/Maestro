@@ -9,7 +9,7 @@
  */
 
 import { ipcRenderer, webUtils } from 'electron';
-import type { DirectoryEntry } from '../../shared/types';
+import type { DirectoryEntry, RemoteCopyWatchResult } from '../../shared/types';
 export type { DirectoryEntry } from '../../shared/types';
 
 /**
@@ -30,6 +30,8 @@ export interface DirectorySizeInfo {
 	totalSize: number;
 	fileCount: number;
 	folderCount: number;
+	/** The walk stopped counting files at its cap: the count and size are at least these ("N+"). */
+	fileCountCapped?: boolean;
 }
 
 /**
@@ -153,6 +155,28 @@ export function createFsApi() {
 			localDestPath?: string
 		): Promise<{ success: boolean; path: string }> =>
 			ipcRenderer.invoke('fs:downloadRemoteFile', remotePath, sshRemoteId, localDestPath),
+
+		/**
+		 * Watch the temp copy `downloadRemoteFile` fetched for a remote file (no
+		 * destination), and write a change saved in another app back to the remote
+		 * file. A remote file that changed since the fetch is never overwritten: the
+		 * user's version is kept beside the copy and a toast says so. Call it right
+		 * after the fetch. Resolves with the copy's path and whether it saves back
+		 * (a copy too large to send back is not watched, and `reason` says so).
+		 */
+		watchRemoteCopy: (remotePath: string, sshRemoteId: string): Promise<RemoteCopyWatchResult> =>
+			ipcRenderer.invoke('fs:watchRemoteCopy', remotePath, sshRemoteId),
+
+		/**
+		 * Download a remote SSH folder (its whole tree) to a temp folder on this
+		 * machine. Rejects when the folder is too large to copy whole. Resolves with
+		 * the local folder path and how many files it holds.
+		 */
+		downloadRemoteFolder: (
+			remotePath: string,
+			sshRemoteId: string
+		): Promise<{ success: boolean; path: string; fileCount: number }> =>
+			ipcRenderer.invoke('fs:downloadRemoteFolder', remotePath, sshRemoteId),
 
 		/**
 		 * Write file contents

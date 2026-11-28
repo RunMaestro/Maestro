@@ -6,9 +6,20 @@ import { useComposerInputStore } from '../../../renderer/stores/composerInputSto
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session } from '../../../renderer/types';
-import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	agentModeFields,
+	createMockSession as baseCreateMockSession,
+} from '../../helpers/mockSession';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
+import { createMockDesignPick } from '../../helpers/mockTab';
 
 import { mockTheme } from '../../helpers/mockTheme';
 
@@ -936,6 +947,63 @@ describe('InputArea', () => {
 			const updaterFn = setStagedImages.mock.calls[0][0];
 			const result = updaterFn(stagedImages);
 			expect(result).toEqual(['data:image/png;base64,DEF456']);
+		});
+	});
+
+	describe('Design Mode chips', () => {
+		const chip = createMockDesignPick({
+			note: 'Make it blue',
+			text: 'Design Mode element from https://example.com',
+		});
+
+		/** A session whose active tab has `chip` staged, in the store and on screen. */
+		function renderWithChip(inputMode: 'ai' | 'terminal' = 'ai') {
+			const base = createMockSession({ inputMode });
+			const session = {
+				...base,
+				aiTabs: base.aiTabs.map((tab) => ({ ...tab, stagedDesignPicks: [chip] })),
+			};
+			useSessionStore.setState({ sessions: [session] } as never);
+			// The chip's popover registers with the layer stack (Escape closes it).
+			render(
+				<LayerStackProvider>
+					<InputArea {...createDefaultProps({ session })} />
+				</LayerStackProvider>
+			);
+		}
+
+		function storedChips() {
+			return useSessionStore.getState().sessions[0].aiTabs[0].stagedDesignPicks;
+		}
+
+		it("shows the active tab's chips in AI mode", () => {
+			renderWithChip();
+			expect(screen.getAllByTestId('design-pick-chip')).toHaveLength(1);
+			expect(screen.getByText('button.cta "Sign up"')).toBeInTheDocument();
+		});
+
+		it('does NOT show chips in terminal mode', () => {
+			renderWithChip('terminal');
+			expect(screen.queryByTestId('design-pick-chip')).not.toBeInTheDocument();
+		});
+
+		it('removes a chip from the tab through the store', () => {
+			renderWithChip();
+			fireEvent.click(screen.getByRole('button', { name: 'Remove pick button.cta "Sign up"' }));
+			expect(storedChips()).toEqual([]);
+		});
+
+		it('saves an edited note on the tab when the popover closes', () => {
+			renderWithChip();
+			fireEvent.click(
+				screen.getByRole('button', { name: 'Design Mode pick button.cta "Sign up"' })
+			);
+			fireEvent.change(screen.getByTestId('design-pick-popover-note'), {
+				target: { value: ' Make it red ' },
+			});
+			fireEvent.click(screen.getByTestId('design-pick-popover-done'));
+
+			expect(storedChips()).toEqual([{ ...chip, note: 'Make it red' }]);
 		});
 	});
 
@@ -2882,10 +2950,89 @@ describe('InputArea on a phone', () => {
 		expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
 	});
 
+	describe('Design Mode chips behind the fold', () => {
+		/** A session whose active tab holds one chip and no text. */
+		function sessionWithChip(inputMode: 'ai' | 'terminal'): Session {
+			const base = createMockSession({ inputMode });
+			return {
+				...base,
+				aiTabs: base.aiTabs.map((tab) => ({
+					...tab,
+					stagedDesignPicks: [createMockDesignPick()],
+				})),
+			};
+		}
+
+		it('marks the handle when only chips wait behind it: they send on their own', () => {
+			render(<InputArea {...createDefaultProps({ session: sessionWithChip('ai') })} />);
+			expect(screen.getByTestId('phone-composer-handle-draft')).toBeInTheDocument();
+		});
+
+		it("does not count the AI tab's chips behind the terminal composer", () => {
+			render(<InputArea {...createDefaultProps({ session: sessionWithChip('terminal') })} />);
+			expect(screen.queryByTestId('phone-composer-handle-draft')).not.toBeInTheDocument();
+		});
+	});
+
 	it('draws no handle at all on desktop', () => {
 		mockedUsePhoneLayout.mockReturnValue(false);
 		render(<InputArea {...createDefaultProps()} />);
 		expect(screen.queryByTestId('phone-composer-handle')).not.toBeInTheDocument();
 		expect(screen.getByRole('textbox')).toBeInTheDocument();
+	});
+});
+
+// docs/parity/agent-ux-parity.md, Composer: the send column, the Attach Image control, the
+// staged image strip, and the model, effort, and thinking pills are one composer in every
+// mode. Rendered for a local, an SSH, and a hosted agent, the DOM is identical.
+describe('InputArea mode parity', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [], groups: [] });
+		useSettingsStore.setState({ federationHostedAgents: true } as any);
+		const { peer } = replacePeerAgents(
+			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+			[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+			[],
+			1
+		);
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+	});
+
+	afterEach(() => {
+		useSettingsStore.setState({ federationHostedAgents: false } as any);
+		usePeerMirrorStore.setState({ peers: {} } as any);
+	});
+
+	it('draws the same composer for a local, an SSH, and a hosted agent', () => {
+		const markup = AGENT_MODES.map((mode) => {
+			const session = createMockSession({ ...agentModeFields(mode), inputMode: 'ai' });
+			const props = createDefaultProps({
+				session,
+				inputValue: 'hello',
+				stagedImages: ['data:image/png;base64,AA'],
+				supportsThinking: true,
+				tabShowThinking: 'on',
+				onToggleTabShowThinking: vi.fn(),
+				currentModel: 'opus',
+				currentEffort: 'high',
+				availableModels: ['opus', 'sonnet'],
+				availableEfforts: ['low', 'high'],
+				onModelChange: vi.fn(),
+				onEffortChange: vi.fn(),
+			});
+			const { container, unmount } = render(<InputArea {...props} />);
+			// The controls the Composer rows name are present in every mode.
+			expect(screen.getByTitle('Send message')).toBeInTheDocument();
+			expect(screen.getByTitle('Attach Image')).toBeInTheDocument();
+			expect(screen.getByTitle('Change model')).toBeInTheDocument();
+			expect(screen.getByTitle('Change effort level')).toBeInTheDocument();
+			expect(screen.getByTitle(/^Thinking/)).toBeInTheDocument();
+			const html = container.innerHTML;
+			unmount();
+			return html;
+		});
+		expect(markup[1]).toBe(markup[0]);
+		expect(markup[2]).toBe(markup[0]);
 	});
 });

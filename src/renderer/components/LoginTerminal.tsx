@@ -27,7 +27,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { copyTextWithFlash } from '../utils/inlineCodeCopy';
 import { logger } from '../utils/logger';
-import type { Theme } from '../types';
+import type { Session, Theme } from '../types';
 
 export type LoginTerminalStatus = 'starting' | 'running' | 'failed' | 'exited';
 
@@ -35,6 +35,36 @@ export interface LoginTerminalSshConfig {
 	enabled: boolean;
 	remoteId: string | null;
 	workingDirOverride?: string;
+}
+
+/**
+ * The SSH target a login or install shell for `session` starts on: the agent's
+ * remote (a hosted agent's host is that remote too), or undefined for a local
+ * agent. Same SSH resolution as a terminal tab, but only paths that are
+ * definitely REMOTE are used: a terminal tab falls back to `session.cwd`, but
+ * this shell exists solely to run one command, it gains nothing from the project
+ * directory, and main turns the override into a `cd` that the remote shell runs
+ * first, so a stale or local-looking path would kill the session before the
+ * command starts. Landing in the remote home directory is always safe.
+ */
+export function loginTerminalSshConfig(
+	session: Pick<Session, 'sessionSshRemoteConfig' | 'sshRemoteId' | 'remoteCwd'>
+): LoginTerminalSshConfig | undefined {
+	if (session.sessionSshRemoteConfig?.enabled) {
+		return {
+			...session.sessionSshRemoteConfig,
+			workingDirOverride:
+				session.sessionSshRemoteConfig.workingDirOverride || session.remoteCwd || undefined,
+		};
+	}
+	if (session.sshRemoteId) {
+		return {
+			enabled: true,
+			remoteId: session.sshRemoteId,
+			workingDirOverride: session.remoteCwd || undefined,
+		};
+	}
+	return undefined;
 }
 
 /** Where and how the login shell is started. Read once, when the shell spawns. */

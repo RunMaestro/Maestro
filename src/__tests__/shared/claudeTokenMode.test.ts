@@ -11,6 +11,8 @@ import {
 	toClaudeTokenModeSource,
 	getClaudeTokenSourceFields,
 	autoRunMaestroPMaxWaitSeconds,
+	claudeTurnMayUseTui,
+	isMaestroPBinaryPath,
 	type ClaudeTokenMode,
 } from '../../shared/claudeTokenMode';
 
@@ -231,5 +233,40 @@ describe('autoRunMaestroPMaxWaitSeconds', () => {
 				autoRunMaxTaskDurationMin: 0,
 			})
 		).toBe(86400);
+	});
+});
+
+describe('claudeTurnMayUseTui', () => {
+	it('is the TUI for an unset source over SSH and the API locally (the default is the difference)', () => {
+		expect(claudeTurnMayUseTui({}, { sshEnabled: true })).toBe(true);
+		expect(claudeTurnMayUseTui({})).toBe(false);
+		expect(claudeTurnMayUseTui({}, { sshEnabled: true, sshMaestroPAvailable: false })).toBe(false);
+	});
+
+	it('runs a stored Dynamic on the TUI locally and on the API over SSH', () => {
+		const dynamic = { enableMaestroP: true, maestroPMode: 'dynamic' as const };
+		expect(claudeTurnMayUseTui(dynamic)).toBe(true);
+		expect(claudeTurnMayUseTui(dynamic, { sshEnabled: true })).toBe(false);
+	});
+
+	it('runs the TUI locally when the Path field points at maestro-p, whatever the token mode', () => {
+		expect(
+			claudeTurnMayUseTui({ enableMaestroP: false, customPath: 'C:\\tools\\maestro-p.exe' })
+		).toBe(true);
+		expect(
+			claudeTurnMayUseTui(
+				{ enableMaestroP: false, customPath: '/opt/maestro-p' },
+				{ sshEnabled: true }
+			)
+		).toBe(false);
+		expect(claudeTurnMayUseTui({ enableMaestroP: false, customPath: '/usr/bin/claude' })).toBe(
+			false
+		);
+	});
+
+	it('recognises a maestro-p binary by its basename', () => {
+		expect(isMaestroPBinaryPath('/a/maestro-p.js')).toBe(true);
+		expect(isMaestroPBinaryPath('/a/claude')).toBe(false);
+		expect(isMaestroPBinaryPath(undefined)).toBe(false);
 	});
 });

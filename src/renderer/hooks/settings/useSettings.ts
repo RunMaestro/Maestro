@@ -423,6 +423,8 @@ export interface UseSettingsReturn {
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 	federationAutoMove: boolean;
 	setFederationAutoMove: (value: boolean) => void;
+	federationHostedAgents: boolean;
+	setFederationHostedAgents: (value: boolean) => void;
 
 	// Browser settings
 	useSystemBrowser: boolean;
@@ -435,6 +437,8 @@ export interface UseSettingsReturn {
 	setBrowserTabKeepAlive: (value: 'off' | 'recent' | 'all') => void;
 	browserTabKeepAliveLimit: number;
 	setBrowserTabKeepAliveLimit: (value: number) => void;
+	designModeCollapsePanels: boolean;
+	setDesignModeCollapsePanels: (value: boolean) => void;
 
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
@@ -447,6 +451,10 @@ export interface UseSettingsReturn {
 	setUtilityAgentId: (value: string | null) => void;
 	utilityModelId: string | null;
 	setUtilityModelId: (value: string | null) => void;
+
+	// Primary Agent (#2050): default receiver of the user's input
+	primaryAgentId: string | null;
+	setPrimaryAgentId: (value: string | null) => void;
 
 	// Where new tabs are inserted in the tab bar (per content type)
 	newTabPlacement: 'end' | 'after-current';
@@ -482,7 +490,9 @@ export interface UseSettingsReturn {
 	coworkingBrowserInteraction: string[];
 	setCoworkingBrowserInteraction: (value: string[]) => void;
 	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
+	coworkingBrowserTypingWithoutConfirmation: string[];
 	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
+	setCoworkingBrowserTypingWithoutConfirmation: (value: string[]) => void;
 	coworkingBackgroundBrowsers: boolean;
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	coworkingBackgroundBrowsersLimit: number;

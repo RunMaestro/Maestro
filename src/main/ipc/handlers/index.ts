@@ -48,8 +48,13 @@ import {
 } from '../../cue/stats/cue-stats-query';
 import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from './documentGraph';
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
-import { registerFilesystemHandlers } from './filesystem';
+import {
+	flushRemoteCopyWriteBack,
+	pendingRemoteCopyWrites,
+	registerFilesystemHandlers,
+} from './filesystem';
 import { registerParquetHandlers } from './parquet';
+import { registerSqliteHandlers } from './sqlite';
 import { registerCodexVisualizationHandlers } from './codexVisualization';
 import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './attachments';
 import {
@@ -64,6 +69,7 @@ import { registerComputerHistoryHandlers } from './computerHistory';
 import { registerFederationHandlers } from './federation';
 import { registerMaestroRunHandlers } from './maestroRun';
 import { registerDataviewHandlers, DataviewHandlerDependencies } from './dataview';
+import { registerPromptLinkHandlers } from './promptLinks';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationHistoryHandlers } from './notification-history';
 import { registerNotificationsHandlers } from './notifications';
@@ -71,6 +77,7 @@ import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphon
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerAiCommandHandlers } from './aiCommand';
+import { registerSideQuestionHandlers } from './sideQuestion';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
@@ -135,8 +142,9 @@ export { registerCueStatsHandlers };
 export type { CueStatsHandlerDependencies };
 export { registerDocumentGraphHandlers };
 export { registerSshRemoteHandlers };
-export { registerFilesystemHandlers };
+export { registerFilesystemHandlers, flushRemoteCopyWriteBack, pendingRemoteCopyWrites };
 export { registerParquetHandlers };
+export { registerSqliteHandlers };
 export { registerCodexVisualizationHandlers };
 export { registerAttachmentsHandlers };
 export type { AttachmentsHandlerDependencies };
@@ -153,6 +161,7 @@ export { registerFederationHandlers };
 export { registerMaestroRunHandlers };
 export { registerDataviewHandlers };
 export type { DataviewHandlerDependencies };
+export { registerPromptLinkHandlers };
 export { registerLeaderboardHandlers };
 export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers, registerNotificationHistoryHandlers };
@@ -160,6 +169,7 @@ export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
 export { registerAiCommandHandlers };
+export { registerSideQuestionHandlers };
 export type { TabNamingHandlerDependencies };
 export { registerDirectorNotesHandlers };
 export type { DirectorNotesHandlerDependencies };
@@ -340,7 +350,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Register stats handlers for usage tracking
 	registerStatsHandlers({
-		getMainWindow: deps.getMainWindow,
 		settingsStore: deps.settingsStore,
 	});
 	// Register Cue Stats handlers for the Cue Dashboard aggregation query
@@ -359,6 +368,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	// Register filesystem handlers (no dependencies needed - uses stores directly)
 	registerFilesystemHandlers();
 	registerParquetHandlers();
+	registerSqliteHandlers();
 	// Register attachments handlers
 	registerAttachmentsHandlers({
 		app: deps.app,

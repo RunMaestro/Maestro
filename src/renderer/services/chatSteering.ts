@@ -23,10 +23,11 @@
  */
 
 import type { LogEntry, PendingSteer, QueuedItem, Session } from '../types';
-import type {
-	QueueSteerResult,
-	SteerBubbleState,
-	SteeringResultFrame,
+import {
+	steerRefusalSentence,
+	type QueueSteerResult,
+	type SteerBubbleState,
+	type SteeringResultFrame,
 } from '../../shared/chatSteering';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
@@ -34,6 +35,8 @@ import { notifyToast } from '../stores/notificationStore';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { resolveQueuedItemTarget } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
+import { hostedTargetOf } from './hostedTurns';
+import { steerMirrorQueuedItem } from './peerMirror';
 import {
 	describeSteerBlocked,
 	getSteerEligibility,
@@ -201,6 +204,39 @@ export function settlePendingSteers(
 	return next;
 }
 
+function notifyDelivered(sessionId: string, tabId: string, name: string): void {
+	notifyToast({
+		color: 'green',
+		title: 'Sent to the running turn',
+		message: `${name} has your message. If it never takes it, it goes back in the queue.`,
+		sessionId,
+		tabId,
+	});
+}
+
+function notifyRefused(
+	sessionId: string,
+	tabId: string,
+	name: string,
+	result: Pick<QueueSteerResult, 'refusal' | 'detail'>
+): void {
+	notifyToast({
+		color: 'yellow',
+		title: 'Could not steer this turn',
+		message: `${steerRefusalSentence(result, `${name} could not take the message right now.`)} It stays queued.`,
+		sessionId,
+		tabId,
+	});
+}
+
+function notifySteeringUnavailable(detail?: string): void {
+	notifyToast({
+		color: 'yellow',
+		title: 'Steering unavailable',
+		message: detail ?? 'This client cannot steer a running turn.',
+	});
+}
+
 function notifyUnconfirmed(sessionId: string, tabId: string): void {
 	notifyToast({
 		color: 'orange',
@@ -243,15 +279,14 @@ export async function steerQueuedItem(
 		return { outcome: 'not-found', detail: `no queued item ${itemId} for agent ${sessionId}` };
 	}
 
+	// A hosted agent's message waits on its host, which runs this same steer on its own queue.
+	if (item.hostQueued) return steerHostQueuedItem(session, item, flightKey);
+
 	const steer = window.maestro?.process?.steer;
 	if (!steer) {
 		// Web renderer, or a build without the bridge. Say so rather than leaving
 		// the click silent.
-		notifyToast({
-			color: 'yellow',
-			title: 'Steering unavailable',
-			message: 'This client cannot steer a running turn.',
-		});
+		notifySteeringUnavailable();
 		return { outcome: 'unavailable', detail: 'this client cannot steer a running turn' };
 	}
 
@@ -338,13 +373,7 @@ export async function steerQueuedItem(
 					p.steerId === provisionalId ? { ...p, steerId } : p
 				),
 			}));
-			notifyToast({
-				color: 'green',
-				title: 'Sent to the running turn',
-				message: `${name} has your message. If it never takes it, it goes back in the queue.`,
-				sessionId,
-				tabId: target.tabId,
-			});
+			notifyDelivered(sessionId, target.tabId, name);
 			const early = earlyVerdicts.get(`${processKey}:${steerId}`);
 			if (early) {
 				earlyVerdicts.delete(`${processKey}:${steerId}`);
@@ -364,13 +393,7 @@ export async function steerQueuedItem(
 		// of the queue, live, and it sends normally when the turn ends.
 		if (result.verdict === 'refused') {
 			updateSessionWith(sessionId, (s) => returnPendingSteersToQueue(s, provisional, false));
-			notifyToast({
-				color: 'yellow',
-				title: 'Could not steer this turn',
-				message: `${result.detail ?? `${name} could not take the message right now.`} It stays queued.`,
-				sessionId,
-				tabId: target.tabId,
-			});
+			notifyRefused(sessionId, target.tabId, name, result);
 			return {
 				outcome: 'refused',
 				verdict: result.verdict,
@@ -392,6 +415,91 @@ export async function steerQueuedItem(
 	} finally {
 		noteAwaitingReply(processKey, -1);
 	}
+}
+
+/**
+ * Steer a hosted agent's queued message. The host runs {@link steerQueuedItem} on its own queue
+ * (it parks the message, types it, and puts it back if the agent never takes it), so nothing is
+ * parked here: the host's queue update takes the card away or brings it back. This side checks
+ * the same eligibility first and reports the outcome with the same toasts a local steer shows.
+ */
+async function steerHostQueuedItem(
+	session: Session,
+	item: QueuedItem,
+	flightKey: string
+): Promise<QueueSteerResult> {
+	const host = hostedTargetOf(session);
+	const target = resolveQueuedItemTarget(session, item);
+	const eligibility = getSteerEligibility(session, item);
+	if (!host || !eligibility.canSteer || !target || !item.text?.trim()) {
+		return {
+			outcome: 'not-steerable',
+			blockedReason: eligibility.blockedReason ?? 'no-target-tab',
+			detail: 'the message stays queued and sends when the current turn ends',
+		};
+	}
+	return runHostSteer(session, host, target.tabId, item.id, flightKey);
+}
+
+/** One steer on the host, reported with the toasts a local steer shows. */
+async function runHostSteer(
+	session: Session,
+	host: { peerId: string; agentId: string },
+	tabId: string,
+	itemId: string,
+	flightKey: string
+): Promise<QueueSteerResult> {
+	steersInFlight.add(flightKey);
+	let result: QueueSteerResult | null;
+	try {
+		result = await steerMirrorQueuedItem(host.peerId, host.agentId, itemId);
+	} finally {
+		steersInFlight.delete(flightKey);
+	}
+	// The host could not be reached or refused the call: already a red toast, and the message
+	// still waits on the host.
+	if (!result) return { outcome: 'unavailable', detail: 'the host did not take the steer' };
+	const name = agentLabel(session);
+	switch (result.outcome) {
+		case 'delivered':
+			notifyDelivered(session.id, tabId, name);
+			break;
+		case 'refused':
+			notifyRefused(session.id, tabId, name, result);
+			break;
+		case 'unconfirmed':
+			// The host paused it rather than send it twice, as a local steer does.
+			notifyUnconfirmed(session.id, tabId);
+			break;
+		case 'unavailable':
+			notifySteeringUnavailable(result.detail);
+			break;
+		default:
+			// `settled` needs no word, and `not-steerable` / `not-found` are the caller's to explain.
+			break;
+	}
+	return result;
+}
+
+/**
+ * Steer Running Turn with a draft, on a hosted agent: the draft went to the host, which queued it
+ * behind the running turn as `itemId` (a local Steer queues it first, too). The host's queue
+ * update has not reached this record yet, so the steer names the host's item directly; the host
+ * checks it as it checks a click on its own card. A message that cannot be steered stays queued
+ * there, and says why, as {@link steerQueuedItemOrExplain} does.
+ */
+export async function steerHostedSentMessage(
+	session: Session,
+	tabId: string,
+	itemId: string
+): Promise<QueueSteerResult> {
+	const host = hostedTargetOf(session);
+	if (!host) return { outcome: 'not-found', detail: `no host for agent ${session.id}` };
+	const result = await runHostSteer(session, host, tabId, itemId, `${session.id}:${itemId}`);
+	if (result.outcome === 'not-steerable') {
+		notifySteerBlocked(session.id, tabId, result.blockedReason);
+	}
+	return result;
 }
 
 /**

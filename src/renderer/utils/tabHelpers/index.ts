@@ -25,6 +25,7 @@ import {
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
 import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
+import { DEFAULT_TAB_DEFAULTS, turnEntryIdFor } from '../../../shared/maestro-lib/agents/rules';
 import type { MessagePin } from '../../../shared/messagePins';
 import { collectGroupMemberTabKeys } from '../../../shared/tabStripMembership';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
@@ -50,6 +51,7 @@ import {
 	rehydrateBrowserTab,
 } from '../browserTabPersistence';
 import { getLiveDraft } from '../liveDraftStore';
+import { hostedTabHoldsLine } from '../hostedTabLine';
 import { codifyQueuedTurnSettings } from '../providerTabSessions';
 import {
 	aiTabFocusFields,
@@ -59,7 +61,6 @@ import {
 	toggleReadOnlyModeFields,
 	permissionModeFields,
 	nextPermissionMode,
-	cycleShowThinkingFields,
 	setShowThinkingFields,
 } from './focusFields';
 import {
@@ -89,7 +90,6 @@ export {
 	toggleReadOnlyModeFields,
 	permissionModeFields,
 	nextPermissionMode,
-	cycleShowThinkingFields,
 	setShowThinkingFields,
 };
 export { groupFocusFields, resolveFocusedPaneTabRef, findGroupPaneForTab };
@@ -524,7 +524,16 @@ export function extractQuickTabName(message: string): string | null {
 }
 
 /**
- * Check if a tab has draft content (unsent input or staged images).
+ * Whether a tab's composer holds staged attachments: images, or Design Mode
+ * chips. Either one is a sendable draft on its own, with no text typed.
+ */
+export function hasStagedAttachments(tab: AITab): boolean {
+	return (tab.stagedImages?.length ?? 0) > 0 || (tab.stagedDesignPicks?.length ?? 0) > 0;
+}
+
+/**
+ * Check if a tab has draft content (unsent input, staged images, or Design
+ * Mode chips).
  * Used for determining if a tab should be shown in "unread only" filter mode.
  *
  * Prefers the live textarea value from liveDraftStore (which the active tab
@@ -533,12 +542,12 @@ export function extractQuickTabName(message: string): string | null {
  * sync with what's actually on screen.
  *
  * @param tab - The AI tab to check
- * @returns True if the tab has unsent text input or staged images
+ * @returns True if the tab has unsent text input or staged attachments
  */
 export function hasDraft(tab: AITab): boolean {
 	const liveValue = getLiveDraft(tab.id);
 	const text = liveValue !== undefined ? liveValue : (tab.inputValue ?? '');
-	return text.trim() !== '' || (tab.stagedImages && tab.stagedImages.length > 0);
+	return text.trim() !== '' || hasStagedAttachments(tab);
 }
 
 /**
@@ -554,7 +563,8 @@ export function hasActiveWizard(tab: AITab): boolean {
 
 /**
  * Check if a tab's active wizard has any user interaction.
- * Returns true if the user has sent messages, typed input, or staged images.
+ * Returns true if the user has sent messages, typed input, or staged images
+ * or Design Mode chips.
  * Used to decide whether closing the wizard should show a confirmation dialog.
  *
  * @param tab - The AI tab to check
@@ -565,8 +575,7 @@ export function hasWizardInteraction(tab: AITab): boolean {
 	const hasUserMessages =
 		tab.wizardState.conversationHistory?.some((m) => m.role === 'user') ?? false;
 	const hasInput = (tab.inputValue ?? '').trim() !== '';
-	const hasImages = tab.stagedImages?.length > 0;
-	return hasUserMessages || hasInput || hasImages;
+	return hasUserMessages || hasInput || hasStagedAttachments(tab);
 }
 
 /**
@@ -883,10 +892,16 @@ export function resolveQueuedItemTarget(
  * ("Agent process already running for session ...-ai-<tabId>", MAESTRO-ZS). Every
  * drain path checks this first and leaves the item queued; the busy tab's own exit
  * drains it.
+ *
+ * A hosted agent's tab is also busy while it holds its line here (`hostedTabHoldsLine()`):
+ * a turn on its way to the host, or a consult waiting for its turn to start there. The tab
+ * reads the host's state, idle until the host's first frame of that turn, and the next
+ * item must not overtake it (U1).
  */
 export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 'tabId'>): boolean {
 	const target = resolveQueuedItemTarget(session, item);
 	if (!target) return false;
+	if (hostedTabHoldsLine(session.id, target.tabId)) return true;
 	const tab =
 		session.aiTabs?.find((candidate) => candidate.id === target.tabId) ??
 		session.orphanedThinkingTabs?.find((candidate) => candidate.id === target.tabId);
@@ -915,8 +930,12 @@ export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 
 export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: Session): AITab {
 	const next = markTabRunningTurn(tab, item, session);
 	if (item.type === 'message' && (item.text || item.images?.length)) {
+		// The id a Federation client named for it (`TurnInput.entryId`), read as a headless host
+		// reads it: a resend of a message this tab already holds is that entry, written once.
+		const entryId = turnEntryIdFor(tab, item.entryId, item.text ?? '', item.images);
+		if (entryId && tab.logs.some((entry) => entry.id === entryId)) return next;
 		const logEntry: LogEntry = {
-			id: generateId(),
+			id: entryId ?? generateId(),
 			timestamp: next.thinkingStartTime ?? Date.now(),
 			source: 'user',
 			text: item.text ?? '',
@@ -927,10 +946,46 @@ export function markTabRunningQueuedItem(tab: AITab, item: QueuedItem, session: 
 			queuedItemId: item.id,
 			...(item.forceParallel && { forceParallel: true }),
 			...(item.readOnlyMode && { readOnly: true }),
+			...(item.turnSaveToHistory !== undefined && { saveToHistory: item.turnSaveToHistory }),
 		};
+		// The bubble drawn for it while it was kept for a host (`QueuedItem.keptEntryId`), still here
+		// after a Move Back: the message runs here now, and that bubble becomes its entry, drawn once.
+		const keptAt = item.keptEntryId
+			? tab.logs.findIndex((entry) => entry.id === item.keptEntryId && entry.keptForHost)
+			: -1;
+		if (keptAt !== -1) {
+			const logs = [...tab.logs];
+			logs[keptAt] = { ...logEntry, id: tab.logs[keptAt].id };
+			next.logs = logs;
+			return next;
+		}
 		next.logs = [...tab.logs, logEntry];
 	}
 	return next;
+}
+
+/**
+ * The queue items a busy tab's running work came from, by the `queuedItemId`
+ * {@link markTabRunningQueuedItem} stamped on their user entries: the latest user
+ * entry that started a turn, and each steer after it that the agent took as input of
+ * its own (`steered`, `steerState: 'queued'`). Such a steer waits inside the turn while
+ * that turn runs, then runs as the turn's follow-up in the same busy stretch, and the
+ * tab records no start between the two, so a Stop in that stretch ends both (Greptile
+ * and CodeRabbit on #2162). A steer the turn absorbed is part of it and named by none.
+ * Empty for an idle tab and for a turn sent straight from the composer (no id).
+ */
+export function runningQueuedItemIds(tab: Pick<AITab, 'state' | 'logs'>): string[] {
+	if (tab.state !== 'busy') return [];
+	const steers: string[] = [];
+	for (let index = tab.logs.length - 1; index >= 0; index--) {
+		const entry = tab.logs[index];
+		if (entry.source !== 'user') continue;
+		if (!entry.steered) {
+			return entry.queuedItemId ? [entry.queuedItemId, ...steers] : steers;
+		}
+		if (entry.steerState === 'queued' && entry.queuedItemId) steers.unshift(entry.queuedItemId);
+	}
+	return steers;
 }
 
 /**
@@ -1177,8 +1232,9 @@ export function createTab(
 		starred = false,
 		usageStats,
 		pinnedMessages,
-		saveToHistory = true,
-		showThinking = 'off',
+		// The one default for a new tab, shared with a hosted agent's new tab (`openHostedTab()`).
+		saveToHistory = DEFAULT_TAB_DEFAULTS.saveToHistory,
+		showThinking = DEFAULT_TAB_DEFAULTS.showThinking,
 		activate: activateOption = true,
 		hidden = false,
 		id,
@@ -2030,6 +2086,38 @@ export interface ReopenUnifiedClosedTabResult {
 }
 
 /**
+ * `tab` placed at `unifiedIndex` of the strip (a closed tab's old slot), and among the AI tabs
+ * after as many AI tabs as come before that slot. A tab of the same id already in the session is
+ * moved there, not doubled, so a hosted reopen whose host update landed first (and appended it)
+ * still returns to its slot. The index is clamped to the strip.
+ */
+export function insertAiTabAtUnifiedIndex(
+	session: Pick<Session, 'aiTabs' | 'unifiedTabOrder'>,
+	tab: AITab,
+	unifiedIndex: number
+): Pick<Session, 'aiTabs' | 'unifiedTabOrder'> {
+	const order = (session.unifiedTabOrder ?? []).filter(
+		(ref) => !(ref.type === 'ai' && ref.id === tab.id)
+	);
+	const aiTabs = session.aiTabs.filter((candidate) => candidate.id !== tab.id);
+	const targetUnifiedIndex = Math.max(0, Math.min(unifiedIndex, order.length));
+	// Count how many AI tabs come before this position
+	let aiTabsBeforeIndex = 0;
+	for (let i = 0; i < targetUnifiedIndex; i++) {
+		if (order[i].type === 'ai') aiTabsBeforeIndex++;
+	}
+	const insertIndex = Math.min(aiTabsBeforeIndex, aiTabs.length);
+	return {
+		aiTabs: [...aiTabs.slice(0, insertIndex), tab, ...aiTabs.slice(insertIndex)],
+		unifiedTabOrder: [
+			...order.slice(0, targetUnifiedIndex),
+			{ type: 'ai', id: tab.id },
+			...order.slice(targetUnifiedIndex),
+		],
+	};
+}
+
+/**
  * Restore a closed AI tab into a session, handling orphan re-attach and
  * duplicate detection. Does NOT mutate either closed-tab history list - the
  * caller is responsible for popping/removing the entry it pulled this tab from
@@ -2097,42 +2185,16 @@ function restoreClosedAiTab(
 		id: restoredTabId ?? generateId(),
 	};
 
-	// Calculate insert position in aiTabs based on unified index
-	// Find where this tab should go in unifiedTabOrder
-	const targetUnifiedIndex = Math.min(unifiedIndex, session.unifiedTabOrder.length);
-
-	// Count how many AI tabs come before this position
-	let aiTabsBeforeIndex = 0;
-	for (let i = 0; i < targetUnifiedIndex && i < session.unifiedTabOrder.length; i++) {
-		if (session.unifiedTabOrder[i].type === 'ai') {
-			aiTabsBeforeIndex++;
-		}
-	}
-	const insertIndex = Math.min(aiTabsBeforeIndex, session.aiTabs.length);
-
-	const updatedAiTabs = [
-		...session.aiTabs.slice(0, insertIndex),
-		restoredTab,
-		...session.aiTabs.slice(insertIndex),
-	];
-
-	// Insert into unifiedTabOrder at the original position
-	const newTabRef: UnifiedTabRef = { type: 'ai', id: restoredTab.id };
-	const updatedUnifiedTabOrder = [
-		...session.unifiedTabOrder.slice(0, targetUnifiedIndex),
-		newTabRef,
-		...session.unifiedTabOrder.slice(targetUnifiedIndex),
-	];
+	const placed = insertAiTabAtUnifiedIndex(session, restoredTab, unifiedIndex);
 
 	return {
 		tabType: 'ai',
 		tabId: restoredTab.id,
 		session: {
 			...session,
-			aiTabs: updatedAiTabs,
+			...placed,
 			activeTabId: restoredTab.id,
 			activeFileTabId: null,
-			unifiedTabOrder: updatedUnifiedTabOrder,
 		},
 		wasDuplicate: false,
 	};

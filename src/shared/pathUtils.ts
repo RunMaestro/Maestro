@@ -80,6 +80,32 @@ function stripTrailingSeparators(filePath: string): string {
 }
 
 /**
+ * Resolve symlinks through the nearest existing ancestor (sync), so a path that is not created yet resolves
+ * to where it would land. `p` unchanged when nothing on it resolves.
+ *
+ * It calls `fs.realpathSync.native`, never the JS `fs.realpathSync`: only the native one returns the on-disk
+ * case on macOS, where the file system is case-insensitive. The main process's real-path containment
+ * helpers (`src/main/utils/real-path-containment.ts`) and the memory-folder check in
+ * `src/shared/maestro-lib/translation/memory.ts` both judge a path through it.
+ */
+export function realpathThroughAncestor(p: string): string {
+	let current = p;
+	const rest: string[] = [];
+	for (let i = 0; i < 64; i++) {
+		try {
+			const real = fs.realpathSync.native(current);
+			return rest.length > 0 ? path.join(real, ...rest.reverse()) : real;
+		} catch {
+			const parent = path.dirname(current);
+			if (parent === current) return p;
+			rest.push(path.basename(current));
+			current = parent;
+		}
+	}
+	return p;
+}
+
+/**
  * Split a version string into its numeric part and optional pre-release suffix.
  *
  * @param version - Cleaned version string (no 'v' prefix), e.g., "0.15.0-rc.1"
@@ -332,6 +358,8 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			path.join(appData, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'cli'),
 			// Codex CLI install location (npm global)
 			path.join(appData, 'npm', 'node_modules', '@openai', 'codex', 'bin'),
+			// Antigravity CLI (agy) install.ps1 / install.cmd location
+			path.join(localAppData, 'agy', 'bin'),
 			// User local programs
 			path.join(localAppData, 'Programs'),
 			path.join(localAppData, 'Microsoft', 'WindowsApps'),
@@ -354,6 +382,7 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			// Scoop package manager
 			path.join(home, 'scoop', 'shims'),
 			path.join(home, 'scoop', 'apps', 'opencode', 'current'),
+			path.join(home, 'scoop', 'apps', 'kilo', 'current'),
 			// Chocolatey
 			path.join(process.env.ChocolateyInstall || 'C:\\ProgramData\\chocolatey', 'bin'),
 			// Go binaries
@@ -380,6 +409,7 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			`${home}/bin`, // User bin directory
 			`${home}/.claude/local`, // Claude local install location
 			`${home}/.opencode/bin`, // OpenCode installer default location
+			`${home}/.kilo/bin`, // Kilo installer default location
 			'/home/linuxbrew/.linuxbrew/bin', // Linuxbrew
 			'/usr/bin',
 			'/bin',

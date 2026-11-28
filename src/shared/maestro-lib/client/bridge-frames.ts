@@ -9,11 +9,11 @@
  */
 
 import type { AgentError, UsageStats } from '../../types';
-import { describeToolActivity } from '../../toolActivityLabel';
 import { createOutputParser } from '../parsers/parser-factory';
 import { resolveTurnOutcome, type TurnOutcome } from '../streaming/turn-outcome';
 import type { ClientErrorCode, TurnToolCall } from './types';
 import { isUnsupportedInvokeError } from '../../bridgeError';
+import { toolActivityState } from '../../toolActivityLabel';
 
 // ---------------------------------------------------------------------------
 // Process ids (8.1)
@@ -83,6 +83,29 @@ function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * `bridge.event` channel a host sends when a tab's transcript grew outside a turn (a `/skills` or
+ * `/history` that ran on an idle tab): read the tab again. Its arguments are the tab's process id,
+ * then the agent id and the tab id on their own, since an imported tab's id may hold `-ai-`, which
+ * the process id cannot carry unambiguously. A client turns it into a turn `gap`; an older client
+ * ignores the channel, as it ignores any it does not know.
+ */
+export const TRANSCRIPT_CHANGED_CHANNEL = 'process:transcript-changed';
+
+/** The arguments of a `TRANSCRIPT_CHANGED_CHANNEL` frame for one tab. */
+export function transcriptChangedArgs(agentId: string, tabId: string): unknown[] {
+	return [`${agentId}-ai-${tabId}`, agentId, tabId];
+}
+
+/** The tab a `TRANSCRIPT_CHANGED_CHANNEL` frame names, or null when its arguments are malformed. */
+export function parseTranscriptChangedFrame(args: unknown[]): ProcessTarget | null {
+	const [processId, agentId, tabId] = args;
+	if (typeof agentId === 'string' && agentId && typeof tabId === 'string' && tabId) {
+		return { kind: 'tab', agentId, tabId };
+	}
+	return typeof processId === 'string' ? parseProcessId(processId) : null;
+}
+
 /** `failed` is the error spelling some providers use; a missing status is a call still running. */
 function toolStatus(state: Record<string, unknown> | undefined): TurnToolCall['status'] {
 	const status = state?.status;
@@ -109,7 +132,15 @@ export function parseProcessFrame(channel: string, args: unknown[]): ParsedProce
 			break;
 		case 'process:thinking-chunk':
 			if (typeof args[1] === 'string') {
-				build = { kind: 'stream', event: { kind: 'thinking', text: args[1] } };
+				build = {
+					kind: 'stream',
+					event: {
+						kind: 'thinking',
+						text: args[1],
+						// The chunk is also answer text (R58): either host kind says so with `true`.
+						...(args[2] === true ? { answer: true } : {}),
+					},
+				};
 			}
 			break;
 		case 'process:data':
@@ -175,8 +206,19 @@ export function parseProcessFrame(channel: string, args: unknown[]): ParsedProce
 
 const BATCH_PROCESS = /^(.+)-batch-\d+$/;
 
-/** What a run's own process says: a line of output, or a usage report. */
-export type BatchFrame = { kind: 'output'; text: string } | { kind: 'usage'; usage: UsageStats };
+/** The longest reasoning chunk or tool name taken from a host; the rest is cut off. */
+const MAX_BATCH_THINKING_CHARS = 64_000;
+const MAX_BATCH_TOOL_NAME_CHARS = 200;
+
+/**
+ * What a run's own process says: a line of output, a usage report, a piece of its reasoning, or a
+ * tool call starting or finishing (with the provider's payload, which the Thought Stream reads).
+ */
+export type BatchFrame =
+	| { kind: 'output'; text: string }
+	| { kind: 'usage'; usage: UsageStats }
+	| { kind: 'thinking'; text: string }
+	| { kind: 'tool'; toolName: string; state?: Record<string, unknown>; toolCallId?: string };
 
 export interface ParsedBatchFrame {
 	agentId: string;
@@ -193,8 +235,9 @@ export function parseBatchProcessId(processId: string): string | null {
 /**
  * Interpret a `bridge.event` from an Auto Run process. A task's answer arrives
  * on `process:data`, which a `--print` run emits once at the end, so a tool
- * call that starts is turned into a line too: it is what shows the run moving
- * between answers. Thinking text and tool results are left out of the tail.
+ * call that starts also adds a line to the tail (`reduceAutoRun()`): it is what
+ * shows the run moving between answers. Reasoning (`process:thinking-chunk`) and
+ * every tool report travel on as their own frames, for the Thought Stream.
  */
 export function parseBatchFrame(channel: string, args: unknown[]): ParsedBatchFrame | null {
 	const processId = args[0];
@@ -210,14 +253,24 @@ export function parseBatchFrame(channel: string, args: unknown[]): ParsedBatchFr
 		case 'process:usage':
 			if (isObject(args[1])) frame = { kind: 'usage', usage: args[1] as unknown as UsageStats };
 			break;
+		case 'process:thinking-chunk':
+			if (typeof args[1] === 'string' && args[1]) {
+				frame = { kind: 'thinking', text: args[1].slice(0, MAX_BATCH_THINKING_CHARS) };
+			}
+			break;
 		case 'process:tool-execution': {
 			const payload = args[1];
-			if (!isObject(payload) || typeof payload.toolName !== 'string') break;
-			const state = isObject(payload.state) ? payload.state : undefined;
-			// A call's finish repeats its start; one line per call is enough.
-			if (toolStatus(state) !== 'running') break;
-			const label = describeToolActivity(payload.toolName, state?.input);
-			frame = { kind: 'output', text: `${label.verb} ${label.target}`.trim() };
+			if (!isObject(payload) || typeof payload.toolName !== 'string' || !payload.toolName) break;
+			// Only what the Thought Stream reads: a tool's output never crosses to the window.
+			const state = toolActivityState(payload.state);
+			frame = {
+				kind: 'tool',
+				toolName: payload.toolName.slice(0, MAX_BATCH_TOOL_NAME_CHARS),
+				...(state ? { state } : {}),
+				...(typeof payload.toolCallId === 'string' && payload.toolCallId
+					? { toolCallId: payload.toolCallId }
+					: {}),
+			};
 			break;
 		}
 		default:

@@ -23,6 +23,7 @@ import { WindowsWarningModal } from './WindowsWarningModal';
 import { OnboardingSeriesHost } from './OnboardingSeriesHost';
 import { AppOverlays } from './AppOverlays';
 import { GitPillModals } from './GitPillModals';
+import { fileOpRemoteId, pathPickerRemoteId, UnresolvedRemoteError } from '../services/pathPicker';
 import { PlaygroundPanel } from './PlaygroundPanel';
 import { GistPublishModal } from './GistPublishModal';
 import type { GistInfo } from './GistPublishModal';
@@ -36,6 +37,7 @@ import { HostFolderPicker } from './HostFolderPicker';
 import { AgentBundleModals } from './Bundles/AgentBundleModals';
 import type { UnifiedHistoryTabProps } from './DirectorNotes/UnifiedHistoryTab';
 import { MoveToHostModalHost } from './MoveToHostModal';
+import { AddHostedAgentModalHost } from './AddHostedAgentModal';
 
 import type {
 	Theme,
@@ -328,6 +330,7 @@ function AppStandaloneModalsInner({
 			<HostFolderPicker theme={theme} />
 			<AgentBundleModals theme={theme} />
 			<MoveToHostModalHost theme={theme} />
+			<AddHostedAgentModalHost theme={theme} />
 			{notificationCenterEnabled && <NotificationCenterHost theme={theme} />}
 			{/* --- DEBUG PACKAGE MODAL --- */}
 			<DebugPackageModal
@@ -410,11 +413,7 @@ function AppStandaloneModalsInner({
 						onClose={() => setMarketplaceModalOpen(false)}
 						autoRunFolderPath={activeSession.autoRunFolderPath}
 						sessionId={activeSession.id}
-						sshRemoteId={
-							activeSession.sshRemoteId ||
-							activeSession.sessionSshRemoteConfig?.remoteId ||
-							undefined
-						}
+						sshRemoteId={pathPickerRemoteId(activeSession)}
 						onImportComplete={onMarketplaceImportComplete}
 					/>
 				</Suspense>
@@ -623,13 +622,11 @@ function AppStandaloneModalsInner({
 								graphRootPath || activeSession?.projectRoot || activeSession?.cwd || '';
 							const fullPath = `${treeRoot}/${filePath}`;
 							const filename = filePath.split('/').pop() || filePath;
-							// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
-							// use sessionSshRemoteConfig.remoteId as fallback (see CLAUDE.md SSH Remote Sessions)
-							const sshRemoteId =
-								activeSession?.sshRemoteId ||
-								activeSession?.sessionSshRemoteConfig?.remoteId ||
-								undefined;
 							try {
+								// The gated remote id: a remote left on an agent with SSH switched off is
+								// ignored, and an SSH agent with no remote resolved throws instead of
+								// reading this machine's disk.
+								const sshRemoteId = fileOpRemoteId(pathPickerRemoteId(activeSession));
 								// Fetch content and stat in parallel for efficiency
 								const [content, stat] = await Promise.all([
 									window.maestro.fs.readFile(fullPath, sshRemoteId),
@@ -648,6 +645,13 @@ function AppStandaloneModalsInner({
 									});
 								}
 							} catch (error) {
+								if (error instanceof UnresolvedRemoteError) {
+									notifyToast({
+										color: 'red',
+										title: 'Could not open file',
+										message: error.message,
+									});
+								}
 								logger.error('[DocumentGraph] Failed to open file:', undefined, error);
 							}
 							useFileExplorerStore.getState().setIsGraphViewOpen(false);
@@ -678,13 +682,7 @@ function AppStandaloneModalsInner({
 							// Also update the global default for new agents
 							onLayoutTypeChange(type);
 						}}
-						// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
-						// use sessionSshRemoteConfig.remoteId as fallback (see CLAUDE.md SSH Remote Sessions)
-						sshRemoteId={
-							activeSession?.sshRemoteId ||
-							activeSession?.sessionSshRemoteConfig?.remoteId ||
-							undefined
-						}
+						sshRemoteId={pathPickerRemoteId(activeSession)}
 					/>
 				</Suspense>
 			)}

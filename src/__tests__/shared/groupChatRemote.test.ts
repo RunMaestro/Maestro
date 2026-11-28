@@ -41,6 +41,11 @@ describe('toRemoteGroupChatState', () => {
 		});
 	});
 
+	it('carries the unread dot, defaulting to false', () => {
+		expect(toRemoteGroupChatState(baseChat, 'idle').unread).toBe(false);
+		expect(toRemoteGroupChatState(baseChat, 'idle', [], { unread: true }).unread).toBe(true);
+	});
+
 	it('marks user lines as user and everything else as assistant, with epoch timestamps', () => {
 		const state = toRemoteGroupChatState(baseChat, 'idle', [
 			{ timestamp: '2026-09-26T10:00:00.000Z', from: 'user', content: 'go' },
@@ -78,21 +83,23 @@ describe('toRemoteGroupChatState', () => {
 
 	it('reports the queue with only the flags that are set, and never the image data', () => {
 		const state = toRemoteGroupChatState(baseChat, 'agent-working', [], {
-			items: [
-				{ id: 'q1', text: 'plain', timestamp: 1 },
-				{
-					id: 'q2',
-					text: 'with everything',
-					timestamp: 2,
-					images: ['data:image/png;base64,AAAA'],
-					failed: true,
-					failureReason: 'boom',
-					sending: true,
-					readOnlyMode: true,
-				},
-				{ id: 'q3', text: 'empty images', timestamp: 3, images: [] },
-			],
-			paused: true,
+			queue: {
+				items: [
+					{ id: 'q1', text: 'plain', timestamp: 1 },
+					{
+						id: 'q2',
+						text: 'with everything',
+						timestamp: 2,
+						images: ['data:image/png;base64,AAAA'],
+						failed: true,
+						failureReason: 'boom',
+						sending: true,
+						readOnlyMode: true,
+					},
+					{ id: 'q3', text: 'empty images', timestamp: 3, images: [] },
+				],
+				paused: true,
+			},
 		});
 		expect(state.queue).toEqual([
 			{ id: 'q1', text: 'plain', timestamp: 1 },

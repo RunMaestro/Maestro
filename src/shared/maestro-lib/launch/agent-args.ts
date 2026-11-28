@@ -5,6 +5,11 @@ import type {
 	AgentDiscoverySelection,
 } from '../../types';
 import { describeEffortRejection, getEffortRejection } from '../../effortRejection';
+import {
+	readAntigravityModelEffortArgs,
+	resolveAntigravityModelEffortArgs,
+	resolveAntigravitySelection,
+} from '../../antigravityModels';
 import { logger } from '../host';
 
 /** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
@@ -180,6 +185,15 @@ export type BuildAgentArgsOptions = {
 	yoloMode?: boolean;
 	permissionMode?: 'full' | 'standard' | 'readonly';
 	agentSessionId?: string;
+	/**
+	 * Resume `agentSessionId` as a throwaway branch (the agent's
+	 * `ephemeralForkArgs`): the turn sees the conversation, the conversation never
+	 * sees the turn. Without `agentSessionId` the turn still saves nothing (the
+	 * agent's `noPersistenceArgs`). Callers must check the agent declares both
+	 * first; without them the turn would resume, and write into, the real
+	 * session, or save a new one.
+	 */
+	ephemeralFork?: boolean;
 	/**
 	 * The session's Additional Directories. Providers that declare
 	 * `supportsAdditionalDirectories` turn these into native grant flags; the rest
@@ -466,10 +480,19 @@ export function buildAgentArgs(
 			return true;
 		});
 
+	// A fresh turn has nothing to fork, but a throwaway turn must still not
+	// leave a session behind.
+	if (options.ephemeralFork && !options.agentSessionId && agent.noPersistenceArgs) {
+		finalArgs = [...finalArgs, ...agent.noPersistenceArgs];
+	}
+
 	const dedupedArgs = dedupe(finalArgs);
 	const resumeArgs =
 		options.agentSessionId && agent.resumeArgs
-			? dedupe(agent.resumeArgs(options.agentSessionId))
+			? dedupe([
+					...agent.resumeArgs(options.agentSessionId),
+					...(options.ephemeralFork ? (agent.ephemeralForkArgs ?? []) : []),
+				])
 			: [];
 
 	// Additional Directories skip the dedupe on purpose. Every provider expresses
@@ -641,6 +664,20 @@ export function applyAgentConfigOverrides(
 	}
 	if (agent?.id === 'grok') {
 		finalArgs = resolveGrokModelEffortArgs(finalArgs, overrides.grokEffortMenu);
+	}
+	if (agent?.id === 'antigravity') {
+		// An effort-suffixed model id plus a different --effort is a hard error in
+		// agy; resolve the pair here so every surface (tab, Auto Run hint, Cue,
+		// custom args) sends one the CLI accepts. The SDK path reads modelId and
+		// effort, so they get the same resolution.
+		finalArgs = resolveAntigravityModelEffortArgs(finalArgs);
+		// The SDK path sends modelId and effort, so they come from the same
+		// last-wins flags the CLI reads; a configured value stands when no flag
+		// names that axis.
+		const flags = readAntigravityModelEffortArgs(finalArgs);
+		const selected = resolveAntigravitySelection(flags.model ?? modelId, flags.effort ?? effort);
+		modelId = selected.model;
+		effort = selected.effort;
 	}
 
 	// Env vars: agent defaults (lowest), then ONE user-configured set on top. The

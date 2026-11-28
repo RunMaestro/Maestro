@@ -1,5 +1,10 @@
 import type { PianolaQueueControl } from '../../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
+import type {
+	QueuedTurnEdit,
+	TurnAgentText,
+	TurnOverrides,
+} from '../../../shared/maestro-lib/client/types';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
  *
@@ -21,6 +26,7 @@ import type {
 	GetSessionDetailCallback,
 	WriteToSessionCallback,
 	ExecuteCommandCallback,
+	ExecuteCommandOutcome,
 	InterruptSessionCallback,
 	SwitchModeCallback,
 	SelectSessionCallback,
@@ -35,6 +41,7 @@ import type {
 	ClosedTabCommandCallback,
 	MessagePinCommandCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
@@ -50,6 +57,13 @@ import type {
 	OpenBrowserTabOptions,
 	OpenBrowserTabResult,
 	CloseBrowserTabCallback,
+	PickBrowserElementCallback,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
+	BrowserViewportCallback,
+	BrowserViewportRequest,
+	BrowserViewportResult,
+	DesignPickCommandCallback,
 	OpenTerminalTabCallback,
 	OpenTerminalTabConfig,
 	OpenTerminalTabResult,
@@ -78,6 +92,12 @@ import type {
 	SetQueueItemPausedResult,
 	MergeQueueItemCallback,
 	MergeQueueItemResult,
+	EditQueueItemCallback,
+	EditQueueItemResult,
+	MoveQueueItemCallback,
+	MoveQueueItemResult,
+	SendQueueItemNowCallback,
+	SendQueueItemNowResult,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -134,6 +154,7 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	SetGroupChatUnreadCallback,
 	AddGroupChatParticipantCallback,
 	AddGroupChatParticipantResult,
 	SendGroupChatMessageCallback,
@@ -148,9 +169,7 @@ import type {
 	TriggerCueSubscriptionCallback,
 	CueSubscriptionInfo,
 	CueActivityEntry,
-	GetUsageDashboardCallback,
 	GetAchievementsCallback,
-	UsageDashboardData,
 	AchievementData,
 	GenerateDirectorNotesSynopsisCallback,
 	DirectorNotesSynopsisResult,
@@ -189,11 +208,19 @@ import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../../shared/autoRunSteeringCommands';
+import type {
+	DiffReviewCommandRequest,
+	DiffReviewCommandResult,
+} from '../../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
 } from '../../../shared/throughputGaugeCommands';
+import type {
+	DesignPickCommandRequest,
+	DesignPickCommandResult,
+} from '../../../shared/designPickCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
@@ -231,6 +258,7 @@ export interface WebServerCallbacks {
 	closedTabCommand: ClosedTabCommandCallback | null;
 	messagePinCommand: MessagePinCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
+	diffReviewCommand: DiffReviewCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
 	throughputGaugeCommand: ThroughputGaugeCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
@@ -244,6 +272,9 @@ export interface WebServerCallbacks {
 	refreshFileTree: RefreshFileTreeCallback | null;
 	openBrowserTab: OpenBrowserTabCallback | null;
 	closeBrowserTab: CloseBrowserTabCallback | null;
+	pickBrowserElement: PickBrowserElementCallback | null;
+	browserViewport: BrowserViewportCallback | null;
+	designPickCommand: DesignPickCommandCallback | null;
 	openTerminalTab: OpenTerminalTabCallback | null;
 	writeTerminalTab: WriteTerminalTabCallback | null;
 	listTerminalTabs: ListTerminalTabsCallback | null;
@@ -257,6 +288,9 @@ export interface WebServerCallbacks {
 	steerQueueItem: SteerQueueItemCallback | null;
 	setQueueItemPaused: SetQueueItemPausedCallback | null;
 	mergeQueueItem: MergeQueueItemCallback | null;
+	editQueueItem: EditQueueItemCallback | null;
+	moveQueueItem: MoveQueueItemCallback | null;
+	sendQueueItemNow: SendQueueItemNowCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
 	configureAutoRun: ConfigureAutoRunCallback | null;
 	launchGoalRun: LaunchGoalRunCallback | null;
@@ -300,6 +334,7 @@ export interface WebServerCallbacks {
 	getGroupChatState: GetGroupChatStateCallback | null;
 	stopGroupChat: StopGroupChatCallback | null;
 	archiveGroupChat: ArchiveGroupChatCallback | null;
+	setGroupChatUnread: SetGroupChatUnreadCallback | null;
 	addGroupChatParticipant: AddGroupChatParticipantCallback | null;
 	sendGroupChatMessage: SendGroupChatMessageCallback | null;
 	steerGroupChat: SteerGroupChatCallback | null;
@@ -309,7 +344,6 @@ export interface WebServerCallbacks {
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
 	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
-	getUsageDashboard: GetUsageDashboardCallback | null;
 	getAchievements: GetAchievementsCallback | null;
 	generateDirectorNotesSynopsis: GenerateDirectorNotesSynopsisCallback | null;
 	notifyToast: NotifyToastCallback | null;
@@ -350,6 +384,7 @@ export class CallbackRegistry {
 		closedTabCommand: null,
 		messagePinCommand: null,
 		autoRunSteeringCommand: null,
+		diffReviewCommand: null,
 		windowCommand: null,
 		throughputGaugeCommand: null,
 		reorderTab: null,
@@ -361,6 +396,9 @@ export class CallbackRegistry {
 		refreshFileTree: null,
 		openBrowserTab: null,
 		closeBrowserTab: null,
+		pickBrowserElement: null,
+		browserViewport: null,
+		designPickCommand: null,
 		openTerminalTab: null,
 		writeTerminalTab: null,
 		listTerminalTabs: null,
@@ -374,6 +412,9 @@ export class CallbackRegistry {
 		steerQueueItem: null,
 		setQueueItemPaused: null,
 		mergeQueueItem: null,
+		editQueueItem: null,
+		moveQueueItem: null,
+		sendQueueItemNow: null,
 		refreshAutoRunDocs: null,
 		configureAutoRun: null,
 		launchGoalRun: null,
@@ -417,6 +458,7 @@ export class CallbackRegistry {
 		getGroupChatState: null,
 		stopGroupChat: null,
 		archiveGroupChat: null,
+		setGroupChatUnread: null,
 		addGroupChatParticipant: null,
 		sendGroupChatMessage: null,
 		steerGroupChat: null,
@@ -426,7 +468,6 @@ export class CallbackRegistry {
 		toggleCueSubscription: null,
 		getCueActivity: null,
 		triggerCueSubscription: null,
-		getUsageDashboard: null,
 		getAchievements: null,
 		generateDirectorNotesSynopsis: null,
 		notifyToast: null,
@@ -482,7 +523,7 @@ export class CallbackRegistry {
 		mentionRouting?: MentionRouting,
 		requireDeliveryReceipt?: boolean,
 		pianolaDispatchId?: string
-	): Promise<boolean> {
+	): Promise<ExecuteCommandOutcome> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
 			sessionId,
@@ -532,9 +573,15 @@ export class CallbackRegistry {
 		return this.callbacks.selectTab(sessionId, tabId);
 	}
 
-	async newTab(sessionId: string, background?: boolean): Promise<{ tabId: string } | null> {
+	async newTab(
+		sessionId: string,
+		background?: boolean,
+		tabId?: string
+	): Promise<{ tabId: string } | null> {
 		if (!this.callbacks.newTab) return null;
-		return this.callbacks.newTab(sessionId, background);
+		return tabId
+			? this.callbacks.newTab(sessionId, background, tabId)
+			: this.callbacks.newTab(sessionId, background);
 	}
 
 	async closeTab(sessionId: string, tabId: string): Promise<boolean> {
@@ -587,6 +634,13 @@ export class CallbackRegistry {
 			return { success: false, error: 'Auto Run steering is not configured' };
 		}
 		return this.callbacks.autoRunSteeringCommand(request);
+	}
+
+	async diffReviewCommand(request: DiffReviewCommandRequest): Promise<DiffReviewCommandResult> {
+		if (!this.callbacks.diffReviewCommand) {
+			return { success: false, error: 'Diff review is not configured' };
+		}
+		return this.callbacks.diffReviewCommand(request);
 	}
 
 	async windowCommand(request: WindowCommandRequest): Promise<WindowCommandResult> {
@@ -668,6 +722,27 @@ export class CallbackRegistry {
 		return this.callbacks.closeBrowserTab(tabId);
 	}
 
+	async pickBrowserElement(request: PickBrowserElementRequest): Promise<PickBrowserElementResult> {
+		if (!this.callbacks.pickBrowserElement) {
+			return { success: false, error: 'Browser Design Mode not configured', screenshot: false };
+		}
+		return this.callbacks.pickBrowserElement(request);
+	}
+
+	async browserViewport(request: BrowserViewportRequest): Promise<BrowserViewportResult> {
+		if (!this.callbacks.browserViewport) {
+			return { success: false, error: 'Browser viewport not configured' };
+		}
+		return this.callbacks.browserViewport(request);
+	}
+
+	async designPickCommand(request: DesignPickCommandRequest): Promise<DesignPickCommandResult> {
+		if (!this.callbacks.designPickCommand) {
+			return { success: false, error: 'Browser Design Mode not configured' };
+		}
+		return this.callbacks.designPickCommand(request);
+	}
+
 	async openTerminalTab(
 		sessionId: string,
 		config: OpenTerminalTabConfig,
@@ -743,10 +818,13 @@ export class CallbackRegistry {
 		held?: boolean,
 		mentionRouting?: MentionRouting,
 		dispatchCallback?: boolean,
-		control?: PianolaQueueControl
+		control?: PianolaQueueControl,
+		turnOverrides?: TurnOverrides,
+		agentText?: TurnAgentText,
+		entryId?: string
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
-		return this.callbacks.enqueueCommand(
+		const args: Parameters<EnqueueCommandCallback> = [
 			sessionId,
 			command,
 			inputMode,
@@ -756,8 +834,12 @@ export class CallbackRegistry {
 			held,
 			mentionRouting,
 			dispatchCallback,
-			control
-		);
+			control,
+		];
+		if (turnOverrides || agentText || entryId) args.push(turnOverrides);
+		if (agentText || entryId) args.push(agentText);
+		if (entryId) args.push(entryId);
+		return this.callbacks.enqueueCommand(...args);
 	}
 
 	async listQueue(sessionId?: string): Promise<ListQueueResult> {
@@ -790,6 +872,33 @@ export class CallbackRegistry {
 		if (!this.callbacks.mergeQueueItem)
 			return { success: false, merged: false, error: 'not configured' };
 		return this.callbacks.mergeQueueItem(sessionId, itemId);
+	}
+
+	async editQueueItem(
+		sessionId: string,
+		itemId: string,
+		edit: QueuedTurnEdit
+	): Promise<EditQueueItemResult> {
+		if (!this.callbacks.editQueueItem)
+			return { success: false, found: false, error: 'not configured' };
+		return this.callbacks.editQueueItem(sessionId, itemId, edit);
+	}
+
+	async moveQueueItem(
+		sessionId: string,
+		itemId: string,
+		toIndex: number,
+		tabId?: string
+	): Promise<MoveQueueItemResult> {
+		if (!this.callbacks.moveQueueItem)
+			return { success: false, moved: false, error: 'not configured' };
+		return this.callbacks.moveQueueItem(sessionId, itemId, toIndex, tabId);
+	}
+
+	async sendQueueItemNow(sessionId: string, itemId: string): Promise<SendQueueItemNowResult> {
+		if (!this.callbacks.sendQueueItemNow)
+			return { success: false, sent: false, error: 'not configured' };
+		return this.callbacks.sendQueueItemNow(sessionId, itemId);
 	}
 
 	async refreshAutoRunDocs(sessionId: string, background?: boolean): Promise<boolean> {
@@ -1117,6 +1226,11 @@ export class CallbackRegistry {
 		return this.callbacks.archiveGroupChat(chatId, archived);
 	}
 
+	async setGroupChatUnread(chatId: string, unread: boolean): Promise<boolean> {
+		if (!this.callbacks.setGroupChatUnread) return false;
+		return this.callbacks.setGroupChatUnread(chatId, unread);
+	}
+
 	async addGroupChatParticipant(
 		chatId: string,
 		agentId: string
@@ -1183,21 +1297,6 @@ export class CallbackRegistry {
 	): Promise<boolean> {
 		if (!this.callbacks.triggerCueSubscription) return false;
 		return this.callbacks.triggerCueSubscription(subscriptionName, prompt, sourceAgentId);
-	}
-
-	async getUsageDashboard(
-		timeRange: 'day' | 'week' | 'month' | 'all'
-	): Promise<UsageDashboardData> {
-		if (!this.callbacks.getUsageDashboard) {
-			return {
-				totalTokensIn: 0,
-				totalTokensOut: 0,
-				totalCost: 0,
-				sessionBreakdown: [],
-				dailyUsage: [],
-			};
-		}
-		return this.callbacks.getUsageDashboard(timeRange);
 	}
 
 	async getAchievements(): Promise<AchievementData[]> {
@@ -1395,6 +1494,10 @@ export class CallbackRegistry {
 		this.callbacks.autoRunSteeringCommand = callback;
 	}
 
+	setDiffReviewCommandCallback(callback: DiffReviewCommandCallback): void {
+		this.callbacks.diffReviewCommand = callback;
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbacks.windowCommand = callback;
 	}
@@ -1433,6 +1536,18 @@ export class CallbackRegistry {
 
 	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
 		this.callbacks.closeBrowserTab = callback;
+	}
+
+	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
+		this.callbacks.pickBrowserElement = callback;
+	}
+
+	setBrowserViewportCallback(callback: BrowserViewportCallback): void {
+		this.callbacks.browserViewport = callback;
+	}
+
+	setDesignPickCommandCallback(callback: DesignPickCommandCallback): void {
+		this.callbacks.designPickCommand = callback;
 	}
 
 	setWriteTerminalTabCallback(callback: WriteTerminalTabCallback): void {
@@ -1485,6 +1600,18 @@ export class CallbackRegistry {
 
 	setMergeQueueItemCallback(callback: MergeQueueItemCallback): void {
 		this.callbacks.mergeQueueItem = callback;
+	}
+
+	setEditQueueItemCallback(callback: EditQueueItemCallback): void {
+		this.callbacks.editQueueItem = callback;
+	}
+
+	setMoveQueueItemCallback(callback: MoveQueueItemCallback): void {
+		this.callbacks.moveQueueItem = callback;
+	}
+
+	setSendQueueItemNowCallback(callback: SendQueueItemNowCallback): void {
+		this.callbacks.sendQueueItemNow = callback;
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -1659,6 +1786,10 @@ export class CallbackRegistry {
 		this.callbacks.archiveGroupChat = callback;
 	}
 
+	setSetGroupChatUnreadCallback(callback: SetGroupChatUnreadCallback): void {
+		this.callbacks.setGroupChatUnread = callback;
+	}
+
 	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {
 		this.callbacks.addGroupChatParticipant = callback;
 	}
@@ -1693,10 +1824,6 @@ export class CallbackRegistry {
 
 	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
 		this.callbacks.triggerCueSubscription = callback;
-	}
-
-	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
-		this.callbacks.getUsageDashboard = callback;
 	}
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {

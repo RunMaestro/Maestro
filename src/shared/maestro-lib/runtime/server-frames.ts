@@ -15,7 +15,14 @@
 import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { AutoRunProgress } from '../autorun/progress';
 import type { AutoRunRunEvent } from '../autorun/run-tracker';
-import type { AutoRunOutcome, MaestroEvent, QueuedTurn, TurnEvent } from '../client/types';
+import { TRANSCRIPT_CHANGED_CHANNEL, transcriptChangedArgs } from '../client/bridge-frames';
+import type {
+	AutoRunOutcome,
+	MaestroEvent,
+	QueuedTurn,
+	QueueExit,
+	TurnEvent,
+} from '../client/types';
 import type { GroupChatEvent, GroupChatRecord } from '../groupchat/chat';
 import type { AgentRecord, AITabRecord } from '../store/records';
 
@@ -70,6 +77,10 @@ export interface QueuedTurnWire {
 	type: QueuedTurn['kind'];
 	text: string;
 	paused: boolean;
+	handOver?: boolean;
+	handOverSince?: number;
+	turnSettings?: QueuedTurn['turnSettings'];
+	images?: QueuedTurn['images'];
 }
 
 /**
@@ -84,16 +95,31 @@ export function queuedTurnsToWire(items: readonly QueuedTurn[]): QueuedTurnWire[
 		type: item.kind,
 		text: item.text,
 		paused: item.paused,
+		...(item.handOver !== undefined ? { handOver: item.handOver } : {}),
+		...(item.handOverSince !== undefined ? { handOverSince: item.handOverSince } : {}),
+		...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
+		...(item.images?.length ? { images: item.images } : {}),
 	}));
 }
 
 /**
  * An agent's execution queue changed. The desktop's bridge has no frame for this, so it is a
  * headless host's own: `createWsMaestroClient` reads it back into `queue.changed`, and a client
- * that does not know the type ignores it.
+ * that does not know the type ignores it. `namesExits` says this host names how every item leaves
+ * its queue (`exit`: started or removed); an older client ignores both fields.
  */
-export function queueChangedFrame(agentId: string, items: readonly QueuedTurn[]): Frame {
-	return { type: 'queue_changed', sessionId: agentId, items: queuedTurnsToWire(items) };
+export function queueChangedFrame(
+	agentId: string,
+	items: readonly QueuedTurn[],
+	exit?: QueueExit
+): Frame {
+	return {
+		type: 'queue_changed',
+		sessionId: agentId,
+		items: queuedTurnsToWire(items),
+		namesExits: true,
+		...(exit ? { exit: { itemId: exit.itemId, exit: exit.exit } } : {}),
+	};
 }
 
 /** The desktop's process id for an agent's AI tab, which is what the client parses back. */
@@ -125,6 +151,9 @@ export function progressToWire(progress: AutoRunProgress): AutoRunBroadcastState
 		loopEnabled: progress.loopEnabled,
 		loopIteration: progress.loopIteration,
 		...(progress.startTime !== undefined ? { startTime: progress.startTime } : {}),
+		...(progress.initialTasksDone !== undefined
+			? { initialCompletedTasks: progress.initialTasksDone }
+			: {}),
 		...(progress.worktreeBranch ? { worktreeBranch: progress.worktreeBranch } : {}),
 		...(pause
 			? {
@@ -212,7 +241,16 @@ function turnFrames(agentId: string, tabId: string, event: TurnEvent, state: Fra
 		case 'session':
 			return [bridgeEvent('process:session-id', processId, event.providerSessionId)];
 		case 'thinking':
-			return [bridgeEvent('process:thinking-chunk', processId, event.text)];
+			// A third argument, `true`, when the chunk is also answer text (R58); the desktop's own
+			// `process:thinking-chunk` carries it the same way.
+			return [
+				bridgeEvent(
+					'process:thinking-chunk',
+					processId,
+					event.text,
+					...(event.answer === true ? [true] : [])
+				),
+			];
 		case 'text':
 			return [bridgeEvent('process:data', processId, event.text)];
 		case 'tool':
@@ -239,14 +277,17 @@ function turnFrames(agentId: string, tabId: string, event: TurnEvent, state: Fra
 			);
 			return frames;
 		}
-		// `started` is learned from the first frame, and a `gap` is the client's own signal.
-		case 'started':
+		// A transcript that grew outside a turn: the client reads the tab again. (A client's own
+		// `gap`, for events it missed, never comes from here.)
 		case 'gap':
+			return [bridgeEvent(TRANSCRIPT_CHANGED_CHANNEL, ...transcriptChangedArgs(agentId, tabId))];
+		// `started` is learned from the first frame.
+		case 'started':
 			return [];
 	}
 }
 
-/** A run's progress, output, and usage: the flat state frame and the run's own batch process. */
+/** A run's progress, output, usage, reasoning, and tool calls: the flat state frame and the run's own batch process. */
 function autoRunFrames(agentId: string, run: AutoRunRunEvent): Frame[] {
 	switch (run.kind) {
 		case 'state':
@@ -255,6 +296,18 @@ function autoRunFrames(agentId: string, run: AutoRunRunEvent): Frame[] {
 			return [bridgeEvent('process:data', run.processId, run.text)];
 		case 'usage':
 			return [bridgeEvent('process:usage', run.processId, run.usage)];
+		case 'thinking':
+			return [bridgeEvent('process:thinking-chunk', run.processId, run.text)];
+		case 'tool':
+			// The desktop's own `process:tool-execution` payload, which `parseBatchFrame()` reads.
+			return [
+				bridgeEvent('process:tool-execution', run.processId, {
+					toolName: run.toolName,
+					...(run.state !== undefined ? { state: run.state } : {}),
+					...(run.toolCallId ? { toolCallId: run.toolCallId } : {}),
+					timestamp: run.at,
+				}),
+			];
 	}
 }
 
@@ -350,11 +403,15 @@ export function framesForEvent(event: MaestroEvent, state: FrameState): Frame[] 
 		case 'turn':
 			return turnFrames(event.agentId, event.tabId, event.event, state);
 		case 'queue.changed':
-			return [queueChangedFrame(event.agentId, event.items)];
+			return [queueChangedFrame(event.agentId, event.items, event.exit)];
 		case 'autorun':
 			return autoRunFrames(event.agentId, event.event);
 		case 'autorun.ended':
 			return [autoRunEndedFrame(event.agentId, event.outcome)];
+		case 'history.changed':
+			// The frame a desktop's History watcher sends (`history:externalChange`), so a client reads
+			// both host kinds the same way.
+			return [bridgeEvent('history:externalChange', event.agentId)];
 		case 'groupChat':
 			return groupChatFrames(event.chatId, event.event);
 		default:

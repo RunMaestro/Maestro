@@ -41,6 +41,7 @@ import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { useSettingsStore } from '../stores/settingsStore';
 import type { HistoryEntryItemProps } from './History/HistoryEntryItem';
+import { clampHistoryEntry } from '../../shared/history';
 
 interface HistoryDetailModalProps {
 	theme: Theme;
@@ -213,7 +214,10 @@ export function HistoryDetailModal({
 	// For USER entries:
 	//   - summary = the synopsis text
 	//   - fullResponse = may contain more context
-	const rawResponse = entry.fullResponse || entry.summary || '';
+	// Clamp first: an entry written before the storage caps existed can hold
+	// megabytes, and this text goes through markdown rendering.
+	const shown = clampHistoryEntry(entry);
+	const rawResponse = shown.fullResponse || shown.summary || '';
 	// Strip ANSI, then the internal `<!-- maestro:... -->` control markers the Auto
 	// Run engine reads (progress/goal-complete/deadlock/halt) - users shouldn't see them.
 	const cleanResponse = stripMaestroMarkers(stripAnsiCodes(rawResponse));

@@ -83,6 +83,16 @@ export interface FloatingWidgetController {
 	 */
 	setBounds(partial: FloatingWidgetBounds): Electron.Rectangle | null;
 	/**
+	 * Raise the window's minimum width past the spec's while the widget's content
+	 * needs more (the media player's transport row, which gains buttons with the
+	 * queue and the file). The OS window then refuses a narrower drag, `setBounds`
+	 * clamps to it, and a window already narrower is widened, kept inside its
+	 * work area. A width at or below the spec minimum (or not a usable number)
+	 * puts the spec minimum back. Not saved; dropped when the window closes.
+	 * Returns the window's bounds afterwards, or null when there is no window.
+	 */
+	setMinWidth(width: number): Electron.Rectangle | null;
+	/**
 	 * Borrow room past the card for content taller than it (see
 	 * `FloatingWidgetOverflow`). `need` is how far each side would have to grow;
 	 * the window grows on one side only, within the work area, and resolves with
@@ -125,6 +135,11 @@ export function createFloatingWidgetWindow(
 	let flushPendingSave: (() => void) | null = null;
 	/** Room currently borrowed past the card. Everything saved or reported excludes it. */
 	let overflow: FloatingWidgetOverflow = NO_FLOATING_WIDGET_OVERFLOW;
+	/** Width the widget's content asked for past the spec minimum (see `setMinWidth`). 0 means none. */
+	let contentMinWidth = 0;
+
+	/** The narrowest the window may be right now. */
+	const minWidthNow = () => Math.max(minSize.width, contentMinWidth);
 
 	const enabled = () => deps.isEnabled?.() ?? true;
 
@@ -170,7 +185,7 @@ export function createFloatingWidgetWindow(
 	function sizeNow(): FloatingWidgetSize {
 		const s = loadSaved();
 		return {
-			width: Math.max(minSize.width, Math.round(s.width ?? spec.defaultSize.width)),
+			width: Math.max(minWidthNow(), Math.round(s.width ?? spec.defaultSize.width)),
 			height: Math.max(minSize.height, Math.round(s.height ?? spec.defaultSize.height)),
 		};
 	}
@@ -233,7 +248,7 @@ export function createFloatingWidgetWindow(
 			fullscreenable: false,
 			skipTaskbar: true,
 			show: false,
-			minWidth: minSize.width,
+			minWidth: minWidthNow(),
 			minHeight: minSize.height,
 			webPreferences: {
 				preload: deps.preloadPath,
@@ -252,7 +267,12 @@ export function createFloatingWidgetWindow(
 		});
 
 		created.setAlwaysOnTop(true, 'floating');
-		created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+		// skipTransformProcessType: without it Electron 41 turns the whole app into a UIElement
+		// process (no Dock icon, no menu bar, no main window) the moment this runs.
+		created.setVisibleOnAllWorkspaces(true, {
+			visibleOnFullScreen: true,
+			skipTransformProcessType: true,
+		});
 
 		const url = withWidgetParam(
 			deps.isDevelopment ? deps.devServerUrl : deps.rendererProductionUrl,
@@ -322,6 +342,7 @@ export function createFloatingWidgetWindow(
 			revealPending = false;
 			ready = false;
 			overflow = NO_FLOATING_WIDGET_OVERFLOW;
+			contentMinWidth = 0;
 			// The next window reloads the store, so a spot the user chose survives a
 			// close (feature toggled off and on) the same way it survives a restart.
 			saved = null;
@@ -373,7 +394,7 @@ export function createFloatingWidgetWindow(
 		const next: FloatingWidgetBounds = { ...loadSaved() };
 		const width = positiveNumber(partial?.width);
 		const height = positiveNumber(partial?.height);
-		if (width !== undefined) next.width = Math.max(minSize.width, Math.round(width));
+		if (width !== undefined) next.width = Math.max(minWidthNow(), Math.round(width));
 		if (height !== undefined) next.height = Math.max(minSize.height, Math.round(height));
 		const x = finiteNumber(partial?.x);
 		const y = finiteNumber(partial?.y);
@@ -395,6 +416,22 @@ export function createFloatingWidgetWindow(
 		if (!target) return null;
 		target.setBounds(withOverflow(openingBounds()));
 		return withoutOverflow(target.getBounds());
+	}
+
+	function setMinWidth(width: number): Electron.Rectangle | null {
+		const asked = positiveNumber(width);
+		contentMinWidth = asked === undefined ? 0 : Math.ceil(asked);
+		const target = live();
+		if (!target) return null;
+		const min = minWidthNow();
+		target.setMinimumSize(min, minSize.height);
+		const card = withoutOverflow(target.getBounds());
+		if (card.width >= min) return card;
+		// Grow toward the left when the right edge would leave the work area: the
+		// player opens in the bottom-right corner, flush against that edge.
+		const area = screen.getDisplayMatching(card).workArea;
+		const x = Math.max(area.x, Math.min(card.x, area.x + area.width - min));
+		return setBounds({ x, y: card.y, width: min });
 	}
 
 	function setOverflow(need: FloatingWidgetOverflow): FloatingWidgetOverflow {
@@ -426,6 +463,7 @@ export function createFloatingWidgetWindow(
 			return target ? withoutOverflow(target.getBounds()) : null;
 		},
 		setBounds,
+		setMinWidth,
 		setOverflow,
 		isReady: () => !!live() && ready,
 		markReady: () => {

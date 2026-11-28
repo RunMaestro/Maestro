@@ -20,6 +20,23 @@ describe('AgentErrorBanner', () => {
 		expect(screen.getByText('Something went wrong')).toBeInTheDocument();
 	});
 
+	it('shows only the short message, clamped, never a terminal screen', () => {
+		const legacy =
+			'Claude Code stopped producing output for too long, so Maestro ended the turn.' +
+			'\n\nWhat Claude Code last showed:\n\n```\n│ row │\n```';
+		render(
+			<AgentErrorBanner
+				error={makeError({ message: legacy, failureScreen: '│ row │' })}
+				theme={mockTheme}
+			/>
+		);
+		const text = screen.getByText(
+			'Claude Code stopped producing output for too long, so Maestro ended the turn.'
+		);
+		expect(text.className).toContain('line-clamp-2');
+		expect(screen.queryByText(/row/)).not.toBeInTheDocument();
+	});
+
 	it('renders View Details button when onShowDetails is provided', () => {
 		const onShowDetails = vi.fn();
 		render(

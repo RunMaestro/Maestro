@@ -10,6 +10,7 @@ import { reopenClosedTabWithTiling } from '../utils/panelLayout';
 import { isWebDesktop } from '../utils/runtimeContext';
 import { snapshotClosedTabTranscript } from '../utils/starredSessions';
 import { persistTabPins } from './messagePins';
+import { reopenHostedTabIfNeeded } from './closedTabCommands';
 import {
 	addAiTabToUnifiedHistory,
 	aiTabFocusFields,
@@ -83,7 +84,8 @@ export function requestDesktopTabCloses(
 
 /** Order browser reopen intents; route AI history through the desktop and restore other types locally. */
 export function reopenDesktopTabIfNeeded(session: Session): boolean {
-	if (!isWebDesktop()) return false;
+	// On the desktop, a hosted agent's AI tab reopens on its host (`reopenHostedTabIfNeeded`).
+	if (!isWebDesktop()) return reopenHostedTabIfNeeded(session);
 	// Coalesce repeated key presses while this intent waits for earlier closes or
 	// its own acknowledgement. Select the history head only when the queue runs.
 	if (pendingReopens.has(session.id)) return true;

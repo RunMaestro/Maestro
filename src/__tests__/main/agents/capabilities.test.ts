@@ -57,9 +57,10 @@ describe('agent-capabilities', () => {
 			expect(DEFAULT_CAPABILITIES.usesCombinedContextWindow).toBe(false);
 		});
 
-		it('should be a conservative default (all false)', () => {
-			const allFalse = Object.values(DEFAULT_CAPABILITIES).every((v) => v === false);
-			expect(allFalse).toBe(true);
+		it('should be a conservative default (all false, no token speed)', () => {
+			const { tokenSpeedMeasurement, ...flags } = DEFAULT_CAPABILITIES;
+			expect(Object.values(flags).every((v) => v === false)).toBe(true);
+			expect(tokenSpeedMeasurement).toBe('none');
 		});
 	});
 
@@ -295,6 +296,10 @@ describe('agent-capabilities', () => {
 			expect(hasCapability('claude-code', 'supportsPromptViaStdin')).toBe(true);
 			expect(hasCapability('codex', 'supportsPromptViaStdin')).toBe(true);
 			expect(hasCapability('opencode', 'supportsPromptViaStdin')).toBe(true);
+			// Antigravity reads its own stream-json line on stdin (MAESTRO-NM), which
+			// is not Claude's image-carrying stream-json, so that capability stays off.
+			expect(hasCapability('antigravity', 'supportsPromptViaStdin')).toBe(true);
+			expect(hasCapability('antigravity', 'supportsStreamJsonInput')).toBe(false);
 			// Unknown agents fall back to argv delivery (loud failure over silent).
 			expect(hasCapability('unknown-agent', 'supportsPromptViaStdin')).toBe(false);
 		});
@@ -366,6 +371,7 @@ describe('agent-capabilities', () => {
 				'supportsAppendSystemPrompt',
 				'supportsProjectMemory',
 				'supportsAdditionalDirectories',
+				'tokenSpeedMeasurement',
 			];
 
 			const defaultKeys = Object.keys(DEFAULT_CAPABILITIES);
@@ -461,7 +467,12 @@ describe('agent-capabilities', () => {
 			);
 			// The lookups every consumer uses serve this same object.
 			expect(getAgentCapabilities('grok')).toBe(grok);
-			for (const flag of capabilityKeys) {
+			// hasCapability answers boolean flags; tokenSpeedMeasurement and other
+			// non-boolean fields are read directly, so they are not compared here.
+			const booleanFlags = capabilityKeys.filter(
+				(flag) => typeof grok[flag as keyof AgentCapabilities] !== 'string'
+			);
+			for (const flag of booleanFlags) {
 				expect(hasCapability('grok', flag as keyof AgentCapabilities), flag).toBe(
 					grok[flag as keyof AgentCapabilities] === true
 				);

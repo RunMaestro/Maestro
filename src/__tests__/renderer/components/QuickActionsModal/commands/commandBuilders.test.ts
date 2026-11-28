@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMockSession } from '../../../../helpers/mockSession';
+import {
+	AGENT_MODES,
+	createMockSession,
+	createModeSession,
+	type AgentMode,
+} from '../../../../helpers/mockSession';
 import { buildAgentPanelCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from '../../../../../renderer/components/QuickActionsModal/commands/agentSwitcherCommands';
 import { buildActiveTabContextCommands } from '../../../../../renderer/components/QuickActionsModal/commands/contextCommands';
@@ -30,6 +35,11 @@ import { createMockAITab } from '../../../../helpers/mockTab';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useTabStore } from '../../../../../renderer/stores/tabStore';
+import { openFolderInFileManager } from '../../../../../renderer/services/fileActions';
+
+vi.mock('../../../../../renderer/services/fileActions', () => ({
+	openFolderInFileManager: vi.fn(),
+}));
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -246,6 +256,7 @@ describe('QuickActions command builders', () => {
 			'newGroupChat',
 			'closeGroupChat',
 			'toggleGroupChatModeratorOnly',
+			'toggleGroupChatUnread',
 			'deleteGroupChat',
 		]);
 	});
@@ -342,7 +353,6 @@ describe('QuickActions command builders', () => {
 				deleteSession: vi.fn(),
 				getOpenInLabel: () => 'Open',
 				platform: 'darwin',
-				openPath: vi.fn(),
 				onGoToNextUnread: vi.fn(),
 				onGoToPreviousUnread: vi.fn(),
 				shortcuts: {},
@@ -473,6 +483,93 @@ describe('QuickActions command builders', () => {
 		}
 	});
 
+	describe('Browser: Viewport commands', () => {
+		const browserTab = (viewportPreset?: string) =>
+			({
+				id: 'b1',
+				url: 'https://example.com',
+				title: 'Example',
+				createdAt: 1,
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+				...(viewportPreset ? { viewportPreset } : {}),
+			}) as any;
+
+		function viewportCommands(viewportPreset?: string) {
+			const setBrowserViewportPreset = vi.fn();
+			const setQuickActionOpen = vi.fn();
+			const commands = buildActiveTabContextCommands({
+				activeSession: createMockSession({
+					id: 's1',
+					browserTabs: [browserTab(viewportPreset)],
+					activeBrowserTabId: 'b1',
+				}),
+				activeSessionId: 's1',
+				activeTabType: 'browser',
+				setSessions,
+				setQuickActionOpen,
+				safeClipboardWrite: async () => true,
+				flashCopiedToClipboard: vi.fn(),
+				mainPanelRef: { current: { setBrowserViewportPreset } } as any,
+			}).filter((a) => a.id.startsWith('browserViewport-'));
+			return { commands, setBrowserViewportPreset, setQuickActionOpen };
+		}
+
+		it('lists Fit, then each preset from widest to narrowest, so typing "viewport" finds them all', () => {
+			expect(viewportCommands().commands.map((a) => a.label)).toEqual([
+				'Browser: Viewport Fit',
+				'Browser: Viewport Desktop (1440)',
+				'Browser: Viewport Laptop (1280)',
+				'Browser: Viewport Tablet (768)',
+				'Browser: Viewport Phone (390)',
+			]);
+		});
+
+		it('says what each entry does, and names the preset the tab is at now', () => {
+			const { commands } = viewportCommands('tablet');
+			const byId = Object.fromEntries(commands.map((a) => [a.id, a.subtext]));
+
+			expect(byId['browserViewport-tablet']).toBe('Current: Tablet (768 px wide)');
+			expect(byId['browserViewport-phone']).toBe(
+				'Show the page 390 px wide, scaled to fit the tab'
+			);
+			expect(byId['browserViewport-fit']).toBe("Show the page at the tab's own width");
+		});
+
+		it('counts Fit as current for a tab with no saved preset', () => {
+			const { commands } = viewportCommands();
+
+			expect(commands.find((a) => a.id === 'browserViewport-fit')!.subtext).toBe(
+				"Current: Fit (the tab's width)"
+			);
+		});
+
+		it('closes the palette and sets the preset through the MainPanel handle', () => {
+			const { commands, setBrowserViewportPreset, setQuickActionOpen } = viewportCommands();
+
+			commands.find((a) => a.id === 'browserViewport-phone')!.action();
+
+			expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+			expect(setBrowserViewportPreset).toHaveBeenCalledWith('phone');
+		});
+
+		it('offers nothing on other kinds of tab', () => {
+			const commands = buildActiveTabContextCommands({
+				activeSession: createMockSession({ id: 's1' }),
+				activeSessionId: 's1',
+				activeTabType: 'terminal',
+				setSessions,
+				setQuickActionOpen: vi.fn(),
+				safeClipboardWrite: async () => true,
+				flashCopiedToClipboard: vi.fn(),
+				mainPanelRef: { current: {} } as any,
+			});
+
+			expect(commands.some((a) => a.id.startsWith('browserViewport-'))).toBe(false);
+		});
+	});
+
 	it('builds tab-type-aware Context / Buffer / Content commands', () => {
 		const session = createMockSession({
 			id: 's1',
@@ -516,17 +613,33 @@ describe('QuickActions command builders', () => {
 
 		// Browser tab -> "Content" actions, no Gist option.
 		const copyActiveBrowserContent = vi.fn();
+		const toggleBrowserDesignMode = vi.fn();
 		const browserRef = {
-			current: { copyActiveBrowserContent, sendActiveBrowserContentToAgent: vi.fn() },
+			current: {
+				copyActiveBrowserContent,
+				sendActiveBrowserContentToAgent: vi.fn(),
+				toggleBrowserDesignMode,
+			},
 		} as any;
 		const browser = buildActiveTabContextCommands({
 			...baseArgs,
 			activeTabType: 'browser',
 			mainPanelRef: browserRef,
 		});
-		expect(browser.map((a) => a.id)).toEqual(['copyBrowserContent', 'sendBrowserContentToAgent']);
+		expect(browser.map((a) => a.id)).toEqual([
+			'copyBrowserContent',
+			'sendBrowserContentToAgent',
+			'toggleBrowserDesignMode',
+			'browserViewport-fit',
+			'browserViewport-desktop',
+			'browserViewport-laptop',
+			'browserViewport-tablet',
+			'browserViewport-phone',
+		]);
 		browser.find((a) => a.id === 'copyBrowserContent')!.action();
 		expect(copyActiveBrowserContent).toHaveBeenCalled();
+		browser.find((a) => a.id === 'toggleBrowserDesignMode')!.action();
+		expect(toggleBrowserDesignMode).toHaveBeenCalled();
 
 		// File previews expose no context/buffer/content actions, and no delete
 		// entry either while there is no open preview tab to act on.
@@ -780,6 +893,7 @@ describe('QuickActions command builders', () => {
 		}).map((a) => a.id);
 		expect(supportIds).toContain('createDebugPackage');
 		expect(supportIds).toContain('leaderboard');
+		expect(supportIds).toContain('privacy');
 
 		const debugCommandIds = buildDebugCommands({
 			activeSession: createMockSession({
@@ -801,6 +915,34 @@ describe('QuickActions command builders', () => {
 		}).map((a) => a.id);
 		expect(debugCommandIds).toContain('debugReleaseQueued');
 		expect(debugCommandIds).toContain('debugAgentProbe');
+	});
+
+	it('offers a rollback command that opens Check for Updates on its rollback list', () => {
+		const close = vi.fn();
+		const setUpdateCheckModalOpen = vi.fn();
+		const commands = buildSupportCommands({
+			setQuickActionOpen: close,
+			setSettingsModalOpen: vi.fn(),
+			setSettingsTab: vi.fn(),
+			setShortcutsHelpOpen: vi.fn(),
+			setAboutModalOpen: vi.fn(),
+			setFeedbackModalOpen: vi.fn(),
+			setLogViewerOpen: vi.fn(),
+			setProcessMonitorOpen: vi.fn(),
+			setUpdateCheckModalOpen,
+			getFeedbackDraft: () => ({ isMinimized: false, setMinimized: vi.fn() }),
+			createDebugPackage: vi.fn(),
+			notifyToast: vi.fn(),
+			openUrl: vi.fn(),
+			toggleDevtools: vi.fn(),
+			shortcuts: {},
+		} as Parameters<typeof buildSupportCommands>[0]);
+
+		const rollback = commands.find((c) => c.id === 'updateRollback');
+		expect(rollback?.label).toBe('Roll Back to an Earlier Version');
+		rollback!.action();
+		expect(setUpdateCheckModalOpen).toHaveBeenCalledWith(true, 'rollback');
+		expect(close).toHaveBeenCalledWith(false);
 	});
 
 	describe('buildTabGroupCommands', () => {
@@ -1249,5 +1391,149 @@ describe('agent-switch window scoping', () => {
 		expect(roomCommands.find((a) => a.id === 'toggleStarTab')).toBeUndefined();
 		expect(roomCommands.find((a) => a.id === 'copySessionId')).toBeDefined();
 		expect(roomCommands.find((a) => a.id === 'markTabUnread')).toBeDefined();
+	});
+});
+
+describe('mode parity (local, SSH, hosted)', () => {
+	/** Every agent-scoped palette command the builders offer, as the palette lists it. */
+	function paletteFor(mode: AgentMode) {
+		const session = createModeSession(mode, {
+			id: 's1',
+			name: 'Atlas',
+			isGitRepo: true,
+			worktreeBranch: 'feat/x',
+			parentSessionId: 'parent',
+			aiTabs: [createMockAITab({ id: 'tab-1' })],
+			activeTabId: 'tab-1',
+			unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+		});
+		const commands = [
+			...buildNavigationCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				setQuickActionOpen: close,
+				setLeftSidebarOpen: vi.fn(),
+				setRightPanelOpen: vi.fn(),
+				addNewSession: vi.fn(),
+				deleteSession: vi.fn(),
+				getOpenInLabel: () => 'Open in Finder',
+				platform: 'darwin',
+				shortcuts: {},
+			}),
+			...buildSessionManagementCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				sessions: [session],
+				setSessions,
+				setQuickActionOpen: close,
+				setRenameInstanceModalOpen: vi.fn(),
+				setRenameInstanceValue: vi.fn(),
+				deleteSession: vi.fn(),
+				openClearBookmarksConfirm: vi.fn(),
+			}),
+			...buildNewTabCommands({
+				activeSession: session,
+				onNewTab: vi.fn(),
+				setQuickActionOpen: close,
+			}),
+			...buildTabCommands({
+				activeSession: session,
+				isAiMode: true,
+				activeTabInfo: {
+					isTerminalMode: false,
+					hasActiveTab: true,
+					activeUnifiedIndex: 0,
+					unifiedTabCount: 1,
+					activeTabType: 'ai',
+				},
+				enterToSendAI: true,
+				onRenameTab: vi.fn(),
+				setQuickActionOpen: close,
+				shortcuts: {},
+				toggleInputMode: vi.fn(),
+			}),
+			...buildGitWorktreeCommands({
+				activeSession: session,
+				sessions: [createMockSession({ id: 'parent', name: 'Parent' }), session],
+				gitActions: {
+					isGitRepo: true,
+					branch: 'feat/x',
+					ahead: 0,
+					behind: 0,
+					canCreatePR: true,
+					canConfigureWorktrees: true,
+					changes: { fileCount: 1, additions: 2, deletions: 1, modified: 1 },
+					viewLog: vi.fn(),
+					viewDiff: vi.fn(),
+					pull: vi.fn(),
+					push: vi.fn(),
+					switchBranch: vi.fn(),
+					createPR: vi.fn(),
+					configureWorktrees: vi.fn(),
+				} as any,
+				setQuickActionOpen: close,
+				onQuickCreateWorktree: vi.fn(),
+				onOpenCreatePR: vi.fn(),
+				onRefreshGitFileState: vi.fn(),
+				shortcuts: {},
+				gitService: { getRemoteBrowserUrl: vi.fn().mockResolvedValue(null) },
+				notifyToast: vi.fn(),
+				openUrl: vi.fn(),
+				logger: { error: vi.fn() },
+			}),
+		];
+		return commands.map(({ id, label, subtext, shortcut }) => ({ id, label, subtext, shortcut }));
+	}
+
+	it('offers local, SSH, and hosted agents the same commands', () => {
+		const [local, ssh, hosted] = AGENT_MODES.map(paletteFor);
+		expect(local.map((c) => c.id)).toContain('openWorkingDirectory');
+		expect(ssh).toEqual(local);
+		expect(hosted).toEqual(local);
+	});
+
+	it.each(AGENT_MODES)(
+		'%s: Open Working Directory opens the folder, or shows a remote one in the Files panel',
+		(mode) => {
+			const session = createModeSession(mode, { id: 's1', fullPath: '/work/atlas' });
+			const action = buildNavigationCommands({
+				activeSession: session,
+				activeSessionId: 's1',
+				setQuickActionOpen: close,
+				setLeftSidebarOpen: vi.fn(),
+				setRightPanelOpen: vi.fn(),
+				addNewSession: vi.fn(),
+				deleteSession: vi.fn(),
+				getOpenInLabel: () => 'Open in Finder',
+				platform: 'darwin',
+				shortcuts: {},
+			}).find((c) => c.id === 'openWorkingDirectory')!;
+			action.action();
+			expect(openFolderInFileManager).toHaveBeenCalledWith(
+				{ path: '/work/atlas', sshRemoteId: mode === 'local' ? undefined : 'r1' },
+				{ sessionId: 's1' }
+			);
+			expect(close).toHaveBeenCalledWith(false);
+		}
+	);
+
+	it('offers Open Working Directory for an SSH agent before its first spawn', () => {
+		const pending = createMockSession({
+			id: 's1',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+		} as any);
+		const ids = buildNavigationCommands({
+			activeSession: pending,
+			activeSessionId: 's1',
+			setQuickActionOpen: close,
+			setLeftSidebarOpen: vi.fn(),
+			setRightPanelOpen: vi.fn(),
+			addNewSession: vi.fn(),
+			deleteSession: vi.fn(),
+			getOpenInLabel: () => 'Open',
+			platform: 'darwin',
+			shortcuts: {},
+		}).map((a) => a.id);
+		expect(ids).toContain('openWorkingDirectory');
 	});
 });

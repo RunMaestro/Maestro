@@ -63,6 +63,11 @@ import {
 	isRemoteSettingWritable,
 } from '../../../../main/web-server/handlers/bridgeDenyList';
 import { createWebApi } from '../../../../main/preload/web';
+import { setRemoteSpawnSessionsProvider } from '../../../../main/web-server/handlers/remoteSpawnEnv';
+import type { StoredSession } from '../../../../main/stores/types';
+
+const storedSessions: StoredSession[] = [];
+setRemoteSpawnSessionsProvider(() => storedSessions);
 
 function makeClient(user?: { id: string; username: string; displayName: string }) {
 	return {
@@ -102,6 +107,40 @@ describe('handleBridgeInvoke', () => {
 				querySource: 'auto',
 			});
 			expect(config.querySource).toBe(querySource);
+		}
+	});
+
+	it("restores the agent's saved env vars on a browser spawn (#2088)", async () => {
+		const handler = vi.fn().mockResolvedValue({ success: true });
+		invokeHandlers.set('process:spawn', handler);
+		storedSessions.splice(0, storedSessions.length, {
+			id: 'agent',
+			name: 'agent',
+			toolType: 'codex',
+			cwd: '/w',
+			projectRoot: '/w',
+			customEnvVars: { CODEX_HOME: '/profiles/a', SHARED: 'saved' },
+		});
+		try {
+			// The browser's copy of the agent has no customEnvVars (stripped from
+			// every reply), so its spawn arrives without the agent's profile.
+			await handleBridgeInvoke(
+				makeClient(),
+				{
+					type: 'bridge.invoke',
+					requestId: 'spawn',
+					channel: 'process:spawn',
+					args: [{ sessionId: 'agent-ai-tab', sessionCustomEnvVars: { SHARED: 'sent' } }],
+				},
+				vi.fn()
+			);
+			expect(handler).toHaveBeenLastCalledWith(expect.anything(), {
+				sessionId: 'agent-ai-tab',
+				sessionCustomEnvVars: { CODEX_HOME: '/profiles/a', SHARED: 'sent' },
+				querySource: 'auto',
+			});
+		} finally {
+			storedSessions.length = 0;
 		}
 	});
 
@@ -735,6 +774,28 @@ describe('handleBridgeInvoke denied channels', () => {
 			expect(send.mock.calls[0][1]).toMatchObject({ requestId: 13, ok: true, result: 'ok' });
 		}
 	);
+
+	it('refuses every promptLinks channel: a browser may not mint, list, or revoke a link', async () => {
+		// A link would let a browser keep the power to prompt an agent after it
+		// disconnects or its account is disabled, and listing hands it every prompt.
+		for (const channel of [
+			'promptLinks:create',
+			'promptLinks:list',
+			'promptLinks:revoke',
+			'promptLinks:rendererReady',
+		]) {
+			const handler = vi.fn(async () => 'leaked');
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: channel, channel },
+				send
+			);
+			expect(handler).not.toHaveBeenCalled();
+			expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+		}
+	});
 
 	it('refuses a denied send-style channel too', async () => {
 		const listener = vi.fn();

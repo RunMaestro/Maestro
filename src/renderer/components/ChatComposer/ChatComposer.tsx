@@ -24,9 +24,13 @@ import { useScrollIntoView } from '../../hooks/ui/useScrollIntoView';
 import { useVoiceInput } from '../../hooks/utils/useVoiceInput';
 import { useStableCallback } from '../../hooks/utils/useStableCallback';
 import { ComposerTextarea } from './ComposerTextarea';
-import { ChatComposerFrame, useChatComposerFold } from './ChatComposerFrame';
+import {
+	ChatComposerFrame,
+	useChatComposerFold,
+	type ChatComposerToolbarProps,
+} from './ChatComposerFrame';
 import { AtMentionPopover } from '../InputArea/overlays/AtMentionPopover';
-import { applyTrimmedTextPaste, clipboardHasImage } from './pasteTrim';
+import { clipboardHasImage } from './pasteTrim';
 import { getAtMentionTrigger } from '../InputArea/utils/inputTriggers';
 import {
 	useMentionPicker,
@@ -102,6 +106,11 @@ export interface ChatComposerProps {
 	aboveComposer?: React.ReactNode;
 	toolbarExtras?: React.ReactNode;
 	sheetExtras?: React.ReactNode;
+	/**
+	 * The toolbar's per-tab controls (permission, save to History, model and effort) for a surface
+	 * that turns those capabilities on. A room leaves it unset.
+	 */
+	toolbarProps?: ChatComposerToolbarProps;
 
 	// Event bridges
 	onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
@@ -148,6 +157,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 	aboveComposer,
 	toolbarExtras,
 	sheetExtras,
+	toolbarProps,
 	onPaste,
 	onDrop,
 	onUploadFiles,
@@ -354,15 +364,13 @@ export const ChatComposer = React.memo(function ChatComposer({
 		[onChange]
 	);
 
+	// A text paste lands verbatim (native paste, no trimming): dictation tools
+	// such as Scribe append a trailing space on purpose. Images go to the host.
 	const handlePasteWrapped = useCallback(
 		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-			if (clipboardHasImage(e.clipboardData)) {
-				onPaste?.(e);
-				return;
-			}
-			applyTrimmedTextPaste(e, value, onChange);
+			if (clipboardHasImage(e.clipboardData)) onPaste?.(e);
 		},
-		[value, onChange, onPaste]
+		[onPaste]
 	);
 
 	const handleFocus = useCallback(() => {
@@ -446,6 +454,7 @@ export const ChatComposer = React.memo(function ChatComposer({
 			}
 			toolbarExtras={toolbarExtras}
 			sheetExtras={sheetExtras}
+			toolbarProps={toolbarProps}
 			stagedImages={stagedImages}
 			setStagedImages={setStagedImages}
 			draftValue={value}

@@ -11,8 +11,28 @@ import type {
 	ParquetQueryResult,
 } from '../../../shared/parquet/types';
 import { mockTheme } from '../../helpers/mockTheme';
+import { AGENT_MODES, agentModeFields } from '../../helpers';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 // lucide-react icons are auto-mocked globally in src/__tests__/setup.ts
+
+// jsdom has no layout, so the grid's virtualizer is stubbed to draw every
+// loaded row. The grid's own "is it on screen" guard (clientHeight 0) still
+// keeps it from paging on its own.
+vi.mock('@tanstack/react-virtual', () => ({
+	useVirtualizer: (opts: { count: number; estimateSize: () => number }) => {
+		const items = Array.from({ length: opts.count }, (_, index) => ({
+			index,
+			key: index,
+			start: index * opts.estimateSize(),
+			size: opts.estimateSize(),
+		}));
+		return {
+			getTotalSize: () => opts.count * opts.estimateSize(),
+			getVirtualItems: () => items,
+		};
+	},
+}));
 
 function column(
 	name: string,
@@ -321,6 +341,32 @@ describe('ParquetViewer', () => {
 		expect(screen.queryByText(/Reading parquet footer/)).not.toBeInTheDocument();
 	});
 
+	it.each(AGENT_MODES)(
+		'reads a %s file with the same summary and no mode words in its wait',
+		async (mode) => {
+			const remote = mode !== 'local';
+			open.mockReturnValue(new Promise(() => {}));
+			const remoteId = (agentModeFields(mode) as { sshRemoteId?: string }).sshRemoteId;
+			renderViewer(remoteId ? { sshRemoteId: remoteId } : {});
+			if (remote) {
+				act(() => {
+					fetchProgressListeners.forEach((l) =>
+						l({
+							remotePath: '/data/events.parquet',
+							receivedBytes: 1,
+							totalBytes: 4,
+							done: false,
+						})
+					);
+				});
+				expect(await screen.findByText('Downloading events.parquet...')).toBeInTheDocument();
+			} else {
+				expect(screen.getByText(/Reading parquet footer/)).toBeInTheDocument();
+			}
+			expect(document.body.textContent).not.toMatch(/remote|SSH/i);
+		}
+	);
+
 	it('ignores progress for a file this tab is not opening', async () => {
 		// Every viewer in the window hears every event. Without the path check,
 		// a second tab's copy would drive this tab's bar.
@@ -377,6 +423,27 @@ describe('ParquetViewer', () => {
 			expect(screen.getByText(/Could not open this parquet file/)).toBeInTheDocument()
 		);
 		expect(screen.queryByTestId('parquet-fetch-progress-bar')).not.toBeInTheDocument();
+	});
+
+	it('shows a null in the record view as a placeholder, apart from an empty string', async () => {
+		query.mockResolvedValue(queryResult({ rows: [[1, '', null]], rowIndexes: [0] }));
+		render(
+			<LayerStackProvider>
+				<ParquetViewer
+					filePath="/data/events.parquet"
+					fileName="events.parquet"
+					theme={mockTheme}
+				/>
+			</LayerStackProvider>
+		);
+		fireEvent.doubleClick(await screen.findByTestId('parquet-row-0'));
+		await screen.findByTestId('parquet-row-detail-modal');
+		const placeholder = screen.getByTestId('parquet-row-detail-placeholder');
+		expect(placeholder).toHaveTextContent('null');
+		expect(placeholder.closest('tr')).toHaveTextContent('price');
+		expect(screen.getByTestId('parquet-row-detail-empty').closest('tr')).toHaveTextContent(
+			'region'
+		);
 	});
 
 	it('releases the main-process handle when the tab goes away', async () => {

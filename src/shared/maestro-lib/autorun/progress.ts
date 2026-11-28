@@ -49,6 +49,11 @@ export interface AutoRunProgress {
 	loopIteration: number;
 	/** Epoch ms the owning window started the run, when it says. */
 	startTime?: number;
+	/**
+	 * Checked tasks the documents held when the run started, when it says: the baseline the
+	 * REMAINING estimate measures the run's pace from (`estimateAutoRunEta()`).
+	 */
+	initialTasksDone?: number;
 	worktreeBranch?: string;
 	/** Set while the run waits on an error or a gate. */
 	pause?: AutoRunPause;
@@ -99,6 +104,9 @@ export function parseAutoRunProgress(raw: unknown): AutoRunProgress | null {
 		loopEnabled: wire.loopEnabled === true,
 		loopIteration: asNumber(wire.loopIteration) ?? 0,
 		...(asNumber(wire.startTime) !== undefined ? { startTime: asNumber(wire.startTime) } : {}),
+		...(asNumber(wire.initialCompletedTasks) !== undefined
+			? { initialTasksDone: asNumber(wire.initialCompletedTasks) }
+			: {}),
 		...(asString(wire.worktreeBranch) ? { worktreeBranch: asString(wire.worktreeBranch) } : {}),
 		// A paused run with no message still needs the controls, so the flag alone builds a pause.
 		...(wire.errorPaused === true || pauseMessage

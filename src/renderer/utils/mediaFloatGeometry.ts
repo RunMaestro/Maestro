@@ -68,8 +68,15 @@ export const MEDIA_FLOAT_DEFAULT_WIDTH: Record<MediaKind, number> = {
 
 /** Gap from the viewport edge for the initial bottom-right placement. */
 export const MEDIA_FLOAT_EDGE_MARGIN = 24;
-/** Below this the transport controls start clipping. */
+/**
+ * Width floor before the transport has been measured, and the floor under any
+ * measurement. The real floor is the transport's measured width (see
+ * {@link mediaFloatMinWidth}), since the controls row varies by file and queue.
+ */
 export const MEDIA_FLOAT_MIN_WIDTH = 300;
+
+/** Left plus right border of the frame. Matches its 1px `border`. */
+export const MEDIA_FLOAT_FRAME_BORDER_X = 2;
 
 export interface Viewport {
 	width: number;
@@ -90,6 +97,22 @@ export interface MediaFloatFit {
 	aspect: number;
 	/** Measured title bar + transport, or the fallback estimate. */
 	chromeHeight: number;
+	/**
+	 * Narrowest frame that shows every transport control, from
+	 * {@link mediaFloatMinWidth}. Omitted means {@link MEDIA_FLOAT_MIN_WIDTH}.
+	 */
+	minWidth?: number;
+}
+
+/**
+ * Frame width floor for a measured transport: the controls must never clip, so
+ * the frame is at least as wide as the transport needs plus its own border.
+ */
+export function mediaFloatMinWidth(transportMinWidth?: number | null): number {
+	if (typeof transportMinWidth !== 'number' || !(transportMinWidth > 0)) {
+		return MEDIA_FLOAT_MIN_WIDTH;
+	}
+	return Math.max(MEDIA_FLOAT_MIN_WIDTH, Math.ceil(transportMinWidth) + MEDIA_FLOAT_FRAME_BORDER_X);
 }
 
 /** Title bar plus transport, with the fallback for before it is measured. */
@@ -135,15 +158,15 @@ export function fitMediaFloatRect(
 	const minTop = Math.max(0, viewport.top ?? 0);
 	const usableHeight = Math.max(1, viewport.height - minTop);
 	const maxWidth = Math.max(1, viewport.width);
-	let width = Math.min(Math.max(desired.width, MEDIA_FLOAT_MIN_WIDTH), maxWidth);
+	// Never narrower than the controls need: a clipped transport hides buttons
+	// the user cannot reach any other way. Only a smaller viewport overrides it.
+	const minWidth = Math.max(MEDIA_FLOAT_MIN_WIDTH, fit.minWidth ?? 0);
+	let width = Math.min(Math.max(desired.width, minWidth), maxWidth);
 	let height = mediaFloatHeight(fit, width);
 
 	if (height > usableHeight && fit.kind === 'video') {
 		const stage = Math.max(0, usableHeight - fit.chromeHeight);
-		width = Math.min(
-			width,
-			Math.max(MEDIA_FLOAT_MIN_WIDTH, stage * normalizeMediaAspect(fit.aspect))
-		);
+		width = Math.min(width, Math.max(minWidth, stage * normalizeMediaAspect(fit.aspect)));
 		width = Math.min(width, maxWidth);
 		height = mediaFloatHeight(fit, width);
 	}

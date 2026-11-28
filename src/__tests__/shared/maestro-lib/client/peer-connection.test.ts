@@ -106,6 +106,21 @@ describe('peerForwardError', () => {
 		expect(failed.message).toContain('maestro-cli remote-host status box');
 	});
 
+	it('maps a CLI too old for `host endpoint` to outdated, with the upgrade line', () => {
+		const outdated = peerForwardError(
+			'box',
+			new RemoteDiscoveryError(
+				'unsupported',
+				'maestro-cli on box (1.1.0) has no `host endpoint` verb.'
+			)
+		);
+		expect(outdated.code).toBe('outdated');
+		expect(outdated.message).toContain('maestro-cli remote-host install box --start');
+		expect(peerForwardError('box', new RemoteDiscoveryError('ssh-failed', 'x')).code).toBe(
+			'forward-failed'
+		);
+	});
+
 	it('marks a discovery timeout as a timeout, and passes a PeerConnectError through', () => {
 		const timedOut = peerForwardError('box', new RemoteDiscoveryError('timeout', 'slow'));
 		expect(timedOut.timeout).toBe(true);

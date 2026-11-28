@@ -97,12 +97,23 @@ export interface DispatchCallbackEntry extends DispatchCallbackRegistration {
 	/** Wall-clock ms when the dispatched process started (set on spawn). */
 	startedAt?: number;
 	exitCode?: number | null;
+	/**
+	 * The turn failed whatever its exit code said: a hosted turn whose host classified it `crashed`
+	 * (an in-band provider error with exit 0). Local exits leave it unset.
+	 */
+	turnFailed?: boolean;
 	durationMs?: number;
 	/**
 	 * The renderer reported a pending retry for this tab while the process was
 	 * still running, so a failing exit parks instead of firing.
 	 */
 	retryPending?: boolean;
+	/**
+	 * Tail of the display text the dispatched process emitted since it started.
+	 * The source of {{DISPATCH_OUTPUT}}: History only gets an entry for this
+	 * turn after an opt-in synopsis, long after the callback fires.
+	 */
+	output?: string;
 }
 
 /** Payload handed to the delivery side when a callback fires. */
@@ -111,6 +122,13 @@ export interface DispatchCallbackFire {
 	status: DispatchCallbackStatus;
 	exitCode: number | null;
 	durationMs: number;
+	/** Captured tail of the dispatched turn's output (see DispatchCallbackEntry.output). */
+	output?: string;
+	/**
+	 * The callback waited for an Auto Run batch the turn started. `output` then
+	 * holds only the turn's launch reply, so the batch summary in History wins.
+	 */
+	awaitedAutoRun?: boolean;
 	/** Auto Run progress, when the dispatch ended via an Auto Run batch. */
 	tasksCompleted?: number;
 	tasksTotal?: number;

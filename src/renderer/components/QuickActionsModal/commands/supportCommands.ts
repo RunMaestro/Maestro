@@ -1,8 +1,9 @@
-import { buildMaestroUrl } from '../../../utils/buildMaestroUrl';
+import { buildMaestroUrl, MAESTRO_PRIVACY_URL } from '../../../utils/buildMaestroUrl';
 import type { NotifyToastInput } from '../../../stores/notificationStore';
 import { captureException } from '../../../utils/sentry';
 import type { SettingsTab } from '../../../types';
 import type { QuickAction } from '../types';
+import type { UpdateCheckView } from '../../../../shared/updateRollback';
 
 interface FeedbackDraftActions {
 	isMinimized: boolean;
@@ -20,7 +21,7 @@ interface BuildSupportCommandsArgs {
 	setFeedbackModalOpen: (open: boolean) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
-	setUpdateCheckModalOpen?: (open: boolean) => void;
+	setUpdateCheckModalOpen?: (open: boolean, view?: UpdateCheckView) => void;
 	setDebugPackageModalOpen?: (open: boolean) => void;
 	startTour?: () => void;
 	getFeedbackDraft: () => FeedbackDraftActions;
@@ -185,6 +186,15 @@ export function buildSupportCommands({
 			},
 		},
 		{
+			id: 'privacy',
+			label: 'Privacy Policy',
+			subtext: 'What Maestro sends off your machine, and how to turn it off',
+			action: () => {
+				openUrl(buildMaestroUrl(MAESTRO_PRIVACY_URL));
+				setQuickActionOpen(false);
+			},
+		},
+		{
 			id: 'createDebugPackage',
 			label: 'Create Debug Package',
 			subtext: 'Generate a support bundle for bug reporting',
@@ -246,6 +256,15 @@ export function buildSupportCommands({
 			label: 'Check for Updates',
 			action: () => {
 				setUpdateCheckModalOpen(true);
+				setQuickActionOpen(false);
+			},
+		});
+		commands.push({
+			id: 'updateRollback',
+			label: 'Roll Back to an Earlier Version',
+			subtext: 'Reinstall a previous Maestro release',
+			action: () => {
+				setUpdateCheckModalOpen(true, 'rollback');
 				setQuickActionOpen(false);
 			},
 		});

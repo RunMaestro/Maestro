@@ -7,6 +7,9 @@
  * - The choice is written to storage under a stable key, so it survives a
  *   restart, and is read back on the next mount.
  * - The last visible series cannot be hidden - an empty chart says nothing.
+ *
+ * Plus the tab's framing: cost is labeled API-equivalent, and the footer says
+ * what the totals leave out (partial providers, SSH agents, unsupported ones).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -33,7 +36,10 @@ vi.mock('../../../../renderer/utils/safeLocalStorage', () => ({
 	},
 }));
 
-import { TokenStats } from '../../../../renderer/components/UsageDashboard/TokenStats';
+import {
+	TokenStats,
+	tokenCoverageNotes,
+} from '../../../../renderer/components/UsageDashboard/TokenStats';
 
 const theme = THEMES['dracula'];
 
@@ -82,6 +88,10 @@ const aggregate: TokenUsageAggregate = {
 	} as TokenUsageAggregate['series'],
 	speed: emptyTokenSpeedSummary(),
 	coverageByAgent: {},
+	excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] },
+	granularity: 'day',
+	windowStartMs: 1_700_000_000_000,
+	windowEndMs: 1_700_086_400_000,
 	generatedAtMs: 1_700_086_400_000,
 };
 
@@ -110,7 +120,7 @@ describe('TokenStats timeline legend', () => {
 		mountTokens();
 		await screen.findByTestId('token-timeline');
 
-		for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens']) {
+		for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens']) {
 			expect(screen.getByTestId(`token-timeline-legend-${key}`).getAttribute('aria-pressed')).toBe(
 				'true'
 			);
@@ -159,6 +169,7 @@ describe('TokenStats timeline legend', () => {
 
 		fireEvent.click(screen.getByTestId('token-timeline-legend-inputTokens'));
 		fireEvent.click(screen.getByTestId('token-timeline-legend-outputTokens'));
+		fireEvent.click(screen.getByTestId('token-timeline-legend-cacheCreationTokens'));
 
 		const last = screen.getByTestId('token-timeline-legend-cacheReadTokens');
 		await waitFor(() => expect((last as HTMLButtonElement).disabled).toBe(true));
@@ -230,13 +241,15 @@ describe('TokenStats timeline legend', () => {
 		};
 		vi.mocked(window.maestro.stats.getTokenUsage).mockResolvedValue(data);
 		mountTokens();
-		expect(await screen.findByRole('group', { name: `Total Cost: ${text}` })).toBeInTheDocument();
+		expect(
+			await screen.findByRole('group', { name: `API-equivalent Cost: ${text}` })
+		).toBeInTheDocument();
 		for (const dimension of ['agent', 'account', 'model', 'project']) {
 			const chart = screen.getByTestId(`token-by-${dimension}`);
 			const row = within(chart).getByText(text).parentElement!;
 			expect(row.querySelector<HTMLElement>('.h-full')!.style.width).toBe(width);
 			fireEvent.mouseEnter(row);
-			expect(await screen.findByText(`Cost: ${text}`)).toBeInTheDocument();
+			expect(await screen.findByText(`API-equivalent cost: ${text}`)).toBeInTheDocument();
 			expect(screen.queryByText('~ cost estimated from rates') !== null).toBe(
 				cost.status === 'estimated'
 			);
@@ -246,7 +259,7 @@ describe('TokenStats timeline legend', () => {
 			.getByTestId('token-timeline')
 			.querySelector('.rounded-t-sm')!.parentElement!;
 		fireEvent.mouseEnter(timelineRow);
-		expect(await screen.findByText(`Cost: ${text}`)).toBeInTheDocument();
+		expect(await screen.findByText(`API-equivalent cost: ${text}`)).toBeInTheDocument();
 		fireEvent.mouseLeave(timelineRow);
 		expect(screen.getByTestId('token-speed-empty')).toHaveTextContent('No timed API calls');
 		expect(screen.queryByTestId('token-speed-cards')).not.toBeInTheDocument();
@@ -298,7 +311,7 @@ describe('TokenStats timeline legend', () => {
 		});
 		mountTokens();
 		expect(
-			await screen.findByRole('group', { name: 'Total Cost: $3.25 (partial)' })
+			await screen.findByRole('group', { name: 'API-equivalent Cost: $3.25 (partial)' })
 		).toBeInTheDocument();
 		const agents = screen.getByTestId('token-by-agent');
 		expect(within(agents).getByText('$1.25 (partial)')).toBeInTheDocument();
@@ -324,7 +337,9 @@ describe('TokenStats timeline legend', () => {
 			});
 			mountTokens();
 			expect(
-				await screen.findByRole('group', { name: `Total Cost: ${costEstimated ? '~' : ''}$2.00` })
+				await screen.findByRole('group', {
+					name: `API-equivalent Cost: ${costEstimated ? '~' : ''}$2.00`,
+				})
 			).toBeInTheDocument();
 		}
 	);
@@ -393,12 +408,14 @@ describe('Grok token presentation', () => {
 		},
 	])('shows $name Grok spend apart from token counts', async ({ cost, completeness, text }) => {
 		mountWith(grokAggregate(cost, completeness));
-		expect(await screen.findByRole('group', { name: `Total Cost: ${text}` })).toBeInTheDocument();
+		expect(
+			await screen.findByRole('group', { name: `API-equivalent Cost: ${text}` })
+		).toBeInTheDocument();
 		// Tokens are never presented as money, and cache creation counts on the input side.
 		expect(screen.getByRole('group', { name: 'Input Tokens: 60' })).toBeInTheDocument();
 		expect(screen.getByText('30% of input served from cache')).toBeInTheDocument();
 		expect(screen.getByTestId('token-stats')).toHaveTextContent(
-			'2 sessions read from agent transcripts.'
+			'2 conversations read from agent transcripts.'
 		);
 		for (const a of ['alpha', 'beta']) {
 			const row = within(screen.getByTestId('token-by-account')).getByText(`Grok ${a}`);
@@ -411,5 +428,181 @@ describe('Grok token presentation', () => {
 		expect(screen.getByTestId('token-stats')).not.toHaveTextContent(
 			/quota|balance|unlimited|resets?/i
 		);
+	});
+});
+
+describe('TokenStats framing', () => {
+	beforeEach(() => {
+		storage.clear();
+		clearCachedResources();
+	});
+
+	function mountWith(over: Partial<TokenUsageAggregate>) {
+		(window as unknown as { maestro: unknown }).maestro = {
+			stats: { getTokenUsage: vi.fn().mockResolvedValue({ ...aggregate, ...over }) },
+		};
+		return render(<TokenStats timeRange="week" theme={theme} />);
+	}
+
+	it('labels the cost API-equivalent rather than as spend', async () => {
+		mountWith({});
+		await screen.findByTestId('token-timeline');
+		expect(screen.getByText('API-equivalent Cost')).toBeInTheDocument();
+		expect(screen.queryByText('Total Cost')).not.toBeInTheDocument();
+	});
+
+	it('states the last-activity attribution in the footer', async () => {
+		mountWith({});
+		const coverage = await screen.findByTestId('token-stats-coverage');
+		expect(coverage.textContent).toContain('count toward the day of its last activity');
+	});
+
+	it('lists partial providers and what is not counted', async () => {
+		mountWith({
+			coverageByAgent: { 'claude-code': 'full', codex: 'partial' },
+			excluded: { unsupportedAgents: ['grok'], remoteProjects: 1, notCountedAgents: ['Build Box'] },
+		});
+		const coverage = await screen.findByTestId('token-stats-coverage');
+		expect(coverage.textContent).toContain('Partial token data for Codex');
+		expect(coverage.textContent).toContain(
+			'Not counted: Build Box, 1 removed agent (conversations on another computer that could not be read); Grok CLI (no transcripts to read).'
+		);
+		expect(coverage.textContent).not.toMatch(/SSH|remote|hosted/i);
+	});
+
+	it('names what is not counted even when nothing was counted', async () => {
+		mountWith({
+			totals: makeTotals({ sessionCount: 0 }),
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: ['Build Box'] },
+		});
+		const empty = await screen.findByText(/No token usage in this range\./);
+		expect(empty.textContent).toContain(
+			'Not counted: Build Box (conversations on another computer that could not be read).'
+		);
+	});
+
+	it('says nothing is left out once every agent on another computer is counted', async () => {
+		mountWith({
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: [] },
+		});
+		const coverage = await screen.findByTestId('token-stats-coverage');
+		expect(coverage.textContent).not.toContain('Not counted');
+	});
+
+	it('shows local totals while a computer is still counting, then fills its rows in', async () => {
+		const first = {
+			...aggregate,
+			totals: makeTotals({ sessionCount: 3 }),
+			excluded: {
+				unsupportedAgents: [],
+				remoteProjects: 0,
+				notCountedAgents: [],
+				pendingAgents: ['Build Box'],
+				remoteRefreshing: true,
+			},
+		};
+		let land: (value: TokenUsageAggregate) => void = () => undefined;
+		const landed = new Promise<TokenUsageAggregate>((resolve) => (land = resolve));
+		const getTokenUsage = vi.fn((_query: unknown, _force: boolean, waitForRemote?: boolean) =>
+			waitForRemote ? landed : Promise.resolve(first)
+		);
+		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
+		render(<TokenStats timeRange="week" theme={theme} />);
+
+		const coverage = await screen.findByTestId('token-stats-coverage');
+		expect(coverage.textContent).toContain(
+			'Not counted: Build Box (conversations on another computer, still being read).'
+		);
+		expect(coverage.textContent).not.toMatch(/SSH|remote|hosted/i);
+		// The dashboard asks once more, waiting for the remote count.
+		await waitFor(() => expect(getTokenUsage).toHaveBeenCalledTimes(2));
+		expect(getTokenUsage.mock.calls[1][2]).toBe(true);
+
+		land({
+			...aggregate,
+			totals: makeTotals({ sessionCount: 5 }),
+			excluded: {
+				unsupportedAgents: [],
+				remoteProjects: 0,
+				notCountedAgents: [],
+				pendingAgents: [],
+				remoteRefreshing: false,
+			},
+		});
+		await waitFor(() =>
+			expect(screen.getByTestId('token-stats-coverage').textContent).not.toContain('Not counted')
+		);
+		expect(getTokenUsage).toHaveBeenCalledTimes(2);
+	});
+
+	it('offers a refresh in the empty state while something is not counted, and reads again on it', async () => {
+		const getTokenUsage = vi.fn().mockResolvedValue({
+			...aggregate,
+			totals: makeTotals({ sessionCount: 0 }),
+			excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: ['Build Box'] },
+		});
+		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
+		render(<TokenStats timeRange="week" theme={theme} />);
+		await screen.findByText(/No token usage in this range\./);
+		fireEvent.click(screen.getByTestId('token-stats-refresh'));
+		await waitFor(() => expect(getTokenUsage).toHaveBeenCalledTimes(2));
+		expect(getTokenUsage.mock.calls[1][1]).toBe(true);
+	});
+
+	it('keeps the not-counted note and Retry when a refresh of an empty result fails', async () => {
+		const getTokenUsage = vi
+			.fn()
+			.mockResolvedValueOnce({
+				...aggregate,
+				totals: makeTotals({ sessionCount: 0 }),
+				excluded: { unsupportedAgents: [], remoteProjects: 0, notCountedAgents: ['Build Box'] },
+			})
+			.mockRejectedValue(new Error('host went away'));
+		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
+		render(<TokenStats timeRange="week" theme={theme} />);
+		await screen.findByText(/No token usage in this range\./);
+		fireEvent.click(screen.getByTestId('token-stats-refresh'));
+		await screen.findByText(/host went away/);
+		expect(screen.getByTestId('token-stats-empty').textContent).toContain(
+			'Not counted: Build Box (conversations on another computer that could not be read).'
+		);
+		expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+	});
+
+	it('names agents still being read as not counted once the read for them failed', () => {
+		const data = {
+			...aggregate,
+			excluded: {
+				unsupportedAgents: [],
+				remoteProjects: 0,
+				notCountedAgents: [],
+				pendingAgents: ['Build Box'],
+				remoteRefreshing: true,
+			},
+		};
+		expect(tokenCoverageNotes(data).join(' ')).toContain('still being read');
+		const failed = tokenCoverageNotes(data, { readFailed: true }).join(' ');
+		expect(failed).not.toContain('still being read');
+		expect(failed).toContain(
+			'Not counted: Build Box (conversations on another computer that could not be read).'
+		);
+	});
+
+	it('shows the error, not an empty state, when the read fails', async () => {
+		(window as unknown as { maestro: unknown }).maestro = {
+			stats: { getTokenUsage: vi.fn().mockRejectedValue(new Error('disk on fire')) },
+		};
+		render(<TokenStats timeRange="quarter" theme={theme} />);
+		const error = await screen.findByTestId('token-stats-error');
+		expect(error.textContent).toContain('disk on fire');
+		expect(screen.queryByTestId('token-stats-empty')).not.toBeInTheDocument();
+	});
+});
+
+describe('tokenCoverageNotes', () => {
+	it('says nothing when coverage is full and nothing was skipped', () => {
+		expect(
+			tokenCoverageNotes({ ...aggregate, coverageByAgent: { 'claude-code': 'full' } })
+		).toEqual([]);
 	});
 });

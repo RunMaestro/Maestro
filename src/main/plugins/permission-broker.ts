@@ -7,9 +7,11 @@
  * default-deny matcher. It does NOT execute the call - the sandbox host does
  * that only after `authorize` returns allowed. Keeping authorization separate
  * from execution means this gate can be unit-tested exhaustively without any
- * Electron or fs.
+ * Electron. The one part that reads the file system is the protected-folder
+ * check, which resolves real paths (read-only `realpath`) on both sides.
  */
 
+import * as path from 'path';
 import {
 	isPermitted,
 	type PluginCapability,
@@ -21,6 +23,11 @@ import {
 	extractTarget,
 	type HostMethod,
 } from '../../shared/plugins/rpc-protocol';
+import {
+	foldPathCase,
+	isPathWithin,
+	realpathThroughAncestor,
+} from '../utils/real-path-containment';
 
 export interface BrokerDecision {
 	allowed: boolean;
@@ -40,33 +47,41 @@ export interface PermissionBrokerDeps {
 	/** Absolute directory prefixes that fs:read AND fs:write must NEVER touch -
 	 * the userData/config tree (grants, enable-state, encoreFeatures settings,
 	 * agent-configs, cli-server.json, the plugins dir, plugin KV, supervisor
-	 * targets, transcripts). Re-read each call. The integrator passes the real,
-	 * resolved userData path(s). Enforced AFTER the grant check, so a broad fs
-	 * grant can never reach into the data dir; because the fs handlers re-call
-	 * authorize() with the symlink-resolved REAL path, the exclusion also holds
-	 * post-resolution (a symlink inside a granted scope cannot escape into it). */
+	 * targets, transcripts). Re-read each call. Enforced AFTER the grant check,
+	 * so a broad fs grant can never reach into the data dir. The target and each
+	 * prefix are both resolved to a canonical path before they are compared (`..`
+	 * collapsed, symlinks followed, case folded on macOS and Windows), so a
+	 * symlink, a `..` hop, or an upper-case spelling of the folder cannot slip by;
+	 * the fs handlers also re-call authorize() with the symlink-resolved REAL path,
+	 * so the exclusion holds post-resolution too. */
 	protectedPaths?: () => readonly string[];
+	/** The platform whose file-system case rules apply to `protectedPaths`
+	 * (macOS and Windows are case-insensitive). Defaults to `process.platform`;
+	 * a seam so a test can run another platform's rules on any host. */
+	platform?: NodeJS.Platform;
 }
 
 /**
- * Normalize a path for protected-prefix comparison: forward slashes, no trailing
- * separator, and case-folded on Windows (its filesystem is case-insensitive).
+ * The form of a path used to compare it with a protected prefix: absolute, `..`
+ * collapsed, symlinks resolved through the nearest existing ancestor (so a path
+ * that does not exist yet lands where it would), and case-folded where the file
+ * system is case-insensitive. The target and the prefix both go through it, so a
+ * symlink, a `..` hop, and a case variant all name the same place as the prefix.
  */
-function normalizeForPrefix(p: string): string {
-	let out = p.replace(/\\/g, '/').replace(/\/+$/, '');
-	if (out === '') out = '/';
-	return process.platform === 'win32' ? out.toLowerCase() : out;
+function canonicalForCompare(p: string, platform: NodeJS.Platform): string {
+	return foldPathCase(realpathThroughAncestor(path.resolve(p)), platform);
 }
 
 /** Is `target` equal to or inside any protected prefix? Separator-boundary
  * match so `/data/userdata-plugins` does not match prefix `/data/userdata`. */
-function isUnderProtectedPath(target: string, prefixes: readonly string[]): boolean {
-	const t = normalizeForPrefix(target);
-	for (const prefix of prefixes) {
-		const p = normalizeForPrefix(prefix);
-		if (t === p || t.startsWith(p === '/' ? '/' : `${p}/`)) return true;
-	}
-	return false;
+function isUnderProtectedPath(
+	target: string,
+	prefixes: readonly string[],
+	platform: NodeJS.Platform
+): boolean {
+	if (prefixes.length === 0) return false;
+	const t = canonicalForCompare(target, platform);
+	return prefixes.some((prefix) => isPathWithin(t, canonicalForCompare(prefix, platform)));
 }
 
 export class PermissionBroker {
@@ -118,7 +133,7 @@ export class PermissionBroker {
 		// path the fs handlers re-authorize with - so it holds post-resolution.
 		if (allowed && (capability === 'fs:read' || capability === 'fs:write') && target) {
 			const protectedPaths = this.deps.protectedPaths?.() ?? [];
-			if (isUnderProtectedPath(target, protectedPaths)) {
+			if (isUnderProtectedPath(target, protectedPaths, this.deps.platform ?? process.platform)) {
 				allowed = false;
 				reason = `permission denied: ${capability} into a protected location (${target})`;
 			}

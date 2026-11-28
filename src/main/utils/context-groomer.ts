@@ -38,6 +38,8 @@ import {
 } from '../../shared/maestro-lib/launch/prompt-delivery';
 import { newRemotePromptFileDestination } from '../../shared/maestro-lib/launch/ssh-command-builder';
 import { argsResumeSession, resumeIdFromArgs } from '../../shared/maestro-lib/run/pipe-spawn';
+import type { HostedLaunchFeature } from '../../shared/maestro-lib/agents/hosted-launch';
+import { checkHostedAgentLaunch } from './hosted-launch-guard';
 
 const LOG_CONTEXT = '[ContextGroomer]';
 
@@ -84,6 +86,8 @@ export interface GroomingSpawnConfig extends Pick<
 	sshRemoteHost?: string;
 	// Custom environment variables (resolved via applyAgentConfigOverrides)
 	customEnvVars?: Record<string, string>;
+	// Global Shell Configuration vars, the lowest env layer
+	shellEnvVars?: Record<string, string>;
 }
 
 /**
@@ -177,6 +181,12 @@ export interface GroomContextOptions {
 	prompt: string;
 	/** Optional session ID to resume (for context access) */
 	agentSessionId?: string;
+	/**
+	 * Resume `agentSessionId` as a throwaway fork (see `ephemeralForkArgs`): the
+	 * turn reads the conversation but never writes to it. Throws when the agent
+	 * cannot fork, rather than resume, and append to, the real session.
+	 */
+	ephemeralFork?: boolean;
 	/** Use read-only mode (default: false) */
 	readOnlyMode?: boolean;
 	/** Optional model ID override (e.g., when using a utility agent) */
@@ -197,6 +207,12 @@ export interface GroomContextOptions {
 	sessionCustomArgs?: string;
 	/** Custom environment variables for the agent */
 	sessionCustomEnvVars?: Record<string, string>;
+	/**
+	 * Global Shell Configuration vars (`settingsStore.get('shellEnvVars')`), the
+	 * lowest env layer, the same one a chat spawn applies. Left undefined the
+	 * turn gets only the agent and session vars.
+	 */
+	globalShellEnvVars?: Record<string, string>;
 	/**
 	 * Model the caller wants this one-shot turn to run under, resolved the same
 	 * way a chat spawn resolves it (tab override, then agent override). Left
@@ -246,6 +262,13 @@ export interface GroomContextOptions {
 	acceptWorkspaceTrust?: boolean;
 	/** Optional callback for progress updates during grooming */
 	onProgress?: (update: GroomProgressUpdate) => void;
+	/**
+	 * The Maestro agent record this turn runs for, and the feature asking. Set whenever the turn
+	 * belongs to one agent: a hosted agent's launch from here is checked against
+	 * `HOSTED_STATELESS_HELPERS` (see `checkHostedAgentLaunch`).
+	 */
+	ownerAgentId?: string;
+	launchFeature?: HostedLaunchFeature;
 }
 
 /**
@@ -276,6 +299,9 @@ export async function groomContext(
 	processManager: GroomingProcessManager,
 	agentDetector: AgentDetector
 ): Promise<GroomContextResult> {
+	if (options.ownerAgentId) {
+		checkHostedAgentLaunch(options.ownerAgentId, options.launchFeature ?? 'groom-context');
+	}
 	let groomerSessionId = `groomer-${uuidv4()}`;
 	const controller = new AbortController();
 	activeGroomingSessions.set(groomerSessionId, {
@@ -371,6 +397,7 @@ async function groomContextOnce(
 		agentType,
 		prompt,
 		agentSessionId,
+		ephemeralFork = false,
 		readOnlyMode: requestedReadOnly = false,
 		modelId,
 		timeoutMs = DEFAULT_GROOMING_TIMEOUT_MS,
@@ -379,6 +406,7 @@ async function groomContextOnce(
 		sessionCustomPath,
 		sessionCustomArgs,
 		sessionCustomEnvVars,
+		globalShellEnvVars,
 		sessionCustomModel,
 		sessionCustomEffort,
 		disableTools = false,
@@ -402,9 +430,11 @@ async function groomContextOnce(
 	});
 
 	// Get agent configuration
+	// Local detection says nothing about an SSH remote: an agent installed only
+	// on the remote host reads as unavailable here but runs fine there.
 	const agent = await agentDetector.getAgent(agentType);
 	signal.throwIfAborted();
-	if (!agent || !agent.available) {
+	if (!agent || (!agent.available && !sessionSshRemoteConfig?.enabled)) {
 		throw new Error(`Agent ${agentType} is not available`);
 	}
 	const canDisableTools = !!agent.noToolsArgs?.length;
@@ -439,6 +469,15 @@ async function groomContextOnce(
 		? sessionSshRemoteConfig.workingDirOverride || projectRoot
 		: projectRoot;
 
+	if (ephemeralFork && agentSessionId && !agent.ephemeralForkArgs?.length) {
+		throw new Error(`${agentType} cannot fork a session, so it cannot answer a side question`);
+	}
+	if (ephemeralFork && !agentSessionId && !agent.noPersistenceArgs?.length) {
+		throw new Error(
+			`${agentType} cannot run a turn without saving a session, so it cannot answer a side question`
+		);
+	}
+
 	// Build args using the unified buildAgentArgs utility
 	const baseArgs = buildAgentArgs(agent, {
 		baseArgs: agent.args || [],
@@ -450,6 +489,7 @@ async function groomContextOnce(
 		permissionMode: readOnlyMode ? 'readonly' : 'standard',
 		forceBatchMode: !!agent.promptFile,
 		agentSessionId,
+		ephemeralFork,
 	});
 
 	// Apply agent config overrides (model, custom args, custom env vars)
@@ -609,9 +649,13 @@ async function groomContextOnce(
 				cwd: effectiveCwd,
 				prompt: spawnPrompt,
 				...(fileDelivery ? { promptArtifact: fileDelivery.artifact } : {}),
-				customEnvVars: remoteInteractive
-					? { ...(resolvedEnvVars ?? {}), ...remoteInteractive.env }
-					: resolvedEnvVars,
+				// The remote shell has no global layer of its own, so it rides in
+				// underneath the agent and session vars (as wrap-spawn-for-ssh does).
+				customEnvVars: {
+					...(globalShellEnvVars ?? {}),
+					...(resolvedEnvVars ?? {}),
+					...(remoteInteractive?.env ?? {}),
+				},
 				promptArgs: agent.promptArgs,
 				noPromptSeparator: agent.noPromptSeparator,
 				// Never send a locally-detected absolute path to the remote host -
@@ -849,6 +893,9 @@ async function groomContextOnce(
 				sshRemoteHost: sshRemoteUsed?.host,
 				// Pass resolved env vars (merged from agent defaults + agent config + session overrides)
 				customEnvVars: spawnEnvVars,
+				// Global Shell Configuration vars. Local only: an SSH spawn already
+				// carries them in the wrapped remote env above.
+				shellEnvVars: sshRemoteUsed ? undefined : globalShellEnvVars,
 			});
 		} catch (error) {
 			cleanup();

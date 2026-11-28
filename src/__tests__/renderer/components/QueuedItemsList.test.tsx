@@ -10,6 +10,9 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import type { QueuedItem } from '../../../renderer/types';
 import { renderCallbackPrompt } from '../../../main/dispatch-callbacks/dispatch-callback-prompt';
+import { getSteerEligibility } from '../../../renderer/utils/executionQueue';
+import { mirrorQueuedItem } from '../../../renderer/utils/peerMirrorView';
+import { createMockAITab, createMockSession } from '../../helpers';
 
 function item(overrides: Partial<QueuedItem> = {}): QueuedItem {
 	return {
@@ -130,6 +133,30 @@ describe('QueuedItemsList merge into the message above', () => {
 	it('omits Merge when no handler is wired', () => {
 		setup({ executionQueue: [item({ id: 'q1' }), item({ id: 'q2' })] });
 		expect(screen.queryByTitle(MERGE_TITLE)).toBeNull();
+	});
+
+	// A local and an SSH agent's cards are this machine's queue; a hosted agent's are its host's
+	// (`hostQueued`). Merge reads the same and hands the same id up in all three: only where the
+	// merge runs differs (`mergeQueuedItemIntoAbove` routes a host item to the host).
+	it.each([
+		['local', undefined],
+		['SSH', undefined],
+		['hosted', true],
+	] as const)('%s: offers Merge on the same cards', async (_mode, hostQueued) => {
+		const onMergeQueuedItem = vi.fn();
+		setup({
+			executionQueue: [
+				item({ id: 'q1', hostQueued }),
+				item({ id: 'q2', tabId: 'tab-2', hostQueued }),
+				item({ id: 'q3', hostQueued }),
+			],
+			onMergeQueuedItem,
+			activeTabId: 'tab-1',
+		});
+		expect(screen.getAllByTitle(MERGE_TITLE)).toHaveLength(1);
+		fireEvent.click(screen.getByTitle(MERGE_TITLE));
+		fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+		expect(onMergeQueuedItem).toHaveBeenCalledWith('q3');
 	});
 });
 
@@ -262,6 +289,32 @@ describe('QueuedItemsList steer button', () => {
 		});
 		expect(screen.queryByText('Steer')).toBeNull();
 	});
+
+	// The real eligibility, not a stub: a hosted agent's record keeps its SSH remote, but its host
+	// runs the turn on its own machine, so its card steers exactly as a local agent's does. Only
+	// where the steer runs differs (`steerQueuedItem` routes a host item to the host).
+	it.each([
+		['local', undefined, undefined],
+		['hosted', 'remote-1', true],
+	] as const)('%s: a busy tab offers the same live Steer', (_mode, sshRemoteId, hostQueued) => {
+		const session = createMockSession({
+			state: 'busy',
+			activeTabId: 'tab-1',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+			claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+			...(sshRemoteId ? { sshRemoteId } : {}),
+		});
+		const onSteerQueuedItem = vi.fn();
+		setup({
+			executionQueue: [item({ hostQueued })],
+			onSteerQueuedItem,
+			getSteerContext: (queued: QueuedItem) => getSteerEligibility(session, queued),
+		});
+		const button = screen.getByText('Steer').closest('button')!;
+		expect(button).toHaveAttribute('aria-disabled', 'false');
+		fireEvent.click(button);
+		expect(onSteerQueuedItem).toHaveBeenCalledWith('q1');
+	});
 });
 
 describe('QueuedItemsList drag-to-reorder', () => {
@@ -323,6 +376,31 @@ describe('QueuedItemsList drag-to-reorder', () => {
 		expect(onReorderItems).toHaveBeenCalledWith(0, 1);
 	});
 
+	// A hosted agent's cards are its host's queue (`hostQueued`); the drag reads and reports the
+	// same in all three modes, and `reorderQueuedItems` routes a host item's move to the host.
+	it.each([
+		['local', undefined],
+		['SSH', undefined],
+		['hosted', true],
+	] as const)('%s: offers the same drag and reports the same move', (_mode, hostQueued) => {
+		vi.useFakeTimers();
+		const onReorderItems = vi.fn();
+		const { container } = setup({
+			executionQueue: twoItems.map((queued) => ({ ...queued, hostQueued })),
+			onReorderItems,
+		});
+		const cards = container.querySelectorAll('.group.select-none');
+		cards.forEach((card) => expect(card).toHaveStyle({ cursor: 'grab' }));
+		fireEvent.mouseDown(cards[0], { button: 0 });
+		act(() => {
+			vi.advanceTimersByTime(200);
+		});
+		const dropZones = container.querySelectorAll('.relative.h-1');
+		fireEvent.mouseEnter(dropZones[dropZones.length - 1]);
+		fireEvent.mouseUp(window);
+		expect(onReorderItems).toHaveBeenCalledWith(0, 1);
+	});
+
 	it('does not start a drag when pressing an action button', () => {
 		vi.useFakeTimers();
 		const onReorderItems = vi.fn();
@@ -347,7 +425,7 @@ describe('QueuedItemsList edit modal', () => {
 	const editable = item({ id: 'q1', text: 'a queued message' });
 
 	function renderList(queue: QueuedItem[] = [editable]) {
-		const onEditQueuedItem = vi.fn();
+		const onEditQueuedItem = vi.fn(async () => ({ saved: true as const }));
 		const utils = render(
 			<LayerStackProvider>
 				<QueuedItemsList
@@ -368,6 +446,62 @@ describe('QueuedItemsList edit modal', () => {
 		useUIStore.getState().setEditingQueuedItemId(null);
 	});
 
+	// A local and an SSH agent's cards are this machine's queue; a hosted agent's are its host's
+	// (`hostQueued`). Edit reads the same and hands the same patch up in all three: only where the
+	// edit runs differs (`editQueuedItem` routes a host item to the host).
+	it.each([
+		['local', undefined],
+		['SSH', undefined],
+		['hosted', true],
+	] as const)('%s: offers the same Edit and saves the same patch', (_mode, hostQueued) => {
+		const { onEditQueuedItem } = renderList([item({ id: 'q1', text: 'draft', hostQueued })]);
+		fireEvent.click(screen.getByTitle('Edit message and images'));
+		fireEvent.change(screen.getByPlaceholderText('Message to send…'), {
+			target: { value: 'final' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(onEditQueuedItem).toHaveBeenCalledWith(
+			'q1',
+			expect.objectContaining({ text: 'final', images: [] })
+		);
+	});
+
+	// A hosted card's images come off the host's queue (`mirrorQueuedItem`), so the card draws the
+	// same thumbnails and its editor opens with, and saves, the same images as a local card.
+	it.each([
+		['local', undefined],
+		['SSH', undefined],
+		['hosted', true],
+	] as const)('%s: draws the same images and saves them with the edit', (_mode, hostQueued) => {
+		const images = ['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB'];
+		const queued = hostQueued
+			? {
+					...mirrorQueuedItem({
+						itemId: 'q1',
+						tabId: 'tab-1',
+						queuedAt: 1,
+						kind: 'message',
+						text: 'draft',
+						paused: false,
+						images,
+					}),
+					hostQueued,
+				}
+			: item({ id: 'q1', text: 'draft', images });
+		const { onEditQueuedItem, container } = renderList([queued]);
+		expect(screen.getByText('2 images attached')).toBeInTheDocument();
+		fireEvent.click(screen.getByTitle('Show thumbnails'));
+		expect(
+			Array.from(container.querySelectorAll('img')).map((img) => img.getAttribute('src'))
+		).toEqual(images);
+		fireEvent.click(screen.getByTitle('Edit message and images'));
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(onEditQueuedItem).toHaveBeenCalledWith(
+			'q1',
+			expect.objectContaining({ text: 'draft', images })
+		);
+	});
+
 	it('opens the modal for the item named by uiStore, with no click involved', () => {
 		useUIStore.getState().setEditingQueuedItemId('q1');
 		renderList();
@@ -383,19 +517,50 @@ describe('QueuedItemsList edit modal', () => {
 		expect(screen.getByPlaceholderText('Message to send…')).toBeInTheDocument();
 	});
 
-	it('clears the id when the item is dispatched out of the queue', () => {
+	// As the Execution Queue browser does: the open modal edits the item captured when it opened,
+	// so a message that starts while its modal is open (even while a save waits on a host) keeps
+	// what the person typed, and the save says why it did not land.
+	it('keeps the open modal and the typed text when its item leaves the queue', async () => {
 		useUIStore.getState().setEditingQueuedItemId('q1');
-		const { rerender } = renderList();
+		const onEditQueuedItem = vi.fn(async () => ({
+			saved: false as const,
+			reason: 'It no longer waits in the queue: it may have started already.',
+		}));
+		const { rerender } = render(
+			<LayerStackProvider>
+				<QueuedItemsList
+					executionQueue={[editable]}
+					theme={mockTheme}
+					onEditQueuedItem={onEditQueuedItem}
+				/>
+			</LayerStackProvider>
+		);
+		fireEvent.change(screen.getByPlaceholderText('Message to send…'), {
+			target: { value: 'typed' },
+		});
 
 		rerender(
 			<LayerStackProvider>
 				<QueuedItemsList
 					executionQueue={[item({ id: 'q2', text: 'the next one' })]}
 					theme={mockTheme}
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={onEditQueuedItem}
 				/>
 			</LayerStackProvider>
 		);
+
+		expect(useUIStore.getState().editingQueuedItemId).toBe('q1');
+		expect(screen.getByPlaceholderText('Message to send…')).toHaveValue('typed');
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(await screen.findByRole('alert')).toHaveTextContent(
+			'Not saved: It no longer waits in the queue: it may have started already.'
+		);
+		expect(onEditQueuedItem).toHaveBeenCalledWith('q1', expect.objectContaining({ text: 'typed' }));
+	});
+
+	it('clears an id whose item left the queue before its modal opened', () => {
+		useUIStore.getState().setEditingQueuedItemId('q1');
+		renderList([item({ id: 'q2', text: 'the next one' })]);
 
 		expect(useUIStore.getState().editingQueuedItemId).toBeNull();
 		expect(screen.queryByPlaceholderText('Message to send…')).not.toBeInTheDocument();
@@ -412,7 +577,7 @@ describe('QueuedItemsList edit modal', () => {
 					executionQueue={[editable, item({ id: 'q-other', tabId: 'tab-2' })]}
 					theme={mockTheme}
 					activeTabId="tab-1"
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			</LayerStackProvider>
 		);
@@ -431,7 +596,7 @@ describe('QueuedItemsList edit modal', () => {
 					executionQueue={queue}
 					theme={mockTheme}
 					activeTabId="tab-1"
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			</LayerStackProvider>
 		);
@@ -442,7 +607,7 @@ describe('QueuedItemsList edit modal', () => {
 					executionQueue={queue}
 					theme={mockTheme}
 					activeTabId="tab-2"
-					onEditQueuedItem={vi.fn()}
+					onEditQueuedItem={vi.fn(async () => ({ saved: true as const }))}
 				/>
 			</LayerStackProvider>
 		);
@@ -551,6 +716,26 @@ describe('QueuedItemsList force send', () => {
 		// it. With nothing else running the setting is irrelevant.
 		withForceSend(eligibility(), { forcedParallelEnabled: false });
 		expect(screen.getByRole('button', { name: /Force Send/i })).toBeEnabled();
+	});
+
+	// Force Send asks the same eligibility and hands the same id up in all three modes;
+	// `sendQueuedItemNow` runs a host item on its host.
+	it.each([
+		['local', undefined],
+		['SSH', undefined],
+		['hosted', true],
+	] as const)('%s: offers the same Force Send and sends the same item', (_mode, hostQueued) => {
+		const onForceSendQueuedItem = vi.fn();
+		setup({
+			executionQueue: [item({ id: 'q1', hostQueued })],
+			onForceSendQueuedItem,
+			getForceSendContext: () => eligibility(),
+		});
+		fireEvent.click(screen.getByRole('button', { name: /Force Send/i }));
+		// The same confirmation, then the same id.
+		const confirms = screen.getAllByRole('button', { name: 'Force Send' });
+		fireEvent.click(confirms[confirms.length - 1]);
+		expect(onForceSendQueuedItem).toHaveBeenCalledWith('q1');
 	});
 
 	it('hides Force Send when the target tab is already working', () => {

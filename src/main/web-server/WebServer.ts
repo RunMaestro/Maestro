@@ -1,3 +1,5 @@
+import type { QueuedTurnEdit } from '../../shared/maestro-lib/client/types';
+import type { CliAudience } from './queue-change-broadcast';
 import type { ManagedQueueRoutingProgress } from '../../shared/crossAgentTypes';
 import { pianolaScopeSnapshotFromDesktop } from '../../shared/pianola/pianola-scope-cycle';
 import type {
@@ -124,6 +126,7 @@ import type {
 	ClosedTabCommandCallback,
 	MessagePinCommandCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
@@ -135,6 +138,9 @@ import type {
 	RefreshFileTreeCallback,
 	OpenBrowserTabCallback,
 	CloseBrowserTabCallback,
+	PickBrowserElementCallback,
+	BrowserViewportCallback,
+	DesignPickCommandCallback,
 	OpenTerminalTabCallback,
 	WriteTerminalTabCallback,
 	WriteTerminalTabPayload,
@@ -152,6 +158,9 @@ import type {
 	SteerQueueItemCallback,
 	SetQueueItemPausedCallback,
 	MergeQueueItemCallback,
+	EditQueueItemCallback,
+	MoveQueueItemCallback,
+	SendQueueItemNowCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -199,6 +208,7 @@ import type {
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
 	ArchiveGroupChatCallback,
+	SetGroupChatUnreadCallback,
 	AddGroupChatParticipantCallback,
 	SendGroupChatMessageCallback,
 	SteerGroupChatCallback,
@@ -213,7 +223,6 @@ import type {
 	GetCueActivityCallback,
 	CueActivityEntry,
 	CueSubscriptionInfo,
-	GetUsageDashboardCallback,
 	GetAchievementsCallback,
 	GenerateDirectorNotesSynopsisCallback,
 	NotifyToastCallback,
@@ -236,6 +245,7 @@ import type { ClosedTabCommandRequest } from '../../shared/closedTabCommands';
 import type { MessagePinCommandRequest } from '../../shared/messagePinCommands';
 import type { TabContextOpRequest } from '../../shared/tabContextOps';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
+import type { DiffReviewCommandRequest } from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
 import type { ThroughputGaugeCommandRequest } from '../../shared/throughputGaugeCommands';
 
@@ -655,6 +665,10 @@ export class WebServer {
 		this.callbackRegistry.setAutoRunSteeringCommandCallback(callback);
 	}
 
+	setDiffReviewCommandCallback(callback: DiffReviewCommandCallback): void {
+		this.callbackRegistry.setDiffReviewCommandCallback(callback);
+	}
+
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbackRegistry.setWindowCommandCallback(callback);
 	}
@@ -700,6 +714,18 @@ export class WebServer {
 
 	setCloseBrowserTabCallback(callback: CloseBrowserTabCallback): void {
 		this.callbackRegistry.setCloseBrowserTabCallback(callback);
+	}
+
+	setPickBrowserElementCallback(callback: PickBrowserElementCallback): void {
+		this.callbackRegistry.setPickBrowserElementCallback(callback);
+	}
+
+	setBrowserViewportCallback(callback: BrowserViewportCallback): void {
+		this.callbackRegistry.setBrowserViewportCallback(callback);
+	}
+
+	setDesignPickCommandCallback(callback: DesignPickCommandCallback): void {
+		this.callbackRegistry.setDesignPickCommandCallback(callback);
 	}
 
 	setOpenTerminalTabCallback(callback: OpenTerminalTabCallback): void {
@@ -850,6 +876,18 @@ export class WebServer {
 
 	setMergeQueueItemCallback(callback: MergeQueueItemCallback): void {
 		this.callbackRegistry.setMergeQueueItemCallback(callback);
+	}
+
+	setEditQueueItemCallback(callback: EditQueueItemCallback): void {
+		this.callbackRegistry.setEditQueueItemCallback(callback);
+	}
+
+	setMoveQueueItemCallback(callback: MoveQueueItemCallback): void {
+		this.callbackRegistry.setMoveQueueItemCallback(callback);
+	}
+
+	setSendQueueItemNowCallback(callback: SendQueueItemNowCallback): void {
+		this.callbackRegistry.setSendQueueItemNowCallback(callback);
 	}
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
@@ -1039,6 +1077,10 @@ export class WebServer {
 		this.callbackRegistry.setArchiveGroupChatCallback(callback);
 	}
 
+	setSetGroupChatUnreadCallback(callback: SetGroupChatUnreadCallback): void {
+		this.callbackRegistry.setSetGroupChatUnreadCallback(callback);
+	}
+
 	setAddGroupChatParticipantCallback(callback: AddGroupChatParticipantCallback): void {
 		this.callbackRegistry.setAddGroupChatParticipantCallback(callback);
 	}
@@ -1073,10 +1115,6 @@ export class WebServer {
 
 	setGetCueActivityCallback(callback: GetCueActivityCallback): void {
 		this.callbackRegistry.setGetCueActivityCallback(callback);
-	}
-
-	setGetUsageDashboardCallback(callback: GetUsageDashboardCallback): void {
-		this.callbackRegistry.setGetUsageDashboardCallback(callback);
 	}
 
 	setGetAchievementsCallback(callback: GetAchievementsCallback): void {
@@ -1364,8 +1402,14 @@ export class WebServer {
 			},
 			getBridgeEpoch: () => this.broadcastService.bridgeEpoch,
 			getBridgeSeq: () => this.broadcastService.getBridgeSeq(),
-			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId) =>
-				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId),
+			resumeBridgeClient: (epoch, lastSeq, subscribedSessionId, cli, queueChanges) =>
+				this.broadcastService.resumeBridgeClient(
+					epoch,
+					lastSeq,
+					subscribedSessionId,
+					cli,
+					queueChanges
+				),
 		});
 		this.wsRoute.registerRoute(this.server);
 		registerLiteConnectionRoutes(this.server, {
@@ -1452,8 +1496,8 @@ export class WebServer {
 				this.callbackRegistry.selectSession(sessionId, tabId, focus),
 			selectTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.selectTab(sessionId, tabId),
-			newTab: async (sessionId: string, background?: boolean) =>
-				this.callbackRegistry.newTab(sessionId, background),
+			newTab: async (sessionId: string, background?: boolean, tabId?: string) =>
+				this.callbackRegistry.newTab(sessionId, background, tabId),
 			closeTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.closeTab(sessionId, tabId),
 			renameTab: async (sessionId: string, tabId: string, newName: string) =>
@@ -1468,6 +1512,8 @@ export class WebServer {
 				this.callbackRegistry.messagePinCommand(request),
 			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
 				this.callbackRegistry.autoRunSteeringCommand(request),
+			diffReviewCommand: async (request: DiffReviewCommandRequest) =>
+				this.callbackRegistry.diffReviewCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
 				this.callbackRegistry.windowCommand(request),
 			throughputGaugeCommand: async (request: ThroughputGaugeCommandRequest) =>
@@ -1485,6 +1531,9 @@ export class WebServer {
 			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
 				this.callbackRegistry.openBrowserTab(sessionId, url, options),
 			closeBrowserTab: async (tabId: string) => this.callbackRegistry.closeBrowserTab(tabId),
+			pickBrowserElement: async (request) => this.callbackRegistry.pickBrowserElement(request),
+			browserViewport: async (request) => this.callbackRegistry.browserViewport(request),
+			designPickCommand: async (request) => this.callbackRegistry.designPickCommand(request),
 			openTerminalTab: async (
 				sessionId: string,
 				config: { cwd?: string; shell?: string; name?: string | null; command?: string },
@@ -1530,7 +1579,10 @@ export class WebServer {
 				held?: boolean,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
-				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl
+				control?: import('../../shared/pianola/pianola-dispatch').PianolaQueueControl,
+				turnOverrides?: import('../../shared/maestro-lib/client/types').TurnOverrides,
+				agentText?: import('../../shared/maestro-lib/client/types').TurnAgentText,
+				entryId?: string
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1542,7 +1594,10 @@ export class WebServer {
 					held,
 					mentionRouting,
 					dispatchCallback,
-					control
+					control,
+					turnOverrides,
+					agentText,
+					entryId
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
@@ -1553,6 +1608,12 @@ export class WebServer {
 				this.callbackRegistry.setQueueItemPaused(sessionId, itemId, paused),
 			mergeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.mergeQueueItem(sessionId, itemId),
+			editQueueItem: async (sessionId: string, itemId: string, edit: QueuedTurnEdit) =>
+				this.callbackRegistry.editQueueItem(sessionId, itemId, edit),
+			moveQueueItem: async (sessionId: string, itemId: string, toIndex: number, tabId?: string) =>
+				this.callbackRegistry.moveQueueItem(sessionId, itemId, toIndex, tabId),
+			sendQueueItemNow: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.sendQueueItemNow(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (
@@ -1650,6 +1711,8 @@ export class WebServer {
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
 			archiveGroupChat: async (chatId: string, archived: boolean) =>
 				this.callbackRegistry.archiveGroupChat(chatId, archived),
+			setGroupChatUnread: async (chatId: string, unread: boolean) =>
+				this.callbackRegistry.setGroupChatUnread(chatId, unread),
 			addGroupChatParticipant: async (chatId: string, agentId: string) =>
 				this.callbackRegistry.addGroupChatParticipant(chatId, agentId),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
@@ -1714,8 +1777,6 @@ export class WebServer {
 				if (!ctx) throw new Error('Cue bundles are not ready yet');
 				return importBundleIntoApp(ctx, request);
 			},
-			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
-				this.callbackRegistry.getUsageDashboard(timeRange),
 			getAchievements: async () => this.callbackRegistry.getAchievements(),
 			generateDirectorNotesSynopsis: async (lookbackDays: number, provider: string) =>
 				this.callbackRegistry.generateDirectorNotesSynopsis(lookbackDays, provider),
@@ -1774,6 +1835,16 @@ export class WebServer {
 
 	broadcastToAll(message: object): void {
 		this.broadcastService.broadcastToAll(message);
+	}
+
+	/** To the clients admitted by the CLI secret only (`BroadcastService.broadcastToCliClients`). */
+	broadcastToCliClients(message: object, audience?: CliAudience): void {
+		this.broadcastService.broadcastToCliClients(message, audience);
+	}
+
+	/** How many open clients the CLI secret admitted read queue changes, and how many do not. */
+	getCliClientCounts(): Record<CliAudience, number> {
+		return this.broadcastService.getCliClientCounts();
 	}
 
 	broadcastSessionStateChange(
@@ -2008,6 +2079,18 @@ export class WebServer {
 			this.watchWebUserStore();
 
 			await this.server.listen({ port: this.port, host: bindHost });
+
+			// Fastify drops its own 'error' listener once listen() resolves, so from
+			// here a failed accept() (Windows reports `accept UNKNOWN`, any platform
+			// can report EMFILE) is an 'error' event nobody handles, and Node throws
+			// it into the uncaught-exception handler as a fatal crash (MAESTRO-19C).
+			// The server keeps listening after a failed accept; only that one
+			// connection is lost, so a log line is the whole response.
+			this.server.server.on('error', (error: NodeJS.ErrnoException) => {
+				logger.warn(`Web server connection error: ${error.message}`, LOG_CONTEXT, {
+					code: error.code,
+				});
+			});
 
 			// Get the actual port (important when using port 0 for random assignment)
 			const address = this.server.server.address();

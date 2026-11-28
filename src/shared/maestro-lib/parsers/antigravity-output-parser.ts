@@ -6,8 +6,9 @@
  * Unlike the Claude-family agents, Antigravity discriminates on an `event` key and
  * nests the payload under a property of the same name:
  *
- * 1. Init event (once, at start):
- *    {"event":"init","init":{"cwd":"...","tools":[...],"permission_mode":"...","model":"...","agent":"..."}}
+ * 1. Init event (once, at start). agy 1.5.16 also carries `conversation_id` at the
+ *    top level, beside `init`:
+ *    {"event":"init","conversation_id":"...","init":{"cwd":"...","tools":[...],"permission_mode":"...","model":"..."}}
  *
  * 2. Step update (many, during execution):
  *    {"event":"step_update","step_update":{"conversation_id":"...","step_index":0,"state":"ACTIVE",
@@ -16,8 +17,10 @@
  * 3. Result (once, terminal) - same shape as the `--output-format json` envelope:
  *    {"event":"result","result":{"conversation_id":"...","status":"...","response":"...","error":"...",
  *      "duration_seconds":1.2,"num_turns":1,"usage":{...}}}
+ *    `usage` here is the whole conversation's running total once a turn is resumed
+ *    (`num_turns` > 1), so a turn's usage is the sum of its steps (`turnUsage`).
  *
- * Checked against captured agy 1.2.16 runs. The stream gives thinking only as a
+ * Checked against captured agy 1.2.16 and 1.5.16 runs. The stream gives thinking only as a
  * token count and settles every tool step `DONE` with no exit code, so the
  * thinking summary and each command's exit status are read from agy's own
  * conversation store (read through `host.ts`; the desktop registers the reader in
@@ -104,6 +107,19 @@ const STREAM_EVENTS = ['init', 'step_update', 'result'];
  * Multiline because stderr arrives in chunks that can hold several lines.
  */
 const PRINT_TIMEOUT_WARNING = /^\[agy\] print timeout after \S+ with turn in progress/m;
+
+/** Field-by-field sum of per-step usage records. */
+function sumAntigravityUsage(usages: AntigravityUsage[]): AntigravityUsage {
+	const sum = (key: keyof AntigravityUsage) =>
+		usages.reduce((total, usage) => total + (usage[key] || 0), 0);
+	return {
+		input_tokens: sum('input_tokens'),
+		output_tokens: sum('output_tokens'),
+		thinking_tokens: sum('thinking_tokens'),
+		cache_read_tokens: sum('cache_read_tokens'),
+		total_tokens: sum('total_tokens'),
+	};
+}
 
 /**
  * Map a step's lifecycle word onto the status vocabulary the tool badge reads.
@@ -209,6 +225,20 @@ export class AntigravityOutputParser implements AgentOutputParser {
 	 */
 	private readonly lastStepUsage = new Map<string, AntigravityUsage>();
 
+	/**
+	 * This turn's model-step usage per conversation, keyed by `step_index`.
+	 * `result.usage` is the turn total only on a conversation's FIRST turn: on a
+	 * resumed turn (`--conversation`, argv or stdin input) agy reports the running
+	 * total of the whole conversation (verified agy 1.5.16: turn 3 reported the
+	 * sum of turns 1-3, `num_turns: 3`). Each model step reports its own usage
+	 * once, on DONE, and their sum is the turn's usage in both cases. Kept across
+	 * a repeated parse of the same result line; a conversation's next step after
+	 * its result starts a fresh turn.
+	 */
+	private readonly turnStepUsage = new Map<string, Map<number, AntigravityUsage>>();
+	/** Conversations whose result was parsed; their next step starts a new turn. */
+	private readonly settledTurns = new Set<string>();
+
 	constructor(private readonly stepStore: AntigravityStepStore = antigravityStepStore) {}
 
 	parseJsonLine(line: string): ParsedEvent | null {
@@ -279,7 +309,17 @@ export class AntigravityOutputParser implements AgentOutputParser {
 		}
 
 		const sessionId = step.conversation_id;
-		if (step.usage && sessionId) this.lastStepUsage.set(sessionId, step.usage);
+		if (sessionId && this.settledTurns.delete(sessionId)) this.turnStepUsage.delete(sessionId);
+		if (step.usage && sessionId) {
+			this.lastStepUsage.set(sessionId, step.usage);
+			let steps = this.turnStepUsage.get(sessionId);
+			if (!steps) this.turnStepUsage.set(sessionId, (steps = new Map()));
+			// A step without an index still counts, once, under a key no index uses.
+			steps.set(
+				typeof step.step_index === 'number' ? step.step_index : -1 - steps.size,
+				step.usage
+			);
+		}
 
 		// Tool steps: surface the tool name and its lifecycle state so the UI can
 		// render an in-progress / settled tool card.
@@ -410,15 +450,28 @@ export class AntigravityOutputParser implements AgentOutputParser {
 		};
 	}
 
-	/** The turn's usage: result totals, plus the last model call as occupancy. */
+	/**
+	 * The turn's usage: the sum of this turn's model steps (see `turnStepUsage`),
+	 * plus the last model call as occupancy. `result.usage` stands in only when
+	 * no step reported usage and this is the conversation's first turn; on a
+	 * resumed turn it is the whole conversation's total, so it is never used.
+	 */
 	private turnUsage(result: AntigravityResult | undefined): ParsedEvent['usage'] | undefined {
-		const totals = this.normalizeUsage(result?.usage);
 		const conversationId = result?.conversation_id;
+		if (conversationId) this.settledTurns.add(conversationId);
+		const steps = conversationId ? this.turnStepUsage.get(conversationId) : undefined;
+		const resumed = (result?.num_turns ?? 1) > 1;
+		const totals =
+			steps && steps.size > 0
+				? this.normalizeUsage(sumAntigravityUsage([...steps.values()]))
+				: resumed
+					? undefined
+					: this.normalizeUsage(result?.usage);
 		// Read, never consumed: StdoutHandler can parse the same result line twice
 		// (once to settle a held error notice) and only the second parse is used.
-		const last = conversationId ? this.lastStepUsage.get(conversationId) : undefined;
-		// A result without totals still reports the last call it saw, rather than nothing.
-		if (!totals) return last ? this.normalizeUsage(last) : undefined;
+		// With no step this turn, `last` would be an earlier turn's call; report nothing.
+		if (!totals) return undefined;
+		const last = steps?.size && conversationId ? this.lastStepUsage.get(conversationId) : undefined;
 		if (!last) return totals;
 		return {
 			...totals,

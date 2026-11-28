@@ -442,7 +442,7 @@ Registered in `src/main/ipc/handlers/openspec.ts`:
 ### At Runtime (Standard Prompts)
 
 1. `src/main/prompt-manager.ts` reads every `.md` under `Resources/prompts/core/` once at startup
-2. A user customization from `userData/core-prompts-customizations.json` wins over the bundled text when `isModified` is set
+2. A user customization from `userData/core-prompts-customizations.json` wins over the bundled text when `isModified` is set. A file that is not valid JSON is moved aside to `core-prompts-customizations.corrupt-<stamp>.json` and the app runs on the bundled text; only a missing BUNDLED prompt stops startup
 3. `{{INCLUDE:name}}` inlines another prompt (recursive, max depth 3, cycle-detected) and `{{REF:name}}` expands to the bundled file's absolute path
 4. Template variables (`{{...}}`) are replaced at call sites, and the fully resolved prompt is passed to the agent spawn configuration
 

@@ -19,10 +19,17 @@
 
 import { asThinkingMode, type SshRemoteConfig, type UsageStats } from '../../types';
 import { isPathAtOrUnderRoot } from '../../worktreePaths';
-import type { AgentImportInput, AgentImportQueuedMessage, AgentImportTab } from '../client/types';
+import type {
+	AgentImportInput,
+	AgentImportQueuedMessage,
+	AgentImportTab,
+	TurnOverrides,
+} from '../client/types';
+import { queuedTurnOverrides } from '../../queuedTurnSettings';
 import { aiTabsOf, visibleAiTabsOf } from '../store/read-stores';
 import type { AgentRecord, AITabRecord } from '../store/records';
 import { transcriptOf } from '../store/transcript';
+import { inlineEntryImages, inlineImageList } from '../launch/image-refs';
 import { liftBusyReason, peerAgentRef, readLiftedTo } from './lift-pointer';
 import { planLiftEnv, type SessionDirSelector } from './lift-env';
 import { sshRecordOf } from './rules';
@@ -62,6 +69,16 @@ export function liftRemoteCwd(agent: AgentRecord): string {
 	const override =
 		ssh?.enabled && typeof ssh.workingDirOverride === 'string' ? ssh.workingDirOverride.trim() : '';
 	return override || (agent.cwd ?? '').trim();
+}
+
+/**
+ * The playbook folder the host keeps for the agent, or undefined for the host's default. A folder
+ * outside the working directory is a path on the remote the host may not mean the same way, so it
+ * stays behind and the host uses `.maestro/playbooks` under `cwd`.
+ */
+export function liftedAutoRunFolder(agent: AgentRecord, cwd: string): string | undefined {
+	const folder = stringField(agent.autoRunFolderPath);
+	return folder && cwd && isPathAtOrUnderRoot(folder, cwd) ? folder : undefined;
 }
 
 /**
@@ -112,10 +129,19 @@ export interface LiftPlanTab {
 
 /** Something that stays on this machine, and why. */
 export interface LiftPlanStay {
-	kind: 'secret-env' | 'queued-command' | 'queued-image' | 'hidden-tab' | 'auto-run-folder';
+	kind:
+		| 'secret-env'
+		| 'queued-command'
+		| 'queued-image'
+		| 'queued-held'
+		| 'transcript-image'
+		| 'hidden-tab'
+		| 'auto-run-folder';
 	/** The env key, queue item id, or tab id. */
 	ref: string;
 	reason: string;
+	/** `transcript-image`: how many images of that tab's transcript stay. */
+	count?: number;
 }
 
 /** What a lift sends and keeps. Holds no env value and no transcript text: safe to print. */
@@ -144,6 +170,42 @@ export interface LiftPlanSummary {
 	/** Queued messages that move, by queue item id, in queue order. */
 	queued: string[];
 	stays: LiftPlanStay[];
+	/**
+	 * `peer:agentId` of the copy an earlier Move Back left on this host, which this lift replaces
+	 * (`runLift()`). Absent for a plain lift.
+	 */
+	replaces?: string;
+	/**
+	 * With `replaces`: what the copy's tabs become (`keepDivergentHostTabs()`). `merged` tabs are a
+	 * local tab's conversation and merge into it; `copies` went on on both sides and stay as their
+	 * own "(on the host)" tab; `added` only the host had.
+	 */
+	tabMerge?: { merged: number; copies: number; added: number };
+}
+
+/**
+ * What the host copy's tabs become in the agent that moves, in one sentence (the plan the user
+ * confirms), naming only the parts that hold a tab; undefined when the plan does not say or the
+ * copy has no tab.
+ */
+export function formatHostTabMerge(merge: LiftPlanSummary['tabMerge']): string | undefined {
+	if (!merge) return undefined;
+	const tabs = (n: number, one: string, many: string) =>
+		`${n} tab${n === 1 ? '' : 's'} ${n === 1 ? one : many}`;
+	const parts: string[] = [];
+	if (merge.merged > 0) {
+		parts.push(tabs(merge.merged, 'merges', 'merge') + ' into the tab of the same conversation');
+	}
+	if (merge.copies > 0) {
+		parts.push(
+			tabs(merge.copies, 'stays', 'stay') +
+				' as a copy named "(on the host)" (both sides went on after the Move Back)'
+		);
+	}
+	if (merge.added > 0)
+		parts.push(tabs(merge.added, 'comes', 'come') + ' in that only the host had');
+	if (parts.length === 0) return undefined;
+	return `The host copy's tabs: ${parts.join('; ')}.`;
 }
 
 export interface LiftPlan {
@@ -163,6 +225,12 @@ export interface PlanAgentLiftInput {
 	providerEnvVars?: Record<string, string>;
 	/** Send secret env vars too (`--with-env`). */
 	withEnv: boolean;
+	/**
+	 * Whether the host keeps a moved held message held (`import-held` in its capabilities). False:
+	 * a held message stays on this machine, held, and the plan says so, since that host would run
+	 * it at once (R57). Absent: it does.
+	 */
+	hostKeepsHeld?: boolean;
 }
 
 function stringField(value: unknown): string | undefined {
@@ -175,22 +243,35 @@ function usageStatsOf(value: unknown): UsageStats | undefined {
 		: undefined;
 }
 
-function importTabOf(tab: AITabRecord): AgentImportTab {
+/**
+ * One tab as the host imports it, and how many images of its transcript this machine's image store
+ * could not read: those are left out of the host's copy (the refs stay on this machine's record).
+ */
+function importTabOf(tab: AITabRecord): { tab: AgentImportTab; unresolvedImages: number } {
 	const showThinking = asThinkingMode(tab.showThinking);
 	const usageStats = usageStatsOf(tab.usageStats);
+	let unresolvedImages = 0;
+	const logs = transcriptOf(tab).map((entry) => {
+		const inlined = inlineEntryImages(entry);
+		unresolvedImages += inlined.unresolved;
+		return inlined.entry;
+	});
 	return {
-		id: tab.id,
-		...(tab.name !== undefined ? { name: tab.name } : {}),
-		...(typeof tab.starred === 'boolean' ? { starred: tab.starred } : {}),
-		agentSessionId: stringField(tab.agentSessionId) ?? null,
-		...(typeof tab.createdAt === 'number' ? { createdAt: tab.createdAt } : {}),
-		...(typeof tab.saveToHistory === 'boolean' ? { saveToHistory: tab.saveToHistory } : {}),
-		...(showThinking ? { showThinking } : {}),
-		...(typeof tab.readOnlyMode === 'boolean' ? { readOnlyMode: tab.readOnlyMode } : {}),
-		...(stringField(tab.customModel) ? { model: tab.customModel } : {}),
-		...(stringField(tab.customEffort) ? { effort: tab.customEffort } : {}),
-		...(usageStats ? { usageStats } : {}),
-		logs: transcriptOf(tab),
+		tab: {
+			id: tab.id,
+			...(tab.name !== undefined ? { name: tab.name } : {}),
+			...(typeof tab.starred === 'boolean' ? { starred: tab.starred } : {}),
+			agentSessionId: stringField(tab.agentSessionId) ?? null,
+			...(typeof tab.createdAt === 'number' ? { createdAt: tab.createdAt } : {}),
+			...(typeof tab.saveToHistory === 'boolean' ? { saveToHistory: tab.saveToHistory } : {}),
+			...(showThinking ? { showThinking } : {}),
+			...(typeof tab.readOnlyMode === 'boolean' ? { readOnlyMode: tab.readOnlyMode } : {}),
+			...(stringField(tab.customModel) ? { model: tab.customModel } : {}),
+			...(stringField(tab.customEffort) ? { effort: tab.customEffort } : {}),
+			...(usageStats ? { usageStats } : {}),
+			logs,
+		},
+		unresolvedImages,
 	};
 }
 
@@ -201,12 +282,38 @@ interface StoredQueueItem {
 	text?: unknown;
 	images?: unknown;
 	command?: unknown;
+	paused?: unknown;
+	turnSettings?: unknown;
+	readOnlyMode?: unknown;
+	turnReadOnly?: unknown;
+	turnSaveToHistory?: unknown;
+}
+
+/** The choices a stored queued item froze when it was queued, as a host's per-turn overrides. */
+function storedQueueItemOverrides(item: StoredQueueItem): TurnOverrides | undefined {
+	const settings =
+		item.turnSettings && typeof item.turnSettings === 'object'
+			? (item.turnSettings as { model?: unknown; effort?: unknown })
+			: undefined;
+	const bool = (value: unknown) => (typeof value === 'boolean' ? value : undefined);
+	return queuedTurnOverrides({
+		turnSettings: settings
+			? {
+					...(typeof settings.model === 'string' ? { model: settings.model } : {}),
+					...(typeof settings.effort === 'string' ? { effort: settings.effort } : {}),
+				}
+			: undefined,
+		readOnlyMode: bool(item.readOnlyMode),
+		turnReadOnly: bool(item.turnReadOnly),
+		turnSaveToHistory: bool(item.turnSaveToHistory),
+	});
 }
 
 /** Queued messages that move, and the queue entries that stay with the reason. */
 function planQueue(
 	agent: AgentRecord,
-	tabIds: ReadonlySet<string>
+	tabIds: ReadonlySet<string>,
+	hostKeepsHeld: boolean
 ): { queue: AgentImportQueuedMessage[]; moved: string[]; stays: LiftPlanStay[] } {
 	const items = Array.isArray(agent.executionQueue) ? (agent.executionQueue as unknown[]) : [];
 	const queue: AgentImportQueuedMessage[] = [];
@@ -235,22 +342,39 @@ function planQueue(
 			});
 			continue;
 		}
+		// A host too old to keep it held would run it at once: it stays here, held (R57).
+		if (item.paused === true && !hostKeepsHeld) {
+			stays.push({
+				kind: 'queued-held',
+				ref: id,
+				reason:
+					'The host runs a moved message at once, so a held one stays on this machine, held. Update Maestro on the host to move it.',
+			});
+			continue;
+		}
 		const images = Array.isArray(item.images)
 			? item.images.filter((image): image is string => typeof image === 'string')
 			: [];
-		// A stored image reference names this machine's image store: only inline data moves.
-		const inline = images.filter((image) => image.startsWith('data:'));
-		if (inline.length < images.length) {
+		// A stored image reference names this machine's image store, which the host cannot read:
+		// it moves as its bytes. Only one that cannot be read here stays.
+		const { inline, unresolved } = inlineImageList(images);
+		if (unresolved > 0) {
 			stays.push({
 				kind: 'queued-image',
 				ref: id,
-				reason: `${images.length - inline.length} image(s) on this queued message are in this machine's image store and do not move.`,
+				reason: `${unresolved} image(s) on this queued message could not be read from this machine's image store and do not move.`,
 			});
 		}
+		const overrides = storedQueueItemOverrides(item);
 		queue.push({
 			tabId: item.tabId,
 			text: item.text,
 			...(inline.length > 0 ? { images: inline } : {}),
+			// A message the person held stays held on the host, until they resume it (R50).
+			...(item.paused === true ? { held: true } : {}),
+			// The model, effort, read-only and save to History choices it was queued with: settings
+			// are codified at send, so it runs on the host as it would have here (R55).
+			...(overrides ? { overrides } : {}),
 		});
 		moved.push(id);
 	}
@@ -273,12 +397,17 @@ export function planAgentLift(input: PlanAgentLiftInput): LiftPlan {
 
 	const tabs = visibleAiTabsOf(agent);
 	const tabIds = new Set(tabs.map((tab) => tab.id));
-	const importTabs = tabs.map(importTabOf);
+	const imported = tabs.map(importTabOf);
+	const importTabs = imported.map(({ tab }) => tab);
 	const activeTabId =
 		typeof agent.activeTabId === 'string' && tabIds.has(agent.activeTabId)
 			? agent.activeTabId
 			: undefined;
-	const { queue, moved, stays: queueStays } = planQueue(agent, tabIds);
+	const {
+		queue,
+		moved,
+		stays: queueStays,
+	} = planQueue(agent, tabIds, input.hostKeepsHeld !== false);
 
 	const stays: LiftPlanStay[] = env.withheld.map((key) => ({
 		kind: 'secret-env' as const,
@@ -293,12 +422,23 @@ export function planAgentLift(input: PlanAgentLiftInput): LiftPlan {
 			reason: 'A hidden consult tab belongs to the consult that opened it on this machine.',
 		});
 	}
+	// An image of a transcript that this machine's image store cannot read does not move: said
+	// per tab, with the count, so the plan the person confirms names it (R52).
+	imported.forEach(({ tab, unresolvedImages }) => {
+		if (unresolvedImages === 0) return;
+		// Named with its id too: two tabs may share a name, and each must show in the plan.
+		const name = tab.name ? `"${tab.name}" (${tab.id})` : tab.id;
+		stays.push({
+			kind: 'transcript-image',
+			ref: tab.id,
+			count: unresolvedImages,
+			reason: `${unresolvedImages} image(s) in the conversation ${name} could not be read from this machine's image store and do not move. They stay in this machine's copy.`,
+		});
+	});
 	stays.push(...queueStays);
 
-	// A playbook folder outside the working directory is a path on the remote the host may not
-	// mean the same way; the host's default (`.maestro/playbooks` under cwd) is used instead.
 	const autoRunFolder = stringField(agent.autoRunFolderPath);
-	const keepAutoRun = autoRunFolder && cwd && isPathAtOrUnderRoot(autoRunFolder, cwd);
+	const keepAutoRun = liftedAutoRunFolder(agent, cwd) !== undefined;
 	if (autoRunFolder && !keepAutoRun) {
 		stays.push({
 			kind: 'auto-run-folder',
@@ -336,6 +476,8 @@ export function planAgentLift(input: PlanAgentLiftInput): LiftPlan {
 		tabs: importTabs,
 		...(activeTabId ? { activeTabId } : {}),
 		...(queue.length > 0 ? { queue } : {}),
+		// The host stores it, and replaces a copy a Move Back left only when it carries this id.
+		liftedFromAgentId: agent.id,
 	};
 
 	const summary: LiftPlanSummary = {

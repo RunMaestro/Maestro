@@ -574,6 +574,29 @@ describe('Agent Completeness', () => {
 					}
 				});
 
+				// Token speed is a declared capability, not an accident of which
+				// parsers happen to be wired: a new harness must say where its
+				// per-call speed comes from, and the declaration must be backed by code.
+				it('backs its tokenSpeedMeasurement with the code that reads it', () => {
+					const caps = getAgentCapabilities(def.id);
+					expect(
+						['transcript', 'stream', 'none'],
+						`Agent "${def.id}" declares no tokenSpeedMeasurement in capabilities.ts`
+					).toContain(caps.tokenSpeedMeasurement);
+					if (caps.tokenSpeedMeasurement === 'stream') {
+						expect(
+							typeof getOutputParser(def.id)?.extractCallTiming,
+							`Agent "${def.id}" says tokenSpeedMeasurement='stream' but its output parser has no extractCallTiming(), so no call is ever timed`
+						).toBe('function');
+					}
+					if (caps.tokenSpeedMeasurement === 'transcript') {
+						expect(
+							getSessionStorage(def.id),
+							`Agent "${def.id}" says tokenSpeedMeasurement='transcript' but has no session storage to read it from`
+						).not.toBeNull();
+					}
+				});
+
 				it('has error patterns if has output parser', () => {
 					const parser = getOutputParser(def.id);
 					if (parser) {
@@ -655,8 +678,9 @@ describe('Agent Completeness', () => {
 			// Present with an unknown window on purpose, not missing.
 			expect(Object.prototype.hasOwnProperty.call(DEFAULT_CONTEXT_WINDOWS, 'grok')).toBe(true);
 			expect(DEFAULT_CONTEXT_WINDOWS.grok).toBe(0);
-			// Last on purpose: a synopsis is a read-only batch turn.
-			expect(SYNOPSIS_PROVIDER_PREFERENCE.at(-1)).toBe('grok');
+			// After the earlier providers on purpose: a synopsis is a read-only batch
+			// turn. Antigravity follows it for the same reason.
+			expect(SYNOPSIS_PROVIDER_PREFERENCE.slice(-2)).toEqual(['grok', 'antigravity']);
 			expect(supportsEffortSelection('grok')).toBe(true);
 			// No stable three-tier catalog: the configured model stays in charge.
 			expect(supportsTierSelection('grok')).toBe(false);

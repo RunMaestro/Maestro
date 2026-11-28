@@ -28,6 +28,12 @@ import {
 	type LiftRunDeps,
 } from '../../shared/maestro-lib/agents/lift-run';
 import type { LiftedToPointer } from '../../shared/maestro-lib/agents/lift-pointer';
+import {
+	runReturnFromHost,
+	type ReturnedFromHost,
+	type ReturnResult,
+	type ReturnRunOptions,
+} from '../../shared/maestro-lib/agents/lift-return';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
 import { isAgentBusy, type ProcessLivenessProbe } from '../utils/agent-busy';
@@ -56,7 +62,54 @@ export interface DesktopLiftDeps {
 	/** The running mirror, or null before boot started it. */
 	service(): PeerMirrorService | null;
 	setPointer(agentId: string, pointer: LiftedToPointer, movedQueueItemIds: string[]): Promise<void>;
+	/** Move Back: make the agent an SSH agent again with the host's tabs merged in. */
+	restore(agentId: string, returned: ReturnedFromHost): Promise<void>;
 	now?(): number;
+}
+
+/** The answer to the window's Move Back from Host. */
+export type DesktopReturnAnswer =
+	| { ok: true; result: ReturnResult }
+	| { ok: false; error: string; code: string };
+
+/**
+ * Move a hosted agent back from its host (Move Back from Host, `maestro-cli unlift`). The host is
+ * reached over the mirror's held client, as for Move to Host. Never throws.
+ */
+export async function returnAgentFromDesktop(
+	agentId: string,
+	options: ReturnRunOptions,
+	deps: DesktopLiftDeps
+): Promise<DesktopReturnAnswer> {
+	const service = deps.service();
+	if (!service && !options.offline) {
+		return { ok: false, code: 'FEDERATION_NOT_RUNNING', error: FEDERATION_NOT_RUNNING_MESSAGE };
+	}
+	try {
+		const result = await runReturnFromHost(agentId, options, {
+			readAgents: deps.readAgents,
+			connect: async (remoteId) => {
+				try {
+					if (!service) throw new Error(FEDERATION_NOT_RUNNING_MESSAGE);
+					const { peer, client } = service.hostClient(remoteId);
+					return { peer, client, release: async () => {} };
+				} catch (error) {
+					throw new LiftRunError(
+						'PEER_NOT_CONNECTED',
+						error instanceof Error ? error.message : String(error)
+					);
+				}
+			},
+			restore: deps.restore,
+		});
+		return { ok: true, result };
+	} catch (error) {
+		return {
+			ok: false,
+			code: error instanceof LiftRunError ? error.code : 'RETURN_FAILED',
+			error: error instanceof Error ? error.message : String(error),
+		};
+	}
 }
 
 /** Lift one local agent by id. Never throws: a refusal or failure is `{ ok: false }`. */
@@ -152,6 +205,22 @@ export async function setLiftPointerInWindow(
 	if (!reply.success) throw new Error(reply.error || 'The window refused the pointer');
 }
 
+/** Ask the window that owns the agent list to restore a hosted agent. Throws when it refuses. */
+export async function restoreReturnedAgentInWindow(
+	win: BrowserWindow | null,
+	agentId: string,
+	returned: ReturnedFromHost
+): Promise<void> {
+	if (!win || !isWebContentsAvailable(win)) throw new Error('The Maestro window is not available');
+	const reply = await requestFromRenderer<PointerReply>(win, 'remote:updateSessionConfig', {
+		args: [agentId, { returnedFromHost: returned }],
+		fallback: { success: false, error: 'The window did not answer in time' },
+		parse: readPointerReply,
+		timeoutMs: LIFT_POINTER_TIMEOUT_MS,
+	});
+	if (!reply.success) throw new Error(reply.error || 'The window refused the move back');
+}
+
 export interface DesktopLiftRuntime {
 	/** The stored agent list (`maestro-sessions.json` `sessions`). */
 	readSessions(): unknown;
@@ -183,5 +252,7 @@ export function buildDesktopLiftDeps(runtime: DesktopLiftRuntime): DesktopLiftDe
 		service: runtime.service,
 		setPointer: (agentId, pointer, moved) =>
 			setLiftPointerInWindow(runtime.getMainWindow(), agentId, pointer, moved),
+		restore: (agentId, returned) =>
+			restoreReturnedAgentInWindow(runtime.getMainWindow(), agentId, returned),
 	};
 }

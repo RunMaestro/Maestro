@@ -43,6 +43,7 @@ export const AGENT_ICONS: Record<string, string> = {
 
 	// Open-source alternatives
 	opencode: '📟',
+	kilo: '⚡',
 	hermes: '⚕',
 	pi: 'π',
 

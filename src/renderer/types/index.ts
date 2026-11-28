@@ -78,6 +78,7 @@ import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
 import type { LiftedToPointer } from '../../shared/maestro-lib/agents/lift-pointer';
+import type { DesignPickKind } from '../../shared/designPickCommands';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -238,6 +239,34 @@ export interface FileArtifact {
 export interface LogEntry {
 	id: string;
 	timestamp: number;
+	/**
+	 * A hosted agent's live entry: part of a turn still streaming on its Federation host. Display
+	 * only: every host sync drops these and rebuilds them (`projectHostedSession()`).
+	 */
+	hostLive?: boolean;
+	/**
+	 * The key the transcript draws this entry's row under, when it is not `id`: a hosted turn's
+	 * answer the host saved under its own id keeps the key of the live row that showed it while it
+	 * streamed, so the row is updated in place instead of drawn a second time (`mergeHostedLogs()`).
+	 * Display only, never an id: pins, deletes, and lookups use `id`.
+	 */
+	rowKey?: string;
+	/**
+	 * A hosted agent's message kept on this machine for its host while the link is down
+	 * (`keepTurnForHost()`), drawn here as an SSH agent's send draws its message. The host's own
+	 * entry for it replaces it once the host has it (`mergeHostedLogs()`).
+	 */
+	keptForHost?: boolean;
+	/**
+	 * When this machine handed a kept message (`keptForHost`) to its host. Only then may a host
+	 * message with the same words be taken as its copy; cleared when the host refused it again.
+	 */
+	keptSentAt?: number;
+	/**
+	 * The time a kept message's bubble was drawn: the host's entry that replaced it is drawn there,
+	 * above the retry card, as an SSH agent's kept message is, not at the host's later time.
+	 */
+	keptPlace?: number;
 	// One union shared with the on-disk record (`LogEntryRecord`) every client reads.
 	source: LogEntrySource;
 	text: string;
@@ -258,8 +287,24 @@ export interface LogEntry {
 	// applyQueuedItemDispatchFailure) instead of matching on text, which would
 	// also delete an identical message the user really did send earlier.
 	queuedItemId?: string;
+	// The turn this entry belongs to ended here: stamped on a tab's last entry when its turn's
+	// process exits (`markTurnEnded()`), so a Federation client asking whether a message ran tells
+	// a turn that ended from one its host lost mid-stream (`turnFateAfter()`).
+	turnEnded?: boolean;
+	// On a user message: when its turn's latest attempt ended with nothing of its own that stays
+	turnEndedAt?: number;
+	// On a queued steer: its own follow-up turn ended on it with nothing of its own that stays
+	// (`markTurnEnded()`); its `turnEnded` may also be the end of the turn it was steered into
+	steerTurnEnded?: boolean;
+	steerTurnEndedAt?: number;
+	// This machine's copy of the reply text a hosted turn streamed before its link was cut, drawn
+	// as an SSH turn's partial reply is (R58); dropped when the host turns out to have answered
+	cutReply?: boolean;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
+	// For user messages - the sender's own save to History choice for this turn (Federation
+	// `TurnOverrides`); when set, the exit synopsis follows it instead of the tab's chip
+	saveToHistory?: boolean;
 	// For user messages - tracks if message was sent via forced parallel execution
 	forceParallel?: boolean;
 	// For user messages - tracks if message was steered into a turn that was
@@ -355,6 +400,9 @@ export interface LogEntry {
 	// card collapses all subsequent auto-retry attempts into a single live stat
 	// readout (attempt count, elapsed, next-retry countdown, Retry now / Stop).
 	retryOutageId?: string;
+	// The outage of that card was stopped by the user: its retry no longer holds the message,
+	// which waits paused. A Federation client reads a stopped card as no retry of the host's own.
+	retryStopped?: boolean;
 	// Command mode: anchors the live output card for a `!command` the user ran
 	// from the AI composer. The command never reaches the agent - Maestro runs
 	// it directly and streams stdout/stderr into `text`. See
@@ -373,10 +421,11 @@ export interface LogEntry {
 		 * REQUEST at least as much as the command line.
 		 */
 		request?: string;
-		/** Directory the command ran in (the agent's cwd, or the SSH remote's). */
+		/**
+		 * Directory the command ran in (the agent's cwd, or the remote's). The remote's name is not
+		 * kept: the mode pill is the one mark of where an agent runs.
+		 */
 		cwd: string;
-		/** SSH remote name when the agent runs remotely, else undefined. */
-		remoteName?: string;
 		status: 'running' | 'finished' | 'cancelled';
 		exitCode?: number;
 		/** Wall-clock duration in ms, set on finish. */
@@ -479,6 +528,13 @@ export interface QueuedItemEditPatch {
 	turnSettings: QueuedTurnSettings;
 }
 
+/**
+ * What a modal's save did, for a modal that sends what the person typed somewhere that can refuse
+ * it (a hosted agent's host): Edit Queued Message (`saveQueuedItemEdit()`) and Rename Tab. The
+ * modal closes only on `saved`; otherwise it keeps the person's input and shows `reason` in it.
+ */
+export type ModalSaveOutcome = { saved: true } | { saved: false; reason: string };
+
 /** One agent a held turn is waiting to hear from. */
 export interface ConsultHoldTarget {
 	targetSessionId: string;
@@ -510,6 +566,36 @@ export interface MentionHandoff {
 	targets: ConsultHoldTarget[];
 	/** The user's message, verbatim, relayed alongside the answer. */
 	message: string;
+	/**
+	 * A hosted agent's turn runs on its host, so no local exit releases the hand-off: the host's
+	 * tab state does (`followHostedHandoffs()`). `sent` once the host took the turn (`queueItemId`
+	 * when it waits in the host's queue; `afterEntryId` the tab's last entry then), `running` once
+	 * the host tab reads busy with it.
+	 */
+	hostTurn?: {
+		stage: 'sent' | 'running';
+		queueItemId?: string;
+		afterEntryId?: string;
+		/** The host's queue frame showed `queueItemId` waiting. */
+		seenQueued?: boolean;
+		/**
+		 * The start time of the turn it was queued behind (the tab's `thinkingStartTime` when it was
+		 * first seen waiting; never overwritten).
+		 */
+		turnStartedAt?: number;
+		/**
+		 * When it left the host queue with no start seen (this machine's clock, compared only with
+		 * it): past `HOST_QUEUE_START_GRACE_MS` it counts as removed.
+		 */
+		goneAt?: number;
+		/**
+		 * The mirror's count of whole host-queue reads when it was last seen waiting (or sent). A
+		 * read since then (a reconnect) may have missed its named exit: the tab's state decides.
+		 */
+		readsAtSeen?: number;
+		/** How many images the message carried (absent: none): an image-only message is matched by it. */
+		imageCount?: number;
+	};
 }
 
 export interface QueuedItem {
@@ -539,11 +625,44 @@ export interface QueuedItem {
 	tabName?: string;
 	// Read-only mode tracking (for parallel execution bypass)
 	readOnlyMode?: boolean; // True if queued from a read-only tab
+	// A sender's own chips for this one message (Federation `TurnOverrides`): when set, they
+	// replace the tab's read-only and save to History settings. See `withQueuedTurnOverrides`.
+	turnReadOnly?: boolean;
+	turnSaveToHistory?: boolean;
 	// Force parallel: dispatches immediately when this tab finishes, skipping cross-tab wait
 	forceParallel?: boolean;
 	// Held/paused: kept in the queue (preserving order) but skipped by every
 	// dispatch path until the user resumes it. See utils/executionQueue.ts.
 	paused?: boolean;
+	/**
+	 * Waits in a hosted agent's HOST queue (`projectHostedSession()`): drawn as a queued card here,
+	 * never run here. Remove and Hold / Resume act on the host.
+	 */
+	hostQueued?: boolean;
+	/**
+	 * A host queue item whose images this window does not hold yet: an older desktop host said they
+	 * were unchanged (`imagesKept`) before this window read them (M28). Its card draws none, so an
+	 * Edit must not save it without them.
+	 */
+	hostImagesPending?: boolean;
+	/**
+	 * A hosted agent's message that is already an entry in its host's transcript (or drawn here):
+	 * the send names it (`TurnInput.entryId`), so the message is drawn once. Set on the message of a
+	 * turn a lost link cut, kept for a resend (`noteHostedTurnsCut()`).
+	 */
+	hostEntryId?: string;
+	/**
+	 * The bubble this machine drew for a hosted agent's message it kept while the host was not
+	 * connected (`LogEntry.keptForHost`). Unlike `hostEntryId`, the host never had it: the send names
+	 * it (`TurnInput.entryId`) so a host that takes the id writes the same entry, drawn once.
+	 */
+	keptEntryId?: string;
+	/**
+	 * On a desktop HOST: the id a Federation client named for this message (`TurnInput.entryId`).
+	 * Its user entry takes that id when it runs (`markTabRunningQueuedItem()`), or is the entry
+	 * the tab already holds under it, as a headless host writes it, so the client draws it once.
+	 */
+	entryId?: string;
 	/** Dispatch ID held until host admission and its pre-start baseline are complete. */
 	pendingAdmissionId?: string;
 	/** Host-journaled release revision. Pending ID remains provenance and a
@@ -557,6 +676,16 @@ export interface QueuedItem {
 	// mentioned agent is pulled in at the moment the message becomes the agent's
 	// turn - not when the user typed it into a queue that was minutes deep.
 	crossAgentMention?: boolean;
+	// The page-derived text of each Design Mode chip the send expanded into
+	// `text` (each block without its note; see `expandDesignPicks`). It is page
+	// content, not the user's words, so every re-plan of this item's `@mentions`
+	// (the drain, an edit, a note-only edit too) reads `text` with it removed: a
+	// picked page that says `@Other` must not consult Other.
+	designPickPageText?: string[];
+	// Queued with `planMentions: false` (its text is not the user's words, such
+	// as a queued Design Mode pick). It can never consult another agent: an edit
+	// keeps both mention flags off instead of re-planning them from the text.
+	mentionsDisabled?: boolean;
 	// The message is addressed ONLY at the mentioned agent(s) - it leads with an
 	// `@agent` mention, so this agent does not answer it. Dispatching the item
 	// fires the consult and nothing else: no spawn, no turn. It still occupies a
@@ -580,6 +709,10 @@ export interface QueuedItem {
 	// transcript. Carries a consult's replies verbatim without repeating them in
 	// the user bubble, where they are already shown as the consult's own reply.
 	agentContext?: string;
+	// Agent-only notes appended BEHIND the prompt at spawn and never rendered (a Federation
+	// sender's `@mention` notes: a consult is running, the answer is handed off), as the drain
+	// appends a mention's own notes (`TurnInput.agentNotes`).
+	agentNotes?: string;
 	// A `dispatch --notify-on-complete` wake that main queued because this tab was
 	// mid-turn: another agent reporting back, not the user's message. It runs as
 	// its own turn when the tab goes idle and is never steered into the running
@@ -815,6 +948,27 @@ export interface OnboardingStats {
 	averageTasksPerPhase: number; // Average tasks per document
 }
 
+/**
+ * One browser Design Mode pick staged in a tab's composer as a chip.
+ *
+ * A pick no longer pastes its selector, computed styles and HTML into the
+ * draft: it waits above the textarea as a chip (thumbnail, short label, note)
+ * the user can review, annotate or remove. The full `text` block, followed by
+ * the `note`, is expanded into the outgoing message at send time, and the
+ * `screenshot` rides along after the staged images. The chip owns its
+ * screenshot; it is never copied into `stagedImages`.
+ */
+export interface StagedDesignPick {
+	id: string; // generateId()
+	kind: DesignPickKind; // 'element' | 'region'
+	label: string; // short: `button.cta "Sign up"` or `Region 640 x 220`
+	url: string;
+	note: string; // editable from the chip
+	text: string; // full block from buildDesignModePrompt (note excluded; appended at send)
+	screenshot: string | null; // data URL or maestro-image ref; owned by the chip, NOT in stagedImages
+	createdAt: number;
+}
+
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
@@ -851,6 +1005,16 @@ export interface AITab {
 	 */
 	commandMode?: ComposerCommandMode | boolean;
 	stagedImages: string[]; // Staged images (base64) for this tab
+	/**
+	 * Design Mode picks staged in this tab's composer as chips, in the order they
+	 * were picked (which is the order they expand at send). Absent means none, so
+	 * a fresh tab literal needs no entry. Anything that clears `stagedImages` on
+	 * an EXISTING tab must clear this too, or a sent or discarded draft leaves
+	 * its chips behind. Persisted with the tab like `stagedImages`;
+	 * `relocateSessionImages()` moves each inline `screenshot` out of the
+	 * sessions file.
+	 */
+	stagedDesignPicks?: StagedDesignPick[];
 	usageStats?: UsageStats; // Token usage for this tab
 	createdAt: number; // Timestamp for ordering
 	state: 'idle' | 'busy'; // Tab-level state for write-mode tracking
@@ -899,6 +1063,20 @@ export interface AITab {
 	 * to its original position rather than appending it to the end of the strip.
 	 */
 	hidden?: boolean;
+	/**
+	 * On a hosted agent's tab: the `liftedTo.at` of the hosting during which the host reported
+	 * this tab (`projectHostedSession()`). A tab the host reported and then stopped listing was
+	 * closed on the host, so the record drops it too; a tab without it (or from an earlier
+	 * hosting) is a conversation kept from before the move, and stays.
+	 */
+	hostSeenAt?: number;
+	/**
+	 * On a hosted agent's tab: opened here while its host was not connected
+	 * (`openHostedTabOrHere()`), and not yet made on the host. It is made there under this id when
+	 * the link is back or at its first send (`createPendingHostTab()`); the host's first report of
+	 * it clears the flag.
+	 */
+	pendingHostTab?: boolean;
 	/**
 	 * Set on a tab Quick Chat created (the hotkey-summoned floating chat window,
 	 * see src/shared/quickChat.ts). An ephemeral Quick Chat tab is also `hidden`
@@ -951,8 +1129,8 @@ export interface AITab {
 // A single "thinking item" - one busy tab within a session.
 // Used by ThinkingStatusPill to show all active work across all agents.
 /**
- * The agent fields the Thinking pill reads. A local agent passes its `Session`; a Federation peer's
- * mirrored agent passes a view built by `buildMirrorThinkingItems()`, which is never a `Session`.
+ * The agent fields the Thinking pill reads. An agent passes its `Session`, hosted agents included
+ * (their Left Bar record, kept in step with the host).
  */
 export type ThinkingItemAgent = Pick<
 	Session,
@@ -962,11 +1140,6 @@ export type ThinkingItemAgent = Pick<
 export interface ThinkingItem<S extends ThinkingItemAgent = ThinkingItemAgent> {
 	session: S;
 	tab: AITab | null; // null for legacy sessions without tab-level tracking
-	/**
-	 * Set for a peer's mirrored agent: `session.id` is then its mirror key (`peerId:agentId`), a
-	 * click opens the mirror, and Stop reaches the host.
-	 */
-	mirror?: { peerId: string; agentId: string };
 }
 
 // An Auto Run in progress on an agent other than the one being viewed. Auto Run
@@ -1015,6 +1188,10 @@ export interface FilePreviewTab {
 	searchQuery: string; // Preserved search query
 	editMode: boolean; // Whether tab was in edit mode
 	editContent: string | undefined; // Unsaved edit content (undefined if no pending changes)
+	// The file `editContent` was typed for. Written with the draft by `nextEditContentPath()` and
+	// read only while a draft exists: Save refuses to write a draft anywhere else. A draft saved
+	// before this field existed has none and is taken to belong to `path`.
+	editContentPath?: string;
 	createdAt: number; // Timestamp for ordering
 	// When the tab started showing its current path (ms). Differs from createdAt
 	// once an open replaces the file in this tab. The User Journey dwell time on
@@ -1422,6 +1599,8 @@ export interface Session {
 		fileCount: number;
 		folderCount: number;
 		totalSize: number;
+		/** The size walk stopped counting files at its cap: the footer shows "N+". */
+		fileCountCapped?: boolean;
 	};
 	/** True when the last file tree load hit the entry cap and stopped early. */
 	fileTreeTruncated?: boolean;
@@ -1601,6 +1780,15 @@ export interface Session {
 	// Federation: set once this SSH agent was lifted onto its remote's host. Every tab and
 	// transcript stays; sends are refused with a pointer at `peer:agentId` (liftedSendRefusal()).
 	liftedTo?: LiftedToPointer;
+	// Federation: moved back from its host by the person (Move Back from Host, `maestro-cli
+	// unlift`). Automatic Federation leaves it an SSH agent; Move to Host clears it.
+	hostedOptOut?: boolean;
+	// Federation: the host's copy a Move Back left behind (the host was down). The next Move to
+	// Host of this agent replaces it instead of being refused for its name.
+	leftOnHost?: LiftedToPointer;
+	// Federation, on a host: the id of the agent this record was lifted from. A later Move to Host
+	// of that agent may replace this record (`planAgentImport()`).
+	liftedFromAgentId?: string;
 
 	// Inline wizard state for /wizard command
 	// Keeps per-session/per-tab wizard state for creating or iterating on Auto Run documents
@@ -1710,6 +1898,12 @@ export interface Session {
 		mode: 'interactive' | 'api';
 		modeReason: 'auto' | 'limit';
 		lastUsageSnapshotKey?: string;
+		/**
+		 * Why the most recent TUI turn has no steering channel when the settings say
+		 * it should (its SSH remote's maestro-p predates the steering relay). Absent
+		 * when the turn can be steered. Written by the spawner with `mode`.
+		 */
+		steeringUnavailable?: import('../../shared/chatSteering').SteeringUnavailableReason;
 	};
 }
 
@@ -1935,6 +2129,10 @@ export interface EncoreFeatureFlags {
 	// Run preview. Off by default. Optional so older fixtures and persisted
 	// settings remain valid.
 	dataview?: boolean;
+	// Prompt Links - maestro://run/<token> URLs that open a new tab in an agent
+	// and send a stored prompt. Off by default. Optional so older fixtures and
+	// persisted settings remain valid.
+	promptLinks?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

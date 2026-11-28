@@ -123,6 +123,14 @@ export function buildEditorTheme(
 				backgroundColor: c.accent + '60',
 				outline: `1px solid ${c.accent}`,
 			},
+			// Host-flagged problem span (see markdownEditor/problemMark): the
+			// token a SQL error points at.
+			'.cm-app-problem': {
+				textDecoration: `underline wavy ${c.error}`,
+				textDecorationSkipInk: 'none',
+				textUnderlineOffset: '3px',
+				backgroundColor: c.error + '1f',
+			},
 
 			// ── Code-editor chrome (markdownEditor/codeEditing) ──────────────
 			// CM6's base theme paints these with `&light` / `&dark` selectors (one

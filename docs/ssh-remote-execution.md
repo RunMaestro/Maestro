@@ -258,9 +258,7 @@ When a session is running via SSH remote, you can easily identify it:
 
 ![SSH Agent Status](./screenshots/ssh-agents-status.png)
 
-- **REMOTE pill** - Appears in the Left Bar next to the session, indicating it's configured for remote execution
-- **Host name badge** - Displayed in the Main Panel header showing which SSH host the agent is running on (e.g., "PEDTOME")
-- **SSH badge** - An `SSH` badge under the agent's name. Hover it for how an SSH agent differs from a hosted one, and how to move it to its host
+- **REMOTE pill** - Under the agent's name in the Left Bar and next to it in the Main Panel header. A local agent shows `LOCAL` there and a hosted agent shows `HOSTED`; it is the only mark that differs between the three. Hover it for the remote's name, how an SSH agent differs from a hosted one, and how to move it to its host
 - Connection state reflects SSH connectivity
 - Errors are detected and displayed with SSH-specific context
 
@@ -281,7 +279,9 @@ From the CLI, `maestro-cli ssh-remote-status` lists the remotes that are down. `
 
 An SSH agent is owned by your local Maestro, so its turns stop when your laptop sleeps or loses the connection. [Federation](./federation) moves the agent onto a Maestro host on the remote instead, and the work keeps going there. It is built in and opportunistic: Maestro checks each SSH remote for a host, one at a time, and mirrors the agents of the ones that run one. A remote without a host stays an ordinary SSH remote.
 
-By default Maestro does this for you: it installs its own `maestro-cli` on a remote that has SSH agents (Linux, macOS, or Windows through Git Bash or WSL), registers the host as a service so it survives reboots where the remote has a service manager (a systemd user session on Linux; on macOS a launch agent, which starts at login; Windows and Linux without systemd have none, and Maestro says how to start the host there), and moves each SSH agent onto it once every sanity check passes. When it cannot, the agent's `SSH` badge turns red and its hover card says what to do; **Settings > SSH Hosts > Federation automation** lists everything that needs you. To do it by hand, right-click an agent and choose **Move to Host**. To keep a remote out of Federation, switch **Federation** off for it under **Settings > SSH Hosts**; to stop the automatic moves everywhere, turn off **Move SSH agents to their host automatically** there.
+Hosting is off by default. With **Run hosted agents on their host** and **Move SSH agents to their host automatically** turned on under **Settings > SSH Hosts > Federation automation**, Maestro does this for you: it installs its own `maestro-cli` on a remote that has SSH agents (Linux, macOS, or Windows through Git Bash or WSL), registers the host as a service so it survives reboots where the remote has a service manager (a systemd user session on Linux; on macOS a launch agent, which starts at login; Windows and Linux without systemd have none, and Maestro says how to start the host there), and moves each SSH agent onto it once every sanity check passes. When it cannot, the agent's `REMOTE` pill turns red and its hover card says what to do; **Settings > SSH Hosts > Federation automation** lists everything that needs you. To do it by hand, right-click an agent and choose **Move to Host**. To keep a remote out of Federation, switch **Federation** off for it under **Settings > SSH Hosts**; to stop the automatic moves everywhere, turn **Move SSH agents to their host automatically** off again.
+
+Once an agent is hosted, its settings live on the host and every Maestro that drives it follows them, while each person's own tab choices (model, effort, read-only, save to History) stay their own. See [Settings of a hosted agent](./federation#settings-of-a-hosted-agent).
 
 ## Full Remote Capabilities
 
@@ -295,6 +295,7 @@ The File Explorer works seamlessly with remote agents:
 - Open and edit files directly
 - Use `@` file mentions to reference remote files in prompts
 - Compress a folder into a `.zip` on the remote host (requires `zip` there)
+- **Open in Default App** and **Reveal** hand your computer's app a copy of the remote file. A change you save in that app goes back to the remote file while Maestro runs. If the remote file changed since you opened it, Maestro does not overwrite it: it keeps your version beside the copy and tells you where.
 
 ### Remote Auto Run
 
@@ -477,12 +478,12 @@ project/
 
 ### Enabling Shared History
 
-Shared history is enabled per-session via the **Sync history to remote** toggle, which appears in the SSH Remote Execution dropdown when an SSH host is selected:
+Shared history is enabled per agent with the **Share history in the project folder** toggle, which appears under SSH Remote Execution for every agent, local or remote:
 
-1. Create or edit an agent session
-2. Select an SSH remote from the dropdown
-3. The **Sync history to remote** checkbox appears below the status indicator (disabled by default)
-4. When enabled, every history entry is written to both your local Maestro store and the remote project's `.maestro/history/` directory
+1. Create or edit an agent
+2. Pick Local Execution or an SSH remote from the dropdown
+3. Turn on **Share history in the project folder** below the status indicator (off by default)
+4. When enabled, every history entry is written to both your local Maestro store and `.maestro/history/` in the project folder where the agent runs: on the remote for an SSH agent, on this machine for a local agent
 
 ### Use Case: Same User, Multiple Machines
 

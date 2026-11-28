@@ -3,17 +3,27 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useAiTabToolbarBinding } from '../../../../../renderer/components/InputArea/hooks/useAiTabToolbarBinding';
 import { createInputAreaSession } from '../_fixtures';
 import type { AITab } from '../../../../../renderer/types';
+import { AGENT_MODES, agentModeFields } from '../../../../helpers/mockSession';
 
 const mockUpdateSessionWith = vi.fn();
 vi.mock('../../../../../renderer/stores/sessionStore', () => ({
 	updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
 }));
+// The thinking write (and its hand-off to a hosted agent's host) is the shared service, covered in
+// tabThinkingMode.test; this binding only routes the pick there.
+const mockSetTabThinkingMode = vi.fn();
+vi.mock('../../../../../renderer/services/tabThinkingMode', () => ({
+	setTabThinkingMode: (...args: unknown[]) => mockSetTabThinkingMode(...args),
+}));
 
 describe('useAiTabToolbarBinding', () => {
-	afterEach(() => mockUpdateSessionWith.mockClear());
+	afterEach(() => {
+		mockUpdateSessionWith.mockClear();
+		mockSetTabThinkingMode.mockClear();
+	});
 
-	function bind(tabOverrides: Partial<AITab> = {}) {
-		const base = createInputAreaSession();
+	function bind(tabOverrides: Partial<AITab> = {}, mode: (typeof AGENT_MODES)[number] = 'local') {
+		const base = createInputAreaSession(agentModeFields(mode));
 		const session = {
 			...base,
 			aiTabs: base.aiTabs.map((t) => (t.id === 'tab-1' ? { ...t, ...tabOverrides } : t)),
@@ -53,12 +63,37 @@ describe('useAiTabToolbarBinding', () => {
 		});
 	});
 
-	it('writes a thinking mode by name', () => {
+	it('writes a thinking mode by name through the shared write', () => {
 		const { session, result } = bind();
 
 		result.current.onThinkingModeChange('sticky');
 
-		expect(lastUpdatedTab(session).showThinking).toBe('sticky');
+		expect(mockSetTabThinkingMode).toHaveBeenCalledWith(session.id, 'tab-1', 'sticky');
+	});
+
+	it('sets the thinking and permission pills the same way in every mode (mode parity)', () => {
+		// docs/parity/agent-ux-parity.md, Composer: one binding for every mode. The host
+		// hand-off lives in the shared thinking write, a no-op for a local or SSH agent.
+		const outcomes = AGENT_MODES.map((mode) => {
+			mockUpdateSessionWith.mockClear();
+			mockSetTabThinkingMode.mockClear();
+			const { session, result } = bind({}, mode);
+			result.current.onThinkingModeChange('sticky');
+			result.current.onPermissionModeChange('readonly');
+			const { permissionMode, readOnlyMode } = lastUpdatedTab(session);
+			return {
+				thinking: mockSetTabThinkingMode.mock.calls.map((call) => call.slice(1)),
+				permissionMode,
+				readOnlyMode,
+			};
+		});
+		expect(outcomes[0]).toEqual({
+			thinking: [['tab-1', 'sticky']],
+			permissionMode: 'readonly',
+			readOnlyMode: true,
+		});
+		expect(outcomes[1]).toEqual(outcomes[0]);
+		expect(outcomes[2]).toEqual(outcomes[0]);
 	});
 
 	it('writes nothing without an active tab', () => {
@@ -68,6 +103,7 @@ describe('useAiTabToolbarBinding', () => {
 		result.current.onThinkingModeChange('on');
 
 		expect(mockUpdateSessionWith).not.toHaveBeenCalled();
+		expect(mockSetTabThinkingMode).not.toHaveBeenCalled();
 	});
 
 	it('keeps its callbacks across renders of the same tab', () => {

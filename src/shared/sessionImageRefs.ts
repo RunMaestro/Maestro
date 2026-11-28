@@ -42,6 +42,15 @@ export function sessionImageRefBasename(value: unknown): string | null {
 	return SESSION_IMAGE_BASENAME_RE.test(basename) ? basename : null;
 }
 
+/**
+ * The sha256 of the bytes a reference names (the store is content-addressed: a ref's basename is
+ * the hash of its bytes), or null when the value is not a valid reference.
+ */
+export function sessionImageRefSha256(value: unknown): string | null {
+	const basename = sessionImageRefBasename(value);
+	return basename ? basename.slice(0, basename.indexOf('.')) : null;
+}
+
 /** Route segment, under the web server's `apiBase`, that serves store images. */
 export const SESSION_IMAGE_HTTP_SEGMENT = 'images';
 

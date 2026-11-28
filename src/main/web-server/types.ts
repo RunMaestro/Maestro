@@ -1,5 +1,11 @@
+import type { QueuedItemSnapshot } from '../../shared/queueSnapshot';
 import type { PianolaQueueControl } from '../../shared/pianola/pianola-dispatch';
 import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
+import type {
+	QueuedTurnEdit,
+	TurnAgentText,
+	TurnOverrides,
+} from '../../shared/maestro-lib/client/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
@@ -7,6 +13,7 @@ import type { TranslationReport } from '../../shared/maestro-lib/translation/typ
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { RemoteAskerContext } from '../../shared/crossAgentTypes';
 import type { InterruptTurnResult } from '../../shared/turnInterrupt';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 import type { DesktopTabEntry, DesktopSessionsSnapshot } from '../../shared/desktopTabs';
@@ -24,11 +31,21 @@ import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
 } from '../../shared/autoRunSteeringCommands';
+import type {
+	DiffReviewCommandRequest,
+	DiffReviewCommandResult,
+} from '../../shared/diffReviewCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
 } from '../../shared/throughputGaugeCommands';
+import type {
+	DesignPickCommandRequest,
+	DesignPickCommandResult,
+} from '../../shared/designPickCommands';
+import type { BrowserPickTarget } from '../../shared/coworkingBrowser';
+import type { BrowserViewportPreset } from '../../shared/browserViewport';
 import type { AdditionalDirectory, UsageStats } from '../../shared/types';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
@@ -96,6 +113,8 @@ export interface AITabData {
 	createdAt: number;
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
+	/** This desktop's own Agent Resilience holds the tab's failed turn for a resend (R56). */
+	retryPending?: boolean;
 	hasUnread?: boolean;
 }
 
@@ -249,6 +268,11 @@ export interface WebClient {
 	subscribedSessionId?: string;
 	/** Set only from the verified per-boot CLI secret on WebSocket upgrade. */
 	cliAuthenticated?: boolean;
+	/**
+	 * The upgrade said this client reads queue changes (`QUEUE_CHANGES_QUERY_PARAM`, M28): its
+	 * `queue_changed` frames carry the change only. Read only for a client the CLI secret admitted.
+	 */
+	readsQueueChanges?: boolean;
 	/** Revalidate the upgrade session/current login policy before commands and delivery. */
 	isAuthorized?: (context?: import('./auth/web-login-policy').WebLoginPolicyContext) => boolean;
 	/**
@@ -363,7 +387,21 @@ export type ExecuteCommandCallback = (
 	/** Throw on a missing/malformed receipt instead of reporting a rejection. */
 	requireDeliveryReceipt?: boolean,
 	pianolaDispatchId?: string
-) => Promise<boolean>;
+) => Promise<ExecuteCommandOutcome>;
+
+/**
+ * An accepted command that did not start: a hosted agent's Federation host put it in its
+ * execution queue behind the running turn (a host has no `--force`). Truthy, so a caller that only
+ * asks "accepted?" reads it as accepted; `send_command` answers it as `queued` with the item.
+ */
+export interface ExecuteCommandQueued {
+	queued: true;
+	itemId: string;
+	queuePosition: number;
+}
+
+/** `true`: accepted; `false`: refused; an object: accepted and queued (`ExecuteCommandQueued`). */
+export type ExecuteCommandOutcome = boolean | ExecuteCommandQueued;
 
 /**
  * Stop a running turn through the renderer's `interruptTurn()`: the whole agent,
@@ -401,7 +439,9 @@ export type SelectSessionCallback = (
 export type SelectTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export type NewTabCallback = (
 	sessionId: string,
-	background?: boolean
+	background?: boolean,
+	/** The id the tab takes when no tab of the agent has it (a Federation client's, R15). */
+	tabId?: string
 ) => Promise<{ tabId: string } | null>;
 export type ReopenTabCallback = (
 	sessionId: string,
@@ -469,6 +509,15 @@ export type MessagePinCommandCallback = (
 export type AutoRunSteeringCommandCallback = (
 	request: SteeringCommandRequest
 ) => Promise<SteeringCommandResult>;
+
+/**
+ * One Git Diff review verb, forwarded to the renderer - which holds the pending
+ * comments the viewer draws - and answered with whatever it did. Resolves
+ * rather than rejects on a miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type DiffReviewCommandCallback = (
+	request: DiffReviewCommandRequest
+) => Promise<DiffReviewCommandResult>;
 /**
  * `maestro-cli window` - list windows, or move an agent or a whole group
  * between them. Answered by the primary window through the same WindowContext
@@ -546,7 +595,7 @@ export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
  * of streaming it into a chat bubble, because the caller here is an agent
  * waiting on a tool result rather than a human reading a transcript.
  */
-export type ConsultAgentParams = {
+export type ConsultAgentParams = RemoteAskerContext & {
 	targetSessionId: string;
 	question: string;
 	/** The calling agent, when it named itself. Attribution + continuity. */
@@ -555,6 +604,13 @@ export type ConsultAgentParams = {
 	fromTabId?: string;
 	/** Forward the caller's transcript as context (off by default). */
 	withContext?: boolean;
+	/**
+	 * Ask a `/btw` side question instead of consulting: the answer comes from a
+	 * throwaway fork of one of the target's tabs, which is never written to.
+	 */
+	sideQuestion?: boolean;
+	/** The target's tab a side question forks. Defaults to its active tab. */
+	targetTabId?: string;
 	/** How long the caller is willing to wait, already clamped by the CLI. */
 	timeoutMs: number;
 };
@@ -603,6 +659,11 @@ export type EnqueueCommandResult = {
 	queueLength?: number;
 	/** Id of the queued item, for later tracking or removal. */
 	itemId?: string;
+	/**
+	 * True when the text was one of Maestro's own commands (`/history`, `/skills`) and the renderer
+	 * ran it for the tab, as the composer does, instead of starting a turn.
+	 */
+	ran?: boolean;
 	error?: string;
 	/**
 	 * Machine-readable cause of a failure, so callers can react to a specific
@@ -628,25 +689,19 @@ export type EnqueueCommandCallback = (
 	 * queued item is marked so it can never be steered into a running turn.
 	 */
 	dispatchCallback?: boolean,
-	control?: PianolaQueueControl
+	control?: PianolaQueueControl,
+	/**
+	 * The sender's own tab chips for this one message (`TurnInput.overrides`, Federation): the
+	 * queued item runs under them. Never written to the tab.
+	 */
+	turnOverrides?: TurnOverrides,
+	/** A Federation client's agent-only text for this turn (`TurnInput.agentContext`, `agentNotes`). */
+	agentText?: TurnAgentText,
+	/** The id a Federation client named for the message's entry (`TurnInput.entryId`). */
+	entryId?: string
 ) => Promise<EnqueueCommandResult>;
-/**
- * A single queued item, mirrored from the renderer's executionQueue for CLI
- * inspection (`maestro-cli queue list`). Tracks the renderer QueuedItem shape.
- */
-export interface QueuedItemSnapshot {
-	id: string;
-	timestamp: number;
-	tabId: string;
-	type: 'message' | 'command';
-	text?: string;
-	command?: string;
-	commandArgs?: string;
-	tabName?: string;
-	paused?: boolean;
-	/** The `@mention` routing picked for this item (strip or `dispatch --routing`). */
-	mentionRouting?: MentionRouting;
-}
+/** A single queued item, mirrored from the renderer's executionQueue (`src/shared/queueSnapshot.ts`). */
+export type { QueuedItemSnapshot };
 /**
  * Per-session queue snapshot returned by the list_queue round-trip. Carries the
  * session state alongside the queued items so `maestro-cli queue list` can show
@@ -692,6 +747,27 @@ export type MergeQueueItemCallback = (
 	sessionId: string,
 	itemId: string
 ) => Promise<MergeQueueItemResult>;
+/** `maestro-cli queue edit`: whether a waiting item had that id to rewrite. */
+export type EditQueueItemResult = { success: boolean; found: boolean; error?: string };
+export type EditQueueItemCallback = (
+	sessionId: string,
+	itemId: string,
+	edit: QueuedTurnEdit
+) => Promise<EditQueueItemResult>;
+/** `maestro-cli queue move`: whether a waiting item had that id and the place was in range. */
+export type MoveQueueItemResult = { success: boolean; moved: boolean; error?: string };
+export type MoveQueueItemCallback = (
+	sessionId: string,
+	itemId: string,
+	toIndex: number,
+	tabId?: string
+) => Promise<MoveQueueItemResult>;
+/** `maestro-cli queue send-now`: whether the waiting item was dispatched out of turn. */
+export type SendQueueItemNowResult = { success: boolean; sent: boolean; error?: string };
+export type SendQueueItemNowCallback = (
+	sessionId: string,
+	itemId: string
+) => Promise<SendQueueItemNowResult>;
 /** `maestro-cli queue steer`: the renderer's own steer outcome, plus transport failure. */
 export type SteerQueueItemResult = { success: boolean; result?: QueueSteerResult; error?: string };
 export type SteerQueueItemCallback = (
@@ -724,6 +800,81 @@ export type OpenBrowserTabCallback = (
  * callers only need the tab id returned by `OpenBrowserTabCallback`.
  */
 export type CloseBrowserTabCallback = (tabId: string) => Promise<boolean>;
+
+/**
+ * Design Mode by selector or by region (`maestro-cli browser-pick`). Names an
+ * element (`selector`) or a region in guest CSS px (`rect`), exactly one.
+ * `tab` is either the tab id `open-browser` returned or the tab's Coworking id
+ * (`browser:N`), resolved against `sessionId`. The pick runs through the
+ * Coworking browser resolver, so it reaches the same renderer code a click or a
+ * drag in Design Mode does.
+ */
+export type PickBrowserElementRequest = BrowserPickTarget & {
+	sessionId: string;
+	tab: string;
+	note?: string;
+	background?: boolean;
+	/** True queues the pick as its own message instead of staging a chip. */
+	queue?: boolean;
+};
+export interface PickBrowserElementResult {
+	success: boolean;
+	error?: string;
+	/** Renderer browser tab id the element was picked from. */
+	tabId?: string;
+	/** Coworking id of that tab, when Coworking knows it and the tab is visible to agents. */
+	browserId?: string;
+	/** The block the chip (or the queued message) carries, note included. */
+	text?: string;
+	/** Whether the pick carries a cropped screenshot. */
+	screenshot: boolean;
+	/** The AI tab whose composer holds the chip, or whose queue holds the message. */
+	aiTabId?: string;
+	/** The staged chip's id, for `browser-picks --remove`. Not set when queued. */
+	pickId?: string;
+	/** The queued message's id, for `queue remove`. Only set when queued. */
+	queueItemId?: string;
+}
+export type PickBrowserElementCallback = (
+	request: PickBrowserElementRequest
+) => Promise<PickBrowserElementResult>;
+/**
+ * Set or read a browser tab's viewport preset (`maestro-cli browser-viewport`).
+ * `tab` is either the tab id `open-browser` returned or the tab's Coworking id
+ * (`browser:N`), resolved against `sessionId`, as `PickBrowserElementRequest`'s
+ * is. With `preset` the tab is set to it; without, it is only read. Runs through
+ * the Coworking browser resolver as the host-only `viewport` op, so it reaches
+ * the same store write the toolbar's viewport control ends in.
+ */
+export interface BrowserViewportRequest {
+	sessionId: string;
+	tab: string;
+	preset?: BrowserViewportPreset;
+}
+export interface BrowserViewportResult {
+	success: boolean;
+	error?: string;
+	/** Renderer browser tab id. */
+	tabId?: string;
+	/** Coworking id of that tab, when Coworking knows it and the tab is visible to agents. */
+	browserId?: string;
+	/** The preset the tab shows after the call. */
+	preset?: BrowserViewportPreset;
+	/** The preset it showed before the call (the same, when nothing changed). */
+	previous?: BrowserViewportPreset;
+}
+export type BrowserViewportCallback = (
+	request: BrowserViewportRequest
+) => Promise<BrowserViewportResult>;
+/**
+ * One Design Mode chip verb (`maestro-cli browser-picks`), forwarded to the
+ * renderer that holds the chips staged in the agent's composer and answered
+ * with what it found or removed. Resolves rather than rejects on a miss, for
+ * the same reason `SnoozeCommandCallback` does.
+ */
+export type DesignPickCommandCallback = (
+	request: DesignPickCommandRequest
+) => Promise<DesignPickCommandResult>;
 export interface OpenTerminalTabConfig {
 	/** Explicit signal that the agent is waiting for a person at this terminal. */
 	inputRequired?: boolean;
@@ -1500,6 +1651,7 @@ export type StartGroupChatCallback = (
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
 export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
+export type SetGroupChatUnreadCallback = (chatId: string, unread: boolean) => Promise<boolean>;
 export interface AddGroupChatParticipantResult {
 	success: boolean;
 	/** The participant's name in the chat. */
@@ -1606,26 +1758,6 @@ export type TriggerCueSubscriptionCallback = (
 // Usage Dashboard Types
 // =============================================================================
 
-/** Usage dashboard aggregate data for web interface */
-export interface UsageDashboardData {
-	totalTokensIn: number;
-	totalTokensOut: number;
-	totalCost: number;
-	sessionBreakdown: Array<{
-		sessionId: string;
-		sessionName: string;
-		tokensIn: number;
-		tokensOut: number;
-		cost: number;
-	}>;
-	dailyUsage: Array<{
-		date: string;
-		tokensIn: number;
-		tokensOut: number;
-		cost: number;
-	}>;
-}
-
 /** Achievement data for web interface */
 export interface AchievementData {
 	id: string;
@@ -1641,9 +1773,6 @@ export interface AchievementData {
 // Usage Dashboard Callback Types
 // =============================================================================
 
-export type GetUsageDashboardCallback = (
-	timeRange: 'day' | 'week' | 'month' | 'all'
-) => Promise<UsageDashboardData>;
 export type GetAchievementsCallback = () => Promise<AchievementData[]>;
 
 // =============================================================================

@@ -1,17 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { AgentModePill } from '../SessionList/AgentModePill';
 // Menu + Command are rc-only: the narrow-viewport sidebar opener and the Quick
 // Actions button, neither of which exists on main's header.
-import {
-	Wand2,
-	Columns,
-	GitBranch,
-	List,
-	Server,
-	Bookmark,
-	Brain,
-	Menu,
-	Command,
-} from 'lucide-react';
+import { Wand2, Columns, GitBranch, List, Bookmark, Brain, Menu, Command } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { GitStatusWidget } from '../GitStatusWidget';
@@ -48,6 +39,10 @@ import {
 	formatConversationDuration,
 } from '../../../shared/tabConversationStats';
 import { useProviderProfiles } from '../../hooks/stats/useProviderProfiles';
+import {
+	isImplicitDefaultProfile,
+	profileAccountShortLabel,
+} from '../../../shared/providerProfiles';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 /** Snapshot an element's viewport rect as plain numbers for the timeline anchor. */
@@ -87,7 +82,6 @@ export interface MainPanelHeaderProps {
 		behind: number;
 		uncommittedChanges: number;
 	} | null;
-	sshRemoteName: string | null;
 	activeTabContextWindow: number;
 	activeTabContextTokens: number;
 	activeTabContextUsage: number;
@@ -113,7 +107,6 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	activeTab,
 	theme,
 	gitInfo,
-	sshRemoteName,
 	activeTabContextWindow,
 	activeTabContextTokens,
 	activeTabContextUsage,
@@ -168,12 +161,21 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	// and while $HOME is still resolving.
 	const profileSessions = useMemo(() => [activeSession], [activeSession]);
 	const activeProfile = useProviderProfiles(profileSessions).profiles[0];
-	// Named only for a provider that splits: a config-dir account, a billed
-	// credential, or either one on a remote host.
+	// Named only for a provider that splits: a config-dir account or a billed
+	// credential. The account alone, never `@ host`: the same account reads the
+	// same in every mode, and the mode pill says where the agent runs.
 	const activeProfileLabel =
 		activeProfile && (activeProfile.accountKey || activeProfile.credential)
-			? activeProfile.shortLabel
+			? profileAccountShortLabel(activeSession.toolType, activeProfile)
 			: null;
+	// The header fallback (shown while the gauge has no window) names only an
+	// account that tells several apart; the implicit default ("Codex default"),
+	// here or on a remote, is the one every single-account user is on.
+	const showProfileFallback =
+		!!activeProfile &&
+		!!activeSession &&
+		activeProfileLabel !== null &&
+		!isImplicitDefaultProfile(activeSession.toolType, activeProfile);
 
 	const headerRef = useRef<HTMLDivElement>(null);
 	// Anchors the git menu, and is the hover target that opens it. Wrapping both
@@ -228,8 +230,8 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	const gitMenu = useHoverTooltip(GIT_MENU_CLOSE_DELAY_MS, GIT_MENU_OPEN_DELAY_MS);
 	const gitMenuOpen = activeSession.isGitRepo && gitMenu.isOpen;
 
-	// Hover/focus handlers, suppressed entirely for non-git agents so the LOCAL
-	// badge has no hidden behavior.
+	// Hover/focus handlers, suppressed entirely for non-git agents, which draw no
+	// branch pill, so the empty wrapper has no hidden behavior.
 	const gitPillHoverHandlers = activeSession.isGitRepo
 		? {
 				onMouseEnter: gitMenu.triggerHandlers.onMouseEnter,
@@ -395,6 +397,9 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							data-testid="bookmark-icon"
 						/>
 					)}
+					{/* The mode pill, the same one the Left Bar row draws: `LOCAL`, `REMOTE`, or `HOSTED`.
+					    It is the only mark that differs between the three; hover it for what that means. */}
+					<AgentModePill theme={theme} session={activeSession} />
 					{/* min-w-0 (not shrink-0) so the pills inside can give up width when the
 					    header runs out of room. A hard cap truncates a name that had space to
 					    spare; letting flex do the clamping means the text is only ever cut when
@@ -404,71 +409,21 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 						className="header-git-pill relative min-w-0 flex items-center gap-2"
 						{...gitPillHoverHandlers}
 					>
-						{/* SSH Host Pill - show SSH remote name when running remotely (replaces the
-						    GIT/LOCAL badge). For git repos the branch name is rendered in a separate
-						    badge just after this pill (see below) so SSH/container agents still surface
-						    the branch the same way local agents do. */}
-						{activeSession.sessionSshRemoteConfig?.enabled && sshRemoteName ? (
+						{/* The branch pill, drawn the same for a git repo in every mode. A non-git agent has
+						    none: where it runs is the mode pill's job, not this one's. */}
+						{activeSession.isGitRepo && (
 							<button
-								className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-purple-500/30 text-purple-500 bg-purple-500/10 min-w-0 outline-none ${
-									activeSession.isGitRepo ? 'cursor-pointer hover:bg-purple-500/20' : ''
-								}`}
-								title={`SSH Remote: ${sshRemoteName}${activeSession.isGitRepo && gitInfo?.branch ? ` (${gitInfo.branch})` : ''}`}
+								className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border min-w-0 cursor-pointer outline-none border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20"
 								onClick={handleGitPillClick}
-							>
-								<Server className="w-3 h-3 shrink-0" />
-								<span className="truncate uppercase">{sshRemoteName}</span>
-							</button>
-						) : (
-							/* The LOCAL badge carries the `header-local-badge` hook so the phone
-							   layout can retire it. It is inert for non-git agents (no menu, no
-							   hover handlers), so on a 390px header it spends width to say
-							   nothing; the git pill keeps its icon because that one opens a menu. */
-							<button
-								className={`flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border min-w-0 cursor-pointer outline-none ${
-									activeSession.isGitRepo
-										? 'border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20'
-										: 'header-local-badge border-blue-500/30 text-blue-500 bg-blue-500/10'
-								}`}
-								onClick={handleGitPillClick}
-								title={activeSession.isGitRepo && gitInfo?.branch ? gitInfo.branch : undefined}
+								title={gitInfo?.branch || undefined}
 								aria-haspopup="menu"
 								aria-expanded={gitMenuOpen}
 							>
-								{activeSession.isGitRepo ? (
-									<>
-										<GitBranch className="w-3 h-3 shrink-0" />
-										{/* Hide branch name text at narrow widths via CSS container query */}
-										<span className="header-git-branch-text truncate">
-											{gitInfo?.branch || 'GIT'}
-										</span>
-									</>
-								) : (
-									'LOCAL'
-								)}
+								<GitBranch className="w-3 h-3 shrink-0" />
+								{/* Hide branch name text at narrow widths via CSS container query */}
+								<span className="header-git-branch-text truncate">{gitInfo?.branch || 'GIT'}</span>
 							</button>
 						)}
-						{/* Branch badge for SSH/container git agents. The SSH host pill above
-						    replaces the GIT/branch badge, so without this remote agents lose the
-						    branch name that local agents show. Render it alongside the host pill,
-						    styled like the local git badge, reusing the same git-log click. */}
-						{activeSession.sessionSshRemoteConfig?.enabled &&
-							sshRemoteName &&
-							activeSession.isGitRepo && (
-								<button
-									className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border border-orange-500/30 text-orange-500 bg-orange-500/10 hover:bg-orange-500/20 min-w-0 cursor-pointer outline-none"
-									title={gitInfo?.branch || undefined}
-									onClick={handleGitPillClick}
-									aria-haspopup="menu"
-									aria-expanded={gitMenuOpen}
-								>
-									<GitBranch className="w-3 h-3 shrink-0" />
-									{/* Hide branch name text at narrow widths via CSS container query */}
-									<span className="header-git-branch-text truncate">
-										{gitInfo?.branch || 'GIT'}
-									</span>
-								</button>
-							)}
 						{gitPillMenu}
 					</div>
 				</div>
@@ -575,7 +530,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 				{activeSession.inputMode === 'ai' &&
 					!activeFileTabId &&
 					activeProfile &&
-					activeProfileLabel &&
+					showProfileFallback &&
 					!(activeTabContextWindow > 0) && (
 						<span
 							className="text-xs font-mono truncate min-w-0"

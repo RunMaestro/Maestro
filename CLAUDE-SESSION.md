@@ -4,6 +4,8 @@ Session interface (agent data model) and code conventions for the Maestro codeba
 
 > **Terminology:** In code, the `Session` interface represents what users see as an **agent** in the Left Bar. The name is historical. Within each agent, "provider sessions" refer to individual conversation contexts (tabs). See [[CLAUDE.md#terminology-agent-vs-session]] for the full distinction.
 
+> **Federation:** a field a person sets on an agent or a tab must also get a Federation decision (shared on the host, personal per conductor, or machine-only), or a hosted agent silently runs without it. Follow the checklist in [FEDERATION.md](docs/agent-guides/FEDERATION.md) before adding or changing one; `AGENT_PATCH_FEDERATION` will not compile until the decision is made for anything the host can take.
+
 ## Session Interface (Agent Data Model)
 
 Key fields on the Session object (abbreviated - see `src/renderer/types/index.ts` for full definition):
@@ -144,6 +146,7 @@ interface FilePreviewTab {
 	searchQuery: string; // Preserved search query
 	editMode: boolean; // Whether tab was in edit mode
 	editContent: string | undefined; // Unsaved edit content (undefined = none pending)
+	editContentPath?: string; // The file editContent was typed for; Save refuses any other (see CANONICAL-UTILITIES)
 	createdAt: number; // Timestamp for ordering
 	lastModified: number; // File modification time
 	sshRemoteId?: string; // SSH remote ID for remote files

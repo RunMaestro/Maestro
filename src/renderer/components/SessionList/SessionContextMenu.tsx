@@ -27,6 +27,7 @@ import {
 	Check,
 	PackageOpen,
 	ServerCog,
+	Undo2,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -41,12 +42,9 @@ import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
-import {
-	useAgentFederationStatus,
-	useLiftedMirrorTarget,
-} from '../../hooks/federation/useAgentLift';
+import { useAgentFederationStatus } from '../../hooks/federation/useAgentLift';
 import { canMoveToHost } from '../../utils/peerMirrorView';
-import { openLiftedAgent, requestMoveToHost } from '../../services/agentLift';
+import { requestMoveBackFromHost, requestMoveToHost } from '../../services/agentLift';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -236,9 +234,11 @@ export function SessionContextMenu({
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	// Federation (FED-SSH-06): Move to Host for an SSH agent whose remote takes part (it sets a host
-	// up first when there is none); a lifted agent offers the jump to where it moved instead.
+	// up first when there is none), and its reverse, Move Back from Host, for a hosted agent. Those
+	// are the only Federation rows: the host connection (reconnect) lives in Quick Actions, and its
+	// state rides the mode pill's color and hover card.
 	const federationStatus = useAgentFederationStatus(session);
-	const liftedTarget = useLiftedMirrorTarget(session.liftedTo);
+	const hosted = federationStatus.kind === 'moved' ? federationStatus : undefined;
 
 	// Inline window-rename state. While a row is being renamed, the Move to Window
 	// flyout must NOT auto-close on mouse-leave (it would unmount the input
@@ -409,7 +409,7 @@ export function SessionContextMenu({
 				</button>
 			)}
 
-			{canMoveToHost(federationStatus) && (
+			{canMoveToHost(federationStatus) && !session.liftedTo && (
 				<button
 					type="button"
 					onClick={() => {
@@ -430,19 +430,20 @@ export function SessionContextMenu({
 				</button>
 			)}
 
-			{liftedTarget && (
+			{hosted && (
 				<button
 					type="button"
 					onClick={() => {
-						openLiftedAgent(session);
+						requestMoveBackFromHost(session.id, session.name, hosted.peer?.name ?? hosted.peerId);
 						onDismiss();
 					}}
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
-					title={`This agent moved to ${liftedTarget.ref}`}
+					title={`Make it an SSH agent again: its conversations on ${hosted.peer?.name ?? hosted.peerId} come back here, and automatic moves leave it alone`}
+					data-testid="session-menu-move-back-from-host"
 				>
-					<ServerCog className="w-3.5 h-3.5" />
-					Open on Host ({liftedTarget.ref})
+					<Undo2 className="w-3.5 h-3.5" />
+					Move Back from Host ({hosted.peer?.name ?? hosted.peerId})...
 				</button>
 			)}
 

@@ -201,6 +201,26 @@ describe('runtime server', () => {
 		expect(value(await runtime.tabs.list('a1')).map((candidate) => candidate.id)).toEqual(['t1']);
 	});
 
+	it('creates a tab under the id the client asks for, and makes no second tab when that id is taken (R15, R25)', async () => {
+		value(await client.connection.connect());
+		const asked = value(await client.tabs.create('a1', { tabId: 'drawn-here-1' }));
+		expect(asked.tabId).toBe('drawn-here-1');
+		expect(value(await runtime.tabs.list('a1')).map((tab) => tab.id)).toContain('drawn-here-1');
+		const count = value(await runtime.tabs.list('a1')).length;
+		// The same request again (its answer was lost): the tab it made, never a second one.
+		const again = value(await client.tabs.create('a1', { tabId: 'drawn-here-1' }));
+		expect(again.tabId).toBe('drawn-here-1');
+		const taken = value(await client.tabs.create('a1', { tabId: 't1' }));
+		expect(taken.tabId).toBe('t1');
+		const listed = value(await runtime.tabs.list('a1'));
+		expect(listed).toHaveLength(count);
+		expect(listed.filter((tab) => tab.id === 't1')).toHaveLength(1);
+		expect(listed.filter((tab) => tab.id === 'drawn-here-1')).toHaveLength(1);
+		// Not an id: the host answers its own.
+		const bad = value(await client.tabs.create('a1', { tabId: 'no spaces/allowed' }));
+		expect(bad.tabId).not.toBe('no spaces/allowed');
+	});
+
 	it('answers settings and providers', async () => {
 		fs.writeFileSync(
 			path.join(dir, 'maestro-settings.json'),
@@ -229,6 +249,31 @@ describe('runtime server', () => {
 			() => seen.some((event) => event.type === 'agent.updated' && event.agent.name === 'Renamed'),
 			'the rename'
 		);
+	});
+
+	it('tells an attached client to read a tab again when /skills writes to it outside a turn (M13)', async () => {
+		value(await client.connection.connect());
+		const seen: MaestroEvent[] = [];
+		client.events.subscribe((event) => seen.push(event), { types: ['turn'] });
+
+		const receipt = value(await client.turns.send('a1', 't1', { text: '/skills' }));
+		expect(receipt).toEqual({ status: 'ran' });
+		// The idle tab's new rows arrive as a `gap` at once, not with the tab's next turn.
+		await waitFor(
+			() =>
+				seen.some(
+					(event) =>
+						event.type === 'turn' &&
+						event.agentId === 'a1' &&
+						event.tabId === 't1' &&
+						event.event.kind === 'gap'
+				),
+			'the gap for the /skills rows'
+		);
+		await waitFor(() => seen.filter((event) => event.type === 'turn').length >= 2, 'both rows');
+		const texts = value(await client.tabs.transcript('a1', 't1')).map((entry) => entry.text);
+		expect(texts[1]).toBe('/skills');
+		expect(texts[2]).toContain('Skills');
 	});
 
 	it('answers group chat and consult requests with a reason, not a crash', async () => {

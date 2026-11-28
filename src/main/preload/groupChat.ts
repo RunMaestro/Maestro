@@ -271,10 +271,20 @@ export function createGroupChatApi() {
 		},
 
 		onAutoRunTriggered: (
-			callback: (groupChatId: string, participantName: string, filename?: string) => void
+			callback: (
+				groupChatId: string,
+				participantName: string,
+				filename?: string,
+				agentId?: string
+			) => void
 		) => {
-			const handler = (_: any, groupChatId: string, participantName: string, filename?: string) =>
-				callback(groupChatId, participantName, filename);
+			const handler = (
+				_: any,
+				groupChatId: string,
+				participantName: string,
+				filename?: string,
+				agentId?: string
+			) => callback(groupChatId, participantName, filename, agentId);
 			ipcRenderer.on('groupChat:autoRunTriggered', handler);
 			return () => ipcRenderer.removeListener('groupChat:autoRunTriggered', handler);
 		},

@@ -13,6 +13,7 @@
 
 import type { ToolType, AgentError, CallUsage } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
+import type { CallTimingSignal } from '../../tokenSpeed';
 import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
 import {
 	claudeTurnCost,
@@ -21,6 +22,7 @@ import {
 	rememberedClaudeSessionCost,
 	type ClaudeCostState,
 } from '../../claudeCostTracker';
+import { formatFailureScreen } from '../../failureScreen';
 import {
 	getErrorPatterns,
 	isClaudeLimitNotice,
@@ -169,7 +171,7 @@ export const STOP_HOOK_ANSWER_SEPARATOR = '\n\n---\n\n';
  */
 const MAESTRO_P_FAILURE_TEXT: Record<string, string> = {
 	// 1
-	tui_exited: 'Claude Code quit before the turn finished. Nothing it printed explains why.',
+	tui_exited: 'Claude Code quit before the turn finished.',
 	// 3
 	timeout: 'Claude Code stopped producing output for too long, so Maestro ended the turn.',
 	// 4
@@ -184,7 +186,25 @@ const MAESTRO_P_FAILURE_TEXT: Record<string, string> = {
 	// 7
 	workspace_untrusted:
 		'Claude Code has not been trusted to work in this folder. Open claude in it once and choose "Yes, I trust this folder".',
+	// 10
+	add_dir_untrusted:
+		"Claude Code asked to add a directory this agent does not grant, and stopped. Add the directory to the agent, or remove it from Claude Code's additionalDirectories settings.",
+	// 11
+	startup_dialog_blocked:
+		'Claude Code showed a startup prompt Maestro does not know how to answer, and its highlighted option would quit, so nothing was sent. Run claude once in this folder with the same settings and answer it.',
 };
+
+/**
+ * The screen maestro-p left behind (`last_screen` on its result), cleaned for
+ * the error's `failureScreen` field. Kept off the message: the message is what
+ * every inline surface shows, and classification runs on it before this.
+ */
+function lastScreenOf(obj: Record<string, unknown>): { failureScreen?: string } {
+	const screen = formatFailureScreen(
+		typeof obj.last_screen === 'string' ? obj.last_screen : undefined
+	);
+	return screen ? { failureScreen: screen } : {};
+}
 
 /**
  * maestro-p failure codes that a plain resend fixes: the turn stalled on the
@@ -836,6 +856,40 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
+	 * Per-call timing for token speed off the live stream (used when the agent
+	 * runs on an SSH host, whose transcript Maestro cannot read; qwen3-coder
+	 * inherits this). A call starts at session init or at the latest tool result
+	 * handed back (`user`), and ends at the `assistant` message carrying that
+	 * call's usage. stream-json repeats an assistant message per content block,
+	 * so the message id keys the end. Subagent messages are skipped: a Task
+	 * subagent's calls run alongside the main transcript's and would interleave
+	 * the clock.
+	 */
+	extractCallTiming(raw: unknown): CallTimingSignal | null {
+		if (!raw || typeof raw !== 'object') return null;
+		const msg = raw as ClaudeRawMessage;
+		if (normalizeParentToolUseId(msg)) return null;
+		if (msg.type === 'user') return { kind: 'start' };
+		if (msg.type === 'system' && (msg.subtype === 'init' || msg.subtype === 'session_start')) {
+			return { kind: 'start' };
+		}
+		if (msg.type !== 'assistant') return null;
+		const usage = msg.message?.usage;
+		const model = msg.message?.model;
+		if (!usage || model === '<synthetic>') return null;
+		return {
+			kind: 'end',
+			key: msg.message?.id || undefined,
+			model: model || undefined,
+			inputTokens:
+				(usage.input_tokens || 0) +
+				(usage.cache_creation_input_tokens || 0) +
+				(usage.cache_read_input_tokens || 0),
+			outputTokens: usage.output_tokens || 0,
+		};
+	}
+
+	/**
 	 * Extract usage statistics from an event
 	 */
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {
@@ -954,6 +1008,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			return {
 				type: match?.type ?? (transient ? 'network_error' : 'unknown'),
 				message: match?.message ?? failureText,
+				...lastScreenOf(obj),
 				recoverable: match?.recoverable ?? true,
 				agentId: this.agentId,
 				timestamp: Date.now(),

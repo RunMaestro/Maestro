@@ -6,6 +6,7 @@ import {
 	getLiveRelayConversationTurns,
 } from '../../plugins/relay-conversations';
 import { canonicalJson } from '../../../shared/canonicalJson';
+import { queuedItemRunsReadOnly } from '../../../shared/queuedTurnSettings';
 import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { getPrompt } from '../../prompt-manager';
@@ -40,9 +41,16 @@ import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
 import { handleProcessSpawn, cancelPendingDesktopSpawns } from './process/handle-spawn';
 import type { SpawnProcessConfig } from './process/spawn-types';
 import {
+	HOSTED_AGENTS_SETTING,
 	liftedOwnerOfProcess,
 	liftedSendRefusal,
 } from '../../../shared/maestro-lib/agents/lift-pointer';
+import { statelessHelperOfProcess } from '../../../shared/maestro-lib/agents/hosted-launch';
+import {
+	TRANSCRIPT_CHANGED_CHANNEL,
+	transcriptChangedArgs,
+} from '../../../shared/maestro-lib/client/bridge-frames';
+import { installHostedLaunchGuard } from '../../utils/hosted-launch-guard';
 import {
 	initPermissionRelay,
 	resolvePermissionResponse,
@@ -194,6 +202,14 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
+	// One observer per actual SSH terminal, rather than per attach request.
+	const sshTerminalExits = new Map<
+		string,
+		{
+			process: NonNullable<ReturnType<ProcessManager['get']>>;
+			dispose: () => void;
+		}
+	>();
 	ipcMain.handle('process:getHeadlessActivity', () => getHeadlessAgentActivity());
 	const {
 		getProcessManager,
@@ -203,6 +219,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		getMainWindow,
 		safeSend,
 	} = deps;
+
+	// The launches that skip process:spawn (group chat, consults, Cue, groomed one-shots) check a
+	// hosted agent against the same records this handler's backstop reads.
+	installHostedLaunchGuard({
+		sessions: () => deps.sessionsStore.get('sessions', []),
+		hostedEnabled: () => settingsStore.get(HOSTED_AGENTS_SETTING, false) === true,
+	});
 
 	// Wire the Claude Code permission relay: surface requests to the renderer
 	// and clean up per-spawn bindings when a process exits.
@@ -263,10 +286,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
 	ipcMain.handle('process:spawn', async (event, config: SpawnProcessConfig) => {
 		// A lifted agent runs on its Federation host now. Its local copy keeps every tab, but no turn
-		// of it may start here: it would resume the provider session the host owns. Shell tabs stay.
+		// of it may start here: it would resume the provider session the host owns. Shell tabs stay,
+		// and so does a named stateless helper (`HOSTED_STATELESS_HELPERS`): it writes nothing into
+		// the agent, so it runs over the record's SSH remote exactly as it does for an SSH agent.
 		if (config.toolType !== 'terminal') {
 			const lifted = liftedOwnerOfProcess(deps.sessionsStore.get('sessions', []), config.sessionId);
-			const refusal = lifted && liftedSendRefusal(lifted);
+			const refusal =
+				lifted &&
+				!statelessHelperOfProcess(config.sessionId, lifted.id) &&
+				liftedSendRefusal(lifted, settingsStore.get(HOSTED_AGENTS_SETTING, false) === true);
 			if (refusal) throw new Error(refusal);
 		}
 		// A web/CLI caller cannot assert the native renderer's submitted log boundary.
@@ -314,10 +342,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			const item = agent.executionQueue?.find(
 				(i: { id: string }) => i.id === config.pianolaQueueItemId
 			);
-			const readOnly =
-				item?.readOnlyMode === true ||
-				tab.readOnlyMode === true ||
-				tab.permissionMode === 'readonly';
+			const readOnly = queuedItemRunsReadOnly(item, tab);
 			let expected = item?.text?.trim() ? item.text : getPrompt('image-only-default');
 			if (item?.crossAgentMention) {
 				if (!hostQueueAgent || hostQueueAgent.id !== agent.toolType)
@@ -516,6 +541,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				if (mainWindow && isWebContentsAvailable(mainWindow)) {
 					mainWindow.webContents.send('process:user-input', payload);
 				}
+			}
+		)
+	);
+
+	// A tab's transcript grew outside a turn (`/skills`, `/history` run for a Federation client):
+	// tell this host's clients to read the tab again, as a headless host does.
+	ipcMain.handle(
+		'process:broadcast-transcript-changed',
+		withIpcErrorLogging(
+			handlerOpts('broadcast-transcript-changed'),
+			async (sessionId: unknown, tabId: unknown) => {
+				if (typeof sessionId !== 'string' || typeof tabId !== 'string') return;
+				if (!sessionId || !tabId) return;
+				safeSend?.(TRANSCRIPT_CHANGED_CHANNEL, ...transcriptChangedArgs(sessionId, tabId));
 			}
 		)
 	);
@@ -798,27 +837,60 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						// tracker, so a host that dropped raises the same dialog as an agent.
 						const terminalSessionId = config.sessionId;
 						const remoteId = sshResult.config.id;
-						const onTerminalExit = (exitedId: string, exitCode: number) => {
-							if (exitedId !== terminalSessionId) return;
-							processManager.off('exit', onTerminalExit);
-							noteSshExit(remoteId, exitCode);
-						};
-						processManager.on('exit', onTerminalExit);
-						return settleTerminalPid(
-							processManager,
-							config.sessionId,
-							processManager.spawn({
+						let dispose: (() => void) | undefined;
+						let settledSuccessfully = false;
+						try {
+							const command = await resolveSshPath();
+							const result = processManager.spawn({
 								sessionId: config.sessionId,
 								reuseTerminal: true,
 								toolType: 'terminal',
 								cwd: os.homedir(),
-								command: await resolveSshPath(),
+								command,
 								args: sshArgs,
 								shellEnvVars: mergedEnvVars,
 								cols: config.cols || 80,
 								rows: config.rows || 24,
-							})
-						);
+							});
+							const ownedProcess = processManager.get(terminalSessionId);
+							const previous = sshTerminalExits.get(terminalSessionId);
+							if (previous && previous.process !== ownedProcess) previous.dispose();
+							// A reused process keeps its original host's observer. A new
+							// process must actually exist before we can observe its exit.
+							if (result.success && !result.attached && ownedProcess) {
+								let active = true;
+								const release = () => {
+									if (!active) return;
+									active = false;
+									processManager.off('exit', onTerminalExit);
+									if (sshTerminalExits.get(terminalSessionId)?.dispose === release) {
+										sshTerminalExits.delete(terminalSessionId);
+									}
+								};
+								const onTerminalExit = (exitedId: string, exitCode: number) => {
+									if (exitedId !== terminalSessionId || !active) return;
+									const current = processManager.get(terminalSessionId);
+									release();
+									// ExitHandler removes an exited process before emitting.
+									// A successor with this ID is not the captured terminal.
+									if (!current || current === ownedProcess) noteSshExit(remoteId, exitCode);
+								};
+								dispose = release;
+								sshTerminalExits.set(terminalSessionId, {
+									process: ownedProcess,
+									dispose: release,
+								});
+								processManager.on('exit', onTerminalExit);
+							}
+							const settled = await settleTerminalPid(processManager, terminalSessionId, result);
+							settledSuccessfully = settled.success;
+							return settled;
+						} finally {
+							if (!settledSuccessfully) dispose?.();
+							const current = sshTerminalExits.get(terminalSessionId);
+							if (current && current.process !== processManager.get(terminalSessionId))
+								current.dispose();
+						}
 					}
 					// SSH is enabled but the remote config was not found (deleted or disabled).
 					// Fail explicitly rather than silently falling through to a local terminal,

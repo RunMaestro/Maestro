@@ -225,10 +225,18 @@ const INVALIDATION_EVENTS = new Set([
 ]);
 const MAX_INVALIDATION_ROWS = 15;
 
-/** `fn @ file:line:col` for the frame that scheduled an invalidation. */
+/**
+ * `fn @ file:line:col` for the frame that scheduled an invalidation. An
+ * animation tick has no JS stack, so for those the animated NODE is the origin:
+ * "(no JS stack)" alone hid which looping animation kept an idle renderer busy.
+ */
 function invalidationOrigin(data) {
 	const top = data?.stackTrace?.[0];
-	if (!top) return '(no JS stack)';
+	if (!top) {
+		return data?.reason === 'Animation' && data?.nodeName
+			? `(animation) ${data.nodeName}`
+			: '(no JS stack)';
+	}
 	const file =
 		String(top.url ?? '')
 			.split('/')
@@ -242,6 +250,8 @@ async function collectSpans(trace, wantedKeys) {
 	const profiles = new Map();
 	// key `pid:tid` -> Map(`event|reason|origin` -> { event, reason, origin, count })
 	const invalidations = new Map();
+	// pid -> Map(animation id -> AnimationRecord). See collectAnimationEvent.
+	const animations = new Map();
 	// The window is taken from the threads being reported on, not from every
 	// event in the file. Metadata is stamped ts:0, and a background renderer's
 	// compositor can carry events from minutes before the capture started -
@@ -259,6 +269,10 @@ async function collectSpans(trace, wantedKeys) {
 		}
 		if (e.name === 'Profile' || e.name === 'ProfileChunk') {
 			collectProfileChunk(profiles, e);
+			return;
+		}
+		if (e.name === 'Animation' && typeof e.cat === 'string' && e.cat.includes('blink.animations')) {
+			collectAnimationEvent(animations, e);
 			return;
 		}
 		if (!perThread.has(key)) return;
@@ -309,7 +323,65 @@ async function collectSpans(trace, wantedKeys) {
 	const seen = await forEachEvent(trace, onEvent);
 	if (seen === 0) await forEachEventWhole(trace, onEvent);
 
-	return { perThread, profiles, minTs, maxTs, invalidations };
+	return { perThread, profiles, minTs, maxTs, invalidations, animations };
+}
+
+// `blink.animations` emits one nestable async `Animation` span per CSS/Web
+// animation: the begin carries its name and target node, and later instants
+// carry `compositeFailed`, Blink's bitmask of why the compositor refused it
+// (CompositorAnimations::FailureReason in compositor_animations.h), plus any
+// `unsupportedProperties`. A non-zero mask is an animation the MAIN thread runs
+// every frame, which is the one question an idle-renderer trace needs answered
+// and the Nov 2026 capture could not (the category was not recorded).
+const MAX_ANIMATION_ROWS = 15;
+
+function collectAnimationEvent(animations, e) {
+	const id = e.id2?.local ?? e.id2?.global ?? e.id;
+	if (id === undefined) return;
+	const pid = String(e.pid ?? 0);
+	let byId = animations.get(pid);
+	if (!byId) animations.set(pid, (byId = new Map()));
+	let rec = byId.get(id);
+	if (!rec) {
+		byId.set(
+			id,
+			(rec = { name: '', nodeName: '', failed: 0, sawFailure: false, unsupported: new Set() })
+		);
+	}
+	const data = e.args?.data ?? {};
+	if (data.name) rec.name = data.name;
+	if (data.nodeName) rec.nodeName = data.nodeName;
+	if (typeof data.compositeFailed === 'number') {
+		rec.sawFailure = true;
+		rec.failed |= data.compositeFailed;
+	}
+	for (const prop of data.unsupportedProperties ?? []) rec.unsupported.add(prop);
+}
+
+/** Group a renderer's animations by (name, node, failure) and count instances. */
+function summarizeAnimations(byId) {
+	const rows = new Map();
+	for (const rec of byId?.values() ?? []) {
+		const composited = rec.sawFailure ? (rec.failed === 0 ? 'yes' : 'NO') : 'unknown';
+		const unsupported = [...rec.unsupported].sort().join(', ');
+		const key = `${rec.name}|${rec.nodeName}|${rec.failed}|${unsupported}`;
+		const row = rows.get(key);
+		if (row) row.count++;
+		else
+			rows.set(key, {
+				name: rec.name || '(unnamed)',
+				nodeName: rec.nodeName || '-',
+				composited,
+				failedMask: rec.sawFailure && rec.failed ? `0x${rec.failed.toString(16)}` : '-',
+				unsupported: unsupported || '-',
+				count: 1,
+			});
+	}
+	// Failures first: those are the rows that explain an idle renderer.
+	const rank = { NO: 0, unknown: 1, yes: 2 };
+	return [...rows.values()]
+		.sort((a, b) => rank[a.composited] - rank[b.composited] || b.count - a.count)
+		.slice(0, MAX_ANIMATION_ROWS);
 }
 
 // The v8.cpu_profiler category carries the only usable JS attribution in an
@@ -401,7 +473,10 @@ async function analyzeTrace(trace) {
 	const wanted = new Set([rendererKey, browserKey].filter(Boolean));
 	if (wanted.size === 0) throw new Error('Trace has no CrRendererMain or CrBrowserMain thread.');
 
-	const { perThread, profiles, minTs, maxTs, invalidations } = await collectSpans(trace, wanted);
+	const { perThread, profiles, minTs, maxTs, invalidations, animations } = await collectSpans(
+		trace,
+		wanted
+	);
 
 	const traceDurationSec =
 		Number.isFinite(minTs) && maxTs > minTs ? us2ms(maxTs - minTs) / 1000 : 0;
@@ -464,6 +539,12 @@ async function analyzeTrace(trace) {
 		invalidations: [...(invalidations.get(rendererKey)?.values() ?? [])]
 			.sort((a, b) => b.count - a.count)
 			.slice(0, MAX_INVALIDATION_ROWS),
+		// null = the category was not recorded; [] = recorded, renderer ran none.
+		animations: rendererKey
+			? animations.size
+				? summarizeAnimations(animations.get(rendererKey.split(':')[0]))
+				: null
+			: null,
 		jank: { longTaskCount: longTasks.length, worstMs, estimatedDroppedFrames },
 	};
 }
@@ -840,6 +921,36 @@ function render(analysis, meta) {
 		);
 		out.push('');
 	}
+
+	out.push('## Animations and compositing (renderer)');
+	out.push('');
+	if (analysis.animations === null || analysis.animations === undefined) {
+		out.push(
+			'No `blink.animations` events in this capture, so which animation failed to run ' +
+				'on the compositor cannot be answered from this file. Re-capture on a build ' +
+				'that records the category.'
+		);
+	} else if (analysis.animations.length === 0) {
+		out.push('The category was recorded and the renderer ran no animations.');
+	} else {
+		out.push(
+			'Composited = NO means the main thread ticks that animation every frame. Decode ' +
+				'`compositeFailed` against `CompositorAnimations::FailureReason` in Blink ' +
+				'(third_party/blink/renderer/core/animation/compositor_animations.h) for the ' +
+				'Chromium version above.'
+		);
+		out.push('');
+		out.push(
+			'| Instances | Animation | Node | Composited | compositeFailed | Unsupported properties |'
+		);
+		out.push('| --- | --- | --- | --- | --- | --- |');
+		for (const row of analysis.animations) {
+			out.push(
+				`| ${row.count.toLocaleString()} | ${sanitize(row.name)} | ${sanitize(row.nodeName)} | ${row.composited} | ${row.failedMask} | ${sanitize(row.unsupported)} |`
+			);
+		}
+	}
+	out.push('');
 
 	out.push(`_Analyzed ${analysis.totalEvents.toLocaleString()} trace events._`);
 	out.push('');

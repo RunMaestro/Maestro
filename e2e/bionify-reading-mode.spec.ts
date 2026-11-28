@@ -1,12 +1,17 @@
-import { test, expect, _electron as electron } from '@playwright/test';
+/**
+ * Bionify reading mode: the reading surfaces get word spans, chat input, code and
+ * terminal output do not.
+ *
+ * Isolated like the other specs: the app is pointed at the fixture's temp data directory
+ * (`isolatedLaunchEnv`), and that same directory is where the agents, groups and settings
+ * are seeded. Never seed a path the app reports. When the redirect does not take, that path
+ * is the real data directory, and redirecting `HOME` alone does not take on macOS.
+ */
+import { _electron as electron } from '@playwright/test';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import type { Page } from '@playwright/test';
-
-function createTempDir(prefix: string): string {
-	return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-}
+import { test, expect, isolatedLaunchEnv, FIRST_RUN_SEEN_SETTINGS } from './fixtures/electron-app';
 
 function shouldWriteDurableScreenshots(): boolean {
 	return process.env.MAESTRO_WRITE_DURABLE_SCREENSHOTS === 'true';
@@ -27,9 +32,12 @@ async function writeDurableScreenshot(page: Page, fileName: string): Promise<voi
 }
 
 test.describe('Bionify reading mode prototype', () => {
-	test('applies Bionify spans to supported reading surfaces while excluding chat and terminal surfaces', async () => {
-		const homeDir = createTempDir('maestro-bionify-home-');
-		const projectDir = path.join(homeDir, 'project');
+	test('applies Bionify spans to supported reading surfaces while excluding chat and terminal surfaces', async ({
+		appPath,
+		testDataDir,
+	}) => {
+		// The project lives inside the fixture's data directory, which the fixture removes.
+		const projectDir = path.join(testDataDir, 'project');
 		const autoRunDir = path.join(projectDir, 'Auto Run Docs');
 		const previewFilePath = path.join(projectDir, 'reading-mode-demo.md');
 		const autoRunFilePath = path.join(autoRunDir, 'Phase 1.md');
@@ -245,44 +253,37 @@ Reading mode should emphasize this ${autoRunPhrase}.
 			unifiedClosedTabHistory: [],
 		};
 
-		const launchEnv = {
-			...process.env,
-			HOME: homeDir,
-			ELECTRON_DISABLE_GPU: '1',
-			NODE_ENV: 'test',
-			MAESTRO_E2E_TEST: 'true',
-		};
-
-		const probeApp = await electron.launch({
-			args: [path.join(__dirname, '../dist/main/bootstrap.js')],
-			env: launchEnv,
-			timeout: 30000,
-		});
-
-		await probeApp.firstWindow();
-		const userDataPath = await probeApp.evaluate(({ app }) => app.getPath('userData'));
-		await probeApp.close();
-
-		fs.mkdirSync(userDataPath, { recursive: true });
+		// Seed the fixture's data directory before the app starts. Its path comes from the
+		// fixture, never from the app. The settings file keeps the first-run modals closed.
 		fs.writeFileSync(
-			path.join(userDataPath, 'maestro-sessions.json'),
+			path.join(testDataDir, 'maestro-sessions.json'),
 			JSON.stringify({ sessions: [readingSession, aiChatSession, terminalSession] }, null, '\t'),
 			'utf-8'
 		);
 		fs.writeFileSync(
-			path.join(userDataPath, 'maestro-groups.json'),
+			path.join(testDataDir, 'maestro-groups.json'),
 			JSON.stringify({ groups: [] }, null, '\t'),
+			'utf-8'
+		);
+		fs.writeFileSync(
+			path.join(testDataDir, 'maestro-settings.json'),
+			JSON.stringify(FIRST_RUN_SEEN_SETTINGS),
 			'utf-8'
 		);
 
 		const app = await electron.launch({
-			args: [path.join(__dirname, '../dist/main/bootstrap.js')],
-			env: launchEnv,
+			args: [appPath],
+			env: { ...process.env, ...isolatedLaunchEnv(testDataDir) },
 			timeout: 30000,
 		});
 
 		try {
 			const window = await app.firstWindow();
+			// Stop before any interaction if the app is not on the fixture's directory: this run
+			// drives Settings and writes the Bionify preferences. Both sides go through realpath
+			// because macOS temp folders sit behind the /var -> /private/var link.
+			const userDataPath = await app.evaluate(({ app: main }) => main.getPath('userData'));
+			expect(fs.realpathSync(userDataPath)).toBe(fs.realpathSync(testDataDir));
 			await window.waitForLoadState('domcontentloaded');
 			await window.setViewportSize({ width: 1440, height: 960 });
 			await window.waitForTimeout(1000);
@@ -514,7 +515,6 @@ Reading mode should emphasize this ${autoRunPhrase}.
 			});
 		} finally {
 			await app.close();
-			fs.rmSync(homeDir, { recursive: true, force: true });
 		}
 	});
 });

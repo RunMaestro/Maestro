@@ -19,30 +19,31 @@ export function foldPathCase(p: string, platform: NodeJS.Platform = process.plat
 
 /**
  * Resolve symlinks through the nearest existing ancestor (sync), so a not-yet-created file under a symlinked
- * folder resolves to where it would land. `p` unchanged when nothing on it resolves.
+ * folder resolves to where it would land. Defined in `src/shared/pathUtils.ts` (the shared libraries judge
+ * paths the same way); re-exported so main keeps one import for the whole real-path trio.
  */
-export function realpathThroughAncestor(p: string): string {
-	let current = p;
-	const rest: string[] = [];
-	for (let i = 0; i < 64; i++) {
-		try {
-			const real = fs.realpathSync.native(current);
-			return rest.length > 0 ? path.join(real, ...rest.reverse()) : real;
-		} catch {
-			const parent = path.dirname(current);
-			if (parent === current) return p;
-			rest.push(path.basename(current));
-			current = parent;
-		}
-	}
-	return p;
+export { realpathThroughAncestor } from '../../shared/pathUtils';
+
+function isWindowsStylePath(p: string): boolean {
+	return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('\\\\');
 }
 
 /** Whether absolute path `child` is `parent` or inside it, compared as given (fold and resolve first). */
 export function isPathWithin(child: string, parent: string): boolean {
-	if (child === parent) return true;
-	const rel = path.relative(parent, child);
-	return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+	const windows = isWindowsStylePath(child) || isWindowsStylePath(parent);
+	const norm = (p: string): string => {
+		// Convert backslashes only for Windows-style paths; on POSIX a backslash is
+		// a literal filename character and must not fold a sibling into a descendant.
+		const slashNormalized = windows ? p.replace(/\\/g, '/') : p;
+		return slashNormalized.replace(/\/+$/, '') || '/';
+	};
+	const c = norm(child);
+	const p = norm(parent);
+	if (c === p) return true;
+	// Use POSIX relative so case stays exact as given: on Windows, `path.relative`
+	// folds case internally and overrides a caller's explicit case-sensitive check.
+	const rel = path.posix.relative(p, c);
+	return rel !== '' && rel !== '..' && !rel.startsWith('../') && !path.posix.isAbsolute(rel);
 }
 
 /** Where a root-relative path really points. */

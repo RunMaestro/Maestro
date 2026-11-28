@@ -75,6 +75,7 @@ Note: `run-playbook.ts` is the file name, but the command is registered under th
 - `runAgentCommand(agentId, options, build)` - the one-liner path: resolves the agent (partial IDs), sends the message `build()` describes, reports the result. Used by `rename-agent`, `auto-run-control` (stop/resume/skip/abort/reset), `remove-playbook`, `agent-control` (focus/switch-mode).
 - `sendSimpleCommand(payload, responseType)` + `reportResult(result, opts)` + `failCommand(msg, json)` - the building blocks, for commands that don't key off an agent ID (e.g. `rename-group` uses `resolveGroupId`; `set-theme`/`encore` send `set_setting`).
 - `resolveAgentOrFail(agentId, json)` - resolve-or-exit helper.
+- `resolveAgentOrActive(agentHint, whose)` - `--agent` when given, else the agent the desktop has selected (`readActiveAgentId()`), never the first stored agent; throws `No active agent recorded. Pass --agent <id> to say <whose>.` when neither names one. Use it for a verb that acts on what the user is looking at (a composer, the tab on screen): `browser-pick`, `browser-picks`, `browser-viewport`, and the `active` keyword of `resolveTabEntry`.
 - `resolveTabEntry(tabId, agentHint?)` - resolve one desktop tab via `list_desktop_sessions` and return its whole `DesktopTabEntry` (`src/shared/desktopTabs.ts`). Accepts an exact ID, a unique prefix, or the literal `active` - the tab that `agentHint`'s agent has selected, or the desktop's focused agent (`readActiveAgentId()`) when no hint is given. Use it rather than matching IDs yourself: a verb that has to read before it writes (`tab show`, `tab thinking cycle`) gets the current settings from the same call that resolved the tab, instead of a second round trip or a value the caller guessed.
 - `resolveTabOwner(tabId, agentHint?)` - thin wrapper over `resolveTabEntry` for the verbs that only need `{ agentId, tabId }`.
 
@@ -309,8 +310,10 @@ Response format:
 Remove orphaned playbooks for deleted sessions.
 
 ```bash
-maestro-cli clean playbooks [--dry-run] [--json]
+maestro-cli clean playbooks [--dry-run] [--force] [--json]
 ```
+
+A playbook is an orphan when its agent is not in the list `readSessions()` returns, so the command refuses (exit 1, nothing removed, `--dry-run` included) when that list cannot be believed: no agents at all (`--force` overrides this one), or a custom Storage Location the bootstrap file names that `resolveSyncDir()` fell back from, which `getSyncDirFallbackReason()` in `src/cli/services/storage.ts` reports (`--force` does not override this one). A command that deletes on the agent list must make the same check.
 
 ### `create-agent <name>`
 

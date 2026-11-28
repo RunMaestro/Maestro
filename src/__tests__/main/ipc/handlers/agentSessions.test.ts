@@ -36,6 +36,36 @@ import { nativeAccountRef } from '../../../../shared/agentAccountDir';
 import { grokInstallationId } from '../../../../shared/maestro-lib/grok/host-seams';
 import type { SshRemoteEndpointIdentity } from '../../../../shared/maestro-lib/launch/ssh-remote-resolver';
 import type { NativeSessionBinding } from '../../../../shared/maestro-lib/agents/providerSwap';
+import { canLoadNodeSqlite } from '../../../helpers/nodeSqlite';
+import {
+	agyModelStep,
+	agyUserStep,
+	writeAgyConversation,
+	writeAgyIndex,
+} from '../../../helpers/antigravityStoreFixture';
+
+// agy's stores are SQLite; read them through node:sqlite, not the Electron binary.
+// Imported inside the factory: an earlier import (main/agents) loads the step
+// store, and so better-sqlite3, before this file's own imports have run.
+vi.mock('better-sqlite3', async () =>
+	(await import('../../../helpers/nodeSqlite')).nodeSqliteBetterSqlite3Mock()
+);
+// agy's home follows the `os.homedir()` spies below through the default `os`
+// export they patch, so no test reads the real ~/.gemini (the step store
+// itself imports the `os` namespace).
+vi.mock('../../../../main/parsers/antigravity-step-store', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/parsers/antigravity-step-store')>();
+	const { default: nodeOs } = await import('os');
+	const nodePath = await import('path');
+	const antigravityHome = () => nodePath.join(nodeOs.homedir(), '.gemini', 'antigravity-cli');
+	return {
+		...actual,
+		antigravityHome,
+		antigravityConversationDbPath: (id: string, root = antigravityHome()) =>
+			nodePath.join(root, 'conversations', `${id}.db`),
+	};
+});
 
 const accountStores = vi.hoisted(() => ({
 	provider: {} as Record<string, string>,
@@ -2392,6 +2422,126 @@ describe('agentSessions:getGlobalStats Grok history', () => {
 		const saved = lastSaved().providers.grok.sessions;
 		expect(saved[await keyFor('.grok-work', 'GONE')].archived).toBe(true);
 		expect(saved[await keyFor('.grok', 'KEPT')].archived).toBe(false);
+	});
+});
+
+describe.skipIf(!canLoadNodeSqlite())('agentSessions:getGlobalStats Antigravity history', () => {
+	const A = '11111111-1111-4111-8111-111111111111';
+	const B = '22222222-2222-4222-8222-222222222222';
+	const SUBAGENT = '33333333-3333-4333-8333-333333333333';
+	const NO_STORE = '44444444-4444-4444-8444-444444444444';
+	const T0 = 1_791_295_505;
+	let home: string;
+	let agyHome: string;
+	let getGlobalStats: () => Promise<any>;
+
+	const lastSaved = (): GlobalStatsCache =>
+		structuredClone(vi.mocked(saveGlobalStatsCache).mock.calls.at(-1)![0]);
+
+	const writeTwoConversations = () => {
+		writeAgyConversation(agyHome, A, [
+			agyUserStep(T0, 'first'),
+			agyModelStep(T0 + 1, 'one', { input: 100, output: 10, cacheRead: 50, thinking: 7 }),
+			agyModelStep(T0 + 2, 'two', { input: 200, output: 20, cacheRead: 0 }),
+		]);
+		writeAgyConversation(agyHome, B, [
+			agyUserStep(T0, 'second'),
+			agyModelStep(T0 + 1, 'reply', { input: 40, output: 4, cacheRead: 5 }),
+		]);
+		writeAgyConversation(agyHome, SUBAGENT, [
+			agyUserStep(T0, 'internal worker'),
+			agyModelStep(T0 + 1, 'done', { input: 9_000, output: 900, cacheRead: 0 }),
+		]);
+		writeAgyIndex(agyHome, [
+			{ id: A, steps: 3 },
+			{ id: B, steps: 2 },
+			// agy's internal worker: the storage lists only what the user started.
+			{ id: SUBAGENT, steps: 2, parent: A },
+			// Indexed, but its store is gone.
+			{ id: NO_STORE, steps: 2 },
+		]);
+	};
+
+	beforeEach(async () => {
+		home = await realFs.mkdtemp(path.join(os.tmpdir(), 'maestro-agy-global-stats-'));
+		agyHome = path.join(home, '.gemini', 'antigravity-cli');
+		vi.spyOn(os, 'homedir').mockReturnValue(home);
+		vi.stubEnv('GROK_HOME', '');
+		vi.mocked(saveGlobalStatsCache).mockClear();
+		const handlers = new Map<string, (...args: any[]) => any>();
+		vi.mocked(ipcMain.handle).mockImplementation((channel, handler) => {
+			handlers.set(channel, handler);
+		});
+		registerAgentSessionsHandlers();
+		const handler = handlers.get('agentSessions:getGlobalStats')!;
+		getGlobalStats = () => handler({});
+	});
+
+	afterEach(async () => {
+		vi.restoreAllMocks();
+		vi.unstubAllEnvs();
+		await realFs.rm(home, { recursive: true, force: true });
+	});
+
+	it('counts top-level conversations with their tokens and no cost', async () => {
+		writeTwoConversations();
+
+		const stats = await getGlobalStats();
+
+		expect(stats.byProvider.antigravity).toEqual({
+			sessions: 2,
+			messages: 5,
+			inputTokens: 340,
+			outputTokens: 34,
+			costUsd: 0,
+			hasCostData: false,
+		});
+		expect(stats.totalSessions).toBe(2);
+		expect(stats.totalCacheReadTokens).toBe(55);
+		// agy records no cost: never priced from its tokens, never a coverage claim.
+		expect(stats.totalCostUsd).toBe(0);
+		expect(stats.hasCostData).toBe(false);
+		expect(stats.costCoverage).toBeUndefined();
+		const saved = lastSaved().providers.antigravity.sessions;
+		expect(Object.keys(saved).sort()).toEqual([A, B]);
+		expect(saved[A]).toMatchObject({ messages: 3, cacheReadTokens: 50, archived: false });
+		expect(saved[A].costUsd).toBeUndefined();
+	});
+
+	it('contributes nothing, and does not fail, without an agy folder', async () => {
+		const stats = await getGlobalStats();
+
+		expect(stats.byProvider.antigravity).toBeUndefined();
+		expect(stats.totalSessions).toBe(0);
+		expect(stats.isComplete).toBe(true);
+		expect(lastSaved().providers.antigravity.sessions).toEqual({});
+	});
+
+	it('reuses unchanged entries, re-reads changed ones, and keeps a vanished one archived', async () => {
+		writeTwoConversations();
+		await getGlobalStats();
+		const cached = lastSaved();
+		const sessions = cached.providers.antigravity.sessions;
+		// A's fingerprint still matches its store, so a marker value survives.
+		sessions[A].inputTokens = 999;
+		// B looks older than its store, so it is read again.
+		sessions[B].fileMtimeMs = 0;
+		sessions[B].inputTokens = 1;
+		// A conversation agy no longer indexes still counts toward lifetime totals.
+		sessions.GONE = { ...sessions[B], inputTokens: 1_000, fileMtimeMs: 1 };
+		vi.mocked(loadGlobalStatsCache).mockResolvedValueOnce(cached);
+
+		const stats = await getGlobalStats();
+
+		const saved = lastSaved().providers.antigravity.sessions;
+		expect(saved[A].inputTokens).toBe(999);
+		expect(saved[B].inputTokens).toBe(40);
+		expect(saved.GONE.archived).toBe(true);
+		expect(saved[A].archived).toBe(false);
+		expect(stats.byProvider.antigravity).toMatchObject({
+			sessions: 3,
+			inputTokens: 999 + 40 + 1_000,
+		});
 	});
 });
 

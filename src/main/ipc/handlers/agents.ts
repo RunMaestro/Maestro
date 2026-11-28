@@ -20,8 +20,9 @@ import {
 import { capabilitySnapshots } from '../../agents/capability-snapshot';
 import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
 import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
+import { probeRemoteGrokContextWindows } from '../../agents/probeRemoteGrokContextWindows';
 import { execFileNoThrow } from '../../utils/execFile';
-import { discoverCodexSkills } from '../../agents/codex-skills';
+import { discoverCodexSkills, type CodexSkillsRemote } from '../../agents/codex-skills';
 import {
 	discoverGrokSlashCommands,
 	type GrokCommandDiscoveryResult,
@@ -35,7 +36,10 @@ import {
 	effectiveAgentCustomEnvVars,
 	resolveAgentAccountKey,
 } from '../../../shared/providerProfiles';
-import { probeClaudeSlashCommands } from '../../agents/claude-slash-command-probe';
+import {
+	probeClaudeSlashCommands,
+	probeClaudeSlashCommandsRemoteCached,
+} from '../../agents/claude-slash-command-probe';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
 import {
@@ -44,11 +48,14 @@ import {
 	CreateHandlerOptions,
 } from '../../utils/ipcHandler';
 import {
+	agentEnvOverRemote,
 	buildSshCommand,
 	execSshCommand,
 	RemoteCommandOptions,
 } from '../../utils/ssh-command-builder';
 import { stripAnsi } from '../../utils/stripAnsi';
+import { readDirRemote, readFileRemote } from '../../utils/remote-fs';
+import { createTtlPromiseCache } from '../../utils/ttl-promise-cache';
 import {
 	discoverAgentModels,
 	discoverModelsRemote,
@@ -103,6 +110,8 @@ import {
 import type { CodexResetCreditConsumeResult } from '../../../shared/codexResetCredits';
 import type { KnownAuthDirs } from '../../../shared/authPaths';
 import { rememberableEnvVarKeys, type KnownEnvVarKeys } from '../../../shared/envVarCatalog';
+import { maskEnvRecords } from '../../../shared/agentEnvironment';
+import { customPathsFromAgentConfigs } from '../../agents/agent-config-lookup';
 
 const LOG_CONTEXT = '[AgentDetector]';
 const CONFIG_LOG_CONTEXT = '[AgentConfig]';
@@ -412,15 +421,128 @@ async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCom
  * they are implemented inside the TUI and have no on-disk prompt to inline, so
  * offering them would send a literal "/compact" to the model.
  */
+/**
+ * The files Codex's disk fallback reads, on the machine Codex runs on: this
+ * one through `fs`, an SSH remote through the remote fs helpers. `null` means
+ * the entry is not there; any other local error is thrown.
+ */
+interface CodexCommandFiles {
+	skillDirs: string[];
+	promptDirs: string[];
+	join: (...parts: string[]) => string;
+	/** Names of the folders in `dir`. */
+	listDirs: (dir: string) => Promise<string[] | null>;
+	/** Names of every entry in `dir`. */
+	listNames: (dir: string) => Promise<string[] | null>;
+	readFile: (file: string) => Promise<string | null>;
+	/**
+	 * Whether a read failed for a reason other than a missing entry (a remote
+	 * that dropped mid-scan). The list is then incomplete and is not cached.
+	 */
+	readFailed?: () => boolean;
+}
+
+function localCodexCommandFiles(cwd: string, env: NodeJS.ProcessEnv): CodexCommandFiles {
+	const missingAsNull = async <T>(read: () => Promise<T>): Promise<T | null> => {
+		try {
+			return await read();
+		} catch (error) {
+			if (isMissingEntryError(error)) return null;
+			throw error;
+		}
+	};
+	return {
+		skillDirs: getCodexSkillDirs(cwd, env),
+		promptDirs: getCodexPromptDirs(cwd, env),
+		join: path.join,
+		listDirs: (dir) =>
+			missingAsNull(async () =>
+				(await fs.promises.readdir(dir, { withFileTypes: true }))
+					.filter((entry) => entry.isDirectory())
+					.map((entry) => entry.name)
+			),
+		listNames: (dir) => missingAsNull(() => fs.promises.readdir(dir)),
+		readFile: (file) => missingAsNull(() => fs.promises.readFile(file, 'utf-8')),
+	};
+}
+
+function remoteCodexCommandFiles(cwd: string, remote: CodexSkillsRemote): CodexCommandFiles {
+	// The agent's CODEX_HOME over the remote's (a blank one cancels it), else the
+	// remote's `~/.codex` (expanded by the remote shell).
+	const { env } = agentEnvOverRemote(remote.config, remote.env);
+	const home = env.CODEX_HOME || '~/.codex';
+	const join = path.posix.join;
+	let failed = false;
+	/** A missing entry reads as null; any other failure also marks the scan incomplete. */
+	const unlessMissing = (error: string | undefined, missing: string[]): null => {
+		if (!missing.some((prefix) => error?.startsWith(prefix))) failed = true;
+		return null;
+	};
+	const listDir = async (dir: string) => {
+		const result = await readDirRemote(dir, remote.config);
+		if (result.success && result.data) return result.data;
+		return unlessMissing(result.error, ['Directory not found']);
+	};
+	return {
+		skillDirs: [join(cwd, '.codex', 'skills'), `${home}/skills`],
+		promptDirs: [join(cwd, '.codex', 'prompts'), `${home}/prompts`],
+		join,
+		listDirs: async (dir) =>
+			(await listDir(dir))?.filter((entry) => entry.isDirectory).map((entry) => entry.name) ?? null,
+		listNames: async (dir) => (await listDir(dir))?.map((entry) => entry.name) ?? null,
+		readFile: async (file) => {
+			const result = await readFileRemote(file, remote.config);
+			if (result.success && typeof result.data === 'string') return result.data;
+			return unlessMissing(result.error, ['File not found', 'Path is a directory']);
+		},
+		readFailed: () => failed,
+	};
+}
+
+/** What Codex discovery found, and whether Codex itself answered (its skills/list). */
+interface CodexDiscovery {
+	commands: DiscoveredCommand[];
+	authoritative: boolean;
+	/** False when a folder or file could not be read (not missing): the list may be short. */
+	complete: boolean;
+}
+
+/**
+ * Remote Codex command lists, kept as long as a Claude probe's (30 minutes).
+ * An empty list is kept only when Codex itself said so: an unreachable remote
+ * also reads as empty, and must be asked again next time. A list from a scan
+ * that could not read a folder or file is never kept.
+ */
+const remoteCodexCommandCache = createTtlPromiseCache<CodexDiscovery>(
+	30 * 60 * 1000,
+	(found) => found.complete && (found.authoritative || found.commands.length > 0)
+);
+
+/** For tests: forget every cached remote Codex command list. */
+export function clearRemoteCodexCommandCache(): void {
+	remoteCodexCommandCache.clear();
+}
+
 async function discoverCodexSlashCommands(
 	cwd: string,
 	command: string,
-	env: NodeJS.ProcessEnv
+	env: NodeJS.ProcessEnv,
+	remote?: CodexSkillsRemote
 ): Promise<DiscoveredCommand[]> {
+	return (await discoverCodexCommands(cwd, command, env, remote)).commands;
+}
+
+async function discoverCodexCommands(
+	cwd: string,
+	command: string,
+	env: NodeJS.ProcessEnv,
+	remote?: CodexSkillsRemote
+): Promise<CodexDiscovery> {
 	const commands = new Map<string, DiscoveredCommand>();
+	const files = remote ? remoteCodexCommandFiles(cwd, remote) : localCodexCommandFiles(cwd, env);
 	let nativeSkillsAvailable = false;
 	try {
-		for (const skill of await discoverCodexSkills(command, cwd, env)) {
+		for (const skill of await discoverCodexSkills(command, cwd, env, remote)) {
 			commands.set(skill.name, skill);
 		}
 		nativeSkillsAvailable = true;
@@ -445,69 +567,55 @@ async function discoverCodexSlashCommands(
 
 	// Skills: one directory per command, holding a SKILL.md.
 	const addSkillsFromDir = async (dir: string) => {
-		let entries: fs.Dirent[];
-		try {
-			entries = await fs.promises.readdir(dir, { withFileTypes: true });
-		} catch (error) {
-			if (isMissingEntryError(error)) {
-				logger.debug(`Codex skills directory not found: ${dir}`, LOG_CONTEXT);
-				return;
-			}
-			throw error;
+		const names = await files.listDirs(dir);
+		if (!names) {
+			logger.debug(`Codex skills directory not found: ${dir}`, LOG_CONTEXT);
+			return;
 		}
-		for (const entry of entries) {
-			if (!entry.isDirectory()) continue;
+		for (const name of names) {
 			// `.system/` holds Codex's own internal skills, and dotted names are
 			// hidden from its picker.
-			if (entry.name.startsWith('.')) continue;
-			if (commands.has(entry.name)) continue;
-			try {
-				const raw = await fs.promises.readFile(path.join(dir, entry.name, 'SKILL.md'), 'utf-8');
-				addCommand(entry.name, raw);
-			} catch (error) {
-				// A directory without a SKILL.md is not a skill.
-				if (!isMissingEntryError(error)) throw error;
-			}
+			if (name.startsWith('.')) continue;
+			if (commands.has(name)) continue;
+			// A directory without a SKILL.md is not a skill.
+			const raw = await files.readFile(files.join(dir, name, 'SKILL.md'));
+			if (raw !== null) addCommand(name, raw);
 		}
 	};
 
 	// Prompts: one .md file per command.
 	const addPromptsFromDir = async (dir: string) => {
-		let files: string[];
-		try {
-			files = await fs.promises.readdir(dir);
-		} catch (error) {
-			if (isMissingEntryError(error)) {
-				logger.debug(`Codex prompts directory not found: ${dir}`, LOG_CONTEXT);
-				return;
-			}
-			throw error;
+		const fileNames = await files.listNames(dir);
+		if (!fileNames) {
+			logger.debug(`Codex prompts directory not found: ${dir}`, LOG_CONTEXT);
+			return;
 		}
-		for (const file of files) {
+		for (const file of fileNames) {
 			if (!file.endsWith('.md')) continue;
 			const name = file.replace(/\.md$/, '');
 			if (commands.has(name)) continue;
-			try {
-				addCommand(name, await fs.promises.readFile(path.join(dir, file), 'utf-8'));
-			} catch (error) {
-				if (!isMissingEntryError(error)) throw error;
-			}
+			const content = await files.readFile(files.join(dir, file));
+			if (content !== null) addCommand(name, content);
 		}
 	};
 
 	// An authoritative empty result must stay empty (e.g. all skills disabled).
 	if (!nativeSkillsAvailable) {
-		for (const dir of getCodexSkillDirs(cwd, env)) {
+		for (const dir of files.skillDirs) {
 			await addSkillsFromDir(dir);
 		}
 	}
-	for (const dir of getCodexPromptDirs(cwd, env)) {
+	for (const dir of files.promptDirs) {
 		await addPromptsFromDir(dir);
 	}
 
 	const commandList = Array.from(commands.values());
 	logger.info(`Discovered ${commandList.length} Codex slash commands`, LOG_CONTEXT);
-	return commandList;
+	return {
+		commands: commandList,
+		authoritative: nativeSkillsAvailable,
+		complete: !files.readFailed?.(),
+	};
 }
 
 /**
@@ -585,6 +693,48 @@ function stripAgentFunctions(agent: any, sshRemoteId?: string) {
 		configOptions: agent.configOptions?.map(withoutFunctionProps),
 		...(snapshot ? { snapshot } : {}),
 	};
+}
+
+/**
+ * Every installation of `binaryName` on an SSH remote, for the Edit Agent
+ * "Detected installations" chooser a local agent gets from
+ * `findAllBinaryPaths()`. Runs bash's `type -a -p` (every match in the remote's
+ * PATH) over SSH. `activePath` (what `command -v` resolved) comes first and is
+ * never listed twice. Returns undefined when there is only one installation or
+ * the probe fails: the chooser is a nice-to-have, the single path still works.
+ */
+async function detectAllBinaryPathsRemote(
+	sshRemote: SshRemoteConfig,
+	binaryName: string,
+	activePath: string | undefined
+): Promise<string[] | undefined> {
+	if (binaryName === 'bash') return undefined;
+	const TIMEOUT_MS = 10000;
+	try {
+		const sshCommand = await buildSshCommand(sshRemote, {
+			command: 'type',
+			args: ['-a', '-p', binaryName],
+		});
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new Error('timed out')), TIMEOUT_MS);
+		});
+		// The exec timeout ends ssh itself; the race only bounds the wait.
+		const result = await Promise.race([
+			execSshCommand(sshRemote, sshCommand, { timeout: TIMEOUT_MS }),
+			timeout,
+		]).finally(() => clearTimeout(timer));
+		if (result.exitCode !== 0) return undefined;
+		const found = stripAnsi(result.stdout)
+			.split('\n')
+			.map((line) => line.trim())
+			.filter((line) => line.startsWith('/'));
+		const merged = Array.from(new Set(activePath ? [activePath, ...found] : found));
+		return merged.length > 1 ? merged : undefined;
+	} catch (err) {
+		logger.debug(`Remote installation list failed for ${binaryName}`, LOG_CONTEXT, { err });
+		return undefined;
+	}
 }
 
 /**
@@ -718,6 +868,11 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 	// availability unknown rather than caching a false.
 	if (connectionSucceeded) {
 		await probeRemoteMaestroP(sshRemote);
+		// A remote Grok agent's context window comes from the remote account's
+		// catalog, as a local one's comes from this machine's.
+		if (agents.some((agent) => agent.id === 'grok' && agent.available)) {
+			await probeRemoteGrokContextWindows(sshRemote);
+		}
 	}
 
 	return agents;
@@ -860,6 +1015,57 @@ async function discoverOpenCodeSlashCommandsRemote(
 	}
 }
 
+/** How a remote looks up a binary (`detectAgentsRemote()`), named in a refresh's debug info. */
+export const REMOTE_WHICH_COMMAND = 'command -v';
+
+/** The host facts a refresh's debug info names, read from the machine the agent runs on. */
+export interface RemoteDebugFacts {
+	platform: string;
+	homeDir: string;
+	envPath: string;
+}
+
+const REMOTE_FACTS_UNKNOWN: RemoteDebugFacts = { platform: 'unknown', homeDir: '', envPath: '' };
+
+/**
+ * The remote's platform (`uname -s`, lowercased to match `process.platform`), home, and PATH, for
+ * the debug panel a failed refresh shows. A static script with no caller text in it. Any failure
+ * (unreachable host, timeout) leaves the facts unknown: the detection error is already the reason.
+ */
+export async function readRemoteDebugFacts(sshRemote: SshRemoteConfig): Promise<RemoteDebugFacts> {
+	const remoteOptions: RemoteCommandOptions = {
+		command: 'sh',
+		args: ['-c', 'uname -s; printf "%s\\n" "$HOME"; printf "%s\\n" "$PATH"'],
+		env: sshRemote.remoteEnv,
+	};
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
+		const result = await Promise.race([
+			// The subprocess has the same bound as the race, so a hung probe never outlives it.
+			execSshCommand(sshRemote, sshCommand, { timeout: SSH_MODEL_TIMEOUT_MS }),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new Error('SSH debug facts timed out')),
+					SSH_MODEL_TIMEOUT_MS
+				);
+			}),
+		]);
+		if (result.exitCode !== 0) return REMOTE_FACTS_UNKNOWN;
+		const [platform = '', homeDir = '', envPath = ''] = stripAnsi(result.stdout)
+			.split('\n')
+			.map((line) => line.trim());
+		return { platform: platform.toLowerCase() || 'unknown', homeDir, envPath };
+	} catch (error) {
+		logger.warn(`Could not read debug facts from ${sshRemote.host}`, LOG_CONTEXT, {
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return REMOTE_FACTS_UNKNOWN;
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	const { getAgentDetector, agentConfigsStore, settingsStore, sessionsStore } = deps;
 	const translation =
@@ -881,43 +1087,51 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			}
 	);
 
+	// Agents detected on an SSH remote. A remote that is not configured (or is switched off)
+	// returns every agent as unavailable with the reason, never this machine's agents: the
+	// caller asked about the remote, and this machine's answer would be the wrong one.
+	const detectAgentsOnRemote = async (sshRemoteId: string) => {
+		const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
+		if (!sshConfig) {
+			// Return all agents as unavailable with error info instead of throwing
+			logger.warn(
+				`SSH remote not found or disabled: ${sshRemoteId}, returning unavailable agents`,
+				LOG_CONTEXT
+			);
+			return {
+				sshConfig: null,
+				agents: AGENT_DEFINITIONS.map((agentDef) =>
+					stripAgentFunctions(
+						{
+							...agentDef,
+							available: false,
+							path: undefined,
+							capabilities: getAgentCapabilities(agentDef.id),
+							error: `SSH remote configuration not found: ${sshRemoteId}`,
+						},
+						sshRemoteId
+					)
+				),
+			};
+		}
+		logger.info(`Detecting agents on remote host: ${sshConfig.host}`, LOG_CONTEXT);
+		const agents = await detectAgentsRemote(sshConfig);
+		logger.info(
+			`Detected ${agents.filter((a: any) => a.available).length} agents on remote`,
+			LOG_CONTEXT,
+			{
+				agents: agents.map((a: any) => a.id),
+			}
+		);
+		return { sshConfig, agents: agents.map((a) => stripAgentFunctions(a, sshConfig.id)) };
+	};
+
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(
 		'agents:detect',
 		withIpcErrorLogging(handlerOpts('detect'), async (sshRemoteId?: string) => {
 			// If SSH remote ID provided, detect agents on remote host
-			if (sshRemoteId) {
-				const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
-				if (!sshConfig) {
-					// Return all agents as unavailable with error info instead of throwing
-					logger.warn(
-						`SSH remote not found or disabled: ${sshRemoteId}, returning unavailable agents`,
-						LOG_CONTEXT
-					);
-					return AGENT_DEFINITIONS.map((agentDef) =>
-						stripAgentFunctions(
-							{
-								...agentDef,
-								available: false,
-								path: undefined,
-								capabilities: getAgentCapabilities(agentDef.id),
-								error: `SSH remote configuration not found: ${sshRemoteId}`,
-							},
-							sshRemoteId
-						)
-					);
-				}
-				logger.info(`Detecting agents on remote host: ${sshConfig.host}`, LOG_CONTEXT);
-				const agents = await detectAgentsRemote(sshConfig);
-				logger.info(
-					`Detected ${agents.filter((a: any) => a.available).length} agents on remote`,
-					LOG_CONTEXT,
-					{
-						agents: agents.map((a: any) => a.id),
-					}
-				);
-				return agents.map((a) => stripAgentFunctions(a, sshConfig.id));
-			}
+			if (sshRemoteId) return (await detectAgentsOnRemote(sshRemoteId)).agents;
 
 			// Local detection
 			const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
@@ -931,10 +1145,44 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
+	// `agents:refresh` for a remote: detect there and, for one requested agent, the same debug
+	// facts the local refresh gives (binary, platform, home, PATH, the failed lookup), read from
+	// the remote. Remote detection has no cache to clear: every call probes the host.
+	const refreshAgentsOnRemote = async (sshRemoteId: string, agentId?: string) => {
+		const { sshConfig, agents } = await detectAgentsOnRemote(sshRemoteId);
+		if (!agentId) return { agents, debugInfo: null };
+		const agent = agents.find((a: any) => a?.id === agentId) as
+			| { binaryName?: string; available?: boolean; path?: string; error?: string }
+			| undefined;
+		const binaryName = agent?.binaryName || agentId;
+		const facts =
+			sshConfig && !agent?.available ? await readRemoteDebugFacts(sshConfig) : REMOTE_FACTS_UNKNOWN;
+		const debugInfo = {
+			agentId,
+			available: agent?.available || false,
+			path: agent?.path || null,
+			binaryName,
+			envPath: facts.envPath,
+			homeDir: facts.homeDir,
+			platform: facts.platform,
+			whichCommand: REMOTE_WHICH_COMMAND,
+			error: agent?.available
+				? null
+				: agent?.error ||
+					`${REMOTE_WHICH_COMMAND} ${binaryName} found nothing on ${sshConfig?.host ?? sshRemoteId}`,
+		};
+		logger.info(`Agent refresh debug info for ${agentId} on remote`, LOG_CONTEXT, debugInfo);
+		return { agents, debugInfo };
+	};
+
 	// Refresh agent detection with debug info (clears cache and returns detailed error info)
 	ipcMain.handle(
 		'agents:refresh',
-		withIpcErrorLogging(handlerOpts('refresh'), async (agentId?: string) => {
+		withIpcErrorLogging(handlerOpts('refresh'), async (agentId?: string, sshRemoteId?: string) => {
+			// An agent that runs on an SSH remote is re-detected THERE (the same check the
+			// config panel's `useRemoteAgentDetection()` runs), never on this machine.
+			if (sshRemoteId) return refreshAgentsOnRemote(sshRemoteId, agentId);
+
 			const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
 			// Clear the cache to force re-detection
@@ -1030,9 +1278,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 				try {
 					const sshCommand = await buildSshCommand(sshConfig, remoteOptions);
+					// The last argument is the remote command line, and `buildSshCommand()` merges this
+					// remote's `remoteEnv` into it as `NAME='value'`. Log the connection arguments and the
+					// bare invocation instead (`remoteCommandLine` carries no env).
 					logger.info(`Executing SSH detection command for '${agentDef.binaryName}'`, LOG_CONTEXT, {
 						command: sshCommand.command,
-						args: sshCommand.args,
+						args: sshCommand.args.slice(0, -1),
+						remoteCommandLine: sshCommand.remoteCommandLine,
 					});
 
 					// Execute with timeout
@@ -1049,23 +1301,30 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 					const result = await Promise.race([resultPromise, timeoutPromise]);
 
+					// When `command -v` exits non-zero with empty stderr, Node's `execFile`
+					// fallback message echoes the full SSH argv (including `remoteEnv`).
+					// Never log that argv echo.
+					const safeStderr = /^Command failed:/i.test(result.stderr)
+						? `SSH detection exited with code ${result.exitCode}`
+						: result.stderr;
 					logger.info(`SSH command result for '${agentDef.binaryName}'`, LOG_CONTEXT, {
 						exitCode: result.exitCode,
 						stdout: result.stdout,
-						stderr: result.stderr,
+						stderr: safeStderr,
 					});
 
-					// Check for SSH connection errors
+					// Check for SSH connection errors using sanitized stderr so Node's
+					// `Command failed: <argv>` fallback cannot leak remoteEnv secrets.
 					let connectionError: string | undefined;
 					if (
-						result.stderr &&
-						(result.stderr.includes('Connection refused') ||
-							result.stderr.includes('Connection timed out') ||
-							result.stderr.includes('No route to host') ||
-							result.stderr.includes('Could not resolve hostname') ||
-							result.stderr.includes('Permission denied'))
+						safeStderr &&
+						(safeStderr.includes('Connection refused') ||
+							safeStderr.includes('Connection timed out') ||
+							safeStderr.includes('No route to host') ||
+							safeStderr.includes('Could not resolve hostname') ||
+							safeStderr.includes('Permission denied'))
 					) {
-						connectionError = result.stderr.trim().split('\n')[0];
+						connectionError = safeStderr.trim().split('\n')[0];
 						logger.warn(
 							`SSH connection error for ${sshConfig.host}: ${connectionError}`,
 							LOG_CONTEXT
@@ -1089,16 +1348,25 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 							if (existing?.status !== 'auth_required') {
 								capabilitySnapshots.markOk(agentDef.id, { path }, sshConfig.id);
 							}
+							if (agentDef.id === 'grok') await probeRemoteGrokContextWindows(sshConfig);
 						} else if (!connectionError) {
 							capabilitySnapshots.markNotInstalled(agentDef.id, sshConfig.id);
 						}
 					}
+
+					// Every installation on the remote, so the Edit Agent chooser shows
+					// for a remote agent exactly when it shows for a local one. Looked up
+					// after the snapshot write, so that write follows its own observation.
+					const allPaths = available
+						? await detectAllBinaryPathsRemote(sshConfig, agentDef.binaryName, path)
+						: undefined;
 
 					return stripAgentFunctions(
 						{
 							...agentDef,
 							available,
 							path,
+							allPaths,
 							capabilities: getAgentCapabilities(agentDef.id),
 							error: connectionError,
 						},
@@ -1206,7 +1474,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				const allConfigs = agentConfigsStore.get('configs', {});
 				allConfigs[agentId] = config;
 				agentConfigsStore.set('configs', allConfigs);
-				logger.info(`Updated config for agent: ${agentId}`, CONFIG_LOG_CONTEXT, config);
+				// The log shows in the System Log Viewer and goes to disk with file logging on, so
+				// log a masked copy: `config` itself is what the store holds.
+				logger.info(
+					`Updated config for agent: ${agentId}`,
+					CONFIG_LOG_CONTEXT,
+					maskEnvRecords(config)
+				);
 				return true;
 			}
 		)
@@ -1247,7 +1521,10 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 				allConfigs[agentId][key] = value;
 				agentConfigsStore.set('configs', allConfigs);
-				logger.debug(`Updated config ${key} for agent ${agentId}`, CONFIG_LOG_CONTEXT, { value });
+				// `key` may be `customEnvVars`: mask by the key the value was stored under.
+				logger.debug(`Updated config ${key} for agent ${agentId}`, CONFIG_LOG_CONTEXT, {
+					value: maskEnvRecords(value, key),
+				});
 				return true;
 			}
 		)
@@ -1277,13 +1554,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				agentConfigsStore.set('configs', allConfigs);
 
 				// Update agent detector with all custom paths
-				const allCustomPaths: Record<string, string> = {};
-				for (const [id, config] of Object.entries(allConfigs)) {
-					if (config && typeof config === 'object' && 'customPath' in config && config.customPath) {
-						allCustomPaths[id] = config.customPath as string;
-					}
-				}
-				agentDetector.setCustomPaths(allCustomPaths);
+				agentDetector.setCustomPaths(customPathsFromAgentConfigs(allConfigs));
 
 				return true;
 			}
@@ -1306,14 +1577,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	ipcMain.handle(
 		'agents:getAllCustomPaths',
 		withIpcErrorLogging(handlerOpts('getAllCustomPaths', CONFIG_LOG_CONTEXT), async () => {
-			const allConfigs = agentConfigsStore.get('configs', {});
-			const customPaths: Record<string, string> = {};
-			for (const [agentId, config] of Object.entries(allConfigs)) {
-				if (config && typeof config === 'object' && 'customPath' in config && config.customPath) {
-					customPaths[agentId] = config.customPath as string;
-				}
-			}
-			return customPaths;
+			return customPathsFromAgentConfigs(agentConfigsStore.get('configs', {}));
 		})
 	);
 
@@ -1904,19 +2168,63 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					return discoverOpenCodeSlashCommandsRemote(sshRemote, cwd);
 				}
 
-				const agent = await agentDetector.getAgent(agentId);
-				if (agentId === 'codex') {
-					// Codex skills/prompts live on the machine that runs the CLI.
-					// For an SSH-remote agent that is the remote host, so return
-					// nothing rather than offering this machine's commands - a
-					// command the remote Codex has never heard of is worse than none.
-					if (sshRemoteId) {
-						logger.debug(
-							'Skipping Codex slash command discovery for SSH remote agent',
+				// SSH remote (an SSH agent, or a hosted one, which keeps its remote):
+				// Claude and Codex commands live on the machine that runs the CLI, so
+				// discovery runs there, over SSH. It never falls back to this
+				// machine: a command the remote has never heard of is worse than none.
+				if (sshRemoteId && (agentId === 'claude-code' || agentId === 'codex')) {
+					const sshRemote = getSshRemoteById(settingsStore, sshRemoteId);
+					// A remote the user switched off is not asked: no SSH connection starts.
+					if (sshRemote?.enabled === false) {
+						logger.info(
+							`SSH remote ${sshRemoteId} is disabled; no slash command discovery`,
 							LOG_CONTEXT
 						);
 						return null;
 					}
+					if (!sshRemote) {
+						logger.warn(
+							`SSH remote ${sshRemoteId} not found for slash command discovery`,
+							LOG_CONTEXT
+						);
+						return null;
+					}
+					const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
+					// The agent's custom path is a path on the remote; else the remote's PATH finds it.
+					const binary = customPath || agentDef?.binaryName || agentId;
+					// The agent's own vars (its account: CLAUDE_CONFIG_DIR, CODEX_HOME), as its turns get.
+					// Kept raw: a blank value cancels the remote's own layer, and is
+					// dropped only once the layers are merged (in the probe).
+					const providerEnv = agentConfigsStore.get('configs', {})[agentId]?.customEnvVars;
+					const remoteEnv = effectiveAgentCustomEnvVars(customEnvVars, providerEnv);
+					if (agentId === 'claude-code') {
+						const names = await probeClaudeSlashCommandsRemoteCached(
+							sshRemote,
+							binary,
+							cwd,
+							remoteEnv
+						);
+						if (!names) return null;
+						logger.info(
+							`Discovered ${names.length} slash commands for ${agentId} on ${sshRemote.name}`,
+							LOG_CONTEXT
+						);
+						return names.map((name: string) => ({ name }));
+					}
+					// Cached per remote, binary, folder, and env: an agent switch must not
+					// start `codex app-server` over SSH again. A failure is not kept.
+					const key = ['ssh', sshRemote.id, binary, cwd, canonicalJson(remoteEnv)].join('\0');
+					const found = await remoteCodexCommandCache.get(key, () =>
+						discoverCodexCommands(cwd, binary, process.env, {
+							config: sshRemote,
+							env: remoteEnv,
+						})
+					);
+					return found.commands;
+				}
+
+				const agent = await agentDetector.getAgent(agentId);
+				if (agentId === 'codex') {
 					let commandPath = agent?.available ? agent.path || agent.command : undefined;
 					if (customPath) {
 						const detection = await checkCustomPath(customPath);
@@ -1968,8 +2276,20 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					}
 
 					// The init message of a `/help` probe names every command; see
-					// claude-slash-command-probe.ts.
-					const names = await probeClaudeSlashCommands(commandPath, cwd);
+					// claude-slash-command-probe.ts. An agent with its own vars (its
+					// CLAUDE_CONFIG_DIR account) probes with them, as on a remote.
+					// Raw, so a blank value still cancels the global layer underneath.
+					const agentEnv = effectiveAgentCustomEnvVars(
+						customEnvVars,
+						agentConfigsStore.get('configs', {})['claude-code']?.customEnvVars
+					);
+					const names = Object.keys(agentEnv).length
+						? await probeClaudeSlashCommands(
+								commandPath,
+								cwd,
+								buildChildProcessEnv(agentEnv, false, settingsStore?.get('shellEnvVars', {}))
+							)
+						: await probeClaudeSlashCommands(commandPath, cwd);
 					if (!names) return null;
 					logger.info(`Discovered ${names.length} slash commands for ${agentId}`, LOG_CONTEXT);
 					// Description enrichment is best-effort: a permission/IO

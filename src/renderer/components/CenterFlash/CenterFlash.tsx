@@ -146,9 +146,9 @@ export const CenterFlash = memo(function CenterFlash({ theme }: CenterFlashProps
 						</div>
 						{rendered.detail && (
 							<div
-								className="text-xs font-mono mt-1 truncate"
+								className={`text-xs mt-1 ${rendered.wrapDetail ? 'break-words' : 'font-mono truncate'}`}
 								style={{ color: theme.colors.textDim }}
-								title={rendered.detail}
+								title={rendered.wrapDetail ? undefined : rendered.detail}
 							>
 								{rendered.detail}
 							</div>

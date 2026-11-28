@@ -1,10 +1,24 @@
 const hostPaths = vi.hoisted(() => ({ userData: '' }));
 vi.mock('electron', () => ({ app: { getPath: () => hostPaths.userData } }));
 
+const bridgeRead = vi.hoisted(() => ({ invokeAsBridge: vi.fn() }));
+vi.mock('../../../../main/web-server/handlers/bridgeHandlers', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/web-server/handlers/bridgeHandlers')>()),
+	invokeAsBridge: bridgeRead.invokeAsBridge,
+}));
+
 vi.mock(
 	'../../../../main/plugins/plugin-scan',
 	async () => await import('../../../helpers/pluginScan')
 );
+import {
+	noteAiTabRetryPending,
+	resetAiTabRetryStateForTests,
+} from '../../../../main/utils/ai-tab-retry-state';
+import {
+	recordFramedQueue,
+	resetQueueChangeFrames,
+} from '../../../../main/web-server/queue-change-frames';
 import { MAESTRO_PUBLISHER_KEYS } from '../../../../shared/plugins/publisher-keys';
 import { RELAY_PUBLISHER_KEY } from '../../../../shared/plugins/relay-identity';
 /**
@@ -66,6 +80,10 @@ vi.mock('../../../../main/feedback', () => ({
 		issueUrl: 'https://github.com/RunMaestro/Maestro/issues/1',
 	}),
 	subscribeFeedbackIssue: vi.fn().mockResolvedValue({ success: true }),
+}));
+const cancelCrossAgentRequestsForSource = vi.hoisted(() => vi.fn(() => 2));
+vi.mock('../../../../main/cross-agent/cross-agent-router', () => ({
+	cancelCrossAgentRequestsForSource,
 }));
 vi.mock('../../../../main/debug-package', () => ({
 	generateDebugPackage: vi.fn().mockResolvedValue({
@@ -179,6 +197,23 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		refreshFileTree: vi.fn().mockResolvedValue(true),
 		openBrowserTab: vi.fn().mockResolvedValue({ success: true, tabId: 'browser-tab-1' }),
 		closeBrowserTab: vi.fn().mockResolvedValue(true),
+		pickBrowserElement: vi.fn().mockResolvedValue({
+			success: true,
+			tabId: 'browser-tab-1',
+			browserId: 'browser:1',
+			text: 'Element `h1` ...',
+			screenshot: true,
+			aiTabId: 'ai-1',
+			pickId: 'pick-1',
+		}),
+		browserViewport: vi.fn().mockResolvedValue({
+			success: true,
+			tabId: 'browser-tab-1',
+			browserId: 'browser:1',
+			preset: 'phone',
+			previous: 'fit',
+		}),
+		designPickCommand: vi.fn().mockResolvedValue({ success: true, aiTabId: 'ai-1', picks: [] }),
 		openTerminalTab: vi.fn().mockResolvedValue({ success: true, tabId: 'terminal-tab-1' }),
 		writeTerminalTab: vi
 			.fn()
@@ -211,6 +246,9 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		mergeQueueItem: vi
 			.fn()
 			.mockResolvedValue({ success: true, merged: true, mergedIntoId: 'item-8' }),
+		editQueueItem: vi.fn().mockResolvedValue({ success: true, found: true }),
+		moveQueueItem: vi.fn().mockResolvedValue({ success: true, moved: true }),
+		sendQueueItemNow: vi.fn().mockResolvedValue({ success: true, sent: true }),
 		steerQueueItem: vi.fn().mockResolvedValue({
 			success: true,
 			result: { outcome: 'delivered', verdict: 'delivered' },
@@ -260,6 +298,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		getGroupChatState: vi.fn().mockResolvedValue(null),
 		stopGroupChat: vi.fn().mockResolvedValue(true),
 		archiveGroupChat: vi.fn().mockResolvedValue(true),
+		setGroupChatUnread: vi.fn().mockResolvedValue(true),
 		addGroupChatParticipant: vi
 			.fn()
 			.mockResolvedValue({ success: true, participantName: 'Isabelle', alreadyMember: false }),
@@ -281,7 +320,6 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		removeCuePipeline: vi.fn().mockResolvedValue({ ok: true }),
 		exportCueBundle: vi.fn().mockResolvedValue({ ok: true, outputPath: '/tmp/b.zip' }),
 		importCueBundle: vi.fn().mockResolvedValue({ ok: true, applied: true, plan: {} }),
-		getUsageDashboard: vi.fn().mockResolvedValue({}),
 		getAchievements: vi.fn().mockResolvedValue([]),
 		writeToTerminal: vi.fn().mockReturnValue(true),
 		resizeTerminal: vi.fn().mockReturnValue(true),
@@ -579,6 +617,43 @@ describe('WebSocketMessageHandler', () => {
 			expect(callbacks.noteAgentDelegation).not.toHaveBeenCalled();
 		});
 
+		it('forwards the context, name, and hand-off of an asker on another machine (Federation)', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				transcript: [{ source: 'user', text: 'hi', timestamp: 1 }, 'junk'],
+				fromAgentName: ' Laptop Agent ',
+				askerKey: 'laptop/agent-a/tab-1',
+				handoffAnswer: 'the plan',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalledWith(
+					expect.objectContaining({
+						transcript: [{ source: 'user', text: 'hi', timestamp: 1 }],
+						fromAgentName: 'Laptop Agent',
+						askerKey: 'laptop/agent-a/tab-1',
+						handoffAnswer: 'the plan',
+					})
+				);
+			});
+		});
+
+		it('drops an asker key it cannot read, so the consult shares the stand-in tab (G2)', async () => {
+			handler.handleMessage(client, {
+				type: 'cross_agent_ask',
+				sessionId: 'session-1',
+				question: 'q',
+				askerKey: 'session-2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.consultAgent).toHaveBeenCalled();
+			});
+			expect((callbacks.consultAgent as any).mock.calls[0][0]).not.toHaveProperty('askerKey');
+		});
+
 		it('consults the target and returns the answer without touching its open tab', async () => {
 			handler.handleMessage(client, {
 				type: 'cross_agent_ask',
@@ -648,6 +723,79 @@ describe('WebSocketMessageHandler', () => {
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.success).toBe(false);
 			expect(response.error).toContain('not found');
+		});
+
+		// G4: a wire hand-off may run writable (`crossAgentHandoffsWritable`, default on), so it must
+		// never be open to a client that may not send a turn. Today no client kind is refused a send
+		// (Web Login accounts are equal operators, the CLI and a Federation peer present the CLI
+		// secret), so every kind may do both. Pinned per kind: a gate added to `send_command` for one
+		// kind fails here until the wire hand-off carries the same gate.
+		describe.each([
+			['a web-desktop or phone client (URL token only)', {}],
+			[
+				'a Web Login account',
+				{ user: { id: 'u1', username: 'ann', displayName: 'Ann' }, sessionId: 's1' },
+			],
+			['maestro-cli or a Federation peer (CLI secret)', { cli: true, cliAuthenticated: true }],
+		] as Array<[string, Partial<WebClient>]>)('as %s', (_kind, fields) => {
+			it('may hand off on the wire only as far as it may send a turn', async () => {
+				const kindClient = { ...createMockClient('kind-client'), ...fields };
+				handler.handleMessage(kindClient, {
+					type: 'send_command',
+					sessionId: 'session-1',
+					command: 'do it',
+					inputMode: 'ai',
+				});
+				handler.handleMessage(kindClient, {
+					type: 'cross_agent_ask',
+					sessionId: 'session-1',
+					question: 'then pass it on',
+					handoffAnswer: 'the plan',
+				});
+
+				await vi.waitFor(() => {
+					expect(callbacks.consultAgent).toHaveBeenCalled();
+				});
+				const handedOff = (callbacks.consultAgent as any).mock.calls.some(
+					([params]: [{ handoffAnswer?: string }]) => params.handoffAnswer === 'the plan'
+				);
+				const sent = (callbacks.executeCommand as any).mock.calls.length > 0;
+				expect(handedOff).toBe(true);
+				expect(sent).toBe(handedOff);
+			});
+		});
+
+		// G1: Stop on an asker on another machine ends its consults here, and only its own.
+		it('stops the consults one remote asker has running, keyed on its asker key', async () => {
+			cancelCrossAgentRequestsForSource.mockClear();
+			handler.handleMessage(client, {
+				type: 'cross_agent_cancel',
+				askerKey: 'laptop/agent-a/tab-1',
+				requestId: 'r-stop',
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(cancelCrossAgentRequestsForSource).toHaveBeenCalledWith(
+				'remote-asker:laptop/agent-a/tab-1'
+			);
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'cross_agent_cancel_result',
+				requestId: 'r-stop',
+				success: true,
+				canceled: 2,
+			});
+		});
+
+		it('stops nothing for a key it cannot read, never the shared stand-in tab', async () => {
+			cancelCrossAgentRequestsForSource.mockClear();
+			handler.handleMessage(client, { type: 'cross_agent_cancel', askerKey: 'cli-ask' });
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(cancelCrossAgentRequestsForSource).not.toHaveBeenCalled();
+			expect(JSON.parse((client.socket.send as any).mock.calls[0][0]).success).toBe(false);
 		});
 
 		it('clamps an absurd timeout instead of holding a process for a day', async () => {
@@ -870,6 +1018,38 @@ describe('WebSocketMessageHandler', () => {
 				requestId: 'req-1',
 			});
 			expect(response.error).toContain('mid-turn');
+		});
+
+		// M19: a hosted agent's host has no `--force`; the CLI must print queued, not delivered.
+		it('answers a command a hosted agent host queued as a queued command_result with its item', async () => {
+			(callbacks.executeCommand as any).mockResolvedValue({
+				queued: true,
+				itemId: 'q-7',
+				queuePosition: 2,
+			});
+
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'test',
+				inputMode: 'ai',
+				tabId: 'busy-tab',
+				force: true,
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'command_result',
+				success: true,
+				queued: true,
+				itemId: 'q-7',
+				queuePosition: 2,
+				tabId: 'busy-tab',
+				requestId: 'req-1',
+			});
+			expect(response.error).toBeUndefined();
 		});
 
 		it('omits tabId from command_result on the no-tabId path so callers do not chain to a stale snapshot', async () => {
@@ -1401,6 +1581,27 @@ describe('WebSocketMessageHandler', () => {
 
 			await vi.waitFor(() => {
 				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', true);
+			});
+		});
+
+		it('asks for the tab under the id a Federation client sent, and ignores one that is not an id (R15)', async () => {
+			handler.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+				background: true,
+				tabId: 'drawn-here-1',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', true, 'drawn-here-1');
+			});
+			(callbacks.newTab as any).mockClear();
+			handler.handleMessage(client, {
+				type: 'new_tab',
+				sessionId: 'session-1',
+				tabId: '../not an id',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.newTab).toHaveBeenCalledWith('session-1', false);
 			});
 		});
 
@@ -2000,6 +2201,503 @@ describe('WebSocketMessageHandler', () => {
 				expect(lastResponse.type).toBe('close_browser_tab_result');
 				expect(lastResponse.success).toBe(false);
 				expect(lastResponse.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('Pick Browser Element (Web → Desktop)', () => {
+		it('should forward the pick with selector, note, and placement', async () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				selector: ' h1 ',
+				note: 'bigger',
+				background: true,
+				requestId: 'r1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.pickBrowserElement).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					tab: 'browser:1',
+					selector: 'h1',
+					note: 'bigger',
+					background: true,
+				});
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'pick_browser_element_result',
+				success: true,
+				tabId: 'browser-tab-1',
+				browserId: 'browser:1',
+				screenshot: true,
+				aiTabId: 'ai-1',
+				pickId: 'pick-1',
+				sessionId: 'session-1',
+				background: true,
+				requestId: 'r1',
+			});
+		});
+
+		it('should default to foreground when no placement is sent', async () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				selector: 'button',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.pickBrowserElement).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					tab: 'tab-uuid',
+					selector: 'button',
+					note: undefined,
+					background: false,
+				});
+			});
+		});
+
+		it('should forward a queue request and answer with the queued message id', async () => {
+			(callbacks.pickBrowserElement as any).mockResolvedValueOnce({
+				success: true,
+				tabId: 'browser-tab-1',
+				text: 'Element `h1` ...',
+				screenshot: true,
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-1',
+			});
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				selector: 'h1',
+				queue: true,
+				requestId: 'r2',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.pickBrowserElement).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					tab: 'browser:1',
+					selector: 'h1',
+					note: undefined,
+					background: false,
+					queue: true,
+				});
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'pick_browser_element_result',
+				success: true,
+				aiTabId: 'ai-1',
+				queueItemId: 'queue-1',
+				requestId: 'r2',
+			});
+			// A queued pick stages no chip.
+			expect(response).not.toHaveProperty('pickId');
+		});
+
+		it('should treat only a literal true as a queue request', async () => {
+			// Same rule as `background`: a value that is not clearly an opt-in must
+			// leave the safe form, a staged chip that sends nothing, in force.
+			for (const queue of ['true', 'yes', 1, false, null]) {
+				(callbacks.pickBrowserElement as any).mockClear();
+				handler.handleMessage(client, {
+					type: 'pick_browser_element',
+					sessionId: 'session-1',
+					tab: 'tab-uuid',
+					selector: 'button',
+					queue,
+				});
+				await vi.waitFor(() => {
+					expect(callbacks.pickBrowserElement).toHaveBeenCalledTimes(1);
+				});
+				const request = (callbacks.pickBrowserElement as any).mock.calls[0][0];
+				expect(request, `queue: ${String(queue)}`).not.toHaveProperty('queue');
+			}
+		});
+
+		it('should reject a missing selector without calling the desktop', () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				selector: '   ',
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('pick_browser_element_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Missing selector or rect');
+			expect(response.screenshot).toBe(false);
+			expect(callbacks.pickBrowserElement).not.toHaveBeenCalled();
+		});
+
+		it('should forward a region (--rect) in place of a selector, queue included', async () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				// Only the four numbers travel on; anything else the client sent stays here.
+				rect: { x: 0, y: 120, width: 1280, height: 400, frame: { width: 1, height: 1 } },
+				note: 'tighten',
+				queue: true,
+				requestId: 'r3',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.pickBrowserElement).toHaveBeenCalledTimes(1);
+			});
+			expect((callbacks.pickBrowserElement as any).mock.calls[0][0]).toStrictEqual({
+				sessionId: 'session-1',
+				tab: 'browser:1',
+				rect: { x: 0, y: 120, width: 1280, height: 400 },
+				note: 'tighten',
+				background: false,
+				queue: true,
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(JSON.parse((client.socket.send as any).mock.calls[0][0])).toMatchObject({
+				type: 'pick_browser_element_result',
+				success: true,
+				requestId: 'r3',
+			});
+		});
+
+		it('should reject a selector and a rect together, or a malformed rect', () => {
+			for (const [fields, error] of [
+				[
+					{ selector: 'h1', rect: { x: 0, y: 0, width: 10, height: 10 } },
+					'Send a selector or a rect, not both',
+				],
+				[{ rect: { x: 0, y: 0, width: 0, height: 10 } }, 'Invalid rect'],
+				[{ rect: '0,0,10,10' }, 'Invalid rect'],
+				[{ rect: { x: 'a', y: 0, width: 10, height: 10 } }, 'Invalid rect'],
+			] as const) {
+				(client.socket.send as any).mockClear();
+				handler.handleMessage(client, {
+					type: 'pick_browser_element',
+					sessionId: 'session-1',
+					tab: 'tab-uuid',
+					...fields,
+				});
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('pick_browser_element_result');
+				expect(response.success).toBe(false);
+				expect(response.error).toContain(error);
+			}
+			expect(callbacks.pickBrowserElement).not.toHaveBeenCalled();
+		});
+
+		it('should reject a missing tab', () => {
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				selector: 'h1',
+			});
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Missing sessionId or tab');
+		});
+
+		it('should handle callback failure', async () => {
+			(callbacks.pickBrowserElement as any).mockRejectedValue(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'pick_browser_element',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				selector: 'h1',
+			});
+			await vi.waitFor(() => {
+				const calls = (client.socket.send as any).mock.calls;
+				const lastResponse = JSON.parse(calls[calls.length - 1][0]);
+				expect(lastResponse.type).toBe('pick_browser_element_result');
+				expect(lastResponse.success).toBe(false);
+				expect(lastResponse.error).toContain('boom');
+			});
+		});
+	});
+
+	describe('Browser Viewport (Web → Desktop)', () => {
+		const lastResponse = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('forwards a set with the trimmed tab and a normalized preset, and answers with both presets', async () => {
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: ' browser:1 ',
+				preset: ' Phone ',
+				requestId: 'r1',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.browserViewport).toHaveBeenCalledWith({
+					sessionId: 'session-1',
+					tab: 'browser:1',
+					preset: 'phone',
+				});
+			});
+			await vi.waitFor(() => {
+				expect((client.socket.send as any).mock.calls.length).toBeGreaterThan(0);
+			});
+			expect(lastResponse()).toEqual({
+				type: 'browser_viewport_result',
+				success: true,
+				tabId: 'browser-tab-1',
+				browserId: 'browser:1',
+				preset: 'phone',
+				previous: 'fit',
+				sessionId: 'session-1',
+				requestId: 'r1',
+				timestamp: expect.any(Number),
+			});
+		});
+
+		it('forwards a read with no preset key at all', async () => {
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.browserViewport).toHaveBeenCalledTimes(1);
+			});
+			expect((callbacks.browserViewport as any).mock.calls[0][0]).toStrictEqual({
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+			});
+		});
+
+		it('treats a null preset as a read', async () => {
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				preset: null,
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.browserViewport).toHaveBeenCalledTimes(1);
+			});
+			expect((callbacks.browserViewport as any).mock.calls[0][0]).toStrictEqual({
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+			});
+		});
+
+		it.each([['wide'], [390], [''], [{ preset: 'phone' }]])(
+			'refuses the preset %j rather than reading the tab',
+			(preset) => {
+				handler.handleMessage(client, {
+					type: 'browser_viewport',
+					sessionId: 'session-1',
+					tab: 'tab-uuid',
+					preset,
+					requestId: 'r2',
+				});
+
+				expect(callbacks.browserViewport).not.toHaveBeenCalled();
+				expect(lastResponse()).toMatchObject({
+					type: 'browser_viewport_result',
+					success: false,
+					requestId: 'r2',
+				});
+				expect(lastResponse().error).toBe(
+					'Unknown viewport preset. Use one of: fit, desktop, laptop, tablet, phone'
+				);
+			}
+		);
+
+		it.each([
+			[{ tab: 'tab-uuid' }],
+			[{ sessionId: 'session-1' }],
+			[{ sessionId: 'session-1', tab: '   ' }],
+		])('refuses a request missing the agent or the tab: %j', (fields) => {
+			handler.handleMessage(client, { type: 'browser_viewport', preset: 'phone', ...fields });
+
+			expect(callbacks.browserViewport).not.toHaveBeenCalled();
+			expect(lastResponse().success).toBe(false);
+			expect(lastResponse().error).toBe('Missing sessionId or tab');
+		});
+
+		it('answers with the failure the callback reports', async () => {
+			(callbacks.browserViewport as any).mockResolvedValueOnce({
+				success: false,
+				error: 'Browser tab not found in your session (it may have been closed).',
+				tabId: 'tab-uuid',
+			});
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				preset: 'phone',
+			});
+
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'browser_viewport_result',
+					success: false,
+					error: 'Browser tab not found in your session (it may have been closed).',
+					tabId: 'tab-uuid',
+				});
+			});
+		});
+
+		it('says the viewport is not configured when the callback is absent', () => {
+			const bare = new WebSocketMessageHandler();
+			bare.setCallbacks({});
+			bare.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+			});
+
+			expect(lastResponse()).toMatchObject({
+				type: 'browser_viewport_result',
+				success: false,
+				error: 'Browser viewport not configured',
+			});
+		});
+
+		it('names a set or a read in the failure when the callback rejects', async () => {
+			(callbacks.browserViewport as any).mockRejectedValueOnce(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+				preset: 'phone',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse().error).toBe('Failed to set the viewport: boom');
+			});
+
+			(callbacks.browserViewport as any).mockRejectedValueOnce(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'browser_viewport',
+				sessionId: 'session-1',
+				tab: 'tab-uuid',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse().error).toBe('Failed to read the viewport: boom');
+			});
+		});
+	});
+
+	describe('Design Mode chips (Web → Desktop)', () => {
+		// The chips are renderer state: this hop validates, refuses an unknown
+		// agent, and always answers with the request id, because the CLI blocks on it.
+		const lastResponse = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('forwards a list and answers with what the renderer found', async () => {
+			const chip = { id: 'pick-1', kind: 'element', label: 'h1', url: '', note: '', text: 'B' };
+			(callbacks.designPickCommand as any).mockResolvedValueOnce({
+				success: true,
+				aiTabId: 'ai-1',
+				picks: [chip],
+			});
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'list',
+				sessionId: 'session-1',
+				requestId: 'r1',
+			});
+
+			await vi.waitFor(() => {
+				expect(lastResponse()).toEqual({
+					type: 'design_pick_command_result',
+					success: true,
+					aiTabId: 'ai-1',
+					picks: [chip],
+					requestId: 'r1',
+					timestamp: expect.any(Number),
+				});
+			});
+			expect(callbacks.designPickCommand).toHaveBeenCalledWith({
+				action: 'list',
+				sessionId: 'session-1',
+			});
+		});
+
+		it('forwards a remove with its trimmed chip id', async () => {
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'remove',
+				sessionId: 'session-1',
+				pickId: ' pick-1 ',
+			});
+			await vi.waitFor(() => {
+				expect(callbacks.designPickCommand).toHaveBeenCalledWith({
+					action: 'remove',
+					sessionId: 'session-1',
+					pickId: 'pick-1',
+				});
+			});
+		});
+
+		it('refuses a malformed request before it reaches the renderer', () => {
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'remove',
+				sessionId: 'session-1',
+				requestId: 'r2',
+			});
+			expect(lastResponse()).toEqual({
+				type: 'design_pick_command_result',
+				success: false,
+				error: 'browser-picks remove requires a chip id',
+				requestId: 'r2',
+				timestamp: expect.any(Number),
+			});
+			expect(callbacks.designPickCommand).not.toHaveBeenCalled();
+		});
+
+		it('refuses an unknown agent', () => {
+			(callbacks.getSessionDetail as any).mockReturnValueOnce(null);
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'list',
+				sessionId: 'ghost',
+				requestId: 'r3',
+			});
+			expect(lastResponse()).toMatchObject({
+				success: false,
+				error: 'Session not found: ghost',
+				requestId: 'r3',
+			});
+			expect(callbacks.designPickCommand).not.toHaveBeenCalled();
+		});
+
+		it('answers a renderer failure instead of hanging', async () => {
+			(callbacks.designPickCommand as any).mockRejectedValueOnce(new Error('boom'));
+			handler.handleMessage(client, {
+				type: 'design_pick_command',
+				action: 'list',
+				sessionId: 'session-1',
+				requestId: 'r4',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'design_pick_command_result',
+					success: false,
+					error: 'Design Mode chip list failed: boom',
+					requestId: 'r4',
+				});
 			});
 		});
 	});
@@ -2707,6 +3405,46 @@ describe('WebSocketMessageHandler', () => {
 			expect(callbacks.archiveGroupChat).toHaveBeenLastCalledWith('chat-1', false);
 		});
 
+		it('marks a chat unread, and only a literal unread: false marks it read', async () => {
+			handler.handleMessage(client, {
+				type: 'set_group_chat_unread',
+				chatId: 'chat-1',
+				requestId: 'req-u1',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({
+					type: 'set_group_chat_unread_result',
+					success: true,
+					chatId: 'chat-1',
+					unread: true,
+					requestId: 'req-u1',
+				});
+			});
+			expect(callbacks.setGroupChatUnread).toHaveBeenLastCalledWith('chat-1', true);
+
+			handler.handleMessage(client, {
+				type: 'set_group_chat_unread',
+				chatId: 'chat-1',
+				unread: false,
+				requestId: 'req-u2',
+			});
+			await vi.waitFor(() => {
+				expect(lastResponse()).toMatchObject({ unread: false, requestId: 'req-u2' });
+			});
+			expect(callbacks.setGroupChatUnread).toHaveBeenLastCalledWith('chat-1', false);
+		});
+
+		it('tags a missing chatId on set_group_chat_unread with the requestId', () => {
+			handler.handleMessage(client, { type: 'set_group_chat_unread', requestId: 'req-u3' });
+
+			expect(lastResponse()).toMatchObject({
+				type: 'error',
+				message: 'Missing chatId',
+				requestId: 'req-u3',
+			});
+			expect(callbacks.setGroupChatUnread).not.toHaveBeenCalled();
+		});
+
 		it('adds a participant by agent ID and answers with the result', async () => {
 			handler.handleMessage(client, {
 				type: 'add_group_chat_participant',
@@ -3267,6 +4005,358 @@ describe('WebSocketMessageHandler', () => {
 			return JSON.parse(String(calls[calls.length - 1][0]));
 		};
 
+		it("forwards a Federation sender's turnOverrides after the empty callback and admission slots", async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Mine',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+				turnOverrides: { model: ' opus ', readOnly: true, saveToHistory: false, junk: 1 },
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Mine',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					undefined,
+					undefined,
+					undefined,
+					{ model: 'opus', readOnly: true, saveToHistory: false }
+				);
+			});
+		});
+
+		it("forwards a Federation sender's agent-only text after the overrides slot, read as the headless host reads it (M16)", async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'Mine',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+				background: true,
+				agentContext: 'Replies:\nBackend: the cache is fine.',
+				agentNotes: '   ',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Mine',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					{ agentContext: 'Replies:\nBackend: the cache is fine.' }
+				);
+			});
+		});
+
+		// Parity R19: the resend of a message this tab already answered (the client lost track of
+		// the turn: a cut link, a restart) never runs again, as a headless host refuses it.
+		describe('the resend of a message the tab already answered (entryId, R19)', () => {
+			const QUESTION = { id: 'u1', timestamp: 1, source: 'user', text: 'Summarize the docs' };
+			const resend = (text = 'Summarize the docs') =>
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: text,
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					background: true,
+					entryId: 'u1',
+					requestId: 'r1',
+				});
+
+			afterEach(() => bridgeRead.invokeAsBridge.mockReset());
+
+			it('answers "already ran" and queues nothing when an answer follows the entry', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						// This desktop stamps a turn's end when its process exits (R36).
+						{ id: 'a1', timestamp: 2, source: 'ai', text: 'The docs say...', turnEnded: true },
+					],
+				});
+				resend();
+				await vi.waitFor(() =>
+					expect(lastSend()).toMatchObject({
+						type: 'enqueue_command_result',
+						success: true,
+						queued: false,
+						answered: true,
+						tabId: 'tab-1',
+					})
+				);
+				expect(bridgeRead.invokeAsBridge).toHaveBeenCalledWith(
+					'sessions:getDeferredContent',
+					'session-1',
+					'tab-1',
+					false
+				);
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			});
+
+			// Parity R37: a turn that ended on the provider's own error is retried by that error's rule
+			// (the client's retry sends it): the resend runs. A turn the person stopped never runs again.
+			it("runs the resend when the entry's turn ended on a provider error", async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{
+							id: 'e1',
+							timestamp: 2,
+							source: 'error',
+							text: 'API Error: 529 overloaded',
+							turnEnded: true,
+						},
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			// Parity R38: a resend that arrives while this desktop still runs the message's turn (its
+			// sender lost the link and cannot see that) is the message running: never queued to run
+			// a second time, as a headless host refuses it.
+			it.each([
+				['runs it right now', 'busy', true],
+				['is idle (the turn died with the host)', 'idle', false],
+			])('answers "already ran" only when the tab %s (R38)', async (_how, state, answered) => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }],
+					transcriptSnapshots: [{ sessionId: 'session-1', tabId: 'tab-1', runtime: { state } }],
+				});
+				resend();
+				if (answered) {
+					await vi.waitFor(() => expect(lastSend()).toMatchObject({ answered: true }));
+					expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+				} else {
+					await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+					expect(lastSend()).not.toHaveProperty('answered');
+				}
+			});
+
+			// Parity R41: one side owns a retry. When this desktop's own Agent Resilience holds the
+			// tab's failed turn for a resend, a client's resend of that message would run it twice:
+			// it is refused as "the host retries it" (`answered` too, for an older client).
+			it.each([
+				['holds a retry of the turn', true, true],
+				['holds no retry', false, false],
+			])(
+				'answers "the host retries it" only when the tab %s (R41)',
+				async (_how, pending, retrying) => {
+					noteAiTabRetryPending('session-1', 'tab-1', pending);
+					bridgeRead.invokeAsBridge.mockResolvedValue({
+						logs: [
+							QUESTION,
+							{ id: 'e1', timestamp: 2, source: 'error', text: 'API Error: 529', turnEnded: true },
+						],
+					});
+					resend();
+					try {
+						if (retrying) {
+							await vi.waitFor(() =>
+								expect(lastSend()).toMatchObject({ answered: true, retrying: true, queued: false })
+							);
+							expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+						} else {
+							await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+							expect(lastSend()).not.toHaveProperty('retrying');
+						}
+					} finally {
+						resetAiTabRetryStateForTests();
+					}
+				}
+			);
+
+			it("runs a resend of an earlier message while the tab's retry holds a later one (R41)", async () => {
+				noteAiTabRetryPending('session-1', 'tab-1', true);
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{ id: 'e1', timestamp: 2, source: 'error', text: 'API Error: 529', turnEnded: true },
+						{ id: 'u2', timestamp: 3, source: 'user', text: 'Next' },
+					],
+				});
+				resend();
+				try {
+					await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+					expect(lastSend()).not.toHaveProperty('retrying');
+				} finally {
+					resetAiTabRetryStateForTests();
+				}
+			});
+
+			// CodeRabbit on #2167: a busy tab whose turn began after the message (a command that writes
+			// no message of its own) is not running this message: the resend runs.
+			it('runs the resend when the tab is busy with a turn that began after the message', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }],
+					transcriptSnapshots: [
+						{
+							sessionId: 'session-1',
+							tabId: 'tab-1',
+							runtime: { state: 'busy', thinkingStartTime: 600_000 },
+						},
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			it('answers "already ran" when the entry\'s turn was stopped by the person', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({
+					logs: [
+						QUESTION,
+						{ id: 's1', timestamp: 2, source: 'system', text: 'Canceled by user', turnEnded: true },
+					],
+				});
+				resend();
+				await vi.waitFor(() => expect(lastSend()).toMatchObject({ answered: true }));
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			});
+
+			it.each([
+				['the turn died before an answer', { logs: [QUESTION] }, 'Summarize the docs'],
+				// Parity R36: this desktop writes streamed text as it arrives, so text with no end stamp
+				// is a turn that died with the host part way through, never an answer.
+				[
+					'the turn streamed some text and died with the host (no end stamp, R36)',
+					{
+						logs: [
+							{ id: 'u0', timestamp: 0, source: 'user', text: 'Hello' },
+							{ id: 'a0', timestamp: 0, source: 'ai', text: 'Hi', turnEnded: true },
+							QUESTION,
+							{ id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' },
+						],
+					},
+					'Summarize the docs',
+				],
+				[
+					'the turn streamed some text and died, on a host too old to stamp (R36)',
+					{ logs: [QUESTION, { id: 'o1', timestamp: 2, source: 'stdout', text: 'The docs s' }] },
+					'Summarize the docs',
+				],
+				// Parity R23: a2 answers the later u2, never u1, whose own turn died.
+				[
+					'only a later message was answered',
+					{
+						logs: [
+							QUESTION,
+							{ id: 'u2', timestamp: 3, source: 'user', text: 'And the tests?' },
+							{ id: 'a2', timestamp: 4, source: 'ai', text: 'The tests...' },
+						],
+					},
+					'Summarize the docs',
+				],
+				[
+					'the message was edited while it was kept',
+					{ logs: [QUESTION, { id: 'a1', timestamp: 2, source: 'ai', text: 'ok' }] },
+					'Summarize the docs, briefly',
+				],
+			])('runs the message when %s', async (_why, read, text) => {
+				bridgeRead.invokeAsBridge.mockResolvedValue(read);
+				resend(text);
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(lastSend()).not.toHaveProperty('answered');
+			});
+
+			it('runs the message when the tab cannot be read: the client read the host first', async () => {
+				bridgeRead.invokeAsBridge.mockRejectedValue(new Error('no owner'));
+				resend();
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+			});
+
+			// Parity R26: the desktop host writes the message under the id the client named, as a
+			// headless host does, so the client's kept bubble is replaced by id, never by its words.
+			it('hands the entry id to the renderer after the agent-only text slot (R26)', async () => {
+				bridgeRead.invokeAsBridge.mockResolvedValue({ logs: [] });
+				resend();
+				await vi.waitFor(() =>
+					expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+						'session-1',
+						'Summarize the docs',
+						'ai',
+						'tab-1',
+						undefined,
+						true,
+						false,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						'u1'
+					)
+				);
+			});
+
+			it('sends no entry id slot for an id it cannot take (R26)', async () => {
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: 'Mine',
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					background: true,
+					entryId: 'not an id!',
+				});
+				await vi.waitFor(() => expect(callbacks.enqueueCommand).toHaveBeenCalled());
+				expect(vi.mocked(callbacks.enqueueCommand).mock.calls[0]).toHaveLength(8);
+			});
+		});
+
+		it.each([
+			[{ agentContext: 42 }, 'agentContext must be text.'],
+			[{ agentNotes: 'x'.repeat(1_000_001) }, 'agentNotes is longer than 1000000 characters.'],
+		])(
+			'refuses agent-only text it cannot take, and queues nothing (M16)',
+			async (fields, error) => {
+				handler.handleMessage(client, {
+					type: 'enqueue_command',
+					sessionId: 'session-1',
+					command: 'Mine',
+					inputMode: 'ai',
+					tabId: 'tab-1',
+					...fields,
+				});
+				await vi.waitFor(() =>
+					expect(lastSend()).toMatchObject({
+						type: 'enqueue_command_result',
+						success: false,
+						error,
+					})
+				);
+				expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			}
+		);
+
+		it('names what it does beyond the base protocol, as the headless host does (M16)', async () => {
+			handler.handleMessage(client, { type: 'host_capabilities', requestId: 'r1' });
+			await vi.waitFor(() =>
+				expect(lastSend()).toMatchObject({
+					type: 'host_capabilities_result',
+					requestId: 'r1',
+					success: true,
+					capabilities: ['turn-agent-text', 'import-held'],
+				})
+			);
+		});
+
 		it('forwards sessionId/command/tab/background to the callback and replies with queue info', async () => {
 			handler.handleMessage(client, {
 				type: 'enqueue_command',
@@ -3298,6 +4388,33 @@ describe('WebSocketMessageHandler', () => {
 				expect(response.queuePosition).toBe(1);
 				expect(response.itemId).toBe('item-1');
 				expect(response.tabId).toBe('tab-mock-123');
+			});
+		});
+
+		it('replies ran when the renderer ran one of its own commands, so no turn is awaited', async () => {
+			vi.mocked(callbacks.enqueueCommand).mockResolvedValueOnce({
+				success: true,
+				tabId: 'tab-1',
+				queued: false,
+				ran: true,
+			});
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: '/history',
+				inputMode: 'ai',
+				tabId: 'tab-1',
+			});
+
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response).toMatchObject({
+					type: 'enqueue_command_result',
+					success: true,
+					queued: false,
+					ran: true,
+					tabId: 'tab-1',
+				});
 			});
 		});
 
@@ -3409,6 +4526,50 @@ describe('WebSocketMessageHandler', () => {
 				expect(response.success).toBe(true);
 				expect(Array.isArray(response.queues)).toBe(true);
 			});
+		});
+
+		// Parity M28: a client that reads queue changes applies the next one over this answer.
+		it('answers each queue with the seq of the last changes frame sent for it (M28)', async () => {
+			resetQueueChangeFrames();
+			recordFramedQueue('session-1', { seq: 4, items: new Map() });
+			vi.mocked(callbacks.listQueue).mockResolvedValue({
+				success: true,
+				queues: [
+					{ sessionId: 'session-1', name: 'A', state: 'idle', items: [] },
+					{ sessionId: 'session-2', name: 'B', state: 'idle', items: [] },
+				],
+			});
+			handler.handleMessage(client, { type: 'list_queue' });
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.queues).toMatchObject([
+					{ sessionId: 'session-1', queueSeq: 4 },
+					{ sessionId: 'session-2', queueSeq: 0 },
+				]);
+			});
+			resetQueueChangeFrames();
+		});
+
+		// Parity M29: a frame sent while the read was out labelled the older list with its newer seq.
+		it('names the seq taken before it read the queues, never one a frame sent meanwhile (M29)', async () => {
+			resetQueueChangeFrames();
+			recordFramedQueue('session-1', { seq: 4, items: new Map() });
+			vi.mocked(callbacks.listQueue).mockImplementation(async () => {
+				// A change lands while the renderer answers.
+				recordFramedQueue('session-1', { seq: 5, items: new Map() });
+				return {
+					success: true,
+					queues: [{ sessionId: 'session-1', name: 'A', state: 'idle', items: [] }],
+				};
+			});
+			handler.handleMessage(client, { type: 'list_queue', sessionId: 'session-1' });
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('list_queue_result');
+				expect(response.queues).toMatchObject([{ sessionId: 'session-1', queueSeq: 4 }]);
+			});
+			resetQueueChangeFrames();
 		});
 
 		it('passes undefined when no sessionId is provided (all agents)', async () => {
@@ -3558,6 +4719,133 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.type).toBe('merge_queue_item_result');
 			expect(response.success).toBe(false);
 			expect(callbacks.mergeQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Edit Queue Item (queue edit, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the checked edit and answers whether the item was there', async () => {
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				text: 'rewritten',
+				turnSettings: { model: 'm' },
+			} as never);
+
+			await vi.waitFor(() => {
+				expect(callbacks.editQueueItem).toHaveBeenCalledWith('session-1', 'item-9', {
+					text: 'rewritten',
+					turnSettings: { model: 'm' },
+				});
+			});
+			await vi.waitFor(() => {
+				const response = lastSend();
+				expect(response.type).toBe('edit_queue_item_result');
+				expect(response).toMatchObject({ success: true, found: true });
+			});
+		});
+
+		it('rejects a missing itemId or an empty text without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				text: 'x',
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'edit_queue_item_result', success: false });
+			handler.handleMessage(client, {
+				type: 'edit_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				text: ' ',
+			} as never);
+			expect(lastSend()).toMatchObject({ success: false, error: 'Missing text' });
+			expect(callbacks.editQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Move Queue Item (queue move, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the move and answers whether it took', async () => {
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				toIndex: 0,
+				tabId: 'tab-1',
+			} as never);
+			await vi.waitFor(() => {
+				expect(callbacks.moveQueueItem).toHaveBeenCalledWith('session-1', 'item-9', 0, 'tab-1');
+			});
+			await vi.waitFor(() => {
+				expect(lastSend()).toMatchObject({
+					type: 'move_queue_item_result',
+					success: true,
+					moved: true,
+				});
+			});
+		});
+
+		it('rejects a missing itemId or a bad place without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				toIndex: 0,
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'move_queue_item_result', success: false });
+			handler.handleMessage(client, {
+				type: 'move_queue_item',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+				toIndex: -1,
+			} as never);
+			expect(lastSend()).toMatchObject({
+				success: false,
+				error: 'toIndex must be a whole number, 0 or more',
+			});
+			expect(callbacks.moveQueueItem).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('Send Queue Item Now (queue send-now, a hosted queued card)', () => {
+		const lastSend = (): Record<string, unknown> => {
+			const calls = vi.mocked(client.socket.send).mock.calls;
+			return JSON.parse(String(calls[calls.length - 1][0]));
+		};
+
+		it('forwards the send and answers whether it started', async () => {
+			handler.handleMessage(client, {
+				type: 'send_queue_item_now',
+				sessionId: 'session-1',
+				itemId: 'item-9',
+			} as never);
+			await vi.waitFor(() => {
+				expect(callbacks.sendQueueItemNow).toHaveBeenCalledWith('session-1', 'item-9');
+			});
+			await vi.waitFor(() => {
+				expect(lastSend()).toMatchObject({
+					type: 'send_queue_item_now_result',
+					success: true,
+					sent: true,
+				});
+			});
+		});
+
+		it('rejects a missing itemId without calling the callback', () => {
+			handler.handleMessage(client, {
+				type: 'send_queue_item_now',
+				sessionId: 'session-1',
+			} as never);
+			expect(lastSend()).toMatchObject({ type: 'send_queue_item_now_result', success: false });
+			expect(callbacks.sendQueueItemNow).not.toHaveBeenCalled();
 		});
 	});
 
@@ -6591,6 +7879,22 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			await vi.waitFor(() => expect(lastResponse().type).toBe('feedback_submit_result'));
 			expect(vi.mocked(submitFeedbackConversation).mock.calls[0][1]).toEqual({ settingsStore: {} });
 			expect(lastResponse().issueUrl).toContain('/issues/1');
+		});
+
+		it('feedback_submit hands performanceTracePath to the shared service, which checks it', async () => {
+			// The bridge neither screens nor drops the path: the trace check lives in
+			// submitFeedbackConversation(), so this route and the IPC route share it.
+			const tracePath = '/Users/me/.ssh/id_rsa';
+			handler.handleMessage(client, {
+				type: 'feedback_submit',
+				requestId: 'sub-trace',
+				payload: { category: 'bug_report', performanceTracePath: tracePath },
+			});
+			await vi.waitFor(() => expect(lastResponse().requestId).toBe('sub-trace'));
+			expect(submitFeedbackConversation).toHaveBeenLastCalledWith(
+				expect.objectContaining({ performanceTracePath: tracePath }),
+				undefined
+			);
 		});
 
 		it('feedback_submit refuses more screenshots than the modal allows', async () => {

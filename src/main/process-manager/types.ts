@@ -1,3 +1,4 @@
+import type { StreamCallTimer, TokenSpeedSample } from '../../shared/tokenSpeed';
 import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { OpencodeClient } from '@opencode-ai/sdk';
@@ -9,6 +10,7 @@ import type { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { CodexAppServerSshLaunch } from '../codex-app-server/ssh-launch';
+import type { RemoteSteeringChannel } from './steering-client';
 import type { CodexAppServerProcessHandle } from '../codex-app-server/protocol';
 import type { HarnessControlHandle } from '../../shared/harness-control/types';
 import type { NativeSessionBinding } from '../../shared/maestro-lib/agents/providerSwap';
@@ -219,6 +221,8 @@ export interface ProcessConfig {
 	 *  beside the exec wrapper, set only when the turn wants app-server. The
 	 *  app-server spawner runs it; exec ignores it. */
 	codexAppServerSsh?: CodexAppServerSshLaunch;
+	/** Steering channel of a Claude TUI turn on an SSH remote; see RemoteSteeringChannel. */
+	remoteSteering?: RemoteSteeringChannel;
 }
 
 /**
@@ -257,6 +261,9 @@ export interface ManagedProcess {
 	provisionalError?: AgentError;
 	startTime: number;
 	outputParser?: AgentOutputParser;
+	/** Times this process's model calls off its stream for token speed. Created
+	 *  on the first timing mark; absent for agents not measured from the stream. */
+	callTimer?: StreamCallTimer;
 	stderrBuffer?: string;
 	stdoutBuffer?: string;
 	streamedText?: string;
@@ -300,6 +307,11 @@ export interface ManagedProcess {
 	/** Private remote prompt cleanup metadata, bound to sshRemotePidFile ownership.
 	 *  Never expose in Process Details, capture events or persisted diagnostics. */
 	sshRemotePromptArtifactPath?: string;
+	/**
+	 * Steering channel of a Claude TUI turn on an SSH remote, copied from the spawn
+	 * config. `steer()` delivers through it instead of the local socket.
+	 */
+	remoteSteering?: RemoteSteeringChannel;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
 	/** Env vars Maestro explicitly set on this process (global, then the session's own set or else the agent-level set),
@@ -377,9 +389,12 @@ export interface ProcessManagerEvents {
 	usage: (sessionId: string, stats: UsageStats) => void;
 	/** One API call's new spend, mid-turn (see `CallUsage`). claude-code only. */
 	'call-usage': (sessionId: string, usage: CallUsage) => void;
+	/** One model API call timed off the live stream (see `StreamCallTimer`). */
+	'token-speed': (sessionId: string, agentType: string, sample: TokenSpeedSample) => void;
 	'session-id': (sessionId: string, agentSessionId: string) => void;
 	'agent-error': (sessionId: string, error: AgentError) => void;
-	'thinking-chunk': (sessionId: string, text: string) => void;
+	/** `answer`: the chunk is also answer text (Claude streams its reply as thinking). */
+	'thinking-chunk': (sessionId: string, text: string, answer?: boolean) => void;
 	/** One parsed output line, as the parser built it and before anything
 	 *  interprets it. Fires once per line, and only while something is
 	 *  subscribed (see `utils/parsedEvent.ts`). */

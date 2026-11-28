@@ -369,6 +369,12 @@ const nestedGuideTree = [
 	},
 ];
 
+/** Let a file action's fetch-then-act promise chain finish under this suite's fake timers. */
+const settleFileAction = () =>
+	act(async () => {
+		await vi.advanceTimersByTimeAsync(0);
+	});
+
 describe('FileExplorerPanel', () => {
 	let defaultProps: React.ComponentProps<typeof FileExplorerPanel>;
 
@@ -1577,26 +1583,15 @@ describe('FileExplorerPanel', () => {
 			expect(screen.queryByText('Stop loading')).not.toBeInTheDocument();
 		});
 
-		it('hides Stop loading for local sessions even when cancelFileTreeLoad is provided', () => {
-			const session = createMockSession({ fileTree: [], fileTreeLoading: true });
-			render(
-				<FileExplorerPanel
-					{...defaultProps}
-					session={session}
-					filteredFileTree={[]}
-					cancelFileTreeLoad={vi.fn()}
-				/>
-			);
-
-			expect(screen.queryByText('Stop loading')).not.toBeInTheDocument();
-		});
-
-		it('invokes cancelFileTreeLoad with session id when Stop loading clicked on SSH session', () => {
+		it.each([
+			['local', {}],
+			['SSH', { sshRemoteId: 'remote-1' }],
+		] as const)('offers Stop loading for a %s agent and cancels that agent', (_mode, overrides) => {
 			const session = createMockSession({
 				id: 'session-xyz',
 				fileTree: [],
 				fileTreeLoading: true,
-				sshRemoteId: 'remote-1',
+				...overrides,
 			});
 			const cancelFileTreeLoad = vi.fn();
 			render(
@@ -1608,6 +1603,7 @@ describe('FileExplorerPanel', () => {
 				/>
 			);
 
+			expect(screen.getByText('Loading files...')).toBeInTheDocument();
 			fireEvent.click(screen.getByText('Stop loading'));
 			expect(cancelFileTreeLoad).toHaveBeenCalledWith('session-xyz');
 		});
@@ -3632,7 +3628,7 @@ describe('FileExplorerPanel', () => {
 			expect(screen.queryByText('Open in Default App')).not.toBeInTheDocument();
 		});
 
-		it('calls shell.showItemInFolder with full path when Reveal in Finder is clicked', () => {
+		it('calls shell.showItemInFolder with full path when Reveal in Finder is clicked', async () => {
 			const mockShell = { showItemInFolder: vi.fn().mockResolvedValue(undefined) };
 			(window as any).maestro = { platform: 'darwin', shell: mockShell };
 
@@ -3645,10 +3641,11 @@ describe('FileExplorerPanel', () => {
 			const revealButton = screen.getByText('Reveal in Finder');
 			fireEvent.click(revealButton);
 
+			await settleFileAction();
 			expect(mockShell.showItemInFolder).toHaveBeenCalledWith('/Users/test/project/package.json');
 		});
 
-		it('calls shell.showItemInFolder with folder path when Reveal in Finder is clicked on folder', () => {
+		it('calls shell.showItemInFolder with folder path when Reveal in Finder is clicked on folder', async () => {
 			const mockShell = { showItemInFolder: vi.fn().mockResolvedValue(undefined) };
 			(window as any).maestro = { platform: 'darwin', shell: mockShell };
 
@@ -3661,10 +3658,11 @@ describe('FileExplorerPanel', () => {
 			const revealButton = screen.getByText('Reveal in Finder');
 			fireEvent.click(revealButton);
 
+			await settleFileAction();
 			expect(mockShell.showItemInFolder).toHaveBeenCalledWith('/Users/test/project/src');
 		});
 
-		it('calls shell.openPath with full file path when Open in Default App is clicked', () => {
+		it('calls shell.openPath with full file path when Open in Default App is clicked', async () => {
 			const mockShell = { openPath: vi.fn().mockResolvedValue(undefined) };
 			(window as any).maestro = { platform: 'darwin', shell: mockShell };
 
@@ -3677,6 +3675,7 @@ describe('FileExplorerPanel', () => {
 			const openButton = screen.getByText('Open in Default App');
 			fireEvent.click(openButton);
 
+			await settleFileAction();
 			expect(mockShell.openPath).toHaveBeenCalledWith('/Users/test/project/package.json');
 		});
 
@@ -3716,7 +3715,7 @@ describe('FileExplorerPanel', () => {
 			expect(screen.queryByText('Open in Maestro Browser')).not.toBeInTheDocument();
 		});
 
-		it('calls onOpenBrowserTabAt with a file:// URL when Open in Maestro Browser is clicked', () => {
+		it('calls onOpenBrowserTabAt with a file:// URL when Open in Maestro Browser is clicked', async () => {
 			const onOpenBrowserTabAt = vi.fn();
 			const { container } = render(
 				<FileExplorerPanel {...defaultProps} onOpenBrowserTabAt={onOpenBrowserTabAt} />
@@ -3728,81 +3727,10 @@ describe('FileExplorerPanel', () => {
 
 			fireEvent.click(screen.getByText('Open in Maestro Browser'));
 
+			await settleFileAction();
 			expect(onOpenBrowserTabAt).toHaveBeenCalledWith('file:///Users/test/project/index.html', {
 				title: 'index.html',
 			});
-		});
-
-		it('does not show Open in Maestro Browser option for SSH sessions', () => {
-			const sshSession = createMockSession({
-				sshRemoteId: 'ssh-remote-123',
-			});
-			const onOpenBrowserTabAt = vi.fn();
-			const { container } = render(
-				<FileExplorerPanel
-					{...defaultProps}
-					session={sshSession}
-					onOpenBrowserTabAt={onOpenBrowserTabAt}
-				/>
-			);
-			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
-				el.textContent?.includes('index.html')
-			);
-			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
-
-			expect(screen.queryByText('Open in Maestro Browser')).not.toBeInTheDocument();
-		});
-
-		it('does not show Open in Default App option for SSH sessions', () => {
-			const sshSession = createMockSession({
-				sshRemoteId: 'ssh-remote-123',
-			});
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={sshSession} />);
-			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
-				el.textContent?.includes('package.json')
-			);
-			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
-
-			expect(screen.queryByText('Open in Default App')).not.toBeInTheDocument();
-		});
-
-		it('does not show Open in Default App option for sessions with SSH remote config', () => {
-			const sshSession = createMockSession({
-				sessionSshRemoteConfig: { remoteId: 'ssh-config-456', enabled: true },
-			});
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={sshSession} />);
-			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
-				el.textContent?.includes('package.json')
-			);
-			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
-
-			expect(screen.queryByText('Open in Default App')).not.toBeInTheDocument();
-		});
-
-		it('does not show Reveal in Finder option for SSH sessions', () => {
-			const sshSession = createMockSession({
-				sshRemoteId: 'ssh-remote-123',
-			});
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={sshSession} />);
-			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
-				el.textContent?.includes('package.json')
-			);
-			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
-
-			expect(screen.queryByText('Reveal in Finder')).not.toBeInTheDocument();
-		});
-
-		it('does not show Reveal in Finder option for sessions with SSH remote config', () => {
-			const sshSession = createMockSession({
-				sessionSshRemoteConfig: { remoteId: 'ssh-config-456', enabled: true },
-			});
-			const { container } = render(<FileExplorerPanel {...defaultProps} session={sshSession} />);
-			const fileItem = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
-				el.textContent?.includes('package.json')
-			);
-			fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
-
-			expect(screen.queryByText('Reveal in Finder')).not.toBeInTheDocument();
 		});
 
 		it('shows folder delete warning with item count', async () => {
@@ -3934,5 +3862,181 @@ describe('FileExplorerPanel', () => {
 			const { container } = render(<FileExplorerPanel {...defaultProps} />);
 			expect(container.querySelector('.file-stats-container')).toBeNull();
 		});
+	});
+
+	/**
+	 * A local, an SSH, and a hosted agent draw the same Files panel, down to the
+	 * HTML. A hosted agent keeps its SSH remote (its files are on the host's
+	 * machine). Where this machine's OS must touch a remote file (file manager,
+	 * default app, Maestro Browser, media player) the control is the same and the
+	 * action fetches the file first (services/fileActions).
+	 */
+	describe('Mode parity (local, SSH, hosted)', () => {
+		type Mode = 'local' | 'ssh' | 'hosted';
+		const REMOTE = {
+			sshRemoteId: 'r1',
+			sshRemote: { id: 'r1', name: 'Box', host: 'box.lan' },
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+		};
+		const sessionFor = (mode: Mode, overrides: Partial<Session> = {}): Session =>
+			createMockSession({
+				id: 'agent-1',
+				...(mode === 'local' ? {} : REMOTE),
+				...(mode === 'hosted' ? { liftedTo: { peer: 'box', agentId: 'h1', at: 1 } } : {}),
+				...overrides,
+			} as Partial<Session>);
+
+		/** The panel's HTML, header Open button included. */
+		const panelHtml = (mode: Mode, overrides: Partial<Session> = {}) => {
+			const { container, unmount } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={sessionFor(mode, overrides)}
+					cancelFileTreeLoad={vi.fn()}
+				/>
+			);
+			const html = container.innerHTML;
+			unmount();
+			return html;
+		};
+
+		/** The rows of the right-click menu on a named tree item. */
+		const menuRows = (mode: Mode, itemName: string) => {
+			const { container, unmount } = render(
+				<FileExplorerPanel
+					{...defaultProps}
+					session={sessionFor(mode)}
+					onOpenBrowserTabAt={vi.fn()}
+				/>
+			);
+			const item = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+				el.textContent?.includes(itemName)
+			);
+			fireEvent.contextMenu(item!, { clientX: 100, clientY: 200 });
+			const menu = document.body.querySelector('[class*="z-[10000]"]');
+			const rows = Array.from(menu?.querySelectorAll('button') ?? []).map(
+				// The mocked icons draw an emoji ahead of the label.
+				(button) => (button.textContent ?? '').replace(/^[^A-Za-z]+/u, '')
+			);
+			unmount();
+			return rows;
+		};
+
+		it('draws the same header, tree, and stats in every mode', () => {
+			const stats = { fileTreeStats: { fileCount: 3, folderCount: 2, totalSize: 1024 } };
+			const local = panelHtml('local', stats as Partial<Session>);
+			expect(panelHtml('ssh', stats as Partial<Session>)).toBe(local);
+			expect(panelHtml('hosted', stats as Partial<Session>)).toBe(local);
+		});
+
+		it('draws a capped count as "N+" the same in every mode', () => {
+			const stats = {
+				fileTreeStats: {
+					fileCount: 50000,
+					folderCount: 2,
+					totalSize: 2048,
+					fileCountCapped: true,
+				},
+			} as Partial<Session>;
+			const local = panelHtml('local', stats);
+			expect(local).toContain('50,000+');
+			expect(local).toContain('2 KB+');
+			expect(panelHtml('ssh', stats)).toBe(local);
+			expect(panelHtml('hosted', stats)).toBe(local);
+		});
+
+		it('draws the same loading state, with the same Stop loading, in every mode', () => {
+			const loading = { fileTree: [], fileTreeLoading: true } as Partial<Session>;
+			const local = panelHtml('local', loading);
+			expect(local).toContain('Loading files...');
+			expect(local).toContain('Stop loading');
+			expect(panelHtml('ssh', loading)).toBe(local);
+			expect(panelHtml('hosted', loading)).toBe(local);
+		});
+
+		it('draws the same header path title: the path, never the remote host', () => {
+			for (const mode of ['local', 'ssh', 'hosted'] as const) {
+				const { unmount } = render(
+					<FileExplorerPanel {...defaultProps} session={sessionFor(mode)} />
+				);
+				expect(screen.getByTitle('/Users/test/project')).toBeInTheDocument();
+				expect(screen.queryByTitle(/box\.lan|SSH:/)).toBeNull();
+				unmount();
+			}
+		});
+
+		it('opens the same folder menu, New Agent Here and Reveal included, in every mode', () => {
+			const local = menuRows('local', 'src');
+			expect(local).toEqual(expect.arrayContaining(['New Agent Here', 'Reveal in Finder']));
+			expect(menuRows('ssh', 'src')).toEqual(local);
+			expect(menuRows('hosted', 'src')).toEqual(local);
+		});
+
+		it('opens the same file menu in every mode', () => {
+			const local = menuRows('local', 'index.html');
+			expect(local).toEqual(
+				expect.arrayContaining([
+					'Open in Default App',
+					'Open in Maestro Browser',
+					'Save a Copy…',
+					'Reveal in Finder',
+				])
+			);
+			expect(local).not.toContain('Download File');
+			expect(menuRows('ssh', 'index.html')).toEqual(local);
+			expect(menuRows('hosted', 'index.html')).toEqual(local);
+		});
+
+		it.each(['local', 'ssh', 'hosted'] as const)(
+			'%s: Open in Default App, Reveal, and Open in Maestro Browser act on a copy on this machine',
+			async (mode) => {
+				const localCopy = '/tmp/maestro-remote-downloads/k/index.html';
+				const downloadRemoteFile = vi.fn().mockResolvedValue({ success: true, path: localCopy });
+				const shell = {
+					openPath: vi.fn().mockResolvedValue(undefined),
+					showItemInFolder: vi.fn().mockResolvedValue(undefined),
+				};
+				(window as any).maestro = {
+					...(window as any).maestro,
+					platform: 'darwin',
+					shell,
+					fs: { ...(window as any).maestro?.fs, downloadRemoteFile },
+				};
+				const onOpenBrowserTabAt = vi.fn();
+				const { container, unmount } = render(
+					<FileExplorerPanel
+						{...defaultProps}
+						session={sessionFor(mode)}
+						onOpenBrowserTabAt={onOpenBrowserTabAt}
+					/>
+				);
+				const open = (label: string) => {
+					const item = Array.from(container.querySelectorAll('[data-file-index]')).find((el) =>
+						el.textContent?.includes('index.html')
+					);
+					fireEvent.contextMenu(item!, { clientX: 100, clientY: 200 });
+					fireEvent.click(screen.getByText(label));
+				};
+				const expected = mode === 'local' ? '/Users/test/project/index.html' : localCopy;
+
+				open('Open in Default App');
+				await settleFileAction();
+				expect(shell.openPath).toHaveBeenCalledWith(expected);
+				open('Reveal in Finder');
+				await settleFileAction();
+				expect(shell.showItemInFolder).toHaveBeenCalledWith(expected);
+				open('Open in Maestro Browser');
+				await settleFileAction();
+				expect(onOpenBrowserTabAt).toHaveBeenCalledWith(`file://${expected}`, {
+					title: 'index.html',
+				});
+				if (mode === 'local') {
+					expect(downloadRemoteFile).not.toHaveBeenCalled();
+				} else {
+					expect(downloadRemoteFile).toHaveBeenCalledWith('/Users/test/project/index.html', 'r1');
+				}
+				unmount();
+			}
+		);
 	});
 });

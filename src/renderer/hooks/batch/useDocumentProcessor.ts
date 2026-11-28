@@ -23,9 +23,12 @@ import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemS
 import { extractTaskSynopsis } from '../../../shared/maestro-lib/autorun/synopsis';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
 import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
+import { tierNeedsOfferedModels } from '../../../shared/modelTiers';
+import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 import { restoreTasksCheckedByFailedTurn } from '../../../shared/markdownTaskScan';
 import {
 	formatSteeringNotesBlock,
+	joinAutoRunPromptBlocks,
 	type AutoRunSteeringNote,
 } from '../../../shared/autorunSteering';
 import {
@@ -221,6 +224,11 @@ export interface AutoRunTurnOverrides {
 	effortOverride?: string;
 	/** The run the task belongs to, so a dispatch it makes reports back to it. */
 	autoRunId?: string;
+	/**
+	 * Aborted when the run is force-ended while this turn is awaited (`abortAutoRunTurns`), so
+	 * the spawn releases its listeners and waits. Set by `abortableAutoRunSpawn`, never by a runner.
+	 */
+	abortSignal?: AbortSignal;
 }
 
 /**
@@ -439,11 +447,28 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			const ignoreModelHints = runOverrides?.ignoreModelHints === true;
 			const baselineModel = runOverrides?.modelOverride ?? session.customModel;
 			const baselineEffort = runOverrides?.effortOverride ?? session.customEffort;
+			const modelHint = ignoreModelHints ? null : findActiveModelHint(documentContent);
+			// A tier model the account does not offer fails the task by name, so a
+			// provider whose discovery is the account's catalogue is checked first
+			// (cached in main; a failed read is no evidence and keeps the mapping).
+			const offeredModels = tierNeedsOfferedModels(session.toolType, modelHint?.tier)
+				? await Promise.resolve()
+						.then(() =>
+							window.maestro.agents.getModels(
+								session.toolType,
+								false,
+								getSessionSshRemoteId(session)
+							)
+						)
+						.catch(() => undefined)
+				: undefined;
 			const turnSettings = resolveTurnSettings(
 				session.toolType,
-				ignoreModelHints ? null : findActiveModelHint(documentContent),
+				modelHint,
 				baselineModel,
-				baselineEffort
+				baselineEffort,
+				undefined,
+				offeredModels
 			);
 			for (const warning of turnSettings.warnings) {
 				logger.warn(`[DocumentProcessor] ${warning}`, undefined, { document: filename });
@@ -492,9 +517,11 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// Delegated results ride in front too, for the same reason: another
 			// agent's report is data, and a `{{...}}` inside it stays literal.
 			const delegationBlock = formatDelegationResultsBlock(delegationResults ?? []);
-			const steeredPrompt = [steeringBlock, delegationBlock, substitutedPrompt]
-				.filter(Boolean)
-				.join('\n\n---\n\n');
+			const steeredPrompt = joinAutoRunPromptBlocks([
+				steeringBlock,
+				delegationBlock,
+				substitutedPrompt,
+			]);
 			if (steeringBlock) {
 				logger.info(
 					`[DocumentProcessor] Delivering ${steeringNotes?.length ?? 0} steering note(s)`,

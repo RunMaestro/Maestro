@@ -15,6 +15,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { getRevealLabel } from '../utils/platformUtils';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
+import { openFileInDefaultApp, revealInFileManager } from '../services/fileActions';
 
 export interface FileContextMenuState {
 	x: number;
@@ -33,8 +34,11 @@ interface FileContextMenuProps {
 	onPreview?: (filePath: string) => void;
 	/** Project root absolute path - used to derive relative path for Document Graph */
 	projectRoot?: string;
-	/** Whether the session is SSH remote (disables local-only actions) */
-	sshRemote?: boolean;
+	/**
+	 * The SSH remote the file lives on, for an SSH or hosted agent. Changes only
+	 * the transport: the actions fetch the file to this machine first.
+	 */
+	sshRemoteId?: string;
 }
 
 function isMarkdownFile(name: string): boolean {
@@ -47,7 +51,7 @@ export function FileContextMenu({
 	onDismiss,
 	onPreview,
 	projectRoot,
-	sshRemote,
+	sshRemoteId,
 }: FileContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const onDismissRef = useRef(onDismiss);
@@ -90,9 +94,9 @@ export function FileContextMenu({
 	}, [menu.filePath, projectRoot, onDismiss]);
 
 	const handleOpenInDefaultApp = useCallback(() => {
-		window.maestro?.shell?.openPath(menu.filePath);
+		void openFileInDefaultApp({ path: menu.filePath, sshRemoteId });
 		onDismiss();
-	}, [menu.filePath, onDismiss]);
+	}, [menu.filePath, sshRemoteId, onDismiss]);
 
 	const handleCopyPath = useCallback(() => {
 		safeClipboardWrite(menu.filePath);
@@ -105,9 +109,9 @@ export function FileContextMenu({
 	}, [menu.fileName, onDismiss]);
 
 	const handleRevealInFinder = useCallback(() => {
-		window.maestro?.shell?.showItemInFolder(menu.filePath);
+		void revealInFileManager({ path: menu.filePath, sshRemoteId });
 		onDismiss();
-	}, [menu.filePath, onDismiss]);
+	}, [menu.filePath, sshRemoteId, onDismiss]);
 
 	const showDocGraph = isMarkdownFile(menu.fileName);
 
@@ -154,22 +158,18 @@ export function FileContextMenu({
 					</button>
 				)}
 
-				{/* Open in Default App - not available over SSH */}
-				{!sshRemote && (
-					<button
-						onClick={handleOpenInDefaultApp}
-						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textMain }}
-					>
-						<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-						<span>Open in Default App</span>
-					</button>
-				)}
+				{/* Open in Default App - a remote file opens its fetched copy */}
+				<button
+					onClick={handleOpenInDefaultApp}
+					className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+					style={{ color: theme.colors.textMain }}
+				>
+					<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+					<span>Open in Default App</span>
+				</button>
 
 				{/* Divider */}
-				{(onPreview || showDocGraph || !sshRemote) && (
-					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-				)}
+				<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
 
 				{/* Copy Path */}
 				<button
@@ -191,17 +191,15 @@ export function FileContextMenu({
 					<span>Copy File Name</span>
 				</button>
 
-				{/* Reveal in Finder / Explorer */}
-				{!sshRemote && (
-					<button
-						onClick={handleRevealInFinder}
-						className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textMain }}
-					>
-						<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-						<span>{getRevealLabel(window.maestro?.platform ?? '')}</span>
-					</button>
-				)}
+				{/* Reveal in Finder / Explorer - a remote file reveals its fetched copy */}
+				<button
+					onClick={handleRevealInFinder}
+					className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+					style={{ color: theme.colors.textMain }}
+				>
+					<FolderOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+					<span>{getRevealLabel(window.maestro?.platform ?? '')}</span>
+				</button>
 			</div>
 		</div>,
 		document.body

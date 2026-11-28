@@ -6,6 +6,8 @@ import { AgentLocationSelect } from './AgentLocationSelect';
 interface AgentSelectionHeaderProps {
 	theme: Theme;
 	agentName: string;
+	/** Existing agent that already has `agentName`, or null when the name is free. */
+	duplicateAgentName?: string | null;
 	isNameFieldFocused: boolean;
 	nameInputRef: RefObject<HTMLInputElement>;
 	sshRemotes: SshRemoteConfig[];
@@ -19,6 +21,7 @@ interface AgentSelectionHeaderProps {
 export function AgentSelectionHeader({
 	theme,
 	agentName,
+	duplicateAgentName,
 	isNameFieldFocused,
 	nameInputRef,
 	sshRemotes,
@@ -28,6 +31,15 @@ export function AgentSelectionHeader({
 	onNameBlur,
 	onSshRemoteChange,
 }: AgentSelectionHeaderProps): JSX.Element {
+	const nameError = duplicateAgentName
+		? `An agent named "${duplicateAgentName}" already exists. Pick another name, or leave it blank.`
+		: null;
+	const nameBorderColor = nameError
+		? theme.colors.error
+		: isNameFieldFocused
+			? theme.colors.accent
+			: theme.colors.border;
+
 	return (
 		<div className="flex flex-col items-center gap-4">
 			<h3 className="text-2xl font-semibold" style={{ color: theme.colors.textMain }}>
@@ -52,11 +64,13 @@ export function AgentSelectionHeader({
 					className="w-64 max-w-full px-4 py-2 rounded-lg border outline-none transition-all"
 					style={{
 						backgroundColor: theme.colors.bgMain,
-						borderColor: isNameFieldFocused ? theme.colors.accent : theme.colors.border,
+						borderColor: nameBorderColor,
 						color: theme.colors.textMain,
-						boxShadow: isNameFieldFocused ? `0 0 0 2px ${theme.colors.accent}40` : 'none',
+						boxShadow: isNameFieldFocused ? `0 0 0 2px ${nameBorderColor}40` : 'none',
 					}}
 					aria-label="Agent name"
+					aria-invalid={nameError ? true : undefined}
+					aria-describedby="project-name-hint"
 				/>
 
 				<AgentLocationSelect
@@ -67,8 +81,14 @@ export function AgentSelectionHeader({
 				/>
 			</div>
 
-			<p className="text-xs text-center max-w-md" style={{ color: theme.colors.textDim }}>
-				Just the label in the Left Bar. Leave it blank to use your project's folder name.
+			<p
+				id="project-name-hint"
+				className="text-xs text-center max-w-md"
+				style={{ color: nameError ? theme.colors.error : theme.colors.textDim }}
+				role={nameError ? 'alert' : undefined}
+			>
+				{nameError ??
+					"Just the label in the Left Bar. Leave it blank to use your project's folder name."}
 			</p>
 		</div>
 	);

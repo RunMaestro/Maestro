@@ -307,6 +307,20 @@ describe('TabBreakdown', () => {
 		expect(screen.getByTestId('tab-breakdown-count').textContent).toBe('2 of 3');
 	});
 
+	it('does not dress a row up as clickable on hover', () => {
+		// Rows open nothing, so a hover highlight would promise an action that
+		// does not exist.
+		const session = createMockSession({
+			aiTabs: [createMockAITab({ id: 'tab-a', name: 'Alpha' })],
+		});
+		renderBreakdown(session, [buildEvent({ id: '1', tabId: 'tab-a' })]);
+
+		const row = screen.getByTestId('tab-row');
+		const before = row.style.backgroundColor;
+		fireEvent.mouseEnter(row);
+		expect(row.style.backgroundColor).toBe(before);
+	});
+
 	it('widens to retired tabs when the filter changes to All', () => {
 		const session = createMockSession({
 			aiTabs: [createMockAITab({ id: 'tab-a', name: 'Alpha' })],
@@ -541,7 +555,7 @@ describe('TabBreakdown', () => {
 		});
 		renderBreakdown(session, [buildEvent({ tabId: 'other' })]);
 
-		expect(screen.getByTestId('tab-row-auto-pct').textContent).toBe('—');
+		expect(screen.getByTestId('tab-row-auto-pct').textContent).toBe('-');
 		expect(screen.getByTestId('tab-row-query-count').textContent).toBe('0');
 	});
 });

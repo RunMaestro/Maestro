@@ -6,6 +6,8 @@
  *
  * 1. Enumerate the distinct (agentType, projectPath) pairs Maestro has tracked,
  *    from the stats `session_lifecycle` table (skipping remote sessions).
+ *    Agents whose conversations are on another computer (SSH and hosted) are
+ *    counted there instead (`remote-breakdowns.ts`) and merged in.
  * 2. `listSessions(projectPath)` per pair - now carrying a per-model `byModel`
  *    split - and turn each into a {@link SessionTokenBreakdown}, served from the
  *    per-session {@link TokenUsageCache} when the fingerprint is unchanged.
@@ -19,8 +21,12 @@
 
 import { getStatsDB } from '../singleton';
 import { getSessionStorage } from '../../agents';
-import type { AgentSessionInfo } from '../../agents/session-storage';
+import { AGENT_CAPABILITIES } from '../../agents/capabilities';
 import { getProviderAccountDirs } from '../../agents/provider-account-dirs';
+import { getLiveSessions } from '../../stores/getters';
+import { isInitialized as storesInitialized } from '../../stores/instances';
+import { getPeerMirrorService } from '../../federation';
+import { withStatsIndexing } from '../stats-indexing';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
 import {
@@ -29,6 +35,7 @@ import {
 	type SessionTokenBreakdown,
 	type TokenCoverage,
 	type TokenUsageAggregate,
+	type TokenUsageExclusions,
 	type TokenUsageGroup,
 	type TokenUsageQuery,
 	type TokenSeries,
@@ -42,80 +49,155 @@ import { normalizeModelId } from '../../../shared/modelPricing';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import type { UsageCost } from '../../../shared/types';
 import { mergeUsageCost, usageCostUsd } from '../../../shared/maestro-lib/streaming/usage-totals';
-import { summarizeTokenSpeed, type TokenSpeedSource } from '../../../shared/tokenSpeed';
 import {
-	getTokenUsageCache,
-	sessionFingerprint,
-	tokenCacheKey,
-	type TokenUsageCache,
-} from './token-usage-cache';
+	summarizeTokenSpeed,
+	tokenGranularityFor,
+	tokenSliceStart,
+	tokenSliceStarts,
+	type TokenSpeedSource,
+} from '../../../shared/tokenSpeed';
+import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
+import { getTokenUsageCache, type TokenUsageCache } from './token-usage-cache';
+import {
+	COVERAGE_BY_AGENT,
+	collectProjectBreakdowns,
+	createSessionListGate,
+	projectTokenUsage,
+	toBreakdown,
+} from './project-breakdowns';
+import type {
+	ProjectTokenUsage,
+	ProjectTokenUsageProject,
+} from '../../../shared/projectTokenUsage';
+import {
+	collectRemoteBreakdowns,
+	remoteProjectPairKey,
+	remoteTokenAgentsOf,
+	type RemoteBreakdowns,
+	type RemoteTokenAgent,
+	type RemoteTokenUsageRequest,
+} from './remote-breakdowns';
 
 const LOG_CONTEXT = '[TokenUsageAccessor]';
-
-/**
- * Per-agent base coverage, matching the Cue accessor's classification so both
- * dashboards label partial data identically. Agents absent here are reported as
- * `unsupported`.
- */
-const COVERAGE_BY_AGENT: Record<string, TokenCoverage> = {
-	'claude-code': 'full',
-	opencode: 'full',
-	'factory-droid': 'full',
-	grok: 'full',
-	codex: 'partial',
-	'copilot-cli': 'partial',
-	// No cost and no model id on disk: tokens only.
-	antigravity: 'partial',
-};
 
 /** How long collected breakdowns stay fresh in memory before a re-collect. */
 const MEMO_TTL_MS = 30_000;
 
-interface MemoEntry {
-	computedAt: number;
+/** What one collection pass read, plus what it had to skip. */
+interface Collection {
 	breakdowns: SessionTokenBreakdown[];
+	excluded: TokenUsageExclusions;
+}
+
+/** What the local scan read, plus the remote lifecycle pairs it left to the remote count. */
+interface LocalCollection extends Collection {
+	remotePairs: Set<string>;
+}
+
+interface MemoEntry extends LocalCollection {
+	computedAt: number;
 }
 
 /**
- * The collected breakdowns, not the aggregate: collection is the expensive step
+ * The local collection, not the aggregate: collection is the expensive step
  * and is query-independent, while aggregating is pure in-memory math over the
  * same array. Memoizing here means flipping the dashboard's time range or
  * granularity re-buckets what we already have instead of re-walking storage.
  */
 let memo: MemoEntry | null = null;
 /** Shared by concurrent callers so a double mount can't run two collections. */
-let inflight: Promise<SessionTokenBreakdown[]> | null = null;
+let inflight: Promise<LocalCollection> | null = null;
+
+/** The last count of the agents on another computer, and which targets it asked about. */
+interface RemoteEntry {
+	computedAt: number;
+	/** {@link remoteTargetKey} of every agent it asked about. */
+	targets: Set<string>;
+	result: RemoteBreakdowns;
+}
+
+/**
+ * What one remote agent's count is of: the agent, where its conversations are, and which
+ * provider. A count of an agent whose working directory or remote changed is not its count now.
+ */
+function remoteTargetKey(agent: RemoteTokenAgent): string {
+	return canonicalJson([agent.id, agent.remoteId, agent.provider, agent.projectPath]);
+}
+
+/**
+ * The remote count is kept apart from the local one: a host can take up to
+ * `REMOTE_TOKEN_USAGE_TIMEOUT_MS` to answer, and the local totals never wait on
+ * it. A read serves the last remote result at once and refreshes it in the
+ * background; the dashboard reads again when the refresh lands.
+ */
+let remoteMemo: RemoteEntry | null = null;
+let remoteInflight: Promise<RemoteEntry> | null = null;
+/** Bumped on invalidation, so a refresh started before it neither is joined nor fills the memo. */
+let remoteGeneration = 0;
 
 /** Reset the in-memory memo (call on external stats changes / tests). */
 export function invalidateTokenUsageMemo(): void {
 	memo = null;
+	remoteMemo = null;
+	remoteInflight = null;
+	remoteGeneration++;
 }
 
 // ---------------------------------------------------------------------------
 // Enumeration
 // ---------------------------------------------------------------------------
 
+/** No exclusions: the default for callers (tests) that build breakdowns directly. */
+function noExclusions(): TokenUsageExclusions {
+	return {
+		unsupportedAgents: [],
+		remoteProjects: 0,
+		notCountedAgents: [],
+		pendingAgents: [],
+		remoteRefreshing: false,
+		partialAgents: [],
+	};
+}
+
 /**
  * Distinct (agentType -> set of projectPaths) Maestro has tracked locally.
- * Remote sessions are skipped (their transcripts live on the remote host).
+ * Remote sessions are left to the remote's own count (their transcripts live
+ * there) and returned as `remotePairs`; agent types with no transcript storage
+ * are counted into `excluded` so the dashboard can say what its totals leave out.
  */
-function enumerateAgentProjects(): Map<string, Set<string>> {
+function enumerateAgentProjects(): {
+	byAgent: Map<string, Set<string>>;
+	excluded: TokenUsageExclusions;
+	/** `agentType|projectPath` of every remote lifecycle row. */
+	remotePairs: Set<string>;
+} {
 	const byAgent = new Map<string, Set<string>>();
+	const excluded = noExclusions();
+	const remote = new Set<string>();
 	const db = getStatsDB();
-	if (!db.isReady()) return byAgent;
+	if (!db.isReady()) return { byAgent, excluded, remotePairs: remote };
 
 	let events;
 	try {
 		events = db.getSessionLifecycleEvents('all');
 	} catch (error) {
 		void captureException(error);
-		return byAgent;
+		return { byAgent, excluded, remotePairs: remote };
 	}
 
+	const unsupported = new Set<string>();
 	for (const ev of events) {
-		if (ev.isRemote) continue;
 		if (!ev.projectPath) continue;
-		if (!getSessionStorage(ev.agentType)) continue;
+		if (ev.isRemote) {
+			remote.add(remoteProjectPairKey(ev.agentType, ev.projectPath));
+			continue;
+		}
+		if (!getSessionStorage(ev.agentType)) {
+			// The terminal is not an agent with a model behind it; leaving it
+			// out is not a gap in the totals.
+			if (ev.agentType !== 'terminal') unsupported.add(ev.agentType);
+			continue;
+		}
 		let set = byAgent.get(ev.agentType);
 		if (!set) {
 			set = new Set<string>();
@@ -123,217 +205,240 @@ function enumerateAgentProjects(): Map<string, Set<string>> {
 		}
 		set.add(ev.projectPath);
 	}
-	return byAgent;
+	excluded.remoteProjects = remote.size;
+	excluded.unsupportedAgents = [...unsupported].sort();
+	return { byAgent, excluded, remotePairs: remote };
 }
 
 // ---------------------------------------------------------------------------
 // Derivation
 // ---------------------------------------------------------------------------
 
-/** Sum a per-model split into the four token totals. */
-function sumModels(byModel: ModelTokenUsage[]): {
-	inputTokens: number;
-	outputTokens: number;
-	cacheReadTokens: number;
-	cacheCreationTokens: number;
-	costUsd: number;
-	costEstimated: boolean;
-} {
-	let inputTokens = 0;
-	let outputTokens = 0;
-	let cacheReadTokens = 0;
-	let cacheCreationTokens = 0;
-	let costUsd = 0;
-	let costEstimated = false;
-	for (const m of byModel) {
-		inputTokens += m.inputTokens;
-		outputTokens += m.outputTokens;
-		cacheReadTokens += m.cacheReadTokens;
-		cacheCreationTokens += m.cacheCreationTokens;
-		costUsd += m.costUsd;
-		if (m.costEstimated) costEstimated = true;
+/**
+ * The agents whose conversations are on another computer, from the stored agents. Empty before
+ * the stores exist (tests, a very early call).
+ */
+function readRemoteTokenAgents(): RemoteTokenAgent[] {
+	if (!storesInitialized()) return [];
+	try {
+		return remoteTokenAgentsOf(getLiveSessions() as AgentRecord[]);
+	} catch (error) {
+		void captureException(error, { operation: 'tokenUsage:readRemoteAgents' });
+		return [];
 	}
-	return {
-		inputTokens,
-		outputTokens,
-		cacheReadTokens,
-		cacheCreationTokens,
-		costUsd,
-		costEstimated,
-	};
+}
+
+/** Ask a remote's host, over the peer mirror's connection, for its projects' usage. */
+const requestRemoteTokenUsage: RemoteTokenUsageRequest = async (remoteId, projects, timeoutMs) =>
+	(await getPeerMirrorService()?.projectTokenUsage(remoteId, projects, timeoutMs)) ?? undefined;
+
+/**
+ * The usage of `agents` (whose conversations are on another computer), counted on that computer.
+ * Shows on the stats indexing surface while a remote is slow to answer.
+ */
+async function collectRemoteAgentBreakdowns(
+	agents: readonly RemoteTokenAgent[]
+): Promise<RemoteBreakdowns> {
+	if (agents.length === 0) return { breakdowns: [], notCounted: [], pairs: new Set(), partial: [] };
+	return withStatsIndexing(
+		{ id: 'remote-token-usage', label: 'Token usage on other computers', reason: 'index' },
+		async (progress) => {
+			progress.addWork(new Set(agents.map((agent) => agent.remoteId)).size, 0);
+			return collectRemoteBreakdowns(agents, requestRemoteTokenUsage, {
+				onRemoteDone: () => progress.advance(1, 0),
+				onError: (error) => void captureException(error, { operation: 'tokenUsage:remote' }),
+			});
+		}
+	);
 }
 
 /**
- * Turn one `AgentSessionInfo` into a {@link SessionTokenBreakdown}. When the
- * native accounting exists, lifetime totals remain authoritative even when model
- * detail is partial. Legacy providers retain their existing model projections.
+ * Count `agents` on their computers, once at a time: a second caller joins the
+ * refresh in flight. Never rejects: a failure leaves every agent "not counted".
  */
-function toBreakdown(
-	agentType: string,
-	info: AgentSessionInfo,
-	accountKey: string = DEFAULT_ACCOUNT_KEY
-): SessionTokenBreakdown {
-	const coverage: TokenCoverage =
-		agentType === 'grok' &&
-		(info.accounting?.completeness !== 'complete' || info.accounting.cost.status !== 'exact')
-			? 'partial'
-			: (COVERAGE_BY_AGENT[agentType] ?? 'unsupported');
-	const timestampMs = Date.parse(info.modifiedAt || info.timestamp) || 0;
+function refreshRemote(agents: readonly RemoteTokenAgent[]): Promise<RemoteEntry> {
+	if (remoteInflight) return remoteInflight;
+	const targets = new Set(agents.map(remoteTargetKey));
+	const generation = remoteGeneration;
+	const pending = (async (): Promise<RemoteEntry> => {
+		let result: RemoteBreakdowns;
+		try {
+			result = await collectRemoteAgentBreakdowns(agents);
+		} catch (error) {
+			void captureException(error, { operation: 'tokenUsage:remoteRefresh' });
+			result = {
+				breakdowns: [],
+				notCounted: [...agents],
+				pairs: new Set(
+					agents.map((agent) => remoteProjectPairKey(agent.provider, agent.projectPath))
+				),
+				partial: [],
+			};
+		}
+		const entry = { computedAt: Date.now(), targets, result };
+		if (generation === remoteGeneration) remoteMemo = entry;
+		return entry;
+	})();
+	remoteInflight = pending;
+	void pending.finally(() => {
+		if (remoteInflight === pending) remoteInflight = null;
+	});
+	return pending;
+}
 
-	let byModel: ModelTokenUsage[];
-	if (info.accounting?.models?.length) {
-		byModel = info.accounting.models.map((detail) => ({
-			model: detail.model,
-			rawModel: detail.model,
-			accounting: structuredClone(detail),
-			inputTokens: detail.inputTokens ?? 0,
-			outputTokens: detail.outputTokens ?? 0,
-			cacheReadTokens: detail.cacheReadInputTokens ?? 0,
-			cacheCreationTokens: detail.cacheCreationInputTokens ?? 0,
-			costUsd: usageCostUsd(detail.cost) ?? 0,
-			costEstimated: detail.cost.status === 'estimated',
-		}));
-	} else if (info.accounting) {
-		// No model attribution: retain the lifetime amount in an unknown bucket.
-		byModel = [
-			{
-				model: '',
-				inputTokens: info.inputTokens,
-				outputTokens: info.outputTokens,
-				cacheReadTokens: info.cacheReadTokens,
-				cacheCreationTokens: info.cacheCreationTokens,
-				costUsd: usageCostUsd(info.accounting.cost) ?? 0,
-				costEstimated: info.accounting.cost.status === 'estimated',
-				accounting: {
-					completeness: info.accounting.completeness,
-					cost: structuredClone(info.accounting.cost),
-				},
-			},
-		];
-	} else if (info.byModel && info.byModel.length > 0) {
-		byModel = info.byModel;
-	} else if (
-		info.inputTokens ||
-		info.outputTokens ||
-		info.cacheReadTokens ||
-		info.cacheCreationTokens
+/** Whether `entry` asked about exactly the targets of `agents`. */
+function askedAbout(entry: RemoteEntry, agents: readonly RemoteTokenAgent[]): boolean {
+	return (
+		entry.targets.size === agents.length &&
+		agents.every((agent) => entry.targets.has(remoteTargetKey(agent)))
+	);
+}
+
+/** The remote count a read uses, and whether a newer one is still being read. */
+interface RemoteRead {
+	agents: RemoteTokenAgent[];
+	entry: RemoteEntry | null;
+	refreshing: boolean;
+}
+
+/**
+ * The remote count for a read. A fresh one is served as it is. Otherwise a
+ * refresh starts in the background and the last result (if any) is served at
+ * once, unless the caller waits for the refresh (`maestro-cli stats-tokens`,
+ * an export: a script wants the whole number).
+ */
+async function loadRemote(force: boolean, waitForRemote: boolean): Promise<RemoteRead> {
+	const agents = readRemoteTokenAgents();
+	if (agents.length === 0) return { agents, entry: null, refreshing: false };
+	if (
+		!force &&
+		remoteMemo &&
+		Date.now() - remoteMemo.computedAt < MEMO_TTL_MS &&
+		askedAbout(remoteMemo, agents)
 	) {
-		// No model split available: one bucket, cost from the session's own figure
-		// when the agent reports it, else rate-table estimated at aggregate time.
-		const hasReportedCost = typeof info.costUsd === 'number';
-		byModel = [
-			{
-				model: '',
-				inputTokens: info.inputTokens,
-				outputTokens: info.outputTokens,
-				cacheReadTokens: info.cacheReadTokens,
-				cacheCreationTokens: info.cacheCreationTokens,
-				costUsd: hasReportedCost ? (info.costUsd as number) : 0,
-				costEstimated: !hasReportedCost,
-			},
-		];
-	} else {
-		byModel = [];
+		if (!remoteInflight) return { agents, entry: remoteMemo, refreshing: false };
+		// A forced refresh is still reading: say so, and let a waited read join it below.
+		if (!waitForRemote) return { agents, entry: remoteMemo, refreshing: true };
 	}
+	const refresh = refreshRemote(agents);
+	if (waitForRemote) {
+		// A refresh already running may be for an older set of agents: then ask again, for these.
+		let entry = await refresh;
+		if (!askedAbout(entry, agents)) entry = await refreshRemote(agents);
+		return { agents, entry, refreshing: !askedAbout(entry, agents) };
+	}
+	return { agents, entry: remoteMemo, refreshing: true };
+}
 
-	const totals = info.accounting
-		? {
-				inputTokens: info.inputTokens,
-				outputTokens: info.outputTokens,
-				cacheReadTokens: info.cacheReadTokens,
-				cacheCreationTokens: info.cacheCreationTokens,
-				costUsd: usageCostUsd(info.accounting.cost) ?? 0,
-				costEstimated: info.accounting.cost.status === 'estimated',
-			}
-		: sumModels(byModel);
+/**
+ * The local collection with the remote count laid over it. An agent the remote
+ * result did not ask about yet is named as still being read, not as not counted.
+ */
+function withRemote(local: LocalCollection, remote: RemoteRead): Collection {
+	const result = remote.entry?.result;
+	const asked = remote.entry?.targets ?? new Set<string>();
+	const current = new Set(remote.agents.map(remoteTargetKey));
+	const pending = remote.agents.filter((agent) => !asked.has(remoteTargetKey(agent)));
+	const pairs = new Set(result?.pairs ?? []);
+	for (const agent of pending) pairs.add(remoteProjectPairKey(agent.provider, agent.projectPath));
+	// A count served while it refreshes may hold projects no current agent asks about any more (an
+	// agent removed or moved): leave those out, and keep a project another agent still asks about.
+	const wanted = new Set(
+		remote.agents.map((agent) => remoteProjectPairKey(agent.provider, agent.projectPath))
+	);
+	const remoteBreakdowns = (result?.breakdowns ?? []).filter((breakdown) =>
+		wanted.has(remoteProjectPairKey(breakdown.agentType, breakdown.projectPath))
+	);
 	return {
-		sessionId: info.sessionId,
-		agentType,
-		projectPath: info.projectPath,
-		accountKey,
-		timestampMs,
-		origin: info.origin,
-		byModel,
-		...(info.accounting
-			? {
-					accounting: {
-						...structuredClone(info.accounting),
-						scopeId:
-							info.accounting.scopeId ??
-							canonicalJson([agentType, accountKey, info.projectPath, info.sessionId]),
-					},
-				}
-			: {}),
-		inputTokens: totals.inputTokens,
-		outputTokens: totals.outputTokens,
-		cacheReadTokens: totals.cacheReadTokens,
-		cacheCreationTokens: totals.cacheCreationTokens,
-		costUsd: totals.costUsd,
-		costEstimated: totals.costEstimated,
-		coverage,
-		...(info.speed && info.speed.length > 0 ? { speed: info.speed } : {}),
+		breakdowns: remoteBreakdowns.length
+			? [...local.breakdowns, ...remoteBreakdowns]
+			: local.breakdowns,
+		excluded: {
+			...local.excluded,
+			// A remote pair of a stored agent is now counted, named below, or being
+			// read; what is left belongs to agents that no longer exist here.
+			remoteProjects: [...local.remotePairs].filter((pair) => !pairs.has(pair)).length,
+			notCountedAgents: (result?.notCounted ?? [])
+				.filter((agent) => current.has(remoteTargetKey(agent)))
+				.map((agent) => agent.name),
+			pendingAgents: pending.map((agent) => agent.name),
+			remoteRefreshing: remote.refreshing,
+			partialAgents: [
+				...(local.excluded.partialAgents ?? []),
+				...(result?.partial ?? [])
+					.filter(({ agent }) => current.has(remoteTargetKey(agent)))
+					.map(({ agent, skippedFiles }) => ({ name: agent.name, conversations: skippedFiles })),
+			],
+		},
 	};
 }
 
 /**
- * Collect one breakdown per known session, using the cache for unchanged ones.
- * Live keys are tracked so the cache can prune sessions deleted on disk.
+ * Collect one breakdown per known local session, using the cache for unchanged
+ * ones. Live keys are tracked so the cache can prune sessions deleted on disk.
+ * The conversations of agents on another computer are counted there
+ * (`loadRemote`), never here.
  */
-async function collectBreakdowns(cache: TokenUsageCache): Promise<SessionTokenBreakdown[]> {
-	const byAgent = enumerateAgentProjects();
-	const breakdowns: SessionTokenBreakdown[] = [];
-	const liveKeys = new Set<string>();
+async function collectBreakdowns(cache: TokenUsageCache): Promise<LocalCollection> {
+	const { byAgent, excluded, remotePairs } = enumerateAgentProjects();
+	const local = await collectProjectBreakdowns(byAgent, {
+		storageFor: getSessionStorage,
+		accountDirsFor: (agentType) => getProviderAccountDirs(agentType),
+		cache,
+		onError: (error) => void captureException(error),
+	});
+	cache.prune(local.liveKeys);
+	excluded.partialAgents = localPartialAgents(local.skippedProjects);
+	// A project whose listing failed is in no total: name it, so the totals are never quietly short.
+	const unread = [...new Set(nameLocalProjects(local.failedProjects).values())];
+	if (unread.length > 0) excluded.unreadAgents = unread;
+	return { breakdowns: local.breakdowns, excluded, remotePairs };
+}
 
-	for (const [agentType, projects] of byAgent) {
-		const storage = getSessionStorage(agentType);
-		if (!storage) continue;
+/**
+ * The local projects a storage read only in part (transcripts too large or unreadable), named the way
+ * an agent on another computer is: by the agents working there, else by the folder.
+ */
+function localPartialAgents(
+	skippedProjects: ReadonlyMap<string, number>
+): Array<{ name: string; conversations: number }> {
+	const names = nameLocalProjects(skippedProjects.keys());
+	return [...skippedProjects].map(([key, conversations]) => ({
+		name: names.get(key) ?? key,
+		conversations,
+	}));
+}
 
-		// Users routinely run one provider under several accounts, each a separate
-		// config dir with its own transcript tree. Reading only the default root
-		// would undercount them, so fan out across every discovered account dir.
-		// A provider with no account-selecting env var yields no dirs and gets a
-		// single default pass, filed under DEFAULT_ACCOUNT_KEY.
-		const accountDirs = await getProviderAccountDirs(agentType);
-		const accounts: Array<string | undefined> = accountDirs.length ? accountDirs : [undefined];
-
-		for (const projectPath of projects) {
-			for (const accountDir of accounts) {
-				const accountKey = accountDir ?? DEFAULT_ACCOUNT_KEY;
-				let sessions: AgentSessionInfo[];
-				try {
-					sessions = await storage.listSessions(projectPath, undefined, accountDir);
-				} catch (error) {
-					void captureException(error);
-					continue;
-				}
-				for (const info of sessions) {
-					// Grok IDs are scoped to account/cwd, and aliased project queries
-					// can return the same native directory more than once.
-					const key = tokenCacheKey(
-						agentType === 'grok'
-							? canonicalJson([agentType, accountKey, info.projectPath])
-							: `${agentType}@${accountKey}`,
-						info.sessionId
-					);
-					if (agentType === 'grok' && liveKeys.has(key)) continue;
-					liveKeys.add(key);
-					const fingerprint = sessionFingerprint(info.modifiedAt, info.sizeBytes);
-					// A Grok usage.json update need not change the transcript size or
-					// summary timestamp. Storage already sampled all native files;
-					// never replace that observation with a stale single-file cache.
-					let breakdown = agentType === 'grok' ? undefined : cache.get(key, fingerprint);
-					if (!breakdown) {
-						breakdown = toBreakdown(agentType, info, accountKey);
-						cache.set(key, fingerprint, breakdown);
-					}
-					breakdowns.push(breakdown);
-				}
-			}
+/**
+ * The name of each local project key ({@link projectKey}): the agents of this machine working
+ * there, else the folder.
+ */
+function nameLocalProjects(keys: Iterable<string>): Map<string, string> {
+	const named = new Map<string, string>();
+	const wanted = [...keys];
+	if (wanted.length === 0) return named;
+	let records: AgentRecord[] = [];
+	if (storesInitialized()) {
+		try {
+			records = getLiveSessions() as AgentRecord[];
+		} catch (error) {
+			void captureException(error, { operation: 'tokenUsage:readLocalAgents' });
 		}
 	}
-
-	cache.prune(liveKeys);
-	return breakdowns;
+	const remoteIds = new Set(remoteTokenAgentsOf(records).map((agent) => agent.id));
+	for (const key of wanted) {
+		const [agentType, projectPath] = key.split('\u0000');
+		const names = records
+			.filter(
+				(record) =>
+					!remoteIds.has(record.id) &&
+					record.toolType === agentType &&
+					(record.cwd === projectPath || record.projectRoot === projectPath)
+			)
+			.map((record) => (typeof record.name === 'string' && record.name ? record.name : record.id));
+		named.set(key, names.length > 0 ? [...new Set(names)].join(', ') : projectLabel(projectPath));
+	}
+	return named;
 }
 
 /**
@@ -420,18 +525,38 @@ function addUsageToTotals(
 		: t.costEstimated || (m.costEstimated && m.costUsd > 0);
 }
 
-/** Round a timestamp down to the start of its day/week/month (local time). */
+/** Round a timestamp down to the start of its hour/day/week/month (local time). */
 function bucketStart(ms: number, granularity: TokenTimelineGranularity): number {
-	const d = new Date(ms);
-	d.setHours(0, 0, 0, 0);
-	if (granularity === 'week') {
-		// Week starts Monday.
-		const day = (d.getDay() + 6) % 7;
-		d.setDate(d.getDate() - day);
-	} else if (granularity === 'month') {
-		d.setDate(1);
+	return tokenSliceStart(ms, granularity);
+}
+
+/**
+ * The window a query covers, and the granularity its timelines use. An open
+ * start (All Time) begins at the earliest activity in the data - a session's
+ * last activity or a timed call, whichever is older - so the timeline spans the
+ * history that exists rather than the epoch.
+ */
+function resolveWindow(
+	all: SessionTokenBreakdown[],
+	query: TokenUsageQuery,
+	nowMs: number
+): { startMs: number; endMs: number; granularity: TokenTimelineGranularity } {
+	const endMs = query.untilMs ?? nowMs;
+	let startMs = query.sinceMs;
+	if (startMs === undefined) {
+		let earliest = Infinity;
+		for (const s of all) {
+			if (s.byModel.length > 0 && s.timestampMs > 0 && s.timestampMs < earliest) {
+				earliest = s.timestampMs;
+			}
+			for (const b of s.speed ?? []) {
+				if (b.startMs < earliest) earliest = b.startMs;
+			}
+		}
+		startMs = Number.isFinite(earliest) ? Math.min(earliest, endMs) : endMs;
 	}
-	return d.getTime();
+	const granularity = query.granularity ?? tokenGranularityFor(Math.max(0, endMs - startMs));
+	return { startMs, endMs, granularity };
 }
 
 function toGroups(map: Map<string, { total: TokenUsageTotals; label: string }>): TokenUsageGroup[] {
@@ -448,8 +573,15 @@ function toGroups(map: Map<string, { total: TokenUsageTotals; label: string }>):
 }
 
 /** Build the dashboard aggregate from raw breakdowns, honoring the query window. */
-function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenUsageAggregate {
-	const granularity: TokenTimelineGranularity = query.granularity ?? 'day';
+function aggregate(
+	all: SessionTokenBreakdown[],
+	query: TokenUsageQuery,
+	excluded: TokenUsageExclusions = noExclusions(),
+	nowMs: number = Date.now(),
+	streamSpeed: readonly TokenSpeedSource[] = []
+): TokenUsageAggregate {
+	const window = resolveWindow(all, query, nowMs);
+	const granularity = window.granularity;
 	const sinceMs = query.sinceMs ?? -Infinity;
 	const untilMs = query.untilMs ?? Infinity;
 
@@ -463,7 +595,7 @@ function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenU
 	const byProject = new Map<string, { total: TokenUsageTotals; label: string }>();
 	const byAccount = new Map<string, { total: TokenUsageTotals; label: string }>();
 	const timeline = new Map<number, TokenUsageTimeBucket>();
-	const coverageByAgent: Record<string, TokenCoverage> = {};
+	const coverageByAgent = keyedRecord<TokenCoverage>();
 
 	/** Get-or-create a group entry, so callers can bump tokens or session count. */
 	const group = (
@@ -531,6 +663,17 @@ function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenU
 		}
 	}
 
+	// Dense over the window: an idle slice is an explicit zero bar, so a quiet
+	// week keeps its width on the axis instead of vanishing between its neighbours.
+	// An open window with no dated activity has no start to fill from; leave it
+	// empty. A session with no usable timestamp counts in the totals but never
+	// lands on the timeline, so it does not start one either.
+	const fillTimeline = query.sinceMs !== undefined || timeline.size > 0;
+	for (const start of fillTimeline
+		? tokenSliceStarts(window.startMs, window.endMs, granularity)
+		: []) {
+		if (!timeline.has(start)) timeline.set(start, { startMs: start, ...emptyTotals() });
+	}
 	const timelineArr = Array.from(timeline.values()).sort((a, b) => a.startMs - b.startMs);
 
 	return {
@@ -541,9 +684,13 @@ function aggregate(all: SessionTokenBreakdown[], query: TokenUsageQuery): TokenU
 		byAccount: toGroups(byAccount),
 		timeline: timelineArr,
 		series: buildSeries(all, sinceMs, untilMs),
-		speed: buildSpeed(all, query),
+		speed: buildSpeed(all, query, window, streamSpeed),
 		coverageByAgent,
-		generatedAtMs: Date.now(),
+		excluded,
+		granularity,
+		windowStartMs: window.startMs,
+		windowEndMs: window.endMs,
+		generatedAtMs: nowMs,
 	};
 }
 
@@ -553,6 +700,15 @@ function localDayKey(ms: number): string {
 	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
 		d.getDate()
 	).padStart(2, '0')}`;
+}
+
+/**
+ * An empty record with no prototype. The series are keyed by strings a remote host supplies (a
+ * conversation id), and a plain object indexed by `__proto__` reaches `Object.prototype`; with no
+ * prototype every key is only ever an own property.
+ */
+function keyedRecord<T>(): Record<string, T> {
+	return Object.create(null) as Record<string, T>;
 }
 
 /** Add `n` into `map[key]`, creating the entry when absent. */
@@ -568,10 +724,10 @@ function bump(map: Record<string, number>, key: string, n: number): void {
  */
 function buildSeries(all: SessionTokenBreakdown[], sinceMs: number, untilMs: number): TokenSeries {
 	const series: TokenSeries = {
-		byDay: {},
-		byHour: {},
-		byAgentByDay: {},
-		bySessionByDay: {},
+		byDay: keyedRecord(),
+		byHour: keyedRecord(),
+		byAgentByDay: keyedRecord(),
+		bySessionByDay: keyedRecord(),
 		bySource: { user: 0, auto: 0 },
 	};
 
@@ -599,7 +755,7 @@ function buildSeries(all: SessionTokenBreakdown[], sinceMs: number, untilMs: num
 
 			let agentDays = series.byAgentByDay[s.agentType];
 			if (!agentDays) {
-				agentDays = {};
+				agentDays = keyedRecord();
 				series.byAgentByDay[s.agentType] = agentDays;
 			}
 			bump(agentDays, day, tokens);
@@ -607,7 +763,7 @@ function buildSeries(all: SessionTokenBreakdown[], sinceMs: number, untilMs: num
 			if (!ambiguous.has(s.sessionId)) {
 				let sessionDays = series.bySessionByDay[s.sessionId];
 				if (!sessionDays) {
-					sessionDays = {};
+					sessionDays = keyedRecord();
 					series.bySessionByDay[s.sessionId] = sessionDays;
 				}
 				bump(sessionDays, day, tokens);
@@ -627,7 +783,12 @@ function buildSeries(all: SessionTokenBreakdown[], sinceMs: number, untilMs: num
  * not per session: a session is skipped only when its last activity predates
  * the window, since then none of its calls can fall inside it.
  */
-function buildSpeed(all: SessionTokenBreakdown[], query: TokenUsageQuery) {
+function buildSpeed(
+	all: SessionTokenBreakdown[],
+	query: TokenUsageQuery,
+	window: { startMs: number; endMs: number; granularity: TokenTimelineGranularity },
+	streamSpeed: readonly TokenSpeedSource[] = []
+) {
 	const sinceMs = query.sinceMs ?? -Infinity;
 	const sources: TokenSpeedSource[] = [];
 	for (const s of all) {
@@ -635,13 +796,45 @@ function buildSpeed(all: SessionTokenBreakdown[], query: TokenUsageQuery) {
 		if (s.timestampMs > 0 && s.timestampMs < sinceMs) continue;
 		sources.push({ agentType: s.agentType, buckets: s.speed });
 	}
+	// Calls timed off the live stream (providers with no timed transcript, and
+	// transcript providers on an SSH host). They never overlap the transcript
+	// buckets above: the stream sampler skips agents whose transcript it can read.
+	sources.push(...streamSpeed);
 	return summarizeTokenSpeed(sources, {
+		measurableAgents: measurableTokenSpeedAgents(),
 		sinceMs: query.sinceMs,
 		untilMs: query.untilMs,
+		// Same slices as the consumption timeline, so the two charts line up.
+		granularity: window.granularity,
+		windowStartMs: window.startMs,
+		nowMs: window.endMs,
 		agentLabel: getAgentDisplayName,
 		modelKey: (model) => (model ? normalizeModelId(model) : 'unknown'),
 		modelLabel: (key) => (key === 'unknown' ? modelLabel('') : key),
 	});
+}
+
+/** Provider ids whose capabilities say their token speed can be measured. */
+function measurableTokenSpeedAgents(): string[] {
+	return Object.entries(AGENT_CAPABILITIES)
+		.filter(([, caps]) => caps.tokenSpeedMeasurement !== 'none')
+		.map(([agentId]) => agentId)
+		.sort();
+}
+
+/**
+ * The stream-timed speed buckets for a window, or none when the stats database
+ * is unavailable (the transcript figures still stand on their own).
+ */
+function loadStreamSpeed(query: TokenUsageQuery): TokenSpeedSource[] {
+	const db = getStatsDB();
+	if (!db.isReady()) return [];
+	try {
+		return db.getTokenSpeedSources(query.sinceMs);
+	} catch (error) {
+		void captureException(error, { operation: 'loadStreamSpeed' });
+		return [];
+	}
 }
 
 /** Human label for a model bucket. */
@@ -662,28 +855,44 @@ function projectLabel(projectPath: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Collected breakdowns for every known session, served from the memo when it is
- * still fresh. Concurrent callers share one collection.
+ * Collected local breakdowns for every known session, served from the memo when
+ * it is still fresh. Concurrent callers share one collection.
  */
-async function loadBreakdowns(force: boolean): Promise<SessionTokenBreakdown[]> {
+async function loadLocal(force: boolean): Promise<LocalCollection> {
 	if (!force && memo && Date.now() - memo.computedAt < MEMO_TTL_MS) {
-		return memo.breakdowns;
+		return memo;
 	}
 	if (inflight) return inflight;
 
 	inflight = (async () => {
 		const cache = getTokenUsageCache();
 		await cache.load();
-		const breakdowns = await collectBreakdowns(cache);
+		const collection = await collectBreakdowns(cache);
 		await cache.persist();
-		memo = { computedAt: Date.now(), breakdowns };
-		return breakdowns;
+		memo = { computedAt: Date.now(), ...collection };
+		return collection;
 	})();
 	try {
 		return await inflight;
 	} finally {
 		inflight = null;
 	}
+}
+
+/** Every breakdown a read counts: the local scan, with the remote count laid over it. */
+async function loadBreakdowns(force: boolean, waitForRemote: boolean): Promise<Collection> {
+	const [local, remote] = await Promise.all([loadLocal(force), loadRemote(force, waitForRemote)]);
+	return withRemote(local, remote);
+}
+
+/** How a read treats the agents whose conversations are on another computer. */
+export interface TokenUsageReadOptions {
+	/**
+	 * Wait for their count instead of serving the last one and refreshing it in
+	 * the background. For a script (`maestro-cli stats-tokens`, an export) that
+	 * wants the whole number; the dashboard never waits.
+	 */
+	waitForRemote?: boolean;
 }
 
 /**
@@ -696,15 +905,36 @@ async function loadBreakdowns(force: boolean): Promise<SessionTokenBreakdown[]> 
  */
 export async function getTokenUsageAggregate(
 	query: TokenUsageQuery = {},
-	force = false
+	force = false,
+	options: TokenUsageReadOptions = {}
 ): Promise<TokenUsageAggregate> {
-	const breakdowns = await loadBreakdowns(force);
-	const result = aggregate(breakdowns, query);
+	const { breakdowns, excluded } = await loadBreakdowns(force, options.waitForRemote === true);
+	// Read fresh on every call, outside the memo: stream samples land live.
+	const result = aggregate(breakdowns, query, excluded, Date.now(), loadStreamSpeed(query));
 	logger.debug(
 		`Computed token usage: ${result.totals.sessionCount} sessions, $${result.totals.costUsd.toFixed(2)}`,
 		LOG_CONTEXT
 	);
 	return result;
+}
+
+/** Joins and limits the session listings this machine runs for its Federation peers. */
+const peerListGate = createSessionListGate();
+
+/**
+ * The usage of `projects` on this machine, for a Federation peer that asked
+ * (`get_project_token_usage`): the same storages and account dirs this
+ * machine's own dashboard reads.
+ */
+export function getProjectTokenUsage(
+	projects: readonly ProjectTokenUsageProject[]
+): Promise<ProjectTokenUsage> {
+	return projectTokenUsage(projects, {
+		storageFor: getSessionStorage,
+		gate: peerListGate,
+		accountDirsFor: (agentType) => getProviderAccountDirs(agentType),
+		onError: (error) => void captureException(error, { operation: 'tokenUsage:peerProjects' }),
+	});
 }
 
 /** Test seam: expose internals for unit tests. */
@@ -714,6 +944,7 @@ export const _internal = {
 	enumerateAgentProjects,
 	accountGroup,
 	bucketStart,
+	resolveWindow,
 	buildSeries,
 	buildSpeed,
 	localDayKey,

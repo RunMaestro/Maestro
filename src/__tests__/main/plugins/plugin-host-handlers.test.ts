@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
 import {
 	buildHostCallHandlers,
 	purgePluginData,
@@ -3383,6 +3384,113 @@ describe('original audio in durable Relay conversations', () => {
 				await expect(request()).rejects.toThrow(/MediaDenied/);
 			} finally {
 				forward.mockRestore();
+			}
+		}
+	);
+});
+
+// RC-F05: a plugin's shell.openExternal used to open any `file:` URL under the
+// broad grant, which launches apps, scripts and installers. Now a `file:` URL
+// passes the broker only under a grant that names a `file:` scope containing it.
+describe('shell.openExternal on a local file', () => {
+	function handlersFor(scope?: string) {
+		const openExternal = vi.fn(async () => {});
+		const grants: PermissionGrant[] = [
+			{ capability: 'shell:openExternal', ...(scope ? { scope } : {}), grantedAt: 1 },
+		];
+		const handlers = buildHostCallHandlers(
+			makeDeps({ broker: brokerFor(() => grants), openExternal })
+		);
+		const open = (url: string) => handlers['shell.openExternal']!('p', { url });
+		return { open, openExternal };
+	}
+
+	it('refuses a file: URL under the unscoped grant and opens nothing', async () => {
+		const { open, openExternal } = handlersFor();
+		await expect(open('file:///Applications/Calculator.app')).rejects.toThrow(
+			'permission denied: shell:openExternal (file:///Applications/Calculator.app)'
+		);
+		await expect(open('FILE://localhost/Users/me/Downloads/Setup.pkg')).rejects.toThrow(
+			'permission denied: shell:openExternal'
+		);
+		expect(openExternal).not.toHaveBeenCalled();
+	});
+
+	it('still opens a web URL under the unscoped grant', async () => {
+		const { open, openExternal } = handlersFor();
+		await expect(open('https://github.com/acme/app/pull/1')).resolves.toEqual({ ok: true });
+		expect(openExternal).toHaveBeenCalledWith('https://github.com/acme/app/pull/1', undefined);
+	});
+
+	it('refuses a file: URL on a host that a host scope names', async () => {
+		const { open, openExternal } = handlersFor('fileserver');
+		await expect(open('file://fileserver/share/setup.exe')).rejects.toThrow(
+			'permission denied: shell:openExternal'
+		);
+		expect(openExternal).not.toHaveBeenCalled();
+	});
+
+	it('opens a file: URL inside a file: scope, and refuses one outside it', async () => {
+		const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-openext-')));
+		try {
+			const reportsDir = path.join(base, 'Reports');
+			const outsideDir = path.join(base, 'Outside');
+			fs.mkdirSync(reportsDir, { recursive: true });
+			fs.mkdirSync(outsideDir, { recursive: true });
+			const reportFile = path.join(reportsDir, 'q3.pdf');
+			const outsideFile = path.join(outsideDir, 'secret.pdf');
+			fs.writeFileSync(reportFile, 'ok');
+			fs.writeFileSync(outsideFile, 'secret');
+
+			const { open, openExternal } = handlersFor(pathToFileURL(reportsDir).href);
+			await expect(open(pathToFileURL(reportFile).href)).resolves.toEqual({ ok: true });
+			expect(openExternal).toHaveBeenCalledWith(pathToFileURL(reportFile).href, undefined);
+
+			await expect(open(pathToFileURL(outsideFile).href)).rejects.toThrow(
+				'permission denied: shell:openExternal'
+			);
+			await expect(open(`${pathToFileURL(reportsDir).href}/../Outside/secret.pdf`)).rejects.toThrow(
+				'permission denied: shell:openExternal'
+			);
+			await expect(open('https://github.com/acme/app/pull/1')).rejects.toThrow(
+				'permission denied: shell:openExternal'
+			);
+			expect(openExternal).toHaveBeenCalledTimes(1);
+		} finally {
+			fs.rmSync(base, { recursive: true, force: true });
+		}
+	});
+
+	it.skipIf(process.platform === 'win32')(
+		're-authorizes symlink targets and refuses a symlink inside a file: scope pointing outside',
+		async () => {
+			const base = fs.realpathSync.native(
+				fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-openext-link-'))
+			);
+			try {
+				const reportsDir = path.join(base, 'Reports');
+				const outsideDir = path.join(base, 'Outside');
+				fs.mkdirSync(reportsDir, { recursive: true });
+				fs.mkdirSync(outsideDir, { recursive: true });
+				const innerFile = path.join(reportsDir, 'real.pdf');
+				const outsideFile = path.join(outsideDir, 'secret.pdf');
+				fs.writeFileSync(innerFile, 'ok');
+				fs.writeFileSync(outsideFile, 'secret');
+				const insideLink = path.join(reportsDir, 'alias.pdf');
+				const escapeLink = path.join(reportsDir, 'escape.pdf');
+				fs.symlinkSync(innerFile, insideLink);
+				fs.symlinkSync(outsideFile, escapeLink);
+
+				const { open, openExternal } = handlersFor(pathToFileURL(reportsDir).href);
+				await expect(open(pathToFileURL(escapeLink).href)).rejects.toThrow(
+					'permission denied: shell:openExternal'
+				);
+				expect(openExternal).not.toHaveBeenCalled();
+
+				await expect(open(pathToFileURL(insideLink).href)).resolves.toEqual({ ok: true });
+				expect(openExternal).toHaveBeenCalledWith(pathToFileURL(innerFile).href, undefined);
+			} finally {
+				fs.rmSync(base, { recursive: true, force: true });
 			}
 		}
 	);

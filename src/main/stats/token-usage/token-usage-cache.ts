@@ -42,8 +42,12 @@ const LOG_CONTEXT = '[TokenUsageCache]';
  * v7 carries per-call token speed buckets (`speed`).
  * v8 reads Grok session totals from usage.json; every Grok session cached
  * before that holds zeros under an unchanged fingerprint.
+ * v9 stores Codex input as fresh tokens only (cached reads were counted inside
+ * it AND in `cacheReadTokens`, so every Codex total counted them twice). main
+ * shipped that fix as its v8, the number rc gave the Grok fix, so both caches
+ * stamped v8 are stale for one of the two and v9 drops them all.
  */
-export const TOKEN_USAGE_CACHE_VERSION = 8;
+export const TOKEN_USAGE_CACHE_VERSION = 9;
 
 /** One cached session: the fingerprint it was derived at plus the derived breakdown. */
 interface CachedSession {
@@ -58,15 +62,8 @@ interface TokenUsageCacheFile {
 	sessions: Record<string, CachedSession>;
 }
 
-/** Stable cache key for a session across agents. */
-export function tokenCacheKey(agentType: string, sessionId: string): string {
-	return `${agentType}:${sessionId}`;
-}
-
-/** Fingerprint a session from the cheap metadata `listSessions` already returns. */
-export function sessionFingerprint(modifiedAt: string, sizeBytes: number): string {
-	return `${modifiedAt}-${sizeBytes}`;
-}
+// The keys live in a module with no Electron import, so a plain-Node host can share them.
+export { sessionFingerprint, tokenCacheKey } from './token-usage-keys';
 
 /**
  * In-memory map backed by a single JSON file under `userData`. Lazy-loaded on

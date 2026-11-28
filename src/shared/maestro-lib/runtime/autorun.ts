@@ -31,17 +31,22 @@
  *   stopped by a person, failed with the engine's reason, or an engine error. The progress frames
  *   cannot say it, since a run that died and one that finished both end in `null`.
  *
+ * - **Steering notes** wait for the next task or goal iteration and open its prompt, as the
+ *   desktop's do (`autorun-steering.ts`); `steer` is the Thought Stream's Steer.
+ *
  * Deferred, with the reason in `Plans/maestro-tui-autorun-engine.md`: worktree runs (AE13),
- * steering notes (AE14), a working copy per loop (AE21), Agent Resilience retry (W4), and Auto Run
+ * a working copy per loop (AE21), Agent Resilience retry (W4), and Auto Run
  * for an SSH-remote agent (W6).
  */
 
 import * as path from 'path';
 
 import { describeUnresolvedHaltMarker } from '../../autorunMarkers';
+import { formatSteeringNotesBlock, joinAutoRunPromptBlocks } from '../../autorunSteering';
 import type { AutoRunBroadcastState } from '../../autoRunBroadcast';
 import type { GoalRunConfig } from '../../goalDriven/types';
 import type { Playbook, SessionInfo } from '../../types';
+import { generateUUID } from '../../uuid';
 import {
 	registerCliActivity,
 	unregisterCliActivity,
@@ -50,7 +55,12 @@ import {
 import { sshRecordOf } from '../agents/rules';
 import type { AgentRepository } from '../agents/repository';
 import { resolveAutoRunFolder } from '../autorun/documents';
-import type { AutoRunDeps, AutoRunEvent } from '../autorun/engine-types';
+import type {
+	AutoRunDeps,
+	AutoRunEvent,
+	AutoRunTurnRequest,
+	AutoRunTurnResult,
+} from '../autorun/engine-types';
 import {
 	DEFAULT_GOAL_MAX_ITERATIONS,
 	validateAutoRunLaunch,
@@ -87,6 +97,7 @@ import {
 	readStatsCollectionEnabled,
 	type StatsRecorder,
 } from '../turns/stats';
+import { createSteeringLedger } from './autorun-steering';
 import { createAutoRunTurnRunner, type AutoRunStreamEvent } from './autorun-turns';
 import type { DataDirVerdict } from './data-dir-lock';
 import { commitAll, isGitRepository, readGitBranch } from './git';
@@ -95,6 +106,10 @@ import type { ProcessRegistry } from './processes';
 import type { RuntimeTurnDeps, RuntimeTurnOptions } from './turns';
 
 const LOG_CONTEXT = '[RuntimeAutoRun]';
+
+/** How long a task's streamed reasoning is joined before it goes out, and the most joined at once. */
+export const THINKING_FLUSH_MS = 50;
+export const THINKING_FLUSH_CHARS = 8 * 1024;
 
 /** One run in flight, for `host status` and for refusing a `host stop`. */
 export interface ActiveAutoRun {
@@ -115,6 +130,11 @@ export interface RuntimeAutoRunOptions {
 	deps?: Partial<RuntimeTurnDeps>;
 	/** A run ended: whatever it held back (queued chat messages) may start now. */
 	onRunEnded?(agentId: string): void;
+	/**
+	 * A run began holding the agent's working tree: a message waiting for its tab alone now waits
+	 * for the run too, so it is no hand-over, and a Stop armed for it in the gap is let go (U9).
+	 */
+	onRunStarted?(agentId: string): void;
 	/** Test seam: the stats writer. Default: the library recorder over the host's SQLite loader. */
 	statsRecorder?: StatsRecorder;
 	/** The runtime's one History writer (it shares each entry with the project). Default: a plain one. */
@@ -247,6 +267,8 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 
 	/** Send the run's current frame. The wire shape stays here; clients get the parsed form. */
 	const publish = (handle: RunHandle): void => {
+		// A task's last reasoning lands before the frame that moves the run on.
+		flushAllThinking();
 		emitRun(handle.agentId, {
 			kind: 'state',
 			at: now(),
@@ -254,17 +276,50 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 		});
 	};
 
-	const forwardStream = (agentId: string, event: AutoRunStreamEvent): void => {
-		if (event.kind === 'output') {
-			emitRun(agentId, { kind: 'output', at: now(), processId: event.processId, text: event.text });
-		} else {
-			emitRun(agentId, {
-				kind: 'usage',
-				at: now(),
-				processId: event.processId,
-				usage: event.usage,
-			});
+	/**
+	 * Reasoning waiting to go out, by process. A provider streams it a few characters at a time, so
+	 * it is joined into windows of `THINKING_FLUSH_MS` (or `THINKING_FLUSH_CHARS`), as the desktop's
+	 * own forwarding does, rather than sent as one frame per token.
+	 */
+	const pendingThinking = new Map<
+		string,
+		{ agentId: string; text: string; timer: ReturnType<typeof setTimeout> | null }
+	>();
+	const flushThinking = (processId: string): void => {
+		const pending = pendingThinking.get(processId);
+		if (!pending) return;
+		pendingThinking.delete(processId);
+		if (pending.timer) clearTimeout(pending.timer);
+		if (pending.text) {
+			emitRun(pending.agentId, { kind: 'thinking', at: now(), processId, text: pending.text });
 		}
+	};
+	const flushAllThinking = (): void => {
+		for (const processId of [...pendingThinking.keys()]) flushThinking(processId);
+	};
+
+	/** Output, usage, reasoning, and tool calls go out in the order they came, stamped with the time. */
+	const forwardStream = (agentId: string, event: AutoRunStreamEvent): void => {
+		if (event.kind === 'thinking') {
+			if (!event.text) return;
+			let pending = pendingThinking.get(event.processId);
+			if (!pending) {
+				pending = { agentId, text: '', timer: null };
+				pendingThinking.set(event.processId, pending);
+			}
+			pending.text += event.text;
+			if (pending.text.length >= THINKING_FLUSH_CHARS) {
+				flushThinking(event.processId);
+			} else if (!pending.timer) {
+				const processId = event.processId;
+				pending.timer = setTimeout(() => flushThinking(processId), THINKING_FLUSH_MS);
+				(pending.timer as { unref?: () => void }).unref?.();
+			}
+			return;
+		}
+		// Reasoning before a tool call or an answer goes out before it.
+		flushThinking(event.processId);
+		emitRun(agentId, { ...event, at: now() });
 	};
 
 	// -----------------------------------------------------------------------
@@ -374,6 +429,47 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 	}
 
 	// -----------------------------------------------------------------------
+	// Steering notes (the Thought Stream's Steer)
+	// -----------------------------------------------------------------------
+
+	const steering = createSteeringLedger({ now, newId: generateUUID });
+
+	/**
+	 * A task or goal iteration takes every note waiting for its run and opens with the block an
+	 * agent reads, as the desktop's runners do; its reply comes back to the notes. Synopsis and
+	 * handoff turns take none.
+	 */
+	async function runSteered(
+		agentId: string,
+		request: AutoRunTurnRequest,
+		run: (request: AutoRunTurnRequest) => Promise<AutoRunTurnResult>
+	): Promise<AutoRunTurnResult> {
+		if (request.purpose !== 'task' && request.purpose !== 'goal-iteration') return run(request);
+		const taken = steering.take(agentId);
+		if (!taken) return run(request);
+		const block = formatSteeringNotesBlock(
+			taken.notes,
+			request.purpose === 'goal-iteration' ? 'goal' : 'document'
+		);
+		try {
+			const result = await run({
+				...request,
+				prompt: joinAutoRunPromptBlocks([block, request.prompt]),
+			});
+			steering.reply(agentId, taken.deliveryId, {
+				text: result.success
+					? (result.response ?? '')
+					: (result.error ?? result.response ?? 'The task failed.'),
+				success: result.success,
+			});
+			return result;
+		} catch (error) {
+			steering.reply(agentId, taken.deliveryId, { text: errorText(error), success: false });
+			throw error;
+		}
+	}
+
+	// -----------------------------------------------------------------------
 	// The engine's ports
 	// -----------------------------------------------------------------------
 
@@ -399,7 +495,7 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 			return text;
 		};
 		return {
-			turns: { run: (request) => turns.run(request) },
+			turns: { run: (request) => runSteered(agentId, request, (steered) => turns.run(steered)) },
 			documents,
 			history: {
 				append: async (entry) => {
@@ -498,6 +594,9 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 	function startRun(handle: Omit<RunHandle, 'done'>, events: AsyncGenerator<AutoRunEvent>): void {
 		const run: RunHandle = { ...handle, done: Promise.resolve() };
 		runs.set(run.agentId, run);
+		// A new run begins with no notes, as the desktop's does.
+		steering.startRun(run.agentId);
+		options.onRunStarted?.(run.agentId);
 		run.done = (async () => {
 			publish(run);
 			let outcome: AutoRunOutcome | undefined;
@@ -512,6 +611,7 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 				outcome = { status: 'error', reason: errorText(error) };
 			} finally {
 				runs.delete(run.agentId);
+				steering.endRun(run.agentId);
 				bus.emit({
 					type: 'autorun.ended',
 					agentId: run.agentId,
@@ -655,8 +755,11 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 					currentTaskIndex: 0,
 					totalDocuments: names.length,
 					currentDocumentIndex: 0,
-					totalTasksAcrossAllDocs: scan.initialTotalTasks,
-					completedTasksAcrossAllDocs: 0,
+					// As the desktop runner starts a run: tasks checked before it count as done, and are
+					// the baseline its pace (the REMAINING estimate) is measured from.
+					totalTasksAcrossAllDocs: scan.initialTotalTasks + scan.initialCheckedTasks,
+					completedTasksAcrossAllDocs: scan.initialCheckedTasks,
+					initialCompletedTasks: scan.initialCheckedTasks,
 					documents: names,
 					startTime: startedAt,
 					loopEnabled: playbook.loopEnabled,
@@ -775,6 +878,14 @@ export function createRuntimeAutoRun(options: RuntimeAutoRunOptions): RuntimeAut
 		resume: async (agentId) => answer('autoRun.resume', agentId, 'resume'),
 		skip: async (agentId) => answer('autoRun.skip', agentId, 'skip'),
 		abort: async (agentId) => answer('autoRun.abort', agentId, 'abort'),
+		steer: async (agentId, input) =>
+			ok(
+				steering.command(
+					agentId,
+					input,
+					runs.has(agentId) ? null : 'No Auto Run is active on this agent'
+				)
+			),
 	};
 
 	return {

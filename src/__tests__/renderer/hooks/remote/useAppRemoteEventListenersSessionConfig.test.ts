@@ -20,7 +20,13 @@ import type { Session } from '../../../../renderer/types';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: Object.assign(vi.fn(), { getState: vi.fn(() => ({})) }),
-	selectSessionById: vi.fn(),
+	selectSessionById: (id: string) => (state: { sessions?: Array<{ id: string }> }) =>
+		state.sessions?.find((session) => session.id === id),
+}));
+// The one Thinking write (T6); its own effect on the store is covered in tabThinkingMode.test.ts.
+const setTabThinkingMode = vi.fn();
+vi.mock('../../../../renderer/services/tabThinkingMode', () => ({
+	setTabThinkingMode: (...args: unknown[]) => setTabThinkingMode(...args),
 }));
 vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: Object.assign(vi.fn(), { getState: vi.fn(() => ({})) }),
@@ -259,12 +265,32 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 		const sessions = [twoTabSession()];
 		const { setSessions } = setup(sessions);
 
-		dispatchPatch('session-1', { tabId: 'tab-1', starred: true, logs: [], agentSessionId: 'x' });
+		dispatchPatch('session-1', { tabId: 'tab-1', starred: true, logs: [], name: 'x' });
 		await flush();
 
 		const [updated] = applyUpdate(setSessions, sessions);
 		expect(updated.aiTabs[0].starred).toBe(true);
+		expect(updated.aiTabs[0].name).toBe(sessions[0].aiTabs[0].name);
+		expect(updated.aiTabs[0].logs).toBe(sessions[0].aiTabs[0].logs);
+	});
+
+	it("adopts the provider session a wizard that ran elsewhere hands the tab, dropping the old one's binding", async () => {
+		const sessions = [twoTabSession()];
+		sessions[0].aiTabs[1] = {
+			...sessions[0].aiTabs[1],
+			agentSessionId: 'old',
+			nativeSessionBinding: { provider: 'claude-code' } as never,
+		};
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { tabId: 'tab-2', agentSessionId: 'wizard-session' });
+		await flush();
+
+		const [updated] = applyUpdate(setSessions, sessions);
+		expect(updated.aiTabs[1].agentSessionId).toBe('wizard-session');
+		expect(updated.aiTabs[1].nativeSessionBinding).toBeUndefined();
 		expect(updated.aiTabs[0].agentSessionId).toBe(sessions[0].aiTabs[0].agentSessionId);
+		expect(ack).toHaveBeenCalledWith('ch', { success: true });
 	});
 
 	it('rejects an unknown tab instead of silently patching nothing', async () => {
@@ -292,7 +318,8 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 		await flush();
 
 		const [updated] = applyUpdate(setSessions, sessions);
-		expect(updated.aiTabs[1].showThinking).toBe('sticky');
+		// Thinking takes the one Thinking write, which also tells a hosted agent's host (T6).
+		expect(setTabThinkingMode).toHaveBeenCalledWith('session-1', 'tab-2', 'sticky');
 		expect(updated.aiTabs[1].readOnlyMode).toBe(true);
 		expect(updated.aiTabs[1].customModel).toBe('opus');
 		expect(updated.aiTabs[1].customEffort).toBe('high');

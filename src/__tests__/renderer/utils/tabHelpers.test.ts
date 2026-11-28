@@ -23,6 +23,7 @@
  * - navigateToPrevUnifiedTab
  * - createMergedSession
  * - hasActiveWizard
+ * - hasStagedAttachments, hasDraft, hasWizardInteraction
  * - extractQuickTabName
  */
 
@@ -58,6 +59,9 @@ import {
 	navigateToClosestTerminalTab,
 	createMergedSession,
 	hasActiveWizard,
+	hasStagedAttachments,
+	hasDraft,
+	hasWizardInteraction,
 	flattenWizardIntoTab,
 	extractQuickTabName,
 	buildUnifiedTabs,
@@ -69,7 +73,6 @@ import {
 	toggleReadOnlyModeFields,
 	permissionModeFields,
 	nextPermissionMode,
-	cycleShowThinkingFields,
 	setShowThinkingFields,
 	findNextUnreadSession,
 	findPreviousUnreadSession,
@@ -100,8 +103,13 @@ import type {
 	TerminalTab,
 	QueuedItem,
 } from '../../../renderer/types';
-import { createMockAITab as createMockTab, createMockFileTab } from '../../helpers/mockTab';
+import {
+	createMockAITab as createMockTab,
+	createMockDesignPick,
+	createMockFileTab,
+} from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
+import { clearLiveDraft, setLiveDraft } from '../../../renderer/utils/liveDraftStore';
 
 // Mock the generateId function to return predictable IDs
 vi.mock('../../../renderer/utils/ids', () => ({
@@ -3330,6 +3338,61 @@ describe('tabHelpers', () => {
 		});
 	});
 
+	describe('staged attachments and drafts', () => {
+		const chip = createMockDesignPick();
+		const activeWizard = {
+			isActive: true,
+			mode: 'new' as const,
+			confidence: 0,
+			conversationHistory: [],
+			previousUIState: { readOnlyMode: false, saveToHistory: true, showThinking: 'off' as const },
+		};
+
+		afterEach(() => {
+			clearLiveDraft('tab-1');
+		});
+
+		it('hasStagedAttachments counts staged images and Design Mode chips', () => {
+			expect(hasStagedAttachments(createMockTab({ id: 'tab-1', stagedImages: [] }))).toBe(false);
+			expect(
+				hasStagedAttachments(
+					createMockTab({ id: 'tab-1', stagedImages: [], stagedDesignPicks: [] })
+				)
+			).toBe(false);
+			expect(
+				hasStagedAttachments(
+					createMockTab({ id: 'tab-1', stagedImages: ['data:image/png;base64,A'] })
+				)
+			).toBe(true);
+			expect(
+				hasStagedAttachments(
+					createMockTab({ id: 'tab-1', stagedImages: [], stagedDesignPicks: [chip] })
+				)
+			).toBe(true);
+		});
+
+		it('hasDraft counts a tab holding only chips, with no text', () => {
+			setLiveDraft('tab-1', '   ');
+			expect(hasDraft(createMockTab({ id: 'tab-1', stagedImages: [] }))).toBe(false);
+			expect(
+				hasDraft(createMockTab({ id: 'tab-1', stagedImages: [], stagedDesignPicks: [chip] }))
+			).toBe(true);
+		});
+
+		it('hasWizardInteraction counts chips staged on an active wizard tab', () => {
+			const wizardTab = (overrides: Partial<AITab> = {}) =>
+				createMockTab({ id: 'tab-1', stagedImages: [], wizardState: activeWizard, ...overrides });
+			expect(hasWizardInteraction(wizardTab())).toBe(false);
+			expect(hasWizardInteraction(wizardTab({ stagedDesignPicks: [chip] }))).toBe(true);
+			// An inactive wizard has nothing to confirm, chips or not.
+			expect(
+				hasWizardInteraction(
+					createMockTab({ id: 'tab-1', stagedImages: [], stagedDesignPicks: [chip] })
+				)
+			).toBe(false);
+		});
+	});
+
 	describe('flattenWizardIntoTab', () => {
 		const wizardTab = (overrides: Record<string, unknown> = {}) =>
 			createMockTab({
@@ -6360,6 +6423,88 @@ describe('tabHelpers', () => {
 	});
 
 	describe('markTabRunningQueuedItem', () => {
+		// Parity R26: on a desktop host, a Federation client's message takes the id it named
+		// (`TurnInput.entryId`), read as a headless host reads it.
+		describe('the entry id a Federation client named (R26)', () => {
+			const queued = (text: string, entryId = 'kept-1'): QueuedItem => ({
+				id: 'q-kept',
+				tabId: 't1',
+				type: 'message',
+				text,
+				timestamp: 1,
+				entryId,
+			});
+
+			it('writes the user entry under that id', () => {
+				const tab = createMockTab({ id: 't1', state: 'idle', logs: [] });
+				const result = markTabRunningQueuedItem(
+					tab,
+					queued('continue'),
+					createMockSession({ aiTabs: [tab] })
+				);
+				expect(result.state).toBe('busy');
+				expect(result.logs).toHaveLength(1);
+				expect(result.logs[0]).toMatchObject({ id: 'kept-1', source: 'user', text: 'continue' });
+			});
+
+			it('writes no second entry when the tab already holds this message under that id', () => {
+				const held = { id: 'kept-1', timestamp: 1, source: 'user' as const, text: 'continue' };
+				const tab = createMockTab({ id: 't1', state: 'idle', logs: [held] });
+				const result = markTabRunningQueuedItem(
+					tab,
+					queued('continue'),
+					createMockSession({ aiTabs: [tab] })
+				);
+				expect(result.state).toBe('busy');
+				expect(result.logs).toEqual([held]);
+			});
+
+			// The integrator's Move Back check on #2161: a message kept for a host while it was down,
+			// then the agent moved back, runs here and is drawn once, in its bubble's place.
+			it('takes over the bubble a message kept for a host drew, after a Move Back', () => {
+				const bubble = {
+					id: 'bubble-1',
+					timestamp: 1,
+					source: 'user' as const,
+					text: 'continue',
+					keptForHost: true,
+					keptSentAt: 5,
+				};
+				const tab = createMockTab({ id: 't1', state: 'idle', logs: [bubble] });
+				const item: QueuedItem = {
+					id: 'q-kept',
+					tabId: 't1',
+					type: 'message',
+					text: 'continue, briefly',
+					timestamp: 1,
+					keptEntryId: 'bubble-1',
+				};
+				const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
+				expect(result.logs).toHaveLength(1);
+				expect(result.logs[0]).toMatchObject({
+					id: 'bubble-1',
+					source: 'user',
+					text: 'continue, briefly',
+					queuedItemId: 'q-kept',
+				});
+				expect(result.logs[0].keptForHost).toBeUndefined();
+				expect(result.logs[0].keptSentAt).toBeUndefined();
+			});
+
+			it('gives the message its own id when that id names another entry', () => {
+				const other = { id: 'kept-1', timestamp: 1, source: 'ai' as const, text: 'an answer' };
+				const tab = createMockTab({ id: 't1', state: 'idle', logs: [other] });
+				const result = markTabRunningQueuedItem(
+					tab,
+					queued('continue'),
+					createMockSession({ aiTabs: [tab] })
+				);
+				expect(result.logs).toHaveLength(2);
+				expect(result.logs[1]).toMatchObject({ source: 'user', text: 'continue' });
+				expect(result.logs[1].id).not.toBe('kept-1');
+			});
+		});
+
 		it.each([undefined, ''])(
 			'records a boundary for an image-only message with text=%s',
 			(text) => {
@@ -6414,6 +6559,24 @@ describe('tabHelpers', () => {
 			};
 			const result = markTabRunningQueuedItem(tab, item, createMockSession({ aiTabs: [tab] }));
 			expect(result.logs[0]).toMatchObject({ forceParallel: true, readOnly: true });
+		});
+
+		it("stamps a sender's own save to History choice on the log entry, and only then", () => {
+			const tab = createMockTab({ id: 't1', logs: [] });
+			const item: QueuedItem = {
+				id: 'q1',
+				tabId: 't1',
+				type: 'message',
+				text: 'from a conductor',
+				timestamp: 1700000000000,
+				turnSaveToHistory: false,
+			};
+			const session = createMockSession({ aiTabs: [tab] });
+			expect(markTabRunningQueuedItem(tab, item, session).logs[0].saveToHistory).toBe(false);
+			const plain = { ...item, turnSaveToHistory: undefined };
+			expect(markTabRunningQueuedItem(tab, plain, session).logs[0]).not.toHaveProperty(
+				'saveToHistory'
+			);
 		});
 
 		it('marks the tab busy without a log for a command item', () => {
@@ -6799,46 +6962,6 @@ describe('tabHelpers', () => {
 		});
 	});
 
-	describe('cycleShowThinkingFields', () => {
-		const thinkingLog: LogEntry = {
-			id: 'think-1',
-			timestamp: 1,
-			source: 'thinking',
-			text: 'reasoning',
-		};
-		const toolLog: LogEntry = { id: 'tool-1', timestamp: 2, source: 'tool', text: 'edit' };
-		const stdoutLog: LogEntry = { id: 'out-1', timestamp: 3, source: 'stdout', text: 'ok' };
-		const mixedLogs = [thinkingLog, toolLog, stdoutLog];
-
-		it('cycles off to on and leaves logs unchanged', () => {
-			expect(cycleShowThinkingFields({ showThinking: 'off', logs: mixedLogs })).toEqual({
-				showThinking: 'on',
-				logs: mixedLogs,
-			});
-		});
-
-		it('treats an unset mode as off, same as nextThinkingMode', () => {
-			expect(cycleShowThinkingFields({ showThinking: undefined, logs: mixedLogs })).toEqual({
-				showThinking: 'on',
-				logs: mixedLogs,
-			});
-		});
-
-		it('cycles on to sticky and leaves logs unchanged', () => {
-			expect(cycleShowThinkingFields({ showThinking: 'on', logs: mixedLogs })).toEqual({
-				showThinking: 'sticky',
-				logs: mixedLogs,
-			});
-		});
-
-		it('cycles sticky to off and drops only thinking logs', () => {
-			expect(cycleShowThinkingFields({ showThinking: 'sticky', logs: mixedLogs })).toEqual({
-				showThinking: 'off',
-				logs: [toolLog, stdoutLog],
-			});
-		});
-	});
-
 	describe('setShowThinkingFields', () => {
 		const thinkingLog: LogEntry = {
 			id: 'think-1',
@@ -6863,19 +6986,6 @@ describe('tabHelpers', () => {
 				showThinking: 'off',
 				logs: [toolLog],
 			});
-		});
-
-		it('agrees with cycleShowThinkingFields on every step of the cycle', () => {
-			// The cycle delegates here, so the log-clearing rule is written once.
-			for (const [from, to] of [
-				['off', 'on'],
-				['on', 'sticky'],
-				['sticky', 'off'],
-			] as const) {
-				expect(cycleShowThinkingFields({ showThinking: from, logs: mixedLogs })).toEqual(
-					setShowThinkingFields({ logs: mixedLogs }, to)
-				);
-			}
 		});
 	});
 

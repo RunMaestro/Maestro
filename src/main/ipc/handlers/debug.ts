@@ -26,6 +26,10 @@ import {
 	getProfilingStatus,
 	setProfilingAutoStopHandler,
 	finalizeCapture,
+	checkFeedbackTraceBundle,
+	feedbackTraceBundlePath,
+	forgetFeedbackTraceBundle,
+	recordFeedbackTraceBundle,
 } from '../../profiling';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
@@ -400,9 +404,12 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 			const tracePath = path.join(app.getPath('temp'), `maestro-trace-${timestamp}.json`);
 			const outcome = await stopProfiling(tracePath);
 			const { durationMs } = outcome;
-			const bundlePath = path.join(app.getPath('temp'), `maestro-profile-${timestamp}.zip`);
 			try {
+				// Named and placed by the profiling module, whose check feedback submit
+				// and debug:discardTrace run on the path the renderer hands back.
+				const bundlePath = feedbackTraceBundlePath(timestamp);
 				const finalized = await finalizeCapture(tracePath, bundlePath, outcome);
+				await recordFeedbackTraceBundle(finalized.path);
 				logger.info(`${LOG_CONTEXT} Performance profile captured for feedback: ${finalized.path}`);
 				return {
 					path: finalized.path,
@@ -417,21 +424,26 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 	);
 
 	// Delete a temp trace bundle produced by debug:stopProfilingToFile that the
-	// user abandoned (removed the attachment or discarded the report). Guarded to
-	// our own temp-dir naming so it can only unlink a maestro trace zip.
+	// user abandoned (removed the attachment or discarded the report). Only a
+	// path that passes the same check as feedback submit is deleted, so a `..`
+	// path or a symlink cannot aim the unlink at another file.
 	ipcMain.handle(
 		'debug:discardTrace',
 		createIpcHandler(handlerOpts('discardTrace', false), async (filePath?: string) => {
-			const tempDir = app.getPath('temp');
-			if (
-				typeof filePath === 'string' &&
-				filePath.startsWith(tempDir) &&
-				/[/\\]maestro-profile-[^/\\]+\.zip$/.test(filePath)
-			) {
-				await fs.promises.unlink(filePath).catch(() => {});
-				return { success: true };
+			const trace = await checkFeedbackTraceBundle(filePath);
+			if (!trace.ok) return { success: false };
+			try {
+				await fs.promises.unlink(trace.realPath);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+					return {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					};
+				}
 			}
-			return { success: false };
+			forgetFeedbackTraceBundle(trace.realPath);
+			return { success: true };
 		})
 	);
 

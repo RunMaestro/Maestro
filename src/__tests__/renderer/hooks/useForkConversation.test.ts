@@ -42,7 +42,13 @@ vi.mock('../../../renderer/utils/spawnHelpers', () => ({
 
 import { useForkConversation } from '../../../renderer/hooks/agent/useForkConversation';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
 
 // ============================================================================
 // Helpers
@@ -492,6 +498,136 @@ describe('useForkConversation', () => {
 			expect(setSessions).not.toHaveBeenCalled();
 			expect(getSessions()[0].aiTabs).toHaveLength(1);
 			expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('local, SSH, and hosted agents', () => {
+		const sshRemote = { enabled: true, remoteId: 'r1', workingDirOverride: '/srv/app' };
+		const hydrateHost = () => {
+			const { peer } = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+				[{ id: 'h1', name: 'Agent One', toolType: 'claude-code', aiTabs: [{ id: 'source-tab' }] }],
+				[],
+				1
+			);
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		};
+
+		afterEach(() => {
+			useSettingsStore.setState({ federationHostedAgents: false });
+			usePeerMirrorStore.setState(usePeerMirrorStore.getInitialState(), true);
+			delete (window as any).maestro.federation;
+		});
+
+		it.each(['local', 'ssh', 'hosted'] as const)(
+			'a %s agent forks into the same tab, in the same place, with the same toast',
+			async (mode) => {
+				const later = createMockAITab({ id: 'later-tab', name: 'Later' });
+				const session = buildSession({
+					aiTabs: [buildSourceTab({ readOnlyMode: true }), later],
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'source-tab' },
+						{ type: 'ai', id: 'later-tab' },
+					],
+					...(mode === 'local' ? {} : { sessionSshRemoteConfig: sshRemote }),
+					...(mode === 'hosted' ? { liftedTo: { peer: 'box', agentId: 'h1', at: 1 } } : {}),
+				});
+				const federationAct = vi.fn(async (_peer: string, _agent: string, action: any) => {
+					if (action.kind === 'new-tab')
+						return { ok: true, result: { kind: 'new-tab', tabId: 'host-fork' } };
+					if (action.kind === 'rename-tab') {
+						return { ok: true, result: { kind: 'rename-tab', tabId: action.tabId } };
+					}
+					return { ok: true, result: { kind: 'send', receipt: { status: 'started' } } };
+				});
+				if (mode === 'hosted') {
+					useSettingsStore.setState({ federationHostedAgents: true });
+					hydrateHost();
+					(window as any).maestro.federation = { act: federationAct };
+				}
+				const { fork, getSessions } = mountHook([session], session.id);
+
+				fork('log-2');
+
+				await waitFor(() =>
+					expect(mockNotifyToast).toHaveBeenCalledWith(
+						expect.objectContaining({ title: 'Conversation Forked' })
+					)
+				);
+				const after = getSessions()[0];
+				const forked = after.aiTabs[1];
+				// The same strip: the fork sits right after its source, active, with the same name,
+				// notice, and permission mode.
+				expect(after.aiTabs.map((tab) => tab.id)).toEqual(['source-tab', forked.id, 'later-tab']);
+				expect(after.unifiedTabOrder?.map((ref) => ref.id)).toEqual([
+					'source-tab',
+					forked.id,
+					'later-tab',
+				]);
+				expect(after.activeTabId).toBe(forked.id);
+				expect(forked.name).toBe('Forked: Source');
+				expect(forked.logs[0]).toMatchObject({
+					source: 'system',
+					text: 'Forked from tab "Source" at message 2 of 2',
+				});
+				expect(forked.readOnlyMode).toBe(true);
+				expect(mockNotifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						message: '"Source" → "Forked: Source" (~3 tokens)',
+						sessionId: session.id,
+						tabId: forked.id,
+					})
+				);
+				expect(mockNotifyToast).toHaveBeenCalledTimes(1);
+
+				// Only the transport differs: here, or on the host.
+				const spawn = (window as any).maestro.process.spawn;
+				if (mode === 'hosted') {
+					expect(spawn).not.toHaveBeenCalled();
+					expect(federationAct.mock.calls.map((call) => call[2])).toEqual([
+						{ kind: 'new-tab' },
+						// The fork starts with Save to History and thinking as a local fork does.
+						{
+							kind: 'update-tab',
+							tabId: 'host-fork',
+							patch: { saveToHistory: true, thinking: 'off' },
+						},
+						{ kind: 'rename-tab', tabId: 'host-fork', name: 'Forked: Source' },
+						{
+							kind: 'send',
+							tabId: 'host-fork',
+							text: expect.stringContaining('# Forked Conversation'),
+							overrides: { readOnly: true, saveToHistory: true },
+						},
+					]);
+				} else {
+					await waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+					expect(spawn.mock.calls[0][0]).toMatchObject({
+						prompt: expect.stringContaining('# Forked Conversation'),
+						readOnlyMode: true,
+						sessionSshRemoteConfig: mode === 'ssh' ? sshRemote : undefined,
+					});
+				}
+			}
+		);
+
+		it('opens no tab when the host refuses the fork', async () => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			hydrateHost();
+			(window as any).maestro.federation = {
+				act: vi.fn().mockResolvedValue({ ok: false, error: 'host is down' }),
+			};
+			const session = buildSession({ liftedTo: { peer: 'box', agentId: 'h1', at: 1 } });
+			const { fork, getSessions } = mountHook([session], session.id);
+
+			fork('log-2');
+
+			await waitFor(() => expect((window as any).maestro.federation.act).toHaveBeenCalled());
+			expect(getSessions()[0].aiTabs).toHaveLength(1);
+			expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+			expect(mockNotifyToast).not.toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Conversation Forked' })
+			);
 		});
 	});
 

@@ -51,6 +51,7 @@ vi.mock('electron', async () => {
 		loadURL = vi.fn();
 		setAlwaysOnTop = vi.fn();
 		setVisibleOnAllWorkspaces = vi.fn();
+		setMinimumSize = vi.fn();
 		// Like Electron, a programmatic setBounds fires move and resize.
 		setBounds = vi.fn((b) => {
 			this.bounds = { ...b };
@@ -108,6 +109,7 @@ type MockWindow = EventEmitter & {
 	loadURL: ReturnType<typeof vi.fn>;
 	setAlwaysOnTop: ReturnType<typeof vi.fn>;
 	setVisibleOnAllWorkspaces: ReturnType<typeof vi.fn>;
+	setMinimumSize: ReturnType<typeof vi.fn>;
 	webContents: EventEmitter & { setWindowOpenHandler: ReturnType<typeof vi.fn> };
 	setBounds: (b: Bounds) => void;
 	getBounds: () => Bounds;
@@ -195,6 +197,7 @@ describe('floating widget window lifecycle', () => {
 		expect(win.setAlwaysOnTop).toHaveBeenCalledWith(true, 'floating');
 		expect(win.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, {
 			visibleOnFullScreen: true,
+			skipTransformProcessType: true,
 		});
 	});
 
@@ -604,5 +607,83 @@ describe('floating widget window overflow', () => {
 		const { deps } = makeDeps();
 		const widget = createFloatingWidgetWindow(MEDIA, deps);
 		expect(widget.setOverflow({ above: 0, below: 280 })).toEqual(NO_OVERFLOW);
+	});
+});
+
+describe('floating widget window content minimum width', () => {
+	beforeEach(() => {
+		created.length = 0;
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/** A painted media window at the given spot and width. */
+	function mediaWindow(x: number, width: number) {
+		const made = makeDeps({ x, y: 100, width, height: 96 });
+		const widget = createFloatingWidgetWindow(MEDIA, made.deps);
+		widget.show();
+		const win = lastWindow();
+		paint(win);
+		return { ...made, widget, win };
+	}
+
+	it('raises the OS minimum and widens a window narrower than it', () => {
+		const { widget, win, store } = mediaWindow(100, 300);
+
+		expect(widget.setMinWidth(452.4)).toEqual({ x: 100, y: 100, width: 453, height: 96 });
+		expect(win.setMinimumSize).toHaveBeenLastCalledWith(453, MEDIA.minSize.height);
+		expect(store.value).toMatchObject({ width: 453 });
+	});
+
+	it('leaves a window already wide enough where it is', () => {
+		const { widget, win } = mediaWindow(100, 500);
+		win.setBounds.mockClear();
+
+		expect(widget.setMinWidth(453)).toEqual({ x: 100, y: 100, width: 500, height: 96 });
+		expect(win.setBounds).not.toHaveBeenCalled();
+	});
+
+	it('grows toward the left when the right edge would leave the work area', () => {
+		const { widget } = mediaWindow(WORK_AREA.width - 300, 300);
+
+		expect(widget.setMinWidth(453)).toMatchObject({ x: WORK_AREA.width - 453, width: 453 });
+	});
+
+	it('clamps a caller resize to the raised minimum, not only the spec one', () => {
+		const { widget } = mediaWindow(100, 500);
+		widget.setMinWidth(453);
+
+		expect(widget.setBounds({ width: 300 })).toMatchObject({ width: 453 });
+	});
+
+	it('puts the spec minimum back for zero or an unusable width', () => {
+		const { widget, win } = mediaWindow(100, 500);
+		widget.setMinWidth(453);
+
+		for (const width of [0, -5, Number.NaN]) {
+			widget.setMinWidth(width);
+			expect(win.setMinimumSize).toHaveBeenLastCalledWith(
+				MEDIA.minSize.width,
+				MEDIA.minSize.height
+			);
+		}
+		expect(widget.setBounds({ width: 300 })).toMatchObject({ width: 300 });
+	});
+
+	it('opens a window created after the floor at the floor, and forgets it on close', () => {
+		const { deps } = makeDeps({ x: 100, y: 100, width: 300, height: 96 });
+		const widget = createFloatingWidgetWindow(MEDIA, deps);
+		expect(widget.setMinWidth(453)).toBeNull();
+
+		widget.ensureCreated();
+		expect(lastWindow().options.minWidth).toBe(453);
+		expect(lastWindow().getBounds().width).toBe(453);
+
+		widget.close();
+		widget.ensureCreated();
+		expect(lastWindow().options.minWidth).toBe(MEDIA.minSize.width);
 	});
 });

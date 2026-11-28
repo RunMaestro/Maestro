@@ -19,6 +19,7 @@ import { logger } from '../utils/logger';
 import { isWebDesktop } from '../utils/runtimeContext';
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import { areToastsEnabled } from '../../shared/toastDuration';
+import { notifyCenterFlash } from './centerFlashStore';
 import { safeLocalStorage, safeStorageGet } from '../utils/safeLocalStorage';
 import { generateId } from '../utils/ids';
 import { useSessionStore } from './sessionStore';
@@ -417,7 +418,17 @@ export type NotifyToastInput = Omit<Toast, 'id' | 'timestamp' | 'color' | 'type'
 	color?: ToastColor;
 	/** @deprecated Use `color`. */
 	type?: ToastType;
+	/**
+	 * Set on feedback for something the user just clicked. With in-app toasts
+	 * turned off the toast never shows, and a click that ends in nothing visible
+	 * reads as a broken button. So when toasts are off this also fires a Center
+	 * Flash with the same title and message. Renderer-only: never stored.
+	 */
+	flashWhenToastsOff?: boolean;
 };
+
+/** How long a {@link NotifyToastInput.flashWhenToastsOff} flash stays: long enough to read a sentence. */
+export const TOAST_FALLBACK_FLASH_MS = 4000;
 
 /**
  * Fire a toast notification. Handles:
@@ -435,11 +446,14 @@ export type NotifyToastInput = Omit<Toast, 'id' | 'timestamp' | 'color' | 'type'
  * `historyOnly` records without delivering a popup, audio command, OS notification,
  * or auto-dismiss timer. Callers preserve any existing audio policy separately.
  *
+ * `flashWhenToastsOff` shows a Center Flash instead of the popup when toasts are off.
+ *
  * Callable from React components and non-React code alike.
  *
  * @returns The generated toast ID
  */
-export function notifyToast(toast: NotifyToastInput): string {
+export function notifyToast(input: NotifyToastInput): string {
+	const { flashWhenToastsOff, ...toast } = input;
 	const store = useNotificationStore.getState();
 	const { config } = store;
 
@@ -480,6 +494,14 @@ export function notifyToast(toast: NotifyToastInput): string {
 	// Only add to visible toast queue if not disabled
 	if (!toastsDisabled && !toast.historyOnly) {
 		store.addToast(newToast);
+	} else if (toastsDisabled && flashWhenToastsOff && !toast.historyOnly) {
+		notifyCenterFlash({
+			message: toast.title,
+			detail: toast.message,
+			wrapDetail: true,
+			color,
+			duration: TOAST_FALLBACK_FLASH_MS,
+		});
 	}
 
 	if (!toast.skipHistory && config.historyEnabled) {

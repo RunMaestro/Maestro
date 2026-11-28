@@ -15,6 +15,7 @@ import { ExitHandler } from '../handlers/ExitHandler';
 import { buildChildProcessEnv, collectMaestroEnvVars } from '../utils/envBuilder';
 import {
 	buildPromptArgv,
+	encodeStdinPrompt,
 	promptExceedsArgvLimit,
 } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
@@ -528,7 +529,7 @@ export class ChildProcessSpawner {
 					scriptLength: config.sshStdinScript.length,
 				});
 			} else if (sendPromptViaStdinRaw && effectivePrompt) {
-				stdinText = effectivePrompt;
+				stdinText = encodeStdinPrompt(getAgentDefinition(toolType), effectivePrompt);
 				logger.debug('[ProcessManager] Sending raw prompt via stdin', 'ProcessManager', {
 					sessionId,
 					promptLength: effectivePrompt.length,
@@ -695,6 +696,8 @@ export class ChildProcessSpawner {
 				sshRemoteCommand: promptArtifact ? undefined : config.sshRemoteCommand,
 				sshRemotePidFile,
 				sshRemotePromptArtifactPath: remoteArtifactPath,
+				// Only an SSH spawn that opened a steering channel on its remote carries one.
+				remoteSteering: config.sshRemoteId ? config.remoteSteering : undefined,
 				// Seed from config on resume. Copilot emits `session.resume`
 				// (no sessionId) instead of `session.start` when --resume=<id>
 				// is set, so StdoutHandler can't populate this from the stream

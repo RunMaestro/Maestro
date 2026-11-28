@@ -34,11 +34,39 @@ export interface InterruptTurnResult {
 	/** Tabs whose turn this call ended. */
 	stoppedTabIds: string[];
 	/**
+	 * The queue items whose turns this call ended (the `queuedItemId` on each stopped tab's
+	 * running user entry), read in the same tick as the signal. Absent from a build that does
+	 * not name them, and from a stop that ended nothing; a turn sent straight from the composer
+	 * has none. A Federation client tells by it which waiting message was the stopped turn.
+	 */
+	stoppedItemIds?: string[];
+	/**
 	 * Every turn process that was live when the request arrived has exited, so
 	 * `tab show` and `session list` already read idle. Set by main, which owns
 	 * the process table; the renderer always reports false.
 	 */
 	exited: boolean;
+}
+
+/** The most queue item ids a stop's answer names (`stoppedItemIds`); one per stopped tab. */
+export const MAX_STOPPED_ITEM_IDS = 64;
+
+/** The longest queue item id a stop's answer may name. */
+const MAX_STOPPED_ITEM_ID_CHARS = 200;
+
+/**
+ * The `stoppedItemIds` of a stop's answer from another process or machine: strings only, each
+ * bounded, at most {@link MAX_STOPPED_ITEM_IDS}. Undefined when the answer names none (a build
+ * that does not name them), never a guess.
+ */
+export function parseStoppedItemIds(raw: unknown): string[] | undefined {
+	if (!Array.isArray(raw)) return undefined;
+	return raw
+		.filter(
+			(id): id is string =>
+				typeof id === 'string' && id.length > 0 && id.length <= MAX_STOPPED_ITEM_ID_CHARS
+		)
+		.slice(0, MAX_STOPPED_ITEM_IDS);
 }
 
 /** How long main waits for the renderer to run the stop and answer. */
@@ -57,16 +85,21 @@ export const INTERRUPT_TURN_REPLY_TIMEOUT_MS = 20000;
  * True when `processId` is a turn process inside the stop's scope.
  *
  * Agent scope (`tabId` null) is every `{agentId}-ai-*` process: per-tab turns,
- * their forced-parallel `-fp-<n>` siblings, and a turn the store records idle.
- * Tab scope is that tab's process and its `-fp-<n>` siblings only. Synopsis,
- * batch and terminal ids never match.
+ * their forced-parallel `-fp-<n>` siblings, and a turn the store records idle;
+ * plus an Auto Run task's `{agentId}-batch-*` turn, which runs on no tab and is
+ * the agent's running turn all the same (stopping it ends that task or that
+ * goal iteration, and the run goes on or stops by its own flags). Tab scope is
+ * that tab's process and its `-fp-<n>` siblings only. Synopsis and terminal ids
+ * never match.
  */
 export function isTurnProcessInScope(
 	processId: string,
 	agentId: string,
 	tabId: string | null
 ): boolean {
-	if (tabId === null) return processId.startsWith(`${agentId}-ai-`);
+	if (tabId === null) {
+		return processId.startsWith(`${agentId}-ai-`) || processId.startsWith(`${agentId}-batch-`);
+	}
 	const tabProcessId = `${agentId}-ai-${tabId}`;
 	return processId === tabProcessId || processId.startsWith(`${tabProcessId}-fp-`);
 }
@@ -113,6 +146,7 @@ export function parseInterruptTurnResult(
 		return interruptTurnFailure(sessionId, tabId, 'SIGNAL_FAILED', 'malformed-interrupt-result');
 	}
 	const r = raw as Record<string, unknown>;
+	const stoppedItemIds = parseStoppedItemIds(r.stoppedItemIds);
 	const code =
 		typeof r.code === 'string' && INTERRUPT_TURN_CODES.has(r.code)
 			? (r.code as InterruptTurnCode)
@@ -128,6 +162,7 @@ export function parseInterruptTurnResult(
 		stoppedTabIds: Array.isArray(r.stoppedTabIds)
 			? r.stoppedTabIds.filter((id): id is string => typeof id === 'string')
 			: [],
+		...(stoppedItemIds ? { stoppedItemIds } : {}),
 		exited: false,
 	};
 }

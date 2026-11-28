@@ -45,14 +45,34 @@ describe('browserOpNeedsConfirm', () => {
 		expect(browserOpNeedsConfirm('off', 'read')).toBe(false);
 	});
 
-	it('off confirms only eval (force-confirmed); every other op runs immediately', () => {
+	it('never confirms the host-only pick or viewport (neither changes page state)', () => {
+		for (const kind of ['pick', 'viewport'] as const) {
+			expect(browserOpNeedsConfirm('all', kind)).toBe(false);
+			expect(browserOpNeedsConfirm('dangerous', kind)).toBe(false);
+			expect(browserOpNeedsConfirm('off', kind)).toBe(false);
+		}
+	});
+
+	it('off still confirms eval and typing by default', () => {
 		expect(browserOpNeedsConfirm('off', 'eval')).toBe(true);
 		expect(browserOpNeedsConfirm('off', 'navigate')).toBe(false);
 		expect(browserOpNeedsConfirm('off', 'click')).toBe(false);
-		expect(browserOpNeedsConfirm('off', 'type')).toBe(false);
+		expect(browserOpNeedsConfirm('off', 'type')).toBe(true);
 		expect(browserOpNeedsConfirm('off', 'reload')).toBe(false);
 		expect(browserOpNeedsConfirm('off', 'newTab')).toBe(false);
 		expect(browserOpNeedsConfirm('off', 'closeTab')).toBe(false);
+	});
+
+	it.each(['dangerous', 'off'] as const)('%s can opt into unattended typing only', (policy) => {
+		expect(browserOpNeedsConfirm(policy, 'type', true)).toBe(false);
+		expect(browserOpNeedsConfirm(policy, 'eval', true)).toBe(true);
+		expect(browserOpNeedsConfirm(policy, 'navigate', true)).toBe(
+			browserOpNeedsConfirm(policy, 'navigate')
+		);
+	});
+
+	it('all still confirms typing if the provider opted in', () => {
+		expect(browserOpNeedsConfirm('all', 'type', true)).toBe(true);
 	});
 
 	it('all confirms every interaction op (read still excluded)', () => {

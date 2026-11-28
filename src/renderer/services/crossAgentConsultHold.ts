@@ -65,7 +65,14 @@ import type {
 } from '../types';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { getTabDisplayName } from '../utils/tabHelpers';
-import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
+import {
+	captureQueuedTurnSettings,
+	queuedSettingsFromOtherProvider,
+} from '../utils/providerTabSessions';
+import {
+	queuedItemRunsReadOnly,
+	type QueuedTurnOverrideFields,
+} from '../../shared/queuedTurnSettings';
 import { generateId } from '../utils/ids';
 
 // ============================================================================
@@ -113,12 +120,17 @@ export async function loadCrossAgentConsultPrompts(force = false): Promise<void>
  * sending a note with its placeholders still in it.
  */
 export function withConsultPendingNote(prompt: string, targets: ConsultHoldTarget[]): string {
-	if (targets.length === 0 || !pendingNoteTemplate) return prompt;
-	const note = buildConsultPendingNote(
+	const note = consultPendingNoteText(targets);
+	return note ? `${prompt}\n\n---\n\n${note}` : prompt;
+}
+
+/** The pending note alone, or undefined when nothing is consulted or the prompt has not loaded. */
+export function consultPendingNoteText(targets: ConsultHoldTarget[]): string | undefined {
+	if (targets.length === 0 || !pendingNoteTemplate) return undefined;
+	return buildConsultPendingNote(
 		pendingNoteTemplate,
 		targets.map((t) => t.targetAgentName)
 	);
-	return `${prompt}\n\n---\n\n${note}`;
 }
 
 /**
@@ -127,12 +139,17 @@ export function withConsultPendingNote(prompt: string, targets: ConsultHoldTarge
  * nothing is handed off or the prompt has not loaded.
  */
 export function withHandoffPendingNote(prompt: string, targets: ConsultHoldTarget[]): string {
-	if (targets.length === 0 || !handoffNoteTemplate) return prompt;
-	const note = buildHandoffPendingNote(
+	const note = handoffPendingNoteText(targets);
+	return note ? `${prompt}\n\n---\n\n${note}` : prompt;
+}
+
+/** The hand-off note alone, or undefined when nothing is handed off or the prompt has not loaded. */
+export function handoffPendingNoteText(targets: ConsultHoldTarget[]): string | undefined {
+	if (targets.length === 0 || !handoffNoteTemplate) return undefined;
+	return buildHandoffPendingNote(
 		handoffNoteTemplate,
 		targets.map((t) => t.targetAgentName)
 	);
-	return `${prompt}\n\n---\n\n${note}`;
 }
 
 /** What the hold reads as in the queue while it waits. */
@@ -164,15 +181,31 @@ export function consultHoldReleasedText(replies: ConsultHoldReply[], deferred = 
 	return parts.join(' ');
 }
 
-/** Build the hold item for one source tab. */
+/**
+ * The settings a queued message was codified with when the user sent it (model, effort,
+ * read-only, save to History). The hold of its consult carries them, and so does the turn the
+ * hold releases into, so a message queued read-only or on a model runs that way when the replies
+ * are in, whatever the tab is set to by then.
+ */
+export type ConsultHoldSettings = Pick<
+	QueuedTurnOverrideFields,
+	'readOnlyMode' | 'turnReadOnly' | 'turnSettings' | 'turnSaveToHistory'
+> &
+	Partial<Pick<QueuedItem, 'id'>>;
+
+/**
+ * Build the hold item for one source tab. `settings` are the queued message's own (a drain);
+ * with none (a message sent at once), the tab's current settings are the ones it was sent with.
+ */
 export function buildConsultHoldItem(opts: {
 	session: Session;
 	tab: AITab;
 	targets: ConsultHoldTarget[];
 	/** The unanswered message, for a consult that runs FIRST. */
 	deferred?: ConsultHold['deferred'];
+	settings?: ConsultHoldSettings;
 }): QueuedItem {
-	const { session, tab, targets, deferred } = opts;
+	const { session, tab, targets, deferred, settings } = opts;
 	return {
 		id: generateId(),
 		timestamp: Date.now(),
@@ -180,8 +213,17 @@ export function buildConsultHoldItem(opts: {
 		type: 'message',
 		text: consultHoldWaitingText(targets, !!deferred),
 		tabName: getTabDisplayName(tab, session.agentSessionId),
-		readOnlyMode: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
-		turnSettings: captureQueuedTurnSettings(tab, session),
+		readOnlyMode: queuedItemRunsReadOnly(settings, tab),
+		// The hold has an id of its own, so the provider-translation rule is applied here, by the
+		// queued message's id: settings frozen on a provider the agent left give way to the tab's.
+		turnSettings:
+			settings?.turnSettings && !queuedSettingsFromOtherProvider(settings, session)
+				? settings.turnSettings
+				: captureQueuedTurnSettings(tab, session),
+		...(typeof settings?.turnReadOnly === 'boolean' && { turnReadOnly: settings.turnReadOnly }),
+		...(typeof settings?.turnSaveToHistory === 'boolean' && {
+			turnSaveToHistory: settings.turnSaveToHistory,
+		}),
 		awaitingConsult: { pending: [...targets], replies: [], ...(deferred && { deferred }) },
 	};
 }
@@ -321,13 +363,14 @@ export function holdTurnForConsults(
 	sessionId: string,
 	tabId: string,
 	targets: ConsultHoldTarget[],
-	deferred?: ConsultHold['deferred']
+	deferred?: ConsultHold['deferred'],
+	settings?: ConsultHoldSettings
 ): void {
 	if (targets.length === 0) return;
 	updateSessionWith(sessionId, (session) => {
 		const tab = session.aiTabs.find((t) => t.id === tabId);
 		if (!tab) return session;
-		const hold = buildConsultHoldItem({ session, tab, targets, deferred });
+		const hold = buildConsultHoldItem({ session, tab, targets, deferred, settings });
 		return { ...session, executionQueue: [hold, ...(session.executionQueue ?? [])] };
 	});
 }

@@ -16,7 +16,7 @@
  */
 
 import * as fs from 'fs/promises';
-import { realpathSync, statSync } from 'fs';
+import { mkdirSync, realpathSync, statSync } from 'fs';
 import * as os from 'os';
 
 import { createSleepTracker } from '../../sleepTracking';
@@ -25,13 +25,14 @@ import type { RepositoryLoadFailure } from '../agents/repository';
 import type { RuleContext, TabDefaults } from '../agents/rules';
 import { createEventBus } from '../client/event-bus';
 import type { HostInfo, MaestroClient } from '../client/types';
-import { logger } from '../host';
+import { logger, setMaestroLibImageRefResolver } from '../host';
 import { grokInstallationId } from '../grok/host-seams';
 import { createGroupChatTurnMetrics } from '../groupchat/turn-metrics';
 import type { BinaryDetectionResult } from '../launch/path-prober';
 import { assertUserDataDirExists, type UserDataDirOptions } from '../paths/userDataDir';
 import { resolveMaestroPaths, type MaestroPaths } from '../paths/resolve';
 import { readAgentConfigsStore } from '../store/read-stores';
+import { createSessionImageStore, type SessionImageStore } from '../store/session-images';
 import { createRuntimeClient, type RuntimePhase } from './client';
 import {
 	acquireDataDirLock,
@@ -44,7 +45,6 @@ import { createBackgroundTurns, type BackgroundTurnDeps } from './background-tur
 import { createRuntimeConsults } from './consults';
 import { createRuntimeGroupChats } from './group-chats';
 import { createRuntimeHistory, type SharedHistoryIdentity } from './history';
-import { createHistoryWriter } from '../turns/history';
 import { createProcessRegistry } from './processes';
 import { createRuntimeAutoRun, type RuntimeAutoRun } from './autorun';
 import { createProviderLister } from './providers';
@@ -172,6 +172,23 @@ async function isDirectory(dir: string): Promise<boolean> {
  * refuses and nothing is written before the lock is held (the start rule, section
  * 3 of the design).
  */
+/**
+ * The runtime's session image store over `paths.sessionImagesDir` (created on first use), registered
+ * as the library's image ref resolver so a spawn can read a stored image back.
+ */
+function createRuntimeImageStore(paths: MaestroPaths): SessionImageStore {
+	let ready = false;
+	const store = createSessionImageStore(() => {
+		if (!ready) {
+			mkdirSync(paths.sessionImagesDir, { recursive: true });
+			ready = true;
+		}
+		return paths.sessionImagesDir;
+	});
+	setMaestroLibImageRefResolver(store.resolveToBytesSync);
+	return store;
+}
+
 export async function createMaestroRuntime(options: MaestroRuntimeOptions): Promise<RuntimeStart> {
 	const deps = options.deps ?? {};
 	const env = { MAESTRO_USER_DATA: options.dataDir };
@@ -260,9 +277,15 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		return verdict;
 	};
 
+	// The data directory's image store, the folder the desktop uses (`<syncDir>/session-images`). A
+	// pasted image is kept there and its ref on the transcript and the queue, as on the desktop, and a
+	// provider spawn reads a ref back through the resolver registered here (M10).
+	const images = createRuntimeImageStore(paths);
+
 	const repository = createAgentRepository({
 		paths,
 		bus,
+		images,
 		processes: registry,
 		fence,
 		quarantineCorruptStores: options.quarantineCorruptStores,
@@ -313,21 +336,21 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		now: deps.now,
 	});
 
-	// The run releases what it held back (queued chat messages) when it ends, and the turn service
-	// asks whether a run holds an agent: each needs the other, so the run reaches `turns`, declared
-	// below, only when a run ends.
+	// The run has the chat queue looked at again when it starts holding the tree (a hand-over ends,
+	// U9) and releases what it held back when it ends, and the turn service asks whether a run holds
+	// an agent: each needs the other, so the run reaches `turns`, declared below, only when a run
+	// starts or ends.
 	// One History writer for every kind of turn, so each entry is copied to the project's shared
 	// History the same way, whether a chat turn, an Auto Run task, or a consult wrote it.
 	const history = createRuntimeHistory({
 		paths,
 		repository,
-		...(options.sharedHistory ? { shared: options.sharedHistory } : {}),
-	});
-	const historyWriter = createHistoryWriter({
-		paths,
 		fence,
-		onAppended: (agentId, entry) => history.share(agentId, entry),
+		...(options.sharedHistory ? { shared: options.sharedHistory } : {}),
+		// A synopsis is written after its turn's end: a client that read the History then reads again.
+		onChanged: (agentId) => bus.emit({ type: 'history.changed', agentId }),
 	});
+	const historyWriter = history.writer;
 
 	const autoRun = createRuntimeAutoRun({
 		paths,
@@ -339,6 +362,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		options: options.turns,
 		deps: { probeBinary: deps.probeBinary, ...deps.turns },
 		onRunEnded: (agentId) => turns.drain(agentId),
+		onRunStarted: (agentId) => turns.drain(agentId),
 	});
 	// The host identity a Grok native session is bound to, computed as the desktop computes it.
 	const grokInstallation = grokInstallationId({
@@ -348,6 +372,7 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 	const turns = createRuntimeTurns({
 		paths,
 		repository,
+		images,
 		bus,
 		registry,
 		fence,
@@ -420,6 +445,8 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		rules: deps.rules,
 		// Where the prompts and the CLI script are, as the chat turns are told.
 		...(options.turns ? { options: options.turns } : {}),
+		// `/btw` forks one of this host's tabs, which is the chat turns' work.
+		sideQuestions: turns.sideQuestions,
 		...(deps.consults?.minTimeoutMs !== undefined
 			? { minTimeoutMs: deps.consults.minTimeoutMs }
 			: {}),
@@ -453,6 +480,9 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 				await consults.settled();
 				await groupChats.drain();
 				await repository.drain();
+				// A History edit still in flight renames its rewrite into place; it must land while
+				// the lock is held, or it could replace entries the next owner appended.
+				await historyWriter.drain();
 			} finally {
 				process.off('exit', onExit);
 				lock.release();
@@ -479,7 +509,11 @@ export async function createMaestroRuntime(options: MaestroRuntimeOptions): Prom
 		turns: turns.api,
 		autoRun: autoRun.api,
 		groupChats: groupChats.api,
-		consults: { api: consults.api, cancelForSource: consults.cancelForSource },
+		consults: {
+			api: consults.api,
+			cancelForSource: consults.cancelForSource,
+			cancelForRemoteAsker: consults.cancelForRemoteAsker,
+		},
 		history: history.api,
 	});
 

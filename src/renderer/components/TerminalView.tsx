@@ -26,6 +26,7 @@ import { isCoarsePointer } from '../utils/touch';
 import type { PaneRect, Session, TerminalTab } from '../types';
 import type { Theme } from '../../shared/theme-types';
 import { logger } from '../utils/logger';
+import { isSshConnectionFailure } from '../../shared/sshConnection';
 
 // ============================================================================
 // Types
@@ -176,31 +177,26 @@ export const TerminalView = memo(
 			}, 200);
 		}, []);
 
-		// Handle a PTY spawn failure. Scratch tabs are closed (their config is
-		// disposable); persistent tabs are kept and marked 'exited' so they survive
-		// a transient failure (e.g. an SSH remote that is briefly unreachable) and
-		// can be restarted by the user instead of vanishing. Marking 'exited' (rather
-		// than leaving 'idle') also stops the spawn effects from retrying in a loop.
+		// Handle a PTY spawn failure. One rule in every mode (local, remote, hosted):
+		// the tab is kept and marked 'exited' so a transient failure (a remote that is
+		// briefly unreachable, a missing shell) leaves a tab the user can restart from
+		// its menu instead of one that vanishes with its config. Marking 'exited'
+		// (rather than leaving 'idle') also stops the spawn effects from retrying in a loop.
 		const handleSpawnFailure = useCallback(
-			(tabId: string, isPersistent: boolean, message: string) => {
+			(tabId: string, message: string) => {
 				logger.warn('Terminal PTY spawn failed', 'TerminalView', {
 					sessionId: session.id,
 					tabId,
-					isPersistent,
 					message,
-					decision: isPersistent ? 'keep-for-restart' : 'close',
+					decision: 'keep-for-restart',
 				});
-				if (isPersistent) {
-					onTabStateChangeRef.current(tabId, 'exited');
-					terminalRefs.current
-						.get(tabId)
-						?.write('\r\n\x1b[2m[failed to start] - restart from the tab menu\x1b[0m\r\n');
-				} else {
-					setTimeout(() => closeTerminalTab(tabId, 'spawn-failure'), 0);
-				}
+				onTabStateChangeRef.current(tabId, 'exited');
+				terminalRefs.current
+					.get(tabId)
+					?.write('\r\n\x1b[2m[failed to start] - restart from the tab menu\x1b[0m\r\n');
 				notifySpawnFailure(message);
 			},
-			[session.id, closeTerminalTab, notifySpawnFailure]
+			[session.id, notifySpawnFailure]
 		);
 
 		const activeTab = getActiveTerminalTab(session);
@@ -386,8 +382,11 @@ export const TerminalView = memo(
 		//     crashing parent) - the user never asked for this and losing the tab
 		//     silently discards their scrollback,
 		//   - the tab carries a startup command (its config is durable), or
-		//   - the tab is under an SSH/remote session whose transport can drop for
-		//     reasons unrelated to the user (sleep, network blip, server timeout).
+		//   - the SSH connection under a remote tab dropped for reasons unrelated to
+		//     the user (sleep, network blip, server timeout). A remote tab's PTY runs
+		//     `ssh` itself, which exits 255 when the connection fails and with the
+		//     remote shell's own code otherwise, so a remote `exit` closes the tab
+		//     exactly as a local one does: local, SSH, and hosted agents act alike.
 		//
 		// Distinguishing the first case is why we need `signal` and not just the exit
 		// code: node-pty reports a signalled death (WIFSIGNALED) as exitCode 0 with a
@@ -400,7 +399,6 @@ export const TerminalView = memo(
 		// duplicate notice. PID 0 alone is not evidence of a failed ConPTY spawn.
 		useEffect(() => {
 			const terminalTabs = session.terminalTabs || [];
-			const isRemoteSession = !!(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId);
 			for (const tab of terminalTabs) {
 				const prev = prevTabStatesRef.current.get(tab.id);
 				if (
@@ -414,11 +412,16 @@ export const TerminalView = memo(
 					const signal = exitSignalsRef.current.get(tabId);
 					exitSignalsRef.current.delete(tabId);
 					const wasKilled = signal != null && signal !== 0;
-					const isPersistent = !!tab.startupCommand || isRemoteSession;
-					const keepTab = isPersistent || wasKilled;
+					// One rule in every mode: a shell that ends with the connection-failure
+					// code (255: ssh's own, and out of range for an ordinary `exit`) is kept
+					// for restart. A remote tab's transport drop ends this way; a local tab
+					// with the same code is treated the same.
+					const transportDropped = tab.exitCode != null && isSshConnectionFailure(tab.exitCode);
+					const isPersistent = !!tab.startupCommand;
+					const keepTab = isPersistent || wasKilled || transportDropped;
 					// Diagnostic: every PTY exit logs why the tab was kept or closed. This
 					// is the signal for the "terminal tabs vanish" reports - e.g. an SSH
-					// transport dropping logs exitCode here with isRemote:true / kept.
+					// transport dropping logs exitCode 255 here with transportDropped / kept.
 					logger.info('Terminal PTY exited', 'TerminalView', {
 						sessionId: session.id,
 						tabId,
@@ -426,7 +429,7 @@ export const TerminalView = memo(
 						signal,
 						ageMs: age,
 						hasStartupCommand: !!tab.startupCommand,
-						isRemote: isRemoteSession,
+						transportDropped,
 						wasKilled,
 						decision: keepTab ? 'keep-for-restart' : 'close',
 					});
@@ -451,13 +454,7 @@ export const TerminalView = memo(
 				}
 				prevTabStatesRef.current.set(tab.id, tab.state);
 			}
-		}, [
-			session.terminalTabs,
-			session.sessionSshRemoteConfig,
-			session.sshRemoteId,
-			closeTerminalTab,
-			notifySpawnFailure,
-		]);
+		}, [session.terminalTabs, closeTerminalTab, notifySpawnFailure]);
 
 		const terminalTabs = session.terminalTabs || [];
 

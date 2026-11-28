@@ -117,6 +117,57 @@ export function parseDataUrl(value: string): { base64: string; mediaType: string
 	return { mediaType: resolved.mediaType, base64: resolved.buffer.toString('base64') };
 }
 
+/**
+ * An image as a self-contained data URL another machine can read, or `null` when it cannot be
+ * resolved (a ref whose file is gone, or a host with no image store registered). An inline data
+ * URL comes back unchanged; a `maestro-image://` ref is read through the host's resolver.
+ */
+export function inlineImageDataUrl(value: string): string | null {
+	if (parseBase64DataUrl(value)) return value;
+	const parsed = parseDataUrl(value);
+	return parsed ? `data:${parsed.mediaType};base64,${parsed.base64}` : null;
+}
+
+/**
+ * Images as data URLs another machine can read. A `maestro-image://` ref names THIS machine's image
+ * store, so a transcript or queued message that left with refs would show broken images there and
+ * hand its provider nothing. A ref that cannot be read here is counted and dropped, as a local spawn
+ * drops it. Used where images leave on the wire: a Federation lift, and a headless host's
+ * transcript and queue reads.
+ */
+export function inlineImageList(images: readonly string[]): {
+	inline: string[];
+	unresolved: number;
+} {
+	const inline: string[] = [];
+	let unresolved = 0;
+	for (const image of images) {
+		const data = inlineImageDataUrl(image);
+		if (data) inline.push(data);
+		else unresolved += 1;
+	}
+	return { inline, unresolved };
+}
+
+/** A transcript entry with its images inlined (`inlineImageList`). The same object when it has none. */
+export function withInlineEntryImages<T extends { images?: unknown }>(entry: T): T {
+	return inlineEntryImages(entry).entry;
+}
+
+/**
+ * `withInlineEntryImages()`, with how many of the entry's images this machine's store could not
+ * read (they are left out of the copy): for a caller that must say what does not move.
+ */
+export function inlineEntryImages<T extends { images?: unknown }>(
+	entry: T
+): { entry: T; unresolved: number } {
+	if (!Array.isArray(entry.images) || entry.images.length === 0) return { entry, unresolved: 0 };
+	const { inline, unresolved } = inlineImageList(
+		entry.images.filter((image): image is string => typeof image === 'string')
+	);
+	return { entry: { ...entry, images: inline }, unresolved };
+}
+
 export function buildImagePromptPrefix(tempPaths: string[]): string {
 	if (tempPaths.length === 0) return '';
 	return `[Attached images: ${tempPaths.join(', ')}]\n\n`;

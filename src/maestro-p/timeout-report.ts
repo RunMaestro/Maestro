@@ -29,6 +29,14 @@ export function idleTimeoutMessage(idleMs: number, maxWaitSeconds: number): stri
 }
 
 /**
+ * The message for a startup dialog maestro-p does not know whose highlighted
+ * option (`option`) would quit or refuse, so it was left unanswered.
+ */
+export function startupDialogBlockedMessage(option: string): string {
+	return `claude is showing a startup prompt maestro-p does not know, and its highlighted option is "${option}", so pressing Enter would end the run. Nothing was sent to the model. Answer the prompt once by running claude in this folder with the same flags. Failing with startup_dialog_blocked.`;
+}
+
+/**
  * The message for a ready-timeout: the TUI never painted its input prompt, so
  * the turn never started and nothing reached the model.
  */

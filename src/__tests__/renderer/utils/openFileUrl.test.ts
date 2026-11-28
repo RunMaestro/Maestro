@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { openFileUrl } from '../../../renderer/utils/openFileUrl';
+import {
+	fileUrlToPath,
+	openFileUrl,
+	pathToFileUrl,
+	windowsDrivePathToFileUrl,
+} from '../../../renderer/utils/openFileUrl';
 
 const openPath = vi.fn();
 
@@ -104,5 +109,71 @@ describe('openFileUrl', () => {
 	it('reports handled so callers can stop, even for the OS branch', () => {
 		// The return value is the "I took this" signal, not "I played it".
 		expect(openFileUrl('file:///tmp/report.pdf')).toBe(true);
+	});
+});
+
+describe('fileUrlToPath', () => {
+	it('drops the slash before a Windows drive letter (#2067)', () => {
+		expect(fileUrlToPath('file:///D:/work/a.png')).toBe('D:/work/a.png');
+		expect(fileUrlToPath('file:///c:/Users/me/My%20Shots/a.png')).toBe(
+			'c:/Users/me/My Shots/a.png'
+		);
+	});
+
+	it('keeps the leading slash of a POSIX path', () => {
+		expect(fileUrlToPath('file:///Users/me/a.png')).toBe('/Users/me/a.png');
+	});
+
+	it('returns null for anything that is not a file URL', () => {
+		expect(fileUrlToPath('D:/work/a.png')).toBeNull();
+	});
+});
+
+describe('windowsDrivePathToFileUrl', () => {
+	it('turns a drive path into a file:/// URL with forward slashes', () => {
+		expect(windowsDrivePathToFileUrl('D:/work/a.png')).toBe('file:///D:/work/a.png');
+		expect(windowsDrivePathToFileUrl('C:\\Users\\me\\a.png')).toBe('file:///C:/Users/me/a.png');
+	});
+
+	it('round-trips through fileUrlToPath', () => {
+		expect(fileUrlToPath(windowsDrivePathToFileUrl('D:/work/a.png')!)).toBe('D:/work/a.png');
+	});
+
+	it('returns null for a path without a drive letter', () => {
+		expect(windowsDrivePathToFileUrl('/Users/me/a.png')).toBeNull();
+		expect(windowsDrivePathToFileUrl('https://example.com/a.png')).toBeNull();
+		expect(windowsDrivePathToFileUrl('D:relative.png')).toBeNull();
+	});
+});
+
+describe('pathToFileUrl', () => {
+	it('encodes each segment of a POSIX path', () => {
+		expect(pathToFileUrl('/Users/me/My Site/index.html')).toBe(
+			'file:///Users/me/My%20Site/index.html'
+		);
+	});
+
+	it('keeps a Windows drive colon and normalizes backslashes', () => {
+		expect(pathToFileUrl('C:\\Users\\Test Project\\a.html')).toBe(
+			'file:///C:/Users/Test%20Project/a.html'
+		);
+	});
+
+	it('keeps a backslash that is part of a POSIX file name', () => {
+		// On POSIX `a\b.html` is one file. Read as a separator it would name
+		// `b.html` in a folder `a`, a different file.
+		expect(pathToFileUrl('/tmp/a\\b.html')).toBe('file:///tmp/a%5Cb.html');
+		expect(pathToFileUrl('/srv/..\\..\\x.html')).toBe('file:///srv/..%5C..%5Cx.html');
+	});
+
+	it('still reads a backslash as the separator in a Windows path', () => {
+		expect(pathToFileUrl('D:\\site\\a b.html')).toBe('file:///D:/site/a%20b.html');
+		expect(pathToFileUrl('\\\\server\\share\\a.html')).toBe('file:////server/share/a.html');
+	});
+
+	it('round-trips through fileUrlToPath', () => {
+		for (const path of ['/tmp/a b/#c.html', 'D:/x y/z.html', '/tmp/a\\b.html']) {
+			expect(fileUrlToPath(pathToFileUrl(path))).toBe(path);
+		}
 	});
 });

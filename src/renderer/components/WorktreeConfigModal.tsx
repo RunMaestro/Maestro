@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, GitBranch, FolderOpen, Plus, AlertTriangle, Server } from 'lucide-react';
+import { X, GitBranch, FolderOpen, Plus, AlertTriangle } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { ModalSubtitle } from './ui/Modal';
 import { Spinner } from './ui/Spinner';
@@ -10,6 +10,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getParentDir } from '../../shared/formatters';
 import { isImeComposing } from '../utils/ime';
 import { openUrl } from '../utils/openUrl';
+import { fileOpRemoteId, pathPickerRemoteId, pickDirectory } from '../services/pathPicker';
 import { ResizeHandles } from './ui/ResizeHandles';
 
 interface WorktreeConfigModalProps {
@@ -72,11 +73,11 @@ export function WorktreeConfigModal({
 	// gh CLI status
 	const [ghCliStatus, setGhCliStatus] = useState<GhCliStatus | null>(null);
 
-	// SSH remote awareness - check both runtime sshRemoteId and configured sessionSshRemoteConfig
-	// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
-	// we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
-	const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-	const isRemoteSession = !!sshRemoteId;
+	// Where the worktree directory lives (SSH and hosted alike). It only routes the reads and the
+	// Browse; the modal looks the same in every mode. `pathPickerRemoteId()` ignores a remote id
+	// left on an agent with SSH switched off (that agent is local), and is `null` for an SSH agent
+	// whose remote is not resolved yet: Browse says so, and Save fails with that reason.
+	const browseRemoteId = pathPickerRemoteId(session);
 
 	// Register with layer stack for Escape handling
 	useEffect(() => {
@@ -115,9 +116,11 @@ export function WorktreeConfigModal({
 	};
 
 	const handleBrowse = async () => {
-		// Browse is only available for local sessions
-		if (isRemoteSession) return;
-		const result = await window.maestro.dialog.selectFolder();
+		const result = await pickDirectory({
+			sshRemoteId: browseRemoteId,
+			title: 'Select Worktree Directory',
+			startPath: basePath.trim() || getParentDir(session.cwd),
+		});
 		if (result) {
 			setBasePath(result);
 		}
@@ -133,13 +136,9 @@ export function WorktreeConfigModal({
 		setIsValidating(true);
 		setError(null);
 		try {
-			const exists = await validateDirectory(basePath.trim(), sshRemoteId);
+			const exists = await validateDirectory(basePath.trim(), fileOpRemoteId(browseRemoteId));
 			if (!exists) {
-				setError(
-					isRemoteSession
-						? 'Directory not found on remote server. Please enter a valid path.'
-						: 'Directory not found. Please select a valid directory.'
-				);
+				setError('Directory not found. Please select a valid directory.');
 				return;
 			}
 			onSaveConfig({ basePath: basePath.trim(), watchEnabled, setupScript: setupScript.trim() });
@@ -274,22 +273,6 @@ export function WorktreeConfigModal({
 						</div>
 					)}
 
-					{/* SSH Remote indicator */}
-					{isRemoteSession && (
-						<div
-							className="flex items-center gap-2 px-3 py-2 rounded border"
-							style={{
-								backgroundColor: theme.colors.accent + '15',
-								borderColor: theme.colors.accent + '40',
-							}}
-						>
-							<Server className="w-4 h-4" style={{ color: theme.colors.accent }} />
-							<span className="text-sm" style={{ color: theme.colors.textMain }}>
-								Remote session - enter the path on the remote server
-							</span>
-						</div>
-					)}
-
 					{/* Worktree Base Directory */}
 					<div>
 						<label
@@ -303,7 +286,7 @@ export function WorktreeConfigModal({
 								type="text"
 								value={basePath}
 								onChange={(e) => setBasePath(e.target.value)}
-								placeholder={isRemoteSession ? '/home/user/worktrees' : '/path/to/worktrees'}
+								placeholder="/path/to/worktrees"
 								className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
 								style={{
 									borderColor: theme.colors.border,
@@ -312,25 +295,16 @@ export function WorktreeConfigModal({
 							/>
 							<button
 								onClick={handleBrowse}
-								disabled={isRemoteSession}
-								className={`px-3 py-2 rounded border transition-colors text-sm flex items-center gap-2 ${
-									isRemoteSession ? 'opacity-50 cursor-not-allowed' : 'hover:bg-white/5'
-								}`}
+								className="px-3 py-2 rounded border transition-colors text-sm flex items-center gap-2 hover:bg-white/5"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								title={
-									isRemoteSession
-										? 'Browse is not available for remote sessions'
-										: 'Browse for directory'
-								}
+								title="Browse for directory"
 							>
 								<FolderOpen className="w-4 h-4" />
 								Browse
 							</button>
 						</div>
 						<p className="text-2xs mt-1" style={{ color: theme.colors.textDim }}>
-							{isRemoteSession
-								? 'Path on the remote server where worktrees will be created'
-								: 'Base directory where worktrees will be created'}
+							Base directory where worktrees will be created
 						</p>
 					</div>
 
@@ -381,10 +355,10 @@ export function WorktreeConfigModal({
 							}}
 						/>
 						<p className="text-2xs mt-1" style={{ color: theme.colors.textDim }}>
-							Runs in each newly created worktree{isRemoteSession ? ' on the remote host' : ''}.
-							Available variables: <code>$MAESTRO_WORKTREE_PATH</code>,{' '}
-							<code>$MAESTRO_WORKTREE_BRANCH</code>, <code>$MAESTRO_MAIN_REPO_PATH</code>,{' '}
-							<code>$MAESTRO_BASE_BRANCH</code>. Leave blank to disable.
+							Runs in each newly created worktree. Available variables:{' '}
+							<code>$MAESTRO_WORKTREE_PATH</code>, <code>$MAESTRO_WORKTREE_BRANCH</code>,{' '}
+							<code>$MAESTRO_MAIN_REPO_PATH</code>, <code>$MAESTRO_BASE_BRANCH</code>. Leave blank
+							to disable.
 						</p>
 					</div>
 

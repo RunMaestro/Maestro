@@ -1,6 +1,7 @@
 /**
  * The runtime's History: `list` reads an agent's own History with the shared History of its
- * project (`.maestro/history/`), and `share` copies a new entry there when the agent shares.
+ * project (`.maestro/history/`), `share` copies a new entry there when the agent shares, and
+ * `remove` / `update` are the History panel's Delete and Validate on the agent's own History.
  * Real temp directories; the agent repository is a map.
  */
 
@@ -192,10 +193,24 @@ describe('createRuntimeHistory', () => {
 
 		it('creates the directory for an agent that opted in on its SSH record', () => {
 			addAgent('a1', {
-				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1', shareHistoryToProjectDir: true },
+				sessionSshRemoteConfig: { enabled: false, remoteId: null, shareHistoryToProjectDir: true },
 			} as Partial<AgentRecord>);
 			make().share('a1', entry('e1', 1));
 			expect(readShared('box.host').map((e) => e.id)).toEqual(['e1']);
+		});
+
+		it('never writes the project of an agent whose turns run over SSH (it lives on the remote)', () => {
+			addAgent('a1', {
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'r1',
+					syncHistory: true,
+					shareHistoryToProjectDir: true,
+				},
+			} as Partial<AgentRecord>);
+			fs.mkdirSync(sharedHistoryDir(project), { recursive: true });
+			make().share('a1', entry('e1', 1));
+			expect(fs.readdirSync(sharedHistoryDir(project))).toEqual([]);
 		});
 
 		it('never creates the directory for an agent that did not opt in', () => {
@@ -260,6 +275,104 @@ describe('createRuntimeHistory', () => {
 			const desktop = make({ shared: { label: 'laptop', hostname: 'laptop' } });
 			const result = await desktop.api.list('a1');
 			expect(result.ok && result.value).toEqual([entry('from-host', 1, { hostname: 'box' })]);
+		});
+	});
+
+	describe('remove and update', () => {
+		it('deletes and validates an entry of the agent own History', async () => {
+			addAgent('a1');
+			writeOwn('a1', [entry('e1', 1), entry('e2', 2)]);
+			const history = make();
+
+			expect(await history.api.update('a1', 'e1', { validated: true })).toEqual({
+				ok: true,
+				value: { updated: true },
+			});
+			expect(await history.api.remove('a1', 'e2')).toEqual({ ok: true, value: { removed: true } });
+			const listed = await history.api.list('a1');
+			expect(listed.ok && listed.value).toEqual([entry('e1', 1, { validated: true })]);
+		});
+
+		it('leaves an entry another Maestro shared alone: it is not this host to edit', async () => {
+			addAgent('a1');
+			writeOwn('a1', [entry('own', 1)]);
+			writeShared('laptop', [entry('theirs', 2, { hostname: 'laptop' })]);
+
+			expect(await make().api.remove('a1', 'theirs')).toEqual({
+				ok: true,
+				value: { removed: false },
+			});
+			expect(readShared('laptop').map((e) => e.id)).toEqual(['theirs']);
+		});
+
+		it('answers not-found for an unknown agent and invalid for a missing id or change', async () => {
+			addAgent('a1');
+			const history = make();
+			expect(await history.api.remove('ghost', 'e1')).toMatchObject({
+				ok: false,
+				error: { code: 'not-found', method: 'history.remove' },
+			});
+			expect(await history.api.update('a1', '', { validated: true })).toMatchObject({
+				ok: false,
+				error: { code: 'invalid', method: 'history.update' },
+			});
+			expect(await history.api.update('a1', 'e1', {})).toMatchObject({
+				ok: false,
+				error: { code: 'invalid', method: 'history.update' },
+			});
+		});
+
+		it('answers host-lost once the fence says another process owns the data directory', async () => {
+			addAgent('a1');
+			writeOwn('a1', [entry('e1', 1)]);
+			const history = make({ fence: () => ({ ok: false, reason: 'Taken over.' }) });
+			expect(await history.api.remove('a1', 'e1')).toEqual({
+				ok: false,
+				error: { code: 'host-lost', message: 'Taken over.', method: 'history.remove' },
+			});
+		});
+
+		it('shares each entry its writer appends, the same as before', async () => {
+			addAgent('a1');
+			fs.mkdirSync(sharedHistoryDir(project), { recursive: true });
+			const history = make();
+			await history.writer.append('a1', entry('e1', 1));
+			expect(readShared(SHARED.label).map((e) => e.id)).toEqual(['e1']);
+		});
+	});
+
+	// L31: a synopsis is written after its turn's end, so a client that read the History at the
+	// end holds a list without it until the runtime says the History changed.
+	describe('onChanged', () => {
+		it('says each write that changed the agent History: an append, a remove, an update', async () => {
+			addAgent('a1');
+			const changed: string[] = [];
+			const history = make({ onChanged: (agentId) => changed.push(agentId) });
+			await history.writer.append('a1', entry('e1', 1));
+			expect(changed).toEqual(['a1']);
+			expect(await history.api.update('a1', 'e1', { validated: true })).toEqual({
+				ok: true,
+				value: { updated: true },
+			});
+			expect(await history.api.remove('a1', 'e1')).toEqual({ ok: true, value: { removed: true } });
+			expect(changed).toEqual(['a1', 'a1', 'a1']);
+		});
+
+		it('says nothing for an edit that changed nothing or was refused', async () => {
+			addAgent('a1');
+			writeOwn('a1', [entry('e1', 1)]);
+			const changed: string[] = [];
+			const history = make({ onChanged: (agentId) => changed.push(agentId) });
+			expect(await history.api.remove('a1', 'missing')).toEqual({
+				ok: true,
+				value: { removed: false },
+			});
+			const fenced = make({
+				onChanged: (agentId) => changed.push(agentId),
+				fence: () => ({ ok: false, reason: 'Taken over.' }),
+			});
+			expect((await fenced.writer.append('a1', entry('e2', 2))).ok).toBe(false);
+			expect(changed).toEqual([]);
 		});
 	});
 });

@@ -17,8 +17,11 @@ import net from 'net';
  * A port on 127.0.0.1 that nothing listens on right now. `port` asks for that
  * one (rejecting with `EADDRINUSE` when it is taken); 0, the default, lets the
  * OS pick. The listener is closed before this resolves, so another process can
- * still take the port before the caller binds it; `ExitOnForwardFailure=yes`
- * is what turns that race into an ssh exit instead of a silent dead forward.
+ * still take the port before the caller binds it. The caller must catch that
+ * race: `ExitOnForwardFailure=yes` turns it into an ssh exit. Federation's
+ * forward adds its port through a ControlMaster with `ssh -O forward`, which
+ * exits non-zero when the bind fails; on Windows (no ControlMaster) it reads
+ * ssh's bind error for its own port with `ownForwardBindFailed()`.
  */
 export async function availableLocalPort(port = 0): Promise<number> {
 	const { promise, resolve, reject } = Promise.withResolvers<number>();

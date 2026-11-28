@@ -1101,6 +1101,8 @@ maestro-cli list groups
 maestro-cli list agents
 maestro-cli list agents -g <group-id>
 maestro-cli list agents --group <group-id>
+maestro-cli list agents --visible-only   # skip agents in a hidden group
+maestro-cli list agents --hidden-only    # only agents in a hidden group
 
 # Federation: the agents on one peer, or local agents plus every peer
 maestro-cli list agents --peer build-box
@@ -1142,7 +1144,17 @@ maestro-cli playbook <playbook-id> --model opus --effort high
 # Clean orphaned playbooks (for deleted sessions)
 maestro-cli clean playbooks
 maestro-cli clean playbooks --dry-run
+
+# Clean when you deleted every agent on purpose (the agent list is empty)
+maestro-cli clean playbooks --force
 ```
+
+`clean playbooks` removes nothing when it cannot trust the agent list, because a wrong list makes every playbook look orphaned and a removed file does not come back. It stops, prints why, and exits 1 in two cases:
+
+- **No agents found.** Every playbook would look orphaned. This is also what a wrong data folder looks like (check `MAESTRO_USER_DATA`). `--force` overrides this check when you really deleted every agent.
+- **The Storage Location is not in use.** Settings > General names a custom Storage Location whose folder is missing (an unmounted drive, a renamed folder) or refused. `maestro-cli` then reads the agent list from the default data folder, which is empty or out of date, so playbooks of live agents would look orphaned. `--force` does not override this check. Restore the folder, or choose **Use Default** in Settings > General > Storage Location, then run the command again.
+
+`--dry-run` runs the same checks, so a preview never lists playbooks the real run would refuse to remove.
 
 ### Goal-Driven Auto Run
 
@@ -1727,7 +1739,8 @@ maestro-cli list groups --json
 
 # Note: list agents outputs a JSON array (not JSONL)
 maestro-cli list agents --json
-[{"id":"agent-abc123","name":"My Agent","toolType":"claude-code","cwd":"/path/to/project",...}]
+# Each row carries groupName and groupHidden (true when the group, or its parent, is hidden)
+[{"id":"agent-abc123","name":"My Agent","toolType":"claude-code","cwd":"/path/to/project","groupId":"group-abc123","groupName":"Frontend","groupHidden":false,...}]
 
 # Running a playbook with JSON streams events
 maestro-cli playbook <playbook-id> --json
@@ -2213,7 +2226,10 @@ set - runs `gh pr create` once the batch completes. See
 Once an Auto Run is going, these commands stop it or recover it from an error pause - the counterpart to launching with `auto-run --launch`. They require the desktop app to be running.
 
 ```bash
-# Stop the active Auto Run for an agent
+# Stop the active Auto Run for an agent (it finishes the current task or goal iteration first)
+maestro-cli stop-auto-run -a <agent-id>
+
+# Run it again on a run already stopping to end it now, like the Force Kill button
 maestro-cli stop-auto-run -a <agent-id>
 
 # When an Auto Run pauses on an error, choose how to proceed:
@@ -2244,9 +2260,64 @@ maestro-cli steer-auto-run list -a <agent-id> --json   # includes each full repl
 
 # Take back a note no task has read yet (accepts a unique id prefix)
 maestro-cli steer-auto-run cancel <note-id> -a <agent-id>
+
+# Clear a delivered note and its reply once read (delivery id from list; accepts a unique prefix)
+maestro-cli steer-auto-run dismiss <delivery-id> -a <agent-id>
 ```
 
-`send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts. `send --background` queues the note without the on-screen "Steering note queued" flash.
+`send` is refused when no Auto Run is active on the agent, or when the run belongs to another Maestro client: there is no next task to hand the note to. A note longer than 4000 characters is refused rather than cut to fit. `list` keeps working after the run ends, since the reply to a run's last note arrives as it finishes; the notes are cleared when the next run starts, or one delivery at a time with `dismiss`. `send --background` queues the note without the on-screen "Steering note queued" flash.
+
+### Reviewing an Agent's Diff
+
+Pin review comments to lines of an agent's current `git diff`, then send them to the agent as one review. These are the CLI half of the [Git Diff viewer's review comments](diff-review.md): the comments are the same ones the viewer's **Review** tray shows, and `send` runs the same code as its **Send Review** button.
+
+```bash
+# Comment on lines 12-14 of the new version of a file
+maestro-cli diff-review add src/app.ts 12-14 "Parse RETRIES as a number" -a <agent-id>
+
+# Comment on a removed line (numbered in the previous version)
+maestro-cli diff-review add src/app.ts 7 "Why remove this?" --side old -a <agent-id>
+
+# Read the pending comments; outdated ones are flagged
+maestro-cli diff-review list -a <agent-id>
+
+# Reword one in place, keeping its id and lines (accepts a unique id prefix)
+maestro-cli diff-review edit <comment-id> "Parse RETRIES with parseInt" -a <agent-id>
+
+# Drop one (accepts a unique id prefix), or all of them
+maestro-cli diff-review remove <comment-id> -a <agent-id>
+maestro-cli diff-review clear -a <agent-id>
+
+# Send every current comment as one queued prompt
+maestro-cli diff-review send -a <agent-id>
+maestro-cli diff-review send -a <agent-id> --compose   # put it in the agent's message box instead
+```
+
+The lines must be ones the diff shows, inside one hunk, as in the viewer. A comment whose lines changed since it was written is outdated: `list` flags it, and `send` leaves it pending and reports it rather than point the agent at the wrong code. `send` is quiet by default (no agent or tab switch, no flash), since an agent calling it is not the person looking at the screen; `--focus` takes the user to the agent the way the button does.
+
+### Reviewing a File
+
+Pin review comments to lines of any file, then send them to an agent as one review. These are the CLI half of the [File Preview's review comments](file-review.md): the comments are the same ones the file tab's **Review** tray shows, and `send` runs the same code as its **Send Review** button. Each verb names the file first; a relative path is resolved against your shell's directory, and the lines are quoted from the file on disk.
+
+```bash
+# Comment on line 3, or lines 4-5
+maestro-cli file-review add docs/plan.md 3 "Say which parser" -a <agent-id>
+maestro-cli file-review add docs/plan.md 4-5 "Merge these into one step" -a <agent-id>
+
+# Read the pending comments; outdated ones are flagged
+maestro-cli file-review list docs/plan.md -a <agent-id>
+
+# Reword one in place, or drop one (both accept a unique id prefix), or all of them
+maestro-cli file-review edit docs/plan.md <comment-id> "Name the YAML parser" -a <agent-id>
+maestro-cli file-review remove docs/plan.md <comment-id> -a <agent-id>
+maestro-cli file-review clear docs/plan.md -a <agent-id>
+
+# Send every current comment as one queued prompt
+maestro-cli file-review send docs/plan.md -a <agent-id>
+maestro-cli file-review send docs/plan.md -a <agent-id> --compose   # put it in the agent's message box instead
+```
+
+A comment whose lines changed since it was written is outdated: `list` flags it, and `send` leaves it pending and reports it. As with `diff-review send`, `send` is quiet by default; `--focus` takes the user to the agent the way the button does.
 
 ### Checking Status
 
@@ -2277,6 +2348,18 @@ maestro-cli doctor --json
 ```
 
 The version and "App handles commands" checks catch the most common gotcha: a freshly-built CLI talking to an older desktop app that's still running. When the app is behind, new commands fail because their handlers don't exist in the running build - rebuild and restart the desktop app. The CLI surfaces this directly: a command the running app doesn't recognize fails fast with "The running Maestro app does not support the '...' command" instead of a generic timeout.
+
+### Checking a Claude Code Update (`claude-canary`)
+
+Claude Code updates itself while Maestro runs, and a new release can change the TUI that interactive-mode Claude agents run through. After every Claude Code (or Maestro) update, the desktop app runs one cheap test turn through maestro-p and raises a sticky toast if it fails. `claude-canary` reads the last result, including what Claude Code showed on screen when it failed:
+
+```bash
+maestro-cli claude-canary          # last result
+maestro-cli claude-canary --run    # run the test turn now; exits 2 if Claude Code fails it
+maestro-cli claude-canary --json
+```
+
+The canary runs only on an account that already has an authenticated usage snapshot, and needs the desktop app.
 
 ### Shell Completions
 
@@ -2426,6 +2509,8 @@ These verbs take a `peer:agent` target (an agent ID, ID prefix, or name after th
 ```bash
 maestro-cli show agent build-box:docs --json        # the host's record and its tabs; stats is null
 maestro-cli send build-box:docs "Summarize the open PRs"
+maestro-cli send build-box:docs "Plan the refactor" --model sonnet --read-only   # your choices, this turn only
+maestro-cli update-agent build-box:docs --model opus --nudge "Run the tests first"  # every conductor sees it
 maestro-cli ask build-box:docs "Which branch is checked out?"
 maestro-cli dispatch build-box:docs "Run the release checklist" --new-tab
 maestro-cli interrupt build-box:docs
@@ -2436,15 +2521,16 @@ maestro-cli queue list --agent build-box:docs
 maestro-cli queue remove <item-id> --agent build-box:docs
 ```
 
-| Verb                                                       | On a peer                                                                                                                                                                                                                                                                                                                                           |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `show agent`                                               | Reads the agent from the host and lists its tabs with their state. `stats` and `recentHistory` come from the host's History, which includes the project's shared History. Each recent row has a `hostname` when another machine sent it. A host that cannot serve History gives `stats: null`.                                                      |
-| `send`                                                     | Opens a new tab on the host (or the tab that holds `--session`, which must be idle), sends the message, and waits for the turn to end. The host records the turn in its own History. `--read-only`, `--tab`, `--no-system-prompt`, `--no-history`, `--no-synopsis` and the plugin-tool flags are refused (`PEER_UNSUPPORTED_OPTION`).               |
-| `ask`                                                      | Sends the same consult to the host. `--from` and `--with-context` name a local agent the host cannot see, so they are refused.                                                                                                                                                                                                                      |
-| `dispatch`                                                 | Sends the same message as a local dispatch to the host. `--notify-on-complete`, the `--callback-*` flags and `--routing` are refused, because they name local agents. A lost acknowledgement is `DISPATCH_UNKNOWN`, as it is locally: reconcile with the same `--dispatch-id`.                                                                      |
-| `interrupt`                                                | Stops every busy tab of the agent on the host, or the one `--tab` names.                                                                                                                                                                                                                                                                            |
-| `tab new`, `tab rename`, `tab star`, `tab unstar`          | With `--agent <peer:agent>`, open, rename, star or unstar a tab of the host's agent. `<tab-id>` is an ID, a unique prefix, or `active`, matched against the host's tabs. `tab new --prompt` is refused: open the tab, then `send`, or use `dispatch`.                                                                                               |
-| `queue list`, `queue remove`, `queue hold`, `queue resume` | With `--agent <peer:agent>`, read or change the messages waiting in the host's queue for that agent. `queue list` prints the local shape plus `peer`, with `sessionId` set to the `peer:agent` target. A message that already started is `ITEM_NOT_FOUND`, as it is locally. `queue merge` and `queue steer` are refused (`PEER_UNSUPPORTED_VERB`). |
+| Verb                                                                                                                                   | On a peer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `show agent`                                                                                                                           | Reads the agent from the host and lists its tabs with their state. `stats` and `recentHistory` come from the host's History, which includes the project's shared History. Each recent row has a `hostname` when another machine sent it. A host that cannot serve History gives `stats: null`.                                                                                                                                                                                                                                                                                 |
+| `send`                                                                                                                                 | Opens a new tab on the host (or the tab that holds `--session`, which must be idle), sends the message, and waits for the turn to end. The host records the turn in its own History. `--model`, `--effort`, `--read-only` and `--no-history` apply to this turn only, as your own choice. `--tab`, `--no-system-prompt`, `--no-synopsis` and the plugin-tool flags are refused (`PEER_UNSUPPORTED_OPTION`).                                                                                                                                                                    |
+| `ask`                                                                                                                                  | Sends the same consult to the host. `--from` and `--with-context` name a local agent the host cannot see, so they are refused.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `dispatch`                                                                                                                             | Sends the same message as a local dispatch to the host. `--notify-on-complete`, the `--callback-*` flags and `--routing` are refused, because they name local agents. A lost acknowledgement is `DISPATCH_UNKNOWN`, as it is locally: reconcile with the same `--dispatch-id`. A hosted agent of this machine, named by its own ID or name rather than `peer:agent`, goes through the desktop app instead, as a local agent does, so `--notify-on-complete` and `--routing` work for it; only while the desktop is not running does it go to the host, where they are refused. |
+| `interrupt`                                                                                                                            | Stops every busy tab of the agent on the host, or the one `--tab` names.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `update-agent`                                                                                                                         | Changes the agent's shared settings on the host, which every conductor then sees: `--model`, `--effort`, `--nudge`, `--new-session-message`, `--custom-path`, `--custom-args`, `--env` / `--clear-env`, `--context-window`, `--token-source`, `--codex-transport`, `--bookmark`, `--provider` (a switch, on its own), and `--cwd` (an absolute path on the host). `--group`, the `--ssh-*` flags, `--maestro-p-path`, and provider conversion are refused.                                                                                                                     |
+| `tab new`, `tab rename`, `tab star`, `tab unstar`                                                                                      | With `--agent <peer:agent>`, open, rename, star or unstar a tab of the host's agent. `<tab-id>` is an ID, a unique prefix, or `active`, matched against the host's tabs. `tab new --prompt` is refused: open the tab, then `send`, or use `dispatch`.                                                                                                                                                                                                                                                                                                                          |
+| `queue list`, `queue remove`, `queue hold`, `queue resume`, `queue merge`, `queue steer`, `queue edit`, `queue move`, `queue send-now` | With `--agent <peer:agent>`, read or change the messages waiting in the host's queue for that agent. `queue list` prints the local shape plus `peer`, with `sessionId` set to the `peer:agent` target. A message that already started is `ITEM_NOT_FOUND`, a merge with nothing above it is `NOT_MERGEABLE`, and a steer reports the host's outcome with the local codes, as they are locally. A headless host cannot steer and refuses it; the message stays queued.                                                                                                          |
 
 `send`, `interrupt`, the tab verbs, and the queue verbs run the same shared action as the desktop's mirrored agent (its composer, Stop, the tab controls beside its tab strip, and its queued cards), so a script and the desktop reach the host the same way. Nothing is queued or retried on this machine. A peer that is down, or a forward that is dead, exits non-zero with a `PEER_*` code (`PEER_HOST_DOWN` exits `3`). If the forward drops while `send` waits, the turn keeps running on the host: `send` exits `3` with `PEER_CONNECTION_LOST`, the tab ID, and the command that shows the tab (`maestro-cli show agent <peer>:<agent>`). A colon target that names a local agent (a name like `Maestro: rc`) stays local.
 
@@ -2466,7 +2552,9 @@ Before it acts, `lift` prints what moves and what stays. `--json` gives the same
 | No host is running on the remote                      | `PEER_HOST_DOWN` (exit 3) |
 | A local `maestro-cli host` owns this machine's agents | `LIFT_LOCAL_HOST`         |
 
-The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. Hidden consult tabs, queued slash commands, and images in this machine's image store stay here.
+When the host's Maestro is an older build that cannot accept a moved agent, `lift` fails with `LIFT_HOST_TOO_OLD` and nothing moves. Update Maestro.app on the remote and relaunch it (or, with no desktop app there, run `maestro-cli remote-host install <remote> --restart --force`), then lift again.
+
+The host's copy is made first. If the local agent cannot then be marked as moved, the host's copy is removed again, so the agent never runs in two places. Hidden consult tabs and queued slash commands stay here. Images in the transcript and on queued messages move as their bytes; only an image whose file is gone from this machine's image store stays behind.
 
 ```bash
 maestro-cli lift docs --dry-run
@@ -2474,7 +2562,28 @@ maestro-cli lift docs --with-env --json
 maestro-cli send build-box:<new-agent-id> "Carry on"
 ```
 
-The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows while the agent's remote takes part in Federation. When the remote runs no host yet, the same action first runs `remote-host install --start` and then shows the lift plan. Either way the plan `--dry-run` prints, with a choice to send secret env vars, shows before anything moves. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
+The desktop app runs the same lift. Right-click the agent in the Left Bar and choose **Move to Host**, or run **Move to Host** from the command palette. The action shows while the agent's remote takes part in Federation. When the remote runs no host yet, the same action first runs `remote-host install --start` and then shows the lift plan. Either way the plan `--dry-run` prints shows before anything moves, drawn as a summary with a choice to send secret env vars, and **Copy Plan as Text** copies the CLI text. Afterwards the agent's row shows `on <peer>`: click it to open the agent on its host.
+
+### Move a Hosted Agent Back
+
+`maestro-cli unlift <agent>` reverses a lift: the hosted agent becomes an SSH agent again. The host's tabs come back with their transcripts and provider session IDs, so a tab that moved lands on its own local tab and the next turn over SSH resumes the same conversation. A tab started on the host arrives as a new tab. Tabs are never dropped: a local tab the host closed stays. The host's copy is then removed, unless you pass `--keep-host-copy`. Automatic Federation leaves the agent an SSH agent from then on; **Move to Host** (or `lift`) hosts it again.
+
+| Refusal                                 | Code                    |
+| --------------------------------------- | ----------------------- |
+| The agent is not hosted                 | `RETURN_NOT_HOSTED`     |
+| The agent has no SSH remote to run on   | `RETURN_NO_SSH`         |
+| A turn is running on the host           | `RETURN_BUSY`           |
+| Messages still wait in the host's queue | `RETURN_QUEUED`         |
+| The local agent could not be restored   | `RETURN_RESTORE_FAILED` |
+
+When the host cannot be reached, `--offline` moves the agent back with only what this machine kept. Conversations started on the host stay there, and its copy is not removed: remove it on the host when it is back (`maestro-cli remove-agent <id>`).
+
+```bash
+maestro-cli unlift docs
+maestro-cli unlift docs --offline --json
+```
+
+The desktop app runs the same steps: right-click a hosted agent and choose **Move Back from Host**, or run it from the command palette. When the host cannot be reached, it offers to move the agent back offline.
 
 ### One Host Per Data Directory
 
@@ -2515,15 +2624,43 @@ To keep the host running across reboots, have your service manager run `maestro-
 
 ### Automatic Federation from the CLI
 
-The desktop app keeps Federation hosts running and, with **Move SSH agents to their host automatically** on, installs hosts and moves SSH agents onto them by itself ([how it decides](/federation#automatic-moves-and-their-sanity-checks)). Two verbs show and drive it:
+The desktop app keeps Federation hosts running and, with **Run hosted agents on their host** and **Move SSH agents to their host automatically** on (both off by default), installs hosts and moves SSH agents onto them by itself ([how it decides](/federation#automatic-moves-and-their-sanity-checks)). Two verbs show and drive it:
 
 ```bash
 maestro-cli federation auto            # every remote and SSH agent, its state, and what needs you
 maestro-cli federation auto run        # run a pass now (Run Now in Settings > SSH Hosts)
-maestro-cli settings set federationAutoMove false   # turn automatic moves off
+maestro-cli settings set federationAutoMove true    # turn automatic moves on (off by default)
 ```
 
 Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) with its service, and each SSH agent's state (`moved`, `pending`, `waiting`, `blocked`, `manual`) with its reason. Anything `blocked` carries a `To fix:` line. Both exit `1` when something needs a person: a `blocked` remote or agent, or a running host whose service still needs one step (lingering off, or a service that failed to register). A remote that can never have a service (Windows, Linux without a user session, a Mac with Maestro.app) shows its workaround as a note and does not make them exit `1`. `--json` prints the same snapshot. They need the desktop app: a headless host mirrors no peers.
+
+### Hosted agents in the Left Bar
+
+Your Left Bar shows the hosted agents you moved from this machine and the ones you added. A host's other agents stay out of it until you add them, the same as **Add Hosted Agent** in the desktop app:
+
+```bash
+maestro-cli federation agents                                # every agent your hosts run, and which ones you added
+maestro-cli federation agents --peer build-box --not-added   # one host, only the ones not in the Left Bar
+maestro-cli federation add build-box:docs --group Research   # add one: agent id, id prefix, or name
+maestro-cli remove-agent <local-agent-id>                    # remove the row; the host keeps its agent
+```
+
+`add` refuses an agent the Left Bar shows already, and `--background` leaves the selection where it is. The row takes the host agent's name and settings; renaming it later renames the agent on the host, as for any hosted agent. Both verbs need the desktop app.
+
+### Settings of hosted agents
+
+A hosted agent's settings live on its host ([how they sync](/federation#settings-of-a-hosted-agent)). When this machine and the host both changed a setting, the desktop waits for you to choose. Two verbs show and settle those choices, the same ones the **Federation Settings Conflicts** modal offers:
+
+```bash
+maestro-cli federation conflicts                                        # each hosted agent's waiting settings, both values
+maestro-cli federation resolve build-box:docs nudgeMessage --take host  # keep the host's value
+maestro-cli federation resolve build-box:docs customModel --take local  # send this machine's value
+maestro-cli federation resolve build-box:docs nudgeMessage --value "Run the tests first. Keep diffs small."  # a merged text
+```
+
+`conflicts` exits `1` while any setting waits, and `--json` prints the list. The field names are the IDs `conflicts` prints (`nudgeMessage`, `customModel`, `env:NAME`, ...). `--value` takes free-text fields only: the nudge message, new session message, and custom arguments. Both need the desktop app.
+
+`send <peer:agent>` takes your own choices for one turn: `--model`, `--effort`, `--read-only`, and `--no-history`. They are never saved on the host, so other conductors keep theirs, the same as the chips in the hosted agent's composer.
 
 ## Run the Host as a Service
 

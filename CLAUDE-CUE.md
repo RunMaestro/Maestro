@@ -362,7 +362,7 @@ Hot-path callers (`recordTriggerFired`, `recordRunCompleted`) MUST be non-throwi
 - `cue-cleanup-service.ts` - heartbeat-driven sweep of stale fan-in trackers and `time.scheduled` dedup keys.
 - `cue-active-state.ts` - pauses scanners while the renderer is hidden (`cue:setActive` IPC).
 - `cue-first-party.ts` - first-party plugin supervisor hooks; the engine emits `cue.runStarted` / `cue.runFinished` plugin events.
-- `cue-agent-binary.ts` - which binary a prompt run executes (same precedence as a tab spawn).
+- `src/shared/maestro-lib/launch/agent-binary.ts` (`resolveAgentBinary()`) - which binary a prompt run executes (same precedence as a tab spawn; shared with the CLI and group chat).
 - `cue-metrics.ts`, `cue-query-service.ts`, `cue-yaml-write.ts`, `pipeline-layout-store.ts`, `pipeline-layout-mutations.ts` - in-process counters, read-side query projections, shared `cue.yaml` writers, and the editor's persisted canvas layout plus its CLI mutations.
 
 ## Test landmarks

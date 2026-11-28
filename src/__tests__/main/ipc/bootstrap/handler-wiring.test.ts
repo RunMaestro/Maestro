@@ -23,10 +23,83 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 
 const SRC = path.resolve(__dirname, '../../../../main/ipc');
 const HANDLERS_INDEX = path.join(SRC, 'handlers/index.ts');
 const BOOTSTRAP_INDEX = path.join(SRC, 'bootstrap/index.ts');
+
+const REPO_ROOT = path.resolve(SRC, '../../..');
+
+/**
+ * Optional dependencies of a registrar that the live wiring leaves out on
+ * purpose, keyed `registrar.dependency`. Each one is a test seam whose handler
+ * runs the real implementation when it is absent. Anything else the live
+ * wiring drops is a feature quietly turned off in a shipped build.
+ */
+const INTENTIONALLY_OMITTED: Record<string, string> = {
+	'registerPersistenceHandlers.cancelQueueItem':
+		'test seam; absent, the handler cancels through cancelPianolaQueueItem() on the live store',
+	'registerPianolaHandlers.confirmScopeConfiguration':
+		'test seam; absent, the handler raises the native approval dialog',
+};
+
+/**
+ * For every `register*Handlers(...)` call in `file`, the optional properties of
+ * the parameter's type that the call does not pass, as `registrar.dependency`.
+ * Uses the type checker, so spreads (`...deps.debugPackageDeps`) and shorthand
+ * properties count the same as written-out keys.
+ */
+function droppedOptionalDependencies(file: string): string[] {
+	const configPath = path.join(REPO_ROOT, 'tsconfig.main.json');
+	const config = ts.getParsedCommandLineOfConfigFile(
+		configPath,
+		{},
+		{ ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => undefined }
+	);
+	if (!config) throw new Error(`Could not read ${configPath}`);
+	const program = ts.createProgram({ rootNames: [file], options: config.options });
+	const checker = program.getTypeChecker();
+	const source = program.getSourceFile(file);
+	if (!source) throw new Error(`Could not load ${file}`);
+	const dropped: string[] = [];
+	let calls = 0;
+	const visit = (node: ts.Node) => {
+		if (
+			ts.isCallExpression(node) &&
+			ts.isIdentifier(node.expression) &&
+			/^register[A-Za-z]+Handlers$/.test(node.expression.text)
+		) {
+			calls++;
+			const registrar = node.expression.text;
+			const signature = checker.getResolvedSignature(node);
+			signature?.parameters.forEach((parameter, index) => {
+				const optional = checker
+					.getTypeOfSymbolAtLocation(parameter, node)
+					.getApparentProperties()
+					.filter((property) => property.flags & ts.SymbolFlags.Optional)
+					.map((property) => property.name);
+				const argument = node.arguments[index];
+				const given = new Set(
+					argument
+						? checker
+								.getTypeAtLocation(argument)
+								.getProperties()
+								.map((property) => property.name)
+						: []
+				);
+				for (const name of optional) {
+					if (!given.has(name)) dropped.push(`${registrar}.${name}`);
+				}
+			});
+		}
+		ts.forEachChild(node, visit);
+	};
+	visit(source);
+	// A checker that silently resolved nothing would report no drops at all.
+	expect(calls).toBeGreaterThan(30);
+	return dropped.sort();
+}
 
 /** Strip line and block comments so prose cannot be mistaken for a call. */
 function stripComments(source: string): string {
@@ -70,12 +143,63 @@ describe('IPC handler wiring parity', () => {
 		expect(missing).toEqual([]);
 	});
 
+	it('hands the live History and Federation handlers the Cue queries, so Cue runs reach every History panel', () => {
+		// Cue runs live in `cue_events`, never in the JSONL History. Without these the History
+		// panel of every agent (local, SSH, or hosted) lists no Cue run at all.
+		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf8'));
+		const call = (name: string) => {
+			const start = source.indexOf(`${name}({`);
+			expect(start).toBeGreaterThan(-1);
+			return source.slice(start, source.indexOf('});', start));
+		};
+		const history = call('registerHistoryHandlers');
+		for (const query of [
+			'getAllSessions',
+			'getCueHistoryEntries',
+			'getCueHistoryGroups',
+			'getCueHistoryGroupRuns',
+			'getCueHistoryBuckets',
+			'getCueHistoryFingerprint',
+		]) {
+			expect(history).toContain(query);
+		}
+		const federation = call('registerFederationHandlers');
+		expect(federation).toContain('getCueHistoryEntries');
+		expect(federation).toContain('getCueHistoryGroups');
+	});
+
+	it('passes every optional dependency a registrar declares, except the named test seams', () => {
+		// Director's Notes was registered without its Cue queries, so it reported
+		// zero Cue activity in every shipped build; Feedback was registered without
+		// the maestro-cli manager. Both compiled, because the dependencies are
+		// optional. This reads the parameter types, so the next dropped one fails.
+		expect(droppedOptionalDependencies(BOOTSTRAP_INDEX)).toEqual(
+			Object.keys(INTENTIONALLY_OMITTED).sort()
+		);
+	}, 120_000);
+
+	it("hands the live Director's Notes handlers the Cue queries", () => {
+		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf8'));
+		const start = source.indexOf('registerDirectorNotesHandlers({');
+		expect(start).toBeGreaterThan(-1);
+		const call = source.slice(start, source.indexOf('});', start));
+		for (const query of [
+			'getCueHistoryEntries',
+			'getCueHistoryBuckets',
+			'getCueHistoryFingerprint',
+		]) {
+			expect(call).toContain(query);
+		}
+	});
+
 	it('uses the composed post-flush Pianola consumer in the live bootstrap', () => {
 		const source = stripComments(readFileSync(BOOTSTRAP_INDEX, 'utf8'));
-		expect(source).toContain(
-			'onSessionsPersisted: pianolaPersistenceConsumer(deps.getPianolaSupervisor)'
+		// Parity R17: wrapped so a Move Back drops its host outage at once (`withHostedAgentsNote()`).
+		expect(source).toMatch(
+			/onSessionsPersisted: withHostedAgentsNote\(\s*pianolaPersistenceConsumer\(deps\.getPianolaSupervisor\),\s*noteHostedAgentsChanged\s*\)/
 		);
 		expect(source).toContain("from './pianola-persistence'");
+		expect(source).toContain("from './sessions-persisted'");
 	});
 
 	it('registers the same plugin create/delete implementation as the adapter composition', () => {

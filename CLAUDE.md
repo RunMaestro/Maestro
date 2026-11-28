@@ -6,20 +6,22 @@ Essential guidance for working with this codebase. This file is loaded into ever
 
 None of these load automatically. Read the one that matches the task before you start; do not read them all.
 
-| Document                                   | Read it before...                                                                                                                                                   |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [[CLAUDE-PATTERNS.md]]                     | Touching process management, modals, themes, tabs, the execution queue, Auto Run, SSH spawns, error handling, or Encore gating. Also holds the debugging checklists |
-| [[CLAUDE-IPC.md]]                          | Adding or calling a `window.maestro.*` API                                                                                                                          |
-| [[CLAUDE-PERFORMANCE.md]]                  | Performance-sensitive renderer work (React optimization, debouncing, batching) or capturing a perf trace                                                            |
-| [[CLAUDE-WIZARD.md]]                       | Editing the Onboarding Wizard, Inline Wizard, or Tour System                                                                                                        |
-| [[CLAUDE-FEATURES.md]]                     | Editing the Usage Dashboard or Document Graph                                                                                                                       |
-| [[CLAUDE-AGENTS.md]]                       | Adding or changing a provider, or looking up what a provider supports                                                                                               |
-| [[CLAUDE-SESSION.md]]                      | Touching the `Session` interface (the agent data model)                                                                                                             |
-| [[CLAUDE-PLATFORM.md]]                     | Anything path-, shell-, or OS-specific (Windows, Linux, macOS, SSH remote)                                                                                          |
-| [[CLAUDE-CUE.md]]                          | Editing `src/main/cue/` (architecture, dispatch flow, lifecycle, gotchas)                                                                                           |
-| [[CLAUDE-PLUGINS.md]]                      | Editing `src/main/plugins/` or `src/shared/plugins/` (tiers, sandbox, broker, capabilities, signing, trust model)                                                   |
-| [[CLAUDE-SETTINGS.md]]                     | Editing `src/renderer/components/Settings/` or adding a setting (style guide plus the registration checklist)                                                       |
-| [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md) | Integrating a new agent end to end                                                                                                                                  |
+| Document                                         | Read it before...                                                                                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [[CLAUDE-PATTERNS.md]]                           | Touching process management, modals, themes, tabs, the execution queue, Auto Run, SSH spawns, error handling, or Encore gating. Also holds the debugging checklists |
+| [[CLAUDE-IPC.md]]                                | Adding or calling a `window.maestro.*` API                                                                                                                          |
+| [[CLAUDE-PERFORMANCE.md]]                        | Performance-sensitive renderer work (React optimization, debouncing, batching) or capturing a perf trace                                                            |
+| [[CLAUDE-WIZARD.md]]                             | Editing the Onboarding Wizard, Inline Wizard, or Tour System                                                                                                        |
+| [[CLAUDE-FEATURES.md]]                           | Editing the Usage Dashboard or Document Graph                                                                                                                       |
+| [[CLAUDE-AGENTS.md]]                             | Adding or changing a provider, or looking up what a provider supports                                                                                               |
+| [[CLAUDE-SESSION.md]]                            | Touching the `Session` interface (the agent data model)                                                                                                             |
+| [[CLAUDE-PLATFORM.md]]                           | Anything path-, shell-, or OS-specific (Windows, Linux, macOS, SSH remote)                                                                                          |
+| [[CLAUDE-CUE.md]]                                | Editing `src/main/cue/` (architecture, dispatch flow, lifecycle, gotchas)                                                                                           |
+| [[CLAUDE-PLUGINS.md]]                            | Editing `src/main/plugins/` or `src/shared/plugins/` (tiers, sandbox, broker, capabilities, signing, trust model)                                                   |
+| [[CLAUDE-SETTINGS.md]]                           | Editing `src/renderer/components/Settings/` or adding a setting (style guide plus the registration checklist)                                                       |
+| [FEDERATION.md](docs/agent-guides/FEDERATION.md) | Adding or changing any agent or tab setting, or a feature that acts on an agent: every one needs a Federation decision (shared, personal, machine)                  |
+| [PROVIDER-SUPPORT.md](PROVIDER-SUPPORT.md)       | Integrating a new agent end to end                                                                                                                                  |
+| [SMOKE-TEST.md](docs/agent-guides/SMOKE-TEST.md) | Any "smoke test" request, or verifying a build or branch on a running app: the whole checklist, every time                                                          |
 
 ---
 
@@ -53,6 +55,7 @@ None of these load automatically. Read the one that matches the task before you 
 | Plugin media isolation or a bounded native tool    | [PLUGIN-MEDIA-TOOLS.md](docs/agent-guides/PLUGIN-MEDIA-TOOLS.md) |
 | Docs or site screenshot                            | [SCREENSHOT-CAPTURE.md](docs/agent-guides/SCREENSHOT-CAPTURE.md) |
 | Dataview query, vault index, or DataviewJS sandbox | [DATAVIEW.md](docs/agent-guides/DATAVIEW.md)                     |
+| Agent or tab setting, or an action on an agent     | [FEDERATION.md](docs/agent-guides/FEDERATION.md)                 |
 
 ### Commonly-reimplemented functions (do NOT add new copies)
 
@@ -68,12 +71,14 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Format numbers:** `formatNumber()` (compact), `formatCount()` (exact) in `src/shared/formatters.ts`
 - **Format tokens:** `formatTokens()`, `formatTokensCompact()`, `estimateTokenCount()` in `src/shared/formatters.ts`
 - **Truncate prose without splitting a word:** `truncateAtWordBoundary()` in `src/shared/formatters.ts`
+- **A history `summary` from free-form text, and the part of one a row renders:** `historySummaryLine()`, `historySummaryPreview()`, `clampHistoryEntry()` in `src/shared/history.ts`
 - **Format elapsed time:** `formatElapsedTimeColon()` in `src/shared/formatters.ts`
 - **Humanized durations:** everything in `src/shared/duration.ts`: `humanizeDuration(ms, opts)` plus its presets (never another `Math.floor(ms / 86400000)` ladder)
 - **Format profiling spans (ms):** `formatDuration()` in `src/shared/performance-metrics.ts` (NOT formatters.ts; perf traces only)
 - **Format relative time:** `formatRelativeTime()` in `src/shared/formatters.ts`
 - **Format a calendar day:** `formatCalendarDay()` in `src/shared/formatters.ts`
 - **Local calendar day keys:** `toLocalYmd()`, `parseLocalYmd()`, `addLocalDays()`, `startOfLocalDay()` in `src/shared/localDay.ts`
+- **Where a dashboard time range starts:** `getTimeRangeStart()` in `src/shared/statsTimeRange.ts` (re-exported from `src/main/stats/utils.ts`)
 - **Format an hour of day:** `formatHourOfDay()` in `src/shared/formatters.ts`
 - **Format cost:** `formatCost()` in `src/shared/formatters.ts`
 - **Timestamp for a generated file name:** `fileTimestampSlug(dateOrTimestamp?)` in `src/shared/formatters.ts`
@@ -81,8 +86,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Summing a Codex session's tokens:** `CodexTokenCounts` in `src/shared/codexTokenUsage.ts`
 - **Claude's cost and per-model usage for one turn:** `claudeTurnCost()`, `readClaudeTurnBaseline()`, `parseCostStateRow()` in `src/shared/claudeCostTracker.ts`
 - **Live tokens-per-second rate:** `createThroughputTracker()`, `THROUGHPUT_WINDOWS_MS` in `src/shared/throughputRate.ts`
-- **Tokens per second:** `extractClaudeSpeedSamples()`, `computeClaudeTokenSpeed()`, `CodexTokenSpeedTracker`, `summarizeTokenSpeed()` in `src/shared/tokenSpeed.ts`; `formatTokensPerSecond()` in `src/shared/formatters.ts`
+- **Tokens per second:** `extractClaudeSpeedSamples()`, `computeClaudeTokenSpeed()`, `CodexTokenSpeedTracker`, `StreamCallTimer`, `summarizeTokenSpeed()` in `src/shared/tokenSpeed.ts`; `formatTokensPerSecond()` in `src/shared/formatters.ts`
 - **Usage, cost and message count of a Claude transcript:** `computeClaudeSessionUsage()`, `computeClaudeUsageWithSubagents()`, `readClaudeSubagentTranscripts()` in `src/shared/claudeSessionUsage.ts`; `countClaudeTranscriptMessages()` in `src/shared/claudeTranscriptMessages.ts`
+- **Token usage of projects on another computer:** `projectTokenUsage()`, `collectProjectBreakdowns()` in `src/main/stats/token-usage/project-breakdowns.ts`; `collectRemoteBreakdowns()` in `src/main/stats/token-usage/remote-breakdowns.ts`; wire in `src/shared/projectTokenUsage.ts`
 
 #### Paths, files, and strings
 
@@ -90,46 +96,96 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Worktree path comparisons:** `normalizeWorktreePath()`, `isPathAtOrUnderRoot()` in `src/shared/worktreePaths.ts`
 - **Empty transcript creation evidence:** `newEmptyTranscript()`, `consumeEmptyTranscriptCreation()` in `src/shared/sessionTranscript.ts`
 - **An untrusted relative path that must stay inside a root:** `normalizeRootRelativePath()`, `isPathInsideRoot()` in `src/shared/pathContainment.ts`
-- **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()`, `realpathThroughAncestor()` in `src/main/utils/real-path-containment.ts`
+- **A path from outside that must not reach `.git` (or any name a file system folds):** `hasGitMetadataSegment()`, `foldPathSegment()` in `src/shared/pathContainment.ts`
+- **Whether a path stays inside a root once symlinks resolve (main):** `resolvePathInRealRoot()`, `isPathWithin()`, `foldPathCase()` in `src/main/utils/real-path-containment.ts`; `realpathThroughAncestor()` in `src/shared/pathUtils.ts`
+- **A performance trace path a caller hands in (Feedback attach, discard):** `checkFeedbackTraceBundle()`, `feedbackTraceBundlePath()`, `recordFeedbackTraceBundle()`, `forgetFeedbackTraceBundle()` in `src/main/profiling/feedback-trace.ts`
 - **Remote worktree aliases:** `resolveWorktreeAliasesRemote()` in `src/main/utils/remote-git.ts`
 - **A path the user typed on the CLI:** `resolveCliPath(input)` in `src/cli/utils/parse.ts`
 - **An image file the user named on the CLI:** `readCliImageFile(input, maxBytes)` in `src/cli/utils/imageFiles.ts`
 - **Classifying a file by extension:** `getFileCategory()`, `isPreviewableFile()`, `matchesFileCategory()`, `getFileExtension()` in `src/shared/fileCategories.ts`
+- **Opening a caller's local path or `file:` URL with the OS (never launching it):** `openLocalPath()`, `isLaunchableLocalPath()`, `openExternalUrl()` in `src/main/utils/open-local-path.ts`, over `isLaunchableFile()` in `src/shared/fileCategories.ts`
+- **A `file://` URL to a path and back (incl. Windows drives):** `fileUrlToPath(href)`, `pathToFileUrl(path)`, `windowsDrivePathToFileUrl(path)` in `src/renderer/utils/openFileUrl.ts`.
 - **Reading a zip from disk:** `readZipArchive()`, `extractZipTo()`, `isUnsafeZipEntryName()` in `src/main/utils/zip-archive.ts` (never `adm-zip`)
+- **A file handed back as a marker instead of its bytes (parquet, SQLite):** `createPreviewMarkerCodec()`, `utf8ToHex()`, `hexToUtf8()` in `src/shared/previewMarker.ts`
 - **Parsing a base64 data URL (an image payload):** `parseBase64DataUrl()`, `mediaSubtype()` in `src/shared/dataUrl.ts` (never a `base64,(.+)$` capture)
 - **Guarding a serialized JSON payload before it overwrites a file:** `assertSerializedJsonIsSafe(serialized, target)` in `src/shared/jsonUtils.ts`
 - **UTF-8 size of a JSON payload (a message size cap):** `serializedJsonByteLength(value)` in `src/shared/jsonUtils.ts`
 - **Deterministic JSON (same value, same text):** `canonicalJson(value)` in `src/shared/canonicalJson.ts` (never hash or compare `JSON.stringify` output)
 - **Redacting secrets from text you persist or show:** `redactSecrets(text, opts?)`, `passesLuhn()` in `src/shared/redactSecrets.ts`
+- **A terminal screen kept beside a failure message, and an error message shown inline:** `formatFailureScreen()`, `inlineErrorText()`, `withoutFailureScreen()` in `src/shared/failureScreen.ts`
 - **An Error in a log entry or JSON payload:** `serializeError()`, `toLoggableData()` in `src/shared/serializeError.ts`
 - **An ssh run that never reached the host (exit 255):** `isSshConnectionFailure()`, `describeSshUnreachable()` in `src/shared/sshConnection.ts`
-- **Telling the user an SSH remote went down:** `noteSshExit()`, `checkSshRemote()` in `src/main/ssh-reachability.ts`; run one-shot remote commands with `execSshCommand()` in `src/main/utils/ssh-command-builder.ts`
+- **Telling the user an SSH remote went down:** `noteSshExit()`, `checkSshRemote()`, `noteHostConnection()`, `checkRemoteLink()`, `noteHostedAgentsChanged()` in `src/main/ssh-reachability.ts`; run one-shot remote commands with `execSshCommand()` in `src/main/utils/ssh-command-builder.ts`
 - **Strip ANSI / collapse progress overwrites:** `stripAnsiCodes()`, `processCarriageReturns()` in `src/shared/stringUtils.ts`
+- **Showing untrusted text a person must approve (hidden characters marked):** `revealHiddenCharacters()` in `src/shared/stringUtils.ts`
+- **Collapsing runs of whitespace to compare two texts:** `collapseWhitespace()` in `src/shared/stringUtils.ts`
 - **Lines added and removed by a save:** `countLineChanges(before, after)` in `src/shared/lineChanges.ts`
 - **Matching error patterns against an agent's exit output:** `stripJsonEventLines()` in `src/shared/agentErrorPatterns.ts`
 - **Reading what a TUI painted from a raw capture:** `replayTerminalScreen(raw)`, `capturedAlternateScreen(raw)` in `src/maestro-p/screen-replay.ts`
 - **Loading a LOCAL file tree:** `walkLocalFileTree()` in `src/main/utils/file-tree-walk.ts`, wrapped by `loadFileTree()` in `src/renderer/utils/fileExplorer.ts`
 - **Telling the Files panel a file appeared or vanished:** `requestFileTreeRefresh(sessionId)` in `src/renderer/utils/fileTreeRefresh.ts` (renderer) and `nudgeFileTreeForPaths(paths)` in `src/cli/services/file-tree-refresh.ts` (CLI)
+- **When the Files panel refreshes on its own:** `fileTreeAutoRefreshSeconds(session)`, `DEFAULT_FILE_TREE_AUTO_REFRESH_SECONDS` in `src/renderer/components/FileExplorerPanel/hooks/useAutoRefresh.ts`
 - **Whether an absolute path exists, from render code:** `checkPathExists()` in `src/renderer/utils/fileLinks/pathExistence.ts`, `usePathExistence(sshRemoteId?)` in `src/renderer/hooks/utils/usePathExistence.ts` (async-filled cache; `remarkFileLinks` links a spaced absolute path only once it exists)
 - **Finding the file a markdown embed points at:** `resolveEmbedCandidates()`, `findFirstExistingPath()`, `parseEmbedAltSize()` in `src/renderer/utils/fileLinks/embedResolution.ts`
 - **Delete the file the user is previewing:** `requestFileDeletion()` in `src/renderer/services/fileDeletion.ts`
+- **A file action that hands a file to this machine (open, reveal, play, save a copy):** `openFileInDefaultApp()`, `revealInFileManager()`, `openFolderInFileManager()`, `openFileInMaestroBrowser()`, `saveCopyOfFile()`, `resolveOpenSource()`, `fetchLocalCopy()` in `src/renderer/services/fileActions.ts`
+- **Saving an opened copy of a remote file back to the remote:** `createRemoteCopyWriteBack()`, `keptVersionPath()`, `REMOTE_COPY_WRITE_BACK_MAX_BYTES` in `src/main/utils/remote-copy-write-back.ts`; `replaceFileRemoteIfUnchanged()`, `sha256FileRemote()` in `src/main/utils/remote-fs.ts`
+- **Sending opened remote copies' unsent saves before the app quits:** `flushRemoteCopyWriteBack()`, `pendingRemoteCopyWrites()` in `src/main/ipc/handlers/filesystem.ts`; `REMOTE_WRITE_FLUSH_MAX_MS`, `REMOTE_WRITE_REPORT_MAX_MS` in `src/main/app-lifecycle/quit-handler.ts`
+- **Counting a folder's files for the Files panel footer (capped):** `DIRECTORY_SIZE_MAX_FILES` in `src/main/ipc/handlers/filesystem.ts` (`fileCountCapped` on the `fs:directorySize` answer)
+- **A Browse button on a folder or file field:** `pickDirectory()`, `pickFile()`, `pathPickerRemoteId(session)`, `fileOpRemoteId()` in `src/renderer/services/pathPicker.ts`; `<PathPickerModal>`, `<PathPickerHost>` in `src/renderer/components/PathPicker/PathPickerModal.tsx`
+- **Which SSH remote an agent's files are on (renderer):** `getSessionSshRemoteId(session)`, `isSessionRemote(session)` in `src/renderer/utils/sessionHelpers.ts`
 
 #### Main process: stores, persistence, platform
 
 - **Hosting untrusted content in an isolated `<webview>` guest:** `hardenIsolatedGuestSession()`, `hardenIsolatedGuestWebPreferences()`, `attachIsolatedGuestSecurity()`, `isolatedGuestDocument()` in `src/main/utils/isolated-guest.ts`; `isDetachedWebviewError()` in `src/renderer/utils/webviewErrors.ts`
+- **Web permissions on a browser-tab session:** `hardenBrowserTabSession()`, `isBrowserTabPermissionGranted()` in `src/main/app-lifecycle/guest-webview-security.ts`
+- **Whether a Coworking browser op skips the interaction gate and per-call approval:** `isUngatedBrowserOp(kind)`, `UNGATED_BROWSER_OP_KINDS` in `src/shared/coworkingBrowser.ts`
 - **One log entry as one JSON line (`--log-format json`):** `formatJsonLogLine()`, `buildJsonLogLine()`, `JSON_LOG_ID_FIELDS` in `src/shared/jsonLogLine.ts`
 - **A CLI verb that needs the desktop app, when the app is absent:** `exitIfMaestroNotRunning(error, options)` / `failFromError()` in `src/cli/services/session-command.ts`, over `MaestroNotRunningError`
 - **An explicit data directory on a CLI verb (`--data-dir`):** `applyDataDirOption()`, `requireDataDirOrExit()` in `src/cli/services/data-dir-option.ts` (sets `MAESTRO_USER_DATA` so every reader agrees; never creates the folder)
 - **Reading or writing `maestro-agent-configs.json` without Electron:** `readAgentConfigsStoreFile(dataDir)`, `writeAgentConfigsStoreFile()` in `src/main/stores/agent-configs-store-file.ts`
 - **Reading or writing `maestro-sessions.json` without Electron:** `readSessionsStoreFile(dataDir)`, `writeSessionsStoreFile()` in `src/main/stores/sessions-store-file.ts`
 - **Maestro's data directory, without Electron:** `resolveUserDataDir(options?)`, `assertUserDataDirExists(dir)` in `src/shared/userDataDir.ts`
-- **Where the synced stores live (custom Storage Location):** `resolveSyncDir(userDataDir)`, `isValidSyncPath()`, `BOOTSTRAP_STORE_FILE` in `src/shared/syncPath.ts`; the CLI's `getSyncDir()` in `src/cli/services/storage.ts`
+- **Electron's userData directory from main code a worker thread also loads:** `getAppUserDataDir()` in `src/main/utils/app-user-data.ts`
+- **Where the synced stores live (custom Storage Location):** `resolveSyncDir(userDataDir)`, `isValidSyncPath()`, `BOOTSTRAP_STORE_FILE` in `src/shared/syncPath.ts`; the CLI's `getSyncDir()`, `getSyncDirFallbackReason()` in `src/cli/services/storage.ts`
 - **Deferred main-process store persistence:** `deferStoreWrites()` in `src/main/stores/deferred-writes.ts`, `flushPendingSessionWrites()` in `src/main/stores/instances.ts`
+- **Serving conf `get()` without re-reading the file:** `cacheStoreReads()`, `readDotPath()` in `src/main/stores/cached-reads.ts`
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`
-- **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
+- **Keeping an agent's file-tree scan out of storage and off the wire:** `withoutFileTreeCache()`, `holdsFileTreeCache()`, `unloadedFileTreeState()` in `src/shared/fileTreeCache.ts`
+- **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()`, `quarantineCorruptStore()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
+- **A JSON store file only the main process writes (read once, one queue, atomic replace):** `createJsonStoreFile()` in `src/main/utils/json-store-file.ts`
 - **Whether a SQLite error means the database file is damaged:** `isSqliteCorruptionError()` in `src/shared/sqliteErrors.ts`
+- **Telling a person SQLite found the database busy:** `isSqliteBusyError()` in `src/shared/sqliteErrors.ts`; `reportSqliteBusy()`, `describeSqliteBusy()`, `sqliteBusyMessage()` in `src/main/sqlite/sqlite-connection.ts`
+- **Whether a file is really a SQLite database:** `hasSqliteHeader()`, `isSqliteCandidateFile()`, `isSqlitePreviewMarker()` in `src/shared/sqlite/preview.ts`; `isSqliteDatabaseFile()` in `src/main/sqlite/sqlite-detect.ts`
+- **Opening a user's SQLite database to read it:** `openSqliteDatabase()`, `getSqliteDatabase()`, `closeAllSqliteDatabases()` in `src/main/sqlite/sqlite-database.ts`; a second connection via `openReadOnlySqliteConnection()` in `src/main/sqlite/sqlite-connection.ts`
+- **A SQLite database's header facts and integrity check:** `readSqliteDatabaseSummary()` in `src/main/sqlite/sqlite-summary.ts`; `checkSqliteIntegrity()` in `src/main/sqlite/sqlite-integrity.ts`; `sqliteSummaryFacts()`, `formatSqliteIntegrity()` in `src/shared/sqlite/summary.ts`
+- **Listing a SQLite database's tables, views, indexes, and triggers:** `listSqliteObjects()`, `readSqliteObjectStats()`, `readAllSqliteObjectStats()` in `src/main/sqlite/sqlite-objects.ts`; `groupSqliteObjects()`, `formatSqliteRowCount()` in `src/shared/sqlite/objects.ts`
+- **Putting a table or column name into SQLite SQL text:** `quoteSqliteIdentifier()`, `sqliteIdentifierForSql()`, `isSqliteKeyword()` in `src/shared/sqlite/sql.ts`
+- **Reading a window of a SQLite table's rows (LIMIT/OFFSET, server-side sort):** `readSqliteRows()` in `src/main/sqlite/sqlite-rows.ts`; `formatSqliteCell()`, `formatSqliteRecordValue()` in `src/shared/sqlite/cells.ts`
+- **Counting a SQLite table's rows (a converging count):** `countSqliteRows()`, `countAllSqliteRows()` in `src/main/sqlite/sqlite-count.ts`; `sqliteConvergingRowTotal()` in `src/shared/sqlite/objects.ts`
+- **Filtering a SQLite table's rows (a parameterised WHERE):** `buildSqliteFilter()`, `compileSqliteFilter()`, `sqliteRegexpTest()` in `src/shared/sqlite/filter.ts`
+- **Reading a SQLite object's columns, keys, and CREATE SQL:** `readSqliteObjectSchema()`, `readSqliteColumnCatalog()` in `src/main/sqlite/sqlite-schema.ts`; `sqliteColumnAffinity()`, `formatSqliteForeignKey()` in `src/shared/sqlite/schema.ts`
+- **Saving a SQLite BLOB to a file:** `saveSqliteBlob()`, `readSqliteBlob()` in `src/main/sqlite/sqlite-blob.ts`; `formatSqliteBlobHex()`, `sqliteBlobFileName()` in `src/shared/sqlite/cells.ts`
+- **Whether a tab may write to a SQLite database (the "Enable editing" unlock):** `enableSqliteEditing()`, `disableSqliteEditing()`, `requireSqliteEditing()` in `src/main/sqlite/sqlite-editing.ts`
+- **Starting a write to a SQLite database (backup before the first write):** `beginSqliteWrite()`, `beginSqliteWorkerWrite()` in `src/main/sqlite/sqlite-editing.ts`; `ensureSqliteBackup()`, `sqliteBackupPath()` in `src/main/sqlite/sqlite-backup.ts`
+- **Whether a SQLite table's rows can be edited, and how an edit names a row:** `resolveSqliteEditability()`, `reachableRowidAlias()`, `sqliteRowKeyCondition()` in `src/main/sqlite/sqlite-identity.ts`; `formatSqliteEditability()`, `sqliteEditabilityLabel()` in `src/shared/sqlite/schema.ts`
+- **Changing one cell of a SQLite table (the single-row UPDATE):** `updateSqliteCell()` in `src/main/sqlite/sqlite-row-edit.ts`; `sqliteCellEditRefusal()`, `sqliteCellEditValue()`, `sqliteCellEditValueProblem()`, `sqliteRowKeyAt()` in `src/renderer/components/SqliteViewer/sqliteCellEdit.ts`
+- **Inserting or deleting one row of a SQLite table (the single-row INSERT and DELETE):** `insertSqliteRow()`, `deleteSqliteRow()` in `src/main/sqlite/sqlite-row-edit.ts`; `sqliteInsertValues()`, `sqliteInsertColumns()` in `src/renderer/components/SqliteViewer/sqliteRowInsert.ts`
+- **Refusing a write to a SQLite row that changed since it was read:** `sqliteRowVersion()`, `registerSqliteRowVersion()`, `sqliteRowVersionExpression()`, `sqliteRowVersionParam()` in `src/main/sqlite/sqlite-row-version.ts`; `sqliteStaleRowMessage()`, `isSqliteStaleRowMessage()` in `src/shared/sqlite/schema.ts`
+- **Undoing the last write to a SQLite table:** `undoSqliteEdit()` in `src/main/sqlite/sqlite-row-edit.ts`; `sqliteUndoLabel()`, `sqliteUndoOutcome()`, `sqliteUndoUnavailableMessage()` in `src/shared/sqlite/undo.ts`; `isSqliteUndoChord()` in `src/renderer/components/SqliteViewer/sqliteUndo.ts`
+- **What a column's affinity does to a value written into it (refuse, never store converted):** `sqliteStoredValueProblem()`, `sqliteRowidValueProblem()`, `isNumericSqliteAffinity()` in `src/shared/sqlite/affinity.ts`; `sqliteNumberTextProblem()` in `src/shared/sqlite/filter.ts`
+- **Running a read-only SQL statement a person wrote:** `runSqliteQuery()`, `cancelSqliteQuery()` in `src/main/sqlite/sqlite-query.ts`; `sqliteQueryRefusal()`, `sqliteQueryParameters()`, `sqliteQueryBinding()` in `src/shared/sqlite/query.ts`; `startSqliteWorkerTask()` in `src/main/sqlite/sqlite-worker-runner.ts`
+- **Dry-running a SQLite statement (what it is, what it would change, nothing changed):** `classifySqliteStatement()`, `sqliteSchemaChanges()`, `formatSqliteDryRun()`, `sqliteDryRunRefusal()` in `src/shared/sqlite/dryRun.ts`; `beginSqliteWorkerTrial()` in `src/main/sqlite/sqlite-editing.ts`
+- **An explicit SQLite transaction (Begin, statements in it, Commit or Roll back):** `beginSqliteTransaction()`, `runInSqliteTransaction()`, `endSqliteTransaction()` in `src/main/sqlite/sqlite-transaction.ts`; `sqliteTransactionEndReason()` in `src/shared/sqlite/transaction.ts`
+- **Where a SQLite query error points in the statement:** `sqliteQueryErrorLocation()`, `sqliteSyntaxErrorOffset()`, `withSqliteErrorOffset()`, `splitSqliteErrorOffset()` in `src/shared/sqlite/queryError.ts`; `sqliteTokens()` in `src/shared/sqlite/tokens.ts`
+- **Reading a SQLite query plan (`EXPLAIN QUERY PLAN` as a tree):** `sqliteQueryPlanSteps()`, `formatSqliteQueryPlan()`, `sqliteQueryPlanStepKind()` in `src/shared/sqlite/plan.ts`
+- **A SQLite database's query history:** `readSqliteQueryHistory()`, `forgetSqliteQueryHistory()`, `getSqliteQueryHistory()` in `src/main/sqlite/sqlite-query-history.ts`; `addSqliteQueryHistoryRun()`, `formatSqliteQueryHistoryOutcome()` in `src/shared/sqlite/history.ts`
+- **A SQLite database's statement log (every write):** `logSqliteStatement()`, `readSqliteStatementLog()`, `onSqliteStatementLogged()` in `src/main/sqlite/sqlite-statement-log.ts`; `sqliteRowWriteStatement()`, `sqliteStatementLogStanding()` in `src/shared/sqlite/statementLog.ts`
+- **Writing rows to CSV or JSON Lines (a data viewer's Export):** `createTabularRowEncoder()`, `csvField()`, `tabularExportFormatForPath()`, `TABULAR_EXPORT_FILE_FILTERS` in `src/shared/tabularExport.ts`; a SQLite result via `exportSqliteQuery()` in `src/main/sqlite/sqlite-query.ts`
+- **A main-process resource the renderer addresses by handle, closed when idle:** `createIdleHandleRegistry()` in `src/main/utils/idle-handle-registry.ts`
 - **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
 - **Reading a page of a transcript's messages:** `forEachJsonlLine()`, `readFirstJsonlLine()` in `src/main/utils/jsonl-stream.ts`, feeding `MessagePageCollector` in `src/main/storage/base-session-storage.ts`
+- **Reading a transcript file that may be missing or unreadable:** `forEachLocalTranscriptLine()`, `readLocalTranscript()`, `readRemoteTranscript()`, `isMissingFileError()`, `isMissingRemoteFile()` in `src/main/storage/transcript-read.ts`
 - **A cache derivation upgrade that survives being killed:** `isDerivationStale()`, `accumulateUpgradeBaseline()`, `finishDerivationUpgrade()` in `src/main/utils/statsCache.ts`; `createCacheCheckpointer()` in `src/main/utils/cache-checkpointer.ts`
 - **Showing the progress of a long scan:** `withStatsIndexing()` in `src/main/stats/stats-indexing.ts`, `summarizeStatsIndexing()` in `src/shared/statsIndexing.ts`, drawn by `<StatsIndexingHost>`
 - **Context and grouping on Sentry events:** `v8OomFingerprint()` in `src/shared/sentryGrouping.ts`; `sentryUserForInstallation()`, `workContextTags()`, `agentInventoryTags()` in `src/shared/sentryContext.ts`; `setSentryScopeTags()`, `noteSentryWorkReasons()`, `noteSentryAgentInventory()` in `src/main/utils/sentry.ts`
@@ -140,22 +196,27 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Recording or reading the User Journey:** `sanitizeJourneyUrl()`, `formatJourneyLine()`, `parseJourneyJsonl()` in `src/shared/userJourney.ts`; `appendJourneyEntry()` in `src/main/user-journey-manager.ts`; `recordJourney()` in `src/renderer/services/userJourney.ts`
 - **What happened around an agent, in time order (the timeline):** `readTimeline()` in `src/shared/maestro-lib/store/read-timeline.ts`; `selectTimelineEvents()`, `formatTimelineLine()`, `timelineFollowUps()` in `src/shared/timeline.ts`; `findHistoryEntries()` in `src/shared/maestro-lib/store/read-history.ts`
 - **A project's shared History (`.maestro/history/history-<label>.jsonl`):** `appendSharedHistoryEntry()`, `readSharedHistoryEntries()`, `hostSharedHistoryLabel()` in `src/shared/maestro-lib/store/shared-history.ts`; `filterHistoryEntries()`, `mergeEntriesById()` in `src/shared/history.ts`
+- **Whether an agent shares its History into the project folder:** `sharesHistoryInProject()`, `withHistorySharedInProject()` in `src/shared/historySharing.ts`; `withOwnHostAsLocal()` in `src/shared/history.ts`
 - **A `--since` / `--until` time the user typed (`30m`, `2h`, `1w`, ISO, epoch):** `parseTimeInput()`, `parseDurationInput()` in `src/shared/timeInput.ts`
 - **Serializing async work on one entity:** `createKeyedWriteQueue()` in `src/shared/keyedWriteQueue.ts` (main imports it via `src/main/utils/atomic-json-store.ts`)
-- **Capping stored tool output:** `compactToolOutput()`, `compactToolInput()`, `compactSessionToolOutputs()` in `src/shared/toolOutput.ts`
+- **Capping stored tool output:** `compactToolOutput()`, `compactToolInput()`, `compactSessionToolOutputs()`, `compactLogToolOutputs()` in `src/shared/toolOutput.ts`
 - **Merging browser-deferred conversations:** `projectWebSession()`, `readDeferredContent()`, `mergeDeferredSessionContent()` in `src/main/stores/deferred-session-content.ts`, over `mergeDeferredItems()` in `src/shared/deferredSessionContent.ts`
 - **Turning Live mode (the web interface) or Remote Control (its tunnel) on or off:** `getLiveModeController()`, `createLiveModeController()` in `src/main/web-server/live-mode.ts`; wire types in `src/shared/liveMode.ts`
 - **Asking a renderer window a question from main (request, reply, timeout):** `requestFromRenderer(win, channel, { fallback, parse, timeoutMs, args })` in `src/main/web-server/callbacks/remoteRequest.ts`
 - **HTTP request from the main process:** `fetchWithTimeout()`, `isFetchTimeoutError()` in `src/main/utils/fetchWithTimeout.ts` (never a bare `fetch()`)
+- **Async results cached by key for a window (in-flight shared, failures dropped):** `createTtlPromiseCache(ttlMs, keep?, { failureTtlMs }?)` in `src/main/utils/ttl-promise-cache.ts`
 - **A git query the UI polls in the background:** `execGitReadOnly()`, `isGitTimeout()`, `READ_ONLY_GIT_TIMEOUT_MS` in `src/main/utils/remote-git.ts`
+- **A ref or branch a caller hands to git:** `gitRefArgProblem()` in `src/shared/gitUtils.ts` (a caller's path goes after `--`)
 - **SSH remote lookup:** `getSshRemoteById()` in `src/main/stores/getters.ts`
 - **Yielding to the event loop during long main-process work:** `yieldToEventLoop()` in `src/main/utils/concurrency.ts`
 - **Platform detection:** `isWindows()`, `isMacOS()`, `isLinux()` in `src/shared/platformDetection.ts`; renderer-only `isWindowsPlatform()` and siblings in `src/renderer/utils/platformUtils.ts` (never `process.platform` in the renderer)
+- **A chokidar watcher that only needs the top of a big tree:** `SHALLOW_WATCH_OPTIONS` in `src/main/utils/watcher-ignore.ts`
 - **Encore Feature flags and their defaults:** `ENCORE_FEATURE_DEFAULTS`, `resolveEncoreFeatures(raw)`, `isEncoreFeatureEnabled()`, `requireEncoreFeature()` in `src/shared/encoreFeatureDefaults.ts`; background services follow the flag via `createEncoreFeatureLifecycle()` in `src/main/encore-feature-lifecycle.ts`
 - **Whether a stored agent is live (a switched-off Pianola is dormant):** `filterLiveAgents()`, `isAgentDormant()` in `src/shared/agentVisibility.ts`; per process `getLiveSessions()` (main getters), `readLiveSessions()` (CLI storage), `useLiveSessions()` in `src/renderer/hooks/session/useLiveSessions.ts`
 - **A maestro-cli verb that belongs to an Encore Feature:** `encoreCommand()`, `requireEncore()`, `requireEncoreForOptions()` in `src/cli/utils/encore-gate.ts`
 - **Filing GitHub feedback (check gh, search, +1, submit):** `submitFeedbackConversation()`, `searchFeedbackIssues()` in `src/main/feedback/index.ts`
 - **Writing lifetime counters that must never go down:** `mergeUsagePeaks()` in `src/shared/usagePeaks.ts`, `mergeAutoRunStats()` in `src/shared/autoRunStatsMerge.ts`, enforced by `settings:set` in `src/main/ipc/handlers/persistence.ts`
+- **Launching Maestro from a Playwright spec on a throwaway data directory:** `isolatedLaunchEnv(dataDir)`, `FIRST_RUN_SEEN_SETTINGS` in `e2e/fixtures/isolation.ts` (also exported by `e2e/fixtures/electron-app.ts`; never redirect only `HOME`)
 
 #### Spawning and stopping agents (process, SSH, env, prompts)
 
@@ -164,9 +225,12 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Escaping for a Windows cmd.exe launch:** `escapeCmdArgs()` in `src/shared/maestro-lib/launch/windows-shell-escape.ts`, `windowsShellReason()`, `cmdShellArgProblem()`, `cmdShellArgsRefusal()` in `src/shared/maestro-lib/launch/windows-command.ts`
 - **Launching an agent (env layers, prompt delivery, SSH target):** `buildAgentLaunchPlan()` in `src/shared/maestro-lib/launch/launch-plan.ts` (env in `launch/env.ts`, prompt in `launch/prompt-delivery.ts`, SSH target in `launch/ssh-remote-resolver.ts`)
 - **Whether a prompt fits on the command line:** `promptExceedsArgvLimit()`, `windowsCommandLineLength()`, `windowsQuotedArgLength()`, `WINDOWS_PROMPT_ARGV_MAX_CHARS`, `POSIX_PROMPT_ARGV_MAX_BYTES` in `src/shared/maestro-lib/launch/prompt-delivery.ts` (Windows: as libuv quotes it; POSIX: UTF-8 bytes)
+- **Writing a prompt to a CLI's stdin (raw text or a message envelope):** `encodeStdinPrompt()` in `src/shared/maestro-lib/launch/prompt-delivery.ts`, over a definition's `stdinPromptArgs` / `stdinPromptEncoder`
+- **Joining a provider's partial text into an answer:** `streamsTokenDeltaText()` in `src/shared/agentConstants.ts`
+- **Which partial text is a thinking chunk:** `partialTextRoute(provider, isReasoning)` in `src/shared/maestro-lib/turns/turn-events.ts`
 - **Starting, streaming, stopping and resuming an agent turn:** `startTurn()` in `src/shared/maestro-lib/run/start-turn.ts`, `runTurn()` / `runToCompletion()` in `src/shared/maestro-lib/run/run-to-completion.ts`, `planSessionTurn()` in `src/shared/maestro-lib/run/session.ts`
 - **Stopping a process (interrupt, terminate, kill the tree):** `stopProcess(target, options)` in `src/shared/maestro-lib/control/termination.ts` (never a bare `kill('SIGTERM')` + `setTimeout`)
-- **Whether a Claude turn runs the maestro-p TUI or `claude --print`:** `resolveClaudeSpawnModeCore()`, `applyClaudeSpawnDecision()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
+- **Whether a Claude turn runs the maestro-p TUI or `claude --print`:** `resolveClaudeSpawnModeCore()`, `applyClaudeSpawnDecision()` in `src/shared/maestro-lib/launch/interactive-mode.ts`; `claudeTurnMayUseTui()`, `getClaudeTokenMode()`, `isMaestroPBinaryPath()` in `src/shared/claudeTokenMode.ts`
 - **Which Grok route a turn runs on (ACP or native headless):** `selectGrokRoute()`, `beginGrokAcpNegotiation()`, `completeGrokAcpNegotiation()`, `grokAcpProcessSpec()`, `grokAcpRouteOptions()`, `isGrokRouteDecisionCurrent()` in `src/shared/maestro-lib/grok/route.ts`
 - **The host seams of the Grok ACP route (digest, effect authority):** `sha256Hex()`, `grokInstallationId()`, `GrokEffectAuthority`, `grokEffectGranted()` in `src/shared/maestro-lib/grok/host-seams.ts`
 - **Running a provider probe (bounded, cancellable, Grok refused):** `runProviderProbe()`, `ProviderProbeRefusedError` in `src/main/agents/grok-probe.ts`
@@ -174,28 +238,66 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Timing out a supervised agent process:** `createIdleWatchdog()` in `src/main/utils/idle-watchdog.ts`, events in `src/main/utils/agent-liveness.ts` (the budget is silence, not wall clock)
 - **A one-shot answer from a cheap model (no tab, no tools):** `window.maestro.context.groomContext()` with `cheapTurn` / `readOnly` / `disableTools` / `timeoutMs`, over `groomContext()` in `src/main/utils/context-groomer.ts`
 - **Whether a working directory can be spawned into:** `unusableCwdReason(cwd)`, `unusableDirectoryReason(dir, label)` in `src/main/process-manager/utils/spawnCwd.ts`
+- **Which binary an agent's turn runs (its own custom path first):** `resolveAgentBinary()` in `src/shared/maestro-lib/launch/agent-binary.ts`
 - **Whether an agent is working right now (main process):** `isAgentBusy()`, `isAiTabProcessActive()` in `src/main/utils/agent-busy.ts` (never the persisted `state`)
 - **Shell escape:** `shellEscape()`, `shellEscapeArgs()`, `shellEscapeForDoubleQuotes()` in `src/main/utils/shell-escape.ts`
 - **Resuming a provider session a background synopsis may still hold:** `awaitSynopsisWriters()` in `src/main/process-manager/utils/synopsisWriterGate.ts` (already called by `process:spawn`; no per-send-path busy check)
 - **A path handed to a REMOTE shell (`cd`, `ls`, `stat` over SSH):** `shellEscapeRemotePath()` in `src/main/utils/shell-escape.ts` (`shellEscape()` stops `~` from expanding)
+- **Template variables in a shell command:** `substituteShellTemplateVariables()`, `ShellTemplateError` in `src/shared/shellTemplateVariables.ts`
 - **SSH connection options (`ssh -o`):** `resolveSshOptions()`, `buildSshOptionArgs()`, `validateSshOption()` in `src/shared/sshOptions.ts`
 - **A one-shot SSH command that must find a binary the user installed:** `wrapRemoteCommandWithPath()` in `src/shared/maestro-lib/launch/ssh-command-builder.ts`
 - **Finding the `maestro-cli host` on an SSH remote (Federation):** `discoverRemoteHost()`, `startRemoteHost()`, `remoteVersionSkew()`, `buildRemoteMaestroCliScript()`, `buildRemoteScriptArgs()` in `src/shared/maestro-lib/client/remote-discovery.ts`
-- **Forwarding a Federation remote's host to the laptop:** `getSshForwardManager().acquire(remote)`, `buildSshForwardArgs()` in `src/shared/maestro-lib/client/ssh-forward.ts`
+- **Forwarding a Federation remote's host to the laptop:** `getSshForwardManager().acquire(remote)`, `SshForwardLease.setBackoffCeiling()`, `buildSshForwardMasterArgs()`, `buildSshMuxArgs()`, `buildSshForwardArgs()` in `src/shared/maestro-lib/client/ssh-forward.ts`
 - **Which env vars a Federation lift sends:** `planLiftEnv()`, `providerSessionDirSelector()`, `liftSessionDirProblem()` in `src/shared/maestro-lib/agents/lift-env.ts`
-- **A lifted agent's pointer and send refusal (Federation):** `readLiftedTo()`, `liftedSendRefusal()`, `liftedAgentRef()`, `liftedOwnerOfProcess()`, `peerAgentRef()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
-- **Planning a Federation lift (refusals, payload, plan):** `liftRefusal()`, `planAgentLift()`, `liftRemoteCwd()`, `liftSshRemoteId()` in `src/shared/maestro-lib/agents/lift-plan.ts`; `liftBusyReason()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
+- **A lifted agent's pointer and send refusal (Federation):** `readLiftedTo()`, `hostedPointer()`, `liftedSendRefusal()`, `liftedAgentRef()`, `liftedOwnerOfProcess()`, `peerAgentRef()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
+- **Planning a Federation lift (refusals, payload, plan):** `liftRefusal()`, `planAgentLift()`, `liftRemoteCwd()`, `liftedAutoRunFolder()`, `liftSshRemoteId()`, `LiftPlanStay` in `src/shared/maestro-lib/agents/lift-plan.ts`; `liftBusyReason()` in `src/shared/maestro-lib/agents/lift-pointer.ts`
+- **Importing a lifted agent on a host (headless or desktop, `import_agent`):** `planAgentImport()` in `src/shared/maestro-lib/agents/import-plan.ts`; `importAgentIntoDesktop()` in `src/main/federation/import-agent.ts`; `importInputFromMessage()` in `src/shared/maestro-lib/runtime/server-requests.ts`
 - **Running a Federation lift (CLI and desktop Move to Host):** `runLift()`, `formatLiftPlan()`, `LiftRunError`, `providerEnvVarsOf()` in `src/shared/maestro-lib/agents/lift-run.ts`; `liftAgentFromDesktop()` in `src/main/federation/lift.ts`
-- **A `peer:agent` target on the CLI (Federation):** `routeAgentTarget()`, `resolvePeerAgent()`, `withPeerAgent()`, `connectPeer()`, `listHostAgents()`, `listFederationPeers()`, `findPeerRemote()`, `peerIdFor()`, `watchPeerConnection()`, `hostCallError()`, `peerErrorCode()` in `src/cli/services/peer-resolver.ts`
+- **Moving a hosted agent back from its host (CLI and desktop Move Back from Host):** `runReturnFromHost()`, `withReturnedFromHost()`, `readReturnedFromHost()` in `src/shared/maestro-lib/agents/lift-return.ts`; `returnAgentFromDesktop()` in `src/main/federation/lift.ts`
+- **A held queued message across Move to Host and Move Back (`import-held`):** `HOST_CAPABILITIES`, `HostCapability` in `src/shared/maestro-lib/client/types.ts`; `ReturnedHeldItem`, `ReturnedFromHost.heldQueue` in `src/shared/maestro-lib/agents/lift-return-record.ts`
+- **Replacing the copy an earlier Move Back left on a host (Federation):** `staleCopyMismatch()` in `src/shared/maestro-lib/agents/import-plan.ts`; `keepDivergentHostTabs()`, `HostTabMerge` in `src/shared/maestro-lib/agents/lift-run.ts`; `formatHostTabMerge()` in `src/shared/maestro-lib/agents/lift-plan.ts`
+- **Whether one transcript holds another (two copies of one tab):** `transcriptContains()`, `containingTranscript()`, `furtherTranscript()`, `conversationTurns()`, `TranscriptMatchOptions` in `src/shared/maestro-lib/agents/lift-return-record.ts`
+- **Removing an agent (busy check, its files, a peer's agent):** `runningTurnWhere()` in `src/shared/maestro-lib/agents/lift-pointer.ts`; `removeAgentFiles()` in `src/shared/maestro-lib/agents/removal-files.ts`; `removeAgent()` in `src/cli/commands/remove-agent.ts`
+- **Keeping a hosted agent's settings on its host (Federation):** `planLiftedSettingsSync()`, `liftFollowUpPatch()` in `src/shared/maestro-lib/agents/lift-settings-sync.ts`; `startLiftedAgentSettingsSync()` in `src/renderer/services/liftedAgentSettingsSync.ts`
+- **A `peer:agent` target on the CLI (Federation):** `routeAgentTarget()`, `resolvePeerAgent()`, `withPeerAgent()`, `connectPeer()`, `listHostAgents()`, `listFederationPeers()`, `findPeerRemote()`, `peerIdFor()`, `watchPeerConnection()`, `liftedPeerTarget()`, `hostCallError()` in `src/cli/services/peer-resolver.ts`
 - **Connecting to a Federation peer's host (CLI and desktop):** `connectPeerClient()`, `federationPeersOf()`, `peerIdFor()`, `peerForwardError()`, `watchPeerConnection()`, `PeerConnectError` in `src/shared/maestro-lib/client/peer-connection.ts`
 - **Driving a Federation peer's agent (CLI and desktop):** `runPeerAgentAction()`, `parsePeerAgentAction()` in `src/shared/maestro-lib/client/peer-actions.ts`; `PeerMirrorService.act()` in `src/main/federation/`
 - **Mirroring a Federation peer in memory (desktop):** `applyPeerEvent()`, `mirrorKey()`, `replacePeerAgents()` in `src/shared/maestro-lib/client/peer-mirror.ts`; `foldLiveTurn()`, `coalesceTurnEvents()` in `src/shared/maestro-lib/client/live-turn.ts`; `getPeerMirrorService()` in `src/main/federation/index.ts`
+- **How often the peer mirror redials a host that is down:** `MIRROR_IDLE_REDIAL_MAX_MS` in `src/main/federation/peer-mirror-service.ts`; `noteHostedAgentsChanged()` in `src/main/federation/index.ts`; `withHostedAgentsNote()` in `src/main/ipc/bootstrap/sessions-persisted.ts`
+- **The peer mirror's History cache (a host announcing a History write, merged pushes):** `MIRROR_UNANNOUNCED_HISTORY_TTL_MS` in `src/main/federation/peer-mirror-service.ts`; `MIRROR_HISTORY_PUSH_MERGE_MS` in `src/shared/maestro-lib/client/peer-mirror.ts`
+- **How an item left a host's queue (started or removed):** `queueExitOf()` in `src/shared/maestro-lib/client/peer-mirror.ts`; `desktopQueueChanges()`, `toQueuedItemSnapshot()` in `src/shared/queueSnapshot.ts`; `broadcastDesktopQueueChanges()` in `src/main/web-server/queue-change-broadcast.ts`
+- **A desktop host's queue frames as changes (a sequence, a client capability):** `QUEUE_CHANGES_QUERY_PARAM`, `QueueChangesFrame` in `src/shared/queueSnapshot.ts`; `queueChangesSeq()`, `queueChangesSeqs()`, `recordFramedQueue()`, `forgetFramedQueue()` in `src/main/web-server/queue-change-frames.ts`
 - **Installing maestro-cli on an SSH remote (Federation):** `setupRemoteHost()`, `installRemoteCli()`, `resolveLocalCliBundle()` in `src/shared/maestro-lib/client/remote-install.ts`; `setupHostFromDesktop()` in `src/main/federation/setup-host.ts`
 - **Keeping a Federation host running across reboots (service):** `installRemoteService()`, `buildRemoteServiceScript()`, `describeRemoteService()` in `src/shared/maestro-lib/client/remote-service.ts`
 - **Automatic Federation (keep hosts, install, move SSH agents):** `AutoFederationCoordinator` in `src/main/federation/auto-federation.ts`; `useFederationAutoStore` in `src/renderer/stores/federationAutoStore.ts`; types in `src/shared/federationAuto.ts`
 - **Whether an SSH remote takes part in Federation:** `isFederationRemote()`, `federationFieldFor()` in `src/shared/federationRemote.ts`
-- **How a local agent stands with Federation (badge, Move to Host):** `agentFederationStatus()`, `canMoveToHost()`, `isPeerFederated()` in `src/renderer/utils/peerMirrorView.ts`; `<FederationBadge>` in `src/renderer/components/SessionList/FederationBadge.tsx`
-- **Showing a Federation peer's mirrored agent (renderer):** `usePeerMirrorStore`, `isMirrorShown()` in `src/renderer/stores/peerMirrorStore.ts`; `buildMirrorViewSession()` in `src/renderer/utils/peerMirrorView.ts`; `gateKeyForMirror()` in `src/renderer/hooks/keyboard/mirrorKeyboardGate.ts`
+- **How a local agent stands with Federation (badge, Move to Host):** `agentFederationStatus()`, `canMoveToHost()`, `isPeerFederated()` in `src/renderer/utils/peerMirrorView.ts`; `<AgentModePill>` in `src/renderer/components/SessionList/AgentModePill.tsx`
+- **The words for an agent's mode (Local / Remote / Hosted):** `AGENT_MODE_LABELS`, `agentModePillLabel()`, `agentModeKind()` in `src/renderer/utils/agentModeLabels.ts`
+- **Which hosted agents the Left Bar shows, and adding one:** `liftedAgentKeys()`, `findLiftedAgent()` in `src/shared/maestro-lib/agents/lift-pointer.ts`; `listHostedAgents()`, `addHostedAgent()`, `resolveHostAgentRef()` in `src/renderer/services/hostedAgents.ts`
+- **A hosted agent drawn as its own Left Bar record (renderer):** `projectHostedSession()` in `src/renderer/utils/hostedSession.ts`; `startHostedAgentSync()` in `src/renderer/services/hostedAgentSync.ts`; `sendHostedTurn()`, `interruptHostedTurn()`, `openHostedTab()` in `src/renderer/services/hostedTurns.ts`
+- **Merging a host's transcript into a hosted tab (rows keep their objects):** `mergeHostedLogs()` in `src/renderer/utils/hostedSession.ts`; `MirrorTranscriptSlot.carryoverVersion` in `src/renderer/stores/peerMirrorStore.ts`; `LogEntry.rowKey` in `src/renderer/types/index.ts`
+- **Keeping a closed hosted tab closed while its host catches up:** `closingHostTabIds()`, `closeHostedTab()` in `src/renderer/services/hostedTurns.ts`, fed to `projectHostedSession()` as `closing`
+- **A tab opened while its host is down, made on the host later:** `openHostedTabOrHere()`, `createPendingHostTabs()`, `pruneHostedTabBooks()` in `src/renderer/services/hostedTurns.ts`; `readRequestedTabId()` in `src/shared/maestro-lib/client/types.ts`; `retargetLeafTab()` in `src/renderer/utils/panelLayout.ts`
+- **A turn queued on this machine for a hosted agent:** `handQueuedItemToHost()`, `sendTakenItemToHost()`, `isQueuedItemForHost()`, `queuedItemHostSend()`, `queuedItemHostOverrides()` in `src/renderer/services/hostedQueuedTurn.ts`; `ExecuteCommandQueued` in `src/main/web-server/types.ts`
+- **A hosted tab's line (later messages wait while a turn or a consult is on its way to the host):** `holdHostedTabLine()`, `releaseHostedTabLine()`, `hostedTabHoldsLine()`, `onHostedTabLineChanged()` in `src/renderer/utils/hostedTabLine.ts`; `hostedTabHasLocalLine()` in `src/renderer/services/hostedQueuedTurn.ts`
+- **The hand-over gap (a queued message that waits for its tab alone, and Stop in it):** `handOverItem()`, `HAND_OVER_MAX_MS`, `ExecutionQueue.handOver()`, `ExecutionQueue.interruptNext()` in `src/shared/maestro-lib/turns/queue.ts`
+- **Drawing a hosted tab busy through a hand-over:** `hostQueueHandOver()`, `UNNAMED_HAND_OVER_MS` in `src/renderer/utils/hostedSession.ts`; `hostedTabsHandingOver()`, `hostHandOverClock()`, `nextHostHandOverDeadline()`, `pruneHostHandOvers()` in `src/renderer/utils/hostedTabLine.ts`
+- **A message kept for a host that could not take it (auto-retry):** `keepTurnForHost()` in `src/renderer/services/hostedQueuedTurn.ts`; `outageCauseOf()`, `wouldAutoRetry()`, `settleRetryOnHost()`, `notOnHostText()`, `retryConnectionOutagesNow()` in `src/renderer/stores/retryStore.ts`
+- **The bubble of a message kept for a host (drawn once):** `keptForHostText()` in `src/renderer/services/hostedQueuedTurn.ts`; `HOST_COPY_CLOCK_SKEW_MS` in `src/renderer/utils/hostedSession.ts`; `LogEntry.keptForHost`, `QueuedItem.keptEntryId` in `src/renderer/types/index.ts`
+- **A hosted turn cut by a lost link to its host:** `hostLinkLostError()`, `noteHostedTurnsCut()`, `settleCutHostedTurns()`, `endHostedTurnsHere()`, `cutTurnUndecided()`, `pruneHostedLinkLoss()` in `src/renderer/services/hostedLinkLoss.ts`; `hostLinkNoteId()` in `src/renderer/utils/hostedSession.ts`
+- **Whether a kept message already ran on its host:** `cutTurnFate()` in `src/renderer/services/hostedLinkLoss.ts`; `userEntryAnswered()`, `turnEndedAfter()`, `isSameUserEntry()`, `turnEntryIdFor()` in `src/shared/maestro-lib/agents/rules.ts`; `invokeAsBridge()` in `src/main/web-server/handlers/bridgeHandlers.ts`
+- **The end mark of a turn, and reading a turn's fate from its transcript:** `markTurnEnded()`, `turnFateAfter()`, `userEntryFate()`, `tabRunsUserEntry()`, `TurnFate` in `src/shared/maestro-lib/agents/rules.ts`
+- **Where a turn begins and ends in a transcript (a queued steer's own turn):** `userTurnSpan()`, `isUserTurnStart()` in `src/shared/maestro-lib/agents/rules.ts`; `isSteerBubbleState()` in `src/shared/chatSteering.ts`
+- **An errored hosted turn, and who owns its retry:** `hostRetriesTurn()`, `hostRetryCardStands()` in `src/shared/maestro-lib/agents/rules.ts`; `HOST_RETRIES_TEXT`, `HOST_TURN_ERRORED_TEXT`, `hostSettledText()`, `heldOnHostOf()` in `src/renderer/stores/retryStore.ts`
+- **A host tab's pending-retry report (a desktop host's own Agent Resilience):** `noteAiTabRetryPending()`, `isAiTabRetryPending()`, `forgetAiTabRetryState()` in `src/main/utils/ai-tab-retry-state.ts`; `AITabRecord.retryPending` in `src/shared/maestro-lib/store/records.ts`
+- **Raising an agent error with no process behind it (the retry card follows):** `raiseAgentError()`, `wouldRecoverError()`, `RaisedErrorRetry`, `AgentErrorSurfacer` in `src/renderer/stores/retryStore.ts`
+- **Whether a host's report is current after a reconnect:** `hostReportIsCurrent()` in `src/shared/maestro-lib/client/peer-mirror.ts`; `requestPeerReport()` in `src/renderer/services/peerMirror.ts`; `HOST_REPORT_REQUEST_MS` in `src/renderer/services/hostedLinkLoss.ts`
+- **Whether a provider launch for a hosted agent may start on this machine:** `checkHostedAgentLaunch()` in `src/main/utils/hosted-launch-guard.ts`; `HOSTED_STATELESS_HELPERS`, `statelessHelperOfProcess()`, `hostedLaunchVerdict()` in `src/shared/maestro-lib/agents/hosted-launch.ts`
+- **Consulting a hosted agent on its host:** `askMirrorConsult()` in `src/renderer/services/peerMirror.ts`; `RemoteAskerContext`, `parseWireTranscript()`, `buildRemoteAskerKey()`, `parseWireAskerKey()` in `src/shared/crossAgentTypes.ts`; `cancelHostedConsults()` in `src/renderer/hooks/agent/useCrossAgentDispatch.ts`
+- **A completion callback for a turn dispatched to a hosted agent (`--notify-on-complete`):** `feedHostedTurnToDispatchCallbacks()` in `src/main/dispatch-callbacks/hosted-turn-feed.ts`
+- **A save on a hosted agent that waits for its host and answers the reason (no toast):** `saveQueuedItemEdit()` in `src/renderer/services/queuedPrompt.ts`; `renameHostedTabSettled()` in `src/renderer/services/hostedTurns.ts`; `actOnMirroredAgentQuietly()` in `src/renderer/services/peerMirror.ts`
+- **A hosted agent's History with this machine's Cue runs:** `withHostedCueRuns()`, `hostedCueScopeAgents()` in `src/main/utils/cue-history-merge.ts`
+- **The peer mirror's store and record adapters (renderer):** `usePeerMirrorStore`, `reducePeerMirrorPush()` in `src/renderer/stores/peerMirrorStore.ts`; `mirrorTab()`, `mirrorLogEntry()`, `mirrorUsageStats()` in `src/renderer/utils/peerMirrorView.ts`
 - **A loopback port for an SSH local forward:** `availableLocalPort()`, `waitForLocalPort()` in `src/shared/maestro-lib/client/local-port.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
 - **Expanding `{{INCLUDE:name}}` in a prompt:** `resolvePromptIncludes()`, `findPromptIncludeNames()` in `src/shared/promptIncludes.ts`
@@ -205,27 +307,35 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Who SENT this turn (Web Login attribution):** `getActingUser()` in `src/main/web-server/auth/acting-user.ts`; `noteTurnActor()`, `resolveTurnActor()`, `forgetAgentActors()` in `src/main/web-server/auth/turn-attribution.ts`
 - **An agent's effective environment:** `resolveAgentEnvironment()`, `isSecretEnvKey()`, `maskEnvValue()` in `src/shared/agentEnvironment.ts`, rendered by `<EnvVarList>` in `src/renderer/components/ui/EnvVarList.tsx`
 - **Whether a configured env value means "unset":** `isBlankEnvValue(value)`, `isBlankEnvKey(key)` and `stripBlankEnvVars(vars)` in `src/shared/agentEnvironment.ts`
+- **Masking every value of an env record (a support package, a log line):** `maskEnvVarValues(vars)`, `maskEnvRecords(value, key?)`, `isEnvRecord(key, value)` in `src/shared/agentEnvironment.ts`, used by `src/main/debug-package/collectors/settings.ts` and `src/main/ipc/handlers/agents.ts`
 - **Suggesting an env-var NAME:** `suggestEnvVarKeys()`, `PROVIDER_ENV_VAR_SUGGESTIONS`, `withBlankEnvVarRow()` in `src/shared/envVarCatalog.ts`, rendered by `<EnvVarKeyInput>` in `src/renderer/components/shared/EnvVarKeyInput.tsx`
 - **`.env` text for an env-var editor (Advanced mode):** `parseDotEnv()`, `serializeDotEnv()`, `envVarRecordsFingerprint()`, `validateEnvVarEntry()` in `src/shared/dotEnv.ts`, drawn by `<EnvVarsDotEnvInput>` / `<EnvVarsModeToggle>` in `src/renderer/components/shared/EnvVarsDotEnvInput.tsx`
 - **Assembling the prompt, arguments and launch request of a chat turn:** `assembleTurn()` in `src/shared/maestro-lib/turns/assemble.ts`
-- **Running a chat turn with no desktop (send, queue, stop, per-tab events):** `createRuntimeTurns()` in `src/shared/maestro-lib/runtime/turns.ts`
-- **Recording a finished turn (transcript, History, usage):** `createTurnRecorder()`, `buildTurnTranscript()` in `src/shared/maestro-lib/turns/record-turn.ts`
+- **Running a chat turn with no desktop (send, queue, stop, per-tab events):** `createRuntimeTurns()`, `MAX_WAITING_TURNS_PER_AGENT` in `src/shared/maestro-lib/runtime/turns.ts`; `installedMaestroPCandidates()` in `src/shared/maestro-lib/runtime/turn-options.ts`
+- **Steering a turn on this machine or a headless host (the local steering socket):** `steeringSocketPathFor()`, `steerOverSocket()`, `steeringTooLongResult()` in `src/shared/chatSteeringSocket.ts`; `createRuntimeSteering()`, `runtimeSteerBlockedReason()` in `src/shared/maestro-lib/runtime/steering.ts`
+- **How a turn's images reach a provider, and the bounds on images from another machine:** `planImageDelivery()`, `admitTurnImages()`, `turnImageBoundsError()`, `writeImageTempFile()`, `MAX_TURN_IMAGES` in `src/shared/maestro-lib/launch/image-delivery.ts`
+- **Image refs as data URLs where images leave a machine:** `inlineImageList()`, `withInlineEntryImages()`, `inlineEntryImages()` in `src/shared/maestro-lib/launch/image-refs.ts`
+- **Recording a finished turn (transcript, History, usage):** `createTurnRecorder()`, `buildTurnTranscript()`, `TurnSummaryHandoff` in `src/shared/maestro-lib/turns/record-turn.ts`
 - **Serving a runtime to other processes (`maestro-cli host`):** `startRuntimeServer()` in `src/shared/maestro-lib/runtime/server.ts`, `withLiveTabState()` in `src/shared/maestro-lib/runtime/server-frames.ts`
 
 #### Providers, accounts, and auth
 
 - **Native Pianola question cores:** `extractQuestionCores()` in `src/shared/pianola/pianola-awaiting-detector.ts`
 
-- **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
+- **Claude Code's memory folder for a project:** `resolveClaudeMemoryPath()`, `discoverClaudeMemoryRoot()` in `src/shared/maestro-lib/translation/memory.ts`, `resolveConfigDirKeyFromEnv()` in `src/shared/maestro-lib/launch/interactive-mode.ts`
 - **Discovering installed Codex skills:** `discoverCodexSkills()` in `src/main/agents/codex-skills.ts`
+- **Discovering a project's Claude Code skills:** `discoverClaudeSkills()` in `src/shared/maestro-lib/agents/claude-skills.ts`
 - **Agent display name:** `getAgentDisplayName()` in `src/shared/agentMetadata.ts`
 - **Two-letter labels for a set of agents:** `buildAgentInitials(agents)`, `agentInitialCandidates(name)` in `src/shared/agentInitials.ts`
-- **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallInfo()`, `getAgentInstallCommand()`, `classifyMissingBinary()`, `agentNotInstalledMessage()`, `agentCliLabel()` in `src/shared/agentInstall.ts`
+- **Installing a missing provider CLI / telling "not installed" from "crashed":** `getAgentInstallInfo()`, `getAgentInstallCommand()`, `classifyMissingBinary()`, `classifyAgentErrorMissingBinary()`, `agentNotInstalledMessage()`, `agentCliLabel()` in `src/shared/agentInstall.ts`
+- **Detecting or installing an agent's CLI where the agent runs:** `useRemoteAgentDetection()` in `src/renderer/hooks/agent/useRemoteAgentDetection.ts`; `agentInstallPlatform()` in `src/shared/agentInstall.ts`; `loginTerminalSshConfig(session)` in `src/renderer/components/LoginTerminal.tsx`
 - **Which providers a user can pick:** `AGENT_PICKER_META`, `PICKABLE_AGENT_IDS`, `getAgentPickerMeta()`, `AGENT_AUTOSELECT_ORDER` in `src/shared/agentMetadata.ts`
 - **"Show only providers this machine can run":** `filterToAvailableProviders()`, `providerLocationLabel()` in `src/renderer/utils/providerAvailability.ts`, rendered by `<ProviderAvailabilityBar>`
-- **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()` in `src/shared/maestro-lib/providers/capabilities.ts`
-- **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
+- **Whether a provider can read images:** `agentCanReadImages()`, `agentIdCanReadImages()`, `PROVIDER_IMAGE_MEDIA_TYPES`, `isProviderImageMediaType()` in `src/shared/maestro-lib/providers/capabilities.ts`
+- **Which provider account an agent runs as:** `resolveAgentProfile()`, `resolveAgentAccountKey()`, `effectiveAgentCustomEnvVars()`, `resolveAgentBillingCredential()`, `isImplicitDefaultProfile()` in `src/shared/providerProfiles.ts`; `useProviderProfiles()` in `src/renderer/hooks/stats/useProviderProfiles.ts`
+- **Naming an agent's provider account on a surface about that one agent:** `profileAccountShortLabel()`, `isImplicitDefaultProfile()` in `src/shared/providerProfiles.ts`
 - **An agent's model list, and refreshing it:** `discoverAgentModels()` in `src/main/agents/model-discovery.ts`; `refreshModels()` on `useAgentModelEffortOptions()`; `MODELS_REFRESHED_CHANNEL` in `src/shared/agentModelsRefresh.ts`
+- **Antigravity models and per-model efforts:** `parseAntigravityModelList()`, `resolveAntigravitySelection()`, `resolveAntigravityModelEffortArgs()`, `readAntigravityModelEffortArgs()`, `antigravitySdkSelection()` in `src/shared/antigravityModels.ts`
 - **Which account dirs exist for a provider (main):** `getProviderAccountDirs(toolType, options?)` in `src/main/agents/provider-account-dirs.ts`
 - **Which account dir an agent runs under:** `resolveAgentAccountDir()` in `src/shared/agentAccountDir.ts` (store-reading wrapper in `src/main/agents/provider-account-dirs.ts`)
 - **Naming the account a login acts on:** `<AccountPill>`, `ghAccountLabel()` in `src/renderer/components/ui/AccountPill.tsx`; `parseGhActiveAccount()` in `src/main/utils/ghErrors.ts`
@@ -246,6 +356,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Rebasing unsaved session changes during recovery:** `rebasePendingSessionChanges()`, `SESSION_PERSISTENCE_BASELINE_EVENT`, `SessionPersistenceBaseline` in `src/renderer/hooks/utils/useDebouncedPersistence.ts`
 - **The record a new agent starts as:** `buildNewAgentRecord(input)`, `newAgentClaudeInteractive(toolType)` in `src/shared/newAgentRecord.ts`
 - **What a duplicated agent inherits:** `buildDuplicateAgentInput(source, overrides?)`, `defaultDuplicateAgentName()`, `duplicateAgentBlocker()` in `src/shared/newAgentRecord.ts`
+- **The Primary Agent (app-level default receiver of the user's input):** `PRIMARY_AGENT_SETTING_KEY`, `pickPrimaryAgentSeed()` in `src/shared/primaryAgent.ts`; `readPrimaryAgentId()` in `src/cli/services/storage.ts`
 - **Session lookup:** `selectActiveSession()`, `selectSessionById()` in `src/renderer/stores/sessionStore.ts`; `useActiveSession()` hook in `src/renderer/hooks/session/useActiveSession.ts`
 - **Session mutation:** `updateSessionWith()`, `updateAiTab()`, `updateFileTab()`, `updateBrowserTab()` in `src/renderer/stores/sessionStore.ts` (never `setSessions(prev => prev.map(...))` for one agent or tab)
 - **Which agent this client is looking at:** `persistActiveSessionId()`, `readPersistedActiveSessionId()` in `src/renderer/utils/activeSessionPersistence.ts` (never `sessions.getActiveSessionId()` directly)
@@ -277,21 +388,26 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Counting or listing an agent's tabs by visibility:** `tabStripSlotKeys()`, `tabStripVisibility()`, `countTabStrip()`, `countOpenTabs()`, `dropOrphanedTabs()`, `collectGroupMemberTabKeys()` in `src/shared/tabStripMembership.ts`
 - **What an unnamed tab is called:** `getTabDisplayName(tab)`, `isSessionIdLabel()` in `src/renderer/utils/tabHelpers`, over `formatSessionId(agentSessionId)`
 - **Where a closed tab's name still exists:** `HistoryEntry.sessionName` only; pass it as the third argument of `handleResumeSession`
+- **The tab name a History entry records:** `historyEntryTabName(tab, agentSessionId)` in `src/shared/maestro-lib/store/tab-display.ts`
 - **Reading a past conversation back into a tab:** `loadResumableSession()` in `src/renderer/services/resumableSession.ts`
+- **Putting an AI tab at a slot of the tab strip (a reopened tab, local or hosted):** `insertAiTabAtUnifiedIndex()` in `src/renderer/utils/tabHelpers/index.ts`
 - **Storing the closed-tab stack (Cmd+Shift+T):** `projectClosedTabHistory()`, `normalizeStoredClosedTabs()`, `MAX_CLOSED_TAB_HISTORY` in `src/shared/closedTabHistory.ts`; `loadReopenedTabContent()` in `src/renderer/services/reopenedTabContent.ts`
 - **Reading or reopening the closed-tab stack from a script (`maestro-cli tab closed` / `tab reopen`):** `runRemoteClosedTabCommand()`, `listClosedTabs()`, `getClosedTabLabel()` in `src/renderer/services/closedTabCommands.ts`, wire in `src/shared/closedTabCommands.ts`
 - **Pinning a message in a tab (pin button, pin panel, `maestro-cli tab pins`):** `toggleMessagePin()`, `persistTabPins()`, `runRemoteMessagePinCommand()` in `src/renderer/services/messagePins.ts`, over `resolvePinnedRows()`, `findPinForRow()` in `src/shared/messagePins.ts`
 - **Compact, Merge Into, or Send to Agent from a script (`maestro-cli tab compact` / `merge` / `transfer`):** `runRemoteTabContextOp()` in `src/renderer/services/tabContextOps.ts`, wire in `src/shared/tabContextOps.ts`
-- **Forcing a tracked sessions flush from outside App's hook tree:** `flushSessionPersistenceNow()`, `registerSessionPersistenceFlush()` in `src/renderer/services/sessionPersistenceFlush.ts`
+- **Starring a tab (the one write):** `setTabStarred()` in `src/renderer/services/tabStar.ts`; `starHostedTab()` in `src/renderer/services/hostedTurns.ts`
+- **Forcing a tracked sessions flush from outside App's hook tree:** `flushSessionPersistenceNow()`, `registerSessionPersistenceFlush()`, `flushBatchedOutputNow()`, `registerBatchedOutputFlush()` in `src/renderer/services/sessionPersistenceFlush.ts`
 - **Which tab a Quick Chat message goes to:** `decideRoute()`, `parseRouteAnswer()` in `src/shared/quickChatRouting.ts`; `routeQuickChatMessage()`, `reopenClosedConversation()` in `src/renderer/services/quickChatRouter.ts`
-- **Naming a tab from the user's message:** `requestTabAutoName()`, `collectNamingPrompt()`, `requestWizardTabAutoName()` in `src/renderer/services/tabAutoNaming.ts`
+- **Naming a tab from the user's message:** `requestTabAutoName()`, `collectNamingPrompt()`, `requestWizardTabAutoName()`, `queuedItemNamingText()` in `src/renderer/services/tabAutoNaming.ts`
 - **Closing a tab while the unread filter is on:** `closeTab()`'s third argument is an OVERRIDE; omit it and `src/renderer/utils/tabHelpers/index.ts` reads `uiStore.showUnreadOnly`
 - **Ending a turn with no process exit:** `settleTabThinkingState(session, tabId)` in `src/renderer/utils/tabHelpers/index.ts`
 - **Never leaving an agent with an empty tab strip:** `ensureAgentHasVisibleTab()`, `agentHasVisibleTab()`, `createBlankAiTab()` in `src/renderer/utils/unifiedTabOrderUtils.ts`
+- **Which file a file tab's unsaved edits belong to:** `nextEditContentPath()`, `draftWrittenElsewhere()` in `src/renderer/hooks/tabs/internal/filePreviewTabHelpers.ts`, over `FilePreviewTab.editContentPath`
 - **Handing the agent back when a shell command or a CLI playbook ends:** `settleAgentStateFromTabs(session)` in `src/renderer/utils/tabHelpers` (never gate on `aiPid`, which per-tab agents leave at 0 or -1)
 - **Agent state from tab states another client reported:** `syncAgentStateToTabs(session)` in `src/renderer/utils/tabHelpers` (the web-desktop inventory sync)
 - **A tab's own process produced output:** `markTabBusyFromOutput(session, tabId)` in `src/renderer/utils/tabHelpers`, via `noteLiveTabOutput()` in `src/renderer/hooks/agent/internal/helpers/liveTabOutput.ts` (check the tab first; write only when it is not already busy)
-- **Stopping a running turn (Stop pill, REST, `maestro-cli interrupt`):** `interruptTurn(sessionId, { tabId? })` in `src/renderer/services/turnInterrupt.ts`, wire types in `src/shared/turnInterrupt.ts`
+- **Stopping a running turn (Stop pill, REST, `maestro-cli interrupt`):** `interruptTurn(sessionId, { tabId? })` in `src/renderer/services/turnInterrupt.ts`, wire types in `src/shared/turnInterrupt.ts`; `TURN_CANCELED_NOTE` in `src/shared/maestro-lib/store/transcript.ts`
+- **Opening a new AI tab with a prompt from the main process:** `requestNewAITabWithPrompt()` in `src/main/utils/new-ai-tab-request.ts`
 - **Stop and a pending auto-retry:** `stopRetriesForAgent(sessionId, tabId?)` in `src/renderer/stores/retryStore.ts` (not `cancelRetry`, which raises the blocking error state)
 - **Killing every AI process an agent owns:** `killAgentAiProcesses(agentId)` in `src/renderer/services/process.ts` (never kill the bare `{id}-ai`, which no per-tab turn uses)
 - **Toggling the unread filters:** `toggleTabUnreadFilter()`, `toggleAllUnreadFilters()`, and `areUnreadFiltersActive()` in `src/renderer/services/unreadFilters.ts`
@@ -308,13 +424,23 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Passive Pianola owner selection:** `pianolaOwnerSelectionState()` in `src/shared/pianola/pianola-scope.ts`
 
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** the mode is STATE, never a leading `!`: `composerInputStore.aiCommandMode` (`'off' | 'shell' | 'ai'`), read through `isShellCommandMode()`, `isAiCommandMode()`, `normalizeComposerCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
+- **Maestro's own slash commands (`/history`, `/skills`, `/wizard`, `/btw`):** `parseMaestroBuiltinCommand()`, `runsOutsideComposer()` in `src/shared/maestroBuiltinCommands.ts`; `runMaestroBuiltinCommand()`, `registerMaestroBuiltinCommandHandlers()` in `src/renderer/services/maestroBuiltinCommands.ts`
+- **What `/history` and `/skills` write, and running them with no desktop:** `HISTORY_COMMAND_TEXT`, `historySynopsisPrompt()`, `formatClaudeSkillsMessage()` in `src/shared/maestroBuiltinCommandText.ts`; `createRuntimeBuiltinCommands()` in `src/shared/maestro-lib/runtime/builtin-commands.ts`
+- **Drawing a tab its host wrote outside a turn (`/skills`, `/history`):** `TRANSCRIPT_CHANGED_CHANNEL`, `transcriptChangedArgs()`, `parseTranscriptChangedFrame()` in `src/shared/maestro-lib/client/bridge-frames.ts`
+- **The History Entry Added toast (a local `/history` and a hosted one):** `notifyHistoryEntryAdded()`, `watchHostedHistoryCommand()`, `hostedTranscriptBaseline()` in `src/renderer/services/historyEntryToast.ts`; `readHistoryCommandOutcome()` in `src/shared/maestroBuiltinCommandText.ts`
+- **The Synopsis toast (a local turn's and a hosted turn's):** `notifySynopsisSaved()`, `watchHostedTurnSynopsis()`, `HOSTED_HISTORY_ANNOUNCE_GRACE_MS` in `src/renderer/services/historyEntryToast.ts`
+- **A `/btw` side question (which tab, the fork, the turn):** `resolveSideQuestionTarget()`, `sideQuestionForkRefusal()` in `src/shared/sideQuestion.ts`; `assembleSideQuestionTurn()` in `src/shared/maestro-lib/turns/assemble.ts`; `createRuntimeSideQuestions()` in `src/shared/maestro-lib/runtime/side-questions.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
 - **Running a shell code fence from an agent's reply:** `requestCodeFenceCommand()` / `CODE_FENCE_COMMAND_EVENT` in `src/renderer/services/codeFenceCommand.ts`, `isRunnableShellLanguage()` / `commandFromShellFence()` in `src/renderer/utils/shellCommandInput.ts`, drawn by `<CodeRunButton>`
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`
 - **A composer's send column (notification bell + Send):** `<ComposerSendColumn>` in `src/renderer/components/ChatComposer/ComposerSendColumn.tsx`
-- **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer(sessionId, text)` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()` / `formatFileSelection()` in `src/renderer/utils/quoteSelection.ts`
+- **Quoting a passage into the agent's message box from outside the chat:** `quoteIntoAgentComposer()`, `insertIntoAgentComposer()`, `resolveComposerTarget()` in `src/renderer/services/quoteIntoComposer.ts`, over `appendQuoteToDraft()`, `appendBlockToDraft()` in `src/renderer/utils/quoteSelection.ts`
+- **Line review comments (pin comments to lines, send them as one review):** `createReviewCommentStore()` in `src/renderer/stores/reviewCommentStore.ts`, `formatReviewPrompt()` in `src/renderer/utils/reviewPrompt.ts`, `sendReviewPrompt()` in `src/renderer/services/reviewDelivery.ts`
+- **Picking an element or a region in a browser tab (Design Mode):** `captureDesignPick()`, `captureDesignRegion()`, `designModeGuestCall()` in `src/renderer/utils/designModePicker.ts`; `deliverDesignPick()` in `src/renderer/services/designModePick.ts`; `readBrowserPickTarget()` in `src/shared/coworkingBrowser.ts`
+- **A Design Mode pick as a composer chip (stage, queue, edit, expand at send, CLI):** `stageDesignPickOnAgent()` in `src/renderer/services/quoteIntoComposer.ts`, `queueDesignPick()` in `src/renderer/services/designModePick.ts`, `getStagedDesignPicks()` in `src/renderer/services/stagedDesignPicks.ts`
+- **Showing a browser tab's page at a set width (Fit / Desktop / Laptop / Tablet / Phone):** `BROWSER_VIEWPORT_PRESETS`, `parseBrowserViewportPreset()`, `browserViewportWidth()` in `src/shared/browserViewport.ts`; `computeBrowserViewportBox()` in `src/renderer/utils/browserViewport.ts`
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx`
-- **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
+- **Whether a composer paste carries an image (text pastes are never rewritten):** `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Tab, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerAgentTabKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
 - **Which optional controls a composer toolbar offers:** `deriveAiComposerCapabilities()`, `deriveGroupChatComposerCapabilities()`, `aiCanAttachImages()`, `canModeratorReadImages()`, `flashModeratorCannotReadImages()`, `GROUP_CHAT_COMPOSER_CAPABILITIES` in `src/renderer/components/ChatComposer/capabilities.ts`
 - **A chat composer's textarea with live `@mention` chips:** `<ComposerTextarea>` in `src/renderer/components/ChatComposer/ComposerTextarea.tsx`
@@ -324,28 +450,41 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` in `src/renderer/services/transcriptScroll.ts`
 - **Appending to a transcript entry:** `canAppendToLogEntry(entry, source)` / `isSelfContainedCard(entry)` in `src/renderer/utils/logEntries.ts`
 - **`{{template}}` variable autocomplete:** `useTemplateAutocompleteEngine()` in `src/renderer/hooks/input/useTemplateAutocompleteEngine.ts`, bound by `useTemplateAutocomplete()` (textarea) or `useEditorTemplateAutocomplete()` (CodeMirror)
-- **Sending a prompt to an agent from outside the composer:** `enqueuePromptForTab()`, `buildQueuedMessageItem()` in `src/renderer/services/queuedPrompt.ts` (queue it, do not spawn it)
+- **Sending a prompt to an agent from outside the composer:** `enqueuePromptForTab()`, `buildQueuedMessageItem()` in `src/renderer/services/queuedPrompt.ts` (queue it, do not spawn it; `planMentions: false` for text the user did not write)
 - **Running or withdrawing one queued item now:** `sendQueuedItemNow()`, `removeQueuedItem()` in `src/renderer/services/queuedPrompt.ts`
 - **The tab a queued item is going to:** `resolveQueuedItemTabName(session, item)` in `src/renderer/utils/executionQueue.ts` (label), `resolveQueuedItemTarget()` in `src/renderer/utils/tabHelpers` (tab); never render `item.tabName`
 - **Whether a queued item's tab is still mid-turn:** `isQueuedItemTargetBusy(session, item)` in `src/renderer/utils/tabHelpers` (every queue drain path asks it before dequeuing)
+- **The images of two merged queued messages:** `joinMergedQueueImages()` in `src/shared/maestro-lib/turns/queue.ts`
 - **Editing the newest queued message:** `requestEditLastQueuedMessage()` in `src/renderer/services/editQueuedMessage.ts`
 - **Recovering a turn refused on the context limit:** `getContextCompactCommand()` in `src/shared/contextCompaction.ts`; `compactTabContext()`, `recordContextCompaction()` in `src/renderer/services/contextCompaction.ts`; driven by `scheduleRetryForError()` in `src/renderer/stores/retryStore.ts`
 - **Whether a Force Send control exists at all:** `shouldOfferForceSend()`, `getForceSendEligibility()`, `getForceSendTitle()` in `src/renderer/utils/executionQueue.ts`
-- **Model/effort badges on a finished turn:** `<TurnSettingPills>` in `src/renderer/components/ui/TurnSettingPills.tsx`; settings are stamped at SEND by `codifyTurnSettings()` in `src/renderer/utils/providerTabSessions.ts`
-- **Thinking mode (`'off' | 'on' | 'sticky'`):** `THINKING_MODES`, `nextThinkingMode()`, `asThinkingMode()` in `src/shared/types.ts`
+- **Model/effort badges on a finished turn:** `<TurnSettingPills>` in `src/renderer/components/ui/TurnSettingPills.tsx`; settings are stamped at SEND by `codifyTurnSettings()`, `queuedSettingsFromOtherProvider()` in `src/renderer/utils/providerTabSessions.ts`
+- **The settings a queued message carries to a host:** `queuedTurnOverrides()`, `withQueuedTurnOverrides()`, `queuedItemRunsReadOnly()` in `src/shared/queuedTurnSettings.ts`; `normalizeTurnOverrides()` in `src/shared/maestro-lib/client/types.ts`
+- **The cadence a streaming reply is drawn at:** `STREAM_FLUSH_INTERVAL_MS` in `src/shared/streamFlushInterval.ts`
+- **Thinking mode (`'off' | 'on' | 'sticky'`):** `THINKING_MODES`, `nextThinkingMode()`, `asThinkingMode()`, `logsKeptAtTurnEnd()`, `logsShownMidTurn()` in `src/shared/types.ts`
+- **Changing a tab's Thinking mode (the one write):** `setTabThinkingMode()`, `cycleTabThinkingMode()` in `src/renderer/services/tabThinkingMode.ts`
 - **The red Stop pill:** `<StopTurnButton>` in `src/renderer/components/ui/StopTurnButton.tsx`
 - **Opening the expanded staged-image organizer:** `requestOpenStagedImagesOrganizer()` in `src/renderer/services/stagedImagesOrganizer.ts`
 - **The `src` of a conversation image:** `displayImageSrc(src)` in `src/renderer/utils/sessionImageSrc.ts`, over `src/shared/sessionImageRefs.ts`; a chip wraps the RESULT in `sessionImageThumbnailSrc()`
 - **Referencing / thumbnailing a pasted transcript image:** `isSessionImageRef()`, `sessionImageThumbnailSrc()` in `src/shared/sessionImageRefs.ts`
+- **Storing a pasted image as a file (the session image store):** `createSessionImageStore()`, `hasInlineSessionImages()`, `isInlineImageDataUrl()`, `extFromMediaType()` in `src/shared/maestro-lib/store/session-images.ts`; the desktop's wrapper is `src/main/storage/session-image-store.ts`
+- **Comparing two images by content (a ref on one machine, a data URL on the wire):** `sessionImageContentSha256()` in `src/shared/maestro-lib/store/session-images.ts`; `sessionImageRefSha256()` in `src/shared/sessionImageRefs.ts`
 
 #### Cross-agent consults
 
 - **Consulting another agent from a message (`@mention`):** `planCrossAgentMentions()`, `dispatchCrossAgentMentions()`, `dispatchCrossAgentMentionsForMessage()`, `queuedMentionFields()` in `src/renderer/services/crossAgentMentions.ts` (plan at submit, fire when the item is the agent's turn)
-- **Holding a mentioning turn open until its consult replies:** `holdTurnForConsults()`, `settleConsultHold()`, `withConsultPendingNote()` in `src/renderer/services/crossAgentConsultHold.ts`
+- **Holding a mentioning turn open until its consult replies:** `holdTurnForConsults()`, `settleConsultHold()`, `withConsultPendingNote()`, `consultPendingNoteText()`, `handoffPendingNoteText()`, `ConsultHoldSettings` in `src/renderer/services/crossAgentConsultHold.ts`
 - **When a mention runs (parallel / consult first / hand-off):** `inferMentionTiming()`, `parseMentionRoutingField()`, `isMentionRouting()` in `src/shared/crossAgentContext.ts`; `armMentionHandoff()`, `releaseMentionHandoff()`, `dropMentionHandoffs()` in `src/renderer/services/crossAgentHandoff.ts`
+- **An `@mention` typed for a hosted agent (consulted here, the turn sent to its host):** `mentionTurnNotes()` in `src/renderer/services/crossAgentMentions.ts`; `queuedItemMentionPlan()`, `fireHostStartedMentions()` in `src/renderer/services/hostedQueuedTurn.ts`
+- **Agent-only text a turn carries to a host (`agentContext`, `agentNotes`):** `readTurnAgentText()`, `MAX_TURN_AGENT_TEXT_CHARS`, `HOST_CAPABILITIES`, `parseHostCapabilities()` in `src/shared/maestro-lib/client/types.ts`; `withTurnAgentText()`, `appendAgentNotes()` in `src/shared/maestro-lib/turns/prompt.ts`
+- **A hosted agent's hand-off (released when its host's turn ends):** `markHandoffSentToHost()`, `followHostedHandoffs()`, `hostedHandoffStep()`, `hostedHandoffTurn()`, `releaseHostedHandoff()`, `handoffSendBoundary()`, `deferHostedHandoff()` in `src/renderer/services/crossAgentHandoff.ts`
+- **Whether a host-queued mention's own turn started:** `judgeUnnamedHostStart()`, `hostRanMessage()`, `HOST_QUEUE_START_GRACE_MS` in `src/renderer/services/crossAgentHandoff.ts`; `hostTabTurnStartedAt()` in `src/renderer/utils/hostedSession.ts`
+- **Letting go of a consult that waits on a host start:** `pruneHostStartedMentions()`, `dropStoppedHostStartMentions()` in `src/renderer/services/hostedQueuedTurn.ts`; `noteSkippedMention()` in `src/renderer/services/crossAgentHandoff.ts`
+- **Settling a waiting consult once its host answers a Stop:** `settleStoppedHostStartMentions()`, `HostStopToken` in `src/renderer/services/hostedQueuedTurn.ts`; `HostStopAnswer`, `STOP_QUEUE_READ_MS` in `src/shared/maestro-lib/client/peer-actions.ts`; `parseStoppedItemIds()` in `src/shared/turnInterrupt.ts`
 - **An agent asking another agent (`maestro-cli ask`):** `runCrossAgentAsk()` in `src/renderer/services/crossAgentAsk.ts` (a question is `ask`, never `dispatch`)
 - **Marking an agent's own hand-off in its transcript (`dispatch` / `ask` from its shell):** `readCallerIdentity()`, `callerMessageFields()`, `isSelfDispatch()` in `src/shared/agentDelegation.ts`; `recordAgentDelegation()`, `settleAgentDelegation()` in `src/renderer/services/agentDelegation.ts`
 - **Running a consult (prompt, budgets, completion, Stop):** `createConsultService()` in `src/shared/maestro-lib/agents/consult.ts`
+- **Capping an agent's hidden consult tabs:** `MAX_CONSULT_TABS_PER_AGENT`, `consultTabToReplace()`, `consultTabLastUsedAt()` in `src/shared/maestro-lib/agents/rules.ts`
 - **Which agents a message mentions, and the `@` picker's rules:** `planMentions()`, `resolveMentionedTargetSessionIds()`, `buildAgentMentionSuggestions()` in `src/shared/maestro-lib/mentions/roster.ts`
 
 #### Auto Run, Cue, Group Chat, Director's Notes
@@ -362,13 +501,20 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Auto model choice:** `isAutoModel()`, `AUTO_MODEL`, `AUTO_MODEL_LABEL` in `src/shared/autoModel.ts`
 - **Settling a Pianola decision:** `resolvePianolaDecision()` in `src/main/pianola/pianola-decisions.ts`; lifecycle transitions in `src/shared/pianola/pianola-decision-lifecycle.ts`
 - **Model tier / effort level (`'low' | 'medium' | 'high'`):** `resolveTierModel()`, `resolveEffortLevel()`, `cheapTurnSettings()`, `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; `findActiveModelHint()` in `src/shared/autorunModelHints.ts`; `resolveTurnSettings()` in `src/shared/autorunTurnSettings.ts`
+- **Whether the account offers a tier model:** `unofferedTierModel()`, `tierNeedsOfferedModels()` in `src/shared/modelTiers.ts`
 - **A provider refusing an effort level:** `parseEffortRejection()`, `noteEffortRejection()` in `src/shared/effortRejection.ts`; `rejectedEffortForLevel()` in `src/shared/modelTiers.ts`; `armEffortFallback()` in `src/renderer/services/effortRejection.ts`
-- **A synopsis turn (the cheap summary resumed on a finished session):** the model rule is `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; the CLI turn is `requestCliSynopsis()` in `src/cli/services/synopsis.ts`
+- **A synopsis turn (the cheap summary resumed on a finished session):** the model rule is `cheapResumeTurnSettings()` in `src/shared/modelTiers.ts`; the gate is `turnDidMeaningfulWork()`, `thinkingLogsRecorded()` in `src/shared/synopsis.ts`; the CLI turn is `requestCliSynopsis()` in `src/cli/services/synopsis.ts`
 - **Un-parking an Auto Run stopped on an error:** `registerBatchResumer()`, `getBatchResumer()` in `src/renderer/services/batchResumer.ts`; `resolveAutoResumePolicy()` in `src/shared/autorunAutoResume.ts`; `scheduleAutoResume()`, `cancelPendingAutoResume()` in `src/renderer/stores/autoRunResumeStore.ts`
+- **Carrying a running Auto Run across an update restart or a confirmed quit:** `saveAutoRunsForRestart()`, `resumeAutoRunsAfterRestart()` in `src/renderer/services/autoRunRestartResume.ts`, over `src/shared/autorunRestartResume.ts`.
 - **Auto Run markers (HITL / halt / model hint):** `scanMaestroMarkers()`, `findPendingHitlGate()`, `detectHaltMarker()`, `hasMaestroMarker()` in `src/shared/autorunMarkers.ts`, rendered by `<MarkerPill>`
 - **Turning an Auto Run prompt template into a task prompt:** `resolveAutoRunPromptTemplate()`, `namesAutoRunDocument()` in `src/shared/autorunPromptTemplate.ts`; desktop `buildDesktopAutoRunPrompt()` / `prepareDesktopAutoRunPrompt()` in `src/renderer/hooks/batch/batchUtils.ts`
 - **Whether an untyped value is a task-selection mode:** `isTaskSelectionMode()` in `src/shared/types.ts`
 - **Auto Run steering notes (mid-run course correction):** `formatSteeringNotesBlock()` in `src/shared/autorunSteering.ts`; `submitSteeringNote()`, `recordSteeringResponse()`, `runRemoteSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; wire shape in `src/shared/autoRunSteeringCommands.ts`
+- **Steering a hosted agent's Auto Run (its notes live on its host):** `createSteeringLedger()` in `src/shared/maestro-lib/runtime/autorun-steering.ts`; `refreshHostedSteering()`, `answerSteeringCommand()` in `src/renderer/services/autoRunSteering.ts`; `steerMirrorAutoRun()` in `src/renderer/services/peerMirror.ts`
+- **A hosted steering note its host did not take:** `forgetHostedSteering()` in `src/renderer/services/autoRunSteering.ts`; `MirrorSteeringAnswer` in `src/renderer/services/peerMirror.ts`; `returnDraft()`, `takeReturnedDrafts()` in `src/renderer/stores/autoRunSteeringStore.ts`
+- **Feeding the Thought Stream (a local run and a hosted run):** `createThoughtCoalescer()`, `captureToolActivity()` in `src/renderer/stores/thoughtStreamStore.ts`; `feedHostedAutoRunActivity()` in `src/renderer/services/hostedAgentSync.ts`; `toolStateOf()` in `src/shared/maestro-lib/runtime/autorun-turns.ts`
+- **What a tool event carries to the Thought Stream (no output):** `toolActivityState()`, `describeToolActivityStatus()` in `src/shared/toolActivityLabel.ts`
+- **Starting a group chat `!autorun` participant's run:** `startGroupChatAutoRun()`, `groupChatAutoRunFailure()` in `src/renderer/services/groupChatAutoRun.ts`; `useGroupChatAutoRunTrigger()` in `src/renderer/hooks/groupChat/useGroupChatAutoRunTrigger.ts`
 - **Auto Run delegation (a task hands work to another agent):** `formatDelegationResultsBlock()`, `applyAutoRunDelegationEvent()` in `src/shared/autoRunDelegation.ts`; `awaitDelegationsBeforeTurn()`, `settleDelegationsAtRunEnd()` in `src/renderer/services/autoRunDelegations.ts`
 - **Fence-aware markdown scanning:** `forEachMarkdownLine()`, `UNCHECKED_TASK_REGEX`, `CHECKED_TASK_COUNT_REGEX`, `CHECKED_TASK_REGEX` in `src/shared/markdownTaskScan.ts`
 - **Auto Run document names (absolute path to folder-relative):** `resolveAutoRunDocumentName()`, `resolveAutoRunDocumentNames()` in `src/shared/autoRunDocumentPaths.ts`
@@ -376,6 +522,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether an Auto Run is parked waiting on the user:** `useAutoRunErrorPaused(sessionId)` in `src/renderer/hooks/batch/useAutoRunPause.ts` (never `errorPaused` off the `batchRunState` prop)
 - **Folding a disk change into an Auto Run draft:** `reconcileDiskContent()`, `isAutoRunDocumentLocked()` in `src/renderer/utils/autoRunDraft.ts`
 - **Auto Run percent complete and ETA:** `autoRunProgressPercent()`, `estimateAutoRunEta()` in `src/shared/autorunProgress.ts`, drawn by `<AutoRunProgressStats>`
+- **An Auto Run's progress frame on the wire:** `parseAutoRunProgress()` in `src/shared/maestro-lib/autorun/progress.ts`; `progressToWire()` in `src/shared/maestro-lib/runtime/server-frames.ts`
 - **Which agent an Auto Run executes in (worktree targets):** `resolveAutoRunDispatchTarget()` in `src/renderer/services/autoRunDispatchTarget.ts`; cue.yaml spelling in `src/shared/cue/autorun-worktree.ts`
 - **Scheduled Tasks (clock-driven Cue subs):** types and pure helpers in `src/shared/cue/scheduled-tasks.ts`, filesystem work in `src/main/cue/cue-scheduled-tasks.ts`
 - **Editing one Cue subscription in place:** `patchSubscriptionInYaml()`, `setSubscriptionTurnSettings()`, `findSubscriptionsByName()` in `src/main/cue/cue-subscription-edit.ts`; `applyCueTurnSettingsPatch()` in `src/shared/cue/turn-settings.ts`
@@ -388,8 +535,11 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **How much work happened in a group chat:** `computeGroupChatActivity(entries)` in `src/shared/groupChatActivity.ts` (never the first-to-last message span)
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()`, `shouldRenderBuckets()`, `buildNarrativeGroupLookup()` in `src/shared/directorNotesGrouping.ts`
 - **Which agent a persisted group chat participant came from:** `findSessionForParticipantName(participantName, sessions)` in `src/shared/group-chat-types.ts`
+- **Ending an Auto Run whose turn never settles (force-end):** `abortAutoRunTurns()`, `abortableAutoRunSpawn()`, `untilAutoRunTurnAborted()`, `AUTO_RUN_TURN_ABORTED` in `src/renderer/hooks/batch/internal/autoRunTurnAbort.ts`; `isAutoRunAlreadyStopping()` in `src/renderer/stores/batchStore.ts`
+- **The Auto-Run Complete toast (a local run and a hosted run's end):** `notifyAutoRunComplete()`, `mirroredRunCompleteInfo()`, `resolveAutoRunGroupName()` in `src/renderer/services/autoRunCompletion.ts`
 - **Running an Auto Run with no desktop (launch, progress, pause, stop):** `createRuntimeAutoRun()` in `src/shared/maestro-lib/runtime/autorun.ts`
 - **Running a group chat or a consult with no desktop (rounds, `@participant`, `ask`):** `createRuntimeGroupChats()` in `src/shared/maestro-lib/runtime/group-chats.ts`, `createRuntimeConsults()` in `src/shared/maestro-lib/runtime/consults.ts`
+- **Prompt Links (`maestro://run/<token>`):** rules in `src/shared/promptLinks.ts`, service in `src/main/prompt-links/index.ts`, renderer gate `openPromptLinks()` / `promptLinksAvailable()` in `src/renderer/services/promptLinks.ts`, log redaction `redactDeepLinkUrl()` in `src/shared/deep-link-urls.ts`
 
 #### Notifications, modals, and surfaces
 
@@ -403,6 +553,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a modal takes the window over:** `DESTINATION_MODALS`, `registerExternalDestination()` in `src/renderer/stores/modalStore.ts`
 - **Opening a modal from inside Settings:** `launchFromSettings(open)` in `src/renderer/utils/launchFromSettings.ts`
 - **Modal layer:** `useModalLayer()` in `src/renderer/hooks/ui/useModalLayer.ts` (do NOT use manual `registerLayer()` boilerplate)
+- **A modal whose save can be refused (it closes only on a save that landed):** `useModalSave()`, `MODAL_SAVE_CHANGED_REASON` in `src/renderer/hooks/ui/useModalSave.ts`; `<ModalSaveError>` in `src/renderer/components/ui/ModalSaveError.tsx`; `ModalSaveOutcome` in `src/renderer/types/index.ts`
 - **Whether a surface is the topmost layer:** `useIsTopLayer(priority)` in `src/renderer/hooks/ui/useIsTopLayer.ts`
 - **Modal / find-bar ESC pill:** `<EscCloseButton>` in `src/renderer/components/ui/EscCloseButton.tsx`
 - **A modal default sized to the screen:** `viewportModalSize({ width, height })` in `src/renderer/utils/modalSizing.ts`
@@ -416,7 +567,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Loading an image for canvas compositing:** `loadImageElement(src)` in `src/renderer/utils/loadImage.ts`
 - **Pan and zoom a diagram or image:** `usePanZoom()` in `src/renderer/hooks/ui/usePanZoom.ts`; full-window viewer via `openZoomViewer(element)` in `src/renderer/components/ZoomViewer/zoomViewerStore.ts`
 - **Diagram content clipped at the SVG edge:** `expandSvgViewBoxToContent(svg, padding?)` in `src/renderer/utils/svgViewBox.ts`
-- **The message of a rejected IPC call:** `ipcErrorMessage(error)` in `src/renderer/utils/ipcErrorMessage.ts` (never show `error.message` raw)
+- **The message of a rejected IPC call:** `ipcErrorMessage(error, fallback?)` in `src/shared/serializeError.ts` (renderer compatibility export in `src/renderer/utils/ipcErrorMessage.ts`)
 
 #### Keyboard and shortcuts
 
@@ -435,9 +586,11 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### UI components and widgets
 
+- **The red X that removes a staged attachment (image tile, Design Mode chip):** `<RemoveBadgeButton>` in `src/renderer/components/ui/RemoveBadgeButton.tsx`
 - **A spinning loading icon:** `<Spinner>` in `src/renderer/components/ui/Spinner.tsx` (never `animate-spin` on an `<svg>`)
 - **A pulsing placeholder bar while content loads:** `<SkeletonBox>` in `src/renderer/components/ui/SkeletonBox.tsx`
 - **Tiny uppercase state chip:** `<MiniBadge>` in `src/renderer/components/ui/MiniBadge.tsx`
+- **A status dot that shows live activity (busy, connecting, retrying):** `activeStatusHalo()` in `src/renderer/utils/theme.tsx`
 - **A labeled action button in a panel header:** `<HeaderActionButton>` in `src/renderer/components/ui/HeaderActionButton.tsx`
 - **A text box that narrows a list:** `<FilterInput>` in `src/renderer/components/ui/FilterInput.tsx`
 - **Segmented toolbar (sort/filter pill bar):** `<SegmentedControl>` in `src/renderer/components/ui/SegmentedControl.tsx`
@@ -446,16 +599,24 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A list of editable `key = value` pairs:** `<KeyValueRows>` in `src/renderer/components/ui/KeyValueRows.tsx`, with `recordToKeyValueRows()` / `keyValueRowsToRecords()` beside it
 - **Switching a `key = value` entry off without deleting it:** `splitParkedEntries()` / `setKeysParked()` / `parkedPairKeys()` in `src/shared/parkedRecords.ts`
 - **Record view for one table row:** `<RecordDetailModal>` in `src/renderer/components/ui/RecordDetailModal.tsx`
+- **A virtualized grid over rows an engine pages in:** `<DataGrid>`, `dataGridColumnWidth()`, `nextDataGridSort()` in `src/renderer/components/ui/DataGrid.tsx`
+- **A filter-expression box over a data viewer (Parquet, SQLite):** `<FilterExpressionBar>` in `src/renderer/components/ui/FilterExpressionBar.tsx`, `quoteFilterColumnName()` in `src/shared/parquet/filterExpression.ts`
 - **Usage Dashboard card tile:** `<EntityTile>` in `src/renderer/components/UsageDashboard/EntityTile.tsx`
-- **Usage Dashboard metric tile:** `<MetricCard>` in `src/renderer/components/UsageDashboard/MetricCard.tsx`
+- **Usage Dashboard metric tile:** `<MetricCard>` in `src/renderer/components/UsageDashboard/SummaryCards.tsx`
 - **Color for the Nth chart series:** `getSeriesColor(index, theme, colorBlindMode?)` in `src/renderer/components/UsageDashboard/chartUtils.ts`
+- **Loading / error / empty states for a dashboard panel:** `useDashboardResource()`, `<DashboardPanelState>` in `src/renderer/components/UsageDashboard/`
+- **Per-day chart series with idle days kept:** `fillDaySeries()`, `localDaysBetween()` in `src/shared/daySeries.ts`; `usageReadWindow()` in `src/shared/statsTimeRange.ts`
+- **Auto Run run and task totals:** `computeAutoRunMetrics()` in `src/shared/autoRunMetrics.ts`
+- **Usage Dashboard reads for the CLI and export:** `src/main/stats/usage-dashboard-reads.ts` over `src/shared/usageDashboardReads.ts`
 - **A label that must not truncate:** `useOptionalLabelFits(rowRef)` in `src/renderer/hooks/ui/useOptionalLabelFits.ts`
 - **A Settings section the search can show inline:** `GENERAL_SECTIONS`, `DISPLAY_SECTIONS`, `ENCORE_SECTIONS` in each tab's `sections.tsx`, `findSettingsSection(settingId)` in `src/renderer/components/Settings/settingsSections.ts`
 - **Adding a control to the Left Bar header:** three zones (identity, indicators, menu); a status control goes in the CENTER band and the wordmark never truncates (`showWordmark` in `SessionList.tsx`)
 - **Color math and contrast:** `readableTextOn()`, `isReadableOn()`, `contrastRatio()`, `blendColors()`, `transparentize()`, `adjustBrightness()`, `hexToRgb()` in `src/shared/colorContrast.ts`
 - **Diagram labels on fills the AUTHOR chose:** `repairDiagramLabelContrast(svg)` in `src/renderer/utils/diagramLabelContrast.ts`, over `cssColorToHex()` in `src/shared/colorContrast.ts`
+- **Whether a string is a CSS color (lenient, or safe to write raw into CSS text):** `isValidCssColor()`, `isStrictCssColor()`, `strictCssColors()` in `src/shared/cssColor.ts`
 - **Naming the OS file manager in copy:** `getFileManagerName()`, `fileManagerName()`, `getRevealLabel()`, `getOpenInLabel()` in `src/renderer/utils/platformUtils.ts`
 - **Rendering raw terminal output (ANSI):** `useAnsiConverter(theme)` in `src/renderer/hooks/ui/useAnsiConverter.ts`, then `getCachedAnsiHtml()` in `src/renderer/utils/textProcessing.ts`
+- **A SQL editor with completion from a SQLite database:** `buildSqliteSqlLanguage()` in `src/renderer/components/SqliteViewer/sqliteSqlLanguage.ts`, via `<MarkdownEditor languageExtension>`
 - **Previewing a parquet file:** `<ParquetViewer>` in `src/renderer/components/ParquetViewer/`, over the main-process engine in `src/main/parquet/` and the shared filter language in `src/shared/parquet/`
 - **Graphing a set of documents rather than one:** `BuildOptions.scopeFiles` / `scopeDirectory` in `src/renderer/components/DocumentGraph/graphDataBuilder.ts`, opened via `openGraphScope()` in `fileExplorerStore.ts`
 - **Sizing a Document Graph node:** `calculateNodeWidth()`, `calculateNodeHeight()` in `src/renderer/components/DocumentGraph/mindMapLayouts.ts` (never the `NODE_WIDTH` constant)
@@ -494,12 +655,14 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Layout, scroll, sizing, and hook utilities
 
+- **Folding the Left Bar and Right Bar while a surface needs the room, then giving back only what it closed:** `collapseSidePanels()` in `src/renderer/utils/sidePanelCollapse.ts`, `useDesignModePanelCollapse(shown)` in `src/renderer/hooks/ui/useDesignModePanelCollapse.ts`
 - **Following streaming output in a capped box:** `useStickToBottom(contentKey)` in `src/renderer/hooks/ui/useStickToBottom.ts`
+- **Pausing looping animations while the window is unfocused:** `installMotionPause()`, `MOTION_PAUSED_CLASS` in `src/renderer/utils/motionPause.ts`
 - **Keeping a scrolling strip's active item on screen:** `useRevealActiveItem()`, `revealActiveProps()`, `computeRevealScroll()` in `src/renderer/hooks/ui/useRevealActiveItem.ts`
 - **Reaching an off-screen item while dragging:** `useDragAutoScroll(ref, { active })` in `src/renderer/hooks/ui/useDragAutoScroll.ts`
 - **Keeping a virtualized list on its selection:** the virtualizer's own `scrollToIndex` from an effect, never a `ref` on the row; a plain list uses `useScrollIntoView` in `src/renderer/hooks/ui/useScrollIntoView.ts`
 - **Sizing a virtualized row the user's font decides:** `virtualizer.measureElement` + `data-index` and NO inline `height` (see `HistoryPanel`, `FileSearchModal`)
-- **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `useElementHeight(ref, enabled?)` in `src/renderer/hooks/ui/useElementWidth.ts`
+- **Element width for JS-computed layout:** `useElementWidth(ref, enabled?)`, `useElementHeight(ref, enabled?)`, `useElementSize(ref, enabled?)` in `src/renderer/hooks/ui/useElementWidth.ts`
 - **Keeping a floating menu on screen:** `useContextMenuPosition(menuRef, x, y)` in `src/renderer/hooks/ui/useContextMenuPosition.ts` (apply BOTH `maxHeight` and `overflowY: 'auto'`)
 - **How a floating surface looks (popover, menu, hover card, tooltip):** `elevatedSurfaceStyle(theme)`, `getElevatedSurfaceColors(colors)` in `src/renderer/utils/elevatedSurface.ts`
 - **Dropdown/tooltip anchored to a header element:** `useAnchoredMenuPosition(menuRef, anchorRef)` in `src/renderer/hooks/ui/useAnchoredMenuPosition.ts`, rendered via `createPortal(..., document.body)`
@@ -517,6 +680,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Identity-stable callback:** `useStableCallback()` in `src/renderer/hooks/utils/useStableCallback.ts`
 - **Data a surface fetches that must survive it unmounting:** `useCachedResource()`, `revalidateCachedResource()`, `readCachedResource()` in `src/renderer/hooks/utils/useCachedResource.ts`; `useDashboardResource()`, `useTokenUsage()` in `src/renderer/components/UsageDashboard/`
 - **Steering a turn that is ALREADY RUNNING:** `getSteerEligibility()` in `src/renderer/utils/executionQueue.ts`, `steerQueuedItem()`, `requestSteerSend()` in `src/renderer/services/chatSteering.ts`, wire protocol in `src/shared/chatSteering.ts`, `steerCodexAppServerTurn()` in `src/main/codex-app-server/steering.ts`
+- **Steering a turn on an SSH remote:** `sendRemoteSteeringRequest()` in `src/main/process-manager/steering-client.ts`; `requestSteeringOverSocket()` in `src/shared/chatSteeringSocket.ts`; `runSteeringRelay()` in `src/maestro-p/steering-relay.ts`; `sshFailedBeforeSession()` in `src/shared/sshConnection.ts`
 - **Honoring the user's settings in a secondary window:** `useWindowSettingsSync()`, `usePublishTypographyVars()`, `useReloadSettingsOnExternalChange()` in `src/renderer/hooks/settings/useWindowSettingsSync.ts`
 - **Reading settings without the lifecycle effects:** `useSettingsValues()` in `src/renderer/hooks/settings/useSettings.ts`
 
@@ -669,6 +833,7 @@ Maestro is an Electron desktop app for managing multiple AI coding assistants si
 | `factory-droid` | Factory Droid   | **Beta**   |
 | `grok`          | Grok CLI        | **Beta**   |
 | `hermes`        | Hermes          | **Beta**   |
+| `kilo`          | Kilo            | **Beta**   |
 | `omp`           | Oh My Pi        | **Beta**   |
 | `opencode`      | OpenCode        | **Beta**   |
 | `pi`            | Pi              | **Beta**   |

@@ -151,6 +151,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: true, // --append-system-prompt flag
 		supportsProjectMemory: true, // $CLAUDE_CONFIG_DIR/projects/<path>/memory/
 		supportsAdditionalDirectories: true, // --add-dir <directories...> (verified against the installed CLI)
+		tokenSpeedMeasurement: 'transcript', // per-call timing in ~/.claude transcripts; live stream (assistant message.usage) when on an SSH host
 	},
 
 	/**
@@ -185,6 +186,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false,
+		tokenSpeedMeasurement: 'none', // not a model
 	},
 
 	/**
@@ -226,6 +228,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: true, // $CODEX_HOME/memories/ (account-wide, written by Codex memories)
 		supportsAdditionalDirectories: true, // --add-dir <DIR>, repeatable. Codex scopes it to WRITABLE roots.
+		tokenSpeedMeasurement: 'transcript', // token_count per call in the rollout JSONL; the live stream reports it only after tools run, so no stream timing
 		imageResumeMode: 'prompt-embed', // codex exec resume doesn't support -i; embed file paths in prompt text
 	},
 
@@ -263,6 +266,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no Gemini CLI available to probe
+		tokenSpeedMeasurement: 'none', // hidden; superseded by Antigravity
 	},
 
 	/**
@@ -276,7 +280,9 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 */
 	antigravity: {
 		supportsResume: true, // --conversation <id>
-		supportsReadOnlyMode: false, // No flag makes it read-only; workspace writes stay auto-allowed
+		// agy 1.5.16: a session-only `--settings` deny list (readOnlyArgs) refuses shell,
+		// file writes and MCP in every permission mode, while reads still answer.
+		supportsReadOnlyMode: true,
 		supportsJsonOutput: true, // --output-format stream-json
 		supportsSessionId: true, // conversation_id on init/step_update/result
 		supportsImageInput: true, // Verified (agy 1.2.16): image path in the prompt, opened with view_file
@@ -290,18 +296,31 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsStreaming: true, // stream-json emits step_update deltas
 		supportsResultMessages: true, // Terminal `result` event
 		supportsModelSelection: true, // --model <slug>
-		supportsStreamJsonInput: false, // No stdin stream-json input format
+		// `--input-format stream-json` exists but takes text blocks only, in agy's own
+		// `{event:'user'}` shape, so Maestro's image stream-json route does not apply.
+		// Prompts still go over stdin through `stdinPromptEncoder` (see below).
+		supportsStreamJsonInput: false,
 		supportsThinkingDisplay: true, // Thinking text is read from the conversation store (antigravity-step-store.ts)
 		supportsContextMerge: true, // Context can be delivered through the prompt
-		supportsContextExport: false, // Requires session storage
-		supportsWizard: false, // Structured-output wizard flow unverified against a live CLI
-		supportsGroupChatModeration: false, // Unverified
+		supportsContextExport: true, // AntigravitySessionStorage reads the conversation stores
+		// Verified on agy 1.5.16 with the real wizard-system.md discovery prompt under
+		// readOnlyArgs: it read the project, wrote nothing, and replied with JSON that
+		// parseStructuredOutput accepts. Desktop onData carries that answer text.
+		supportsWizard: true,
+		supportsGroupChatModeration: false, // Advisory only; no live moderated round run yet
 		usesJsonLineOutput: true, // stream-json is newline-delimited JSON
 		usesCombinedContextWindow: false, // Gemini reports input and output separately
 		supportsAppendSystemPrompt: false,
+		// agy reads AGENTS.md / GEMINI.md / .agents/rules as project RULES (verified
+		// 1.5.16), but keeps no learned-memory store the Memory Viewer could show.
 		supportsProjectMemory: false,
-		supportsPromptViaStdin: false, // Docs give the prompt as `-p "<text>"`; stdin delivery is unstated
-		supportsAdditionalDirectories: false, // No documented flag for extra workspace roots
+		// No raw stdin (`-p -` sends a literal "-"); the definition's stdinPromptEncoder
+		// wraps the prompt in agy's NDJSON input message instead (verified 1.5.16).
+		supportsPromptViaStdin: true,
+		supportsAdditionalDirectories: true, // `--add-dir <path>`, repeatable (agy 1.5.16)
+		// step_update usage is per model step (verified 1.5.16), but the parser has no
+		// per-call timing (`extractCallTiming`), which 'stream' requires.
+		tokenSpeedMeasurement: 'none',
 	},
 
 	/**
@@ -341,6 +360,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+		tokenSpeedMeasurement: 'stream', // Claude-format stream-json: assistant message.usage per call
 	},
 
 	/**
@@ -377,6 +397,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+		tokenSpeedMeasurement: 'none', // plain-text output, no usage at all
 	},
 
 	/**
@@ -412,6 +433,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no directory-grant flag confirmed for this CLI
+		tokenSpeedMeasurement: 'stream', // turn_start / tool_execution_end -> assistant message_end.usage
 	},
 
 	/**
@@ -452,6 +474,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // PLACEHOLDER - unverified
+		tokenSpeedMeasurement: 'stream', // same protocol as pi
 	},
 
 	/**
@@ -489,6 +512,46 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // No directory-grant flag (--dir only relocates the cwd)
+		tokenSpeedMeasurement: 'stream', // step_start -> step_finish.part.tokens; steps that ran a tool are skipped
+	},
+
+	/**
+	 * Kilo (KiloCode) - https://github.com/Kilo-Org/kilocode
+	 *
+	 * Kilo is a fork of OpenCode with the same CLI flags, the same JSONL event
+	 * shape, and the same session storage layout, so its capabilities mirror
+	 * OpenCode's entry above verbatim. Changing one of them almost always means
+	 * changing the other.
+	 */
+	kilo: {
+		supportsResume: true, // --session flag (sessionID in output) - Verified
+		supportsReadOnlyMode: true, // --agent plan (plan mode) - Verified
+		supportsJsonOutput: true, // --format json - Verified
+		supportsSessionId: true, // sessionID in JSON output (camelCase) - Verified
+		supportsImageInput: true, // -f, --file flag documented - Documented
+		supportsImageInputOnResume: true, // -f flag works with --session flag - Documented
+		supportsSlashCommands: true, // Built-in + custom commands via .kilo/commands/ and kilo.json
+		supportsSessionStorage: true, // ~/.local/share/kilo/storage/ (JSON files) or kilo.db
+		supportsCostTracking: true, // part.cost in step_finish events - Verified
+		supportsUsageStats: true, // part.tokens in step_finish events - Verified
+		supportsBatchMode: true, // run subcommand (auto-approves all permissions) - Verified
+		requiresPromptToStart: true, // Kilo requires 'run' subcommand with prompt, no interactive mode via PTY
+		supportsStreaming: true, // Streams JSONL events - Verified
+		supportsResultMessages: true, // step_finish with part.reason:"stop" - Verified
+		supportsModelSelection: true, // --model provider/model (e.g., 'ollama/qwen3:8b') - Verified
+		supportsStreamJsonInput: false, // Uses positional arguments for prompt
+		supportsPromptViaStdin: true, // `kilo run` reads the prompt from stdin
+		supportsThinkingDisplay: true, // Emits streaming text chunks
+		supportsContextMerge: true, // Can receive merged context via prompts
+		supportsContextExport: true, // Session storage supports context export
+		supportsWizard: true, // Supports inline wizard structured output
+		supportsGroupChatModeration: true, // Can serve as group chat moderator
+		usesJsonLineOutput: true, // Uses JSONL output format
+		usesCombinedContextWindow: false, // Depends on model provider
+		supportsAppendSystemPrompt: false,
+		supportsProjectMemory: false,
+		supportsAdditionalDirectories: false, // No directory-grant flag (--dir only relocates the cwd)
+		tokenSpeedMeasurement: 'stream', // step_start -> step_finish.part.tokens; steps that ran a tool are skipped
 	},
 
 	/**
@@ -526,6 +589,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false,
 		supportsProjectMemory: false,
 		supportsAdditionalDirectories: false, // Unverified - no Droid CLI available to probe
+		tokenSpeedMeasurement: 'none', // usage only once per turn (completion), and turn time includes tool runs
 	},
 
 	/**
@@ -561,6 +625,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false, // No --append-system-prompt equivalent
 		supportsProjectMemory: false, // No project memory mechanism
 		supportsAdditionalDirectories: true, // --add-dir <directory>, repeatable (verified against the installed CLI)
+		tokenSpeedMeasurement: 'stream', // assistant.turn_start -> assistant.message.outputTokens (output only; no input tokens reported)
 		usesJsonLineOutput: true, // --output-format json produces JSONL
 		usesCombinedContextWindow: true, // Copilot's own usage layer reports cumulative input (includes cache) regardless of underlying model, so the gauge math must follow the combined formula
 	},
@@ -606,6 +671,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsAppendSystemPrompt: false, // --rules decided unused (GROK_CAPABILITY_EVIDENCE.flagDecisions): no file form, no ACP form; embed once and skip on resume
 		supportsProjectMemory: false, // Native legacy/v2 memory exists and prompt_context.json facts are observed per session (GROK_CAPABILITY_EVIDENCE.projectMemory); selected account/workspace binding is unverified. Rules and translated knowledge do not certify it.
 		supportsAdditionalDirectories: false, // See GROK_DIRECTORY_GRANT_SUPPORT; no qualified native root-grant builder
+		tokenSpeedMeasurement: 'none', // no usage in the stream; counts live only in signals.json / updates.jsonl
 	},
 };
 
@@ -631,6 +697,26 @@ export function agentCanReadImages(
 	capabilities: Pick<AgentCapabilities, 'supportsImageInput'> | null | undefined
 ): boolean {
 	return capabilities?.supportsImageInput !== false;
+}
+
+/**
+ * The image media types an attached image may have: the ones every image-reading provider takes
+ * (PNG, JPEG, GIF, WebP), and so the ones the desktop's room composer offers and a host admits from
+ * another machine. One list, so the two never disagree.
+ */
+export const PROVIDER_IMAGE_MEDIA_TYPES: readonly string[] = [
+	'image/png',
+	'image/jpeg',
+	'image/gif',
+	'image/webp',
+];
+
+/** The same list in words, for a refusal: "PNG, JPEG, GIF or WebP". */
+export const PROVIDER_IMAGE_MEDIA_TYPE_NAMES = 'PNG, JPEG, GIF or WebP';
+
+/** Whether an attached image's media type is one a provider reads (`PROVIDER_IMAGE_MEDIA_TYPES`). */
+export function isProviderImageMediaType(mediaType: string): boolean {
+	return PROVIDER_IMAGE_MEDIA_TYPES.includes(mediaType);
 }
 
 /**

@@ -24,10 +24,15 @@ vi.mock('../../../../renderer/utils/safeLocalStorage', () => ({
 }));
 
 import {
+	OVERVIEW_TOKEN_SPEED_KEY,
 	OverviewTokenSpeed,
 	TokenSpeedCards,
 } from '../../../../renderer/components/UsageDashboard/TokenSpeedCards';
-import { TokenSpeedStats as TokenSpeedSection } from '../../../../renderer/components/UsageDashboard/TokenSpeedStats';
+import {
+	formatTokenSlice,
+	TokenSpeedStats as TokenSpeedSection,
+} from '../../../../renderer/components/UsageDashboard/TokenSpeedStats';
+import { clearCachedResources } from '../../../../renderer/hooks/utils/useCachedResource';
 
 const theme = THEMES['dracula'];
 const HOUR = new Date(2026, 9, 15, 14, 0).getTime();
@@ -80,59 +85,114 @@ beforeEach(() => {
 });
 
 describe('TokenSpeedCards', () => {
-	it('shows average and peak input, output, and total rates', () => {
+	it('shows average and peak input, output, and total rates', async () => {
 		render(<TokenSpeedCards speed={summary()} theme={theme} />);
 
 		const cards = screen.getByTestId('token-speed-cards');
-		for (const label of [
-			'Avg Output',
-			'Avg Input',
-			'Avg Total',
-			'Peak Output',
-			'Peak Input',
-			'Peak Total',
-		]) {
-			expect(within(cards).getByText(label)).toBeInTheDocument();
+		// One card per measure, each pairing its average with its peak.
+		const tiles = within(cards).getAllByTestId('metric-card');
+		expect(tiles.map((t) => t.getAttribute('aria-label')?.split(':')[0])).toEqual([
+			'Output tok/s',
+			'Input tok/s',
+			'Total tok/s',
+		]);
+		for (const tile of tiles) {
+			expect(within(tile).getByTestId('metric-card-split')).toBeInTheDocument();
+			expect(within(tile).getByText('Avg')).toBeInTheDocument();
+			expect(within(tile).getByText('Peak')).toBeInTheDocument();
 		}
-		expect(within(cards).getByText('100 tok/s')).toBeInTheDocument();
-		expect(within(cards).getByText('10.0K tok/s')).toBeInTheDocument();
-		expect(within(cards).getByText('250 tok/s')).toBeInTheDocument();
+		// The unit is on the label, so each figure is a bare number.
+		expect(within(cards).getAllByTestId('metric-card-unit')).toHaveLength(3);
+		expect(within(cards).queryByText(/\d tok\/s$/)).not.toBeInTheDocument();
+		// The figures count up from 0 (AnimatedNumber), so wait for them to land.
+		expect(await within(cards).findByText('100')).toBeInTheDocument();
+		expect(await within(cards).findByText('10.0K')).toBeInTheDocument();
+		expect(await within(cards).findByText('250')).toBeInTheDocument();
 		// Where the output peak happened, and on what.
-		expect(within(cards).getByText(/claude-opus-5-5 · Oct 15, 2 PM/)).toBeInTheDocument();
-		expect(within(cards).getByText(/busiest hour: 30.4K tok\/s/)).toBeInTheDocument();
+		expect(within(cards).getByText(/peak on claude-opus-5-5 · Oct 15, 2 PM/)).toBeInTheDocument();
+		// The fleet figure is labeled as its own measure, not as a per-model peak.
+		expect(
+			within(cards).getByText(/all agents' busiest clock hour: 30.4K tok\/s/)
+		).toBeInTheDocument();
 	});
 
 	it('explains an empty range instead of showing zero rates', () => {
-		render(<TokenSpeedCards speed={emptyTokenSpeedSummary()} theme={theme} />);
+		render(
+			<TokenSpeedCards
+				speed={{ ...emptyTokenSpeedSummary(), measurableAgents: ['claude-code', 'codex', 'pi'] }}
+				theme={theme}
+			/>
+		);
 		expect(screen.getByTestId('token-speed-empty')).toHaveTextContent('No timed API calls');
+		// The providers come from the capability list main sends, not hard-coded copy.
+		expect(screen.getByTestId('token-speed-empty')).toHaveTextContent('Claude Code, Codex and Pi');
 		expect(screen.queryByTestId('token-speed-cards')).not.toBeInTheDocument();
+	});
+
+	it('names the providers it measured', () => {
+		render(<TokenSpeedCards speed={summary({ measuredAgents: ['claude-code'] })} theme={theme} />);
+		expect(screen.getByText(/10 calls measured \(Claude Code\)/)).toBeInTheDocument();
 	});
 });
 
 describe('OverviewTokenSpeed', () => {
-	it('fetches the range and renders its cards', async () => {
+	beforeEach(() => {
+		storage.clear();
+		clearCachedResources();
+	});
+
+	it('does not read transcripts until the user asks, then remembers the choice', async () => {
 		const getTokenUsage = vi.fn().mockResolvedValue({ speed: summary() } as TokenUsageAggregate);
 		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
 
 		render(<OverviewTokenSpeed timeRange="week" theme={theme} />);
 
-		expect(await screen.findByTestId('overview-token-speed')).toBeInTheDocument();
-		expect(screen.getByText('Tokens per Second')).toBeInTheDocument();
+		expect(getTokenUsage).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByTestId('overview-token-speed-load'));
+
+		expect(await screen.findByTestId('token-speed-cards')).toBeInTheDocument();
 		expect(getTokenUsage).toHaveBeenCalledWith(
-			expect.objectContaining({ granularity: 'day' }),
+			expect.objectContaining({ sinceMs: expect.any(Number) }),
+			false,
 			false
 		);
+		expect(storage.get(OVERVIEW_TOKEN_SPEED_KEY)).toBe('true');
+	});
+
+	it('fetches on mount once the user has opted in', async () => {
+		storage.set(OVERVIEW_TOKEN_SPEED_KEY, 'true');
+		const getTokenUsage = vi.fn().mockResolvedValue({ speed: summary() } as TokenUsageAggregate);
+		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
+
+		render(<OverviewTokenSpeed timeRange="week" theme={theme} />);
+
+		expect(await screen.findByTestId('token-speed-cards')).toBeInTheDocument();
+		expect(screen.getByText('Tokens per Second')).toBeInTheDocument();
 	});
 
 	it('reports a failed read when there is nothing to show', async () => {
+		storage.set(OVERVIEW_TOKEN_SPEED_KEY, 'true');
 		const getTokenUsage = vi.fn().mockRejectedValue(new Error('no transcripts'));
 		(window as unknown as { maestro: unknown }).maestro = { stats: { getTokenUsage } };
 
 		render(<OverviewTokenSpeed timeRange="day" theme={theme} />);
 
-		expect(
-			await screen.findByText(/Couldn't read token speed: no transcripts/)
-		).toBeInTheDocument();
+		expect(await screen.findByTestId('overview-token-speed-error')).toHaveTextContent(
+			'no transcripts'
+		);
+	});
+});
+
+describe('formatTokenSlice', () => {
+	it('names a week by its span so a weekly bar is not read as one day', () => {
+		expect(formatTokenSlice(new Date(2026, 10, 9).getTime(), 'week')).toBe('Nov 9-15');
+		expect(formatTokenSlice(new Date(2026, 9, 26).getTime(), 'week')).toBe('Oct 26 - Nov 1');
+	});
+
+	it('names days, hours and months by themselves', () => {
+		expect(formatTokenSlice(new Date(2026, 10, 9).getTime(), 'day')).toBe('Nov 9');
+		expect(formatTokenSlice(new Date(2026, 10, 1).getTime(), 'month')).toBe('Nov 2026');
+		expect(formatTokenSlice(new Date(2026, 10, 9, 14).getTime(), 'hour')).toBe('Mon 2 PM');
 	});
 });
 
@@ -147,10 +207,18 @@ describe('TokenSpeedStats section', () => {
 		expect(screen.getAllByTestId('token-speed-by-model-row')).toHaveLength(2);
 	});
 
+	it('describes the peak columns as model-hours, which is what they measure', () => {
+		render(<TokenSpeedSection speed={summary()} theme={theme} />);
+		const header = screen.getByTestId('token-speed-by-agent-sort-peakOutputTps');
+		expect(within(header).getByRole('button').getAttribute('title')).toContain(
+			'Fastest model-hour'
+		);
+	});
+
 	it('names the fastest and slowest hour of day', () => {
 		render(<TokenSpeedSection speed={summary()} theme={theme} />);
 		expect(screen.getByTestId('token-speed-by-hour')).toHaveTextContent(
-			'Fastest 3a (140), slowest 9a (80.0)'
+			'Fastest 3 AM (140), slowest 9 AM (80.0)'
 		);
 	});
 

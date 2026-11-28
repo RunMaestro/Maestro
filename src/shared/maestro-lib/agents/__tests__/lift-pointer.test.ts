@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+	hostedAgentsEnabled,
 	liftBusyReason,
 	liftedAgentRef,
 	liftedOwnerOfProcess,
@@ -34,6 +35,26 @@ describe('readLiftedTo', () => {
 });
 
 describe('liftedSendRefusal', () => {
+	it('refuses nothing while hosted agents are switched off, and reads the switch only when lifted', () => {
+		expect(liftedSendRefusal({ name: 'Builder', liftedTo: pointer }, false)).toBeUndefined();
+		let reads = 0;
+		const read = () => {
+			reads += 1;
+			return false;
+		};
+		expect(liftedSendRefusal({ name: 'Builder', liftedTo: pointer }, read)).toBeUndefined();
+		expect(liftedSendRefusal({ name: 'Local' }, read)).toBeUndefined();
+		expect(reads).toBe(1);
+	});
+
+	it('reads the switch from settings: only true is on, absent or false is off (opt-in)', () => {
+		expect(hostedAgentsEnabled(undefined)).toBe(false);
+		expect(hostedAgentsEnabled(null)).toBe(false);
+		expect(hostedAgentsEnabled({})).toBe(false);
+		expect(hostedAgentsEnabled({ federationHostedAgents: true })).toBe(true);
+		expect(hostedAgentsEnabled({ federationHostedAgents: false })).toBe(false);
+	});
+
 	it('is undefined for an agent that was not lifted', () => {
 		expect(liftedSendRefusal({ name: 'Local' })).toBeUndefined();
 	});

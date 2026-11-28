@@ -29,6 +29,7 @@
 import type { AgentErrorType } from './types';
 import type { TurnTerminal } from './maestro-lib/streaming/turn-outcome';
 import { getErrorPatterns, matchErrorPattern, stripJsonEventLines } from './agentErrorPatterns';
+import { withoutFailureScreen } from './failureScreen';
 
 /** Which backoff strategy applies to a retryable error. */
 export type RetryStrategy = 'availability' | 'token-exhaustion';
@@ -273,11 +274,14 @@ function classifiableTexts(error: ClassifiableError): string[] {
 			texts.push(stripJsonEventLines(rawLine, { dropMalformed: true }));
 		}
 		if (typeof error.message === 'string')
-			texts.push(stripJsonEventLines(error.message, { dropMalformed: true }));
+			texts.push(stripJsonEventLines(withoutFailureScreen(error.message), { dropMalformed: true }));
 		return texts.filter((text) => text.trim() !== '');
 	}
 	if (typeof rawLine === 'string' && rawLine.trim() !== '') texts.push(rawLine);
-	if (typeof error.message === 'string' && error.message !== '') texts.push(error.message);
+	// A terminal screen shown under the message is evidence for a person, not a
+	// diagnosis: its text must never choose the retry (see failureScreen.ts).
+	const message = typeof error.message === 'string' ? withoutFailureScreen(error.message) : '';
+	if (message !== '') texts.push(message);
 	return texts;
 }
 

@@ -7,6 +7,9 @@
 import { memo, useState, useRef, useMemo, useCallback } from 'react';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useUIStore } from '../stores/uiStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { useGroupChatStore } from '../stores/groupChatStore';
+import { ShortcutHint } from './ui/ShortcutHint';
 import {
 	MessageSquare,
 	ChevronDown,
@@ -18,12 +21,15 @@ import {
 	ArchiveRestore,
 	Clock,
 	ArrowDownAZ,
+	Mail,
+	MailOpen,
 } from 'lucide-react';
 import type { Theme, GroupChat, GroupChatState } from '../types';
 import { useClickOutside, useContextMenuPosition } from '../hooks';
 import { useOptionalLabelFits } from '../hooks/ui/useOptionalLabelFits';
 import { getStatusColor } from '../utils/theme';
 import { isGroupChatBusy, type GroupChatBusySnapshot } from '../utils/groupChatStatus';
+import { selectVisibleGroupChats } from '../utils/groupChatOrdering';
 import { CornerDot } from './ui/CornerDot';
 import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
@@ -36,7 +42,9 @@ interface GroupChatContextMenuProps {
 	y: number;
 	theme: Theme;
 	isArchived: boolean;
+	isUnread: boolean;
 	onEdit: () => void;
+	onToggleUnread: () => void;
 	onRename: () => void;
 	onArchive?: () => void;
 	onDelete: () => void;
@@ -48,13 +56,17 @@ function GroupChatContextMenu({
 	y,
 	theme,
 	isArchived,
+	isUnread,
 	onEdit,
+	onToggleUnread,
 	onRename,
 	onArchive,
 	onDelete,
 	onClose,
 }: GroupChatContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
+	// Same chord as Toggle Tab Unread: inside a room it flips the room's dot.
+	const toggleUnreadKeys = useSettingsStore((s) => s.tabShortcuts.toggleTabUnread?.keys);
 
 	// Close on click outside
 	useClickOutside(menuRef, onClose);
@@ -109,6 +121,18 @@ function GroupChatContextMenu({
 			>
 				<Edit3 className="w-3.5 h-3.5" />
 				Rename
+			</button>
+			<button
+				onClick={() => {
+					onToggleUnread();
+					onClose();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.textMain }}
+			>
+				{isUnread ? <MailOpen className="w-3.5 h-3.5" /> : <Mail className="w-3.5 h-3.5" />}
+				{isUnread ? 'Mark as Read' : 'Mark as Unread'}
+				{toggleUnreadKeys && <ShortcutHint keys={toggleUnreadKeys} theme={theme} />}
 			</button>
 			{onArchive && (
 				<button
@@ -295,34 +319,28 @@ function GroupChatListInner({
 
 	// Filter and sort group chats: show active chats, plus archived if toggled.
 	// When the unread-agents filter is on, also drop idle chats (keeping the
-	// active one so the user doesn't lose their place).
-	const sortedGroupChats = useMemo(() => {
-		return [...groupChats]
-			.filter((c) => (showArchived ? true : !c.archived))
-			.filter((c) => {
-				if (!showUnreadAgentsOnly) return true;
-				if (c.id === activeGroupChatId) return true;
-				return isChatBusy(c.id) || isChatUnread(c.id);
-			})
-			.sort((a, b) => {
-				// When showing archived, group active chats first
-				if (showArchived && a.archived !== b.archived) {
-					return a.archived ? 1 : -1;
-				}
-				if (sortAlphabetical) {
-					return a.name.localeCompare(b.name);
-				}
-				return (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt);
-			});
-	}, [
-		groupChats,
-		showArchived,
-		showUnreadAgentsOnly,
-		activeGroupChatId,
-		isChatBusy,
-		isChatUnread,
-		sortAlphabetical,
-	]);
+	// active one so the user doesn't lose their place). Shared with the Left Bar's published row order so Cmd+[ / Cmd+] walks the
+	// same rooms this list draws.
+	const sortedGroupChats = useMemo(
+		() =>
+			selectVisibleGroupChats(groupChats, {
+				sortAlphabetical,
+				showArchived,
+				showUnreadAgentsOnly,
+				activeGroupChatId,
+				isChatBusy,
+				isChatUnread,
+			}),
+		[
+			groupChats,
+			showArchived,
+			showUnreadAgentsOnly,
+			activeGroupChatId,
+			isChatBusy,
+			isChatUnread,
+			sortAlphabetical,
+		]
+	);
 
 	// When the unread-agents filter hides everything, drop the section entirely
 	// rather than leaving an empty header dangling at the bottom of the sidebar.
@@ -586,7 +604,11 @@ function GroupChatListInner({
 					y={contextMenu.y}
 					theme={theme}
 					isArchived={!!groupChats.find((c) => c.id === contextMenu.chatId)?.archived}
+					isUnread={isChatUnread(contextMenu.chatId)}
 					onEdit={() => onEditGroupChat(contextMenu.chatId)}
+					onToggleUnread={() =>
+						useGroupChatStore.getState().toggleGroupChatUnread(contextMenu.chatId)
+					}
 					onRename={() => onRenameGroupChat(contextMenu.chatId)}
 					onArchive={
 						onArchiveGroupChat

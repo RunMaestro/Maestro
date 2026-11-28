@@ -20,6 +20,7 @@ import {
 	ShortcutsView,
 } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal/views';
 import type { SectionId } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal/sections';
+import { getTimeRangeLabel } from '../../../../renderer/components/UsageDashboard/UsageDashboardModal/constants';
 
 vi.mock('../../../../renderer/components/AchievementShareButton', () => ({
 	AchievementShareButton: () => <button>Share achievements</button>,
@@ -66,17 +67,11 @@ vi.mock('../../../../renderer/components/UsageDashboard/SessionStats', () => ({
 vi.mock('../../../../renderer/components/UsageDashboard/WorktreeAnalytics', () => ({
 	WorktreeAnalytics: () => <div>WorktreeAnalytics mock</div>,
 }));
-vi.mock('../../../../renderer/components/UsageDashboard/AgentEfficiencyChart', () => ({
-	AgentEfficiencyChart: () => <div>AgentEfficiencyChart mock</div>,
-}));
 vi.mock('../../../../renderer/components/UsageDashboard/AgentUsageChart', () => ({
 	AgentUsageChart: () => <div>AgentUsageChart mock</div>,
 }));
 vi.mock('../../../../renderer/components/UsageDashboard/ActivityHeatmap', () => ({
 	ActivityHeatmap: () => <div>ActivityHeatmap mock</div>,
-}));
-vi.mock('../../../../renderer/components/UsageDashboard/WeekdayComparisonChart', () => ({
-	WeekdayComparisonChart: () => <div>WeekdayComparisonChart mock</div>,
 }));
 vi.mock('../../../../renderer/components/UsageDashboard/DurationTrendsChart', () => ({
 	DurationTrendsChart: () => <div>DurationTrendsChart mock</div>,
@@ -135,20 +130,18 @@ const data: StatsAggregation = {
 	bySource: { user: 3, auto: 1 },
 	byLocation: { local: 4, remote: 0 },
 	byDay: [],
+	byDayHour: [],
+	window: { startYmd: '2026-07-04', endYmd: '2026-07-10' },
+	earliestQueryAt: null,
+	streak: { current: 0, longest: 0 },
 	byHour: [],
 	totalSessions: 1,
-	sessionsByAgent: { codex: 1 },
-	sessionsByDay: [],
-	avgSessionDuration: 2000,
 	byAgentByDay: {},
 	bySessionByDay: {},
 	bySessionSource: {},
 	worktreeQueries: 0,
 	parentQueries: 4,
-	byWorktreeStatus: {
-		worktree: { count: 0, duration: 0 },
-		parent: { count: 4, duration: 2000 },
-	},
+	byAgentWorktree: {},
 	imageAnnotations: 0,
 	prompts: emptyPromptCadence(),
 };
@@ -235,6 +228,47 @@ describe('UsageDashboardModal shell components', () => {
 		expect(onClose).toHaveBeenCalled();
 	});
 
+	it('labels the ranges as whole days and dates All Time from the first query', () => {
+		const earliest = new Date(2026, 6, 10, 15, 30).getTime();
+		render(
+			<UsageDashboardHeader
+				theme={theme}
+				showNewDataIndicator={false}
+				timeRange="all"
+				earliestQueryAt={earliest}
+				onTimeRangeChange={vi.fn()}
+				onExport={vi.fn()}
+				isExporting={false}
+				onClose={vi.fn()}
+				autoRunStats={undefined}
+				globalStats={null}
+				usageStats={null}
+				handsOnTimeMs={0}
+				leaderboardRegistration={null}
+			/>
+		);
+		const labels = Array.from(screen.getByRole('combobox').querySelectorAll('option')).map(
+			(option) => option.textContent
+		);
+		expect(labels).toEqual([
+			'Today',
+			'Last 7 Days',
+			'Last 30 Days',
+			'Last 90 Days',
+			'Last 365 Days',
+			'All Time (since Jul 10, 2026)',
+		]);
+	});
+
+	it('getTimeRangeLabel names All Time plainly until the first query is known', () => {
+		expect(getTimeRangeLabel('all')).toBe('All Time');
+		expect(getTimeRangeLabel('all', null)).toBe('All Time');
+		expect(getTimeRangeLabel('week', Date.now())).toBe('Last 7 Days');
+		expect(getTimeRangeLabel('all', new Date(2025, 0, 2).getTime())).toBe(
+			'All Time (since Jan 2, 2025)'
+		);
+	});
+
 	it('renders tabs, delegates keyboard events, and switches view mode', () => {
 		const switchViewMode = vi.fn();
 		const onKeyDown = vi.fn();
@@ -296,12 +330,12 @@ describe('UsageDashboardModal shell components', () => {
 			<UsageDashboardFooter
 				theme={theme}
 				viewMode="overview"
-				rangeLabel="Showing this month data"
+				rangeLabel="Showing Last 30 Days"
 				fallbackSummary={null}
 				databaseSizeLabel="2.0 KB"
 			/>
 		);
-		expect(screen.getByText('Showing this month data')).toBeInTheDocument();
+		expect(screen.getByText('Showing Last 30 Days')).toBeInTheDocument();
 		expect(screen.getByTestId('database-size-indicator')).toHaveTextContent('2.0 KB');
 		expect(screen.getByText('Press Esc to close')).toBeInTheDocument();
 
@@ -309,12 +343,12 @@ describe('UsageDashboardModal shell components', () => {
 			<UsageDashboardFooter
 				theme={theme}
 				viewMode="overview"
-				rangeLabel="No data for selected time range"
+				rangeLabel="No queries in this range"
 				fallbackSummary={null}
 				databaseSizeLabel={null}
 			/>
 		);
-		expect(screen.getByText('No data for selected time range')).toBeInTheDocument();
+		expect(screen.getByText('No queries in this range')).toBeInTheDocument();
 		expect(emptyCell).toBe(String.fromCharCode(8212));
 	});
 
@@ -376,7 +410,7 @@ describe('UsageDashboardModal view modules', () => {
 				{...navigation}
 			/>
 		);
-		expect(screen.getByText('No active agents')).toBeInTheDocument();
+		expect(screen.getByText('No agents')).toBeInTheDocument();
 
 		rerender(
 			<AgentsView

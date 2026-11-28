@@ -912,35 +912,36 @@ describe('error-patterns', () => {
 		});
 
 		describe('agent_crashed patterns', () => {
+			// A missing CLI on the remote reads as a local one does (parity B1.14).
 			it('should match "bash: command not found"', () => {
 				const result = matchSshErrorPattern('bash: claude: command not found');
 				expect(result).not.toBeNull();
-				expect(result?.type).toBe('agent_crashed');
-				expect(result?.recoverable).toBe(false);
+				expect(result?.type).toBe('agent_not_installed');
+				expect(result?.recoverable).toBe(true);
 			});
 
 			it('should match "zsh: command not found"', () => {
 				const result = matchSshErrorPattern('zsh: command not found: claude');
 				expect(result).not.toBeNull();
-				expect(result?.type).toBe('agent_crashed');
+				expect(result?.type).toBe('agent_not_installed');
 			});
 
 			it('should match "sh: command not found"', () => {
 				const result = matchSshErrorPattern('sh: claude: command not found');
 				expect(result).not.toBeNull();
-				expect(result?.type).toBe('agent_crashed');
+				expect(result?.type).toBe('agent_not_installed');
 			});
 
 			it('should match "bash: opencode: command not found"', () => {
 				const result = matchSshErrorPattern('bash: opencode: command not found');
 				expect(result).not.toBeNull();
-				expect(result?.type).toBe('agent_crashed');
+				expect(result?.type).toBe('agent_not_installed');
 			});
 
 			it('should match "bash: codex: command not found"', () => {
 				const result = matchSshErrorPattern('bash: codex: command not found');
 				expect(result).not.toBeNull();
-				expect(result?.type).toBe('agent_crashed');
+				expect(result?.type).toBe('agent_not_installed');
 			});
 
 			it('should NOT match generic "command not found:" without shell prefix', () => {
@@ -952,7 +953,7 @@ describe('error-patterns', () => {
 			it('should match "no such file or directory" for agent binaries', () => {
 				const result = matchSshErrorPattern('/usr/local/bin/claude: No such file or directory');
 				expect(result).not.toBeNull();
-				expect(result?.type).toBe('agent_crashed');
+				expect(result?.type).toBe('agent_not_installed');
 			});
 
 			it('should match "ssh: broken pipe"', () => {
@@ -1021,7 +1022,7 @@ describe('error-patterns', () => {
 				// agent-specific message, never the Windows-remote message.
 				const result = matchSshErrorPattern('bash: claude: command not found');
 				expect(result).not.toBeNull();
-				expect(result?.type).toBe('agent_crashed');
+				expect(result?.type).toBe('agent_not_installed');
 				expect(result?.message).toContain('Claude command not found');
 				expect(result?.message).not.toContain('Windows shell');
 			});

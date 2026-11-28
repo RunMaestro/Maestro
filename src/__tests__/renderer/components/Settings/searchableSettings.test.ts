@@ -11,6 +11,7 @@ import {
 	searchSettings,
 	ALL_SEARCHABLE_SETTINGS,
 	encoreTileForSetting,
+	MIN_SUBSTRING_QUERY_LENGTH,
 } from '../../../../renderer/components/Settings/searchableSettings';
 
 const RENDERER_ROOT = resolve(__dirname, '../../../../renderer');
@@ -68,6 +69,16 @@ describe('searchableSettings', () => {
 		expect(encoreTileForSetting('encore-pianola-auto-fix')).toBe('pianola');
 	});
 
+	it.each(['Allow typing without confirmation', 'browser_type', 'signed-in pages'])(
+		'finds the typing permission for %s only while Coworking is enabled',
+		(query) => {
+			const id = 'coworking-browser-typing-without-confirmation';
+			expect(searchSettings(query, [], { coworking: true }).some((s) => s.id === id)).toBe(true);
+			expect(searchSettings(query, [], { coworking: false }).some((s) => s.id === id)).toBe(false);
+			expect(encoreTileForSetting(id)).toBe('coworking');
+		}
+	);
+
 	describe('ALL_SEARCHABLE_SETTINGS', () => {
 		it('should contain entries from all tabs', () => {
 			const tabs = new Set(ALL_SEARCHABLE_SETTINGS.map((s) => s.tab));
@@ -116,6 +127,29 @@ describe('searchableSettings', () => {
 			expect(searchSettings('   ')).toEqual([]);
 		});
 
+		describe('queries under MIN_SUBSTRING_QUERY_LENGTH', () => {
+			it('does not match a fragment of a word', () => {
+				expect(MIN_SUBSTRING_QUERY_LENGTH).toBe(3);
+				expect(searchSettings('qu')).toEqual([]);
+				expect(searchSettings('a')).toEqual([]);
+			});
+
+			it('matches a whole word in a label or keyword', () => {
+				expect(searchSettings('gh').some((s) => s.id === 'general-gh-path')).toBe(true);
+			});
+
+			it('ignores descriptions, where short words are everywhere', () => {
+				const named = (s: (typeof ALL_SEARCHABLE_SETTINGS)[number]) =>
+					/\bto\b/i.test([s.label, s.tabLabel, ...(s.keywords ?? [])].join(' '));
+				expect(ALL_SEARCHABLE_SETTINGS.some((s) => / to /.test(s.description ?? ''))).toBe(true);
+				expect(searchSettings('to').every(named)).toBe(true);
+			});
+
+			it('switches to substring matching at three characters', () => {
+				expect(searchSettings('qui').some((s) => s.id === 'encore-quick-chat')).toBe(true);
+			});
+		});
+
 		it('should match by label', () => {
 			const results = searchSettings('Fonts');
 			expect(results.some((s) => s.id === 'display-fonts')).toBe(true);
@@ -142,6 +176,13 @@ describe('searchableSettings', () => {
 		])('finds host media settings for %s', (query) => {
 			expect(searchSettings(query).some((s) => s.id === 'environment-host-media')).toBe(true);
 		});
+
+		it.each(['Primary Agent', 'right hand', 'default agent', 'None'])(
+			'finds the Primary Agent setting for %s',
+			(query) => {
+				expect(searchSettings(query).some((s) => s.id === 'general-primary-agent')).toBe(true);
+			}
+		);
 
 		it('should be case insensitive', () => {
 			const lower = searchSettings('font');
@@ -326,6 +367,10 @@ describe('searchableSettings', () => {
 			['cue pipeline', 'general-power'],
 			['ctrl+click', 'general-browser'],
 			['context menu', 'general-browser'],
+			['design mode', 'general-design-mode-collapse-panels'],
+			['collapse side bars', 'general-design-mode-collapse-panels'],
+			['left bar', 'general-design-mode-collapse-panels'],
+			['mobile breakpoint', 'general-design-mode-collapse-panels'],
 			['icloud drive', 'general-storage'],
 			['environment variables', 'general-storage'],
 			['migrate', 'general-storage'],

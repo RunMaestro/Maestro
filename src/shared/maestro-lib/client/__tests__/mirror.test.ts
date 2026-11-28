@@ -154,6 +154,14 @@ describe('ClientMirror', () => {
 			});
 		});
 
+		// Parity R56: a desktop host says whether its own retry holds the tab's failed turn.
+		it("carries a desktop host's pending retry onto a known tab, and its end (R56)", () => {
+			mirror.mergeTabs('a', [{ id: 'a-t1', retryPending: true }], 'a-t1');
+			expect(mirror.visibleTabs('a')?.[0]).toMatchObject({ retryPending: true });
+			mirror.mergeTabs('a', [{ id: 'a-t1', retryPending: false }], 'a-t1');
+			expect(mirror.visibleTabs('a')?.[0]).toMatchObject({ retryPending: false });
+		});
+
 		it('reports an unknown tab instead of inventing a record', () => {
 			const { unknownTab } = mirror.mergeTabs('a', [{ id: 'a-t1' }, { id: 'new-tab' }]);
 			expect(unknownTab).toBe(true);

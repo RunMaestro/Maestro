@@ -24,6 +24,7 @@ describe('toGroupChatSessionInfo', () => {
 	it('carries what a participant needs to launch as its agent would', () => {
 		const info = toGroupChatSessionInfo(
 			session({
+				customPath: '/opt/bin/claude',
 				customArgs: '--foo',
 				customEnvVars: { A: '1' },
 				customModel: 'opus',
@@ -40,6 +41,7 @@ describe('toGroupChatSessionInfo', () => {
 			name: 'Alpha',
 			toolType: 'claude-code',
 			cwd: '/work/alpha',
+			customPath: '/opt/bin/claude',
 			customArgs: '--foo',
 			customEnvVars: { A: '1' },
 			customModel: 'opus',

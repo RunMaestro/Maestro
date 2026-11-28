@@ -20,15 +20,18 @@
 // refused there rather than dropped.
 
 import { getSessionById, resolveAgentId } from '../services/storage';
-import { AGENT_LIFTED_CODE, liftedSendRefusal } from '../../shared/maestro-lib/agents/lift-pointer';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
+import * as os from 'os';
 import { readCallerIdentity } from '../../shared/agentDelegation';
+import { buildRemoteAskerKey, CROSS_AGENT_ASK_TAB_ID } from '../../shared/crossAgentTypes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import {
 	PeerResolveError,
 	peerErrorCode,
+	liftedPeerTarget,
 	routeAgentTarget,
 	withPeerAgent,
+	type PeerTarget,
 } from '../services/peer-resolver';
 import { ExitCode } from '../exit-codes';
 
@@ -41,6 +44,13 @@ export interface AskOptions {
 	from?: string;
 	/** Forward your current transcript as context (off by default). */
 	withContext?: boolean;
+	/**
+	 * Ask a side question (`/btw`) of the target's tab instead of consulting the
+	 * agent: answered from a throwaway fork of that tab's conversation.
+	 */
+	btw?: boolean;
+	/** With `btw`: the target's AI tab to fork. Defaults to its active tab. */
+	tab?: string;
 	/** Seconds to wait for the answer. */
 	timeout?: string;
 	json?: boolean;
@@ -92,11 +102,23 @@ export async function ask(agentId: string, question: string, options: AskOptions
 
 	const timeoutError = `--timeout must be between ${MIN_TIMEOUT_SECONDS} and ${MAX_TIMEOUT_SECONDS} seconds`;
 
-	const route = routeAgentTarget(agentId);
-	if (route.kind === 'peer') {
+	const sideQuestion = options.btw === true;
+	if (options.tab !== undefined && !sideQuestion) {
+		fail('--tab only applies to --btw');
+		return;
+	}
+	if (sideQuestion && options.withContext) {
+		fail('--with-context does not apply to --btw: a side question already reads the tab');
+		return;
+	}
+
+	// A peer's agent answers on its host: the question goes there over the peer link.
+	const askOnPeer = async (target: PeerTarget) => {
+		// `--btw` (and its `--tab`) rides the same message: a desktop host forks its own tab, as a
+		// `/btw` typed there does. A headless host refuses it.
 		if (options.from !== undefined || options.withContext) {
 			fail(
-				`${options.from !== undefined ? '--from' : '--with-context'} names a local agent, which the host on peer "${route.target.peer}" cannot see. Ask without it.`,
+				`${options.from !== undefined ? '--from' : '--with-context'} names a local agent, which the host on peer "${target.peer}" cannot see. Ask without it.`,
 				{},
 				ExitCode.InvalidUsage
 			);
@@ -107,9 +129,25 @@ export async function ask(agentId: string, question: string, options: AskOptions
 			fail(timeoutError);
 			return;
 		}
+		// An agent's own shell names it, as a local ask does: the host keeps one consult tab per
+		// asking (machine, agent), named after it, so a follow-up continues that thread.
+		const caller = readCallerIdentity(process.env);
+		const callerName = caller?.agentId ? getSessionById(caller.agentId)?.name : undefined;
+		const askerFields: Record<string, unknown> = caller?.agentId
+			? {
+					askerKey: buildRemoteAskerKey({
+						machine: os.hostname(),
+						agentId: caller.agentId,
+						tabId: CROSS_AGENT_ASK_TAB_ID,
+					}),
+					...(callerName ? { fromAgentName: callerName } : {}),
+				}
+			: {};
 		try {
-			await withPeerAgent(route.target, ({ agent, peer, withBridge }) =>
-				consult(withBridge, agent.id, question, {}, peerTimeoutMs, options, fail, { peer })
+			await withPeerAgent(target, ({ agent, peer, withBridge }) =>
+				consult(withBridge, agent.id, question, askerFields, peerTimeoutMs, options, fail, {
+					peer,
+				})
 			);
 		} catch (error) {
 			if (!(error instanceof PeerResolveError)) throw error;
@@ -119,8 +157,10 @@ export async function ask(agentId: string, question: string, options: AskOptions
 				error.exitCode
 			);
 		}
-		return;
-	}
+	};
+
+	const route = routeAgentTarget(agentId);
+	if (route.kind === 'peer') return askOnPeer(route.target);
 
 	let targetSessionId: string;
 	try {
@@ -129,12 +169,9 @@ export async function ask(agentId: string, question: string, options: AskOptions
 		fail(error instanceof Error ? error.message : String(error));
 		return;
 	}
-	// A lifted agent answers on its host now, so the question goes there.
-	const liftedRefusal = liftedSendRefusal(getSessionById(targetSessionId) ?? {});
-	if (liftedRefusal) {
-		fail(liftedRefusal, { code: AGENT_LIFTED_CODE });
-		return;
-	}
+	// A hosted agent answers on its host, so the question goes there, as it does for `peer:agent`.
+	const hostRoute = liftedPeerTarget(getSessionById(targetSessionId));
+	if (hostRoute) return askOnPeer(hostRoute);
 
 	const caller = readCallerIdentity(process.env);
 	let fromSessionId: string | undefined;
@@ -148,7 +185,9 @@ export async function ask(agentId: string, question: string, options: AskOptions
 	} else {
 		fromSessionId = caller?.agentId;
 	}
-	if (fromSessionId && fromSessionId === targetSessionId) {
+	// A side question forks a tab and never writes to it, so an agent asking
+	// about its own conversation is fine; a consult of itself would deadlock.
+	if (!sideQuestion && fromSessionId && fromSessionId === targetSessionId) {
 		fail('an agent cannot consult itself');
 		return;
 	}
@@ -210,6 +249,8 @@ async function consult(
 					question,
 					...fromFields,
 					withContext: options.withContext === true,
+					...(options.btw === true ? { sideQuestion: true } : {}),
+					...(options.tab ? { targetTabId: options.tab } : {}),
 					timeoutMs,
 				},
 				'cross_agent_ask_result',

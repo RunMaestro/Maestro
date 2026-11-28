@@ -67,15 +67,39 @@ function formatNoteTime(timestamp: number): string {
 }
 
 /**
- * Build the block that rides in front of the next task's prompt.
+ * Which kind of Auto Run a note steers. A document run dispatches one agent per
+ * TASK and stops on the halt marker; a Goal-Driven run dispatches one agent per
+ * ITERATION and stops on the deadlock marker. The note block names the unit and
+ * the stop marker of the run it lands in, so its advice is never about a marker
+ * that run's prompt does not describe.
+ */
+export type SteeringRunKind = 'document' | 'goal';
+
+/**
+ * Build the block that rides in front of the next task's (or goal iteration's)
+ * prompt.
  *
  * Returns `''` when there are no notes, so callers can prepend unconditionally.
  *
  * The block is prepended AFTER template substitution on purpose: a `{{...}}`
  * the operator typed is their literal text, not a variable to expand.
  */
-export function formatSteeringNotesBlock(notes: readonly AutoRunSteeringNote[]): string {
+export function formatSteeringNotesBlock(
+	notes: readonly AutoRunSteeringNote[],
+	kind: SteeringRunKind = 'document'
+): string {
 	if (notes.length === 0) return '';
+	const unit = kind === 'goal' ? 'iteration' : 'task';
+	const stopAdvice =
+		kind === 'goal'
+			? [
+					'- If it asks you to stop the whole run, use the deadlock marker described',
+					'  below with the note as the reason, rather than just exiting.',
+				]
+			: [
+					'- If it asks you to stop the whole run, use the halt marker described below',
+					'  rather than just exiting.',
+				];
 
 	const lines = notes.map((note, index) => {
 		// Indent continuation lines so a multi-line note stays inside its own
@@ -99,14 +123,27 @@ export function formatSteeringNotesBlock(notes: readonly AutoRunSteeringNote[]):
 		'',
 		'How to act on the above:',
 		'',
-		'- Apply it to the task you are about to do, and keep applying it for the rest',
+		`- Apply it to the ${unit} you are about to do, and keep applying it for the rest`,
 		'  of the run where it still makes sense.',
-		'- If it contradicts the task, the document, or the instructions below, follow',
-		'  the note and say in your synopsis which instruction you set aside.',
-		'- If it asks you to stop the whole run, use the halt marker described below',
-		'  rather than just exiting.',
+		kind === 'goal'
+			? '- If it contradicts the goal or the instructions below, follow the note and'
+			: '- If it contradicts the task, the document, or the instructions below, follow',
+		kind === 'goal'
+			? '  say in your synopsis which instruction you set aside.'
+			: '  the note and say in your synopsis which instruction you set aside.',
+		...stopAdvice,
 		'- Begin your synopsis with `[steered]` so the operator can see it landed.',
 		'',
 		STEERING_BLOCK_END,
 	].join('\n');
+}
+
+/**
+ * Join the blocks that open an Auto Run turn: steering notes, then delegated
+ * results, then the substituted prompt. Empty blocks drop out, so a turn with
+ * no notes and no results is the prompt alone. One definition for the document
+ * runner and the goal runner, so a note opens either turn the same way.
+ */
+export function joinAutoRunPromptBlocks(blocks: readonly string[]): string {
+	return blocks.filter(Boolean).join('\n\n---\n\n');
 }

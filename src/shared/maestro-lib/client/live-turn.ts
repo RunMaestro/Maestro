@@ -1,10 +1,11 @@
 // The live tail of a turn another Maestro is running, folded from its `TurnEvent`s.
 //
-// A host persists only the user entry and the final answer of a turn (`buildTurnTranscript()`),
-// so what a client shows WHILE a turn runs is a display tail, not a record: entries built here are
-// shown after the persisted transcript and dropped when the turn ends, when the caller re-reads
-// the host's transcript. A missed chunk can therefore never be written anywhere; the worst case
-// is a gap in the live view until the turn ends.
+// A host persists the user entry and the final answer of a turn (`buildTurnTranscript()`), and a
+// 'sticky' tab's thinking and tool cards, which a headless host folds with this same function from
+// the events it sends. What a client shows WHILE a turn runs is a display tail, not a record:
+// entries built here are shown after the persisted transcript and dropped when the turn ends, when
+// the caller re-reads the host's transcript. A chunk a client missed is therefore never written
+// from that client; the worst case is a gap in the live view until the turn ends.
 //
 // Pure: no I/O, no clock, no ids of its own (the caller passes `newId`). The desktop's peer mirror
 // folds with it in main and in the renderer, and a TUI client can use it as is.
@@ -23,6 +24,13 @@ export interface LiveTurn {
 	busy: boolean;
 	/** The latest usage report, as received. Not a total. */
 	usage?: UsageStats;
+	/**
+	 * The answer text the turn streamed as thinking chunks so far (`TurnEvent` `answer`): what a
+	 * desktop holds as the turn's streamed answer, and draws as its reply when the turn is cut (R58).
+	 */
+	answerText?: string;
+	/** When the first of `answerText` arrived, epoch ms. */
+	answerAt?: number;
 }
 
 export interface LiveTurnContext {
@@ -135,6 +143,15 @@ export function foldLiveTurn(
 	switch (event.kind) {
 		case 'user': {
 			const next = begin(turn, event.at);
+			// The same entry again (a steer whose outcome the host stamped since): it takes its
+			// place, never drawn twice.
+			const at = next.entries.findIndex((entry) => entry.id === event.entry.id);
+			if (at !== -1) {
+				return {
+					...next,
+					entries: next.entries.map((entry, i) => (i === at ? event.entry : entry)),
+				};
+			}
 			return { ...next, entries: [...next.entries, event.entry] };
 		}
 		case 'started':
@@ -152,6 +169,12 @@ export function foldLiveTurn(
 			return {
 				...next,
 				entries: appendStream(next.entries, 'thinking', event.text, event.at, ctx),
+				...(event.answer === true
+					? {
+							answerText: (next.answerText ?? '') + event.text,
+							answerAt: next.answerAt ?? event.at,
+						}
+					: {}),
 			};
 		}
 		case 'tool': {
@@ -167,6 +190,7 @@ export function foldLiveTurn(
 				timestamp: event.at,
 				source: 'error',
 				text: event.error.message,
+				agentError: event.error,
 			};
 			return { ...next, entries: [...next.entries, entry] };
 		}
@@ -178,7 +202,7 @@ export function foldLiveTurn(
 
 /**
  * Merge a burst of one tab's turn events for one push: consecutive `text` events become one, and
- * so do consecutive `thinking` events. Order is kept, and every other event passes as is, so
+ * so do consecutive `thinking` events of the same kind (answer text or reasoning). Order is kept, and every other event passes as is, so
  * folding the result gives the same entries, with the same text, as folding the burst.
  */
 export function coalesceTurnEvents(events: readonly TurnEvent[]): TurnEvent[] {
@@ -189,7 +213,11 @@ export function coalesceTurnEvents(events: readonly TurnEvent[]): TurnEvent[] {
 			last &&
 			(event.kind === 'text' || event.kind === 'thinking') &&
 			(last.kind === 'text' || last.kind === 'thinking') &&
-			last.kind === event.kind
+			last.kind === event.kind &&
+			// Answer text and reasoning stay apart (R58).
+			(last.kind !== 'thinking' ||
+				event.kind !== 'thinking' ||
+				(last.answer === true) === (event.answer === true))
 		) {
 			out[out.length - 1] = { ...last, text: last.text + event.text };
 			continue;

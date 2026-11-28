@@ -2,7 +2,10 @@ import { createPluginSessionLifecycle } from './plugins/plugin-session-lifecycle
 import type { ConfirmQueueItem, ReleaseQueueItem } from './stores/queue-item-receipt';
 import { flushPendingSessionWrites } from './stores/instances';
 import { RelayConversations } from './plugins/relay-conversations';
-import { broadcastSessionLifecycle } from './ipc/handlers/persistence';
+import {
+	broadcastSessionLifecycle,
+	setSessionLifecycleRecipientFilter,
+} from './ipc/handlers/persistence';
 import { transcriptMessagesToLogEntries, stripSynopsisTurns } from '../shared/transcriptMessages';
 import { canonicalJson } from '../shared/canonicalJson';
 import { realpathSync, lstatSync } from 'fs';
@@ -31,7 +34,6 @@ import {
 	powerMonitor,
 	protocol,
 	safeStorage,
-	shell,
 	ipcMain,
 	dialog,
 	type OpenExternalOptions,
@@ -51,9 +53,10 @@ import { readFile } from 'fs/promises';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
 import { ProcessManager } from './process-manager';
+import { isRetiredOnRendererCrash } from './process-manager/utils/rendererCrashCleanup';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
-import { createAgentConfigLookup } from './agents/agent-config-lookup';
+import { createAgentConfigLookup, customPathsFromAgentConfigs } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import { sentryUserForInstallation } from '../shared/sentryContext';
 import { v8OomFingerprint } from '../shared/sentryGrouping';
@@ -66,6 +69,7 @@ import {
 import { CueEngine } from './cue/cue-engine';
 import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
 import type { SshRemoteConfig } from '../shared/types';
+import { getCueSubscriptionTriggerStats } from './cue/cue-db';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { nativeCurrentTurns } from './pianola/current-turn';
 import { PianolaSupervisor } from './pianola/pianola-supervisor';
@@ -80,7 +84,12 @@ import { createComputerHistoryForApp } from './computer-history/bootstrap';
 import { getMaestroRunService } from './maestro-run';
 import { createMaestroRunForApp } from './maestro-run/bootstrap';
 import { createDataviewSupervisorHooks } from './dataview/dataview-service';
-import { createFederationRuntime, getPeerMirrorService } from './federation';
+import {
+	createFederationRuntime,
+	getPeerMirrorService,
+	noteHostedAgentsChanged,
+	onMirrorPush,
+} from './federation';
 import { execFile } from 'child_process';
 import { PluginManager } from './plugins/plugin-manager';
 import { PluginToolRunProofFiles } from './plugins/plugin-tool-run-proof-file';
@@ -184,6 +193,7 @@ import {
 import { setSusFactorNotifier } from './cue/cue-susfactor';
 import { emitCueNotifyToast } from './cue/cue-notify-bridge';
 import { logger } from './utils/logger';
+import { openExternalUrl } from './utils/open-local-path';
 import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
@@ -217,6 +227,8 @@ import { runSettingsMigrations } from './stores/migrations';
 import { migrateClaudeSessionNamesFromHistory } from './stores/migrations/claude-session-names-backfill';
 import {
 	ensureCliServer,
+	flushRemoteCopyWriteBack,
+	pendingRemoteCopyWrites,
 	startCliDiscoveryWatchdog,
 	stopCliDiscoveryWatchdog,
 } from './ipc/handlers';
@@ -244,7 +256,8 @@ import { createConcertoHtmlResponse } from './concerto-html';
 import { MEDIA_SCHEME } from '../shared/mediaTypes';
 import { handleMediaStreamRequest } from './media/media-stream';
 import { closeAllParquetFiles } from './parquet/parquet-file';
-import { DEMO_MODE, DEMO_DATA_PATH, resolveSharedDataPath } from './constants';
+import { closeAllSqliteDatabases } from './sqlite/sqlite-database';
+import { DEMO_MODE, DEMO_DATA_PATH, DEMO_SHOW_INACTIVE, resolveSharedDataPath } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
 import { setupDeepLinkHandling, flushPendingDeepLink } from './deep-links';
@@ -253,7 +266,7 @@ import { wireProcessListeners } from './process-listeners-wiring';
 // Phase 2 refactoring - dependency injection
 import { createSafeSend, isWebContentsAvailable } from './utils/safe-send';
 import { capabilitySnapshots, createSnapshotBroadcaster } from './agents/capability-snapshot';
-import { setModelsRefreshedBroadcaster } from './agents/model-discovery';
+import { discoverAgentModels, setModelsRefreshedBroadcaster } from './agents/model-discovery';
 import { createWebServerFactory } from './web-server/web-server-factory';
 import { registerBrowserRelayHandlers } from './browser/browser-relay';
 import { isHostBrowserPageWindow } from './browser/browser-pages';
@@ -290,7 +303,8 @@ import { planWindowRestore, pickFocusWindowSpec } from './window-state-persisten
 import type { WindowState as SharedWindowState } from '../shared/window-types';
 import { setupAgentRunCapture } from './agent-run/setup-capture-listener';
 import { setAgentRunSink } from './agent-run/broadcast';
-import { configureSshReachability } from './ssh-reachability';
+import { configureSshReachability, forgetHostPeer, noteHostConnection } from './ssh-reachability';
+import { HOSTED_AGENTS_SETTING, readLiftedTo } from '../shared/maestro-lib/agents/lift-pointer';
 import { sshRemoteManager } from './ssh-remote-manager';
 import { startAgentRunStoreWatcher } from './agent-run/store-watcher';
 import { setupAgentRunRecovery } from './agent-run/setup-recovery';
@@ -309,6 +323,7 @@ import { setSnapshot as setClaudeUsageSnapshot } from './stores/claudeUsageStore
 import { rememberQuotaAccounts } from './stores/quotaAccountsStore';
 import { getMaestroPBinPath, runStartupUsageSampling } from './agents/claude-usage-startup';
 import { UsageRefreshScheduler } from './agents/usage-refresh-scheduler';
+import { ClaudeTuiCanary, setClaudeTuiCanary } from './agents/claude-tui-canary';
 import type { ProcessConfig as ProcessSpawnConfig } from './process-manager/types';
 
 // ============================================================================
@@ -652,6 +667,7 @@ let confirmQueueItemInPersistence: ConfirmQueueItem | null = null;
 // the two emit paths never desync. Null before IPC setup / when unavailable.
 let noteSessionActivatedInPersistence: ((sessionId: string) => void) | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
+let claudeTuiCanary: ClaudeTuiCanary | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring).
@@ -667,12 +683,44 @@ capabilitySnapshots.init(agentCapabilitiesStore, createSnapshotBroadcaster(safeS
 // A forced model discovery pushes the fresh list to every open model picker.
 setModelsRefreshedBroadcaster(safeSend);
 
+/**
+ * Whether an agent on this machine runs on the Maestro host behind `peerId` (a hosted agent, with
+ * hosted agents on). The one predicate the host outage and the mirror's redial pace both read.
+ */
+const hostsAgentsOn = (peerId: string): boolean => {
+	const hostedEnabled = store.get(HOSTED_AGENTS_SETTING, false) === true;
+	if (!hostedEnabled) return false;
+	const sessions = sessionsStore.get('sessions', []) as Array<{ liftedTo?: unknown }>;
+	return sessions.some((session) => readLiftedTo(session?.liftedTo)?.peer === peerId);
+};
+
 // One dialog per unreachable SSH remote, in every window and web client, fed by
 // every path that runs ssh (agent turns, remote-fs, remote git, shell commands).
 configureSshReachability({
 	resolveRemote: getSshRemoteById,
 	probe: (remote) => sshRemoteManager.probeReachability(remote),
 	emit: (event) => safeSend('ssh-remote:reachability', event),
+	hasLiveTransport: (remoteId) => getPeerMirrorService()?.isRemoteConnected(remoteId) ?? false,
+	// A hosted agent's host that stops answering is an outage of its remote, told through the
+	// same dialog. Only a host one of this machine's agents runs on counts.
+	hostsAgents: hostsAgentsOn,
+	reconnectHost: async (remoteId) => {
+		const result = await getPeerMirrorService()?.reconnectRemote(remoteId);
+		return result?.ok ?? false;
+	},
+});
+onMirrorPush(({ peerId, event }) => {
+	if (event.type === 'peer.state') {
+		noteHostConnection({
+			remoteId: event.peer.remoteId,
+			peerId: event.peer.peerId,
+			name: event.peer.name,
+			connection: event.peer.connection,
+			...(event.peer.error ? { error: event.peer.error } : {}),
+		});
+	} else if (event.type === 'peer.removed') {
+		forgetHostPeer(peerId);
+	}
 });
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
@@ -727,6 +775,20 @@ const settingsWatcher = createSettingsWatcher({
 		// here, and the only cost of an unnecessary one is a single `which`.
 		clearGhCache();
 	},
+	onAgentConfigsChangedExternally: () => {
+		// A provider's custom binary set outside the Settings UI (maestro-cli
+		// `settings agent set <provider> customPath`) must reach the detector, or
+		// every spawn that takes `agent.path` keeps running the old binary until a
+		// restart. The Settings setter applies it the same way.
+		const customPaths = customPathsFromAgentConfigs(agentConfigsStore.get('configs', {}));
+		if (
+			agentDetector &&
+			canonicalJson(agentDetector.getCustomPaths()) !== canonicalJson(customPaths)
+		) {
+			agentDetector.setCustomPaths(customPaths);
+			logger.info('Reloaded custom agent paths after an outside change', 'SettingsWatcher');
+		}
+	},
 });
 
 // Fallback must match DEFAULT_START_PORT in scripts/dev-port.mjs. Never 5173
@@ -747,6 +809,11 @@ let quitHandler: QuitHandler | null = null;
 // the primary window registers itself as `isMain` when createWindow() runs on
 // app-ready, and secondary windows register via createSecondaryWindow.
 const windowRegistry = new WindowRegistry();
+// Agent lifecycle deltas go to app windows only: feature windows and offscreen
+// browser pages never mount the listener, and every send clones the payload.
+setSessionLifecycleRecipientFilter(
+	(window) => !isHostBrowserPageWindow(window) && !windowRegistry.isFeatureWindow(window)
+);
 const getWindowForSession = (sessionId: string): BrowserWindow | null => {
 	const ownerId = windowRegistry.getWindowForSession(sessionId);
 	const owner = ownerId ? windowRegistry.get(ownerId) : windowRegistry.getPrimary();
@@ -776,6 +843,7 @@ const windowManager = createWindowManager({
 	windowRegistry,
 	settingsStore: store,
 	getIsQuitting: () => quitHandler?.isQuitConfirmed() ?? false,
+	showInactive: DEMO_SHOW_INACTIVE,
 });
 
 // Deps shared by every cadenza HUD window operation (the HUD reuses the main
@@ -986,6 +1054,7 @@ const createWebServer = createWebServerFactory({
 		if (!cueEngine) return [];
 		return cueEngine.getActivityLog();
 	},
+	getCueSubscriptionTriggerStats,
 	addGroupChatParticipant: async (chatId, agentId) => {
 		try {
 			const { participant, alreadyMember } = await addParticipantByAgentId(chatId, agentId);
@@ -1049,12 +1118,14 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
 		}
 	});
 
-	// Kill all managed processes before the renderer reloads after a crash.
-	// Without this, the new renderer restores sessions with pid:0 and spawns fresh
-	// PTYs, but only the *active* tab's old PTY gets killed (via spawn-before-kill).
-	// Non-active tabs' orphaned PTYs survive indefinitely, leaking PTY file descriptors.
+	// The main process owns AI tab turns across a renderer reload, and session
+	// restoration reattaches to them. Stop only what the crashed renderer owned:
+	// terminal PTYs, Auto Run tasks and synopses (see rendererCrashCleanup.ts).
 	mainWindow.webContents.on('render-process-gone', () => {
-		processManager?.killAll();
+		if (!processManager) return;
+		for (const proc of processManager.getAll()) {
+			if (isRetiredOnRendererCrash(proc)) processManager.kill(proc.sessionId, { sync: true });
+		}
 	});
 }
 
@@ -1108,10 +1179,7 @@ function restoreWindows() {
 		}
 	}
 
-	const focusWindow = focusSpec ? created[specs.indexOf(focusSpec)] : undefined;
-	if (focusWindow && !focusWindow.isDestroyed()) {
-		focusWindow.focus();
-	}
+	windowManager.focusRestoredWindow(focusSpec ? created[specs.indexOf(focusSpec)] : undefined);
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
@@ -1432,7 +1500,11 @@ app
 		// the user having to toggle Live Mode to coax it back.
 		startCliDiscoveryWatchdog(cliServerDeps);
 
-		// Initialize core prompts from disk (must happen before features that use them)
+		// Initialize core prompts from disk (must happen before features that use them).
+		// A customizations file that is not valid JSON never reaches the catch below: the prompt
+		// manager moves it aside and starts from the bundled prompts. What does reach it is a
+		// missing BUNDLED prompt (a broken install, which a reinstall fixes) or a customizations
+		// file that cannot be read at all (permissions, disk).
 		try {
 			await initializePrompts();
 		} catch (error) {
@@ -1491,13 +1563,7 @@ app
 		}
 
 		// Load custom agent paths from settings
-		const allAgentConfigs = agentConfigsStore.get('configs', {});
-		const customPaths: Record<string, string> = {};
-		for (const [agentId, config] of Object.entries(allAgentConfigs)) {
-			if (config && typeof config === 'object' && 'customPath' in config && config.customPath) {
-				customPaths[agentId] = config.customPath as string;
-			}
-		}
+		const customPaths = customPathsFromAgentConfigs(agentConfigsStore.get('configs', {}));
 		if (Object.keys(customPaths).length > 0) {
 			agentDetector.setCustomPaths(customPaths);
 			logger.info(`Loaded custom agent paths: ${JSON.stringify(customPaths)}`, 'Startup');
@@ -1538,6 +1604,18 @@ app
 		if (isEncoreFeatureEnabled(store, 'usageStats')) {
 			usageRefreshScheduler.start();
 		}
+
+		// One real maestro-p turn after every Claude Code (or Maestro) update, so a
+		// release that breaks TUI-mode agents is known the morning it lands. See
+		// claude-tui-canary.ts. It runs only on an account with an authenticated
+		// usage snapshot, so it stays idle for anyone not on the TUI token source.
+		claudeTuiCanary = new ClaudeTuiCanary({
+			agentDetector,
+			maestroVersion: app.getVersion(),
+			notifyToast: (toast) => safeSend('remote:notifyToast', toast),
+		});
+		setClaudeTuiCanary(claudeTuiCanary);
+		claudeTuiCanary.start();
 
 		// Warm any provider the strict startup pass left cold (no auto-refresh
 		// interval picked, no eligible recent maestro-p session, Codex not sampled
@@ -1595,8 +1673,8 @@ app
 					(s) => s.id === sessionId
 				) as CueRunSessionRecord | undefined,
 			resolveAgentBinary: async ({ session, agentConfigValues }) => {
-				const { resolveCueAgentBinary } = await import('./cue/cue-agent-binary');
-				return resolveCueAgentBinary({
+				const { resolveAgentBinary } = await import('../shared/maestro-lib/launch/agent-binary');
+				return resolveAgentBinary({
 					sessionCustomPath: session.customPath,
 					providerCustomPath: agentConfigValues.customPath as string | undefined,
 					sshEnabled: !!session.sessionSshRemoteConfig?.enabled,
@@ -1608,6 +1686,11 @@ app
 				});
 			},
 			sshStore: createSshRemoteStoreAdapter(store),
+			getOfferedModels: (toolType, sshRemoteId) =>
+				discoverAgentModels(
+					{ getAgentDetector: () => agentDetector, getSshRemote: getSshRemoteById },
+					{ agentId: toolType, sshRemoteId }
+				),
 			getAgentConfigValues: (toolType) => getAgentConfigForAgent(toolType),
 			onLog: cueRunLog,
 			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
@@ -3081,7 +3164,9 @@ app
 						logger.info(`shell.openExternal by plugin -> ${url} (demo no-op)`, '[PluginAudit]');
 						return;
 					}
-					await shell.openExternal(url, opts as OpenExternalOptions);
+					// A `file:` URL (the broker passes one only under a `file:` scope)
+					// opens like a clicked link: an app, script or installer is revealed.
+					await openExternalUrl(url, opts as OpenExternalOptions);
 				},
 				powerPreventSleep: (reason) => powerManager.addBlockReason(reason),
 				powerReleaseSleep: (reason) => powerManager.removeBlockReason(reason),
@@ -3181,6 +3266,7 @@ app
 							cwd: session.cwd,
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 							sessionCustomEnvVars: session.customEnvVars,
+							sessionCustomPath: session.customPath,
 							enableMaestroP: session.enableMaestroP,
 							maestroPMode: session.maestroPMode,
 							maestroPPath: session.maestroPPath,
@@ -3899,8 +3985,12 @@ app
 			readRemotes: () => (store.get('sshRemotes', []) ?? []) as SshRemoteConfig[],
 			watchRemotes: (onChange) => store.onDidChange('sshRemotes', () => onChange()),
 			safeSend,
+			// A host nothing here is hosted on redials slowly while it stays down.
+			hostsAgents: hostsAgentsOn,
 		});
 		federation.start();
+		// Hosted agents switched on or off: the host outages and the redial pace follow at once.
+		store.onDidChange(HOSTED_AGENTS_SETTING, () => noteHostedAgentsChanged());
 		app.on('will-quit', () => federation.stop());
 
 		// Install the application menu (File / Edit / View / Window on macOS,
@@ -3970,6 +4060,8 @@ app
 		// out. The idle reaper would get to them eventually, but a preview tab
 		// left open otherwise holds a descriptor until the process dies.
 		app.on('will-quit', () => void closeAllParquetFiles());
+		// Same for the SQLite viewer's read-only connections.
+		app.on('will-quit', () => void closeAllSqliteDatabases());
 
 		// Flush any deep link URL that arrived before the window was ready (cold start)
 		flushPendingDeepLink(() => mainWindow);
@@ -4102,6 +4194,8 @@ quitHandler = createQuitHandler({
 	getHistoryManager,
 	tunnelManager,
 	closeStatsDB,
+	flushPendingRemoteWrites: flushRemoteCopyWriteBack,
+	listPendingRemoteWrites: pendingRemoteCopyWrites,
 	stopCliWatcher: () => {
 		cliWatcher.stop();
 		// Tear down the discovery-file watchdog so it doesn't try to rewrite
@@ -4147,6 +4241,7 @@ quitHandler = createQuitHandler({
 		});
 		// Tear down the background quota refresh timers.
 		usageRefreshScheduler?.stop();
+		claudeTuiCanary?.stop();
 	},
 	stopSettingsWatcher: () => {
 		settingsWatcher.stop();

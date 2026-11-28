@@ -322,18 +322,213 @@ describe('cue-shell-executor', () => {
 		expect(result.subscriptionName).toBe('shell-test');
 	});
 
-	it('substitutes Cue template variables in the command before spawning', async () => {
+	it('substitutes Cue template variables as quoted expansions, with the values in the env', async () => {
 		const config = createConfig({
 			shellCommand: 'echo {{CUE_RUN_ID}} from {{CUE_TRIGGER_NAME}}',
 		});
 		const promise = executeCueShell(config as any);
 		await vi.advanceTimersByTimeAsync(0);
 
-		const cmd = mockSpawn.mock.calls[0][0] as string;
-		expect(cmd).toContain('echo run-1 from shell-test');
+		const [cmd, , opts] = mockSpawn.mock.calls[0] as [
+			string,
+			string[],
+			{ env: Record<string, string> },
+		];
+		expect(cmd).toBe('echo "${MAESTRO_VAR_CUE_RUN_ID}" from "${MAESTRO_VAR_CUE_TRIGGER_NAME}"');
+		expect(opts.env.MAESTRO_VAR_CUE_RUN_ID).toBe('run-1');
+		expect(opts.env.MAESTRO_VAR_CUE_TRIGGER_NAME).toBe('shell-test');
 
 		mockChild.emit('close', 0);
 		await promise;
+	});
+
+	describe('text from a pull request', () => {
+		const prEvent = (title: string): CueEvent => ({
+			id: 'evt-pr',
+			type: 'github.pull_request',
+			timestamp: '2026-04-16T10:00:00.000Z',
+			triggerName: 'shell-test',
+			payload: { number: 42, title },
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'reaches the local shell as one literal argument, never as syntax',
+			async () => {
+				const { spawnSync } =
+					await vi.importActual<typeof import('child_process')>('child_process');
+				const fs = await vi.importActual<typeof import('fs')>('fs');
+				const os = await vi.importActual<typeof import('os')>('os');
+				const path = await vi.importActual<typeof import('path')>('path');
+				const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-shell-injection-'));
+				const marker = path.join(scratch, 'pwned');
+				try {
+					for (const title of [
+						`"; touch ${marker} #`,
+						`$(touch ${marker})`,
+						`\`touch ${marker}\``,
+					]) {
+						for (const shellCommand of [
+							'printf "[%s]" {{CUE_GH_TITLE}}',
+							'printf "[%s]" "{{CUE_GH_TITLE}}"',
+							"printf '[%s]' '{{CUE_GH_TITLE}}'",
+						]) {
+							mockSpawn.mockClear();
+							const promise = executeCueShell(
+								createConfig({ event: prEvent(title), shellCommand }) as any
+							);
+							await vi.advanceTimersByTimeAsync(0);
+
+							const [cmd, , opts] = mockSpawn.mock.calls[0] as [
+								string,
+								string[],
+								{ env: Record<string, string>; shell: boolean },
+							];
+							expect(opts.shell).toBe(true);
+							expect(cmd).not.toContain(marker);
+							expect(opts.env.MAESTRO_VAR_CUE_GH_TITLE).toBe(title);
+
+							// Run what the executor would have spawned, in a real shell.
+							const ran = spawnSync('/bin/sh', ['-c', cmd], {
+								encoding: 'utf8',
+								env: { ...opts.env, PATH: '/usr/bin:/bin' },
+							});
+							expect(ran.status).toBe(0);
+							// printf repeats its format per argument: one `[...]` is one word.
+							expect(ran.stdout).toBe(`[${title}]`);
+							expect(fs.existsSync(marker)).toBe(false);
+
+							mockChild.emit('close', 0);
+							await promise;
+						}
+					}
+				} finally {
+					fs.rmSync(scratch, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it('reaches an SSH remote as an exported variable, not as command text', async () => {
+			const title = '"; touch /tmp/pwned #';
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['user@host', 'remote command'],
+				cwd: '/Users/local',
+				customEnvVars: undefined,
+				sshRemoteUsed: { id: 'remote-1', name: 'Server', host: 'host' },
+			});
+
+			const promise = executeCueShell(
+				createConfig({
+					event: prEvent(title),
+					shellCommand: 'gh pr comment {{CUE_GH_NUMBER}} --body "Thanks: {{CUE_GH_TITLE}}"',
+					sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					sshStore: { getSshRemotes: () => [] },
+				}) as any
+			);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				{
+					command: 'bash',
+					args: [
+						'-c',
+						'gh pr comment "${MAESTRO_VAR_CUE_GH_NUMBER}" --body "Thanks: ${MAESTRO_VAR_CUE_GH_TITLE}"',
+					],
+					cwd: '/projects/test',
+					customEnvVars: { MAESTRO_VAR_CUE_GH_NUMBER: '42', MAESTRO_VAR_CUE_GH_TITLE: title },
+				},
+				expect.anything(),
+				expect.anything()
+			);
+
+			mockChild.emit('close', 0);
+			expect((await promise).status).toBe('completed');
+		});
+
+		it('still passes values as data on a Windows host when the command runs over SSH', async () => {
+			mockIsWindows.mockReturnValue(true);
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['user@host', 'remote command'],
+				cwd: 'C:\\Users\\local',
+				customEnvVars: undefined,
+				sshRemoteUsed: { id: 'remote-1', name: 'Server', host: 'host' },
+			});
+
+			const promise = executeCueShell(
+				createConfig({
+					event: prEvent('$(id)'),
+					shellCommand: 'echo {{CUE_GH_TITLE}}',
+					sshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+					sshStore: { getSshRemotes: () => [] },
+				}) as any
+			);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				expect.objectContaining({
+					args: ['-c', 'echo "${MAESTRO_VAR_CUE_GH_TITLE}"'],
+					customEnvVars: { MAESTRO_VAR_CUE_GH_TITLE: '$(id)' },
+				}),
+				expect.anything(),
+				expect.anything()
+			);
+
+			mockChild.emit('close', 0);
+			await promise;
+		});
+
+		it('is refused in a local Windows shell command, with nothing spawned', async () => {
+			mockIsWindows.mockReturnValue(true);
+			const onLog = vi.fn();
+
+			const result = await executeCueShell(
+				createConfig({
+					event: prEvent('a & calc'),
+					shellCommand: 'echo {{CUE_GH_NUMBER}} {{CUE_GH_TITLE}}',
+					onLog,
+				}) as any
+			);
+
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(result.status).toBe('failed');
+			// Only the variable that carries outside text is named.
+			expect(result.stderr).toContain('{{CUE_GH_TITLE}}');
+			expect(result.stderr).not.toContain('{{CUE_GH_NUMBER}}');
+			expect(onLog).toHaveBeenCalledWith('error', expect.stringContaining('{{CUE_GH_TITLE}}'));
+		});
+
+		it('keeps the plain substitution in a local Windows shell command without outside text', async () => {
+			mockIsWindows.mockReturnValue(true);
+			const promise = executeCueShell(
+				createConfig({
+					event: prEvent('ignored'),
+					shellCommand: 'echo {{CUE_GH_NUMBER}} {{CUE_RUN_ID}}',
+				}) as any
+			);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(mockSpawn.mock.calls[0][0]).toBe('echo 42 run-1');
+
+			mockChild.emit('close', 0);
+			await promise;
+		});
+
+		it('fails without spawning when a placeholder sits in a quoted heredoc', async () => {
+			const onLog = vi.fn();
+			const result = await executeCueShell(
+				createConfig({
+					event: prEvent('x'),
+					shellCommand: "cat <<'EOF'\n{{CUE_GH_TITLE}}\nEOF",
+					onLog,
+				}) as any
+			);
+
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(result.status).toBe('failed');
+			expect(result.stderr).toMatch(/\{\{CUE_GH_TITLE\}\} is inside a quoted heredoc/);
+			expect(onLog).toHaveBeenCalledWith('error', expect.stringContaining('quoted heredoc'));
+		});
 	});
 
 	it('returns a failed result without spawning when the command is empty', async () => {
@@ -440,7 +635,7 @@ describe('cue-shell-executor', () => {
 			await vi.advanceTimersByTimeAsync(0);
 
 			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
-				{ command: 'bash', args: ['-c', 'echo hello'], cwd: '/projects/test' },
+				{ command: 'bash', args: ['-c', 'echo hello'], cwd: '/projects/test', customEnvVars: {} },
 				sshRemoteConfig,
 				sshStore
 			);

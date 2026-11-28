@@ -29,8 +29,9 @@
  * was steering would land in front of an unrelated task days later. DELIVERED
  * notes survive until the NEXT run starts, because the reply to the last note of
  * a run arrives as the run ends - and a note that asks the run to stop ends it.
- * Clearing them at run end erased that reply the instant it landed. Nothing here
- * is persisted.
+ * Clearing them at run end erased that reply the instant it landed. Between
+ * runs the operator clears one by hand (`dismissDelivery`), a whole delivery at
+ * a time because its notes share one reply. Nothing here is persisted.
  */
 
 import { create } from 'zustand';
@@ -88,6 +89,13 @@ export interface AutoRunSteeringState {
 	notes: Record<string, AutoRunSteeringNote[]>;
 	/** sessionId -> notes a task has already taken, oldest first. */
 	delivered: Record<string, DeliveredSteeringNote[]>;
+	/**
+	 * sessionId -> the text of each note that never reached the run (a hosted agent's host refused
+	 * the send, or could not be reached), oldest first, waiting for the Steer box to take it back.
+	 * A local refusal keeps the draft in the box; a host answers after the box has cleared, so the
+	 * text waits here until the box has room for it. A new run's start leaves it alone.
+	 */
+	returnedDrafts: Record<string, string[]>;
 }
 
 export interface AutoRunSteeringActions {
@@ -114,10 +122,23 @@ export interface AutoRunSteeringActions {
 		noteIds: readonly string[],
 		response: Pick<SteeringNoteResponse, 'summary' | 'text' | 'success'>
 	) => void;
+	/**
+	 * Drop one delivery - every note one task took, and its reply - once the
+	 * operator has read it. A reply that arrives afterwards is skipped by
+	 * `recordResponse`, the same as for a note the cap trimmed.
+	 */
+	dismissDelivery: (sessionId: string, deliveryId: string) => void;
 	/** Drop what no task has taken yet, keeping the delivered record (run end). */
 	clearPendingNotes: (sessionId: string) => void;
 	/** Drop everything for a session, pending and delivered (run start). */
 	clearNotes: (sessionId: string) => void;
+	/** Hand a note that was not delivered back to the Steer box (after any already waiting). */
+	returnDraft: (sessionId: string, text: string) => void;
+	/**
+	 * Take the waiting notes, oldest first, that fit in `room` characters once joined with a blank
+	 * line each; the rest keep waiting. Empty when none waits or the first does not fit.
+	 */
+	takeReturnedDrafts: (sessionId: string, room: number) => string[];
 }
 
 export type AutoRunSteeringStore = AutoRunSteeringState & AutoRunSteeringActions;
@@ -128,6 +149,7 @@ const EMPTY_DELIVERED: DeliveredSteeringNote[] = [];
 export const useAutoRunSteeringStore = create<AutoRunSteeringStore>()((set, get) => ({
 	notes: {},
 	delivered: {},
+	returnedDrafts: {},
 
 	addNote: (sessionId, text) => {
 		const normalized = normalizeSteeringNoteText(text);
@@ -201,6 +223,18 @@ export const useAutoRunSteeringStore = create<AutoRunSteeringStore>()((set, get)
 			};
 		}),
 
+	dismissDelivery: (sessionId, deliveryId) =>
+		set((s) => {
+			const existing = s.delivered[sessionId];
+			if (!existing) return {};
+			const remaining = existing.filter((note) => note.deliveryId !== deliveryId);
+			if (remaining.length === existing.length) return {};
+			const next = { ...s.delivered };
+			if (remaining.length === 0) delete next[sessionId];
+			else next[sessionId] = remaining;
+			return { delivered: next };
+		}),
+
 	clearPendingNotes: (sessionId) =>
 		set((s) => {
 			if (!s.notes[sessionId]) return {};
@@ -218,6 +252,39 @@ export const useAutoRunSteeringStore = create<AutoRunSteeringStore>()((set, get)
 			delete nextDelivered[sessionId];
 			return { notes: nextNotes, delivered: nextDelivered };
 		}),
+
+	returnDraft: (sessionId, text) => {
+		const normalized = normalizeSteeringNoteText(text);
+		if (!normalized) return;
+		set((s) => ({
+			returnedDrafts: {
+				...s.returnedDrafts,
+				[sessionId]: [...(s.returnedDrafts[sessionId] ?? []), normalized],
+			},
+		}));
+	},
+
+	takeReturnedDrafts: (sessionId, room) => {
+		const waiting = get().returnedDrafts[sessionId];
+		if (!waiting?.length) return [];
+		const taken: string[] = [];
+		let used = 0;
+		for (const text of waiting) {
+			const needed = text.length + (taken.length ? 2 : 0);
+			if (used + needed > room) break;
+			taken.push(text);
+			used += needed;
+		}
+		if (taken.length === 0) return [];
+		set((s) => {
+			const next = { ...s.returnedDrafts };
+			const rest = (next[sessionId] ?? []).slice(taken.length);
+			if (rest.length) next[sessionId] = rest;
+			else delete next[sessionId];
+			return { returnedDrafts: next };
+		});
+		return taken;
+	},
 }));
 
 /** Pending notes for one session. Stable empty array so it is selector-safe. */

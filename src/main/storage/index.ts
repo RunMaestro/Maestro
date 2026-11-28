@@ -7,6 +7,7 @@
 
 export { ClaudeSessionStorage, ClaudeSessionOriginsData } from './claude-session-storage';
 export { OpenCodeSessionStorage } from './opencode-session-storage';
+export { KiloSessionStorage } from './kilo-session-storage';
 export { CodexSessionStorage } from './codex-session-storage';
 export { FactoryDroidSessionStorage } from './factory-droid-session-storage';
 export { CopilotSessionStorage } from './copilot-session-storage';
@@ -18,6 +19,7 @@ import Store from 'electron-store';
 import { registerSessionStorage } from '../agents';
 import { ClaudeSessionStorage, ClaudeSessionOriginsData } from './claude-session-storage';
 import { OpenCodeSessionStorage } from './opencode-session-storage';
+import { KiloSessionStorage } from './kilo-session-storage';
 import { CodexSessionStorage } from './codex-session-storage';
 import { FactoryDroidSessionStorage } from './factory-droid-session-storage';
 import { CopilotSessionStorage } from './copilot-session-storage';
@@ -40,8 +42,17 @@ export interface InitializeSessionStoragesOptions {
  * @param options - Optional configuration including shared stores
  */
 export function initializeSessionStorages(options?: InitializeSessionStoragesOptions): void {
-	registerSessionStorage(new ClaudeSessionStorage(options?.claudeSessionOriginsStore));
+	registerSessionStorage(
+		new ClaudeSessionStorage(
+			options?.claudeSessionOriginsStore ??
+				new Store<ClaudeSessionOriginsData>({
+					name: 'claude-session-origins',
+					defaults: { origins: {} },
+				})
+		)
+	);
 	registerSessionStorage(new OpenCodeSessionStorage());
+	registerSessionStorage(new KiloSessionStorage());
 	registerSessionStorage(new CodexSessionStorage(options?.claudeSessionOriginsStore));
 	registerSessionStorage(new FactoryDroidSessionStorage());
 	registerSessionStorage(new CopilotSessionStorage());

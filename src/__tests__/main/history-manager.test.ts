@@ -126,6 +126,7 @@ vi.mock('fs/promises', async () => {
 });
 
 import * as fs from 'fs';
+import * as fsp from 'fs/promises';
 import { app } from 'electron';
 import { logger } from '../../main/utils/logger';
 import { HistoryManager, getHistoryManager } from '../../main/history-manager';
@@ -179,6 +180,32 @@ function parseJsonlWrite(payload: unknown): HistoryEntry[] {
 		.split('\n')
 		.filter((l) => l.trim())
 		.map((l) => JSON.parse(l) as HistoryEntry);
+}
+
+/** The only write is a migration marker recording that nothing needed migrating. */
+function expectFreshMarkerOnly(): void {
+	expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+	const [target, payload] = mockWriteFileSync.mock.calls[0];
+	expect(target.toString().endsWith('history-migrated.json')).toBe(true);
+	const marker = JSON.parse(payload as string);
+	expect(marker).toMatchObject({
+		version: HISTORY_VERSION,
+		legacyEntryCount: 0,
+		sessionsMigrated: 0,
+	});
+}
+
+/**
+ * Serve `legacy` for the global legacy file only. Every other path reads as
+ * missing, the way a data directory with no per-session files looks.
+ */
+function stageLegacyHistory(legacy: string, sessionFiles: Record<string, string> = {}): void {
+	mockReadFileSync.mockImplementation(((p: fs.PathOrFileDescriptor) => {
+		const s = p.toString();
+		if (s.endsWith('maestro-history.json')) return legacy;
+		const session = Object.keys(sessionFiles).find((name) => s.endsWith(name));
+		return session ? sessionFiles[session] : undefined;
+	}) as typeof fs.readFileSync);
 }
 
 /**
@@ -268,7 +295,7 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue(JSON.stringify({ entries: legacyEntries }));
+			stageLegacyHistory(JSON.stringify({ entries: legacyEntries }));
 
 			await manager.initialize();
 
@@ -315,9 +342,7 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue(
-				JSON.stringify({ entries: [createMockEntry({ sessionId: 's1' })] })
-			);
+			stageLegacyHistory(JSON.stringify({ entries: [createMockEntry({ sessionId: 's1' })] }));
 
 			await manager.initialize();
 			expect(mockWriteFileSync).toHaveBeenCalled();
@@ -331,13 +356,16 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue(JSON.stringify({ entries: [] }));
+			stageLegacyHistory(JSON.stringify({ entries: [] }));
 
 			await manager.initialize();
-			expect(mockWriteFileSync).not.toHaveBeenCalled();
+			expectFreshMarkerOnly();
 		});
 
-		it('should not need migration when legacy file does not exist', async () => {
+		// The marker is also how maestro-cli picks a format: with none, it wrote History
+		// to the legacy file, which the app never reads, and the next launch's
+		// migration replaced the agents' per-session files with those entries.
+		it('writes the marker on a fresh data directory so the CLI appends per-session', async () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => {
 				const s = p.toString();
 				if (s.endsWith('history')) return true;
@@ -346,10 +374,10 @@ describe('HistoryManager', () => {
 			});
 
 			await manager.initialize();
-			expect(mockWriteFileSync).not.toHaveBeenCalled();
+			expectFreshMarkerOnly();
 		});
 
-		it('should not need migration when legacy file is malformed', async () => {
+		it('quarantines a malformed legacy file to a sidecar and writes the marker once', async () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => {
 				const s = p.toString();
 				if (s.endsWith('history')) return true;
@@ -357,10 +385,122 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue('not-json{{{');
+			stageLegacyHistory('not-json{{{');
 
 			await manager.initialize();
+
+			expect(vi.mocked(fsp.rename)).toHaveBeenCalledWith(
+				path.join('/mock/userData', 'maestro-history.json'),
+				expect.stringMatching(/maestro-history\.corrupt-.*\.json$/)
+			);
+			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(expect.any(SyntaxError), {
+				operation: 'history:corruptLegacy',
+				sidecarPath: expect.stringMatching(/maestro-history\.corrupt-.*\.json$/),
+			});
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('quarantined'),
+				expect.any(String)
+			);
+			expectFreshMarkerOnly();
+		});
+
+		it.each([
+			['null literal', 'null'],
+			['top-level array', '[]'],
+			['non-array entries field', JSON.stringify({ entries: 'x' })],
+		])('quarantines a wrong-shape legacy file (%s) and writes the marker', async (_label, body) => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => {
+				const s = p.toString();
+				if (s.endsWith('history')) return true;
+				if (s.endsWith('history-migrated.json')) return false;
+				if (s.endsWith('maestro-history.json')) return true;
+				return false;
+			});
+			stageLegacyHistory(body);
+
+			await manager.initialize();
+
+			expect(vi.mocked(fsp.rename)).toHaveBeenCalledWith(
+				path.join('/mock/userData', 'maestro-history.json'),
+				expect.stringMatching(/maestro-history\.corrupt-.*\.json$/)
+			);
+			expect(vi.mocked(captureException)).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(expect.any(Error), {
+				operation: 'history:corruptLegacy',
+				sidecarPath: expect.stringMatching(/maestro-history\.corrupt-.*\.json$/),
+			});
+			expectFreshMarkerOnly();
+		});
+
+		it('does not write the marker if quarantining a malformed legacy file fails', async () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => {
+				const s = p.toString();
+				if (s.endsWith('history')) return true;
+				if (s.endsWith('history-migrated.json')) return false;
+				if (s.endsWith('maestro-history.json')) return true;
+				return false;
+			});
+			stageLegacyHistory('not-json{{{');
+			const renameErr = Object.assign(new Error('EBUSY: resource busy'), { code: 'EBUSY' });
+			vi.mocked(fsp.rename).mockRejectedValueOnce(renameErr);
+
+			await manager.initialize();
+
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to quarantine corrupt legacy history file'),
+				expect.any(String)
+			);
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(renameErr, {
+				operation: 'history:checkMigration',
+			});
+		});
+
+		it('does not write the marker on an I/O read error and migrates on the next readable launch', async () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => {
+				const s = p.toString();
+				if (s.endsWith('history')) return true;
+				if (s.endsWith('history-migrated.json')) return false;
+				if (s.endsWith('maestro-history.json')) return true;
+				return false;
+			});
+			const readErr = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+			mockReadFileSync.mockImplementationOnce(() => {
+				throw readErr;
+			});
+
+			await manager.initialize();
+
+			expect(mockWriteFileSync).not.toHaveBeenCalled();
+			expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+				expect.stringContaining('Failed to read legacy history file during migration check'),
+				expect.any(String)
+			);
+			expect(vi.mocked(captureException)).toHaveBeenCalledWith(readErr, {
+				operation: 'history:checkMigration',
+			});
+
+			// Next launch: the legacy file is readable and gets migrated.
+			stageLegacyHistory(
+				JSON.stringify({ entries: [createMockEntry({ sessionId: 's1', id: 'recovered-1' })] })
+			);
+			await manager.initialize();
+
+			const sessionCall = mockWriteFileSync.mock.calls.find((c) =>
+				c[0].toString().endsWith(`s1${HISTORY_JSONL_EXT}`)
+			);
+			expect(sessionCall).toBeDefined();
+			expect(parseJsonlWrite(sessionCall![1]).map((e) => e.id)).toEqual(['recovered-1']);
+
+			const markerCall = mockWriteFileSync.mock.calls.find((c) =>
+				c[0].toString().endsWith('history-migrated.json')
+			);
+			expect(markerCall).toBeDefined();
+			expect(JSON.parse(markerCall![1] as string)).toMatchObject({
+				legacyEntryCount: 1,
+				sessionsMigrated: 1,
+			});
 		});
 	});
 
@@ -397,7 +537,7 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue(JSON.stringify({ entries: [entry1, entry2, entry3] }));
+			stageLegacyHistory(JSON.stringify({ entries: [entry1, entry2, entry3] }));
 
 			await manager.initialize();
 
@@ -434,7 +574,7 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue(JSON.stringify({ entries }));
+			stageLegacyHistory(JSON.stringify({ entries }));
 
 			await manager.initialize();
 
@@ -461,7 +601,7 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue(JSON.stringify({ entries: [goodEntry, orphanedEntry] }));
+			stageLegacyHistory(JSON.stringify({ entries: [goodEntry, orphanedEntry] }));
 
 			await manager.initialize();
 
@@ -497,7 +637,7 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue(JSON.stringify({ entries }));
+			stageLegacyHistory(JSON.stringify({ entries }));
 
 			await manager.initialize();
 
@@ -505,6 +645,36 @@ describe('HistoryManager', () => {
 				c[0].toString().includes('sess-big.jsonl')
 			);
 			expect(parseJsonlWrite(sessionCall![1]).length).toBe(MAX_ENTRIES_PER_SESSION);
+		});
+
+		it('merges legacy entries into an existing per-session file instead of replacing it', async () => {
+			// The desktop wrote two turns per-session while the CLI wrote a third to
+			// the legacy file (no marker). Migration must keep all three.
+			const desk1 = createMockEntry({ sessionId: 's1', id: 'desk-1', timestamp: 1_000 });
+			const desk2 = createMockEntry({ sessionId: 's1', id: 'desk-2', timestamp: 2_000 });
+			const cli = createMockEntry({ sessionId: 's1', id: 'cli-1', type: 'AUTO', timestamp: 3_000 });
+			mockExistsSync.mockImplementation((p: fs.PathLike) => {
+				const s = p.toString();
+				if (s.endsWith('history')) return true;
+				if (s.endsWith('history-migrated.json')) return false;
+				if (s.endsWith('maestro-history.json')) return true;
+				return false;
+			});
+			// desk-2 is in both: a repeat must not be written twice.
+			stageLegacyHistory(JSON.stringify({ entries: [cli, desk2] }), {
+				[`s1${HISTORY_JSONL_EXT}`]: createJsonlFileData([desk1, desk2]),
+			});
+
+			await manager.initialize();
+
+			const sessionCall = mockWriteFileSync.mock.calls.find((c) =>
+				c[0].toString().endsWith(`s1${HISTORY_JSONL_EXT}`)
+			);
+			expect(parseJsonlWrite(sessionCall![1]).map((e) => e.id)).toEqual([
+				'desk-1',
+				'desk-2',
+				'cli-1',
+			]);
 		});
 
 		it('should throw and log error if migration fails', async () => {

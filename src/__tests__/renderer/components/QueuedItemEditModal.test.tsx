@@ -33,7 +33,7 @@ function setup(overrides: Partial<QueuedItem> = {}) {
 		text: 'a queued message',
 		...overrides,
 	};
-	const onSave = vi.fn();
+	const onSave = vi.fn(async () => ({ saved: true as const }));
 	const onClose = vi.fn();
 	render(
 		<LayerStackProvider>
@@ -44,12 +44,12 @@ function setup(overrides: Partial<QueuedItem> = {}) {
 }
 
 describe('QueuedItemEditModal keyboard', () => {
-	it('saves and closes on Cmd+Enter from the textarea', () => {
+	it('saves and closes on Cmd+Enter from the textarea', async () => {
 		const { onSave, onClose, textarea } = setup();
 		fireEvent.change(textarea, { target: { value: 'edited text' } });
 		fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
 		expect(onSave).toHaveBeenCalledWith({ text: 'edited text', images: [], turnSettings: {} });
-		expect(onClose).toHaveBeenCalled();
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
 	});
 
 	it('saves on Ctrl+Enter for Windows and Linux', () => {
@@ -174,7 +174,7 @@ describe('QueuedItemEditModal model + effort override', () => {
 			text: 'a queued message',
 			...item,
 		};
-		const onSave = vi.fn();
+		const onSave = vi.fn(async () => ({ saved: true as const }));
 		render(
 			<LayerStackProvider>
 				<QueuedItemEditModal

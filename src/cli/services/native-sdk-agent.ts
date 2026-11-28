@@ -1,4 +1,5 @@
 import { query, type CanUseTool } from '@anthropic-ai/claude-agent-sdk';
+import { antigravitySdkSelection } from '../../shared/antigravityModels';
 import {
 	CopilotClient,
 	RuntimeConnection,
@@ -93,7 +94,9 @@ function prepareNativeLaunch(
 		agentConfigValues: options.agentConfigValues ?? stored,
 		sessionCustomModel: options.customModel,
 		sessionCustomEffort: options.customEffort,
+		sessionCustomArgs: options.customArgs,
 	});
+	const effort = configResolution.effort ?? options.customEffort;
 	const agentCustomEnvVars =
 		stored.customEnvVars && typeof stored.customEnvVars === 'object'
 			? (stored.customEnvVars as Record<string, string>)
@@ -112,8 +115,8 @@ function prepareNativeLaunch(
 		querySource: options.querySource,
 		requiredSecrets: options.requiredSecrets,
 	});
-	if (options.customEffort && !NATIVE_SDK_EFFORTS.has(options.customEffort)) {
-		return { error: `Native SDK does not support effort '${options.customEffort}'` };
+	if (!supportsAcpNativeControl(toolType) && effort && !NATIVE_SDK_EFFORTS.has(effort)) {
+		return { error: `Native SDK does not support effort '${effort}'` };
 	}
 	if (!result.ok) return { error: result.error };
 	const warning = describeUndeliveredSecrets(toolType, result.plan.secrets);
@@ -147,7 +150,7 @@ function prepareNativeLaunch(
 				? embedSystemPromptInPrompt(options.appendSystemPrompt, prompt)
 				: prompt,
 		modelId: configResolution.modelId,
-		effort: configResolution.effort,
+		effort,
 	};
 }
 
@@ -287,7 +290,7 @@ export async function spawnNativeSdkAgent(
 		nativeOptions = {
 			...nativeOptions,
 			customModel: prepared.modelId,
-			customEffort: nativeOptions.customEffort || prepared.effort,
+			customEffort: prepared.effort,
 		};
 		const effectivePrompt = prepared.prompt;
 		if (toolType === 'claude-code') {
@@ -1134,10 +1137,12 @@ async function spawnAntigravityNative(
 	try {
 		options.signal?.addEventListener('abort', abort, { once: true });
 		if (options.signal?.aborted) abort();
+		const selection = antigravitySdkSelection(options.customModel, options.customEffort);
 		await connection.request('start', {
 			cwd,
 			prompt,
-			model: options.customModel,
+			model: selection.model,
+			effort: selection.effort,
 			permission_mode:
 				options.readOnlyMode || options.permissionMode === 'readonly'
 					? 'readonly'

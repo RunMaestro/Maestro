@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, waitFor, fireEvent, act } from '@testing-library/react';
 import mermaid from 'mermaid';
-import { MermaidRenderer } from '../../../renderer/components/MermaidRenderer';
+import {
+	MermaidRenderer,
+	clearMermaidRenderCache,
+} from '../../../renderer/components/MermaidRenderer';
 import { createMockTheme, mockTheme } from '../../helpers/mockTheme';
 import { AA_CONTRAST, contrastRatio } from '../../../shared/colorContrast';
 import type { ThemeColors } from '../../../shared/theme-types';
@@ -25,6 +28,7 @@ const initializeMock = vi.mocked(mermaid.initialize);
 beforeEach(() => {
 	renderMock.mockReset();
 	initializeMock.mockClear();
+	clearMermaidRenderCache();
 });
 
 /**
@@ -177,6 +181,66 @@ describe('MermaidRenderer', () => {
 
 		await waitFor(() => {
 			expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+		});
+	});
+
+	describe('render cache', () => {
+		const chart = 'flowchart LR\nA-->B';
+
+		function svgFor(id: string) {
+			return `<svg xmlns="http://www.w3.org/2000/svg" id="${id}" viewBox="0 0 10 10"><style>#${id} .node{fill:red}</style><g/></svg>`;
+		}
+
+		it('draws a remounted diagram from the cache, without running mermaid again', async () => {
+			renderMock.mockImplementation(async (id: string) => ({ svg: svgFor(id) }));
+			const first = render(<MermaidRenderer chart={chart} theme={mockTheme} />);
+			await waitFor(() => {
+				expect(first.container.querySelector('.mermaid-container svg')).not.toBeNull();
+			});
+			first.unmount();
+			expect(renderMock).toHaveBeenCalledTimes(1);
+
+			const second = render(<MermaidRenderer chart={chart} theme={mockTheme} />);
+			// On the first paint, not after an async render.
+			expect(second.container.querySelector('.mermaid-container svg')).not.toBeNull();
+			expect(renderMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('gives every cached copy its own diagram id, styles included', async () => {
+			renderMock.mockImplementation(async (id: string) => ({ svg: svgFor(id) }));
+			const first = render(<MermaidRenderer chart={chart} theme={mockTheme} />);
+			await waitFor(() => {
+				expect(first.container.querySelector('.mermaid-container svg')).not.toBeNull();
+			});
+			const second = render(<MermaidRenderer chart={chart} theme={mockTheme} />);
+
+			const firstSvg = first.container.querySelector('.mermaid-container svg')!;
+			const secondSvg = second.container.querySelector('.mermaid-container svg')!;
+			expect(secondSvg.id).not.toBe(firstSvg.id);
+			expect(secondSvg.querySelector('style')?.textContent).toContain(`#${secondSvg.id} `);
+		});
+
+		it('does not redraw for a new theme object with the same name', async () => {
+			renderMock.mockImplementation(async (id: string) => ({ svg: svgFor(id) }));
+			const { container, rerender } = render(<MermaidRenderer chart={chart} theme={mockTheme} />);
+			await waitFor(() => {
+				expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+			});
+			rerender(<MermaidRenderer chart={chart} theme={{ ...mockTheme }} />);
+			expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+			expect(renderMock).toHaveBeenCalledTimes(1);
+		});
+
+		it('renders again when the source changes', async () => {
+			renderMock.mockImplementation(async (id: string) => ({ svg: svgFor(id) }));
+			const { container, rerender } = render(<MermaidRenderer chart={chart} theme={mockTheme} />);
+			await waitFor(() => {
+				expect(container.querySelector('.mermaid-container svg')).not.toBeNull();
+			});
+			rerender(<MermaidRenderer chart={'flowchart LR\nA-->C'} theme={mockTheme} />);
+			await waitFor(() => {
+				expect(renderMock).toHaveBeenCalledTimes(2);
+			});
 		});
 	});
 

@@ -1760,6 +1760,8 @@ describe('ClaudeOutputParser failed results (is_error: true)', () => {
 		['first_byte_timeout', /never began the turn/, 'network_error'],
 		['prompt_truncated', /dropped part of the prompt/, 'unknown'],
 		['workspace_untrusted', /not been trusted to work in this folder/, 'unknown'],
+		['add_dir_untrusted', /asked to add a directory this agent does not grant/, 'unknown'],
+		['startup_dialog_blocked', /startup prompt Maestro does not know how to answer/, 'unknown'],
 	])(
 		'names the maestro-p failure %s instead of the generic subtype text (#1860)',
 		(code, text, type) => {
@@ -1794,6 +1796,50 @@ describe('ClaudeOutputParser failed results (is_error: true)', () => {
 
 		expect(error).not.toBeNull();
 		expect(classifyRetryableError(error!)).toBe(strategy);
+	});
+
+	it('carries the screen maestro-p attached on its own field, not in the message', () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			session_id: 'sess-1',
+			is_error: true,
+			error: 'tui_exited',
+			last_screen:
+				'Adding a new directory:\n\n/work/shared\n\n❯ No, exit\n  Yes, add it\n\\033[1;30m$\\033[0m',
+		});
+
+		expect(error?.message).toMatch(/^Claude Code quit before the turn finished\./);
+		expect(error?.message).not.toContain('❯ No, exit');
+		expect(error?.failureScreen).toContain('❯ No, exit');
+		expect(error?.failureScreen).not.toContain('\\033');
+	});
+
+	it('leaves failureScreen off when maestro-p attached no screen', () => {
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			session_id: 'sess-1',
+			is_error: true,
+			error: 'timeout',
+		});
+
+		expect(error).not.toHaveProperty('failureScreen');
+	});
+
+	it('never lets the attached screen pick the error type or a retry', () => {
+		// A screen can show any text an agent printed, including retry words.
+		const error = parser.detectErrorFromParsed({
+			type: 'result',
+			subtype: 'error_during_execution',
+			session_id: 'sess-1',
+			is_error: true,
+			error: 'tui_exited',
+			last_screen: 'API Error: 529 Overloaded. Rate limit reached, try again later.',
+		});
+
+		expect(error?.type).toBe('unknown');
+		expect(classifyRetryableError(error!)).toBeNull();
 	});
 
 	it("classifies maestro-p's missing-transcript failure as session_not_found", () => {

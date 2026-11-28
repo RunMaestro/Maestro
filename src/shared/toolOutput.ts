@@ -91,6 +91,14 @@ interface CompactedValue<T> {
 	count: number;
 }
 
+/**
+ * Cap the tool results and inputs of transcript entries about to be persisted, as a saved tab's
+ * are (`compactSessionToolOutputs()`): a headless host writing a sticky turn's tool cards.
+ */
+export function compactLogToolOutputs<T>(logs: T[]): T[] {
+	return compactLogs(logs).value as T[];
+}
+
 function compactLogs(value: unknown): CompactedValue<unknown> {
 	if (!Array.isArray(value)) return { value, count: 0 };
 	let count = 0;

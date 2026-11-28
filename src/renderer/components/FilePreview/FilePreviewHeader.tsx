@@ -35,6 +35,7 @@ import { PreviewTierChip } from './PreviewTierChip';
 import { FilePreviewActionsSheet } from './FilePreviewActionsSheet';
 import type { FilePreviewHeaderAction, FilePreviewHeaderStat } from './FilePreviewActionsSheet';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
+import { openFileInDefaultApp, revealInFileManager } from '../../services/fileActions';
 
 interface FilePreviewHeaderProps {
 	file: { name: string; content: string; path: string };
@@ -272,12 +273,12 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			testId: 'html-render-toggle',
 		});
 	}
-	// Open in Maestro Browser - HTML files only, not over SSH (file:// can't
-	// reach the remote host). Mirrors the file-tree right-click action so
-	// JS-heavy local HTML renders in the full webview instead of the sandboxed
-	// preview iframe. Sits next to the HTML render toggle since both are
-	// "view this in a browser" actions.
-	if (toolbarVisibility.openInBrowser && isHtml && !sshRemoteId && onOpenInBrowser) {
+	// Open in Maestro Browser - HTML files only. Mirrors the file-tree
+	// right-click action so JS-heavy HTML renders in the full webview instead of
+	// the sandboxed preview iframe; a remote file opens its fetched copy. Sits
+	// next to the HTML render toggle since both are "view this in a browser"
+	// actions.
+	if (toolbarVisibility.openInBrowser && isHtml && onOpenInBrowser) {
 		actions.push({
 			kind: 'button',
 			key: 'openInBrowser',
@@ -362,29 +363,30 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 		});
 	}
 	// "Open in Default App" hands the file to the HOST machine's OS opener via
-	// the shell bridge. In the web-desktop build the host is not the browser
-	// user's device, so hide it there (as we already do over SSH, where file://
-	// can't reach the remote host).
-	if (toolbarVisibility.openInDefault && hasDiskPath && !sshRemoteId && !isWebDesktop()) {
+	// the shell bridge; a remote file is fetched to this machine first. In the
+	// web-desktop build the host is not the browser user's device, so hide it
+	// there.
+	if (toolbarVisibility.openInDefault && hasDiskPath && !isWebDesktop()) {
 		actions.push({
 			kind: 'button',
 			key: 'openInDefault',
 			icon: ExternalLink,
 			label: 'Open in Default App',
 			onClick: () => {
-				window.maestro?.shell?.openPath(file.path);
+				void openFileInDefaultApp({ path: file.path, sshRemoteId });
 			},
 		});
 	}
-	// Reveal in Finder / Explorer / File Manager - local files only.
-	if (toolbarVisibility.revealInFolder && hasDiskPath && !sshRemoteId) {
+	// Reveal in Finder / Explorer / File Manager. A remote file reveals its
+	// fetched copy.
+	if (toolbarVisibility.revealInFolder && hasDiskPath) {
 		actions.push({
 			kind: 'button',
 			key: 'revealInFolder',
 			icon: FolderOpen,
 			label: getRevealLabel(window.maestro?.platform ?? ''),
 			onClick: () => {
-				window.maestro?.shell?.showItemInFolder(file.path);
+				void revealInFileManager({ path: file.path, sshRemoteId });
 			},
 			testId: 'reveal-in-folder-button',
 		});

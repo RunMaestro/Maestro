@@ -30,6 +30,13 @@ import type { IDisposable, IPty } from 'node-pty';
 import { stripAnsiCodes } from '../shared/stringUtils';
 import { killPty } from '../shared/ptyKill';
 import { showsApiUsageBilling } from './billing-mode';
+import {
+	ADD_DIR_PROMPT_REGEX,
+	ADD_DIR_SELECTOR_YES_REGEX,
+	grantedAddDirs,
+	isGrantedAddDir,
+	readAddDirDialog,
+} from './add-dir-prompt';
 import { replayTerminalScreen } from './screen-replay';
 import {
 	describeBlockingDialog,
@@ -71,6 +78,14 @@ export interface TuiDriverOptions {
 export const DEFAULT_COLS = 200;
 export const DEFAULT_ROWS = 50;
 export const QUIT_GRACE_MS = 2000;
+// How long quit() waits for claude to exit once the grace has run out and it
+// has been sent SIGTERM. claude writes its last transcript rows (the `/quit`
+// rows and the cost-state row) as it exits. If quit() resolves before that,
+// maestro-p exits first, so the next `--resume` turn of the same session can
+// start tailing while the old claude is still writing those rows (2026-11-26:
+// the next turn read the old `/exit` row as its prompt echo). Bounded, because
+// a claude that ignores SIGTERM must not hold the turn's result back.
+export const QUIT_TERM_GRACE_MS = 1000;
 // Gap between writing the prompt body and the terminating Enter. Claude's
 // TUI uses a multi-line input editor: when text and the trailing `\r` arrive
 // in a single PTY write (or back-to-back within the same input tick), the
@@ -328,6 +343,11 @@ const TRUST_SELECTOR_YES_REGEX = /❯\s*(?:\d+\.\s*)?Yes,?\s*I\s*trust/gi;
 export const TRUST_CONFIRM_QUIET_MS = 250;
 // A Down that draws no repaint within this window is assumed lost and retried.
 export const TRUST_REPAINT_WAIT_MS = 400;
+// An add-dir dialog is answered only once the screen has held still this long.
+// `--resume` repaints the conversation in chunks before the input editor, and
+// one that quotes the dialog shows the editor below the quote only in a later
+// chunk.
+export const ADD_DIR_SETTLE_MS = 250;
 // Past this many Downs the driver stops and never confirms: a dialog it cannot
 // read fails the run through 'ready-timeout' instead of guessing at Enter.
 export const TRUST_MAX_DOWNS = 4;
@@ -340,15 +360,66 @@ function lastMatchIndex(re: RegExp, text: string): number {
 	return at;
 }
 
-/** Which trust option the most recent paint in `text` left the selector on. */
-function latestTrustSelection(text: string): 'yes' | 'no' | null {
+/**
+ * The startup dialogs answered by moving the selector off "No, exit": the
+ * folder-trust prompt (with acceptWorkspaceTrust) and the add-dir prompt (see
+ * add-dir-prompt.ts). Both default to "No, exit"; only the "Yes" wording differs.
+ */
+type TrustDialog = 'workspace' | 'add-dir';
+
+const TRUST_DIALOG_YES_REGEX: Record<TrustDialog, RegExp> = {
+	workspace: TRUST_SELECTOR_YES_REGEX,
+	'add-dir': ADD_DIR_SELECTOR_YES_REGEX,
+};
+
+// Raw startup output kept for replaying the add-dir dialog's path. A real
+// startup paints a few KB; past this the tail is kept, and a dialog whose path
+// was cut off is refused rather than guessed at.
+const STARTUP_CAPTURE_CAP = 256 * 1024;
+
+// A highlighted dialog option that ends or refuses: "No, exit", "Exit",
+// "Cancel", "Deny", "Decline", "Reject", "Quit". Read off a replayed grid row,
+// where words keep their spaces.
+const REFUSAL_OPTION_REGEX = /❯\s*(?:\d+\.\s*)?((?:No|Exit|Cancel|Deny|Decline|Reject|Quit)\b.*)$/i;
+
+/**
+ * The option a startup dialog has highlighted when that option quits or
+ * refuses, read from the newest selector row of `screen` (a replayed grid).
+ * Null when no selector is drawn or it sits on anything else.
+ */
+export function selectedRefusalOption(screen: string): string | null {
+	const rows = screen.split('\n');
+	for (let i = rows.length - 1; i >= 0; i -= 1) {
+		if (!rows[i].includes('❯')) continue;
+		const match = REFUSAL_OPTION_REGEX.exec(rows[i]);
+		return match ? match[1].trim() : null;
+	}
+	return null;
+}
+
+// The hint row claude's select dialogs draw under their options. READY_REGEX
+// matches any `❯ ` (a dialog's selector included), so before reading a refusal
+// selector as a dialog at that point the screen must also show this footer:
+// a resumed conversation's own "❯ No, ..." line must never stop a run.
+const DIALOG_FOOTER_REGEX = /Enter\s*to\s*confirm|Esc\s*to\s*(?:cancel|exit)/i;
+
+// Rows of screen a failure report carries. A dialog or an error banner fits;
+// a whole transcript does not belong in an error message.
+const FAILURE_SCREEN_MAX_ROWS = 24;
+
+/** Which option the most recent paint of `dialog` in `text` left the selector on. */
+function latestTrustSelection(
+	text: string,
+	dialog: TrustDialog = 'workspace'
+): 'yes' | 'no' | null {
 	const no = lastMatchIndex(TRUST_SELECTOR_NO_REGEX, text);
-	const yes = lastMatchIndex(TRUST_SELECTOR_YES_REGEX, text);
+	const yes = lastMatchIndex(TRUST_DIALOG_YES_REGEX[dialog], text);
 	if (yes > no) return 'yes';
 	return no >= 0 ? 'no' : null;
 }
 
 interface TrustSelection {
+	dialog: TrustDialog;
 	/** Stripped output since the trust prompt appeared. */
 	text: string;
 	downs: number;
@@ -398,6 +469,9 @@ export type TuiDriverEvent =
 	| 'exit'
 	| 'trust-accepted'
 	| 'workspace-untrusted'
+	| 'add-dir-accepted'
+	| 'add-dir-untrusted'
+	| 'startup-dialog-blocked'
 	| 'bypass-accepted';
 
 export class TuiDriver extends EventEmitter {
@@ -421,11 +495,23 @@ export class TuiDriver extends EventEmitter {
 	private inputTyped = false;
 	private trustHandled = false;
 	/**
-	 * The trust dialog defaulted to "No, exit" and acceptWorkspaceTrust is off.
-	 * Terminal: no Enter is ever written after this, since any Enter would
-	 * confirm "No, exit" and claude would quit with nothing to say why.
+	 * A trust dialog is parked on "No, exit" and the driver may not move it: the
+	 * folder-trust prompt without acceptWorkspaceTrust, or an add-dir prompt for
+	 * a directory the caller did not grant. Terminal: no Enter is ever written
+	 * after this, since any Enter would confirm "No, exit" and claude would quit
+	 * with nothing to say why.
 	 */
-	private workspaceUntrusted = false;
+	private trustRefused = false;
+	/** Every directory `options.args` grants with `--add-dir`. */
+	private readonly grantedAddDirs: ReadonlySet<string>;
+	/** Raw output until `ready`, replayed to read an add-dir dialog's path. */
+	private startupCapture = '';
+	/**
+	 * An add-dir dialog is on screen and not answered yet. Its `❯` is not the
+	 * input prompt, and a blind Enter would confirm its "No, exit" default.
+	 */
+	private addDirPromptOpen = false;
+	private addDirSettleTimer: ReturnType<typeof setTimeout> | null = null;
 	private bypassHandled = false;
 	/** Trust-prompt selection in progress (acceptWorkspaceTrust only). */
 	private trustSelection: TrustSelection | null = null;
@@ -456,6 +542,7 @@ export class TuiDriver extends EventEmitter {
 	constructor(options: TuiDriverOptions) {
 		super();
 		this.options = options;
+		this.grantedAddDirs = grantedAddDirs(options.args, options.cwd);
 	}
 
 	async start(): Promise<void> {
@@ -513,13 +600,21 @@ export class TuiDriver extends EventEmitter {
 		// at that instant, and after a re-render that is "No, exit".
 		if (this.isSelectingTrust()) return false;
 		// The dialog is parked on "No, exit" and we are not allowed to move it.
-		if (this.workspaceUntrusted) return false;
+		if (this.trustRefused) return false;
+		// An add-dir dialog whose path has not finished painting: its default is
+		// "No, exit" too.
+		if (this.addDirPromptOpen) return false;
 		// The bypass-permissions gate defaults to "No, exit", so a bare Enter here
 		// would quit claude. Handle it with Down+Enter first; if it fired this
 		// tick, that IS the unblock action - don't also send a plain Enter (which
 		// would land on the now-revealed editor or, worse, re-trigger the menu).
 		if (this.handleBypassPrompt()) return true;
 		if (this.tapsSent >= READY_MAX_TAPS) return false;
+		// The fallback exists for dialogs whose default moves claude forward. One
+		// whose highlighted option quits or refuses is a dialog this driver does
+		// not know, and an Enter would end the run with nothing to say why (claude
+		// 2.1.326's add-dir prompt did exactly that). Stop and name it instead.
+		if (this.blockRefusingDialog(false)) return false;
 		try {
 			this.ptyProcess?.write('\r');
 		} catch {
@@ -586,7 +681,7 @@ export class TuiDriver extends EventEmitter {
 		if (selected === null) return;
 		this.trustHandled = true;
 		if (selected === 'no') {
-			this.workspaceUntrusted = true;
+			this.trustRefused = true;
 			// Nothing left to unblock: the caller ends the run on this event, and a
 			// later blind tap or ready-timeout would only muddy the reason.
 			this.clearReadyTimers();
@@ -597,8 +692,93 @@ export class TuiDriver extends EventEmitter {
 		this.emit('trust-accepted');
 	}
 
+	// A startup dialog this driver does not know, whose highlighted option quits
+	// or refuses: stop, never press Enter on it, and name it (see
+	// selectedRefusalOption). `requireFooter` is for the READY check, where the
+	// `❯` could also be the input prompt or an old conversation line. Returns
+	// whether the run was stopped.
+	private blockRefusingDialog(requireFooter: boolean): boolean {
+		const screen = this.startupScreen();
+		const refusal = selectedRefusalOption(screen);
+		if (refusal === null) return false;
+		if (requireFooter && !DIALOG_FOOTER_REGEX.test(screen)) return false;
+		this.trustRefused = true;
+		this.clearReadyTimers();
+		this.emit('startup-dialog-blocked', refusal);
+		return true;
+	}
+
 	private isSelectingTrust(): boolean {
 		return this.trustSelection !== null && !this.trustSelection.confirmed;
+	}
+
+	private beginTrustSelection(dialog: TrustDialog): void {
+		this.trustSelection = {
+			dialog,
+			text: '',
+			downs: 0,
+			awaitingRepaint: false,
+			repaintTimer: null,
+			confirmTimer: null,
+			confirmed: false,
+		};
+		this.observeTrustSelection(this.rollingBuffer);
+	}
+
+	// An add-dir dialog (see add-dir-prompt.ts) is on screen. Answer "Yes, add
+	// it" when the directory it names is one the caller passed with --add-dir;
+	// otherwise leave it on "No, exit" and name the failure. Until the replayed
+	// screen shows the whole path, wait: addDirPromptOpen holds off the blind
+	// taps and `ready` meanwhile. One dialog per directory, so this runs again
+	// for each: confirming clears the rolling buffer, and the next dialog paints
+	// its heading afresh.
+	//
+	// Only a dialog that is the last thing on a screen held still for
+	// ADD_DIR_SETTLE_MS is answered (see readAddDirDialog). Its wording elsewhere,
+	// such as a resumed conversation about this dialog, releases the hold.
+	private answerAddDirPrompt(): void {
+		const read = readAddDirDialog(replayTerminalScreen(this.startupCapture));
+		if (read.kind === 'none') {
+			this.releaseAddDirHold();
+			return;
+		}
+		this.addDirPromptOpen = true;
+		this.clearAddDirSettleTimer();
+		if (read.kind === 'painting') return;
+		this.addDirSettleTimer = setTimeout(() => {
+			this.addDirSettleTimer = null;
+			if (this.exited || this.readyEmitted || this.trustRefused || this.isSelectingTrust()) return;
+			const settled = readAddDirDialog(replayTerminalScreen(this.startupCapture));
+			if (settled.kind === 'none') {
+				this.releaseAddDirHold();
+				return;
+			}
+			if (settled.kind === 'painting') return;
+			if (!isGrantedAddDir(settled.paths, this.grantedAddDirs, this.options.cwd)) {
+				this.trustRefused = true;
+				this.clearReadyTimers();
+				this.emit('add-dir-untrusted', settled.paths[0]);
+				return;
+			}
+			this.beginTrustSelection('add-dir');
+		}, ADD_DIR_SETTLE_MS);
+	}
+
+	// The add-dir wording on screen is not a dialog after all. The hold may have
+	// kept back a `ready` whose prompt is already drawn, and no further output
+	// may come to re-check it.
+	private releaseAddDirHold(): void {
+		this.clearAddDirSettleTimer();
+		if (!this.addDirPromptOpen) return;
+		this.addDirPromptOpen = false;
+		this.maybeEmitReady();
+	}
+
+	private clearAddDirSettleTimer(): void {
+		if (this.addDirSettleTimer) {
+			clearTimeout(this.addDirSettleTimer);
+			this.addDirSettleTimer = null;
+		}
 	}
 
 	// Feed trust-dialog output to the selection (acceptWorkspaceTrust only). A
@@ -620,7 +800,7 @@ export class TuiDriver extends EventEmitter {
 	private advanceTrustSelection(): void {
 		const selection = this.trustSelection;
 		if (!selection || selection.confirmed || selection.awaitingRepaint || this.exited) return;
-		const selected = latestTrustSelection(selection.text);
+		const selected = latestTrustSelection(selection.text, selection.dialog);
 		if (selected === 'no') {
 			if (selection.confirmTimer) clearTimeout(selection.confirmTimer);
 			selection.confirmTimer = null;
@@ -644,16 +824,22 @@ export class TuiDriver extends EventEmitter {
 			selection.confirmTimer = setTimeout(() => {
 				selection.confirmTimer = null;
 				if (this.exited || selection.confirmed) return;
-				if (latestTrustSelection(selection.text) !== 'yes') return;
+				if (latestTrustSelection(selection.text, selection.dialog) !== 'yes') return;
 				try {
 					this.ptyProcess?.write('\r');
 				} catch {
 					return;
 				}
 				selection.confirmed = true;
-				// The dialog's own `❯` must not satisfy READY_REGEX afterward.
+				// The dialog's own `❯` must not satisfy READY_REGEX afterward, and its
+				// heading must not read as the next add-dir dialog.
 				this.rollingBuffer = '';
-				this.emit('trust-accepted');
+				if (selection.dialog === 'add-dir') {
+					this.addDirPromptOpen = false;
+					this.emit('add-dir-accepted');
+				} else {
+					this.emit('trust-accepted');
+				}
 			}, TRUST_CONFIRM_QUIET_MS);
 		}
 	}
@@ -676,6 +862,7 @@ export class TuiDriver extends EventEmitter {
 			clearTimeout(this.readyTimeoutTimer);
 			this.readyTimeoutTimer = null;
 		}
+		this.clearAddDirSettleTimer();
 	}
 
 	// Wake everything waiting on evidence that claude read what we typed.
@@ -1060,6 +1247,31 @@ export class TuiDriver extends EventEmitter {
 		return this.rollingBuffer.slice(-maxBytes);
 	}
 
+	// The startup screen replayed onto a grid while claude has not reached its
+	// input prompt, else the screen getLiveScreen() reads. The grid keeps the
+	// spaces and rows the ANSI-stripped buffer loses.
+	private startupScreen(): string {
+		return !this.readyEmitted && this.startupCapture.length > 0
+			? replayTerminalScreen(this.startupCapture)
+			: this.dialogScreen();
+	}
+
+	/**
+	 * The last screen as a person reads it, for a failure report that leaves the
+	 * process: its final rows, blank runs collapsed. Startup failures (the ones
+	 * a dialog causes) get the replayed grid, so a dialog reads as it was drawn.
+	 */
+	getFailureScreen(): string {
+		const rows: string[] = [];
+		for (const row of this.startupScreen().split('\n')) {
+			const trimmed = row.trimEnd();
+			if (trimmed === '' && (rows.length === 0 || rows[rows.length - 1] === '')) continue;
+			rows.push(trimmed);
+		}
+		while (rows.length > 0 && rows[rows.length - 1] === '') rows.pop();
+		return rows.slice(-FAILURE_SCREEN_MAX_ROWS).join('\n');
+	}
+
 	// The screen as it reads now, for the idle watchdog's token-counter sample
 	// (see stream-progress.ts). The replayed grid when the raw stream is captured,
 	// because claude repaints its spinner differentially and the stripped bytes of
@@ -1146,16 +1358,21 @@ export class TuiDriver extends EventEmitter {
 				return;
 			}
 			let settled = false;
+			let timer: NodeJS.Timeout;
 			const onExit = () => {
 				if (settled) return;
 				settled = true;
 				clearTimeout(timer);
 				resolve();
 			};
-			const timer = setTimeout(() => {
+			const giveUp = () => {
 				if (settled) return;
 				settled = true;
 				this.off('exit', onExit);
+				resolve();
+			};
+			timer = setTimeout(() => {
+				if (settled) return;
 				try {
 					// killPty, not ptyProcess.kill('SIGTERM'): node-pty's Windows
 					// backend throws for ANY signal, and it throws from a deferred
@@ -1163,8 +1380,16 @@ export class TuiDriver extends EventEmitter {
 					if (this.ptyProcess) killPty(this.ptyProcess, 'SIGTERM');
 				} catch {
 					// PTY may already be gone; nothing to escalate against.
+					giveUp();
+					return;
 				}
-				resolve();
+				if (this.exited) {
+					onExit();
+					return;
+				}
+				// Wait for the exit SIGTERM causes, so claude's last rows are on disk
+				// before the caller reports and exits (see QUIT_TERM_GRACE_MS).
+				timer = setTimeout(giveUp, QUIT_TERM_GRACE_MS);
 			}, QUIT_GRACE_MS);
 			this.once('exit', onExit);
 		});
@@ -1247,6 +1472,12 @@ export class TuiDriver extends EventEmitter {
 				this.screenCapture = this.screenCapture.slice(-SCREEN_CAPTURE_TRIM_TO);
 			}
 		}
+		if (!this.readyEmitted) {
+			this.startupCapture += data;
+			if (this.startupCapture.length > STARTUP_CAPTURE_CAP) {
+				this.startupCapture = this.startupCapture.slice(-STARTUP_CAPTURE_CAP);
+			}
+		}
 		const stripped = stripAnsiCodes(data);
 		if (stripped.length === 0) return;
 
@@ -1276,31 +1507,21 @@ export class TuiDriver extends EventEmitter {
 		} else if (!this.trustHandled && TRUST_PROMPT_REGEX.test(this.rollingBuffer)) {
 			if (this.options.acceptWorkspaceTrust) {
 				this.trustHandled = true;
-				this.trustSelection = {
-					text: '',
-					downs: 0,
-					awaitingRepaint: false,
-					repaintTimer: null,
-					confirmTimer: null,
-					confirmed: false,
-				};
-				this.observeTrustSelection(this.rollingBuffer);
+				this.beginTrustSelection('workspace');
 			} else {
 				this.answerTrustWithoutOptIn();
 			}
-		}
-		// While the trust dialog is still being answered, its `❯` selector is not
-		// the input prompt. Nor is it once the dialog is parked on "No, exit".
-		if (
+		} else if (
 			!this.readyEmitted &&
-			!this.workspaceUntrusted &&
-			!this.isSelectingTrust() &&
-			READY_REGEX.test(this.rollingBuffer)
+			!this.trustRefused &&
+			(this.addDirPromptOpen || ADD_DIR_PROMPT_REGEX.test(this.rollingBuffer))
 		) {
-			this.readyEmitted = true;
-			this.clearReadyTimers();
-			this.emit('ready');
+			// Startup only: after `ready` the screen carries the conversation, which
+			// can quote the dialog's wording. A resumed conversation is on the startup
+			// screen too, which answerAddDirPrompt tells apart from the dialog.
+			this.answerAddDirPrompt();
 		}
+		this.maybeEmitReady();
 
 		this.lineBuffer += stripped;
 		let nlIndex = this.lineBuffer.indexOf('\n');
@@ -1314,6 +1535,25 @@ export class TuiDriver extends EventEmitter {
 			}
 			nlIndex = this.lineBuffer.indexOf('\n');
 		}
+	}
+
+	// While a trust dialog is still being answered, its `❯` selector is not the
+	// input prompt. Nor is it once the dialog is parked on "No, exit".
+	private maybeEmitReady(): void {
+		if (
+			this.readyEmitted ||
+			this.trustRefused ||
+			this.addDirPromptOpen ||
+			this.isSelectingTrust() ||
+			!READY_REGEX.test(this.rollingBuffer) ||
+			this.blockRefusingDialog(true)
+		) {
+			return;
+		}
+		this.readyEmitted = true;
+		this.startupCapture = '';
+		this.clearReadyTimers();
+		this.emit('ready');
 	}
 
 	private handleExit(exitCode: number): void {

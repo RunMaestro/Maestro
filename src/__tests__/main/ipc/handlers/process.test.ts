@@ -2,6 +2,8 @@ import type { ProcessManager } from '../../../../main/process-manager/ProcessMan
 import { nodeSqliteBetterSqlite3Mock } from '../../../helpers/nodeSqlite';
 vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
 import { fakeAnchor } from '../../../helpers/mockAnchor';
+import { AGENT_MODES, agentModeFields } from '../../../helpers/mockSession';
+import { cueAssistProcessId } from '../../../../shared/maestro-lib/agents/hosted-launch';
 import { createPluginHeadlessAgentRunner } from '../../../../main/plugins/plugin-headless-agent-runner';
 import { RelayConversations } from '../../../../main/plugins/relay-conversations';
 import fs from 'node:fs';
@@ -78,6 +80,7 @@ import type { SshRemoteConfig } from '../../../../shared/types';
 import type { ProviderSwitchTab } from '../../../../shared/maestro-lib/agents/providerSwap';
 import type { SpawnResult } from '../../../../main/process-manager/types';
 import * as path from 'path';
+import { resolveSshPath } from '../../../../main/utils/cliDetection';
 import { describe, it, expect, assert, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
 import {
@@ -520,6 +523,7 @@ describe('process IPC handlers', () => {
 				'process:write',
 				'process:steer',
 				'process:broadcast-user-input',
+				'process:broadcast-transcript-changed',
 				'process:interrupt',
 				'process:closeAgent',
 				'process:kill',
@@ -541,6 +545,33 @@ describe('process IPC handlers', () => {
 			}
 			expect(handlers.size).toBe(expectedChannels.length);
 			expect(ipcMain.on).toHaveBeenCalledWith('concerto-html:release', expect.any(Function));
+		});
+	});
+
+	describe('process:broadcast-transcript-changed (M13)', () => {
+		it("tells this host's Federation clients to read the tab again, and ignores malformed ids", async () => {
+			const safeSendSpy = vi.fn();
+			deps = { ...deps, safeSend: safeSendSpy };
+			handlers.clear();
+			vi.mocked(ipcMain.handle).mockImplementation((channel, h) => {
+				handlers.set(channel, h);
+			});
+			registerProcessHandlers(deps);
+			const handler = handlers.get('process:broadcast-transcript-changed')!;
+
+			await handler({} as any, 'agent-1', 'tab-2');
+			expect(safeSendSpy).toHaveBeenCalledExactlyOnceWith(
+				'process:transcript-changed',
+				'agent-1-ai-tab-2',
+				'agent-1',
+				'tab-2'
+			);
+
+			safeSendSpy.mockClear();
+			await handler({} as any, 'agent-1', 42);
+			await handler({} as any, '', 'tab-2');
+			await handler({} as any, { id: 'x' }, 'tab-2');
+			expect(safeSendSpy).not.toHaveBeenCalled();
 		});
 	});
 
@@ -677,6 +708,10 @@ describe('process IPC handlers', () => {
 			mockSessionsStore.get.mockImplementation((key, fallback) =>
 				key === 'sessions' ? [lifted] : fallback
 			);
+			// Hosting is opt-in: the refusal applies only once it is switched on.
+			mockSettingsStore.get.mockImplementation((key, fallback) =>
+				key === 'federationHostedAgents' ? true : fallback
+			);
 			mockAgentDetector.getAgent.mockResolvedValue({
 				id: 'claude-code',
 				path: '/usr/bin/claude',
@@ -702,6 +737,85 @@ describe('process IPC handlers', () => {
 				(error: Error) => error
 			);
 			expect(shell instanceof Error ? shell.message : '').not.toContain('build-box');
+		});
+
+		it.each(AGENT_MODES)(
+			'starts the Cue AI chat helper for a %s agent, and still refuses a real turn when hosted',
+			async (mode) => {
+				const agent = {
+					id: 'mode-agent',
+					name: 'Mode',
+					toolType: 'claude-code',
+					cwd: '/project',
+					aiTabs: [{ id: 'tab' }],
+					...agentModeFields(mode),
+				};
+				mockSessionsStore.get.mockImplementation((key, fallback) =>
+					key === 'sessions' ? [agent] : fallback
+				);
+				mockSettingsStore.get.mockImplementation((key, fallback) =>
+					key === 'federationHostedAgents' ? true : fallback
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({
+					id: 'claude-code',
+					path: '/usr/bin/claude',
+					requiresPty: false,
+				});
+				mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+				const spawn = (sessionId: string) =>
+					handlers.get('process:spawn')!(
+						{},
+						{ sessionId, toolType: 'claude-code', cwd: '/project', command: 'claude', args: [] }
+					);
+
+				// The same helper launch in every mode: never refused for the lift.
+				const helper = await spawn(cueAssistProcessId('mode-agent', 1)).catch(
+					(error: Error) => error
+				);
+				expect(helper instanceof Error ? helper.message : '').not.toContain('box:h1');
+
+				// A real turn stays refused for a hosted agent only.
+				const turn = await spawn('mode-agent-ai-tab').catch((error: Error) => error);
+				expect(turn instanceof Error ? turn.message : '').toContain(
+					mode === 'hosted' ? 'Send to box:h1 instead.' : ''
+				);
+				if (mode !== 'hosted') {
+					expect(turn instanceof Error ? turn.message : '').not.toContain('box:h1');
+				}
+			}
+		);
+
+		it('runs a lifted agent as its SSH agent while hosting was never switched on', async () => {
+			const lifted = {
+				id: 'lifted-agent',
+				name: 'Lifted',
+				toolType: 'claude-code',
+				cwd: '/project',
+				aiTabs: [{ id: 'tab' }],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [lifted] : fallback
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+
+			const outcome = await handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'lifted-agent-ai-tab',
+					toolType: 'claude-code',
+					cwd: '/project',
+					command: 'claude',
+					args: [],
+				}
+			).catch((error: Error) => error);
+
+			expect(outcome instanceof Error ? outcome.message : '').not.toContain('build-box');
 		});
 
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {
@@ -3417,6 +3531,114 @@ describe('process IPC handlers', () => {
 			enabled: true,
 		};
 
+		describe('owned SSH terminal exit observers', () => {
+			let events: EventEmitter;
+			let processes: Map<string, { pid: number; ptyProcess: { pid: number } }>;
+			const sessionId = 'observer-terminal';
+			const start = (remoteId = 'remote-1') =>
+				handlers.get('process:spawnTerminalTab')!({} as any, {
+					sessionId,
+					cwd: path.join(process.cwd(), 'terminal-fixture'),
+					sessionSshRemoteConfig: { enabled: true, remoteId },
+				});
+			beforeEach(() => {
+				events = new EventEmitter();
+				processes = new Map();
+				vi.mocked(resolveSshPath).mockResolvedValue('ssh');
+				mockSettingsStore.get.mockImplementation((key: string, fallback: unknown) =>
+					key === 'sshRemotes'
+						? [
+								mockSshRemoteForTerminal,
+								{ ...mockSshRemoteForTerminal, id: 'remote-2', host: 'other.invalid' },
+							]
+						: fallback
+				);
+				mockProcessManager.on.mockImplementation((name, fn) => events.on(name, fn));
+				mockProcessManager.off.mockImplementation((name, fn) => events.off(name, fn));
+				mockProcessManager.get.mockImplementation((id) => processes.get(id));
+				mockProcessManager.spawn.mockImplementation((config) => {
+					const existing = processes.get(config.sessionId);
+					if (existing && config.reuseTerminal)
+						return { success: true, pid: existing.pid, attached: true };
+					const proc = { pid: 5001, ptyProcess: { pid: 5001 } };
+					processes.set(config.sessionId, proc);
+					return { success: true, pid: proc.pid };
+				});
+			});
+			it.each(['path', 'spawn'] as const)(
+				'detaches observers when %s resolution throws',
+				async (stage) => {
+					if (stage === 'path')
+						vi.mocked(resolveSshPath).mockRejectedValueOnce(new Error('path unavailable'));
+					else
+						mockProcessManager.spawn.mockImplementationOnce(() => {
+							throw new Error('spawn unavailable');
+						});
+					await expect(start()).rejects.toThrow('unavailable');
+					expect(events.listenerCount('exit')).toBe(0);
+					expect(mockNoteSshExit).not.toHaveBeenCalled();
+				}
+			);
+			it('detaches after an unsuccessful PTY spawn without an exit event', async () => {
+				mockProcessManager.spawn.mockReturnValueOnce({ success: false, pid: 0 });
+				expect(await start()).toEqual({ success: false, pid: 0 });
+				expect(events.listenerCount('exit')).toBe(0);
+				expect(mockNoteSshExit).not.toHaveBeenCalled();
+			});
+			it('detaches when the owned PTY disappears before PID settlement', async () => {
+				mockProcessManager.spawn.mockImplementationOnce(() => {
+					processes.set(sessionId, { pid: 0, ptyProcess: { pid: 0 } });
+					setTimeout(() => processes.delete(sessionId), 0);
+					return { success: true, pid: 0 };
+				});
+				expect(await start()).toEqual({ success: false, pid: 0 });
+				expect(events.listenerCount('exit')).toBe(0);
+				expect(mockNoteSshExit).not.toHaveBeenCalled();
+			});
+			it('reuses one observer and reports exactly one genuine own exit', async () => {
+				await start();
+				await start();
+				await start('remote-2');
+				expect(events.listenerCount('exit')).toBe(1);
+				events.emit('exit', 'another-session', 255);
+				expect(mockNoteSshExit).not.toHaveBeenCalled();
+				processes.delete(sessionId);
+				events.emit('exit', sessionId, 255);
+				events.emit('exit', sessionId, 255);
+				expect(mockNoteSshExit.mock.calls).toEqual([['remote-1', 255]]);
+				expect(events.listenerCount('exit')).toBe(0);
+			});
+			it('retires the old process observer without attributing its late callback to a successor', async () => {
+				await start();
+				const oldExit = events.listeners('exit')[0];
+				processes.delete(sessionId);
+				await start('remote-2');
+				expect(events.listenerCount('exit')).toBe(1);
+				oldExit(sessionId, 255);
+				expect(mockNoteSshExit).not.toHaveBeenCalled();
+				processes.delete(sessionId);
+				events.emit('exit', sessionId, 255);
+				expect(mockNoteSshExit.mock.calls).toEqual([['remote-2', 255]]);
+				expect(events.listenerCount('exit')).toBe(0);
+			});
+			it('does not bind a late path resolution to the host of an already reused terminal', async () => {
+				let resolvePath!: (value: string) => void;
+				vi.mocked(resolveSshPath).mockReturnValueOnce(
+					new Promise<string>((resolve) => {
+						resolvePath = resolve;
+					})
+				);
+				const first = start();
+				await start('remote-2');
+				resolvePath('ssh');
+				await first;
+				expect(events.listenerCount('exit')).toBe(1);
+				processes.delete(sessionId);
+				events.emit('exit', sessionId, 255);
+				expect(mockNoteSshExit.mock.calls).toEqual([['remote-2', 255]]);
+			});
+		});
+
 		it('should spawn local terminal when no SSH config is provided', async () => {
 			mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 5000, success: true });
 
@@ -3575,6 +3797,8 @@ describe('process IPC handlers', () => {
 				return defaultValue;
 			});
 			mockProcessManager.spawn.mockReturnValue({ pid: 5001, success: true });
+			// A successful real spawn is registered in ProcessManager before it returns.
+			mockProcessManager.get.mockReturnValue({ pid: 5001, ptyProcess: { pid: 5001 } });
 
 			const handler = handlers.get('process:spawnTerminalTab');
 			await handler!({} as any, {
@@ -5587,6 +5811,26 @@ describe('process IPC handlers', () => {
 				command: 'claude',
 				sendPromptViaStdinRaw: false,
 			});
+
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+		});
+
+		it('delivers an Antigravity prompt over raw stdin on a Windows host (MAESTRO-NM)', async () => {
+			// agy has no Claude-shaped stream-json input, so it takes the raw path;
+			// the spawner then writes its own stream-json line (see definitions.ts).
+			await setHostWindows(true);
+			const { getAgentCapabilities } = await vi.importActual<
+				typeof import('../../../../main/agents/capabilities')
+			>('../../../../main/agents/capabilities');
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'antigravity',
+				name: 'Antigravity CLI',
+				path: 'C:\\agy\\bin\\agy.exe',
+				capabilities: getAgentCapabilities('antigravity'),
+			});
+
+			const spawnCall = await spawnWith({ toolType: 'antigravity', command: 'agy' });
 
 			expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
 			expect(spawnCall.sendPromptViaStdin).toBe(false);

@@ -4,6 +4,11 @@
  */
 
 import { compareVersions } from '../shared/pathUtils';
+import {
+	ROLLBACK_LIST_LIMIT,
+	rollbackRefusal,
+	type RollbackTargetsResult,
+} from '../shared/updateRollback';
 import { logger } from './utils/logger';
 import { fetchWithTimeout } from './utils/fetchWithTimeout';
 
@@ -11,6 +16,7 @@ import { fetchWithTimeout } from './utils/fetchWithTimeout';
 const GITHUB_OWNER = 'RunMaestro';
 const GITHUB_REPO = 'Maestro';
 const RELEASES_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
+const RELEASES_PAGE_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
 
 /** Request budget for the GitHub releases poll. */
 const RELEASES_FETCH_TIMEOUT_MS = 15_000;
@@ -188,7 +194,7 @@ export async function checkForUpdates(
 	currentVersion: string,
 	includePrerelease: boolean = false
 ): Promise<UpdateCheckResult> {
-	const releasesUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
+	const releasesUrl = RELEASES_PAGE_URL;
 
 	logger.info(
 		`Checking for updates (current: ${currentVersion}, includePrerelease: ${includePrerelease}, platform: ${process.platform})`,
@@ -258,5 +264,79 @@ export async function checkForUpdates(
 			assetsReady: false,
 			error: errorMessage,
 		};
+	}
+}
+
+/**
+ * Why the release tagged `tag` cannot be rolled back to on this machine, or
+ * null when it can. Looks the one release up so a tag typed into `maestro-cli
+ * rollback` gets the same check as the rollback list, before anything
+ * downloads. `tag` must already be a valid release tag (`isReleaseTag()`).
+ */
+export async function rollbackTargetRefusal(
+	tag: string,
+	currentVersion: string
+): Promise<string | null> {
+	const url = `${RELEASES_URL}/tags/${tag}`;
+	let response: Response;
+	try {
+		response = await fetchWithTimeout(
+			url,
+			{
+				headers: {
+					Accept: 'application/vnd.github.v3+json',
+					'User-Agent': 'Maestro-Update-Checker',
+				},
+			},
+			RELEASES_FETCH_TIMEOUT_MS
+		);
+	} catch (error) {
+		// Offline or timed out: the download would fail the same way, so refuse
+		// with the reason instead of throwing out of the IPC handler.
+		const message = error instanceof Error ? error.message : String(error);
+		return `Could not look up ${tag}: ${message}`;
+	}
+	if (response.status === 404) return `No published release is tagged ${tag}`;
+	if (!response.ok) {
+		return `Could not look up ${tag}: GitHub API error ${response.status} ${response.statusText}`;
+	}
+	const release = (await response.json()) as Release;
+	if (release.draft) return `No published release is tagged ${tag}`;
+	return rollbackRefusal(release, currentVersion, process.platform, process.arch);
+}
+
+/**
+ * List the releases the user can roll back to: older than `currentVersion`,
+ * installable on this platform (see `rollbackRefusal()`), newest first, capped
+ * at `ROLLBACK_LIST_LIMIT`. Prereleases are included only when
+ * `includePrerelease` is set, matching the Check for Updates toggle.
+ */
+export async function listRollbackTargets(
+	currentVersion: string,
+	includePrerelease: boolean = false
+): Promise<RollbackTargetsResult> {
+	try {
+		const allReleases = await fetchReleases(includePrerelease);
+		const releases = allReleases
+			.filter((r) => rollbackRefusal(r, currentVersion, process.platform, process.arch) === null)
+			.slice(0, ROLLBACK_LIST_LIMIT)
+			.map((r) => ({
+				tag_name: r.tag_name,
+				name: r.name,
+				body: r.body,
+				html_url: r.html_url,
+				published_at: r.published_at,
+				prerelease: r.prerelease,
+			}));
+		logger.info(
+			`Found ${releases.length} rollback target(s) below v${currentVersion}`,
+			'UpdateChecker',
+			{ versions: releases.map((r) => r.tag_name) }
+		);
+		return { currentVersion, releases, releasesUrl: RELEASES_PAGE_URL };
+	} catch (error) {
+		const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+		logger.error(`Listing rollback targets failed: ${errorMessage}`, 'UpdateChecker');
+		return { currentVersion, releases: [], releasesUrl: RELEASES_PAGE_URL, error: errorMessage };
 	}
 }

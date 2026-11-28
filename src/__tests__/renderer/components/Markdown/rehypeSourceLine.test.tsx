@@ -106,4 +106,25 @@ describe('rehypeSourceLine (rendered DOM)', () => {
 		// ...but the containing paragraph is tagged.
 		expect(container.querySelector('p')?.getAttribute('data-source-line')).toBe('1');
 	});
+
+	it('stamps the last source line too when asked, for a block spanning several', () => {
+		const md = 'First line\nsecond line\nthird line\n\nOne line.\n';
+		const { container } = render(
+			<ReactMarkdown rehypePlugins={[[rehypeSourceLine, { endLine: true }], rehypeRaw]}>
+				{md}
+			</ReactMarkdown>
+		);
+		const [multi, single] = Array.from(container.querySelectorAll('p'));
+		expect(multi.getAttribute('data-source-line')).toBe('1');
+		expect(multi.getAttribute('data-source-line-end')).toBe('3');
+		// A one-line block needs no end: it is its start.
+		expect(single.hasAttribute('data-source-line-end')).toBe(false);
+	});
+
+	it('leaves the end line off by default (the chat transcript has no use for it)', () => {
+		const { container } = render(
+			<ReactMarkdown rehypePlugins={[rehypeSourceLine, rehypeRaw]}>{'a\nb\n'}</ReactMarkdown>
+		);
+		expect(container.querySelector('p')?.hasAttribute('data-source-line-end')).toBe(false);
+	});
 });

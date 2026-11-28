@@ -19,12 +19,15 @@ import {
 	usageCostUsd,
 } from '../../../shared/maestro-lib/streaming/usage-totals';
 import { TurnCapture } from '../../../shared/maestro-lib/run/turn-capture';
+import { partialTextRoute } from '../../../shared/maestro-lib/turns/turn-events';
 import {
 	subagentDisplayParentOf,
 	subagentToolCallOf,
 } from '../../../shared/maestro-lib/turns/turn-events';
 import { canonicalJson } from '../../../shared/canonicalJson';
 import type { UsageAccounting, UsageCost } from '../../../shared/types';
+import { getAgentCapabilities } from '../../agents/capabilities';
+import { StreamCallTimer } from '../../../shared/tokenSpeed';
 import type { ManagedProcess, UsageStats, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
@@ -874,6 +877,33 @@ export class StdoutHandler {
 		this.emitter.emit('usage', sessionId, delta);
 	}
 
+	/**
+	 * Feed one raw stream event to the process's call timer and emit every model
+	 * call it finishes as `token-speed`. Runs before parsing so no event type the
+	 * parser drops is missed. Only for agents measured from the stream, and for
+	 * transcript-measured agents on an SSH host (their transcript is out of reach;
+	 * locally the transcript path already times them, so timing here too would
+	 * count every call twice).
+	 */
+	private recordCallTiming(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		parsed: unknown,
+		outputParser: NonNullable<ManagedProcess['outputParser']>
+	): void {
+		if (!outputParser.extractCallTiming) return;
+		const measurement = getAgentCapabilities(managedProcess.toolType).tokenSpeedMeasurement;
+		const fromStream =
+			measurement === 'stream' || (measurement === 'transcript' && !!managedProcess.sshRemoteId);
+		if (!fromStream) return;
+		const signal = outputParser.extractCallTiming(parsed);
+		if (!signal) return;
+		managedProcess.callTimer ??= new StreamCallTimer();
+		for (const sample of managedProcess.callTimer.signal(signal, Date.now())) {
+			this.emitter.emit('token-speed', sessionId, managedProcess.toolType, sample);
+		}
+	}
+
 	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
 	private handleParsedEvent(
 		sessionId: string,
@@ -881,6 +911,8 @@ export class StdoutHandler {
 		parsed: unknown,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
+		this.recordCallTiming(sessionId, managedProcess, parsed, outputParser);
+
 		const event = outputParser.parseJsonObject(parsed);
 
 		if (!event) return;
@@ -915,7 +947,11 @@ export class StdoutHandler {
 		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
 		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
 		// Reset resultEmitted on each new step so the last text event wins instead of the first.
-		if (event.type === 'init' && managedProcess.toolType === 'opencode') {
+		// Kilo is a fork of OpenCode and emits the same step sequence.
+		if (
+			event.type === 'init' &&
+			(managedProcess.toolType === 'opencode' || managedProcess.toolType === 'kilo')
+		) {
 			managedProcess.resultEmitted = false;
 			managedProcess.streamedText = '';
 		}
@@ -947,38 +983,17 @@ export class StdoutHandler {
 
 		// Handle streaming text events (OpenCode, Codex reasoning, Grok thought/text)
 		if (event.type === 'text' && event.isPartial && event.text) {
-			// Thinking panel routing:
-			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
-			//   and flush once at exit).
-			// - Grok / Codex / OpenCode / OMP / Antigravity: only isReasoning deltas →
-			//   thinking-chunk. These stream the final answer as partial `text`
-			//   WITHOUT isReasoning; dumping those into the thinking panel makes the
-			//   wizard look finished while tools still run (Grok emits no tool events
-			//   on the stream), and in sticky mode left every agy answer printed twice.
-			//   Antigravity's real thinking arrives separately, as `reasoningText`
-			//   (emitted above).
-			// - Claude Code + Factory Droid: forward ALL partials. Claude's assistant
-			//   text arrives as partials with isReasoning undefined; that live preview
-			//   is exactly what drives the thinking display during a turn, and the
-			//   renderer replaces it with the final `result` (useBatchedSessionUpdates
-			//   drops non-sticky thinking/tool logs when assistant stdout arrives,
-			//   cleanupExitedTabLogs on exit). Gating Claude on isReasoning silenced the
-			//   inline thinking display for every ordinary (non-extended-thinking) turn.
-			const toolType = managedProcess.toolType;
-			if (toolType !== 'copilot-cli') {
-				const requiresReasoningTag =
-					toolType === 'grok' ||
-					toolType === 'codex' ||
-					toolType === 'opencode' ||
-					toolType === 'omp' ||
-					toolType === 'antigravity';
-				if (!requiresReasoningTag || event.isReasoning) {
-					this.emitter.emit('thinking-chunk', sessionId, event.text);
-				}
+			// One rule with a Federation host's turn mapper (`partialTextRoute()`): which partials
+			// are a thinking chunk, and which are answer text. Reasoning is internal thinking, never
+			// in the final response text: only message content goes into streamedText.
+			const route = partialTextRoute(managedProcess.toolType, event.isReasoning);
+			if (route.thinking) {
+				// Flagged when it is also answer text, so a Federation client draws a cut turn's
+				// streamed answer as its reply, as this desktop does (R58).
+				if (route.answer) this.emitter.emit('thinking-chunk', sessionId, event.text, true);
+				else this.emitter.emit('thinking-chunk', sessionId, event.text);
 			}
-			// Reasoning content is internal thinking - don't include it in the
-			// final response text. Only message content should be in streamedText.
-			if (!event.isReasoning) {
+			if (route.answer) {
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
 				if (managedProcess.toolType === 'grok') {
 					managedProcess.resultEmitted = true;

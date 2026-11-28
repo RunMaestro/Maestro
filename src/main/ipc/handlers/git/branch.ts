@@ -3,7 +3,7 @@ import { execFileNoThrow } from '../../../utils/execFile';
 import { execGit, execGitReadOnly } from '../../../utils/remote-git';
 import { getSshRemoteById } from '../../../stores';
 import { withIpcErrorLogging, createIpcHandler } from '../../../utils/ipcHandler';
-import { parseGitBranches, parseGitTags } from '../../../../shared/gitUtils';
+import { gitRefArgProblem, parseGitBranches, parseGitTags } from '../../../../shared/gitUtils';
 import { branchSwitchBlocker } from '../../../utils/branch-switch-guard';
 import { handlerOpts, readOnlyGitReply, type GitHandlerDependencies } from './shared';
 
@@ -184,16 +184,9 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 				// Reject flag-like names so a caller can't pass e.g. "-c new-branch" or "-C"
 				// and have git interpret it as a switch flag. execFile blocks shell
 				// injection but not flag injection.
-				if (
-					typeof branchName !== 'string' ||
-					branchName.length === 0 ||
-					branchName.startsWith('-')
-				) {
-					return {
-						success: false,
-						stdout: '',
-						stderr: `Invalid branch name: ${branchName}`,
-					};
+				const refProblem = gitRefArgProblem(branchName, 'branch name');
+				if (refProblem) {
+					return { success: false, stdout: '', stderr: refProblem };
 				}
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
@@ -221,6 +214,10 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 				sshRemoteId?: string,
 				remoteCwd?: string
 			) => {
+				// Same rule as git:switch: a branch of `-f` would be `git checkout -f`,
+				// which throws away local changes.
+				const refProblem = gitRefArgProblem(branch, 'branch name');
+				if (refProblem) return { success: false, error: refProblem };
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				// The user opted into SSH; silently checking out the local repo
 				// instead would switch the wrong working tree.

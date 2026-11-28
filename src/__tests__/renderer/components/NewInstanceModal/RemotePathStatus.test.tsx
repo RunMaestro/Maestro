@@ -44,7 +44,7 @@ describe('RemotePathStatus', () => {
 		expect(container.innerHTML).toBe('');
 	});
 
-	it('should show spinner and generic message when checking without remoteHost', () => {
+	it('shows a spinner and the same words for a local and a remote path', () => {
 		render(
 			<RemotePathStatus
 				theme={createTheme()}
@@ -52,19 +52,7 @@ describe('RemotePathStatus', () => {
 			/>
 		);
 
-		expect(screen.getByText('Checking remote path...')).toBeInTheDocument();
-	});
-
-	it('should show spinner with host name when checking with remoteHost', () => {
-		render(
-			<RemotePathStatus
-				theme={createTheme()}
-				validation={{ checking: true, valid: false, isDirectory: false }}
-				remoteHost="my-server.com"
-			/>
-		);
-
-		expect(screen.getByText('Checking path on my-server.com...')).toBeInTheDocument();
+		expect(screen.getByText('Checking path...')).toBeInTheDocument();
 	});
 
 	it('should show success without host when valid', () => {
@@ -75,19 +63,7 @@ describe('RemotePathStatus', () => {
 			/>
 		);
 
-		expect(screen.getByText('Remote directory found')).toBeInTheDocument();
-	});
-
-	it('should show success with host when valid and remoteHost provided', () => {
-		render(
-			<RemotePathStatus
-				theme={createTheme()}
-				validation={{ checking: false, valid: true, isDirectory: true }}
-				remoteHost="my-server.com"
-			/>
-		);
-
-		expect(screen.getByText('Directory found on my-server.com')).toBeInTheDocument();
+		expect(screen.getByText('Directory found')).toBeInTheDocument();
 	});
 
 	it('should show error message without host suffix', () => {
@@ -104,24 +80,5 @@ describe('RemotePathStatus', () => {
 		);
 
 		expect(screen.getByText('Path is a file, not a directory')).toBeInTheDocument();
-	});
-
-	it('should show error message with host suffix when remoteHost provided', () => {
-		render(
-			<RemotePathStatus
-				theme={createTheme()}
-				validation={{
-					checking: false,
-					valid: false,
-					isDirectory: false,
-					error: 'Path not found or not accessible',
-				}}
-				remoteHost="my-server.com"
-			/>
-		);
-
-		expect(
-			screen.getByText('Path not found or not accessible (my-server.com)')
-		).toBeInTheDocument();
 	});
 });

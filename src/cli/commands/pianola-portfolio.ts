@@ -9,6 +9,7 @@ import { MaestroClient } from '../services/maestro-client';
 import { readAgentRuns } from '../services/agent-run-store';
 import { pianolaTaskAgentRunId } from '../../shared/agent-run';
 import { generateUUID } from '../../shared/uuid';
+import type { AgentSshRemoteConfig, SshRemoteConfig } from '../../shared/types';
 import { getConfigDirectory, readSshRemotes, readLiveSessions } from '../services/storage';
 import { ensurePianolaEnabled } from './pianola';
 import {
@@ -283,6 +284,70 @@ function writeProgramCue(program: PianolaProgram): string | null {
 	return null;
 }
 
+/** The SSH remote an agent runs on, or undefined when it runs on this machine. */
+function agentRemoteId(agent: {
+	sessionSshRemoteConfig?: AgentSshRemoteConfig;
+}): string | undefined {
+	const ssh = agent.sessionSshRemoteConfig;
+	return ssh?.enabled && ssh.remoteId ? ssh.remoteId : undefined;
+}
+
+/**
+ * The id of the SSH remote a manifest's `remoteId` names: an exact id, or the name of exactly one
+ * remote. A name that several remotes share (an old VPN entry kept beside its Tailscale copy) is
+ * refused, not resolved to the first one, and so is a remote that is not configured: the id goes
+ * on every role agent the program creates.
+ */
+function resolveProgramRemoteId(
+	ref: string,
+	remotes: readonly SshRemoteConfig[]
+): { id: string } | { error: string } {
+	if (remotes.some((remote) => remote.id === ref)) return { id: ref };
+	const named = remotes.filter((remote) => remote.name === ref);
+	if (named.length === 1) return { id: named[0].id };
+	const fix = 'Check them with: maestro-cli list ssh-remotes';
+	if (named.length > 1) {
+		const ids = named.map((remote) => remote.id).join(', ');
+		return {
+			error: `SSH remote name "${ref}" matches ${named.length} remotes (${ids}). Put the remote's id in the manifest. ${fix}`,
+		};
+	}
+	return { error: `No SSH remote "${ref}" is configured. ${fix}` };
+}
+
+/**
+ * One line for each existing role agent that applying `programs` would have to move to another
+ * SSH remote. Apply never moves one: only a person changes an agent's remote, so such a manifest
+ * is refused with the command that makes the move. Only a program whose remote is new or changed
+ * is checked. With its remote unchanged, apply sends no SSH change, so an agent that a person
+ * moved by hand stays where they put it.
+ */
+function roleRemoteMoves(programs: readonly PianolaProgram[]): string[] {
+	const sessions = readLiveSessions();
+	const where = (remoteId: string | undefined) =>
+		remoteId ? `on SSH remote ${remoteId}` : 'on this machine';
+	const moves: string[] = [];
+	for (const program of programs) {
+		const existing = readPianolaPrograms().find((entry) => entry.id === program.id);
+		if (existing?.remoteId === program.remoteId) continue;
+		for (const [key, role] of Object.entries(program.roles)) {
+			const session = role.agentId
+				? sessions.find((entry) => entry.id === role.agentId)
+				: undefined;
+			if (!session) continue;
+			const current = agentRemoteId(session);
+			if (current === program.remoteId) continue;
+			moves.push(
+				`Role "${key}" of program "${program.id}" is agent ${session.id}, which runs ${where(current)}, ` +
+					`but the manifest puts the program ${where(program.remoteId)}. Apply never moves an agent to another remote. ` +
+					`Move it with: maestro-cli update-agent ${session.id} --ssh-remote ${program.remoteId ?? 'none'}, ` +
+					`or make the manifest's remoteId ${current ?? 'empty'}.`
+			);
+		}
+	}
+	return moves;
+}
+
 export async function pianolaProgramApply(options: {
 	file: string;
 	json?: boolean;
@@ -330,12 +395,12 @@ export async function pianolaProgramApply(options: {
 					: role;
 		}
 		const now = Date.now();
-		const remoteId =
-			typeof input.remoteId === 'string'
-				? (readSshRemotes().find(
-						(remote) => remote.id === input.remoteId || remote.name === input.remoteId
-					)?.id ?? input.remoteId)
-				: undefined;
+		let remoteId: string | undefined;
+		if (typeof input.remoteId === 'string' && input.remoteId.trim()) {
+			const resolved = resolveProgramRemoteId(input.remoteId.trim(), readSshRemotes());
+			if ('error' in resolved) return fail(resolved.error, options.json);
+			remoteId = resolved.id;
+		}
 		const candidate = validatePianolaProgram({
 			...input,
 			...(remoteId ? { remoteId } : {}),
@@ -351,6 +416,9 @@ export async function pianolaProgramApply(options: {
 		ids.add(candidate.id);
 		candidates.push(candidate);
 	}
+	// Before any write, so a refused manifest leaves every agent and program as it was.
+	const moves = roleRemoteMoves(candidates);
+	if (moves.length) return fail(moves.join('\n'), options.json);
 	let client: MaestroClient | undefined;
 	const applied: PianolaProgram[] = [];
 	const cueWarnings: string[] = [];
@@ -385,9 +453,7 @@ export async function pianolaProgramApply(options: {
 							session.name === role.name &&
 							session.cwd === program.root &&
 							session.toolType === (role.agentType ?? 'omp') &&
-							(session.sessionSshRemoteConfig?.enabled
-								? session.sessionSshRemoteConfig.remoteId
-								: undefined) === program.remoteId
+							agentRemoteId(session) === program.remoteId
 					);
 					if (matches.length > 1)
 						throw new Error(`Multiple live agents match ${program.id}:${key}`);
@@ -411,32 +477,8 @@ export async function pianolaProgramApply(options: {
 						if (!session) throw new Error(`Role agent not found: ${role.agentId}`);
 						configPatch.customEnvVars = { ...session.customEnvVars, ...roleEnv };
 					}
-					if (existing?.remoteId !== program.remoteId) {
-						const session = (await liveSessions()).find((session) => session.id === role.agentId);
-						if (!session) throw new Error(`Role agent not found: ${role.agentId}`);
-						const remoteId = session.sessionSshRemoteConfig?.enabled
-							? session.sessionSshRemoteConfig.remoteId
-							: undefined;
-						if (remoteId !== program.remoteId) {
-							if (!client) {
-								client = new MaestroClient();
-								await client.connect();
-							}
-							const result = await client.sendCommand<{ success: boolean; error?: string }>(
-								{
-									type: 'update_session_ssh',
-									sessionId: role.agentId,
-									sshPatch: {
-										enabled: !!program.remoteId,
-										remoteId: program.remoteId ?? null,
-										workingDirOverride: program.root,
-									},
-								},
-								'update_session_ssh_result'
-							);
-							if (!result.success) throw new Error(result.error ?? 'Failed to update role remote');
-						}
-					}
+					// No SSH change here: `roleRemoteMoves()` already refused a manifest that would
+					// move this agent to another remote.
 					if (Object.keys(configPatch).length || (existing && existing.root !== program.root)) {
 						if (!client) {
 							client = new MaestroClient();

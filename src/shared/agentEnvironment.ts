@@ -84,6 +84,78 @@ export function maskEnvValue(value: string, key?: string): string {
 }
 
 /**
+ * A copy of an env record with EVERY value replaced and every name kept, for
+ * text that leaves the screen: a support package that ends up on a public
+ * issue, a log line that lands in the System Log and on disk.
+ *
+ * `[redacted, 12 chars]` says "this is set, and about this long", which is all
+ * a reader of a package or a log needs. It is deliberately NOT
+ * {@link maskEnvValue}: that keeps the last four characters of any value over
+ * eight (a nine-character password would ship nearly half of itself), and
+ * {@link isSecretEnvKey} only knows secrets by NAME, so it misses `MY_API` or
+ * `INTERNAL_URL`. Every entry gets the same mask, so a name no keyword list
+ * knows cannot carry its value out. The names stay: seeing that `NPM_TOKEN` is
+ * set is the point.
+ *
+ * A value that is not a string (a hand-edited store) is masked without a length.
+ */
+export function maskEnvVarValues(vars: Record<string, unknown>): Record<string, string> {
+	const masked: Record<string, string> = {};
+	for (const [key, value] of Object.entries(vars)) {
+		masked[key] = typeof value === 'string' ? `[redacted, ${value.length} chars]` : '[redacted]';
+	}
+	return masked;
+}
+
+/**
+ * Keys whose value is an env var record: `shellEnvVars`, `shellEnvVarsDisabled`,
+ * `customEnvVars`, `customEnvVarsDisabled`, an SSH remote's `remoteEnv` /
+ * `remoteEnvDisabled`, a plugin's `env`. Variable names are user-chosen
+ * (`NPM_TOKEN`, `HF_TOKEN`, `MY_API`), so no keyword list can tell a secret from
+ * `EDITOR`: a record under one of these keys is masked whole.
+ */
+const ENV_RECORD_KEY = /env(vars|ironment)?(disabled)?$/i;
+
+/**
+ * Whether `value` is an env var record by where it sits: a plain object under a
+ * key named like one (see {@link ENV_RECORD_KEY}). A string, array, or null under
+ * such a name is not a record, so `env: 'production'` is an ordinary string.
+ */
+export function isEnvRecord(key: string, value: unknown): value is Record<string, unknown> {
+	return (
+		ENV_RECORD_KEY.test(key) && typeof value === 'object' && value !== null && !Array.isArray(value)
+	);
+}
+
+/**
+ * A copy of `value` in which every env record, at any depth, goes through
+ * {@link maskEnvVarValues}. Everything else is copied as it is. For data that is
+ * logged whole (an agent config, an IPC payload) where the env records inside it
+ * are not known in advance.
+ *
+ * `key` is the name `value` is stored under, for a caller that holds the value
+ * and the name apart (`setConfigValue(agentId, 'customEnvVars', value)`).
+ *
+ * Always a copy, never the original: the caller keeps the real values to store
+ * or spawn with, and a logger that keeps its argument by reference would
+ * otherwise hold them. Plain JSON-shaped data only (no cycles); an object that
+ * is not a plain object or an array (a `Map`, a class instance) is returned as is.
+ */
+export function maskEnvRecords(value: unknown, key = ''): unknown {
+	if (isEnvRecord(key, value)) return maskEnvVarValues(value);
+	if (Array.isArray(value)) return value.map((item) => maskEnvRecords(item, key));
+	if (value !== null && typeof value === 'object') {
+		const proto = Object.getPrototypeOf(value);
+		if (proto === Object.prototype || proto === null) {
+			return Object.fromEntries(
+				Object.entries(value).map(([name, child]) => [name, maskEnvRecords(child, name)])
+			);
+		}
+	}
+	return value;
+}
+
+/**
  * Merge the layers and report where each surviving value came from.
  *
  * The session layer REPLACES the agent layer rather than merging over it: once

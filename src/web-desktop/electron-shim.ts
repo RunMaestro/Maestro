@@ -28,6 +28,7 @@ import {
 	type WebBridgeReconcileDetail,
 } from '../shared/webClientConfig';
 import { WEB_LOGIN_PATHS, WEB_LOGIN_WS_CLOSE_CODE } from '../shared/webLogin';
+import { SQLITE_EXPORT_TIMEOUT_MS } from '../shared/sqlite/query';
 import { selectHostFolder, selectHostSaveFile } from './remote-file-dialog';
 import {
 	readClientViewState,
@@ -79,6 +80,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'feedback:issues:list',
 	'feedback:search-issues',
 	'parquet:open',
+	'sqlite:open',
 	'ssh-remote:test',
 	'cue:validateYaml',
 	'cue:loadPipelineLayout',
@@ -258,8 +260,33 @@ function alertsOnRejection(channel: string, args: readonly unknown[], error: str
 	);
 }
 function requestTimeoutMs(channel: string): number {
-	// Repository transfers and recursive filesystem reads legitimately outlast ordinary UI requests.
-	if (channel.startsWith('git:') || channel === 'fs:directorySize') return 600_000;
+	// Repository transfers, recursive filesystem reads, and a SQLite integrity
+	// check (every page of the file) legitimately outlast ordinary UI requests.
+	if (
+		channel.startsWith('git:') ||
+		channel === 'fs:directorySize' ||
+		channel === 'sqlite:checkIntegrity'
+	) {
+		return 600_000;
+	}
+	// A SQLite query is stopped by main at its own timeout; with editing on,
+	// a statement that is the session's first write also waits for the file's
+	// VACUUM INTO backup first (stopped at 10 minutes). Leave room for the reply.
+	if (channel === 'sqlite:runQuery') return 12 * 60_000;
+	// Main stops an export at its own 10-minute timeout; leave room for the reply.
+	if (channel === 'sqlite:exportQuery') return SQLITE_EXPORT_TIMEOUT_MS + 60_000;
+	// The first write of a session (a cell edit, an insert, a delete, an undo, a
+	// transaction's Begin) waits for the file's VACUUM INTO backup,
+	// which main stops at 10 minutes; leave room for the reply.
+	if (
+		channel === 'sqlite:updateCell' ||
+		channel === 'sqlite:insertRow' ||
+		channel === 'sqlite:deleteRow' ||
+		channel === 'sqlite:undoEdit' ||
+		channel === 'sqlite:beginTransaction'
+	) {
+		return 11 * 60_000;
+	}
 	return isSubmissionChannel(channel) ? BRIDGE_MUTATION_TIMEOUT_MS : BRIDGE_READ_TIMEOUT_MS;
 }
 

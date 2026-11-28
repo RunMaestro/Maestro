@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import type { UpdateStatus } from '../types';
 import {
 	X,
@@ -7,11 +8,11 @@ import {
 	CheckCircle2,
 	AlertCircle,
 	RefreshCw,
-	ChevronDown,
-	ChevronRight,
 	RotateCcw,
+	History,
 	FlaskConical,
 	Clock,
+	Play,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
@@ -19,11 +20,25 @@ import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { useSettings } from '../hooks';
-import { Markdown } from './Markdown';
+import { UpdateReleaseCard } from './UpdateReleaseCard';
+import { UpdateRollbackPanel } from './UpdateRollbackPanel';
 import { openUrl } from '../utils/openUrl';
 import { selectIsAnySessionBusy, useSessionStore } from '../stores/sessionStore';
 import { selectHasAnyActiveBatch, useBatchStore } from '../stores/batchStore';
 import { useRestartPendingStore } from '../stores/restartPendingStore';
+import { notifyToast } from '../stores/notificationStore';
+import {
+	saveAutoRunsForRestart,
+	selectResumableAutoRunIds,
+} from '../services/autoRunRestartResume';
+import { ipcErrorMessage } from '../../shared/serializeError';
+import { formatSize } from '../../shared/formatters';
+import {
+	normalizeReleaseTag,
+	type RollbackTargetsResult,
+	type UpdateCheckView,
+} from '../../shared/updateRollback';
+import { compareVersions } from '../../shared/pathUtils';
 
 interface Release {
 	tag_name: string;
@@ -47,9 +62,15 @@ interface UpdateCheckResult {
 interface UpdateCheckModalProps {
 	theme: Theme;
 	onClose: () => void;
+	/** Open straight on the rollback list (the menu and palette "Roll Back" entries). */
+	initialView?: UpdateCheckView;
 }
 
-export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
+export function UpdateCheckModal({
+	theme,
+	onClose,
+	initialView = 'updates',
+}: UpdateCheckModalProps) {
 	const [loading, setLoading] = useState(true);
 	const [result, setResult] = useState<UpdateCheckResult | null>(null);
 	const [expandedReleases, setExpandedReleases] = useState<Set<string>>(new Set());
@@ -61,6 +82,28 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	const [downloadStatus, setDownloadStatus] = useState<UpdateStatus>({ status: 'idle' });
 	const [downloadError, setDownloadError] = useState<string | null>(null);
 	const [showBusyWarning, setShowBusyWarning] = useState(false);
+	// What this modal last asked main to download: a forward update, or a
+	// rollback to `downloadTag`. The two views must not show each other's
+	// progress or Restart button.
+	const [downloadKind, setDownloadKind] = useState<UpdateCheckView | null>(null);
+	const [downloadTag, setDownloadTag] = useState<string | null>(null);
+	// A finished download names its version, which settles the question even for
+	// a download this modal did not start (`maestro-cli rollback`). Mid-download
+	// status carries no version, so the modal's own request decides then.
+	const downloadedVersion = downloadStatus.info?.version;
+	const activeDownloadKind: UpdateCheckView = downloadedVersion
+		? compareVersions(downloadedVersion, __APP_VERSION__) < 0
+			? 'rollback'
+			: 'updates'
+		: (downloadKind ?? 'updates');
+	const activeDownloadTag =
+		downloadTag ?? (downloadedVersion ? normalizeReleaseTag(downloadedVersion) : null);
+
+	// Rollback view state, fetched the first time the view opens.
+	const [view, setView] = useState<UpdateCheckView>(initialView);
+	const [rollbackLoading, setRollbackLoading] = useState(false);
+	const [rollbackResult, setRollbackResult] = useState<RollbackTargetsResult | null>(null);
+	const [rollbackReload, setRollbackReload] = useState(0);
 
 	// Idle / restart-pending state
 	const anySessionBusy = useSessionStore(selectIsAnySessionBusy);
@@ -68,10 +111,62 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	const isAppActive = anySessionBusy || anyBatchRunning;
 	const restartPending = useRestartPendingStore((s) => s.pending);
 	const setRestartPending = useRestartPendingStore((s) => s.setPending);
+
+	// Auto Runs survive the restart: each one's place is saved and the next
+	// launch continues it (services/autoRunRestartResume.ts). Work that does
+	// NOT survive is an interactive turn, or a run this client cannot save
+	// (a mirror of another window's run, or one already stopping).
+	const resumableAutoRunIds = useBatchStore(
+		useShallow((s) => selectResumableAutoRunIds(s.batchRunStates))
+	);
+	const runningBatchIds = useBatchStore(
+		useShallow((s) =>
+			Object.entries(s.batchRunStates)
+				.filter(([, state]) => state.isRunning)
+				.map(([sessionId]) => sessionId)
+		)
+	);
+	const otherAgentsBusy = useSessionStore((s) =>
+		s.sessions.some((session) => session.state === 'busy' && !runningBatchIds.includes(session.id))
+	);
+	// An older build may predate Auto Run restart-resume, so a rollback restart
+	// never promises it (and never saves runs it cannot honor).
+	const resumableCount = activeDownloadKind === 'rollback' ? 0 : resumableAutoRunIds.length;
+	const onlyResumableWork =
+		resumableCount > 0 && !otherAgentsBusy && runningBatchIds.length === resumableCount;
+	const autoRunNoun = resumableCount === 1 ? 'Auto Run' : 'Auto Runs';
+	const [savingAutoRuns, setSavingAutoRuns] = useState(false);
 	// Check for updates on mount
 	useEffect(() => {
 		checkForUpdates();
 	}, [enableBetaUpdates]);
+
+	// Load the rollback list when that view opens (or the beta toggle changes it).
+	useEffect(() => {
+		if (view !== 'rollback') return;
+		let cancelled = false;
+		setRollbackLoading(true);
+		window.maestro.updates
+			.listRollbackTargets(enableBetaUpdates)
+			.then((targets) => {
+				if (!cancelled) setRollbackResult(targets);
+			})
+			.catch((error) => {
+				if (cancelled) return;
+				setRollbackResult({
+					currentVersion: __APP_VERSION__,
+					releases: [],
+					releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
+					error: ipcErrorMessage(error, 'Failed to load earlier releases'),
+				});
+			})
+			.finally(() => {
+				if (!cancelled) setRollbackLoading(false);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [view, enableBetaUpdates, rollbackReload]);
 
 	// Subscribe to update status changes
 	useEffect(() => {
@@ -124,24 +219,11 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 		});
 	};
 
-	const formatDate = (dateString: string) => {
-		return new Date(dateString).toLocaleDateString('en-US', {
-			year: 'numeric',
-			month: 'short',
-			day: 'numeric',
-		});
-	};
-
-	const formatBytes = (bytes: number) => {
-		if (bytes === 0) return '0 B';
-		const k = 1024;
-		const sizes = ['B', 'KB', 'MB', 'GB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-	};
-
 	const handleDownloadUpdate = async () => {
 		setDownloadError(null);
+		setShowBusyWarning(false);
+		setDownloadKind('updates');
+		setDownloadTag(result?.releases?.[0]?.tag_name ?? null);
 		setDownloadStatus({
 			status: 'downloading',
 			progress: { percent: 0, bytesPerSecond: 0, total: 0, transferred: 0 },
@@ -158,6 +240,23 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 		}
 	};
 
+	const handleRollback = async (tag: string) => {
+		setDownloadError(null);
+		setShowBusyWarning(false);
+		setRestartPending(false);
+		setDownloadKind('rollback');
+		setDownloadTag(tag);
+		setDownloadStatus({
+			status: 'downloading',
+			progress: { percent: 0, bytesPerSecond: 0, total: 0, transferred: 0 },
+		});
+		const rollbackResult = await window.maestro.updates.rollback(tag);
+		if (!rollbackResult.success && rollbackResult.error) {
+			setDownloadError(rollbackResult.error);
+			setDownloadStatus({ status: 'error', error: rollbackResult.error });
+		}
+	};
+
 	const handleInstallUpdate = () => {
 		if (isAppActive) {
 			setShowBusyWarning(true);
@@ -166,7 +265,23 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 		window.maestro.updates.install();
 	};
 
-	const handleRestartNow = () => {
+	const handleRestartNow = async () => {
+		if (resumableCount > 0) {
+			setSavingAutoRuns(true);
+			try {
+				await saveAutoRunsForRestart('update');
+			} catch (error) {
+				// Restarting now would drop the runs the user was told would resume.
+				setSavingAutoRuns(false);
+				notifyToast({
+					type: 'error',
+					title: 'Restart Canceled',
+					message: `Could not save Auto Run progress: ${ipcErrorMessage(error)}`,
+					dismissible: true,
+				});
+				return;
+			}
+		}
 		setShowBusyWarning(false);
 		setRestartPending(false);
 		window.maestro.updates.install();
@@ -183,6 +298,253 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 
 	const isDownloading = downloadStatus.status === 'downloading';
 	const isDownloaded = downloadStatus.status === 'downloaded';
+	const isUpdateDownloaded = isDownloaded && activeDownloadKind === 'updates';
+	const isRollbackDownloaded = isDownloaded && activeDownloadKind === 'rollback';
+
+	const releasesUrl = result?.releasesUrl ?? 'https://github.com/RunMaestro/Maestro/releases';
+
+	// Each view shows only its own download: a failed rollback is not a failed update.
+	const ownsDownload = (kind: UpdateCheckView) => activeDownloadKind === kind;
+
+	const renderDownloadError = (kind: UpdateCheckView) =>
+		downloadError && ownsDownload(kind) ? (
+			<div
+				className="p-3 rounded border text-xs"
+				style={{
+					backgroundColor: `${theme.colors.error}15`,
+					borderColor: theme.colors.error,
+					color: theme.colors.error,
+				}}
+			>
+				<div className="flex items-center gap-2 mb-1">
+					<AlertCircle className="w-4 h-4" />
+					<span className="font-bold">Download failed</span>
+				</div>
+				<p style={{ color: theme.colors.textDim }}>{downloadError}</p>
+				<button
+					onClick={() => openUrl(releasesUrl)}
+					className="flex items-center gap-1 mt-2 hover:underline"
+					style={{ color: theme.colors.accent }}
+				>
+					Download manually from GitHub
+					<ExternalLink className="w-3 h-3" />
+				</button>
+			</div>
+		) : null;
+
+	const renderDownloadProgress = (kind: UpdateCheckView, label: string) =>
+		isDownloading && downloadStatus.progress && ownsDownload(kind) ? (
+			<div className="space-y-2">
+				<div
+					className="flex items-center justify-between text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
+					<span>{label}</span>
+					<span>{Math.round(downloadStatus.progress.percent)}%</span>
+				</div>
+				<div
+					className="h-2 rounded-full overflow-hidden"
+					style={{ backgroundColor: theme.colors.bgActivity }}
+				>
+					<div
+						className="h-full transition-all duration-300 rounded-full"
+						style={{
+							width: `${downloadStatus.progress.percent}%`,
+							backgroundColor: theme.colors.accent,
+						}}
+					/>
+				</div>
+				<div
+					className="flex items-center justify-between text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
+					<span>
+						{formatSize(downloadStatus.progress.transferred)} /{' '}
+						{formatSize(downloadStatus.progress.total)}
+					</span>
+					<span>{formatSize(downloadStatus.progress.bytesPerSecond)}/s</span>
+				</div>
+			</div>
+		) : null;
+
+	// What follows a finished download, for an update and a rollback alike: a
+	// pending-restart banner, the busy-app warning, or the Restart button.
+	const renderRestartControls = (installLabel: string) =>
+		restartPending ? (
+			<div
+				className="p-3 rounded-lg border space-y-2"
+				style={{
+					backgroundColor: `${theme.colors.warning}15`,
+					borderColor: theme.colors.warning,
+				}}
+			>
+				<div className="flex items-start gap-2">
+					<Clock className="w-4 h-4 mt-0.5 shrink-0" style={{ color: theme.colors.warning }} />
+					<div className="flex-1">
+						<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+							Restart pending
+						</div>
+						<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+							{isAppActive
+								? 'Maestro will restart automatically once all agents and Auto Runs finish.'
+								: 'Restarting…'}
+						</div>
+					</div>
+				</div>
+				<div className="flex gap-2">
+					<button
+						onClick={handleCancelPendingRestart}
+						className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+						style={{
+							borderColor: theme.colors.border,
+							borderWidth: 1,
+							color: theme.colors.textMain,
+						}}
+					>
+						Cancel
+					</button>
+					<button
+						onClick={handleRestartNow}
+						className="flex-1 p-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+						style={{
+							backgroundColor: theme.colors.warning,
+							color: theme.colors.bgMain,
+						}}
+					>
+						Restart Now Anyway
+					</button>
+				</div>
+			</div>
+		) : showBusyWarning ? (
+			<div
+				className="p-3 rounded-lg border space-y-3"
+				style={{
+					backgroundColor: `${theme.colors.warning}15`,
+					borderColor: theme.colors.warning,
+				}}
+			>
+				<div className="flex items-start gap-2">
+					<AlertCircle
+						className="w-4 h-4 mt-0.5 shrink-0"
+						style={{ color: theme.colors.warning }}
+					/>
+					<div className="flex-1">
+						<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+							{onlyResumableWork ? `${autoRunNoun} will resume` : 'Maestro is busy'}
+						</div>
+						<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+							{onlyResumableWork ? (
+								<>
+									Maestro saves {resumableCount === 1 ? 'its' : 'each run’s'} place, restarts into
+									the new version, and continues at the task it was on. That task starts over from
+									the top.
+								</>
+							) : (
+								<>
+									{anySessionBusy && anyBatchRunning
+										? 'Agents are working and Auto Runs are in progress.'
+										: anySessionBusy
+											? 'One or more agents are currently working.'
+											: 'One or more Auto Runs are in progress.'}{' '}
+									{resumableCount > 0
+										? `Restarting now interrupts agent work in progress. ${autoRunNoun} resume${resumableCount === 1 ? 's' : ''} after the restart.`
+										: 'Restarting now will interrupt them.'}
+								</>
+							)}
+						</div>
+					</div>
+				</div>
+				{onlyResumableWork ? (
+					<div className="flex flex-col gap-2">
+						<button
+							onClick={handleRestartNow}
+							disabled={savingAutoRuns}
+							className="w-full flex items-center justify-center gap-2 p-2 rounded text-sm font-bold transition-colors hover:opacity-90 disabled:opacity-50"
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.bgMain,
+							}}
+						>
+							{savingAutoRuns ? <Spinner size={16} /> : <RotateCcw className="w-4 h-4" />}
+							Restart and Resume {autoRunNoun}
+						</button>
+						<div className="flex gap-2">
+							<button
+								onClick={() => setShowBusyWarning(false)}
+								disabled={savingAutoRuns}
+								className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10 disabled:opacity-50"
+								style={{
+									borderColor: theme.colors.border,
+									borderWidth: 1,
+									color: theme.colors.textMain,
+								}}
+							>
+								Cancel
+							</button>
+							<button
+								onClick={handleRestartWhenIdle}
+								disabled={savingAutoRuns}
+								className="flex-1 flex items-center justify-center gap-1.5 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10 disabled:opacity-50"
+								style={{
+									borderColor: theme.colors.border,
+									borderWidth: 1,
+									color: theme.colors.textMain,
+								}}
+							>
+								<Clock className="w-3.5 h-3.5" />
+								Wait Until {autoRunNoun} Finish
+							</button>
+						</div>
+					</div>
+				) : (
+					<div className="flex flex-col gap-2">
+						<button
+							onClick={handleRestartWhenIdle}
+							className="w-full flex items-center justify-center gap-2 p-2 rounded text-sm font-bold transition-colors hover:opacity-90"
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.bgMain,
+							}}
+						>
+							<Clock className="w-4 h-4" />
+							Restart App When Idle
+						</button>
+						<div className="flex gap-2">
+							<button
+								onClick={() => setShowBusyWarning(false)}
+								className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
+								style={{
+									borderColor: theme.colors.border,
+									borderWidth: 1,
+									color: theme.colors.textMain,
+								}}
+							>
+								Cancel
+							</button>
+							<button
+								onClick={handleRestartNow}
+								className="flex-1 p-2 rounded text-xs font-bold transition-colors hover:opacity-90"
+								style={{
+									backgroundColor: theme.colors.warning,
+									color: theme.colors.bgMain,
+								}}
+							>
+								Restart Now Anyway
+							</button>
+						</div>
+					</div>
+				)}
+			</div>
+		) : (
+			<button
+				onClick={handleInstallUpdate}
+				className="w-full flex items-center justify-center gap-2 p-3 rounded-lg font-bold text-sm transition-colors hover:opacity-90"
+				style={{ backgroundColor: theme.colors.success, color: theme.colors.bgMain }}
+			>
+				<RotateCcw className="w-4 h-4" />
+				{installLabel}
+			</button>
+		);
 
 	// Custom header with refresh button
 	const customHeader = (
@@ -191,20 +553,24 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 			style={{ borderColor: theme.colors.border }}
 		>
 			<div className="flex items-center gap-2">
-				<Download className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				{view === 'rollback' ? (
+					<History className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				) : (
+					<Download className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				)}
 				<h2 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-					Check for Updates
+					{view === 'rollback' ? 'Roll Back to an Earlier Version' : 'Check for Updates'}
 				</h2>
 			</div>
 			<div className="flex items-center gap-2">
 				<button
-					onClick={checkForUpdates}
-					disabled={loading || isDownloading}
+					onClick={view === 'rollback' ? () => setRollbackReload((n) => n + 1) : checkForUpdates}
+					disabled={(view === 'rollback' ? rollbackLoading : loading) || isDownloading}
 					className="p-1 rounded hover:bg-white/10 transition-colors disabled:opacity-50"
 					title="Refresh"
 				>
 					<RefreshCw
-						className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
+						className={`w-4 h-4 ${(view === 'rollback' ? rollbackLoading : loading) ? 'animate-spin' : ''}`}
 						style={{ color: theme.colors.textDim }}
 					/>
 				</button>
@@ -227,7 +593,32 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 			maxHeight="80vh"
 		>
 			<div className="space-y-4 -my-2">
-				{loading ? (
+				{view === 'rollback' ? (
+					<>
+						<UpdateRollbackPanel
+							theme={theme}
+							loading={rollbackLoading}
+							result={rollbackResult}
+							activeTag={activeDownloadKind === 'rollback' ? activeDownloadTag : null}
+							downloading={isDownloading}
+							onRollback={handleRollback}
+							onBack={() => setView('updates')}
+						/>
+						{renderDownloadError('rollback')}
+						{renderDownloadProgress('rollback', `Downloading ${activeDownloadTag ?? 'release'}...`)}
+						{isRollbackDownloaded && (
+							<div className="space-y-2">
+								{renderRestartControls(
+									`Restart to Roll Back to ${activeDownloadTag ?? 'This Version'}`
+								)}
+								<div className="text-xs text-center" style={{ color: theme.colors.textDim }}>
+									{activeDownloadTag} is downloaded and installs the next time Maestro restarts or
+									quits.
+								</div>
+							</div>
+						)}
+					</>
+				) : loading ? (
 					<div className="flex flex-col items-center justify-center py-8 gap-3">
 						<Spinner size={32} color={theme.colors.accent} />
 						<span className="text-sm" style={{ color: theme.colors.textDim }}>
@@ -275,6 +666,21 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 									<div className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
 										Current: v{result.currentVersion} → Latest: v{result.latestVersion}
 									</div>
+									{resumableCount > 0 && (
+										<div
+											className="flex items-center gap-1.5 text-xs mt-2"
+											style={{ color: theme.colors.success }}
+											data-testid="update-autorun-resume-note"
+										>
+											<Play className="w-3.5 h-3.5 shrink-0" />
+											<span>
+												No need to wait: your{' '}
+												{resumableCount === 1 ? 'Auto Run' : `${resumableCount} Auto Runs`} will
+												pick up where {resumableCount === 1 ? 'it' : 'they'} left off after the
+												update.
+											</span>
+										</div>
+									)}
 								</div>
 							</div>
 						</div>
@@ -286,279 +692,24 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 							</div>
 							<div className="space-y-2">
 								{result.releases.map((release) => (
-									<div
+									<UpdateReleaseCard
 										key={release.tag_name}
-										className="border rounded overflow-hidden"
-										style={{ borderColor: theme.colors.border }}
-									>
-										<button
-											onClick={() => toggleRelease(release.tag_name)}
-											className="w-full flex items-center justify-between p-3 hover:bg-white/5 transition-colors text-left"
-											style={{ backgroundColor: theme.colors.bgActivity }}
-										>
-											<div className="flex items-center gap-2">
-												{expandedReleases.has(release.tag_name) ? (
-													<ChevronDown
-														className="w-4 h-4"
-														style={{ color: theme.colors.textDim }}
-													/>
-												) : (
-													<ChevronRight
-														className="w-4 h-4"
-														style={{ color: theme.colors.textDim }}
-													/>
-												)}
-												<span
-													className="font-mono font-bold text-sm"
-													style={{ color: theme.colors.accent }}
-												>
-													{release.tag_name}
-												</span>
-												{(() => {
-													// Strip version prefix if name starts with it (e.g., "v0.14.2 | Description" -> "Description")
-													if (!release.name || release.name === release.tag_name) return null;
-													const name = release.name;
-													const tag = release.tag_name;
-													let displayName: string | null = name;
-
-													// Check for patterns like "v0.14.2 | Description" or "v0.14.2 - Description"
-													const pipeIndex = name.indexOf('|');
-													const dashIndex = name.indexOf(' - ');
-
-													if (
-														pipeIndex !== -1 &&
-														name.substring(0, pipeIndex).trim().toLowerCase() === tag.toLowerCase()
-													) {
-														displayName = name.substring(pipeIndex + 1).trim();
-													} else if (
-														dashIndex !== -1 &&
-														name.substring(0, dashIndex).trim().toLowerCase() === tag.toLowerCase()
-													) {
-														displayName = name.substring(dashIndex + 3).trim();
-													} else if (name.toLowerCase().startsWith(tag.toLowerCase())) {
-														// If name just starts with the tag, strip it
-														const remainder = name.substring(tag.length).trim();
-														// Remove leading separator if present
-														if (remainder.startsWith('|') || remainder.startsWith('-')) {
-															displayName = remainder.substring(1).trim();
-														} else {
-															displayName = remainder || null;
-														}
-													}
-
-													if (!displayName) return null;
-													return (
-														<span className="text-xs" style={{ color: theme.colors.textDim }}>
-															- {displayName}
-														</span>
-													);
-												})()}
-											</div>
-											<span className="text-xs" style={{ color: theme.colors.textDim }}>
-												{formatDate(release.published_at)}
-											</span>
-										</button>
-										{expandedReleases.has(release.tag_name) && (
-											<div
-												className="py-3 px-5 border-t text-xs prose prose-sm prose-invert max-w-none"
-												style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
-											>
-												<Markdown
-													preset="release-notes"
-													theme={theme}
-													content={release.body || 'No release notes available.'}
-												/>
-											</div>
-										)}
-									</div>
+										theme={theme}
+										release={release}
+										expanded={expandedReleases.has(release.tag_name)}
+										onToggle={() => toggleRelease(release.tag_name)}
+									/>
 								))}
 							</div>
 						</div>
 
-						{/* Download Error */}
-						{downloadError && (
-							<div
-								className="p-3 rounded border text-xs"
-								style={{
-									backgroundColor: `${theme.colors.error}15`,
-									borderColor: theme.colors.error,
-									color: theme.colors.error,
-								}}
-							>
-								<div className="flex items-center gap-2 mb-1">
-									<AlertCircle className="w-4 h-4" />
-									<span className="font-bold">Download failed</span>
-								</div>
-								<p style={{ color: theme.colors.textDim }}>{downloadError}</p>
-								<button
-									onClick={() => openUrl(result.releasesUrl)}
-									className="flex items-center gap-1 mt-2 hover:underline"
-									style={{ color: theme.colors.accent }}
-								>
-									Download manually from GitHub
-									<ExternalLink className="w-3 h-3" />
-								</button>
-							</div>
-						)}
-
-						{/* Download Progress */}
-						{isDownloading && downloadStatus.progress && (
-							<div className="space-y-2">
-								<div
-									className="flex items-center justify-between text-xs"
-									style={{ color: theme.colors.textDim }}
-								>
-									<span>Downloading update...</span>
-									<span>{Math.round(downloadStatus.progress.percent)}%</span>
-								</div>
-								<div
-									className="h-2 rounded-full overflow-hidden"
-									style={{ backgroundColor: theme.colors.bgActivity }}
-								>
-									<div
-										className="h-full transition-all duration-300 rounded-full"
-										style={{
-											width: `${downloadStatus.progress.percent}%`,
-											backgroundColor: theme.colors.accent,
-										}}
-									/>
-								</div>
-								<div
-									className="flex items-center justify-between text-xs"
-									style={{ color: theme.colors.textDim }}
-								>
-									<span>
-										{formatBytes(downloadStatus.progress.transferred)} /{' '}
-										{formatBytes(downloadStatus.progress.total)}
-									</span>
-									<span>{formatBytes(downloadStatus.progress.bytesPerSecond)}/s</span>
-								</div>
-							</div>
-						)}
+						{renderDownloadError('updates')}
+						{renderDownloadProgress('updates', 'Downloading update...')}
 
 						{/* Action Buttons */}
 						<div className="space-y-2">
-							{isDownloaded && restartPending ? (
-								<div
-									className="p-3 rounded-lg border space-y-2"
-									style={{
-										backgroundColor: `${theme.colors.warning}15`,
-										borderColor: theme.colors.warning,
-									}}
-								>
-									<div className="flex items-start gap-2">
-										<Clock
-											className="w-4 h-4 mt-0.5 shrink-0"
-											style={{ color: theme.colors.warning }}
-										/>
-										<div className="flex-1">
-											<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-												Restart pending
-											</div>
-											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-												{isAppActive
-													? 'Maestro will restart automatically once all agents and Auto Runs finish.'
-													: 'Restarting…'}
-											</div>
-										</div>
-									</div>
-									<div className="flex gap-2">
-										<button
-											onClick={handleCancelPendingRestart}
-											className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
-											style={{
-												borderColor: theme.colors.border,
-												borderWidth: 1,
-												color: theme.colors.textMain,
-											}}
-										>
-											Cancel
-										</button>
-										<button
-											onClick={handleRestartNow}
-											className="flex-1 p-2 rounded text-xs font-bold transition-colors hover:opacity-90"
-											style={{
-												backgroundColor: theme.colors.warning,
-												color: theme.colors.bgMain,
-											}}
-										>
-											Restart Now Anyway
-										</button>
-									</div>
-								</div>
-							) : isDownloaded && showBusyWarning ? (
-								<div
-									className="p-3 rounded-lg border space-y-3"
-									style={{
-										backgroundColor: `${theme.colors.warning}15`,
-										borderColor: theme.colors.warning,
-									}}
-								>
-									<div className="flex items-start gap-2">
-										<AlertCircle
-											className="w-4 h-4 mt-0.5 shrink-0"
-											style={{ color: theme.colors.warning }}
-										/>
-										<div className="flex-1">
-											<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-												Maestro is busy
-											</div>
-											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-												{anySessionBusy && anyBatchRunning
-													? 'Agents are working and Auto Runs are in progress.'
-													: anySessionBusy
-														? 'One or more agents are currently working.'
-														: 'One or more Auto Runs are in progress.'}{' '}
-												Restarting now will interrupt them.
-											</div>
-										</div>
-									</div>
-									<div className="flex flex-col gap-2">
-										<button
-											onClick={handleRestartWhenIdle}
-											className="w-full flex items-center justify-center gap-2 p-2 rounded text-sm font-bold transition-colors hover:opacity-90"
-											style={{
-												backgroundColor: theme.colors.accent,
-												color: theme.colors.bgMain,
-											}}
-										>
-											<Clock className="w-4 h-4" />
-											Restart App When Idle
-										</button>
-										<div className="flex gap-2">
-											<button
-												onClick={() => setShowBusyWarning(false)}
-												className="flex-1 p-2 rounded text-xs font-medium transition-colors hover:bg-white/10"
-												style={{
-													borderColor: theme.colors.border,
-													borderWidth: 1,
-													color: theme.colors.textMain,
-												}}
-											>
-												Cancel
-											</button>
-											<button
-												onClick={handleRestartNow}
-												className="flex-1 p-2 rounded text-xs font-bold transition-colors hover:opacity-90"
-												style={{
-													backgroundColor: theme.colors.warning,
-													color: theme.colors.bgMain,
-												}}
-											>
-												Restart Now Anyway
-											</button>
-										</div>
-									</div>
-								</div>
-							) : isDownloaded ? (
-								<button
-									onClick={handleInstallUpdate}
-									className="w-full flex items-center justify-center gap-2 p-3 rounded-lg font-bold text-sm transition-colors hover:opacity-90"
-									style={{ backgroundColor: theme.colors.success, color: theme.colors.bgMain }}
-								>
-									<RotateCcw className="w-4 h-4" />
-									Restart to Update
-								</button>
+							{isUpdateDownloaded ? (
+								renderRestartControls('Restart to Update')
 							) : !result.assetsReady ? (
 								/* Assets not yet available - show building message */
 								<div
@@ -624,6 +775,18 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 							<ExternalLink className="w-3 h-3" />
 						</button>
 					</div>
+				)}
+
+				{view === 'updates' && !loading && (
+					<button
+						onClick={() => setView('rollback')}
+						disabled={isDownloading}
+						className="w-full flex items-center justify-center gap-2 p-2 rounded text-xs transition-colors hover:bg-white/5 disabled:opacity-50"
+						style={{ color: theme.colors.textDim }}
+					>
+						<History className="w-3.5 h-3.5" />
+						Having trouble with this version? Roll back to an earlier one
+					</button>
 				)}
 
 				{/* Beta Opt-in Toggle */}

@@ -21,6 +21,7 @@ import {
 	getRemoteGroupChatState,
 	listRemoteGroupChats,
 	sendRemoteGroupChatMessage,
+	setRemoteGroupChatUnread,
 	startRemoteGroupChat,
 	stopGroupChatWork,
 } from '../../../renderer/services/remoteGroupChat';
@@ -80,6 +81,7 @@ beforeEach(() => {
 		activeGroupChatId: null,
 		groupChatState: 'idle',
 		groupChatStates: new Map(),
+		unreadGroupChatIds: new Set(),
 	} as never);
 	seedAgents([
 		['id-maestro', 'Maestro'],
@@ -190,6 +192,13 @@ describe('list and state', () => {
 		expect(chats[0]).toMatchObject({ id: 'gc-new', topic: 'Maestro Release', isActive: true });
 	});
 
+	it("reports each chat's unread dot", async () => {
+		expect((await listRemoteGroupChats())[0].unread).toBe(false);
+		useGroupChatStore.setState({ unreadGroupChatIds: new Set(['gc-new']) } as never);
+		expect((await listRemoteGroupChats())[0].unread).toBe(true);
+		expect((await getRemoteGroupChatState('gc-new'))?.unread).toBe(true);
+	});
+
 	it('includes the transcript in a single chat state, and null for a missing chat', async () => {
 		mockGroupChat.getMessages.mockResolvedValue([
 			{ timestamp: '2026-09-26T00:00:00Z', from: 'moderator', content: 'hi' },
@@ -249,5 +258,21 @@ describe('archiveGroupChat', () => {
 
 		expect(dispatchBatch).not.toHaveBeenCalled();
 		expect(useGroupChatStore.getState().groupChats[0]).toMatchObject({ archived: false });
+	});
+});
+
+describe('setRemoteGroupChatUnread', () => {
+	it('sets and clears the unread dot on an existing chat', async () => {
+		expect(await setRemoteGroupChatUnread('gc-new', true)).toBe(true);
+		expect(useGroupChatStore.getState().unreadGroupChatIds.has('gc-new')).toBe(true);
+
+		expect(await setRemoteGroupChatUnread('gc-new', false)).toBe(true);
+		expect(useGroupChatStore.getState().unreadGroupChatIds.has('gc-new')).toBe(false);
+	});
+
+	it('refuses a chat that does not exist and leaves the store alone', async () => {
+		mockGroupChat.load.mockResolvedValue(null);
+		expect(await setRemoteGroupChatUnread('gone', true)).toBe(false);
+		expect(useGroupChatStore.getState().unreadGroupChatIds.size).toBe(0);
 	});
 });

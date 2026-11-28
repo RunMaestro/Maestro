@@ -141,7 +141,20 @@ export const USAGE_PROBE_DIR_NAME = 'maestro-claude-usage-probe';
  * Resolves to null when the folder cannot be created or fails a check.
  */
 export async function ensureUsageProbeDir(baseDir = os.tmpdir()): Promise<string | null> {
-	const dir = path.join(baseDir, USAGE_PROBE_DIR_NAME);
+	return ensurePrivateProbeDir(USAGE_PROBE_DIR_NAME, baseDir);
+}
+
+/**
+ * A folder named `name` under `baseDir` (the OS temp dir by default), created
+ * on demand and held to the checks ensureUsageProbeDir explains: a real
+ * directory owned by this user and writable by no one else. Null when it cannot
+ * be created or fails a check.
+ */
+export async function ensurePrivateProbeDir(
+	name: string,
+	baseDir = os.tmpdir()
+): Promise<string | null> {
+	const dir = path.join(baseDir, name);
 	try {
 		await fs.promises.mkdir(dir, { mode: 0o700 });
 	} catch (err) {
@@ -168,9 +181,56 @@ export async function ensureUsageProbeDir(baseDir = os.tmpdir()): Promise<string
  */
 export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapshot | null> {
 	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-	const childEnv: NodeJS.ProcessEnv = { ...process.env, ...(opts.customEnvVars ?? {}) };
-	if (opts.configDir !== undefined) {
-		childEnv.CLAUDE_CONFIG_DIR = opts.configDir;
+	const childEnv = buildMaestroPProbeEnv(opts.customEnvVars, opts.configDir);
+
+	// The canonical key for WHICH account this sample is about. Resolved before
+	// the spawn because the failure paths below need it too: `CLAUDE_CONFIG_DIR`
+	// can arrive via `customEnvVars` rather than `opts.configDir`, and keying off
+	// `opts.configDir` alone collapses two such accounts onto the same
+	// home-directory key - one broken account would then mute the other's reports
+	// and name the wrong directory in the breadcrumb.
+	const configDirKey = resolveConfigDirKey(childEnv);
+
+	// Start claude in the private probe folder, where maestro-p answers the
+	// folder-trust prompt (see buildMaestroPProbeEnv). See ensureUsageProbeDir
+	// for why neither the caller's working directory nor the home dir will do.
+	const probeDir = await ensureUsageProbeDir();
+	if (!probeDir) {
+		void reportFailure('spawn', opts, configDirKey, 'usage probe folder is missing or not private');
+		return null;
+	}
+
+	let stdout: string;
+	try {
+		const result = await execFileAsync(process.execPath, [opts.binPath, '--status'], {
+			cwd: probeDir,
+			env: childEnv,
+			encoding: 'utf8',
+			maxBuffer: MAX_BUFFER_BYTES,
+			timeout: timeoutMs,
+		});
+		stdout = result.stdout;
+	} catch (err) {
+		void reportFailure('spawn', opts, configDirKey, classifySpawnError(err));
+		return null;
+	}
+
+	return parseStatusOutput(stdout, opts, configDirKey);
+}
+
+/**
+ * The environment for running the bundled maestro-p from the main process in a
+ * probe folder Maestro owns (the usage sampler, the TUI canary): `process.env`
+ * plus `customEnvVars`, `CLAUDE_CONFIG_DIR` set to `configDir` when given, and
+ * the four settings every such spawn needs, each explained below.
+ */
+export function buildMaestroPProbeEnv(
+	customEnvVars?: Record<string, string>,
+	configDir?: string
+): NodeJS.ProcessEnv {
+	const childEnv: NodeJS.ProcessEnv = { ...process.env, ...(customEnvVars ?? {}) };
+	if (configDir !== undefined) {
+		childEnv.CLAUDE_CONFIG_DIR = configDir;
 	}
 
 	// `process.execPath` is the Electron binary in a packaged app. Running it
@@ -194,22 +254,9 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 	// sessions - those spawn through the process manager, not this sampler.
 	childEnv.BROWSER = '/usr/bin/true';
 
-	// The canonical key for WHICH account this sample is about. Resolved before
-	// the spawn because the failure paths below need it too: `CLAUDE_CONFIG_DIR`
-	// can arrive via `customEnvVars` rather than `opts.configDir`, and keying off
-	// `opts.configDir` alone collapses two such accounts onto the same
-	// home-directory key - one broken account would then mute the other's reports
-	// and name the wrong directory in the breadcrumb.
-	const configDirKey = resolveConfigDirKey(childEnv);
-
-	// Start claude in the private probe folder, and let maestro-p answer the
-	// folder-trust prompt there. See ensureUsageProbeDir for why neither the
-	// caller's working directory nor the home dir will do.
-	const probeDir = await ensureUsageProbeDir();
-	if (!probeDir) {
-		void reportFailure('spawn', opts, configDirKey, 'usage probe folder is missing or not private');
-		return null;
-	}
+	// The probe runs in a folder Maestro owns and keeps private (see
+	// ensureUsageProbeDir), so maestro-p may answer claude's folder-trust prompt
+	// there. Never set for an agent's own folder.
 	childEnv.MAESTRO_P_ACCEPT_WORKSPACE_TRUST = '1';
 
 	// `maestro-p.js` is shipped via `extraResources` at the resources root and
@@ -234,21 +281,15 @@ export async function sampleUsage(opts: SampleUsageOptions): Promise<UsageSnapsh
 			: asarModules;
 	}
 
-	let stdout: string;
-	try {
-		const result = await execFileAsync(process.execPath, [opts.binPath, '--status'], {
-			cwd: probeDir,
-			env: childEnv,
-			encoding: 'utf8',
-			maxBuffer: MAX_BUFFER_BYTES,
-			timeout: timeoutMs,
-		});
-		stdout = result.stdout;
-	} catch (err) {
-		void reportFailure('spawn', opts, configDirKey, classifySpawnError(err));
-		return null;
-	}
+	return childEnv;
+}
 
+/** Parse `maestro-p --status` stdout into a snapshot; null (reported) when it does not parse. */
+async function parseStatusOutput(
+	stdout: string,
+	opts: SampleUsageOptions,
+	configDirKey: string
+): Promise<UsageSnapshot | null> {
 	if (!stdout || stdout.trim().length === 0) {
 		void reportFailure('parse', opts, configDirKey, 'empty stdout');
 		return null;

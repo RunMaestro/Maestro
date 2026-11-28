@@ -14,10 +14,19 @@
  */
 
 import type { AgentRecord } from '../store/records';
+import {
+	parseWireAgentName,
+	parseWireAskerKey,
+	parseWireHandoffAnswer,
+	parseWireTranscript,
+} from '../../crossAgentTypes';
 import { parseProcessId } from '../client/bridge-frames';
+import { parseClosedTabCommandRequest } from '../../closedTabCommands';
+import { parseSteeringCommandRequest } from '../../autoRunSteeringCommands';
 import type { ThinkingMode, UsageStats } from '../../types';
 import type {
 	AgentCreateInput,
+	AgentImportInput,
 	AgentImportQueuedMessage,
 	AgentImportTab,
 	AgentPatch,
@@ -25,9 +34,18 @@ import type {
 	MaestroClient,
 	ProviderInfo,
 	TabPatch,
+	TurnInput,
+	TurnOverrides,
 	TurnSendReceipt,
 } from '../client/types';
-import { normalizeOriginHost } from '../client/types';
+import {
+	HOST_CAPABILITIES,
+	normalizeOriginHost,
+	normalizeTurnOverrides,
+	parseQueuedTurnEdit,
+	readRequestedTabId,
+	readTurnEntryId,
+} from '../client/types';
 import {
 	groupChatToWire,
 	queuedTurnsToWire,
@@ -120,6 +138,8 @@ export function tabPatchFromConfig(config: Record<string, unknown>): TabPatch {
 	take('customEffort', 'effort');
 	take('saveToHistory', 'saveToHistory');
 	take('enterToSend', 'enterToSend');
+	take('agentSessionId', 'agentSessionId');
+	take('pendingMergedContext', 'mergedContext');
 	return patch as TabPatch;
 }
 
@@ -288,16 +308,28 @@ function unsupportedDispatch(message: Request): string | undefined {
 	return undefined;
 }
 
-/** A dispatch message's images, when it carries any. */
+/**
+ * A dispatch message's images exactly as they came, when the field is present. Never filtered here:
+ * a malformed list or entry must reach `admitTurnImages()` (in `turns.send`), which refuses the
+ * whole send with the reason, rather than become a text-only message (M12).
+ */
 function imagesOf(message: Request): string[] | undefined {
-	const images = Array.isArray(message.images)
-		? message.images.filter((image): image is string => typeof image === 'string')
-		: [];
-	return images.length > 0 ? images : undefined;
+	if (message.images === undefined || message.images === null) return undefined;
+	if (Array.isArray(message.images) && message.images.length === 0) return undefined;
+	return message.images as string[];
 }
 
-/** The reply fields that say whether the message is running or waiting its turn. */
+/**
+ * The reply fields that say whether the message is running or waiting its turn, or was one of
+ * Maestro's own commands the host ran (`ran`, as a desktop host replies): no turn starts for it, so
+ * a client must not wait for one to end.
+ */
 function receiptFields(receipt: TurnSendReceipt): Frame {
+	if (receipt.status === 'ran') return { queued: false, ran: true };
+	// The message it named already ran (`entryId`): nothing began, and the sender must not wait.
+	if (receipt.status === 'answered') return { queued: false, answered: true };
+	// The host's own retry holds it: `answered` too, for a client too old to know `retrying`.
+	if (receipt.status === 'retrying') return { queued: false, answered: true, retrying: true };
 	return receipt.status === 'queued'
 		? {
 				queued: true,
@@ -381,10 +413,52 @@ function importQueueItemFromWire(entry: unknown): AgentImportQueuedMessage | und
 	const tabId = str(item?.tabId);
 	if (!item || !tabId) return undefined;
 	const images = imagesOf(item);
+	// The choices it was queued with, checked as any client's per-turn overrides are (R55).
+	const overrides = normalizeTurnOverrides(item.overrides);
 	return {
 		tabId,
 		text: typeof item.text === 'string' ? item.text : '',
 		...(images ? { images } : {}),
+		...(item.held === true ? { held: true } : {}),
+		...(overrides ? { overrides } : {}),
+	};
+}
+
+/**
+ * An `import_agent` message back to the client's import input, or why it cannot be read. Every
+ * host that answers `import_agent` reads it here: the headless host below and the desktop app's
+ * bridge (`handleImportAgent`). The import rule (`planAgentImport`) checks the rest.
+ */
+export function importInputFromMessage(
+	message: Request
+): { ok: true; input: AgentImportInput } | { ok: false; error: string } {
+	// `sessionSshRemoteConfig` is passed through so the rule that refuses it can say why.
+	const agent = obj(message.agent) ?? {};
+	const tabs = Array.isArray(message.tabs) ? message.tabs.map(importTabFromWire) : [];
+	if (tabs.some((tab) => tab === undefined)) {
+		return { ok: false, error: 'Every imported tab needs an id.' };
+	}
+	const queue = Array.isArray(message.queue) ? message.queue.map(importQueueItemFromWire) : [];
+	if (queue.some((item) => item === undefined)) {
+		return { ok: false, error: 'Every queued message needs the tab it is for.' };
+	}
+	return {
+		ok: true,
+		input: {
+			agent: {
+				...agentInputFromMessage(agent),
+				...(obj(agent.sessionSshRemoteConfig)
+					? { ssh: obj(agent.sessionSshRemoteConfig) as never }
+					: {}),
+			},
+			tabs: tabs as AgentImportTab[],
+			...(str(message.activeTabId) ? { activeTabId: str(message.activeTabId) } : {}),
+			...(queue.length > 0 ? { queue: queue as AgentImportQueuedMessage[] } : {}),
+			...(str(message.replacesAgentId) ? { replacesAgentId: str(message.replacesAgentId) } : {}),
+			...(str(message.liftedFromAgentId)
+				? { liftedFromAgentId: str(message.liftedFromAgentId) }
+				: {}),
+		},
 	};
 }
 
@@ -412,19 +486,25 @@ async function projectSessions(client: MaestroClient, live: LiveAgent): Promise<
 				groupId: agent.groupId ?? null,
 				...(agent.bookmarked !== undefined ? { bookmarked: agent.bookmarked } : {}),
 				...(typeof agent.activeTabId === 'string' ? { activeTabId: agent.activeTabId } : {}),
-				aiTabs: tabs.map((tab) => ({
-					id: tab.id,
-					agentSessionId: tab.agentSessionId ?? null,
-					name: tab.name ?? null,
-					...(tab.starred !== undefined ? { starred: tab.starred } : {}),
-					...(tab.state ? { state: tab.state } : {}),
-					...(tab.thinkingStartTime !== undefined
-						? { thinkingStartTime: tab.thinkingStartTime }
-						: {}),
-					...(tab.hasUnread !== undefined ? { hasUnread: tab.hasUnread } : {}),
-					...(tab.usageStats !== undefined ? { usageStats: tab.usageStats } : {}),
-					...(tab.createdAt !== undefined ? { createdAt: tab.createdAt } : {}),
-				})),
+				// A list that failed says nothing about the tabs: send none, so a client keeps the tabs
+				// it holds. An empty list would read as "every tab was closed".
+				...(listed.ok
+					? {
+							aiTabs: tabs.map((tab) => ({
+								id: tab.id,
+								agentSessionId: tab.agentSessionId ?? null,
+								name: tab.name ?? null,
+								...(tab.starred !== undefined ? { starred: tab.starred } : {}),
+								...(tab.state ? { state: tab.state } : {}),
+								...(tab.thinkingStartTime !== undefined
+									? { thinkingStartTime: tab.thinkingStartTime }
+									: {}),
+								...(tab.hasUnread !== undefined ? { hasUnread: tab.hasUnread } : {}),
+								...(tab.usageStats !== undefined ? { usageStats: tab.usageStats } : {}),
+								...(tab.createdAt !== undefined ? { createdAt: tab.createdAt } : {}),
+							})),
+						}
+					: {}),
 			};
 		})
 	);
@@ -434,6 +514,31 @@ async function projectSessions(client: MaestroClient, live: LiveAgent): Promise<
 function originHostOf(message: Request): { originHost?: string } {
 	const originHost = normalizeOriginHost(message.originHost);
 	return originHost ? { originHost } : {};
+}
+
+/** The sender's own tab choices for this one turn (`TurnInput.overrides`), when the message carries any. */
+function turnOverridesOf(message: Request): { overrides?: TurnOverrides } {
+	const overrides = normalizeTurnOverrides(message.turnOverrides);
+	return overrides ? { overrides } : {};
+}
+
+/**
+ * The agent-only text a desktop's `@mention` adds to this one turn (`TurnInput.agentContext`,
+ * `agentNotes`), passed through as sent: the runtime checks it and refuses a send it cannot take.
+ */
+function turnAgentTextOf(
+	message: Request
+): Pick<TurnInput, 'agentContext' | 'agentNotes' | 'entryId'> {
+	const entryId = readTurnEntryId(message.entryId);
+	return {
+		...(entryId ? { entryId } : {}),
+		...(message.agentContext !== undefined
+			? { agentContext: message.agentContext as TurnInput['agentContext'] }
+			: {}),
+		...(message.agentNotes !== undefined
+			? { agentNotes: message.agentNotes as TurnInput['agentNotes'] }
+			: {}),
+	};
 }
 
 export type RequestHandler = (message: Request) => Promise<Frame | undefined>;
@@ -492,29 +597,9 @@ export function createRequestHandler(
 			}
 			case 'import_agent': {
 				const type = 'import_agent_result';
-				// `sessionSshRemoteConfig` is passed through so the rule that refuses it can say why.
-				const agent = obj(message.agent) ?? {};
-				const tabs = Array.isArray(message.tabs) ? message.tabs.map(importTabFromWire) : [];
-				if (tabs.some((tab) => tab === undefined)) {
-					return refusal(type, 'Every imported tab needs an id.');
-				}
-				const queue = Array.isArray(message.queue)
-					? message.queue.map(importQueueItemFromWire)
-					: [];
-				if (queue.some((item) => item === undefined)) {
-					return refusal(type, 'Every queued message needs the tab it is for.');
-				}
-				const result = await client.agents.import({
-					agent: {
-						...agentInputFromMessage(agent),
-						...(obj(agent.sessionSshRemoteConfig)
-							? { ssh: obj(agent.sessionSshRemoteConfig) as never }
-							: {}),
-					},
-					tabs: tabs as AgentImportTab[],
-					...(str(message.activeTabId) ? { activeTabId: str(message.activeTabId) } : {}),
-					...(queue.length > 0 ? { queue: queue as AgentImportQueuedMessage[] } : {}),
-				});
+				const parsed = importInputFromMessage(message);
+				if (!parsed.ok) return refusal(type, parsed.error);
+				const result = await client.agents.import(parsed.input);
 				return outcome(type, result, (value) => ({
 					sessionId: value.agentId,
 					queued: value.queued,
@@ -605,9 +690,13 @@ export function createRequestHandler(
 
 			// -- tabs -------------------------------------------------------
 			case 'new_tab':
-				return outcome('new_tab_result', await client.tabs.create(sessionId(message)), (value) => ({
-					tabId: value.tabId,
-				}));
+				return outcome(
+					'new_tab_result',
+					await client.tabs.create(sessionId(message), {
+						tabId: readRequestedTabId(message.tabId),
+					}),
+					(value) => ({ tabId: value.tabId })
+				);
 			case 'rename_tab':
 				return outcome(
 					'rename_tab_result',
@@ -640,15 +729,6 @@ export function createRequestHandler(
 				const agentId = sessionId(message);
 				const unsupported = unsupportedDispatch(message);
 				if (unsupported) return refusal(type, unsupported, { sessionId: agentId });
-				// The queue here starts a waiting message as soon as its turn comes; it has no state
-				// that keeps one back until a person releases it.
-				if (message.held === true) {
-					return refusal(
-						type,
-						'A headless host cannot queue a held message (--held): its queue would run the message as soon as the agent is free. Nothing was queued.',
-						{ sessionId: agentId }
-					);
-				}
 				const target = await resolveTargetTab(client, agentId, str(message.tabId));
 				if (!target.ok) {
 					return refusal(type, target.error, {
@@ -661,6 +741,10 @@ export function createRequestHandler(
 					text: typeof message.command === 'string' ? message.command : '',
 					...(images ? { images } : {}),
 					...originHostOf(message),
+					...turnOverridesOf(message),
+					// Queue Held (`dispatch --queue --held`): queued paused, even on an idle agent.
+					...(message.held === true ? { held: true } : {}),
+					...turnAgentTextOf(message),
 				});
 				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
 				return {
@@ -685,6 +769,7 @@ export function createRequestHandler(
 					text: typeof message.command === 'string' ? message.command : '',
 					...(images ? { images } : {}),
 					...originHostOf(message),
+					...turnOverridesOf(message),
 				});
 				if (!result.ok) return sendFailure(type, agentId, target.tabId, result);
 				return {
@@ -740,6 +825,31 @@ export function createRequestHandler(
 					(entries) => ({ entries })
 				);
 			}
+			case 'delete_history_entry':
+				return outcome(
+					'delete_history_entry_result',
+					await client.history.remove(sessionId(message), str(message.entryId) ?? ''),
+					(value) => ({ removed: value.removed })
+				);
+			case 'update_history_entry': {
+				const validated = bool(message.validated);
+				return outcome(
+					'update_history_entry_result',
+					await client.history.update(
+						sessionId(message),
+						str(message.entryId) ?? '',
+						validated !== undefined ? { validated } : {}
+					),
+					(value) => ({ updated: value.updated })
+				);
+			}
+			// What this host does beyond the base protocol; an older host echoes the request.
+			case 'host_capabilities':
+				return {
+					type: 'host_capabilities_result',
+					success: true,
+					capabilities: [...HOST_CAPABILITIES],
+				};
 			case 'list_queue': {
 				const agentId = sessionId(message);
 				const result = await client.turns.queue.list(agentId);
@@ -768,6 +878,54 @@ export function createRequestHandler(
 					(value) => ({ found: value.found, paused: value.paused })
 				);
 			}
+			case 'steer_queue_item':
+				return outcome(
+					'steer_queue_item_result',
+					await client.turns.queue.steer(sessionId(message), str(message.itemId) ?? ''),
+					(result) => ({ result })
+				);
+			case 'edit_queue_item': {
+				const type = 'edit_queue_item_result';
+				const parsed = parseQueuedTurnEdit(message);
+				if ('error' in parsed) return refusal(type, parsed.error, { found: false });
+				return outcome(
+					type,
+					await client.turns.queue.edit(sessionId(message), str(message.itemId) ?? '', parsed.edit),
+					(value) => ({ found: value.found })
+				);
+			}
+			case 'move_queue_item': {
+				const type = 'move_queue_item_result';
+				const toIndex = message.toIndex;
+				if (typeof toIndex !== 'number' || !Number.isInteger(toIndex) || toIndex < 0) {
+					return refusal(type, 'toIndex must be a whole number, 0 or more', { moved: false });
+				}
+				return outcome(
+					type,
+					await client.turns.queue.move(
+						sessionId(message),
+						str(message.itemId) ?? '',
+						toIndex,
+						str(message.tabId)
+					),
+					(value) => ({ moved: value.moved })
+				);
+			}
+			case 'send_queue_item_now':
+				return outcome(
+					'send_queue_item_now_result',
+					await client.turns.queue.sendNow(sessionId(message), str(message.itemId) ?? ''),
+					(value) => ({ sent: value.sent })
+				);
+			case 'merge_queue_item':
+				return outcome(
+					'merge_queue_item_result',
+					await client.turns.queue.merge(sessionId(message), str(message.itemId) ?? ''),
+					(value) => ({
+						merged: value.merged,
+						...(value.mergedIntoId ? { mergedIntoId: value.mergedIntoId } : {}),
+					})
+				);
 
 			// -- Auto Run ---------------------------------------------------
 			case 'configure_auto_run': {
@@ -849,6 +1007,17 @@ export function createRequestHandler(
 					'abort_auto_run_error_result',
 					await client.autoRun.abort(sessionId(message))
 				);
+			// The Thought Stream's Steer, in the desktop's own message (`maestro-cli steer-auto-run`).
+			case 'auto_run_steering_command': {
+				const type = 'auto_run_steering_command_result';
+				const parsed = parseSteeringCommandRequest(message);
+				if (!parsed.ok) return { type, success: false, error: parsed.error };
+				const { sessionId: agentId, background: _notice, ...input } = parsed.request;
+				const steered = await client.autoRun.steer(agentId, input);
+				return steered.ok
+					? { type, ...steered.value }
+					: { type, success: false, error: errorText(steered) };
+			}
 
 			// -- group chats ------------------------------------------------
 			case 'get_group_chats': {
@@ -894,16 +1063,24 @@ export function createRequestHandler(
 			// -- consults ----------------------------------------------------
 			// Waits as long as the answer takes: the caller's own timeout bounds it, not a delivery receipt.
 			case 'cross_agent_ask': {
+				// An asker on another machine sends its own windowed context: the host holds no tab of it.
+				const transcript = parseWireTranscript(message.transcript);
+				const fromAgentName = parseWireAgentName(message.fromAgentName);
+				const handoffAnswer = parseWireHandoffAnswer(message.handoffAnswer);
+				const askerKey = parseWireAskerKey(message.askerKey);
 				const result = await client.consults.ask({
 					targetAgentId: sessionId(message),
 					question: typeof message.question === 'string' ? message.question : '',
 					...(str(message.fromSessionId) ? { fromAgentId: str(message.fromSessionId) } : {}),
 					...(str(message.fromTabId) ? { fromTabId: str(message.fromTabId) } : {}),
 					withContext: message.withContext === true,
+					...(transcript ? { transcript } : {}),
+					...(fromAgentName ? { fromAgentName } : {}),
+					...(askerKey ? { askerKey } : {}),
 					...(num(message.timeoutMs) !== undefined ? { timeoutMs: num(message.timeoutMs) } : {}),
-					...(typeof message.handoffAnswer === 'string'
-						? { handoffAnswer: message.handoffAnswer }
-						: {}),
+					...(handoffAnswer !== undefined ? { handoffAnswer } : {}),
+					...(message.sideQuestion === true ? { sideQuestion: true } : {}),
+					...(str(message.targetTabId) ? { targetTabId: str(message.targetTabId) } : {}),
 				});
 				if (result.ok) {
 					return {
@@ -922,6 +1099,50 @@ export function createRequestHandler(
 					error: errorText(result),
 					...(stopped ? { canceled: true } : {}),
 				};
+			}
+
+			// Cmd+Shift+T and Quick Chat on an agent this host runs, from another machine.
+			case 'closed_tab_command': {
+				const parsed = parseClosedTabCommandRequest(message);
+				if (!parsed.ok) return refusal('closed_tab_command_result', parsed.error);
+				const { request } = parsed;
+				if (request.action === 'list') {
+					if (!client.tabs.closed) {
+						return refusal('closed_tab_command_result', 'This host keeps no closed tabs.');
+					}
+					return outcome(
+						'closed_tab_command_result',
+						await client.tabs.closed(request.sessionId),
+						(closedTabs) => ({ closedTabs })
+					);
+				}
+				if (!client.tabs.reopen) {
+					return refusal('closed_tab_command_result', 'This host cannot reopen a closed tab.');
+				}
+				return outcome(
+					'closed_tab_command_result',
+					await client.tabs.reopen(request.sessionId, {
+						...(request.tabId ? { tabId: request.tabId } : { index: request.index ?? 0 }),
+					}),
+					(reopened) => ({
+						tabId: reopened.tabId,
+						tabType: 'ai',
+						...(reopened.wasDuplicate ? { wasDuplicate: true } : {}),
+					})
+				);
+			}
+
+			// Stop on an asker on another machine: its consults here end as stopped ones.
+			case 'cross_agent_cancel': {
+				const cancel = client.consults.cancel;
+				if (!cancel) {
+					return refusal('cross_agent_cancel_result', 'This host cannot stop a consult.');
+				}
+				return outcome(
+					'cross_agent_cancel_result',
+					await cancel({ askerKey: str(message.askerKey) ?? '' }),
+					(value) => ({ canceled: value.canceled })
+				);
 			}
 
 			default:

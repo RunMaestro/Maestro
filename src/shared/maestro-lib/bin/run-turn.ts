@@ -202,6 +202,7 @@ export async function main(argv: string[]): Promise<number> {
 		answer: turn.answerText ?? null,
 		usage: turn.usage ?? null,
 		error: turn.error?.message ?? null,
+		failureScreen: turn.error?.failureScreen ?? null,
 		exitCode: turn.exit.exitCode,
 		signal: turn.exit.signal,
 	});

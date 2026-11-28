@@ -63,6 +63,14 @@ export interface AITabRecord extends UnknownFields {
 	 * its live process registry on every record it sends (`withLiveTabState`); it is never stored.
 	 */
 	thinkingStartTime?: number;
+	/**
+	 * A desktop host's own Agent Resilience holds this tab's failed turn for a resend right now
+	 * (`isAiTabRetryPending()` on that host), as it reports it on every agent list it sends; never
+	 * stored. Absent: a host that does not report it (a headless host has no retry of its own, and
+	 * an older desktop host), so a reader falls back to the transcript's retry card
+	 * (`hostRetriesTurn()`, R56).
+	 */
+	retryPending?: boolean;
 	hasUnread?: boolean;
 	/** A consult tab not drawn in the tab strip (see `isAiTabHidden`). */
 	hidden?: boolean;
@@ -95,6 +103,12 @@ export interface ClosedTabRecord extends UnknownFields {
 	/** Where the tab sat in the agent's `aiTabs` when it closed. */
 	index: number;
 	closedAt: number;
+	/**
+	 * The provider the tab's live session fields belong to (the agent's `toolType` at the close). A
+	 * reopen after a provider switch parks them under it. Absent in archives written before it was
+	 * kept: those are read as the agent's current provider.
+	 */
+	toolType?: string;
 }
 
 /** One agent, mirroring the persisted fields of the renderer's `Session`. */
@@ -133,6 +147,15 @@ export interface AgentRecord extends UnknownFields {
 	contextWindowSource?: string;
 	/** Federation: the agent was lifted onto its host. Read it through `readLiftedTo()`. */
 	liftedTo?: import('../agents/lift-pointer').LiftedToPointer;
+	/** Federation: moved back from its host by the person; automatic moves leave it here. */
+	hostedOptOut?: boolean;
+	/** Federation: the host's copy a move back left behind. Read it through `readLeftOnHost()`. */
+	leftOnHost?: import('../agents/lift-pointer').LiftedToPointer;
+	/**
+	 * On a host: the id of the agent this record was lifted from, on the machine it came from
+	 * (`AgentImportInput.liftedFromAgentId`). A later lift of that agent may replace this record.
+	 */
+	liftedFromAgentId?: string;
 }
 
 /** One Left Bar group, mirroring `Group` in `src/shared/types.ts`. */
@@ -143,6 +166,8 @@ export interface GroupRecord extends UnknownFields {
 	kind?: 'user' | 'worktree';
 	parentGroupId?: string;
 	collapsed?: boolean;
+	/** Parked out of the Left Bar; absent on a visible group. */
+	hidden?: boolean;
 }
 
 /** `maestro-sessions.json`. */

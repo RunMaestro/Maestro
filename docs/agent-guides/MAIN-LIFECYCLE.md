@@ -662,6 +662,8 @@ The `performCleanup()` function runs synchronously from `before-quit` (async ope
 6. **Stop web server** - `webServer.stop()` (fire and forget)
 7. **Close stats database** - `closeStatsDB()` (synchronous)
 
+Before cleanup, the quit also starts `flushPendingRemoteWrites` (`flushRemoteCopyWriteBack()`): it tries to send each change saved in an opened remote copy that has not reached the remote yet. Those writes go over SSH and cannot land synchronously, so the hard exit waits for them, at most `REMOTE_WRITE_FLUSH_MAX_MS` (5 s); a re-entrant `before-quit` is held behind the same wait. A Windows or Linux update install, which keeps the graceful teardown, is held the same way: `before-quit` is prevented until the writes settle (same bound), then `app.quit()` runs again and the `cleanupStarted` guard lets it through (the installer was already spawned by `quitAndInstall()` and only waits for the process to exit). A change can still stay unsent: a copy that stopped saving back (a conflict, the size cap, a failed watcher), a failed write, or the 5 s bound running out. When the bound runs out, the quit logs the copies whose change is not on the remote (`listPendingRemoteWrites`, `pendingRemoteCopyWrites()`): a save still waiting out its debounce or being sent, a copy whose last send failed, a copy whose save grew past the size cap, and a copy saved again after it stopped saving back. A copy stopped at a conflict and not saved since is not listed: its change was kept beside it and the user was told where. Sentry gets a message with the count only, and the hard exit waits for it to be sent, at most `REMOTE_WRITE_REPORT_MAX_MS` (1 s). Such a change stays in the copy on this computer, and the next Open of that file keeps it beside the fetched copy, even after a restart.
+
 ### Platform-Specific Quit Behavior
 
 - **macOS**: `window-all-closed` does not quit the app (standard macOS behavior). App stays in dock.
@@ -759,7 +761,7 @@ Use this checklist any time Electron jumps majors (it last did so for the 28 →
 
 - [ ] `npm run package:mac && npm run package:win && npm run package:linux` produce installers; the resulting `.dmg`, `.exe`, `.AppImage` each launch and reach the main window
 - [ ] macOS: notarization passes (or is skipped per `notarize: false` in `package.json`)
-- [ ] Windows: code signing passes (if configured) and SmartScreen does not block the installer
+- [ ] Windows: the "Verify Windows signatures" release step passes (Azure Artifact Signing, publisher "Pedram Amini") and SmartScreen does not block the installer
 
 **Post-merge observation window (24-48h)**
 

@@ -43,6 +43,7 @@ import {
 	type FilterNode,
 } from '../../shared/parquet/filterExpression';
 import { compileFilterPushdown } from '../../shared/parquet/pushdown';
+import { createTabularRowEncoder, type TabularRowEncoder } from '../../shared/tabularExport';
 import type {
 	ParquetCellValue,
 	ParquetColumnInfo,
@@ -730,15 +731,9 @@ async function runQuery(request: ParquetQueryRequest): Promise<ParquetQueryResul
 	}
 }
 
-/** Escape one CSV field, quoting only when the content forces it. */
-function toCsvField(value: ParquetCellValue): string {
-	if (value === null) return '';
-	const text = String(value);
-	return /[",\n\r]/.test(text) ? `"${text.split('"').join('""')}"` : text;
-}
-
 /**
- * Write the current match set to disk as CSV or JSON Lines.
+ * Write the current match set to disk as CSV or JSON Lines, encoded by the
+ * shared `createTabularRowEncoder()` (src/shared/tabularExport.ts).
  *
  * Streams in pages so an export larger than memory still completes, and stops
  * at the engine's match cap with the same honesty the grid shows.
@@ -759,7 +754,7 @@ export async function exportParquetMatches(options: {
 
 	try {
 		let written = 0;
-		let header: string[] | null = null;
+		let encoder: TabularRowEncoder | null = null;
 		let truncated = false;
 		let emptyPages = 0;
 
@@ -773,22 +768,12 @@ export async function exportParquetMatches(options: {
 				limit: Math.min(pageSize, maxRows - written),
 			});
 
-			if (!header) {
-				header = page.columns;
-				if (options.format === 'csv') await output.write(`${header.map(toCsvField).join(',')}\n`);
+			if (!encoder) {
+				encoder = createTabularRowEncoder(options.format, page.columns);
+				if (encoder.header) await output.write(encoder.header);
 			}
 
-			for (const row of page.rows) {
-				if (options.format === 'csv') {
-					await output.write(`${row.map(toCsvField).join(',')}\n`);
-				} else {
-					const record: Record<string, ParquetCellValue> = {};
-					page.columns.forEach((column, index) => {
-						record[column] = row[index];
-					});
-					await output.write(`${JSON.stringify(record)}\n`);
-				}
-			}
+			for (const row of page.rows) await output.write(encoder.row(row));
 
 			written += page.rows.length;
 			truncated = page.truncated;

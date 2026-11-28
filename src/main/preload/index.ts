@@ -23,6 +23,7 @@ import { createComputerHistoryApi } from './computerHistory';
 import { createFederationApi } from './federation';
 import { createMaestroRunApi } from './maestroRun';
 import { createDataviewApi } from './dataview';
+import { createPromptLinksApi } from './promptLinks';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -54,12 +55,14 @@ import { createGitApi } from './git';
 import { createFeedbackApi } from './feedback';
 import { createFsApi } from './fs';
 import { createParquetApi } from './parquet';
+import { createSqliteApi } from './sqlite';
 import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createTabsApi } from './tabs';
 import { createJourneyApi } from './journey';
 import { createAiCommandApi } from './aiCommand';
+import { createSideQuestionApi } from './sideQuestion';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
@@ -125,6 +128,7 @@ contextBridge.exposeInMainWorld('maestro', {
 	// File System API
 	fs: createFsApi(),
 	parquet: createParquetApi(),
+	sqlite: createSqliteApi(),
 
 	// Web Server API
 	webserver: createWebserverApi(),
@@ -146,6 +150,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Dataview API (DQL queries, index status and rebuild, change push)
 	dataview: createDataviewApi(),
+
+	// Prompt Links API (maestro://run/<token> - desktop-only)
+	promptLinks: createPromptLinksApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -265,6 +272,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	journey: createJourneyApi(),
 	// AI Command API (plain-English request -> one shell command line)
 	aiCommand: createAiCommandApi(),
+	// Side question API (`/btw`: ask about a tab without writing to it)
+	sideQuestion: createSideQuestionApi(),
 
 	// Director's Notes API (unified history + synopsis)
 	directorNotes: createDirectorNotesApi(),
@@ -340,6 +349,8 @@ export {
 	createMaestroRunApi,
 	// Dataview
 	createDataviewApi,
+	// Prompt Links
+	createPromptLinksApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,
@@ -396,6 +407,7 @@ export {
 	// Filesystem
 	createFsApi,
 	createParquetApi,
+	createSqliteApi,
 	// Agents
 	createAgentsApi,
 	// Symphony
@@ -665,6 +677,12 @@ export type {
 	AiCommandSuggestRequest,
 	AiCommandSuggestResult,
 } from './aiCommand';
+export type {
+	// From sideQuestion
+	SideQuestionApi,
+	SideQuestionRequest,
+	SideQuestionResult,
+} from './sideQuestion';
 export type {
 	// From directorNotes
 	DirectorNotesApi,

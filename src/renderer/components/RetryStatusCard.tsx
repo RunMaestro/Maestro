@@ -3,7 +3,8 @@
  * transcript. When an agent turn fails with a recoverable upstream error and
  * resilience auto-retries, ALL of the repeated attempts collapse into this one
  * live card instead of spraying a wall of error bubbles. It shows, at a glance:
- *   - which failure mode (service overloaded vs plan quota exhausted),
+ *   - which failure mode (service overloaded, plan quota exhausted, or the
+ *     agent's link down: ssh or the hosted agent's Maestro host),
  *   - how many times we've retried,
  *   - how long the outage has lasted (since the first failure),
  *   - when the next attempt fires (live countdown), and
@@ -18,10 +19,16 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Check, RefreshCw, X, Zap } from 'lucide-react';
 
-import { useRetryStore, useRetryStatus, retryNow, cancelRetry } from '../stores/retryStore';
+import {
+	useRetryStore,
+	useRetryStatus,
+	retryNow,
+	cancelRetry,
+	hostSettledText,
+} from '../stores/retryStore';
 import { formatDurationHuman } from '../../shared/formatters';
 import { describeQuotaWindow } from '../../shared/quotaLimitDetail';
-import { getConnectingColor } from '../utils/theme';
+import { activeStatusHalo, getConnectingColor } from '../utils/theme';
 import { QuotaLimitEvidence } from './ui/QuotaLimitEvidence';
 import type { Theme } from '../types';
 
@@ -108,8 +115,12 @@ export function RetryStatusCard({
 	// hours vs days of waiting, and the generic label cannot tell them apart.
 	// `describeQuotaWindow(undefined)` is the safe generic, so a payload without
 	// a window still reads sensibly.
-	const strategyLabel =
-		outage.strategy === 'availability'
+	// A link that was down is not a provider outage: name the connection, never
+	// "Service overloaded", for an SSH and a hosted agent alike.
+	const connectionLost = outage.cause === 'connection';
+	const strategyLabel = connectionLost
+		? 'Connection lost'
+		: outage.strategy === 'availability'
 			? 'Service overloaded'
 			: outage.quota
 				? `${describeQuotaWindow(outage.quota)} reached`
@@ -124,8 +135,13 @@ export function RetryStatusCard({
 		// `attempts` counts reschedules, so the resend that got through is not in
 		// it (the same correction `resolveOutage` makes for the Usage Dashboard).
 		const sentCount = retryCount + 1;
-		const headline =
-			outage.strategy === 'availability' ? 'Connection recovered.' : 'Quota restored.';
+		const headline = connectionLost
+			? 'Connection restored.'
+			: outage.strategy === 'availability'
+				? 'Connection recovered.'
+				: 'Quota restored.';
+		const retries = `${sentCount} ${sentCount === 1 ? 'retry' : 'retries'}`;
+		const over = totalMs > 0 ? ` over ${formatDurationHuman(totalMs)}` : '';
 		return (
 			<div
 				className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm select-none"
@@ -140,8 +156,11 @@ export function RetryStatusCard({
 				<span>
 					<span className="font-medium">{headline}</span>{' '}
 					<span style={{ color: theme.colors.textDim }}>
-						{strategyLabel} cleared after {sentCount} {sentCount === 1 ? 'retry' : 'retries'}
-						{totalMs > 0 ? ` over ${formatDurationHuman(totalMs)}` : ''}.
+						{connectionLost && outage.settledByHost
+							? hostSettledText(outage)
+							: connectionLost
+								? `Sent after ${retries}${over}, once the link was back.`
+								: `${strategyLabel} cleared after ${retries}${over}.`}
 					</span>
 				</span>
 			</div>
@@ -186,8 +205,8 @@ export function RetryStatusCard({
 					<span className="font-medium" style={{ color: theme.colors.textMain }}>
 						Auto-retry stopped.
 					</span>{' '}
-					{strategyLabel} was not resolved after {retryCount}{' '}
-					{retryCount === 1 ? 'retry' : 'retries'}.
+					{connectionLost ? 'The link was still down' : `${strategyLabel} was not resolved`} after{' '}
+					{retryCount} {retryCount === 1 ? 'retry' : 'retries'}.
 				</span>
 			</div>
 		);
@@ -212,16 +231,11 @@ export function RetryStatusCard({
 			aria-live="polite"
 		>
 			<div className="flex items-center gap-2">
-				<span className="relative flex h-2.5 w-2.5 flex-shrink-0">
-					<span
-						className="absolute inline-flex h-full w-full rounded-full opacity-60 animate-ping"
-						style={{ backgroundColor: outageColor }}
-					/>
-					<span
-						className="relative inline-flex h-2.5 w-2.5 rounded-full"
-						style={{ backgroundColor: outageColor }}
-					/>
-				</span>
+				{/* Static live dot, not an `animate-ping` ring (see activeStatusHalo). */}
+				<span
+					className="inline-flex h-2.5 w-2.5 flex-shrink-0 rounded-full"
+					style={{ backgroundColor: outageColor, boxShadow: activeStatusHalo(outageColor) }}
+				/>
 				<AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: outageColor }} />
 				<span className="font-medium" style={{ color: outageColor }}>
 					{strategyLabel}

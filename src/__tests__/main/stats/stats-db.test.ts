@@ -294,18 +294,19 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			db.initialize();
 
-			// Migrations v1-v14: initial schema, is_remote column, session_lifecycle
+			// Migrations v1-v15: initial schema, is_remote column, session_lifecycle
 			// table, compound indexes, is_worktree column, image_annotations table,
 			// shortcut_usage_daily table, multi_window_usage_daily table,
 			// query_events token/cost columns, resilience_events table,
 			// wizard_runs table, query_events user_name column, wizard_runs.active_ms,
-			// auto_run_sessions kind column.
-			expect(db.getTargetVersion()).toBe(14);
+			// shortcut_usage_by_id table + idx_query_start_session (v14),
+			// auto_run_sessions kind column (v15), token_speed_hourly table (v16).
+			expect(db.getTargetVersion()).toBe(16);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 14 }];
+				if (sql === 'user_version') return [{ user_version: 16 }];
 				return undefined;
 			});
 
@@ -321,7 +322,7 @@ describe('StatsDB class (mocked)', () => {
 			// by checking current version < target version
 
 			// Simulate a database that's already at the target version
-			let currentVersion = 14;
+			let currentVersion = 16;
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: currentVersion }];
 				// Handle version updates from migration
@@ -336,8 +337,8 @@ describe('StatsDB class (mocked)', () => {
 			db.initialize();
 
 			// At target version, no pending migrations
-			expect(db.getCurrentVersion()).toBe(14);
-			expect(db.getTargetVersion()).toBe(14);
+			expect(db.getCurrentVersion()).toBe(16);
+			expect(db.getTargetVersion()).toBe(16);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 
@@ -533,6 +534,73 @@ describe('StatsDB class (mocked)', () => {
 			expect(mockFlushQueryEventsSync).not.toHaveBeenCalled();
 		});
 	});
+
+	describe('initialization result (database reset notice)', () => {
+		it('is null when the database opens cleanly', async () => {
+			mockDb.pragma.mockImplementation(((name: string) =>
+				name === 'integrity_check'
+					? [{ integrity_check: 'ok' }]
+					: [{ user_version: 0 }]) as unknown as () => Array<{ user_version: number }>);
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			expect(db.getInitializationResult()).toBeNull();
+		});
+
+		it('reports a damaged database that was replaced by a fresh one, once', async () => {
+			// The default pragma mock fails the integrity check, and there are no
+			// daily backups, so initialize() moves the file aside and starts over.
+			mockDb.pragma.mockImplementation(((name: string) =>
+				name === 'integrity_check'
+					? [{ integrity_check: 'database disk image is malformed' }]
+					: [{ user_version: 0 }]) as unknown as () => Array<{ user_version: number }>);
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const result = db.getInitializationResult();
+			expect(result).toMatchObject({ success: true, wasReset: true });
+			expect(result?.backupPath).toMatch(/stats\.db\.corrupted\.\d+$/);
+			expect(result?.userMessage).toContain('no usable backup was found');
+			expect(result?.userMessage).toContain(result!.backupPath!);
+
+			db.clearInitializationResult();
+			expect(db.getInitializationResult()).toBeNull();
+		});
+	});
+
+	describe('describeRecovery', () => {
+		it('names the backup day a restore came from', async () => {
+			const { describeRecovery } = await import('../../../main/stats/stats-db');
+
+			const result = describeRecovery(
+				{
+					recovered: true,
+					restoredFromBackup: true,
+					backupPath: '/data/stats.db.daily.2026-11-12',
+					corruptedPath: '/data/stats.db.corrupted.1',
+				},
+				true
+			);
+
+			expect(result.success).toBe(true);
+			expect(result.wasReset).toBe(true);
+			expect(result.backupPath).toBe('/data/stats.db.corrupted.1');
+			expect(result.userMessage).toContain('the backup of 2026-11-12');
+			expect(result.userMessage).toContain('/data/stats.db.corrupted.1');
+		});
+
+		it('says recording is off when no database could be opened', async () => {
+			const { describeRecovery } = await import('../../../main/stats/stats-db');
+
+			const result = describeRecovery({ recovered: false, error: 'EACCES' }, false);
+
+			expect(result).toMatchObject({ success: false, wasReset: true, error: 'EACCES' });
+			expect(result.userMessage).toContain('not being recorded');
+			expect(result.userMessage).not.toContain('kept at');
+		});
+	});
 });
 
 /**
@@ -687,6 +755,65 @@ describe('Database file creation on first launch', () => {
 			for (const indexName of expectedIndexes) {
 				expect(prepareCalls.some((sql: string) => sql.includes(indexName))).toBe(true);
 			}
+		});
+
+		it('should close handle and refuse database access when a migration throws, then allow clean retry', async () => {
+			mockFsExistsSync.mockReturnValue(false);
+			mockDb.prepare.mockImplementation((sql: string) => {
+				if (sql.includes('CREATE TABLE IF NOT EXISTS query_events')) {
+					throw new Error('migration v1 boom');
+				}
+				return mockStatement;
+			});
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+
+			expect(() => db.initialize()).toThrow('migration v1 boom');
+			expect(mockDb.close).toHaveBeenCalledTimes(1);
+			expect(mockFlushQueryEventsSync).not.toHaveBeenCalled();
+			expect(db.isReady()).toBe(false);
+			expect(() => db.database).toThrow('Database not initialized');
+
+			// A later initialize() can retry cleanly once the failure condition is cleared
+			mockDb.prepare.mockReturnValue(mockStatement);
+			expect(() => db.initialize()).not.toThrow();
+			expect(db.isReady()).toBe(true);
+			expect(() => db.database).not.toThrow();
+		});
+
+		it('should close handle and refuse database access when WAL setup or meta table creation throws', async () => {
+			mockFsExistsSync.mockReturnValue(false);
+			mockDb.pragma.mockImplementation((pragmaStr: string) => {
+				if (pragmaStr === 'journal_mode = WAL') {
+					throw new Error('wal boom');
+				}
+				return [{ user_version: 0 }];
+			});
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+
+			expect(() => db.initialize()).toThrow('wal boom');
+			expect(mockDb.close).toHaveBeenCalledTimes(1);
+			expect(mockFlushQueryEventsSync).not.toHaveBeenCalled();
+			expect(db.isReady()).toBe(false);
+			expect(() => db.database).toThrow('Database not initialized');
+
+			// Meta table failure on retry also cleans up
+			mockDb.pragma.mockReturnValue([{ user_version: 0 }]);
+			mockDb.prepare.mockImplementation((sql: string) => {
+				if (sql.includes('CREATE TABLE IF NOT EXISTS _meta')) {
+					throw new Error('meta boom');
+				}
+				return mockStatement;
+			});
+
+			expect(() => db.initialize()).toThrow('meta boom');
+			expect(mockDb.close).toHaveBeenCalledTimes(2);
+			expect(mockFlushQueryEventsSync).not.toHaveBeenCalled();
+			expect(db.isReady()).toBe(false);
+			expect(() => db.database).toThrow('Database not initialized');
 		});
 	});
 

@@ -9,6 +9,8 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { AdditionalDirectoriesSection } from '../../../../renderer/components/shared/AdditionalDirectoriesSection';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { AdditionalDirectory } from '../../../../renderer/types';
+import { AGENT_MODES } from '../../../helpers';
+import { browseAndPick, MODE_REMOTE_ID, resetPathPicker } from '../../../helpers/pathPicker';
 
 const selectFolder = vi.fn();
 
@@ -16,7 +18,7 @@ beforeEach(() => {
 	selectFolder.mockReset();
 	(window as any).maestro = {
 		...(window as any).maestro,
-		dialog: { selectFolder },
+		dialog: { selectFolder, selectFile: vi.fn() },
 	};
 });
 
@@ -108,12 +110,24 @@ describe('AdditionalDirectoriesSection', () => {
 		expect(onChange).not.toHaveBeenCalled();
 	});
 
-	it('hides Browse for SSH agents, where the local picker cannot see the remote', () => {
-		renderSection([{ path: '/remote/dir', read: true, write: false }], { disableBrowse: true });
+	it.each(AGENT_MODES)(
+		'%s: draws the same Browse and placeholder, and picks where the agent runs',
+		async (mode) => {
+			const onChange = renderSection([{ path: '/start/dir', read: true, write: false }], {
+				sshRemoteId: mode === 'local' ? undefined : MODE_REMOTE_ID,
+			});
 
-		expect(screen.queryByLabelText('Browse folders')).not.toBeInTheDocument();
-		expect(screen.getByPlaceholderText('Enter remote path...')).toBeInTheDocument();
-	});
+			expect(screen.getByLabelText('Browse folders')).not.toBeDisabled();
+			expect(screen.getByPlaceholderText('/path/to/directory or ~/path')).toBeInTheDocument();
+			await browseAndPick(
+				mode,
+				() => fireEvent.click(screen.getByLabelText('Browse folders')),
+				'/picked/extra'
+			);
+			expect(onChange).toHaveBeenCalledWith([{ path: '/picked/extra', read: true, write: false }]);
+			resetPathPicker();
+		}
+	);
 
 	it('warns that a row with neither permission will not reach the agent', () => {
 		renderSection([{ path: '/a/docs', read: false, write: false }]);

@@ -226,14 +226,27 @@ describe('CollapsedSessionPill', () => {
 		expect(segments[1].className).toContain('animate-pulse');
 	});
 
-	it('renders tooltip content within each segment', () => {
+	it('renders tooltip content within a segment once it is hovered', () => {
 		const session = makeSession({ name: 'My Test Agent' });
 		const props = createDefaultProps({ session });
 
-		render(<CollapsedSessionPill {...props} />);
+		const { container } = render(<CollapsedSessionPill {...props} />);
+		fireEvent.mouseEnter(container.querySelector('[role="button"]')!);
 
 		// The tooltip content should include the session name
 		expect(screen.getByText('My Test Agent')).toBeTruthy();
+	});
+
+	it('mounts no tooltip until the pill is hovered or focused, and drops it after', () => {
+		const session = makeSession({ name: 'Quiet Agent' });
+		const { container } = render(<CollapsedSessionPill {...createDefaultProps({ session })} />);
+		const segment = container.querySelector('[role="button"]')!;
+
+		expect(screen.queryByText('Quiet Agent')).toBeNull();
+		fireEvent.focus(segment);
+		expect(screen.getByText('Quiet Agent')).toBeTruthy();
+		fireEvent.blur(segment);
+		expect(screen.queryByText('Quiet Agent')).toBeNull();
 	});
 
 	it('does not show unread dot on non-last segments in multi-segment pill', () => {

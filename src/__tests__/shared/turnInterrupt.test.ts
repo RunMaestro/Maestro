@@ -5,9 +5,11 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	MAX_STOPPED_ITEM_IDS,
 	interruptTurnFailure,
 	isTurnProcessInScope,
 	parseInterruptTurnResult,
+	parseStoppedItemIds,
 } from '../../shared/turnInterrupt';
 
 describe('isTurnProcessInScope', () => {
@@ -17,7 +19,9 @@ describe('isTurnProcessInScope', () => {
 		['agent-1-ai-tab-b', true],
 		['agent-1-ai', false],
 		['agent-1-synopsis-1', false],
-		['agent-1-batch-1', false],
+		// An Auto Run task's turn runs on no tab; it is the agent's running turn all the same.
+		['agent-1-batch-1', true],
+		['agent-10-batch-1', false],
 		['agent-1-terminal', false],
 		['agent-10-ai-tab-a', false],
 	])('agent scope: %s -> %s', (processId, expected) => {
@@ -31,6 +35,7 @@ describe('isTurnProcessInScope', () => {
 		// A tab whose id starts with the named one is a different tab.
 		['agent-1-ai-tab-ab', false],
 		['agent-1-ai', false],
+		['agent-1-batch-1', false],
 	])('tab scope: %s -> %s', (processId, expected) => {
 		expect(isTurnProcessInScope(processId, 'agent-1', 'tab-a')).toBe(expected);
 	});
@@ -62,6 +67,21 @@ describe('parseInterruptTurnResult', () => {
 			// Main sets this from its own process table, never from the renderer.
 			exited: false,
 		});
+	});
+
+	it('keeps the queue items the stop names, bounded, and adds none to a reply without them (M27)', () => {
+		const named = parseInterruptTurnResult(
+			{ success: true, stoppedTabIds: ['t'], stoppedItemIds: ['q-1', 4, '', 'q-2'] },
+			'agent-1',
+			't'
+		);
+		expect(named.stoppedItemIds).toEqual(['q-1', 'q-2']);
+		const older = parseInterruptTurnResult({ success: true, stoppedTabIds: ['t'] }, 'agent-1', 't');
+		expect(older).not.toHaveProperty('stoppedItemIds');
+		const many = Array.from({ length: MAX_STOPPED_ITEM_IDS + 5 }, (_, i) => `q-${i}`);
+		expect(parseStoppedItemIds(many)).toHaveLength(MAX_STOPPED_ITEM_IDS);
+		expect(parseStoppedItemIds(['x'.repeat(201)])).toEqual([]);
+		expect(parseStoppedItemIds('q-1')).toBeUndefined();
 	});
 
 	it('keeps a known failure code and drops an unknown one', () => {

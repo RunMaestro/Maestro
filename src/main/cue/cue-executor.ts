@@ -16,6 +16,7 @@ import { substituteTemplateVariables, type TemplateContext } from '../../shared/
 import { prependNewSessionMessage } from '../../shared/newSessionMessage';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { buildSpawnSpec } from './cue-spawn-builder';
+import { checkHostedAgentLaunch } from '../utils/hosted-launch-guard';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import {
 	runProcess,
@@ -206,7 +207,9 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 	// subscription's own prompt, which a standing prefix must not mask.
 	const finalPrompt = prependNewSessionMessage(substitutedPrompt, session.newSessionMessage);
 
-	// 3. Build spawn spec (agent args, SSH wrapping, etc.)
+	// 3. Build spawn spec (agent args, SSH wrapping, etc.). A hosted agent's run from here is
+	// reported: its turns belong to its host.
+	checkHostedAgentLaunch(session.id, 'cue-run');
 	const buildResult = await buildSpawnSpec(config, finalPrompt);
 	// A successful build hands its proofs to this executor before any cancellation
 	// return or setup callback can run. Prompt artifacts stay with the process sink.

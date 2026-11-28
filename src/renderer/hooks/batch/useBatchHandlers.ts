@@ -43,25 +43,10 @@ import * as Sentry from '@sentry/electron/renderer';
 import { queueLeaderboardDelta, noteAutoRunCreditSettled } from '../../services/leaderboard';
 import { logger } from '../../utils/logger';
 import { groupChatAutoRunSummary } from '../../../shared/maestro-lib/groupchat/autorun-summary';
-
-/**
- * Resolve the effective group name for a session, falling back to the parent's group
- * for worktree children whose groupId may not be in sync.
- */
-function resolveGroupName(
-	sessionId: string,
-	sessions: { id: string; groupId?: string; parentSessionId?: string }[],
-	groups: { id: string; name: string }[]
-): string {
-	const session = sessions.find((s) => s.id === sessionId);
-	const effectiveGroupId =
-		session?.groupId ||
-		(session?.parentSessionId
-			? sessions.find((s) => s.id === session.parentSessionId)?.groupId
-			: undefined);
-	const group = effectiveGroupId ? groups.find((g) => g.id === effectiveGroupId) : null;
-	return group?.name || 'Ungrouped';
-}
+import {
+	notifyAutoRunComplete,
+	resolveAutoRunGroupName as resolveGroupName,
+} from '../../services/autoRunCompletion';
 
 /**
  * Find the session that is actually paused on error.
@@ -257,7 +242,6 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			// Read all needed values from stores at call time to avoid stale closures
 			const settingsState = useSettingsStore.getState();
 			const currentSessions = useSessionStore.getState().sessions;
-			const currentGroups = useSessionStore.getState().groups;
 			const {
 				firstAutoRunCompleted,
 				setFirstAutoRunCompleted,
@@ -270,36 +254,8 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			const isLbRegistered = selectIsLeaderboardRegistered(settingsState);
 
 			const session = currentSessions.find((s) => s.id === info.sessionId);
-			const groupName = resolveGroupName(info.sessionId, currentSessions, currentGroups);
 
-			// Determine toast type and message based on completion status
-			const toastType = info.wasStopped
-				? 'warning'
-				: info.completedTasks === info.totalTasks
-					? 'success'
-					: 'info';
-
-			// Build message
-			let message: string;
-			if (info.wasStopped) {
-				message = `Stopped after completing ${info.completedTasks} of ${info.totalTasks} tasks`;
-			} else if (info.completedTasks === info.totalTasks) {
-				message = `All ${info.totalTasks} ${
-					info.totalTasks === 1 ? 'task' : 'tasks'
-				} completed successfully`;
-			} else {
-				message = `Completed ${info.completedTasks} of ${info.totalTasks} tasks`;
-			}
-
-			notifyToast({
-				type: toastType,
-				title: 'Auto-Run Complete',
-				message,
-				group: groupName,
-				project: info.sessionName,
-				taskDuration: info.elapsedTimeMs,
-				sessionId: info.sessionId,
-			});
+			notifyAutoRunComplete(info);
 
 			// Record achievement and check for badge unlocks
 			if (info.elapsedTimeMs > 0) {

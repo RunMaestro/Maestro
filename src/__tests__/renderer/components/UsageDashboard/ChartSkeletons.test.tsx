@@ -260,12 +260,14 @@ describe('ChartSkeletons', () => {
 			const skeleton = screen.getByTestId('dashboard-skeleton');
 			expect(skeleton).toBeInTheDocument();
 
-			// Should contain all overview components
+			// Follows the Overview tab: cards, Provider Comparison, a trend chart
+			// (Provider Trends), and the Query Source donut. The heatmap lives on
+			// the Activity tab, so the Overview skeleton does not draw one.
 			expect(screen.getByTestId('summary-cards-skeleton')).toBeInTheDocument();
 			expect(screen.getByTestId('agent-comparison-skeleton')).toBeInTheDocument();
-			expect(screen.getByTestId('source-distribution-skeleton')).toBeInTheDocument();
-			expect(screen.getByTestId('activity-heatmap-skeleton')).toBeInTheDocument();
 			expect(screen.getByTestId('duration-trends-skeleton')).toBeInTheDocument();
+			expect(screen.getByTestId('source-distribution-skeleton')).toBeInTheDocument();
+			expect(screen.queryByTestId('activity-heatmap-skeleton')).not.toBeInTheDocument();
 		});
 
 		it('renders agents mode skeleton', () => {

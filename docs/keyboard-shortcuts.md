@@ -77,6 +77,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
 | Show/Hide Throughput Gauge    | `Opt+Cmd+Shift+T`       | `Alt+Ctrl+Shift+T`        |
+| Prompt Links                  | `Opt+Cmd+Shift+L`       | `Alt+Ctrl+Shift+L`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Steer Running Turn            | `Opt+Cmd+Enter`         | `Alt+Ctrl+Enter`          |
@@ -159,6 +160,19 @@ comment. `Cmd+[` and `Cmd+]` keep switching agents, so indent with `Tab` and
 `Shift+Tab` instead. With **Vim keybindings** on, `Esc` returns to Vim's normal
 mode, and `Cmd+E` leaves the editor.
 
+## Git Diff Review
+
+These work while the Git Diff viewer is open over an agent that can take a
+review. See [Reviewing Diffs](./diff-review).
+
+| Action                        | macOS                     | Windows/Linux             |
+| ----------------------------- | ------------------------- | ------------------------- |
+| Move the line cursor          | `Down` / `Up`             | `Down` / `Up`             |
+| Extend the line selection     | `Shift+Down` / `Shift+Up` | `Shift+Down` / `Shift+Up` |
+| Comment on the selected lines | `C`                       | `C`                       |
+| Save the comment              | `Cmd+Enter`               | `Ctrl+Enter`              |
+| Send the review               | `Cmd+Shift+Enter`         | `Ctrl+Shift+Enter`        |
+
 ## Group Chat
 
 A group chat has no tab strip, so the tab-cycle chord switches the right panel instead.
@@ -199,6 +213,8 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 | Open Image Organizer        | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`        |
 | Open Prompt Composer        | `Cmd+Shift+P`         | `Ctrl+Shift+P`        |
 
+Inside a group chat, **Toggle Tab Unread** marks the room itself unread (or read) in the Left Bar. The dot stays until you open the room again.
+
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
 
 ### Walking Unread and Draft Tabs
@@ -213,33 +229,34 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 
 ## Tab Management Shortcuts
 
-| Action                    | macOS                   | Windows/Linux             |
-| ------------------------- | ----------------------- | ------------------------- |
-| New Tab                   | `Cmd+T`                 | `Ctrl+T`                  |
-| New Browser Tab           | `Cmd+B`                 | `Ctrl+B`                  |
-| New File Tab              | `Opt+N`                 | `Alt+N`                   |
-| New Terminal Tab          | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
-| Focus Browser Address Bar | `Cmd+L`                 | `Ctrl+L`                  |
-| Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
-| Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
-| Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
-| Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
-| Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
-| Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
-| Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
-| Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
-| Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
-| Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
-| Close Tabs to Left        | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
-| Close Tabs to Right       | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
-| Reopen Closed Tab         | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
-| Previous Tab              | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
-| Next Tab                  | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
-| Tab Switcher              | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
-| Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
-| Rename Tab Group          | unassigned by default   | unassigned by default     |
-| Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
-| Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
+| Action                     | macOS                   | Windows/Linux             |
+| -------------------------- | ----------------------- | ------------------------- |
+| New Tab                    | `Cmd+T`                 | `Ctrl+T`                  |
+| New Browser Tab            | `Cmd+B`                 | `Ctrl+B`                  |
+| New File Tab               | `Opt+N`                 | `Alt+N`                   |
+| New Terminal Tab           | `Ctrl+Shift+` + `` ` `` | `Ctrl+Shift+` + `` ` ``   |
+| Focus Browser Address Bar  | `Cmd+L`                 | `Ctrl+L`                  |
+| Find in Browser Tab        | `Cmd+F`                 | `Ctrl+F`                  |
+| Toggle Browser Design Mode | `Cmd+Shift+C`           | `Ctrl+Shift+C`            |
+| Focus Active Tab           | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
+| Snooze Tab                 | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
+| Change Model and Effort    | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
+| Show Snoozed Tabs          | unassigned by default   | unassigned by default     |
+| Move Tab to First          | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
+| Move Tab to Last           | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
+| Close Tab                  | `Cmd+W`                 | `Ctrl+W`                  |
+| Close All Tabs             | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
+| Close Other Tabs           | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
+| Close Tabs to Left         | `Cmd+Shift+Opt+[`       | `Ctrl+Shift+Alt+[`        |
+| Close Tabs to Right        | `Cmd+Shift+Opt+]`       | `Ctrl+Shift+Alt+]`        |
+| Reopen Closed Tab          | `Cmd+Shift+T`           | `Ctrl+Shift+T`            |
+| Previous Tab               | `Cmd+Shift+[`           | `Ctrl+Shift+[`            |
+| Next Tab                   | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
+| Tab Switcher               | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
+| Rename Tab                 | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
+| Rename Tab Group           | unassigned by default   | unassigned by default     |
+| Go to Tab 1-9              | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
+| Go to Last Tab             | `Cmd+0`                 | `Ctrl+0`                  |
 
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
@@ -248,6 +265,35 @@ Bar opens if it was closed.
 Inside the **Change Model and Effort** console, `Cmd+R` / `Ctrl+R` re-reads the model list, so a model you just installed shows up without leaving the console. See [Changing a Tab's Model and Effort](./general-usage#changing-a-tabs-model-and-effort).
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
+
+### Browser Design Mode
+
+These work while [Browser Design Mode](./browser-design-mode) is on in a browser tab. `Cmd+Shift+C` / `Ctrl+Shift+C` (in the table above) turns the mode itself on and off, and it stays on for that tab until you turn it off.
+
+| Action                                                   | macOS          | Windows/Linux  |
+| -------------------------------------------------------- | -------------- | -------------- |
+| Use the page; release to pick again                      | `Space` (hold) | `Space` (hold) |
+| Select the parent of the outlined element                | `Up arrow`     | `Up arrow`     |
+| Go back toward the element under the pointer             | `Down arrow`   | `Down arrow`   |
+| Pick the outlined element                                | `Enter`        | `Enter`        |
+| Cancel a drag, close the pick card, or leave Design Mode | `Esc`          | `Esc`          |
+
+While you hold `Space`, the page gets the pointer, so you can follow a link or open a menu without leaving Design Mode. `Space` in the pick card's note or on a focused button is an ordinary key.
+
+To pick a region instead of one element, drag a box over the page. Release to open the region's card, or press `Esc` before you release to cancel the drag.
+
+#### Pick Card
+
+These work in the note field of the card that opens when you pick an element or a region.
+
+| Action                                    | macOS         | Windows/Linux |
+| ----------------------------------------- | ------------- | ------------- |
+| Add to the message and go to the chat     | `Enter`       | `Enter`       |
+| Add to the message and keep picking       | `Cmd+Enter`   | `Ctrl+Enter`  |
+| Queue as its own message and keep picking | `Opt+Enter`   | `Alt+Enter`   |
+| New line in the note                      | `Shift+Enter` | `Shift+Enter` |
+
+A queued pick goes to the agent's [execution queue](./general-usage#message-queue) as a separate message and leaves your message box alone. The **Queue** button on the card does the same.
 
 ### Tab Switcher
 
@@ -489,6 +535,39 @@ The field list is focused on open, so these work without clicking first.
 | Leave the filter     | `Enter`               | `Enter`               |
 | Close row detail     | `Esc`                 | `Esc`                 |
 
+### SQLite Cell Editor
+
+Available while previewing a SQLite database with **Enable editing** on.
+Double-click a cell to open its editor.
+
+| Action               | macOS               | Windows/Linux        |
+| -------------------- | ------------------- | -------------------- |
+| Save the cell        | `Enter` or `Tab`    | `Enter` or `Tab`     |
+| Cancel the edit      | `Esc`               | `Esc`                |
+| Set the cell to NULL | `Opt+Cmd+Backspace` | `Alt+Ctrl+Backspace` |
+
+NULL and an empty string are different values. Clearing the text saves an empty
+string, and the empty box reads `empty string`. To store NULL, press the
+**NULL** button in the editor or the shortcut above; the box then reads a dimmed
+`NULL`. Typing, or pressing **NULL** again, turns NULL off.
+
+### SQLite Undo
+
+Available while previewing a SQLite database with **Enable editing** on, after
+the tab changed a cell, inserted a row, or deleted one.
+
+| Action               | macOS   | Windows/Linux |
+| -------------------- | ------- | ------------- |
+| Undo the last change | `Cmd+Z` | `Ctrl+Z`      |
+
+The shortcut works when the focus is not in a text field; inside the cell
+editor, the filter, or the SQL editor, `Cmd+Z` undoes typing as usual. The
+**Undo** button beside **Lock** does the same. Undo goes back one change only,
+and is refused if the row changed since (another tab, another program, or a
+trigger). A change whose triggers or foreign-key actions changed other rows
+reads **cannot undo**; the backup saved before the first change has the file as
+it was.
+
 ## Staged Images Organizer
 
 Opened with the expand button (⤢) beside the staged-image strip, with two or
@@ -508,6 +587,15 @@ organizer is open. They stop firing while the lightbox or the annotator is open
 on top of it.
 
 ## Usage Dashboard
+
+These keys move between the dashboard's tabs while it is open. See
+[Keyboard Navigation](./usage-dashboard#keyboard-navigation) for the keys that
+move between sections inside a tab.
+
+| Action       | macOS         | Windows/Linux  |
+| ------------ | ------------- | -------------- |
+| Previous tab | `Cmd+Shift+[` | `Ctrl+Shift+[` |
+| Next tab     | `Cmd+Shift+]` | `Ctrl+Shift+]` |
 
 The Agents and Groups tabs draw one tile per agent or group. The tile size is
 yours to set, and it is remembered across restarts. See
@@ -586,26 +674,28 @@ branch, so all of this reaches commits the List view does not hold.
 
 ## Settings Search
 
-Type in the search box at the top of Settings to find a setting on any tab. You
-can change most results without leaving the search: a single on/off setting
-shows its switch on the result row, and a larger setting opens its full section
-under the row.
+Type in the search box at the top of Settings to find a setting on any tab. The
+results are a filtered view of Settings: each matching section appears once,
+already open, and shows only the controls that match, so you change a setting
+right where you found it. **Show all** at the bottom of a section shows the rest
+of it. A match with nothing to change in place, such as the theme picker, is a
+row that opens its tab.
 
-| Action                                   | macOS              | Windows/Linux      |
-| ---------------------------------------- | ------------------ | ------------------ |
-| Focus the search box                     | `Cmd+F`            | `Ctrl+F`           |
-| Move from the search box into results    | `Down Arrow`       | `Down Arrow`       |
-| Move between results                     | `Up/Down Arrow`    | `Up/Down Arrow`    |
-| Flip a switch, or open/close its section | `Space`            | `Space`            |
-| Open or close a section                  | `Right/Left Arrow` | `Right/Left Arrow` |
-| Go to the setting on its tab             | `Enter`            | `Enter`            |
-| Back to the search box                   | `Esc`              | `Esc`              |
+Search matches inside words from three characters on. A shorter query, such as
+`gh` or `ai`, matches only a whole word in a setting's name or keywords.
 
-`Space` only acts on a result when the result has focus, so you can still type a
-space in a search of two or more words. `Enter` in the search box goes to the
-highlighted result. A result with nothing to change in place, such as the theme
-picker, goes to its tab with either key. Typing any letter while a result has
-focus returns you to the search box.
+| Action                                | macOS        | Windows/Linux |
+| ------------------------------------- | ------------ | ------------- |
+| Focus the search box                  | `Cmd+F`      | `Ctrl+F`      |
+| Move from the search box into results | `Down Arrow` | `Down Arrow`  |
+| Move between controls                 | `Tab`        | `Tab`         |
+| Go to the top result on its tab       | `Enter`      | `Enter`       |
+| Back to the search box (from a row)   | `Esc`        | `Esc`         |
+| Clear the search                      | `Esc`        | `Esc`         |
+
+`Enter` in the search box goes to the top result's tab. Each section's header
+has a button that opens that section on its tab. Inside a section, `Esc` is
+left to the section's own controls.
 
 ## Maestro Prompts (Settings)
 

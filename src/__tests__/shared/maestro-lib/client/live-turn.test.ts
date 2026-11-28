@@ -11,6 +11,8 @@ import {
 	type LiveTurn,
 } from '../../../../shared/maestro-lib/client/live-turn';
 import type { TurnEvent } from '../../../../shared/maestro-lib/client/types';
+import type { ParsedEvent } from '../../../../shared/maestro-lib/parsers/agent-output-parser';
+import { createTurnEventMapper } from '../../../../shared/maestro-lib/turns/turn-events';
 
 function ids() {
 	let n = 0;
@@ -34,6 +36,90 @@ describe('liveTurnKey', () => {
 });
 
 describe('foldLiveTurn', () => {
+	// T2 review: the host's mapper says a Claude partial once, as thinking, so the live fold has
+	// no copy to skip, and an answer equal to the thinking before it is still drawn.
+	it('folds a coalesced thinking burst and its answer as the burst itself folds', () => {
+		const events: TurnEvent[] = [
+			{ kind: 'thinking', at: 1, text: 'Reasoning. ' },
+			{ kind: 'thinking', at: 1, text: 'First part.' },
+			{ kind: 'text', at: 2, text: 'First part.' },
+		];
+		const strip = (turn: LiveTurn | undefined) => turn?.entries.map((e) => [e.source, e.text]);
+		expect(strip(foldAll(coalesceTurnEvents(events)))).toEqual(strip(foldAll(events)));
+		expect(strip(foldAll(events))).toEqual([
+			['thinking', 'Reasoning. First part.'],
+			['stdout', 'First part.'],
+		]);
+	});
+
+	// Parity R58: the answer a provider streams as thinking is held apart from its reasoning, so a
+	// cut turn's reply row shows the answer only, as a desktop's flushed `streamedText` does.
+	it('holds the answer streamed as thinking apart from reasoning, coalesced or not (R58)', () => {
+		const events: TurnEvent[] = [
+			{ kind: 'thinking', at: 1, text: 'Let me look. ' },
+			{ kind: 'thinking', at: 2, text: 'Partial ', answer: true },
+			{ kind: 'thinking', at: 3, text: 'reply.', answer: true },
+			{ kind: 'thinking', at: 4, text: ' Hmm.' },
+		];
+		for (const folded of [foldAll(events), foldAll(coalesceTurnEvents(events))]) {
+			expect(folded).toMatchObject({ answerText: 'Partial reply.', answerAt: 2 });
+			expect(folded?.entries.map((e) => [e.source, e.text])).toEqual([
+				['thinking', 'Let me look. Partial reply. Hmm.'],
+			]);
+		}
+		expect(
+			coalesceTurnEvents(events).map((event) => event.kind === 'thinking' && event.answer === true)
+		).toEqual([false, true, false]);
+	});
+
+	it('draws an answer even when it equals the thinking before it', () => {
+		const turn = foldAll([
+			{ kind: 'thinking', at: 1, text: '42' },
+			{ kind: 'text', at: 2, text: '42' },
+		]);
+		expect(turn?.entries.map((entry) => [entry.source, entry.text])).toEqual([
+			['thinking', '42'],
+			['stdout', '42'],
+		]);
+	});
+
+	// T10: no text is compared. A provider that tags reasoning keeps an answer chunk equal to the
+	// reasoning chunk before it, in the window's live tail (coalesced or not) and on the host.
+	it('keeps an answer chunk equal to the reasoning chunk before it, through the host mapper (T10)', () => {
+		const strip = (turn: LiveTurn | undefined) => turn?.entries.map((e) => [e.source, e.text]);
+		for (const agentId of ['codex', 'grok', 'opencode', 'kilo', 'omp', 'antigravity']) {
+			const mapper = createTurnEventMapper({ agentId, now: () => 1 });
+			const parsed: ParsedEvent[] = [
+				{ type: 'text', text: '\n\n', isPartial: true, isReasoning: true },
+				{ type: 'text', text: '\n\n', isPartial: true },
+				{ type: 'text', text: 'Done.', isPartial: true },
+			];
+			const events = parsed.flatMap((event) =>
+				mapper.map(event).map((mapped) => ({ ...mapped, at: 1 }) as TurnEvent)
+			);
+			const expected = [
+				['thinking', '\n\n'],
+				['stdout', '\n\nDone.'],
+			];
+			expect(strip(foldAll(events))).toEqual(expected);
+			expect(strip(foldAll(coalesceTurnEvents(events)))).toEqual(expected);
+		}
+	});
+
+	it('draws each Claude partial once, so an older window that knows no flag never draws it twice (T10)', () => {
+		const mapper = createTurnEventMapper({ agentId: 'claude-code', now: () => 1 });
+		const parsed: ParsedEvent[] = [
+			{ type: 'text', text: 'Looking.', isPartial: true },
+			{ type: 'result', text: 'Looking.' },
+		];
+		const events = parsed.flatMap((event) => mapper.map(event));
+		expect(events).toEqual([
+			// Flagged as answer text too (R58): a client still draws it as thinking only.
+			{ kind: 'thinking', text: 'Looking.', answer: true },
+			{ kind: 'text', text: 'Looking.' },
+		]);
+	});
+
 	it('appends the user entry and marks the turn busy on start', () => {
 		const entry = { id: 'u1', timestamp: 1, source: 'user', text: 'hi' };
 		const turn = foldAll([
@@ -104,7 +190,10 @@ describe('foldLiveTurn', () => {
 			{ kind: 'error', at: 3, error: { message: 'boom' } as never },
 		]);
 		expect(turn?.usage).toEqual({ inputTokens: 5 });
-		expect(turn?.entries).toEqual([{ id: 'id-1', timestamp: 3, source: 'error', text: 'boom' }]);
+		// The structured error rides along, as on a local error entry (the card's details).
+		expect(turn?.entries).toEqual([
+			{ id: 'id-1', timestamp: 3, source: 'error', text: 'boom', agentError: { message: 'boom' } },
+		]);
 	});
 
 	it('ends on outcome and on gap', () => {

@@ -8,9 +8,9 @@
  *    its host started (through its service when it has one). A connected remote gets its service
  *    registered once per app run, so the host comes back after a reboot. Both happen whether or
  *    not automatic moves are on.
- * 2. **Install where it is needed.** With automatic moves on, a remote with no `maestro-cli` that
- *    has at least one SSH agent gets this app's CLI, its service, and a running host. A remote with
- *    no SSH agent is left alone: nothing asked for a host there.
+ * 2. **Install where it is needed.** With automatic moves on, a remote with no `maestro-cli`, or
+ *    one too old to run a host, that has at least one SSH agent gets this app's CLI, its service,
+ *    and a running host. A remote with no SSH agent is left alone: nothing asked for a host there.
  * 3. **Move SSH agents onto their host**, with automatic moves on, once every sanity check passes:
  *    - the record may be lifted at all (`runLift()`'s own refusals, through a dry run);
  *    - no turn is running (else `waiting`, and it moves on a later pass);
@@ -347,6 +347,15 @@ export class AutoFederationCoordinator {
 			const ready = await this.ensureHost(remote, agents.length > 0 && autoMove);
 			for (const agent of agents) {
 				if (this.stopped) return;
+				// The person moved it back from its host: leave it an SSH agent.
+				if (agent.hostedOptOut === true) {
+					this.setAgent(agent, remote.id, {
+						state: 'manual',
+						reason: 'You moved it back from its host, so automatic moves leave it here.',
+						fix: 'Right-click the agent > Move to Host to host it again.',
+					});
+					continue;
+				}
 				// Read again before each move: it may have been switched off while setup ran.
 				if (!autoMove || !this.deps.isAutoMoveEnabled()) {
 					this.setAgent(agent, remote.id, {
@@ -402,13 +411,21 @@ export class AutoFederationCoordinator {
 
 		// The CLI is there but no host runs: start it (A2), whatever automatic moves say.
 		const startWanted = connection === 'host-down';
-		// No CLI: install only where an SSH agent wants a host and automatic moves are on.
-		const installWanted = connection === 'not-installed' && hostWanted;
+		// No CLI, or one too old to run a host: install this app's only where an SSH agent wants a
+		// host and automatic moves are on. An outdated CLI runs no host this app can reach, so the
+		// upgrade interrupts nothing.
+		const needsInstall = connection === 'not-installed' || connection === 'outdated';
+		const installWanted = needsInstall && hostWanted;
 		if (!startWanted && !installWanted) {
 			if (connection === 'not-installed') {
 				this.setRemote(remote, {
 					state: 'waiting',
 					reason: 'No Maestro host here, and no SSH agent that needs one.',
+				});
+			} else if (connection === 'outdated') {
+				this.setRemote(remote, {
+					state: 'waiting',
+					reason: 'The maestro-cli here is too old to run a host, and no SSH agent needs one.',
 				});
 			} else if (
 				connection === undefined ||

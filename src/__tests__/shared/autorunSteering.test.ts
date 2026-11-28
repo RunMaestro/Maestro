@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	formatSteeringNotesBlock,
+	joinAutoRunPromptBlocks,
 	normalizeSteeringNoteText,
 	MAX_STEERING_NOTE_LENGTH,
 	STEERING_BLOCK_START,
@@ -66,5 +67,28 @@ describe('formatSteeringNotesBlock', () => {
 	it('leaves template syntax in a note alone - it is the operator literal text', () => {
 		const block = formatSteeringNotesBlock([note({ text: 'check {{GIT_BRANCH}}' })]);
 		expect(block).toContain('check {{GIT_BRANCH}}');
+	});
+
+	it('tells a document run to use the halt marker for the task at hand', () => {
+		const block = formatSteeringNotesBlock([note()]);
+		expect(block).toContain('Apply it to the task you are about to do');
+		expect(block).toContain('use the halt marker described below');
+		expect(block).not.toContain('deadlock');
+	});
+
+	it('tells a goal run to use the deadlock marker for the iteration at hand', () => {
+		const block = formatSteeringNotesBlock([note()], 'goal');
+		expect(block.startsWith(STEERING_BLOCK_START)).toBe(true);
+		expect(block).toContain('Apply it to the iteration you are about to do');
+		expect(block).toContain('use the deadlock marker described');
+		expect(block).not.toContain('halt marker');
+		expect(block).toContain('Begin your synopsis with `[steered]`');
+	});
+});
+
+describe('joinAutoRunPromptBlocks', () => {
+	it('joins the blocks in order and drops empty ones', () => {
+		expect(joinAutoRunPromptBlocks(['notes', '', 'prompt'])).toBe('notes\n\n---\n\nprompt');
+		expect(joinAutoRunPromptBlocks(['', '', 'prompt'])).toBe('prompt');
 	});
 });

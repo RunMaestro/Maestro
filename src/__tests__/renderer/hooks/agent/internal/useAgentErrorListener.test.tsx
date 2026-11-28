@@ -17,7 +17,9 @@ import {
 	retryNow,
 	getRetryEntry,
 	getOutage,
+	raiseAgentError,
 } from '../../../../../renderer/stores/retryStore';
+import { AGENT_MODES, createModeSession } from '../../../../helpers';
 import { useAgentStore } from '../../../../../renderer/stores/agentStore';
 import { registerContextCompactionSpawner } from '../../../../../renderer/services/contextCompaction';
 import { useAuthOutageStore } from '../../../../../renderer/stores/authOutageStore';
@@ -691,6 +693,73 @@ describe('useAgentErrorListener', () => {
 		cancelRetry('sess-1', 'tab-1'); // clear the pending timer
 	});
 
+	// Parity R44: a hosted turn that ended on a provider error while this machine was away is
+	// raised here (`raiseAgentError()`), never scheduled behind the listener's back: its retry gets
+	// the same card anchor (countdown, Try now, Stop) as a local or SSH turn's process error.
+	it.each(AGENT_MODES)('%s: a provider error retry is drawn under its card (R44)', (mode) => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createModeSession(mode, { id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+		seedSnapshot('sess-1', 'tab-1');
+
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		if (mode === 'hosted') raiseAgentError('sess-1-ai-tab-1', overloadError as any);
+		else handler!('sess-1-ai-tab-1', overloadError);
+
+		const updated = useSessionStore.getState().sessions[0];
+		const entry = getRetryEntry('sess-1', 'tab-1');
+		const markers = updated.aiTabs[0].logs.filter((l) => l.retryOutageId);
+		expect({
+			strategy: entry?.strategy,
+			attempt: entry?.attempt,
+			markers: markers.map((m) => ({
+				source: m.source,
+				outage: m.retryOutageId === entry?.outageId,
+			})),
+			state: updated.state,
+		}).toEqual({
+			strategy: 'availability',
+			attempt: 0,
+			markers: [{ source: 'system', outage: true }],
+			state: expect.not.stringMatching(/^error$/),
+		});
+		cancelRetry('sess-1', 'tab-1');
+	});
+
+	it('hosted: a provider error that replaces the lost link retry starts its own card at attempt 0 (R44)', () => {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createModeSession('hosted', {
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		seedSnapshot('sess-1', 'tab-1');
+		renderHook(() => useAgentErrorListener(makeDeps()));
+		// The lost link's retry, a few attempts in.
+		scheduleRetryForError('sess-1', 'tab-1', {
+			...overloadError,
+			type: 'network_error',
+			message: 'Not connected to peer box (lost).',
+		} as any);
+		const link = getRetryEntry('sess-1', 'tab-1')!;
+		useRetryStore.getState().setEntry(link.key, { ...link, attempt: 4 });
+
+		raiseAgentError('sess-1-ai-tab-1', overloadError as any, {
+			freshOutage: { settledByHost: true, hostRetry: 'here' },
+		});
+
+		const entry = getRetryEntry('sess-1', 'tab-1')!;
+		expect(entry.outageId).not.toBe(link.outageId);
+		expect(entry.attempt).toBe(0);
+		const markers = useSessionStore
+			.getState()
+			.sessions[0].aiTabs[0].logs.filter((l) => l.retryOutageId === entry.outageId);
+		expect(markers).toHaveLength(1);
+		expect(getOutage(link.outageId)).toMatchObject({ status: 'recovered', settledByHost: true });
+		cancelRetry('sess-1', 'tab-1');
+	});
+
 	it('collapses a continued outage into the single existing marker (no new entries)', () => {
 		const tab = createMockAITab({ id: 'tab-1' });
 		const session = createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1' });
@@ -1261,5 +1330,67 @@ describe('useAgentErrorListener - SSH transport errors', () => {
 
 		expect(check).not.toHaveBeenCalled();
 		expect(useModalStore.getState().modals.get('agentError')?.open ?? false).toBe(false);
+	});
+});
+
+describe('Auto Run history hint for agent_not_installed', () => {
+	function runBatchError(error: any) {
+		const tab = createMockAITab({ id: 'tab-1' });
+		const session = createMockSession({ id: 'sess-batch', aiTabs: [tab], activeTabId: 'tab-1' });
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const addHistoryEntry = vi.fn();
+		const deps = {
+			...makeDeps(),
+			getBatchStateRef: {
+				current: () => ({
+					isRunning: true,
+					errorPaused: false,
+					documents: ['task.md'],
+					currentDocumentIndex: 0,
+				}),
+			},
+			pauseBatchOnErrorRef: { current: vi.fn() },
+			addHistoryEntryRef: { current: addHistoryEntry },
+		};
+
+		renderHook(() => useAgentErrorListener(deps as any));
+		handler!('sess-batch-ai-tab-1', error);
+		return addHistoryEntry;
+	}
+
+	it('tells the user to restore the runtime rather than reinstall the CLI when runtime-missing', () => {
+		const addHistoryEntry = runBatchError({
+			...baseError,
+			type: 'agent_not_installed',
+			message: 'Codex CLI is installed, but the runtime it needs (Node.js) is not on PATH.',
+			raw: {
+				exitCode: 127,
+				stderr: 'env: node: No such file or directory',
+			},
+		});
+
+		expect(addHistoryEntry).toHaveBeenCalledTimes(1);
+		const fullResponse = addHistoryEntry.mock.calls[0][0].fullResponse as string;
+		expect(fullResponse).toContain('Restore Node.js to PATH');
+		expect(fullResponse).not.toContain('Install the provider CLI');
+	});
+
+	it('tells the user to install the provider CLI when the binary itself is not found', () => {
+		const addHistoryEntry = runBatchError({
+			...baseError,
+			type: 'agent_not_installed',
+			message: 'Codex CLI not installed.',
+			raw: {
+				exitCode: 127,
+				stderr: 'zsh: command not found: codex',
+			},
+		});
+
+		expect(addHistoryEntry).toHaveBeenCalledTimes(1);
+		const fullResponse = addHistoryEntry.mock.calls[0][0].fullResponse as string;
+		expect(fullResponse).toContain(
+			'Install the provider CLI (open the error for the install command), then resume'
+		);
 	});
 });

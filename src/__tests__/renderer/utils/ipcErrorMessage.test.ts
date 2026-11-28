@@ -1,5 +1,47 @@
 import { describe, expect, it } from 'vitest';
 import { ipcErrorMessage } from '../../../renderer/utils/ipcErrorMessage';
+import { ipcErrorMessage as sharedIpcErrorMessage } from '../../../shared/serializeError';
+
+describe('shared and renderer IPC message contract', () => {
+	it.each([
+		[
+			new Error(
+				"Error invoking remote method 'git:push': Error: Push failed: Error: remote rejected"
+			),
+			'Push failed: Error: remote rejected',
+		],
+		[
+			new Error(
+				"Error invoking remote method 'fs:writeFile': TypeError: Save failed: invalid target"
+			),
+			'Save failed: invalid target',
+		],
+		[
+			new Error("Error invoking remote method 'x': EACCES: permission denied"),
+			'EACCES: permission denied',
+		],
+		[new Error('Error: written that way'), 'Error: written that way'],
+		[new Error('literal: Error: keep this context'), 'literal: Error: keep this context'],
+		['plain text', 'plain text'],
+		[undefined, 'undefined'],
+		[new Error(''), 'Error'],
+	])('keeps the accepted whole handler message: %j', (error, expected) => {
+		expect(sharedIpcErrorMessage(error)).toBe(expected);
+		expect(ipcErrorMessage(error)).toBe(expected);
+	});
+	it('supports an explicit shared fallback without discarding a usable handler message', () => {
+		expect(sharedIpcErrorMessage(undefined, 'Could not save.')).toBe('Could not save.');
+		expect(sharedIpcErrorMessage(new Error(''), 'Could not save.')).toBe('Could not save.');
+		expect(
+			sharedIpcErrorMessage(
+				new Error(
+					"Error invoking remote method 'fs:writeFile': TypeError: Write failed: Error: disk full"
+				),
+				'Could not save.'
+			)
+		).toBe('Write failed: Error: disk full');
+	});
+});
 
 describe('ipcErrorMessage', () => {
 	it('drops the wrapper Electron puts around a throw from a main-process handler', () => {

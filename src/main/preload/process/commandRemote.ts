@@ -2,6 +2,7 @@ import { ipcRenderer } from 'electron';
 import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
 import type { InterruptTurnResult } from '../../../shared/turnInterrupt';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
+import type { RemoteAskerContext } from '../../../shared/crossAgentTypes';
 
 /**
  * Helper to log via the main process logger.
@@ -102,15 +103,17 @@ export function createCommandRemoteApi() {
 		 * the command was handed to the spawn/queue logic - NOT that it finished.
 		 * `reason` names the branch that dropped it (session-not-found,
 		 * tab-not-found, session-busy, unsupported-agent, ...) so the CLI can say
-		 * why instead of reporting a meaningless `success: true`.
+		 * why instead of reporting a meaningless `success: true`. `queued` says an accepted
+		 * command waits in a hosted agent's host queue instead of running now.
 		 */
 		sendRemoteCommandReceipt: (
 			receiptChannel: string,
 			accepted: boolean,
-			reason?: string
+			reason?: string,
+			queued?: { itemId: string; position: number }
 		): void => {
-			log('Sending remote command receipt', { receiptChannel, accepted, reason });
-			ipcRenderer.send(receiptChannel, { accepted, reason });
+			log('Sending remote command receipt', { receiptChannel, accepted, reason, queued });
+			ipcRenderer.send(receiptChannel, { accepted, reason, ...(queued ? { queued } : {}) });
 		},
 
 		/**
@@ -128,7 +131,9 @@ export function createCommandRemoteApi() {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
-				},
+					sideQuestion?: boolean;
+					targetTabId?: string;
+				} & RemoteAskerContext,
 				responseChannel: string
 			) => void
 		): (() => void) => {
@@ -141,7 +146,9 @@ export function createCommandRemoteApi() {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
-				},
+					sideQuestion?: boolean;
+					targetTabId?: string;
+				} & RemoteAskerContext,
 				responseChannel: string
 			) => {
 				log('Received remote:crossAgentAsk IPC', {

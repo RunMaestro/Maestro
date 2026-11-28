@@ -9,7 +9,11 @@ import { logger } from '../../../utils/logger';
 import { getSshRemoteById } from '../../../stores';
 import { createSafeSend } from '../../../utils/safe-send';
 import { createIpcHandler } from '../../../utils/ipcHandler';
-import { WINDOWS_LOCKED_SYSTEM_FILES, ignoreDotfilesUnder } from '../../../utils/watcher-ignore';
+import {
+	SHALLOW_WATCH_OPTIONS,
+	WINDOWS_LOCKED_SYSTEM_FILES,
+	ignoreDotfilesUnder,
+} from '../../../utils/watcher-ignore';
 import { readDirRemote } from '../../../utils/remote-fs';
 import { captureException } from '../../../utils/sentry';
 import { markStaleForDeletedWorktreeUsingStore } from '../../../agent-run/worktree-stale';
@@ -423,6 +427,9 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 						persistent: true,
 						ignoreInitial: true,
 						depth: 1,
+						// Shallow by mechanism, not just by filter: the Worktree
+						// Directory holds every worktree's builds and node_modules.
+						...SHALLOW_WATCH_OPTIONS,
 					});
 
 					// Handler for directory additions

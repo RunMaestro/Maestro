@@ -1,3 +1,4 @@
+import type { QueuedTurnEdit } from '../../../../shared/maestro-lib/client/types';
 import type { TranslationReport } from '../../../../shared/maestro-lib/translation/types';
 import type {
 	NotificationInboxRequest,
@@ -30,9 +31,12 @@ import type {
 	AddGroupChatParticipantResult,
 	CueSubscriptionInfo,
 	CueActivityEntry,
-	UsageDashboardData,
 	AchievementData,
+	PickBrowserElementRequest,
+	PickBrowserElementResult,
+	BrowserViewportCallback,
 	CreateSessionConfig,
+	ExecuteCommandOutcome,
 	DirectorNotesSynopsisResult,
 	WebPlaybook,
 	WebPlaybookDocument,
@@ -53,6 +57,8 @@ import type {
 	MessagePinCommandCallback,
 	TabContextOpCallback,
 	AutoRunSteeringCommandCallback,
+	DiffReviewCommandCallback,
+	DesignPickCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	OpenFileTabOptions,
@@ -144,7 +150,7 @@ export interface MessageHandlerCallbacks {
 		mentionRouting?: MentionRouting,
 		requireDeliveryReceipt?: boolean,
 		pianolaDispatchId?: string
-	) => Promise<boolean>;
+	) => Promise<ExecuteCommandOutcome>;
 	switchMode: (
 		sessionId: string,
 		mode: 'ai' | 'terminal',
@@ -152,7 +158,11 @@ export interface MessageHandlerCallbacks {
 	) => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string, focus?: boolean) => Promise<boolean>;
 	selectTab: (sessionId: string, tabId: string) => Promise<boolean>;
-	newTab: (sessionId: string, background?: boolean) => Promise<{ tabId: string } | null>;
+	newTab: (
+		sessionId: string,
+		background?: boolean,
+		tabId?: string
+	) => Promise<{ tabId: string } | null>;
 	closeTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	renameTab: (
 		sessionId: string,
@@ -168,6 +178,8 @@ export interface MessageHandlerCallbacks {
 	messagePinCommand: MessagePinCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
+	/** `maestro-cli diff-review` - list, add, remove, clear, send Git Diff review comments. */
+	diffReviewCommand: DiffReviewCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
 	windowCommand: WindowCommandCallback;
 	/** `maestro-cli throughput-gauge` - show, hide, toggle, set, reset-peak, status. */
@@ -186,6 +198,12 @@ export interface MessageHandlerCallbacks {
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
+	/** Design Mode by selector or region (`browser-pick`). See `PickBrowserElementCallback`. */
+	pickBrowserElement?: (request: PickBrowserElementRequest) => Promise<PickBrowserElementResult>;
+	/** `maestro-cli browser-viewport` - set or read a browser tab's viewport preset. */
+	browserViewport?: BrowserViewportCallback;
+	/** `maestro-cli browser-picks` - list the Design Mode chips in a composer, or remove one. */
+	designPickCommand?: DesignPickCommandCallback;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
 	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
@@ -240,13 +258,17 @@ export interface MessageHandlerCallbacks {
 		held?: boolean,
 		mentionRouting?: MentionRouting,
 		dispatchCallback?: boolean,
-		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl
+		control?: import('../../../../shared/pianola/pianola-dispatch').PianolaQueueControl,
+		turnOverrides?: import('../../../../shared/maestro-lib/client/types').TurnOverrides,
+		agentText?: import('../../../../shared/maestro-lib/client/types').TurnAgentText,
+		/** The id a Federation client named for the message's entry (`TurnInput.entryId`). */
+		entryId?: string
 	) => Promise<EnqueueCommandResult>;
 	confirmQueueItem?: import('../../../stores/queue-item-receipt').ConfirmQueueItem;
 	releaseQueueItem?: import('../../../stores/queue-item-receipt').ReleaseQueueItem;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
-		queues: unknown[];
+		queues: import('../../types').QueueSessionSnapshot[];
 		error?: string;
 	}>;
 	removeQueueItem: (
@@ -266,6 +288,21 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		itemId: string
 	) => Promise<{ success: boolean; merged: boolean; mergedIntoId?: string; error?: string }>;
+	editQueueItem: (
+		sessionId: string,
+		itemId: string,
+		edit: QueuedTurnEdit
+	) => Promise<{ success: boolean; found: boolean; error?: string }>;
+	moveQueueItem: (
+		sessionId: string,
+		itemId: string,
+		toIndex: number,
+		tabId?: string
+	) => Promise<{ success: boolean; moved: boolean; error?: string }>;
+	sendQueueItemNow: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; sent: boolean; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
@@ -413,6 +450,7 @@ export interface MessageHandlerCallbacks {
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
 	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
+	setGroupChatUnread: (chatId: string, unread: boolean) => Promise<boolean>;
 	addGroupChatParticipant: (
 		chatId: string,
 		agentId: string
@@ -451,7 +489,6 @@ export interface MessageHandlerCallbacks {
 	exportCueBundle: (request: CueBundleExportRequest) => Promise<CueBundleExportOutcome>;
 	/** Same function as the Export Agent and Import Agent modals; agents land in the running app. */
 	importCueBundle: (request: CueBundleImportRequest) => Promise<CueBundleImportOutcome>;
-	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
 	generateDirectorNotesSynopsis: (
 		lookbackDays: number,

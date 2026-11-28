@@ -7,6 +7,18 @@ import { parseWorkspaceMetadata } from './copilot-session-storage';
 import Database from 'better-sqlite3';
 import { getSessionStorage } from '../agents/session-storage';
 import { OpenCodeSessionStorage } from './opencode-session-storage';
+import {
+	firstCommandCwd,
+	indexedWorkspaces,
+	readConversation,
+	readLastConversationFolders,
+	readSummaries,
+} from './antigravity-session-storage';
+import {
+	ANTIGRAVITY_CONVERSATION_ID,
+	antigravityConversationDbPath,
+	antigravityHome,
+} from '../parsers/antigravity-step-store';
 import type { MemoryRoot, MemorySource } from '../../shared/pianola/memory';
 
 export const HISTORY_PROVIDERS = [
@@ -17,6 +29,7 @@ export const HISTORY_PROVIDERS = [
 	'copilot-cli',
 	'omp',
 	'grok',
+	'antigravity',
 ] as const;
 export const sourceHash = (value: string): string =>
 	crypto.createHash('sha256').update(value).digest('hex');
@@ -29,6 +42,7 @@ export function defaultHistoryRoots(home = os.homedir()): MemoryRoot[] {
 		'.copilot',
 		'.omp',
 		'.grok',
+		path.relative(os.homedir(), antigravityHome()),
 	];
 	return HISTORY_PROVIDERS.map((provider, i) => ({
 		provider,
@@ -449,6 +463,45 @@ export async function* discoverHistoricalSources(
 		}
 		return;
 	}
+	if (root.provider === 'antigravity') {
+		// agy keeps SQLite stores, not JSONL: one source per conversation store the
+		// summary index lists. A missing index lists nothing. Subagent rows are
+		// left out by readSummaries (agy's internal workers, not the user's turns).
+		if (policy.excludesPath(path.join(account, 'conversation_summaries.db'))) return;
+		const lastFolders = readLastConversationFolders(account);
+		for (const row of readSummaries(account)) {
+			if (!ANTIGRAVITY_CONVERSATION_ID.test(row.conversation_id)) continue;
+			const file = antigravityConversationDbPath(row.conversation_id, account);
+			if (policy.excludesPath(file)) continue;
+			const exists = await fs.stat(file).then(
+				() => true,
+				() => false
+			);
+			if (!exists) continue; // indexed, but the store is gone
+			try {
+				const workspaces = indexedWorkspaces(row, lastFolders);
+				const scanned = workspaces.length ? null : firstCommandCwd(row.conversation_id, account);
+				const candidates = scanned ? [scanned] : workspaces;
+				// A row naming several folders is skipped when ANY of them is excluded.
+				let excluded = false;
+				for (const workspace of candidates) excluded ||= await policy.excludesProject(workspace);
+				if (excluded) continue;
+				if (!candidates[0]) throw new Error(`Cannot attribute historical project: ${file}`);
+				// The store is WAL-mode, so its mtime lags a live run; the index row
+				// moves with every step.
+				const item = await ref(
+					file,
+					row.conversation_id,
+					candidates[0],
+					sourceHash(JSON.stringify([row.last_modified_time, row.step_count]))
+				);
+				if (item) yield item;
+			} catch (error) {
+				yield await failure(file, error);
+			}
+		}
+		return;
+	}
 	const subtree =
 		root.provider === 'claude-code'
 			? 'projects'
@@ -537,6 +590,23 @@ export async function readHistoricalWindow(
 ) {
 	if ((await policy.excludesSource(source)) || !authorize())
 		throw new Error('Historical source is excluded');
+	if (source.provider === 'antigravity') {
+		// A step log, not JSONL: the cursor counts messages, and agy only appends steps.
+		if (!ANTIGRAVITY_CONVERSATION_ID.test(source.sessionId))
+			throw new Error('Historical source is not an Antigravity conversation');
+		// Read exactly the store the exclusion check above was run against.
+		if (
+			path.resolve(antigravityConversationDbPath(source.sessionId, source.root)) !==
+			path.resolve(source.filePath)
+		)
+			throw new Error('Historical source changed; rediscover before reading');
+		const parsed = readConversation(source.sessionId, source.root);
+		if (!parsed) throw new Error('Historical source is unreadable: ' + source.filePath);
+		if (!authorize()) throw new Error('Historical source is excluded');
+		const messages = parsed.messages.slice(cursor, cursor + 64);
+		const next = cursor + messages.length;
+		return { messages, cursor: next, complete: next >= parsed.messages.length };
+	}
 	const storage =
 		source.provider === 'opencode'
 			? new OpenCodeSessionStorage(source.root)

@@ -15,6 +15,7 @@ import { logger } from '../host';
 import { resolveSshPath } from './ssh-path';
 import { buildSshOptionArgs } from '../../sshOptions';
 import { parseDataUrl, buildImagePromptPrefix } from './image-refs';
+import { stripBlankEnvVars } from '../../agentEnvironment';
 import type { PromptDelivery, PromptFileDestination } from './prompt-delivery';
 
 /** Select in the supported remote Linux namespace, never the local temp/home directory. */
@@ -43,6 +44,7 @@ const MAESTRO_INSTALL_PATH_LINE = 'export PATH="$HOME/.maestro/bin:$PATH"';
 const BASE_SSH_PATH_DIRS = [
 	'$HOME/.local/bin',
 	'$HOME/.opencode/bin',
+	'$HOME/.kilo/bin',
 	'$HOME/.claude/local',
 	'$HOME/bin',
 	'/usr/local/bin',
@@ -618,6 +620,24 @@ export async function buildSshCommandWithStdin(
 }
 
 /**
+ * The remote and env for a one-shot command that runs as one agent (a discovery
+ * probe): the agent's vars over the remote's, and a blank agent value cancels
+ * the remote's value instead of falling back to it. {@link buildSshCommand}
+ * merges `config.remoteEnv` under `env`, so the config returned carries none:
+ * the layering is done once, here.
+ */
+export function agentEnvOverRemote(
+	config: SshRemoteConfig,
+	agentEnv: Record<string, string | undefined> = {}
+): { config: SshRemoteConfig; env: Record<string, string> } {
+	const layered: Record<string, string> = { ...(config.remoteEnv || {}) };
+	for (const [key, value] of Object.entries(agentEnv)) {
+		if (value !== undefined) layered[key] = value;
+	}
+	return { config: { ...config, remoteEnv: {} }, env: stripBlankEnvVars(layered) };
+}
+
+/**
  * Build SSH command and arguments for remote execution.
  *
  * This function constructs the complete SSH invocation to execute
@@ -761,6 +781,7 @@ export async function buildSshCommand(
 	// We prepend common binary locations to PATH:
 	// - ~/.local/bin: Claude Code, pip --user installs
 	// - ~/.opencode/bin: OpenCode installer default location
+	// - ~/.kilo/bin: Kilo installer default location
 	// - ~/.claude/local: Claude Code local-install layout (auto-update bundle)
 	// - ~/bin: User scripts
 	// - /usr/local/bin: Homebrew on Intel Mac, manual installs
@@ -783,7 +804,23 @@ export async function buildSshCommand(
 	const wrappedCommand = wrapRemoteCommandWithPath(remoteCommand);
 	args.push(wrappedCommand);
 
-	// Log the exact command being built - use info level so it appears in system logs
+	// Log the command being built - use info level so it appears in system logs.
+	// Env values are masked: an agent's custom vars can carry a credential
+	// (ANTHROPIC_API_KEY), and the log is kept in memory, on the console, and on disk.
+	const loggedRemoteCommand =
+		Object.keys(mergedEnv).length > 0
+			? buildRemoteCommand({
+					command: remoteOptions.command,
+					args: remoteOptions.args,
+					cwd: effectiveCwd,
+					env: Object.fromEntries(Object.keys(mergedEnv).map((key) => [key, '***'])),
+				})
+			: remoteCommand;
+	const loggedWrappedCommand =
+		loggedRemoteCommand === remoteCommand
+			? wrappedCommand
+			: wrapRemoteCommandWithPath(loggedRemoteCommand);
+	const loggedArgs = [...args.slice(0, -1), loggedWrappedCommand];
 	logger.info('SSH command built for remote execution', '[ssh-command-builder]', {
 		host: config.host,
 		username: config.username || '(using SSH config/system default)',
@@ -794,12 +831,14 @@ export async function buildSshCommand(
 		// outlive the session that wrote them, so name them in the log rather than
 		// leaving them buried in the argv.
 		sshOptionOverrides: config.sshOptions,
-		remoteCommand,
-		wrappedCommand,
+		remoteCommand: loggedRemoteCommand,
+		wrappedCommand: loggedWrappedCommand,
+		envKeys: Object.keys(mergedEnv),
 		sshPath,
+		sshArgs: args.slice(0, -1),
 		sshArgsCount: args.length,
 		// Full command for debugging - escape quotes for readability
-		fullCommand: `${sshPath} ${args.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`,
+		fullCommand: `${sshPath} ${loggedArgs.map((a) => (a.includes(' ') ? `"${a}"` : a)).join(' ')}`,
 	});
 
 	return {

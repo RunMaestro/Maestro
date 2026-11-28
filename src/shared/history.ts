@@ -19,6 +19,7 @@
 
 import type { HistoryEntry, HistoryEntryType } from './types';
 import { stripJsonBom } from './jsonUtils';
+import { truncateAtWordBoundary } from './formatters';
 
 /**
  * Every history entry type, in the order filter UIs display them.
@@ -101,6 +102,97 @@ export const HISTORY_VERSION = 1;
  * Settings is the value every writer falls back to.
  */
 export const MAX_ENTRIES_PER_SESSION = 10000;
+
+/**
+ * Most characters of a history summary a list row will lay out. The row clamps
+ * to three lines, so this is far more than it can show.
+ *
+ * The cap exists because a summary is not always short: a failed PR push once
+ * wrote its whole 4.4 MB pre-push log into `summary`, and a list row that
+ * reached it (a Director's Notes search moved it into view) froze the renderer
+ * laying out 72,000 lines behind a three-line clamp.
+ */
+export const MAX_HISTORY_SUMMARY_PREVIEW_CHARS = 1000;
+
+/**
+ * The part of a summary a list row renders. Returns the input unchanged when it
+ * fits, so the common case allocates nothing.
+ */
+export function historySummaryPreview(summary: string): string {
+	if (summary.length <= MAX_HISTORY_SUMMARY_PREVIEW_CHARS) return summary;
+	return `${summary.slice(0, MAX_HISTORY_SUMMARY_PREVIEW_CHARS)}…`;
+}
+
+/** Longest one-line summary a producer should write from free-form text. */
+export const MAX_HISTORY_SUMMARY_LINE_CHARS = 200;
+
+/**
+ * Reduce free-form text (an error, a command's output) to the one line a
+ * history `summary` should carry. Keep the full text in `fullResponse`.
+ */
+export function historySummaryLine(
+	text: string,
+	maxLength: number = MAX_HISTORY_SUMMARY_LINE_CHARS
+): string {
+	const firstLine = text.trimStart().split('\n', 1)[0].trimEnd();
+	return truncateAtWordBoundary(firstLine, maxLength);
+}
+
+/**
+ * Most characters a stored `summary` may hold. Real summaries run to a few
+ * thousand; anything past this is a producer dumping a log into a one-line field.
+ */
+export const MAX_HISTORY_SUMMARY_STORED_CHARS = 10_000;
+
+/** Most characters a stored `fullResponse` may hold (real ones top out near 25 KB). */
+export const MAX_HISTORY_FULL_RESPONSE_STORED_CHARS = 250_000;
+
+/** Room kept under the cap for the truncation notice, so a clamped value is itself within the cap. */
+const TRUNCATION_NOTICE_RESERVE = 48;
+
+function clampStoredText(text: string, max: number): string {
+	// Within the cap (a value clamped before included): leave it alone, so a
+	// second clamp never rewrites the first one's removed-character count.
+	if (text.length <= max) return text;
+	let end = max - TRUNCATION_NOTICE_RESERVE;
+	// Do not cut a surrogate pair in half.
+	const code = text.charCodeAt(end - 1);
+	if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+	return `${text.slice(0, end)}\n[truncated ${text.length - end} characters]`;
+}
+
+/**
+ * The entry as it may be stored. Returns the SAME object when nothing is over
+ * a cap, so the common case allocates nothing.
+ *
+ * Every write funnels through {@link serializeHistoryEntryLine}, so this is the
+ * one guard that covers the app, the CLI, and a rotation rewriting old lines
+ * (which also heals an oversized entry already on disk the next time its file
+ * is rotated). A failed PR push once put its 4.7 MB pre-push log in both fields
+ * and froze the History list for minutes.
+ */
+export function clampHistoryEntry(entry: HistoryEntry): HistoryEntry {
+	const summaryOver =
+		typeof entry.summary === 'string' && entry.summary.length > MAX_HISTORY_SUMMARY_STORED_CHARS;
+	const responseOver =
+		typeof entry.fullResponse === 'string' &&
+		entry.fullResponse.length > MAX_HISTORY_FULL_RESPONSE_STORED_CHARS;
+	if (!summaryOver && !responseOver) return entry;
+	return {
+		...entry,
+		...(summaryOver
+			? { summary: clampStoredText(entry.summary, MAX_HISTORY_SUMMARY_STORED_CHARS) }
+			: {}),
+		...(responseOver
+			? {
+					fullResponse: clampStoredText(
+						entry.fullResponse as string,
+						MAX_HISTORY_FULL_RESPONSE_STORED_CHARS
+					),
+				}
+			: {}),
+	};
+}
 
 /**
  * Session ID used for history entries that don't have an associated session.
@@ -258,6 +350,24 @@ export function mergeEntriesById(base: HistoryEntry[], incoming: HistoryEntry[])
 /** The host key of an entry with no `hostname` (one written on this machine). */
 export const LOCAL_HOST_AGG_KEY = '__local__';
 
+/**
+ * Entries as this machine reads them: one stamped with this machine's own `hostname` (a hosted
+ * agent's turn sent from here, which its host records with the sender's name) reads as written
+ * here, with no `hostname`, as a local or SSH agent's own entry does. An entry another machine
+ * sent keeps its name, as a shared History entry does. Same array back when nothing changed.
+ */
+export function withOwnHostAsLocal<T extends Pick<HistoryEntry, 'hostname'>>(
+	entries: T[],
+	ownHostname: string | undefined
+): T[] {
+	if (!ownHostname || !entries.some((entry) => entry.hostname === ownHostname)) return entries;
+	return entries.map((entry) => {
+		if (entry.hostname !== ownHostname) return entry;
+		const { hostname: _own, ...rest } = entry;
+		return rest as T;
+	});
+}
+
 /** The oldest timestamp a lookback of `lookbackHours` keeps, or 0 for no lookback. */
 export function historyLookbackCutoff(
 	lookbackHours: number | null | undefined,
@@ -325,7 +435,7 @@ export const HISTORY_LEGACY_JSON_EXT = '.json';
  * recover from a torn write by dropping a single line.
  */
 export function serializeHistoryEntryLine(entry: HistoryEntry): string {
-	return `${JSON.stringify(entry)}\n`;
+	return `${JSON.stringify(clampHistoryEntry(entry))}\n`;
 }
 
 /** Result of parsing a JSONL history file. */

@@ -6,9 +6,9 @@ import {
 	Bot,
 	Bookmark,
 	AlertCircle,
-	Server,
 	FolderTree,
 	ChevronRight,
+	Crown,
 	Pin,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
@@ -18,8 +18,7 @@ import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
-import { LiftedPointerChip } from './SessionList/LiftedPointerChip';
-import { SessionFederationBadge } from './SessionList/SessionFederationBadge';
+import { AgentModePill } from './SessionList/AgentModePill';
 import { AutoRunErrorBadge } from './SessionList/AutoRunErrorBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -29,11 +28,12 @@ import { useAutoResumeEntry } from '../stores/autoRunResumeStore';
 import { useSessionIsBeingConsulted } from '../stores/crossAgentInFlightStore';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { COLORBLIND_STATUS_COLORS } from '../constants/colorblindPalettes';
-import { getConnectingColor } from '../utils/theme';
+import { activeStatusHalo, getConnectingColor } from '../utils/theme';
 import { isImeComposing } from '../utils/ime';
 import { hasUnreadVisibleTab } from '../utils/tabHelpers';
 import { abbreviateGroupName } from '../../shared/formatters';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { inlineErrorText } from '../../shared/failureScreen';
 import type { Session, Group, Theme } from '../types';
 
 // ============================================================================
@@ -56,10 +56,11 @@ export function hasNoClaudeProviderSession(session: Session): boolean {
 
 /**
  * Maps session state (plus batch / disconnected overrides) to a status color,
- * an animation flag, and a human-readable label used for the status dot tooltip.
+ * an `active` flag (draws the static busy glow), and a human-readable label
+ * used for the status dot tooltip.
  *
  * Special cases:
- * - `isInBatch`: always warning + pulse (Auto Run takes precedence over agent state)
+ * - `isInBatch`: always warning + busy halo (Auto Run takes precedence over agent state)
  * - `isBeingConsulted`: a cross-agent `@mention` runs under a synthetic process
  *   id and a hidden tab, so it never reaches `session.state` - without this the
  *   agent draws a green "Ready" dot for the whole time it is working
@@ -73,7 +74,7 @@ export function getEnhancedStatusColor(
 	hasActiveOutage: boolean = false,
 	isBeingConsulted: boolean = false,
 	hasHeadlessActivity: boolean = false
-): { color: string; animate: boolean; label: string } {
+): { color: string; active: boolean; label: string } {
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
 	const error = colorBlindMode ? COLORBLIND_STATUS_COLORS.error : theme.colors.error;
@@ -82,14 +83,14 @@ export function getEnhancedStatusColor(
 		: getConnectingColor(theme);
 
 	// Agent Resilience: an active outage (auto-retry backing off) is a "stuck,
-	// needs attention" state. Pulsing orange, ranked above batch/agent state so a
+	// needs attention" state. Orange with the busy halo, ranked above batch/agent state so a
 	// stalled agent is unmistakable in the Left Bar.
 	if (hasActiveOutage) {
-		return { color: connecting, animate: true, label: 'Auto-retrying (stuck)' };
+		return { color: connecting, active: true, label: 'Auto-retrying (stuck)' };
 	}
 
 	if (isInBatch) {
-		return { color: warning, animate: true, label: 'Auto Run active' };
+		return { color: warning, active: true, label: 'Auto Run active' };
 	}
 
 	// Ranked ABOVE the hollow-dot signal on purpose. A consult spawns into a tab
@@ -99,20 +100,20 @@ export function getEnhancedStatusColor(
 	// exists to show. Ranked BELOW the agent's own `busy`, which keeps its more
 	// specific "Thinking" / "Running command" label; both draw the same dot.
 	if (isBeingConsulted && session.state !== 'busy') {
-		return { color: warning, animate: true, label: 'Answering a consult' };
+		return { color: warning, active: true, label: 'Answering a consult' };
 	}
 
 	if (hasHeadlessActivity) {
-		return { color: warning, animate: true, label: 'Running headless turn' };
+		return { color: warning, active: true, label: 'Running headless turn' };
 	}
 
 	if (hasNoClaudeProviderSession(session)) {
-		return { color: theme.colors.textDim, animate: false, label: 'No active Claude session' };
+		return { color: theme.colors.textDim, active: false, label: 'No active Claude session' };
 	}
 
 	switch (session.state) {
 		case 'idle':
-			return { color: success, animate: false, label: 'Ready' };
+			return { color: success, active: false, label: 'Ready' };
 		case 'busy':
 			// `busySource` separates an agent turn from a shell command run in the
 			// same row. Both are legitimately busy, but only the AI one is counted
@@ -120,17 +121,17 @@ export function getEnhancedStatusColor(
 			// Left Bar look like it is lying when the pill lists no such agent.
 			return {
 				color: warning,
-				animate: true,
+				active: true,
 				label: session.busySource === 'terminal' ? 'Running command' : 'Thinking',
 			};
 		case 'error':
-			return { color: error, animate: false, label: 'Error' };
+			return { color: error, active: false, label: 'Error' };
 		case 'connecting':
-			return { color: connecting, animate: true, label: 'Connecting' };
+			return { color: connecting, active: true, label: 'Connecting' };
 		case 'waiting_input':
-			return { color: theme.colors.accent, animate: true, label: 'Waiting for input' };
+			return { color: theme.colors.accent, active: true, label: 'Waiting for input' };
 		default:
-			return { color: theme.colors.textDim, animate: false, label: 'Unknown' };
+			return { color: theme.colors.textDim, active: false, label: 'Unknown' };
 	}
 }
 
@@ -254,6 +255,7 @@ export const SessionItem = memo(function SessionItem({
 	const showFullGroupLabelInBookmarks = useSettingsStore((s) => s.showFullGroupLabelInBookmarks);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const isPrimaryAgent = useSettingsStore((s) => s.primaryAgentId === session.id);
 	// Phone: the row is the name and the status dot. The provider line, location
 	// pills, git count, bookmark toggle, and the Cue / startup-command glyphs all
 	// come off - on a 390px drawer they crowded the name down to a few characters,
@@ -289,19 +291,20 @@ export const SessionItem = memo(function SessionItem({
 	const worktreesExpanded = session.worktreesExpanded ?? true;
 	const showCollapsedCountBadge =
 		isWorktreeParent && !worktreesExpanded && (worktreeChildCount ?? 0) > 0;
-	// Location pills: SSH indicator always shown (even in bookmarks) since it
-	// signals where prompts will run. GIT/LOCAL are suppressed in the bookmark
-	// variant to keep the row compact.
-	const showLocationPills =
+	// The GIT pill. Where prompts run (LOCAL / REMOTE / HOSTED) is the mode pill in the meta row,
+	// the same for every mode, so this pill says only "git repository" and is suppressed in the
+	// bookmark variant to keep the row compact.
+	const showGitPill =
 		showLeftPanelLocationPills &&
 		variant !== 'worktree' &&
+		variant !== 'bookmark' &&
 		session.toolType !== 'terminal' &&
-		!phone;
-	const showGitLocalBadge = showLocationPills && variant !== 'bookmark';
+		!phone &&
+		session.isGitRepo;
 
 	// Status indicator: enhanced color/animation/label, plus hollow signal for
 	// Claude Code agents that haven't bound to a provider session yet. A stuck
-	// Agent Resilience outage overrides to pulsing orange (needs attention).
+	// Agent Resilience outage overrides to orange (needs attention).
 	const hasActiveOutage = useSessionHasActiveOutage(session.id);
 	// Auto Run stopped on an error. Read straight from the stores rather than
 	// threaded down as props: SessionList renders this row from two call sites
@@ -457,13 +460,24 @@ export const SessionItem = memo(function SessionItem({
 								<Pin size={11} style={{ color: theme.colors.accent }} />
 							</span>
 						)}
+						{/* Primary Agent marker (#2050): the app-level default receiver of
+						    the user's input. Settings > General > Primary Agent. */}
+						{isPrimaryAgent && (
+							<span
+								className="shrink-0 inline-flex"
+								title="Primary Agent"
+								aria-label="Primary Agent"
+							>
+								<Crown size={11} style={{ color: theme.colors.accent }} />
+							</span>
+						)}
 						<span
 							className={`row-name font-medium truncate ${variant === 'worktree' ? 'text-xs' : 'text-sm'}`}
 							style={{ color: theme.colors.textMain }}
 						>
 							{session.name}
 						</span>
-						{/* Maestro Cue indicator: subscriptions registered (and pulsing when running).
+						{/* Maestro Cue indicator: subscriptions registered (and glowing when running).
 						    Hidden when the Cue Encore Feature is off, or when the user has hidden it. */}
 						{cueIndicatorVisible && (
 							<CueIndicator
@@ -534,8 +548,7 @@ export const SessionItem = memo(function SessionItem({
 						)}
 						<Activity className="row-provider-icon w-3 h-3" />{' '}
 						<span className="row-provider">{getAgentDisplayName(session.toolType)}</span>
-						<SessionFederationBadge theme={theme} session={session} />
-						<LiftedPointerChip theme={theme} liftedTo={session.liftedTo} />
+						<AgentModePill theme={theme} session={session} />
 					</div>
 				)}
 				{/* Host-owned secondary actions stay outside session identity and SSH/status indicators. */}
@@ -562,7 +575,7 @@ export const SessionItem = memo(function SessionItem({
 						{showFullGroupLabelInBookmarks ? group.name : abbreviateGroupName(group.name)}
 					</span>
 				)}
-				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
+				{/* Git Dirty Indicator (only in wide mode) - placed before GIT for vertical alignment */}
 				{showLeftPanelGitIndicator &&
 					leftSidebarOpen &&
 					!phone &&
@@ -578,63 +591,18 @@ export const SessionItem = memo(function SessionItem({
 						</div>
 					)}
 
-				{/* Location Indicator Pills */}
-				{showLocationPills &&
-					(session.isGitRepo ? (
-						/* Git repo: Show server icon pill (if remote) + GIT pill */
-						<>
-							{session.sessionSshRemoteConfig?.enabled && (
-								<div
-									className="px-1.5 py-0.5 rounded text-3xs font-bold flex items-center"
-									style={{
-										backgroundColor: theme.colors.warning + '30',
-										color: theme.colors.warning,
-									}}
-									title="Running on remote host via SSH"
-								>
-									<Server className="w-3 h-3" />
-								</div>
-							)}
-							{showGitLocalBadge && (
-								<div
-									className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
-									style={{
-										backgroundColor: theme.colors.accent + '30',
-										color: theme.colors.accent,
-									}}
-									title="Git repository"
-								>
-									GIT
-								</div>
-							)}
-						</>
-					) : session.sessionSshRemoteConfig?.enabled ? (
-						/* Plain directory on remote: always show REMOTE */
-						<div
-							className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
-							style={{
-								backgroundColor: theme.colors.warning + '30',
-								color: theme.colors.warning,
-							}}
-							title="Running on remote host via SSH"
-						>
-							REMOTE
-						</div>
-					) : (
-						/* Plain local directory: LOCAL pill suppressed in bookmark variant */
-						showGitLocalBadge && (
-							<div
-								className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
-								style={{
-									backgroundColor: theme.colors.textDim + '20',
-									color: theme.colors.textDim,
-								}}
-								title="Local directory (not a git repo)"
-							>
-								LOCAL
-							</div>
-						)
-					))}
+				{showGitPill && (
+					<div
+						className="px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
+						style={{
+							backgroundColor: theme.colors.accent + '30',
+							color: theme.colors.accent,
+						}}
+						title="Git repository"
+					>
+						GIT
+					</div>
+				)}
 
 				{/* AUTO Mode Indicator */}
 				{isInBatch && (
@@ -656,7 +624,7 @@ export const SessionItem = memo(function SessionItem({
 					<div
 						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
 						style={{ backgroundColor: theme.colors.error + '30', color: theme.colors.error }}
-						title={`Error: ${session.agentError.message}`}
+						title={`Error: ${inlineErrorText(session.agentError.message)}`}
 					>
 						<AlertCircle className="w-2.5 h-2.5" />
 						ERR
@@ -701,14 +669,6 @@ export const SessionItem = memo(function SessionItem({
 
 				{/* AI Status Indicator with Unread Badge */}
 				<div className="relative w-2 h-2 ml-auto">
-					{/* Pulse ring: only renders for animated states, sits behind the dot */}
-					{statusInfo.animate && (
-						<span
-							className="absolute inset-0 rounded-full animate-ping"
-							style={{ backgroundColor: statusInfo.color, opacity: 0.3 }}
-							aria-hidden="true"
-						/>
-					)}
 					{/* Core status dot: filled by default, hollow when Claude has no provider session.
 					    Busy CLI activity overrides the generic "Thinking" tooltip with the playbook name. */}
 					<div
@@ -721,7 +681,9 @@ export const SessionItem = memo(function SessionItem({
 									}
 								: {
 										backgroundColor: statusInfo.color,
-										boxShadow: statusInfo.animate ? `0 0 6px ${statusInfo.color}60` : undefined,
+										// Static, never a looping ring: one `animate-ping` per busy
+										// row was 30,102 style recalcs in a 45s idle trace.
+										boxShadow: statusInfo.active ? activeStatusHalo(statusInfo.color) : undefined,
 									}
 						}
 						title={

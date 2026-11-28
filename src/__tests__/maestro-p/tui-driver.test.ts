@@ -71,6 +71,7 @@ vi.mock('../../shared/platformDetection', async (importOriginal) => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import {
+	ADD_DIR_SETTLE_MS,
 	chunkPromptForPty,
 	CLAUDE_PASTE_THRESHOLD_CHARS,
 	expandPromptTabs,
@@ -85,9 +86,11 @@ import {
 	PROMPT_SETTLE_QUIET_MS,
 	PROMPT_TAB_SPACES,
 	QUIT_GRACE_MS,
+	QUIT_TERM_GRACE_MS,
 	READY_MAX_TAPS,
 	READY_TAP_INTERVAL_MS,
 	READY_TIMEOUT_MS,
+	selectedRefusalOption,
 	SEND_ENTER_DELAY_MS,
 	SUBMIT_ENTER_RETRIES,
 	SUBMIT_ENTER_RETRY_INTERVAL_MS,
@@ -527,6 +530,224 @@ describe('TuiDriver', () => {
 			feed(PROMPT_ON_NO);
 			expect(untrusted).not.toHaveBeenCalled();
 			expect(writes()).toEqual(['\x1b[B']);
+		});
+	});
+
+	describe('selectedRefusalOption()', () => {
+		it('names a highlighted option that quits or refuses', () => {
+			expect(selectedRefusalOption(' Some new gate?\n ❯ No, exit\n   Yes, continue')).toBe(
+				'No, exit'
+			);
+			expect(selectedRefusalOption(' ❯ 1. Cancel\n   2. Proceed')).toBe('Cancel');
+			expect(selectedRefusalOption(' ❯ Exit')).toBe('Exit');
+		});
+
+		it('is null when the selector sits on a forward option', () => {
+			expect(selectedRefusalOption('   No, exit\n ❯ Yes, add it')).toBeNull();
+			expect(selectedRefusalOption(' ❯ 1. Yes, I trust this folder\n   2. No, exit')).toBeNull();
+		});
+
+		it('reads only the newest selector row', () => {
+			expect(selectedRefusalOption(' ❯ No, exit\n\n ❯ Try "edit <filepath>"')).toBeNull();
+		});
+
+		it('is null with no selector on screen', () => {
+			expect(selectedRefusalOption('Loading MCP servers...')).toBeNull();
+		});
+
+		it('does not read a word that only starts like a refusal', () => {
+			expect(selectedRefusalOption(' ❯ Notes and next steps')).toBeNull();
+		});
+	});
+
+	describe("'startup-dialog-blocked' event (an unknown dialog that defaults to quitting)", () => {
+		const writes = () => mockPtyProcess.write.mock.calls.map((call) => call[0]);
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('stops at the blind tap instead of pressing Enter on it', async () => {
+			// ANSI-stripped paints often lose the space after `❯`, so READY never
+			// matches and the blind tap is the first to meet the dialog.
+			const driver = await makeDriver();
+			const blocked = vi.fn();
+			const readyTimeout = vi.fn();
+			driver.on('startup-dialog-blocked', blocked);
+			driver.on('ready-timeout', readyTimeout);
+
+			feed('A gate claude added in a future release\r\n\r\n❯No, exit\r\n  Yes, go on\r\n');
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+
+			expect(blocked).toHaveBeenCalledTimes(1);
+			expect(blocked).toHaveBeenCalledWith('No, exit');
+			expect(readyTimeout).not.toHaveBeenCalled();
+			expect(writes()).not.toContain('\r');
+		});
+
+		it("does not read the dialog's own `❯ ` as the input prompt", async () => {
+			const driver = await makeDriver();
+			const blocked = vi.fn();
+			const readyHandler = vi.fn();
+			driver.on('startup-dialog-blocked', blocked);
+			driver.on('ready', readyHandler);
+
+			feed(
+				'A gate claude added in a future release\r\n\r\n❯ No, exit\r\n  Yes, go on\r\n\r\nEnter to confirm · Esc to cancel\r\n'
+			);
+
+			expect(blocked).toHaveBeenCalledWith('No, exit');
+			expect(readyHandler).not.toHaveBeenCalled();
+		});
+
+		it('fires ready on an old "❯ No, ..." line when no dialog footer is drawn', async () => {
+			// A resumed conversation can show a past message starting with "No".
+			const driver = await makeDriver();
+			const blocked = vi.fn();
+			const readyHandler = vi.fn();
+			driver.on('startup-dialog-blocked', blocked);
+			driver.on('ready', readyHandler);
+
+			feed('❯ No, use the other branch\r\n');
+
+			expect(blocked).not.toHaveBeenCalled();
+			expect(readyHandler).toHaveBeenCalledTimes(1);
+		});
+
+		it('still taps an unknown dialog whose default moves forward', async () => {
+			await makeDriver();
+			feed('A gate claude added in a future release\r\n\r\n❯Continue\r\n  Exit\r\n');
+			vi.advanceTimersByTime(READY_TAP_INTERVAL_MS);
+			expect(writes()).toEqual(['\r']);
+		});
+	});
+
+	describe('add-dir prompt (claude 2.1.326+, one dialog per --add-dir directory)', () => {
+		// As claude paints it: heading, blank, path, blank, body, "No, exit" selected.
+		const dialog = (dir: string) =>
+			`Adding a new directory:\r\n\r\n${dir}\r\n\r\nThis session hasn't worked here before. Is this a directory you created or one you trust?\r\n\r\n❯ No, exit\r\n  Yes, add it\r\n`;
+		const REPAINT_ON_YES = 'No, exit\r❯ Yes, add it\r\n';
+		const writes = () => mockPtyProcess.write.mock.calls.map((call) => call[0]);
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		async function makeAddDirDriver(args: string[]): Promise<TuiDriver> {
+			const driver = new TuiDriver({ binPath: 'claude', args, cwd: '/work', env: {} });
+			await driver.start();
+			return driver;
+		}
+
+		it('answers "Yes, add it" for each granted directory in turn', async () => {
+			const driver = await makeAddDirDriver(['--add-dir', '/work/a', '--add-dir', '/work/b']);
+			const accepted = vi.fn();
+			const readyHandler = vi.fn();
+			driver.on('add-dir-accepted', accepted);
+			driver.on('ready', readyHandler);
+
+			feed(dialog('/work/a'));
+			expect(writes()).toEqual([]);
+			vi.advanceTimersByTime(ADD_DIR_SETTLE_MS);
+			expect(writes()).toEqual(['\x1b[B']);
+			feed(REPAINT_ON_YES);
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS);
+			expect(writes()).toEqual(['\x1b[B', '\r']);
+			expect(accepted).toHaveBeenCalledTimes(1);
+
+			feed(dialog('/work/b'));
+			vi.advanceTimersByTime(ADD_DIR_SETTLE_MS);
+			expect(writes()).toEqual(['\x1b[B', '\r', '\x1b[B']);
+			feed(REPAINT_ON_YES);
+			vi.advanceTimersByTime(TRUST_CONFIRM_QUIET_MS);
+			expect(writes()).toEqual(['\x1b[B', '\r', '\x1b[B', '\r']);
+			expect(accepted).toHaveBeenCalledTimes(2);
+
+			// The dialogs' own `❯` never read as the input prompt.
+			expect(readyHandler).not.toHaveBeenCalled();
+			feed('\r\n❯ Try "edit <filepath>"\r\n');
+			expect(readyHandler).toHaveBeenCalledTimes(1);
+		});
+
+		it('refuses a directory it was not given, and never presses Enter on it', async () => {
+			const driver = await makeAddDirDriver(['--add-dir', '/work/a']);
+			const untrusted = vi.fn();
+			const readyTimeout = vi.fn();
+			driver.on('add-dir-untrusted', untrusted);
+			driver.on('ready-timeout', readyTimeout);
+
+			feed(dialog('/work/a-sibling'));
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+			expect(untrusted).toHaveBeenCalledTimes(1);
+			expect(untrusted).toHaveBeenCalledWith('/work/a-sibling');
+			expect(readyTimeout).not.toHaveBeenCalled();
+			expect(writes()).toEqual([]);
+		});
+
+		it('reports the dialog as it was drawn when claude quits on it', async () => {
+			const driver = await makeAddDirDriver(['--add-dir', '/work/a']);
+			feed(dialog('/work/a-sibling'));
+			const screen = driver.getFailureScreen();
+			expect(screen).toContain('Adding a new directory:');
+			expect(screen).toContain('/work/a-sibling');
+			expect(screen).toContain("This session hasn't worked here before.");
+		});
+
+		it('holds the blind taps while the path is still painting', async () => {
+			await makeAddDirDriver(['--add-dir', '/work/a']);
+			feed('Adding a new directory:\r\n\r\n/work/a');
+			vi.advanceTimersByTime(READY_TAP_INTERVAL_MS * READY_MAX_TAPS);
+			// A blind Enter here would confirm the "No, exit" default.
+			expect(writes()).toEqual([]);
+
+			feed("\r\n\r\nThis session hasn't worked here before.\r\n❯ No, exit\r\n  Yes, add it\r\n");
+			vi.advanceTimersByTime(ADD_DIR_SETTLE_MS);
+			expect(writes()).toEqual(['\x1b[B']);
+		});
+
+		it('starts a resumed conversation that quotes the dialog, with no --add-dir', async () => {
+			// 2026-11-23: a tab whose conversation discussed this dialog failed every
+			// turn as add_dir_untrusted, because --resume repaints the conversation on
+			// the startup screen before the input editor.
+			const driver = await makeAddDirDriver(['--resume', 'abc']);
+			const untrusted = vi.fn();
+			const readyHandler = vi.fn();
+			driver.on('add-dir-untrusted', untrusted);
+			driver.on('ready', readyHandler);
+
+			feed(
+				'⏺ Today\'s error would have read "Adding a new directory: /work/sec590 … No, exit".\r\n'
+			);
+			feed('\r\n────────\r\n❯ \r\n────────\r\n');
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+
+			expect(untrusted).not.toHaveBeenCalled();
+			expect(readyHandler).toHaveBeenCalledTimes(1);
+			expect(writes()).toEqual([]);
+		});
+
+		it('starts a resumed conversation that quotes the whole dialog, editor in a later chunk', async () => {
+			const driver = await makeAddDirDriver(['--resume', 'abc']);
+			const untrusted = vi.fn();
+			const readyHandler = vi.fn();
+			driver.on('add-dir-untrusted', untrusted);
+			driver.on('ready', readyHandler);
+
+			feed(dialog('/work/elsewhere'));
+			// The editor lands inside the settle window, so the quote is never answered.
+			vi.advanceTimersByTime(ADD_DIR_SETTLE_MS - 50);
+			feed('\r\n────────\r\n❯ \r\n────────\r\n');
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+
+			expect(untrusted).not.toHaveBeenCalled();
+			expect(readyHandler).toHaveBeenCalledTimes(1);
+			expect(writes()).toEqual([]);
 		});
 	});
 
@@ -1263,8 +1484,27 @@ describe('TuiDriver', () => {
 			const promise = driver.quit();
 			expect(mockPtyProcess.write).toHaveBeenCalledWith('/quit\r');
 			await vi.advanceTimersByTimeAsync(QUIT_GRACE_MS);
-			await promise;
 			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
+			// A claude that ignores SIGTERM does not hold the result back for long.
+			await vi.advanceTimersByTimeAsync(QUIT_TERM_GRACE_MS);
+			await promise;
+		});
+
+		it('waits for the exit SIGTERM causes, so claude finishes writing its transcript', async () => {
+			const driver = await makeDriver();
+			let resolved = false;
+			const promise = driver.quit().then(() => {
+				resolved = true;
+			});
+			await vi.advanceTimersByTimeAsync(QUIT_GRACE_MS);
+			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
+			// Still shutting down: resolving now would let the next resumed turn
+			// read this claude's last rows as its own.
+			await vi.advanceTimersByTimeAsync(QUIT_TERM_GRACE_MS / 2);
+			expect(resolved).toBe(false);
+			triggerExit(0);
+			await promise;
+			expect(resolved).toBe(true);
 		});
 
 		it('terminates instead of typing /quit onto a prompt that was never submitted', async () => {
@@ -1276,7 +1516,7 @@ describe('TuiDriver', () => {
 			mockPtyProcess.write.mockClear();
 			const promise = driver.quit({ discardTypedInput: true });
 			// "/quit\r" would land after the parked prompt and submit both.
-			await vi.advanceTimersByTimeAsync(QUIT_GRACE_MS);
+			await vi.advanceTimersByTimeAsync(QUIT_GRACE_MS + QUIT_TERM_GRACE_MS);
 			await promise;
 			expect(mockPtyProcess.write).not.toHaveBeenCalledWith('/quit\r');
 			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');

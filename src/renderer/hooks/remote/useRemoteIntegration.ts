@@ -29,16 +29,43 @@ import {
 import { logger } from '../../utils/logger';
 import {
 	buildQueuedMessageItem,
+	matchQueuedSlashCommand,
 	enqueuePromptForTab,
-	setQueuedItemPaused,
-	mergeQueuedItemIntoAbove,
+	sendQueuedItemNow,
+	sendQueuedItemNowSettled,
+	removeQueuedItemSettled,
+	setQueuedItemPausedSettled,
+	editQueuedItemSettled,
+	mergeQueuedItemIntoAboveSettled,
+	moveQueuedItemSettled,
 } from '../../services/queuedPrompt';
+import { withQueuedTurnOverrides } from '../../../shared/queuedTurnSettings';
+import type { TurnAgentText, TurnOverrides } from '../../../shared/maestro-lib/client/types';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
+import { runRemoteSideQuestion } from '../../services/sideQuestion';
+import { runMaestroBuiltinCommand } from '../../services/maestroBuiltinCommands';
+import {
+	closeHostedTab,
+	hostedTargetOf,
+	openHostedTab,
+	openHostedTabOrHere,
+	renameHostedTabSettled,
+	sendHostedTurn,
+} from '../../services/hostedTurns';
+import { hostedTabHoldsLine } from '../../utils/hostedTabLine';
+import { parseMaestroBuiltinCommand } from '../../../shared/maestroBuiltinCommands';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
-import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
+import {
+	reopenHostedClosedEntry,
+	runRemoteClosedTabCommand,
+} from '../../services/closedTabCommands';
 import { runRemoteMessagePinCommand } from '../../services/messagePins';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
-import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
+import { answerSteeringCommand } from '../../services/autoRunSteering';
+import { runRemoteDiffReviewCommand } from '../../services/diffReview';
+import { runRemoteFileReviewCommand } from '../../services/fileReview';
+import { runRemoteDesignPickCommand } from '../../services/designModePick';
+import type { DiffReviewCommandResult } from '../../../shared/diffReviewCommands';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type { ClosedTabCommandResult } from '../../../shared/closedTabCommands';
 import type { MessagePinCommandResult } from '../../../shared/messagePinCommands';
@@ -48,7 +75,7 @@ import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGau
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
-import { persistTabStarred } from '../../utils/starredSessions';
+import { setTabStarred } from '../../services/tabStar';
 import { resolveTurnProvider } from '../../../shared/maestro-lib/agents/providerSwap';
 import { formatLogsForClipboard } from '../../utils/contextExtractor';
 import { messagesToLogEntries } from '../../components/AgentSessionsBrowser/utils/messagesToLogEntries';
@@ -67,7 +94,12 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { steerQueuedItem } from '../../services/chatSteering';
 import { interruptTurn } from '../../services/turnInterrupt';
 import { interruptTurnFailure, type InterruptTurnResult } from '../../../shared/turnInterrupt';
-import { updateAiTab, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
+import {
+	selectSessionById,
+	updateAiTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../stores/sessionStore';
 import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
 import { buildThinkingItems } from '../../utils/thinkingItems';
@@ -88,6 +120,7 @@ import { loadAllSettings } from '../../stores/settingsStore';
 import { useRemoteGroupChat } from './useRemoteGroupChat';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { getGrokSlashCommandRefusal } from '../../slashCommands';
+import { toQueuedItemSnapshot } from '../../../shared/queueSnapshot';
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -704,15 +737,49 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		// Handle remote new tab from web interface
 		const unsubscribeNewTab = window.maestro.process.onRemoteNewTab(
-			(sessionId: string, responseChannel: string, background?: boolean) => {
+			(sessionId: string, responseChannel: string, background?: boolean, tabId?: string) => {
+				// A hosted agent's AI tabs live on its host: `maestro-cli tab new` makes the tab
+				// through the service the window's New Tab calls (`openHostedTabOrHere()`), on the
+				// host and here, with the same defaults, so the id it prints names one tab on both
+				// sides (R42). A Federation client's request (`tabId`) names a tab of this machine.
+				const hostedSession = tabId
+					? undefined
+					: selectSessionById(sessionId)(useSessionStore.getState());
+				if (hostedSession && hostedTargetOf(hostedSession)) {
+					void openHostedTabOrHere(hostedSession, {
+						fields: { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking },
+						...(background ? { background: true } : {}),
+					})
+						.catch(() => null)
+						.then((hostedTabId) => {
+							if (hostedTabId && !background) {
+								setActiveSessionId(sessionId);
+								noteDesktopAiTabSelection(sessionId, hostedTabId);
+							}
+							window.maestro.process.sendRemoteNewTabResponse(
+								responseChannel,
+								hostedTabId ? { tabId: hostedTabId } : null
+							);
+						});
+					return;
+				}
 				let newTabId: string | null = null;
 
 				flushSync(() => {
 					updateSessionWith(sessionId, (s) => {
+						// A Federation client draws the tab under a fresh id before it asks (R15), so a
+						// tab already under that id is the one this same request made (its answer was
+						// lost): answer it, make no second one (R25).
+						if (tabId && s.aiTabs.some((tab) => tab.id === tabId)) {
+							newTabId = tabId;
+							return s;
+						}
 						// Use createTab helper. `activate: false` appends the tab without
 						// touching any active-* id, so it shows up in the tab bar the way
-						// a browser opens a background tab.
+						// a browser opens a background tab. A Federation client's id for a tab it
+						// already drew (R15) is taken.
 						const result = createTab(s, {
+							...(tabId ? { id: tabId } : {}),
 							saveToHistory: defaultSaveToHistory,
 							showThinking: defaultShowThinking,
 							activate: !background,
@@ -796,6 +863,35 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					}
 					if (targetSession.toolType === 'terminal') {
 						ack({ success: false, error: 'A terminal agent cannot receive a new AI tab prompt' });
+						return;
+					}
+					// A hosted agent's tabs and turns are its host's: the new tab opens there, placed
+					// and shown (or hidden) as a local one is, and the prompt runs there as typed (the
+					// host expands a slash command). A managed Pianola admission stays with its owner.
+					if (!control && hostedTargetOf(targetSession)) {
+						const hostTabId = await openHostedTab(targetSession, {
+							fields: {
+								saveToHistory: defaultSaveToHistory,
+								showThinking: defaultShowThinking,
+								...(background && hidden === true ? { hidden: true } : {}),
+							},
+							...(background ? { background: true } : {}),
+						});
+						if (!hostTabId) {
+							ack({ success: false, error: 'The host did not open a new tab' });
+							return;
+						}
+						if (!background) {
+							setActiveSessionId(sessionId);
+							noteDesktopAiTabSelection(sessionId, hostTabId);
+						}
+						const live = selectSessionById(sessionId)(useSessionStore.getState()) ?? targetSession;
+						const receipt = await sendHostedTurn(live, hostTabId, prompt, []);
+						ack(
+							receipt
+								? { success: true, tabId: hostTabId, queued: receipt.status === 'queued' }
+								: { success: false, tabId: hostTabId, error: 'The host did not take the prompt' }
+						);
 						return;
 					}
 					const commandName = prompt.trim().split(/\s/, 1)[0];
@@ -1008,7 +1104,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		const unsubscribeCrossAgentAsk = window.maestro.process.onRemoteCrossAgentAsk(
 			(request, responseChannel) => {
-				void runCrossAgentAsk(request)
+				// `ask --btw` rides the same wire but forks the target's tab instead of
+				// consulting it, exactly as a typed `/btw` in that tab would.
+				const run = request.sideQuestion
+					? runRemoteSideQuestion({
+							targetSessionId: request.targetSessionId,
+							question: request.question,
+							tabId: request.targetTabId,
+						}).then((outcome) => ({
+							success: outcome.success,
+							answer: outcome.answer,
+							error: outcome.error,
+							targetAgentName: outcome.agentName,
+							targetTabId: outcome.tabId,
+						}))
+					: runCrossAgentAsk(request);
+				void run
 					.then((result) => {
 						window.maestro.process.sendRemoteCrossAgentAskResponse(responseChannel, result);
 					})
@@ -1028,6 +1139,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				let closed = false;
 				let closedSession: Session | undefined;
 				try {
+					const before = selectSessionById(sessionId)(useSessionStore.getState());
 					updateSessionWith(sessionId, (s) => {
 						const tab = s.aiTabs.find((t) => t.id === tabId);
 						if (!tab) return s;
@@ -1044,6 +1156,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						closedSession = updated;
 						return updated;
 					});
+					// A hosted agent's tab closes on its host too, as the window's close does
+					// (`closeHostedTab()`, a no-op for any other agent), so the host sync does not
+					// bring it back (R42). Only once the close here was allowed: a refused one leaves
+					// the tab open in both places, never gone on the host while the CLI says not
+					// closed (R57).
+					if (closed && before) closeHostedTab(before, tabId);
 					// Do not leave a confirmed close waiting for the 500ms inventory poll.
 					if (closedSession) broadcastTabInventory(closedSession);
 				} finally {
@@ -1054,6 +1172,39 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 		const unsubscribeReopenTab = window.maestro.process.onRemoteReopenTab(
 			(sessionId: string, tabId: string, responseChannel: string) => {
+				// A hosted agent's AI tab closed on its host too (R42): it reopens there, as the
+				// window's reopen does (`reopenHostedClosedEntry()`), so its conversation goes on in
+				// that host tab, never a second one. A host that cannot reopen it says so in a toast,
+				// the entry stays closed, and the caller hears null (CodeRabbit on #2171).
+				const current = selectSessionById(sessionId)(useSessionStore.getState());
+				const hostedEntry =
+					current && hostedTargetOf(current)
+						? current.unifiedClosedTabHistory?.find(
+								(entry) => entry.type === 'ai' && entry.tab.id === tabId
+							)
+						: undefined;
+				if (current && hostedEntry) {
+					void reopenHostedClosedEntry(current, hostedEntry)
+						.then((hosted) => {
+							if (hosted) {
+								updateSessionWith(sessionId, (session) => ({
+									...session,
+									closedTabHistory: session.closedTabHistory.filter(
+										(entry) => entry.tab.id !== tabId
+									),
+								}));
+							}
+							window.maestro.process.sendRemoteReopenTabResponse(
+								responseChannel,
+								hosted ? { tabId: hosted.tabId } : null
+							);
+						})
+						.catch((error) => {
+							logger.error('[useRemoteIntegration] Hosted reopen failed', undefined, error);
+							window.maestro.process.sendRemoteReopenTabResponse(responseChannel, null);
+						});
+					return;
+				}
 				let reopened: { tabId: string } | null = null;
 				try {
 					updateSessionWith(sessionId, (session) => {
@@ -1101,6 +1252,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 					const tab = session.aiTabs.find((t) => t.id === tabId);
 					if (!tab) return { success: false, error: `Tab not found: ${tabId}` };
+
+					// A hosted agent's tab is renamed on its host first, as the Rename Tab modal
+					// does (`useSessionLifecycle`): the tab is drawn from the host's record, so a
+					// name kept only here is gone on the next sync. A name the host refuses
+					// changes nothing here and answers the caller with the host's reason.
+					const onHost = renameHostedTabSettled(session, tabId, target);
+					if (onHost) {
+						const outcome = await onHost;
+						if (!outcome.saved) return { success: false, error: outcome.reason };
+					}
 
 					const isGrokTab =
 						session.toolType === 'grok' || resolveTurnProvider(tab, session) === 'grok';
@@ -1234,11 +1395,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				const tab = session?.aiTabs.find((t) => t.id === tabId);
 				if (!session || !tab?.agentSessionId) return;
 
-				// Persist starred state and broadcast the change (same logic as
-				// desktop handleTabStar) so the Left Bar's starred cache refreshes.
-				persistTabStarred(session, tab, starred);
-
-				updateAiTab(sessionId, tabId, (t) => ({ ...t, starred }));
+				// The desktop star's own write: a hosted agent's host gets it too, so the
+				// next sync does not draw the tab unstarred again.
+				setTabStarred(sessionId, tabId, starred);
 			}
 		);
 
@@ -1367,8 +1526,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				held?: boolean,
 				mentionRouting?: MentionRouting,
 				dispatchCallback?: boolean,
-				control?: import('../../../shared/pianola/pianola-dispatch').PianolaQueueControl
+				control?: import('../../../shared/pianola/pianola-dispatch').PianolaQueueControl,
+				// A Federation sender's own tab chips for this one message (`TurnInput.overrides`).
+				// The model, effort, and read-only ride on the queued item; save-to-History has no
+				// per-item field here, so the tab's own chip decides it.
+				turnOverrides?: TurnOverrides,
+				// A Federation sender's agent-only text for this turn: a consult's replies ahead of the
+				// message, the `@mention` notes behind it. It rides on the queued item, never drawn.
+				agentText?: TurnAgentText,
+				// The id a Federation sender named for the message's entry (`TurnInput.entryId`): the
+				// user entry takes it when the item runs, as a headless host writes it.
+				entryId?: string
 			) => {
+				const withAgentText = (item: QueuedItem): QueuedItem => ({
+					...item,
+					...(agentText?.agentContext ? { agentContext: agentText.agentContext } : {}),
+					...(agentText?.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
+					...(entryId ? { entryId } : {}),
+				});
 				const reply = (result: {
 					success: boolean;
 					tabId?: string;
@@ -1376,6 +1551,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					queuePosition?: number;
 					queueLength?: number;
 					itemId?: string;
+					ran?: boolean;
 					error?: string;
 					reason?: 'session-not-found' | 'tab-not-found' | 'no-ai-tabs';
 				}) => window.maestro.process.sendRemoteEnqueueCommandResponse(responseChannel, result);
@@ -1440,6 +1616,104 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return;
 					}
 
+					// A hosted agent's line is its host's queue: the message goes there as typed, with
+					// the sender's chips, and the host runs it now, runs `/history` or `/skills` for the
+					// tab, or queues it (held when held), as this handler does below for a local agent.
+					// Nothing waits here for a drain, unless it `@mentions` another agent: the mention
+					// runs on this machine (its roster), so the message gets in this machine's line as
+					// for a local agent, and the drain consults as it hands the turn to the host
+					// (`sendTakenItemToHost()`). Never the text alone with the mention dropped.
+					// This machine holds a line for the tab (a consult's hold, a mention waiting its turn):
+					// a plain follow-up waits behind it too, as it does for a local agent.
+					// A turn of the tab on its way to the host, or a consult waiting for its turn there,
+					// holds the line too (`hostedTabHoldsLine()`).
+					const hostedLocalLine =
+						hostedTabHoldsLine(sessionId, resolvedTabId) ||
+						(session.executionQueue ?? []).some(
+							(queued) => queued.tabId === resolvedTabId && !queued.hostQueued
+						);
+					if (
+						hostedTargetOf(session) &&
+						(hostedLocalLine || planCrossAgentMentions(command, sessionId, mentionRouting))
+					) {
+						const item: QueuedItem = {
+							...withAgentText(
+								withQueuedTurnOverrides(
+									buildQueuedMessageItem({
+										session,
+										tab: targetTab,
+										text: command,
+										images,
+										mentionRouting,
+									}),
+									turnOverrides
+								)
+							),
+							...(held && { paused: true }),
+						};
+						// It waits in this machine's line, and an idle drain takes it at once. The caller
+						// gets its id either way, so a turn the host then refuses (back here, held) can be
+						// found and resumed.
+						updateSessionWith(sessionId, (s) => ({
+							...s,
+							executionQueue: [...s.executionQueue, item],
+						}));
+						const waiting =
+							useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.executionQueue ??
+							[];
+						reply({
+							success: true,
+							tabId: resolvedTabId,
+							queued: true,
+							queuePosition: waiting.findIndex((queued) => queued.id === item.id) + 1,
+							queueLength: waiting.length,
+							itemId: item.id,
+						});
+						return;
+					}
+					if (hostedTargetOf(session)) {
+						const receipt = await sendHostedTurn(session, resolvedTabId, command, images ?? [], {
+							held,
+							overrides: turnOverrides,
+							...(entryId ? { entryId } : {}),
+							...(agentText?.agentContext ? { agentContext: agentText.agentContext } : {}),
+							...(agentText?.agentNotes ? { agentNotes: agentText.agentNotes } : {}),
+						});
+						if (!receipt) {
+							reply({ success: false, tabId: resolvedTabId, error: 'The host did not take it' });
+						} else if (receipt.status === 'queued') {
+							reply({
+								success: true,
+								tabId: resolvedTabId,
+								queued: true,
+								itemId: receipt.itemId,
+								queuePosition: receipt.position,
+								queueLength: receipt.queueLength,
+							});
+						} else {
+							reply({
+								success: true,
+								tabId: resolvedTabId,
+								queued: false,
+								...(receipt.status === 'ran' ? { ran: true } : {}),
+							});
+						}
+						return;
+					}
+
+					// One of Maestro's own commands (`/history`, `/skills`) runs now for the named tab, as
+					// the composer runs it on the active tab, busy or not. This is how a hosted agent's
+					// user gets a local agent's `/history`: the client sends the text here, and what the
+					// command writes reaches the tab's transcript and mirrors back. A held send stays a
+					// message, as Queue Held keeps it.
+					if (!held) {
+						const builtin = parseMaestroBuiltinCommand(command, session.toolType);
+						if (builtin && runMaestroBuiltinCommand(builtin, { sessionId, tabId: resolvedTabId })) {
+							reply({ success: true, tabId: resolvedTabId, queued: false, ran: true });
+							return;
+						}
+					}
+
 					// Idle target TAB with nothing queued for it: no line to wait in,
 					// dispatch now through the shared remote-command path (identical to a
 					// plain `dispatch`). Another tab of the agent being busy is not a line:
@@ -1449,6 +1723,57 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const lineForTab = (session.executionQueue ?? []).some(
 						(item) => item.tabId === resolvedTabId
 					);
+					// One of the user's own slash commands (custom AI, speckit, openspec, bmad) is queued
+					// as a command, so the drain expands it, as the composer and the plain remote-command
+					// path do. A provider's own `/compact` stays a message, as typed.
+					const isUserSlashCommand = matchQueuedSlashCommand(session, command) !== null;
+					// The plain remote-command path spawns on the live tab's settings and the bare text, so
+					// a message carrying the sender's own chips, agent-only text or entry id goes through the
+					// queue instead and is sent at once from there (Force Send): the queued item carries them.
+					if (
+						(turnOverrides || agentText || entryId) &&
+						targetTab.state !== 'busy' &&
+						!lineForTab &&
+						!held
+					) {
+						const item = withAgentText(
+							withQueuedTurnOverrides(
+								buildQueuedMessageItem({
+									session,
+									tab: targetTab,
+									text: command,
+									images,
+									mentionRouting,
+									slashCommand: isUserSlashCommand,
+								}),
+								turnOverrides
+							)
+						);
+						if (!background) {
+							setActiveSessionId(sessionId);
+						}
+						updateSessionWith(sessionId, (s) => ({
+							...s,
+							executionQueue: [...s.executionQueue, item],
+						}));
+						if (sendQueuedItemNow(sessionId, item.id)) {
+							reply({ success: true, tabId: resolvedTabId, queued: false });
+							return;
+						}
+						// Nothing could run it yet: it keeps its place and runs when the queue drains.
+						const waiting =
+							useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.executionQueue ??
+							[];
+						reply({
+							success: true,
+							tabId: resolvedTabId,
+							queued: true,
+							queuePosition: waiting.findIndex((queued) => queued.id === item.id) + 1,
+							queueLength: waiting.length,
+							itemId: item.id,
+						});
+						return;
+					}
 					if (targetTab.state !== 'busy' && !lineForTab && !held) {
 						if (!background) {
 							setActiveSessionId(sessionId);
@@ -1475,13 +1800,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// here) and the model/effort capture that keeps a queued turn running
 					// under the settings it was queued with.
 					const queuedItem: QueuedItem = {
-						...buildQueuedMessageItem({
-							session,
-							tab: targetTab,
-							text: command,
-							images,
-							mentionRouting,
-						}),
+						...withAgentText(
+							withQueuedTurnOverrides(
+								buildQueuedMessageItem({
+									session,
+									tab: targetTab,
+									text: command,
+									images,
+									mentionRouting,
+									slashCommand: isUserSlashCommand,
+								}),
+								turnOverrides
+							)
+						),
 						...(held && { paused: true }),
 						...(dispatchCallback && { dispatchCallback: true }),
 					};
@@ -1530,18 +1861,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						sessionId: s.id,
 						name: s.name,
 						state: s.state,
-						items: (s.executionQueue ?? []).map((item) => ({
-							id: item.id,
-							timestamp: item.timestamp,
-							tabId: item.tabId,
-							type: item.type,
-							...(item.text !== undefined ? { text: item.text } : {}),
-							...(item.command !== undefined ? { command: item.command } : {}),
-							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
-							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
-							...(item.paused !== undefined ? { paused: item.paused } : {}),
-							...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
-						})),
+						items: (s.executionQueue ?? []).map(toQueuedItemSnapshot),
 					}));
 					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
 						success: true,
@@ -1561,18 +1881,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote "remove queue item" from the CLI (`queue remove`). Drops the
 		// item by id from the authoritative queue, exactly like the UI trash action.
 		const unsubscribeRemoveQueueItem = window.maestro.process.onRemoteRemoveQueueItem(
-			(sessionId: string, itemId: string, responseChannel: string) => {
+			async (sessionId: string, itemId: string, responseChannel: string) => {
 				try {
-					// Determine the outcome from the current store snapshot, then mutate.
-					// Keeps the returned `removed` independent of update timing.
-					const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-					const removed = !!session?.executionQueue?.some((i) => i.id === itemId);
-					if (removed) {
-						updateSessionWith(sessionId, (s) => ({
-							...s,
-							executionQueue: s.executionQueue.filter((i) => i.id !== itemId),
-						}));
-					}
+					// The trash action's own removal: a hosted agent's host item is removed on its host.
+					const removed = await removeQueuedItemSettled(sessionId, itemId);
 					window.maestro.process.sendRemoteRemoveQueueItemResponse(responseChannel, {
 						success: true,
 						removed,
@@ -1591,9 +1903,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote "hold / resume queue item" from the CLI (`queue hold`,
 		// `queue resume`). Same flag the queued card's Hold / Resume button flips.
 		const unsubscribeSetQueueItemPaused = window.maestro.process.onRemoteSetQueueItemPaused?.(
-			(sessionId: string, itemId: string, paused: boolean, responseChannel: string) => {
+			async (sessionId: string, itemId: string, paused: boolean, responseChannel: string) => {
 				try {
-					const found = setQueuedItemPaused(sessionId, itemId, paused);
+					const found = await setQueuedItemPausedSettled(sessionId, itemId, paused);
 					window.maestro.process.sendRemoteSetQueueItemPausedResponse(responseChannel, {
 						success: true,
 						found,
@@ -1617,9 +1929,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		// Handle remote "merge queue item" from the CLI (`queue merge`). Same merge
 		// the queued card's Merge button runs.
 		const unsubscribeMergeQueueItem = window.maestro.process.onRemoteMergeQueueItem?.(
-			(sessionId: string, itemId: string, responseChannel: string) => {
+			async (sessionId: string, itemId: string, responseChannel: string) => {
 				try {
-					const mergedIntoId = mergeQueuedItemIntoAbove(sessionId, itemId);
+					const mergedIntoId = await mergeQueuedItemIntoAboveSettled(sessionId, itemId);
 					window.maestro.process.sendRemoteMergeQueueItemResponse(responseChannel, {
 						success: true,
 						merged: mergedIntoId !== null,
@@ -1630,6 +1942,70 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					window.maestro.process.sendRemoteMergeQueueItemResponse(responseChannel, {
 						success: false,
 						merged: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
+		// Handle remote "edit queue item" from the CLI (`queue edit`) or a client's
+		// hosted queued card. Same edit the queued card's Edit runs.
+		const unsubscribeEditQueueItem = window.maestro.process.onRemoteEditQueueItem?.(
+			async (sessionId, itemId, edit, responseChannel) => {
+				try {
+					const found = await editQueuedItemSettled(sessionId, itemId, edit);
+					window.maestro.process.sendRemoteEditQueueItemResponse(responseChannel, {
+						success: true,
+						found,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteEditQueueItem failed:', undefined, error);
+					window.maestro.process.sendRemoteEditQueueItemResponse(responseChannel, {
+						success: false,
+						found: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
+		// Handle remote "move queue item" from the CLI (`queue move`) or a client's
+		// hosted queued card's drag. Same move the drag runs.
+		const unsubscribeMoveQueueItem = window.maestro.process.onRemoteMoveQueueItem?.(
+			async (sessionId, itemId, toIndex, tabId, responseChannel) => {
+				try {
+					const moved = await moveQueuedItemSettled(sessionId, itemId, toIndex, tabId ?? undefined);
+					window.maestro.process.sendRemoteMoveQueueItemResponse(responseChannel, {
+						success: true,
+						moved,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteMoveQueueItem failed:', undefined, error);
+					window.maestro.process.sendRemoteMoveQueueItemResponse(responseChannel, {
+						success: false,
+						moved: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+		);
+
+		// Handle remote "send queue item now" from the CLI (`queue send-now`) or a
+		// client's hosted queued card's Force Send. Same send, and the same Forced
+		// Parallel Execution gate, the Force Send button has.
+		const unsubscribeSendQueueItemNow = window.maestro.process.onRemoteSendQueueItemNow?.(
+			async (sessionId, itemId, responseChannel) => {
+				try {
+					const sent = await sendQueuedItemNowSettled(sessionId, itemId);
+					window.maestro.process.sendRemoteSendQueueItemNowResponse(responseChannel, {
+						success: true,
+						sent,
+					});
+				} catch (error) {
+					logger.error('[useRemoteIntegration] onRemoteSendQueueItemNow failed:', undefined, error);
+					window.maestro.process.sendRemoteSendQueueItemNowResponse(responseChannel, {
+						success: false,
+						sent: false,
 						error: error instanceof Error ? error.message : String(error),
 					});
 				}
@@ -1683,6 +2059,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeSteerQueueItem?.();
 			unsubscribeSetQueueItemPaused?.();
 			unsubscribeMergeQueueItem?.();
+			unsubscribeEditQueueItem?.();
+			unsubscribeMoveQueueItem?.();
+			unsubscribeSendQueueItemNow?.();
 		};
 	}, [
 		sessionsRef,
@@ -2302,6 +2681,46 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, []);
 
+	// Handle a remote review verb: `maestro-cli diff-review` (Git Diff viewer)
+	// or `maestro-cli file-review` (File Preview line comments, which name a
+	// `file`). The pending comments are this renderer's state (the views draw
+	// them), so every verb is answered here, through the same service the
+	// views' Send Review and Edit in Composer buttons call.
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onRemoteDiffReviewCommand(
+			(request, responseChannel) => {
+				const reply = (result: DiffReviewCommandResult) =>
+					window.maestro.process.sendRemoteDiffReviewCommandResponse(responseChannel, result);
+				const { file } = request;
+				(file
+					? runRemoteFileReviewCommand({ ...request, file })
+					: runRemoteDiffReviewCommand(request)
+				)
+					.then(reply)
+					.catch((error) => {
+						logger.error('[useRemoteIntegration] Review command failed', undefined, error);
+						reply({
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+			}
+		);
+		return () => {
+			unsubscribe();
+		};
+	}, []);
+
+	// Handle a remote Design Mode chip verb (`maestro-cli browser-picks`): list
+	// the chips waiting in an agent's composer, or take one off. The chips are
+	// this renderer's state (the composer draws them), so the service answers
+	// from the live store, through the same remover the chip's X calls. The
+	// preload sends the answer back, a throw included.
+	useEffect(
+		() => window.maestro.process.onRemoteDesignPickCommand?.(runRemoteDesignPickCommand),
+		[]
+	);
+
 	// Handle a remote Auto Run steering verb (`maestro-cli steer-auto-run`). The
 	// notes are this renderer's state and its run loop is what reads them, so
 	// every verb is answered here, through the same service the Thought Stream
@@ -2311,15 +2730,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			(request, responseChannel) => {
 				const reply = (result: SteeringCommandResult) =>
 					window.maestro.process.sendRemoteAutoRunSteeringCommandResponse(responseChannel, result);
-				try {
-					reply(runRemoteSteeringCommand(request));
-				} catch (error) {
+				// A hosted agent's answer comes from its host, so the reply waits for it.
+				answerSteeringCommand(request).then(reply, (error: unknown) => {
 					logger.error('[useRemoteIntegration] Steering command failed', undefined, error);
 					reply({
 						success: false,
 						error: error instanceof Error ? error.message : String(error),
 					});
-				}
+				});
 			}
 		);
 		return () => {
@@ -2730,6 +3148,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// to be broadcast immediately for proper UI feedback on the web interface
 	const prevSessionStatesRef = useRef<Map<string, string>>(new Map());
 
+	// The agent object each tick last hashed. Agents are replaced, never mutated,
+	// so an agent that is the same object as last tick has the same tabs and the
+	// same hash, and the tick can skip it. A Nov 2026 field trace measured this
+	// loop as the window's single largest JS cost (~1.2s of every minute in Live
+	// mode) on a branch whose hash projects each tab's provider: every tab of
+	// every agent, twice a second, for agents that had not changed.
+	const prevHashedSessionsRef = useRef<Map<string, Session>>(new Map());
+
 	// Only set up the interval when live mode is active
 	useEffect(() => {
 		// Skip entirely if not in live mode - no web clients to broadcast to
@@ -2737,13 +3163,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		const stopSelectionSync = startDesktopAiTabSelectionSync();
 		const previousTabs = prevTabsRef.current;
 		const previousStates = prevSessionStatesRef.current;
+		const previousHashed = prevHashedSessionsRef.current;
 
 		// Use an interval to periodically check for changes instead of running on every render
 		// This dramatically reduces CPU usage during normal typing
 		const intervalId = setInterval(() => {
 			const sessions = sessionsRef.current;
 			const sessionIds = new Set(sessions.map((session) => session.id));
-			for (const cache of [previousTabs, previousStates]) {
+			for (const cache of [previousTabs, previousStates, previousHashed]) {
 				for (const sessionId of cache.keys()) {
 					if (!sessionIds.has(sessionId)) cache.delete(sessionId);
 				}
@@ -2768,6 +3195,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					session.id,
 					session.activeTabId || session.aiTabs?.[0]?.id || ''
 				);
+
+				// Unchanged since the last tick: nothing the hash reads can differ.
+				if (!activeTabChanged && previousHashed.get(session.id) === session) return;
+				previousHashed.set(session.id, session);
 
 				// An empty aiTabs array is a valid state and still has to be broadcast,
 				// otherwise remote clients keep rendering tabs the user already closed.
@@ -2803,6 +3234,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			clearInterval(intervalId);
 			previousTabs.clear();
 			previousStates.clear();
+			previousHashed.clear();
 			stopSelectionSync();
 		};
 	}, [isLiveMode, sessionsRef]);

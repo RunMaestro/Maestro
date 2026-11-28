@@ -14,7 +14,7 @@ import {
 	SHELL_COMMAND_OUTPUT_LIMIT,
 } from '../../../renderer/services/shellCommand';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import { createMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, agentModeFields, createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 import type { LogEntry } from '../../../renderer/types';
 import {
@@ -284,11 +284,47 @@ describe('runShellCommand', () => {
 			remoteId: 'r1',
 			workingDirOverride: '/remote/path',
 		});
-		expect(getCard()?.shellCommand?.remoteName).toBe('builder');
+		// The remote's name is not stamped on the card: the mode pill is the one mark of mode.
+		expect(getCard()?.shellCommand).not.toHaveProperty('remoteName');
 
 		emitExit(config.sessionId, 0);
 		await promise;
 	});
+
+	// M8: a headless host refuses a terminal command ("has no terminal to run a command in"). A
+	// hosted agent keeps its SSH fields, so this desktop runs its `!command` over SSH itself, the
+	// same way it runs an SSH agent's: the host's refusal is never reached from the composer.
+	test.each(AGENT_MODES)(
+		'%s: runs the command where the agent works, never on its host',
+		async (mode) => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						...agentModeFields(mode),
+						id: SESSION_ID,
+						cwd: '/work',
+						activeTabId: TAB_ID,
+						aiTabs: [createMockAITab({ id: TAB_ID, logs: [] })],
+					}),
+				],
+				activeSessionId: SESSION_ID,
+			});
+
+			const promise = runShellCommand({
+				session: useSessionStore.getState().sessions[0],
+				tabId: TAB_ID,
+				command: 'ls',
+			});
+
+			const config = runCommand.mock.calls[0][0];
+			expect(config.command).toBe('ls');
+			expect(config.cwd).toBe('/work');
+			if (mode === 'local') expect(config.sessionSshRemoteConfig).toBeUndefined();
+			else expect(config.sessionSshRemoteConfig).toEqual({ enabled: true, remoteId: 'r1' });
+			emitExit(config.sessionId, 0);
+			await promise;
+		}
+	);
 
 	test('surfaces a spawn failure in the card instead of throwing', async () => {
 		runCommand.mockRejectedValueOnce(new Error('boom'));

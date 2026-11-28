@@ -57,6 +57,45 @@ export function asThinkingMode(value: unknown): ThinkingMode | undefined {
 }
 
 /**
+ * The exit clearing point of {@link ThinkingMode}: what a tab's transcript keeps once its turn
+ * ends. 'sticky' keeps the `thinking` and `tool` entries; 'on' and 'off' drop them. One rule for
+ * the desktop's exit cleanup (`cleanupExitedTabLogs()`) and a headless host's turn record
+ * (`buildTurnTranscript()`), so a sticky tab reads the same in every mode. Returns `logs` itself
+ * when nothing is dropped.
+ */
+export function logsKeptAtTurnEnd<T extends { source: string }>(logs: T[], mode: unknown): T[] {
+	if (mode === 'sticky') return logs;
+	const kept = logs.filter((log) => log.source !== 'thinking' && log.source !== 'tool');
+	return kept.length === logs.length ? logs : kept;
+}
+
+/**
+ * The mid-turn clearing points of {@link ThinkingMode}: what a turn that is still running shows.
+ * 'off' shows no `thinking` entry (the desktop drops the chunk, `useAgentThinkingListener`); once
+ * answer text arrived, 'on' and 'off' show no `thinking` or `tool` entry from before it (the
+ * inline clear point of `useBatchedSessionUpdates`); 'sticky' shows them all. For the live tail of
+ * a turn another Maestro runs (`projectHostedSession()`), so it draws what a local turn draws.
+ * Returns `logs` itself when nothing is dropped.
+ */
+export function logsShownMidTurn<T extends { source: string }>(logs: T[], mode: unknown): T[] {
+	if (mode === 'sticky') return logs;
+	const showsThinking = !!mode && mode !== 'off';
+	let answerAt = -1;
+	for (let i = logs.length - 1; i >= 0; i--) {
+		if (logs[i].source === 'stdout') {
+			answerAt = i;
+			break;
+		}
+	}
+	const kept = logs.filter((log, i) => {
+		if (log.source !== 'thinking' && log.source !== 'tool') return true;
+		if (i < answerAt) return false;
+		return log.source === 'tool' || showsThinking;
+	});
+	return kept.length === logs.length ? logs : kept;
+}
+
+/**
  * Capability flags that determine what features are available for each agent.
  *
  * This is the single canonical definition. All other AgentCapabilities types
@@ -177,12 +216,34 @@ export interface AgentCapabilities {
 	supportsAdditionalDirectories: boolean;
 
 	/**
+	 * Where this agent's token speed (input and output tokens per second, per
+	 * model API call) is measured from. Every agent MUST declare it, so a new
+	 * harness cannot ship without deciding how its throughput is read.
+	 *
+	 * - `'transcript'`: its on-disk transcript times each call (Claude Code,
+	 *   Codex). The live stream is used only when the agent runs on an SSH host,
+	 *   whose transcript Maestro cannot read, and only if its parser implements
+	 *   `extractCallTiming`.
+	 * - `'stream'`: its live JSON stream marks each call; the parser implements
+	 *   `AgentOutputParser.extractCallTiming` and the main process times calls
+	 *   as the events arrive. Recorded from the day it ships, local or SSH.
+	 * - `'none'`: the provider reports no per-call usage (only per-turn totals,
+	 *   or nothing). Say why next to the value.
+	 *
+	 * See `TokenSpeedMeasurement` and PROVIDER-SUPPORT.md "Token speed".
+	 */
+	tokenSpeedMeasurement: TokenSpeedMeasurement;
+
+	/**
 	 * How images should be handled on resume when -i flag is not available.
 	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
 	 * undefined: Use default image handling (or no special resume handling needed).
 	 */
 	imageResumeMode?: 'prompt-embed';
 }
+
+/** Where an agent's per-call token speed comes from (see `AgentCapabilities.tokenSpeedMeasurement`). */
+export type TokenSpeedMeasurement = 'transcript' | 'stream' | 'none';
 
 /**
  * Default capabilities - safe defaults for unknown agents.
@@ -216,6 +277,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsAppendSystemPrompt: false,
 	supportsProjectMemory: false,
 	supportsAdditionalDirectories: false,
+	tokenSpeedMeasurement: 'none',
 };
 
 // Session group
@@ -357,6 +419,10 @@ export interface SessionInfo {
 	 * through `readLiftedTo()` / `liftedSendRefusal()` in `src/shared/maestro-lib/agents/lift-pointer.ts`.
 	 */
 	liftedTo?: LiftedToPointer;
+	/** Federation: the host's copy a move back left behind. Read it through `readLeftOnHost()`. */
+	leftOnHost?: LiftedToPointer;
+	/** Federation, on a host: the id of the agent this record was lifted from (`planAgentImport()`). */
+	liftedFromAgentId?: string;
 }
 
 /**
@@ -830,6 +896,12 @@ export interface BatchRunConfig {
 	maxAutoResumes?: number;
 	/** Presence selects goal-driven rather than document/task-driven mode. */
 	goalConfig?: import('./goalDriven/types').GoalRunConfig;
+	/**
+	 * Set only when this launch CONTINUES a run the app quit in the middle of
+	 * (an update restart): the first pass starts at this document and loop pass
+	 * instead of the top. Never set by a launch modal. See autorunRestartResume.ts.
+	 */
+	resumeFrom?: import('./autorunRestartResume').AutoRunResumePoint;
 }
 
 // ============================================================================
@@ -955,8 +1027,12 @@ export interface AgentError {
 	/** The category of error */
 	type: AgentErrorType;
 
-	/** Set only when the host supervisor terminates the turn; overrides a successful process exit. */
-	source?: 'host-supervision';
+	/**
+	 * `host-supervision`: set only when the host supervisor terminates the turn; overrides a
+	 * successful process exit. `host-link`: a hosted turn drawn ended here because the link to its
+	 * Federation host was lost; it clears when the host reports again.
+	 */
+	source?: 'host-supervision' | 'host-link';
 
 	/** Human-readable error message for display */
 	message: string;
@@ -991,6 +1067,14 @@ export interface AgentError {
 
 	/** Parsed JSON error details (if the error contains structured JSON) */
 	parsedJson?: unknown;
+
+	/**
+	 * The last screen of a terminal UI the agent ran in (maestro-p's
+	 * `last_screen`), already cleaned by `formatFailureScreen()`. Evidence for
+	 * the error modal only: never part of `message`, never shown inline, never
+	 * read to classify the error.
+	 */
+	failureScreen?: string;
 
 	/**
 	 * For limit/credit/rate-limit errors: epoch ms when the provider window is
@@ -1278,7 +1362,7 @@ export interface AgentSshRemoteConfig {
  */
 export interface ParsedDeepLink {
 	/** The type of navigation action */
-	action: 'focus' | 'session' | 'group' | 'file';
+	action: 'focus' | 'session' | 'group' | 'file' | 'run';
 	/** Maestro session ID (for action: 'session' and 'file') */
 	sessionId?: string;
 	/** Tab ID within the session (for action: 'session') */
@@ -1289,6 +1373,11 @@ export interface ParsedDeepLink {
 	filePath?: string;
 	/** 1-based line number within the file (for action: 'file', optional) */
 	line?: number;
+	/**
+	 * Prompt Link token (for action: 'run'). Handled entirely in the main
+	 * process; a 'run' link is never forwarded to the renderer.
+	 */
+	token?: string;
 }
 
 // ============================================================================
@@ -1381,6 +1470,16 @@ export interface DirectoryEntry {
 	isFile: boolean;
 	isSymlink?: boolean;
 	path: string;
+}
+
+/** The answer of `fs:watchRemoteCopy`: where the copy is, and whether it saves back. */
+export interface RemoteCopyWatchResult {
+	/** The copy's path on this machine. */
+	path: string;
+	/** False when the copy is not watched, so a change saved in it stays here. */
+	savesBack: boolean;
+	/** Why it does not save back, in words for the user (set when `savesBack` is false). */
+	reason?: string;
 }
 
 /**

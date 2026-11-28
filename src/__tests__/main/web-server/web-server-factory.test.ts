@@ -59,6 +59,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setClosedTabCommandCallback = vi.fn();
 			setMessagePinCommandCallback = vi.fn();
 			setAutoRunSteeringCommandCallback = vi.fn();
+			setDiffReviewCommandCallback = vi.fn();
 			setWindowCommandCallback = vi.fn();
 			setThroughputGaugeCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
@@ -66,6 +67,9 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setOpenFileTabCallback = vi.fn();
 			setOpenBrowserTabCallback = vi.fn();
 			setCloseBrowserTabCallback = vi.fn();
+			setPickBrowserElementCallback = vi.fn();
+			setBrowserViewportCallback = vi.fn();
+			setDesignPickCommandCallback = vi.fn();
 			setOpenTerminalTabCallback = vi.fn();
 			setWriteTerminalTabCallback = vi.fn();
 			setListTerminalTabsCallback = vi.fn();
@@ -79,6 +83,9 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setListQueueCallback = vi.fn();
 			setRemoveQueueItemCallback = vi.fn();
 			setMergeQueueItemCallback = vi.fn();
+			setEditQueueItemCallback = vi.fn();
+			setMoveQueueItemCallback = vi.fn();
+			setSendQueueItemNowCallback = vi.fn();
 			setSteerQueueItemCallback = vi.fn();
 			setSetQueueItemPausedCallback = vi.fn();
 			setRefreshFileTreeCallback = vi.fn();
@@ -134,6 +141,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setGetGroupChatStateCallback = vi.fn();
 			setStopGroupChatCallback = vi.fn();
 			setArchiveGroupChatCallback = vi.fn();
+			setSetGroupChatUnreadCallback = vi.fn();
 			setSendGroupChatMessageCallback = vi.fn();
 			setSteerGroupChatCallback = vi.fn();
 			setTabContextOpCallback = vi.fn();
@@ -1195,7 +1203,7 @@ describe('web-server/web-server-factory', () => {
 		 * recent `remote:executeCommand` send, standing in for the renderer.
 		 * The acknowledgement must originate from the owning webContents.
 		 */
-		const answerReceipt = (accepted: boolean, reason?: string): void => {
+		const answerReceipt = (accepted: boolean, reason?: string, queued?: unknown): void => {
 			const send = mockWebContents.send as ReturnType<typeof vi.fn>;
 			const call = [...send.mock.calls]
 				.reverse()
@@ -1203,8 +1211,36 @@ describe('web-server/web-server-factory', () => {
 			if (!call) throw new Error('no remote:executeCommand send was issued');
 			const receiptChannel = call[call.length - 1] as string;
 			const listener = vi.mocked(ipcMain.on).mock.calls.find((c) => c[0] === receiptChannel)?.[1];
-			listener?.({ sender: mockWebContents } as never, { accepted, reason });
+			listener?.(
+				{ sender: mockWebContents } as never,
+				queued === undefined ? { accepted, reason } : { accepted, reason, queued }
+			);
 		};
+
+		// M19: a hosted agent's host queued a forced message behind its running turn.
+		it('answers a receipt that says the host queued it with the queued item', async () => {
+			const server = createWebServerFactory(deps)();
+			const callback = (server.setExecuteCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			const pending = callback('session-1', 'work', 'ai', 'tab', true);
+			answerReceipt(true, undefined, { itemId: 'q-7', position: 2 });
+			await expect(pending).resolves.toEqual({ queued: true, itemId: 'q-7', queuePosition: 2 });
+		});
+
+		it.each([
+			['a non-object', 'q-7'],
+			['an empty item id', { itemId: '', position: 1 }],
+			['an overlong item id', { itemId: 'x'.repeat(201), position: 1 }],
+			['a position below 1', { itemId: 'q-7', position: 0 }],
+			['a fractional position', { itemId: 'q-7', position: 1.5 }],
+		])('reads a receipt whose queued field is %s as plainly accepted', async (_label, queued) => {
+			const server = createWebServerFactory(deps)();
+			const callback = (server.setExecuteCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			const pending = callback('session-1', 'work', 'ai', 'tab', true);
+			answerReceipt(true, undefined, queued);
+			await expect(pending).resolves.toBe(true);
+		});
 
 		it('forwards the host dispatch marker and waits for the owning renderer receipt', async () => {
 			const server = createWebServerFactory(deps)();
@@ -1422,6 +1458,17 @@ describe('web-server/web-server-factory', () => {
 					error: 'Tab not found: ghost-tab',
 					reason: 'tab-not-found',
 				})
+			);
+		});
+
+		it('carries ran: true when the renderer ran one of its own commands (/history)', async () => {
+			const server = createWebServerFactory(deps)();
+			const resultPromise = invokeEnqueue(server);
+
+			answerEnqueue({ success: true, tabId: 'tab-1', queued: false, ran: true });
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({ success: true, queued: false, ran: true })
 			);
 		});
 
@@ -1974,6 +2021,65 @@ describe('web-server/web-server-factory', () => {
 			expect(filtered[0].sessionId).toBe('agent-2');
 		});
 
+		// Issue #2046: every heartbeat showed "never triggered" because the
+		// callback hard-coded triggerCount 0 and never set lastTriggered.
+		it('fills lastTriggered and triggerCount from the event journal per session and name', async () => {
+			const getCueGraphData = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					sessionName: 'Ops',
+					toolType: 'claude-code',
+					subscriptions: [
+						{
+							name: 'hourly-heartbeat',
+							event: 'time.heartbeat',
+							enabled: true,
+							prompt: '',
+							interval_minutes: 60,
+						},
+						{ name: 'idle', event: 'time.heartbeat', enabled: true, prompt: '' },
+					],
+				},
+				{
+					sessionId: 'agent-2',
+					sessionName: 'Other',
+					toolType: 'claude-code',
+					subscriptions: [
+						{ name: 'hourly-heartbeat', event: 'time.heartbeat', enabled: true, prompt: '' },
+					],
+				},
+			]);
+			const getCueSubscriptionTriggerStats = vi.fn().mockReturnValue([
+				{
+					sessionId: 'agent-1',
+					subscriptionName: 'hourly-heartbeat',
+					triggerCount: 312,
+					lastTriggered: 1_700_000_000_000,
+				},
+			]);
+
+			const createWebServer = createWebServerFactory({
+				...deps,
+				getCueGraphData,
+				getCueSubscriptionTriggerStats,
+			});
+			const server = createWebServer() as any;
+			const callback = server.setGetCueSubscriptionsCallback.mock.calls[0][0];
+
+			const all = await callback();
+			expect(all[0]).toMatchObject({
+				sessionId: 'agent-1',
+				name: 'hourly-heartbeat',
+				triggerCount: 312,
+				lastTriggered: 1_700_000_000_000,
+			});
+			// Same name on another agent must not borrow agent-1's runs.
+			expect(all[1]).toMatchObject({ name: 'idle', triggerCount: 0 });
+			expect(all[1].lastTriggered).toBeUndefined();
+			expect(all[2]).toMatchObject({ sessionId: 'agent-2', triggerCount: 0 });
+			expect(all[2].lastTriggered).toBeUndefined();
+		});
+
 		it('returns [] and warns when the engine dependency is missing', async () => {
 			const createWebServer = createWebServerFactory({ ...deps, getCueGraphData: undefined });
 			const server = createWebServer() as any;
@@ -2180,6 +2286,44 @@ describe('web-server/web-server-factory', () => {
 				undefined,
 				undefined,
 				undefined
+			);
+		});
+
+		it("setEnqueueCommandCallback forwards a Federation sender's turn overrides after the control slot", () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+			const callback = (server.setEnqueueCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			const overrides = { model: 'opus', readOnly: true };
+
+			void callback(
+				'session-1',
+				'mine',
+				'ai',
+				'tab-1',
+				undefined,
+				true,
+				false,
+				undefined,
+				undefined,
+				undefined,
+				overrides
+			);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:enqueueCommand',
+				'session-1',
+				'mine',
+				expect.any(String),
+				'ai',
+				'tab-1',
+				undefined,
+				true,
+				false,
+				undefined,
+				undefined,
+				undefined,
+				overrides
 			);
 		});
 
@@ -2470,18 +2614,11 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('usageAchievementsCallbacks smoke', () => {
-		it('setGetUsageDashboardCallback forwards to the renderer', () => {
+		it('registers no usage dashboard callback (no renderer answers it)', () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer() as any;
-			const callback = server.setGetUsageDashboardCallback.mock.calls[0][0];
 
-			void callback('week');
-
-			expect(mockWebContents.send).toHaveBeenCalledWith(
-				'remote:getUsageDashboard',
-				'week',
-				expect.any(String)
-			);
+			expect(server.setGetUsageDashboardCallback).not.toHaveBeenCalled();
 		});
 
 		it('setGetAchievementsCallback forwards to the renderer', () => {
@@ -2907,6 +3044,78 @@ describe('web-server/web-server-factory', () => {
 			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
 			const server = createWebServer() as any;
 			const callback = server.setAutoRunSteeringCommandCallback.mock.calls[0][0];
+
+			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
+				success: false,
+				error: 'Maestro window is not available',
+			});
+		});
+	});
+
+	describe('diffReview callback', () => {
+		it('forwards the request to the renderer and waits on a response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setDiffReviewCommandCallback.mock.calls[0][0];
+			const request = { action: 'list', sessionId: 'session-1' };
+
+			void callback(request);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:diffReviewCommand',
+				request,
+				expect.stringContaining('remote:diffReviewCommand:response:')
+			);
+		});
+
+		it('answers with a failure when no window is available', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setDiffReviewCommandCallback.mock.calls[0][0];
+
+			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
+				success: false,
+				error: 'Maestro window is not available',
+			});
+		});
+	});
+
+	describe('browserViewport callback', () => {
+		it('is registered, and resolves a Coworking id before it reaches the renderer', async () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			expect(server.setBrowserViewportCallback).toHaveBeenCalledTimes(1);
+			const callback = server.setBrowserViewportCallback.mock.calls[0][0];
+
+			// No tab of this agent carries that Coworking id, so the op never goes out.
+			const result = await callback({ sessionId: 'session-1', tab: 'browser:42', preset: 'phone' });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('No browser tab browser:42 in this agent');
+			expect(mockWebContents.send).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('designPickCommand callback', () => {
+		it('forwards the request to the renderer and waits on a response channel', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer() as any;
+			const callback = server.setDesignPickCommandCallback.mock.calls[0][0];
+			const request = { action: 'remove', sessionId: 'session-1', pickId: 'pick-1' };
+
+			void callback(request);
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:designPickCommand',
+				request,
+				expect.stringContaining('remote:designPickCommand:response:')
+			);
+		});
+
+		it('answers with a failure when no window is available', async () => {
+			const createWebServer = createWebServerFactory({ ...deps, getMainWindow: () => null });
+			const server = createWebServer() as any;
+			const callback = server.setDesignPickCommandCallback.mock.calls[0][0];
 
 			await expect(callback({ action: 'list', sessionId: 'session-1' })).resolves.toEqual({
 				success: false,

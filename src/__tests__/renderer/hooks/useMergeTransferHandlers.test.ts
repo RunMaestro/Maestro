@@ -20,6 +20,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import type { Session } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
+import { AGENT_MODES, agentModeFields } from '../../helpers/mockSession';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
 
 // ============================================================================
 // Mock modules BEFORE importing the hook
@@ -1747,5 +1753,125 @@ describe('mergeTabContext / transferTabContext', () => {
 		// The modal's pending buffer is still there for the modal to use.
 		expect(useTabStore.getState().pendingTerminalBufferSend).not.toBeNull();
 		useTabStore.getState().setPendingTerminalBufferSend(null);
+	});
+});
+
+describe('transferTabContext in every agent mode', () => {
+	const act$ = vi.fn();
+	const HOST_TAB = 'host-from';
+
+	beforeEach(() => {
+		usePeerMirrorStore.setState(usePeerMirrorStore.getInitialState());
+		useSettingsStore.setState({ federationHostedAgents: true });
+		const { peer } = replacePeerAgents(
+			createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+			[{ id: 'h1', name: 'Target', toolType: 'codex', aiTabs: [{ id: 'target-tab' }] }],
+			[],
+			1
+		);
+		usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		act$
+			.mockReset()
+			.mockImplementation(async (_peer, _agent, action: { kind: string }) =>
+				action.kind === 'new-tab'
+					? { ok: true, result: { kind: 'new-tab', tabId: HOST_TAB } }
+					: action.kind === 'send'
+						? { ok: true, result: { kind: 'send', receipt: { status: 'started' } } }
+						: { ok: true, result: { kind: action.kind, tabId: HOST_TAB } }
+			);
+		(window as any).maestro.federation = { act: act$ };
+	});
+
+	it.each(AGENT_MODES)(
+		'%s: Send to Agent opens a "From:" tab on the target and its first turn runs the context',
+		async (mode) => {
+			const source = createMockSession({
+				id: 'source-agent',
+				name: 'Source',
+				aiTabs: [{ ...createMockSession().aiTabs[0], id: 'tab-2', name: 'Tab 2' }],
+			});
+			const target = createMockSession({
+				...agentModeFields(mode),
+				id: 'target-agent',
+				name: 'Target',
+				toolType: 'codex',
+				aiTabs: [{ ...createMockSession().aiTabs[0], id: 'target-tab', logs: [] }],
+				activeTabId: 'target-tab',
+			});
+			useSessionStore.setState({ sessions: [source, target], activeSessionId: 'source-agent' });
+			const setActiveSessionId = vi.fn();
+			const { result } = renderHook(() =>
+				useMergeTransferHandlers(createMockDeps({ setActiveSessionId }))
+			);
+
+			let outcome: any;
+			await act(async () => {
+				outcome = await result.current.transferTabContext('source-agent', 'tab-2', 'target-agent', {
+					groomContext: false,
+					targetSessionId: 'target-agent',
+				});
+			});
+
+			expect(outcome).toMatchObject({ success: true, newSessionId: 'target-agent' });
+			const after = useSessionStore.getState().sessions.find((s) => s.id === 'target-agent')!;
+			const opened = after.aiTabs.find((t) => t.id === outcome.newTabId)!;
+			expect(opened.name).toBe('From: Source');
+			expect(opened.logs[0]).toMatchObject({
+				source: 'system',
+				text: 'Context transferred from "Source" (claude-code)',
+			});
+			expect(after.activeTabId).toBe(outcome.newTabId);
+			expect(setActiveSessionId).toHaveBeenCalledWith('target-agent');
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ title: 'Context Sent', tabId: outcome.newTabId })
+			);
+
+			// Only the transport differs: the host runs a hosted agent's turn, this machine the rest.
+			const spawn = (window as any).maestro.process.spawn;
+			if (mode === 'hosted') {
+				expect(outcome.newTabId).toBe(HOST_TAB);
+				const kinds = act$.mock.calls.map(([, , action]) => action.kind);
+				// The host's new tab is given the defaults a local new tab starts with.
+				expect(kinds).toEqual(['new-tab', 'update-tab', 'rename-tab', 'send']);
+				expect(act$.mock.calls[3][2]).toMatchObject({
+					tabId: HOST_TAB,
+					text: expect.stringContaining('("Source" using claude-code)'),
+				});
+				expect(spawn).not.toHaveBeenCalled();
+			} else {
+				await vi.waitFor(() =>
+					expect(spawn).toHaveBeenCalledWith(
+						expect.objectContaining({
+							sessionId: `target-agent-ai-${outcome.newTabId}`,
+							prompt: expect.stringContaining('("Source" using claude-code)'),
+						})
+					)
+				);
+				expect(act$).not.toHaveBeenCalled();
+			}
+		}
+	);
+
+	it('hosted: a host that refuses the tab fails the transfer and spawns nothing here', async () => {
+		act$.mockResolvedValue(null);
+		const source = createMockSession({ id: 'source-agent', name: 'Source' });
+		const target = createMockSession({
+			...agentModeFields('hosted'),
+			id: 'target-agent',
+			name: 'Target',
+		});
+		useSessionStore.setState({ sessions: [source, target], activeSessionId: 'source-agent' });
+		const { result } = renderHook(() => useMergeTransferHandlers(createMockDeps()));
+
+		let outcome: any;
+		await act(async () => {
+			outcome = await result.current.transferTabContext('source-agent', 'tab-1', 'target-agent', {
+				groomContext: false,
+				targetSessionId: 'target-agent',
+			});
+		});
+
+		expect(outcome).toMatchObject({ success: false });
+		expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
 	});
 });

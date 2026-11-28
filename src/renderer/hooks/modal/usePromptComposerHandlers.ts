@@ -14,11 +14,8 @@ import { useSessionStore, selectActiveSession, updateAiTab } from '../../stores/
 import { useGroupChatStore, selectActiveGroupChatStagedImages } from '../../stores/groupChatStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useComposerInputStore } from '../../stores/composerInputStore';
-import {
-	cycleShowThinkingFields,
-	getActiveTab,
-	toggleReadOnlyModeFields,
-} from '../../utils/tabHelpers';
+import { getActiveTab, toggleReadOnlyModeFields } from '../../utils/tabHelpers';
+import { cycleTabThinkingMode } from '../../services/tabThinkingMode';
 import {
 	REMOVE_ATTACHED_IMAGES_TO_SEND_DETAIL,
 	canModeratorReadImages,
@@ -139,10 +136,11 @@ export function usePromptComposerHandlers(
 					prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: '' } : c))
 				);
 			} else {
-				// Set the input value and trigger send
+				// Put the text in the composer, then send it AS a composer submit (no
+				// override) so processInput consumes the composer, staged images included.
 				setInputValue(value);
 				// Use setTimeout to ensure state updates before processing
-				setTimeout(() => processInput(value), 0);
+				setTimeout(() => processInput(), 0);
 			}
 		},
 		[
@@ -185,10 +183,7 @@ export function usePromptComposerHandlers(
 		if (!activeSession) return;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return;
-		updateAiTab(activeSession.id, activeTab.id, (tab) => ({
-			...tab,
-			...cycleShowThinkingFields(tab),
-		}));
+		cycleTabThinkingMode(activeSession.id, activeTab.id);
 	}, []);
 
 	const handlePromptToggleEnterToSend = useCallback(

@@ -57,6 +57,8 @@ export interface CenterFlash {
 	id: number;
 	message: string;
 	detail?: string;
+	/** Wrap the detail as prose instead of truncating it to one monospace line. */
+	wrapDetail?: boolean;
 	color: CenterFlashColor;
 	/** ms; 0 = no auto-dismiss */
 	duration: number;
@@ -89,6 +91,11 @@ export const useCenterFlashStore = create<CenterFlashStore>()((set) => ({
 export interface NotifyCenterFlashOptions {
 	message: string;
 	detail?: string;
+	/**
+	 * Wrap `detail` as prose. Default false: a detail is usually a path or an
+	 * id, which reads better truncated on one monospace line.
+	 */
+	wrapDetail?: boolean;
 	/** One of the 5 canonical colors. Default: `'theme'` (matches active theme). */
 	color?: CenterFlashColor;
 	/**
@@ -131,6 +138,7 @@ export function notifyCenterFlash(opts: NotifyCenterFlashOptions): number {
 		id: nextId++,
 		message: opts.message,
 		detail: opts.detail,
+		wrapDetail: opts.wrapDetail,
 		color: resolveColor(opts),
 		duration: opts.duration ?? DEFAULT_DURATION_MS,
 	};

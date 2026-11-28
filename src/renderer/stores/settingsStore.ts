@@ -465,10 +465,12 @@ export interface SettingsStoreState
 	userMessageAlignment: 'left' | 'right';
 	utilityAgentId: string | null;
 	utilityModelId: string | null;
+	primaryAgentId: string | null;
 	encoreFeatures: EncoreFeatureFlags;
 	symphonyRegistryUrls: string[];
 	coworkingBrowserInteraction: string[];
 	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
+	coworkingBrowserTypingWithoutConfirmation: string[];
 	coworkingBackgroundBrowsers: boolean;
 	coworkingBackgroundBrowsersLimit: number;
 	dataviewJsEnabled: boolean;
@@ -594,11 +596,13 @@ export interface SettingsStoreActions
 	setSuppressWindowsWarning: (value: boolean) => void;
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
 	setUtilityAgentId: (value: string | null) => void;
+	setPrimaryAgentId: (value: string | null) => void;
 	setUtilityModelId: (value: string | null) => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setSymphonyRegistryUrls: (value: string[]) => void;
 	setCoworkingBrowserInteraction: (value: string[]) => void;
 	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
+	setCoworkingBrowserTypingWithoutConfirmation: (value: string[]) => void;
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 	setDataviewJsEnabled: (value: boolean) => void;
@@ -863,10 +867,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		userMessageAlignment: 'right',
 		utilityAgentId: null,
 		utilityModelId: null,
+		primaryAgentId: null,
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
 		symphonyRegistryUrls: [],
 		coworkingBrowserInteraction: [],
 		coworkingBrowserInteractionConfirm: {},
+		coworkingBrowserTypingWithoutConfirmation: [],
 		coworkingBackgroundBrowsers: false,
 		coworkingBackgroundBrowsersLimit: 2,
 		dataviewJsEnabled: false,
@@ -1403,6 +1409,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('utilityAgentId', value);
 		},
 
+		setPrimaryAgentId: (value) => {
+			set({ primaryAgentId: value });
+			window.maestro.settings.set('primaryAgentId', value);
+		},
+
 		setUtilityModelId: (value) => {
 			set({ utilityModelId: value });
 			window.maestro.settings.set('utilityModelId', value);
@@ -1426,6 +1437,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setCoworkingBrowserInteractionConfirm: (value) => {
 			set({ coworkingBrowserInteractionConfirm: value });
 			window.maestro.settings.set('coworkingBrowserInteractionConfirm', value);
+		},
+
+		setCoworkingBrowserTypingWithoutConfirmation: (value) => {
+			set({ coworkingBrowserTypingWithoutConfirmation: value });
+			window.maestro.settings.set('coworkingBrowserTypingWithoutConfirmation', value);
 		},
 
 		setCoworkingBackgroundBrowsers: (value) => {
@@ -2670,6 +2686,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['utilityModelId'] !== undefined)
 			patch.utilityModelId = allSettings['utilityModelId'] as string | null;
 
+		if (allSettings['primaryAgentId'] !== undefined)
+			patch.primaryAgentId = allSettings['primaryAgentId'] as string | null;
+
 		// Encore Features (merge with defaults so a flag the stored object predates
 		// keeps its default instead of reading as off)
 		if (allSettings['encoreFeatures'] !== undefined) {
@@ -2701,6 +2720,11 @@ export async function loadAllSettings(): Promise<void> {
 			}
 			patch.coworkingBrowserInteractionConfirm = out;
 		}
+
+		const rawTyping = allSettings['coworkingBrowserTypingWithoutConfirmation'];
+		patch.coworkingBrowserTypingWithoutConfirmation = Array.isArray(rawTyping)
+			? rawTyping.filter((id): id is string => typeof id === 'string')
+			: [];
 
 		if (typeof allSettings['coworkingBackgroundBrowsers'] === 'boolean') {
 			patch.coworkingBackgroundBrowsers = allSettings['coworkingBackgroundBrowsers'];
@@ -3087,6 +3111,7 @@ export function getSettingsActions() {
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
 		setSuppressWindowsWarning: state.setSuppressWindowsWarning,
 		setUtilityAgentId: state.setUtilityAgentId,
+		setPrimaryAgentId: state.setPrimaryAgentId,
 		setUtilityModelId: state.setUtilityModelId,
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,

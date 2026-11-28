@@ -4,9 +4,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildWorktreeSession } from '../../../renderer/utils/worktreeSession';
+import {
+	buildWorktreeSession,
+	recordWorktreeAgentsCreated,
+} from '../../../renderer/utils/worktreeSession';
 import type { AITab, Session } from '../../../renderer/types';
 import { createMockAITab } from '../../helpers/mockTab';
+import { AGENT_MODES, agentModeFields } from '../../helpers/mockSession';
 
 // Mock generateId for deterministic IDs
 let idCounter = 0;
@@ -43,6 +47,27 @@ describe('buildWorktreeSession', () => {
 	beforeEach(() => {
 		idCounter = 0;
 	});
+
+	it.each(AGENT_MODES)(
+		'%s: an Auto Run worktree child runs where its parent runs, spawned from this machine (M8)',
+		(mode) => {
+			const parent = createMockParentSession(agentModeFields(mode));
+			const child = buildWorktreeSession({
+				parentSession: parent,
+				path: '/worktrees/feature-x',
+				branch: 'feature-x',
+				name: 'feature-x',
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			});
+			// A hosted parent's child is an SSH worktree agent, never a hosted one, so a run in a
+			// worktree never reaches the headless host's `--worktree` refusal.
+			expect(child.liftedTo).toBeUndefined();
+			expect(child.sessionSshRemoteConfig).toEqual(
+				mode === 'local' ? undefined : { enabled: true, remoteId: 'r1' }
+			);
+		}
+	);
 
 	it('should create a new-model session with correct fields', () => {
 		const parent = createMockParentSession();
@@ -370,4 +395,41 @@ describe('buildWorktreeSession', () => {
 			expect(parent).toEqual(original);
 		}
 	);
+});
+
+describe('recordWorktreeAgentsCreated', () => {
+	beforeEach(() => {
+		vi.mocked(window.maestro.stats.recordSessionCreated).mockClear();
+	});
+
+	it('records one worktree lifecycle row per added agent', () => {
+		recordWorktreeAgentsCreated([
+			{
+				id: 'wt-1',
+				toolType: 'codex',
+				cwd: '/repo/wt-1',
+				createdAt: 1234,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' },
+			} as Session,
+			{ id: 'wt-2', toolType: 'claude-code', cwd: '/repo/wt-2', createdAt: 5678 } as Session,
+		]);
+
+		expect(window.maestro.stats.recordSessionCreated).toHaveBeenCalledTimes(2);
+		expect(window.maestro.stats.recordSessionCreated).toHaveBeenCalledWith({
+			sessionId: 'wt-1',
+			agentType: 'codex',
+			projectPath: '/repo/wt-1',
+			createdAt: 1234,
+			isRemote: true,
+			isWorktree: true,
+		});
+		expect(window.maestro.stats.recordSessionCreated).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'wt-2', isRemote: false, isWorktree: true })
+		);
+	});
+
+	it('records nothing for an empty list', () => {
+		recordWorktreeAgentsCreated([]);
+		expect(window.maestro.stats.recordSessionCreated).not.toHaveBeenCalled();
+	});
 });

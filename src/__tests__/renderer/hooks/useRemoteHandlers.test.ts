@@ -106,6 +106,13 @@ import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAuto
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
+import { registerMaestroBuiltinCommandHandlers } from '../../../renderer/services/maestroBuiltinCommands';
+import {
+	createMirroredPeer,
+	replacePeerAgents,
+} from '../../../shared/maestro-lib/client/peer-mirror';
+import { AGENT_MODES, agentModeFields, type AgentMode } from '../../helpers';
 import {
 	clearCapabilitiesCache,
 	setCapabilitiesCache,
@@ -2732,5 +2739,181 @@ describe('useRemoteHandlers', () => {
 				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 			}
 		);
+	});
+
+	// A message a web or phone client sends to a tab reaches the machine that runs the agent's
+	// turns, with the same delivery receipt in every mode: local and SSH spawn it here, a hosted
+	// agent's goes to its host as typed (`sendHostedTurn()`), never to a spawn main would refuse.
+	// Maestro's `/history` runs for the tab in every mode: here, or on the host for its own tab.
+	describe('mode parity: a remote command reaches the machine that runs the turn', () => {
+		const act$ = vi.fn();
+		const hostSends = () => act$.mock.calls.filter(([, , action]) => action?.kind === 'send');
+
+		beforeEach(() => {
+			usePeerMirrorStore.setState(usePeerMirrorStore.getInitialState());
+			useSettingsStore.setState({ federationHostedAgents: true } as any);
+			act$.mockReset();
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+			(window as any).maestro.federation = { act: act$ };
+			const { peer } = replacePeerAgents(
+				createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+				[{ id: 'h1', name: 'Docs', toolType: 'claude-code', aiTabs: [{ id: 'tab-1' }] }],
+				[],
+				1
+			);
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'connected' }]);
+		});
+
+		afterEach(() => {
+			usePeerMirrorStore.setState(usePeerMirrorStore.getInitialState());
+			useSettingsStore.setState({ federationHostedAgents: false } as any);
+			registerMaestroBuiltinCommandHandlers(null);
+		});
+
+		const send = async (mode: AgentMode, command: string, overrides: Partial<Session> = {}) => {
+			const session = createMockSession({
+				...agentModeFields(mode),
+				inputMode: 'ai',
+				...overrides,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as any);
+			renderHook(() => useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } })));
+			await act(async () =>
+				getRemoteCommandHandler()(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: session.id,
+							tabId: 'tab-1',
+							command,
+							inputMode: 'ai',
+							receiptChannel: 'receipt',
+						},
+					})
+				)
+			);
+			return session;
+		};
+
+		it.each(AGENT_MODES)(
+			'%s: a message runs where the agent runs and is acked delivered',
+			async (mode) => {
+				const session = await send(mode, 'hello');
+
+				expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+					'receipt',
+					true,
+					undefined
+				);
+				const spawned = vi.mocked(window.maestro.process.spawn).mock.calls.map(([config]) => ({
+					sessionId: config.sessionId,
+					prompt: config.prompt,
+				}));
+				const hosted = hostSends().map(([, , action]) => ({
+					tabId: action.tabId,
+					text: action.text,
+				}));
+				if (mode === 'hosted') {
+					expect(spawned).toEqual([]);
+					expect(hosted).toEqual([{ tabId: 'tab-1', text: 'hello' }]);
+				} else {
+					expect(spawned).toEqual([
+						expect.objectContaining({ sessionId: `${session.id}-ai-tab-1` }),
+					]);
+					expect(hosted).toEqual([]);
+				}
+			}
+		);
+
+		it.each(AGENT_MODES)('%s: /history runs for the tab and nothing spawns here', async (mode) => {
+			const history = vi.fn().mockResolvedValue(undefined);
+			registerMaestroBuiltinCommandHandlers({ history, skills: vi.fn() });
+			act$.mockResolvedValue({ ok: true, result: { kind: 'send', receipt: { status: 'ran' } } });
+
+			const session = await send(mode, '/history');
+
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt',
+				true,
+				undefined
+			);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			if (mode === 'hosted') {
+				expect(history).not.toHaveBeenCalled();
+				expect(hostSends().map(([, , action]) => action.text)).toEqual(['/history']);
+			} else {
+				expect(history).toHaveBeenCalledExactlyOnceWith({ sessionId: session.id, tabId: 'tab-1' });
+			}
+		});
+
+		// Parity round 3, N1: a dispatched message names the tab it lands in, in every mode, through
+		// the same namer with the same text (a hosted send names it once the host took it).
+		it.each(AGENT_MODES)('%s: a dispatched message names the tab it lands in', async (mode) => {
+			vi.mocked(requestTabAutoNameForMessage).mockClear();
+			const session = await send(mode, 'Fix the login bug');
+
+			expect(vi.mocked(requestTabAutoNameForMessage).mock.calls).toEqual([
+				[expect.objectContaining({ id: session.id }), 'tab-1', 'Fix the login bug', 'remote'],
+			]);
+		});
+
+		it.each(AGENT_MODES)('%s: a dispatched slash command names no tab', async (mode) => {
+			vi.mocked(requestTabAutoNameForMessage).mockClear();
+			await send(mode, '/not-a-command');
+
+			expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
+		});
+
+		// M19: a host has no `--force`, so a forced message for a busy host tab waits in its queue.
+		// The ack says queued, with the host's item, so the CLI prints what happened.
+		it('hosted: a --force message the host queues behind a busy tab is acked queued, never delivered (M19)', async () => {
+			act$.mockResolvedValue({
+				ok: true,
+				result: {
+					kind: 'send',
+					receipt: { status: 'queued', itemId: 'q-7', position: 2, queueLength: 2 },
+				},
+			});
+			const session = createBusyTabSession(agentModeFields('hosted'));
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id } as any);
+			renderHook(() => useRemoteHandlers(createMockDeps({ sessionsRef: { current: [session] } })));
+			await act(async () =>
+				getRemoteCommandHandler()(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: session.id,
+							tabId: 'tab-1',
+							command: 'hello',
+							inputMode: 'ai',
+							force: true,
+							receiptChannel: 'receipt',
+						},
+					})
+				)
+			);
+
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledExactlyOnceWith(
+				'receipt',
+				true,
+				undefined,
+				{ itemId: 'q-7', position: 2 }
+			);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		it('hosted: a host that refuses the message acks it undelivered and spawns nothing', async () => {
+			act$.mockResolvedValue(null);
+
+			await send('hosted', 'hello');
+
+			expect(window.maestro.process.sendRemoteCommandReceipt).toHaveBeenCalledWith(
+				'receipt',
+				false,
+				'host-refused'
+			);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
 	});
 });

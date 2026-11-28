@@ -6,7 +6,7 @@
  * - Migration system for schema evolution
  * - CRUD operations for query events, auto-run sessions/tasks, and session lifecycle
  * - Aggregated statistics for the Usage Dashboard
- * - Data management (cleanup); the dashboard export lives in usage-export.ts
+ * - The dashboard export lives in usage-export.ts (there is no automatic retention)
  * - Singleton instance management
  * - Performance metrics API
  *
@@ -24,6 +24,7 @@ export type {
 	CorruptionRecoveryResult,
 	Migration,
 	MigrationRecord,
+	StatsInitializationResult,
 } from './types';
 
 // ============ Utilities ============

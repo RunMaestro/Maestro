@@ -11,6 +11,7 @@ import type { ChildProcess } from 'child_process';
 import type { SpawnSpec } from '../../../main/cue/cue-spawn-builder';
 import { ClaudeOutputParser } from '../../../shared/maestro-lib/parsers/claude-output-parser';
 import { GrokOutputParser } from '../../../shared/maestro-lib/parsers/grok-output-parser';
+import { AntigravityOutputParser } from '../../../shared/maestro-lib/parsers/antigravity-output-parser';
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -1401,6 +1402,57 @@ describe('cue-process-lifecycle', () => {
 						cost: { status: 'unknown' },
 					},
 				});
+			});
+		});
+
+		// agy streams the answer as `step_update.text_delta` fragments. When the
+		// terminal `result` carries no `response`, the answer is rebuilt from them
+		// and must not be split mid-word.
+		describe('Antigravity Cue turn text', () => {
+			afterEach(() => mockGetOutputParser.mockReturnValue(null));
+
+			const line = (record: Record<string, unknown>) => JSON.stringify(record) + '\n';
+			const delta = (text: string, stepIndex: number) =>
+				line({
+					event: 'step_update',
+					step_update: {
+						conversation_id: 'agy-conv',
+						step_index: stepIndex,
+						state: 'ACTIVE',
+						step_type: 'agent_response',
+						text_delta: text,
+					},
+				});
+
+			it('joins text deltas without a separator when the result has no response', async () => {
+				mockGetOutputParser.mockReturnValue(new AntigravityOutputParser());
+				const pending = runProcess(
+					'agy-run',
+					createSpec({ command: 'agy', args: ['-p', 'hi'] }),
+					createOptions({ toolType: 'antigravity' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				for (const chunk of [
+					delta('Hel', 1),
+					delta('lo, wor', 1),
+					delta('ld', 1),
+					line({
+						event: 'result',
+						result: {
+							conversation_id: 'agy-conv',
+							status: 'SUCCESS',
+							response: '',
+							num_turns: 1,
+							usage: { input_tokens: 10, output_tokens: 3, total_tokens: 13 },
+						},
+					}),
+				]) {
+					mockChild.stdout.emit('data', chunk);
+				}
+				mockChild.emit('close', 0);
+				const result = await pending;
+
+				expect(result.stdout).toBe('Hello, world');
 			});
 		});
 

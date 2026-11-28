@@ -7,6 +7,7 @@ import type {
 	FocusArea,
 	AgentError,
 	QueuedItem,
+	ModalSaveOutcome,
 	QueuedItemEditPatch,
 } from '../../types';
 import type { FileNode } from '../../types/fileTree';
@@ -152,12 +153,9 @@ export interface LogItemProps {
 }
 
 /**
- * The fields of an agent the transcript view reads, and no others. A local agent
- * passes its `Session`; a Federation peer's mirrored agent passes a view object
- * built by `buildMirrorViewSession()`, which is never a `Session` and never in
- * `sessionStore`. The optional fields only feed history backfill and the Claude
- * mode pill: a mirror leaves them out, so backfill (a local provider read) has
- * no project root to read from.
+ * The fields of an agent the transcript view reads, and no others. An agent passes
+ * its `Session` (a hosted agent too: its Left Bar record). The optional fields only
+ * feed history backfill and the Claude mode pill.
  */
 export type TranscriptViewSession = Pick<
 	Session,
@@ -205,7 +203,7 @@ export interface TerminalOutputProps {
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
 	onTogglePauseQueuedItem?: (itemId: string) => void; // Callback to toggle held/paused state of a queued item
 	onMergeQueuedItem?: (itemId: string) => void; // Fold a queued message into the one above it
-	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void; // Edit a queued message's text, images and turn settings
+	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => Promise<ModalSaveOutcome>; // Edit a queued message's text, images and turn settings
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void; // Reorder a queued item within the active tab's queue
 	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)

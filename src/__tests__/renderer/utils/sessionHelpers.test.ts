@@ -13,6 +13,7 @@ import {
 	buildSpawnConfigForAgent,
 	createSessionForAgent,
 	agentSupportsContextTransfer,
+	buildSharedHistoryContext,
 	getAgentInfo,
 	getSessionSshRemoteId,
 	isSessionRemote,
@@ -555,6 +556,25 @@ describe('sessionHelpers', () => {
 			expect(getSessionSshRemoteId(session)).toBe('spawned-remote-id');
 		});
 
+		it('ignores the last spawn remote id once SSH is switched off in the settings', () => {
+			const session: SessionSshInfo = {
+				sshRemoteId: 'last-spawn-remote',
+				sessionSshRemoteConfig: { enabled: false, remoteId: 'last-spawn-remote' },
+			};
+			expect(isSessionRemote(session)).toBe(false);
+			expect(getSessionSshRemoteId(session)).toBeUndefined();
+		});
+
+		it('ignores a remote id left on an agent with SSH switched off (a local agent)', () => {
+			const session: SessionSshInfo = {
+				sessionSshRemoteConfig: {
+					enabled: false,
+					remoteId: 'stale-remote-id',
+				},
+			};
+			expect(getSessionSshRemoteId(session)).toBeUndefined();
+		});
+
 		it('returns undefined when sessionSshRemoteConfig.remoteId is null', () => {
 			const session: SessionSshInfo = {
 				sessionSshRemoteConfig: {
@@ -683,6 +703,26 @@ describe('sessionHelpers', () => {
 			// CORRECT: Use the helper function
 			const correctIsRemote = isSessionRemote(preSpawnSession);
 			expect(correctIsRemote).toBe(true); // Correct!
+		});
+	});
+
+	describe('buildSharedHistoryContext', () => {
+		const config = (extra: Record<string, unknown>) =>
+			({ enabled: true, remoteId: 'r1', shareHistoryToProjectDir: true, ...extra }) as any;
+
+		it("uses the agent's working directory on the remote when one is set", () => {
+			expect(
+				buildSharedHistoryContext({
+					cwd: '/home/me/default',
+					sessionSshRemoteConfig: config({ workingDirOverride: '/srv/project' }),
+				})
+			).toEqual({ sshRemoteId: 'r1', remoteCwd: '/srv/project' });
+		});
+
+		it('falls back to the agent folder when no remote working directory is set', () => {
+			expect(
+				buildSharedHistoryContext({ cwd: '/srv/app', sessionSshRemoteConfig: config({}) })
+			).toEqual({ sshRemoteId: 'r1', remoteCwd: '/srv/app' });
 		});
 	});
 });

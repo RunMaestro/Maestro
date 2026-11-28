@@ -1,7 +1,7 @@
 /**
  * @file peer-targets.test.ts
  * @description The `peer:agent` path of `show agent`, `send`, `ask`, `dispatch`, `interrupt`, and
- * `tab new|rename|star|unstar --agent peer:agent` (Federation over SSH).
+ * `tab new|rename|star|unstar --agent peer:agent`, and `update-agent` (Federation over SSH).
  *
  * The resolver is stood in for at its seams (`routeAgentTarget`, `withPeerAgent`,
  * `resolvePeerAgent`), so no SSH is dialed; the rest of it (error codes, `hostCallError`,
@@ -36,7 +36,8 @@ import { interrupt } from '../../../cli/commands/interrupt';
 import { ask } from '../../../cli/commands/ask';
 import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
 import { send } from '../../../cli/commands/send';
-import { tabNew, tabRename, tabStar } from '../../../cli/commands/tab';
+import { tabClose, tabNew, tabRename, tabStar, tabThinking } from '../../../cli/commands/tab';
+import { updateAgent } from '../../../cli/commands/update-agent';
 import { ExitCode } from '../../../cli/exit-codes';
 import type {
 	ClientResult,
@@ -82,11 +83,19 @@ function fakePeer(agent: AgentRecord, bridgeReply: Record<string, unknown> = {})
 	const ok = <T>(value: T): ClientResult<T> => ({ ok: true, value });
 	const client = {
 		groups: { list: vi.fn(async () => ok([{ id: 'g1', name: 'Docs group' }])) },
-		agents: { get: vi.fn(async () => ok(agent)) },
+		agents: {
+			get: vi.fn(async () => ok(agent)),
+			update: vi.fn(
+				async (): Promise<ClientResult<{ applied: string[]; notices?: string[] }>> =>
+					ok({ applied: ['model'] })
+			),
+		},
 		tabs: {
 			create: vi.fn(async () => ok({ tabId: 'tab-new' })),
 			rename: vi.fn(async () => ok(undefined)),
 			star: vi.fn(async () => ok(undefined)),
+			close: vi.fn(async () => ok(undefined)),
+			update: vi.fn(async () => ok(undefined)),
 		},
 		turns: {
 			send: vi.fn(async () => ok({ status: 'started' as const })),
@@ -238,6 +247,20 @@ describe('peer:agent targets', () => {
 				],
 			});
 			expect(release).toHaveBeenCalledTimes(1);
+		});
+
+		it('reports groupName and groupHidden as null when the host cannot list its groups', async () => {
+			const peer = fakePeer(agentWith([{ id: 'tab-1', state: 'idle' }], { groupId: 'g1' }));
+			peer.client.groups.list.mockResolvedValue({
+				ok: false,
+				error: { code: 'unsupported', message: 'Not served.', method: 'groups.list' },
+			} as never);
+
+			await showAgent(`${PEER}:docs`, { json: true });
+
+			const [output] = printedJson(logSpy);
+			expect(output).toHaveProperty('groupName', null);
+			expect(output).toHaveProperty('groupHidden', null);
 		});
 
 		it('fills stats and recentHistory from the host History, naming another machine work', async () => {
@@ -539,6 +562,9 @@ describe('peer:agent targets', () => {
 
 			expect(callback).toMatchObject({ success: false, code: 'INVALID_OPTIONS', peer: PEER });
 			expect(routing).toMatchObject({ success: false, code: 'INVALID_OPTIONS', peer: PEER });
+			// A true `peer:agent` target keeps its refusal, whether or not a desktop runs (M17).
+			expect(callback.error).toContain(`cannot reach across to peer "${PEER}"`);
+			expect(routing.error).toContain(`cannot reach across to peer "${PEER}"`);
 			expect(resolvePeerAgent).not.toHaveBeenCalled();
 		});
 
@@ -618,6 +644,40 @@ describe('peer:agent targets', () => {
 			expect(peer.client.tabs.star).toHaveBeenLastCalledWith(AGENT_ID, 'tab-bbbb2222', false);
 		});
 
+		it("tab thinking sets the mode on the host's tab, and cycle reads the host's mode (T6)", async () => {
+			const peer = fakePeer(
+				agentWith([
+					{ id: 'tab-aaaa1111', state: 'idle', showThinking: 'on' },
+					{ id: 'tab-bbbb2222', state: 'idle' },
+				])
+			);
+			await tabThinking('tab-bbbb', 'sticky', { agent: `${PEER}:docs`, json: true });
+			expect(peer.client.tabs.update).toHaveBeenCalledWith(AGENT_ID, 'tab-bbbb2222', {
+				thinking: 'sticky',
+			});
+			await tabThinking('active', 'cycle', { agent: `${PEER}:docs`, json: true });
+			expect(peer.client.tabs.update).toHaveBeenLastCalledWith(AGENT_ID, 'tab-aaaa1111', {
+				thinking: 'sticky',
+			});
+			expect(peer.client.tabs.update).toHaveBeenCalledTimes(2);
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				success: true,
+				tabId: 'tab-bbbb2222',
+				peer: PEER,
+			});
+		});
+
+		it('tab close resolves the tab on the host by prefix and closes it there', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			await tabClose('tab-bbbb', { agent: `${PEER}:docs`, json: true });
+			expect(peer.client.tabs.close).toHaveBeenCalledWith(AGENT_ID, 'tab-bbbb2222');
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				success: true,
+				tabId: 'tab-bbbb2222',
+				peer: PEER,
+			});
+		});
+
 		it('names the peer agent when the tab is not on the host, and sends nothing', async () => {
 			const peer = fakePeer(agentWith(tabs));
 			await expect(tabStar('nope', true, { agent: `${PEER}:docs`, json: true })).rejects.toThrow(
@@ -643,6 +703,152 @@ describe('peer:agent targets', () => {
 			).rejects.toThrow('process.exit(3)');
 			expect(peer.client.tabs.rename).toHaveBeenCalledTimes(1);
 			expect(printedJson(logSpy)[0]).toMatchObject({ code: 'PEER_CONNECTION_LOST', peer: PEER });
+		});
+	});
+
+	describe('update-agent', () => {
+		const tabs: AITabRecord[] = [{ id: 'tab-aaaa1111', state: 'idle' }];
+
+		it("maps the settings flags onto the host's AgentPatch and reports what it applied", async () => {
+			const peer = fakePeer(agentWith(tabs));
+			peer.client.agents.update.mockResolvedValueOnce({
+				ok: true,
+				value: {
+					applied: ['model', 'effort', 'nudgeMessage', 'env', 'contextWindow', 'bookmarked'],
+				},
+			});
+			await updateAgent(`${PEER}:docs`, {
+				model: 'opus',
+				effort: '',
+				nudge: 'be brief',
+				env: ['FOO=bar'],
+				contextWindow: '200000',
+				bookmark: 'true',
+				json: true,
+			});
+			expect(peer.client.agents.update).toHaveBeenCalledWith(AGENT_ID, {
+				model: 'opus',
+				effort: null,
+				nudgeMessage: 'be brief',
+				env: { FOO: 'bar' },
+				contextWindow: 200000,
+				bookmarked: true,
+			});
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				success: true,
+				agentId: AGENT_ID,
+				peer: PEER,
+				applied: ['model', 'effort', 'nudgeMessage', 'env', 'contextWindow', 'bookmarked'],
+				config: { customModel: 'opus', customEffort: null, customContextWindow: 200000 },
+			});
+			expect(printedJson(logSpy)[0].config).not.toHaveProperty('contextWindowSource');
+			expect(peer.release).toHaveBeenCalledTimes(1);
+		});
+
+		it('sends an absolute host cwd as typed, and the token source as the maestro-p pair', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			await updateAgent(`${PEER}:docs`, { cwd: '/srv/other', tokenSource: 'tui', json: true });
+			expect(peer.client.agents.update).toHaveBeenCalledWith(AGENT_ID, {
+				cwd: '/srv/other',
+				enableMaestroP: true,
+				maestroPMode: 'interactive',
+			});
+		});
+
+		it('switches the provider on its own, and prints the notices the host returned', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			peer.client.agents.update.mockResolvedValueOnce({
+				ok: true,
+				value: { applied: ['provider'], notices: ['Tab 1 starts a fresh conversation.'] },
+			});
+			await updateAgent(`${PEER}:docs`, { provider: 'Codex' });
+			expect(peer.client.agents.update).toHaveBeenCalledWith(AGENT_ID, { provider: 'codex' });
+			const printed = logSpy.mock.calls.map((call) => String(call[0]));
+			expect(printed.some((line) => line.endsWith(`Updated agent ${PEER}:${AGENT_ID}`))).toBe(true);
+			expect(printed).toContain('  Provider: codex');
+			expect(printed).toContain('  Tab 1 starts a fresh conversation.');
+		});
+
+		it.each([
+			[{ group: 'g1' }, '--group'],
+			[{ sshRemote: 'box' }, '--ssh-remote'],
+			[{ sshCwd: '/x' }, '--ssh-cwd'],
+			[{ syncHistoryToRemote: 'true' }, '--sync-history-to-remote'],
+			[{ maestroPPath: '/bin/maestro-p' }, '--maestro-p-path'],
+			[{ provider: 'codex', convert: true }, '--convert'],
+			[{ provider: 'codex', dryRun: true }, '--dry-run'],
+			[{ migration: 'status' as const }, '--migration'],
+			[{ provider: 'codex', translationResource: ['/x'] }, '--translation-resource'],
+		])('refuses %o for a peer agent before dialing it', async (flags, named) => {
+			const peer = fakePeer(agentWith(tabs));
+			await expect(
+				updateAgent(`${PEER}:docs`, { model: 'opus', ...flags, json: true })
+			).rejects.toThrow('process.exit(1)');
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				success: false,
+				error: expect.stringContaining(named),
+			});
+			expect(withPeerAgent).not.toHaveBeenCalled();
+			expect(peer.client.agents.update).not.toHaveBeenCalled();
+		});
+
+		it('refuses a relative --cwd, which nothing here can resolve on the host', async () => {
+			fakePeer(agentWith(tabs));
+			await expect(updateAgent(`${PEER}:docs`, { cwd: 'src/app', json: true })).rejects.toThrow(
+				'process.exit(1)'
+			);
+			expect(printedJson(logSpy)[0].error).toContain('absolute path');
+			expect(withPeerAgent).not.toHaveBeenCalled();
+		});
+
+		it('refuses a provider switch mixed with settings, and an update with nothing in it', async () => {
+			fakePeer(agentWith(tabs));
+			await expect(
+				updateAgent(`${PEER}:docs`, { provider: 'codex', model: 'gpt-5', json: true })
+			).rejects.toThrow('process.exit(1)');
+			expect(printedJson(logSpy)[0].error).toContain('separate operation');
+			await expect(updateAgent(`${PEER}:docs`, { json: true })).rejects.toThrow('process.exit(1)');
+			expect(printedJson(logSpy)[1].error).toContain('Specify at least one field');
+			expect(withPeerAgent).not.toHaveBeenCalled();
+		});
+
+		it("checks a provider-only flag against the host's agent, and sends nothing", async () => {
+			const peer = fakePeer(agentWith(tabs, { toolType: 'codex' }));
+			await expect(updateAgent(`${PEER}:docs`, { tokenSource: 'api', json: true })).rejects.toThrow(
+				'process.exit(1)'
+			);
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				success: false,
+				code: 'PEER_HOST_FAILED',
+				peer: PEER,
+				error: expect.stringContaining('only applies to Claude Code agents'),
+			});
+			expect(peer.client.agents.update).not.toHaveBeenCalled();
+		});
+
+		it('reports a host refusal and a dropped connection with their codes and exit codes', async () => {
+			const peer = fakePeer(agentWith(tabs));
+			peer.client.agents.update.mockResolvedValueOnce({
+				ok: false,
+				error: { code: 'rejected', message: 'The agent is busy.', method: 'agents.update' },
+			} as never);
+			await expect(updateAgent(`${PEER}:docs`, { model: 'opus', json: true })).rejects.toThrow(
+				'process.exit(1)'
+			);
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				code: 'PEER_HOST_FAILED',
+				error: `Peer "${PEER}": The agent is busy.`,
+			});
+
+			peer.client.agents.update.mockResolvedValueOnce({
+				ok: false,
+				error: { code: 'host-lost', message: 'dropped', method: 'agents.update' },
+			} as never);
+			await expect(updateAgent(`${PEER}:docs`, { model: 'opus', json: true })).rejects.toThrow(
+				'process.exit(3)'
+			);
+			expect(printedJson(logSpy)[1]).toMatchObject({ code: 'PEER_CONNECTION_LOST', peer: PEER });
+			expect(peer.client.agents.update).toHaveBeenCalledTimes(2);
 		});
 	});
 
@@ -689,6 +895,23 @@ describe('peer:agent targets', () => {
 				usage: { inputTokens: 10, outputTokens: 5, totalCostUsd: 0.01 },
 				peer: PEER,
 				tabId: 'tab-new',
+			});
+			expect(exitSpy).not.toHaveBeenCalled();
+			expect(peer.release).toHaveBeenCalledTimes(1);
+		});
+
+		it('reports a Maestro command the host ran (/history) without waiting for a turn', async () => {
+			const peer = fakePeer(agentWith([]));
+			peer.client.turns.send.mockResolvedValue({ ok: true, value: { status: 'ran' } } as never);
+
+			await send(`${PEER}:docs`, '/history', {});
+
+			expect(printedJson(logSpy)[0]).toMatchObject({
+				agentId: AGENT_ID,
+				success: true,
+				peer: PEER,
+				tabId: 'tab-new',
+				response: expect.stringContaining(`ran /history for tab tab-new`),
 			});
 			expect(exitSpy).not.toHaveBeenCalled();
 			expect(peer.release).toHaveBeenCalledTimes(1);
@@ -772,12 +995,12 @@ describe('peer:agent targets', () => {
 				target: { peer: PEER, agent: 'docs' },
 			});
 
-			await expect(send(`${PEER}:docs`, 'x', { readOnly: true })).rejects.toThrow(
+			await expect(send(`${PEER}:docs`, 'x', { synopsis: false })).rejects.toThrow(
 				'process.exit(2)'
 			);
 
 			expect(printedJson(logSpy)[0]).toMatchObject({ code: 'PEER_UNSUPPORTED_OPTION' });
-			expect(String(printedJson(logSpy)[0].error)).toContain('--read-only');
+			expect(String(printedJson(logSpy)[0].error)).toContain('--no-synopsis');
 			expect(withPeerAgent).not.toHaveBeenCalled();
 		});
 
@@ -800,6 +1023,10 @@ describe('peer:agent targets', () => {
 			{ verb: 'ask', run: () => ask(`${PEER}:docs`, 'q', { json: true }) },
 			{ verb: 'dispatch', run: () => dispatch(`${PEER}:docs`, 'x', {}) },
 			{ verb: 'send', run: () => send(`${PEER}:docs`, 'x', {}) },
+			{
+				verb: 'update-agent',
+				run: () => updateAgent(`${PEER}:docs`, { model: 'opus', json: true }),
+			},
 		];
 		const failures = [
 			{

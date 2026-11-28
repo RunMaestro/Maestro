@@ -1,5 +1,5 @@
 /**
- * Wires the six group chat requests from the WebSocket bridge (maestro-cli
+ * Wires the seven group chat requests from the WebSocket bridge (maestro-cli
  * `group-chat`, the web/mobile client) to the renderer service that answers
  * them. Without these listeners every request times out in main.
  *
@@ -14,6 +14,7 @@ import {
 	getRemoteGroupChatState,
 	listRemoteGroupChats,
 	sendRemoteGroupChatMessage,
+	setRemoteGroupChatUnread,
 	startRemoteGroupChat,
 	stopGroupChatWork,
 } from '../../services/remoteGroupChat';
@@ -80,6 +81,15 @@ export function useRemoteGroupChat(): void {
 					.catch((error) => {
 						report('archive', error, { chatId, archived });
 						process.sendRemoteArchiveGroupChatResponse(responseChannel, false);
+					});
+			}),
+
+			process.onRemoteSetGroupChatUnread((chatId, unread, responseChannel) => {
+				setRemoteGroupChatUnread(chatId, unread)
+					.then((ok) => process.sendRemoteSetGroupChatUnreadResponse(responseChannel, ok))
+					.catch((error) => {
+						report('unread', error, { chatId, unread });
+						process.sendRemoteSetGroupChatUnreadResponse(responseChannel, false);
 					});
 			}),
 		];

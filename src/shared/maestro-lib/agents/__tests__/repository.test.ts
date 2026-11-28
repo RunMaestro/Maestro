@@ -1172,6 +1172,69 @@ describe('agent repository', () => {
 			expect(events).toEqual([]);
 		});
 
+		it('keeps the closed-tab archive when a fenced reopen finds the conversation already open', async () => {
+			let allowed = true;
+			const repo = await setup(
+				{
+					sessions: {
+						sessions: [
+							{
+								id: 'a1',
+								name: 'A',
+								toolType: 'claude-code',
+								cwd: '/p',
+								projectRoot: '/p',
+								aiTabs: [{ id: 't1', agentSessionId: 's1', logs: [] }],
+								activeTabId: 't1',
+								unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+							},
+						],
+					},
+				},
+				{ fence: () => (allowed ? { ok: true } : { ok: false, reason: 'lost' }) }
+			);
+			await archiveClosedTab(paths.syncDir, 'a1', {
+				tab: { id: 't2', agentSessionId: 's1', logs: [] },
+				index: 1,
+				closedAt: 1,
+			} as never);
+			allowed = false;
+			expect(errorOf(await repo.reopenClosedTab('a1', { tabId: 't2' })).code).toBe('host-lost');
+			expect(await readClosedTabs(closedTabsFile(paths.syncDir, 'a1'))).toHaveLength(1);
+		});
+
+		it('keeps the archive entry when the directory is lost between the reopen and its cleanup', async () => {
+			let calls = 0;
+			const repo = await setup(
+				{
+					sessions: {
+						sessions: [
+							{
+								id: 'a1',
+								name: 'A',
+								toolType: 'claude-code',
+								cwd: '/p',
+								projectRoot: '/p',
+								aiTabs: [{ id: 't1', logs: [] }],
+								activeTabId: 't1',
+								unifiedTabOrder: [{ type: 'ai', id: 't1' }],
+							},
+						],
+					},
+				},
+				// The reopen's own checks pass; the one before its archive cleanup does not.
+				{ fence: () => (++calls <= 2 ? { ok: true } : { ok: false, reason: 'lost' }) }
+			);
+			await archiveClosedTab(paths.syncDir, 'a1', {
+				tab: { id: 't2', agentSessionId: 's2', logs: [] },
+				index: 1,
+				closedAt: 1,
+			} as never);
+			calls = 0;
+			expect(value(await repo.reopenClosedTab('a1', { tabId: 't2' }))).toEqual({ tabId: 't2' });
+			expect(await readClosedTabs(closedTabsFile(paths.syncDir, 'a1'))).toHaveLength(1);
+		});
+
 		it('is checked before every write, not only at the start', async () => {
 			let allowed = true;
 			const repo = await setup(

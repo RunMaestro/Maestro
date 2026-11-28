@@ -226,6 +226,17 @@ describe('AutoFederationCoordinator: moving SSH agents', () => {
 	});
 });
 
+describe('AutoFederationCoordinator: an agent moved back from its host', () => {
+	it('leaves it an SSH agent, manual, and says how to host it again', async () => {
+		const w = world({ agents: [{ ...agent('a1', 'r1'), hostedOptOut: true }] });
+		const snapshot = await w.coordinator.runNow({ force: false });
+		expect(w.deps.lift).not.toHaveBeenCalled();
+		expect(snapshot.agents[0]).toMatchObject({ agentId: 'a1', state: 'manual' });
+		expect(snapshot.agents[0].reason).toContain('moved it back');
+		expect(snapshot.agents[0].fix).toContain('Move to Host');
+	});
+});
+
 describe('AutoFederationCoordinator: keeping hosts', () => {
 	it('starts a stopped host even with automatic moves off, and leaves the agents manual', async () => {
 		const w = world({ autoMove: false, peers: [peer('r1', 'host-down')] });
@@ -248,6 +259,24 @@ describe('AutoFederationCoordinator: keeping hosts', () => {
 		expect(off.deps.setupHost).not.toHaveBeenCalled();
 
 		const wanted = world({ peers: [peer('r1', 'not-installed')] });
+		const snapshot = await wanted.coordinator.runNow({ force: false });
+		expect(wanted.deps.setupHost).toHaveBeenCalledTimes(1);
+		expect(snapshot.agents[0].state).toBe('moved');
+	});
+
+	it('upgrades a CLI too old to run a host, under the same rules as an install', async () => {
+		const lonely = world({ agents: [], peers: [peer('r1', 'outdated')] });
+		expect((await lonely.coordinator.runNow({ force: false })).remotes[0]).toMatchObject({
+			state: 'waiting',
+			reason: 'The maestro-cli here is too old to run a host, and no SSH agent needs one.',
+		});
+		expect(lonely.deps.setupHost).not.toHaveBeenCalled();
+
+		const off = world({ autoMove: false, peers: [peer('r1', 'outdated')] });
+		await off.coordinator.runNow({ force: false });
+		expect(off.deps.setupHost).not.toHaveBeenCalled();
+
+		const wanted = world({ peers: [peer('r1', 'outdated')] });
 		const snapshot = await wanted.coordinator.runNow({ force: false });
 		expect(wanted.deps.setupHost).toHaveBeenCalledTimes(1);
 		expect(snapshot.agents[0].state).toBe('moved');

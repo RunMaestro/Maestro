@@ -89,7 +89,7 @@ When an AI agent encounters an error, Maestro displays a modal with clear recove
 | **Rate Limit Exceeded**        | Too many API requests                   | Wait and retry, reduce request frequency       |
 | **Connection Error**           | Network connectivity issue              | Check internet, retry connection               |
 | **Agent Error**                | Agent process crashed unexpectedly      | Restart agent, start new session               |
-| **Provider CLI Not Installed** | The provider's CLI could not be started | Copy the install command, run it, then retry   |
+| **Provider CLI Not Installed** | The provider's CLI could not be started | Install it from the dialog, then retry         |
 | **Permission Denied**          | File or operation access denied         | Check permissions, run with appropriate access |
 
 Each error modal shows:
@@ -112,7 +112,9 @@ Two details worth knowing:
 
 ### Provider CLI Not Installed
 
-For an agent running on this machine, if its provider CLI is missing from your `PATH` (never installed, uninstalled, or installed under a Node.js version that is not active), every message to that agent fails before the provider sees it. Maestro reports this as **Provider CLI Not Installed** instead of a bare "exited with code N", and the error message prints the install command for your platform (for example `npm install -g @openai/codex` for Codex). Copy it into a terminal, run it, and send your message again. The dialog offers no restart or retry button, because neither can succeed until the CLI is there.
+For an agent running on this machine, if its provider CLI is missing from your `PATH` (never installed, uninstalled, or installed under a Node.js version that is not active), every message to that agent fails before the provider sees it. Maestro reports this as **Provider CLI Not Installed** instead of a bare "exited with code N", and the error dialog offers **Install <provider>**. That opens a terminal inside Maestro running the install command for your platform (for example `npm install -g @openai/codex` for Codex). Once it exits with code 0, click **Retry** to refresh detection and resend the message that failed.
+
+The same command is available to scripts and agents: `maestro-cli install-command codex` prints it for the current platform (`--platform win32` for another one, `--json` for the docs link too).
 
 Agents running on an SSH remote are excluded from this classification. The binary lives on the remote host, the SSH error bank reports that case, and Maestro does not print a local install command for it.
 
@@ -175,7 +177,7 @@ Support packages usually end up attached to a public GitHub issue, so the debug 
 - **Agent, session, and group names** - Not included
 - **SSH remote identities** - Hosts and usernames replaced with `[REDACTED]`
 - **URLs** - Reduced to scheme and domain, so tunnel URLs cannot be reused
-- **Environment variables** - Only counts shown, not values (may contain secrets)
+- **Environment variables** - Names are kept so support can see what is set, but every value is replaced with `[redacted, N chars]`, whatever the name
 - **Custom agent arguments** - Only `[SET]` or `[NOT SET]` shown, not actual values
 
 **Example path redaction:**

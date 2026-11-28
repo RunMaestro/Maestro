@@ -17,7 +17,7 @@ import { isWebContentsAvailable } from '../utils/safe-send';
 import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 import { stopAllCueRuns } from '../cue/cue-executor';
 import { flushTelemetry } from '../cue/cue-telemetry';
-import { captureException } from '../utils/sentry';
+import { captureException, captureMessage, flushSentry } from '../utils/sentry';
 import { powerManager as powerManagerInstance } from '../power-manager';
 import { isMacOS } from '../../shared/platformDetection';
 import { flushTranscriptMirrorsSync } from '../storage/starred-transcript-mirror';
@@ -55,6 +55,19 @@ const FORCE_EXIT_GRACE_MS = 750;
  * teardown hits (see hardExit() and the before-quit handler).
  */
 const UPDATE_EXIT_GRACE_MS = 2000;
+
+/**
+ * The longest a quit waits for {@link QuitHandlerDependencies.flushPendingRemoteWrites}
+ * before the hard exit. Those writes go over SSH, so they cannot be landed
+ * synchronously like the stores; a dead connection must not hold the quit.
+ */
+export const REMOTE_WRITE_FLUSH_MAX_MS = 5000;
+
+/**
+ * After {@link REMOTE_WRITE_FLUSH_MAX_MS} runs out, the longest the quit waits
+ * for its report of the unsent copies to reach Sentry before the hard exit.
+ */
+export const REMOTE_WRITE_REPORT_MAX_MS = 1000;
 
 /**
  * Terminates the process immediately, bypassing Electron's Node-environment
@@ -127,6 +140,17 @@ export interface QuitHandlerDependencies {
 	windowStateStore?: Store<WindowState>;
 	/** Registry of every open window, the source of truth for the saved layout. */
 	getWindowRegistry?: () => WindowRegistry | null;
+	/**
+	 * Send the changes the user saved in opened remote copies that have not
+	 * reached the remote yet. The hard exit waits for it, at most
+	 * {@link REMOTE_WRITE_FLUSH_MAX_MS}.
+	 */
+	flushPendingRemoteWrites?: () => Promise<unknown>;
+	/**
+	 * The remote copies whose change is still not sent, named when the quit stops
+	 * waiting: those changes stay only in the copies on this machine.
+	 */
+	listPendingRemoteWrites?: () => string[];
 }
 
 /** Quit handler state */
@@ -146,6 +170,17 @@ interface QuitHandlerState {
 	installingUpdate: boolean;
 	/** Guards against re-entrant before-quit running cleanup / arming the timer twice. */
 	cleanupStarted: boolean;
+	/**
+	 * This process ends by its own hard exit (the loop is held open for it). A
+	 * re-entrant before-quit must hold it open too, or it ends the process
+	 * before the remote-copy writes the exit waits for.
+	 */
+	controlledExit: boolean;
+	/**
+	 * A Windows/Linux update install is held until the remote-copy writes land;
+	 * a re-entrant before-quit is held too, then the quit goes on.
+	 */
+	awaitingRemoteWrites: boolean;
 }
 
 /** Quit handler instance */
@@ -188,7 +223,73 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		getPersistedSessions,
 		windowStateStore,
 		getWindowRegistry,
+		flushPendingRemoteWrites,
+		listPendingRemoteWrites,
 	} = deps;
+
+	/**
+	 * Start the remote-copy writes, bounded: `done` resolves when they settle or
+	 * the bound runs out, and `settled` says which has happened by now. Null when
+	 * there is nothing to flush.
+	 */
+	function startRemoteWriteFlush(): { settled: boolean; done: Promise<void> } | null {
+		if (!flushPendingRemoteWrites) return null;
+		const flush = { settled: false, done: Promise.resolve() };
+		flush.done = new Promise<void>((resolve) => {
+			const finish = () => {
+				clearTimeout(bound);
+				flush.settled = true;
+				resolve();
+			};
+			/** The bound ran out and the report is going: only it ends the wait now. */
+			let reporting = false;
+			const bound = setTimeout(() => {
+				reporting = true;
+				void reportUnsentRemoteWrites().finally(finish);
+			}, REMOTE_WRITE_FLUSH_MAX_MS);
+			void Promise.resolve()
+				.then(flushPendingRemoteWrites)
+				.catch((err) =>
+					logger.error(`Error flushing remote copy writes on quit: ${err}`, 'Shutdown')
+				)
+				.finally(() => {
+					if (!reporting) finish();
+				});
+		});
+		return flush;
+	}
+
+	/**
+	 * The bound ran out: name the copies whose change did not reach the remote
+	 * (it stays in the copy, and the next Open keeps it beside the fetched file).
+	 * Sentry hears the count only, never the user's paths. Resolves once the
+	 * report was sent, or after {@link REMOTE_WRITE_REPORT_MAX_MS}: the hard exit
+	 * that follows would drop it from Sentry's queue.
+	 */
+	async function reportUnsentRemoteWrites(): Promise<void> {
+		let unsent: string[] = [];
+		try {
+			unsent = listPendingRemoteWrites?.() ?? [];
+		} catch (err) {
+			logger.warn(`Could not list unsent remote copy writes: ${err}`, 'Shutdown');
+		}
+		logger.warn('Quit stopped waiting for remote copy writes', 'Shutdown', {
+			waitedMs: REMOTE_WRITE_FLUSH_MAX_MS,
+			unsent,
+		});
+		let giveUp: ReturnType<typeof setTimeout> | undefined;
+		await Promise.race([
+			(async () => {
+				await captureMessage('Quit stopped waiting for remote copy writes', 'warning', {
+					waitedMs: REMOTE_WRITE_FLUSH_MAX_MS,
+					unsentCount: unsent.length,
+				});
+				await flushSentry(REMOTE_WRITE_REPORT_MAX_MS);
+			})(),
+			new Promise<void>((resolve) => (giveUp = setTimeout(resolve, REMOTE_WRITE_REPORT_MAX_MS))),
+		]);
+		clearTimeout(giveUp);
+	}
 
 	const state: QuitHandlerState = {
 		quitConfirmed: false,
@@ -196,6 +297,8 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		confirmationTimeout: null,
 		installingUpdate: false,
 		cleanupStarted: false,
+		controlledExit: false,
+		awaitingRemoteWrites: false,
 	};
 
 	return {
@@ -279,9 +382,14 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				// path calling app.quit() during the grace window) running cleanup or
 				// arming the timer twice.
 				if (state.cleanupStarted) {
+					if (state.controlledExit || state.awaitingRemoteWrites) event.preventDefault();
 					return;
 				}
 				state.cleanupStarted = true;
+
+				// Start the remote-copy writes first: they run over SSH while cleanup
+				// runs, and the hard exit below waits for them (bounded).
+				const remoteWrites = startRemoteWriteFlush();
 
 				// Proceed with cleanup (async operations are fire-and-forget).
 				performCleanup();
@@ -303,19 +411,40 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 				// hard-exit here too (after a longer settle window). Windows/Linux keep
 				// the graceful teardown their updater handoffs are written against.
 				const forceExitOnInstall = state.installingUpdate && isMacOS();
-				if (!state.installingUpdate || forceExitOnInstall) {
-					event.preventDefault();
-					const graceMs = state.installingUpdate ? UPDATE_EXIT_GRACE_MS : FORCE_EXIT_GRACE_MS;
-					setTimeout(() => {
-						logger.info(
-							forceExitOnInstall
-								? 'Hard-exiting after update-install grace window (ShipIt armed; dodging teardown deadlock)'
-								: 'Hard-exiting after cleanup grace window',
-							'Shutdown'
-						);
-						hardExit();
-					}, graceMs);
+				if (state.installingUpdate && !forceExitOnInstall) {
+					// The Windows/Linux updater already spawned its installer, which
+					// waits for this process to exit. Its graceful teardown still runs,
+					// but only once the remote-copy writes land (or their bound runs
+					// out): a save in its debounce or mid-SSH would be lost otherwise.
+					// Then app.quit() again: the cleanupStarted guard lets it through.
+					if (remoteWrites && !remoteWrites.settled) {
+						state.awaitingRemoteWrites = true;
+						event.preventDefault();
+						void remoteWrites.done.then(() => {
+							state.awaitingRemoteWrites = false;
+							app.quit();
+						});
+					}
+					return;
 				}
+				state.controlledExit = true;
+				event.preventDefault();
+				const graceMs = state.installingUpdate ? UPDATE_EXIT_GRACE_MS : FORCE_EXIT_GRACE_MS;
+				const exit = () => {
+					logger.info(
+						forceExitOnInstall
+							? 'Hard-exiting after update-install grace window (ShipIt armed; dodging teardown deadlock)'
+							: 'Hard-exiting after cleanup grace window',
+						'Shutdown'
+					);
+					hardExit();
+				};
+				setTimeout(() => {
+					// A remote-copy write still going holds the exit until it lands
+					// (or its bound runs out); otherwise exit now.
+					if (!remoteWrites || remoteWrites.settled) exit();
+					else void remoteWrites.done.then(exit);
+				}, graceMs);
 			});
 		},
 

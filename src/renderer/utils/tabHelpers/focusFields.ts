@@ -1,5 +1,4 @@
 import type { Session, AITab, LogEntry, ThinkingMode } from '../../types';
-import { nextThinkingMode } from '../../../shared/types';
 
 /**
  * The session-state patch that focuses an agent's AI tab area.
@@ -92,38 +91,16 @@ export function nextPermissionMode(
 }
 
 /**
- * Field patch for cycling a tab's thinking-display mode via {@link nextThinkingMode}.
+ * Field patch for setting a tab's thinking-display mode.
  *
  * Turning the mode OFF also drops the tab's stored thinking logs - only thinking
  * logs are storage-gated (tool logs are always recorded and hidden purely at
  * render, see the global tool-call visibility setting + TerminalOutput), so this
  * must never touch anything but `source: 'thinking'` entries.
  *
- * UI callers that should also clear logs on off: tab overlay
- * (`useAITabHandlers`), prompt composer, command palette, and the keyboard
- * shortcut's non-wizard branch. The keyboard wizard branch is separate: it
- * flips `wizardState.showWizardThinking` and must not go through this helper.
- *
- * `tabStore.cycleThinkingMode` and `maestro-cli tab thinking <id> cycle`
- * already share {@link nextThinkingMode} for the step order, but they still
- * only write `showThinking` and do not clear thinking logs. That split is
- * pre-existing; do not assume this helper closed it.
- */
-export function cycleShowThinkingFields(tab: Pick<AITab, 'showThinking' | 'logs'>): {
-	showThinking: ThinkingMode;
-	logs: LogEntry[];
-} {
-	return setShowThinkingFields(tab, nextThinkingMode(tab.showThinking));
-}
-
-/**
- * Field patch for setting a tab's thinking-display mode outright.
- *
- * The set half of {@link cycleShowThinkingFields}, which now delegates here, so
- * the log-clearing rule above is written once. Reach for this from a surface
- * that NAMES a mode instead of stepping to the next one - the phone options
- * sheet lists all three, because cycling one step per tap through three states
- * is a poor control on a touchscreen.
+ * A control that changes the mode goes through `setTabThinkingMode()` /
+ * `cycleTabThinkingMode()` in `services/tabThinkingMode.ts`, which apply this
+ * patch and also hand the mode to a hosted agent's host.
  */
 export function setShowThinkingFields(
 	tab: Pick<AITab, 'logs'>,

@@ -24,10 +24,4 @@ describe('CommandModeBar', () => {
 		expect(screen.getByText(/files and dirs/)).toBeInTheDocument();
 		expect(screen.queryByText(/branches/)).not.toBeInTheDocument();
 	});
-
-	it('shows the SSH remote when the agent runs remotely', () => {
-		render(<CommandModeBar theme={inputAreaTheme} cwd="/srv/app" remoteName="builder" />);
-
-		expect(screen.getByText(/builder:/)).toBeInTheDocument();
-	});
 });

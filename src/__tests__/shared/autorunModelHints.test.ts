@@ -350,6 +350,57 @@ describe('resolveTurnSettings', () => {
 		expect(resolved.warnings).toHaveLength(1);
 	});
 
+	it('maps Antigravity tiers to Hydrogen, Neon and Carbon at the matching effort', () => {
+		const cases = [
+			['low', 'gemini-4-hydrogen', 'low'],
+			['medium', 'gemini-4-neon', 'medium'],
+			['high', 'gemini-4-carbon', 'high'],
+		] as const;
+		for (const [level, model, effort] of cases) {
+			const hint = findActiveModelHint(
+				`<!-- MAESTRO:MODEL tier="${level}" effort="${level}" -->\n- [ ] x`
+			);
+			const resolved = resolveTurnSettings('antigravity', hint, 'gemini-4-neon-high', undefined);
+			expect(resolved).toMatchObject({ model, effort });
+			expect(resolved.warnings).toEqual([]);
+		}
+	});
+
+	it('keeps the agent model and names the tier model an account does not offer', () => {
+		const hint = findActiveModelHint(`<!-- MAESTRO:MODEL tier="high" -->\n- [ ] x`);
+		const resolved = resolveTurnSettings(
+			'antigravity',
+			hint,
+			'gemini-4-hydrogen',
+			undefined,
+			undefined,
+			['gemini-4-hydrogen', 'gemini-3.8-flash']
+		);
+		// agy would refuse gemini-4-carbon by name and fail the task.
+		expect(resolved.model).toBe('gemini-4-hydrogen');
+		expect(resolved.warnings.join(' ')).toContain('gemini-4-carbon');
+		expect(resolved.warnings.join(' ')).toContain('does not offer');
+	});
+
+	it('falls back for an Antigravity model that refused the level, and warns, without touching other models', () => {
+		noteEffortRejection('antigravity', {
+			value: 'high',
+			model: 'gpt-oss-120b',
+			supported: ['medium'],
+		});
+		try {
+			const hint = findActiveModelHint(`<!-- MAESTRO:MODEL effort="high" -->\n- [ ] x`);
+			const refused = resolveTurnSettings('antigravity', hint, 'gpt-oss-120b', 'medium');
+			expect(refused.effort).toBe('medium');
+			expect(refused.warnings.join(' ')).toContain('gpt-oss-120b');
+			const other = resolveTurnSettings('antigravity', hint, 'gemini-4-neon', 'medium');
+			expect(other.effort).toBe('high');
+			expect(other.warnings).toEqual([]);
+		} finally {
+			resetEffortRejections();
+		}
+	});
+
 	describe('after the provider refused the value a level maps to', () => {
 		afterEach(() => {
 			resetEffortRejections();

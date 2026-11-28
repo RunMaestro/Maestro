@@ -17,7 +17,8 @@ import { useCallback } from 'react';
 import type { AITab, ThinkingMode } from '../../../types';
 import { resolveTabPermissionMode } from '../../../../shared/agentMetadata';
 import { updateSessionWith } from '../../../stores/sessionStore';
-import { permissionModeFields, setShowThinkingFields } from '../../../utils/tabHelpers';
+import { setTabThinkingMode } from '../../../services/tabThinkingMode';
+import { permissionModeFields } from '../../../utils/tabHelpers';
 import type { PermissionMode } from '../components/ComposerOptionsSheet';
 
 export interface AiTabToolbarBinding {
@@ -48,12 +49,7 @@ export function useAiTabToolbarBinding(
 	const onThinkingModeChange = useCallback(
 		(mode: ThinkingMode) => {
 			if (!activeTabId) return;
-			updateSessionWith(sessionId, (s) => ({
-				...s,
-				aiTabs: s.aiTabs.map((t) =>
-					t.id === activeTabId ? { ...t, ...setShowThinkingFields(t, mode) } : t
-				),
-			}));
+			setTabThinkingMode(sessionId, activeTabId, mode);
 		},
 		[sessionId, activeTabId]
 	);

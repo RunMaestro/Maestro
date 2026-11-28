@@ -5,7 +5,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { evaluateGoalExit } from '../../../shared/goalDriven/goalExitEvaluator';
+import {
+	evaluateGoalExit,
+	resolveGoalIterationProgress,
+} from '../../../shared/goalDriven/goalExitEvaluator';
 import { STALL_THRESHOLD } from '../../../shared/goalDriven/types';
 import type { GoalIterationRecord, GoalRunConfig } from '../../../shared/goalDriven/types';
 
@@ -220,6 +223,41 @@ describe('evaluateGoalExit', () => {
 				expect(decision.detail).toContain('50%');
 			}
 		});
+
+		it('names the percent the user saw when the raw reports dip after a peak', () => {
+			// A real run on 2026-11-25: raw self-reports 30, 42, 38, 48, 42, 36 were
+			// displayed as the high-water mark 30, 42, 42, 48, 48, 48, and the run
+			// was stopped with "stuck at 36%". The detail must name 48.
+			const history = [30, 42, 38, 48, 42, 36].map((p, i) => rec(i + 1, p));
+			const decision = evaluateGoalExit(history, config());
+			expect(decision).toEqual({
+				action: 'stop',
+				reason: 'stalled',
+				detail: `No progress across the last ${STALL_THRESHOLD} iterations (stuck at 48%).`,
+			});
+		});
+
+		it('stalls the displayed 30, 42, 42, 48, 48, 48 series at 48%', () => {
+			const history = [30, 42, 42, 48, 48, 48].map((p, i) => rec(i + 1, p));
+			const decision = evaluateGoalExit(history, config());
+			expect(decision.action).toBe('stop');
+			if (decision.action === 'stop') {
+				expect(decision.reason).toBe('stalled');
+				expect(decision.detail).toContain('stuck at 48%');
+			}
+		});
+
+		it('rounds a fractional high-water mark the way the progress bar does', () => {
+			const history = [rec(1, 48.4), rec(2, 48.2), rec(3, 48.1)];
+			const decision = evaluateGoalExit(history, config());
+			expect(decision.action === 'stop' && decision.detail).toContain('stuck at 48%');
+		});
+
+		it('does not change when a dipping run stalls', () => {
+			// 48 -> 42 -> 50: the upward tick still resets the window.
+			const history = [rec(1, 48), rec(2, 42), rec(3, 50)];
+			expect(evaluateGoalExit(history, config())).toEqual({ action: 'continue' });
+		});
 	});
 
 	describe('priority ordering', () => {
@@ -257,5 +295,39 @@ describe('evaluateGoalExit with delegated work outstanding', () => {
 		expect(
 			evaluateGoalExit(history, config({ maxIterations: 1 }), { pendingDelegations: 1 })
 		).toMatchObject({ action: 'stop', reason: 'max-iterations' });
+	});
+});
+
+describe('resolveGoalIterationProgress', () => {
+	it('keeps the reported value at full precision and rounds only the display', () => {
+		expect(resolveGoalIterationProgress({ exactProgress: 48.35 }, [], 0)).toEqual({
+			reported: 48.35,
+			display: 48,
+		});
+	});
+
+	it('carries the previous raw value forward when no marker was reported', () => {
+		expect(resolveGoalIterationProgress({ exactProgress: null }, [rec(1, 48.27)], 48)).toEqual({
+			reported: 48.27,
+			display: 48,
+		});
+		expect(resolveGoalIterationProgress({ exactProgress: null }, [], 0)).toEqual({
+			reported: 0,
+			display: 0,
+		});
+	});
+
+	it('never lets the display slide backward on a dip', () => {
+		expect(resolveGoalIterationProgress({ exactProgress: 35 }, [rec(1, 55)], 55)).toEqual({
+			reported: 35,
+			display: 55,
+		});
+	});
+});
+
+describe('evaluateGoalExit with fractional progress', () => {
+	it('does not stall when every iteration rounds to the same whole percent but climbs', () => {
+		const history = [rec(1, 48.27), rec(2, 48.29), rec(3, 48.31)];
+		expect(evaluateGoalExit(history, config()).action).toBe('continue');
 	});
 });

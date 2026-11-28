@@ -61,7 +61,7 @@ export interface CueEventRecord {
 	 * maestro-p this is the distinguishing signal (3 = idle timeout, 4 =
 	 * ready_timeout, 5 = first_byte_timeout, 6 = prompt_truncated, 7 =
 	 * workspace_untrusted, 8 = terminal API error such as an unknown model, 9 =
-	 * resumed session has no transcript on this host, 1 =
+	 * resumed session has no transcript on this host, 10 = add_dir_untrusted, 11 = startup_dialog_blocked, 1 =
 	 * tui_exited, 2 = limit, 0 = success). NULL when the run never produced an exit code (spawn error,
 	 * still running) or for status flips that aren't run completions.
 	 */
@@ -1242,6 +1242,65 @@ export function getCueEventGroupCounts(options: {
 	}));
 }
 
+/** How often one subscription has fired, for `maestro-cli cue list`. */
+export interface CueSubscriptionTriggerStat {
+	sessionId: string;
+	/** Raw `subscription_name`, as the YAML names it. */
+	subscriptionName: string;
+	/** Every recorded run, whatever its outcome. */
+	triggerCount: number;
+	/** `created_at` of the newest run (epoch ms). */
+	lastTriggered: number;
+}
+
+/**
+ * Rows a queue cleanup wrote for work it discarded without running it (stale,
+ * malformed, or whose agent is gone). Both cleanup paths (`cue-run-manager.ts`
+ * and `cue-queue-persistence.ts`) mark them `droppedFromQueue: true` in the
+ * payload and stamp them with the cleanup time. A real run that timed out
+ * carries no such flag. `json_valid` guards `json_extract`, which throws on a
+ * payload that is not JSON, and `IS 1` (not `= 1`) keeps rows with no flag:
+ * `= 1` on a missing key is NULL, and `NOT NULL` would drop the row.
+ */
+const CUE_EVENT_DROPPED_FROM_QUEUE_SQL = `(payload IS NOT NULL AND json_valid(payload) AND json_extract(payload, '$.droppedFromQueue') IS 1)`;
+
+/**
+ * Per-subscription trigger counts and last-trigger times across all retained
+ * Cue history. Unlike {@link getCueEventGroupCounts}, this does NOT apply
+ * {@link CUE_EVENT_WORTH_SHOWING_SQL}: a quiet heartbeat that completes with
+ * no output still fired, and `cue list` must say so. It does exclude
+ * {@link CUE_EVENT_DROPPED_FROM_QUEUE_SQL}: discarding queued work is not a
+ * trigger, and counting it would report a fresh last-trigger time for a run
+ * that never happened.
+ *
+ * Returns `[]` when the DB is not initialized, so `cue list` falls back to
+ * "never triggered" instead of throwing.
+ */
+export function getCueSubscriptionTriggerStats(): CueSubscriptionTriggerStat[] {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT session_id, subscription_name,
+				COUNT(*) AS trigger_count,
+				MAX(created_at) AS last_triggered
+			FROM cue_events
+			WHERE NOT ${CUE_EVENT_DROPPED_FROM_QUEUE_SQL}
+			GROUP BY session_id, subscription_name`
+		)
+		.all() as Array<{
+		session_id: string;
+		subscription_name: string;
+		trigger_count: number;
+		last_triggered: number;
+	}>;
+	return rows.map((row) => ({
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		triggerCount: row.trigger_count,
+		lastTriggered: row.last_triggered,
+	}));
+}
+
 /**
  * Cue's contribution to the delegation split: how many runs finished and how
  * much wall-clock time they took, over all retained history or since `sinceMs`.
@@ -1450,6 +1509,91 @@ function recentCueEventsIn(
 	) as CueEventRow[];
 
 	return rows.map(rowToCueEventRecord);
+}
+
+/**
+ * The columns the Usage Dashboard's Cue aggregation reads, one row per run.
+ * Leaves out the payload and the stored output (`full_output` can be tens of
+ * KB per run), which the aggregation never looks at.
+ */
+export type CueStatsEventRecord = Pick<
+	CueEventRecord,
+	| 'id'
+	| 'type'
+	| 'sessionId'
+	| 'subscriptionName'
+	| 'status'
+	| 'createdAt'
+	| 'completedAt'
+	| 'pipelineId'
+	| 'chainRootId'
+	| 'parentEventId'
+	| 'providerSessionId'
+	| 'streamUsageJson'
+> & {
+	/**
+	 * True when the engine-start sweep settled this run (`failOrphanedRunningEvents`):
+	 * its `completed_at` is when the NEXT engine started, so its "duration" is
+	 * downtime, not run time.
+	 */
+	orphaned?: boolean;
+};
+
+/**
+ * Cue runs created at or after `since`, newest first, with only the columns
+ * the stats aggregation needs. `orphanedMessage` is the error message the
+ * engine-start sweep stamps on runs it settled; rows carrying it come back
+ * flagged `orphaned`.
+ *
+ * Returns `[]` when the DB is not initialized, like {@link getRecentCueEvents}.
+ */
+export function getCueEventsForStats(
+	since: number,
+	orphanedMessage: string
+): CueStatsEventRecord[] {
+	if (!db) return [];
+	const rows = db
+		.prepare(
+			`SELECT id, type, session_id, subscription_name, status, created_at, completed_at,
+			        pipeline_id, chain_root_id, parent_event_id, provider_session_id,
+			        stream_usage_json,
+			        CASE WHEN error_message = ? THEN 1 ELSE 0 END AS orphaned
+			 FROM cue_events
+			 WHERE created_at >= ?
+			 ORDER BY created_at DESC`
+		)
+		.all(orphanedMessage, since) as Array<
+		Pick<
+			CueEventRow,
+			| 'id'
+			| 'type'
+			| 'session_id'
+			| 'subscription_name'
+			| 'status'
+			| 'created_at'
+			| 'completed_at'
+			| 'pipeline_id'
+			| 'chain_root_id'
+			| 'parent_event_id'
+			| 'provider_session_id'
+			| 'stream_usage_json'
+		> & { orphaned: number }
+	>;
+	return rows.map((row) => ({
+		id: row.id,
+		type: row.type,
+		sessionId: row.session_id,
+		subscriptionName: row.subscription_name,
+		status: row.status,
+		createdAt: row.created_at,
+		completedAt: row.completed_at,
+		pipelineId: row.pipeline_id,
+		chainRootId: row.chain_root_id,
+		parentEventId: row.parent_event_id,
+		providerSessionId: row.provider_session_id,
+		streamUsageJson: row.stream_usage_json,
+		orphaned: row.orphaned === 1,
+	}));
 }
 
 /**
