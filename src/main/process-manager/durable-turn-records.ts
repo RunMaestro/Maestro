@@ -63,6 +63,15 @@ const FILE_NAME = 'durable-ssh-turns.json';
 
 let records: Map<string, DurableTurnRecord> | null = null;
 
+/**
+ * Set while the file does not match the records: a write failed. The whole
+ * current set is written again every {@link DURABLE_OFFSETS_PERSIST_MS} until
+ * one lands, so a turn's first record (whose turn may stay silent) and a
+ * settled turn's removal (which nothing else would write again) still reach
+ * the disk.
+ */
+let retryTimer: ReturnType<typeof setInterval> | null = null;
+
 function filePath(): string {
 	return path.join(getAppUserDataDir(), FILE_NAME);
 }
@@ -130,13 +139,21 @@ function persist(): boolean {
 		} else {
 			atomicWriteJsonSync(filePath(), all);
 		}
+		if (retryTimer) {
+			clearInterval(retryTimer);
+			retryTimer = null;
+		}
 		return true;
 	} catch (error) {
 		// The turn itself is unaffected; only a restart would not find it.
-		void captureException(error);
-		logger.error('Could not write the durable SSH turn records', 'ProcessManager', {
-			error: String(error),
-		});
+		if (!retryTimer) {
+			void captureException(error);
+			logger.error('Could not write the durable SSH turn records', 'ProcessManager', {
+				error: String(error),
+			});
+			retryTimer = setInterval(persist, DURABLE_OFFSETS_PERSIST_MS);
+			retryTimer.unref?.();
+		}
 		return false;
 	}
 }
@@ -177,6 +194,8 @@ export function recordedDurableTurns(): DurableTurnRecord[] {
 /** For tests: forget the in-memory copy so the next call reads the file. */
 export function __resetDurableTurnRecordsForTests(): void {
 	records = null;
+	if (retryTimer) clearInterval(retryTimer);
+	retryTimer = null;
 }
 
 /** How often a running durable turn's offsets are written to its record. */

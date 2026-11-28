@@ -38,6 +38,7 @@ import {
 	buildPreLaunchReapScript,
 	newRemotePidFilePath,
 	newRemoteTurnDir,
+	PRE_LAUNCH_REAP_REFUSED_EXIT_CODE,
 	reapRemoteAgent,
 	signalRemoteAgent,
 	sshConnectionArgs,
@@ -556,7 +557,7 @@ export class ChildProcessSpawner {
 				// prompt-owner launch must stay one compound, so its turn leaves the
 				// orphan to the reap's own retries.
 				if (sshRemotePidFile && remoteArtifactPath === undefined)
-					takenReaps = takePendingRemoteReaps(sessionId);
+					takenReaps = takePendingRemoteReaps(sessionId, command, finalArgs);
 				const orphanReap = buildPreLaunchReapScript(takenReaps);
 				// A durable launch runs the reaps before its envelope stages the
 				// turn, so a staging failure (a full disk) cannot skip them.
@@ -849,6 +850,18 @@ export class ChildProcessSpawner {
 					durableDetached = true;
 					updateDurableTurn(record(restartOffsets()));
 				};
+				// The record goes at once: a quit right behind this kill must not
+				// leave the turn for the next launch to pick up again.
+				managedProcess.reapDurableTurn = () => {
+					forgetDurableTurn(sessionId, durableTurnDir);
+					reapRemoteAgent({
+						sshCommand: command,
+						sshArgs: finalArgs,
+						pidFile: sshRemotePidFile,
+						sessionId,
+						turnDir: durableTurnDir,
+					});
+				};
 			}
 
 			// The run layer settles once the streams have ended, so every line the
@@ -940,11 +953,16 @@ export class ChildProcessSpawner {
 						undefined,
 						managedProcess.interrupted ? INTERACTIVE_STOP_GRACE_MS : 0
 					);
-					// The launch never reached its agent, so it never ran the earlier
-					// turns' reaps it carried: they go back to their retry loop.
-					if ((completed as DurableTurnExit | undefined)?.outcome === 'not-started')
-						for (const target of takenReaps) reapRemoteAgent(target);
 				}
+				// The launch never reached its agent, or refused to start it beside an
+				// earlier agent it could not stop: the earlier turns' reaps it carried
+				// go back to their retry loop.
+				if (
+					(durableTurnDir &&
+						(completed as DurableTurnExit | undefined)?.outcome === 'not-started') ||
+					completed?.exitCode === PRE_LAUNCH_REAP_REFUSED_EXIT_CODE
+				)
+					for (const target of takenReaps) reapRemoteAgent(target);
 				const exit = completed
 					? { ...completed, exitCode: supervisionFailed ? 1 : completed.exitCode }
 					: {
@@ -1294,7 +1312,7 @@ export class ChildProcessSpawner {
 			sessionId,
 		};
 		forgetDurableTurn(sessionId, record.dir);
-		if (how === 'interrupt') signalRemoteAgent(target, 'interrupt');
+		if (how === 'interrupt') signalRemoteAgent({ ...target, turnDir: record.dir }, 'interrupt');
 		reapRemoteAgent(
 			{ ...target, turnDir: record.dir },
 			undefined,
@@ -1420,6 +1438,10 @@ export class ChildProcessSpawner {
 		managedProcess.detachDurableTurn = () => {
 			detached = true;
 			updateDurableTurn(recordAt(turn.restartOffsets()));
+		};
+		managedProcess.reapDurableTurn = () => {
+			forgetDurableTurn(sessionId, record.dir);
+			cleanup();
 		};
 		void turn.done.then((exit) => {
 			if (detached) return;

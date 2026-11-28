@@ -270,14 +270,35 @@ describe('ProcessManager synthetic SSH prompt artifact stops', () => {
 		}
 	);
 
-	it('closing the tab of a durable SSH turn still stops its agent on the host', () => {
+	it('closing the tab of a durable SSH turn registers its reap before the tab is released', () => {
 		const detach = vi.fn();
 		managed.sshRemotePromptArtifactPath = undefined;
 		managed.sshRemotePidFile = '/tmp/maestro-agent-11111111-1111-4111-8111-111111111111.pid';
 		managed.detachDurableTurn = detach;
+		// The reap (agent and turn dir, retried until the host answers) is
+		// registered while the entry still owns the session: a replacement
+		// launched before the old ssh closes carries it.
+		const ownedAtReap: boolean[] = [];
+		managed.reapDurableTurn = vi.fn(() => ownedAtReap.push(processes.has(SESSION_ID)));
 		expect(manager.kill(SESSION_ID)).toBe(true);
 		expect(detach).not.toHaveBeenCalled();
-		expect(remoteSignal.signalRemoteAgent).toHaveBeenCalledOnce();
+		expect(ownedAtReap).toEqual([true]);
+		expect(processes.has(SESSION_ID)).toBe(false);
+		expect(remoteSignal.signalRemoteAgent).not.toHaveBeenCalled();
+	});
+
+	it('quitting right after a Stop does not keep the stopped durable turn for the next launch', () => {
+		const detach = vi.fn();
+		const reap = vi.fn();
+		managed.sshRemotePromptArtifactPath = undefined;
+		managed.sshRemotePidFile = '/tmp/maestro-agent-11111111-1111-4111-8111-111111111111.pid';
+		managed.detachDurableTurn = detach;
+		managed.reapDurableTurn = reap;
+		// Stop while the link is down: the reconnect loop has not seen it yet.
+		managed.interrupted = true;
+		manager.killAll({ shutdown: true });
+		expect(detach).not.toHaveBeenCalled();
+		expect(reap).toHaveBeenCalledOnce();
 	});
 
 	it.each(['interrupt', 'kill', 'shutdown'] as const)(

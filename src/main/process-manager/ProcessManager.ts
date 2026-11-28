@@ -875,6 +875,8 @@ export class ProcessManager extends EventEmitter {
 		const proc = this.processes.get(sessionId);
 		if (!proc) return this.copilotSdkSpawner.closeSession(sessionId);
 
+		// A Stop the user pressed before this kill: a quit must not keep that turn.
+		const stoppedBefore = proc.interrupted === true;
 		// A kill is a stop Maestro asked for (a closed tab, the Process Monitor, a
 		// watchdog), so the exit it causes is not a crash. The resolver reads any
 		// signal it is not told about as an outside kill, which it is not here.
@@ -909,8 +911,10 @@ export class ProcessManager extends EventEmitter {
 				);
 			} else if (proc.childProcess) {
 				// The app quitting leaves a durable SSH turn running on its remote
-				// and records it for the next launch; only the local ssh goes.
-				if (shutdown && proc.detachDurableTurn) proc.detachDurableTurn();
+				// and records it for the next launch; only the local ssh goes. A
+				// turn the user already stopped is not kept: it is reaped as a close.
+				if (shutdown && proc.detachDurableTurn && !stoppedBefore) proc.detachDurableTurn();
+				else if (proc.reapDurableTurn) proc.reapDurableTurn();
 				else this.signalRemote(sessionId, proc, 'terminate');
 				stopProcess(
 					{ child: proc.childProcess },

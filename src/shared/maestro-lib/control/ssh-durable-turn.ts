@@ -93,6 +93,16 @@ const RS = 0x1e;
 const US = 0x1f;
 const LF = 0x0a;
 
+/*
+ * stdout carries one marker per attempt, before the agent's first byte: a
+ * login shell's startup files can print to stdout before the script runs,
+ * and those bytes are not the agent's. This machine counts and parses only
+ * what follows the marker.
+ */
+const DURABLE_STDOUT_START_SHELL = '\\036MAESTRO-TURN-STDOUT\\036\\n';
+/** The stdout marker that starts the agent's bytes in each attempt. */
+export const DURABLE_STDOUT_START = Buffer.from('\x1eMAESTRO-TURN-STDOUT\x1e\n', 'latin1');
+
 function assertOffset(offset: number): void {
 	if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Invalid remote turn offset.');
 }
@@ -122,14 +132,15 @@ const ALIVE_FUNCTION = [
  * file exists BEFORE it copies, so the pass that ends the loop copied
  * everything the agent wrote.
  *
- * Every few idle seconds it checks that the agent (`$pf`) or its supervisor
- * (`$d/sup`) still lives. When neither does and no exit file exists, one more
+ * Every few idle seconds it checks that the agent (its record in the dir, or
+ * `$pf`) or its supervisor (`$d/sup`) still lives. When neither does and no exit file exists, one more
  * pass copies what they wrote last, and the loop sends the gone frame.
  */
 function streamLoop(outOffset: number, errOffset: number): string[] {
 	assertOffset(outOffset);
 	assertOffset(errOffset);
 	return [
+		`printf '${DURABLE_STDOUT_START_SHELL}'`,
 		`o=${outOffset}; e=${errOffset}; k=0; g=0`,
 		'while :; do',
 		'  f=0; [ -e "$d/exit" ] && f=1',
@@ -153,7 +164,7 @@ function streamLoop(outOffset: number, errOffset: number): string[] {
 		`  [ -d "$d" ] || exit ${DURABLE_TURN_GONE_EXIT_CODE}`,
 		'  if [ "$m" = 0 ]; then',
 		'    k=$((k+1))',
-		`    if [ "$k" -ge ${STREAM_LIVENESS_EVERY_PASSES} ]; then k=0; _alive "$d/sup" || _alive "$pf" || g=1; fi`,
+		`    if [ "$k" -ge ${STREAM_LIVENESS_EVERY_PASSES} ]; then k=0; _alive "$d/sup" || _alive "$d/agent" || _alive "$pf" || g=1; fi`,
 		`    [ "$g" = 1 ] || sleep ${STREAM_POLL_SECONDS}`,
 		'  fi',
 		'done',
@@ -264,7 +275,7 @@ export function buildDurableReattachScript(
 		`d=${shellEscape(dir)}; pf=${shellEscape(pidFile)}`,
 		`[ -d "$d" ] || ${GONE}`,
 		...ALIVE_FUNCTION,
-		'if [ ! -e "$d/exit" ] && ! _alive "$d/sup" && ! _alive "$pf"; then',
+		'if [ ! -e "$d/exit" ] && ! _alive "$d/sup" && ! _alive "$d/agent" && ! _alive "$pf"; then',
 		// The supervisor may have finished between the first check and the probe.
 		`  [ -e "$d/exit" ] || ${GONE}`,
 		'fi',
@@ -403,8 +414,15 @@ export class DurableStderrReader {
 			const nl = this.buf.indexOf(LF);
 			if (nl < 0) return out;
 			const line = this.buf.subarray(0, nl);
+			const rs = line.indexOf(RS);
+			if (rs > 0) {
+				// ssh's own text with no line end, and a frame right behind it.
+				out += this.sshText(line.subarray(0, rs).toString('utf8') + '\n');
+				this.buf = this.buf.subarray(rs);
+				continue;
+			}
 			this.buf = this.buf.subarray(nl + 1);
-			if (line[0] !== RS) {
+			if (rs < 0) {
 				out += this.sshText(line.toString('utf8') + '\n');
 				continue;
 			}
@@ -569,9 +587,32 @@ export function runDurableSshTurn(
 	const replayEnd = replay ? resume!.outOffset : 0;
 	let outOffset = replay ? 0 : (resume?.outOffset ?? 0);
 	let outLineOffset = outOffset;
+	// What this attempt's stdout sent before its start marker (null once it
+	// came): a login shell's startup output. The first launch passes it on as
+	// a normal launch does; a reattach drops it. Neither counts it as the agent's.
+	let outHead: Buffer | null = Buffer.alloc(0);
+	let passStartupOutput = !resume;
+	const startupOutput = (bytes: Buffer) => {
+		if (passStartupOutput && bytes.length) options.onStdout(bytes.toString('utf8'));
+	};
 	const handlers: DurableAttemptHandlers = {
 		onStdoutBytes: (chunk) => {
 			let bytes = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+			if (outHead !== null) {
+				const seen = outHead.length ? Buffer.concat([outHead, bytes]) : bytes;
+				const mark = seen.indexOf(DURABLE_STDOUT_START);
+				if (mark < 0) {
+					// Keep what may be the marker's first bytes for the next chunk.
+					const keep = Math.min(seen.length, DURABLE_STDOUT_START.length - 1);
+					startupOutput(seen.subarray(0, seen.length - keep));
+					outHead = Buffer.from(seen.subarray(seen.length - keep));
+					return;
+				}
+				startupOutput(seen.subarray(0, mark));
+				outHead = null;
+				bytes = seen.subarray(mark + DURABLE_STDOUT_START.length);
+				if (bytes.length === 0) return;
+			}
 			const nl = bytes.lastIndexOf(LF);
 			if (nl >= 0) outLineOffset = outOffset + nl + 1;
 			const at = outOffset;
@@ -621,6 +662,9 @@ export function runDurableSshTurn(
 		let failures = 0;
 		for (;;) {
 			const exit = await attempt.done;
+			if (outHead) startupOutput(outHead);
+			outHead = Buffer.alloc(0);
+			passStartupOutput = false;
 			const attached = stderr.attached;
 			const rest = stderr.endAttempt();
 			if (rest) options.onStderr(rest);

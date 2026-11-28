@@ -172,6 +172,42 @@ describe('durable SSH turn records', () => {
 		});
 	});
 
+	describe('a write that failed', () => {
+		beforeEach(() => vi.useFakeTimers());
+		afterEach(() => vi.useRealTimers());
+
+		it("is tried again until it lands, so a silent turn's first record still reaches the disk", () => {
+			// The data dir is gone when the turn starts: the first write fails.
+			fs.rmSync(dataDir, { recursive: true, force: true });
+			noteDurableTurn(record());
+			expect(fs.existsSync(file())).toBe(false);
+			fs.mkdirSync(dataDir, { recursive: true });
+			// No offset moves (the agent is quiet): the retry alone writes it.
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
+			__resetDurableTurnRecordsForTests();
+			expect(recordedDurableTurns()).toEqual([expect.objectContaining({ dir: DIR })]);
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			"is tried again for a settled turn's removal, so the next launch never restores it",
+			() => {
+				noteDurableTurn(record());
+				// The file cannot be removed when the turn settles.
+				fs.chmodSync(dataDir, 0o500);
+				try {
+					forgetDurableTurn('agent-1-ai-tab-1', DIR);
+					expect(fs.existsSync(file())).toBe(true);
+				} finally {
+					fs.chmodSync(dataDir, 0o700);
+				}
+				vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
+				expect(fs.existsSync(file())).toBe(false);
+				__resetDurableTurnRecordsForTests();
+				expect(recordedDurableTurns()).toEqual([]);
+			}
+		);
+	});
+
 	describe('updateDurableTurn', () => {
 		it("rewrites only the turn's own record: a stopped turn never overwrites its successor's", () => {
 			const successorDir = '/tmp/maestro-turn-11111111-2222-4333-8444-555555555555';

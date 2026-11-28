@@ -19,16 +19,20 @@ import {
 	buildDurableLaunchScript,
 	buildDurableReattachScript,
 	buildTurnDirSweepScript,
+	DURABLE_STDOUT_START,
 	DURABLE_TURN_GONE_EXIT_CODE,
 	DurableStderrReader,
 	incompleteUtf8TailLength,
 	MAX_STDERR_FRAME_BYTES,
 } from '../../../../shared/maestro-lib/control/ssh-durable-turn';
 import {
+	buildDurableInterruptScript,
 	buildPreLaunchReapScript,
 	buildRemoteSignalScript,
 	buildRemoteTurnCleanupScript,
 	newRemoteTurnDir,
+	PRE_LAUNCH_REAP_REFUSED_EXIT_CODE,
+	PRE_LAUNCH_REAP_REFUSED_MESSAGE,
 	SSH_STDIN_REMOTE_SHELL,
 	withRemotePidRecord,
 } from '../../../../shared/maestro-lib/control/ssh-remote-signal';
@@ -58,6 +62,22 @@ function runShell(script: string, killAfterBytes = 0): Promise<ShellRun> {
 		child.on('close', (code) => resolve({ out, err, code }));
 		child.stdin.end(script);
 	});
+}
+
+/** The agent's stdout of a run: every attempt's start marker taken out. */
+function agentOut(out: Buffer): Buffer {
+	const parts: Buffer[] = [];
+	let rest = out;
+	for (
+		let at = rest.indexOf(DURABLE_STDOUT_START);
+		at >= 0;
+		at = rest.indexOf(DURABLE_STDOUT_START)
+	) {
+		parts.push(rest.subarray(0, at));
+		rest = rest.subarray(at + DURABLE_STDOUT_START.length);
+	}
+	parts.push(rest);
+	return Buffer.concat(parts);
 }
 
 const dirs: string[] = [];
@@ -120,6 +140,17 @@ const RS = '\x1e';
 const US = '\x1f';
 
 describe('DurableStderrReader', () => {
+	it('finds the start frame behind ssh text that has no line end', () => {
+		const reader = new DurableStderrReader();
+		expect(reader.push(Buffer.from(`Warning: no newline${RS}S\n${RS}D2\nok${US}`))).toBe(
+			'Warning: no newline\nok'
+		);
+		expect(reader.launched).toBe(true);
+		// A frame header inside a data payload is the agent's data, not a frame.
+		expect(reader.push(Buffer.from(`${RS}D3\na${RS}b${US}`))).toBe(`a${RS}b`);
+		expect(reader.errOffset).toBe(5);
+	});
+
 	it("passes ssh's own lines until the agent runs, then keeps them apart from the agent's stderr", () => {
 		const reader = new DurableStderrReader();
 		expect(reader.push(Buffer.from('Warning: added host\n' + RS))).toBe('Warning: added host\n');
@@ -223,8 +254,9 @@ posixOnly('against a real shell', () => {
 		const durable = await runShell(
 			buildDurableLaunchScript(todaysStdin(pidFile, 10), dir, pidFile)
 		);
-		expect(durable.out.toString()).toBe(plain.out.toString());
-		expect(durable.out.toString()).toBe(expectedLines(10));
+		expect(durable.out.subarray(0, DURABLE_STDOUT_START.length)).toEqual(DURABLE_STDOUT_START);
+		expect(agentOut(durable.out).toString()).toBe(plain.out.toString());
+		expect(agentOut(durable.out).toString()).toBe(expectedLines(10));
 		expect(durable.code).toBe(plain.code);
 		expect(durable.code).toBe(3);
 		const { text, reader } = readStderr(durable.err);
@@ -238,7 +270,7 @@ posixOnly('against a real shell', () => {
 		const dir = newDir();
 		const first = await runShell(buildDurableLaunchScript(todaysStdin(pidFile), dir, pidFile), 200);
 		expect(first.code).toBeNull();
-		let got = first.out;
+		let got = agentOut(first.out);
 		const reader = new DurableStderrReader();
 		let err = reader.push(first.err) + reader.endAttempt();
 		let code: number | null = null;
@@ -248,7 +280,7 @@ posixOnly('against a real shell', () => {
 				buildDurableReattachScript(dir, pidFile, got.length, reader.errOffset),
 				hop < 3 ? 200 : 0
 			);
-			got = Buffer.concat([got, next.out]);
+			got = Buffer.concat([got, agentOut(next.out)]);
 			err += reader.push(next.err) + reader.endAttempt();
 			code = next.code;
 		}
@@ -274,10 +306,15 @@ posixOnly('against a real shell', () => {
 			"exec /bin/bash -c 'sleep 30 & for i in $(seq 1 400); do echo tick $i; sleep 0.05; done'\n",
 			pidFile
 		);
-		const first = await runShell(buildDurableLaunchScript(inner, dir, pidFile), 20);
+		const first = await runShell(
+			buildDurableLaunchScript(inner, dir, pidFile),
+			DURABLE_STDOUT_START.length + 20
+		);
 		const [pid] = fs.readFileSync(pidFile, 'utf8').split(' ');
 		await runShell(buildRemoteSignalScript(pidFile, 'terminate'));
-		const rest = await runShell(buildDurableReattachScript(dir, pidFile, first.out.length, 0));
+		const rest = await runShell(
+			buildDurableReattachScript(dir, pidFile, agentOut(first.out).length, 0)
+		);
 		expect(rest.code).toBe(143);
 		// The agent led its own group, so the tool it started went with it.
 		expect(() => process.kill(-Number(pid), 0)).toThrow();
@@ -337,8 +374,8 @@ posixOnly('against a real shell', () => {
 		const stdin = withRemotePidRecord(`${agent}\n`, pidFile) + 'API_KEY=secret\n';
 		const plain = await runShell(stdin);
 		const durable = await runShell(buildDurableLaunchScript(stdin, dir, pidFile));
-		expect(durable.out.toString()).toContain('in-gone\nfd3-closed\n');
-		expect(durable.out.toString()).toBe(plain.out.toString());
+		expect(agentOut(durable.out).toString()).toContain('in-gone\nfd3-closed\n');
+		expect(agentOut(durable.out).toString()).toBe(plain.out.toString());
 		expect(fs.existsSync(`${dir}/in`)).toBe(false);
 		for (const name of ['out', 'err']) {
 			expect(fs.statSync(`${dir}/${name}`).mode & 0o777).toBe(0o600);
@@ -369,7 +406,7 @@ posixOnly('against a real shell', () => {
 		expect(run.code).toBe(DURABLE_TURN_GONE_EXIT_CODE);
 		expect(fs.existsSync(`${dir}/exit`)).toBe(false);
 		// What they wrote before they died still arrived, once.
-		expect(run.out.toString()).toBe('started\n');
+		expect(agentOut(run.out).toString()).toBe('started\n');
 		const { text, reader } = readStderr(run.err);
 		expect(text).toBe('oops\n');
 		expect(reader.gone).toBe(true);
@@ -415,17 +452,116 @@ posixOnly('against a real shell', () => {
 		expect(fs.existsSync(dir)).toBe(false);
 	}, 20_000);
 
-	it('a reap that cannot prove the agent gone keeps the turn dir', async () => {
+	it('a launch whose earlier turn names no agent yet keeps that dir and never starts its own agent', async () => {
 		const dir = newDir();
 		fs.mkdirSync(dir, { mode: 0o700 });
 		fs.writeFileSync(`${dir}/out`, 'partial');
-		const cleanup = `(\n${buildPreLaunchReapScript([
-			{ sshCommand: 'ssh', sshArgs: [], pidFile: newPidFile(), sessionId: 's', turnDir: dir },
-		])})\necho reap-ran\n`;
-		const run = await runShell(cleanup);
-		expect(run.out.toString()).toBe('reap-ran\n');
-		// No exit file and no record naming the agent: nothing proves it stopped.
+		const launch =
+			buildPreLaunchReapScript([
+				{ sshCommand: 'ssh', sshArgs: [], pidFile: newPidFile(), sessionId: 's', turnDir: dir },
+			]) + 'echo launched\n';
+		const run = await runShell(launch);
+		// No exit file and no record naming the agent (a Stop that beat the
+		// supervisor's record): nothing proves it stopped, so the reap retries
+		// and the new agent waits.
+		expect(run.code).toBe(PRE_LAUNCH_REAP_REFUSED_EXIT_CODE);
+		expect(run.out.toString()).toBe('');
+		expect(run.err.toString()).toBe(`${PRE_LAUNCH_REAP_REFUSED_MESSAGE}\n`);
 		expect(fs.existsSync(dir)).toBe(true);
+	}, 20_000);
+
+	it('a terminate that cannot see its agent go keeps the record and the dir, and a retry finishes the job', async () => {
+		const dir = newDir();
+		const pidFile = newPidFile();
+		fs.mkdirSync(dir, { mode: 0o700 });
+		// A zombie no parent reaps answers `kill -0` and keeps its start time
+		// through SIGKILL: an agent the terminate cannot see go.
+		const zombieFile = path.join(os.tmpdir(), `durable-zombie-${randomUUID()}`);
+		pidFiles.push(zombieFile);
+		const parent = spawn(
+			'/bin/bash',
+			['-c', `sh -c 'echo $$ > ${zombieFile}; exit 0' & exec sleep 30`],
+			{ stdio: 'ignore', detached: true }
+		);
+		try {
+			for (let i = 0; i < 100 && !fs.existsSync(zombieFile); i++)
+				await new Promise((r) => setTimeout(r, 50));
+			await new Promise((r) => setTimeout(r, 200));
+			const zombie = fs.readFileSync(zombieFile, 'utf8').trim();
+			const started = execFileSync('ps', ['-o', 'lstart=', '-p', zombie]).toString().trim();
+			fs.writeFileSync(`${dir}/agent`, `${zombie} ${started}\n`);
+			const target = { sshCommand: 'ssh', sshArgs: [], pidFile, sessionId: 's', turnDir: dir };
+			const first = await runShell(buildPreLaunchReapScript([target]) + 'echo launched\n');
+			expect(first.code).toBe(PRE_LAUNCH_REAP_REFUSED_EXIT_CODE);
+			expect(first.out.toString()).toBe('');
+			expect(fs.readFileSync(`${dir}/agent`, 'utf8')).toContain(zombie);
+			expect(fs.existsSync(dir)).toBe(true);
+			// Its parent goes, the zombie is reaped: the retry proves it gone.
+			process.kill(parent.pid!, 'SIGKILL');
+			await new Promise((r) => setTimeout(r, 300));
+			const retry = await runShell(buildPreLaunchReapScript([target]) + 'echo launched\n');
+			expect(retry.out.toString()).toBe('launched\n');
+			expect(fs.existsSync(dir)).toBe(false);
+		} finally {
+			try {
+				process.kill(parent.pid!, 'SIGKILL');
+			} catch {
+				// Already gone.
+			}
+		}
+	}, 20_000);
+
+	it('a Stop reaches the agent through the dir copy once the day-old sweep took its pid record', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		const inner = withRemotePidRecord(
+			'exec /bin/bash -c \'trap "echo interrupted; exit 5" INT; while :; do sleep 0.1; done\'\n',
+			pidFile
+		);
+		const launch = runShell(buildDurableLaunchScript(inner, dir, pidFile));
+		await waitFor(() => fs.existsSync(pidFile) && fs.existsSync(`${dir}/agent`));
+		await new Promise((r) => setTimeout(r, 200));
+		fs.rmSync(pidFile);
+		await runShell(buildDurableInterruptScript(dir, pidFile));
+		const run = await launch;
+		expect(run.code).toBe(5);
+		expect(agentOut(run.out).toString()).toBe('interrupted\n');
+		// The interrupt removes nothing: a later terminate still needs the record.
+		expect(fs.existsSync(`${dir}/agent`)).toBe(true);
+	}, 20_000);
+
+	it('a reattach keeps a turn whose supervisor died while the agent, found by its dir copy, still runs', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		const inner = withRemotePidRecord("exec /bin/bash -c 'sleep 30'\n", pidFile);
+		const launch = runShell(
+			buildDurableLaunchScript(inner, dir, pidFile),
+			DURABLE_STDOUT_START.length
+		);
+		await waitFor(
+			() => fs.existsSync(pidFile) && fs.existsSync(`${dir}/sup`) && fs.existsSync(`${dir}/agent`)
+		);
+		await launch;
+		const [agent] = fs.readFileSync(`${dir}/agent`, 'utf8').split(' ');
+		const [supervisor] = fs.readFileSync(`${dir}/sup`, 'utf8').split(' ');
+		try {
+			process.kill(Number(supervisor), 'SIGKILL');
+			fs.rmSync(pidFile);
+			const reattach = await runShell(
+				buildDurableReattachScript(dir, pidFile, 0, 0),
+				DURABLE_STDOUT_START.length
+			);
+			const { reader } = readStderr(reattach.err);
+			expect(reader.gone).toBe(false);
+			expect(reader.launched).toBe(true);
+			expect(reattach.err.toString('latin1')).toContain('\x1eS\n');
+		} finally {
+			try {
+				process.kill(-Number(agent), 'SIGKILL');
+			} catch {
+				// Already gone.
+			}
+		}
 	}, 20_000);
 });
 

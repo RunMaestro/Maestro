@@ -294,7 +294,7 @@ The switch is off by default. With it off, Maestro sends the same commands and w
 
 **When Maestro gives up.** A turn ends only when the agent ends, when you press **Stop**, when the remote shows that the agent is gone, or when the remote has not answered for about 25 minutes. The agent is gone when its process and its supervisor ended without an exit code (the remote ran out of memory or rebooted): the turn then fails with that reason, even while the connection stays up. After 25 minutes without an answer, the turn ends as a lost connection, as it would with the switch off.
 
-Maestro removes a turn's folder only once it has proof that the agent stopped. If it has none (the agent's records are gone), the folder stays, and the day-old sweep removes it after the agent ends.
+Maestro removes a turn's folder only once it has proof that the agent stopped. If it has none (the agent's records are gone, or the agent has not stopped yet), the folder stays and Maestro tries again; the day-old sweep removes what is left after the agent ends. While an earlier turn's agent on a tab is still running and cannot be stopped, a new turn on that tab does not start beside it: the send fails with "An earlier turn of this tab is still running on the remote", and you can send again once Maestro has stopped it. Quitting Maestro right after a **Stop** does not keep that turn for the next launch.
 
 **Not covered yet:**
 

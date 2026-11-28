@@ -317,6 +317,12 @@ export interface ManagedProcess {
 	 */
 	detachDurableTurn?: () => void;
 	/**
+	 * Set on a durable SSH turn. A kill registers its reap (agent and turn dir,
+	 * retried until the host answers) BEFORE the entry is released, so the
+	 * next launch on the tab carries it even while the old ssh still closes.
+	 */
+	reapDurableTurn?: () => void;
+	/**
 	 * A durable SSH turn owns this entry. Its agent lives on the remote, so a
 	 * local pid that is gone (between reattaches, or a turn restored at launch
 	 * that has no ssh yet) never makes the entry stale: only its settle frees

@@ -171,11 +171,13 @@ import * as sentry from '../../../../main/utils/sentry';
 import { POSIX_PROMPT_ARGV_MAX_BYTES } from '../../../../shared/maestro-lib/launch/prompt-delivery';
 import {
 	__resetPendingRemoteReapsForTest,
+	PRE_LAUNCH_REAP_REFUSED_EXIT_CODE,
 	reapRemoteAgent,
 	takePendingRemoteReaps,
 	withRemotePidRecord,
 } from '../../../../main/utils/ssh-remote-signal';
 import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
+import { DURABLE_STDOUT_START } from '../../../../shared/maestro-lib/control/ssh-durable-turn';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -1039,6 +1041,8 @@ describe('ChildProcessSpawner', () => {
 				...(keep === undefined ? {} : { sshKeepTurnsOnDisconnect: keep }),
 			});
 		const RS = '\x1e';
+		/** Each attempt's stdout marker, which comes before the agent's first byte. */
+		const OUT_START = DURABLE_STDOUT_START.toString('latin1');
 
 		function closeWith(child: any, code: number | null, signal: string | null = null) {
 			childHandlers(child).get('close')?.(code, signal);
@@ -1086,7 +1090,7 @@ describe('ChildProcessSpawner', () => {
 			const managed = processes.get('test-session')!;
 			const launch = mockChildProcess;
 			launch.stderr.emit('data', Buffer.from(`${RS}S\n`));
-			launch.stdout.emit('data', Buffer.from('first line\nsecond li'));
+			launch.stdout.emit('data', Buffer.from(OUT_START + 'first line\nsecond li'));
 			closeWith(launch, 255);
 
 			await new Promise((r) => setTimeout(r, 300));
@@ -1100,7 +1104,7 @@ describe('ChildProcessSpawner', () => {
 			const script = reattach.stdin.end.mock.calls[0]?.[0] ?? reattach.stdin.write.mock.calls[0][0];
 			expect(script).toContain(`o=${'first line\nsecond li'.length}; e=0`);
 			emitter.on('raw-stdout', onData);
-			reattach.stdout.emit('data', Buffer.from('ne\n'));
+			reattach.stdout.emit('data', Buffer.from(OUT_START + 'ne\n'));
 			reattach.stderr.emit('data', Buffer.from(`${RS}S\n${RS}E0\n`));
 			closeWith(reattach, 0);
 
@@ -1145,7 +1149,7 @@ describe('ChildProcessSpawner', () => {
 			// Still inside the Stop's grace: nothing sent to the host yet, but the
 			// next launch on this tab takes the reap and runs it before its agent.
 			expect(reapSpawns()).toHaveLength(0);
-			expect(takePendingRemoteReaps('test-session')).toEqual([
+			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([
 				expect.objectContaining({
 					pidFile: managed.sshRemotePidFile,
 					turnDir: expect.stringMatching(/^\/tmp\/maestro-turn-/),
@@ -1173,7 +1177,7 @@ describe('ChildProcessSpawner', () => {
 			// The reap comes first, outside the envelope: a staging failure cannot skip it.
 			expect(written.indexOf(orphan.pidFile)).toBeGreaterThanOrEqual(0);
 			expect(written.indexOf(orphan.pidFile)).toBeLessThan(written.indexOf('\n{\n'));
-			expect(takePendingRemoteReaps('test-session')).toEqual([]);
+			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([]);
 			// The host never ran the launch (no started marker): the reap goes back.
 			closeWith(mockChildProcess, 255);
 			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
@@ -1181,6 +1185,47 @@ describe('ChildProcessSpawner', () => {
 			await vi.waitFor(() =>
 				expect(reapSpawns().some((script) => script.includes(orphan.pidFile))).toBe(true)
 			);
+		});
+
+		it('hands the carried reaps back when the host refused to start a second agent beside an earlier one', async () => {
+			const { spawner, emitter } = createTestContext();
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			const orphan = {
+				sshCommand: '/usr/bin/ssh',
+				sshArgs: SSH_ARGS,
+				pidFile: '/tmp/maestro-agent-33333333-3333-4333-8333-333333333333.pid',
+				sessionId: 'test-session',
+				turnDir: '/tmp/maestro-turn-33333333-3333-4333-8333-333333333333',
+			};
+			reapRemoteAgent(orphan, [60_000]);
+			childHandlers(mockSpawn.mock.results[0].value).get('exit')?.(255);
+			mockSpawn.mockClear();
+			// Switch off: today's launch, which still carries the earlier durable turn's reap.
+			spawner.spawn(sshConfig(false));
+			const written = mockChildProcess.stdin.write.mock.calls[0][0] as string;
+			expect(written).toContain(`exit ${PRE_LAUNCH_REAP_REFUSED_EXIT_CODE}`);
+			expect(written.indexOf(orphan.turnDir)).toBeLessThan(written.indexOf('exec claude'));
+			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([]);
+			closeWith(mockChildProcess, PRE_LAUNCH_REAP_REFUSED_EXIT_CODE);
+			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+			await vi.waitFor(() =>
+				expect(reapSpawns().some((script) => script.includes(orphan.turnDir))).toBe(true)
+			);
+		});
+
+		it('a closed durable turn forgets its record and registers its reap at once', () => {
+			const { processes, spawner } = createTestContext();
+			spawner.spawn(sshConfig(true));
+			const managed = processes.get('test-session')!;
+			mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n`));
+			expect(durableRecords.has('test-session')).toBe(true);
+			managed.reapDurableTurn!();
+			// A quit right behind the close finds nothing to restore.
+			expect(durableRecords.has('test-session')).toBe(false);
+			expect(reapSpawns()).toHaveLength(1);
+			expect(reapSpawns()[0]).toContain(managed.sshRemotePidFile!);
+			durableRecords.clear();
 		});
 
 		// Stage 4: the app quits mid-turn and the next launch picks the turn up.
@@ -1216,7 +1261,7 @@ describe('ChildProcessSpawner', () => {
 				expect(from).toEqual({ outOffset: 0, errOffset: 0 });
 				expect(isDetached()).toBe(false);
 				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}D3\nabc\x1f`));
-				mockChildProcess.stdout.emit('data', Buffer.from('line one\nline tw'));
+				mockChildProcess.stdout.emit('data', Buffer.from(OUT_START + 'line one\nline tw'));
 				write(turn.restartOffsets());
 				expect(durableRecords.get('test-session')).toMatchObject({
 					outOffset: 'line one\n'.length,
@@ -1231,7 +1276,7 @@ describe('ChildProcessSpawner', () => {
 				spawner.spawn(sshConfig(true));
 				const managed = processes.get('test-session')!;
 				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}D3\nabc\x1f`));
-				mockChildProcess.stdout.emit('data', Buffer.from('line one\nline tw'));
+				mockChildProcess.stdout.emit('data', Buffer.from(OUT_START + 'line one\nline tw'));
 				managed.detachDurableTurn!();
 				processes.delete('test-session');
 				closeWith(mockChildProcess, null, 'SIGTERM');
@@ -1290,7 +1335,7 @@ describe('ChildProcessSpawner', () => {
 				// The 120 bytes the tab already has rebuild the parser's state in a
 				// handler that emits nothing; only the rest reaches the tab.
 				const before = 'x'.repeat(119) + '\n';
-				mockChildProcess.stdout.emit('data', Buffer.from(before + 'rest\n'));
+				mockChildProcess.stdout.emit('data', Buffer.from(OUT_START + before + 'rest\n'));
 				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}E0\n`));
 				closeWith(mockChildProcess, 0);
 				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
@@ -1348,7 +1393,9 @@ describe('ChildProcessSpawner', () => {
 				spawner.startRestoredDurableTurns();
 				expect(mockSpawn).not.toHaveBeenCalled();
 				expect(durableRecords.get('agent-1-ai-tab-1')).toMatchObject({ outOffset: 0 });
-				expect(takePendingRemoteReaps('agent-1-ai-tab-1')).toEqual([]);
+				expect(
+					takePendingRemoteReaps('agent-1-ai-tab-1', '/usr/bin/ssh', restoredRecord().sshArgs)
+				).toEqual([]);
 			});
 
 			it('a Stop before a restored turn reattaches stops the agent, settles the turn, and never attaches', async () => {
@@ -1368,9 +1415,9 @@ describe('ChildProcessSpawner', () => {
 					.map((r) => r.value.stdin.end.mock.calls[0]?.[0] as string | undefined)
 					.find((script) => script?.includes('kill -INT'));
 				expect(interrupt).toContain('/tmp/maestro-agent-0b5c6a52');
-				expect(takePendingRemoteReaps('agent-1-ai-tab-1')).toEqual([
-					expect.objectContaining({ turnDir: restoredRecord().dir }),
-				]);
+				expect(
+					takePendingRemoteReaps('agent-1-ai-tab-1', '/usr/bin/ssh', restoredRecord().sshArgs)
+				).toEqual([expect.objectContaining({ turnDir: restoredRecord().dir })]);
 				spawner.startRestoredDurableTurns();
 				expect(reapSpawns()).toHaveLength(0);
 			});

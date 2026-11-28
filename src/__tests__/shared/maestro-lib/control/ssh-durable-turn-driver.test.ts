@@ -22,6 +22,7 @@ import * as path from 'path';
 
 import {
 	buildDurableLaunchScript,
+	DURABLE_STDOUT_START,
 	DURABLE_TURN_GONE_MESSAGE,
 	runDurableSshTurn,
 	type DurableAttempt,
@@ -110,6 +111,8 @@ interface Rig {
 	received?: number;
 	/** Where in the whole stream each cut fell. */
 	cutAt?: number[];
+	/** What a login shell's startup files print to stdout before each attempt's script. */
+	stdoutNoise?: string;
 }
 
 const HOST_DOWN_STDIN =
@@ -123,12 +126,24 @@ function rigAttempt(rig: Rig) {
 		const cut = rig.cutAfter[index] ?? 0;
 		let seen = 0;
 		let lost = false;
+		// The startup noise and the stdout marker come first; cuts count only the agent's bytes.
+		const noise = rig.stdoutNoise ?? '';
+		let ahead = down ? 0 : Buffer.byteLength(noise) + DURABLE_STDOUT_START.length;
+		const noiseScript = noise ? `printf '%s' '${noise}'\n` : '';
 		let turn: ReturnType<typeof startTurn>;
 		turn = startTurn(
-			{ ...SHELL_SPEC, stdin: down ? HOST_DOWN_STDIN : (index > 0 ? LOGIN_NOISE : '') + stdin },
 			{
-				onStdoutBytes: (chunk) => {
+				...SHELL_SPEC,
+				stdin: down ? HOST_DOWN_STDIN : noiseScript + (index > 0 ? LOGIN_NOISE : '') + stdin,
+			},
+			{
+				onStdoutBytes: (all) => {
 					if (lost) return;
+					const pre = Math.min(all.length, ahead);
+					ahead -= pre;
+					if (pre) handlers.onStdoutBytes(all.subarray(0, pre));
+					const chunk = all.subarray(pre);
+					if (chunk.length === 0) return;
 					const take = cut ? Math.min(chunk.length, cut - seen) : chunk.length;
 					handlers.onStdoutBytes(chunk.subarray(0, take));
 					seen += take;
@@ -238,6 +253,29 @@ posixOnly('runDurableSshTurn', () => {
 		expect(durable.err).toBe(today.err);
 		expect(durable.exit.outcome).toBe('ended');
 		expect(durable.exit.exitCode).toBe(7);
+	}, 30_000);
+
+	it("a login shell's stdout before each attempt is passed on once and never shifts the offsets", async () => {
+		const fixture = fixtureFile();
+		const noise = 'Welcome to the durable box\n';
+		const today = await runToday(
+			`printf '%s' '${noise}'\n` + todaysStdin(track(newPid()), fixture)
+		);
+		const pidFile = track(newPid());
+		const bytes = Buffer.from(today.out.slice(noise.length));
+		const inE = bytes.indexOf(Buffer.from('é')) + 1;
+		const rig: Rig = { cutAfter: [inE, 300], hostDown: new Set(), attempts: 0, stdoutNoise: noise };
+		const durable = await runDurable(
+			todaysStdin(pidFile, fixture),
+			track(newRemoteTurnDir()),
+			pidFile,
+			rig
+		);
+		expect(durable.linksLost).toBeGreaterThanOrEqual(2);
+		// The first launch's noise reaches the tab as today's does; a reattach's never does.
+		expect(durable.out).toBe(today.out);
+		expect(parse(durable.out)).toEqual(parse(today.out));
+		expect(durable.exit.outcome).toBe('ended');
 	}, 30_000);
 
 	it('D4: the turn stays unsettled while the host is down, then settles with the agent', async () => {

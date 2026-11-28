@@ -71,31 +71,82 @@ export function buildRemoteTurnCleanupScript(dir: string): string {
 }
 
 /**
+ * What a durable turn's terminate exits with when it cannot prove the agent
+ * gone: the dir names no agent yet (a Stop that reached the host before the
+ * supervisor recorded it), or the agent outlived SIGKILL's wait. The dir and
+ * the agent's record stay, and the reap tries again.
+ */
+export const DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE = 75;
+
+/**
+ * What a launch exits with, before its own agent starts, when an earlier
+ * turn's agent it had to stop first could not be proven gone. The new agent
+ * never runs beside it on the same session.
+ */
+export const PRE_LAUNCH_REAP_REFUSED_EXIT_CODE = 248;
+
+/** The stderr line of a launch refused by {@link PRE_LAUNCH_REAP_REFUSED_EXIT_CODE}. */
+export const PRE_LAUNCH_REAP_REFUSED_MESSAGE =
+	'An earlier turn of this tab is still running on the remote and could not be stopped yet. Maestro keeps trying; send again in a moment.';
+
+/**
+ * Lines that find a durable turn's agent: `ap` / `as` from the copy of its
+ * record in the turn dir (which the day-old pid sweep never touches), else
+ * from the pid file; `_same` while that process still runs with the recorded
+ * start time; `t` the target to signal (its group when it leads one).
+ */
+function durableAgentLines(dir: string, pidFile: string): string[] {
+	assertRemoteTurnDir(dir);
+	const pf = shellEscape(pidFile);
+	return [
+		`d=${shellEscape(dir)}; ap=; as=`,
+		'[ -r "$d/agent" ] && read -r ap as < "$d/agent"',
+		`[ -n "$ap" ] || { [ -r ${pf} ] && read -r ap as < ${pf}; }`,
+		'case "$ap" in ""|*[!0-9]*) ap= ;; esac',
+		'_same() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null && [ "$(echo $(ps -o lstart= -p "$ap" 2>/dev/null))" = "$(echo $as)" ]; }',
+		't="$ap"; [ -n "$ap" ] && [ "$(ps -o pgid= -p "$ap" 2>/dev/null | tr -d " ")" = "$ap" ] && t="-$ap"',
+	];
+}
+
+/**
  * The terminate script for `target`. A durable turn's dir goes with it, but
- * only once the agent is proven gone: the agent wrote its exit, or the record
- * that names it (the pid file, or the copy in the dir that outlives the
- * day-old pid sweep) names no live process after the terminate. Without that
- * proof the dir stays and the script exits 1: a dir removed under a live agent
- * leaves a writer nobody can reattach to or find again.
+ * only once the agent is proven gone: the agent wrote its exit, or its record
+ * names no live process after the terminate. Without that proof the dir and
+ * the record stay and the script exits
+ * {@link DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}, so the reap tries again: a
+ * dir removed under a live agent leaves a writer nobody can find again.
  */
 function terminateScriptFor(target: RemoteSignalTarget): string {
-	const signal = buildRemoteSignalScript(target.pidFile, 'terminate', target.promptArtifactPath);
-	if (target.turnDir === undefined) return signal;
-	assertRemoteTurnDir(target.turnDir);
-	const d = shellEscape(target.turnDir);
-	const quiet = (script: string) => `(\n${script}) </dev/null >/dev/null 2>&1\n`;
-	return (
-		`d=${d}; ap=; as=\n` +
-		`[ -r "$d/agent" ] && read -r ap as < "$d/agent"\n` +
-		`[ -n "$ap" ] || { [ -r ${shellEscape(target.pidFile)} ] && read -r ap as < ${shellEscape(target.pidFile)}; }\n` +
-		quiet(signal) +
-		quiet(buildRemoteSignalScript(`${target.turnDir}/agent`, 'terminate')) +
-		`if [ -d "$d" ] && [ ! -e "$d/exit" ]; then\n` +
-		`  case "$ap" in ""|*[!0-9]*) exit 1 ;; esac\n` +
-		`  kill -0 "$ap" 2>/dev/null && [ "$(echo $(ps -o lstart= -p "$ap" 2>/dev/null))" = "$(echo $as)" ] && exit 1\n` +
-		`fi\n` +
-		buildRemoteTurnCleanupScript(target.turnDir)
-	);
+	if (target.turnDir === undefined)
+		return buildRemoteSignalScript(target.pidFile, 'terminate', target.promptArtifactPath);
+	if (target.promptArtifactPath !== undefined)
+		throw new Error('A durable turn has no prompt artifact.');
+	return [
+		...durableAgentLines(target.turnDir, target.pidFile),
+		'if _same; then',
+		'  kill -TERM -- "$t" 2>/dev/null',
+		'  i=0; while [ "$i" -lt 6 ] && _same; do sleep 0.5; i=$((i+1)); done',
+		'  _same && kill -KILL -- "$t" 2>/dev/null',
+		// Its supervisor reaps it: give the zombie a moment to go.
+		'  i=0; while [ "$i" -lt 10 ] && _same; do sleep 0.1; i=$((i+1)); done',
+		'fi',
+		'if [ -d "$d" ] && [ ! -e "$d/exit" ]; then',
+		`  { [ -z "$ap" ] || _same; } && exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}`,
+		'fi',
+		`rm -f -- ${shellEscape(target.pidFile)}`,
+		buildRemoteTurnCleanupScript(target.turnDir),
+	].join('\n');
+}
+
+/**
+ * A durable turn's interrupt: SIGINT to the agent its record names, the dir
+ * copy first, so a Stop still reaches an agent whose pid file the day-old
+ * sweep removed. Nothing is removed: the terminate needs the record.
+ */
+export function buildDurableInterruptScript(dir: string, pidFile: string): string {
+	return [...durableAgentLines(dir, pidFile), '_same && kill -INT -- "$t" 2>/dev/null', 'exit 0']
+		.join('\n')
+		.concat('\n');
 }
 
 /**
@@ -306,7 +357,10 @@ export interface RemoteSignalTarget {
 	sessionId: string;
 	/** Remote-owned file; enables descriptor-preserving cancellation. */
 	promptArtifactPath?: string;
-	/** A durable turn's dir, which a terminate removes once the agent is gone. */
+	/**
+	 * A durable turn's dir: an interrupt or terminate finds the agent through
+	 * the record copy in it, and a terminate removes it once the agent is gone.
+	 */
 	turnDir?: string;
 }
 
@@ -337,7 +391,9 @@ export function signalRemoteAgent(
 		const script =
 			mode === 'terminate'
 				? terminateScriptFor(target)
-				: buildRemoteSignalScript(target.pidFile, mode, target.promptArtifactPath);
+				: target.turnDir !== undefined && target.promptArtifactPath === undefined
+					? buildDurableInterruptScript(target.turnDir, target.pidFile)
+					: buildRemoteSignalScript(target.pidFile, mode, target.promptArtifactPath);
 		const child = spawn(target.sshCommand, [...connection, ...SSH_STDIN_REMOTE_SHELL], {
 			stdio: ['pipe', 'ignore', 'ignore'],
 			detached: true,
@@ -442,12 +498,18 @@ export function reapRemoteAgent(
 		if (!isCurrent()) return;
 		const started = signalRemoteAgent(target, 'terminate', (exitCode) => {
 			if (!isCurrent()) return;
-			if (exitCode !== null && !isSshConnectionFailure(exitCode)) {
+			if (
+				exitCode !== null &&
+				!isSshConnectionFailure(exitCode) &&
+				!(target.turnDir !== undefined && exitCode === DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE)
+			) {
 				pendingReaps.delete(target.pidFile);
 				return;
 			}
 			if (attempt >= delaysMs.length) {
-				pendingReaps.delete(target.pidFile);
+				// The agent may still run. The next launch on its tab still carries
+				// the reap and runs it before its own agent; only the timer stops.
+				if (target.promptArtifactPath !== undefined) pendingReaps.delete(target.pidFile);
 				logger.warn('Gave up stopping a remote agent: its host never answered', LOG_CONTEXT, {
 					sessionId: target.sessionId,
 					attempts: attempt + 1,
@@ -473,15 +535,28 @@ export function reapRemoteAgent(
  * The next turn on a tab resumes the same provider session, so an orphan still
  * running there is a second writer. The launch script runs the terminate
  * itself, over the connection that just proved the host answers, before it
- * starts the new agent. Prompt-owner records stay with their retry loop: their
- * script reads its own descriptors through `/proc/$$`, which a subshell of the
- * launch script would point at the wrong process.
+ * starts the new agent. Only reaps for the same ssh endpoint go: a launch on
+ * another host cannot reach them, so they stay with their own retry loop.
+ * Prompt-owner records stay with their retry loop too: their script reads its
+ * own descriptors through `/proc/$$`, which a subshell of the launch script
+ * would point at the wrong process.
  */
-export function takePendingRemoteReaps(sessionId: string): RemoteSignalTarget[] {
+export function takePendingRemoteReaps(
+	sessionId: string,
+	sshCommand: string,
+	sshArgs: readonly string[]
+): RemoteSignalTarget[] {
+	const endpoint = sshConnectionArgs(sshArgs)?.join('\0');
 	const taken: RemoteSignalTarget[] = [];
 	for (const [pidFile, entry] of pendingReaps) {
 		if (entry.target.sessionId !== sessionId) continue;
 		if (entry.target.promptArtifactPath !== undefined) continue;
+		if (
+			endpoint === undefined ||
+			entry.target.sshCommand !== sshCommand ||
+			sshConnectionArgs(entry.target.sshArgs)?.join('\0') !== endpoint
+		)
+			continue;
 		if (entry.timer) clearTimeout(entry.timer);
 		pendingReaps.delete(pidFile);
 		taken.push(entry.target);
@@ -493,10 +568,20 @@ export function takePendingRemoteReaps(sessionId: string): RemoteSignalTarget[] 
  * Launch-script lines that terminate earlier agents before this one starts.
  * Each runs in a subshell, so its `exit` and variables stay out of the launch
  * script, with stdin closed so it cannot read the script bash is still reading.
+ * An earlier durable agent that cannot be proven gone ends the launch before
+ * its own agent starts ({@link PRE_LAUNCH_REAP_REFUSED_EXIT_CODE}); the caller
+ * hands the reaps back to their retry loop.
  */
 export function buildPreLaunchReapScript(targets: readonly RemoteSignalTarget[]): string {
+	const refuse =
+		`[ "$?" != ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE} ] || ` +
+		`{ printf '%s\\n' ${shellEscape(PRE_LAUNCH_REAP_REFUSED_MESSAGE)} >&2; exit ${PRE_LAUNCH_REAP_REFUSED_EXIT_CODE}; }\n`;
 	return targets
-		.map((target) => `(\n${terminateScriptFor(target)}) </dev/null >/dev/null 2>&1\n`)
+		.map(
+			(target) =>
+				`(\n${terminateScriptFor(target)}) </dev/null >/dev/null 2>&1\n` +
+				(target.turnDir !== undefined ? refuse : '')
+		)
 		.join('');
 }
 
