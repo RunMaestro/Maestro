@@ -1230,7 +1230,9 @@ describe('runReturnFromHost', () => {
 			await runReturnFromHost('agent-1', {}, d.value);
 			const first = d.restore.mock.calls[0][1];
 			expect(first.tabs.map((tab: AITabRecord) => tab.id)).toContain('tab-late');
-			expect(first.queue?.find((queued) => queued.itemId === 'q2')?.tabId).toBe('tab-late');
+			expect(first.queue?.find((queued: { itemId: string }) => queued.itemId === 'q2')?.tabId).toBe(
+				'tab-late'
+			);
 			const done = d.store.get('agent-1') as AgentRecord & {
 				executionQueue?: Array<{ id: string; tabId: string }>;
 			};
