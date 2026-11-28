@@ -243,6 +243,7 @@ Start only after every release in scope verifies.
    more out of Maestro, then the most recent post nobody has emailed yet.
    `node scripts/blog-spotlight.mjs pick` (in RunMaestro.ai) chooses it: the
    newest published post that is not a Release post and is not in the ledger
+   <!-- doc-refs-ignore -->
    (`scripts/email-templates/blog-spotlight.jsonl`). Never pick it by hand and
    never reuse a post: `send-announcement.cjs --send` refuses a spotlight the
    ledger already holds and records the slug on a successful broadcast. When

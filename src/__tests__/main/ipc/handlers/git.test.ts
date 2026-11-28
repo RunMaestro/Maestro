@@ -3024,6 +3024,44 @@ export function Component() {
 			);
 		});
 
+		it('should fail when the branch is checked out in the main repository itself (#2189)', async () => {
+			// The main worktree exists on disk, so only the linked-only filter keeps
+			// the handler from handing the parent's own checkout back as a worktree.
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockImplementation(async (p: any) => {
+				if (String(p) === '/main/repo') return undefined;
+				throw new Error('ENOENT');
+			});
+
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({ stdout: 'abc123', stderr: '', exitCode: 0 })
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: "fatal: 'feature-branch' is already checked out at '/main/repo'",
+					exitCode: 128,
+				})
+				.mockResolvedValueOnce({
+					stdout: ['worktree /main/repo', 'HEAD aaa', 'branch refs/heads/feature-branch', ''].join(
+						'\n'
+					),
+					stderr: '',
+					exitCode: 0,
+				});
+
+			const handler = handlers.get('git:worktreeSetup');
+			const result = await handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-branch'
+			);
+
+			expect(result).toEqual({
+				success: false,
+				error: "fatal: 'feature-branch' is already checked out at '/main/repo'",
+			});
+		});
+
 		it('should fall through to error when porcelain returns a stale worktree path that no longer exists on disk', async () => {
 			// fs.access rejects → recovered path is stale, treat as no match
 			const fsPromises = await import('fs/promises');
@@ -3240,7 +3278,8 @@ export function Component() {
 				}
 				if (args?.[0] === 'worktree' && args?.[1] === 'list') {
 					return {
-						stdout: 'worktree /elsewhere/feature\nHEAD abc123\nbranch refs/heads/feature-branch\n',
+						stdout:
+							'worktree /main/repo\nHEAD aaa\nbranch refs/heads/main\n\nworktree /elsewhere/feature\nHEAD abc123\nbranch refs/heads/feature-branch\n',
 						stderr: '',
 						exitCode: 0,
 					};

@@ -48,7 +48,9 @@ async function findLocalWorktreeForBranch(
 ): Promise<string | null> {
 	const result = await execFileNoThrow('git', ['worktree', 'list', '--porcelain'], mainRepoCwd);
 	if (result.exitCode !== 0) return null;
-	const existingPath = parseWorktreePathForBranch(result.stdout, branchName);
+	const existingPath = parseWorktreePathForBranch(result.stdout, branchName, {
+		linkedOnly: true,
+	});
 	if (!existingPath) return null;
 	try {
 		await fs.access(existingPath);

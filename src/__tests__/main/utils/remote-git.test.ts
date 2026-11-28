@@ -1585,6 +1585,25 @@ describe('remote-git.ts', () => {
 			expect(result.data!.branchMismatch).toBe(false);
 		});
 
+		it('should fail when the remote branch is checked out in the main repository itself (#2189)', async () => {
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc\n'));
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				failResult("fatal: 'feature' is already checked out at '/a'", 128)
+			);
+			mockExecFileNoThrow.mockResolvedValueOnce(
+				successResult(['worktree /a', 'HEAD aaa', 'branch refs/heads/feature', ''].join('\n'))
+			);
+
+			const result = await worktreeSetupRemote('/a', '/b', 'feature', sshRemote);
+
+			expect(result.success).toBe(true);
+			expect(result.data!.success).toBe(false);
+			expect(result.data!.alreadyExisted).toBeUndefined();
+			expect(result.data!.error).toContain('already checked out');
+		});
+
 		it('should fall through to error when porcelain returns a stale remote worktree path', async () => {
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
