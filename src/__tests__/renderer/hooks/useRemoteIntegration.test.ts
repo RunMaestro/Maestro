@@ -2021,6 +2021,53 @@ describe('useRemoteIntegration', () => {
 			);
 			expect(useSessionStore.getState().activeSessionId).toBe('other-session');
 		});
+		it('refuses a managed release while the agent is coming home, and keeps it retryable (#2199)', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			} as Partial<Session>);
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other-session' });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			vi.spyOn(window.maestro.sessions, 'setMany').mockResolvedValue(true);
+			renderHook(() => useRemoteIntegration(deps));
+			const control = { phase: 'prepare' as const, dispatchId: 'come-home', tabId: 'host-tab' };
+			const send = (channel: string, phase: 'prepare' | 'release') =>
+				act(async () => {
+					await onRemoteNewAITabWithPromptHandler?.(
+						'session-1',
+						phase === 'prepare' ? '' : 'Hello',
+						channel,
+						true,
+						false,
+						undefined,
+						{ ...control, phase }
+					);
+				});
+			const remoteCommands = () =>
+				dispatchEventSpy.mock.calls.filter(([event]) => event.type === 'maestro:remoteCommand');
+			await send('prepare', 'prepare');
+			await send('held', 'release');
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('held', {
+				success: false,
+				error: 'DispatchTargetUnavailable',
+			});
+			expect(remoteCommands()).toHaveLength(0);
+			// Home: the same release goes through, it was never recorded as released.
+			act(() => {
+				useSessionStore.setState({
+					sessions: useSessionStore
+						.getState()
+						.sessions.map((s) => ({ ...s, liftedTo: undefined }) as Session),
+				});
+			});
+			await send('home', 'release');
+			expect(mockProcess.sendRemoteNewAITabWithPromptResponse).toHaveBeenCalledWith('home', {
+				success: true,
+				tabId: 'host-tab',
+			});
+			expect(remoteCommands()).toHaveLength(1);
+		});
 		it('keeps a prepared tab empty when persistence fails', async () => {
 			const deps = createDeps({ sessions: [createMockSession({ id: 'session-1' })] });
 			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');

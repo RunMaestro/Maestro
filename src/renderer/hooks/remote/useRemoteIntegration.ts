@@ -980,6 +980,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						ack({ success: true, tabId: createdTabId, queued: true });
 						return;
 					}
+					// The command handler refuses a managed dispatch while the agent is coming home
+					// (`isAwaitingComeHome()`): refuse it here, before the release is recorded and
+					// acknowledged, so the release stays retryable and its sender keeps it (#2199).
+					if (control && isAwaitingComeHome(liveSession)) {
+						ack({ success: false, error: 'DispatchTargetUnavailable' });
+						return;
+					}
 					if (control) releasedAdmissions.add(control.dispatchId);
 					// Pass the new tab id explicitly so the renderer writes into the tab
 					// we just created - without it, useRemoteHandlers would fall back to
