@@ -61,8 +61,10 @@ function surveyPreamble(): string[] {
 		'[ -f "$root/host.env" ] && . "$root/host.env"',
 		// Every agent stored in a data directory, read from the store itself: `list agents` hides
 		// some (stored Pianola agents while Pianola is off), so it never decides what may be deleted.
-		// A custom storage location (the bootstrap file) keeps the store elsewhere: unknown.
-		`stored_agents() { _b="$1/${BOOTSTRAP_STORE_FILE}"; if [ -e "$_b" ] && { [ ! -r "$_b" ] || grep -q customSyncPath "$_b"; }; then echo unknown; elif [ ! -e "$1/maestro-sessions.json" ]; then echo none; elif [ ! -r "$1/maestro-sessions.json" ]; then echo unknown; elif grep -q '"id"' "$1/maestro-sessions.json"; then echo held; else echo none; fi; }`,
+		// `none` only for a store that is exactly empty (`{}` or `{"sessions":[]}`, whitespace aside):
+		// a cut-off or malformed file, an unreadable one, or a custom storage location (the bootstrap
+		// file) keeping the store elsewhere is `unknown`.
+		`stored_agents() { _b="$1/${BOOTSTRAP_STORE_FILE}"; _s="$1/maestro-sessions.json"; if [ -e "$_b" ] && { [ ! -r "$_b" ] || grep -q customSyncPath "$_b"; }; then echo unknown; elif [ ! -e "$_s" ]; then echo none; elif [ ! -r "$_s" ]; then echo unknown; elif grep -q '"id"' "$_s"; then echo held; else case "$(tr -d ' \\t\\r\\n' < "$_s" 2>/dev/null)" in '{}'|'{"sessions":[]}') echo none;; *) echo unknown;; esac; fi; }`,
 		'case "$(uname -s)" in Linux*) os=linux;; Darwin*) os=darwin;; MINGW*|MSYS*|CYGWIN*) os=win;; *) os=other;; esac',
 		'say "os=$os"',
 		// Every maestro-cli Maestro did not install: on PATH, and the Mac app's bundle.
@@ -224,7 +226,8 @@ export function buildRemoteHostStopScript(options: RemoteHostStopScriptOptions =
 		'if [ "$running" != 0 ]; then',
 		`  _out=$(_mc host stop --wait ${REMOTE_HOST_STOP_WAIT_SECONDS} 2>&1); _rc=$?`,
 		'  if [ "$_rc" = 0 ]; then say did=host-stopped',
-		`  elif ! _mc host endpoint --json 2>/dev/null | grep -q '"running": *false'; then printf '%s\\n' "$_out" | tail -n 3 >&2; say error=host-stop; exit 0; fi`,
+		`  elif _mc host endpoint --json 2>/dev/null | grep -q '"running": *false'; then say did=host-stopped`,
+		`  else printf '%s\\n' "$_out" | tail -n 3 >&2; say error=host-stop; exit 0; fi`,
 		'fi',
 		// 3. The service manager's own copy, which a service-run host may still be under.
 		`[ "$service" = systemd ] && systemctl --user stop ${REMOTE_SERVICE_UNIT} >/dev/null 2>&1`,
@@ -596,9 +599,14 @@ async function runScript(
 	const label = remoteLabel(remote);
 	const result = await exec(sshPath, buildRemoteScriptArgs(remote, script), { timeout });
 	if (result.exitCode === 'ETIMEDOUT') {
+		// The act may have stopped the host or disabled its service before it hung: keep that.
+		const progress = progressFrom(readMarkers(result.stdout).markers);
 		throw new RemoteHostStopError(
 			'timeout',
-			`No answer from ${label} within ${Math.round(timeout / 1000)}s.`
+			`No answer from ${label} within ${Math.round(timeout / 1000)}s.`,
+			progress.hostStopped || progress.serviceDisabled || progress.removed.length
+				? progress
+				: undefined
 		);
 	}
 	const parsed = readMarkers(result.stdout);
@@ -611,6 +619,16 @@ async function runScript(
 		);
 	}
 	return { parsed, survey, stderr: result.stderr };
+}
+
+/** What the act's `did=` and `removed=` markers say it already did. */
+function progressFrom(markers: Map<string, string[]>): RemoteHostStopProgress {
+	const did = markers.get('did') ?? [];
+	return {
+		hostStopped: did.includes('host-stopped'),
+		serviceDisabled: did.includes('service-disabled'),
+		removed: markers.get('removed') ?? [],
+	};
 }
 
 function safeText(text: string): string {
@@ -688,11 +706,7 @@ export async function stopRemoteHost(
 	}
 
 	const did = markers.get('did') ?? [];
-	const progress: RemoteHostStopProgress = {
-		hostStopped: did.includes('host-stopped'),
-		serviceDisabled: did.includes('service-disabled'),
-		removed: markers.get('removed') ?? [],
-	};
+	const progress = progressFrom(markers);
 	// The script's last check (`boot=`) when it got that far; before it, whether `disable` worked.
 	const boot = first(markers, 'boot');
 	const serviceLeftAtBoot =

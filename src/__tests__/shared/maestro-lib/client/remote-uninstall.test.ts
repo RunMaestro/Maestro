@@ -69,6 +69,8 @@ interface RemoteSetup {
 	data?: 'host' | 'desktop';
 	/** `host stop` fails. */
 	stopFails?: boolean;
+	/** `host stop` stops the host, then exits non-zero (its wait for the process timed out). */
+	stopExitsLate?: boolean;
 	/** What `list agents --json` prints once `host stop` ran: an agent that arrived meanwhile. */
 	agentsAfterStop?: string;
 	/** The contents of `~/.maestro/host.env`. */
@@ -127,7 +129,7 @@ function makeRemote(setup: RemoteSetup): Remote {
 			: `  "host endpoint") if [ -f "${state}" ]; then printf '{\\n  "running": true,\\n  "port": 4100,\\n  "token": "${TOKEN}",\\n  "pid": 812\\n}\\n'; else echo '{ "running": false }'; fi;;`,
 		`  "version --json") ${setup.version !== undefined ? `echo '${setup.version}'` : setup.desktop ? `echo '{ "cliVersion": "1.1.2", "appRunning": true }'` : `echo '{ "cliVersion": "1.1.2", "appRunning": false, "hostKind": "headless", "hostPid": 812 }'`};;`,
 		`  "list agents") ${agents === null ? 'exit 1' : `cat "${agentsFile}"; if [ -f "${laterFile}" ]; then mv "${laterFile}" "${agentsFile}"; fi`};;`,
-		`  "host stop") ${setup.stopFails ? 'echo "Error: work in flight (1 turn)" >&2; exit 5' : `rm -f "${state}";${setup.agentsAfterStop ? ` printf '%s\\n' '${setup.agentsAfterStop}' > "${agentsFile}"; printf '%s\\n' '{"sessions":${setup.agentsAfterStop}}' > "${path.join(dataDir, 'maestro-sessions.json')}";` : ''} echo "Host stopped (pid 812)."`};;`,
+		`  "host stop") ${setup.stopFails ? 'echo "Error: work in flight (1 turn)" >&2; exit 5' : setup.stopExitsLate ? `rm -f "${state}"; echo "Error: timed out waiting for pid 812" >&2; exit 5` : `rm -f "${state}";${setup.agentsAfterStop ? ` printf '%s\\n' '${setup.agentsAfterStop}' > "${agentsFile}"; printf '%s\\n' '{"sessions":${setup.agentsAfterStop}}' > "${path.join(dataDir, 'maestro-sessions.json')}";` : ''} echo "Host stopped (pid 812)."`};;`,
 		'esac',
 	].join('\n');
 	const root = path.join(home, '.maestro');
@@ -1061,5 +1063,69 @@ describe('a partial install left behind', () => {
 		});
 		expect(result).toMatchObject({ outcome: 'done' });
 		expect(exists(r, '.maestro', 'npm-cache')).toBe(false);
+	});
+});
+
+describe('Greptile review of #2193', () => {
+	it.skipIf(!onPosix)('reads a cut-off or malformed store as unknown, never empty', async () => {
+		const r = makeRemote({ os: 'Linux', installed: true, data: 'host', stored: '{"sessions": [' });
+		const survey = parseRemoteHostSurvey(
+			runScript(r, buildRemoteHostSurveyScript({ agents: true })).stdout
+		);
+		expect(survey?.storedAgents).toBe('unknown');
+		const result = await stopRemoteHost(remote, {
+			exec: execOn(r),
+			sshPath: 'ssh',
+			uninstall: true,
+			purgeData: true,
+		});
+		expect(result).toMatchObject({ outcome: 'purge-refused', reason: 'stored-agents' });
+		expect(fs.existsSync(path.join(dataDirOf(r, 'Linux'), 'maestro-sessions.json'))).toBe(true);
+	});
+
+	it.skipIf(!onPosix)('reads an exactly empty store as none', () => {
+		const r = makeRemote({
+			os: 'Linux',
+			installed: true,
+			data: 'host',
+			stored: '{\n\t"sessions": []\n}\n',
+		});
+		const survey = parseRemoteHostSurvey(
+			runScript(r, buildRemoteHostSurveyScript({ agents: true })).stdout
+		);
+		expect(survey?.storedAgents).toBe('none');
+	});
+
+	it.skipIf(!onPosix)(
+		'counts a host stop that exited non-zero but left the host stopped as a stop',
+		async () => {
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				running: true,
+				service: true,
+				stopExitsLate: true,
+			});
+			expect(await stopRemoteHost(remote, { exec: execOn(r), sshPath: 'ssh' })).toMatchObject({
+				outcome: 'done',
+				hostStopped: true,
+			});
+		}
+	);
+
+	it.skipIf(!onPosix)('keeps what the act did when it timed out part way', async () => {
+		const r = makeRemote({ os: 'Linux', installed: true, running: true, service: true });
+		const real = execOn(r);
+		const hung = vi.fn<RemoteExec>(async (command, args, options) => {
+			const result = await real(command, args, options);
+			if (!args[args.length - 1].includes('UNINSTALL=')) return result;
+			// The act stopped the host and disabled its service, then hung before it finished.
+			const cut = result.stdout.slice(0, result.stdout.indexOf('MAESTRO_HOST=done'));
+			return { ...result, stdout: cut, exitCode: 'ETIMEDOUT' };
+		});
+		await expect(stopRemoteHost(remote, { exec: hung, sshPath: 'ssh' })).rejects.toMatchObject({
+			code: 'timeout',
+			progress: { hostStopped: true, serviceDisabled: true },
+		});
 	});
 });
