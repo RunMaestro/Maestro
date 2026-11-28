@@ -238,6 +238,16 @@ Start only after every release in scope verifies.
 4. Email: build the template, send the draft to `pedram@runmaestro.ai`, confirm
    every link returns 200, then broadcast. Report the broadcast ID and the
    recipient count.
+   **Every email carries one blog spotlight**, placed after the release
+   content: a short line telling readers the blog has techniques for getting
+   more out of Maestro, then the most recent post nobody has emailed yet.
+   `node scripts/blog-spotlight.mjs pick` (in RunMaestro.ai) chooses it: the
+   newest published post that is not a Release post and is not in the ledger
+   (`scripts/email-templates/blog-spotlight.jsonl`). Never pick it by hand and
+   never reuse a post: `send-announcement.cjs --send` refuses a spotlight the
+   ledger already holds and records the slug on a successful broadcast. When
+   `pick` exits `2`, every post has been emailed: send the email without a
+   spotlight and say so in the report.
 5. **Report the Resend contact count every time.** The plan allows 5,000
    contacts. At 4,500 or more, say so in a `> [!WARNING]` so the conductor can
    reconsider the plan before a broadcast gets refused.
@@ -274,6 +284,7 @@ One message to the conductor, ending with a BLUF. The tweet URL in it is what
 | Each bump                     | New tip SHA, CI status           |
 | Discord                       | Message ID                       |
 | Email                         | Broadcast ID, recipients         |
+| Blog spotlight                | Post slug, or "none left"        |
 | Resend contacts               | Count (warn at 4,500)            |
 | Release art                   | Share JPEG path, Artlist session |
 | X                             | Tweet URL                        |
