@@ -301,7 +301,8 @@ Maestro removes a turn's folder only once it has proof that the agent stopped. I
 - Codex turns, and agents that keep talking to the provider on stdin during a turn (Codex app-server, ACP agents such as Grok, SDK-based agents, and turns with tool permission prompts). These keep the default behavior.
 - Terminal tabs, and agents Maestro runs in a terminal on this computer. A Claude turn that runs through Maestro's own wrapper on the remote (Claude's interactive mode) is covered: its prompt rides the turn's input, and steering it travels on its own connection to the remote, which reconnects like any other.
 - Windows remotes.
-- A crash of Maestro (as opposed to quitting it). The turn is still picked up at the next launch, from where it stood a few seconds before the crash. The tab can show those last few seconds of the reply twice.
+- A crash of Maestro (as opposed to quitting it). The turn is still picked up at the next launch, from where it stood a few seconds before the crash. The tab can show those last few seconds of the reply twice, or miss the last lines that reached the window but were not yet saved. The whole reply stays in the agent's own conversation on the remote.
+- Stopping a turn while the remote cannot be reached, and then quitting Maestro before it can. Maestro keeps the remote clean-up only while it runs, so the stopped agent can keep running on the remote. Stop it again once the remote answers, or end it on the remote.
 
 From the CLI, `maestro-cli update-ssh-remote <remote-id> --keep-turns on` (or `off`) changes the switch, and `create-ssh-remote --keep-turns on` sets it on a new remote. `maestro-cli list ssh-remotes --json` reports it as `keepTurnsOnDisconnect`.
 
