@@ -83,6 +83,14 @@ interface RemoteSetup {
 	wantsLink?: boolean;
 	/** The `default.target.wants` directory is read-only, so the link cannot be removed. */
 	wantsLocked?: boolean;
+	/** `host endpoint --json` fails with no answer (a discovery file other users can read). */
+	endpointFails?: boolean;
+	/** The contents of the data directory's `maestro-sessions.json`; omit for `{}`. */
+	stored?: string;
+	/** What `list agents --json` prints from its second call on: an agent that moved in meanwhile. */
+	agentsLater?: string;
+	/** The service file's folder is read-only, so the file cannot be removed. */
+	serviceLocked?: boolean;
 }
 
 /** A fresh HOME and stub bin directory shaped like a remote Maestro set up. */
@@ -96,6 +104,7 @@ function makeRemote(setup: RemoteSetup): Remote {
 			mode: 0o755,
 		});
 	};
+	const dataDir = dataDirOf({ home, bin, log }, setup.os);
 	stub(bin, 'uname', `[ "$1" = -s ] && echo ${setup.os} || echo x86_64`);
 	stub(bin, 'systemctl', setup.disableFails ? 'exit 1' : 'exit 0');
 	stub(
@@ -109,12 +118,16 @@ function makeRemote(setup: RemoteSetup): Remote {
 	const agents = setup.agents === undefined ? '[]' : setup.agents;
 	const agentsFile = path.join(home, 'agents.json');
 	if (agents !== null) fs.writeFileSync(agentsFile, `${agents}\n`);
+	const laterFile = path.join(home, 'agents-later.json');
+	if (setup.agentsLater !== undefined) fs.writeFileSync(laterFile, `${setup.agentsLater}\n`);
 	const launcher = [
 		`case "$1 $2" in`,
-		`  "host endpoint") if [ -f "${state}" ]; then printf '{\\n  "running": true,\\n  "port": 4100,\\n  "token": "${TOKEN}",\\n  "pid": 812\\n}\\n'; else echo '{ "running": false }'; fi;;`,
+		setup.endpointFails
+			? `  "host endpoint") echo '{ "error": "cli-server.json can be read by other users" }'; exit 1;;`
+			: `  "host endpoint") if [ -f "${state}" ]; then printf '{\\n  "running": true,\\n  "port": 4100,\\n  "token": "${TOKEN}",\\n  "pid": 812\\n}\\n'; else echo '{ "running": false }'; fi;;`,
 		`  "version --json") ${setup.version !== undefined ? `echo '${setup.version}'` : setup.desktop ? `echo '{ "cliVersion": "1.1.2", "appRunning": true }'` : `echo '{ "cliVersion": "1.1.2", "appRunning": false, "hostKind": "headless", "hostPid": 812 }'`};;`,
-		`  "list agents") ${agents === null ? 'exit 1' : `cat "${agentsFile}"`};;`,
-		`  "host stop") ${setup.stopFails ? 'echo "Error: work in flight (1 turn)" >&2; exit 5' : `rm -f "${state}";${setup.agentsAfterStop ? ` printf '%s\\n' '${setup.agentsAfterStop}' > "${agentsFile}";` : ''} echo "Host stopped (pid 812)."`};;`,
+		`  "list agents") ${agents === null ? 'exit 1' : `cat "${agentsFile}"; if [ -f "${laterFile}" ]; then mv "${laterFile}" "${agentsFile}"; fi`};;`,
+		`  "host stop") ${setup.stopFails ? 'echo "Error: work in flight (1 turn)" >&2; exit 5' : `rm -f "${state}";${setup.agentsAfterStop ? ` printf '%s\\n' '${setup.agentsAfterStop}' > "${agentsFile}"; printf '%s\\n' '{"sessions":${setup.agentsAfterStop}}' > "${path.join(dataDir, 'maestro-sessions.json')}";` : ''} echo "Host stopped (pid 812)."`};;`,
 		'esac',
 	].join('\n');
 	const root = path.join(home, '.maestro');
@@ -137,6 +150,7 @@ function makeRemote(setup: RemoteSetup): Remote {
 			const dir = path.join(home, '.config', 'systemd', 'user');
 			fs.mkdirSync(dir, { recursive: true });
 			fs.writeFileSync(path.join(dir, 'maestro-host.service'), '[Unit]\n');
+			if (setup.serviceLocked) fs.chmodSync(dir, 0o555);
 			if (setup.wantsLink) {
 				const wants = path.join(dir, 'default.target.wants');
 				fs.mkdirSync(wants, { recursive: true });
@@ -150,12 +164,13 @@ function makeRemote(setup: RemoteSetup): Remote {
 			const dir = path.join(home, 'Library', 'LaunchAgents');
 			fs.mkdirSync(dir, { recursive: true });
 			fs.writeFileSync(path.join(dir, 'sh.maestro.host.plist'), '<plist/>\n');
+			if (setup.serviceLocked) fs.chmodSync(dir, 0o555);
 		}
 	}
 	if (setup.data) {
-		const data = dataDirOf({ home, bin, log }, setup.os);
+		const data = dataDir;
 		fs.mkdirSync(data, { recursive: true });
-		fs.writeFileSync(path.join(data, 'maestro-sessions.json'), '{}');
+		fs.writeFileSync(path.join(data, 'maestro-sessions.json'), setup.stored ?? '{}');
 		if (setup.data === 'desktop')
 			fs.writeFileSync(path.join(data, 'maestro-window-state.json'), '{}');
 	}
@@ -261,6 +276,7 @@ describe('surveying a Linux remote (systemd)', () => {
 				},
 				dataDir: dataDirOf(r, 'Linux'),
 				dataDirUsedByDesktop: false,
+				storedAgents: 'none',
 				agents: [{ id: 'a1', name: 'Backend' }],
 			});
 		}
@@ -626,7 +642,7 @@ describe('purgeData safety', () => {
 	});
 
 	it.skipIf(!onPosix)(
-		'checks the agents again after the host stops, and keeps the data when one arrived',
+		'checks the store again right before the rm, and keeps the data when an agent arrived',
 		async () => {
 			const r = makeRemote({
 				os: 'Linux',
@@ -643,7 +659,7 @@ describe('purgeData safety', () => {
 			});
 			expect(result).toMatchObject({ outcome: 'done', hostStopped: true, purged: false });
 			if (result.outcome === 'done')
-				expect(result.warnings.join(' ')).toContain('an agent appeared');
+				expect(result.warnings.join(' ')).toContain('its store still holds an agent');
 			expect(fs.existsSync(path.join(dataDirOf(r, 'Linux'), 'maestro-sessions.json'))).toBe(true);
 		}
 	);
@@ -856,4 +872,194 @@ describe('a running host whose CLI does not say what it is', () => {
 			).toMatchObject({ outcome: 'done', hostStopped: true });
 		}
 	);
+});
+
+describe('a host whose state cannot be read is never taken for stopped', () => {
+	it.skipIf(!onPosix)(
+		'reads a failed host endpoint as unknown, and refuses without force',
+		async () => {
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				running: true,
+				service: true,
+				endpointFails: true,
+			});
+			const survey = parseRemoteHostSurvey(
+				runScript(r, buildRemoteHostSurveyScript({ agents: true })).stdout
+			);
+			expect(survey).toMatchObject({ host: 'unknown', hostUnreadable: true });
+			const exec = execOn(r);
+			const result = await stopRemoteHost(remote, { exec, sshPath: 'ssh', uninstall: true });
+			expect(result).toMatchObject({ outcome: 'host-unknown' });
+			expect(exec).toHaveBeenCalledTimes(1);
+			expect(fs.readFileSync(r.log, 'utf8')).not.toContain('host stop');
+			expect(exists(r, '.maestro', 'bin', 'maestro-cli')).toBe(true);
+		}
+	);
+
+	it.skipIf(!onPosix)(
+		'with force, stops it, and fails while the host does not answer that it stopped',
+		async () => {
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				running: true,
+				service: true,
+				endpointFails: true,
+			});
+			const error = await stopRemoteHost(remote, {
+				exec: execOn(r),
+				sshPath: 'ssh',
+				uninstall: true,
+				force: true,
+			}).catch((caught: unknown) => caught);
+			expect(error).toBeInstanceOf(RemoteHostStopError);
+			expect(error).toMatchObject({
+				code: 'still-running',
+				progress: { hostStopped: true, serviceDisabled: true },
+			});
+			expect(fs.readFileSync(r.log, 'utf8')).toContain('host stop --wait');
+			// Nothing was removed under a host that may still run.
+			expect(exists(r, '.maestro', 'bin', 'maestro-cli')).toBe(true);
+			expect(exists(r, '.config', 'systemd', 'user', 'maestro-host.service')).toBe(true);
+		}
+	);
+});
+
+describe('an agent list cut off part way', () => {
+	it('is unknown, never "none"', () => {
+		const out = [
+			'MAESTRO_HOST=os=linux',
+			'MAESTRO_HOST=host=headless',
+			'MAESTRO_HOST=service=none',
+			'MAESTRO_HOST=surveyed=1',
+			'MAESTRO_HOST=agents-begin',
+		].join('\n');
+		expect(parseRemoteHostSurvey(out)?.agents).toBe('unknown');
+		expect(parseRemoteHostSurvey(`${out}\n[]\nMAESTRO_HOST=agents-end\n`)?.agents).toEqual([]);
+	});
+});
+
+describe('the agents are read again right before the stop', () => {
+	it.skipIf(!onPosix)(
+		'refuses without force when one moved onto the host since the survey',
+		async () => {
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				running: true,
+				service: true,
+				agentsLater: '[{ "id": "late", "name": "Imported" }]',
+			});
+			const result = await stopRemoteHost(remote, { exec: execOn(r), sshPath: 'ssh' });
+			expect(result).toMatchObject({
+				outcome: 'agents-held',
+				agents: [{ id: 'late', name: 'Imported' }],
+			});
+			const calls = fs.readFileSync(r.log, 'utf8');
+			expect(calls).not.toContain('host stop');
+			expect(calls).not.toContain('systemctl --user disable');
+		}
+	);
+});
+
+describe('purge reads the store, not the agent list', () => {
+	it.skipIf(!onPosix)(
+		'keeps a data directory whose store holds an agent the list hides',
+		async () => {
+			// A stored Pianola agent while Pianola is off: `list agents` shows none.
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				data: 'host',
+				stored: '{"sessions":[{"id":"pianola-1","name":"Pianola"}]}',
+			});
+			const result = await stopRemoteHost(remote, {
+				exec: execOn(r),
+				sshPath: 'ssh',
+				uninstall: true,
+				purgeData: true,
+				force: true,
+			});
+			expect(result).toMatchObject({ outcome: 'purge-refused', reason: 'stored-agents' });
+			expect(fs.existsSync(path.join(dataDirOf(r, 'Linux'), 'maestro-sessions.json'))).toBe(true);
+			expect(exists(r, '.maestro', 'bin', 'maestro-cli')).toBe(true);
+		}
+	);
+
+	it.skipIf(!onPosix)('never removes ~/.maestro or a directory holding host.env', async () => {
+		const r = makeRemote({
+			os: 'Linux',
+			installed: true,
+			hostEnv: 'export MAESTRO_USER_DATA="$HOME/.maestro"\n',
+		});
+		// An empty Maestro store in ~/.maestro, so only the host.env rule stands in the way.
+		fs.writeFileSync(path.join(r.home, '.maestro', 'maestro-sessions.json'), '{}');
+		const result = await stopRemoteHost(remote, {
+			exec: execOn(r),
+			sshPath: 'ssh',
+			uninstall: true,
+			purgeData: true,
+		});
+		expect(result).toMatchObject({ outcome: 'done', purged: false });
+		expect(exists(r, '.maestro', 'host.env')).toBe(true);
+	});
+});
+
+describe('a service file that cannot be removed', () => {
+	it.skipIf(!onPosix)(
+		'systemd: fails the uninstall and keeps what the stop already did',
+		async () => {
+			const r = makeRemote({
+				os: 'Linux',
+				installed: true,
+				running: true,
+				service: true,
+				serviceLocked: true,
+			});
+			const error = await stopRemoteHost(remote, {
+				exec: execOn(r),
+				sshPath: 'ssh',
+				uninstall: true,
+			}).catch((caught: unknown) => caught);
+			expect(error).toMatchObject({
+				code: 'remove',
+				progress: { hostStopped: true, serviceDisabled: true },
+			});
+			expect(exists(r, '.config', 'systemd', 'user', 'maestro-host.service')).toBe(true);
+		}
+	);
+
+	it.skipIf(!onPosix)('launchd: fails, and never enables the label again', async () => {
+		const r = makeRemote({
+			os: 'Darwin',
+			installed: true,
+			running: true,
+			service: true,
+			serviceLocked: true,
+		});
+		await expect(
+			stopRemoteHost(remote, { exec: execOn(r), sshPath: 'ssh', uninstall: true })
+		).rejects.toMatchObject({ code: 'remove' });
+		expect(exists(r, 'Library', 'LaunchAgents', 'sh.maestro.host.plist')).toBe(true);
+		expect(fs.readFileSync(r.log, 'utf8')).not.toContain('launchctl enable');
+	});
+});
+
+describe('a partial install left behind', () => {
+	it.skipIf(!onPosix)('is found and removed by a retry', async () => {
+		const r = makeRemote({ os: 'Linux' });
+		// An earlier uninstall removed the launcher, cli and node, and stopped at the npm cache.
+		fs.mkdirSync(path.join(r.home, '.maestro', 'npm-cache'), { recursive: true });
+		const survey = parseRemoteHostSurvey(runScript(r, buildRemoteHostSurveyScript()).stdout);
+		expect(survey?.hasFiles).toBe(true);
+		const result = await stopRemoteHost(remote, {
+			exec: execOn(r),
+			sshPath: 'ssh',
+			uninstall: true,
+		});
+		expect(result).toMatchObject({ outcome: 'done' });
+		expect(exists(r, '.maestro', 'npm-cache')).toBe(false);
+	});
 });

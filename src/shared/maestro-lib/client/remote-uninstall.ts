@@ -31,10 +31,18 @@ import { resolveSshPath } from '../launch/ssh-path';
 import { MAC_APP_CLI_PATH, buildRemoteScriptArgs, type RemoteExec } from './remote-discovery';
 import { REMOTE_INSTALL_ROOT } from './remote-install';
 import { REMOTE_SERVICE_LABEL, REMOTE_SERVICE_UNIT } from './remote-service';
+import { BOOTSTRAP_STORE_FILE } from '../../syncPath';
 
 const MARKER = 'MAESTRO_HOST=';
 const AGENTS_BEGIN = `${MARKER}agents-begin`;
 const AGENTS_END = `${MARKER}agents-end`;
+
+/**
+ * Every path Maestro's install leaves under `~/.maestro`, as shell words. The survey counts them and
+ * the uninstall removes them, from this one list, so a retry after a partial removal finishes it.
+ */
+const MANAGED_PATHS =
+	'"$root/cli" "$root/cli.old" "$root/node" "$root/npm-cache" "$ours" "$bin/maestro-cli.new" "$bin/maestro-host-service" "$bin/maestro-host-service.new" "$root"/cli.stage.* "$root"/node.dl.*';
 
 /** How long `host stop --wait` lets work in flight finish, in seconds. */
 export const REMOTE_HOST_STOP_WAIT_SECONDS = 120;
@@ -51,6 +59,10 @@ function surveyPreamble(): string[] {
 		`root="$HOME/${REMOTE_INSTALL_ROOT}"; bin="$root/bin"; ours="$bin/maestro-cli"`,
 		// The same settings the service wrapper reads, so the CLI resolves the same data directory.
 		'[ -f "$root/host.env" ] && . "$root/host.env"',
+		// Every agent stored in a data directory, read from the store itself: `list agents` hides
+		// some (stored Pianola agents while Pianola is off), so it never decides what may be deleted.
+		// A custom storage location (the bootstrap file) keeps the store elsewhere: unknown.
+		`stored_agents() { _b="$1/${BOOTSTRAP_STORE_FILE}"; if [ -e "$_b" ] && { [ ! -r "$_b" ] || grep -q customSyncPath "$_b"; }; then echo unknown; elif [ ! -e "$1/maestro-sessions.json" ]; then echo none; elif [ ! -r "$1/maestro-sessions.json" ]; then echo unknown; elif grep -q '"id"' "$1/maestro-sessions.json"; then echo held; else echo none; fi; }`,
 		'case "$(uname -s)" in Linux*) os=linux;; Darwin*) os=darwin;; MINGW*|MSYS*|CYGWIN*) os=win;; *) os=other;; esac',
 		'say "os=$os"',
 		// Every maestro-cli Maestro did not install: on PATH, and the Mac app's bundle.
@@ -60,7 +72,7 @@ function surveyPreamble(): string[] {
 		'IFS=$_ifs; set +f',
 		`[ "$os" = darwin ] && [ -f ${app} ] && say "foreign=${MAC_APP_CLI_PATH}"`,
 		'[ -x "$ours" ] && say installed=1',
-		'{ [ -d "$root/cli" ] || [ -d "$root/node" ] || [ -e "$bin/maestro-host-service" ]; } && say files=1',
+		`for p in ${MANAGED_PATHS}; do if [ -e "$p" ] || [ -L "$p" ]; then say files=1; break; fi; done`,
 		// The CLI that answers for the host: Maestro's own first, then any other.
 		'have=1',
 		'if [ -x "$ours" ]; then _mc() { "$ours" "$@"; }',
@@ -68,11 +80,15 @@ function surveyPreamble(): string[] {
 		`elif [ "$os" = darwin ] && [ -f ${app} ] && command -v node >/dev/null 2>&1; then _mc() { node ${app} "$@"; }`,
 		'else have=0; fi',
 		// Is a host serving the data directory, and is it the desktop app? The endpoint holds the
-		// token, so it is grepped here and never printed.
+		// token, so it is grepped here and never printed. Only an explicit answer decides: a failed or
+		// unreadable one (a discovery file other users can read, a CLI that crashed) is `running=u`,
+		// never "stopped". A stopped host exits non-zero, so the JSON field is read, not the status.
 		'running=0; kind=unknown; pid=""',
 		'if [ "$have" = 1 ]; then',
 		'  ep=$(_mc host endpoint --json 2>/dev/null)',
-		`  printf '%s\\n' "$ep" | grep -q '"running": *true' && running=1`,
+		`  if printf '%s\\n' "$ep" | grep -q '"running": *true'; then running=1`,
+		`  elif printf '%s\\n' "$ep" | grep -q '"running": *false'; then running=0`,
+		'  else running=u; fi',
 		`  pid=$(printf '%s\\n' "$ep" | sed -n 's/^ *"pid": *\\([0-9][0-9]*\\).*/\\1/p' | head -n 1)`,
 		'  ep=""',
 		'  if [ "$running" = 1 ]; then',
@@ -90,7 +106,7 @@ function surveyPreamble(): string[] {
 		'    _ver=""',
 		'  fi',
 		'fi',
-		'if [ "$running" = 0 ]; then say host=none; else say "host=$kind"; fi',
+		'case "$running" in 0) say host=none;; u) say host=unknown; say host-state=unknown;; *) say "host=$kind";; esac',
 		'[ -n "$pid" ] && say "pid=$pid"',
 		// The boot service.
 		'service=none',
@@ -124,30 +140,38 @@ function surveyPreamble(): string[] {
 		'  data="$base/$guess"',
 		'  [ ! -d "$data" ] && [ -d "$base/$alt" ] && data="$base/$alt"',
 		'fi',
-		'if [ -d "$data" ]; then say "data=$data"; [ -f "$data/maestro-window-state.json" ] && say data-desktop=1; fi',
+		'if [ -d "$data" ]; then say "data=$data"; [ -f "$data/maestro-window-state.json" ] && say data-desktop=1; say "data-agents=$(stored_agents "$data")"; fi',
 		// The last survey line: output without it was cut off, and is never trusted.
 		'say surveyed=1',
 	];
 }
 
 /**
- * The read-only survey. With `agents`, it also prints the host's agents (`list agents --json`,
- * which reads the data directory, so it answers with the host stopped too) between two markers,
- * or `agents=unknown` when they could not be read. Always exits 0.
+ * The host's agents (`list agents --json`, which reads the data directory, so it answers with the
+ * host stopped too) between two markers, or `agents=unknown` when they could not be read. Sets
+ * `ag` to `empty`, `held` or `unknown`.
+ */
+function agentsLines(): string[] {
+	return [
+		// A running host is always asked: it may serve a data directory the guess above missed
+		// (`--data-dir`, or MAESTRO_USER_DATA set outside host.env). No host and no data
+		// directory: no agents. Anything that cannot be read: unknown, never "none".
+		'ag=unknown',
+		'if [ "$running" = 0 ] && [ ! -d "$data" ]; then say agents-begin; echo "[]"; say agents-end; ag=empty;',
+		'elif [ "$have" = 0 ]; then say agents=unknown;',
+		'elif _list=$(_mc list agents --json 2>/dev/null); then say agents-begin; printf \'%s\\n\' "$_list"; say agents-end;',
+		`  case "$(printf '%s' "$_list" | tr -d ' \\t\\r\\n')" in ''|'[]') ag=empty;; *) ag=held;; esac`,
+		'else say agents=unknown; fi',
+	];
+}
+
+/**
+ * The read-only survey. With `agents`, it also prints the host's agents (`agentsLines()`).
+ * Always exits 0.
  */
 export function buildRemoteHostSurveyScript(options: { agents?: boolean } = {}): string {
 	const lines = surveyPreamble();
-	if (options.agents) {
-		lines.push(
-			// A running host is always asked: it may serve a data directory the guess above missed
-			// (`--data-dir`, or MAESTRO_USER_DATA set outside host.env). No host and no data
-			// directory: no agents. Anything that cannot be read: unknown, never "none".
-			'if [ "$running" = 0 ] && [ ! -d "$data" ]; then say agents-begin; echo "[]"; say agents-end;',
-			'elif [ "$have" = 0 ]; then say agents=unknown;',
-			'elif _list=$(_mc list agents --json 2>/dev/null); then say agents-begin; printf \'%s\\n\' "$_list"; say agents-end;',
-			'else say agents=unknown; fi'
-		);
-	}
+	if (options.agents) lines.push(...agentsLines());
 	lines.push('exit 0');
 	return lines.join('\n');
 }
@@ -176,7 +200,13 @@ export function buildRemoteHostStopScript(options: RemoteHostStopScriptOptions =
 		`PURGE=${purge ? 1 : 0}`,
 		`FORCE=${options.force ? 1 : 0}`,
 		'[ "$running" = 1 ] && [ "$kind" = desktop ] && { say refused=desktop; exit 0; }',
-		'[ "$running" = 1 ] && [ "$kind" = unknown ] && [ "$FORCE" = 0 ] && { say refused=unknown; exit 0; }',
+		'{ [ "$running" = u ] || { [ "$running" = 1 ] && [ "$kind" = unknown ]; }; } && [ "$FORCE" = 0 ] && { say refused=unknown; exit 0; }',
+		// The agents again, right before anything changes: one may have moved onto the host since the
+		// survey. Without force, only a host read as holding none is stopped.
+		'if [ "$FORCE" = 0 ]; then',
+		...agentsLines().map((line) => `  ${line}`),
+		'  [ "$ag" = empty ] || { say refused=agents; exit 0; }',
+		'fi',
 		// 1. The service first, so nothing starts the host again behind the stop.
 		'if [ "$service" = systemd ]; then',
 		`  if systemctl --user disable ${REMOTE_SERVICE_UNIT} >/dev/null 2>&1; then say did=service-disabled`,
@@ -189,47 +219,61 @@ export function buildRemoteHostStopScript(options: RemoteHostStopScriptOptions =
 		`  if launchctl disable "$domain/${label}" >/dev/null 2>&1; then say did=service-disabled; ld_off=1; else say warn=service-disable-failed; fi`,
 		'fi',
 		// 2. The host, drained: `host stop --wait` lets work in flight finish first.
-		'if [ "$running" = 1 ]; then',
+		// A host whose state could not be read (`running=u`, only with force) is stopped too; a stop
+		// that fails is a failure unless the host now answers that it is not running.
+		'if [ "$running" != 0 ]; then',
 		`  _out=$(_mc host stop --wait ${REMOTE_HOST_STOP_WAIT_SECONDS} 2>&1); _rc=$?`,
-		`  if [ "$_rc" != 0 ]; then printf '%s\\n' "$_out" | tail -n 3 >&2; say error=host-stop; exit 0; fi`,
-		'  say did=host-stopped',
+		'  if [ "$_rc" = 0 ]; then say did=host-stopped',
+		`  elif ! _mc host endpoint --json 2>/dev/null | grep -q '"running": *false'; then printf '%s\\n' "$_out" | tail -n 3 >&2; say error=host-stop; exit 0; fi`,
 		'fi',
 		// 3. The service manager's own copy, which a service-run host may still be under.
 		`[ "$service" = systemd ] && systemctl --user stop ${REMOTE_SERVICE_UNIT} >/dev/null 2>&1`,
 		`[ "$service" = launchd ] && launchctl bootout "$domain/${label}" >/dev/null 2>&1`,
+		// Stopped means the host says so: no answer, or an unreadable one, is not "stopped".
 		'if [ "$have" = 1 ]; then',
-		`  _mc host endpoint --json 2>/dev/null | grep -q '"running": *true' && { say error=still-running; exit 0; }`,
+		`  _mc host endpoint --json 2>/dev/null | grep -q '"running": *false' || { say error=still-running; exit 0; }`,
 		'fi',
-		// 4. Is the data directory safe to remove? Decided here, with the host stopped and the CLI
-		// still in place: its real path is not home, an ancestor of home, or /; it holds Maestro's own
-		// files and not the desktop app's; and it holds no agent now (one may have arrived since the
-		// survey). Anything less keeps the data.
-		'purge_ok=0',
+		// 4. The data directory, removed only when it is safe, with the host stopped and before the
+		// install goes: its real path is not home, an ancestor of home, or /; it is not, and does not
+		// hold, `~/.maestro` or its host.env; it holds Maestro's own files and not the desktop app's;
+		// and its store holds no agent at the moment of the `rm` (read in the same statement, from the
+		// store, so an agent the list hides or one that arrived since the survey keeps it).
 		'if [ "$PURGE" = 1 ]; then',
-		'  real=$(cd "$data" 2>/dev/null && pwd -P); home_real=$(cd "$HOME" 2>/dev/null && pwd -P)',
+		'  real=$(cd "$data" 2>/dev/null && pwd -P); home_real=$(cd "$HOME" 2>/dev/null && pwd -P); root_real=$(cd "$root" 2>/dev/null && pwd -P)',
 		'  under_home=0; case "$home_real/" in "$real/"*) under_home=1;; esac',
+		'  holds_root=0; [ -n "$root_real" ] && case "$root_real/" in "$real/"*) holds_root=1;; esac',
 		'  if [ -z "$real" ] || [ "$real" = / ] || [ -z "$home_real" ] || [ "$under_home" = 1 ]; then say refused=purge-path',
+		'  elif [ "$holds_root" = 1 ] || [ -e "$real/host.env" ]; then say refused=purge-path',
 		'  elif [ -f "$real/maestro-window-state.json" ]; then say refused=purge-desktop',
 		'  elif [ ! -f "$real/maestro-settings.json" ] && [ ! -f "$real/maestro-sessions.json" ] && [ ! -f "$real/maestro-agent-configs.json" ]; then say refused=purge-path',
-		'  elif [ "$have" = 0 ]; then say refused=purge-agents-unknown',
-		'  elif ! _left=$(_mc list agents --json 2>/dev/null); then say refused=purge-agents-unknown',
-		`  elif printf '%s\n' "$_left" | grep -q '"id"'; then say refused=purge-agents`,
-		'  else purge_ok=1; fi',
+		'  else',
+		'    _stored=$(stored_agents "$real")',
+		'    if [ "$_stored" = held ]; then say refused=purge-agents',
+		'    elif [ "$_stored" != none ]; then say refused=purge-agents-unknown',
+		'    elif rm -rf "$real"; then say "removed=$data"',
+		'    else say error=purge; exit 0; fi',
+		'  fi',
 		'fi',
 		'if [ "$UNINSTALL" = 1 ]; then',
-		'  if [ "$service" = systemd ]; then rm -f "$unit" && say "removed=$unit"; rm -f "$wants" 2>/dev/null; systemctl --user daemon-reload >/dev/null 2>&1; fi',
+		// A service file that stays is a failure, and its label is not enabled again: the stop holds.
+		'  if [ "$service" = systemd ]; then',
+		'    rm -f "$unit" 2>/dev/null',
+		'    if [ -e "$unit" ]; then say error=remove; exit 0; fi',
+		'    say "removed=$unit"; rm -f "$wants" 2>/dev/null; systemctl --user daemon-reload >/dev/null 2>&1',
+		'  fi',
 		// A disabled label stays disabled after its plist is gone, and would block a later install.
-		`  if [ "$service" = launchd ]; then rm -f "$plist" && say "removed=$plist"; launchctl enable "$domain/${label}" >/dev/null 2>&1; fi`,
-		'  for p in "$root/cli" "$root/cli.old" "$root/node" "$root/npm-cache" "$ours" "$bin/maestro-cli.new" "$bin/maestro-host-service" "$bin/maestro-host-service.new" "$root"/cli.stage.* "$root"/node.dl.*; do',
+		'  if [ "$service" = launchd ]; then',
+		'    rm -f "$plist" 2>/dev/null',
+		'    if [ -e "$plist" ]; then say error=remove; exit 0; fi',
+		`    say "removed=$plist"; launchctl enable "$domain/${label}" >/dev/null 2>&1`,
+		'  fi',
+		`  for p in ${MANAGED_PATHS}; do`,
 		'    { [ -e "$p" ] || [ -L "$p" ]; } || continue',
 		'    if rm -rf "$p"; then say "removed=$p"; else say "error=remove"; exit 0; fi',
 		'  done',
 		'  rmdir "$bin" 2>/dev/null',
 		'  [ -f "$root/host.env" ] && say "kept=$root/host.env"',
 		'  rmdir "$root" 2>/dev/null && say "removed=$root"',
-		'fi',
-		'if [ "$purge_ok" = 1 ]; then',
-		'  if rm -rf "$real"; then say "removed=$data"; else say error=purge; exit 0; fi',
 		'fi',
 		// The last check: does anything still start the host at boot (systemd) or login (launchd)?
 		'boot=off',
@@ -277,12 +321,22 @@ export interface RemoteHostSurvey {
 	/** Each `maestro-cli` Maestro did not install. Never removed. */
 	foreign: string[];
 	host: RemoteHostKind;
+	/**
+	 * With host `unknown`: whether a host runs could not be read at all (its CLI gave no clear answer
+	 * to `host endpoint`). Never taken for "stopped".
+	 */
+	hostUnreadable?: boolean;
 	pid?: number;
 	service: RemoteServiceStatus;
 	/** The host's data directory, when it exists. */
 	dataDir?: string;
 	/** The desktop app uses that data directory too. */
 	dataDirUsedByDesktop: boolean;
+	/**
+	 * Whether the data directory's store holds an agent, read from the store itself (the agent list
+	 * hides some). `unknown`: unreadable, or kept elsewhere (a custom storage location).
+	 */
+	storedAgents?: 'none' | 'held' | 'unknown';
 	/** The agents in the host's data directory; `unknown` when they could not be read; absent when not asked. */
 	agents?: RemoteHostAgent[] | 'unknown';
 }
@@ -290,6 +344,8 @@ export interface RemoteHostSurvey {
 interface ParsedOutput {
 	markers: Map<string, string[]>;
 	agentsJson?: string;
+	/** The agent list began and never ended. */
+	agentsCut?: boolean;
 }
 
 function readMarkers(stdout: string): ParsedOutput {
@@ -297,6 +353,7 @@ function readMarkers(stdout: string): ParsedOutput {
 	const agentLines: string[] = [];
 	let inAgents = false;
 	let sawAgents = false;
+	let closed = false;
 	for (const raw of stdout.split(/\r?\n/)) {
 		const line = raw.trimEnd();
 		if (line === AGENTS_BEGIN) {
@@ -306,6 +363,7 @@ function readMarkers(stdout: string): ParsedOutput {
 		}
 		if (line === AGENTS_END) {
 			inAgents = false;
+			closed = true;
 			continue;
 		}
 		if (inAgents) {
@@ -319,6 +377,8 @@ function readMarkers(stdout: string): ParsedOutput {
 		const value = at === -1 ? '' : body.slice(at + 1);
 		markers.set(key, [...(markers.get(key) ?? []), value]);
 	}
+	// A list without its closing marker was cut off (the connection dropped): never read as "none".
+	if (sawAgents && !closed) return { markers, agentsCut: true };
 	return { markers, ...(sawAgents ? { agentsJson: agentLines.join('\n') } : {}) };
 }
 
@@ -385,20 +445,26 @@ function surveyFrom(parsed: ParsedOutput): RemoteHostSurvey | null {
 				}
 			: { kind: 'none' };
 	let agents: RemoteHostSurvey['agents'];
-	if (parsed.agentsJson !== undefined)
+	if (parsed.agentsCut) agents = 'unknown';
+	else if (parsed.agentsJson !== undefined)
 		agents = parseRemoteAgentList(parsed.agentsJson) ?? 'unknown';
 	else if (first(markers, 'agents') === 'unknown') agents = 'unknown';
 	const dataDir = first(markers, 'data');
+	const stored = first(markers, 'data-agents');
 	return {
 		os: os === 'linux' || os === 'darwin' || os === 'win' ? os : 'other',
 		installed: first(markers, 'installed') === '1',
 		hasFiles: first(markers, 'files') === '1' || first(markers, 'installed') === '1',
 		foreign: [...new Set(markers.get('foreign') ?? [])],
 		host,
+		...(first(markers, 'host-state') === 'unknown' ? { hostUnreadable: true } : {}),
 		...(Number.isInteger(pid) && pid > 0 ? { pid } : {}),
 		service,
 		...(dataDir ? { dataDir } : {}),
 		dataDirUsedByDesktop: first(markers, 'data-desktop') === '1',
+		...(dataDir
+			? { storedAgents: stored === 'none' || stored === 'held' ? stored : ('unknown' as const) }
+			: {}),
 		...(agents !== undefined ? { agents } : {}),
 	};
 }
@@ -423,13 +489,38 @@ export type RemoteHostStopErrorCode =
 	/** The connection ended before the remote said it was done. */
 	| 'incomplete';
 
+/** What a stop that failed part way had already done, so a caller keeps it from being undone. */
+export interface RemoteHostStopProgress {
+	/** A host was running and is stopped now. */
+	hostStopped: boolean;
+	/** The boot service no longer starts the host. */
+	serviceDisabled: boolean;
+	/** What was removed before the failure. */
+	removed: string[];
+}
+
 export class RemoteHostStopError extends Error {
 	readonly code: RemoteHostStopErrorCode;
-	constructor(code: RemoteHostStopErrorCode, message: string) {
+	/** Set when the act ran and failed part way; absent when nothing on the remote changed. */
+	readonly progress?: RemoteHostStopProgress;
+	constructor(code: RemoteHostStopErrorCode, message: string, progress?: RemoteHostStopProgress) {
 		super(message);
 		this.name = 'RemoteHostStopError';
 		this.code = code;
+		if (progress) this.progress = progress;
 	}
+}
+
+/**
+ * Whether a stop changed the remote enough that automatic Federation must not undo it: the host
+ * stopped, or its boot service was disabled. Both callers then turn the remote's Federation off.
+ */
+export function remoteHostStopTookEffect(
+	outcome: RemoteHostStopResult | RemoteHostStopProgress | undefined
+): boolean {
+	if (!outcome) return false;
+	if ('outcome' in outcome) return outcome.outcome === 'done';
+	return outcome.hostStopped || outcome.serviceDisabled;
 }
 
 export interface StopRemoteHostOptions {
@@ -459,7 +550,8 @@ export type RemoteHostStopResult =
 	/** `purgeData` was refused: the host holds agents, or the desktop app uses the directory. Nothing changed. */
 	| {
 			outcome: 'purge-refused';
-			reason: 'agents-held' | 'desktop-data';
+			/** `stored-agents`: the data directory's store holds an agent the list does not show, or could not be read. */
+			reason: 'agents-held' | 'stored-agents' | 'desktop-data';
 			survey: RemoteHostSurvey;
 			agents?: RemoteHostAgent[] | 'unknown';
 	  }
@@ -572,6 +664,9 @@ export async function stopRemoteHost(
 	const holds = agents === 'unknown' || agents.length > 0;
 	if (uninstall && options.purgeData) {
 		if (holds) return { outcome: 'purge-refused', reason: 'agents-held', survey, agents };
+		if (survey.dataDir && survey.storedAgents !== 'none') {
+			return { outcome: 'purge-refused', reason: 'stored-agents', survey };
+		}
 		if (survey.dataDirUsedByDesktop) {
 			return { outcome: 'purge-refused', reason: 'desktop-data', survey };
 		}
@@ -588,8 +683,16 @@ export async function stopRemoteHost(
 	const { markers } = parsed;
 	if (first(markers, 'refused') === 'desktop') return { outcome: 'desktop-host', survey: after };
 	if (first(markers, 'refused') === 'unknown') return { outcome: 'host-unknown', survey: after };
+	if (first(markers, 'refused') === 'agents') {
+		return { outcome: 'agents-held', survey: after, agents: after.agents ?? 'unknown' };
+	}
 
 	const did = markers.get('did') ?? [];
+	const progress: RemoteHostStopProgress = {
+		hostStopped: did.includes('host-stopped'),
+		serviceDisabled: did.includes('service-disabled'),
+		removed: markers.get('removed') ?? [],
+	};
 	// The script's last check (`boot=`) when it got that far; before it, whether `disable` worked.
 	const boot = first(markers, 'boot');
 	const serviceLeftAtBoot =
@@ -608,13 +711,13 @@ export async function stopRemoteHost(
 			error === 'host-stop'
 				? `The host on ${label} did not stop${detail ? `: ${detail}` : '.'}${bootNote}`
 				: error === 'still-running'
-					? `The host on ${label} still answers after it was stopped. Stop it there with: maestro-cli host stop${bootNote}`
+					? `The host on ${label} did not answer that it stopped: it may still run. Check it there with: maestro-cli host status${bootNote}`
 					: error === 'purge'
 						? `The host's data directory on ${label} could not be removed${detail ? `: ${detail}` : '.'}`
 						: `A file under ~/${REMOTE_INSTALL_ROOT} on ${label} could not be removed${detail ? `: ${detail}` : '.'}${bootNote}`;
 		const code: RemoteHostStopErrorCode =
 			error === 'host-stop' || error === 'still-running' || error === 'purge' ? error : 'remove';
-		throw new RemoteHostStopError(code, message);
+		throw new RemoteHostStopError(code, message, progress);
 	}
 
 	// Every finished run ends with `done`. Without it the connection dropped part way, and what was
@@ -622,10 +725,11 @@ export async function stopRemoteHost(
 	if (!markers.has('done')) {
 		throw new RemoteHostStopError(
 			'incomplete',
-			`The connection to ${label} ended before the ${uninstall ? 'removal' : 'stop'} finished. Run \`maestro-cli remote-host status ${remote.name || remote.id}\` to see what is left, then run it again.`
+			`The connection to ${label} ended before the ${uninstall ? 'removal' : 'stop'} finished. Run \`maestro-cli remote-host status ${remote.name || remote.id}\` to see what is left, then run it again.`,
+			progress
 		);
 	}
-	const removed = markers.get('removed') ?? [];
+	const { removed } = progress;
 	const kept = [...(markers.get('kept') ?? []), ...after.foreign];
 	if (after.dataDir && !removed.includes(after.dataDir)) kept.push(after.dataDir);
 	const warnings: string[] = [];
@@ -642,17 +746,17 @@ export async function stopRemoteHost(
 			'The data directory was kept: it is not a Maestro data directory, or it is your home folder or one above it.'
 		);
 	} else if (purgeRefusal === 'purge-agents') {
-		warnings.push('The data directory was kept: an agent appeared on the host while it stopped.');
+		warnings.push('The data directory was kept: its store still holds an agent.');
 	} else if (purgeRefusal === 'purge-agents-unknown') {
 		warnings.push(
-			'The data directory was kept: its agents could not be read to make sure it holds none.'
+			'The data directory was kept: its store could not be read to make sure it holds no agent.'
 		);
 	}
 	return {
 		outcome: 'done',
 		survey: after,
-		hostStopped: did.includes('host-stopped'),
-		serviceDisabled: did.includes('service-disabled'),
+		hostStopped: progress.hostStopped,
+		serviceDisabled: progress.serviceDisabled,
 		removed,
 		kept,
 		purged: after.dataDir !== undefined && removed.includes(after.dataDir),
@@ -697,6 +801,12 @@ export function describeRemoteHostStop(
 		case 'desktop-host':
 			return desktopHostMessage(remote, result.survey.pid);
 		case 'host-unknown':
+			if (result.survey.hostUnreadable) {
+				return (
+					`Whether a Maestro host runs on ${label} could not be read: its maestro-cli gave no clear answer to \`host endpoint\`. ` +
+					'Nothing was changed.'
+				);
+			}
 			return (
 				`A Maestro host runs on ${label}${result.survey.pid ? ` (pid ${result.survey.pid})` : ''}, but it could not be told whether it is the desktop app or a headless host. ` +
 				'Nothing was changed.'
@@ -707,6 +817,9 @@ export function describeRemoteHostStop(
 				'Move them back first. Stopping the host anyway leaves them behind on the remote: their data stays there, and nothing runs them.'
 			);
 		case 'purge-refused':
+			if (result.reason === 'stored-agents') {
+				return `The host's data was kept: the data directory on ${label} (${result.survey.dataDir ?? 'unknown'}) still stores agents the agent list does not show (such as Pianola agents), or its store could not be read. Nothing was changed.`;
+			}
 			return result.reason === 'desktop-data'
 				? `The host's data was kept: the Maestro desktop app on ${label} uses that data directory too (${result.survey.dataDir ?? 'unknown'}). Nothing was changed.`
 				: `The host's data was kept: the host on ${label} holds ${describeHeldAgents(result.agents ?? 'unknown')}, and it is their only copy until they move back. Nothing was changed.`;
