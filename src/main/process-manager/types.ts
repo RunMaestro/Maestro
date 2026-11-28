@@ -324,6 +324,14 @@ export interface ManagedProcess {
 	 */
 	durableSshTurn?: boolean;
 	/**
+	 * Set on a durable SSH turn restored at launch until it reattaches (it has
+	 * no ssh process yet). Stop and close end it here: `interrupt` and `kill`
+	 * forget its record and reap its remote agent (a Stop also settles the
+	 * turn); `shutdown` (the app quitting) keeps the record and the remote turn
+	 * for the next launch.
+	 */
+	stopPendingDurableTurn?: (how: 'interrupt' | 'kill' | 'shutdown') => void;
+	/**
 	 * Steering channel of a Claude TUI turn on an SSH remote, copied from the spawn
 	 * config. `steer()` delivers through it instead of the local socket.
 	 */

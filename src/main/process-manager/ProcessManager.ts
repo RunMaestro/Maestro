@@ -821,6 +821,10 @@ export class ProcessManager extends EventEmitter {
 				this.signalRemote(sessionId, process, 'interrupt');
 				this.scheduleRemoteTerminate(sessionId, process, process.childProcess);
 				return true;
+			} else if (process.stopPendingDurableTurn) {
+				// A durable SSH turn restored at launch that has not reattached yet.
+				process.stopPendingDurableTurn('interrupt');
+				return true;
 			}
 			return false;
 		} catch (error) {
@@ -921,6 +925,9 @@ export class ProcessManager extends EventEmitter {
 						label: 'kill',
 					}
 				);
+			} else if (proc.stopPendingDurableTurn) {
+				// A durable SSH turn restored at launch that has not reattached yet.
+				proc.stopPendingDurableTurn(shutdown ? 'shutdown' : 'kill');
 			}
 			this.processes.delete(sessionId);
 			return true;

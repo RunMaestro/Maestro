@@ -617,10 +617,6 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		withIpcErrorLogging(handlerOpts('getActiveProcesses'), async (options?: ProcessQuery) => {
 			const processManager = requireProcessManager(getProcessManager);
 			const processes = processManager.getAll();
-			// A renderer asking for the live turns has restored its tabs and can
-			// hear their output: durable SSH turns from the last run reattach now,
-			// after this answer has shown their tabs busy.
-			setImmediate(() => processManager.startRestoredDurableTurns());
 			// Return serializable process info (exclude non-serializable PTY/child process objects)
 			// For terminal processes, also fetch child processes to show what's running inside the shell
 			const result: Array<Record<string, unknown>> = await Promise.all(
@@ -677,6 +673,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				});
 			}
 
+			// A renderer asking for the live turns has restored its tabs and can
+			// hear their output: durable SSH turns from the last run reattach once
+			// this answer, which shows their tabs busy, is built and on its way.
+			setImmediate(() => processManager.startRestoredDurableTurns());
 			return result;
 		})
 	);

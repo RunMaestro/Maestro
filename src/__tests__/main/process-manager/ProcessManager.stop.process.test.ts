@@ -249,6 +249,27 @@ describe('ProcessManager synthetic SSH prompt artifact stops', () => {
 		expect(processes.has(SESSION_ID)).toBe(false);
 	});
 
+	it.each([
+		['interrupt', 'interrupt'],
+		['kill', 'kill'],
+		['shutdown', 'shutdown'],
+	] as const)(
+		'%s of a durable SSH turn restored at launch, before it reattached, goes to its pending stop (%s)',
+		(action, how) => {
+			const stopPending = vi.fn();
+			managed.childProcess = undefined;
+			managed.pid = -1;
+			managed.durableSshTurn = true;
+			managed.stopPendingDurableTurn = stopPending;
+			if (action === 'shutdown') manager.killAll({ shutdown: true });
+			else expect(manager[action](SESSION_ID)).toBe(true);
+			expect(stopPending).toHaveBeenCalledExactlyOnceWith(how);
+			// No ssh exists yet: nothing local to stop, and the remote is the pending stop's job.
+			expect(termination.stopProcess).not.toHaveBeenCalled();
+			expect(remoteSignal.signalRemoteAgent).not.toHaveBeenCalled();
+		}
+	);
+
 	it('closing the tab of a durable SSH turn still stops its agent on the host', () => {
 		const detach = vi.fn();
 		managed.sshRemotePromptArtifactPath = undefined;

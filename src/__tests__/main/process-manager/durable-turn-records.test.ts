@@ -22,6 +22,7 @@ import {
 	keepDurableOffsetsCurrent,
 	noteDurableTurn,
 	recordedDurableTurns,
+	updateDurableTurn,
 	type DurableTurnRecord,
 } from '../../../main/process-manager/durable-turn-records';
 
@@ -110,7 +111,7 @@ describe('durable SSH turn records', () => {
 
 		it('writes the offsets while they move, and stops when the turn settles', async () => {
 			const { turn, offsets, settle } = running();
-			const write = vi.fn();
+			const write = vi.fn(() => true);
 			keepDurableOffsetsCurrent(turn, { outOffset: 0, errOffset: 0 }, write, () => false);
 			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
 			expect(write).not.toHaveBeenCalled();
@@ -129,7 +130,7 @@ describe('durable SSH turn records', () => {
 
 		it('leaves the record to the detach once the app quits', () => {
 			const { turn, offsets } = running();
-			const write = vi.fn();
+			const write = vi.fn(() => true);
 			let detached = false;
 			keepDurableOffsetsCurrent(turn, { outOffset: 0, errOffset: 0 }, write, () => detached);
 			detached = true;
@@ -144,7 +145,7 @@ describe('durable SSH turn records', () => {
 			keepDurableOffsetsCurrent(
 				turn,
 				{ outOffset: 0, errOffset: 0 },
-				(o) => noteDurableTurn(record(o)),
+				(o) => updateDurableTurn(record(o)),
 				() => false
 			);
 			offsets.outOffset = 4096;
@@ -153,6 +154,46 @@ describe('durable SSH turn records', () => {
 			// The app dies here: nothing settles, nothing detaches.
 			__resetDurableTurnRecordsForTests();
 			expect(recordedDurableTurns()[0]).toMatchObject({ outOffset: 4096, errOffset: 9 });
+		});
+
+		it('a write that failed is tried again on the next tick, even when the offsets stay put', () => {
+			const { turn, offsets } = running();
+			const write = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+			keepDurableOffsetsCurrent(turn, { outOffset: 0, errOffset: 0 }, write, () => false);
+			offsets.outOffset = 300;
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
+			expect(write).toHaveBeenCalledTimes(1);
+			// The remote went quiet: the same offsets, written again because the first write failed.
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
+			expect(write).toHaveBeenCalledTimes(2);
+			expect(write).toHaveBeenLastCalledWith({ outOffset: 300, errOffset: 0 });
+			vi.advanceTimersByTime(DURABLE_OFFSETS_PERSIST_MS);
+			expect(write).toHaveBeenCalledTimes(2);
+		});
+	});
+
+	describe('updateDurableTurn', () => {
+		it("rewrites only the turn's own record: a stopped turn never overwrites its successor's", () => {
+			const successorDir = '/tmp/maestro-turn-11111111-2222-4333-8444-555555555555';
+			noteDurableTurn(record());
+			// The next turn on the tab starts while the stopped one still drains.
+			noteDurableTurn(record({ dir: successorDir }));
+			expect(updateDurableTurn(record({ outOffset: 999 }))).toBe(true);
+			__resetDurableTurnRecordsForTests();
+			expect(recordedDurableTurns()).toEqual([
+				expect.objectContaining({ dir: successorDir, outOffset: 0 }),
+			]);
+			// The successor's own rewrite lands.
+			expect(updateDurableTurn(record({ dir: successorDir, outOffset: 50 }))).toBe(true);
+			__resetDurableTurnRecordsForTests();
+			expect(recordedDurableTurns()[0]).toMatchObject({ dir: successorDir, outOffset: 50 });
+		});
+
+		it('reports a write that failed, so its caller tries again', () => {
+			noteDurableTurn(record());
+			// The data dir is gone: the write cannot land.
+			fs.rmSync(dataDir, { recursive: true, force: true });
+			expect(updateDurableTurn(record({ outOffset: 10 }))).toBe(false);
 		});
 	});
 });

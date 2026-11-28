@@ -117,7 +117,8 @@ function load(): Map<string, DurableTurnRecord> {
 	return records;
 }
 
-function persist(): void {
+/** Write the records to disk. False when the write failed (logged and reported). */
+function persist(): boolean {
 	const all = [...load().values()];
 	try {
 		if (all.length === 0) {
@@ -129,19 +130,34 @@ function persist(): void {
 		} else {
 			atomicWriteJsonSync(filePath(), all);
 		}
+		return true;
 	} catch (error) {
 		// The turn itself is unaffected; only a restart would not find it.
 		void captureException(error);
 		logger.error('Could not write the durable SSH turn records', 'ProcessManager', {
 			error: String(error),
 		});
+		return false;
 	}
 }
 
-/** Record a durable turn (at its start, and again at a detach). */
+/** Record a durable turn at its start: it owns its tab's record from now on. */
 export function noteDurableTurn(record: DurableTurnRecord): void {
 	load().set(record.sessionId, record);
 	persist();
+}
+
+/**
+ * Rewrite a running turn's record (its offsets, or the last record at a
+ * detach), but only while the record is still this turn's: a stopped turn
+ * still draining never overwrites the record of the next turn on its tab.
+ * Returns false only when the write failed and is worth retrying.
+ */
+export function updateDurableTurn(record: DurableTurnRecord): boolean {
+	const map = load();
+	if (map.get(record.sessionId)?.dir !== record.dir) return true;
+	map.set(record.sessionId, record);
+	return persist();
 }
 
 /** The turn settled: nothing is left to pick up. */
@@ -169,13 +185,14 @@ export const DURABLE_OFFSETS_PERSIST_MS = 5_000;
 /**
  * Rewrite a running durable turn's record with its offsets every
  * {@link DURABLE_OFFSETS_PERSIST_MS} while they move, until the turn settles
- * or is detached. `write` gets the offsets; `isDetached` stops it at quit,
- * where the detach writes the last record itself.
+ * or is detached. `write` gets the offsets and returns false when the write
+ * failed, so the next tick tries the same offsets again; `isDetached` stops it
+ * at quit, where the detach writes the last record itself.
  */
 export function keepDurableOffsetsCurrent(
 	turn: { done: Promise<unknown>; restartOffsets: () => DurableTurnOffsets },
 	from: DurableTurnOffsets,
-	write: (offsets: DurableTurnOffsets) => void,
+	write: (offsets: DurableTurnOffsets) => boolean,
 	isDetached: () => boolean
 ): void {
 	let last = `${from.outOffset}:${from.errOffset}`;
@@ -185,8 +202,7 @@ export function keepDurableOffsetsCurrent(
 		const offsets = turn.restartOffsets();
 		const key = `${offsets.outOffset}:${offsets.errOffset}`;
 		if (key === last) return;
-		last = key;
-		write(offsets);
+		if (write(offsets)) last = key;
 	}, DURABLE_OFFSETS_PERSIST_MS);
 	timer.unref?.();
 	const stop = () => {

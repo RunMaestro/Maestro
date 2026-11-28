@@ -9,7 +9,7 @@ import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
 import { getAgentDefinition } from '../../agents/definitions';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
-import type { DataBufferManager } from '../handlers/DataBufferManager';
+import { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
@@ -43,6 +43,7 @@ import {
 	sshConnectionArgs,
 	takePendingRemoteReaps,
 	withRemotePidRecord,
+	type RemoteSignalTarget,
 } from '../../utils/ssh-remote-signal';
 import { isWindows } from '../../../shared/platformDetection';
 import type { WindowsShellReason } from '../../../shared/maestro-lib/launch/windows-command';
@@ -56,12 +57,14 @@ import {
 import {
 	buildDurableLaunchScript,
 	runDurableSshTurn,
+	type DurableTurnExit,
 	type DurableTurnOffsets,
 } from '../../../shared/maestro-lib/control/ssh-durable-turn';
 import {
 	forgetDurableTurn,
 	keepDurableOffsetsCurrent,
 	noteDurableTurn,
+	updateDurableTurn,
 	recordedDurableTurns,
 	type DurableTurnRecord,
 } from '../durable-turn-records';
@@ -543,21 +546,31 @@ export class ChildProcessSpawner {
 					: undefined;
 
 			let stdinText: string | undefined;
+			// The earlier turns' reaps this launch carries: a durable launch hands
+			// them back to the retry loop when it never reached its agent.
+			let takenReaps: RemoteSignalTarget[] = [];
 			if (config.sshStdinScript) {
 				// An earlier turn on this tab whose connection dropped may still be
 				// running remotely, on the session this launch resumes. Stop it here,
 				// on the connection that is about to prove the host answers. A
 				// prompt-owner launch must stay one compound, so its turn leaves the
 				// orphan to the reap's own retries.
-				const orphanReap =
-					sshRemotePidFile && remoteArtifactPath === undefined
-						? buildPreLaunchReapScript(takePendingRemoteReaps(sessionId))
-						: '';
+				if (sshRemotePidFile && remoteArtifactPath === undefined)
+					takenReaps = takePendingRemoteReaps(sessionId);
+				const orphanReap = buildPreLaunchReapScript(takenReaps);
+				// A durable launch runs the reaps before its envelope stages the
+				// turn, so a staging failure (a full disk) cannot skip them.
 				stdinText = sshRemotePidFile
-					? orphanReap +
-						withRemotePidRecord(config.sshStdinScript, sshRemotePidFile, remoteArtifactPath)
+					? durableTurnDir
+						? orphanReap +
+							buildDurableLaunchScript(
+								withRemotePidRecord(config.sshStdinScript, sshRemotePidFile),
+								durableTurnDir,
+								sshRemotePidFile
+							)
+						: orphanReap +
+							withRemotePidRecord(config.sshStdinScript, sshRemotePidFile, remoteArtifactPath)
 					: config.sshStdinScript;
-				if (durableTurnDir) stdinText = buildDurableLaunchScript(stdinText, durableTurnDir);
 				logger.debug('[ProcessManager] Sending SSH stdin script', 'ProcessManager', {
 					sessionId,
 					scriptLength: config.sshStdinScript.length,
@@ -829,12 +842,12 @@ export class ChildProcessSpawner {
 				keepDurableOffsetsCurrent(
 					{ done: turn.done, restartOffsets },
 					{ outOffset: 0, errOffset: 0 },
-					(offsets) => noteDurableTurn(record(offsets)),
+					(offsets) => updateDurableTurn(record(offsets)),
 					() => durableDetached
 				);
 				managedProcess.detachDurableTurn = () => {
 					durableDetached = true;
-					noteDurableTurn(record(restartOffsets()));
+					updateDurableTurn(record(restartOffsets()));
 				};
 			}
 
@@ -911,19 +924,26 @@ export class ChildProcessSpawner {
 				if (durableDetached) return;
 				// A durable turn has settled (or was given up): its remote dir goes,
 				// with the agent if one still runs, retried until the host answers.
-				// After a Stop the agent first gets the grace a Stop gives it.
+				// After a Stop the agent first gets the grace a Stop gives it, but
+				// the reap is registered now, before the tab is released, so a next
+				// turn launched inside the grace runs it before its own agent.
 				if (durableTurnDir && sshRemotePidFile) {
 					forgetDurableTurn(sessionId, durableTurnDir);
-					const cleanup = () =>
-						reapRemoteAgent({
+					reapRemoteAgent(
+						{
 							sshCommand: command,
 							sshArgs: finalArgs,
 							pidFile: sshRemotePidFile,
 							sessionId,
 							turnDir: durableTurnDir,
-						});
-					if (managedProcess.interrupted) setTimeout(cleanup, INTERACTIVE_STOP_GRACE_MS).unref?.();
-					else cleanup();
+						},
+						undefined,
+						managedProcess.interrupted ? INTERACTIVE_STOP_GRACE_MS : 0
+					);
+					// The launch never reached its agent, so it never ran the earlier
+					// turns' reaps it carried: they go back to their retry loop.
+					if ((completed as DurableTurnExit | undefined)?.outcome === 'not-started')
+						for (const target of takenReaps) reapRemoteAgent(target);
 				}
 				const exit = completed
 					? { ...completed, exitCode: supervisionFailed ? 1 : completed.exitCode }
@@ -1137,6 +1157,7 @@ export class ChildProcessSpawner {
 		onAttempt: (child: ChildProcess) => void;
 		stopReason: () => 'interrupt' | 'kill' | null;
 		resume?: DurableTurnOffsets;
+		onReplayStdout?: (text: string) => void;
 	}): {
 		child: ChildProcess;
 		done: Promise<TurnExit>;
@@ -1174,6 +1195,7 @@ export class ChildProcessSpawner {
 			},
 			stopReason: input.stopReason,
 			resume: input.resume,
+			onReplayStdout: input.onReplayStdout,
 		});
 		const done = durable.done.then((exit) => {
 			logger.info('[ProcessManager] Durable SSH turn settled', 'ProcessManager', {
@@ -1193,7 +1215,7 @@ export class ChildProcessSpawner {
 	 * starts on its session (D4), and is reattached by
 	 * {@link startRestoredDurableTurns} once a renderer can hear its output.
 	 */
-	private readonly restoredDurableTurns: Array<() => void> = [];
+	private readonly restoredDurableTurns = new Map<string, () => void>();
 
 	restoreRecordedDurableTurns(): number {
 		for (const record of recordedDurableTurns()) {
@@ -1225,7 +1247,12 @@ export class ChildProcessSpawner {
 			};
 			managedProcess.spawnGeneration = nextSpawnGeneration(record.sessionId);
 			this.processes.set(record.sessionId, managedProcess);
-			this.restoredDurableTurns.push(() => this.reattachRestoredTurn(record, managedProcess));
+			this.restoredDurableTurns.set(record.sessionId, () => {
+				managedProcess.stopPendingDurableTurn = undefined;
+				this.reattachRestoredTurn(record, managedProcess);
+			});
+			managedProcess.stopPendingDurableTurn = (how) =>
+				this.stopPendingDurableTurn(record, managedProcess, how);
 			logger.info(
 				'[ProcessManager] Restored a durable SSH turn from the last run',
 				'ProcessManager',
@@ -1234,24 +1261,69 @@ export class ChildProcessSpawner {
 				}
 			);
 		}
-		return this.restoredDurableTurns.length;
+		return this.restoredDurableTurns.size;
 	}
 
 	/** Reattach every turn {@link restoreRecordedDurableTurns} registered. Runs once. */
 	startRestoredDurableTurns(): void {
-		for (const start of this.restoredDurableTurns.splice(0)) start();
+		const starts = [...this.restoredDurableTurns.values()];
+		this.restoredDurableTurns.clear();
+		for (const start of starts) start();
+	}
+
+	/**
+	 * Stop or close a restored turn before it reattached. The app quitting
+	 * leaves it as it is: the record and the remote turn wait for the next
+	 * launch. A close forgets it and reaps its agent and dir at once. A Stop
+	 * asks the agent to stop as a Stop does (SIGINT, then the reap after the
+	 * grace) and settles the turn as stopped.
+	 */
+	private stopPendingDurableTurn(
+		record: DurableTurnRecord,
+		managedProcess: ManagedProcess,
+		how: 'interrupt' | 'kill' | 'shutdown'
+	): void {
+		const { sessionId } = record;
+		if (!this.restoredDurableTurns.delete(sessionId)) return;
+		managedProcess.stopPendingDurableTurn = undefined;
+		if (how === 'shutdown') return;
+		const target = {
+			sshCommand: record.sshCommand,
+			sshArgs: record.sshArgs,
+			pidFile: record.pidFile,
+			sessionId,
+		};
+		forgetDurableTurn(sessionId, record.dir);
+		if (how === 'interrupt') signalRemoteAgent(target, 'interrupt');
+		reapRemoteAgent(
+			{ ...target, turnDir: record.dir },
+			undefined,
+			how === 'interrupt' ? INTERACTIVE_STOP_GRACE_MS : 0
+		);
+		if (how !== 'interrupt') return;
+		void this.exitHandler.handleExit(sessionId, 0, managedProcess, 'SIGINT').catch((err) => {
+			void captureException(err);
+			if (this.processes.get(sessionId) === managedProcess) {
+				this.processes.delete(sessionId);
+				this.emitter.emit('exit', sessionId, 0);
+			}
+		});
 	}
 
 	private reattachRestoredTurn(record: DurableTurnRecord, managedProcess: ManagedProcess): void {
 		const { sessionId } = record;
-		const cleanup = () =>
-			reapRemoteAgent({
-				sshCommand: record.sshCommand,
-				sshArgs: record.sshArgs,
-				pidFile: record.pidFile,
-				sessionId,
-				turnDir: record.dir,
-			});
+		const cleanup = (firstDelayMs = 0) =>
+			reapRemoteAgent(
+				{
+					sshCommand: record.sshCommand,
+					sshArgs: record.sshArgs,
+					pidFile: record.pidFile,
+					sessionId,
+					turnDir: record.dir,
+				},
+				undefined,
+				firstDelayMs
+			);
 		const isSuperseded = (): boolean =>
 			isSupersededGeneration(sessionId, managedProcess.spawnGeneration);
 		// Closed or stopped before a renderer was ready: the user ended the turn.
@@ -1263,6 +1335,15 @@ export class ChildProcessSpawner {
 		const env = buildChildProcessEnv(undefined, true, undefined, undefined, record.querySource);
 		const shellPlan = planSpawnShell(record.sshCommand, record.sshArgs, {});
 		let detached = false;
+		// The output this app received before it restarted is read again into a
+		// handler that emits nothing: the new parser and the turn's buffers get
+		// back what a reply needs, and the tab hears each byte once.
+		const silent = new EventEmitter();
+		const replayHandler = new StdoutHandler({
+			processes: this.processes,
+			emitter: silent,
+			bufferManager: new SilentDataBufferManager(this.processes, silent),
+		});
 		const turn = this.startDurableSshTurn({
 			sessionId,
 			stdin: '',
@@ -1270,6 +1351,9 @@ export class ChildProcessSpawner {
 			pidFile: record.pidFile,
 			sshRemoteId: record.sshRemoteId,
 			resume: { outOffset: record.outOffset, errOffset: record.errOffset },
+			onReplayStdout: (output) => {
+				if (!isSuperseded()) replayHandler.handleData(sessionId, output);
+			},
 			startAttempt: (stdin, bytes) =>
 				startTurn(
 					{
@@ -1330,18 +1414,17 @@ export class ChildProcessSpawner {
 		keepDurableOffsetsCurrent(
 			turn,
 			{ outOffset: record.outOffset, errOffset: record.errOffset },
-			(offsets) => noteDurableTurn(recordAt(offsets)),
+			(offsets) => updateDurableTurn(recordAt(offsets)),
 			() => detached
 		);
 		managedProcess.detachDurableTurn = () => {
 			detached = true;
-			noteDurableTurn(recordAt(turn.restartOffsets()));
+			updateDurableTurn(recordAt(turn.restartOffsets()));
 		};
 		void turn.done.then((exit) => {
 			if (detached) return;
 			forgetDurableTurn(sessionId, record.dir);
-			if (managedProcess.interrupted) setTimeout(cleanup, INTERACTIVE_STOP_GRACE_MS).unref?.();
-			else cleanup();
+			cleanup(managedProcess.interrupted ? INTERACTIVE_STOP_GRACE_MS : 0);
 			if (isSuperseded()) return;
 			if (exit.spawnError) {
 				this.exitHandler.handleError(sessionId, exit.spawnError);
@@ -1359,6 +1442,15 @@ export class ChildProcessSpawner {
 				});
 		});
 	}
+}
+
+/**
+ * The buffer manager of a durable turn's replay after a restart: the replayed
+ * output was delivered before the restart, so none of it is buffered or sent.
+ */
+class SilentDataBufferManager extends DataBufferManager {
+	override emitDataBuffered(): void {}
+	override flushDataBuffer(): void {}
 }
 
 /** The session id a `--resume <id>` (or `--resume=<id>`) argument names, if any. */

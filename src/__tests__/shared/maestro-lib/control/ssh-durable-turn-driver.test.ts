@@ -5,7 +5,10 @@
  * through `startTurn`, which stands in for the remote shell sshd starts.
  * Killing that bash is what a lost link does: the stream dies, the agent and
  * its supervisor do not. A "host down" attempt is a bash that exits 255 at
- * once, as ssh does when it cannot connect. The agent replays a Claude
+ * once, as ssh does when it cannot connect, after saying so on stderr; a
+ * reattach that reaches the host first prints a login shell's noise on
+ * stderr, as a real `.bashrc` can. Neither may reach the agent's stderr once
+ * the agent runs (a first launch's noise reaches it, as today's does). The agent replays a Claude
  * stream-json fixture, and the parsed events are compared with today's
  * direct launch, so D2 and D3 are judged on what the parser sees.
  *
@@ -19,6 +22,7 @@ import * as path from 'path';
 
 import {
 	buildDurableLaunchScript,
+	DURABLE_TURN_GONE_MESSAGE,
 	runDurableSshTurn,
 	type DurableAttempt,
 	type DurableAttemptHandlers,
@@ -94,12 +98,23 @@ const [SHELL, ...SHELL_ARGS] = SSH_STDIN_REMOTE_SHELL;
 const SHELL_SPEC = { command: SHELL, args: SHELL_ARGS, cwd: os.tmpdir(), env: process.env };
 
 interface Rig {
-	/** How many stdout bytes each attempt may read before its link is cut (0: never). */
+	/**
+	 * How many stdout bytes each attempt delivers before its link is cut (0:
+	 * never). The cut is byte-exact: the bytes past it are lost with the link.
+	 */
 	cutAfter: number[];
 	/** Attempts (by index) that find the host down. */
 	hostDown: Set<number>;
 	attempts: number;
+	/** Every stdout byte delivered so far, across attempts. */
+	received?: number;
+	/** Where in the whole stream each cut fell. */
+	cutAt?: number[];
 }
+
+const HOST_DOWN_STDIN =
+	"echo 'ssh: connect to host durable port 22: Connection refused' >&2; exit 255\n";
+const LOGIN_NOISE = "echo 'bash: atuin: command not found' >&2\n";
 
 function rigAttempt(rig: Rig) {
 	return (stdin: string, handlers: DurableAttemptHandlers): DurableAttempt => {
@@ -107,16 +122,26 @@ function rigAttempt(rig: Rig) {
 		const down = rig.hostDown.has(index);
 		const cut = rig.cutAfter[index] ?? 0;
 		let seen = 0;
+		let lost = false;
 		let turn: ReturnType<typeof startTurn>;
 		turn = startTurn(
-			{ ...SHELL_SPEC, stdin: down ? 'exit 255\n' : stdin },
+			{ ...SHELL_SPEC, stdin: down ? HOST_DOWN_STDIN : (index > 0 ? LOGIN_NOISE : '') + stdin },
 			{
 				onStdoutBytes: (chunk) => {
-					handlers.onStdoutBytes(chunk);
-					seen += chunk.length;
-					if (cut && seen >= cut) turn.child.kill('SIGKILL');
+					if (lost) return;
+					const take = cut ? Math.min(chunk.length, cut - seen) : chunk.length;
+					handlers.onStdoutBytes(chunk.subarray(0, take));
+					seen += take;
+					rig.received = (rig.received ?? 0) + take;
+					if (cut && seen >= cut) {
+						lost = true;
+						(rig.cutAt ??= []).push(rig.received);
+						turn.child.kill('SIGKILL');
+					}
 				},
-				onStderrBytes: (chunk) => handlers.onStderrBytes(chunk),
+				onStderrBytes: (chunk) => {
+					if (!lost) handlers.onStderrBytes(chunk);
+				},
 			},
 			{}
 		);
@@ -134,7 +159,7 @@ async function runDurable(
 	let out = '';
 	let err = '';
 	let linksLost = 0;
-	const turn = runDurableSshTurn(buildDurableLaunchScript(stdin, dir), {
+	const turn = runDurableSshTurn(buildDurableLaunchScript(stdin, dir, pidFile), {
 		dir,
 		pidFile,
 		startAttempt: rigAttempt(rig),
@@ -185,13 +210,27 @@ posixOnly('runDurableSshTurn', () => {
 		const fixture = fixtureFile();
 		const today = await runToday(todaysStdin(track(newPid()), fixture));
 		const pidFile = track(newPid());
+		// Byte-exact cuts: one inside the 2-byte é of the first reply, one inside
+		// the 3-byte ✓ of a later one, one in the middle of a plain run.
+		const bytes = Buffer.from(today.out);
+		const inE = bytes.indexOf(Buffer.from('é')) + 1;
+		const inCheck = bytes.indexOf(Buffer.from('✓'), inE + 300) + 2;
+		const rig: Rig = {
+			cutAfter: [inE, inCheck - inE, 0, 377],
+			hostDown: new Set([2]),
+			attempts: 0,
+		};
 		const durable = await runDurable(
 			todaysStdin(pidFile, fixture, 7),
 			track(newRemoteTurnDir()),
 			pidFile,
-			// Odd byte counts land inside a line, and often inside a multibyte character.
-			{ cutAfter: [151, 233, 0, 377], hostDown: new Set([2]), attempts: 0 }
+			rig
 		);
+		expect(rig.cutAt).toEqual([inE, inCheck, inCheck + 377]);
+		const insideLine = (at: number) => bytes[at - 1] !== 0x0a && bytes[at] !== 0x0a;
+		const insideChar = (at: number) => (bytes[at] & 0xc0) === 0x80;
+		expect(rig.cutAt!.every(insideLine)).toBe(true);
+		expect(rig.cutAt!.filter(insideChar).length).toBeGreaterThanOrEqual(2);
 		expect(durable.linksLost).toBeGreaterThanOrEqual(3);
 		expect(parse(durable.out)).toEqual(parse(today.out));
 		expect(durable.out).toBe(today.out);
@@ -258,19 +297,22 @@ posixOnly('runDurableSshTurn', () => {
 		const quitRig: Rig = { cutAfter: [251], hostDown: new Set(), attempts: 0 };
 		let quit = false;
 		let before = '';
-		const first = runDurableSshTurn(buildDurableLaunchScript(todaysStdin(pidFile, fixture), dir), {
-			dir,
-			pidFile,
-			startAttempt: (stdin, handlers) => {
-				const attempt = rigAttempt(quitRig)(stdin, handlers);
-				void attempt.done.then(() => (quit = true));
-				return attempt;
-			},
-			onStdout: (text) => (before += text),
-			onStderr: () => {},
-			stopReason: () => (quit ? 'kill' : null),
-			delaysMs: [20],
-		});
+		const first = runDurableSshTurn(
+			buildDurableLaunchScript(todaysStdin(pidFile, fixture), dir, pidFile),
+			{
+				dir,
+				pidFile,
+				startAttempt: (stdin, handlers) => {
+					const attempt = rigAttempt(quitRig)(stdin, handlers);
+					void attempt.done.then(() => (quit = true));
+					return attempt;
+				},
+				onStdout: (text) => (before += text),
+				onStderr: () => {},
+				stopReason: () => (quit ? 'kill' : null),
+				delaysMs: [20],
+			}
+		);
 		expect((await first.done).outcome).toBe('stopped');
 		const offsets = first.restartOffsets();
 		// A new process starts with empty line buffers: only whole lines were parsed.
@@ -319,6 +361,103 @@ posixOnly('runDurableSshTurn', () => {
 		expect(exit.exitCode).toBe(255);
 	});
 
+	it("a turn given up as unreachable hands ssh's last words to the error parsers; a recovered one never does", async () => {
+		const pidFile = track(newPid());
+		const rig: Rig = { cutAfter: [], hostDown: new Set([0, 1]), attempts: 0 };
+		let err = '';
+		const turn = runDurableSshTurn('', {
+			dir: track(newRemoteTurnDir()),
+			pidFile,
+			resume: { outOffset: 10, errOffset: 0 },
+			startAttempt: rigAttempt(rig),
+			onStdout: () => {},
+			onStderr: (text) => (err += text),
+			stopReason: () => null,
+			delaysMs: [20],
+		});
+		expect((await turn.done).outcome).toBe('unreachable');
+		// Held while the turn could still recover; passed on once it was given up.
+		expect(err).toBe('ssh: connect to host durable port 22: Connection refused\n'.repeat(2));
+	});
+
+	it('a restart replays the output received before it into a silent parser, and the tab hears the rest once', async () => {
+		const fixture = fixtureFile();
+		const today = await runToday(todaysStdin(track(newPid()), fixture));
+		const pidFile = track(newPid());
+		const dir = track(newRemoteTurnDir());
+		// The first run of the app: it quits after 400 bytes.
+		const quitRig: Rig = { cutAfter: [400], hostDown: new Set(), attempts: 0 };
+		let quit = false;
+		const first = runDurableSshTurn(
+			buildDurableLaunchScript(todaysStdin(pidFile, fixture), dir, pidFile),
+			{
+				dir,
+				pidFile,
+				startAttempt: (stdin, handlers) => {
+					const attempt = rigAttempt(quitRig)(stdin, handlers);
+					void attempt.done.then(() => (quit = true));
+					return attempt;
+				},
+				onStdout: () => {},
+				onStderr: () => {},
+				stopReason: () => (quit ? 'kill' : null),
+				delaysMs: [20],
+			}
+		);
+		await first.done;
+		const offsets = first.restartOffsets();
+		expect(offsets.outOffset).toBeGreaterThan(0);
+
+		// The next run: the stream starts at byte 0; the first part is the replay.
+		let replayed = '';
+		let after = '';
+		let lowest = Infinity;
+		const rig: Rig = { cutAfter: [150], hostDown: new Set(), attempts: 0 };
+		const second = runDurableSshTurn('', {
+			dir,
+			pidFile,
+			resume: offsets,
+			startAttempt: rigAttempt(rig),
+			onReplayStdout: (text) => {
+				replayed += text;
+				lowest = Math.min(lowest, second.restartOffsets().outOffset);
+			},
+			onStdout: (text) => (after += text),
+			onStderr: () => {},
+			stopReason: () => null,
+			delaysMs: [20],
+		});
+		const exit = await second.done;
+		expect(exit.outcome).toBe('ended');
+		// A lost link during the replay changes nothing either.
+		expect(rig.attempts).toBe(2);
+		expect(Buffer.byteLength(replayed)).toBe(offsets.outOffset);
+		expect(replayed + after).toBe(today.out);
+		expect([...parse(replayed), ...parse(after)]).toEqual(parse(today.out));
+		// A crash mid-replay keeps the record where the tab already is.
+		expect(lowest).toBe(offsets.outOffset);
+	}, 30_000);
+
+	it('a stream whose agent and supervisor die with no exit settles as failed, with the reason', async () => {
+		const pidFile = track(newPid());
+		const dir = track(newRemoteTurnDir());
+		const inner = withRemotePidRecord("exec /bin/bash -c 'echo started; sleep 60'\n", pidFile);
+		const rig: Rig = { cutAfter: [], hostDown: new Set(), attempts: 0 };
+		const run = runDurable(inner, dir, pidFile, rig);
+		await waitFor(() => fs.existsSync(pidFile) && fs.existsSync(`${dir}/sup`));
+		const [agent] = fs.readFileSync(pidFile, 'utf8').split(' ');
+		const [supervisor] = fs.readFileSync(`${dir}/sup`, 'utf8').split(' ');
+		process.kill(Number(supervisor), 'SIGKILL');
+		process.kill(-Number(agent), 'SIGKILL');
+		const durable = await run;
+		expect(durable.exit.outcome).toBe('gone');
+		expect(durable.exit.exitCode).toBe(1);
+		expect(durable.out).toBe('started\n');
+		expect(durable.err).toBe(DURABLE_TURN_GONE_MESSAGE);
+		expect(rig.attempts).toBe(1);
+		expect(durable.linksLost).toBe(0);
+	}, 30_000);
+
 	it('a launch that never reaches the agent settles as today, with no reattach', async () => {
 		const rig: Rig = { cutAfter: [], hostDown: new Set([0]), attempts: 0 };
 		const pidFile = track(newPid());
@@ -326,6 +465,8 @@ posixOnly('runDurableSshTurn', () => {
 		expect(durable.exit.outcome).toBe('not-started');
 		expect(durable.exit.exitCode).toBe(255);
 		expect(rig.attempts).toBe(1);
+		// The agent never ran: ssh's words reach the error parsers as today.
+		expect(durable.err).toBe('ssh: connect to host durable port 22: Connection refused\n');
 	});
 
 	it('an agent that itself exits 255 is not mistaken for a lost link', async () => {

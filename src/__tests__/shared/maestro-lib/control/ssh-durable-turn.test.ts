@@ -21,6 +21,8 @@ import {
 	buildTurnDirSweepScript,
 	DURABLE_TURN_GONE_EXIT_CODE,
 	DurableStderrReader,
+	incompleteUtf8TailLength,
+	MAX_STDERR_FRAME_BYTES,
 } from '../../../../shared/maestro-lib/control/ssh-durable-turn';
 import {
 	buildPreLaunchReapScript,
@@ -92,14 +94,16 @@ function expectedLines(lines = 40): string {
 
 describe('script text', () => {
 	it("puts today's stdin, unchanged, after the envelope", () => {
-		const inner = todaysStdin(newPidFile());
-		const script = buildDurableLaunchScript(inner, newDir());
+		const pidFile = newPidFile();
+		const inner = todaysStdin(pidFile);
+		const script = buildDurableLaunchScript(inner, newDir(), pidFile);
 		expect(script.endsWith(`\n}\n${inner}`)).toBe(true);
 		expect(script.startsWith('{\n')).toBe(true);
 	});
 
 	it('refuses a turn dir or pid file Maestro did not name', () => {
-		expect(() => buildDurableLaunchScript('', '/tmp/evil; rm -rf ~')).toThrow();
+		expect(() => buildDurableLaunchScript('', '/tmp/evil; rm -rf ~', newPidFile())).toThrow();
+		expect(() => buildDurableLaunchScript('', newRemoteTurnDir(), '/etc/passwd')).toThrow();
 		expect(() => buildDurableReattachScript(newRemoteTurnDir(), '/etc/passwd', 0, 0)).toThrow();
 		expect(() => buildDurableReattachScript(newRemoteTurnDir(), newPidFile(), -1, 0)).toThrow();
 		expect(() => buildDurableReattachScript(newRemoteTurnDir(), newPidFile(), 1.5, 0)).toThrow();
@@ -116,7 +120,7 @@ const RS = '\x1e';
 const US = '\x1f';
 
 describe('DurableStderrReader', () => {
-	it("passes ssh's own lines and the agent's framed stderr in order, and counts only the agent's", () => {
+	it("passes ssh's own lines until the agent runs, then keeps them apart from the agent's stderr", () => {
 		const reader = new DurableStderrReader();
 		expect(reader.push(Buffer.from('Warning: added host\n' + RS))).toBe('Warning: added host\n');
 		expect(reader.launched).toBe(false);
@@ -125,10 +129,41 @@ describe('DurableStderrReader', () => {
 		expect(reader.attached).toBe(true);
 		expect(reader.push(Buffer.from(`cd${US}`))).toBe('abcd');
 		expect(reader.errOffset).toBe(4);
-		expect(reader.push(Buffer.from(`${RS}E3\nShared connection closed.\n`))).toBe(
-			'Shared connection closed.\n'
+		// ssh's own words once the agent runs are diagnostics, never agent stderr:
+		// a link that drops and recovers must not read as an agent error.
+		expect(reader.push(Buffer.from(`client_loop: send disconnect: Broken pipe\n`))).toBe('');
+		expect(reader.push(Buffer.from(`${RS}E3\nShared connection closed.\n`))).toBe('');
+		expect(reader.endAttempt()).toBe('');
+		expect(reader.sshDiagnostics).toBe(
+			'client_loop: send disconnect: Broken pipe\nShared connection closed.\n'
 		);
 		expect(reader.endCode).toBe(3);
+	});
+
+	it('resumes a restart before a character the last frame cut, and the reconnect from the byte', () => {
+		const reader = new DurableStderrReader();
+		const e = Buffer.from('é');
+		reader.push(Buffer.from(`${RS}S\n`));
+		expect(
+			reader.push(Buffer.concat([Buffer.from(`${RS}D2\nx`), e.subarray(0, 1), Buffer.from(US)]))
+		).toBe('x');
+		// A reconnect keeps this reader and its pending byte; a restart starts a new one.
+		expect(reader.errOffset).toBe(2);
+		expect(reader.restartErrOffset).toBe(1);
+		const restarted = new DurableStderrReader(reader.restartErrOffset);
+		restarted.push(Buffer.from(`${RS}S\n`));
+		expect(restarted.push(Buffer.concat([Buffer.from(`${RS}D2\n`), e, Buffer.from(US)]))).toBe('é');
+		expect(restarted.errOffset).toBe(3);
+		expect(restarted.restartErrOffset).toBe(3);
+	});
+
+	it('finds the start of an incomplete UTF-8 character', () => {
+		const four = Buffer.from('😀');
+		expect(incompleteUtf8TailLength(Buffer.from('abc'))).toBe(0);
+		expect(incompleteUtf8TailLength(four)).toBe(0);
+		for (let n = 1; n < 4; n++) expect(incompleteUtf8TailLength(four.subarray(0, n))).toBe(n);
+		expect(incompleteUtf8TailLength(Buffer.from('é').subarray(0, 1))).toBe(1);
+		expect(incompleteUtf8TailLength(Buffer.from([0x80, 0x80]))).toBe(0);
 	});
 
 	it('drops a frame a drop cut, even when ssh wrote into it, and decodes a split character whole', () => {
@@ -140,7 +175,9 @@ describe('DurableStderrReader', () => {
 		).toBe('');
 		expect(reader.errOffset).toBe(1);
 		// The next frame is cut; ssh's disconnect message lands where its bytes were due.
-		reader.push(Buffer.from(`${RS}D9\nxyclient_loop: send disconnect: Broken pipe\n`));
+		expect(reader.push(Buffer.from(`${RS}D9\nxyclient_loop: send disconnect: Broken pipe\n`))).toBe(
+			''
+		);
 		expect(reader.errOffset).toBe(1);
 		reader.endAttempt();
 		expect(reader.attached).toBe(false);
@@ -183,7 +220,9 @@ posixOnly('against a real shell', () => {
 		const pidFile = newPidFile();
 		const dir = newDir();
 		const plain = await runShell(todaysStdin(pidFile, 10));
-		const durable = await runShell(buildDurableLaunchScript(todaysStdin(pidFile, 10), dir));
+		const durable = await runShell(
+			buildDurableLaunchScript(todaysStdin(pidFile, 10), dir, pidFile)
+		);
 		expect(durable.out.toString()).toBe(plain.out.toString());
 		expect(durable.out.toString()).toBe(expectedLines(10));
 		expect(durable.code).toBe(plain.code);
@@ -197,7 +236,7 @@ posixOnly('against a real shell', () => {
 	it('three lost links lose and repeat no byte', async () => {
 		const pidFile = newPidFile();
 		const dir = newDir();
-		const first = await runShell(buildDurableLaunchScript(todaysStdin(pidFile), dir), 200);
+		const first = await runShell(buildDurableLaunchScript(todaysStdin(pidFile), dir, pidFile), 200);
 		expect(first.code).toBeNull();
 		let got = first.out;
 		const reader = new DurableStderrReader();
@@ -221,7 +260,9 @@ posixOnly('against a real shell', () => {
 
 	it('an agent that exits 255 itself sends its end frame, so it is not a lost link', async () => {
 		const pidFile = newPidFile();
-		const run = await runShell(buildDurableLaunchScript(todaysStdin(pidFile, 1, 255), newDir()));
+		const run = await runShell(
+			buildDurableLaunchScript(todaysStdin(pidFile, 1, 255), newDir(), pidFile)
+		);
 		expect(run.code).toBe(255);
 		expect(readStderr(run.err).reader.endCode).toBe(255);
 	}, 20_000);
@@ -233,7 +274,7 @@ posixOnly('against a real shell', () => {
 			"exec /bin/bash -c 'sleep 30 & for i in $(seq 1 400); do echo tick $i; sleep 0.05; done'\n",
 			pidFile
 		);
-		const first = await runShell(buildDurableLaunchScript(inner, dir), 20);
+		const first = await runShell(buildDurableLaunchScript(inner, dir, pidFile), 20);
 		const [pid] = fs.readFileSync(pidFile, 'utf8').split(' ');
 		await runShell(buildRemoteSignalScript(pidFile, 'terminate'));
 		const rest = await runShell(buildDurableReattachScript(dir, pidFile, first.out.length, 0));
@@ -245,7 +286,7 @@ posixOnly('against a real shell', () => {
 	it('the cleanup leaves nothing, and a reattach then reports the turn gone', async () => {
 		const pidFile = newPidFile();
 		const dir = newDir();
-		await runShell(buildDurableLaunchScript(todaysStdin(pidFile, 2), dir));
+		await runShell(buildDurableLaunchScript(todaysStdin(pidFile, 2), dir, pidFile));
 		expect(fs.existsSync(dir)).toBe(true);
 		await runShell(buildRemoteTurnCleanupScript(dir));
 		expect(fs.existsSync(dir)).toBe(false);
@@ -258,7 +299,7 @@ posixOnly('against a real shell', () => {
 		const pidFile = newPidFile();
 		const dir = newDir();
 		const inner = withRemotePidRecord("exec /bin/bash -c 'sleep 30'\n", pidFile);
-		const launch = runShell(buildDurableLaunchScript(inner, dir));
+		const launch = runShell(buildDurableLaunchScript(inner, dir, pidFile));
 		for (let i = 0; i < 50 && !fs.existsSync(pidFile); i++)
 			await new Promise((r) => setTimeout(r, 50));
 		const [pid] = fs.readFileSync(pidFile, 'utf8').split(' ');
@@ -295,7 +336,7 @@ posixOnly('against a real shell', () => {
 			`{ : <&3; } 2>/dev/null && echo fd3-open || echo fd3-closed; umask'`;
 		const stdin = withRemotePidRecord(`${agent}\n`, pidFile) + 'API_KEY=secret\n';
 		const plain = await runShell(stdin);
-		const durable = await runShell(buildDurableLaunchScript(stdin, dir));
+		const durable = await runShell(buildDurableLaunchScript(stdin, dir, pidFile));
 		expect(durable.out.toString()).toContain('in-gone\nfd3-closed\n');
 		expect(durable.out.toString()).toBe(plain.out.toString());
 		expect(fs.existsSync(`${dir}/in`)).toBe(false);
@@ -303,6 +344,88 @@ posixOnly('against a real shell', () => {
 			expect(fs.statSync(`${dir}/${name}`).mode & 0o777).toBe(0o600);
 		}
 		expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+	}, 20_000);
+
+	const waitFor = async (check: () => boolean): Promise<void> => {
+		for (let i = 0; i < 100 && !check(); i++) await new Promise((r) => setTimeout(r, 50));
+		expect(check()).toBe(true);
+	};
+
+	it('a stream on a live link ends as gone when the agent and its supervisor die without an exit', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		const inner = withRemotePidRecord(
+			"exec /bin/bash -c 'echo started; echo oops >&2; sleep 60'\n",
+			pidFile
+		);
+		const launch = runShell(buildDurableLaunchScript(inner, dir, pidFile));
+		await waitFor(() => fs.existsSync(pidFile) && fs.existsSync(`${dir}/sup`));
+		const [agent] = fs.readFileSync(pidFile, 'utf8').split(' ');
+		const [supervisor] = fs.readFileSync(`${dir}/sup`, 'utf8').split(' ');
+		// Out of memory, or a reboot: both go at once and nobody writes `exit`.
+		process.kill(Number(supervisor), 'SIGKILL');
+		process.kill(-Number(agent), 'SIGKILL');
+		const run = await launch;
+		expect(run.code).toBe(DURABLE_TURN_GONE_EXIT_CODE);
+		expect(fs.existsSync(`${dir}/exit`)).toBe(false);
+		// What they wrote before they died still arrived, once.
+		expect(run.out.toString()).toBe('started\n');
+		const { text, reader } = readStderr(run.err);
+		expect(text).toBe('oops\n');
+		expect(reader.gone).toBe(true);
+	}, 20_000);
+
+	it('a stderr backlog is sent in bounded frames and arrives whole', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		const size = MAX_STDERR_FRAME_BYTES * 3 + 123;
+		const inner = withRemotePidRecord(
+			`exec /bin/bash -c 'head -c ${size} /dev/zero | tr "\\0" "x" >&2; exit 0'\n`,
+			pidFile
+		);
+		const run = await runShell(buildDurableLaunchScript(inner, dir, pidFile));
+		expect(run.code).toBe(0);
+		const headers = [...run.err.toString('latin1').matchAll(/\x1eD(\d+)\n/g)].map((m) =>
+			Number(m[1])
+		);
+		expect(headers.length).toBeGreaterThanOrEqual(4);
+		expect(Math.max(...headers)).toBeLessThanOrEqual(MAX_STDERR_FRAME_BYTES);
+		const { text, reader } = readStderr(run.err);
+		expect(text).toBe('x'.repeat(size));
+		expect(reader.errOffset).toBe(size);
+		expect(reader.endCode).toBe(0);
+	}, 20_000);
+
+	it('a reap finds the agent through the dir copy after the day-old sweep took its pid record', async () => {
+		const pidFile = newPidFile();
+		const dir = newDir();
+		const inner = withRemotePidRecord("exec /bin/bash -c 'sleep 30'\n", pidFile);
+		const launch = runShell(buildDurableLaunchScript(inner, dir, pidFile));
+		await waitFor(() => fs.existsSync(pidFile) && fs.existsSync(`${dir}/agent`));
+		const [pid] = fs.readFileSync(pidFile, 'utf8').split(' ');
+		expect(fs.readFileSync(`${dir}/agent`, 'utf8')).toBe(fs.readFileSync(pidFile, 'utf8'));
+		fs.rmSync(pidFile);
+		await runShell(
+			buildPreLaunchReapScript([
+				{ sshCommand: 'ssh', sshArgs: [], pidFile, sessionId: 's', turnDir: dir },
+			])
+		);
+		expect(() => process.kill(-Number(pid), 0)).toThrow();
+		expect([143, DURABLE_TURN_GONE_EXIT_CODE]).toContain((await launch).code);
+		expect(fs.existsSync(dir)).toBe(false);
+	}, 20_000);
+
+	it('a reap that cannot prove the agent gone keeps the turn dir', async () => {
+		const dir = newDir();
+		fs.mkdirSync(dir, { mode: 0o700 });
+		fs.writeFileSync(`${dir}/out`, 'partial');
+		const cleanup = `(\n${buildPreLaunchReapScript([
+			{ sshCommand: 'ssh', sshArgs: [], pidFile: newPidFile(), sessionId: 's', turnDir: dir },
+		])})\necho reap-ran\n`;
+		const run = await runShell(cleanup);
+		expect(run.out.toString()).toBe('reap-ran\n');
+		// No exit file and no record naming the agent: nothing proves it stopped.
+		expect(fs.existsSync(dir)).toBe(true);
 	}, 20_000);
 });
 
@@ -358,6 +481,8 @@ posixOnly('the sweep of finished turn dirs', () => {
 	it('refuses a sweep root that is not a plain absolute path', () => {
 		expect(() => buildTurnDirSweepScript('tmp')).toThrow();
 		expect(() => buildTurnDirSweepScript("/tmp'; rm -rf ~; '")).toThrow();
-		expect(buildDurableLaunchScript('', newRemoteTurnDir())).toContain(buildTurnDirSweepScript());
+		expect(buildDurableLaunchScript('', newRemoteTurnDir(), newPidFile())).toContain(
+			buildTurnDirSweepScript()
+		);
 	});
 });

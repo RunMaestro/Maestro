@@ -71,14 +71,31 @@ export function buildRemoteTurnCleanupScript(dir: string): string {
 }
 
 /**
- * The terminate script for `target`. A durable turn's dir goes with it, after
- * the agent is gone: the subshell keeps the signal script's early `exit`s
- * from skipping the removal.
+ * The terminate script for `target`. A durable turn's dir goes with it, but
+ * only once the agent is proven gone: the agent wrote its exit, or the record
+ * that names it (the pid file, or the copy in the dir that outlives the
+ * day-old pid sweep) names no live process after the terminate. Without that
+ * proof the dir stays and the script exits 1: a dir removed under a live agent
+ * leaves a writer nobody can reattach to or find again.
  */
 function terminateScriptFor(target: RemoteSignalTarget): string {
 	const signal = buildRemoteSignalScript(target.pidFile, 'terminate', target.promptArtifactPath);
 	if (target.turnDir === undefined) return signal;
-	return `(\n${signal}) </dev/null >/dev/null 2>&1\n${buildRemoteTurnCleanupScript(target.turnDir)}`;
+	assertRemoteTurnDir(target.turnDir);
+	const d = shellEscape(target.turnDir);
+	const quiet = (script: string) => `(\n${script}) </dev/null >/dev/null 2>&1\n`;
+	return (
+		`d=${d}; ap=; as=\n` +
+		`[ -r "$d/agent" ] && read -r ap as < "$d/agent"\n` +
+		`[ -n "$ap" ] || { [ -r ${shellEscape(target.pidFile)} ] && read -r ap as < ${shellEscape(target.pidFile)}; }\n` +
+		quiet(signal) +
+		quiet(buildRemoteSignalScript(`${target.turnDir}/agent`, 'terminate')) +
+		`if [ -d "$d" ] && [ ! -e "$d/exit" ]; then\n` +
+		`  case "$ap" in ""|*[!0-9]*) exit 1 ;; esac\n` +
+		`  kill -0 "$ap" 2>/dev/null && [ "$(echo $(ps -o lstart= -p "$ap" 2>/dev/null))" = "$(echo $as)" ] && exit 1\n` +
+		`fi\n` +
+		buildRemoteTurnCleanupScript(target.turnDir)
+	);
 }
 
 /**
@@ -403,10 +420,15 @@ const pendingReaps = new Map<string, PendingReap>();
  * {@link REMOTE_REAP_RETRY_DELAYS_MS} only while ssh itself fails (exit 255,
  * a timeout, or no start). Any other exit means the host ran the script, which
  * ends quietly when the agent is already gone.
+ *
+ * `firstDelayMs` holds the first attempt back (the grace a Stop gives the
+ * agent) while the reap is already registered, so the next launch on the tab
+ * takes and runs it before its own agent starts, even inside that grace.
  */
 export function reapRemoteAgent(
 	target: RemoteSignalTarget,
-	delaysMs: readonly number[] = REMOTE_REAP_RETRY_DELAYS_MS
+	delaysMs: readonly number[] = REMOTE_REAP_RETRY_DELAYS_MS,
+	firstDelayMs = 0
 ): void {
 	const previous = pendingReaps.get(target.pidFile);
 	if (previous?.timer) clearTimeout(previous.timer);
@@ -439,7 +461,10 @@ export function reapRemoteAgent(
 		// later attempt would do better.
 		if (!started) pendingReaps.delete(target.pidFile);
 	};
-	run();
+	if (firstDelayMs > 0) {
+		entry.timer = setTimeout(run, firstDelayMs);
+		entry.timer.unref?.();
+	} else run();
 }
 
 /**
