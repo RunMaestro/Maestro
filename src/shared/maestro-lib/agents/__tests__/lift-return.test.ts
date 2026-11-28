@@ -10,6 +10,8 @@ import { LiftRunError } from '../lift-run';
 import {
 	hostDraftsNotKept,
 	readReturnedFromHost,
+	RestoreUnsettledError,
+	RETURN_LATE_QUEUE_PASSES,
 	RETURN_TRANSCRIPT_RETRY_TIMEOUT_MS,
 	returnRestoreRefusal,
 	runReturnFromHost,
@@ -67,6 +69,7 @@ function hostClient(
 		{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1', starred: true },
 		{ id: 'tab-new', name: 'Started on host', agentSessionId: 'sess-2', state: 'idle' },
 	];
+	const pausedOnHost = new Map<string, boolean>();
 	const transcripts = overrides.transcripts ?? {
 		'tab-1': [log('l1'), log('l2')],
 		'tab-new': [log('n1')],
@@ -86,11 +89,29 @@ function hostClient(
 		},
 		turns: {
 			queue: {
-				list: vi.fn().mockResolvedValue(overrides.queue ?? ok([])),
-				setPaused: vi.fn(
-					async (_agentId: string, _itemId: string, paused: boolean) =>
-						overrides.setPaused ?? ok({ found: true, paused })
-				),
+				// The host's queue keeps what Hold / Resume set, as a real host does.
+				list: vi.fn(async () => {
+					const listed = (overrides.queue ?? ok([])) as {
+						ok: boolean;
+						value?: Array<{ itemId: string; paused: boolean }>;
+					};
+					if (!listed.ok || !listed.value) return listed;
+					return ok(
+						listed.value.map((item) =>
+							pausedOnHost.has(item.itemId)
+								? { ...item, paused: pausedOnHost.get(item.itemId) }
+								: item
+						)
+					);
+				}),
+				setPaused: vi.fn(async (_agentId: string, itemId: string, paused: boolean) => {
+					const answer = (overrides.setPaused ?? ok({ found: true, paused })) as {
+						ok: boolean;
+						value?: { found: boolean };
+					};
+					if (answer.ok && answer.value?.found) pausedOnHost.set(itemId, paused);
+					return answer;
+				}),
 				remove: vi.fn().mockResolvedValue(ok({ removed: true })),
 			},
 		},
@@ -301,6 +322,9 @@ describe('readReturnedFromHost and returnRestoreRefusal', () => {
 			tabs: [],
 			hostCopyLeft: copyLeft(true),
 		});
+		// A copy the user kept keeps saying so on the wire to the window.
+		const kept = { ...copyLeft(true, ['q1']), keep: true };
+		expect(readReturnedFromHost({ tabs: [], hostCopyLeft: kept })?.hostCopyLeft).toEqual(kept);
 		expect(
 			readReturnedFromHost({ tabs: [], hostCopyLeft: { ...copyLeft(true), fetched: 'yes' } })
 		).toBeUndefined();
@@ -419,8 +443,23 @@ describe('runReturnFromHost', () => {
 	});
 
 	describe("the host's queue", () => {
-		const waiting = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: false };
-		const held = { itemId: 'q2', tabId: 'tab-new', queuedAt: 20, text: 'later', paused: true };
+		// A host of this release says whether each message runs read-only.
+		const waiting = {
+			itemId: 'q1',
+			tabId: 'tab-1',
+			queuedAt: 10,
+			text: 'next',
+			paused: false,
+			readOnly: false,
+		};
+		const held = {
+			itemId: 'q2',
+			tabId: 'tab-new',
+			queuedAt: 20,
+			text: 'later',
+			paused: true,
+			readOnly: false,
+		};
 
 		it('holds each waiting message on the host, brings both back, then removes the host copy', async () => {
 			const client = hostClient({ queue: ok([waiting, held]) });
@@ -444,6 +483,7 @@ describe('runReturnFromHost', () => {
 				queuedAt: 30,
 				text: 'typed on host',
 				paused: false,
+				readOnly: false,
 			};
 			const client = hostClient();
 			client.turns.queue.list
@@ -452,7 +492,8 @@ describe('runReturnFromHost', () => {
 				.mockResolvedValueOnce(ok([{ ...waiting, paused: true }, late]));
 			const d = deps(hostedAgent(), client);
 			const result = await runReturnFromHost('agent-1', {}, d.value);
-			expect(client.turns.queue.list).toHaveBeenCalledTimes(2);
+			// Twice before the restore, and once after it, before the copy is removed.
+			expect(client.turns.queue.list).toHaveBeenCalledTimes(3);
 			expect(client.turns.queue.setPaused.mock.calls).toEqual([
 				['host-1', 'q1', true],
 				['host-1', 'q3', true],
@@ -480,6 +521,34 @@ describe('runReturnFromHost', () => {
 			);
 		});
 
+		it('a draft from a desktop host comes home as text, and the notice says its staged images do not (#2195)', async () => {
+			const client = hostClient({
+				tabs: [
+					{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1', inputValue: 'see the screenshot' },
+					{ id: 'tab-new', name: 'Started on host', agentSessionId: 'sess-2', inputValue: '  ' },
+				],
+			});
+			const desktop = {
+				...client,
+				connection: { host: () => ({ kind: 'desktop' as const, label: 'desktop pid 1' }) },
+			};
+			const d = deps(hostedAgent(), desktop as unknown as typeof client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(d.restore.mock.calls[0][1].tabs[0].inputValue).toBe('see the screenshot');
+			const said = result.notices?.join(' ') ?? '';
+			expect(said).toMatch(
+				/build-box:host-1 is a Maestro desktop, which does not send the images staged with a draft\. The draft in tab "Main" came back as text only/
+			);
+			expect(said).not.toMatch(/Started on host/);
+			// The same drafts from a headless host: it sends what it holds, so there is nothing to say.
+			const headless = {
+				...client,
+				connection: { host: () => ({ kind: 'headless' as const, label: 'headless pid 1' }) },
+			};
+			const h = deps(hostedAgent(), headless as unknown as typeof client);
+			expect((await runReturnFromHost('agent-1', {}, h.value)).notices).toBeUndefined();
+		});
+
 		it('messages from a headless host keep their state: it takes no images (R2)', async () => {
 			const client = hostClient({ queue: ok([waiting]) });
 			const headless = {
@@ -505,8 +574,25 @@ describe('runReturnFromHost', () => {
 			const home = store.get('agent-1') as AgentRecord & { executionQueue?: unknown[] };
 			expect(home.liftedTo).toBeUndefined();
 			expect(home.executionQueue).toEqual([
-				{ id: 'q1', timestamp: 10, tabId: 'tab-1', type: 'message', text: 'next' },
-				{ id: 'q2', timestamp: 20, tabId: 'tab-new', type: 'message', text: 'later', paused: true },
+				{
+					id: 'q1',
+					timestamp: 10,
+					tabId: 'tab-1',
+					type: 'message',
+					text: 'next',
+					turnReadOnly: false,
+					readOnlyMode: false,
+				},
+				{
+					id: 'q2',
+					timestamp: 20,
+					tabId: 'tab-new',
+					type: 'message',
+					text: 'later',
+					paused: true,
+					turnReadOnly: false,
+					readOnlyMode: false,
+				},
 			]);
 			// A second run finds it home and touches nothing.
 			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
@@ -549,7 +635,8 @@ describe('runReturnFromHost', () => {
 			d.restore.mockImplementationOnce(async (id: string, returned) => {
 				const record = store.get(id) as unknown as Record<string, unknown>;
 				store.set(id, withReturnedFromHost(record, returned) as unknown as AgentRecord);
-				throw new Error('The window did not answer in time');
+				// A window that did not answer in time: the timeout main raises (`NO_RESTORE_ANSWER`).
+				throw new RestoreUnsettledError('The window did not answer in time');
 			});
 			const result = await runReturnFromHost('agent-1', {}, d.value);
 			expect(client.turns.queue.setPaused.mock.calls).toEqual([['host-1', 'q1', true]]);
@@ -733,7 +820,11 @@ describe('runReturnFromHost', () => {
 		expect(d.connect).not.toHaveBeenCalled();
 		expect(d.restore).toHaveBeenCalledWith('agent-1', { tabs: [], hostCopyLeft: copyLeft(false) });
 		expect(result.hostCopyRemoved).toBe(false);
-		expect(result.notices?.[0]).toMatch(/maestro-cli remove-agent host-1/);
+		// The limit on the automatic recovery, and the queue that may still hold work (#2195).
+		expect(result.notices?.[0]).toMatch(/for the next 14 days, Maestro tries the host again/);
+		expect(result.notices?.[0]).toMatch(
+			/After that, nothing is brought home: the copy \(agent host-1 there\) may still hold messages in its queue/
+		);
 	});
 
 	it.each([
@@ -824,7 +915,14 @@ describe('runReturnFromHost', () => {
 				ok(tabId === 'tab-1' ? [log('l1'), log('h2', 2)] : [log('n1')])
 			);
 			const later = { itemId: 'q2', tabId: 'tab-1', queuedAt: 20, text: 'later', paused: false };
-			client.turns.queue.list.mockResolvedValue(ok([{ ...first, paused: true }, later]));
+			client.turns.queue.list
+				.mockResolvedValueOnce(ok([{ ...first, paused: true }, later]))
+				.mockResolvedValue(
+					ok([
+						{ ...first, paused: true },
+						{ ...later, paused: true },
+					])
+				);
 			client.turns.queue.setPaused.mockClear();
 
 			const result = await runReturnFromHost('agent-1', {}, d.value);
@@ -854,6 +952,59 @@ describe('runReturnFromHost', () => {
 			expect(result.notices?.join(' ')).toMatch(/stopped answering before the messages/);
 			expect(result.notices?.join(' ')).toMatch(/did not close: forward stuck/);
 			expect(d.release).toHaveBeenCalledTimes(1);
+			// The message is still noted, so the next return takes it out of the host's queue.
+			expect(d.store.get('agent-1')?.hostCopyLeft).toMatchObject({ keep: true, carried: ['q1'] });
+		});
+
+		it('a kept copy whose queue would not let a message go stays noted, and the next return takes it out without reading or removing the copy (#2195)', async () => {
+			const waiting = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: false };
+			const client = hostClient({ queue: ok([waiting]) });
+			client.turns.queue.remove.mockResolvedValueOnce(fail('rejected', 'queue locked'));
+			const d = stored(hostedAgent(), client);
+			const first = await runReturnFromHost('agent-1', { keepHostCopy: true }, d.value);
+			expect(first.notices?.join(' ')).toMatch(
+				/still waits, held, in the host's queue \(build-box:host-1\): queue locked Maestro takes it out at the next launch/
+			);
+			const home = d.store.get('agent-1') as AgentRecord & { executionQueue?: { id: string }[] };
+			expect(home.liftedTo).toBeUndefined();
+			expect(home.executionQueue?.map((item) => item.id)).toEqual(['q1']);
+			expect(home.hostCopyLeft).toEqual({
+				...copyLeft(true, ['q1']),
+				homeTabIds: ['tab-1', 'tab-old', 'tab-new'],
+				keep: true,
+			});
+			// The offline return has nothing to do for it.
+			await expect(runReturnFromHost('agent-1', { offline: true }, d.value)).rejects.toThrow(
+				/The host keeps its copy/
+			);
+
+			// The next launch (the come-home pass asks with no options): only the queue is cleaned.
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.turns.queue.remove).toHaveBeenLastCalledWith('host-1', 'q1');
+			expect(client.tabs.list).toHaveBeenCalledTimes(1);
+			expect(client.turns.queue.setPaused).toHaveBeenCalledTimes(1);
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ hostCopyRemoved: false, tabs: 0 });
+			expect(d.store.get('agent-1')?.hostCopyLeft).toBeUndefined();
+			expect(d.release).toHaveBeenCalledTimes(2);
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_NOT_HOSTED',
+			});
+		});
+
+		it('a kept copy the host no longer has: the note is cleared, nothing is dialed again', async () => {
+			const home = {
+				...hostedAgent(),
+				liftedTo: undefined,
+				hostCopyLeft: { ...copyLeft(true, ['q1']), keep: true },
+			};
+			const client = hostClient({ agent: fail('not-found') });
+			const d = stored(home as AgentRecord, client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(result.hostCopyRemoved).toBe(false);
+			expect(client.turns.queue.remove).not.toHaveBeenCalled();
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			expect(d.store.get('agent-1')?.hostCopyLeft).toBeUndefined();
 		});
 
 		it('a copy kept on purpose loses the messages that came home earlier too', async () => {
@@ -927,6 +1078,300 @@ describe('runReturnFromHost', () => {
 			const result = await runReturnFromHost('agent-1', {}, d.value);
 			expect(result.notices).toBeUndefined();
 			expect(d.store.get('agent-1')?.hostCopyLeft).toBeUndefined();
+		});
+	});
+
+	describe('a return the host or the window races (#2195)', () => {
+		const item = (itemId: string, extra: Record<string, unknown> = {}) => ({
+			itemId,
+			tabId: 'tab-1',
+			queuedAt: 10,
+			text: `text of ${itemId}`,
+			paused: false,
+			readOnly: false,
+			...extra,
+		});
+		function storedDeps(client: ReturnType<typeof hostClient>) {
+			const store = new Map<string, AgentRecord>([['agent-1', hostedAgent()]]);
+			const d = deps(hostedAgent(), client);
+			d.value.readAgents = () => [...store.values()];
+			d.restore.mockImplementation(async (id: string, returned) => {
+				const record = store.get(id) as unknown as Record<string, unknown>;
+				store.set(id, withReturnedFromHost(record, returned) as unknown as AgentRecord);
+			});
+			const queueIds = () =>
+				(
+					(store.get('agent-1') as unknown as { executionQueue?: Array<{ id: string }> })
+						.executionQueue ?? []
+				).map((queued) => queued.id);
+			return { ...d, store, queueIds };
+		}
+
+		it('a message resumed on the host during the return is held again, so it never runs there while it comes home', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			client.turns.queue.list
+				.mockResolvedValueOnce(ok([item('q1')]))
+				// The user resumed it on the host while the transcripts were read.
+				.mockResolvedValueOnce(ok([item('q1', { paused: false })]));
+			const d = deps(hostedAgent(), client);
+			await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.turns.queue.setPaused.mock.calls).toEqual([
+				['host-1', 'q1', true],
+				['host-1', 'q1', true],
+			]);
+			expect(client.turns.queue.setPaused.mock.invocationCallOrder[1]).toBeLessThan(
+				d.restore.mock.invocationCallOrder[0]
+			);
+			// Runnable here: this return held it, not the user.
+			expect(d.restore.mock.calls[0][1].queue).toEqual([item('q1')]);
+		});
+
+		it('a message the host takes after the last read comes home, held there first, before the copy is removed', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			client.turns.queue.list
+				.mockResolvedValueOnce(ok([item('q1')]))
+				.mockResolvedValueOnce(ok([item('q1', { paused: true })]))
+				// Taken by the host after the restore was written.
+				.mockResolvedValueOnce(ok([item('q1', { paused: true }), item('q3')]))
+				.mockResolvedValue(ok([item('q1', { paused: true }), item('q3', { paused: true })]));
+			const d = storedDeps(client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.turns.queue.setPaused).toHaveBeenCalledWith('host-1', 'q3', true);
+			const holdLate = client.turns.queue.setPaused.mock.calls.findIndex(
+				(call) => call[1] === 'q3'
+			);
+			expect(client.turns.queue.setPaused.mock.invocationCallOrder[holdLate]).toBeLessThan(
+				d.restore.mock.invocationCallOrder[1]
+			);
+			expect(d.restore.mock.invocationCallOrder[1]).toBeLessThan(
+				client.agents.remove.mock.invocationCallOrder[0]
+			);
+			// In the host's order: the message it took later waits after the one it took first.
+			expect(d.queueIds()).toEqual(['q1', 'q3']);
+			expect(result.queued).toBe(2);
+			expect(result.hostCopyRemoved).toBe(true);
+			expect(d.store.get('agent-1')?.hostCopyLeft).toBeUndefined();
+		});
+
+		it('late batches keep the host order, ahead of a message typed here (#2197)', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			client.turns.queue.list
+				.mockResolvedValueOnce(ok([item('q1')]))
+				.mockResolvedValueOnce(ok([item('q1', { paused: true })]))
+				.mockResolvedValueOnce(ok([item('q1', { paused: true }), item('q2')]))
+				.mockResolvedValueOnce(
+					ok([item('q1', { paused: true }), item('q2', { paused: true }), item('q3')])
+				)
+				.mockResolvedValue(
+					ok([
+						item('q1', { paused: true }),
+						item('q2', { paused: true }),
+						item('q3', { paused: true }),
+					])
+				);
+			const d = storedDeps(client);
+			d.store.set('agent-1', {
+				...hostedAgent(),
+				executionQueue: [{ id: 'mine', tabId: 'tab-1', text: 'typed here' }],
+			} as unknown as AgentRecord);
+			await runReturnFromHost('agent-1', {}, d.value);
+			expect(d.queueIds()).toEqual(['q1', 'q2', 'q3', 'mine']);
+		});
+
+		it('a late message for a tab opened on the host during the return comes home in that tab, with its conversation (#2197)', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			const opened = { id: 'tab-late', name: 'Opened on host', agentSessionId: 'sess-9' };
+			client.turns.queue.list
+				.mockResolvedValueOnce(ok([item('q1')]))
+				.mockResolvedValueOnce(ok([item('q1', { paused: true })]))
+				.mockResolvedValueOnce(
+					ok([item('q1', { paused: true }), item('q3', { tabId: 'tab-late' })])
+				)
+				.mockResolvedValue(
+					ok([item('q1', { paused: true }), item('q3', { tabId: 'tab-late', paused: true })])
+				);
+			client.tabs.list
+				.mockResolvedValueOnce(
+					ok([{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1' }] as AITabRecord[])
+				)
+				.mockResolvedValue(
+					ok([{ id: 'tab-1', name: 'Main', agentSessionId: 'sess-1' }, opened] as AITabRecord[])
+				);
+			client.tabs.transcript.mockImplementation(async (_agentId: string, tabId: string) =>
+				ok(tabId === 'tab-late' ? [log('late-1')] : [log('l1')])
+			);
+			const d = storedDeps(client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			const done = d.store.get('agent-1') as AgentRecord & {
+				executionQueue?: Array<{ id: string; tabId: string }>;
+			};
+			expect(done.aiTabs?.find((tab) => tab.id === 'tab-late')?.logs).toEqual([log('late-1')]);
+			expect(done.executionQueue?.find((queued) => queued.id === 'q3')?.tabId).toBe('tab-late');
+			expect(result.newTabs).toBe(1);
+			expect(result.hostCopyRemoved).toBe(true);
+		});
+
+		it('once the agent is home, a failed hold releases nothing on the host, so a message that came home never runs there (#2197)', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			client.turns.queue.list
+				.mockResolvedValueOnce(ok([item('q1')]))
+				.mockResolvedValueOnce(ok([item('q1', { paused: true })]))
+				// After the restore: q1 (home already) was resumed on the host, and q3 arrived.
+				.mockResolvedValue(ok([item('q1', { paused: false }), item('q3')]));
+			client.turns.queue.setPaused.mockImplementation(
+				async (_agentId: string, itemId: string, paused: boolean) =>
+					itemId === 'q3' ? fail('rejected', 'queue locked') : ok({ found: true, paused })
+			);
+			const d = storedDeps(client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.turns.queue.setPaused).not.toHaveBeenCalledWith('host-1', 'q1', false);
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			expect(d.store.get('agent-1')?.liftedTo).toBeUndefined();
+			expect(result.notices?.join(' ')).toMatch(/stopped answering before its copy was removed/);
+		});
+
+		it('a late message from a desktop host comes home held, with the image notice, though the first read had none (#2197)', async () => {
+			const base = hostClient();
+			base.turns.queue.list
+				.mockResolvedValueOnce(ok([]))
+				.mockResolvedValueOnce(ok([]))
+				.mockResolvedValueOnce(ok([item('q3')]))
+				.mockResolvedValue(ok([item('q3', { paused: true })]));
+			const client = {
+				...base,
+				connection: { host: () => ({ kind: 'desktop' as const, label: 'desktop pid 1' }) },
+			} as unknown as typeof base;
+			const d = storedDeps(client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			const done = d.store.get('agent-1') as AgentRecord & {
+				executionQueue?: Array<{ id: string; paused?: boolean }>;
+			};
+			expect(done.executionQueue?.map((queued) => [queued.id, queued.paused])).toEqual([
+				['q3', true],
+			]);
+			expect(result.notices?.join(' ')).toMatch(
+				/is a Maestro desktop, which does not send the images attached to queued messages\. The message from its queue waits here, held/
+			);
+		});
+
+		it('a host that keeps taking messages keeps its copy, marked, and every message it took is here', async () => {
+			const client = hostClient();
+			let next = 0;
+			client.turns.queue.list.mockImplementation(async () => ok([item(`n${next++}`)]));
+			const d = storedDeps(client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			expect(result.hostCopyRemoved).toBe(false);
+			expect(result.notices?.join(' ')).toMatch(/kept taking new messages, so its copy stays/);
+			// The two reads before the restore, then one per pass after it.
+			expect(client.turns.queue.list).toHaveBeenCalledTimes(2 + RETURN_LATE_QUEUE_PASSES);
+			const marker = d.store.get('agent-1')?.hostCopyLeft as { carried?: string[] };
+			expect(new Set(marker.carried)).toEqual(new Set(d.queueIds()));
+		});
+
+		it('a late message the window could not save stays held on the host, and the copy stays', async () => {
+			const client = hostClient({ queue: ok([]) });
+			client.turns.queue.list
+				.mockResolvedValueOnce(ok([]))
+				.mockResolvedValueOnce(ok([]))
+				.mockResolvedValue(ok([item('q3')]));
+			const d = storedDeps(client);
+			const first = d.restore.getMockImplementation();
+			d.restore.mockImplementationOnce(first!).mockRejectedValueOnce(new Error('disk full'));
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.turns.queue.setPaused.mock.calls).toEqual([['host-1', 'q3', true]]);
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			expect(result.notices?.join(' ')).toMatch(/could not be saved here.*waits there, held/);
+			expect(d.store.get('agent-1')?.liftedTo).toBeUndefined();
+		});
+
+		it('a message sent read-only comes home read-only; save to History comes with it', async () => {
+			const client = hostClient({
+				queue: ok([item('q1', { readOnly: true, saveToHistory: false })]),
+			});
+			const d = storedDeps(client);
+			await runReturnFromHost('agent-1', {}, d.value);
+			const queued = (
+				d.store.get('agent-1') as unknown as { executionQueue: Array<Record<string, unknown>> }
+			).executionQueue[0];
+			expect(queued).toMatchObject({
+				id: 'q1',
+				turnReadOnly: true,
+				readOnlyMode: true,
+				turnSaveToHistory: false,
+			});
+			expect(queued.paused).toBeUndefined();
+		});
+
+		it('a message from a host that does not say whether it was sent read-only comes home held, and says why', async () => {
+			const older = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: false };
+			const client = hostClient({ queue: ok([older]) });
+			const d = deps(hostedAgent(), client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(d.restore.mock.calls[0][1].queue).toEqual([{ ...older, paused: true }]);
+			expect(result.notices?.join(' ')).toMatch(
+				/did not say whether the message from its queue was sent read-only, so it waits here, held/
+			);
+		});
+
+		it('readReturnedFromHost keeps the read-only and save to History choices', () => {
+			const queue = [item('q1', { readOnly: true, saveToHistory: true })];
+			expect(readReturnedFromHost({ tabs: [], queue })?.queue).toEqual(queue);
+		});
+
+		it('a restore the window may still write releases nothing on the host', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			const d = deps(hostedAgent(), client);
+			d.restore.mockRejectedValue(new RestoreUnsettledError('The window did not answer in time'));
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_RESTORE_FAILED',
+				message: expect.stringMatching(/message it held on the host stays held there/),
+			});
+			expect(client.turns.queue.setPaused.mock.calls).toEqual([['host-1', 'q1', true]]);
+			expect(client.agents.remove).not.toHaveBeenCalled();
+		});
+
+		// A save that failed (a full disk) is refused by the window, but main's store already took
+		// the new record before its flush failed, so it reads home. That must not count as landed:
+		// counting it would remove the host copy and the message it holds while nothing was saved.
+		it('a restore the window refused is not taken as landed, even when the store reads home', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			const d = deps(hostedAgent(), client);
+			// Moved until the restore is tried; then the store reads home (it took the record before
+			// the failed flush), as main's does.
+			const homeInMemory = { ...hostedAgent(), liftedTo: undefined } as AgentRecord;
+			let tried = false;
+			d.value.readAgents = () => [tried ? homeInMemory : hostedAgent()];
+			d.restore.mockImplementation(async () => {
+				tried = true;
+				throw new Error('Could not save the agent: the write did not reach the disk');
+			});
+
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_RESTORE_FAILED',
+			});
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			// The held message is released on the host, where it runs: the agent stays moved.
+			expect(client.turns.queue.setPaused.mock.calls).toEqual([
+				['host-1', 'q1', true],
+				['host-1', 'q1', false],
+			]);
+		});
+
+		it('a hold the host would not release is named beside the restore error', async () => {
+			const client = hostClient({ queue: ok([item('q1')]) });
+			client.turns.queue.setPaused.mockImplementation(
+				async (_agentId: string, _itemId: string, paused: boolean) =>
+					paused ? ok({ found: true, paused }) : fail('rejected')
+			);
+			const d = deps(hostedAgent(), client);
+			d.restore.mockRejectedValue(new Error('window gone'));
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_RESTORE_FAILED',
+				message: expect.stringMatching(
+					/window gone.*A message this return held on the host \(build-box:host-1\) could not be released and still waits there, held/
+				),
+			});
 		});
 	});
 

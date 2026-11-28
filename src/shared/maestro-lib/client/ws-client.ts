@@ -172,6 +172,8 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 			kind: item.type === 'command' ? 'command' : 'message',
 			text: asString(item.text) ?? (command ? (args ? `${command} ${args}` : command) : ''),
 			paused: item.paused === true,
+			...(typeof item.readOnly === 'boolean' ? { readOnly: item.readOnly } : {}),
+			...(typeof item.saveToHistory === 'boolean' ? { saveToHistory: item.saveToHistory } : {}),
 		};
 	});
 }

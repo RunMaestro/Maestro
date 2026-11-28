@@ -196,6 +196,10 @@ function toQueuedTurn(item: TurnItem): QueuedTurn {
 		kind: 'message',
 		text: item.text,
 		paused: item.paused === true,
+		readOnly: item.readOnly === true,
+		...(item.overrides?.saveToHistory !== undefined
+			? { saveToHistory: item.overrides.saveToHistory }
+			: {}),
 	};
 }
 

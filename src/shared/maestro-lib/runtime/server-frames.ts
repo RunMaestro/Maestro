@@ -70,6 +70,8 @@ export interface QueuedTurnWire {
 	type: QueuedTurn['kind'];
 	text: string;
 	paused: boolean;
+	readOnly?: boolean;
+	saveToHistory?: boolean;
 }
 
 /**
@@ -84,6 +86,8 @@ export function queuedTurnsToWire(items: readonly QueuedTurn[]): QueuedTurnWire[
 		type: item.kind,
 		text: item.text,
 		paused: item.paused,
+		...(item.readOnly !== undefined ? { readOnly: item.readOnly } : {}),
+		...(item.saveToHistory !== undefined ? { saveToHistory: item.saveToHistory } : {}),
 	}));
 }
 

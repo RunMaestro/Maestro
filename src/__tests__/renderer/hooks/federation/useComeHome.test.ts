@@ -1,6 +1,6 @@
 /**
- * Tests for useComeHome: the window starts the come-home job once, after the agents load, only in
- * the lifecycle owner, and hands the report on.
+ * Tests for useComeHome: the window starts the come-home job after the agents load, and again when
+ * hosting turns off, only in the lifecycle owner, and hands the report on.
  */
 
 import { renderHook } from '@testing-library/react';
@@ -12,6 +12,7 @@ import {
 } from '../../../../renderer/hooks/federation/useComeHome';
 import { useNotificationStore } from '../../../../renderer/stores/notificationStore';
 import { useFederationAutoStore } from '../../../../renderer/stores/federationAutoStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { COME_HOME_RETRY_INTERVAL_MS } from '../../../../shared/federationComeHome';
 import { captureException } from '../../../../renderer/utils/sentry';
 
@@ -26,6 +27,7 @@ describe('useComeHome', () => {
 
 	beforeEach(() => {
 		vi.useFakeTimers();
+		useFederationAutoStore.getState().setComeHomeReport(null);
 		saved = maestro.federation;
 		comeHome = vi.fn(async () => report);
 		maestro.federation = { comeHome };
@@ -33,6 +35,7 @@ describe('useComeHome', () => {
 
 	afterEach(() => {
 		maestro.federation = saved;
+		useSettingsStore.setState({ federationHostedAgents: false });
 		vi.useRealTimers();
 	});
 
@@ -141,6 +144,125 @@ describe('useComeHome', () => {
 			unmount();
 			await vi.advanceTimersByTimeAsync(COME_HOME_RETRY_INTERVAL_MS * 2);
 			expect(comeHome).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('hosting turned off later, and an owner that goes away (#2195)', () => {
+		const stuck = {
+			startedAt: 1,
+			finishedAt: 2,
+			agents: [
+				{
+					id: 'a1',
+					name: 'Docs',
+					from: 'box:h1',
+					result: 'failed' as const,
+					reason: 'timed out',
+					notices: [],
+				},
+			],
+		};
+
+		it('runs nothing while hosting is on, and runs once it is turned off', async () => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+			renderHook(() => useComeHome({ enabled: true, sessionsLoaded: true }));
+			await vi.advanceTimersByTimeAsync(COME_HOME_START_DELAY_MS * 2);
+			expect(comeHome).not.toHaveBeenCalled();
+
+			useSettingsStore.setState({ federationHostedAgents: false });
+			await vi.advanceTimersByTimeAsync(COME_HOME_START_DELAY_MS);
+			expect(comeHome).toHaveBeenCalledTimes(1);
+		});
+
+		it('turning hosting on stops the retries', async () => {
+			comeHome.mockResolvedValue(stuck);
+			renderHook(() => useComeHome({ enabled: true, sessionsLoaded: true }));
+			await vi.advanceTimersByTimeAsync(COME_HOME_START_DELAY_MS);
+			expect(comeHome).toHaveBeenCalledTimes(1);
+			useSettingsStore.setState({ federationHostedAgents: true });
+			await vi.advanceTimersByTimeAsync(COME_HOME_RETRY_INTERVAL_MS * 2);
+			expect(comeHome).toHaveBeenCalledTimes(1);
+			expect(vi.getTimerCount()).toBe(0);
+		});
+
+		it('an answer that arrives after the window unmounted announces nothing and schedules nothing', async () => {
+			let answer: (value: typeof stuck) => void = () => {};
+			comeHome.mockImplementationOnce(
+				() => new Promise<typeof stuck>((resolve) => (answer = resolve))
+			);
+			const onReport = vi.fn();
+			const { unmount } = renderHook(() =>
+				useComeHome({ enabled: true, sessionsLoaded: true, onReport })
+			);
+			await vi.advanceTimersByTimeAsync(COME_HOME_START_DELAY_MS);
+			unmount();
+			answer(stuck);
+			await vi.advanceTimersByTimeAsync(COME_HOME_RETRY_INTERVAL_MS * 2);
+			expect(onReport).not.toHaveBeenCalled();
+			expect(comeHome).toHaveBeenCalledTimes(1);
+			expect(vi.getTimerCount()).toBe(0);
+		});
+
+		it('a failure that arrives after the window lost the lifecycle is not shown and not retried', async () => {
+			useNotificationStore.setState({ toasts: [] });
+			let fail: (error: Error) => void = () => {};
+			comeHome.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
+			const { rerender } = renderHook((props) => useComeHome(props), {
+				initialProps: { enabled: true, sessionsLoaded: true },
+			});
+			await vi.advanceTimersByTimeAsync(COME_HOME_START_DELAY_MS);
+			rerender({ enabled: false, sessionsLoaded: true });
+			fail(new Error('no window'));
+			await vi.advanceTimersByTimeAsync(COME_HOME_RETRY_INTERVAL_MS * 2);
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+			expect(comeHome).toHaveBeenCalledTimes(1);
+			expect(vi.getTimerCount()).toBe(0);
+		});
+	});
+
+	describe('a window that does not run the job still knows why messages wait (#2195)', () => {
+		const older = { startedAt: 1, finishedAt: 2, agents: [] };
+		const newer = { startedAt: 3, finishedAt: 4, agents: [] };
+
+		it("keeps main's pushed report, and reads the last one when it opens", async () => {
+			let push: (report: typeof newer) => void = () => {};
+			const unsubscribe = vi.fn();
+			maestro.federation = {
+				comeHome,
+				lastComeHomeReport: vi.fn(async () => older),
+				onComeHomeReport: vi.fn((handler: typeof push) => {
+					push = handler;
+					return unsubscribe;
+				}),
+			};
+			const { unmount } = renderHook(() => useComeHome({ enabled: false, sessionsLoaded: true }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(useFederationAutoStore.getState().comeHomeReport).toBe(older);
+			push(newer);
+			expect(useFederationAutoStore.getState().comeHomeReport).toBe(newer);
+			// Not the owner: it never runs the job itself.
+			await vi.advanceTimersByTimeAsync(COME_HOME_START_DELAY_MS * 2);
+			expect(comeHome).not.toHaveBeenCalled();
+			unmount();
+			expect(unsubscribe).toHaveBeenCalled();
+		});
+
+		it('a read that answers after a newer push does not replace it', async () => {
+			let answer: (report: typeof older) => void = () => {};
+			let push: (report: typeof newer) => void = () => {};
+			maestro.federation = {
+				comeHome,
+				lastComeHomeReport: vi.fn(() => new Promise((resolve) => (answer = resolve))),
+				onComeHomeReport: vi.fn((handler: typeof push) => {
+					push = handler;
+					return () => {};
+				}),
+			};
+			renderHook(() => useComeHome({ enabled: false, sessionsLoaded: true }));
+			push(newer);
+			answer(older);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(useFederationAutoStore.getState().comeHomeReport).toBe(newer);
 		});
 	});
 
