@@ -52,6 +52,7 @@ import {
 	transcriptChangedArgs,
 } from '../../../shared/maestro-lib/client/bridge-frames';
 import { installHostedLaunchGuard } from '../../utils/hosted-launch-guard';
+import { movedAgentWaitRefusal } from '../../federation/come-home';
 import {
 	initPermissionRelay,
 	resolvePermissionResponse,
@@ -290,12 +291,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		// of it may start here: it would resume the provider session the host owns. Shell tabs stay,
 		// and so does a named stateless helper (`HOSTED_STATELESS_HELPERS`): it writes nothing into
 		// the agent, so it runs over the record's SSH remote exactly as it does for an SSH agent.
+		// With hosting off the agent is on its way home (`src/main/federation/come-home.ts`): the
+		// window holds its messages in the queue until then, and this refuses any other path.
 		if (config.toolType !== 'terminal') {
 			const lifted = liftedOwnerOfProcess(deps.sessionsStore.get('sessions', []), config.sessionId);
 			const refusal =
 				lifted &&
 				!statelessHelperOfProcess(config.sessionId, lifted.id) &&
-				liftedSendRefusal(lifted, readHostingSwitches(settingsStore)[HOSTED_AGENTS_SETTING]);
+				(liftedSendRefusal(lifted, readHostingSwitches(settingsStore)[HOSTED_AGENTS_SETTING]) ??
+					movedAgentWaitRefusal(lifted));
 			if (refusal) throw new Error(refusal);
 		}
 		// A web/CLI caller cannot assert the native renderer's submitted log boundary.

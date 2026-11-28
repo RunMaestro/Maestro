@@ -30,6 +30,7 @@ import type {
 } from '../../shared/maestro-lib/client/peer-mirror';
 import { formatRelativeTime } from '../../shared/formatters';
 import type { AutoFederationSnapshot } from '../../shared/federationAuto';
+import { summarizeComeHomeReport } from '../../shared/federationComeHome';
 import { colorize, formatSuccess } from '../output/formatter';
 import { withMaestroClient } from '../services/maestro-client';
 import { diskFallbackPeer, failCommand, failFromError } from '../services/session-command';
@@ -195,7 +196,13 @@ export function formatAutoFederation(snapshot: AutoFederationSnapshot): string {
 		);
 		if (agent.fix) lines.push(`    To fix: ${agent.fix}`);
 	}
-	if (snapshot.remotes.length === 0 && snapshot.agents.length === 0) {
+	// The same text as the desktop's notice after the job that brings moved agents home.
+	const comeHome = summarizeComeHomeReport(snapshot.comeHome);
+	if (comeHome) {
+		lines.push('', `Moved back from a host this launch: ${comeHome.title}`);
+		for (const line of comeHome.lines) lines.push(`  ${line}`);
+	}
+	if (snapshot.remotes.length === 0 && snapshot.agents.length === 0 && !comeHome) {
 		lines.push('Nothing to do: no SSH remote has run a pass yet.');
 	}
 	return lines.join('\n');
@@ -205,7 +212,9 @@ export function formatAutoFederation(snapshot: AutoFederationSnapshot): string {
 function needsAttention(snapshot: AutoFederationSnapshot): boolean {
 	return (
 		snapshot.remotes.some((remote) => remote.state === 'blocked' || remote.needsYou === true) ||
-		snapshot.agents.some((agent) => agent.state === 'blocked')
+		snapshot.agents.some((agent) => agent.state === 'blocked') ||
+		// An agent the job could not bring home is still on a host.
+		(snapshot.comeHome?.agents ?? []).some((outcome) => outcome.result === 'failed')
 	);
 }
 

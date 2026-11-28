@@ -13,6 +13,7 @@ import {
 	getActiveTab,
 	getBusyTabs,
 	getTabDisplayName,
+	isAwaitingComeHome,
 	settleAgentStateFromTabs,
 	settleTabThinkingState,
 } from '../../utils/tabHelpers';
@@ -967,10 +968,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							activeSession.id,
 							activeTab?.id || activeSession.activeTabId
 						);
+						// Still moved onto a host: queue it like a message, it runs once the agent is home.
 						const sessionIsIdle =
 							!options?.hold &&
 							!retryHoldsTab &&
 							!hostedLineHoldsTab &&
+							!isAwaitingComeHome(activeSession) &&
 							(forceParallel
 								? activeTab?.state !== 'busy'
 								: activeSession.state !== 'busy' && !isAutoRunActive);
@@ -1432,6 +1435,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const liveTab = resolveTargetTab(liveSession) ?? activeTab;
 				const connectionHold = liveSession.executionQueue.some((item) => item.waitingForConnection);
 				const queuedWorkAhead = hasRunnableQueueItem(liveSession.executionQueue);
+				// Still moved onto a host and on its way home: hold the message, it runs once the
+				// agent is back. A spawn now would resume the provider session the host owns.
+				const comingHome = isAwaitingComeHome(liveSession);
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {
@@ -1514,6 +1520,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const shouldQueue =
 					hostedTurn ||
 					options?.hold ||
+					comingHome ||
 					connectionHold ||
 					retryHoldsTab ||
 					consultHoldsTab ||
@@ -1537,6 +1544,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					anySessionAiProcessActive,
 					processStateRequiresQueue,
 					connectionHold,
+					comingHome,
 					queuedWorkAhead,
 					retryHoldsTab,
 					consultHoldsTab,

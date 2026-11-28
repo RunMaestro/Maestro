@@ -19,6 +19,7 @@ import type {
 	DesktopReturnAnswer,
 } from '../federation/lift';
 import type { DesktopSetupHostAnswer, DesktopSetupHostOptions } from '../federation/setup-host';
+import type { ComeHomeReport } from '../../shared/federationComeHome';
 import type { DesktopStopHostAnswer, DesktopStopHostOptions } from '../federation/stop-host';
 import {
 	FEDERATION_WINDOW_REQUEST_CHANNEL,
@@ -123,6 +124,11 @@ export function createFederationApi() {
 			options?: { offline?: boolean; keepHostCopy?: boolean }
 		): Promise<DesktopReturnAnswer> =>
 			ipcRenderer.invoke('federation:unlift', agentId, options ?? {}),
+		/**
+		 * Bring every agent an earlier release moved onto a host home (hosting off), one at a time,
+		 * and answer what happened to each. Joins the run in flight; does nothing with hosting on.
+		 */
+		comeHome: (): Promise<ComeHomeReport> => ipcRenderer.invoke('federation:comeHome'),
 		/**
 		 * Answer main's Federation questions for the CLI: the hosted agents' settings conflicts
 		 * (`maestro-cli federation conflicts|resolve`) and the host agents the Left Bar shows or adds

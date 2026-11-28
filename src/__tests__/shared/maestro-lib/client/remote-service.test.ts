@@ -248,6 +248,51 @@ describe('the launchd branch', () => {
 			);
 		}
 	);
+
+	it.skipIf(!canRun)(
+		'fails when launchd will not enable the label a stop disabled, and never says deferred',
+		() => {
+			const home = fs.mkdtempSync(path.join(tmp, 'home-'));
+			const bin = fs.mkdtempSync(path.join(tmp, 'bin-'));
+			const log = path.join(home, 'calls.log');
+			fs.mkdirSync(path.join(home, '.maestro', 'bin'), { recursive: true });
+			// A host started some other way runs, so a confirmed-enabled label would be `deferred`.
+			fs.writeFileSync(
+				path.join(home, '.maestro', 'bin', 'maestro-cli'),
+				'#!/bin/sh\necho \'{ "running": true, "pid": 812 }\'\n',
+				{ mode: 0o755 }
+			);
+			fs.writeFileSync(
+				path.join(bin, 'uname'),
+				'#!/bin/sh\n[ "$1" = -s ] && echo Darwin || echo arm64\n',
+				{ mode: 0o755 }
+			);
+			fs.writeFileSync(
+				path.join(bin, 'launchctl'),
+				[
+					'#!/bin/sh',
+					`echo "launchctl $*" >> "${log}"`,
+					'case "$1" in',
+					'  print) exit 1;;',
+					'  enable) exit 1;;',
+					'  print-disabled) echo \'\t"sh.maestro.host" => disabled\'; exit 0;;',
+					'esac',
+					'exit 0',
+				].join('\n') + '\n',
+				{ mode: 0o755 }
+			);
+			const result = spawnSync(
+				'bash',
+				['--norc', '--noprofile', '-c', buildRemoteServiceScript()],
+				{ env: { HOME: home, PATH: `${bin}:/usr/bin:/bin` }, encoding: 'utf8' }
+			);
+			expect(parseRemoteServiceReport(result.stdout)).toMatchObject({
+				kind: 'none',
+				reason: 'enable-failed',
+			});
+			expect(fs.readFileSync(log, 'utf8')).not.toContain('launchctl bootstrap');
+		}
+	);
 });
 
 describe('parseRemoteServiceReport and describeRemoteService', () => {

@@ -256,6 +256,63 @@ describe('federation command', () => {
 			expect(lastJson()).toMatchObject({ autoMove: true, agents: [] });
 			expect(process.exitCode).toBeUndefined();
 		});
+
+		it('reports the agents that came home this launch, with what an offline one may miss', async () => {
+			const comeHome = {
+				startedAt: 1,
+				finishedAt: 2,
+				agents: [
+					{ id: 'a1', name: 'Docs', from: 'box:h1', result: 'online' as const, notices: [] },
+					{
+						id: 'a2',
+						name: 'Api',
+						from: 'box:h2',
+						result: 'offline' as const,
+						missing: { peer: 'box', hostAgentId: 'h2', movedAt: 1 },
+						notices: ['The host was not contacted. Its SSH remote is disabled.'],
+					},
+				],
+			};
+			mockDesktop({
+				success: true,
+				auto: { autoMove: false, running: false, remotes: [], agents: [], comeHome },
+			});
+
+			await federationAuto({});
+
+			const text = printed();
+			expect(text).toContain('Moved back from a host this launch: 2 agents moved back');
+			expect(text).toContain('"Docs" is an SSH agent again, with its conversations from box.');
+			expect(text).toMatch(/"Api" .*still on box, as agent h2\..*SSH remote is disabled/);
+			expect(text).not.toContain('Nothing to do');
+			// Back offline is told, not a failure: nothing needs a person.
+			expect(process.exitCode).toBeUndefined();
+		});
+
+		it('exits 1 while an agent the job could not bring home is still on a host', async () => {
+			mockDesktop({
+				success: true,
+				auto: {
+					autoMove: false,
+					running: false,
+					remotes: [],
+					agents: [],
+					comeHome: {
+						startedAt: 1,
+						finishedAt: 2,
+						agents: [
+							{ id: 'a1', name: 'Docs', from: 'box:h1', result: 'failed', notices: ['refused'] },
+						],
+					},
+				},
+			});
+
+			await federationAuto({});
+
+			expect(printed()).toContain('"Docs" is still on box');
+			expect(process.exitCode).toBe(1);
+			process.exitCode = undefined;
+		});
 	});
 
 	describe('federation conflicts', () => {

@@ -10,6 +10,7 @@ import { usePeerMirrorStore } from '../../stores/peerMirrorStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { buildHostedAgentListings } from '../../services/hostedAgents';
+import { readLiftedTo } from '../../../shared/maestro-lib/agents/lift-pointer';
 import {
 	agentFederationStatus,
 	sameFederationStatus,
@@ -44,6 +45,24 @@ export function useAgentFederationStatus(
 			);
 		},
 		sameFederationStatus
+	);
+}
+
+/**
+ * Where Move Back from Host takes `agent` from, or `undefined` when it is not on a host. Unlike
+ * {@link useAgentFederationStatus}, it reads the stored pointer whatever the hosted-agents setting
+ * says: an agent an earlier release moved must always be able to come home. `peerName` is the
+ * mirrored peer's name when the mirror knows it, else the peer id.
+ */
+export function useMoveBackTarget(
+	agent: LiftableAgent | null | undefined
+): { peerId: string; peerName: string } | undefined {
+	const peers = usePeerMirrorStore((s) => s.peers);
+	const pointer = readLiftedTo(agent?.liftedTo);
+	const peerId = pointer?.peer;
+	return useMemo(
+		() => (peerId ? { peerId, peerName: peers[peerId]?.name ?? peerId } : undefined),
+		[peerId, peers]
 	);
 }
 

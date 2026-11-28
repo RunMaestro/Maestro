@@ -6,16 +6,29 @@
  * back turns that pointer into an SSH agent again:
  *
  * 1. Refusals that cost no dial: not hosted, or no SSH remote to run on once it is back.
- * 2. The host's copy is read: its tabs and each tab's transcript. A running turn or a message that
- *    still waits in the host's queue is refused: it would be lost or run twice. The host's tab ids
- *    and provider session ids are the ones the lift sent, so a tab that moved comes back onto its
- *    own local tab, and the next turn over SSH resumes the same provider session.
+ * 2. The host's copy is read: its tabs, each tab's transcript, and its queue. A running turn is
+ *    refused: it would be lost. Each waiting message is held on the host first (so the host cannot
+ *    start it while this runs; one that started anyway is a running turn), then comes back into the
+ *    local queue. The host's tab ids and provider session ids are the ones the lift sent, so a tab
+ *    that moved comes back onto its own local tab, and the next turn over SSH resumes the same
+ *    provider session.
  * 3. The local record is restored (`withReturnedFromHost()`): no pointer, the host's tabs merged
  *    in, and `hostedOptOut`, so automatic Federation does not move it straight back.
- * 4. The host's copy is removed, unless the caller keeps it, so the agent has one owner again.
+ * 4. The host's copy is removed, unless the caller keeps it, so the agent has one owner again. A
+ *    kept copy loses the messages that came back, so they cannot run twice.
  *
- * `offline` skips 2 and 4 for a host that cannot be reached: the agent comes back with only what
- * this machine kept, and the result says the host's copy is still there.
+ * The restore in 3 records the copy still to remove (`hostCopyLeft`), and a second write clears it
+ * once 4 is done. A crash, a lost link, or a refused removal in between leaves the agent home with
+ * the marker, and the next return of that agent (the come-home job at the next launch) finishes:
+ * the copy may have taken turns or messages since, so it is read again (transcripts merge row by
+ * row, so nothing comes twice), the queue items that came home already (`carried`) are skipped,
+ * and then the copy is removed.
+ *
+ * `offline` skips 2 and 4 for a host that cannot be reached (and needs no SSH remote, so an agent
+ * whose SSH settings are off or gone is never stranded): the agent comes back with only what
+ * this machine kept, and the result says the host's copy is still there. The marker says so too
+ * (`fetched: false`): a later return that reaches the host brings what the host wrote since (the
+ * transcripts merge row by row, so the rows this machine wrote meanwhile stay), then removes it.
  *
  * Tabs are never dropped: a local tab the host no longer has stays, and a host transcript shorter
  * than the local one does not replace it.
@@ -25,15 +38,29 @@ import type { ClientError, MaestroClient } from '../client/types';
 import type { AITabRecord, AgentRecord } from '../store/records';
 import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
 import { LiftRunError } from './lift-run';
-import type { ReturnedFromHost, ReturnedHeldItem } from './lift-return-record';
+import {
+	hostDraftsNotKept,
+	readHostCopyLeft,
+	type HostCopyLeft,
+	type ReturnedFromHost,
+} from './lift-return-record';
 
 export {
+	hostDraftsNotKept,
+	readHostCopyLeft,
 	readLeftOnHost,
 	readReturnedFromHost,
 	returnRestoreRefusal,
 	withReturnedFromHost,
+	type HostCopyLeft,
 	type ReturnedFromHost,
 } from './lift-return-record';
+
+/**
+ * The wait for a host transcript read that timed out once (the client's own wait is 10 s): a
+ * long transcript is a large frame, and a slow answer is not a host that is gone.
+ */
+export const RETURN_TRANSCRIPT_RETRY_TIMEOUT_MS = 120_000;
 
 export interface ReturnRunOptions {
 	/** The host cannot be reached: restore from this machine's copy only, and keep the host's. */
@@ -45,7 +72,9 @@ export interface ReturnRunOptions {
 /** A client attached to the agent's host. `release()` is the caller's. */
 export interface ReturnHostConnection {
 	peer: string;
-	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'>;
+	/** `connection` names the host kind: a desktop host does not send a queued message's images. */
+	client: Pick<MaestroClient, 'agents' | 'tabs' | 'turns'> &
+		Partial<Pick<MaestroClient, 'connection'>>;
 	release(): Promise<void>;
 }
 
@@ -58,6 +87,8 @@ export interface ReturnRunDeps {
 	hostCallError?(peer: string, error: Pick<ClientError, 'code' | 'message'>): Error;
 	/** Write the restored record (see `withReturnedFromHost()`). Throws on failure. */
 	restore(agentId: string, returned: ReturnedFromHost): Promise<void>;
+	/** Epoch milliseconds, for `HostCopyLeft.returnedAt`. Default `Date.now()`. */
+	now?(): number;
 }
 
 export interface ReturnResult {
@@ -68,6 +99,8 @@ export interface ReturnResult {
 	tabs: number;
 	/** Host tabs this machine did not have, added as new tabs. */
 	newTabs: number;
+	/** Messages that waited in the host's queue and now wait in this one. */
+	queued?: number;
 	hostCopyRemoved: boolean;
 	notices?: string[];
 }
@@ -112,25 +145,53 @@ export async function runReturnFromHost(
 	}
 	const agent = deps.readAgents().find((record) => record.id === agentId);
 	if (!agent) throw new LiftRunError('AGENT_NOT_FOUND', `Agent not found: ${agentRef}`);
-	const pointer: LiftedToPointer | undefined = readLiftedTo(agent.liftedTo);
+	// Home already, with a host copy an earlier return did not get to remove: finish that return.
+	const left: HostCopyLeft | undefined = readLiftedTo(agent.liftedTo)
+		? undefined
+		: readHostCopyLeft(agent.hostCopyLeft);
+	const pointer: LiftedToPointer | undefined = readLiftedTo(agent.liftedTo) ?? left;
 	if (!pointer) {
 		throw new LiftRunError(
 			'RETURN_NOT_HOSTED',
 			`"${agent.name}" is not hosted: nothing to move back.`
 		);
 	}
-	const remoteId = sshRemoteIdOf(agent);
-	if (!remoteId) {
-		throw new LiftRunError(
-			'RETURN_NO_SSH',
-			`"${agent.name}" has no SSH remote to run on once it is back. Set one in Edit Agent first.`
-		);
-	}
 	const from = peerAgentRef(pointer.peer, pointer.agentId);
 	const summary = { id: agent.id, name: agent.name };
+	const now = deps.now ?? Date.now;
+	/** The copy on the host as `leftOnHost` records it (a plain pointer, also when finishing). */
+	const leftOnHost: LiftedToPointer = {
+		peer: pointer.peer,
+		agentId: pointer.agentId,
+		at: pointer.at,
+	};
+	const copyLeft = (fetched: boolean, carried: readonly string[] = []): HostCopyLeft => {
+		const all = [...new Set([...(left?.carried ?? []), ...carried])];
+		return {
+			peer: pointer.peer,
+			agentId: pointer.agentId,
+			at: pointer.at,
+			fetched: fetched || left?.fetched === true,
+			returnedAt: left?.returnedAt ?? now(),
+			...(all.length > 0 ? { carried: all } : {}),
+		};
+	};
 
 	if (options.offline) {
-		await restoreOrThrow(deps, agent, { tabs: [], leftOnHost: pointer });
+		if (left) {
+			throw new LiftRunError(
+				'RETURN_NOT_HOSTED',
+				`"${agent.name}" is home already. Its copy on the host (${from}) is removed once the host answers.`
+			);
+		}
+		// The copy left on the host is recorded twice: `hostCopyLeft` for the come-home job, which
+		// finishes this return once the host answers, and `leftOnHost`, so a Move to Host made first
+		// replaces that copy instead of being refused for its name.
+		await restoreOrThrow(deps, agent, {
+			tabs: [],
+			hostCopyLeft: copyLeft(false),
+			leftOnHost,
+		});
 		return {
 			agent: summary,
 			from,
@@ -138,98 +199,155 @@ export async function runReturnFromHost(
 			newTabs: 0,
 			hostCopyRemoved: false,
 			notices: [
-				`The host was not reached, so conversations started there after the move stay there, and its copy (${from}) still exists. ${hostCopyLeftAdvice(from)}`,
+				`The host was not reached, so conversations started there after the move stay there, and its copy (${from}) still exists. With hosted agents off, Maestro brings what it wrote since and removes it once the host answers. ${hostCopyLeftAdvice(from)}`,
 			],
 		};
 	}
 
+	// Only the offline return above may run without an SSH remote: the host is reached through it.
+	const remoteId = sshRemoteIdOf(agent);
+	if (!remoteId) {
+		throw new LiftRunError(
+			'RETURN_NO_SSH',
+			`"${agent.name}" has no SSH remote to reach its host through. Move it back offline, or set one in Edit Agent first.`
+		);
+	}
 	const connection = await deps.connect(remoteId, pointer.peer);
+	let released = false;
 	try {
 		const hostError = deps.hostCallError ?? defaultHostCallError;
 		const notices: string[] = [];
 		let returned: ReturnedFromHost = { tabs: [] };
-		let heldQueue: ReturnedHeldItem[] = [];
+		/** Messages this return held on the host: released again when the return fails. */
+		const heldIds: string[] = [];
+		/** Items an earlier return brought home that still wait, held, in the host copy. */
+		let carriedOnHost: string[] = [];
 		const hostAgent = await connection.client.agents.get(pointer.agentId);
 		const hostGone = !hostAgent.ok && hostAgent.error.code === 'not-found';
 		if (!hostAgent.ok && !hostGone) throw hostError(connection.peer, hostAgent.error);
+		/** Queue items an earlier return of this agent brought home already. */
+		const carried = new Set(left?.carried ?? []);
 
 		if (hostAgent.ok) {
 			const busy = (hostAgent.value.aiTabs ?? []).some((tab) => tab.state === 'busy');
 			if (busy) {
 				throw new LiftRunError(
 					'RETURN_BUSY',
-					`"${agent.name}" is running a turn on its host. Wait for it to finish, or stop it, then move it back.`
+					left
+						? `The old copy of "${agent.name}" on its host is running a turn. Wait for it to finish, then it is removed.`
+						: `"${agent.name}" is running a turn on its host. Wait for it to finish, or stop it, then move it back.`
 				);
 			}
-			const queue = await connection.client.turns.queue.list(pointer.agentId);
-			if (!queue.ok) throw hostError(connection.peer, queue.error);
-			// A message the person held (paused) comes home held, with the agent (R50). One that
-			// waits to run would run there or here, or twice: refused. With the host's copy kept, a
-			// held one would be held on both: refused too.
-			const waiting = queue.value.filter(
-				(item) => item.paused !== true || options.keepHostCopy === true
-			);
-			if (waiting.length > 0) {
-				throw new LiftRunError(
-					'RETURN_QUEUED',
-					`${waiting.length} message(s) still wait in "${agent.name}"'s queue on its host. Let them run or remove them, then move it back.`
-				);
-			}
-			heldQueue = queue.value.map((item) => ({
-				id: item.itemId,
-				tabId: item.tabId,
-				timestamp: item.queuedAt,
-				kind: item.kind,
-				text: item.text,
-				...(item.images && item.images.length > 0 ? { images: item.images } : {}),
-				...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
-			}));
+			/**
+			 * The host's waiting messages, less those an earlier return carried, each held on the host
+			 * so it cannot start there while it moves here.
+			 */
+			const holdWaiting = async (): Promise<NonNullable<ReturnedFromHost['queue']>> => {
+				const listed = await connection.client.turns.queue.list(pointer.agentId);
+				if (!listed.ok) {
+					await releaseHeld(connection, pointer.agentId, heldIds);
+					throw hostError(connection.peer, listed.error);
+				}
+				carriedOnHost = listed.value
+					.filter((item) => carried.has(item.itemId))
+					.map((item) => item.itemId);
+				const waiting = listed.value.filter((item) => !carried.has(item.itemId));
+				for (const item of waiting) {
+					if (item.paused || heldIds.includes(item.itemId)) continue;
+					const held = await connection.client.turns.queue.setPaused(
+						pointer.agentId,
+						item.itemId,
+						true
+					);
+					if (!held.ok) {
+						await releaseHeld(connection, pointer.agentId, heldIds);
+						throw hostError(connection.peer, held.error);
+					}
+					if (!held.value.found) {
+						await releaseHeld(connection, pointer.agentId, heldIds);
+						throw new LiftRunError(
+							'RETURN_BUSY',
+							`"${agent.name}" started a queued message on its host. Wait for it to finish, then move it back.`
+						);
+					}
+					heldIds.push(item.itemId);
+				}
+				return waiting.map((item) => ({
+					itemId: item.itemId,
+					tabId: item.tabId,
+					queuedAt: item.queuedAt,
+					text: item.text,
+					// Held by this return or by the user: `paused` is the user's own hold only.
+					paused: item.paused && !heldIds.includes(item.itemId),
+					...(item.kind === 'command' ? { kind: item.kind } : {}),
+					...(item.images && item.images.length > 0 ? { images: item.images } : {}),
+					...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
+				}));
+			};
+			let queue = await holdWaiting();
+			const failRead = async (error: Pick<ClientError, 'code' | 'message'>): Promise<never> => {
+				await releaseHeld(connection, pointer.agentId, heldIds);
+				throw hostError(connection.peer, error);
+			};
 			const tabs = await connection.client.tabs.list(pointer.agentId);
-			if (!tabs.ok) throw hostError(connection.peer, tabs.error);
+			if (!tabs.ok) return await failRead(tabs.error);
 			const withLogs: AITabRecord[] = [];
 			for (const tab of tabs.value) {
-				const transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id);
-				if (!transcript.ok) throw hostError(connection.peer, transcript.error);
+				let transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id);
+				if (!transcript.ok && transcript.error.code === 'timeout') {
+					transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id, {
+						timeoutMs: RETURN_TRANSCRIPT_RETRY_TIMEOUT_MS,
+					});
+				}
+				if (!transcript.ok) return await failRead(transcript.error);
 				withLogs.push({ ...tab, logs: transcript.value });
 			}
-			// A held message waits for a tab that comes home (one the host lists, or this machine
-			// has): one for a tab the host does not list (a hidden consult tab) would be dropped by
-			// the restore and lost with the host's copy. Refused, nothing changed (CodeRabbit on #2171).
-			const restorable = new Set([
-				...tabs.value.map((tab) => tab.id),
-				...(agent.aiTabs ?? []).map((tab) => tab.id),
-			]);
-			if (heldQueue.some((item) => !restorable.has(item.tabId))) {
+			// A turn may have started on the host since the first look (a message that left the queue
+			// before it was held, or a send typed on the host): look again before anything is written.
+			const recheck = await connection.client.agents.get(pointer.agentId);
+			if (!recheck.ok) return await failRead(recheck.error);
+			if ((recheck.value.aiTabs ?? []).some((tab) => tab.state === 'busy')) {
+				await releaseHeld(connection, pointer.agentId, heldIds);
 				throw new LiftRunError(
-					'RETURN_QUEUED',
-					`"${agent.name}" has a held message on its host for a tab that does not come back. Nothing changed; send or remove that message, then move it back.`
+					'RETURN_BUSY',
+					`"${agent.name}" started a turn on its host. Wait for it to finish, then move it back.`
 				);
 			}
-			// The held messages come home only as they were listed: one another client resumed or
-			// sent on the host while the tabs were read could run there and come home held too
-			// (CodeRabbit on #2171). Read the queue again just before the restore; any change refuses
-			// the move with nothing changed.
-			if (heldQueue.length > 0) {
-				const again = await connection.client.turns.queue.list(pointer.agentId);
-				if (!again.ok) throw hostError(connection.peer, again.error);
-				const unchanged =
-					again.value.length === heldQueue.length &&
-					again.value.every(
-						(item) => item.paused === true && heldQueue.some((held) => held.id === item.itemId)
-					);
-				if (!unchanged) {
-					throw new LiftRunError(
-						'RETURN_QUEUED',
-						`"${agent.name}"'s queue on its host changed while it was being moved back. Nothing changed; move it back again.`
-					);
-				}
-			}
+			// A message queued on the host while its transcripts were read comes home too, held.
+			queue = await holdWaiting();
+			// A desktop host from before queued images went on the wire (`QueuedTurn.images`) sends
+			// none, and nothing tells it apart from one with no images: its messages come home held,
+			// so none runs without the image it was sent with. A headless host sends what it took.
+			const imagesUnread =
+				queue.length > 0 && connection.client.connection?.host()?.kind === 'desktop';
 			returned = {
 				tabs: withLogs,
+				...(options.keepHostCopy
+					? {}
+					: {
+							hostCopyLeft: copyLeft(
+								true,
+								queue.map((item) => item.itemId)
+							),
+						}),
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
-				...(heldQueue.length > 0 ? { heldQueue } : {}),
+				...(queue.length > 0
+					? {
+							queue: queue.map((item) => ({ ...item, paused: item.paused || imagesUnread })),
+						}
+					: {}),
 			};
-		} else {
+			for (const kept of hostDraftsNotKept(agent.aiTabs ?? [], returned)) {
+				notices.push(
+					`A draft typed on the host in tab "${kept.tabName ?? kept.tabId}" was not put in that tab, because it has a draft of its own here. The host's draft was: ${kept.draft}`
+				);
+			}
+			if (imagesUnread) {
+				notices.push(
+					`${from} is a Maestro desktop, which does not send the images attached to queued messages. The ${queue.length === 1 ? 'message' : `${queue.length} messages`} from its queue wait here, held: attach any image again, then resume ${queue.length === 1 ? 'it' : 'each one'}.`
+				);
+			}
+		} else if (!left) {
 			notices.push(
 				`The host no longer has ${from}: the agent comes back with this machine's copy.`
 			);
@@ -238,23 +356,56 @@ export async function runReturnFromHost(
 		// The host's copy is recorded on the agent until its removal is confirmed (it is removed
 		// below, after the restore), so a kept copy, or one whose removal fails, is replaced by a
 		// later Move to Host. A pointer to a copy since removed is harmless: the lift finds no copy.
-		await restoreOrThrow(
-			deps,
-			agent,
-			hostAgent.ok ? { ...returned, leftOnHost: pointer } : returned
-		);
-
-		let hostCopyRemoved = false;
-		if (hostAgent.ok && !options.keepHostCopy) {
-			const removed = await connection.client.agents.remove(pointer.agentId);
-			if (removed.ok) hostCopyRemoved = true;
-			else {
-				notices.push(
-					`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} ${hostCopyLeftAdvice(from)}`
-				);
+		try {
+			await restoreOrThrow(deps, agent, hostAgent.ok ? { ...returned, leftOnHost } : returned);
+		} catch (error) {
+			// A restore that answered late (the window timed out) may have been written anyway: the
+			// messages it carried then wait here, and releasing them on the host would run them twice.
+			if (!restoreLanded(deps, agent.id, left !== undefined, heldIds)) {
+				await releaseHeld(connection, pointer.agentId, heldIds);
+				throw error;
 			}
-		} else if (hostAgent.ok) {
-			notices.push(`The host keeps its copy (${from}). Do not send to both.`);
+		}
+
+		// The agent is home from here on: a failure is the host copy's, reported, never the agent's.
+		let hostCopyRemoved = false;
+		try {
+			if (hostAgent.ok && !options.keepHostCopy) {
+				const removed = await connection.client.agents.remove(pointer.agentId);
+				if (removed.ok) {
+					hostCopyRemoved = true;
+					await clearHostCopyLeft(deps, agent, notices);
+				} else {
+					notices.push(
+						`The agent is back, but its copy on the host (${from}) could not be removed: ${removed.error.message} With hosted agents off, Maestro removes it at the next launch. ${hostCopyLeftAdvice(from)}`
+					);
+				}
+			} else if (hostAgent.ok) {
+				notices.push(`The host keeps its copy (${from}). Do not send to both.`);
+				const cameHome = [...(returned.queue ?? []).map((item) => item.itemId), ...carriedOnHost];
+				for (const itemId of cameHome) {
+					const removed = await connection.client.turns.queue.remove(pointer.agentId, itemId);
+					if (!removed.ok) {
+						notices.push(
+							`A message that came back still waits, held, in the host's queue (${from}): ${removed.error.message} Remove it there so it does not run twice.`
+						);
+					}
+				}
+			}
+		} catch (error) {
+			notices.push(
+				options.keepHostCopy
+					? `The agent is back, but the host (${from}) stopped answering before the messages that came back left its queue: ${errorText(error)} Remove them there so they do not run twice.`
+					: `The agent is back, but the host (${from}) stopped answering before its copy was removed: ${errorText(error)} Maestro removes it at the next launch.`
+			);
+		}
+		released = true;
+		try {
+			await connection.release();
+		} catch (error) {
+			notices.push(
+				`The agent is back, but the connection to ${from} did not close: ${errorText(error)}`
+			);
 		}
 
 		const localIds = new Set((agent.aiTabs ?? []).map((tab) => tab.id));
@@ -263,11 +414,71 @@ export async function runReturnFromHost(
 			from,
 			tabs: returned.tabs.length,
 			newTabs: returned.tabs.filter((tab) => !localIds.has(tab.id)).length,
+			...(returned.queue?.length ? { queued: returned.queue.length } : {}),
 			hostCopyRemoved,
 			...(notices.length > 0 ? { notices } : {}),
 		};
 	} finally {
-		await connection.release();
+		if (!released) await connection.release();
+	}
+}
+
+function errorText(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The host copy is gone: write the record without the marker, so no later run dials for it. A
+ * failure here is not the agent's: it is home, and the next run finds the copy gone and clears the
+ * marker then. Reported as a notice.
+ */
+async function clearHostCopyLeft(
+	deps: ReturnRunDeps,
+	agent: AgentRecord,
+	notices: string[]
+): Promise<void> {
+	try {
+		await deps.restore(agent.id, { tabs: [] });
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		notices.push(
+			`The host copy is removed, but "${agent.name}" could not be saved without its note of it (${message}). Maestro clears it at the next launch.`
+		);
+	}
+}
+
+/**
+ * Whether the restore was written although it reported a failure: the stored record is home, and
+ * (for a record that was home already, finishing an earlier return) every message this return held
+ * on the host is in its queue or in its note of the host copy.
+ */
+function restoreLanded(
+	deps: ReturnRunDeps,
+	agentId: string,
+	finishing: boolean,
+	heldIds: readonly string[]
+): boolean {
+	const current = deps.readAgents().find((record) => record.id === agentId);
+	if (!current || readLiftedTo(current.liftedTo)) return false;
+	if (!finishing) return true;
+	const carried = new Set(readHostCopyLeft(current.hostCopyLeft)?.carried ?? []);
+	const queue = (current as { executionQueue?: Array<{ id?: unknown }> }).executionQueue;
+	const queued = new Set((Array.isArray(queue) ? queue : []).map((item) => item?.id));
+	return heldIds.length > 0 && heldIds.every((id) => carried.has(id) || queued.has(id));
+}
+
+/**
+ * Let the host run the messages this return held, because the return failed. A failure to release
+ * one is not reported over the error the caller is about to see: that message stays held on the
+ * host, where Hold / Resume reaches it.
+ */
+async function releaseHeld(
+	connection: ReturnHostConnection,
+	hostAgentId: string,
+	heldIds: string[]
+): Promise<void> {
+	for (const itemId of heldIds) {
+		await connection.client.turns.queue.setPaused(hostAgentId, itemId, false);
 	}
 }
 

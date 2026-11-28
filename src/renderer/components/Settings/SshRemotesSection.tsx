@@ -20,7 +20,7 @@
  * ```
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
 	Server,
 	Plus,
@@ -41,6 +41,7 @@ import type { Theme } from '../../types';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type { SshRemoteRemediation } from '../../../shared/sshRemoteShell';
 import { formatSshTarget } from '../../../shared/formatters';
+import { federationFieldFor, isFederationRemote } from '../../../shared/federationRemote';
 import { compareNamesIgnoringEmojis } from '../../../shared/emojiUtils';
 import { useSshRemotes } from '../../hooks';
 import { SshRemoteModal } from './SshRemoteModal';
@@ -144,6 +145,9 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 		Record<string, { success: boolean; message: string }>
 	>({});
 	const [hostConfirm, setHostConfirm] = useState<HostConfirm | null>(null);
+	// Remotes whose Federation switch a Stop Host or Remove Host turned off while the editor held
+	// the earlier value: a save that leaves the switch as it was opened keeps it off.
+	const federationOffSinceEdit = useRef(new Set<string>());
 
 	const sortedConfigs = useMemo(() => sortSshRemotes(configs), [configs]);
 	const visibleConfigs = useMemo(
@@ -160,6 +164,7 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 
 	// Handle edit existing remote
 	const handleEdit = (config: SshRemoteConfig) => {
+		federationOffSinceEdit.current.delete(config.id);
 		setEditingConfig(config);
 		setShowModal(true);
 	};
@@ -227,8 +232,12 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 			});
 			return;
 		}
-		// Main switched the remote's Federation off: reload, so an edit here does not switch it back.
-		if (answer.federationOff) await refresh();
+		// Main switched the remote's Federation off: reload, and keep an editor opened before the stop
+		// from switching it back on with the value it was opened with.
+		if (answer.federationOff) {
+			federationOffSinceEdit.current.add(config.id);
+			await refresh();
+		}
 		const success = answer.ok && (answer.outcome === 'done' || answer.outcome === 'nothing');
 		setHostResults((prev) => ({
 			...prev,
@@ -247,7 +256,15 @@ export function SshRemotesSection({ theme }: SshRemotesSectionProps) {
 
 	// Handle save from modal
 	const handleSave = async (config: Partial<SshRemoteConfig>) => {
-		const result = await saveConfig(config);
+		const opened = editingConfig;
+		const keepOff =
+			opened !== undefined &&
+			config.id === opened.id &&
+			federationOffSinceEdit.current.has(opened.id) &&
+			isFederationRemote(config) === isFederationRemote(opened);
+		const result = await saveConfig(
+			keepOff ? { ...config, federation: federationFieldFor(false) } : config
+		);
 		if (result.success) {
 			setShowModal(false);
 			setEditingConfig(undefined);
