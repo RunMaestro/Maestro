@@ -35,6 +35,15 @@ import {
 } from '../../shared/maestro-lib/client/remote-install';
 import { peerIdFor } from '../../shared/maestro-lib/client/peer-connection';
 import { describeRemoteService } from '../../shared/maestro-lib/client/remote-service';
+import {
+	RemoteHostStopError,
+	describeHeldAgents,
+	desktopHostMessage,
+	stopRemoteHost,
+	surveyRemoteHost,
+	type RemoteHostStopResult,
+	type RemoteServiceStatus,
+} from '../../shared/maestro-lib/client/remote-uninstall';
 import type { SshRemoteConfig } from '../../shared/types';
 import { ExitCode } from '../exit-codes';
 import { colorize, formatError, formatSuccess } from '../output/formatter';
@@ -76,6 +85,10 @@ export interface RemoteHostStatusReport extends RemoteLingerWarning {
 	localVersion: string;
 	/** The running host's version (else the remote CLI's) against this CLI. */
 	skew: RemoteVersionSkew;
+	/** The boot service Maestro registered there (`kind: 'none'` when there is none). */
+	service?: RemoteServiceStatus;
+	/** Why the boot service could not be read, when it could not. */
+	serviceError?: string;
 }
 
 /** What `remote-host` needs from the world, so a test can stand in for it. */
@@ -85,6 +98,8 @@ export interface RemoteHostDeps {
 	discover: typeof discoverRemoteHost;
 	start: typeof startRemoteHost;
 	setup: typeof setupRemoteHost;
+	survey: typeof surveyRemoteHost;
+	stop: typeof stopRemoteHost;
 	/** This CLI's own bundle: the file the running process loaded, and its prompts beside it. */
 	localBundle(version: string): LocalCliBundle;
 	/** Tell a running desktop to reload the peer. */
@@ -97,6 +112,8 @@ const defaultDeps: RemoteHostDeps = {
 	discover: discoverRemoteHost,
 	start: startRemoteHost,
 	setup: setupRemoteHost,
+	survey: surveyRemoteHost,
+	stop: stopRemoteHost,
 	localBundle: (version) => resolveLocalCliBundle(__filename, version),
 	nudgeDesktop: nudgeDesktopReconnect,
 };
@@ -183,10 +200,28 @@ function describeSkew(report: RemoteHostStatusReport): string {
 	}
 }
 
+/** One line for the boot service, or null when it was not read. */
+export function formatRemoteServiceStatus(report: RemoteHostStatusReport): string | null {
+	if (report.serviceError)
+		return colorize('yellow', `Service: could not read (${report.serviceError})`);
+	const service = report.service;
+	if (!service) return null;
+	if (service.kind === 'none') return 'Service: none registered';
+	const manager = service.kind === 'systemd' ? 'systemd user unit' : 'launchd agent';
+	const boot = service.enabled
+		? service.kind === 'systemd'
+			? 'starts the host at boot'
+			: 'starts the host at login'
+		: colorize('yellow', 'disabled');
+	return `Service: ${manager} registered, ${boot}${service.active ? ', running' : ''} (${service.file})`;
+}
+
 export function formatRemoteHostStatus(report: RemoteHostStatusReport): string {
 	const lines = [`Remote: ${report.remote.name} (${report.remote.id})`];
+	const serviceLine = formatRemoteServiceStatus(report);
 	if (!report.installed) {
 		lines.push(`Installed: ${colorize('yellow', 'no')}`, `Fix: ${report.fix}`);
+		if (serviceLine) lines.push(serviceLine);
 		return lines.join('\n');
 	}
 	const via = report.launcher === 'app-bundle' ? 'Maestro.app bundle' : 'maestro-cli on PATH';
@@ -197,6 +232,7 @@ export function formatRemoteHostStatus(report: RemoteHostStatusReport): string {
 			: `Host: ${colorize('yellow', 'not running')} (start it with: maestro-cli remote-host start ${report.remote.id})`
 	);
 	lines.push(`Version skew: ${describeSkew(report)}`);
+	if (serviceLine) lines.push(serviceLine);
 	if (report.linger === false) {
 		lines.push(
 			colorize(
@@ -265,7 +301,15 @@ export async function remoteHostStatus(
 		requireFederationRemote(remote);
 		const opts = discoveryOptions(options);
 		const found = await deps.discover(remote, opts);
-		printStatus(options, buildRemoteHostStatusReport(remote, found, localVersion));
+		const report = buildRemoteHostStatusReport(remote, found, localVersion);
+		// A second call, after the first (never side by side): the boot service, read-only.
+		try {
+			report.service = (await deps.survey(remote, opts)).service;
+		} catch (error) {
+			if (!(error instanceof RemoteHostStopError)) throw error;
+			report.serviceError = error.message;
+		}
+		printStatus(options, report);
 	} catch (error) {
 		reportError(options, error);
 	}
@@ -449,4 +493,174 @@ export async function remoteHostInstall(
 	} catch (error) {
 		reportError(options, error);
 	}
+}
+
+export interface RemoteHostStopOptions extends RemoteHostOptions {
+	/** Stop even though the host holds agents. */
+	force?: boolean;
+}
+
+export interface RemoteHostUninstallOptions extends RemoteHostStopOptions {
+	/** Also remove the host's data directory (refused while the host holds an agent). */
+	purgeData?: boolean;
+}
+
+/** The human form of a stop or uninstall result. */
+export function formatRemoteHostStop(
+	remote: SshRemoteConfig,
+	result: RemoteHostStopResult,
+	uninstall: boolean
+): string {
+	const lines = [`Remote: ${remote.name} (${remote.id})`];
+	switch (result.outcome) {
+		case 'desktop-host':
+			lines.push(desktopHostMessage(remote, result.survey.pid));
+			break;
+		case 'agents-held':
+			lines.push(
+				`The host holds ${describeHeldAgents(result.agents)}. Nothing was changed.`,
+				'Move them back first (maestro-cli unlift <agent>), or pass --force to stop the host anyway; their data stays on the remote.'
+			);
+			break;
+		case 'purge-refused':
+			lines.push(
+				result.reason === 'desktop-data'
+					? `--purge-data refused: the Maestro desktop app on ${remote.name} uses that data directory too (${result.survey.dataDir}). Nothing was changed.`
+					: `--purge-data refused: the host holds ${describeHeldAgents(result.agents ?? 'unknown')}, and its data is their only copy until they move back. Nothing was changed.`
+			);
+			break;
+		case 'nothing':
+			lines.push(
+				uninstall
+					? 'Maestro installed nothing there to remove: no host, no boot service, no files under ~/.maestro.'
+					: 'No host is running and no boot service is registered: nothing to stop.'
+			);
+			break;
+		case 'done': {
+			lines.push(
+				`Host: ${result.hostStopped ? `stopped${result.survey.pid ? ` (pid ${result.survey.pid})` : ''}` : 'was not running'}`
+			);
+			if (result.survey.service.kind !== 'none') {
+				lines.push(
+					`Service: ${result.serviceDisabled ? 'disabled, so the host does not come back after a reboot' : colorize('yellow', 'not disabled')}`
+				);
+			}
+			for (const item of result.removed) lines.push(`Removed: ${item}`);
+			for (const item of result.kept) lines.push(`Kept: ${item}`);
+			for (const warning of result.warnings) lines.push(colorize('yellow', warning));
+			break;
+		}
+	}
+	return lines.join('\n');
+}
+
+function stopTimeoutMs(options: RemoteHostOptions): number | undefined {
+	return discoveryOptions(options).timeoutMs;
+}
+
+async function runRemoteHostStop(
+	ref: string,
+	options: RemoteHostUninstallOptions,
+	uninstall: boolean,
+	overrides: Partial<RemoteHostDeps>
+): Promise<void> {
+	const deps = { ...defaultDeps, ...overrides };
+	try {
+		const remote = findPeerRemote(ref, {
+			readRemotes: deps.readRemotes,
+			resolveRemoteId: deps.resolveRemoteId,
+		});
+		// No `requireFederationRemote()`: undoing what Maestro set up is what a person who turned
+		// Federation off for this remote asks for, and it changes only Maestro's own files.
+		if (options.purgeData && !uninstall) {
+			throw new RemoteHostUsageError('--purge-data belongs to uninstall', ExitCode.InvalidUsage);
+		}
+		const timeoutMs = stopTimeoutMs(options);
+		if (!options.json) {
+			console.log(
+				`${uninstall ? 'Removing' : 'Stopping'} the Maestro host on ${colorize('cyan', remote.name)}...`
+			);
+		}
+		const result = await deps.stop(remote, {
+			uninstall,
+			force: options.force === true,
+			purgeData: options.purgeData === true,
+			...(timeoutMs !== undefined ? { timeoutMs } : {}),
+		});
+		const refused =
+			result.outcome === 'desktop-host' ||
+			result.outcome === 'agents-held' ||
+			result.outcome === 'purge-refused';
+		if (options.json) {
+			const { survey, ...rest } = result;
+			console.log(
+				JSON.stringify(
+					{
+						remote: { id: remote.id, name: remote.name },
+						...rest,
+						...(result.outcome === 'desktop-host'
+							? { error: desktopHostMessage(remote, survey.pid) }
+							: {}),
+						foreign: survey.foreign,
+						service: survey.service,
+						...(survey.dataDir ? { dataDir: survey.dataDir } : {}),
+					},
+					null,
+					2
+				)
+			);
+		} else {
+			if (result.outcome === 'done') {
+				console.log(
+					formatSuccess(
+						uninstall
+							? `Maestro's host is removed from ${remote.name}`
+							: `Host stopped on ${remote.name}`
+					)
+				);
+			}
+			const text = formatRemoteHostStop(remote, result, uninstall);
+			if (refused) console.error(text);
+			else console.log(text);
+		}
+		if (refused) process.exitCode = ExitCode.GeneralError;
+	} catch (error) {
+		if (error instanceof RemoteHostStopError) {
+			const code = error.code === 'timeout' ? ExitCode.Timeout : ExitCode.GeneralError;
+			if (options.json) {
+				console.log(JSON.stringify({ error: error.message, code: error.code }, null, 2));
+			} else {
+				console.error(formatError(error.message));
+			}
+			process.exitCode = code;
+			return;
+		}
+		reportError(options, error);
+	}
+}
+
+/**
+ * `remote-host stop <ssh-remote>`: stop the host and disable its boot service, so it does not come
+ * back after a reboot. The install and the host's data stay. Refuses while the host holds agents,
+ * unless `--force`; changes nothing where the desktop app is the host.
+ */
+export function remoteHostStop(
+	ref: string,
+	options: RemoteHostStopOptions,
+	overrides: Partial<RemoteHostDeps> = {}
+): Promise<void> {
+	return runRemoteHostStop(ref, options, false, overrides);
+}
+
+/**
+ * `remote-host uninstall <ssh-remote>`: `stop`, then remove the boot service file and Maestro's own
+ * install under `~/.maestro`. A `maestro-cli` Maestro did not install is named and left, and so is
+ * the data directory unless `--purge-data` (refused while the host holds an agent).
+ */
+export function remoteHostUninstall(
+	ref: string,
+	options: RemoteHostUninstallOptions,
+	overrides: Partial<RemoteHostDeps> = {}
+): Promise<void> {
+	return runRemoteHostStop(ref, options, true, overrides);
 }

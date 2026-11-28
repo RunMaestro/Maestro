@@ -15,6 +15,8 @@ import {
 	remoteHostInstall,
 	remoteHostStart,
 	remoteHostStatus,
+	remoteHostStop,
+	remoteHostUninstall,
 	type RemoteHostDeps,
 	type RemoteHostStatusReport,
 } from '../../../cli/commands/remote-host';
@@ -29,6 +31,11 @@ import {
 	type LocalCliBundle,
 	type RemoteHostSetupResult,
 } from '../../../shared/maestro-lib/client/remote-install';
+import {
+	RemoteHostStopError,
+	type RemoteHostStopResult,
+	type RemoteHostSurvey,
+} from '../../../shared/maestro-lib/client/remote-uninstall';
 import type { SshRemoteConfig } from '../../../shared/types';
 
 const TOKEN = 'tok-6f1d0c2a-secret-path-token';
@@ -62,6 +69,24 @@ const notRunning: RemoteHostDiscovery = {
 };
 const notInstalled: RemoteHostDiscovery = { installed: false, fix: 'Install Maestro.' };
 
+const surveyOf = (overrides: Partial<RemoteHostSurvey> = {}): RemoteHostSurvey => ({
+	os: 'linux',
+	installed: true,
+	hasFiles: true,
+	foreign: [],
+	host: 'headless',
+	pid: 812,
+	service: { kind: 'none' },
+	dataDirUsedByDesktop: false,
+	...overrides,
+});
+const SYSTEMD = {
+	kind: 'systemd' as const,
+	file: '/home/pedram/.config/systemd/user/maestro-host.service',
+	enabled: true,
+	active: true,
+};
+
 function depsWith(
 	discoveries: RemoteHostDiscovery[],
 	startResult?: RemoteHostStartResult | Error,
@@ -77,7 +102,9 @@ function depsWith(
 		if (!hit) throw new Error(`SSH remote not found: ${ref}`);
 		return hit.id;
 	});
-	return { discover, start, readRemotes: () => remotes, resolveRemoteId };
+	const survey = vi.fn<RemoteHostDeps['survey']>().mockResolvedValue(surveyOf());
+	const stop = vi.fn<RemoteHostDeps['stop']>();
+	return { discover, start, survey, stop, readRemotes: () => remotes, resolveRemoteId };
 }
 
 describe('maestro-cli remote-host', () => {
@@ -116,6 +143,7 @@ describe('maestro-cli remote-host', () => {
 				pid: 812,
 				port: 41234,
 				skew: 'none',
+				service: { kind: 'none' },
 			});
 			expect(process.exitCode).toBeUndefined();
 			expect(everything()).not.toContain(TOKEN);
@@ -433,6 +461,167 @@ describe('maestro-cli remote-host', () => {
 			await remoteHostInstall('r1', { timeout: 'soon' }, LOCAL, deps);
 			expect(deps.setup).not.toHaveBeenCalled();
 			expect(process.exitCode).toBe(ExitCode.InvalidUsage);
+		});
+	});
+
+	describe('status: the boot service', () => {
+		it('says whether the boot service is registered, in both forms, on a second ssh call', async () => {
+			const deps = depsWith([running()]);
+			deps.survey.mockResolvedValue(surveyOf({ service: SYSTEMD }));
+			await remoteHostStatus('r1', { json: true }, LOCAL, deps);
+			expect(json().service).toEqual(SYSTEMD);
+			expect(deps.survey).toHaveBeenCalledTimes(1);
+			expect(deps.discover.mock.invocationCallOrder[0]).toBeLessThan(
+				deps.survey.mock.invocationCallOrder[0]
+			);
+
+			deps.discover.mockResolvedValueOnce(running());
+			deps.survey.mockResolvedValue(
+				surveyOf({ service: { ...SYSTEMD, enabled: false, active: false } })
+			);
+			await remoteHostStatus('r1', {}, LOCAL, deps);
+			expect(everything()).toContain('Service: systemd user unit registered, disabled');
+		});
+
+		it('shows a service left behind on a remote with no CLI', async () => {
+			const deps = depsWith([notInstalled]);
+			deps.survey.mockResolvedValue(
+				surveyOf({
+					installed: false,
+					host: 'none',
+					service: {
+						kind: 'launchd',
+						file: '/Users/p/Library/LaunchAgents/sh.maestro.host.plist',
+						enabled: true,
+						active: false,
+					},
+				})
+			);
+			await remoteHostStatus('r1', {}, LOCAL, deps);
+			expect(everything()).toContain('Service: launchd agent registered, starts the host at login');
+		});
+
+		it('keeps the host status when the service cannot be read, and says why', async () => {
+			const deps = depsWith([running()]);
+			deps.survey.mockRejectedValue(
+				new RemoteHostStopError('timeout', 'No answer from Build box.')
+			);
+			await remoteHostStatus('r1', { json: true }, LOCAL, deps);
+			expect(json()).toMatchObject({ running: true, serviceError: 'No answer from Build box.' });
+			expect(process.exitCode).toBeUndefined();
+		});
+	});
+
+	describe('stop and uninstall', () => {
+		const done = (overrides: Partial<Extract<RemoteHostStopResult, { outcome: 'done' }>> = {}) =>
+			({
+				outcome: 'done',
+				survey: surveyOf({ service: SYSTEMD }),
+				hostStopped: true,
+				serviceDisabled: true,
+				removed: [],
+				kept: [],
+				warnings: [],
+				...overrides,
+			}) as RemoteHostStopResult;
+
+		it('stops the host and disables the service, and reports both', async () => {
+			const deps = depsWith([]);
+			deps.stop.mockResolvedValue(done());
+			await remoteHostStop('r1', {}, deps);
+			expect(deps.stop).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1-abcdef' }), {
+				uninstall: false,
+				force: false,
+				purgeData: false,
+			});
+			expect(everything()).toContain('Host: stopped (pid 812)');
+			expect(everything()).toContain(
+				'Service: disabled, so the host does not come back after a reboot'
+			);
+			expect(process.exitCode).toBeUndefined();
+		});
+
+		it('refuses without --force while the host holds agents, and names them with their count', async () => {
+			const deps = depsWith([]);
+			deps.stop.mockResolvedValue({
+				outcome: 'agents-held',
+				survey: surveyOf(),
+				agents: [
+					{ id: 'a1', name: 'Backend' },
+					{ id: 'a2', name: 'Docs' },
+				],
+			});
+			await remoteHostStop('r1', {}, deps);
+			expect(everything()).toContain(
+				'The host holds 2 agents: "Backend", "Docs". Nothing was changed.'
+			);
+			expect(everything()).toContain('--force');
+			expect(process.exitCode).toBe(ExitCode.GeneralError);
+
+			await remoteHostStop('r1', { force: true, json: true }, deps);
+			expect(deps.stop).toHaveBeenLastCalledWith(
+				expect.anything(),
+				expect.objectContaining({ force: true })
+			);
+		});
+
+		it('says the desktop app is the host and that quitting it there stops it', async () => {
+			const deps = depsWith([]);
+			deps.stop.mockResolvedValue({
+				outcome: 'desktop-host',
+				survey: surveyOf({ host: 'desktop', pid: 77 }),
+			});
+			await remoteHostUninstall('r1', { json: true }, deps);
+			expect(json()).toMatchObject({ outcome: 'desktop-host' });
+			expect(String(json().error)).toContain('desktop app on Build box (pid 77) is the host there');
+			expect(String(json().error)).toContain('Quit the app on that machine');
+			expect(process.exitCode).toBe(ExitCode.GeneralError);
+		});
+
+		it('uninstall lists what it removed and what it kept (a foreign maestro-cli, the data)', async () => {
+			const deps = depsWith([]);
+			deps.stop.mockResolvedValue(
+				done({
+					removed: ['/home/pedram/.maestro/cli', '/home/pedram/.maestro/bin/maestro-cli'],
+					kept: ['/usr/local/bin/maestro-cli', '/home/pedram/.config/maestro'],
+				})
+			);
+			await remoteHostUninstall('r1', {}, deps);
+			expect(deps.stop).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ uninstall: true })
+			);
+			expect(everything()).toContain('Removed: /home/pedram/.maestro/cli');
+			expect(everything()).toContain('Kept: /usr/local/bin/maestro-cli');
+			expect(everything()).toContain('Kept: /home/pedram/.config/maestro');
+		});
+
+		it('works on a remote that opted out of Federation: undoing is what that person wants', async () => {
+			const deps = depsWith([], undefined, [remoteOf({ federation: false })]);
+			deps.stop.mockResolvedValue(done());
+			await remoteHostStop('r1', {}, deps);
+			expect(deps.stop).toHaveBeenCalledTimes(1);
+		});
+
+		it('names the refusal of --purge-data while agents are on the host', async () => {
+			const deps = depsWith([]);
+			deps.stop.mockResolvedValue({
+				outcome: 'purge-refused',
+				reason: 'agents-held',
+				survey: surveyOf(),
+				agents: [{ id: 'a1', name: 'Backend' }],
+			});
+			await remoteHostUninstall('r1', { purgeData: true, force: true }, deps);
+			expect(everything()).toContain('--purge-data refused: the host holds 1 agent: "Backend"');
+			expect(process.exitCode).toBe(ExitCode.GeneralError);
+		});
+
+		it('maps a stop failure to its exit code and keeps its code in JSON', async () => {
+			const deps = depsWith([]);
+			deps.stop.mockRejectedValue(new RemoteHostStopError('host-stop', 'The host did not stop.'));
+			await remoteHostStop('r1', { json: true }, deps);
+			expect(json()).toEqual({ error: 'The host did not stop.', code: 'host-stop' });
+			expect(process.exitCode).toBe(ExitCode.GeneralError);
 		});
 	});
 });

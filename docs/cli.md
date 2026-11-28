@@ -2442,7 +2442,7 @@ Asks the host to stop and waits for its process to exit. With work in flight (a 
 | `--force`           | Stop even with work in flight. A running Auto Run records how it ended first                                                                                       | -                             |
 | `--json`            | Output as JSON (for scripting)                                                                                                                                     | -                             |
 
-### `remote-host install`, `remote-host status`, and `remote-host start`
+### `remote-host install`, `remote-host status`, `remote-host start`, `remote-host stop`, and `remote-host uninstall`
 
 Install, check, and start the `maestro-cli host` on an SSH remote, for [Federation](/federation) over SSH. Federation is opportunistic: every SSH remote takes part unless it opted out with `update-ssh-remote <id> --federation off`, and these verbs refuse a remote that opted out. The `<ssh-remote>` argument is the remote's name or its ID (a unique prefix works).
 
@@ -2484,6 +2484,15 @@ maestro-cli remote-host start build-box --json
 | --------------------- | ------------------------------------------------ | ------- |
 | `--timeout <seconds>` | Give up on each SSH call after this many seconds | `60`    |
 | `--json`              | Output as JSON (for scripting)                   | -       |
+
+`remote-host status` also reads the boot service (a second SSH call, after the first): whether a systemd user unit or a launchd agent is registered, whether it starts the host at boot or login, and whether it runs now. `--json` carries it as `service`.
+
+`remote-host stop` undoes `start`: it disables the boot service first, so nothing starts the host again, then stops the host with `host stop --wait 120` (work in flight finishes first) and reports what it stopped. The install and the host's data stay. While the host still holds agents, it names them with their count and changes nothing; move them back first (`maestro-cli unlift <agent>`), or pass `--force` (their data stays on the remote). `remote-host uninstall` stops the host the same way, then removes the service file and Maestro's own install under `~/.maestro` (`cli/`, `node/`, `npm-cache/`, the launcher and the service wrapper). It keeps `~/.maestro/host.env` (your own settings), any `maestro-cli` Maestro did not install (named in the output), and the host's data directory. `--purge-data` removes the data directory too; it is refused while the host holds an agent, even with `--force`, and when the Maestro desktop app on that machine uses the same directory. On a remote where the Maestro desktop app is the host, both verbs say so and change nothing: quit the app there to stop it. Both work on a remote whose Federation is off, since undoing Maestro's setup is what such a remote's owner asks for.
+
+```bash
+maestro-cli remote-host stop build-box
+maestro-cli remote-host uninstall build-box --json
+```
 
 ### Agents on a Peer
 
