@@ -362,6 +362,29 @@ describe('AutoFederationCoordinator: keeping hosts', () => {
 		expect(w.deps.setupHost).toHaveBeenCalledTimes(1);
 	});
 
+	it('keeps a saved service fix as needing you after automatic moves turn off', async () => {
+		const w = world({
+			setup: {
+				ok: true,
+				result: {
+					cli: 'current',
+					service: {
+						kind: 'systemd',
+						state: 'active',
+						linger: false,
+						lingerFix: 'sudo loginctl enable-linger pedram',
+					},
+				},
+			},
+		});
+		await w.coordinator.runNow({ force: false });
+		w.deps.isAutoMoveEnabled.mockReturnValue(false);
+		const status = (await w.coordinator.runNow({ force: false })).remotes[0];
+		expect(status).toMatchObject({ state: 'ready', needsYou: true });
+		expect(status.fix).toContain('sudo loginctl enable-linger pedram');
+		expect(w.deps.setupHost).toHaveBeenCalledTimes(1);
+	});
+
 	it('retries a failed setup at once when the remote connection settings change', async () => {
 		const w = world({
 			peers: [peer('r1', 'not-installed')],
