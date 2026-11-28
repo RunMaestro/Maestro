@@ -44,6 +44,12 @@ export interface ComeHomeReport {
  */
 export const COME_HOME_RETRY_INTERVAL_MS = 5 * 60_000;
 
+/**
+ * Main pushes each come-home report on this channel to every window, so a window that does not run
+ * the job (a secondary window) still shows why a moved agent's messages wait.
+ */
+export const COME_HOME_REPORT_CHANNEL = 'federation:comeHomeReport';
+
 /** The outcome of a run for an agent that run could not bring home, if any. */
 export function comeHomeFailureFor(
 	report: ComeHomeReport | null | undefined,

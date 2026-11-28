@@ -118,6 +118,18 @@ export function createFederationApi() {
 		 * and answer what happened to each. Joins the run in flight; does nothing with hosting on.
 		 */
 		comeHome: (): Promise<ComeHomeReport> => ipcRenderer.invoke('federation:comeHome'),
+		/** The last come-home report main has, or null before the first run. */
+		lastComeHomeReport: (): Promise<ComeHomeReport | null> =>
+			ipcRenderer.invoke('federation:lastComeHomeReport'),
+		/** Fires with each come-home report, in every window. Returns the unsubscribe. */
+		onComeHomeReport: (handler: (report: ComeHomeReport) => void): (() => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, report: ComeHomeReport) =>
+				handler(report);
+			ipcRenderer.on('federation:comeHomeReport', wrapped);
+			return () => {
+				ipcRenderer.removeListener('federation:comeHomeReport', wrapped);
+			};
+		},
 		/**
 		 * Answer main's Federation questions for the CLI: the hosted agents' settings conflicts
 		 * (`maestro-cli federation conflicts|resolve`) and the host agents the Left Bar shows or adds

@@ -75,11 +75,13 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
+// A queued message's come-home note: no agent here is moved onto a host.
+const mockIsAwaitingComeHome = vi.fn((_session: unknown, _hostingOn?: boolean) => false);
 vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	getActiveTab: (session: Session) =>
 		session.tabs?.find((t) => t.id === session.activeTabId) || session.tabs?.[0],
-	// A queued message's come-home note: no agent here is moved onto a host.
-	isAwaitingComeHome: () => false,
+	isAwaitingComeHome: (session: unknown, hostingOn?: boolean) =>
+		mockIsAwaitingComeHome(session, hostingOn),
 }));
 
 // Track message-by-message navigation calls
@@ -5142,5 +5144,19 @@ describe('message pins', () => {
 		// The gutter marker opens the panel for this tab.
 		fireEvent.click(screen.getByTestId('log-pinned-marker'));
 		expect(useUIStore.getState().messagePinsTabId).toBe('tab-1');
+	});
+});
+
+describe('TerminalOutput come-home note (#2195)', () => {
+	afterEach(() => useSettingsStore.setState({ federationHostedAgents: false }));
+
+	it('redraws when the hosting setting changes, and decides with the new value', () => {
+		useSettingsStore.setState({ federationHostedAgents: false });
+		render(<TerminalOutput {...createDefaultProps()} />);
+		expect(mockIsAwaitingComeHome).toHaveBeenLastCalledWith(expect.anything(), false);
+		act(() => {
+			useSettingsStore.setState({ federationHostedAgents: true });
+		});
+		expect(mockIsAwaitingComeHome).toHaveBeenLastCalledWith(expect.anything(), true);
 	});
 });

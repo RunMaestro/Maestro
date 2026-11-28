@@ -104,8 +104,11 @@ function fakeService() {
 	};
 }
 
+const safeSend = vi.fn();
+
 describe('federation IPC handlers', () => {
 	beforeEach(() => {
+		safeSend.mockReset();
 		handlers.clear();
 		(ipcMain.handle as Mock).mockImplementation(
 			(channel: string, handler: (...args: unknown[]) => Promise<unknown>) => {
@@ -125,10 +128,11 @@ describe('federation IPC handlers', () => {
 			getProcessManager: () => null,
 			readAutoMove: () => true,
 			hosting: { isOn: () => hostingOn, watch: () => () => undefined },
+			safeSend,
 		});
 	});
 
-	it('registers the fifteen federation channels', () => {
+	it('registers the sixteen federation channels', () => {
 		expect([...handlers.keys()].sort()).toEqual([
 			'federation:act',
 			'federation:autoRun',
@@ -137,6 +141,7 @@ describe('federation IPC handlers', () => {
 			'federation:historyGraph',
 			'federation:historyOffset',
 			'federation:historyPage',
+			'federation:lastComeHomeReport',
 			'federation:lift',
 			'federation:peers',
 			'federation:reconnect',
@@ -168,6 +173,13 @@ describe('federation IPC handlers', () => {
 			const report = (await call('federation:comeHome')) as { agents: unknown[] };
 			expect(report.agents).toEqual([]);
 			expect(requestFromRenderer).not.toHaveBeenCalled();
+		});
+
+		it('pushes each report to every window, and answers the last one to a window opened later (#2195)', async () => {
+			expect(await call('federation:lastComeHomeReport')).toBeNull();
+			const report = await call('federation:comeHome');
+			expect(safeSend).toHaveBeenCalledWith('federation:comeHomeReport', report);
+			expect(await call('federation:lastComeHomeReport')).toBe(report);
 		});
 
 		it('brings an agent on an opted-out remote home offline, without dialing, and names why', async () => {

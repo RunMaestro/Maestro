@@ -890,10 +890,14 @@ export function resolveQueuedItemTarget(
  * come-home job (`src/main/federation/come-home.ts`) clears the pointer, and the queue drains then.
  * With hosting on, nothing is held: sends go to the host (`hostedTargetOf()`) as before. Same
  * reading of the setting as `hostingEnabled()` in `services/hostedTurns.ts` (not imported: that
- * module imports this one).
+ * module imports this one). A component passes `hostingOn` from its own subscription to the
+ * setting, so a change of it redraws what this decides.
  */
-export function isAwaitingComeHome(session: Pick<Session, 'liftedTo'>): boolean {
-	if (useSettingsStore.getState().federationHostedAgents === true) return false;
+export function isAwaitingComeHome(
+	session: Pick<Session, 'liftedTo'>,
+	hostingOn: boolean = useSettingsStore.getState().federationHostedAgents === true
+): boolean {
+	if (hostingOn) return false;
 	return readLiftedTo(session.liftedTo) !== undefined;
 }
 
