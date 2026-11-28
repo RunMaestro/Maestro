@@ -322,6 +322,9 @@ describe('readReturnedFromHost and returnRestoreRefusal', () => {
 			tabs: [],
 			hostCopyLeft: copyLeft(true),
 		});
+		// A copy the user kept keeps saying so on the wire to the window.
+		const kept = { ...copyLeft(true, ['q1']), keep: true };
+		expect(readReturnedFromHost({ tabs: [], hostCopyLeft: kept })?.hostCopyLeft).toEqual(kept);
 		expect(
 			readReturnedFromHost({ tabs: [], hostCopyLeft: { ...copyLeft(true), fetched: 'yes' } })
 		).toBeUndefined();
@@ -920,6 +923,59 @@ describe('runReturnFromHost', () => {
 			expect(result.notices?.join(' ')).toMatch(/stopped answering before the messages/);
 			expect(result.notices?.join(' ')).toMatch(/did not close: forward stuck/);
 			expect(d.release).toHaveBeenCalledTimes(1);
+			// The message is still noted, so the next return takes it out of the host's queue.
+			expect(d.store.get('agent-1')?.hostCopyLeft).toMatchObject({ keep: true, carried: ['q1'] });
+		});
+
+		it('a kept copy whose queue would not let a message go stays noted, and the next return takes it out without reading or removing the copy (#2195)', async () => {
+			const waiting = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: false };
+			const client = hostClient({ queue: ok([waiting]) });
+			client.turns.queue.remove.mockResolvedValueOnce(fail('rejected', 'queue locked'));
+			const d = stored(hostedAgent(), client);
+			const first = await runReturnFromHost('agent-1', { keepHostCopy: true }, d.value);
+			expect(first.notices?.join(' ')).toMatch(
+				/still waits, held, in the host's queue \(build-box:host-1\): queue locked Maestro takes it out at the next launch/
+			);
+			const home = d.store.get('agent-1') as AgentRecord & { executionQueue?: { id: string }[] };
+			expect(home.liftedTo).toBeUndefined();
+			expect(home.executionQueue?.map((item) => item.id)).toEqual(['q1']);
+			expect(home.hostCopyLeft).toEqual({
+				...copyLeft(true, ['q1']),
+				homeTabIds: ['tab-1', 'tab-old', 'tab-new'],
+				keep: true,
+			});
+			// The offline return has nothing to do for it.
+			await expect(runReturnFromHost('agent-1', { offline: true }, d.value)).rejects.toThrow(
+				/The host keeps its copy/
+			);
+
+			// The next launch (the come-home pass asks with no options): only the queue is cleaned.
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.turns.queue.remove).toHaveBeenLastCalledWith('host-1', 'q1');
+			expect(client.tabs.list).toHaveBeenCalledTimes(1);
+			expect(client.turns.queue.setPaused).toHaveBeenCalledTimes(1);
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			expect(result).toMatchObject({ hostCopyRemoved: false, tabs: 0 });
+			expect(d.store.get('agent-1')?.hostCopyLeft).toBeUndefined();
+			expect(d.release).toHaveBeenCalledTimes(2);
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_NOT_HOSTED',
+			});
+		});
+
+		it('a kept copy the host no longer has: the note is cleared, nothing is dialed again', async () => {
+			const home = {
+				...hostedAgent(),
+				liftedTo: undefined,
+				hostCopyLeft: { ...copyLeft(true, ['q1']), keep: true },
+			};
+			const client = hostClient({ agent: fail('not-found') });
+			const d = stored(home as AgentRecord, client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(result.hostCopyRemoved).toBe(false);
+			expect(client.turns.queue.remove).not.toHaveBeenCalled();
+			expect(client.agents.remove).not.toHaveBeenCalled();
+			expect(d.store.get('agent-1')?.hostCopyLeft).toBeUndefined();
 		});
 
 		it('a copy kept on purpose loses the messages that came home earlier too', async () => {

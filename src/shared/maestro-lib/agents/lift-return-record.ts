@@ -81,13 +81,19 @@ export interface HostCopyLeft extends LiftedToPointer {
 	 * Finishing does not bring back a host tab named here that is gone here: the user closed it.
 	 */
 	homeTabIds?: string[];
+	/**
+	 * The user kept the host copy (`--keep-host-copy`): it is never read or removed. Only the
+	 * messages in `carried` are left to do: they came home, wait held in its queue, and are removed
+	 * from it, so none can run there too.
+	 */
+	keep?: true;
 }
 
 /** The stored marker, or undefined when the field is absent or malformed. */
 export function readHostCopyLeft(value: unknown): HostCopyLeft | undefined {
 	const pointer = readLiftedTo(value);
 	if (!pointer) return undefined;
-	const { fetched, returnedAt, carried, homeTabIds } = value as Record<string, unknown>;
+	const { fetched, returnedAt, carried, homeTabIds, keep } = value as Record<string, unknown>;
 	if (typeof fetched !== 'boolean') return undefined;
 	if (typeof returnedAt !== 'number' || !Number.isFinite(returnedAt)) return undefined;
 	if (
@@ -105,6 +111,7 @@ export function readHostCopyLeft(value: unknown): HostCopyLeft | undefined {
 		returnedAt,
 		...(Array.isArray(carried) && carried.length > 0 ? { carried: [...carried] } : {}),
 		...(tabIds.length > 0 ? { homeTabIds: tabIds } : {}),
+		...(keep === true ? { keep: true as const } : {}),
 	};
 }
 
