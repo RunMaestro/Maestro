@@ -729,7 +729,7 @@ export async function sendHostedTurn(
 			opts.onHostUnavailable(message);
 			return null;
 		}
-		notifyToast({ color: 'red', title: 'Message not sent', message });
+		notifyToast({ flashWhenToastsOff: true, color: 'red', title: 'Message not sent', message });
 		return null;
 	}
 	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
@@ -747,6 +747,7 @@ export async function sendHostedTurn(
 		if (hostTabId !== tabId && !hostTabAdopted(session.id, hostTabId)) {
 			// An older host gave it its own id while this tab holds a kept message: a copy here.
 			notifyToast({
+				flashWhenToastsOff: true,
 				color: 'theme',
 				title: 'Sent in a new tab',
 				message: `The Maestro host on ${target.peerId} made that tab under its own id, so the message continues in a new tab there.`,
@@ -759,6 +760,7 @@ export async function sendHostedTurn(
 	if (!isHostTab(target, hostTabId) && madeForCopy && isHostTab(target, madeForCopy)) {
 		hostTabId = madeForCopy;
 		notifyToast({
+			flashWhenToastsOff: true,
 			color: 'theme',
 			title: 'Sent in a new tab',
 			message: `The Maestro host on ${target.peerId} made that tab under its own id, so the message continues in a new tab there.`,
@@ -768,6 +770,7 @@ export async function sendHostedTurn(
 		hostTabId = (await openHostedTab(session)) ?? undefined;
 		if (!hostTabId) return null;
 		notifyToast({
+			flashWhenToastsOff: true,
 			color: 'theme',
 			title: 'Sent in a new tab',
 			message: `That conversation is the copy kept from before the move, so it continues in a new tab on ${target.peerId}.`,

@@ -764,6 +764,7 @@ export function reorderQueuedItems(
 function refuseCrossingMove(session: Pick<Session, 'liftedTo'>): false {
 	const host = hostedTargetOf(session)?.peerId ?? 'its host';
 	notifyToast({
+		flashWhenToastsOff: true,
 		color: 'theme',
 		title: 'Cannot move it there',
 		message: `A message held on this machine and the messages waiting on ${host} are two lines. Resume a held message to send it to the end of the host's line.`,

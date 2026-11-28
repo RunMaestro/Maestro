@@ -68,6 +68,7 @@ import type { QueuedItem, Session } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { resetStores } from '../../helpers/resetStores';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
+import { useCenterFlashStore, dismissCenterFlash } from '../../../renderer/stores/centerFlashStore';
 import { fingerprintGrokSpawnSelection } from '../../../shared/grokSpawnSelection';
 import { sha256Hex } from '../../../shared/maestro-lib/grok/host-seams';
 
@@ -730,6 +731,16 @@ describe('reorderQueuedItems / moveQueuedItem', () => {
 		expect(toasts).toHaveLength(2);
 		expect(toasts[0]).toMatchObject({ title: 'Cannot move it there' });
 		expect(toasts[0].message).toContain('box');
+
+		// With in-app toasts off, the refused drag still says why: a Center Flash.
+		const toastSeconds = useNotificationStore.getState().config.defaultDuration;
+		useNotificationStore.getState().setDefaultDuration(-1);
+		expect(reorderQueuedItems('session-1', 0, 1, 'a')).toBe(false);
+		expect(useCenterFlashStore.getState().active).toMatchObject({
+			message: 'Cannot move it there',
+		});
+		dismissCenterFlash();
+		useNotificationStore.getState().setDefaultDuration(toastSeconds);
 
 		expect(reorderQueuedItems('session-1', 2, 0, 'a')).toBe(true);
 		expect(currentQueue().map((i) => i.id)).toEqual(['l2', 'l1', 'h1']);

@@ -265,7 +265,7 @@ export function keepTurnForHost(
 	}
 	if (!raised) {
 		// No listener to report it: say so here, as the refusal's own toast would have.
-		notifyToast({ color: 'red', title: 'Message not sent', message });
+		notifyToast({ flashWhenToastsOff: true, color: 'red', title: 'Message not sent', message });
 		return false;
 	}
 	return held;
@@ -385,6 +385,7 @@ function notHostedAgain(
 		return;
 	}
 	notifyToast({
+		flashWhenToastsOff: true,
 		color: 'theme',
 		title: held ? 'Not sent' : 'Not sent again',
 		message: held
