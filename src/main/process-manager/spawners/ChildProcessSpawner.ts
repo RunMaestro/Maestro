@@ -56,7 +56,14 @@ import {
 import {
 	buildDurableLaunchScript,
 	runDurableSshTurn,
+	type DurableTurnOffsets,
 } from '../../../shared/maestro-lib/control/ssh-durable-turn';
+import {
+	forgetDurableTurn,
+	noteDurableTurn,
+	recordedDurableTurns,
+	type DurableTurnRecord,
+} from '../durable-turn-records';
 import { noteSshExit } from '../../ssh-reachability';
 import {
 	INTERACTIVE_STOP_GRACE_MS,
@@ -635,7 +642,14 @@ export class ChildProcessSpawner {
 				sessionId,
 				label: toolType,
 			};
-			const turn: { child: ChildProcess; done: Promise<TurnExit> } = durableTurnDir
+			// Set when the app quit with this durable turn still running: it is
+			// recorded for the next launch, so this run neither settles nor cleans it.
+			let durableDetached = false;
+			const turn: {
+				child: ChildProcess;
+				done: Promise<TurnExit>;
+				restartOffsets?: () => DurableTurnOffsets;
+			} = durableTurnDir
 				? this.startDurableSshTurn({
 						sessionId,
 						stdin: stdinText!,
@@ -787,6 +801,33 @@ export class ChildProcessSpawner {
 			this.supervisions.get(sessionId)?.();
 			managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 			this.processes.set(sessionId, managedProcess);
+			if (durableTurnDir && sshRemotePidFile) {
+				const record = (offsets: DurableTurnOffsets): DurableTurnRecord => ({
+					sessionId,
+					toolType,
+					cwd,
+					sshCommand: command,
+					sshArgs: finalArgs,
+					dir: durableTurnDir,
+					pidFile: sshRemotePidFile,
+					...offsets,
+					isStreamJsonMode,
+					isBatchMode,
+					tabId: config.tabId,
+					projectPath: config.projectPath,
+					sshRemoteId: config.sshRemoteId,
+					sshRemoteHost: config.sshRemoteHost,
+					agentSessionId: managedProcess.agentSessionId,
+					contextWindow,
+					querySource: config.querySource,
+					startTime: managedProcess.startTime,
+				});
+				noteDurableTurn(record({ outOffset: 0, errOffset: 0 }));
+				managedProcess.detachDurableTurn = () => {
+					durableDetached = true;
+					noteDurableTurn(record(turn.restartOffsets?.() ?? { outOffset: 0, errOffset: 0 }));
+				};
+			}
 
 			// The run layer settles once the streams have ended, so every line the
 			// process wrote has been read by then. A process that never started is
@@ -857,10 +898,13 @@ export class ChildProcessSpawner {
 			}
 			void Promise.race([turn.done, forced]).then((completed) => {
 				disposeSupervision();
+				// Detached at quit: the agent runs on, and the next launch owns the turn.
+				if (durableDetached) return;
 				// A durable turn has settled (or was given up): its remote dir goes,
 				// with the agent if one still runs, retried until the host answers.
 				// After a Stop the agent first gets the grace a Stop gives it.
 				if (durableTurnDir && sshRemotePidFile) {
+					forgetDurableTurn(sessionId, durableTurnDir);
 					const cleanup = () =>
 						reapRemoteAgent({
 							sshCommand: command,
@@ -1083,7 +1127,12 @@ export class ChildProcessSpawner {
 		handlers: TurnHandlers;
 		onAttempt: (child: ChildProcess) => void;
 		stopReason: () => 'interrupt' | 'kill' | null;
-	}): { child: ChildProcess; done: Promise<TurnExit> } {
+		resume?: DurableTurnOffsets;
+	}): {
+		child: ChildProcess;
+		done: Promise<TurnExit>;
+		restartOffsets: () => DurableTurnOffsets;
+	} {
 		const { sessionId, handlers } = input;
 		const durable = runDurableSshTurn(input.stdin, {
 			dir: input.dir,
@@ -1115,6 +1164,7 @@ export class ChildProcessSpawner {
 				void captureException(error);
 			},
 			stopReason: input.stopReason,
+			resume: input.resume,
 		});
 		const done = durable.done.then((exit) => {
 			logger.info('[ProcessManager] Durable SSH turn settled', 'ProcessManager', {
@@ -1124,7 +1174,173 @@ export class ChildProcessSpawner {
 			});
 			return exit;
 		});
-		return { child: durable.first.child, done };
+		return { child: durable.first.child, done, restartOffsets: durable.restartOffsets };
+	}
+
+	/**
+	 * Durable SSH turns an earlier run of this app left running at quit (see
+	 * durable-turn-records.ts). Each is registered at once, so its tab reads
+	 * busy to the renderer's first look at the live turns and nothing else
+	 * starts on its session (D4), and is reattached by
+	 * {@link startRestoredDurableTurns} once a renderer can hear its output.
+	 */
+	private readonly restoredDurableTurns: Array<() => void> = [];
+
+	restoreRecordedDurableTurns(): number {
+		for (const record of recordedDurableTurns()) {
+			if (this.processes.has(record.sessionId)) continue;
+			const managedProcess: ManagedProcess = {
+				sessionId: record.sessionId,
+				toolType: record.toolType,
+				cwd: record.cwd,
+				pid: -1,
+				isTerminal: false,
+				isBatchMode: record.isBatchMode,
+				isStreamJsonMode: record.isStreamJsonMode,
+				jsonBuffer: record.isBatchMode ? '' : undefined,
+				startTime: record.startTime,
+				outputParser: createOutputParser(record.toolType) || undefined,
+				stderrBuffer: '',
+				stdoutBuffer: '',
+				contextWindow: record.contextWindow,
+				command: record.sshCommand,
+				args: record.sshArgs,
+				querySource: record.querySource,
+				tabId: record.tabId,
+				projectPath: record.projectPath,
+				sshRemoteId: record.sshRemoteId,
+				sshRemoteHost: record.sshRemoteHost,
+				sshRemotePidFile: record.pidFile,
+				agentSessionId: record.agentSessionId,
+			};
+			managedProcess.spawnGeneration = nextSpawnGeneration(record.sessionId);
+			this.processes.set(record.sessionId, managedProcess);
+			this.restoredDurableTurns.push(() => this.reattachRestoredTurn(record, managedProcess));
+			logger.info(
+				'[ProcessManager] Restored a durable SSH turn from the last run',
+				'ProcessManager',
+				{
+					sessionId: record.sessionId,
+				}
+			);
+		}
+		return this.restoredDurableTurns.length;
+	}
+
+	/** Reattach every turn {@link restoreRecordedDurableTurns} registered. Runs once. */
+	startRestoredDurableTurns(): void {
+		for (const start of this.restoredDurableTurns.splice(0)) start();
+	}
+
+	private reattachRestoredTurn(record: DurableTurnRecord, managedProcess: ManagedProcess): void {
+		const { sessionId } = record;
+		const cleanup = () =>
+			reapRemoteAgent({
+				sshCommand: record.sshCommand,
+				sshArgs: record.sshArgs,
+				pidFile: record.pidFile,
+				sessionId,
+				turnDir: record.dir,
+			});
+		const isSuperseded = (): boolean =>
+			isSupersededGeneration(sessionId, managedProcess.spawnGeneration);
+		// Closed or stopped before a renderer was ready: the user ended the turn.
+		if (isSuperseded() || this.processes.get(sessionId) !== managedProcess) {
+			forgetDurableTurn(sessionId, record.dir);
+			cleanup();
+			return;
+		}
+		const env = buildChildProcessEnv(undefined, true, undefined, undefined, record.querySource);
+		const shellPlan = planSpawnShell(record.sshCommand, record.sshArgs, {});
+		let detached = false;
+		const turn = this.startDurableSshTurn({
+			sessionId,
+			stdin: '',
+			dir: record.dir,
+			pidFile: record.pidFile,
+			sshRemoteId: record.sshRemoteId,
+			resume: { outOffset: record.outOffset, errOffset: record.errOffset },
+			startAttempt: (stdin, bytes) =>
+				startTurn(
+					{
+						command: shellPlan.command,
+						args: shellPlan.args,
+						// ssh needs no working directory; the agent's is on the remote.
+						cwd: os.homedir(),
+						env,
+						stdin,
+						shell: shellPlan.shell,
+					},
+					bytes,
+					{
+						stopGraceMs: INTERACTIVE_STOP_GRACE_MS,
+						keepStdinOpen: false,
+						stdoutTailLimit: 0,
+						stderrTailLimit: 0,
+						processGroup: true,
+						sessionId,
+						label: record.toolType,
+					}
+				),
+			handlers: {
+				onStdout: (output) => {
+					if (isSuperseded()) return;
+					try {
+						this.emitter.emit('raw-stdout', sessionId, output);
+					} catch (err) {
+						void captureException(err);
+					}
+					this.stdoutHandler.handleData(sessionId, output);
+				},
+				onStderr: (text) => {
+					if (isSuperseded()) return;
+					this.stderrHandler.handleData(sessionId, text);
+				},
+			},
+			onAttempt: (child) => {
+				managedProcess.childProcess = child;
+				managedProcess.pid = child.pid || -1;
+				armStdioCloseWatchdog(child);
+			},
+			stopReason: () =>
+				isSuperseded() || this.processes.get(sessionId) !== managedProcess
+					? 'kill'
+					: managedProcess.interrupted
+						? 'interrupt'
+						: null,
+		});
+		managedProcess.childProcess = turn.child;
+		managedProcess.pid = turn.child.pid || -1;
+		armStdioCloseWatchdog(turn.child);
+		managedProcess.detachDurableTurn = () => {
+			detached = true;
+			noteDurableTurn({
+				...record,
+				...turn.restartOffsets(),
+				agentSessionId: managedProcess.agentSessionId,
+			});
+		};
+		void turn.done.then((exit) => {
+			if (detached) return;
+			forgetDurableTurn(sessionId, record.dir);
+			if (managedProcess.interrupted) setTimeout(cleanup, INTERACTIVE_STOP_GRACE_MS).unref?.();
+			else cleanup();
+			if (isSuperseded()) return;
+			if (exit.spawnError) {
+				this.exitHandler.handleError(sessionId, exit.spawnError);
+				return;
+			}
+			return this.exitHandler
+				.handleExit(sessionId, exit.exitCode || 0, managedProcess, exit.signal)
+				.catch((err) => {
+					void captureException(err);
+					// As in spawn(): an entry left behind would own the tab forever.
+					if (this.processes.get(sessionId) === managedProcess) {
+						this.processes.delete(sessionId);
+						this.emitter.emit('exit', sessionId, exit.exitCode || 0);
+					}
+				});
+		});
 	}
 }
 

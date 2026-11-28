@@ -247,6 +247,78 @@ posixOnly('runDurableSshTurn', () => {
 		expect(fs.existsSync(dir)).toBe(false);
 	}, 30_000);
 
+	it('an app restart mid-turn: the next run resumes at the last line end, and the parser sees every event once', async () => {
+		const fixture = fixtureFile();
+		const today = await runToday(todaysStdin(track(newPid()), fixture));
+		const pidFile = track(newPid());
+		const dir = track(newRemoteTurnDir());
+
+		// The quit: the local ssh dies mid-turn and nobody owns the turn any more.
+		// (The mid-line rule itself is the spawner test's 'a quit detaches the turn'.)
+		const quitRig: Rig = { cutAfter: [251], hostDown: new Set(), attempts: 0 };
+		let quit = false;
+		let before = '';
+		const first = runDurableSshTurn(buildDurableLaunchScript(todaysStdin(pidFile, fixture), dir), {
+			dir,
+			pidFile,
+			startAttempt: (stdin, handlers) => {
+				const attempt = rigAttempt(quitRig)(stdin, handlers);
+				void attempt.done.then(() => (quit = true));
+				return attempt;
+			},
+			onStdout: (text) => (before += text),
+			onStderr: () => {},
+			stopReason: () => (quit ? 'kill' : null),
+			delaysMs: [20],
+		});
+		expect((await first.done).outcome).toBe('stopped');
+		const offsets = first.restartOffsets();
+		// A new process starts with empty line buffers: only whole lines were parsed.
+		const parsedBefore = before.slice(0, before.lastIndexOf('\n') + 1);
+		expect(Buffer.byteLength(parsedBefore)).toBe(offsets.outOffset);
+
+		// The next launch: one reattach from the recorded offsets, to the end.
+		const rig: Rig = { cutAfter: [], hostDown: new Set(), attempts: 0 };
+		let after = '';
+		let err = '';
+		const second = runDurableSshTurn('', {
+			dir,
+			pidFile,
+			resume: offsets,
+			startAttempt: rigAttempt(rig),
+			onStdout: (text) => (after += text),
+			onStderr: (text) => (err += text),
+			stopReason: () => null,
+			delaysMs: [20],
+		});
+		const exit = await second.done;
+		expect(exit.outcome).toBe('ended');
+		expect(exit.exitCode).toBe(0);
+		expect(rig.attempts).toBe(1);
+		expect(parsedBefore + after).toBe(today.out);
+		expect([...parse(parsedBefore), ...parse(after)]).toEqual(parse(today.out));
+		expect(err).toBe(today.err);
+	}, 30_000);
+
+	it('a restarted turn whose host does not answer is a lost link, not a launch that never ran', async () => {
+		const pidFile = track(newPid());
+		const rig: Rig = { cutAfter: [], hostDown: new Set([0, 1]), attempts: 0 };
+		const turn = runDurableSshTurn('', {
+			dir: track(newRemoteTurnDir()),
+			pidFile,
+			resume: { outOffset: 10, errOffset: 0 },
+			startAttempt: rigAttempt(rig),
+			onStdout: () => {},
+			onStderr: () => {},
+			stopReason: () => null,
+			delaysMs: [20],
+		});
+		const exit = await turn.done;
+		expect(rig.attempts).toBe(2);
+		expect(exit.outcome).toBe('unreachable');
+		expect(exit.exitCode).toBe(255);
+	});
+
 	it('a launch that never reaches the agent settles as today, with no reattach', async () => {
 		const rig: Rig = { cutAfter: [], hostDown: new Set([0]), attempts: 0 };
 		const pidFile = track(newPid());

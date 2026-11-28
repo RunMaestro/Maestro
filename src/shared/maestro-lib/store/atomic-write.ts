@@ -14,6 +14,7 @@
  */
 
 import * as fs from 'fs/promises';
+import { renameSync, unlinkSync, writeFileSync } from 'fs';
 
 import { assertSerializedJsonIsSafe } from '../../jsonUtils';
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
@@ -54,6 +55,29 @@ export async function atomicWriteJson(filePath: string, data: unknown): Promise<
 	const serialized = JSON.stringify(data, null, 2);
 	assertSerializedJsonIsSafe(serialized, filePath);
 	await atomicWriteFile(filePath, serialized);
+}
+
+/**
+ * The synchronous form of {@link atomicWriteJson}, for a write that must land
+ * before the process exits (a quit handler cannot await). Same temp file +
+ * rename and the same safety gate; no rename retry, so a transient Windows
+ * lock throws and the caller reports it.
+ */
+export function atomicWriteJsonSync(filePath: string, data: unknown): void {
+	const serialized = JSON.stringify(data, null, 2);
+	assertSerializedJsonIsSafe(serialized, filePath);
+	const tmp = uniqueTempPath(filePath);
+	try {
+		writeFileSync(tmp, serialized, 'utf-8');
+		renameSync(tmp, filePath);
+	} catch (err) {
+		try {
+			unlinkSync(tmp);
+		} catch {
+			// Best effort, as in atomicWriteFile: the write's own error is the one to report.
+		}
+		throw err;
+	}
 }
 
 /**

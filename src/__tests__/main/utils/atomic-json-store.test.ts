@@ -6,6 +6,7 @@ import * as os from 'os';
 import {
 	atomicWriteFile,
 	atomicWriteJson,
+	atomicWriteJsonSync,
 	createKeyedWriteQueue,
 } from '../../../main/utils/atomic-json-store';
 
@@ -62,6 +63,41 @@ describe('atomicWriteJson', () => {
 		expect(JSON.parse(await fs.readFile(file, 'utf-8'))).toEqual({ good: true });
 		// No temp file left behind by the rejected write.
 		expect(await fs.readdir(dir)).toEqual(['data.json']);
+	});
+});
+
+describe('atomicWriteJsonSync', () => {
+	let dir: string;
+
+	beforeEach(async () => {
+		dir = await fs.mkdtemp(path.join(os.tmpdir(), 'atomic-json-sync-'));
+	});
+
+	afterEach(async () => {
+		await fs.rm(dir, { recursive: true, force: true });
+	});
+
+	it('replaces the file whole before it returns, and leaves no temp file', async () => {
+		const file = path.join(dir, 'data.json');
+		atomicWriteJsonSync(file, { entries: [1, 2, 3, 4, 5] });
+		atomicWriteJsonSync(file, { entries: [9] });
+		expect(JSON.parse(await fs.readFile(file, 'utf-8'))).toEqual({ entries: [9] });
+		expect(await fs.readdir(dir)).toEqual(['data.json']);
+	});
+
+	it('refuses to write undefined and leaves an existing file intact', async () => {
+		const file = path.join(dir, 'data.json');
+		atomicWriteJsonSync(file, { good: true });
+		expect(() => atomicWriteJsonSync(file, undefined)).toThrow(/empty\/undefined/);
+		expect(JSON.parse(await fs.readFile(file, 'utf-8'))).toEqual({ good: true });
+		expect(await fs.readdir(dir)).toEqual(['data.json']);
+	});
+
+	it('removes its temp file when the rename fails', async () => {
+		const target = path.join(dir, 'a-dir');
+		await fs.mkdir(path.join(target, 'inside'), { recursive: true });
+		expect(() => atomicWriteJsonSync(target, { x: 1 })).toThrow();
+		expect(await fs.readdir(dir)).toEqual(['a-dir']);
 	});
 });
 

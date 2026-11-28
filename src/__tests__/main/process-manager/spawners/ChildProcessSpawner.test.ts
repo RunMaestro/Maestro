@@ -136,6 +136,15 @@ vi.mock('../../../../main/process-manager/utils/childProcessInfo', () => ({
 vi.mock('../../../../main/coworking/coworking-socket-path', () => ({
 	getBridgeSocketPath: () => '/tmp/maestro-test-coworking.sock',
 }));
+// The restart record of durable SSH turns, in memory (the real one writes to userData).
+const durableRecords = vi.hoisted(() => new Map<string, any>());
+vi.mock('../../../../main/process-manager/durable-turn-records', () => ({
+	noteDurableTurn: vi.fn((record: any) => durableRecords.set(record.sessionId, record)),
+	forgetDurableTurn: vi.fn((sessionId: string, dir: string) => {
+		if (durableRecords.get(sessionId)?.dir === dir) durableRecords.delete(sessionId);
+	}),
+	recordedDurableTurns: vi.fn(() => [...durableRecords.values()]),
+}));
 import { isPidAlive } from '../../../../main/process-manager/utils/childProcessInfo';
 import { createOutputParser } from '../../../../main/parsers';
 import { isWindows } from '../../../../shared/platformDetection';
@@ -1081,6 +1090,128 @@ describe('ChildProcessSpawner', () => {
 			expect(reapSpawns()[0]).toContain('kill -TERM');
 			expect(reapSpawns()[0]).toContain(managed.sshRemotePidFile!);
 		}, 10_000);
+
+		// Stage 4: the app quits mid-turn and the next launch picks the turn up.
+		describe('across an app restart', () => {
+			afterEach(() => durableRecords.clear());
+
+			it('records the turn at its start and forgets it once it settles', async () => {
+				const { processes, spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				spawner.spawn(sshConfig(true));
+				const managed = processes.get('test-session')!;
+				const record = durableRecords.get('test-session');
+				expect(record).toMatchObject({
+					sshCommand: '/usr/bin/ssh',
+					pidFile: managed.sshRemotePidFile,
+					outOffset: 0,
+					errOffset: 0,
+				});
+				expect(record.dir).toMatch(/^\/tmp\/maestro-turn-/);
+				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}E0\n`));
+				closeWith(mockChildProcess, 0);
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				expect(durableRecords.size).toBe(0);
+			});
+
+			it('a quit detaches the turn: recorded at the last line end, not settled, not stopped on the host', async () => {
+				const { processes, spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				spawner.spawn(sshConfig(true));
+				const managed = processes.get('test-session')!;
+				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}D3\nabc\x1f`));
+				mockChildProcess.stdout.emit('data', Buffer.from('line one\nline tw'));
+				managed.detachDurableTurn!();
+				processes.delete('test-session');
+				closeWith(mockChildProcess, null, 'SIGTERM');
+				await new Promise((r) => setTimeout(r, 300));
+				expect(durableRecords.get('test-session')).toMatchObject({
+					outOffset: 'line one\n'.length,
+					errOffset: 3,
+				});
+				expect(onExit).not.toHaveBeenCalled();
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				expect(reapSpawns()).toHaveLength(0);
+			});
+
+			it('the next launch shows the turn busy at once, reattaches from its offsets, and settles with the agent', async () => {
+				const { processes, spawner, emitter } = createTestContext();
+				const dir = '/tmp/maestro-turn-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e';
+				const pidFile = '/tmp/maestro-agent-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e.pid';
+				durableRecords.set('agent-1-ai-tab-1', {
+					sessionId: 'agent-1-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/tmp/test',
+					sshCommand: '/usr/bin/ssh',
+					sshArgs: SSH_ARGS,
+					dir,
+					pidFile,
+					outOffset: 120,
+					errOffset: 4,
+					isStreamJsonMode: true,
+					isBatchMode: true,
+					tabId: 'tab-1',
+					startTime: 1,
+				});
+				const onExit = vi.fn();
+				const onData = vi.fn();
+				emitter.on('exit', onExit);
+				emitter.on('raw-stdout', onData);
+
+				expect(spawner.restoreRecordedDurableTurns()).toBe(1);
+				// Busy (and refusing a second writer) before anything reaches the host.
+				const managed = processes.get('agent-1-ai-tab-1')!;
+				expect(managed).toMatchObject({ sshRemotePidFile: pidFile, tabId: 'tab-1' });
+				expect(mockSpawn).not.toHaveBeenCalled();
+
+				spawner.startRestoredDurableTurns();
+				spawner.startRestoredDurableTurns();
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				const script =
+					mockChildProcess.stdin.end.mock.calls[0]?.[0] ??
+					mockChildProcess.stdin.write.mock.calls[0][0];
+				expect(script).toContain(`d='${dir}'`);
+				expect(script).toContain('o=120; e=4');
+				expect(managed.childProcess).toBe(mockChildProcess);
+
+				mockChildProcess.stdout.emit('data', Buffer.from('rest\n'));
+				mockChildProcess.stderr.emit('data', Buffer.from(`${RS}S\n${RS}E0\n`));
+				closeWith(mockChildProcess, 0);
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				expect(onExit.mock.calls[0].slice(0, 2)).toEqual(['agent-1-ai-tab-1', 0]);
+				expect(onData).toHaveBeenCalledWith('agent-1-ai-tab-1', 'rest\n');
+				expect(durableRecords.size).toBe(0);
+				await vi.waitFor(() => expect(reapSpawns()).toHaveLength(1));
+				expect(reapSpawns()[0]).toContain(`rm -rf -- '${dir}'`);
+			});
+
+			it('a restored turn closed before a renderer asked is stopped on the host, not reattached', async () => {
+				const { processes, spawner } = createTestContext();
+				const dir = '/tmp/maestro-turn-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e';
+				durableRecords.set('agent-1-ai-tab-1', {
+					sessionId: 'agent-1-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/tmp/test',
+					sshCommand: '/usr/bin/ssh',
+					sshArgs: SSH_ARGS,
+					dir,
+					pidFile: '/tmp/maestro-agent-0b5c6a52-4bb4-4f6f-8f0e-1f2a3b4c5d6e.pid',
+					outOffset: 0,
+					errOffset: 0,
+					isStreamJsonMode: true,
+					isBatchMode: true,
+					startTime: 1,
+				});
+				spawner.restoreRecordedDurableTurns();
+				processes.delete('agent-1-ai-tab-1');
+				spawner.startRestoredDurableTurns();
+				expect(durableRecords.size).toBe(0);
+				await vi.waitFor(() => expect(reapSpawns()).toHaveLength(1));
+				expect(reapSpawns()[0]).toContain('kill -TERM');
+			});
+		});
 
 		/** The terminate scripts sent to the host (detached signal ssh processes). */
 		function reapSpawns(): string[] {

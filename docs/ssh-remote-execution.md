@@ -286,6 +286,7 @@ Switch **Keep turns running when the connection drops** on for a remote (in its 
 - When the remote answers again, Maestro picks the output up from the exact byte where it stopped. Nothing is shown twice and nothing is lost, and the reply lands in the tab as if the link never dropped.
 - **Stop** works while Maestro is reconnecting. If the remote cannot be reached, Maestro keeps trying to stop the agent until it can.
 - Messages you send in the meantime wait in the queue, as they do for any busy tab.
+- Quitting or restarting Maestro during a turn does not stop it either. The turn keeps running on the remote, and Maestro picks it up again at the next launch: the tab is busy from the start, and the reply lands in it. A turn that ended while Maestro was closed is read to the end and lands the same way.
 
 The switch is off by default. With it off, Maestro sends the same commands and writes the same files on the remote as before.
 
@@ -298,7 +299,7 @@ The switch is off by default. With it off, Maestro sends the same commands and w
 - Codex turns, and agents that keep talking to the provider on stdin during a turn (Codex app-server, ACP agents such as Grok, SDK-based agents, and turns with tool permission prompts). These keep the default behavior.
 - Terminal (TUI) agents.
 - Windows remotes.
-- Quitting or restarting Maestro during a turn. The turn keeps running on the remote, but this machine does not pick it up again after a restart yet.
+- A crash of Maestro (as opposed to quitting it). The turn is still picked up at the next launch, but the tab can show part of the reply twice.
 
 From the CLI, `maestro-cli update-ssh-remote <remote-id> --keep-turns on` (or `off`) changes the switch, and `create-ssh-remote --keep-turns on` sets it on a new remote. `maestro-cli list ssh-remotes --json` reports it as `keepTurnsOnDisconnect`.
 

@@ -440,6 +440,7 @@ describe('process IPC handlers', () => {
 			resize: vi.fn(),
 			getAll: vi.fn().mockReturnValue([]),
 			get: vi.fn(),
+			startRestoredDurableTurns: vi.fn(),
 			on: vi.fn(),
 			off: vi.fn(),
 			runCommand: vi.fn(),
@@ -3140,6 +3141,13 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:getActiveProcesses', () => {
+		it('starts the durable SSH turns restored from the last run once a renderer asks, after it answers', async () => {
+			const handler = handlers.get('process:getActiveProcesses')!;
+			await handler({}, { includeChildProcesses: false });
+			await new Promise((resolve) => setImmediate(resolve));
+			expect(mockProcessManager.startRestoredDurableTurns).toHaveBeenCalledOnce();
+		});
+
 		it('reattaches queued and running Host Relay turns and stops them by real tab identity', async () => {
 			writerGate.enabled = true;
 			let owner: any = {

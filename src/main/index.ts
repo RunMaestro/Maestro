@@ -1350,6 +1350,14 @@ app
 			appVersion: app.getVersion(),
 			isCoworkingEnabled: () => isEncoreFeatureEnabled(store, 'coworking'),
 		});
+		// Durable SSH turns the last run left running at quit: their tabs are busy
+		// from the first look, and they reattach when the renderer asks for them.
+		if (processManager.restoreRecordedDurableTurns() > 0) {
+			const pm = processManager;
+			// No renderer asked (none loaded): reattach anyway, so the remote is not
+			// left holding the turn.
+			setTimeout(() => pm.startRestoredDurableTurns(), 60_000).unref?.();
+		}
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)
 		agentDetector = new AgentDetector();
 

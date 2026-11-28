@@ -900,7 +900,10 @@ export class ProcessManager extends EventEmitter {
 					}
 				);
 			} else if (proc.childProcess) {
-				this.signalRemote(sessionId, proc, 'terminate');
+				// The app quitting leaves a durable SSH turn running on its remote
+				// and records it for the next launch; only the local ssh goes.
+				if (shutdown && proc.detachDurableTurn) proc.detachDurableTurn();
+				else this.signalRemote(sessionId, proc, 'terminate');
 				stopProcess(
 					{ child: proc.childProcess },
 					{
@@ -1008,6 +1011,20 @@ export class ProcessManager extends EventEmitter {
 			});
 		});
 	}
+	/**
+	 * Register the durable SSH turns the last run of the app left running at
+	 * quit. Their tabs read busy at once; {@link startRestoredDurableTurns}
+	 * reattaches them. Returns how many were restored.
+	 */
+	restoreRecordedDurableTurns(): number {
+		return this.childProcessSpawner.restoreRecordedDurableTurns();
+	}
+
+	/** Reattach the restored durable SSH turns, once a renderer can hear them. */
+	startRestoredDurableTurns(): void {
+		this.childProcessSpawner.startRestoredDurableTurns();
+	}
+
 	/** Stop every active turn for an agent and dispose retained native runtimes. */
 	closeAgent(agentId: string): void {
 		for (const proc of [...this.processes.values()]) {

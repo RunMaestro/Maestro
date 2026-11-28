@@ -217,6 +217,18 @@ export class DurableStderrReader {
 	private ended: number | null = null;
 	private goneNow = false;
 
+	/**
+	 * `resumeFrom`: a turn picked up again after this app restarted. Its agent
+	 * was already running, and its stderr was received up to that offset.
+	 */
+	constructor(resumeFrom?: number) {
+		if (resumeFrom !== undefined) {
+			assertOffset(resumeFrom);
+			this.offset = resumeFrom;
+			this.everStarted = true;
+		}
+	}
+
 	/** The agent's stderr bytes received so far. */
 	get errOffset(): number {
 		return this.offset;
@@ -343,6 +355,19 @@ export interface DurableSshTurnOptions {
 	/** `'interrupt'` after a Stop, `'kill'` once nobody owns the turn, else null. */
 	stopReason(): 'interrupt' | 'kill' | null;
 	delaysMs?: readonly number[];
+	/**
+	 * Pick up a turn this app started before it restarted: the first attempt
+	 * is a reattach from these offsets instead of the launch, and the turn
+	 * counts as started (a host that does not answer is a lost link, not a
+	 * launch that never ran).
+	 */
+	resume?: DurableTurnOffsets;
+}
+
+/** Where a durable turn's streams stand, in the agent's own bytes. */
+export interface DurableTurnOffsets {
+	outOffset: number;
+	errOffset: number;
 }
 
 /**
@@ -368,13 +393,27 @@ const LOST_LINK_EXIT_CODE = 255;
 export function runDurableSshTurn(
 	launchStdin: string,
 	options: DurableSshTurnOptions
-): { first: DurableAttempt; done: Promise<DurableTurnExit> } {
+): {
+	first: DurableAttempt;
+	done: Promise<DurableTurnExit>;
+	/**
+	 * Where to pick the turn up after this app restarts. stdout resumes at
+	 * its last line end, not at the last byte: a new process starts with
+	 * empty line buffers, so the line in progress is sent again whole.
+	 */
+	restartOffsets(): DurableTurnOffsets;
+} {
 	const delays = options.delaysMs ?? DURABLE_REATTACH_DELAYS_MS;
-	const stderr = new DurableStderrReader();
+	const resume = options.resume;
+	if (resume) assertOffset(resume.outOffset);
+	const stderr = new DurableStderrReader(resume?.errOffset);
 	const stdoutDecoder = new StringDecoder('utf8');
-	let outOffset = 0;
+	let outOffset = resume?.outOffset ?? 0;
+	let outLineOffset = outOffset;
 	const handlers: DurableAttemptHandlers = {
 		onStdoutBytes: (chunk) => {
+			const nl = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength).lastIndexOf(LF);
+			if (nl >= 0) outLineOffset = outOffset + nl + 1;
 			outOffset += chunk.length;
 			const text = stdoutDecoder.write(Buffer.from(chunk));
 			if (text) options.onStdout(text);
@@ -403,7 +442,12 @@ export function runDurableSshTurn(
 			tick();
 		});
 
-	const first = options.startAttempt(launchStdin, handlers);
+	const first = options.startAttempt(
+		resume
+			? buildDurableReattachScript(options.dir, options.pidFile, resume.outOffset, resume.errOffset)
+			: launchStdin,
+		handlers
+	);
 	const done = (async (): Promise<DurableTurnExit> => {
 		let attempt = first;
 		let failures = 0;
@@ -455,5 +499,9 @@ export function runDurableSshTurn(
 			options.onAttempt?.(attempt.child);
 		}
 	})();
-	return { first, done };
+	return {
+		first,
+		done,
+		restartOffsets: () => ({ outOffset: outLineOffset, errOffset: stderr.errOffset }),
+	};
 }

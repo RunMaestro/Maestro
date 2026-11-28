@@ -237,6 +237,28 @@ describe('ProcessManager synthetic SSH prompt artifact stops', () => {
 		vi.restoreAllMocks();
 	});
 
+	it('quitting detaches a durable SSH turn: recorded, its agent left running, only the local ssh stopped', () => {
+		const detach = vi.fn();
+		managed.sshRemotePromptArtifactPath = undefined;
+		managed.sshRemotePidFile = '/tmp/maestro-agent-11111111-1111-4111-8111-111111111111.pid';
+		managed.detachDurableTurn = detach;
+		manager.killAll({ shutdown: true });
+		expect(detach).toHaveBeenCalledOnce();
+		expect(remoteSignal.signalRemoteAgent).not.toHaveBeenCalled();
+		expect(termination.stopProcess).toHaveBeenCalledWith({ child }, expect.anything());
+		expect(processes.has(SESSION_ID)).toBe(false);
+	});
+
+	it('closing the tab of a durable SSH turn still stops its agent on the host', () => {
+		const detach = vi.fn();
+		managed.sshRemotePromptArtifactPath = undefined;
+		managed.sshRemotePidFile = '/tmp/maestro-agent-11111111-1111-4111-8111-111111111111.pid';
+		managed.detachDurableTurn = detach;
+		expect(manager.kill(SESSION_ID)).toBe(true);
+		expect(detach).not.toHaveBeenCalled();
+		expect(remoteSignal.signalRemoteAgent).toHaveBeenCalledOnce();
+	});
+
 	it.each(['interrupt', 'kill', 'shutdown'] as const)(
 		'%s forwards the exact remote owner and private cleanup path',
 		(action) => {
