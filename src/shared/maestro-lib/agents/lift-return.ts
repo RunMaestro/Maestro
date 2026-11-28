@@ -277,7 +277,7 @@ export async function runReturnFromHost(
 				}
 			}
 			if (stuck.length === 0) {
-				await clearHostCopyLeft(deps, agent, notices, 'kept');
+				await clearHostCopyLeft(deps, agent, notices, 'kept', leftOnHost);
 				return;
 			}
 			const which =
@@ -288,6 +288,8 @@ export async function runReturnFromHost(
 				await restoreOrThrow(deps, agent, {
 					tabs: [],
 					hostCopyLeft: { ...marker, carried: stuck },
+					// The kept copy is still there: a later Move to Host replaces it (#2199).
+					leftOnHost,
 				});
 				notices.push(
 					`${which}, held, in the host's queue (${from}): ${why} Maestro takes ${stuck.length === 1 ? 'it' : 'them'} out at the next launch; do not resume ${stuck.length === 1 ? 'it' : 'them'} there.`
@@ -562,6 +564,8 @@ export async function runReturnFromHost(
 							tabs: newTabs,
 							queue: late.map(asHomeItem),
 							hostCopyLeft: copyLeft(true, [...cameHome, ...late.map((item) => item.itemId)]),
+							// The copy is not removed yet: keep the pointer the first restore wrote (#2199).
+							leftOnHost,
 						});
 					} catch (error) {
 						// Not released: the window may still write it. Held on the host, the message
@@ -636,18 +640,20 @@ function errorText(error: unknown): string {
 
 /**
  * The host copy is gone (or, `kept`, its queue holds nothing of this agent's any more): write the
- * record without the marker, so no later run dials for it. A failure here is not the agent's: it
- * is home, and the next run finds nothing left to do and clears the marker then. Reported as a
- * notice.
+ * record without the marker, so no later run dials for it. A copy that is still on the host
+ * (`stillOnHost`) keeps its `leftOnHost` pointer, so a later Move to Host replaces it; only a copy
+ * the host confirmed gone drops both. A failure here is not the agent's: it is home, and the next
+ * run finds nothing left to do and clears the marker then. Reported as a notice.
  */
 async function clearHostCopyLeft(
 	deps: ReturnRunDeps,
 	agent: AgentRecord,
 	notices: string[],
-	kept?: 'kept'
+	kept?: 'kept',
+	stillOnHost?: LiftedToPointer
 ): Promise<void> {
 	try {
-		await deps.restore(agent.id, { tabs: [] });
+		await deps.restore(agent.id, { tabs: [], ...(stillOnHost ? { leftOnHost: stillOnHost } : {}) });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		notices.push(
