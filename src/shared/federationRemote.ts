@@ -18,3 +18,24 @@ export function isFederationRemote(remote: Pick<SshRemoteConfig, 'federation'>):
 export function federationFieldFor(on: boolean): false | undefined {
 	return on ? undefined : false;
 }
+
+/**
+ * The remote list with Federation switched off for `remoteId`, or null when it already is (or the
+ * remote is gone). Stop Host and Remove Host write it: automatic Federation skips a remote whose
+ * switch is off, so a host the person stopped is not started, or its service registered, again.
+ */
+export function withFederationOff<T extends Pick<SshRemoteConfig, 'id' | 'federation'>>(
+	remotes: T[],
+	remoteId: string
+): T[] | null {
+	const index = remotes.findIndex((remote) => remote.id === remoteId);
+	if (index === -1 || !isFederationRemote(remotes[index])) return null;
+	const next = [...remotes];
+	next[index] = { ...remotes[index], federation: federationFieldFor(false) };
+	return next;
+}
+
+/** What a person reads once Stop Host or Remove Host switched Federation off for the remote. */
+export function federationTurnedOffNote(remoteName: string): string {
+	return `Federation is now off for ${remoteName}, so Maestro does not start the host there again. Switch it back on in the remote's SSH Hosts settings, or with maestro-cli update-ssh-remote <id> --federation on.`;
+}

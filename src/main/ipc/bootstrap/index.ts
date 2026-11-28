@@ -165,6 +165,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// A hosted agent's Cue runs run here: its History panel lists them as a local agent's does.
 		getCueHistoryEntries,
 		getCueHistoryGroups,
+		writeSshRemotes: (remotes) => deps.settingsStore.set('sshRemotes', remotes),
 	});
 
 	// MaestroRun - install, grant walkthrough, and the readiness that gates its
