@@ -2616,7 +2616,8 @@ With **Run hosted agents on their host** and **Move SSH agents to their host aut
 ```bash
 maestro-cli federation auto            # every remote and SSH agent, its state, and what needs you
 maestro-cli federation auto run        # run a pass now (Run Now in Settings > SSH Hosts)
-maestro-cli settings set federationAutoMove true    # turn automatic moves on (off by default)
+maestro-cli settings set federationHostedAgents true    # turn hosted agents on first (off by default)
+maestro-cli settings set federationAutoMove true        # then automatic moves (off by default)
 ```
 
 Both print each remote's state (`ready`, `setting-up`, `waiting`, `blocked`) with its service, and each SSH agent's state (`moved`, `pending`, `waiting`, `blocked`, `manual`) with its reason. Anything `blocked` carries a `To fix:` line. Both exit `1` when something needs a person: a `blocked` remote or agent, or a running host whose service still needs one step (lingering off, or a service that failed to register). A remote that can never have a service (Windows, Linux without a user session, a Mac with Maestro.app) shows its workaround as a note and does not make them exit `1`. `--json` prints the same snapshot. They need the desktop app: a headless host mirrors no peers.
