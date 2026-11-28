@@ -241,6 +241,12 @@ export class PeerMirrorService {
 	private reprobeTimer: ReturnType<typeof setTimeout> | null = null;
 	private started = false;
 	private stopped = false;
+	/**
+	 * Forwards a `connect()` holds while it is still in flight (discovery, the first attach). The
+	 * connection is not saved on its entry until the connect returns, so `stop()` releases these
+	 * itself: a stop mid-discovery ends the forward before it can dial.
+	 */
+	private readonly connectingLeases = new Set<SshForwardLease>();
 
 	constructor(deps: PeerMirrorServiceDeps) {
 		this.deps = deps;
@@ -631,7 +637,12 @@ export class PeerMirrorService {
 		const entries = [...this.entries.values()];
 		this.entries.clear();
 		this.pending.clear();
-		await Promise.all(entries.map((entry) => this.detach(entry)));
+		const connecting = [...this.connectingLeases];
+		this.connectingLeases.clear();
+		await Promise.all([
+			...entries.map((entry) => this.detach(entry)),
+			...connecting.map((lease) => lease.release()),
+		]);
 		this.deps.reset();
 	}
 
@@ -729,11 +740,14 @@ export class PeerMirrorService {
 		if (entry.dropped || this.stopped) return;
 		this.commit(entry, setPeerConnection(entry.state, 'connecting'));
 		const unsubscribes: Array<() => void> = [];
+		let connectingLease: SshForwardLease | undefined;
 		let opened: PeerClient;
 		try {
 			opened = await connectPeerClient(entry.state.peerId, entry.remote, {
 				acquireForward: (remote) => {
 					const lease = this.deps.acquireForward(remote);
+					connectingLease = lease;
+					this.connectingLeases.add(lease);
 					unsubscribes.push(lease.onChange((state) => this.onLeaseState(entry, state)));
 					return lease;
 				},
@@ -745,6 +759,7 @@ export class PeerMirrorService {
 				},
 			});
 		} catch (error) {
+			if (connectingLease) this.connectingLeases.delete(connectingLease);
 			for (const unsubscribe of unsubscribes) unsubscribe();
 			if (entry.dropped || this.stopped) return;
 			if (error instanceof PeerConnectError) {
@@ -756,6 +771,7 @@ export class PeerMirrorService {
 			this.deps.onError?.(error, 'federation:connect');
 			return;
 		}
+		if (connectingLease) this.connectingLeases.delete(connectingLease);
 		if (entry.dropped || this.stopped) {
 			for (const unsubscribe of unsubscribes) unsubscribe();
 			await opened.release();
