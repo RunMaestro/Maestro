@@ -22,6 +22,7 @@ import {
 	LIFT_POINTER_TIMEOUT_MS,
 	buildDesktopLiftDeps,
 	liftAgentFromDesktop,
+	returnAgentFromDesktop,
 	setLiftPointerInWindow,
 	type DesktopLiftDeps,
 } from '../../../main/federation/lift';
@@ -78,6 +79,7 @@ function depsWith(overrides: Partial<DesktopLiftDeps> = {}, svc = fakeService())
 		isAgentRunning: () => false,
 		service: () => svc.service,
 		setPointer: vi.fn().mockResolvedValue(undefined),
+		restore: vi.fn().mockResolvedValue(undefined),
 		now: () => NOW,
 		...overrides,
 	};
@@ -164,6 +166,107 @@ describe('liftAgentFromDesktop', () => {
 		importAgent.mockClear();
 		await liftAgentFromDesktop('agent-1', { withEnv: true }, deps);
 		expect(importAgent.mock.calls[0][0].agent.env).toHaveProperty('ANTHROPIC_API_KEY', 'sk');
+	});
+});
+
+describe('returnAgentFromDesktop', () => {
+	const hosted = () =>
+		sshAgent({ liftedTo: { peer: 'build-box', agentId: 'host-1', at: NOW } } as never);
+
+	function hostClient() {
+		return {
+			agents: {
+				get: vi.fn().mockResolvedValue({
+					ok: true,
+					value: { id: 'host-1', activeTabId: 'tab-1', aiTabs: [{ id: 'tab-1', state: 'idle' }] },
+				}),
+				remove: vi.fn().mockResolvedValue({ ok: true, value: undefined }),
+			},
+			tabs: {
+				list: vi.fn().mockResolvedValue({ ok: true, value: [{ id: 'tab-1', name: 'Main' }] }),
+				transcript: vi.fn().mockResolvedValue({ ok: true, value: [] }),
+			},
+			turns: { queue: { list: vi.fn().mockResolvedValue({ ok: true, value: [] }) } },
+		};
+	}
+
+	it('with no mirror running, opens one connection of its own and releases it', async () => {
+		const client = hostClient();
+		const release = vi.fn().mockResolvedValue(undefined);
+		const connectHost = vi.fn().mockResolvedValue({ peer: 'build-box', client, release });
+		const restore = vi.fn().mockResolvedValue(undefined);
+		const { deps } = depsWith({
+			readAgents: () => [hosted()],
+			service: () => null,
+			connectHost,
+			restore,
+		});
+		const answer = await returnAgentFromDesktop('agent-1', {}, deps);
+		expect(answer).toMatchObject({ ok: true, result: { hostCopyRemoved: true, tabs: 1 } });
+		expect(connectHost).toHaveBeenCalledTimes(1);
+		expect(connectHost).toHaveBeenCalledWith('remote-1', 'build-box');
+		expect(restore).toHaveBeenCalledWith(
+			'agent-1',
+			expect.objectContaining({ activeTabId: 'tab-1' })
+		);
+		expect(release).toHaveBeenCalledTimes(1);
+	});
+
+	it('releases its own connection when the host refuses mid-return', async () => {
+		const client = hostClient();
+		client.tabs.list.mockResolvedValue({ ok: false, error: { code: 'timeout', message: 'gone' } });
+		const release = vi.fn().mockResolvedValue(undefined);
+		const restore = vi.fn();
+		const { deps } = depsWith({
+			readAgents: () => [hosted()],
+			service: () => null,
+			connectHost: vi.fn().mockResolvedValue({ peer: 'build-box', client, release }),
+			restore,
+		});
+		const answer = await returnAgentFromDesktop('agent-1', {}, deps);
+		expect(answer.ok).toBe(false);
+		expect(restore).not.toHaveBeenCalled();
+		expect(release).toHaveBeenCalledTimes(1);
+	});
+
+	it('answers PEER_NOT_CONNECTED when its own connection cannot be opened', async () => {
+		const { deps } = depsWith({
+			readAgents: () => [hosted()],
+			service: () => null,
+			connectHost: vi.fn().mockRejectedValue(new Error('host-down')),
+			restore: vi.fn(),
+		});
+		expect(await returnAgentFromDesktop('agent-1', {}, deps)).toMatchObject({
+			ok: false,
+			code: 'PEER_NOT_CONNECTED',
+		});
+	});
+
+	it('refuses with no mirror and no way to connect', async () => {
+		const { deps } = depsWith({
+			readAgents: () => [hosted()],
+			service: () => null,
+			restore: vi.fn(),
+		});
+		expect(await returnAgentFromDesktop('agent-1', {}, deps)).toMatchObject({
+			ok: false,
+			code: 'FEDERATION_NOT_RUNNING',
+		});
+	});
+
+	it('borrows the running mirror and never opens a connection of its own', async () => {
+		const client = hostClient();
+		const connectHost = vi.fn();
+		const service = { hostClient: vi.fn(() => ({ peer: 'build-box', client })) };
+		const { deps } = depsWith({
+			readAgents: () => [hosted()],
+			service: () => service as unknown as PeerMirrorService,
+			connectHost,
+			restore: vi.fn().mockResolvedValue(undefined),
+		});
+		expect((await returnAgentFromDesktop('agent-1', {}, deps)).ok).toBe(true);
+		expect(service.hostClient).toHaveBeenCalledWith('remote-1');
+		expect(connectHost).not.toHaveBeenCalled();
 	});
 });
 

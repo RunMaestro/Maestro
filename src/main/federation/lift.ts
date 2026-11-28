@@ -9,6 +9,9 @@
  * - The host is reached over the peer mirror's HELD client (`PeerMirrorService.hostClient()`).
  *   Nothing dials: a peer that is not connected right now is refused, so no second ssh starts
  *   beside the mirror's one queue (decision D8).
+ * - Move Back is the one exception, because it must work with hosting off: when no mirror runs,
+ *   it opens ONE connection to the agent's host (`connectHost`) and releases it when the return
+ *   ends. With no mirror there is no second ssh to race.
  * - A running turn is read from the live processes (`isAgentBusy()`), because the persisted record
  *   always says idle.
  * - The pointer is written by the window, which owns the agent list: the same
@@ -30,10 +33,14 @@ import {
 import type { LiftedToPointer } from '../../shared/maestro-lib/agents/lift-pointer';
 import {
 	runReturnFromHost,
+	type ReturnHostConnection,
 	type ReturnedFromHost,
 	type ReturnResult,
 	type ReturnRunOptions,
 } from '../../shared/maestro-lib/agents/lift-return';
+import { connectPeerClient } from '../../shared/maestro-lib/client/peer-connection';
+import { getSshForwardManager } from '../../shared/maestro-lib/client/ssh-forward';
+import { createWsMaestroClient } from '../../shared/maestro-lib/client/ws-client';
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
 import { isAgentBusy, type ProcessLivenessProbe } from '../utils/agent-busy';
@@ -64,6 +71,11 @@ export interface DesktopLiftDeps {
 	setPointer(agentId: string, pointer: LiftedToPointer, movedQueueItemIds: string[]): Promise<void>;
 	/** Move Back: make the agent an SSH agent again with the host's tabs merged in. */
 	restore(agentId: string, returned: ReturnedFromHost): Promise<void>;
+	/**
+	 * Move Back with no mirror running (hosting off): open one connection to the host on SSH
+	 * remote `remoteId`. Throws when it cannot. The caller releases it. Absent: refuse instead.
+	 */
+	connectHost?(remoteId: string, peer: string): Promise<ReturnHostConnection>;
 	now?(): number;
 }
 
@@ -74,7 +86,8 @@ export type DesktopReturnAnswer =
 
 /**
  * Move a hosted agent back from its host (Move Back from Host, `maestro-cli unlift`). The host is
- * reached over the mirror's held client, as for Move to Host. Never throws.
+ * reached over the mirror's held client, as for Move to Host, or, when no mirror runs (hosting
+ * off), over one connection of its own that ends with the return. Never throws.
  */
 export async function returnAgentFromDesktop(
 	agentId: string,
@@ -82,15 +95,18 @@ export async function returnAgentFromDesktop(
 	deps: DesktopLiftDeps
 ): Promise<DesktopReturnAnswer> {
 	const service = deps.service();
-	if (!service && !options.offline) {
+	if (!service && !deps.connectHost && !options.offline) {
 		return { ok: false, code: 'FEDERATION_NOT_RUNNING', error: FEDERATION_NOT_RUNNING_MESSAGE };
 	}
 	try {
 		const result = await runReturnFromHost(agentId, options, {
 			readAgents: deps.readAgents,
-			connect: async (remoteId) => {
+			connect: async (remoteId, pointerPeer) => {
 				try {
-					if (!service) throw new Error(FEDERATION_NOT_RUNNING_MESSAGE);
+					if (!service) {
+						if (!deps.connectHost) throw new Error(FEDERATION_NOT_RUNNING_MESSAGE);
+						return await deps.connectHost(remoteId, pointerPeer);
+					}
 					const { peer, client } = service.hostClient(remoteId);
 					return { peer, client, release: async () => {} };
 				} catch (error) {
@@ -254,5 +270,26 @@ export function buildDesktopLiftDeps(runtime: DesktopLiftRuntime): DesktopLiftDe
 			setLiftPointerInWindow(runtime.getMainWindow(), agentId, pointer, moved),
 		restore: (agentId, returned) =>
 			restoreReturnedAgentInWindow(runtime.getMainWindow(), agentId, returned),
+		connectHost: (remoteId, peer) =>
+			connectHostForReturn(arrayOf<SshRemoteConfig>(runtime.readSshRemotes()), remoteId, peer),
 	};
+}
+
+/**
+ * One connection to the host on SSH remote `remoteId`, for a Move Back while no mirror runs. The
+ * forward is the shared manager's, refcounted, so `release()` ends the ssh when nothing else
+ * holds it. One attempt: a host that does not answer throws, and the caller decides what next.
+ */
+export async function connectHostForReturn(
+	remotes: readonly SshRemoteConfig[],
+	remoteId: string,
+	peer: string
+): Promise<ReturnHostConnection> {
+	const remote = remotes.find((candidate) => candidate.id === remoteId);
+	if (!remote) throw new Error(`SSH remote ${remoteId} is not configured on this machine.`);
+	const opened = await connectPeerClient(peer, remote, {
+		acquireForward: (target) => getSshForwardManager().acquire(target),
+		createClient: (endpoint) => createWsMaestroClient({ endpoint }),
+	});
+	return { peer, client: opened.client, release: opened.release };
 }
