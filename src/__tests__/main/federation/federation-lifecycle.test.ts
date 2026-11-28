@@ -200,6 +200,61 @@ describe('Federation runtime', () => {
 	});
 });
 
+describe('a quick off then on', () => {
+	it("starts the new service only after the old one's reset, so the reset never empties it", async () => {
+		const { deps, transport } = runtime([remoteOf('a')]);
+		// The old forward takes its time to end, as a real ssh does.
+		let endForward!: () => void;
+		transport.release.mockImplementationOnce(
+			() => new Promise<undefined>((resolve) => (endForward = () => resolve(undefined)))
+		);
+		const federation = createFederationRuntime(deps);
+		federation.start();
+		await settle();
+
+		federation.stop();
+		federation.start();
+		await settle();
+		// The old service is still stopping: nothing new runs yet, and nothing was reset.
+		expect(getPeerMirrorService()).toBeNull();
+		expect(transport.acquireForward).toHaveBeenCalledTimes(1);
+		expect(deps.safeSend).not.toHaveBeenCalledWith(FEDERATION_RESET_CHANNEL);
+
+		endForward();
+		await settle();
+		await settle();
+		expect(getPeerMirrorService()).not.toBeNull();
+		expect(transport.acquireForward).toHaveBeenCalledTimes(2);
+		// The reset came first; everything the new service pushed is after it and stays.
+		const channels = deps.safeSend.mock.calls.map((call) => call[0]);
+		const reset = channels.lastIndexOf(FEDERATION_RESET_CHANNEL);
+		expect(reset).toBeGreaterThanOrEqual(0);
+		expect(channels.slice(reset + 1)).toContain(FEDERATION_EVENT_CHANNEL);
+		expect(channels.slice(reset + 1)).not.toContain(FEDERATION_RESET_CHANNEL);
+		federation.stop();
+	});
+
+	it('a stop while the old service is still stopping leaves nothing running', async () => {
+		const { deps, transport } = runtime([remoteOf('a')]);
+		let endForward!: () => void;
+		transport.release.mockImplementationOnce(
+			() => new Promise<undefined>((resolve) => (endForward = () => resolve(undefined)))
+		);
+		const federation = createFederationRuntime(deps);
+		federation.start();
+		await settle();
+		federation.stop();
+		federation.start();
+		federation.stop();
+		await settle();
+		endForward();
+		await settle();
+		await settle();
+		expect(getPeerMirrorService()).toBeNull();
+		expect(transport.acquireForward).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe('buildPeerMirrorServiceDeps', () => {
 	it('routes pushes and resets through the all-windows send', () => {
 		const { deps } = runtime([]);

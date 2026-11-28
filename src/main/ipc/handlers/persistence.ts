@@ -71,6 +71,9 @@ import type {
 	QueueItemReceiptRequest,
 } from '../../stores/queue-item-receipt';
 import { mergeGroupPersistenceChanges } from '../../../shared/groupHierarchy';
+import { withFederationHostingDefaultOff } from '../../../shared/federationAuto';
+import { isHostingSwitchKey, readHostingSwitches } from '../../federation/hosting-gate';
+import { migrateFederationHostingDefaultOff } from '../../stores/migrations/federation-hosting-default-off';
 
 /**
  * Shallow-compare cliActivity for the diff broadcast.
@@ -601,7 +604,11 @@ export function registerPersistenceHandlers(
 
 	// Settings management
 	ipcMain.handle('settings:get', async (_, key: string) => {
-		const value = settingsStore.get(key);
+		// The two Federation switches read as the gate reads them (off until the default-off
+		// migration ran), so no window acts on a hosting value the gate does not.
+		const value = isHostingSwitchKey(key)
+			? readHostingSwitches(settingsStore)[key]
+			: settingsStore.get(key);
 		logger.debug(`Settings read: ${key}`, 'Settings', { key, value });
 		return value;
 	});
@@ -637,6 +644,10 @@ export function registerPersistenceHandlers(
 					? mergeAutoRunStats(settingsStore.get('autoRunStats'), value)
 					: value;
 		try {
+			// A switch written before the default-off migration ran (it failed to write at launch)
+			// runs it first, so this write is the opt-in it means and the other switch's old `true`
+			// does not come back with it.
+			if (isHostingSwitchKey(key)) migrateFederationHostingDefaultOff(settingsStore);
 			settingsStore.set(key, toPersist);
 		} catch (err) {
 			// ENOSPC / ENFILE errors are transient disk issues - log and return false
@@ -705,7 +716,8 @@ export function registerPersistenceHandlers(
 	});
 
 	ipcMain.handle('settings:getAll', async () => {
-		const settings = settingsStore.store;
+		// The Federation switches as the gate reads them; see `settings:get`.
+		const settings = withFederationHostingDefaultOff(settingsStore.store);
 		logger.debug('All settings retrieved', 'Settings', { count: Object.keys(settings).length });
 		return settings;
 	});

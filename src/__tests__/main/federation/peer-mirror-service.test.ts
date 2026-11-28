@@ -432,6 +432,27 @@ describe('PeerMirrorService', () => {
 		expect(h.deps.acquireForward).toHaveBeenCalledTimes(1);
 	});
 
+	it('stop ends a forward whose connect is still in flight, and that connect keeps nothing', async () => {
+		// Discovery is still out when hosting turns off: the forward must end now, not once the
+		// connect returns, or it could dial the remote while hosting is off.
+		const a = fakeHost('a', { manualReady: true });
+		const h = harness([remoteOf('a')], { a });
+		h.service.start();
+		await settle();
+		expect(h.deps.acquireForward).toHaveBeenCalledTimes(1);
+		expect(a.lease.release).not.toHaveBeenCalled();
+
+		await h.service.stop();
+		expect(a.lease.release).toHaveBeenCalledTimes(1);
+
+		// The connect resolves after the stop: it closes what it opened and saves nothing.
+		a.open();
+		await settle();
+		expect(a.close).toHaveBeenCalled();
+		expect(h.service.peers()).toEqual([]);
+		expect(h.deps.acquireForward).toHaveBeenCalledTimes(1);
+	});
+
 	describe('host queues', () => {
 		const waiting = (itemId: string, text = itemId): QueuedTurn => ({
 			itemId,

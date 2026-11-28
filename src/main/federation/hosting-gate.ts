@@ -21,6 +21,7 @@
  */
 
 import {
+	FEDERATION_AUTO_MOVE_SETTING,
 	FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER,
 	withFederationHostingDefaultOff,
 } from '../../shared/federationAuto';
@@ -32,7 +33,39 @@ import {
 /** The settings keys the gate reads. */
 type HostingKey =
 	| typeof HOSTED_AGENTS_SETTING
+	| typeof FEDERATION_AUTO_MOVE_SETTING
 	| typeof FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER;
+
+/** The two Federation switches, by settings key. */
+export type HostingSwitches = Record<
+	typeof HOSTED_AGENTS_SETTING | typeof FEDERATION_AUTO_MOVE_SETTING,
+	boolean
+>;
+
+/** Whether `key` names one of the two Federation switches. */
+export function isHostingSwitchKey(key: string): key is keyof HostingSwitches {
+	return key === HOSTED_AGENTS_SETTING || key === FEDERATION_AUTO_MOVE_SETTING;
+}
+
+/**
+ * The two Federation switches as every desktop reader must see them: the gate, the launch guard,
+ * and the settings the windows read. Each is on only for an explicit `true` written after the
+ * default-off migration ran (`withFederationHostingDefaultOff()`), so a migration that failed to
+ * write reads as off everywhere at once, never on in one place and off in another.
+ */
+export function readHostingSwitches(store: Pick<HostingSettingStore, 'get'>): HostingSwitches {
+	const settings = withFederationHostingDefaultOff({
+		[HOSTED_AGENTS_SETTING]: store.get(HOSTED_AGENTS_SETTING),
+		[FEDERATION_AUTO_MOVE_SETTING]: store.get(FEDERATION_AUTO_MOVE_SETTING),
+		[FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER]: store.get(
+			FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER
+		),
+	});
+	return {
+		[HOSTED_AGENTS_SETTING]: hostedAgentsEnabled(settings),
+		[FEDERATION_AUTO_MOVE_SETTING]: settings[FEDERATION_AUTO_MOVE_SETTING] === true,
+	};
+}
 
 /** Every gate's watcher, told when the settings file changed outside the store. */
 const externalChangeListeners = new Set<() => void>();
@@ -70,15 +103,7 @@ export interface HostingSettingStore {
  */
 export function hostingSettingOf(store: HostingSettingStore): HostingSetting {
 	return {
-		isOn: () =>
-			hostedAgentsEnabled(
-				withFederationHostingDefaultOff({
-					[HOSTED_AGENTS_SETTING]: store.get(HOSTED_AGENTS_SETTING),
-					[FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER]: store.get(
-						FEDERATION_HOSTING_DEFAULT_OFF_MIGRATION_MARKER
-					),
-				})
-			),
+		isOn: () => readHostingSwitches(store)[HOSTED_AGENTS_SETTING],
 		watch: (onChange) => {
 			const listener = () => onChange();
 			const offHosting = store.onDidChange(HOSTED_AGENTS_SETTING, listener);

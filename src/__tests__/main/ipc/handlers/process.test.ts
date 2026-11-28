@@ -679,9 +679,12 @@ describe('process IPC handlers', () => {
 			mockSessionsStore.get.mockImplementation((key, fallback) =>
 				key === 'sessions' ? [lifted] : fallback
 			);
-			// Hosting is opt-in: the refusal applies only once it is switched on.
+			// Hosting is opt-in: the refusal applies only once it is switched on, after the
+			// default-off migration ran.
 			mockSettingsStore.get.mockImplementation((key, fallback) =>
-				key === 'federationHostedAgents' ? true : fallback
+				key === 'federationHostedAgents' || key === 'migration_federationHostingDefaultOffV1'
+					? true
+					: fallback
 			);
 			mockAgentDetector.getAgent.mockResolvedValue({
 				id: 'claude-code',
@@ -795,6 +798,67 @@ describe('process IPC handlers', () => {
 				}
 			).catch((error: Error) => error);
 			expect(shell instanceof Error ? shell.message : '').not.toContain('Federation host');
+		});
+
+		it('holds a lifted agent for the come-home job while the default-off migration could not write', async () => {
+			// The old `true` is still on disk with no marker: the gate keeps hosting off, so the
+			// launch guard must too, or the agent would be sent to a host no mirror reaches.
+			const lifted = {
+				id: 'lifted-agent',
+				name: 'Lifted',
+				toolType: 'claude-code',
+				cwd: '/project',
+				aiTabs: [{ id: 'tab' }],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [lifted] : fallback
+			);
+			mockSettingsStore.get.mockImplementation((key: string, fallback: unknown) => {
+				if (key === 'federationHostedAgents' || key === 'federationAutoMove') return true;
+				if (key === 'sshRemotes') {
+					return [
+						{
+							id: 'remote-1',
+							name: 'Dev Server',
+							host: 'dev.example.com',
+							port: 22,
+							username: 'devuser',
+							privateKeyPath: '',
+							enabled: true,
+						},
+					];
+				}
+				return fallback;
+			});
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+
+			const outcome = await handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'lifted-agent-ai-tab',
+					toolType: 'claude-code',
+					cwd: '/project',
+					command: 'claude',
+					args: [],
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				}
+			).catch((error: Error) => error);
+
+			// Hosting reads off, as the gate reads it: never the hosted refusal that points at the
+			// host. The agent waits for the come-home job instead, which brings it back to run here
+			// over SSH; until then a turn would resume the provider session its host owns.
+			const message = outcome instanceof Error ? outcome.message : '';
+			expect(message).not.toContain('Send to build-box:host-1 instead.');
+			expect(message).toContain(
+				'"Lifted" is still on its Federation host. Bringing this agent back from build-box.'
+			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 		});
 
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {

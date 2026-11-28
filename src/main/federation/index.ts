@@ -114,21 +114,41 @@ export interface FederationRuntime {
 }
 
 export function createFederationRuntime(deps: FederationRuntimeDeps): FederationRuntime {
+	/** Whether the service should run: the last call was `start()`. */
+	let wanted = false;
+	/**
+	 * The stop of the previous service, until it finished. A new service starts only after it: the
+	 * old stop ends with `federation:reset`, which would empty what a new service already pushed.
+	 */
+	let stopping: Promise<void> | null = null;
+	const launch = (): void => {
+		if (!wanted || service || stopping) return;
+		service = new PeerMirrorService(buildPeerMirrorServiceDeps(deps));
+		service.start();
+	};
 	return {
 		start: () => {
+			wanted = true;
 			if (service) {
 				service.reconcile();
 				return;
 			}
-			service = new PeerMirrorService(buildPeerMirrorServiceDeps(deps));
-			service.start();
+			launch();
 		},
 		stop: () => {
+			wanted = false;
 			const running = service;
 			service = null;
-			void running
-				?.stop()
-				.catch((error) => void captureException(error, { operation: 'federation:stop' }));
+			if (!running) return;
+			const done = running
+				.stop()
+				.catch((error) => void captureException(error, { operation: 'federation:stop' }))
+				.finally(() => {
+					if (stopping === done) stopping = null;
+					// Turned on again while the old service was stopping: start the new one now.
+					launch();
+				});
+			stopping = done;
 		},
 	};
 }
