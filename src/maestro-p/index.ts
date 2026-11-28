@@ -1069,14 +1069,13 @@ async function runMode(args: ParsedArgs): Promise<never> {
 			costState = cost;
 			return;
 		}
-		// A timestamped transcript line means claude started the turn - cancel
-		// the first-byte timer before the init-gating buffer logic so a pre-init
+		// A stamped row from this run means claude started the turn - cancel the
+		// first-byte timer before the init-gating buffer logic so a pre-init
 		// entry still counts as "first byte". A SessionStart hook row does not
-		// (claude writes it at boot, before it reads the prompt), and neither does
-		// an untimestamped bookkeeping row: on --resume those arrive while the TUI
-		// is still booting, and counting one opened the steer gate before the
-		// editor was drawn (see provesTurnStarted in turn-start.ts).
-		if (provesTurnStarted(entry)) markFirstEntrySeen();
+		// (claude writes it at boot), and neither does an unstamped bookkeeping
+		// row: it may be the previous claude's exit flush, and on --resume those
+		// arrive while the TUI is still booting. See provesTurnStarted.
+		if (provesTurnStarted(entry, startMs)) markFirstEntrySeen();
 		if (!initEmitted) {
 			if (entry && typeof entry === 'object') {
 				checkPromptEchoRow(entry as Record<string, unknown>);

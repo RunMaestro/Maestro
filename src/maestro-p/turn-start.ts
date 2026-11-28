@@ -44,27 +44,36 @@ export function rowTimestampMs(entry: unknown): number | null {
 	return Number.isFinite(madeAt) ? madeAt : null;
 }
 
-/**
- * True for a row that proves claude read the prompt and started the turn: a
- * TIMESTAMPED row that is not a SessionStart hook's.
- *
- * Untimestamped rows never count. They are bookkeeping (`last-prompt`,
- * `tools-used`, `file-history-snapshot`, `mode`, `cost-state`), and on `--resume`
- * they reach the tailer while claude is still booting: the previous turn's
- * claude flushes them as it exits, with no stale timestamped row ahead of them
- * for the stale-flush guard to key on. Counting one opened the steer gate before
- * the TUI had drawn its editor, so a Quick Chat steer 10s into a Pedsidian turn
- * was refused as "the input editor is not on screen" three seconds before claude
- * received the prompt (2026-11-27). Every row that does mean the turn started
- * (the prompt echo, a reply, a tool result, a non-SessionStart hook) carries a
- * timestamp.
- */
-export function provesTurnStarted(entry: unknown): boolean {
-	return rowTimestampMs(entry) !== null && !isPreTurnRow(entry);
-}
-
 /** True for a row timestamped before `runStartedAt` (epoch ms). */
 export function isRowFromBeforeRun(entry: unknown, runStartedAt: number): boolean {
 	const madeAt = rowTimestampMs(entry);
 	return madeAt !== null && madeAt < runStartedAt;
+}
+
+/**
+ * True for a row that proves claude read this run's prompt and started the
+ * turn: a row TIMESTAMPED at or after `runStartedAt` (epoch ms) that is not a
+ * SessionStart hook's.
+ *
+ * Untimestamped rows never count. They are bookkeeping (`last-prompt`,
+ * `tools-used`, `file-history-snapshot`, `mode`, `cost-state`), and an exiting
+ * claude flushes them as a block. When that flush is ALL unstamped, no stale
+ * timestamped row precedes it for the stale-flush guard to key on, so it reached
+ * the next run as new:
+ * - On `--resume` the rows arrived while the TUI was still booting, and counting
+ *   one opened the steer gate before the editor was drawn: a Quick Chat steer
+ *   10s into a Pedsidian turn was refused as "the input editor is not on screen"
+ *   three seconds before claude received the prompt (2026-11-27).
+ * - A synopsis claude's flush landed after the next user turn began tailing, and
+ *   its `tools-used` row switched off the first-byte timer and the Enter
+ *   resubmit loop with that turn's prompt still parked in the editor. The 300s
+ *   idle watchdog then failed the turn with the prompt unsent (rc 1.1.1,
+ *   2026-11-27).
+ *
+ * Every row a started turn writes (the prompt echo, a reply, a tool result, a
+ * non-SessionStart hook) is stamped.
+ */
+export function provesTurnStarted(entry: unknown, runStartedAt: number): boolean {
+	const madeAt = rowTimestampMs(entry);
+	return madeAt !== null && madeAt >= runStartedAt && !isPreTurnRow(entry);
 }

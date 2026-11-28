@@ -7,6 +7,10 @@
  * drainer uses. This module only turns the answer into a toast. The transcript
  * marks the message itself when a turn takes it, and the queue updates from
  * main's broadcast.
+ *
+ * Every answer is the result of a click, and a refusal leaves no other trace:
+ * the message just stays queued. So each toast falls back to a Center Flash
+ * when in-app toasts are off, or a refused Steer looks like a dead button.
  */
 
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
@@ -19,6 +23,7 @@ export function notifyGroupChatSteerResult(result: GroupChatSteerResult): void {
 		case 'delivered':
 		case 'settled':
 			notifyToast({
+				flashWhenToastsOff: true,
 				color: 'green',
 				title: 'Sent to the running round',
 				message: `Steered to ${(result.targets ?? []).join(', ')}.`,
@@ -26,6 +31,7 @@ export function notifyGroupChatSteerResult(result: GroupChatSteerResult): void {
 			return;
 		case 'unconfirmed':
 			notifyToast({
+				flashWhenToastsOff: true,
 				color: 'orange',
 				title: 'Steering result unconfirmed',
 				message:
@@ -35,6 +41,7 @@ export function notifyGroupChatSteerResult(result: GroupChatSteerResult): void {
 			return;
 		case 'refused':
 			notifyToast({
+				flashWhenToastsOff: true,
 				color: 'yellow',
 				title: 'Could not steer this round',
 				message: `${steerRefusalSentence(result, 'The running turn could not take the message right now.')} It stays queued.`,
@@ -42,6 +49,7 @@ export function notifyGroupChatSteerResult(result: GroupChatSteerResult): void {
 			return;
 		default:
 			notifyToast({
+				flashWhenToastsOff: true,
 				color: 'yellow',
 				title: 'Could not steer this round',
 				message: result.detail ?? 'The message stays queued and sends when the round ends.',
