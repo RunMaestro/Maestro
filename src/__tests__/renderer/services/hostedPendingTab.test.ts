@@ -133,6 +133,18 @@ describe('New Tab while the link is down (R15)', () => {
 		expect(useNotificationStore.getState().toasts).toHaveLength(0);
 	});
 
+	it('runs discovery again at once when the tab opens while the host is not connected (R68)', async () => {
+		const reconnect = vi.fn(async () => ({ ok: false, error: 'No maestro-cli host is running.' }));
+		maestro.federation = { act: act$, reconnect };
+		const session = seed('hosted');
+		hydrateHost(['t1'], 'host-down');
+		await act(async () => {
+			await openHostedTabOrHere(session);
+		});
+		expect(reconnect).toHaveBeenCalledWith('box');
+		expect(act$).not.toHaveBeenCalled();
+	});
+
 	it('keeps the blank tab through the host sync while it waits', async () => {
 		const session = seed('hosted');
 		hydrateHost(['t1'], 'lost');

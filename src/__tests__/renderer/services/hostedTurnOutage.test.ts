@@ -18,6 +18,7 @@ import {
 	sendTakenItemToHost,
 } from '../../../renderer/services/hostedQueuedTurn';
 import { interruptTurn } from '../../../renderer/services/turnInterrupt';
+import { sendHostedTurn } from '../../../renderer/services/hostedTurns';
 import { usePeerMirrorStore } from '../../../renderer/stores/peerMirrorStore';
 import {
 	getRetryEntry,
@@ -26,6 +27,8 @@ import {
 	registerDispatchDepsProvider,
 	retryConnectionOutagesNow,
 	scheduleRetryForError,
+	settleRetryOnHost,
+	stopRetriesForAgent,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
 import { syncHostedAgents } from '../../../renderer/services/hostedAgentSync';
@@ -523,6 +526,289 @@ describe('a message sent while the link is down is kept for a retry', () => {
 		expect(getRetryEntry(session.id, 't1')).toBeUndefined();
 		expect(raised).toHaveLength(0);
 		expect(queue().map((queued) => [queued.id, queued.paused === true])).toEqual([['q1', true]]);
+	});
+
+	// Parity R68: a host that started after this app's first probe (discovery found no host) is
+	// found by the kept message's next resend (Try now, or the auto-retry), as an SSH agent's next
+	// send dials; it is never left to the slow re-probe.
+	describe('a host that started after the last probe (R68)', () => {
+		const reconnect$ = vi.fn();
+		function hostDown() {
+			const peer = usePeerMirrorStore.getState().peers.box;
+			usePeerMirrorStore.getState().hydrate([{ ...peer, connection: 'host-down' }]);
+		}
+		/** The probe found the host: main pushes the peer connected, then answers. */
+		function probeFindsHost() {
+			reconnect$.mockImplementation(async () => {
+				hydrateHost();
+				return { ok: true };
+			});
+		}
+		beforeEach(() => {
+			reconnect$.mockReset();
+			maestro.federation = { act: act$, reconnect: reconnect$ };
+		});
+
+		it('is found by Try now: the resend probes again, then sends the kept message once', async () => {
+			const session = seed('hosted');
+			hostDown();
+			keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+			const entry = getRetryEntry(session.id, 't1')!;
+			useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+			probeFindsHost();
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+
+			await sendTakenItemToHost(session.id, message('m1', 'hello'));
+			await flush();
+
+			expect(reconnect$).toHaveBeenCalledTimes(1);
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(1);
+			expect(getRetryEntry(session.id, 't1')).toBeUndefined();
+			expect(useRetryStore.getState().outages[entry.outageId]?.status).toBe('recovered');
+		});
+
+		it('keeps the message for the next attempt when the probe still finds no host', async () => {
+			const session = seed('hosted');
+			hostDown();
+			keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+			const entry = getRetryEntry(session.id, 't1')!;
+			useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+			reconnect$.mockResolvedValue({ ok: false, error: 'No maestro-cli host is running on box.' });
+
+			await sendTakenItemToHost(session.id, message('m1', 'hello'));
+			await flush();
+
+			// One probe per attempt, nothing sent, the same outage on its next backoff step.
+			expect(reconnect$).toHaveBeenCalledTimes(1);
+			expect(act$).not.toHaveBeenCalled();
+			expect(getRetryEntry(session.id, 't1')).toMatchObject({
+				outageId: entry.outageId,
+				attempt: 1,
+				status: 'scheduled',
+			});
+		});
+
+		it('sends nothing when the user stops the retry while the probe runs', async () => {
+			const session = seed('hosted');
+			hostDown();
+			keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+			const entry = getRetryEntry(session.id, 't1')!;
+			useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+			let found!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						found = () => {
+							hydrateHost();
+							resolve({ ok: true });
+						};
+					})
+			);
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+
+			const sent = sendTakenItemToHost(session.id, message('m1', 'hello'));
+			await flush();
+			stopRetriesForAgent(session.id, 't1');
+			found();
+			await sent;
+			await flush();
+
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(0);
+		});
+
+		it('probes on a send while the mirror has not read the agents yet (an app started with the host down) (Greptile on #2180)', async () => {
+			const session = seed('hosted');
+			usePeerMirrorStore.getState().hydrate([
+				{
+					...createMirroredPeer({ peerId: 'box', remoteId: 'r1', name: 'Box' }),
+					connection: 'host-down',
+				},
+			]);
+			probeFindsHost();
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+			const unavailable = vi.fn();
+
+			const receipt = await sendHostedTurn(session, 't1', 'hello', [], {
+				onHostUnavailable: unavailable,
+			});
+
+			expect(reconnect$).toHaveBeenCalledWith('box');
+			expect(unavailable).not.toHaveBeenCalled();
+			expect(receipt).toMatchObject({ status: 'started' });
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(1);
+		});
+
+		it('sends nothing when Stop lands on the tab while a drained message waits for discovery (Greptile on #2180)', async () => {
+			const session = seed('hosted');
+			hostDown();
+			useSessionStore.setState({
+				sessions: [{ ...session, executionQueue: [message('q1', 'wake up')] }],
+			});
+			let found!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						found = () => {
+							hydrateHost();
+							resolve({ ok: true });
+						};
+					})
+			);
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+
+			expect(handQueuedItemToHost(session.id, 'q1')).toBe(true);
+			await flush();
+			await interruptTurn(session.id, { tabId: 't1' });
+			found();
+			await flush();
+			await flush();
+
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(0);
+			// Parked held, one click from Force Send, as Stop parks a kept message.
+			expect(queue().map((queued) => [queued.id, queued.paused === true])).toEqual([['q1', true]]);
+		});
+
+		it('sends nothing on a direct send when Stop lands while the host is reached (CodeRabbit on #2180)', async () => {
+			const session = seed('hosted');
+			hostDown();
+			let found!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						found = () => {
+							hydrateHost();
+							resolve({ ok: true });
+						};
+					})
+			);
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+			const unavailable = vi.fn();
+
+			const sending = sendHostedTurn(session, 't1', 'hello', [], {
+				onHostUnavailable: unavailable,
+			});
+			await flush();
+			await interruptTurn(session.id, { tabId: 't1' });
+			found();
+
+			expect(await sending).toBeNull();
+			// Nothing reached the host, and no retry takes the message: the draft stays the user's.
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(0);
+			expect(unavailable).not.toHaveBeenCalled();
+			expect(getRetryEntry(session.id, 't1')).toBeUndefined();
+			expect(useNotificationStore.getState().toasts.map((toast) => toast.title)).toContain(
+				'Message not sent'
+			);
+		});
+
+		it("never holds again a kept message whose retry the host's answer settled while the probe ran (CodeRabbit on #2180)", async () => {
+			const session = seed('hosted');
+			hostDown();
+			keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+			const entry = getRetryEntry(session.id, 't1')!;
+			useRetryStore.getState().setEntry(entry.key, { ...entry, status: 'in-flight' });
+			let found!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						found = () => {
+							hydrateHost();
+							resolve({ ok: true });
+						};
+					})
+			);
+
+			const sent = sendTakenItemToHost(session.id, message('m1', 'hello'));
+			await flush();
+			// The host is back and its report says the turn ran: the cut's own read settles the retry.
+			settleRetryOnHost(session.id, 't1');
+			found();
+			await sent;
+			await flush();
+
+			expect(act$).not.toHaveBeenCalled();
+			expect(queue().map((queued) => queued.id)).not.toContain('m1');
+			expect(useRetryStore.getState().outages[entry.outageId]?.settledByHost).toBe(true);
+		});
+
+		it('sends nothing to a host the agent moved away from while the send waited (CodeRabbit on #2180)', async () => {
+			const session = seed('hosted');
+			hostDown();
+			let found!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						found = () => {
+							hydrateHost();
+							resolve({ ok: true });
+						};
+					})
+			);
+			act$.mockResolvedValue({
+				ok: true,
+				result: { kind: 'send', receipt: { status: 'started' } },
+			});
+
+			const sending = sendHostedTurn(session, 't1', 'hello', [], { onHostUnavailable: vi.fn() });
+			await flush();
+			// Move Back while the host was being reached: this machine no longer assigns that host.
+			useSessionStore.setState((state) => ({
+				sessions: state.sessions.map((row) => ({ ...row, liftedTo: undefined })),
+			}));
+			found();
+
+			expect(await sending).toBeNull();
+			expect(act$.mock.calls.filter(([, , action]) => action?.kind === 'send')).toHaveLength(0);
+			expect(useNotificationStore.getState().toasts.map((toast) => toast.message)).toContain(
+				'The agent moved while its Maestro host was being reached. Nothing was sent.'
+			);
+		});
+
+		it("probes on Stop that only ends a kept message's retry (CodeRabbit on #2180)", async () => {
+			const session = seed('hosted');
+			hostDown();
+			keepTurnForHost(session.id, message('m1', 'hello'), UNAVAILABLE.error);
+			reconnect$.mockResolvedValue({ ok: false });
+
+			await interruptTurn(session.id, { tabId: 't1' });
+
+			expect(reconnect$).toHaveBeenCalledWith('box');
+			// An idle tab sends the host no interrupt.
+			expect(act$).not.toHaveBeenCalled();
+		});
+
+		it('shares one probe among ten kept messages of the burst', async () => {
+			const session = seed('hosted');
+			hostDown();
+			let answer!: () => void;
+			reconnect$.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						answer = () => resolve({ ok: false });
+					})
+			);
+			const items = Array.from({ length: 10 }, (_, i) => message(`q${i}`, `m${i}`));
+			const sends = items.map((item) => sendTakenItemToHost(session.id, item));
+			await flush();
+			answer();
+			await Promise.all(sends);
+			expect(reconnect$).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	it('keeps the message without any host step while the mirror says the host is not connected', async () => {

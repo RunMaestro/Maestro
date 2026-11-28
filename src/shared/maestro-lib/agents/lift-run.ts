@@ -529,13 +529,18 @@ export async function runLift(
 		);
 	}
 
-	const busy = deps.busyReason(agent.id);
-	if (busy) {
-		throw new LiftRunError(
-			liftErrorCode('busy'),
-			`"${agent.name}" is busy: ${busy}. A running turn cannot move: wait for it to finish, then lift again.`
-		);
-	}
+	// Asked before the dial (it costs none) and again just before the import: a turn that started
+	// while the host was reached (the desktop's discovery can wait seconds) cannot move either.
+	const refuseBusy = () => {
+		const busy = deps.busyReason(agent.id);
+		if (busy) {
+			throw new LiftRunError(
+				liftErrorCode('busy'),
+				`"${agent.name}" is busy: ${busy}. A running turn cannot move: wait for it to finish, then lift again.`
+			);
+		}
+	};
+	refuseBusy();
 	const local = deps.localRefusal?.();
 	if (local) throw local;
 
@@ -572,6 +577,7 @@ export async function runLift(
 		// before the import; any change refuses with nothing changed (CodeRabbit on #2171).
 		const queueChanged = movedQueueChange(planned, deps.readAgents(), plan.movedQueueItemIds);
 		if (queueChanged) throw new LiftRunError('LIFT_QUEUE_CHANGED', queueChanged);
+		refuseBusy();
 
 		const imported = await connection.client.agents.import(plan.input);
 		if (!imported.ok) {

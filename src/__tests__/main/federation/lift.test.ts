@@ -52,7 +52,11 @@ function sshAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 	};
 }
 
-function fakeService(connected = true) {
+function fakeService(connected = true, foundByProbe = false) {
+	// `ensureLink()` is the mirror's discovery for an explicit act: a host found by it is connected.
+	const ensureLink = vi.fn(async (_remoteId: string) => {
+		if (foundByProbe) connected = true;
+	});
 	const importAgent = vi
 		.fn()
 		.mockResolvedValue({ ok: true, value: { agentId: 'host-1', queued: 1 } });
@@ -63,8 +67,9 @@ function fakeService(connected = true) {
 		return { peer: 'build-box', client: { agents: { import: importAgent, remove } } };
 	});
 	return {
-		service: { hostClient } as unknown as PeerMirrorService,
+		service: { hostClient, ensureLink } as unknown as PeerMirrorService,
 		hostClient,
+		ensureLink,
 		importAgent,
 		remove,
 	};
@@ -122,11 +127,22 @@ describe('liftAgentFromDesktop', () => {
 		if (answer.ok) expect(answer.planText).toMatch(/^Lifting "Docs"/);
 	});
 
-	it('refuses a peer the mirror is not connected to, without dialing', async () => {
-		const { deps } = depsWith({}, fakeService(false));
+	it('refuses a peer the mirror is still not connected to after it probed again', async () => {
+		const { deps, ensureLink } = depsWith({}, fakeService(false));
 		const answer = await liftAgentFromDesktop('agent-1', {}, deps);
+		expect(ensureLink).toHaveBeenCalledWith('remote-1');
 		expect(answer).toMatchObject({ ok: false, code: 'PEER_NOT_CONNECTED' });
 		expect(answer.ok ? '' : answer.error).toContain('Nothing moved');
+	});
+
+	it('moves to a host that started after the last probe: Move to Host probes again first (R68)', async () => {
+		const { deps, ensureLink, importAgent } = depsWith({}, fakeService(false, true));
+		const answer = await liftAgentFromDesktop('agent-1', {}, deps);
+		expect(ensureLink).toHaveBeenCalledWith('remote-1');
+		expect(ensureLink.mock.invocationCallOrder[0]).toBeLessThan(
+			importAgent.mock.invocationCallOrder[0]
+		);
+		expect(answer).toMatchObject({ ok: true, result: { target: 'build-box:host-1' } });
 	});
 
 	it('refuses an agent with a running turn', async () => {

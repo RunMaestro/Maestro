@@ -66,6 +66,7 @@ import {
 	callMirroredAgentAction,
 	closeMirrorTab,
 	interruptMirroredAgent,
+	reachPeerNow,
 	renameMirrorTab,
 	reopenMirrorClosedTab,
 	sendToMirroredTab,
@@ -108,6 +109,32 @@ export function hostedTargetOf(
 		.getState()
 		.peers[pointer.peer]?.agents.find((candidate) => candidate.id === pointer.agentId);
 	return { peerId: pointer.peer, agentId: pointer.agentId, ...(agent ? { agent } : {}) };
+}
+
+/**
+ * When Stop last ran on a hosted agent (`agent`) or one of its tabs (`agent:tab`), on one counter.
+ * A send that waits for discovery (`reachPeerNow()`) or for a cut turn's fate reads it after the
+ * wait: a Stop meanwhile means nothing goes (R68, Greptile and CodeRabbit on #2180).
+ */
+const hostedStops = new Map<string, number>();
+let hostedStopSeq = 0;
+
+/** Stop ran on a hosted agent: the whole agent, or the tab `tabId`. */
+export function noteHostedStop(sessionId: string, tabId?: string): void {
+	hostedStopSeq += 1;
+	hostedStops.set(tabId ? `${sessionId}:${tabId}` : sessionId, hostedStopSeq);
+}
+
+/** The mark a send takes before it waits: `hostedStoppedSince()` compares a later Stop with it. */
+export function hostedStopMark(): number {
+	return hostedStopSeq;
+}
+
+/** Whether Stop ran on the agent, or on its tab `tabId`, after the mark `since`. */
+export function hostedStoppedSince(sessionId: string, tabId: string, since: number): boolean {
+	const agentStop = hostedStops.get(sessionId) ?? 0;
+	const tabStop = hostedStops.get(`${sessionId}:${tabId}`) ?? 0;
+	return Math.max(agentStop, tabStop) > since;
 }
 
 /**
@@ -302,6 +329,9 @@ export async function openHostedTabOrHere(
 	if (usePeerMirrorStore.getState().peers[target.peerId]?.connection === 'connected') {
 		return openHostedTab(session, placement);
 	}
+	// An explicit act: a host started after the last probe is found now (R68), and the tab opened
+	// here is made there when the link comes up.
+	void reachPeerNow(target.peerId);
 	const tabId = generateId();
 	const saveToHistory = placement.fields?.saveToHistory ?? DEFAULT_TAB_DEFAULTS.saveToHistory;
 	const showThinking = placement.fields?.showThinking ?? DEFAULT_TAB_DEFAULTS.showThinking;
@@ -715,11 +745,50 @@ export async function sendHostedTurn(
 		agentNotes?: string;
 		/** The transcript entry the message already is (`QueuedItem.hostEntryId`): drawn once. */
 		entryId?: string;
+		/** The caller already ran discovery for this send (`reachPeerNow()`): not run again. */
+		reached?: boolean;
 	} = {}
 ): Promise<TurnSendReceipt | null> {
-	const target = hostedTargetOf(session);
+	let target = hostedTargetOf(session);
 	if (!target) return null;
-	const connection = usePeerMirrorStore.getState().peers[target.peerId]?.connection;
+	let connection = usePeerMirrorStore.getState().peers[target.peerId]?.connection;
+	// A send is an explicit act: a host that is not connected, or whose agents the mirror has not
+	// read yet (an app started while the host was down), is probed again now (R68), so a host
+	// started after the last probe takes the message, as an SSH agent's next send dials.
+	const unreached = !target.agent || (opts.onHostUnavailable && connection !== 'connected');
+	if (unreached && !opts.reached) {
+		const stopMark = hostedStopMark();
+		const reached = await reachPeerNow(target.peerId);
+		if (hostedStoppedSince(session.id, tabId ?? session.activeTabId, stopMark)) {
+			// Stop ran while the host was reached: nothing goes, and no retry takes the message. The
+			// composer keeps the draft; a caller that sends for someone else hears null.
+			notifyToast({
+				color: 'theme',
+				title: 'Message not sent',
+				message: 'Stop ran while the Maestro host was being reached. Nothing was sent.',
+			});
+			return null;
+		}
+		target = hostedTargetOf(session) ?? target;
+		connection = reached
+			? 'connected'
+			: usePeerMirrorStore.getState().peers[target.peerId]?.connection;
+	}
+	// The agent may have moved while this send waited (for discovery, or for a cut turn's fate on
+	// the queued path): a send goes only to the host this machine assigns the agent now, never to
+	// a copy the user moved away from (CodeRabbit on #2180).
+	const live = selectSessionById(session.id)(useSessionStore.getState());
+	if (live && live !== session) {
+		const now = hostedTargetOf(live);
+		if (!now || now.peerId !== target.peerId || now.agentId !== target.agentId) {
+			notifyToast({
+				color: 'red',
+				title: 'Message not sent',
+				message: 'The agent moved while its Maestro host was being reached. Nothing was sent.',
+			});
+			return null;
+		}
+	}
 	if (!target.agent || (opts.onHostUnavailable && connection !== 'connected')) {
 		// Nothing is sent to a host that is not connected, including the steps ahead of the send
 		// (a new host tab, merged context): the caller keeps the message for a retry, or it is told.

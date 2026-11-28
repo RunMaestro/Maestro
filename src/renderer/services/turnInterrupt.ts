@@ -18,7 +18,8 @@
  * (`send-terminal --control C`), and a `!` command has its own card Stop.
  */
 
-import { hostedTargetOf, interruptHostedTurn } from './hostedTurns';
+import { hostedTargetOf, interruptHostedTurn, noteHostedStop } from './hostedTurns';
+import { reachPeerNow } from './peerMirror';
 import { cutHostedTurnTabs, endHostedTurnsHere, markHostedTurnsStopped } from './hostedLinkLoss';
 import { usePeerMirrorStore } from '../stores/peerMirrorStore';
 import { TURN_CANCELED_NOTE } from '../../shared/maestro-lib/store/transcript';
@@ -162,6 +163,8 @@ export async function interruptTurn(
 	const terminalCommand =
 		tabId === null && session.state === 'busy' && session.busySource === 'terminal';
 	if (hostedTargetOf(session) && !terminalCommand) {
+		// First, before any await: a send still waiting for its host's discovery goes nowhere (R68).
+		noteHostedStop(sessionId, scopeTabId);
 		const hostBusy = scopedTab
 			? scopedTab.state === 'busy'
 				? [scopedTab.id]
@@ -184,6 +187,10 @@ export async function interruptTurn(
 		// A consult whose message may be a turn Stop ends goes with it, also before any await.
 		const hostStop = dropStoppedHostStartMentions(sessionId, stopHere);
 		const hostNotTold = !!peer && peer.connection !== 'connected' && stopHere.length > 0;
+		// Stop is an explicit act, also when it only ends a kept message's retry: a host started
+		// after the last probe is found now (R68), and a cut turn's fate is read from it once the
+		// link is up. An idle tab still sends no interrupt to the host.
+		if (peer && peer.connection !== 'connected') void reachPeerNow(peer.peerId);
 		let hostAnswer: HostStopAnswer | undefined;
 		try {
 			if (hostNotTold) {

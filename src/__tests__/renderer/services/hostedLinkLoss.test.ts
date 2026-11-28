@@ -407,6 +407,16 @@ describe('a turn cut by a lost link (Agent Resilience off: the cut draws its not
 		}
 	);
 
+	it('runs discovery again at once on a Stop the host could not be told of (R68)', async () => {
+		const reconnect = vi.fn(async () => ({ ok: false, error: 'No maestro-cli host is running.' }));
+		maestro.federation = { transcript, act: act$, reconnect };
+		hostReports('busy', 'reconnecting');
+		syncHostedAgents();
+		await interruptTurn('row', { tabId: 't1' });
+		expect(reconnect).toHaveBeenCalledWith('box');
+		expect(act$).not.toHaveBeenCalled();
+	});
+
 	it('never sends again a stopped turn the host still ran, cut again by a later outage', async () => {
 		hostReports('busy', 'reconnecting');
 		syncHostedAgents();
@@ -813,6 +823,51 @@ describe('projectHostedSession with the link lost', () => {
 			expect(back.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'card']);
 		}
 	);
+
+	it("keeps a cut turn's thinking and tool rows above the card once the host saves them, with the host clock ahead (R69)", () => {
+		const card: LogEntry = {
+			id: 'card',
+			timestamp: 50,
+			source: 'system',
+			text: 'Connection lost',
+			retryOutageId: 'o1',
+		};
+		const local = createModeSession('hosted', {
+			id: 'row',
+			activeTabId: 't1',
+			aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking: 'sticky', logs: [card] })],
+		});
+		const hostAt = 4_000;
+		const rows = [
+			{ ...QUESTION, timestamp: hostAt },
+			{ id: 'th1', timestamp: hostAt + 10, source: 'thinking', text: 'Let me think' },
+			{
+				id: 'tool1',
+				timestamp: hostAt + 20,
+				source: 'tool',
+				text: 'Read',
+				metadata: { toolState: { status: 'completed' } },
+			},
+		];
+		const liveTurns = {
+			[liveTurnKey('h1', 't1')]: { startedAt: hostAt, busy: true, entries: rows },
+		} as never;
+		const during = projectHostedSession(local, {
+			agent,
+			liveTurns,
+			linkLost,
+			keptCuts: new Set(['t1']),
+		});
+		expect(during.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'th1', 'tool1', 'card']);
+		// The host is back and its transcript holds the turn's rows under the same ids.
+		const back = projectHostedSession(during, {
+			agent: peerWith('idle', 'connected').agents[0],
+			transcripts: {
+				[liveTurnKey('h1', 't1')]: { loaded: true, entries: rows },
+			} as never,
+		});
+		expect(back.aiTabs[0].logs.map((entry) => entry.id)).toEqual(['u1', 'th1', 'tool1', 'card']);
+	});
 
 	it('never draws reasoning as a reply row at the cut (R58)', () => {
 		const local = createModeSession('hosted', {
@@ -1738,6 +1793,31 @@ describe('a turn cut by a lost link is kept under the retry card, drawn once (R1
 		expect(queue().map((item) => item.hostEntryId)).toContain('u1');
 	});
 
+	it('drops every cut-reply copy when the cut turn has no message here and the host runs it on (R69)', async () => {
+		// The tab's newest message is an earlier turn's (older than the running turn's start): the
+		// cut has no message on record.
+		const earlier: LogEntry = { id: 'a0', timestamp: 20, source: 'ai', text: 'Earlier answer' };
+		updateAiTab('row', 't1', (current) => ({ ...current, logs: [QUESTION, earlier] }));
+		hostReports('busy', 'reconnecting', 100);
+		confirmOutage();
+		syncHostedAgents();
+		expect(queue()).toHaveLength(0);
+		updateAiTab('row', 't1', (current) => ({
+			...current,
+			logs: [...current.logs, { ...PARTIAL_REPLY, timestamp: 120 }],
+		}));
+		transcript.mockResolvedValue([QUESTION, earlier]);
+		useSshOutageStore.getState().applyReachability({ ...hostOutage, reachable: true, since: 60 });
+		hostReports('busy', 'connected', 100);
+		syncHostedAgents();
+		await flush();
+		syncHostedAgents();
+		await flush();
+		// Running on there: its live tail draws what streamed before the cut; no copy stays beside it.
+		expect(tab().logs.some((entry) => entry.cutReply)).toBe(false);
+		expect(sends()).toHaveLength(0);
+	});
+
 	it('sends the kept message when only a LATER message of the tab was answered: its own turn died (R23)', async () => {
 		cut();
 		// Died with the host: what streamed before the cut stays, as an SSH turn's does (R58).
@@ -2130,6 +2210,32 @@ describe('a kept cut message after the app restarted asks the host how its turn 
 		expect(sends()).toHaveLength(1);
 		expect(sends()[0][2]).toMatchObject({ kind: 'send', text: QUESTION.text, entryId: 'u1' });
 	});
+
+	it.each([
+		['the turn died there', 'died'],
+		['the host tab cannot be read', 'unread'],
+	])(
+		'sends nothing, and holds the message, when Stop lands while the host says how its turn ended (%s) (CodeRabbit on #2180)',
+		async (_how, outcome) => {
+			relaunch('idle', [QUESTION]);
+			let land!: () => void;
+			transcript.mockReturnValue(
+				new Promise<LogEntry[]>((resolve, reject) => {
+					land = () =>
+						outcome === 'died' ? resolve([QUESTION]) : reject(new Error('read failed'));
+				})
+			);
+			expect(handQueuedItemToHost('row', 'k1')).toBe(true);
+			await flush();
+			await interruptTurn('row', { tabId: 't1' });
+			land();
+			await flush();
+			await flush();
+			expect(sends()).toHaveLength(0);
+			expect(getRetryEntry('row', 't1')).toBeUndefined();
+			expect(queue().map((item) => [item.id, item.paused === true])).toEqual([['k1', true]]);
+		}
+	);
 
 	it('keeps the message, unsent, when the host tab cannot be read', async () => {
 		relaunch('idle', [QUESTION]);

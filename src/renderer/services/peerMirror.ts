@@ -91,6 +91,47 @@ export async function requestPeerReport(peerId: string): Promise<void> {
 	}
 }
 
+/**
+ * How long an explicit act waits for `reachPeerNow()` before it takes the host as still down (the
+ * probe goes on, and the link coming back sends what was kept). The mirror's own bound on an act
+ * (`MIRROR_ACT_RECONNECT_WAIT_MS` in main) is the same.
+ */
+export const HOST_REACH_WAIT_MS = 10_000;
+
+/** The reach in flight per peer: every act meanwhile shares it. */
+const reachesInFlight = new Map<string, Promise<boolean>>();
+
+/**
+ * An explicit act on a hosted agent whose host is not connected (a send, Try now, an auto-retry,
+ * Stop, a new tab): run discovery again now, quietly (`federation reconnect`; main runs one probe
+ * per peer that every act shares), so a host started after the last probe is found at once, as an
+ * SSH agent's next turn dials. Resolves true when the host is connected after it, false when it is
+ * still not there or did not answer within `HOST_REACH_WAIT_MS`. Never throws.
+ */
+export function reachPeerNow(peerId: string): Promise<boolean> {
+	if (usePeerMirrorStore.getState().peers[peerId]?.connection === 'connected') {
+		return Promise.resolve(true);
+	}
+	const inFlight = reachesInFlight.get(peerId);
+	if (inFlight) return inFlight;
+	const api = window.maestro?.federation;
+	if (!api?.reconnect) return Promise.resolve(false);
+	const reach = new Promise<boolean>((resolve) => {
+		const timer = setTimeout(() => resolve(false), HOST_REACH_WAIT_MS);
+		Promise.resolve()
+			.then(() => api.reconnect(peerId))
+			.then(
+				(result) => resolve(result?.ok === true),
+				() => resolve(false)
+			)
+			.finally(() => clearTimeout(timer));
+	}).finally(() => {
+		if (reachesInFlight.get(peerId) === reach) reachesInFlight.delete(peerId);
+	});
+	reachesInFlight.set(peerId, reach);
+	return reach;
+}
+
 /** The toast title for a failed action, by kind. */
 const ACTION_FAILURE_TITLES: Record<PeerAgentActionKind, string> = {
 	send: 'Message not sent',

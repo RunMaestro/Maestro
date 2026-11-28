@@ -712,11 +712,17 @@ function settleKeptCut(
  * The host answered the cut turn itself (it ran on, or finished while only the link was down): its
  * answer is the reply (`decideCutTurn()`), so this machine's copy of what streamed before the cut (`cutReply`, R58)
  * would draw its start twice. Only the copies in this cut's turn go; one from an earlier cut stays.
+ * A cut with no message on record (a turn this machine did not send) has no turn to bound them:
+ * every copy in the tab goes, so none stays beside the host's own answer (R69).
  */
 function dropCutReplies(cut: CutTurn): void {
 	updateAiTab(cut.sessionId, cut.tabId, (tab) => {
 		const logs = tab.logs ?? [];
-		const from = cut.message ? logs.findIndex((entry) => entry.id === cut.message!.id) : -1;
+		if (!cut.message) {
+			const next = logs.filter((entry) => !entry.cutReply);
+			return next.length === logs.length ? tab : { ...tab, logs: next };
+		}
+		const from = logs.findIndex((entry) => entry.id === cut.message!.id);
 		let to = logs.length;
 		for (let i = from + 1; i < logs.length; i += 1) {
 			if (logs[i].source === 'user' && !logs[i].steered && !logs[i].keptForHost) {

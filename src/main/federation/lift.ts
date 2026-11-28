@@ -91,6 +91,8 @@ export async function returnAgentFromDesktop(
 			connect: async (remoteId) => {
 				try {
 					if (!service) throw new Error(FEDERATION_NOT_RUNNING_MESSAGE);
+					// An explicit act: a host started after the last probe is found now.
+					await service.ensureLink(remoteId);
 					const { peer, client } = service.hostClient(remoteId);
 					return { peer, client, release: async () => {} };
 				} catch (error) {
@@ -133,6 +135,8 @@ export async function liftAgentFromDesktop(
 		},
 		connect: async (remote) => {
 			try {
+				// An explicit act: a host started after the last probe is found now.
+				await service.ensureLink(remote.id);
 				const { peer, client } = service.hostClient(remote.id);
 				// Borrowed from the mirror: the mirror keeps it open after the lift.
 				return { peer, client, release: async () => {} };

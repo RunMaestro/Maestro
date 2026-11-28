@@ -10,7 +10,9 @@ import * as os from 'os';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	MIRROR_ACT_RECONNECT_WAIT_MS,
+	MIRROR_HOSTED_REPROBE_INTERVAL_MS,
 	MIRROR_IDLE_REDIAL_MAX_MS,
+	MIRROR_REPROBE_INTERVAL_MS,
 	MIRROR_TURN_COALESCE_MS,
 	MIRROR_UNANNOUNCED_HISTORY_TTL_MS,
 	MIRROR_HISTORY_PUSH_MERGE_MS,
@@ -1304,6 +1306,95 @@ describe('PeerMirrorService', () => {
 			expect(turns.send).not.toHaveBeenCalled();
 		});
 
+		// Parity R68: a host that starts after the first probe (discovery found none) is found by the
+		// next explicit act, not by the slow re-probe; the acts in a burst share one probe.
+		describe('on a remote whose discovery found no host (R68)', () => {
+			/** A peer whose first probe found no host; `start()` makes the host answer from now on. */
+			async function noHostPeer(extra: Partial<PeerMirrorServiceDeps> = {}) {
+				const a = fakeHost('a', { manualReady: true });
+				const h = harness([remoteOf('a')], { a }, { reprobeIntervalMs: 0, ...extra });
+				const { turns } = withInput(a);
+				h.service.start();
+				await settle();
+				a.fail(new SshForwardError('not-running', 'no host'));
+				await settle();
+				expect(h.service.peers()[0].connection).toBe('host-down');
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(1);
+				let answer!: (endpoint: typeof ENDPOINT) => void;
+				const started = new Promise<typeof ENDPOINT>((resolve) => (answer = resolve));
+				(a.lease as unknown as { ready: () => Promise<typeof ENDPOINT> }).ready = () => started;
+				return { a, h, turns, start: () => answer(ENDPOINT) };
+			}
+
+			it('finds a host started after the first probe on the next send, and sends', async () => {
+				const { h, turns, start } = await noHostPeer();
+				const pending = h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+				await settle();
+				// The send ran discovery again at once and waits for it, never failing ahead of it.
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(2);
+				expect(h.service.peers()[0].connection).toBe('connecting');
+				start();
+				expect(await pending).toMatchObject({ ok: true });
+				expect(turns.send).toHaveBeenCalledTimes(1);
+				expect(h.service.peers()[0].connection).toBe('connected');
+			});
+
+			it("finds it on Try now: the kept message's resend probes again, as each auto-retry does", async () => {
+				const { a, h, turns } = await noHostPeer();
+				const lease = a.lease as unknown as { ready: () => Promise<typeof ENDPOINT> };
+				lease.ready = () => Promise.reject(new SshForwardError('not-running', 'no host'));
+				const first = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+				expect(first).toMatchObject({ ok: false, notSent: true });
+				// The host starts; the retry card's Try now sends the kept message again.
+				lease.ready = () => Promise.resolve(ENDPOINT);
+				const tryNow = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+				expect(tryNow).toMatchObject({ ok: true });
+				expect(turns.send).toHaveBeenCalledTimes(1);
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(3);
+			});
+
+			it('shares one probe among ten sends in a burst and a Check Now beside them', async () => {
+				const { h, turns, start } = await noHostPeer();
+				const sends = Array.from({ length: 10 }, (_, i) =>
+					h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: `m${i}` })
+				);
+				const checked = h.service.reconnect('a');
+				await settle();
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(2);
+				start();
+				const answers = await Promise.all(sends);
+				expect(answers.every((answer) => answer.ok)).toBe(true);
+				expect(await checked).toMatchObject({ ok: true });
+				expect(turns.send).toHaveBeenCalledTimes(10);
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(2);
+			});
+
+			it('says what the probe found when the host is still not there, and probes again on the next act', async () => {
+				const { a, h, turns } = await noHostPeer();
+				(a.lease as unknown as { ready: () => Promise<typeof ENDPOINT> }).ready = () =>
+					Promise.reject(new SshForwardError('not-running', 'no host'));
+				const answer = await h.service.act('a', 'a-a1', { kind: 'send', tabId: 't1', text: 'hi' });
+				expect(answer).toMatchObject({ ok: false, code: 'host-unavailable', notSent: true });
+				expect(answer.ok ? '' : answer.error).toMatch(
+					/^Not connected to peer "a" \(host-down\)\. Nothing was sent\./
+				);
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(2);
+				await h.service.act('a', 'a-a1', { kind: 'new-tab' });
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(3);
+				expect(turns.send).not.toHaveBeenCalled();
+			});
+
+			it('probes again for Move to Host (ensureLink) and lends the client it found', async () => {
+				const { a, h, start } = await noHostPeer();
+				const reached = h.service.ensureLink('a');
+				await settle();
+				start();
+				await reached;
+				expect(h.service.hostClient('a').client).toBe(a.client);
+				expect(h.deps.acquireForward).toHaveBeenCalledTimes(2);
+			});
+		});
+
 		it('names an unknown peer or agent, and passes a host failure through with the peer', async () => {
 			const a = fakeHost('a');
 			const h = harness([remoteOf('a')], { a });
@@ -1349,6 +1440,47 @@ describe('PeerMirrorService', () => {
 				vi.advanceTimersByTime(5000);
 				await settle();
 				expect(h.deps.acquireForward).toHaveBeenCalledTimes(3);
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('probes a remote with no host every 30 s while an agent here is hosted on it, and one that hosts nothing at the slow pace (R68)', async () => {
+			vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+			try {
+				const a = fakeHost('a', { manualReady: true });
+				const b = fakeHost('b', { manualReady: true });
+				const h = harness(
+					[remoteOf('a'), remoteOf('b')],
+					{ a, b },
+					{
+						hostsAgents: (peerId) => peerId === 'a',
+					}
+				);
+				h.service.start();
+				await settle();
+				a.fail(new SshForwardError('not-running', 'no host'));
+				await settle();
+				b.fail(new SshForwardError('not-running', 'no host'));
+				await settle();
+				expect(h.service.peers().map((p) => p.connection)).toEqual(['host-down', 'host-down']);
+				const dialed = () =>
+					vi.mocked(h.deps.acquireForward).mock.calls.map(([remote]) => remote.id);
+				expect(dialed()).toEqual(['a', 'b']);
+
+				vi.advanceTimersByTime(MIRROR_HOSTED_REPROBE_INTERVAL_MS);
+				await settle();
+				// Only the remote that hosts an agent of this machine was probed again.
+				expect(dialed()).toEqual(['a', 'b', 'a']);
+				vi.advanceTimersByTime(MIRROR_HOSTED_REPROBE_INTERVAL_MS);
+				await settle();
+				expect(dialed()).toEqual(['a', 'b', 'a', 'a']);
+
+				vi.advanceTimersByTime(MIRROR_REPROBE_INTERVAL_MS - 2 * MIRROR_HOSTED_REPROBE_INTERVAL_MS);
+				await settle();
+				// The slow re-probe takes the remote that hosts nothing here (and the hosted one again).
+				expect(dialed().filter((id) => id === 'b')).toHaveLength(2);
+				await h.service.stop();
 			} finally {
 				vi.useRealTimers();
 			}
