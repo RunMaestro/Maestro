@@ -217,6 +217,72 @@ describe('withReturnedFromHost', () => {
 		expect(merged.activeTabId).toBe('tab-1');
 	});
 
+	it('keeps every row of both sides when rows have no id, each one once', () => {
+		const record = hostedAgent({
+			aiTabs: [
+				{
+					id: 'tab-1',
+					logs: [
+						{ text: 'a', timestamp: 1 },
+						{ text: 'b', timestamp: 3 },
+					],
+				},
+				{ id: 'tab-old', logs: [{ text: 'x' }] },
+			],
+		}) as unknown as Record<string, unknown>;
+		const merged = withReturnedFromHost(record, {
+			tabs: [
+				{
+					id: 'tab-1',
+					logs: [
+						{ timestamp: 1, text: 'a' },
+						{ text: 'h', timestamp: 2 },
+					],
+				},
+				{ id: 'tab-old', logs: [{ text: 'y' }] },
+			],
+		});
+		const tabs = merged.aiTabs as AITabRecord[];
+		// Matched by content (key order does not matter), in time order.
+		expect(tabs[0].logs).toEqual([
+			{ timestamp: 1, text: 'a' },
+			{ text: 'h', timestamp: 2 },
+			{ text: 'b', timestamp: 3 },
+		]);
+		// Rows with no time: the host's, then this machine's.
+		expect(tabs[1].logs).toEqual([{ text: 'y' }, { text: 'x' }]);
+	});
+
+	it('finishing a host copy keeps a local rename and star, and does not bring back a tab closed here since', () => {
+		const record = {
+			...hostedAgent(),
+			liftedTo: undefined,
+			hostCopyLeft: { ...copyLeft(false), homeTabIds: ['tab-1', 'tab-closed'] },
+			unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+			aiTabs: [{ id: 'tab-1', name: 'Mine', starred: false, logs: [] }],
+		} as unknown as Record<string, unknown>;
+		const merged = withReturnedFromHost(record, {
+			tabs: [
+				{ id: 'tab-1', name: 'Host name', starred: true, logs: [] },
+				{ id: 'tab-closed', name: 'Closed here', logs: [log('c1')] },
+				{ id: 'tab-host-new', logs: [log('n1')] },
+			],
+			hostCopyLeft: copyLeft(true),
+		});
+		const tabs = merged.aiTabs as AITabRecord[];
+		expect(tabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-host-new']);
+		expect(tabs[0]).toMatchObject({ name: 'Mine', starred: false });
+		expect(merged.unifiedTabOrder).toEqual([
+			{ type: 'ai', id: 'tab-1' },
+			{ type: 'ai', id: 'tab-host-new' },
+		]);
+		// The tabs that were home stay named, so a later pass does not bring the closed one back either.
+		expect(merged.hostCopyLeft).toEqual({
+			...copyLeft(true),
+			homeTabIds: ['tab-1', 'tab-closed', 'tab-host-new'],
+		});
+	});
+
 	it('keeps a local transcript the host has less of', () => {
 		const record = hostedAgent() as unknown as Record<string, unknown>;
 		const merged = withReturnedFromHost(record, { tabs: [{ id: 'tab-1', logs: [] }] });
@@ -368,6 +434,35 @@ describe('runReturnFromHost', () => {
 			);
 			expect(d.restore.mock.calls[0][1].queue).toEqual([waiting, held]);
 			expect(client.agents.remove).toHaveBeenCalledWith('host-1');
+			expect(result.queued).toBe(2);
+		});
+
+		it('a message queued on the host while its transcripts were read comes home too, held; one removed there does not', async () => {
+			const late = {
+				itemId: 'q3',
+				tabId: 'tab-1',
+				queuedAt: 30,
+				text: 'typed on host',
+				paused: false,
+			};
+			const client = hostClient();
+			client.turns.queue.list
+				.mockResolvedValueOnce(ok([waiting, held]))
+				// The second look: q1 is held by this return, q2 was removed on the host, q3 is new.
+				.mockResolvedValueOnce(ok([{ ...waiting, paused: true }, late]));
+			const d = deps(hostedAgent(), client);
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			expect(client.turns.queue.list).toHaveBeenCalledTimes(2);
+			expect(client.turns.queue.setPaused.mock.calls).toEqual([
+				['host-1', 'q1', true],
+				['host-1', 'q3', true],
+			]);
+			expect(client.turns.queue.setPaused.mock.invocationCallOrder[1]).toBeLessThan(
+				d.restore.mock.invocationCallOrder[0]
+			);
+			// Both come home as the user left them (not held by the user), the removed one does not.
+			expect(d.restore.mock.calls[0][1].queue).toEqual([waiting, late]);
+			expect(d.restore.mock.calls[0][1].hostCopyLeft?.carried).toEqual(['q1', 'q3']);
 			expect(result.queued).toBe(2);
 		});
 
@@ -681,7 +776,10 @@ describe('runReturnFromHost', () => {
 			expect(d.release).toHaveBeenCalledTimes(1);
 			const home = d.store.get('agent-1') as AgentRecord & { executionQueue?: unknown[] };
 			expect(home.liftedTo).toBeUndefined();
-			expect(home.hostCopyLeft).toEqual(copyLeft(true, ['q1']));
+			expect(home.hostCopyLeft).toEqual({
+				...copyLeft(true, ['q1']),
+				homeTabIds: ['tab-1', 'tab-old', 'tab-new'],
+			});
 			expect(home.executionQueue).toHaveLength(1);
 
 			// The next launch: the copy is read again, the message that came home is not held or
@@ -712,7 +810,10 @@ describe('runReturnFromHost', () => {
 			client.agents.remove.mockResolvedValueOnce(fail('rejected'));
 			const back = await runReturnFromHost('agent-1', {}, d.value);
 			expect(back.hostCopyRemoved).toBe(false);
-			expect(d.store.get('agent-1')?.hostCopyLeft).toEqual(copyLeft(true, ['q1']));
+			expect(d.store.get('agent-1')?.hostCopyLeft).toEqual({
+				...copyLeft(true, ['q1']),
+				homeTabIds: ['tab-1', 'tab-old', 'tab-new'],
+			});
 			// The carried message runs here, and leaves the local queue.
 			const home = d.store.get('agent-1') as AgentRecord & { executionQueue?: unknown[] };
 			d.store.set('agent-1', { ...home, executionQueue: [] } as AgentRecord);
@@ -791,7 +892,10 @@ describe('runReturnFromHost', () => {
 			});
 			const d = stored(hostedAgent(), client);
 			await runReturnFromHost('agent-1', { offline: true }, d.value);
-			expect(d.store.get('agent-1')?.hostCopyLeft).toEqual(copyLeft(false));
+			expect(d.store.get('agent-1')?.hostCopyLeft).toEqual({
+				...copyLeft(false),
+				homeTabIds: ['tab-1', 'tab-old'],
+			});
 			// The agent works here while the host is down: a new row on its tab.
 			const away = d.store.get('agent-1') as AgentRecord;
 			d.store.set('agent-1', {

@@ -278,6 +278,35 @@ describe('returnAgentFromDesktop', () => {
 		});
 	});
 
+	it('runs one return of an agent at a time: a second one waits, then finds it home', async () => {
+		const client = hostClient();
+		let agent = hosted();
+		let opened!: () => void;
+		const gate = new Promise<void>((resolve) => (opened = resolve));
+		const release = vi.fn().mockResolvedValue(undefined);
+		const connectHost = vi.fn(async () => {
+			await gate;
+			return { peer: 'build-box', client, release };
+		});
+		const { deps } = depsWith({
+			readAgents: () => [agent],
+			service: () => null,
+			connectHost,
+			restore: vi.fn(async () => {
+				agent = { ...agent, liftedTo: undefined } as typeof agent;
+			}),
+		});
+		// The come-home job and Move Back from Host, on the same agent at once.
+		const first = returnAgentFromDesktop('agent-1', {}, deps);
+		const second = returnAgentFromDesktop('agent-1', {}, deps);
+		await Promise.resolve();
+		opened();
+		expect(await first).toMatchObject({ ok: true });
+		expect(await second).toMatchObject({ ok: false, code: 'RETURN_NOT_HOSTED' });
+		expect(connectHost).toHaveBeenCalledTimes(1);
+		expect(client.turns.queue.list).toHaveBeenCalledTimes(2);
+	});
+
 	it('borrows the running mirror and never opens a connection of its own', async () => {
 		const client = hostClient();
 		const connectHost = vi.fn();

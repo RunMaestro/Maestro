@@ -216,33 +216,51 @@ export async function runReturnFromHost(
 						: `"${agent.name}" is running a turn on its host. Wait for it to finish, or stop it, then move it back.`
 				);
 			}
-			const listed = await connection.client.turns.queue.list(pointer.agentId);
-			if (!listed.ok) throw hostError(connection.peer, listed.error);
-			const queue = listed.value.filter((item) => !carried.has(item.itemId));
-			carriedOnHost = listed.value
-				.filter((item) => carried.has(item.itemId))
-				.map((item) => item.itemId);
-			// Hold each waiting message on the host, so it cannot start there while it moves here.
-			for (const item of queue) {
-				if (item.paused) continue;
-				const held = await connection.client.turns.queue.setPaused(
-					pointer.agentId,
-					item.itemId,
-					true
-				);
-				if (!held.ok) {
+			/**
+			 * The host's waiting messages, less those an earlier return carried, each held on the host
+			 * so it cannot start there while it moves here.
+			 */
+			const holdWaiting = async (): Promise<NonNullable<ReturnedFromHost['queue']>> => {
+				const listed = await connection.client.turns.queue.list(pointer.agentId);
+				if (!listed.ok) {
 					await releaseHeld(connection, pointer.agentId, heldIds);
-					throw hostError(connection.peer, held.error);
+					throw hostError(connection.peer, listed.error);
 				}
-				if (!held.value.found) {
-					await releaseHeld(connection, pointer.agentId, heldIds);
-					throw new LiftRunError(
-						'RETURN_BUSY',
-						`"${agent.name}" started a queued message on its host. Wait for it to finish, then move it back.`
+				carriedOnHost = listed.value
+					.filter((item) => carried.has(item.itemId))
+					.map((item) => item.itemId);
+				const waiting = listed.value.filter((item) => !carried.has(item.itemId));
+				for (const item of waiting) {
+					if (item.paused || heldIds.includes(item.itemId)) continue;
+					const held = await connection.client.turns.queue.setPaused(
+						pointer.agentId,
+						item.itemId,
+						true
 					);
+					if (!held.ok) {
+						await releaseHeld(connection, pointer.agentId, heldIds);
+						throw hostError(connection.peer, held.error);
+					}
+					if (!held.value.found) {
+						await releaseHeld(connection, pointer.agentId, heldIds);
+						throw new LiftRunError(
+							'RETURN_BUSY',
+							`"${agent.name}" started a queued message on its host. Wait for it to finish, then move it back.`
+						);
+					}
+					heldIds.push(item.itemId);
 				}
-				heldIds.push(item.itemId);
-			}
+				return waiting.map((item) => ({
+					itemId: item.itemId,
+					tabId: item.tabId,
+					queuedAt: item.queuedAt,
+					text: item.text,
+					// Held by this return or by the user: `paused` is the user's own hold only.
+					paused: item.paused && !heldIds.includes(item.itemId),
+					...(item.kind === 'command' ? { kind: item.kind } : {}),
+				}));
+			};
+			let queue = await holdWaiting();
 			const failRead = async (error: Pick<ClientError, 'code' | 'message'>): Promise<never> => {
 				await releaseHeld(connection, pointer.agentId, heldIds);
 				throw hostError(connection.peer, error);
@@ -271,6 +289,8 @@ export async function runReturnFromHost(
 					`"${agent.name}" started a turn on its host. Wait for it to finish, then move it back.`
 				);
 			}
+			// A message queued on the host while its transcripts were read comes home too, held.
+			queue = await holdWaiting();
 			// Neither host sends a queued message's images (`list_queue` carries its text only), and a
 			// headless host takes none. A desktop host may hold some: its messages come home held, so
 			// none runs without the image it was sent with.
@@ -289,14 +309,7 @@ export async function runReturnFromHost(
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
 				...(queue.length > 0
 					? {
-							queue: queue.map((item) => ({
-								itemId: item.itemId,
-								tabId: item.tabId,
-								queuedAt: item.queuedAt,
-								text: item.text,
-								paused: item.paused || imagesUnread,
-								...(item.kind === 'command' ? { kind: item.kind } : {}),
-							})),
+							queue: queue.map((item) => ({ ...item, paused: item.paused || imagesUnread })),
 						}
 					: {}),
 			};

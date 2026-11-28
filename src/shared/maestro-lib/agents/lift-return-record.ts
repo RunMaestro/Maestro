@@ -6,6 +6,7 @@
  * which a browser bundle cannot load). `lift-return.ts` re-exports everything here.
  */
 
+import { canonicalJson } from '../../canonicalJson';
 import type { QueuedTurn } from '../client/types';
 import type { AITabRecord } from '../store/records';
 import { readLiftedTo, type LiftedToPointer } from './lift-pointer';
@@ -62,13 +63,18 @@ export interface HostCopyLeft extends LiftedToPointer {
 	 * removed). Finishing skips them, so none comes home twice, even one that has run here since.
 	 */
 	carried?: string[];
+	/**
+	 * The tabs this machine had once the agent was home (written by `withReturnedFromHost()`).
+	 * Finishing does not bring back a host tab named here that is gone here: the user closed it.
+	 */
+	homeTabIds?: string[];
 }
 
 /** The stored marker, or undefined when the field is absent or malformed. */
 export function readHostCopyLeft(value: unknown): HostCopyLeft | undefined {
 	const pointer = readLiftedTo(value);
 	if (!pointer) return undefined;
-	const { fetched, returnedAt, carried } = value as Record<string, unknown>;
+	const { fetched, returnedAt, carried, homeTabIds } = value as Record<string, unknown>;
 	if (typeof fetched !== 'boolean') return undefined;
 	if (typeof returnedAt !== 'number' || !Number.isFinite(returnedAt)) return undefined;
 	if (
@@ -77,11 +83,15 @@ export function readHostCopyLeft(value: unknown): HostCopyLeft | undefined {
 	) {
 		return undefined;
 	}
+	const tabIds = Array.isArray(homeTabIds)
+		? homeTabIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+		: [];
 	return {
 		...pointer,
 		fetched,
 		returnedAt,
 		...(Array.isArray(carried) && carried.length > 0 ? { carried: [...carried] } : {}),
+		...(tabIds.length > 0 ? { homeTabIds: tabIds } : {}),
 	};
 }
 
@@ -117,37 +127,43 @@ function asLocalTab(tab: AITabRecord): AITabRecord {
 	};
 }
 
-/** Row ids, or undefined when one row has none (then rows cannot be matched across machines). */
-function rowIds(rows: unknown[]): Set<string> | undefined {
-	const ids = new Set<string>();
-	for (const row of rows) {
-		const id = (row as { id?: unknown } | null)?.id;
-		if (typeof id !== 'string' || !id) return undefined;
-		ids.add(id);
+/**
+ * What matches a row across machines: its id, or, for a row with none, its whole content. Undefined
+ * when the row cannot be read as JSON: such a row matches nothing, so it is kept.
+ */
+function rowKey(row: unknown): string | undefined {
+	const id = (row as { id?: unknown } | null)?.id;
+	if (typeof id === 'string' && id) return `id:${id}`;
+	try {
+		return `row:${canonicalJson(row)}`;
+	} catch {
+		return undefined;
 	}
-	return ids;
 }
 
-const rowTime = (row: unknown): number => {
+const rowTime = (row: unknown): number | undefined => {
 	const at = (row as { timestamp?: unknown } | null)?.timestamp;
-	return typeof at === 'number' && Number.isFinite(at) ? at : 0;
+	return typeof at === 'number' && Number.isFinite(at) ? at : undefined;
 };
 
 /**
- * One transcript from the host's and this machine's: every row of both, matched by row id, in time
- * order (host rows first on a tie). So a row either side wrote after the other last saw it is kept.
- * Rows without ids cannot be matched: then the longer transcript wins, the host's on a tie.
+ * One transcript from the host's and this machine's: every host row, plus every local row the host
+ * does not have (matched by `rowKey()`), so a row either side wrote after the other last saw it is
+ * kept and none is dropped. In time order (host rows first on a tie) when every row has a
+ * timestamp; otherwise the host's rows, then this machine's.
  */
 function mergeLogs(hostLogs: unknown[], localLogs: unknown[]): unknown[] {
-	const hostIds = rowIds(hostLogs);
-	if (!hostIds || !rowIds(localLogs)) {
-		return hostLogs.length >= localLogs.length ? hostLogs : localLogs;
-	}
-	const localOnly = localLogs.filter((row) => !hostIds.has((row as { id: string }).id));
+	const hostKeys = new Set(hostLogs.map(rowKey));
+	const localOnly = localLogs.filter((row) => {
+		const key = rowKey(row);
+		return key === undefined || !hostKeys.has(key);
+	});
 	if (localOnly.length === 0) return hostLogs;
-	return [...hostLogs, ...localOnly]
+	const rows = [...hostLogs, ...localOnly];
+	if (rows.some((row) => rowTime(row) === undefined)) return rows;
+	return rows
 		.map((row, index) => ({ row, index }))
-		.sort((a, b) => rowTime(a.row) - rowTime(b.row) || a.index - b.index)
+		.sort((x, y) => (rowTime(x.row) ?? 0) - (rowTime(y.row) ?? 0) || x.index - y.index)
 		.map(({ row }) => row);
 }
 
@@ -197,9 +213,10 @@ export function hostDraftsNotKept(
 /**
  * The local record once the agent is back: no `liftedTo`, `hostedOptOut` set, and the host's tabs
  * merged in by tab id. A tab both sides have takes every transcript row of both (matched by row
- * id, see `mergeLogs()`), plus the host's name, star, provider session, and the draft and staged
- * images the host has and this machine does not (`mergedComposer()`). A host tab this
- * machine lacks is appended. Local tabs the host closed stay. The host's queued messages go first in
+ * id, see `mergeLogs()`), plus the host's name and star (a tab already home keeps its own), its
+ * provider session, and the draft and staged images the host has and this machine does not
+ * (`mergedComposer()`). A host tab this machine lacks is appended, unless it was home once and the
+ * user closed it here since (`HostCopyLeft.homeTabIds`). Local tabs the host closed stay. The host's queued messages go first in
  * the local queue (they were sent before anything this machine held while the agent was away), as
  * messages, held when the host held them; one this queue already has (same id) is not added twice,
  * and one whose tab is gone waits for the active tab. The host's queue cards (`hostQueued`) are
@@ -226,8 +243,10 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 			agentSessionId: wasMoved
 				? (host.agentSessionId ?? local.agentSessionId ?? null)
 				: (local.agentSessionId ?? host.agentSessionId ?? null),
-			name: host.name ?? local.name ?? null,
-			starred: host.starred === true,
+			// A moved tab takes the host's name and star; a tab already home keeps what the user set
+			// here since the return.
+			name: wasMoved ? (host.name ?? local.name ?? null) : (local.name ?? host.name ?? null),
+			starred: wasMoved ? host.starred === true : local.starred === true,
 			logs: mergeLogs(hostLogs, localLogs),
 			...mergedComposer(host, local),
 			...(host.usageStats ? { usageStats: host.usageStats } : {}),
@@ -235,7 +254,11 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 		};
 	});
 	const localIds = new Set(localTabs.map((tab) => tab.id));
-	const added = returned.tabs.filter((tab) => !localIds.has(tab.id)).map(asLocalTab);
+	// A tab that was home once and is gone here now was closed by the user: it does not come back.
+	const homeTabIds = new Set(readHostCopyLeft(record.hostCopyLeft)?.homeTabIds ?? []);
+	const added = returned.tabs
+		.filter((tab) => !localIds.has(tab.id) && !homeTabIds.has(tab.id))
+		.map(asLocalTab);
 	const aiTabs = [...merged, ...added];
 
 	const order = Array.isArray(record.unifiedTabOrder)
@@ -273,7 +296,14 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 	const { liftedTo: _liftedTo, hostCopyLeft: _hostCopyLeft, ...rest } = record;
 	return {
 		...rest,
-		...(returned.hostCopyLeft ? { hostCopyLeft: returned.hostCopyLeft } : {}),
+		...(returned.hostCopyLeft
+			? {
+					hostCopyLeft: {
+						...returned.hostCopyLeft,
+						homeTabIds: [...new Set([...homeTabIds, ...aiTabs.map((tab) => tab.id)])],
+					},
+				}
+			: {}),
 		aiTabs,
 		...(order ? { unifiedTabOrder: order } : {}),
 		...(activeTabId !== undefined ? { activeTabId } : {}),

@@ -22,6 +22,7 @@
 
 import type { BrowserWindow } from 'electron';
 import { FEDERATION_NOT_RUNNING_MESSAGE } from '../../shared/federationCommands';
+import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import {
 	LiftRunError,
 	formatLiftPlan,
@@ -85,11 +86,28 @@ export type DesktopReturnAnswer =
 	| { ok: false; error: string; code: string };
 
 /**
+ * One return of an agent at a time in this process: the come-home job and Move Back from Host
+ * (`federation:unlift`) both return through `returnAgentFromDesktop()`, and two returns of one
+ * agent side by side would read and hold the same host queue twice. The second waits, then finds
+ * the agent home.
+ */
+const returnsByAgent = createKeyedWriteQueue();
+
+/**
  * Move a hosted agent back from its host (Move Back from Host, `maestro-cli unlift`). The host is
  * reached over the mirror's held client, as for Move to Host, or, when no mirror runs (hosting
- * off), over one connection of its own that ends with the return. Never throws.
+ * off), over one connection of its own that ends with the return. One return per agent at a time
+ * (`returnsByAgent`). Never throws.
  */
-export async function returnAgentFromDesktop(
+export function returnAgentFromDesktop(
+	agentId: string,
+	options: ReturnRunOptions,
+	deps: DesktopLiftDeps
+): Promise<DesktopReturnAnswer> {
+	return returnsByAgent.enqueue(agentId, () => returnAgentNow(agentId, options, deps));
+}
+
+async function returnAgentNow(
 	agentId: string,
 	options: ReturnRunOptions,
 	deps: DesktopLiftDeps
