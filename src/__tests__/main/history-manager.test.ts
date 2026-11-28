@@ -871,6 +871,61 @@ describe('HistoryManager', () => {
 			).rejects.toThrow('ENOSPC');
 		});
 
+		it('reads newest first by time after an import appended older entries (CodeRabbit on #2181)', async () => {
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === sessionFile);
+			mockReadFileSync.mockReturnValue(
+				createJsonlFileData([
+					createMockEntry({ id: 't20', timestamp: 20 }),
+					createMockEntry({ id: 't30', timestamp: 30 }),
+					createMockEntry({ id: 't10', timestamp: 10 }),
+				])
+			);
+			expect((await manager.getEntries('session-1')).map((e) => e.id)).toEqual([
+				't30',
+				't20',
+				't10',
+			]);
+			expect((await manager.getEntriesStrict('session-1')).map((e) => e.id)).toEqual([
+				't30',
+				't20',
+				't10',
+			]);
+		});
+
+		it('never lets a read migration replace a JSONL file an import wrote meanwhile (CodeRabbit on #2181)', async () => {
+			// Legacy-only session. A read starts the migration outside the write queue; an import in
+			// its queue slot needs the same migration: it waits on that one run instead of starting
+			// its own, and the run never replaces a JSONL file that exists by the time it writes.
+			const legacyFile = sessionFile.replace(/\.jsonl$/, '.json');
+			let jsonlExists = false;
+			mockExistsSync.mockImplementation((p: fs.PathLike) =>
+				p.toString() === sessionFile ? jsonlExists : p.toString() === legacyFile
+			);
+			mockReadFileSync.mockImplementation((p: fs.PathLike) => {
+				if (p.toString() === legacyFile) {
+					return JSON.stringify({ version: 1, entries: [createMockEntry({ id: 'legacy' })] });
+				}
+				if (!jsonlExists) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+				return createJsonlFileData([createMockEntry({ id: 'legacy' })]);
+			});
+			mockWriteFileSync.mockImplementation((p: fs.PathLike) => {
+				if (p.toString() === sessionFile) jsonlExists = true;
+			});
+			const [read, imported] = await Promise.all([
+				manager.getEntries('session-1'),
+				manager.importEntries('session-1', [createMockEntry({ id: 'from-host' })]),
+			]);
+			expect(read.map((e) => e.id)).toEqual(['legacy']);
+			expect(imported).toBe(1);
+			// One migration write, then the import's append: the import is not overwritten.
+			expect(
+				mockWriteFileSync.mock.calls.filter((c) => c[0].toString() === sessionFile)
+			).toHaveLength(1);
+			expect(parseJsonlWrite(mockAppendFileSync.mock.calls[0][1]).map((e) => e.id)).toEqual([
+				'from-host',
+			]);
+		});
+
 		it('writes an id twice in one batch only once (CodeRabbit on #2181)', async () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === sessionFile);
 			mockReadFileSync.mockReturnValue(createJsonlFileData([createMockEntry({ id: 'here' })]));

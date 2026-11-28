@@ -96,6 +96,8 @@ export interface ReturnResult {
 	 * or a host that does not send its History (the copy keeps it).
 	 */
 	hostCopyKept?: boolean;
+	/** The host no longer had the agent's copy: nothing there to remove or keep. */
+	hostCopyGone?: boolean;
 	/** Set on a dry run: the counts are what WOULD come back; nothing was written. */
 	dryRun?: boolean;
 	notices?: string[];
@@ -307,6 +309,7 @@ export async function runReturnFromHost(
 				...(hostAgent.ok && (options.keepHostCopy || historyStaysOnHost)
 					? { hostCopyKept: true }
 					: {}),
+				...(hostGone ? { hostCopyGone: true } : {}),
 				dryRun: true,
 				...(notices.length > 0 ? { notices } : {}),
 			};
@@ -383,6 +386,7 @@ export async function runReturnFromHost(
 			history,
 			hostCopyRemoved,
 			...(hostAgent.ok && !hostCopyRemoved ? { hostCopyKept: true } : {}),
+			...(hostGone ? { hostCopyGone: true } : {}),
 			...(notices.length > 0 ? { notices } : {}),
 		};
 	} finally {

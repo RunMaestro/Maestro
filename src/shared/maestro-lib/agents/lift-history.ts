@@ -153,7 +153,12 @@ export function describeReturn(result: ReturnResult, keepHostCopy = false): stri
 	const history = historyEntryCount(result.history);
 	if (result.dryRun) {
 		const kept = keepHostCopy || result.hostCopyKept === true;
-		const copy = kept ? 'its copy there is kept' : 'its copy there is removed';
+		const copy =
+			result.hostCopyGone === true
+				? 'the host no longer has its copy'
+				: kept
+					? 'its copy there is kept'
+					: 'its copy there is removed';
 		return `Moving "${result.agent.name}" back from ${result.from}: ${tabs} and ${history} come back to this machine, and ${copy}.`;
 	}
 	return `"${result.agent.name}" is an SSH agent again: ${tabs} and ${history} came back from ${result.from}${result.hostCopyRemoved ? ', host copy removed' : ''}.`;

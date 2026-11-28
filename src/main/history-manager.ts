@@ -123,6 +123,12 @@ export class HistoryManager {
 	 */
 	private writeQueue = createKeyedWriteQueue();
 	/**
+	 * The legacy-to-JSONL migration running for a session, shared by every caller that needs it: a
+	 * read migrates outside the write queue, and an import (inside its queue slot) waiting on the
+	 * same run cannot be overwritten by it afterwards.
+	 */
+	private migrations = new Map<string, Promise<HistoryEntry[] | null>>();
+	/**
 	 * Resolves the user's per-session entry cap (`maxLogBuffer`). Set once at
 	 * startup by the main process so fire-and-forget writers - Cue notify,
 	 * Cue command, Cue agent runs - trim to the SAME cap the IPC path uses.
@@ -385,7 +391,17 @@ export class HistoryManager {
 	 * one-time format change is not worth a destructive step. Returns the
 	 * migrated entries in file order, or null when there was nothing to migrate.
 	 */
-	private async migrateSessionToJsonl(sessionId: string): Promise<HistoryEntry[] | null> {
+	private migrateSessionToJsonl(sessionId: string): Promise<HistoryEntry[] | null> {
+		const running = this.migrations.get(sessionId);
+		if (running) return running;
+		const run = this.runSessionMigration(sessionId).finally(() => {
+			if (this.migrations.get(sessionId) === run) this.migrations.delete(sessionId);
+		});
+		this.migrations.set(sessionId, run);
+		return run;
+	}
+
+	private async runSessionMigration(sessionId: string): Promise<HistoryEntry[] | null> {
 		const legacyPath = this.getLegacySessionFilePath(sessionId);
 		const jsonlPath = this.getSessionFilePath(sessionId);
 
@@ -411,6 +427,9 @@ export class HistoryManager {
 		const fileOrder = [...legacyEntries].reverse();
 		const serialized = fileOrder.map(serializeHistoryEntryLine).join('');
 
+		// A JSONL file written since this read began (another process, or a path that did not share
+		// this run) is never replaced by the legacy snapshot: it is the newer state.
+		if (await pathExists(jsonlPath)) return null;
 		await atomicWriteFile(jsonlPath, serialized);
 		try {
 			await fsp.rename(legacyPath, `${legacyPath}.migrated`);
@@ -494,7 +513,7 @@ export class HistoryManager {
 	 */
 	async getEntriesStrict(sessionId: string): Promise<HistoryEntry[]> {
 		const entries = await this.readEntriesInFileOrder(sessionId, { strict: true });
-		return normalizeHistoryEntries(entries.reverse());
+		return normalizeHistoryEntries(sortEntriesByTimestamp(entries.reverse()));
 	}
 
 	/**
@@ -525,8 +544,9 @@ export class HistoryManager {
 		// type existed) so no consumer has to special-case them. Applied here
 		// rather than in the file-order reader because the trim/prune paths write
 		// what they read back to disk, and a read is not the moment to rewrite
-		// entries the user has not touched.
-		return normalizeHistoryEntries(entries.reverse());
+		// entries the user has not touched. Sorted by time, not only reversed: a Federation move
+		// appends a host's entries, which can be older than the file's tail (`importEntries`).
+		return normalizeHistoryEntries(sortEntriesByTimestamp(entries.reverse()));
 	}
 
 	/**

@@ -334,6 +334,15 @@ describe('runReturnFromHost', () => {
 		}
 	});
 
+	it('a dry run says the host no longer has the copy, not that it is removed (CodeRabbit on #2181)', async () => {
+		const d = deps(hostedAgent(), hostClient({ agent: fail('not-found') }));
+		const result = await runReturnFromHost('agent-1', { dryRun: true }, d.value);
+		expect(result.hostCopyGone).toBe(true);
+		expect(describeReturn(result)).toBe(
+			'Moving "Docs" back from build-box:host-1: 0 tab(s) and 0 History entries come back to this machine, and the host no longer has its copy.'
+		);
+	});
+
 	it('comes back with this machine copy when the host no longer has the agent', async () => {
 		const client = hostClient({ agent: fail('not-found') });
 		const d = deps(hostedAgent(), client);
