@@ -55,7 +55,11 @@ describe('services/peerMirror', () => {
 			});
 			expect(await removeMirrorQueuedItem('box', 'a1', 'q1')).toBe(false);
 			expect(notifyToast).toHaveBeenCalledWith(
-				expect.objectContaining({ color: 'yellow', title: 'Message not removed' })
+				expect.objectContaining({
+					flashWhenToastsOff: true,
+					color: 'yellow',
+					title: 'Message not removed',
+				})
 			);
 		});
 
@@ -78,7 +82,11 @@ describe('services/peerMirror', () => {
 			});
 			await setMirrorQueuedItemPaused('box', 'a1', 'q1', true);
 			expect(notifyToast).toHaveBeenLastCalledWith(
-				expect.objectContaining({ color: 'yellow', title: 'Message not held' })
+				expect.objectContaining({
+					flashWhenToastsOff: true,
+					color: 'yellow',
+					title: 'Message not held',
+				})
 			);
 
 			act$.mockResolvedValue({
@@ -87,7 +95,11 @@ describe('services/peerMirror', () => {
 			});
 			await setMirrorQueuedItemPaused('box', 'a1', 'q1', false);
 			expect(notifyToast).toHaveBeenLastCalledWith(
-				expect.objectContaining({ color: 'yellow', title: 'Message not resumed' })
+				expect.objectContaining({
+					flashWhenToastsOff: true,
+					color: 'yellow',
+					title: 'Message not resumed',
+				})
 			);
 		});
 
@@ -96,7 +108,11 @@ describe('services/peerMirror', () => {
 			// No answer is null, not a refusal: the caller reports the failure, not "not found".
 			expect(await removeMirrorQueuedItem('box', 'a1', 'q1')).toBeNull();
 			expect(notifyToast).toHaveBeenCalledWith(
-				expect.objectContaining({ color: 'red', title: 'Could not remove the queued message' })
+				expect.objectContaining({
+					flashWhenToastsOff: true,
+					color: 'red',
+					title: 'Could not remove the queued message',
+				})
 			);
 		});
 	});
@@ -117,6 +133,7 @@ describe('services/peerMirror', () => {
 			expect(await cancelMirrorConsult('box', 'a1', { agentId: 'src', tabId: 't' })).toBe(false);
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
+					flashWhenToastsOff: true,
 					color: 'red',
 					title: 'Could not stop the consult',
 					message: expect.stringContaining('The host may still finish the consult.'),

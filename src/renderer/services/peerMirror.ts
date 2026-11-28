@@ -73,7 +73,12 @@ export async function reconnectPeer(peerId: string): Promise<void> {
 		error = ipcErrorMessage(caught);
 	}
 	if (error) {
-		notifyToast({ color: 'red', title: `Could not reconnect to ${peerId}`, message: error });
+		notifyToast({
+			flashWhenToastsOff: true,
+			color: 'red',
+			title: `Could not reconnect to ${peerId}`,
+			message: error,
+		});
 	}
 }
 
@@ -164,6 +169,7 @@ export function settleMirroredAnswer(
 	if (!answer) return null;
 	if (answer.ok) return answer.result;
 	notifyToast({
+		flashWhenToastsOff: true,
 		color: 'red',
 		title: ACTION_FAILURE_TITLES[action.kind],
 		message: mirroredActionError(answer),
@@ -310,6 +316,7 @@ export async function removeMirrorQueuedItem(
 	if (result?.kind !== 'remove-queued') return null;
 	if (!result.removed) {
 		notifyToast({
+			flashWhenToastsOff: true,
 			color: 'yellow',
 			title: 'Message not removed',
 			message: 'It no longer waits on the host: it may have started already.',
@@ -336,6 +343,7 @@ export async function setMirrorQueuedItemPaused(
 	if (result?.kind !== 'pause-queued') return null;
 	if (!result.found) {
 		notifyToast({
+			flashWhenToastsOff: true,
 			color: 'yellow',
 			title: paused ? 'Message not held' : 'Message not resumed',
 			message: 'It no longer waits on the host: it may have started already.',
@@ -364,6 +372,7 @@ export async function mergeMirrorQueuedItem(
 	if (result?.kind !== 'merge-queued') return null;
 	if (!result.merged) {
 		notifyToast({
+			flashWhenToastsOff: true,
 			color: 'yellow',
 			title: 'Messages not merged',
 			message: 'They no longer both wait on the host: one may have started already.',
@@ -387,6 +396,7 @@ export async function editMirrorQueuedItem(
 	if (result?.kind !== 'edit-queued') return null;
 	if (!result.found) {
 		notifyToast({
+			flashWhenToastsOff: true,
 			color: 'yellow',
 			title: 'Message not edited',
 			message: 'It no longer waits on the host: it may have started already.',
@@ -416,6 +426,7 @@ export async function moveMirrorQueuedItem(
 	if (result?.kind !== 'move-queued') return null;
 	if (!result.moved) {
 		notifyToast({
+			flashWhenToastsOff: true,
 			color: 'yellow',
 			title: 'Message not moved',
 			message: 'It no longer waits on the host: it may have started already.',
@@ -437,6 +448,7 @@ export async function sendMirrorQueuedItemNow(
 	if (result?.kind !== 'send-now-queued') return null;
 	if (!result.sent) {
 		notifyToast({
+			flashWhenToastsOff: true,
 			color: 'yellow',
 			title: 'Message not sent now',
 			message: 'Its tab on the host is mid-turn, or it already started.',
@@ -555,6 +567,7 @@ export async function cancelMirrorConsult(
 	const answer = await callMirroredAgentAction(peerId, agentId, { kind: 'consult-cancel', asker });
 	if (answer?.ok) return true;
 	notifyToast({
+		flashWhenToastsOff: true,
 		color: 'red',
 		title: ACTION_FAILURE_TITLES['consult-cancel'],
 		message: `${answer?.error ?? 'Federation is not available in this window.'} The host may still finish the consult.`,
