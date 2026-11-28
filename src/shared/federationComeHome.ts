@@ -12,7 +12,7 @@ export interface ComeHomeAgentOutcome {
 	from: string;
 	/**
 	 * `online`: back with the host's tabs and transcripts. `offline`: back with only this machine's
-	 * copy (see `missing`). `failed`: still moved; the next launch tries again.
+	 * copy (see `missing`). `failed`: still moved; tried again every {@link COME_HOME_RETRY_INTERVAL_MS} while the app runs, and at the next launch.
 	 */
 	result: 'online' | 'offline' | 'failed';
 	/** A turn on the host held this agent back until it ended. */
@@ -28,12 +28,41 @@ export interface ComeHomeAgentOutcome {
 	};
 	/** What the return reported (host copy left behind, a failure's reason). */
 	notices: string[];
+	/** `failed` only: why the agent is not home yet, in one sentence, for its queued messages. */
+	reason?: string;
 }
 
 export interface ComeHomeReport {
 	startedAt: number;
 	finishedAt: number;
 	agents: ComeHomeAgentOutcome[];
+}
+
+/**
+ * While hosting is off, a run that leaves an agent still moved (`failed`) is tried again this often,
+ * for as long as the app runs, and no more once every agent is home.
+ */
+export const COME_HOME_RETRY_INTERVAL_MS = 5 * 60_000;
+
+/** The outcome of a run for an agent that run could not bring home, if any. */
+export function comeHomeFailureFor(
+	report: ComeHomeReport | null | undefined,
+	agentId: string
+): ComeHomeAgentOutcome | undefined {
+	return report?.agents.find((outcome) => outcome.id === agentId && outcome.result === 'failed');
+}
+
+/**
+ * Why a moved agent's messages wait in its queue, in the words its queued messages and a refused
+ * spawn both show. `failure` is the last run's outcome for it; none means the job has not settled
+ * it yet.
+ */
+export function comeHomeWaitText(peer: string, failure?: ComeHomeAgentOutcome): string {
+	if (!failure) {
+		return `Bringing this agent back from ${peer}. Its messages wait in its queue and run here once it is back.`;
+	}
+	const reason = failure.reason ?? failure.notices.join(' ');
+	return `Waiting to bring this agent back from ${peer}${reason ? `: ${reason}` : '.'} Maestro tries again every ${Math.round(COME_HOME_RETRY_INTERVAL_MS / 60_000)} minutes. Its messages wait in its queue.`;
 }
 
 /** What a person reads about one run of the job: a title and one line per agent. */
@@ -63,7 +92,7 @@ function outcomeLine(outcome: ComeHomeAgentOutcome, formatTime: (ms: number) => 
 		const since = formatTime(outcome.missing.lastLocalRowAt ?? outcome.missing.movedAt);
 		return `${name} is an SSH agent again, from this machine's copy only. Anything written on ${peer} after ${since} may be missing here: it is still on ${peer}, as agent ${outcome.missing.hostAgentId}.${waited}${notices}`;
 	}
-	return `${name} is still on ${peer}. Maestro tries again at the next launch, or run maestro-cli unlift "${outcome.name}".${waited}${notices}`;
+	return `${name} is still on ${peer}. Maestro tries again every ${Math.round(COME_HOME_RETRY_INTERVAL_MS / 60_000)} minutes, or run maestro-cli unlift "${outcome.name}".${waited}${notices}`;
 }
 
 /**

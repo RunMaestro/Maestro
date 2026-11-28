@@ -253,11 +253,119 @@ describe('runComeHome', () => {
 		expect(deps.sleep).toHaveBeenCalledWith(11);
 	});
 
-	it('a host turn that runs past the limit leaves the agent moved for the next launch', async () => {
-		const { deps, store } = world([agent('a')], () => refused('RETURN_BUSY'));
+	it('a host turn that runs past the limit: the agent comes home with this copy, the host keeps its own (R5)', async () => {
+		const { deps, store, calls } = world([agent('a')], (_id, options) =>
+			options.offline ? ok() : refused('RETURN_BUSY')
+		);
 		const report = await runComeHome(deps, { busyWaitMs: 10, busyMaxWaitMs: 30 });
-		expect(report.agents[0]).toMatchObject({ result: 'failed', waitedForHostTurn: true });
+		expect(report.agents[0]).toMatchObject({ result: 'offline', waitedForHostTurn: true });
+		expect(report.agents[0].notices.join(' ')).toContain(
+			'It is not stopped: build-box keeps its copy'
+		);
+		// Not interrupted: four checks (0, 10, 20, 30 ms waited), then the local restore.
+		expect(calls.map((c) => c.options.offline === true)).toEqual([
+			false,
+			false,
+			false,
+			false,
+			true,
+		]);
+		expect(movedAgents([...store.values()])).toEqual([]);
+		expect(store.get('a')?.hostCopyLeft).toMatchObject({ agentId: 'host-a', fetched: false });
+	});
+
+	it('polls a running host turn over one held connection, released once when done (R5)', async () => {
+		const { deps } = world([agent('a')], (_id, _o, call) =>
+			call <= 3 ? refused('RETURN_BUSY') : ok()
+		);
+		const order: string[] = [];
+		const returnAgent = deps.returnAgent;
+		deps.returnAgent = vi.fn(async (id: string, options: ReturnRunOptions) => {
+			order.push('return');
+			return returnAgent(id, options);
+		});
+		deps.releaseConnection = vi.fn(async (remoteId: string) => {
+			order.push(`release ${remoteId}`);
+		});
+		await runComeHome(deps, { busyWaitMs: 10 });
+		expect(order).toEqual(['return', 'return', 'return', 'return', 'release remote-1']);
+	});
+
+	it('a host error ends the held connection before the next try, so a broken link is dialed again', async () => {
+		const { deps } = world([agent('a')], (_id, _o, call) =>
+			call === 1 ? refused('RETURN_HOST_FAILED', 'transcript read timed out') : ok()
+		);
+		deps.releaseConnection = vi.fn(async () => {});
+		const report = await runComeHome(deps);
+		expect(report.agents[0].result).toBe('online');
+		expect(deps.releaseConnection).toHaveBeenCalledTimes(2);
+	});
+
+	it('an agent the window cannot restore stays moved, with the reason its queue shows (R3)', async () => {
+		const { deps, store } = world([agent('a')], (_id, options) =>
+			options.offline
+				? refused('RETURN_RESTORE_FAILED', 'the window did not answer')
+				: refused('PEER_NOT_CONNECTED')
+		);
+		const report = await runComeHome(deps, { onlineAttempts: 1 });
+		expect(report.agents[0]).toMatchObject({
+			result: 'failed',
+			reason: 'This machine could not restore it: the window did not answer',
+		});
 		expect(store.get('a')?.liftedTo).toBeDefined();
+	});
+
+	describe('remotes side by side (R6)', () => {
+		const REMOTE_2 = { id: 'remote-2', name: 'gpu', enabled: true } as SshRemoteConfig;
+		const on = (id: string, remoteId: string) =>
+			({
+				...agent(id),
+				sessionSshRemoteConfig: { enabled: true, remoteId },
+			}) as unknown as AgentRecord;
+
+		it('one agent at a time per remote, while a busy host on one remote does not hold up another', async () => {
+			const { deps, calls } = world(
+				[on('a', 'remote-1'), on('b', 'remote-1'), on('c', 'remote-2')],
+				(id, _o, call) => (id === 'a' && call <= 2 ? refused('RETURN_BUSY') : ok())
+			);
+			deps.readRemotes = () => [REMOTE, REMOTE_2];
+			const report = await runComeHome(deps, { busyWaitMs: 10 });
+			// c (remote-2) starts while a (remote-1) waits; b waits for a, on its own remote.
+			expect(calls[1].id).toBe('c');
+			const remote1 = calls.filter((c) => c.id !== 'c').map((c) => c.id);
+			expect(remote1).toEqual(['a', 'a', 'a', 'b']);
+			// The report keeps the list order.
+			expect(report.agents.map((o) => [o.id, o.result])).toEqual([
+				['a', 'online'],
+				['b', 'online'],
+				['c', 'online'],
+			]);
+		});
+
+		it('a remote that did not answer is not dialed again for its other agents in the same run', async () => {
+			const { deps, calls } = world(
+				[on('a', 'remote-1'), on('b', 'remote-1'), on('c', 'remote-2')],
+				(id, options) =>
+					options.offline || id === 'c' ? ok() : refused('PEER_NOT_CONNECTED', 'host-down')
+			);
+			deps.readRemotes = () => [REMOTE, REMOTE_2];
+			const report = await runComeHome(deps, { onlineAttempts: 2 });
+			expect(calls.filter((c) => c.id === 'b')).toEqual([{ id: 'b', options: { offline: true } }]);
+			expect(report.agents.find((o) => o.id === 'b')?.notices.join(' ')).toContain(
+				'did not answer for another agent'
+			);
+			expect(report.agents.find((o) => o.id === 'c')?.result).toBe('online');
+		});
+
+		it('a host that answered with an error is not marked unreachable: its next agent is dialed (R7)', async () => {
+			const { deps, calls } = world([on('a', 'remote-1'), on('b', 'remote-1')], (id, options) =>
+				options.offline || id === 'b' ? ok() : refused('RETURN_HOST_FAILED', 'boom')
+			);
+			const report = await runComeHome(deps, { onlineAttempts: 2 });
+			expect(report.agents[0].notices.join(' ')).toContain('The host answered with an error: boom');
+			expect(calls.filter((c) => c.id === 'b')).toEqual([{ id: 'b', options: {} }]);
+			expect(report.agents[1].result).toBe('online');
+		});
 	});
 
 	it('a refusal no retry can fix ends in a local restore, never a moved agent (R1)', async () => {

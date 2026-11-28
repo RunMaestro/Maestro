@@ -276,6 +276,48 @@ export function buildDesktopLiftDeps(runtime: DesktopLiftRuntime): DesktopLiftDe
 }
 
 /**
+ * Keeps the connection a return opens, so the returns that follow on the same remote reuse it
+ * (the come-home job polling a turn that runs on the host: one held connection, not a new forward
+ * every check). Each return's own `release()` does nothing; `release(remoteId)` ends the one held
+ * for that remote, and the job calls it when it is done with that remote's agent or the link may
+ * be broken.
+ */
+export function holdHostConnections(
+	connectHost: (remoteId: string, peer: string) => Promise<ReturnHostConnection>
+): {
+	connectHost(remoteId: string, peer: string): Promise<ReturnHostConnection>;
+	release(remoteId: string): Promise<void>;
+} {
+	const held = new Map<string, { peer: string; opened: Promise<ReturnHostConnection> }>();
+	const release = async (remoteId: string) => {
+		const entry = held.get(remoteId);
+		if (!entry) return;
+		held.delete(remoteId);
+		const connection = await entry.opened.catch(() => null);
+		await connection?.release();
+	};
+	return {
+		async connectHost(remoteId, peer) {
+			const entry = held.get(remoteId);
+			// A different peer on the same remote is a different host: never hand its client out.
+			if (entry && entry.peer !== peer) await release(remoteId);
+			let current = held.get(remoteId);
+			if (!current) {
+				current = { peer, opened: connectHost(remoteId, peer) };
+				held.set(remoteId, current);
+				// A connection that never opened is not kept: the next return dials again.
+				current.opened.catch(() => {
+					if (held.get(remoteId) === current) held.delete(remoteId);
+				});
+			}
+			const connection = await current.opened;
+			return { peer: connection.peer, client: connection.client, release: async () => {} };
+		},
+		release,
+	};
+}
+
+/**
  * One connection to the host on SSH remote `remoteId`, for a Move Back while no mirror runs. The
  * forward is the shared manager's, refcounted, so `release()` ends the ssh when nothing else
  * holds it. One attempt: a host that does not answer throws, and the caller decides what next.

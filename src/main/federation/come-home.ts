@@ -5,12 +5,16 @@
  * (`federationHostedAgents`, off by default since v1.1.3-RC), each record that still carries a
  * `liftedTo` pointer is returned here, once per launch, with no click and no question:
  *
- * - One agent at a time, so one remote never sees two SSH connections from this job (I5).
+ * - One agent at a time per SSH remote, so one remote never sees two SSH connections from this
+ *   job (I5). Remotes run side by side, so one slow host does not hold up the others.
  * - Online first, through the same `returnAgentFromDesktop()` that Move Back from Host and
  *   `maestro-cli unlift` run. The host's tabs and transcripts come back and its copy is removed.
- * - A turn running on the host is waited out, never interrupted: the return is retried after it.
+ * - A turn running on the host is waited out, never interrupted: the return is retried after it,
+ *   over one held connection. Past {@link COME_HOME_BUSY_MAX_WAIT_MS} the agent comes back with
+ *   this machine's copy and the host keeps its own, finished later (`hostCopyLeft`).
  * - A host that does not answer is tried a small, fixed number of times. Then the agent is
- *   returned offline, so it works now, and the result records what could not be fetched.
+ *   returned offline, so it works now, and the result records what could not be fetched. The other
+ *   agents on that remote are not dialed again in the same run.
  * - An agent already home is skipped, so a crash or a quit mid-way is finished by the next run.
  * - An agent home with its host copy still there (`hostCopyLeft`: a crash or a lost link between
  *   the restore and the removal, or an offline return) is finished: the host is tried again, what
@@ -30,7 +34,12 @@ import {
 import type { AgentRecord } from '../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { DesktopReturnAnswer } from './lift';
-import type { ComeHomeAgentOutcome, ComeHomeReport } from '../../shared/federationComeHome';
+import {
+	comeHomeFailureFor,
+	comeHomeWaitText,
+	type ComeHomeAgentOutcome,
+	type ComeHomeReport,
+} from '../../shared/federationComeHome';
 
 export type { ComeHomeAgentOutcome, ComeHomeReport } from '../../shared/federationComeHome';
 
@@ -64,6 +73,11 @@ export interface ComeHomeDeps {
 	hostingEnabled(): boolean;
 	/** `returnAgentFromDesktop()` with the desktop's deps. */
 	returnAgent(agentId: string, options: ReturnRunOptions): Promise<DesktopReturnAnswer>;
+	/**
+	 * End the connection held for SSH remote `remoteId` (`holdHostConnections()`), so the returns
+	 * between two calls reuse one. Absent: each return opens and ends its own.
+	 */
+	releaseConnection?(remoteId: string): Promise<void>;
 	sleep(ms: number): Promise<void>;
 	now(): number;
 }
@@ -98,9 +112,8 @@ export function onlineSkipReason(
 	agent: AgentRecord,
 	remotes: readonly SshRemoteConfig[]
 ): string | undefined {
-	const ssh = (agent as { sessionSshRemoteConfig?: { enabled?: boolean; remoteId?: unknown } })
-		.sessionSshRemoteConfig;
-	const remoteId = typeof ssh?.remoteId === 'string' && ssh.remoteId ? ssh.remoteId : undefined;
+	const ssh = (agent as { sessionSshRemoteConfig?: { enabled?: boolean } }).sessionSshRemoteConfig;
+	const remoteId = remoteIdOf(agent);
 	// The same rule as the return's own (`RETURN_NO_SSH`): the host is reached through this remote.
 	if (!ssh?.enabled || !remoteId) return 'It has no SSH remote turned on in Edit Agent.';
 	const remote = remotes.find((candidate) => candidate.id === remoteId);
@@ -110,6 +123,13 @@ export function onlineSkipReason(
 		return `Its SSH remote "${remote.name}" is opted out of Federation.`;
 	}
 	return undefined;
+}
+
+/** The SSH remote id an agent runs on, or undefined when it has none. */
+function remoteIdOf(agent: AgentRecord): string | undefined {
+	const remoteId = (agent as { sessionSshRemoteConfig?: { remoteId?: unknown } })
+		.sessionSshRemoteConfig?.remoteId;
+	return typeof remoteId === 'string' && remoteId ? remoteId : undefined;
 }
 
 function newestRowAt(agent: AgentRecord): number | undefined {
@@ -145,28 +165,36 @@ async function finishHostCopy(
 		notices: [],
 	};
 	let waitedMs = 0;
-	for (;;) {
-		// Settings can change during a wait: no dial once hosting is on or the remote may not be dialed.
-		if (deps.hostingEnabled() || onlineSkipReason(agent, deps.readRemotes())) return null;
-		const answer = await deps.returnAgent(agent.id, {});
-		if (answer.ok) {
-			if (answer.result.hostCopyRemoved) {
-				outcome.notices.push(`Its old copy on ${left.peer} is removed.`);
+	const remoteId = remoteIdOf(agent);
+	try {
+		for (;;) {
+			// Settings can change during a wait: no dial once hosting is on or the remote may not be dialed.
+			if (deps.hostingEnabled() || onlineSkipReason(agent, deps.readRemotes())) return null;
+			const answer = await deps.returnAgent(agent.id, {});
+			if (answer.ok) {
+				if (answer.result.hostCopyRemoved) {
+					outcome.notices.push(`Its old copy on ${left.peer} is removed.`);
+				}
+				outcome.notices.push(...(answer.result.notices ?? []));
+				return outcome;
 			}
-			outcome.notices.push(...(answer.result.notices ?? []));
-			return outcome;
+			if (answer.code !== 'RETURN_BUSY' || waitedMs >= timing.busyMaxWaitMs) return null;
+			outcome.waitedForHostTurn = true;
+			// The connection stays held: the next check reuses it.
+			await deps.sleep(timing.busyWaitMs);
+			waitedMs += timing.busyWaitMs;
 		}
-		if (answer.code !== 'RETURN_BUSY' || waitedMs >= timing.busyMaxWaitMs) return null;
-		outcome.waitedForHostTurn = true;
-		await deps.sleep(timing.busyWaitMs);
-		waitedMs += timing.busyWaitMs;
+	} finally {
+		if (remoteId) await deps.releaseConnection?.(remoteId);
 	}
 }
 
 async function bringHome(
 	agent: AgentRecord,
 	deps: ComeHomeDeps,
-	timing: Required<ComeHomeTiming>
+	timing: Required<ComeHomeTiming>,
+	/** Remotes that did not answer earlier in this run: their agents are not dialed again. */
+	unreachable: Set<string>
 ): Promise<ComeHomeAgentOutcome | null> {
 	const pointer = readLiftedTo(agent.liftedTo);
 	if (!pointer) return null;
@@ -177,54 +205,75 @@ async function bringHome(
 		result: 'failed',
 		notices: [],
 	};
+	const remoteId = remoteIdOf(agent);
+	const release = async () => {
+		if (remoteId) await deps.releaseConnection?.(remoteId);
+	};
 
 	let attempts = 0;
 	let waitedMs = 0;
 	let lastError = '';
+	let lastCode = '';
 	let skipReason: string | undefined;
 	let refusedForGood = false;
-	while (attempts < timing.onlineAttempts) {
-		// Read before every try, since a wait can be long: hosting turned on leaves the agent where
-		// the person now wants it, and a remote disabled or opted out meanwhile is not dialed.
-		if (deps.hostingEnabled()) return null;
-		skipReason = onlineSkipReason(agent, deps.readRemotes());
-		if (skipReason) break;
-		const answer = await deps.returnAgent(agent.id, {});
-		if (answer.ok) {
-			outcome.result = 'online';
-			outcome.notices.push(...(answer.result.notices ?? []));
-			return outcome;
-		}
-		// Moved back by someone else since the list was read (Move Back, `unlift`): done.
-		if (answer.code === 'RETURN_NOT_HOSTED') return null;
-		if (answer.code === 'RETURN_BUSY') {
-			outcome.waitedForHostTurn = true;
-			if (waitedMs >= timing.busyMaxWaitMs) {
-				outcome.notices.push(
-					`A turn has run on the host for more than ${Math.round(timing.busyMaxWaitMs / 60_000)} minutes. The agent stays on the host until it ends; Maestro tries again at the next launch.`
-				);
+	let busyTooLong = false;
+	try {
+		while (attempts < timing.onlineAttempts) {
+			// Read before every try, since a wait can be long: hosting turned on leaves the agent where
+			// the person now wants it, and a remote disabled or opted out meanwhile is not dialed.
+			if (deps.hostingEnabled()) return null;
+			skipReason = onlineSkipReason(agent, deps.readRemotes());
+			if (!skipReason && remoteId && unreachable.has(remoteId)) {
+				skipReason = 'Its host did not answer for another agent a moment ago.';
+			}
+			if (skipReason) break;
+			const answer = await deps.returnAgent(agent.id, {});
+			if (answer.ok) {
+				outcome.result = 'online';
+				outcome.notices.push(...(answer.result.notices ?? []));
 				return outcome;
 			}
-			await deps.sleep(timing.busyWaitMs);
-			waitedMs += timing.busyWaitMs;
-			continue;
+			// Moved back by someone else since the list was read (Move Back, `unlift`): done.
+			if (answer.code === 'RETURN_NOT_HOSTED') return null;
+			if (answer.code === 'RETURN_BUSY') {
+				outcome.waitedForHostTurn = true;
+				if (waitedMs >= timing.busyMaxWaitMs) {
+					busyTooLong = true;
+					break;
+				}
+				// The connection stays held: the next check reuses it.
+				await deps.sleep(timing.busyWaitMs);
+				waitedMs += timing.busyWaitMs;
+				continue;
+			}
+			// Anything else may have broken the link: the next try dials again.
+			await release();
+			lastError = answer.error;
+			lastCode = answer.code;
+			// A refusal no retry can fix must not leave the agent moved: restore it here now.
+			if (!RETRYABLE_CODES.has(answer.code)) {
+				refusedForGood = true;
+				break;
+			}
+			attempts++;
+			if (attempts < timing.onlineAttempts) await deps.sleep(timing.retryWaitMs);
 		}
-		lastError = answer.error;
-		// A refusal no retry can fix must not leave the agent moved: restore it here now.
-		if (!RETRYABLE_CODES.has(answer.code)) {
-			refusedForGood = true;
-			break;
-		}
-		attempts++;
-		if (attempts < timing.onlineAttempts) await deps.sleep(timing.retryWaitMs);
+	} finally {
+		await release();
+	}
+	// The host never answered: its other agents in this run go straight to the local restore.
+	if (remoteId && lastCode === 'PEER_NOT_CONNECTED' && !refusedForGood && !busyTooLong) {
+		unreachable.add(remoteId);
 	}
 
-	// The host did not answer, may not be dialed, or refused for good: come back with this
-	// machine's copy, so the agent works now and nothing stays moved.
+	// The host did not answer, may not be dialed, refused for good, or runs a turn past the limit:
+	// come back with this machine's copy, so the agent works now and nothing stays moved. The host
+	// copy is kept (`hostCopyLeft`) and finished when the host answers.
 	if (deps.hostingEnabled()) return null;
 	const offline = await deps.returnAgent(agent.id, { offline: true });
 	if (!offline.ok) {
 		if (offline.code === 'RETURN_NOT_HOSTED') return null;
+		outcome.reason = `This machine could not restore it: ${offline.error}`;
 		outcome.notices.push(offline.error);
 		return outcome;
 	}
@@ -235,15 +284,33 @@ async function bringHome(
 		movedAt: pointer.at,
 		...(newestRowAt(agent) !== undefined ? { lastLocalRowAt: newestRowAt(agent) } : {}),
 	};
-	if (skipReason) outcome.notices.push(`The host was not contacted. ${skipReason}`);
+	if (busyTooLong) {
+		outcome.notices.push(
+			`A turn has run on ${pointer.peer} for more than ${Math.round(timing.busyMaxWaitMs / 60_000)} minutes. It is not stopped: ${pointer.peer} keeps its copy, and what that turn writes comes home when Maestro finishes the copy.`
+		);
+	} else if (skipReason) outcome.notices.push(`The host was not contacted. ${skipReason}`);
 	else if (refusedForGood) outcome.notices.push(`The return was refused: ${lastError}`);
-	else if (lastError) outcome.notices.push(`The host did not answer: ${lastError}`);
+	else if (lastCode === 'PEER_NOT_CONNECTED') {
+		outcome.notices.push(`The host did not answer: ${lastError}`);
+	} else if (lastError) outcome.notices.push(`The host answered with an error: ${lastError}`);
 	outcome.notices.push(...(offline.result.notices ?? []));
 	return outcome;
 }
 
+/** The agents grouped by SSH remote, in list order; agents with no remote share one lane. */
+function lanesByRemote(agents: readonly AgentRecord[]): AgentRecord[][] {
+	const lanes = new Map<string, AgentRecord[]>();
+	for (const agent of agents) {
+		const key = remoteIdOf(agent) ?? '';
+		const lane = lanes.get(key);
+		if (lane) lane.push(agent);
+		else lanes.set(key, [agent]);
+	}
+	return [...lanes.values()];
+}
+
 /**
- * Return every moved agent, one at a time. Does nothing while hosting is on. Never throws for one
+ * Return every moved agent, one at a time per SSH remote. Does nothing while hosting is on. Never throws for one
  * agent's failure: it is reported and the job moves on.
  */
 export async function runComeHome(
@@ -261,17 +328,31 @@ export async function runComeHome(
 	if (!deps.hostingEnabled()) {
 		/** Agents this run already dialed for: a copy they left is for the next launch. */
 		const tried = new Set<string>();
-		for (const { id } of movedAgents(deps.readAgents())) {
-			tried.add(id);
-			// Re-read: an earlier return or a user's Move Back may have settled it meanwhile.
-			const current = deps.readAgents().find((agent) => agent.id === id);
-			if (!current || deps.hostingEnabled()) continue;
-			const outcome = await bringHome(current, deps, resolved);
+		const unreachable = new Set<string>();
+		const moved = movedAgents(deps.readAgents());
+		const outcomes = new Map<string, ComeHomeAgentOutcome>();
+		// One lane per SSH remote, run side by side; inside a lane, one agent at a time (I5).
+		await Promise.all(
+			lanesByRemote(moved).map(async (lane) => {
+				for (const { id } of lane) {
+					tried.add(id);
+					// Re-read: an earlier return or a user's Move Back may have settled it meanwhile.
+					const current = deps.readAgents().find((agent) => agent.id === id);
+					if (!current || deps.hostingEnabled()) continue;
+					const outcome = await bringHome(current, deps, resolved, unreachable);
+					if (outcome) outcomes.set(id, outcome);
+				}
+			})
+		);
+		for (const { id } of moved) {
+			const outcome = outcomes.get(id);
 			if (outcome) agents.push(outcome);
 		}
 		for (const { id } of hostCopiesLeft(deps.readAgents(), deps.now())) {
 			const current = deps.readAgents().find((agent) => agent.id === id);
 			if (!current || tried.has(id) || deps.hostingEnabled()) continue;
+			const remoteId = remoteIdOf(current);
+			if (remoteId && unreachable.has(remoteId)) continue;
 			const outcome = await finishHostCopy(current, deps, resolved);
 			if (outcome) agents.push(outcome);
 		}
@@ -313,4 +394,32 @@ export function createComeHomeRunner(
 		},
 		lastReport: () => last,
 	};
+}
+
+let comeHomeRunner: ComeHomeRunner | null = null;
+
+/**
+ * The job that brings moved agents home, once the IPC handlers built it. `federation auto` and the
+ * spawn refusal for a moved agent read its last report.
+ */
+export function getComeHomeRunner(): ComeHomeRunner | null {
+	return comeHomeRunner;
+}
+
+export function setComeHomeRunner(next: ComeHomeRunner | null): void {
+	comeHomeRunner = next;
+}
+
+/**
+ * The spawn refusal for an agent still moved onto a host while hosting is off: the same true reason
+ * its queued messages show (`comeHomeWaitText()`), from the job's last report.
+ */
+export function movedAgentWaitRefusal(agent: {
+	id: string;
+	name?: string;
+	liftedTo?: unknown;
+}): string {
+	const peer = readLiftedTo(agent.liftedTo)?.peer ?? 'its host';
+	const failure = comeHomeFailureFor(getComeHomeRunner()?.lastReport(), agent.id);
+	return `"${agent.name ?? 'This agent'}" is still on its Federation host. ${comeHomeWaitText(peer, failure)}`;
 }

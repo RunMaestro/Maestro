@@ -62,6 +62,19 @@ describe('QueuedItemsList pause/hold', () => {
 		);
 	});
 
+	it('says why every item waits while the agent is still moved onto a host (R3)', () => {
+		const note =
+			'Waiting to bring this agent back from gpu: timed out. Maestro tries again every 5 minutes. Its messages wait in its queue.';
+		const { rerender } = setup({ waitingNote: note });
+		expect(screen.getByTestId('queued-waiting-note')).toHaveTextContent(note);
+		rerender(
+			<LayerStackProvider>
+				<QueuedItemsList executionQueue={[item()]} theme={mockTheme} />
+			</LayerStackProvider>
+		);
+		expect(screen.queryByTestId('queued-waiting-note')).toBeNull();
+	});
+
 	it('omits the hold control when no toggle handler is provided', () => {
 		setup({ onTogglePauseQueuedItem: undefined });
 		expect(screen.queryByTitle(/Hold this message/i)).toBeNull();

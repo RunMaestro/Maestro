@@ -58,6 +58,7 @@ import type {
 } from '../../federation/peer-mirror-service';
 import {
 	buildDesktopLiftDeps,
+	holdHostConnections,
 	liftAgentFromDesktop,
 	returnAgentFromDesktop,
 	type DesktopLiftAnswer,
@@ -300,12 +301,19 @@ export function registerFederationHandlers(deps: FederationHandlerDeps): void {
 	);
 	// Every moved agent comes home (hosting off): the window calls this once its agent list is
 	// loaded, because each restore is written by that window. One run at a time. Starts no
-	// mirror and no coordinator: each return opens its own connection and releases it.
+	// mirror and no coordinator: it opens its own connection per remote, held while it polls a turn
+	// running on the host, and released when it is done with that remote's agent.
+	const comeHomeConnections = holdHostConnections(async (remoteId, peer) => {
+		if (!liftDeps.connectHost) throw new Error(FEDERATION_NOT_RUNNING_MESSAGE);
+		return liftDeps.connectHost(remoteId, peer);
+	});
+	const comeHomeLiftDeps = { ...liftDeps, connectHost: comeHomeConnections.connectHost };
 	const comeHome = createComeHomeRunner({
 		readAgents: liftDeps.readAgents,
 		readRemotes: liftDeps.readRemotes,
 		hostingEnabled: () => deps.hosting.isOn(),
-		returnAgent: (agentId, options) => returnAgentFromDesktop(agentId, options, liftDeps),
+		returnAgent: (agentId, options) => returnAgentFromDesktop(agentId, options, comeHomeLiftDeps),
+		releaseConnection: comeHomeConnections.release,
 		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 		now: () => Date.now(),
 	});

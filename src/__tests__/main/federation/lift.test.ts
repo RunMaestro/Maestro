@@ -44,6 +44,7 @@ import {
 	LIFT_POINTER_TIMEOUT_MS,
 	buildDesktopLiftDeps,
 	connectHostForReturn,
+	holdHostConnections,
 	liftAgentFromDesktop,
 	returnAgentFromDesktop,
 	setLiftPointerInWindow,
@@ -324,6 +325,51 @@ describe('connectHostForReturn', () => {
 			/not configured/
 		);
 		expect(forwardAcquire).not.toHaveBeenCalled();
+	});
+});
+
+describe('holdHostConnections (R5: one held connection while the job polls)', () => {
+	beforeEach(() => {
+		liveLeases.clear();
+		forwardAcquire.mockClear();
+		wsClose.mockClear();
+		wsConnect.mockReset();
+	});
+
+	const held = () =>
+		holdHostConnections((remoteId, peer) => connectHostForReturn([remote], remoteId, peer));
+
+	it('every return on a remote reuses one forward; release(remoteId) leaves no ssh running', async () => {
+		wsConnect.mockResolvedValue({ ok: true, value: undefined });
+		const connections = held();
+		for (let check = 0; check < 4; check++) {
+			const connection = await connections.connectHost('remote-1', 'build-box');
+			// A return's own release does not end the held connection.
+			await connection.release();
+		}
+		expect(forwardAcquire).toHaveBeenCalledTimes(1);
+		expect(liveLeases.size).toBe(1);
+		await connections.release('remote-1');
+		await connections.release('remote-1');
+		expect(wsClose).toHaveBeenCalledTimes(1);
+		expect(liveLeases.size).toBe(0);
+		// The next return dials again.
+		await connections.connectHost('remote-1', 'build-box');
+		expect(forwardAcquire).toHaveBeenCalledTimes(2);
+		await connections.release('remote-1');
+		expect(liveLeases.size).toBe(0);
+	});
+
+	it('a connection that never opened is not kept: the next return dials again', async () => {
+		wsConnect
+			.mockResolvedValueOnce({ ok: false, error: { code: 'timeout', message: 'no answer' } })
+			.mockResolvedValue({ ok: true, value: undefined });
+		const connections = held();
+		await expect(connections.connectHost('remote-1', 'build-box')).rejects.toThrow();
+		await connections.connectHost('remote-1', 'build-box');
+		expect(forwardAcquire).toHaveBeenCalledTimes(2);
+		await connections.release('remote-1');
+		expect(liveLeases.size).toBe(0);
 	});
 });
 

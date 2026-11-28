@@ -17,7 +17,6 @@ import { captureException } from '../utils/sentry';
 import type { SafeSendFn } from '../utils/safe-send';
 import { PeerMirrorService, type PeerMirrorServiceDeps } from './peer-mirror-service';
 import type { AutoFederationCoordinator } from './auto-federation';
-import type { ComeHomeRunner } from './come-home';
 import {
 	emptyAutoFederationSnapshot,
 	type AutoFederationSnapshot,
@@ -50,16 +49,9 @@ export function setAutoFederation(next: AutoFederationCoordinator | null): void 
 	autoFederation = next;
 }
 
-let comeHomeRunner: ComeHomeRunner | null = null;
-
-/** The job that brings moved agents home, once the IPC handlers built it (`federation auto` reads it). */
-export function getComeHomeRunner(): ComeHomeRunner | null {
-	return comeHomeRunner;
-}
-
-export function setComeHomeRunner(next: ComeHomeRunner | null): void {
-	comeHomeRunner = next;
-}
+// The come-home job's holder lives beside the job, so the spawn refusal can read it without this
+// module's imports.
+export { getComeHomeRunner, setComeHomeRunner } from './come-home';
 
 /**
  * What automatic Federation reports: the coordinator's snapshot, or, while it does not run (hosted

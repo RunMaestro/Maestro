@@ -45,6 +45,7 @@ import {
 	liftedOwnerOfProcess,
 	liftedSendRefusal,
 } from '../../../shared/maestro-lib/agents/lift-pointer';
+import { movedAgentWaitRefusal } from '../../federation/come-home';
 import {
 	initPermissionRelay,
 	resolvePermissionResponse,
@@ -281,7 +282,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			const refusal =
 				lifted &&
 				(liftedSendRefusal(lifted, settingsStore.get(HOSTED_AGENTS_SETTING, false) === true) ??
-					`"${lifted.name ?? 'This agent'}" is still on its Federation host and is moving back to this machine. Its messages wait in its queue and run once it is back.`);
+					movedAgentWaitRefusal(lifted));
 			if (refusal) throw new Error(refusal);
 		}
 		// A web/CLI caller cannot assert the native renderer's submitted log boundary.

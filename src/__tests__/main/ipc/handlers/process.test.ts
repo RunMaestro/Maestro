@@ -95,6 +95,7 @@ import {
 	computeOmpCatalogKey,
 } from '../../../../main/agents/omp-model-catalog';
 import { runAsActingUser } from '../../../../main/web-server/auth/acting-user';
+import { setComeHomeRunner } from '../../../../main/federation/come-home';
 import {
 	noteTurnActor,
 	resolveTurnActor,
@@ -742,8 +743,45 @@ describe('process IPC handlers', () => {
 			// It would resume the provider session its host owns: refused until the come-home job
 			// clears the pointer. The window holds the message in the queue meanwhile.
 			expect(outcome instanceof Error ? outcome.message : '').toContain(
-				'is moving back to this machine'
+				'"Lifted" is still on its Federation host. Bringing this agent back from build-box.'
 			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+
+			// R3: once a run could not bring it home, the refusal says why, as its queued card does.
+			setComeHomeRunner({
+				run: vi.fn(),
+				lastReport: () => ({
+					startedAt: 1,
+					finishedAt: 2,
+					agents: [
+						{
+							id: 'lifted-agent',
+							name: 'Lifted',
+							from: 'build-box:host-1',
+							result: 'failed',
+							reason: 'This machine could not restore it: timed out.',
+							notices: [],
+						},
+					],
+				}),
+			});
+			try {
+				const refused = await handlers.get('process:spawn')!(
+					{},
+					{
+						sessionId: 'lifted-agent-ai-tab',
+						toolType: 'claude-code',
+						cwd: '/project',
+						command: 'claude',
+						args: [],
+					}
+				).catch((error: Error) => error);
+				expect(refused instanceof Error ? refused.message : '').toBe(
+					'"Lifted" is still on its Federation host. Waiting to bring this agent back from build-box: This machine could not restore it: timed out. Maestro tries again every 5 minutes. Its messages wait in its queue.'
+				);
+			} finally {
+				setComeHomeRunner(null);
+			}
 			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
 
 			const shell = await handlers.get('process:spawn')!(
@@ -756,7 +794,7 @@ describe('process IPC handlers', () => {
 					args: [],
 				}
 			).catch((error: Error) => error);
-			expect(shell instanceof Error ? shell.message : '').not.toContain('moving back');
+			expect(shell instanceof Error ? shell.message : '').not.toContain('Federation host');
 		});
 
 		it('binds an announced first desktop provider id before a CLI resume can start', async () => {

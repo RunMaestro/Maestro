@@ -78,6 +78,8 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	getActiveTab: (session: Session) =>
 		session.tabs?.find((t) => t.id === session.activeTabId) || session.tabs?.[0],
+	// A queued message's come-home note: no agent here is moved onto a host.
+	isAwaitingComeHome: () => false,
 }));
 
 // Track message-by-message navigation calls

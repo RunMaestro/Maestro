@@ -5,6 +5,8 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+	comeHomeFailureFor,
+	comeHomeWaitText,
 	summarizeComeHomeReport,
 	type ComeHomeAgentOutcome,
 } from '../../shared/federationComeHome';
@@ -86,8 +88,44 @@ describe('summarizeComeHomeReport', () => {
 		);
 		expect(summary?.title).toBe('1 agent moved back from its host, 1 agent still on a host');
 		expect(summary?.lines[1]).toBe(
-			'"Ops" is still on gpu. Maestro tries again at the next launch, or run maestro-cli unlift "Ops". refused'
+			'"Ops" is still on gpu. Maestro tries again every 5 minutes, or run maestro-cli unlift "Ops". refused'
 		);
 		expect(summary?.needsReview).toBe(true);
+	});
+});
+
+describe('comeHomeWaitText (R3: the hold is never silent)', () => {
+	const failed: ComeHomeAgentOutcome = {
+		id: 'a3',
+		name: 'Ops',
+		from: 'gpu:h3',
+		result: 'failed',
+		reason: 'This machine could not save the agent: timed out.',
+		notices: ['ignored when a reason is set'],
+	};
+
+	it('before the job settles the agent, says it is on its way back', () => {
+		expect(comeHomeWaitText('gpu')).toBe(
+			'Bringing this agent back from gpu. Its messages wait in its queue and run here once it is back.'
+		);
+	});
+
+	it('after a run could not bring it home, names the true reason and the retry', () => {
+		expect(comeHomeWaitText('gpu', failed)).toBe(
+			'Waiting to bring this agent back from gpu: This machine could not save the agent: timed out. Maestro tries again every 5 minutes. Its messages wait in its queue.'
+		);
+		expect(comeHomeWaitText('gpu', { ...failed, reason: undefined, notices: ['refused.'] })).toBe(
+			'Waiting to bring this agent back from gpu: refused. Maestro tries again every 5 minutes. Its messages wait in its queue.'
+		);
+	});
+
+	it('finds the failure of one agent only, never a home one', () => {
+		const run = report([
+			{ id: 'a1', name: 'Docs', from: 'box:h1', result: 'online', notices: [] },
+			failed,
+		]);
+		expect(comeHomeFailureFor(run, 'a3')).toBe(failed);
+		expect(comeHomeFailureFor(run, 'a1')).toBeUndefined();
+		expect(comeHomeFailureFor(null, 'a3')).toBeUndefined();
 	});
 });
