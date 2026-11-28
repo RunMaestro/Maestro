@@ -97,7 +97,7 @@ import { createCotStateKeyringAnchor } from '../../cot-export/config-store';
 import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
-import { hostingSettingOf } from '../../federation/hosting-gate';
+import { hostingSettingOf, readHostingSwitches } from '../../federation/hosting-gate';
 import { MAX_ENTRIES_PER_SESSION, resolveHistoryEntryLimit } from '../../../shared/history';
 import {
 	setGetSessionsCallback,
@@ -154,10 +154,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		readAgentConfigs: () => deps.agentConfigsStore.get('configs', {}),
 		getMainWindow: deps.getMainWindow,
 		getProcessManager: deps.getProcessManager,
-		// With hosted agents off, nothing moves onto a host on its own either.
-		readAutoMove: () =>
-			deps.settingsStore.get('federationAutoMove', false) === true &&
-			deps.settingsStore.get('federationHostedAgents', false) === true,
+		// With hosted agents off, nothing moves onto a host on its own either. Both switches read
+		// as the gate reads them: off until the default-off migration ran.
+		readAutoMove: () => {
+			const switches = readHostingSwitches(deps.settingsStore);
+			return switches.federationAutoMove && switches.federationHostedAgents;
+		},
 		// Automatic Federation runs only while hosted agents are on.
 		hosting: hostingSettingOf(deps.settingsStore),
 		watchSessions: (onChange) => deps.sessionsStore.onDidChange('sessions', () => onChange()),
@@ -557,7 +559,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 			getSshRemoteById,
 			deps.getProcessManager(),
 			{
-				hostingEnabled: () => deps.settingsStore.get('federationHostedAgents', false) === true,
+				hostingEnabled: () => readHostingSwitches(deps.settingsStore).federationHostedAgents,
 				peers: () => getPeerMirrorService()?.snapshot().peers ?? [],
 			}
 		)
