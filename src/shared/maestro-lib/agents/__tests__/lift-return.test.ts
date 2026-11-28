@@ -48,6 +48,7 @@ function hostClient(
 		tabs?: AITabRecord[];
 		transcripts?: Record<string, unknown[]>;
 		remove?: unknown;
+		setPaused?: unknown;
 	} = {}
 ) {
 	const tabs = overrides.tabs ?? [
@@ -71,7 +72,16 @@ function hostClient(
 			list: vi.fn().mockResolvedValue(ok(tabs)),
 			transcript: vi.fn(async (_agentId: string, tabId: string) => ok(transcripts[tabId] ?? [])),
 		},
-		turns: { queue: { list: vi.fn().mockResolvedValue(overrides.queue ?? ok([])) } },
+		turns: {
+			queue: {
+				list: vi.fn().mockResolvedValue(overrides.queue ?? ok([])),
+				setPaused: vi.fn(
+					async (_agentId: string, _itemId: string, paused: boolean) =>
+						overrides.setPaused ?? ok({ found: true, paused })
+				),
+				remove: vi.fn().mockResolvedValue(ok({ removed: true })),
+			},
+		},
 	};
 }
 
@@ -197,20 +207,135 @@ describe('runReturnFromHost', () => {
 		}
 	});
 
-	it('refuses a running turn or a waiting message on the host, and changes nothing', async () => {
-		const busy = hostClient({
+	it('refuses a running turn on the host, and changes nothing', async () => {
+		const client = hostClient({
 			agent: ok({ id: 'host-1', aiTabs: [{ id: 'tab-1', state: 'busy' }] }),
 		});
-		const queued = hostClient({ queue: ok([{ itemId: 'q1' }]) });
-		for (const [client, code] of [
-			[busy, 'RETURN_BUSY'],
-			[queued, 'RETURN_QUEUED'],
-		] as const) {
+		const d = deps(hostedAgent(), client);
+		await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+			code: 'RETURN_BUSY',
+		});
+		expect(d.restore).not.toHaveBeenCalled();
+		expect(client.agents.remove).not.toHaveBeenCalled();
+	});
+
+	describe("the host's queue", () => {
+		const waiting = { itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: false };
+		const held = { itemId: 'q2', tabId: 'tab-new', queuedAt: 20, text: 'later', paused: true };
+
+		it('holds each waiting message on the host, brings both back, then removes the host copy', async () => {
+			const client = hostClient({ queue: ok([waiting, held]) });
 			const d = deps(hostedAgent(), client);
-			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({ code });
+			const result = await runReturnFromHost('agent-1', {}, d.value);
+			// Only the one the host could still start is held; the held one already is.
+			expect(client.turns.queue.setPaused).toHaveBeenCalledTimes(1);
+			expect(client.turns.queue.setPaused).toHaveBeenCalledWith('host-1', 'q1', true);
+			expect(client.turns.queue.setPaused.mock.invocationCallOrder[0]).toBeLessThan(
+				d.restore.mock.invocationCallOrder[0]
+			);
+			expect(d.restore.mock.calls[0][1].queue).toEqual([waiting, held]);
+			expect(client.agents.remove).toHaveBeenCalledWith('host-1');
+			expect(result.queued).toBe(2);
+		});
+
+		it('the stored record ends home with both messages queued, the held one still held', async () => {
+			const store = new Map<string, AgentRecord>([['agent-1', hostedAgent()]]);
+			const client = hostClient({ queue: ok([waiting, held]) });
+			const d = deps(hostedAgent(), client);
+			d.value.readAgents = () => [...store.values()];
+			d.restore.mockImplementation(async (id: string, returned) => {
+				const record = store.get(id) as unknown as Record<string, unknown>;
+				store.set(id, withReturnedFromHost(record, returned) as unknown as AgentRecord);
+			});
+			await runReturnFromHost('agent-1', {}, d.value);
+			const home = store.get('agent-1') as AgentRecord & { executionQueue?: unknown[] };
+			expect(home.liftedTo).toBeUndefined();
+			expect(home.executionQueue).toEqual([
+				{ id: 'q1', timestamp: 10, tabId: 'tab-1', type: 'message', text: 'next' },
+				{ id: 'q2', timestamp: 20, tabId: 'tab-new', type: 'message', text: 'later', paused: true },
+			]);
+			// A second run finds it home and touches nothing.
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_NOT_HOSTED',
+			});
+		});
+
+		it('a message that started on the host before it was held is a running turn: nothing changes', async () => {
+			const client = hostClient({
+				queue: ok([held, waiting]),
+				setPaused: ok({ found: false, paused: false }),
+			});
+			const d = deps(hostedAgent(), client);
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_BUSY',
+			});
 			expect(d.restore).not.toHaveBeenCalled();
 			expect(client.agents.remove).not.toHaveBeenCalled();
-		}
+		});
+
+		it('releases what it held when the restore fails, so the host can still run them', async () => {
+			const client = hostClient({ queue: ok([waiting, held]) });
+			const d = deps(hostedAgent(), client);
+			d.restore.mockRejectedValue(new Error('window gone'));
+			await expect(runReturnFromHost('agent-1', {}, d.value)).rejects.toMatchObject({
+				code: 'RETURN_RESTORE_FAILED',
+			});
+			expect(client.turns.queue.setPaused.mock.calls).toEqual([
+				['host-1', 'q1', true],
+				['host-1', 'q1', false],
+			]);
+			expect(client.agents.remove).not.toHaveBeenCalled();
+		});
+
+		it('takes the messages out of a kept host copy, so they cannot run twice', async () => {
+			const client = hostClient({ queue: ok([waiting, held]) });
+			const d = deps(hostedAgent(), client);
+			await runReturnFromHost('agent-1', { keepHostCopy: true }, d.value);
+			expect(client.turns.queue.remove.mock.calls).toEqual([
+				['host-1', 'q1'],
+				['host-1', 'q2'],
+			]);
+			expect(client.agents.remove).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('withReturnedFromHost with a queue', () => {
+		it('puts the host messages first, keeps held ones held, skips a duplicate, and re-targets a lost tab', () => {
+			const record = hostedAgent({
+				executionQueue: [
+					{ id: 'local-1', timestamp: 50, tabId: 'tab-1', type: 'message', text: 'held here' },
+					// The host's card for q1, drawn while hosted agents were on: replaced, not kept.
+					{
+						id: 'q1',
+						timestamp: 10,
+						tabId: 'tab-1',
+						type: 'message',
+						text: 'next',
+						hostQueued: true,
+					},
+				],
+			} as Partial<AgentRecord>) as unknown as Record<string, unknown>;
+			const merged = withReturnedFromHost(record, {
+				tabs: [],
+				queue: [
+					{ itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: false },
+					{ itemId: 'q2', tabId: 'tab-gone', queuedAt: 20, text: 'later', paused: true },
+					{ itemId: 'local-1', tabId: 'tab-1', queuedAt: 30, text: 'dup', paused: false },
+				],
+			});
+			expect(merged.executionQueue).toEqual([
+				{ id: 'q1', timestamp: 10, tabId: 'tab-1', type: 'message', text: 'next' },
+				{ id: 'q2', timestamp: 20, tabId: 'tab-1', type: 'message', text: 'later', paused: true },
+				{ id: 'local-1', timestamp: 50, tabId: 'tab-1', type: 'message', text: 'held here' },
+			]);
+		});
+
+		it('readReturnedFromHost keeps a valid queue and refuses a malformed one', () => {
+			const queue = [{ itemId: 'q1', tabId: 'tab-1', queuedAt: 10, text: 'next', paused: true }];
+			expect(readReturnedFromHost({ tabs: [], queue })).toEqual({ tabs: [], queue });
+			expect(readReturnedFromHost({ tabs: [], queue: [{ itemId: 'q1' }] })).toBeUndefined();
+			expect(readReturnedFromHost({ tabs: [], queue: 'nope' })).toBeUndefined();
+		});
 	});
 
 	it('comes back with this machine copy when the host no longer has the agent', async () => {

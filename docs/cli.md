@@ -2553,15 +2553,14 @@ The desktop app runs the same lift. Right-click the agent in the Left Bar and ch
 
 ### Move a Hosted Agent Back
 
-`maestro-cli unlift <agent>` reverses a lift: the hosted agent becomes an SSH agent again. The host's tabs come back with their transcripts and provider session IDs, so a tab that moved lands on its own local tab and the next turn over SSH resumes the same conversation. A tab started on the host arrives as a new tab. Tabs are never dropped: a local tab the host closed stays. The host's copy is then removed, unless you pass `--keep-host-copy`. Automatic Federation leaves the agent an SSH agent from then on; **Move to Host** (or `lift`) hosts it again.
+`maestro-cli unlift <agent>` reverses a lift: the hosted agent becomes an SSH agent again. The host's tabs come back with their transcripts and provider session IDs, so a tab that moved lands on its own local tab and the next turn over SSH resumes the same conversation. A tab started on the host arrives as a new tab. Tabs are never dropped: a local tab the host closed stays. Messages that wait in the host's queue come back into this machine's queue, in their order, and a held message stays held. The host's copy is then removed, unless you pass `--keep-host-copy`. Automatic Federation leaves the agent an SSH agent from then on; **Move to Host** (or `lift`) hosts it again.
 
-| Refusal                                 | Code                    |
-| --------------------------------------- | ----------------------- |
-| The agent is not hosted                 | `RETURN_NOT_HOSTED`     |
-| The agent has no SSH remote to run on   | `RETURN_NO_SSH`         |
-| A turn is running on the host           | `RETURN_BUSY`           |
-| Messages still wait in the host's queue | `RETURN_QUEUED`         |
-| The local agent could not be restored   | `RETURN_RESTORE_FAILED` |
+| Refusal                               | Code                    |
+| ------------------------------------- | ----------------------- |
+| The agent is not hosted               | `RETURN_NOT_HOSTED`     |
+| The agent has no SSH remote to run on | `RETURN_NO_SSH`         |
+| A turn is running on the host         | `RETURN_BUSY`           |
+| The local agent could not be restored | `RETURN_RESTORE_FAILED` |
 
 When the host cannot be reached, `--offline` moves the agent back with only what this machine kept. Conversations started on the host stay there, and its copy is not removed: remove it on the host when it is back (`maestro-cli remove-agent <id>`).
 

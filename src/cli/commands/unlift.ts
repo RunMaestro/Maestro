@@ -97,6 +97,13 @@ const defaultDeps: UnliftDeps = {
 	},
 };
 
+/** The one line a successful return prints. */
+function returnedLine(result: ReturnResult): string {
+	const queued = result.queued ? `, ${result.queued} queued message(s)` : '';
+	const removed = result.hostCopyRemoved ? ', host copy removed' : '';
+	return `"${result.agent.name}" is an SSH agent again (${result.tabs} tab(s)${queued} back from ${result.from}${removed})`;
+}
+
 /** Write the restored record through whoever owns the store. Throws on failure. */
 async function restore(
 	deps: UnliftDeps,
@@ -163,11 +170,7 @@ export async function unlift(
 			return;
 		}
 		for (const notice of result.notices ?? []) console.log(formatWarning(notice));
-		console.log(
-			formatSuccess(
-				`"${result.agent.name}" is an SSH agent again (${result.tabs} tab(s) back from ${result.from}${result.hostCopyRemoved ? ', host copy removed' : ''})`
-			)
-		);
+		console.log(formatSuccess(returnedLine(result)));
 	} catch (error) {
 		const { code, exitCode, message } = failureOf(error);
 		if (options.json)
@@ -225,10 +228,6 @@ export async function unliftAll(
 			continue;
 		}
 		for (const notice of outcome.notices ?? []) console.log(formatWarning(notice));
-		console.log(
-			formatSuccess(
-				`"${outcome.agent.name}" is an SSH agent again (${outcome.tabs} tab(s) back from ${outcome.from}${outcome.hostCopyRemoved ? ', host copy removed' : ''})`
-			)
-		);
+		console.log(formatSuccess(returnedLine(outcome)));
 	}
 }

@@ -6,13 +6,22 @@
  * which a browser bundle cannot load). `lift-return.ts` re-exports everything here.
  */
 
+import type { QueuedTurn } from '../client/types';
 import type { AITabRecord } from '../store/records';
 import { readLiftedTo } from './lift-pointer';
+
+/** A message that waited in the host's queue, to wait in the local queue once the agent is back. */
+export type ReturnedQueuedMessage = Pick<
+	QueuedTurn,
+	'itemId' | 'tabId' | 'queuedAt' | 'text' | 'paused'
+>;
 
 /** What the host held, to merge into the local record. Each tab carries its transcript. */
 export interface ReturnedFromHost {
 	tabs: AITabRecord[];
 	activeTabId?: string;
+	/** The host's queue, in its order. A held (paused) message stays held here. */
+	queue?: ReturnedQueuedMessage[];
 }
 
 /** A host tab as a local tab record: the fields a local tab needs, idle, with its transcript. */
@@ -41,7 +50,11 @@ function asLocalTab(tab: AITabRecord): AITabRecord {
  * The local record once the agent is back: no `liftedTo`, `hostedOptOut` set, and the host's tabs
  * merged in by tab id. A tab both sides have takes the host's transcript (the conversation went on
  * there) unless the host's is shorter, plus its name, star, and provider session. A host tab this
- * machine lacks is appended. Local tabs the host closed stay. Pure.
+ * machine lacks is appended. Local tabs the host closed stay. The host's queued messages go first in
+ * the local queue (they were sent before anything this machine held while the agent was away), as
+ * messages, held when the host held them; one this queue already has (same id) is not added twice,
+ * and one whose tab is gone waits for the active tab. The host's queue cards (`hostQueued`) are
+ * dropped. Pure.
  */
 export function withReturnedFromHost<T extends Record<string, unknown>>(
 	record: T,
@@ -78,14 +91,73 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
 			? returned.activeTabId
 			: record.activeTabId;
 
+	// The host's own queue cards (`hostQueued`, drawn while hosted agents were on) go: the host's
+	// messages arrive below as local items, and a card nothing here runs would hide one.
+	const localQueue = (
+		(Array.isArray(record.executionQueue) ? record.executionQueue : []) as {
+			id?: unknown;
+			hostQueued?: unknown;
+		}[]
+	).filter((item) => item.hostQueued !== true);
+	const queuedIds = new Set(localQueue.map((item) => item.id));
+	const fallbackTabId =
+		typeof activeTabId === 'string' && aiTabs.some((tab) => tab.id === activeTabId)
+			? activeTabId
+			: aiTabs[0]?.id;
+	const fromHost = (returned.queue ?? []).flatMap((item) => {
+		if (queuedIds.has(item.itemId)) return [];
+		const tabId = aiTabs.some((tab) => tab.id === item.tabId) ? item.tabId : fallbackTabId;
+		if (!tabId) return [];
+		queuedIds.add(item.itemId);
+		return [
+			{
+				id: item.itemId,
+				timestamp: item.queuedAt,
+				tabId,
+				type: 'message',
+				text: item.text,
+				...(item.paused ? { paused: true } : {}),
+			},
+		];
+	});
+
 	const { liftedTo: _liftedTo, ...rest } = record;
 	return {
 		...rest,
 		aiTabs,
 		...(order ? { unifiedTabOrder: order } : {}),
 		...(activeTabId !== undefined ? { activeTabId } : {}),
+		...(Array.isArray(record.executionQueue) || fromHost.length > 0
+			? { executionQueue: [...fromHost, ...localQueue] }
+			: {}),
 		hostedOptOut: true,
 	} as unknown as T;
+}
+
+function readReturnedQueue(value: unknown): ReturnedQueuedMessage[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const queue: ReturnedQueuedMessage[] = [];
+	for (const item of value) {
+		if (!item || typeof item !== 'object' || Array.isArray(item)) return undefined;
+		const raw = item as Record<string, unknown>;
+		if (
+			typeof raw.itemId !== 'string' ||
+			!raw.itemId ||
+			typeof raw.tabId !== 'string' ||
+			typeof raw.text !== 'string' ||
+			typeof raw.queuedAt !== 'number'
+		) {
+			return undefined;
+		}
+		queue.push({
+			itemId: raw.itemId,
+			tabId: raw.tabId,
+			queuedAt: raw.queuedAt,
+			text: raw.text,
+			paused: raw.paused === true,
+		});
+	}
+	return queue;
 }
 
 /**
@@ -94,8 +166,10 @@ export function withReturnedFromHost<T extends Record<string, unknown>>(
  */
 export function readReturnedFromHost(value: unknown): ReturnedFromHost | undefined {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-	const raw = value as { tabs?: unknown; activeTabId?: unknown };
+	const raw = value as { tabs?: unknown; activeTabId?: unknown; queue?: unknown };
 	if (!Array.isArray(raw.tabs)) return undefined;
+	const queue = raw.queue === undefined ? [] : readReturnedQueue(raw.queue);
+	if (!queue) return undefined;
 	const tabs: AITabRecord[] = [];
 	for (const tab of raw.tabs) {
 		if (!tab || typeof tab !== 'object' || Array.isArray(tab)) return undefined;
@@ -108,6 +182,7 @@ export function readReturnedFromHost(value: unknown): ReturnedFromHost | undefin
 		...(typeof raw.activeTabId === 'string' && raw.activeTabId
 			? { activeTabId: raw.activeTabId }
 			: {}),
+		...(queue.length > 0 ? { queue } : {}),
 	};
 }
 

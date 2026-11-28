@@ -6,13 +6,16 @@
  * back turns that pointer into an SSH agent again:
  *
  * 1. Refusals that cost no dial: not hosted, or no SSH remote to run on once it is back.
- * 2. The host's copy is read: its tabs and each tab's transcript. A running turn or a message that
- *    still waits in the host's queue is refused: it would be lost or run twice. The host's tab ids
- *    and provider session ids are the ones the lift sent, so a tab that moved comes back onto its
- *    own local tab, and the next turn over SSH resumes the same provider session.
+ * 2. The host's copy is read: its tabs, each tab's transcript, and its queue. A running turn is
+ *    refused: it would be lost. Each waiting message is held on the host first (so the host cannot
+ *    start it while this runs; one that started anyway is a running turn), then comes back into the
+ *    local queue. The host's tab ids and provider session ids are the ones the lift sent, so a tab
+ *    that moved comes back onto its own local tab, and the next turn over SSH resumes the same
+ *    provider session.
  * 3. The local record is restored (`withReturnedFromHost()`): no pointer, the host's tabs merged
  *    in, and `hostedOptOut`, so automatic Federation does not move it straight back.
- * 4. The host's copy is removed, unless the caller keeps it, so the agent has one owner again.
+ * 4. The host's copy is removed, unless the caller keeps it, so the agent has one owner again. A
+ *    kept copy loses the messages that came back, so they cannot run twice.
  *
  * `offline` skips 2 and 4 for a host that cannot be reached: the agent comes back with only what
  * this machine kept, and the result says the host's copy is still there.
@@ -67,6 +70,8 @@ export interface ReturnResult {
 	tabs: number;
 	/** Host tabs this machine did not have, added as new tabs. */
 	newTabs: number;
+	/** Messages that waited in the host's queue and now wait in this one. */
+	queued?: number;
 	hostCopyRemoved: boolean;
 	notices?: string[];
 }
@@ -139,6 +144,8 @@ export async function runReturnFromHost(
 		const hostError = deps.hostCallError ?? defaultHostCallError;
 		const notices: string[] = [];
 		let returned: ReturnedFromHost = { tabs: [] };
+		/** Messages this return held on the host: released again when the return fails. */
+		const heldIds: string[] = [];
 		const hostAgent = await connection.client.agents.get(pointer.agentId);
 		const hostGone = !hostAgent.ok && hostAgent.error.code === 'not-found';
 		if (!hostAgent.ok && !hostGone) throw hostError(connection.peer, hostAgent.error);
@@ -153,23 +160,53 @@ export async function runReturnFromHost(
 			}
 			const queue = await connection.client.turns.queue.list(pointer.agentId);
 			if (!queue.ok) throw hostError(connection.peer, queue.error);
-			if (queue.value.length > 0) {
-				throw new LiftRunError(
-					'RETURN_QUEUED',
-					`${queue.value.length} message(s) still wait in "${agent.name}"'s queue on its host. Let them run or remove them, then move it back.`
+			// Hold each waiting message on the host, so it cannot start there while it moves here.
+			for (const item of queue.value) {
+				if (item.paused) continue;
+				const held = await connection.client.turns.queue.setPaused(
+					pointer.agentId,
+					item.itemId,
+					true
 				);
+				if (!held.ok) {
+					await releaseHeld(connection, pointer.agentId, heldIds);
+					throw hostError(connection.peer, held.error);
+				}
+				if (!held.value.found) {
+					await releaseHeld(connection, pointer.agentId, heldIds);
+					throw new LiftRunError(
+						'RETURN_BUSY',
+						`"${agent.name}" started a queued message on its host. Wait for it to finish, then move it back.`
+					);
+				}
+				heldIds.push(item.itemId);
 			}
+			const failRead = async (error: Pick<ClientError, 'code' | 'message'>): Promise<never> => {
+				await releaseHeld(connection, pointer.agentId, heldIds);
+				throw hostError(connection.peer, error);
+			};
 			const tabs = await connection.client.tabs.list(pointer.agentId);
-			if (!tabs.ok) throw hostError(connection.peer, tabs.error);
+			if (!tabs.ok) return failRead(tabs.error);
 			const withLogs: AITabRecord[] = [];
 			for (const tab of tabs.value) {
 				const transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id);
-				if (!transcript.ok) throw hostError(connection.peer, transcript.error);
+				if (!transcript.ok) return failRead(transcript.error);
 				withLogs.push({ ...tab, logs: transcript.value });
 			}
 			returned = {
 				tabs: withLogs,
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
+				...(queue.value.length > 0
+					? {
+							queue: queue.value.map((item) => ({
+								itemId: item.itemId,
+								tabId: item.tabId,
+								queuedAt: item.queuedAt,
+								text: item.text,
+								paused: item.paused,
+							})),
+						}
+					: {}),
 			};
 		} else {
 			notices.push(
@@ -177,7 +214,12 @@ export async function runReturnFromHost(
 			);
 		}
 
-		await restoreOrThrow(deps, agent, returned);
+		try {
+			await restoreOrThrow(deps, agent, returned);
+		} catch (error) {
+			await releaseHeld(connection, pointer.agentId, heldIds);
+			throw error;
+		}
 
 		let hostCopyRemoved = false;
 		if (hostAgent.ok && !options.keepHostCopy) {
@@ -190,6 +232,14 @@ export async function runReturnFromHost(
 			}
 		} else if (hostAgent.ok) {
 			notices.push(`The host keeps its copy (${from}). Do not send to both.`);
+			for (const item of returned.queue ?? []) {
+				const removed = await connection.client.turns.queue.remove(pointer.agentId, item.itemId);
+				if (!removed.ok) {
+					notices.push(
+						`A message that came back still waits, held, in the host's queue (${from}): ${removed.error.message} Remove it there so it does not run twice.`
+					);
+				}
+			}
 		}
 
 		const localIds = new Set((agent.aiTabs ?? []).map((tab) => tab.id));
@@ -198,11 +248,27 @@ export async function runReturnFromHost(
 			from,
 			tabs: returned.tabs.length,
 			newTabs: returned.tabs.filter((tab) => !localIds.has(tab.id)).length,
+			...(returned.queue?.length ? { queued: returned.queue.length } : {}),
 			hostCopyRemoved,
 			...(notices.length > 0 ? { notices } : {}),
 		};
 	} finally {
 		await connection.release();
+	}
+}
+
+/**
+ * Let the host run the messages this return held, because the return failed. A failure to release
+ * one is not reported over the error the caller is about to see: that message stays held on the
+ * host, where Hold / Resume reaches it.
+ */
+async function releaseHeld(
+	connection: ReturnHostConnection,
+	hostAgentId: string,
+	heldIds: string[]
+): Promise<void> {
+	for (const itemId of heldIds) {
+		await connection.client.turns.queue.setPaused(hostAgentId, itemId, false);
 	}
 }
 
