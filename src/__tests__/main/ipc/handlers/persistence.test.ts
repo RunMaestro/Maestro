@@ -7470,6 +7470,37 @@ describe('persistence IPC handlers', () => {
 			expect(stored[0].executionQueue).toEqual([queued]);
 		});
 
+		it('a refused save leaves removed a row whose admission it cancelled, and keeps the rest of the queue (#2203)', async () => {
+			const held = {
+				id: 'q-held',
+				timestamp: 1,
+				tabId: 'tab-1',
+				type: 'message',
+				text: 'held',
+				pendingAdmissionId: 'dispatch-1',
+			};
+			const plain = { id: 'q-plain', timestamp: 2, tabId: 'tab-1', type: 'message', text: 'plain' };
+			let stored: Array<Record<string, unknown>> = [
+				{ ...baseSession, aiTabs: [{ id: 'tab-1', logs: [] }], executionQueue: [held, plain] },
+			];
+			mockSessionsStore.get.mockImplementation(
+				(_key: string, fallback: unknown) => stored ?? fallback
+			);
+			mockSessionsStore.set.mockImplementation((_key: string, value: typeof stored) => {
+				stored = value;
+			});
+			mockFlushSessionWrites.mockRejectedValueOnce(
+				Object.assign(new Error('ENOSPC: refused'), { code: 'ENOSPC' })
+			);
+			const handler = handlers.get('sessions:setMany')!;
+			expect(
+				await handler({} as any, [
+					{ ...baseSession, aiTabs: [{ id: 'tab-1', logs: [] }], executionQueue: [] },
+				])
+			).toBe(false);
+			expect(stored[0].executionQueue).toEqual([plain]);
+		});
+
 		it('does not acknowledge an unexpected deferred write failure', async () => {
 			const error = new Error('EIO: input/output error') as NodeJS.ErrnoException;
 			error.code = 'EIO';

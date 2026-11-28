@@ -394,8 +394,12 @@ export function registerPersistenceHandlers(
 		});
 	};
 
-	/** Cancel pending admissions when their queue row or owning tab disappears. */
-	const noteQueueRemovals = (previous: StoredSession[], next: StoredSession[]) => {
+	/**
+	 * Cancel pending admissions when their queue row or owning tab disappears. Returns the rows
+	 * cancelled, as `agentId/itemId`, so a refused save does not restore a row it can no longer release.
+	 */
+	const noteQueueRemovals = (previous: StoredSession[], next: StoredSession[]): Set<string> => {
+		const cancelled = new Set<string>();
 		for (const agent of previous) {
 			const current = next.find((s) => s.id === agent.id);
 			for (const item of agent.executionQueue ?? []) {
@@ -404,6 +408,7 @@ export function registerPersistenceHandlers(
 					(!current?.aiTabs?.some((tab: { id: string }) => tab.id === item.tabId) ||
 						!current?.executionQueue?.some((row: { id: string }) => row.id === item.id))
 				) {
+					cancelled.add(`${agent.id}/${item.id}`);
 					if (deps.cancelQueueItem)
 						deps.cancelQueueItem(agent.id, item.tabId, item.pendingAdmissionId);
 					else
@@ -417,6 +422,7 @@ export function registerPersistenceHandlers(
 				}
 			}
 		}
+		return cancelled;
 	};
 
 	const releaseQueueItem: ReleaseQueueItem = (input, commit) => {
@@ -1214,10 +1220,11 @@ export function registerPersistenceHandlers(
 				}
 
 				let storeChanged = false;
+				let cancelledRows = new Set<string>();
 				try {
 					await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
 					const persistedBefore = sessionsStore.get('sessions', []);
-					noteQueueRemovals(persistedBefore, sessionsToPersist);
+					cancelledRows = noteQueueRemovals(persistedBefore, sessionsToPersist);
 					sessionsStore.set('sessions', sessionsToPersist);
 					storeChanged = true;
 					broadcastDesktopQueueChanges(getWebServer(), persistedBefore, sessionsToPersist);
@@ -1231,11 +1238,24 @@ export function registerPersistenceHandlers(
 					// messages; the record must not reach disk home afterwards (#2199).
 					if (storeChanged) {
 						const refused = sessionsStore.get('sessions', []);
+						// A row whose admission this save cancelled stays removed: its hold can no
+						// longer be released, so restoring it would leave it stuck (#2203).
 						const restored = undoRefusedSessionsSave(
 							refused,
 							previousSessions,
 							sessionsToPersist,
 							touchedIds
+						).map((session) =>
+							session.executionQueue?.some((row: { id: string }) =>
+								cancelledRows.has(`${session.id}/${row.id}`)
+							)
+								? {
+										...session,
+										executionQueue: session.executionQueue.filter(
+											(row: { id: string }) => !cancelledRows.has(`${session.id}/${row.id}`)
+										),
+									}
+								: session
 						);
 						sessionsStore.set('sessions', restored);
 						// The queue frames this save sent are taken back too.
