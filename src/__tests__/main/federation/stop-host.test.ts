@@ -140,6 +140,41 @@ describe('stopHostFromDesktop', () => {
 		expect(d.writeRemotes).not.toHaveBeenCalled();
 	});
 
+	it('turns Federation off inside the queued stop, before the next queued task runs', async () => {
+		const order: string[] = [];
+		const waiting: Array<() => void> = [];
+		// A queue that runs the task waiting behind this one the moment this one settles.
+		const exclusive = vi.fn(async <T>(task: () => Promise<T>) => {
+			const value = await task();
+			for (const next of waiting.splice(0)) next();
+			return value;
+		});
+		const d = deps(done, { exclusive } as unknown as PeerMirrorService);
+		d.writeRemotes.mockImplementation(() => order.push('federation-off'));
+		waiting.push(() => order.push('queued-setup'));
+		await stopHostFromDesktop('r1', {}, d);
+		expect(order).toEqual(['federation-off', 'queued-setup']);
+	});
+
+	it('turns Federation off when the stop failed part way after the host stopped', async () => {
+		const d = deps(
+			new RemoteHostStopError('remove', 'A file could not be removed.', {
+				hostStopped: true,
+				serviceDisabled: true,
+				removed: [],
+			})
+		);
+		const answer = await stopHostFromDesktop('r1', { uninstall: true }, d);
+		expect(answer).toMatchObject({ ok: false, code: 'remove', federationOff: true });
+		expect(d.writeRemotes).toHaveBeenCalledWith([{ ...remote, federation: false }]);
+	});
+
+	it('leaves Federation as it was when a failure changed nothing', async () => {
+		const d = deps(new RemoteHostStopError('ssh-failed', 'No route.'));
+		await stopHostFromDesktop('r1', {}, d);
+		expect(d.writeRemotes).not.toHaveBeenCalled();
+	});
+
 	it('lets an unexpected error through to Sentry', async () => {
 		await expect(stopHostFromDesktop('r1', {}, deps(new TypeError('bug')))).rejects.toThrow('bug');
 	});

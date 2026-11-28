@@ -39,6 +39,7 @@ import {
 	RemoteHostStopError,
 	describeRemoteHostStop,
 	desktopHostMessage,
+	remoteHostStopTookEffect,
 	stopRemoteHost,
 	surveyRemoteHost,
 	type RemoteHostStopResult,
@@ -302,7 +303,8 @@ export async function remoteHostStatus(
 			readRemotes: deps.readRemotes,
 			resolveRemoteId: deps.resolveRemoteId,
 		});
-		requireFederationRemote(remote);
+		// No `requireFederationRemote()`: status only reads, and it is how a person checks a stop or
+		// a removal, which turn the remote's Federation switch off.
 		const opts = discoveryOptions(options);
 		const found = await deps.discover(remote, opts);
 		const report = buildRemoteHostStatusReport(remote, found, localVersion);
@@ -551,8 +553,10 @@ async function runRemoteHostStop(
 	overrides: Partial<RemoteHostDeps>
 ): Promise<void> {
 	const deps = { ...defaultDeps, ...overrides };
+	// Outside the `try`: a stop that fails part way still turns this remote's Federation off.
+	let remote: SshRemoteConfig | undefined;
 	try {
-		const remote = findPeerRemote(ref, {
+		remote = findPeerRemote(ref, {
 			readRemotes: deps.readRemotes,
 			resolveRemoteId: deps.resolveRemoteId,
 		});
@@ -579,8 +583,9 @@ async function runRemoteHostStop(
 			result.outcome === 'agents-held' ||
 			result.outcome === 'purge-refused';
 		// Automatic Federation honors the remote's own switch: off, it never starts this host again.
-		const switched =
-			result.outcome === 'done' ? withFederationOff(deps.readRemotes(), remote.id) : null;
+		const switched = remoteHostStopTookEffect(result)
+			? withFederationOff(deps.readRemotes(), remote.id)
+			: null;
 		if (switched) deps.writeRemotes(switched);
 		// --purge-data that the last check on the remote turned down is not the success asked for.
 		const purgeKept = result.outcome === 'done' && options.purgeData === true && !result.purged;
@@ -606,7 +611,7 @@ async function runRemoteHostStop(
 				)
 			);
 		} else {
-			if (result.outcome === 'done' && !bootLeft) {
+			if (result.outcome === 'done' && !bootLeft && !purgeKept) {
 				console.log(
 					formatSuccess(
 						uninstall
@@ -616,7 +621,7 @@ async function runRemoteHostStop(
 				);
 			}
 			const text = formatRemoteHostStop(remote, result, uninstall);
-			if (refused || bootLeft) console.error(text);
+			if (refused || bootLeft || purgeKept) console.error(text);
 			else console.log(text);
 			if (switched) console.log(federationTurnedOffNote(remote.name));
 		}
@@ -624,10 +629,29 @@ async function runRemoteHostStop(
 	} catch (error) {
 		if (error instanceof RemoteHostStopError) {
 			const code = error.code === 'timeout' ? ExitCode.Timeout : ExitCode.GeneralError;
+			// A stop that failed part way still stopped the host or its service: keep that from being
+			// undone by automatic Federation, as a finished stop does.
+			const switched =
+				remote && remoteHostStopTookEffect(error.progress)
+					? withFederationOff(deps.readRemotes(), remote.id)
+					: null;
+			if (switched) deps.writeRemotes(switched);
 			if (options.json) {
-				console.log(JSON.stringify({ error: error.message, code: error.code }, null, 2));
+				console.log(
+					JSON.stringify(
+						{
+							error: error.message,
+							code: error.code,
+							...(error.progress ? { progress: error.progress } : {}),
+							...(switched ? { federationOff: true } : {}),
+						},
+						null,
+						2
+					)
+				);
 			} else {
 				console.error(formatError(error.message));
+				if (switched && remote) console.error(federationTurnedOffNote(remote.name));
 			}
 			process.exitCode = code;
 			return;
