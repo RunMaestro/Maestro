@@ -89,7 +89,8 @@ const PID_FILE_PATTERN = /^\/tmp\/maestro-agent-[0-9a-f-]{36}\.pid$/;
  *   RS 'D' <len> LF <len bytes> US   that many bytes of the agent's stderr
  *   RS 'E' <code> <out> LF    the agent ended with <code>; every stderr byte was
  *                             sent, and <out> stdout bytes in all
- *   RS 'G' LF                 the turn is gone (reattach only)
+ *   RS 'G' [<out>] LF         the turn is gone (reattach only); after a drain,
+ *                             with the stdout bytes sent in all
  *
  * A data frame cut by a drop is discarded whole and sent again by the
  * reattach, which starts from the last complete frame.
@@ -115,6 +116,9 @@ function assertOffset(offset: number): void {
 /** The gone frame and exit: the remote proved the turn has no agent and no exit code. */
 const GONE = `{ printf '\\036G\\n' >&2; exit ${DURABLE_TURN_GONE_EXIT_CODE}; }`;
 
+/** The same, after the stream loop drained the files: with the stdout bytes sent in all. */
+const GONE_DRAINED = `{ printf '\\036G%d\\n' "$o" >&2; exit ${DURABLE_TURN_GONE_EXIT_CODE}; }`;
+
 /**
  * `_alive <record>`: true while the process a `<pid> <lstart>` record names
  * still runs. A record names a live process only while its start time still
@@ -126,9 +130,10 @@ const ALIVE_FUNCTION = [
 	'  read -r p started < "$1" || return 1',
 	'  case "$p" in ""|*[!0-9]*) return 1 ;; esac',
 	'  kill -0 "$p" 2>/dev/null || return 1',
-	// A `ps` that prints nothing proves nothing: the process answers, so it lives.
+	// A `ps` that prints nothing (now or when the record was written) proves
+	// nothing: the process answers, so it lives.
 	'  now=$(ps -o lstart= -p "$p" 2>/dev/null)',
-	'  [ -z "$now" ] || [ "$(echo $now)" = "$(echo $started)" ]',
+	'  [ -z "$now" ] || [ -z "$started" ] || [ "$(echo $now)" = "$(echo $started)" ]',
 	'}',
 ];
 
@@ -148,7 +153,8 @@ function streamLoop(outOffset: number, errOffset: number): string[] {
 	assertOffset(errOffset);
 	return [
 		`printf '${DURABLE_STDOUT_START_SHELL}'`,
-		`o=${outOffset}; e=${errOffset}; k=0; g=0`,
+		// The caller sets `g`: 1 when a reattach found the agent gone, so one pass drains first.
+		`o=${outOffset}; e=${errOffset}; k=0`,
 		'while :; do',
 		'  f=0; [ -e "$d/exit" ] && f=1',
 		'  m=0',
@@ -166,7 +172,7 @@ function streamLoop(outOffset: number, errOffset: number): string[] {
 		// A frame cap left stderr behind: copy the rest before the exit counts.
 		'  [ "$e" -lt "$n" ] && continue',
 		'  [ "$f" = 1 ] && break',
-		`  [ "$g" = 1 ] && ${GONE}`,
+		`  [ "$g" = 1 ] && ${GONE_DRAINED}`,
 		// Removed by a cleanup or a reap: nobody reads this turn any more.
 		`  [ -d "$d" ] || exit ${DURABLE_TURN_GONE_EXIT_CODE}`,
 		'  if [ "$m" = 0 ]; then',
@@ -262,6 +268,7 @@ export function buildDurableLaunchScript(innerStdin: string, dir: string, pidFil
 		'exec 3<&-',
 		'printf \'%s %s\\n\' "$!" "$(ps -o lstart= -p $! 2>/dev/null)" > "$d/sup"',
 		"printf '\\036S\\n' >&2",
+		'g=0',
 		...streamLoop(0, 0),
 		'}',
 	];
@@ -287,9 +294,12 @@ export function buildDurableReattachScript(
 		`d=${shellEscape(dir)}; pf=${shellEscape(pidFile)}`,
 		`[ -d "$d" ] || ${GONE}`,
 		...ALIVE_FUNCTION,
+		// Gone (no exit, nothing alive): still send what the agent wrote last
+		// before the gone frame. The supervisor may have finished between the
+		// first check and the probe, so the loop's own exit check decides.
+		'g=0',
 		'if [ ! -e "$d/exit" ] && ! _alive "$d/sup" && ! _alive "$d/agent" && ! _alive "$pf"; then',
-		// The supervisor may have finished between the first check and the probe.
-		`  [ -e "$d/exit" ] || ${GONE}`,
+		'  [ -e "$d/exit" ] || g=1',
 		'fi',
 		"printf '\\036S\\n' >&2",
 		...streamLoop(outOffset, errOffset),
@@ -339,6 +349,7 @@ export class DurableStderrReader {
 	private ended: number | null = null;
 	private endedOut: number | null = null;
 	private goneNow = false;
+	private goneOut: number | null = null;
 	private diagnostics = '';
 
 	/**
@@ -386,15 +397,22 @@ export class DurableStderrReader {
 		return this.endedOut;
 	}
 
-	/** Forget an end frame whose stdout has not all arrived: the next attempt sends it again. */
+	/** Forget an end or gone frame whose stdout has not all arrived: the next attempt sends it again. */
 	dropEnd(): void {
 		this.ended = null;
 		this.endedOut = null;
+		this.goneNow = false;
+		this.goneOut = null;
 	}
 
 	/** True when a reattach reported the turn gone. */
 	get gone(): boolean {
 		return this.goneNow;
+	}
+
+	/** How many stdout bytes the gone frame says were sent in all (null: not said). */
+	get goneOutBytes(): number | null {
+		return this.goneOut;
 	}
 
 	/** ssh's own stderr since the agent first ran (the last few KB). */
@@ -454,8 +472,9 @@ export class DurableStderrReader {
 			if (header === 'S') {
 				this.startedNow = true;
 				this.everStarted = true;
-			} else if (header === 'G') {
+			} else if (/^G\d*$/.test(header)) {
 				this.goneNow = true;
+				this.goneOut = header.length > 1 ? Number(header.slice(1)) : null;
 			} else if (/^E\d+(?: \d+)?$/.test(header)) {
 				const [code, out] = header.slice(1).split(' ');
 				this.ended = Number(code);
@@ -715,11 +734,12 @@ export function runDurableSshTurn(
 			// that dropped between them is read again from the offsets.
 			if (stderr.endCode !== null && (stderr.endOutBytes ?? outOffset) <= outOffset)
 				return finish({ ...exit, exitCode: stderr.endCode, signal: null, outcome: 'ended' });
+			const goneHere = stderr.gone && (stderr.goneOutBytes ?? outOffset) <= outOffset;
 			stderr.dropEnd();
 			if (!stderr.launched || exit.spawnError) return finish({ ...exit, outcome: 'not-started' });
 			const reason = options.stopReason();
 			if (reason) return finish(stopped(exit, reason));
-			if (stderr.gone)
+			if (goneHere)
 				return finish({
 					...exit,
 					exitCode: DURABLE_TURN_GONE_SETTLE_CODE,

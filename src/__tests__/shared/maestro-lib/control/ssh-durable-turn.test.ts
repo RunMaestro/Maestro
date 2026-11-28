@@ -152,6 +152,15 @@ describe('DurableStderrReader', () => {
 		expect(reader.endOutBytes).toBeNull();
 	});
 
+	it('reads the stdout byte count of a gone frame sent after a drain', () => {
+		const reader = new DurableStderrReader();
+		reader.push(Buffer.from(`${RS}S\n${RS}G42\n`));
+		expect(reader.gone).toBe(true);
+		expect(reader.goneOutBytes).toBe(42);
+		reader.dropEnd();
+		expect(reader.gone).toBe(false);
+	});
+
 	it('finds the start frame behind ssh text that has no line end', () => {
 		const reader = new DurableStderrReader();
 		expect(reader.push(Buffer.from(`Warning: no newline${RS}S\n${RS}D2\nok${US}`))).toBe(
@@ -372,7 +381,11 @@ posixOnly('against a real shell', () => {
 		fs.writeFileSync(`${dir}/sup`, '999999 Thu Jan  1 00:00:00 1970\n');
 		const gone = await runShell(buildDurableReattachScript(dir, pidFile, 0, 0));
 		expect(gone.code).toBe(DURABLE_TURN_GONE_EXIT_CODE);
-		expect(gone.out.length).toBe(0);
+		// What the agent wrote after the link dropped still arrives, before the gone frame.
+		expect(agentOut(gone.out).toString()).toBe('partial');
+		const { reader } = readStderr(gone.err);
+		expect(reader.gone).toBe(true);
+		expect(reader.goneOutBytes).toBe(7);
 	});
 
 	it('the launch script and its secrets leave the disk before the agent runs; the files are private', async () => {
@@ -542,6 +555,14 @@ posixOnly('against a real shell', () => {
 			]) + 'echo launched\n'
 		);
 		expect(reap.out.toString()).toBe('launched\n');
+		expect(fs.readFileSync(`${dir}/exit`, 'utf8')).toBe('reaped\n');
+		// A second reap of the same turn keeps the marker.
+		const again = await runShell(
+			buildPreLaunchReapScript([
+				{ sshCommand: 'ssh', sshArgs: [], pidFile, sessionId: 's', turnDir: dir },
+			]) + 'echo launched\n'
+		);
+		expect(again.out.toString()).toBe('launched\n');
 		expect(fs.readFileSync(`${dir}/exit`, 'utf8')).toBe('reaped\n');
 		// The envelope that was already on the host runs only now.
 		const late = await runShell(

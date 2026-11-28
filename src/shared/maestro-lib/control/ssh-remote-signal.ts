@@ -109,8 +109,11 @@ function durableAgentLines(dir: string, pidFile: string): string[] {
 		'[ -r "$d/agent" ] && read -r ap as < "$d/agent"',
 		`[ -n "$ap" ] || { [ -r ${pf} ] && read -r ap as < ${pf}; }`,
 		'case "$ap" in ""|*[!0-9]*) ap= ;; esac',
-		// A `ps` that prints nothing proves nothing: the process still answers, so it counts as the agent.
-		'_same() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null || return 1; n=$(ps -o lstart= -p "$ap" 2>/dev/null); [ -z "$n" ] || [ "$(echo $n)" = "$(echo $as)" ]; }',
+		// Signal only a proven match: the start time agrees (or the host never
+		// recorded one, as today's pid record allows). A `ps` that prints nothing
+		// proves nothing, so `_maybe` (may the agent still run?) counts it as live.
+		'_same() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null && [ "$(echo $(ps -o lstart= -p "$ap" 2>/dev/null))" = "$(echo $as)" ]; }',
+		'_maybe() { [ -n "$ap" ] && kill -0 "$ap" 2>/dev/null || return 1; n=$(ps -o lstart= -p "$ap" 2>/dev/null); [ -z "$n" ] || [ -z "$as" ] || [ "$(echo $n)" = "$(echo $as)" ]; }',
 		't="$ap"; [ -n "$ap" ] && [ "$(ps -o pgid= -p "$ap" 2>/dev/null | tr -d " ")" = "$ap" ] && t="-$ap"',
 	];
 }
@@ -122,6 +125,13 @@ function durableAgentLines(dir: string, pidFile: string): string[] {
  * the record stay and the script exits
  * {@link DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}, so the reap tries again: a
  * dir removed under a live agent leaves a writer nobody can find again.
+ *
+ * Where no dir exists the script creates one, finished (`exit` reads
+ * `reaped`), and leaves it: a launch still on its way (its script already on
+ * the host, running an earlier reap) then fails its own `mkdir` and never
+ * starts its agent after this reap reported it gone. `mkdir` is the one
+ * atomic choice between the two: whoever makes the dir owns it. A later reap
+ * leaves that marker in place; the sweep of finished dirs removes it.
  */
 function terminateScriptFor(target: RemoteSignalTarget): string {
 	if (target.turnDir === undefined)
@@ -130,27 +140,20 @@ function terminateScriptFor(target: RemoteSignalTarget): string {
 		throw new Error('A durable turn has no prompt artifact.');
 	return [
 		...durableAgentLines(target.turnDir, target.pidFile),
+		`if ( umask 077; mkdir "$d" 2>/dev/null ); then printf 'reaped\\n' > "$d/exit"; rm -f -- ${shellEscape(target.pidFile)}; exit 0; fi`,
+		'[ "$(cat "$d/exit" 2>/dev/null)" = reaped ] && exit 0',
 		'if _same; then',
 		'  kill -TERM -- "$t" 2>/dev/null',
-		'  i=0; while [ "$i" -lt 6 ] && _same; do sleep 0.5; i=$((i+1)); done',
+		'  i=0; while [ "$i" -lt 6 ] && _maybe; do sleep 0.5; i=$((i+1)); done',
 		'  _same && kill -KILL -- "$t" 2>/dev/null',
 		// Its supervisor reaps it: give the zombie a moment to go.
-		'  i=0; while [ "$i" -lt 10 ] && _same; do sleep 0.1; i=$((i+1)); done',
+		'  i=0; while [ "$i" -lt 10 ] && _maybe; do sleep 0.1; i=$((i+1)); done',
 		'fi',
-		'if [ -d "$d" ] && [ ! -e "$d/exit" ]; then',
-		`  { [ -z "$ap" ] || _same; } && exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}`,
+		'if [ ! -e "$d/exit" ]; then',
+		`  { [ -z "$ap" ] || _maybe; } && exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}`,
 		'fi',
 		`rm -f -- ${shellEscape(target.pidFile)}`,
-		'if [ -d "$d" ]; then',
-		`  rm -rf -- "$d" 2>/dev/null; [ -d "$d" ] && exit ${DURABLE_CLEANUP_FAILED_EXIT_CODE}`,
-		'  exit 0',
-		'fi',
-		// No dir: the launch never staged, or an earlier reap removed it. Leave
-		// a finished one in its place, so a launch still on its way (its script
-		// already on the host, running an earlier reap) cannot start its agent
-		// after this reap reported it gone. The sweep of finished dirs removes it.
-		`( umask 077; mkdir "$d" 2>/dev/null ) || exit ${DURABLE_TERMINATE_UNCONFIRMED_EXIT_CODE}`,
-		'printf \'reaped\\n\' > "$d/exit"',
+		`rm -rf -- "$d" 2>/dev/null; [ -d "$d" ] && exit ${DURABLE_CLEANUP_FAILED_EXIT_CODE}`,
 		'exit 0',
 	]
 		.join('\n')

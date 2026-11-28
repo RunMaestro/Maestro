@@ -1215,28 +1215,34 @@ describe('ChildProcessSpawner', () => {
 			);
 		});
 
-		it("hands the carried reaps back when a plain launch's ssh never reached the host", async () => {
-			const { spawner, emitter } = createTestContext();
-			const onExit = vi.fn();
-			emitter.on('exit', onExit);
-			const orphan = {
-				sshCommand: '/usr/bin/ssh',
-				sshArgs: SSH_ARGS,
-				pidFile: '/tmp/maestro-agent-44444444-4444-4444-8444-444444444444.pid',
-				sessionId: 'test-session',
-				turnDir: '/tmp/maestro-turn-44444444-4444-4444-8444-444444444444',
-			};
-			reapRemoteAgent(orphan, [60_000]);
-			childHandlers(mockSpawn.mock.results[0].value).get('exit')?.(255);
-			mockSpawn.mockClear();
-			spawner.spawn(sshConfig(false));
-			expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([]);
-			closeWith(mockChildProcess, 255);
-			await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
-			await vi.waitFor(() =>
-				expect(reapSpawns().some((script) => script.includes(orphan.turnDir))).toBe(true)
-			);
-		});
+		it.each([
+			['its ssh never reached the host', 255, null],
+			['it was stopped before its script ran', null, 'SIGINT'],
+		] as const)(
+			"hands the carried reaps back when a plain launch's %s",
+			async (_why, code, signal) => {
+				const { spawner, emitter } = createTestContext();
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				const orphan = {
+					sshCommand: '/usr/bin/ssh',
+					sshArgs: SSH_ARGS,
+					pidFile: '/tmp/maestro-agent-44444444-4444-4444-8444-444444444444.pid',
+					sessionId: 'test-session',
+					turnDir: '/tmp/maestro-turn-44444444-4444-4444-8444-444444444444',
+				};
+				reapRemoteAgent(orphan, [60_000]);
+				childHandlers(mockSpawn.mock.results[0].value).get('exit')?.(255);
+				mockSpawn.mockClear();
+				spawner.spawn(sshConfig(false));
+				expect(takePendingRemoteReaps('test-session', '/usr/bin/ssh', SSH_ARGS)).toEqual([]);
+				closeWith(mockChildProcess, code, signal);
+				await vi.waitFor(() => expect(onExit).toHaveBeenCalled());
+				await vi.waitFor(() =>
+					expect(reapSpawns().some((script) => script.includes(orphan.turnDir))).toBe(true)
+				);
+			}
+		);
 
 		it('a closed durable turn forgets its record and registers its reap at once', () => {
 			const { processes, spawner } = createTestContext();
