@@ -656,6 +656,13 @@ export interface QueuedTurn {
 	/** The host paused the queue on this item. */
 	paused: boolean;
 	/**
+	 * Whether the message runs read-only, as the sender chose it (or the tab was when it was
+	 * queued). Absent: the host did not say (a host older than this field).
+	 */
+	readOnly?: boolean;
+	/** The sender's save to History choice for this one message. Absent: the tab's own chip. */
+	saveToHistory?: boolean;
+	/**
 	 * The item waits for its own tab alone (the hand-over, `handOverItem()`): it starts the moment
 	 * the tab's own hold ends, so a client draws the tab busy and a Stop there ends it as it starts.
 	 * False: it waits for something else (or a desktop host, which starts it in the moment the turn

@@ -22,6 +22,7 @@ import { useSessionStore, updateAiTab } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import {
 	getActiveTab,
+	isAwaitingComeHome,
 	settleAgentStateFromTabs,
 	settleTabThinkingState,
 } from '../../utils/tabHelpers';
@@ -253,6 +254,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					!requestedTabId ||
 					session.state === 'busy' ||
 					session.agentErrorPaused ||
+					// A managed dispatch carries an admission identity the come-home queue
+					// below does not keep: refuse it while the agent is coming home, as a busy
+					// target is refused, so its sender keeps it and sends it again.
+					isAwaitingComeHome(session) ||
 					!session.aiTabs.some(
 						(t) => t.id === requestedTabId && t.state !== 'busy' && !t.agentError
 					))
@@ -574,6 +579,52 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				);
 				// No command arguments enter the receipt's main-process log.
 				reportDelivery(false, 'unknown-command');
+				return;
+			}
+
+			// An agent an earlier release moved onto a host is coming home (hosting off):
+			// its turns may not start here yet, because the host can still hold its
+			// provider session. Queue the prompt the way the composer does
+			// (`useInputProcessing`, `isAwaitingComeHome`); the queue drain runs it once the
+			// agent is home. Sending now would only be refused by main, and the prompt lost.
+			// `force` does not lift this: the refusal is about the session's owner, not a
+			// busy tab. Slash commands never reach here: the branch above queues them as
+			// commands, and the drain holds them the same way.
+			const comingHomeSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+			if (comingHomeSession && isAwaitingComeHome(comingHomeSession)) {
+				// A managed dispatch is refused here too, not only by the guard above: the
+				// setting can change while capabilities are awaited, and this queue would drop
+				// its admission identity.
+				if (pianolaDispatchId) {
+					reportDelivery(false, 'DispatchTargetUnavailable');
+					return;
+				}
+				// The pinned tab is read again: it may have closed while capabilities were
+				// resolved above, and the queue would otherwise fall back to another tab.
+				const pinnedTab = writeTabId
+					? comingHomeSession.aiTabs.find((tab) => tab.id === writeTabId)
+					: undefined;
+				const queued = pinnedTab
+					? enqueuePromptForTab({
+							sessionId,
+							tabId: pinnedTab.id,
+							text: command,
+							images,
+							mentionRouting,
+						})
+					: null;
+				if (!queued) {
+					reportDelivery(false, 'command-target-unavailable');
+					return;
+				}
+				logger.info('[Remote] Agent is coming home from its host; queued the command');
+				// Say it was queued, with its place, so `dispatch` reports queued, not delivered.
+				const waiting =
+					useSessionStore.getState().sessions.find((s) => s.id === sessionId)?.executionQueue ?? [];
+				reportDelivery(true, undefined, {
+					itemId: queued.id,
+					position: waiting.findIndex((item) => item.id === queued.id) + 1,
+				});
 				return;
 			}
 

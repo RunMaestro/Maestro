@@ -15,6 +15,7 @@
 
 import { LiftRunError } from '../../shared/maestro-lib/agents/lift-run';
 import {
+	RestoreUnsettledError,
 	runReturnFromHost,
 	withReturnedFromHost,
 	type ReturnedFromHost,
@@ -75,7 +76,12 @@ const defaultDeps: UnliftDeps = {
 			{
 				type: 'update_session_config',
 				sessionId: agentId,
-				configPatch: { returnedFromHost: returned },
+				// The window refuses it past this, before the desktop's own 5 s wait ends, so a
+				// restore the desktop answered "no answer" for is never applied later.
+				configPatch: {
+					returnedFromHost: returned,
+					restoreBy: Date.now() + DESKTOP_RESTORE_DEADLINE_MS,
+				},
 			},
 			'update_session_config_result'
 		),
@@ -97,11 +103,39 @@ const defaultDeps: UnliftDeps = {
 	},
 };
 
+/** How long the desktop window may take to accept a restore (the desktop waits 5 s for it). */
+const DESKTOP_RESTORE_DEADLINE_MS = 4000;
+
+/** The desktop's answer when its window did not reply (`sessionCrudCallbacks.ts`). */
+const DESKTOP_NO_ANSWER = 'Renderer did not respond in time';
+
 /** The one line a successful return prints. */
 function returnedLine(result: ReturnResult): string {
 	const queued = result.queued ? `, ${result.queued} queued message(s)` : '';
 	const removed = result.hostCopyRemoved ? ', host copy removed' : '';
 	return `"${result.agent.name}" is an SSH agent again (${result.tabs} tab(s)${queued} back from ${result.from}${removed})`;
+}
+
+/**
+ * Restore through the running desktop. False when it quit since the check (nothing owns the store
+ * now, so the file is ours). Throws `RestoreUnsettledError` when it cannot tell whether the window
+ * saved it (no answer in time, or a dropped link), so the return releases nothing on the host.
+ */
+async function restoreThroughDesktop(
+	deps: UnliftDeps,
+	agentId: string,
+	returned: ReturnedFromHost
+): Promise<boolean> {
+	let result: SimpleResult;
+	try {
+		result = await deps.restoreInDesktop(agentId, returned);
+	} catch (error) {
+		if (error instanceof MaestroNotRunningError) return false;
+		throw new RestoreUnsettledError(error instanceof Error ? error.message : String(error));
+	}
+	if (result.success) return true;
+	if (result.error === DESKTOP_NO_ANSWER) throw new RestoreUnsettledError(result.error);
+	throw new Error(result.error || errorFrameMessage(result) || 'The desktop refused');
 }
 
 /** Write the restored record through whoever owns the store. Throws on failure. */
@@ -116,16 +150,7 @@ async function restore(
 			"A maestro-cli host owns this machine's agents. Stop it (maestro-cli host stop), or move the agent back from the desktop app"
 		);
 	}
-	if (owner === 'desktop') {
-		try {
-			const result = await deps.restoreInDesktop(agentId, returned);
-			if (result.success) return;
-			throw new Error(result.error || errorFrameMessage(result) || 'The desktop refused');
-		} catch (error) {
-			// The desktop quit since the check: nothing owns the store now, so the file is ours.
-			if (!(error instanceof MaestroNotRunningError)) throw error;
-		}
-	}
+	if (owner === 'desktop' && (await restoreThroughDesktop(deps, agentId, returned))) return;
 	await deps.restoreOnDisk(agentId, returned);
 }
 

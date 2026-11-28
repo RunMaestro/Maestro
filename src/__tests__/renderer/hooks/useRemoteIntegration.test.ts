@@ -2624,6 +2624,40 @@ describe('useRemoteIntegration', () => {
 			}
 		);
 
+		// F11: an agent an earlier release moved onto a host, coming home with hosting
+		// off, is a line of its own. An idle tab must not send at once (main refuses that
+		// spawn and the prompt was lost); the item waits and the reply says queued.
+		it('queues on an idle tab of an agent coming home from a host, and acks queued', () => {
+			useSettingsStore.setState({ federationHostedAgents: false } as any);
+			const tab = createMockTab({ id: 'tab-1', name: 'Build', state: 'idle' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+				liftedTo: { peer: 'build-box', agentId: 'host-1', at: 1 },
+			} as any);
+			useSessionStore.setState({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.('session-1', 'Run the build', 'chan-q', 'ai', 'tab-1');
+			});
+
+			expect(dispatchEventSpy).not.toHaveBeenCalled();
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.executionQueue).toHaveLength(1);
+			expect(updated?.executionQueue[0]).toMatchObject({ text: 'Run the build', tabId: 'tab-1' });
+			expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
+				'chan-q',
+				expect.objectContaining({ success: true, queued: true, itemId: expect.any(String) })
+			);
+			dispatchEventSpy.mockRestore();
+		});
+
 		it('enqueues a message on a busy tab and acks the queue position', () => {
 			const tab = createMockTab({ id: 'tab-1', name: 'PR review', state: 'busy' });
 			const session = createMockSession({
@@ -3519,12 +3553,52 @@ describe('useRemoteIntegration', () => {
 									mentionRouting: 'handoff',
 									// As stored: main inlines them for a Federation client that asks.
 									images: ['maestro-image://store/abc.png'],
+									readOnly: false,
 								}),
 							],
 						}),
 					],
 				})
 			);
+		});
+
+		it('says whether each item runs read-only and its save to History choice (#2195 Move Back)', () => {
+			const tab = createMockTab({ id: 'tab-1', readOnlyMode: true });
+			const fromTab = {
+				id: 'q1',
+				timestamp: 5,
+				tabId: 'tab-1',
+				type: 'message' as const,
+				text: 'a',
+			};
+			const chosen = {
+				id: 'q2',
+				timestamp: 6,
+				tabId: 'tab-1',
+				type: 'message' as const,
+				text: 'b',
+				turnReadOnly: false,
+				turnSaveToHistory: true,
+			};
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [fromTab, chosen],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+			act(() => {
+				onRemoteListQueueHandler?.('session-1', 'chan-ro');
+			});
+			const answer = mockProcess.sendRemoteListQueueResponse.mock.calls.find(
+				(call: unknown[]) => call[0] === 'chan-ro'
+			)?.[1] as { queues: Array<{ items: Array<Record<string, unknown>> }> };
+			expect(answer.queues[0].items).toEqual([
+				expect.objectContaining({ id: 'q1', readOnly: true }),
+				expect.objectContaining({ id: 'q2', readOnly: false, saveToHistory: true }),
+			]);
+			expect(answer.queues[0].items[0]).not.toHaveProperty('saveToHistory');
 		});
 
 		it('removes a queued item by id and acks removed:true', async () => {

@@ -124,10 +124,12 @@ export const TerminalOutput = memo(
 			sessionRecoveryError,
 		} = props;
 		// An agent still moved onto a host holds its queue: its queued cards say why.
+		// Subscribed, so the note follows the hosting setting when it changes.
+		const hostingOn = useSettingsStore((s) => s.federationHostedAgents === true);
 		const comeHomeWait = useComeHomeWaitText(
 			session.id,
 			session.liftedTo,
-			isAwaitingComeHome(session)
+			isAwaitingComeHome(session, hostingOn)
 		);
 		const globalBionifyReadingMode = useSettingsStore((s) => s.bionifyReadingMode);
 		const globalBionifyIntensity = useSettingsStore((s) => s.bionifyIntensity);

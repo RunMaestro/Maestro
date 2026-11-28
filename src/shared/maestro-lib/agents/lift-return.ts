@@ -39,6 +39,7 @@ import type { AITabRecord, AgentRecord } from '../store/records';
 import { peerAgentRef, readLiftedTo, type LiftedToPointer } from './lift-pointer';
 import { LiftRunError } from './lift-run';
 import {
+	HOST_COPY_RETRY_MS,
 	hostDraftsNotKept,
 	readHostCopyLeft,
 	type HostCopyLeft,
@@ -46,6 +47,7 @@ import {
 } from './lift-return-record';
 
 export {
+	HOST_COPY_RETRY_MS,
 	hostDraftsNotKept,
 	readHostCopyLeft,
 	readLeftOnHost,
@@ -61,6 +63,25 @@ export {
  * long transcript is a large frame, and a slow answer is not a host that is gone.
  */
 export const RETURN_TRANSCRIPT_RETRY_TIMEOUT_MS = 120_000;
+
+/**
+ * How many times a return reads the host queue again after the restore, to bring home a message
+ * the host took meanwhile, before it removes the copy. A host that keeps taking messages past this
+ * keeps its copy (marked), and the next return finishes it.
+ */
+export const RETURN_LATE_QUEUE_PASSES = 3;
+
+/**
+ * Thrown by `ReturnRunDeps.restore` when it cannot tell whether the restore was written (the window
+ * did not answer, and may still write it). The return then releases nothing on the host: a message
+ * it held there stays held, so it can never run there and here both.
+ */
+export class RestoreUnsettledError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'RestoreUnsettledError';
+	}
+}
 
 export interface ReturnRunOptions {
 	/** The host cannot be reached: restore from this machine's copy only, and keep the host's. */
@@ -181,7 +202,9 @@ export async function runReturnFromHost(
 		if (left) {
 			throw new LiftRunError(
 				'RETURN_NOT_HOSTED',
-				`"${agent.name}" is home already. Its copy on the host (${from}) is removed once the host answers.`
+				left.keep
+					? `"${agent.name}" is home already. The host keeps its copy (${from}); the messages that came back leave its queue once the host answers.`
+					: `"${agent.name}" is home already. Its copy on the host (${from}) is removed once the host answers.`
 			);
 		}
 		// The copy left on the host is recorded twice: `hostCopyLeft` for the come-home job, which
@@ -199,7 +222,7 @@ export async function runReturnFromHost(
 			newTabs: 0,
 			hostCopyRemoved: false,
 			notices: [
-				`The host was not reached, so conversations started there after the move stay there, and its copy (${from}) still exists. With hosted agents off, Maestro brings what it wrote since and removes it once the host answers. ${hostCopyLeftAdvice(from)}`,
+				`The host was not reached, so conversations started there after the move stay there, and its copy (${from}) still exists. At each launch for the next ${Math.round(HOST_COPY_RETRY_MS / 86_400_000)} days, Maestro tries the host again and brings home what it wrote and the messages waiting in its queue. After that, nothing is brought home: the copy (agent ${pointer.agentId} there) may still hold messages in its queue, so look at them on the host before you remove it. ${hostCopyLeftAdvice(from)}`,
 			],
 		};
 	}
@@ -220,13 +243,112 @@ export async function runReturnFromHost(
 		let returned: ReturnedFromHost = { tabs: [] };
 		/** Messages this return held on the host: released again when the return fails. */
 		const heldIds: string[] = [];
+		/** The restore is written: the agent is home, and this return releases nothing any more. */
+		let home = false;
+		/** Release what this return held, then throw `error`, naming any message still held there. */
+		const failReleasing = async (error: Error): Promise<never> => {
+			// Once the agent is home, nothing is released: a message held on the host then comes home
+			// (held) at the next return, and never runs there while this machine owns the agent.
+			const stuck = home ? [] : await releaseHeld(connection, pointer.agentId, heldIds);
+			if (stuck.length > 0) {
+				error.message += ` ${stuck.length === 1 ? 'A message' : `${stuck.length} messages`} this return held on the host (${from}) could not be released and still ${stuck.length === 1 ? 'waits' : 'wait'} there, held: resume ${stuck.length === 1 ? 'it' : 'them'} on the host.`;
+			}
+			throw error;
+		};
 		/** Items an earlier return brought home that still wait, held, in the host copy. */
 		let carriedOnHost: string[] = [];
+		let keptQueue: string[] = [];
 		const hostAgent = await connection.client.agents.get(pointer.agentId);
 		const hostGone = !hostAgent.ok && hostAgent.error.code === 'not-found';
 		if (!hostAgent.ok && !hostGone) throw hostError(connection.peer, hostAgent.error);
+		/**
+		 * Take the messages that came home out of the kept host copy's queue. The note of the copy
+		 * stays on the record for any the host would not take out, so the next return (or launch)
+		 * tries again, and none of them can be resumed there unnoticed meanwhile.
+		 */
+		const takeOutOfKeptQueue = async (marker: HostCopyLeft, itemIds: readonly string[]) => {
+			const stuck: string[] = [];
+			let why = '';
+			for (const itemId of itemIds) {
+				const removed = await connection.client.turns.queue.remove(pointer.agentId, itemId);
+				if (!removed.ok) {
+					stuck.push(itemId);
+					why = removed.error.message;
+				}
+			}
+			if (stuck.length === 0) {
+				await clearHostCopyLeft(deps, agent, notices, 'kept');
+				return;
+			}
+			const which =
+				stuck.length === 1
+					? 'A message that came back still waits'
+					: `${stuck.length} messages that came back still wait`;
+			try {
+				await restoreOrThrow(deps, agent, {
+					tabs: [],
+					hostCopyLeft: { ...marker, carried: stuck },
+				});
+				notices.push(
+					`${which}, held, in the host's queue (${from}): ${why} Maestro takes ${stuck.length === 1 ? 'it' : 'them'} out at the next launch; do not resume ${stuck.length === 1 ? 'it' : 'them'} there.`
+				);
+			} catch (error) {
+				notices.push(
+					`${which}, held, in the host's queue (${from}): ${why} This machine could not note ${stuck.length === 1 ? 'it' : 'them'} for a retry (${errorText(error)}): remove ${stuck.length === 1 ? 'it' : 'them'} there so ${stuck.length === 1 ? 'it does' : 'they do'} not run twice.`
+				);
+			}
+		};
+		if (left?.keep) {
+			// The user kept the host copy: only its queue is left to clean. It is never read or removed.
+			if (hostGone) await clearHostCopyLeft(deps, agent, notices, 'kept');
+			else await takeOutOfKeptQueue(left, left.carried ?? []);
+			released = true;
+			await connection.release();
+			return {
+				agent: summary,
+				from,
+				tabs: 0,
+				newTabs: 0,
+				hostCopyRemoved: false,
+				...(notices.length > 0 ? { notices } : {}),
+			};
+		}
 		/** Queue items an earlier return of this agent brought home already. */
 		const carried = new Set(left?.carried ?? []);
+		/** The host tabs a late batch needs that were not read yet (set once the tabs are read). */
+		let readNewTabs:
+			| ((items: NonNullable<ReturnedFromHost['queue']>) => Promise<AITabRecord[]>)
+			| undefined;
+		/** Re-reads the host queue and holds what waits there (set once the host agent is read). */
+		let holdWaiting: (() => Promise<NonNullable<ReturnedFromHost['queue']>>) | undefined;
+		/**
+		 * Neither host sends a queued message's images (`list_queue` carries its text only), and a
+		 * headless host takes none. A desktop host may hold some: each of its messages comes home held,
+		 * in every batch, so none runs without the image it was sent with.
+		 */
+		const desktopHost = connection.client.connection?.host()?.kind === 'desktop';
+		/**
+		 * How a host message waits here. Held when the host held it, when its images may be missing,
+		 * or when the host did not say whether it was sent read-only (a host older than that field):
+		 * it must not run here with writes allowed when it was sent without.
+		 */
+		const asHomeItem = (item: NonNullable<ReturnedFromHost['queue']>[number]) => ({
+			...item,
+			paused: item.paused || desktopHost || item.readOnly === undefined,
+		});
+		/** A notice for the messages whose read-only choice the host did not send, or none. */
+		const readOnlyUnknownNotice = (
+			items: NonNullable<ReturnedFromHost['queue']>
+		): string | undefined => {
+			const unknown = items.filter((item) => item.readOnly === undefined && !item.paused);
+			if (unknown.length === 0 || desktopHost) return undefined;
+			return `${from} did not say whether ${unknown.length === 1 ? 'the message from its queue was' : `the ${unknown.length} messages from its queue were`} sent read-only, so ${unknown.length === 1 ? 'it waits' : 'they wait'} here, held: check the tab's read-only setting, then resume ${unknown.length === 1 ? 'it' : 'each one'}.`;
+		};
+		/** A notice for messages from a desktop host, which come home held without their images. */
+		const imagesNotice = (items: NonNullable<ReturnedFromHost['queue']>): string | undefined =>
+			desktopHost && items.length > 0
+				? `${from} is a Maestro desktop, which does not send the images attached to queued messages. The ${items.length === 1 ? 'message' : `${items.length} messages`} from its queue ${items.length === 1 ? 'waits' : 'wait'} here, held: attach any image again, then resume ${items.length === 1 ? 'it' : 'each one'}.`
+				: undefined;
 
 		if (hostAgent.ok) {
 			const busy = (hostAgent.value.aiTabs ?? []).some((tab) => tab.state === 'busy');
@@ -242,35 +364,33 @@ export async function runReturnFromHost(
 			 * The host's waiting messages, less those an earlier return carried, each held on the host
 			 * so it cannot start there while it moves here.
 			 */
-			const holdWaiting = async (): Promise<NonNullable<ReturnedFromHost['queue']>> => {
+			holdWaiting = async (): Promise<NonNullable<ReturnedFromHost['queue']>> => {
 				const listed = await connection.client.turns.queue.list(pointer.agentId);
-				if (!listed.ok) {
-					await releaseHeld(connection, pointer.agentId, heldIds);
-					throw hostError(connection.peer, listed.error);
-				}
+				if (!listed.ok) return await failReleasing(hostError(connection.peer, listed.error));
 				carriedOnHost = listed.value
 					.filter((item) => carried.has(item.itemId))
 					.map((item) => item.itemId);
 				const waiting = listed.value.filter((item) => !carried.has(item.itemId));
 				for (const item of waiting) {
-					if (item.paused || heldIds.includes(item.itemId)) continue;
+					// Held already, by the user or by this return. One this return held that the latest
+					// list shows running again (resumed on the host meanwhile) is held again: it must not
+					// run there while it comes home.
+					if (item.paused) continue;
 					const held = await connection.client.turns.queue.setPaused(
 						pointer.agentId,
 						item.itemId,
 						true
 					);
-					if (!held.ok) {
-						await releaseHeld(connection, pointer.agentId, heldIds);
-						throw hostError(connection.peer, held.error);
-					}
+					if (!held.ok) return await failReleasing(hostError(connection.peer, held.error));
 					if (!held.value.found) {
-						await releaseHeld(connection, pointer.agentId, heldIds);
-						throw new LiftRunError(
-							'RETURN_BUSY',
-							`"${agent.name}" started a queued message on its host. Wait for it to finish, then move it back.`
+						return await failReleasing(
+							new LiftRunError(
+								'RETURN_BUSY',
+								`"${agent.name}" started a queued message on its host. Wait for it to finish, then move it back.`
+							)
 						);
 					}
-					heldIds.push(item.itemId);
+					if (!heldIds.includes(item.itemId)) heldIds.push(item.itemId);
 				}
 				return waiting.map((item) => ({
 					itemId: item.itemId,
@@ -279,20 +399,20 @@ export async function runReturnFromHost(
 					text: item.text,
 					// Held by this return or by the user: `paused` is the user's own hold only.
 					paused: item.paused && !heldIds.includes(item.itemId),
+					...(item.readOnly !== undefined ? { readOnly: item.readOnly } : {}),
+					...(item.saveToHistory !== undefined ? { saveToHistory: item.saveToHistory } : {}),
 					...(item.kind === 'command' ? { kind: item.kind } : {}),
 					...(item.images && item.images.length > 0 ? { images: item.images } : {}),
 					...(item.turnSettings ? { turnSettings: item.turnSettings } : {}),
 				}));
 			};
 			let queue = await holdWaiting();
-			const failRead = async (error: Pick<ClientError, 'code' | 'message'>): Promise<never> => {
-				await releaseHeld(connection, pointer.agentId, heldIds);
-				throw hostError(connection.peer, error);
-			};
+			const failRead = (error: Pick<ClientError, 'code' | 'message'>): Promise<never> =>
+				failReleasing(hostError(connection.peer, error));
 			const tabs = await connection.client.tabs.list(pointer.agentId);
 			if (!tabs.ok) return await failRead(tabs.error);
-			const withLogs: AITabRecord[] = [];
-			for (const tab of tabs.value) {
+			/** A host tab with its transcript; a read that times out is tried once more, for longer. */
+			const withTranscript = async (tab: AITabRecord): Promise<AITabRecord> => {
 				let transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id);
 				if (!transcript.ok && transcript.error.code === 'timeout') {
 					transcript = await connection.client.tabs.transcript(pointer.agentId, tab.id, {
@@ -300,30 +420,53 @@ export async function runReturnFromHost(
 					});
 				}
 				if (!transcript.ok) return await failRead(transcript.error);
-				withLogs.push({ ...tab, logs: transcript.value });
-			}
+				return { ...tab, logs: transcript.value };
+			};
+			const withLogs: AITabRecord[] = [];
+			for (const tab of tabs.value) withLogs.push(await withTranscript(tab));
+			/**
+			 * The host tabs a late batch of messages belongs to that this return did not read yet (a tab
+			 * opened on the host during the return), read now, so each message reaches its own
+			 * conversation and not the tab the user is on.
+			 */
+			readNewTabs = async (items) => {
+				const known = new Set([
+					...returned.tabs.map((tab) => tab.id),
+					...(agent.aiTabs ?? []).map((tab) => tab.id),
+				]);
+				if (items.every((item) => known.has(item.tabId))) return [];
+				const listed = await connection.client.tabs.list(pointer.agentId);
+				if (!listed.ok) return await failRead(listed.error);
+				const wanted = new Set(items.map((item) => item.tabId));
+				const fresh: AITabRecord[] = [];
+				for (const tab of listed.value) {
+					if (known.has(tab.id) || !wanted.has(tab.id)) continue;
+					fresh.push(await withTranscript(tab));
+				}
+				return fresh;
+			};
 			// A turn may have started on the host since the first look (a message that left the queue
 			// before it was held, or a send typed on the host): look again before anything is written.
 			const recheck = await connection.client.agents.get(pointer.agentId);
 			if (!recheck.ok) return await failRead(recheck.error);
 			if ((recheck.value.aiTabs ?? []).some((tab) => tab.state === 'busy')) {
-				await releaseHeld(connection, pointer.agentId, heldIds);
-				throw new LiftRunError(
-					'RETURN_BUSY',
-					`"${agent.name}" started a turn on its host. Wait for it to finish, then move it back.`
+				return await failReleasing(
+					new LiftRunError(
+						'RETURN_BUSY',
+						`"${agent.name}" started a turn on its host. Wait for it to finish, then move it back.`
+					)
 				);
 			}
 			// A message queued on the host while its transcripts were read comes home too, held.
 			queue = await holdWaiting();
-			// A desktop host from before queued images went on the wire (`QueuedTurn.images`) sends
-			// none, and nothing tells it apart from one with no images: its messages come home held,
-			// so none runs without the image it was sent with. A headless host sends what it took.
-			const imagesUnread =
-				queue.length > 0 && connection.client.connection?.host()?.kind === 'desktop';
+			/** Kept copy: the messages that come home, still to take out of its queue. */
+			keptQueue = [...queue.map((item) => item.itemId), ...carriedOnHost];
 			returned = {
 				tabs: withLogs,
 				...(options.keepHostCopy
-					? {}
+					? keptQueue.length > 0
+						? { hostCopyLeft: { ...copyLeft(true, keptQueue), keep: true } }
+						: {}
 					: {
 							hostCopyLeft: copyLeft(
 								true,
@@ -333,7 +476,7 @@ export async function runReturnFromHost(
 				...(hostAgent.value.activeTabId ? { activeTabId: hostAgent.value.activeTabId } : {}),
 				...(queue.length > 0
 					? {
-							queue: queue.map((item) => ({ ...item, paused: item.paused || imagesUnread })),
+							queue: queue.map(asHomeItem),
 						}
 					: {}),
 			};
@@ -342,11 +485,21 @@ export async function runReturnFromHost(
 					`A draft typed on the host in tab "${kept.tabName ?? kept.tabId}" was not put in that tab, because it has a draft of its own here. The host's draft was: ${kept.draft}`
 				);
 			}
-			if (imagesUnread) {
+			const images = imagesNotice(queue);
+			if (images) notices.push(images);
+			// A desktop host sends a tab's draft text but never the images staged with it, and no call
+			// fetches them: name each draft that came back as text only, so the user attaches again.
+			const draftTabs = desktopHost
+				? withLogs.filter((tab) => typeof tab.inputValue === 'string' && tab.inputValue.trim())
+				: [];
+			if (draftTabs.length > 0) {
+				const names = draftTabs.map((tab) => `"${tab.name ?? tab.id}"`).join(', ');
 				notices.push(
-					`${from} is a Maestro desktop, which does not send the images attached to queued messages. The ${queue.length === 1 ? 'message' : `${queue.length} messages`} from its queue wait here, held: attach any image again, then resume ${queue.length === 1 ? 'it' : 'each one'}.`
+					`${from} is a Maestro desktop, which does not send the images staged with a draft. The draft in ${draftTabs.length === 1 ? 'tab' : 'tabs'} ${names} came back as text only: any image attached to it there is not here, so attach it again before you send.`
 				);
 			}
+			const unknownReadOnly = readOnlyUnknownNotice(queue);
+			if (unknownReadOnly) notices.push(unknownReadOnly);
 		} else if (!left) {
 			notices.push(
 				`The host no longer has ${from}: the agent comes back with this machine's copy.`
@@ -361,16 +514,77 @@ export async function runReturnFromHost(
 		} catch (error) {
 			// A restore that answered late (the window timed out) may have been written anyway: the
 			// messages it carried then wait here, and releasing them on the host would run them twice.
-			if (!restoreLanded(deps, agent.id, left !== undefined, heldIds)) {
-				await releaseHeld(connection, pointer.agentId, heldIds);
-				throw error;
+			// A restore the window REFUSED (its save failed: a full disk) was not written, whatever
+			// main's in-memory store says (it takes the record before the failed flush), so only a
+			// timed-out restore is checked for having landed. Treating a refused one as home would go
+			// on to remove the host copy and the messages it holds.
+			const unsettled = error instanceof LiftRunError && error.code === 'RETURN_RESTORE_UNSETTLED';
+			if (!unsettled || !restoreLanded(deps, agent.id, left !== undefined, heldIds)) {
+				// The window may still write it: release nothing, so no message can run in both places.
+				// A held message comes home held at the next return.
+				if (error instanceof LiftRunError && error.code === 'RETURN_RESTORE_UNSETTLED') {
+					throw new LiftRunError(
+						'RETURN_RESTORE_FAILED',
+						heldIds.length > 0
+							? `${error.message} ${heldIds.length === 1 ? 'The message it held on the host stays held there, so it cannot run twice; it comes' : `The ${heldIds.length} messages it held on the host stay held there, so none runs twice; they come`} back held at the next try.`
+							: error.message
+					);
+				}
+				return await failReleasing(error as Error);
 			}
 		}
 
 		// The agent is home from here on: a failure is the host copy's, reported, never the agent's.
+		home = true;
 		let hostCopyRemoved = false;
 		try {
-			if (hostAgent.ok && !options.keepHostCopy) {
+			// The messages the restore carried are home: none of them is ever released on the host.
+			heldIds.length = 0;
+			// A message the host took after the last read is in neither the restore nor the held set:
+			// bring it home (held on the host first) before the copy goes, or keep the copy (marked)
+			// for the next return when the host keeps taking them.
+			let lateQueueSettled = !holdWaiting || options.keepHostCopy === true;
+			let lateNotice = `The agent is back, but its host (${from}) kept taking new messages, so its copy stays for now. Each message it took came back here. Maestro removes the copy at the next launch.`;
+			if (holdWaiting && !lateQueueSettled) {
+				const cameHome = new Set([
+					...(returned.queue ?? []).map((item) => item.itemId),
+					...carried,
+				]);
+				for (let pass = 0; pass < RETURN_LATE_QUEUE_PASSES; pass++) {
+					const late = (await holdWaiting()).filter((item) => !cameHome.has(item.itemId));
+					if (late.length === 0) {
+						lateQueueSettled = true;
+						break;
+					}
+					const newTabs = readNewTabs ? await readNewTabs(late) : [];
+					try {
+						await restoreOrThrow(deps, agent, {
+							tabs: newTabs,
+							queue: late.map(asHomeItem),
+							hostCopyLeft: copyLeft(true, [...cameHome, ...late.map((item) => item.itemId)]),
+						});
+					} catch (error) {
+						// Not released: the window may still write it. Held on the host, the message
+						// comes back held at the next return.
+						lateNotice = `The agent is back, but ${late.length === 1 ? 'a message' : `${late.length} messages`} its host (${from}) took during the return could not be saved here (${errorText(error)}). ${late.length === 1 ? 'It waits' : 'They wait'} there, held, and ${late.length === 1 ? 'comes' : 'come'} back at the next launch, with the rest of the host copy.`;
+						break;
+					}
+					for (const item of late) cameHome.add(item.itemId);
+					heldIds.length = 0;
+					const unknownReadOnly = readOnlyUnknownNotice(late);
+					if (unknownReadOnly) notices.push(unknownReadOnly);
+					const images = imagesNotice(late);
+					if (images) notices.push(images);
+					returned = {
+						...returned,
+						tabs: [...returned.tabs, ...newTabs],
+						queue: [...(returned.queue ?? []), ...late],
+					};
+				}
+			}
+			if (hostAgent.ok && !options.keepHostCopy && !lateQueueSettled) {
+				notices.push(lateNotice);
+			} else if (hostAgent.ok && !options.keepHostCopy) {
 				const removed = await connection.client.agents.remove(pointer.agentId);
 				if (removed.ok) {
 					hostCopyRemoved = true;
@@ -382,20 +596,13 @@ export async function runReturnFromHost(
 				}
 			} else if (hostAgent.ok) {
 				notices.push(`The host keeps its copy (${from}). Do not send to both.`);
-				const cameHome = [...(returned.queue ?? []).map((item) => item.itemId), ...carriedOnHost];
-				for (const itemId of cameHome) {
-					const removed = await connection.client.turns.queue.remove(pointer.agentId, itemId);
-					if (!removed.ok) {
-						notices.push(
-							`A message that came back still waits, held, in the host's queue (${from}): ${removed.error.message} Remove it there so it does not run twice.`
-						);
-					}
-				}
+				const marker = returned.hostCopyLeft;
+				if (marker) await takeOutOfKeptQueue(marker, keptQueue);
 			}
 		} catch (error) {
 			notices.push(
 				options.keepHostCopy
-					? `The agent is back, but the host (${from}) stopped answering before the messages that came back left its queue: ${errorText(error)} Remove them there so they do not run twice.`
+					? `The agent is back, but the host (${from}) stopped answering before the messages that came back left its queue: ${errorText(error)} Maestro takes them out at the next launch; do not resume them there.`
 					: `The agent is back, but the host (${from}) stopped answering before its copy was removed: ${errorText(error)} Maestro removes it at the next launch.`
 			);
 		}
@@ -428,21 +635,23 @@ function errorText(error: unknown): string {
 }
 
 /**
- * The host copy is gone: write the record without the marker, so no later run dials for it. A
- * failure here is not the agent's: it is home, and the next run finds the copy gone and clears the
- * marker then. Reported as a notice.
+ * The host copy is gone (or, `kept`, its queue holds nothing of this agent's any more): write the
+ * record without the marker, so no later run dials for it. A failure here is not the agent's: it
+ * is home, and the next run finds nothing left to do and clears the marker then. Reported as a
+ * notice.
  */
 async function clearHostCopyLeft(
 	deps: ReturnRunDeps,
 	agent: AgentRecord,
-	notices: string[]
+	notices: string[],
+	kept?: 'kept'
 ): Promise<void> {
 	try {
 		await deps.restore(agent.id, { tabs: [] });
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		notices.push(
-			`The host copy is removed, but "${agent.name}" could not be saved without its note of it (${message}). Maestro clears it at the next launch.`
+			`${kept ? "The messages that came back are out of the host's queue" : 'The host copy is removed'}, but "${agent.name}" could not be saved without its note of it (${message}). Maestro clears it at the next launch.`
 		);
 	}
 }
@@ -468,18 +677,25 @@ function restoreLanded(
 }
 
 /**
- * Let the host run the messages this return held, because the return failed. A failure to release
- * one is not reported over the error the caller is about to see: that message stays held on the
- * host, where Hold / Resume reaches it.
+ * Let the host run the messages this return held, because the return failed. Answers the ids it
+ * could not release: those stay held on the host, where Hold / Resume reaches them, and the caller
+ * names them beside its own error.
  */
 async function releaseHeld(
 	connection: ReturnHostConnection,
 	hostAgentId: string,
 	heldIds: string[]
-): Promise<void> {
+): Promise<string[]> {
+	const stuck: string[] = [];
 	for (const itemId of heldIds) {
-		await connection.client.turns.queue.setPaused(hostAgentId, itemId, false);
+		try {
+			const released = await connection.client.turns.queue.setPaused(hostAgentId, itemId, false);
+			if (!released.ok) stuck.push(itemId);
+		} catch {
+			stuck.push(itemId);
+		}
 	}
+	return stuck;
 }
 
 async function restoreOrThrow(
@@ -491,6 +707,12 @@ async function restoreOrThrow(
 		await deps.restore(agent.id, returned);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
+		if (error instanceof RestoreUnsettledError) {
+			throw new LiftRunError(
+				'RETURN_RESTORE_UNSETTLED',
+				`Could not move "${agent.name}" back: ${message}.`
+			);
+		}
 		throw new LiftRunError(
 			'RETURN_RESTORE_FAILED',
 			`Could not move "${agent.name}" back: ${message}. Nothing changed on the host.`

@@ -1,9 +1,10 @@
 /**
  * useComeHome - bring every agent an earlier release moved onto a Federation host home, once per
- * launch (`federation:comeHome`, `src/main/federation/come-home.ts`). Main runs the job; this
- * window only starts it, because each restore is written through this window's
- * `remote:updateSessionConfig` handler. Mounted once, in App, and active only in the lifecycle
- * owner. Main does nothing while hosting is on, or when no agent is moved.
+ * launch, and again when hosting turns off (`federation:comeHome`, `src/main/federation/come-home.ts`).
+ * Main runs the job; this window only starts it, because each restore is written through this
+ * window's `remote:updateSessionConfig` handler. Mounted once, in App, and active only in the
+ * lifecycle owner. Main does nothing while hosting is on, or when no agent is moved; main's runner
+ * is single flight, so a second start joins the run in flight.
  *
  * A run that leaves an agent still moved is run again every {@link COME_HOME_RETRY_INTERVAL_MS}
  * while this window lives, so the hold on its messages ends; no timer is left once every agent is
@@ -18,6 +19,7 @@ import {
 	type ComeHomeReport,
 } from '../../../shared/federationComeHome';
 import { useFederationAutoStore } from '../../stores/federationAutoStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { logger } from '../../utils/logger';
 import { captureException } from '../../utils/sentry';
@@ -66,63 +68,78 @@ export interface UseComeHomeOptions {
 	onReport?: (report: ComeHomeReport) => void;
 }
 
+/** Keep the newest report: a push and the read at mount may arrive in either order. */
+function storeNewestReport(report: ComeHomeReport | null | undefined): void {
+	if (!report) return;
+	const store = useFederationAutoStore.getState();
+	const current = store.comeHomeReport;
+	if (current && current.finishedAt > report.finishedAt) return;
+	store.setComeHomeReport(report);
+}
+
 /** A run left some agent still moved, so it is worth another run. */
 const leftAgentMoved = (report: ComeHomeReport) =>
 	report.agents.some((outcome) => outcome.result === 'failed');
 
 export function useComeHome({ enabled, sessionsLoaded, onReport }: UseComeHomeOptions): void {
-	const startedRef = useRef(false);
 	const onReportRef = useRef(onReport);
 	onReportRef.current = onReport;
-	const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// Hosting turned off later (it was on at launch) needs a run too: until it runs, a moved agent's
+	// messages are held here (`isAwaitingComeHome()`). Main reads the setting again itself.
+	const hostingOn = useSettingsStore((s) => s.federationHostedAgents === true);
 
-	// The retry belongs to this window: it ends with it.
-	useEffect(
-		() => () => {
-			if (retryRef.current) clearTimeout(retryRef.current);
-			retryRef.current = null;
-		},
-		[]
-	);
+	// Every window, owner or not, keeps the last report, so its queued cards say why a moved agent's
+	// messages wait: main pushes each report, and a window opened later reads the last one.
+	useEffect(() => {
+		const federation = window.maestro?.federation;
+		if (!federation?.onComeHomeReport) return;
+		const unsubscribe = federation.onComeHomeReport(storeNewestReport);
+		federation
+			.lastComeHomeReport?.()
+			.then(storeNewestReport)
+			.catch((error: unknown) => {
+				captureException(error, { tags: { area: 'federation-come-home' } });
+			});
+		return unsubscribe;
+	}, []);
 
 	useEffect(() => {
 		const comeHome = window.maestro?.federation?.comeHome;
-		if (!enabled || !sessionsLoaded || !comeHome || startedRef.current) return;
-		startedRef.current = true;
-		let fired = false;
+		if (!enabled || !sessionsLoaded || hostingOn || !comeHome) return;
+		// This run of the effect owns what it starts: once it is torn down (the window unmounts, loses
+		// the lifecycle, or hosting turns on), a late answer announces nothing and schedules nothing.
+		let active = true;
+		let timer: ReturnType<typeof setTimeout> | null = null;
 		let runs = 0;
 		let failureShown = false;
 		const run = () => {
-			retryRef.current = null;
+			timer = null;
 			const first = runs++ === 0;
 			comeHome()
 				.then((report) => {
-					useFederationAutoStore.getState().setComeHomeReport(report);
+					// The report is true for every window that reads it, owner or not.
+					storeNewestReport(report);
+					if (!active) return;
 					// The first run is always told; a retry only when it brought someone home.
 					if (first || report.agents.some((outcome) => outcome.result !== 'failed')) {
 						onReportRef.current?.(report);
 					}
-					if (leftAgentMoved(report)) {
-						retryRef.current = setTimeout(run, COME_HOME_RETRY_INTERVAL_MS);
-					}
+					if (leftAgentMoved(report)) timer = setTimeout(run, COME_HOME_RETRY_INTERVAL_MS);
 				})
 				.catch((error: unknown) => {
-					// Told once per window; the next try still runs, since the agents are still moved.
+					if (!active) return;
+					// Told once per run of the effect; the next try still runs, since the agents are
+					// still moved.
 					if (!failureShown) showComeHomeFailure(error);
 					failureShown = true;
-					retryRef.current = setTimeout(run, COME_HOME_RETRY_INTERVAL_MS);
+					timer = setTimeout(run, COME_HOME_RETRY_INTERVAL_MS);
 				});
 		};
-		const timer = setTimeout(() => {
-			fired = true;
-			run();
-		}, COME_HOME_START_DELAY_MS);
+		timer = setTimeout(run, COME_HOME_START_DELAY_MS);
 		return () => {
-			// Torn down before the beat elapsed: let the next run of the effect try.
-			if (!fired) {
-				clearTimeout(timer);
-				startedRef.current = false;
-			}
+			active = false;
+			if (timer) clearTimeout(timer);
+			timer = null;
 		};
-	}, [enabled, sessionsLoaded]);
+	}, [enabled, sessionsLoaded, hostingOn]);
 }

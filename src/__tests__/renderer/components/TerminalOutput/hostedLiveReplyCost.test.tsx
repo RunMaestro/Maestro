@@ -243,6 +243,9 @@ describe('a hosted long reply costs what a local one does (R34, L30)', () => {
 			// The reply's row is never mounted again: not by a thinking copy, not by the saved answer.
 			expect(local.rowRemounted).toBe(false);
 			expect(hosted.rowRemounted).toBe(false);
-		}
+		},
+		// Three full long-reply renders in one test: the assertions count nodes and commits, not
+		// time, and the Windows CI runner takes past the 10 s default (flaked on #2187 and #2198).
+		60_000
 	);
 });

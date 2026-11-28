@@ -41,7 +41,7 @@ import {
 import { useAgentStore } from '../stores/agentStore';
 import { getDispatchDeps } from '../stores/retryStore';
 import type { QueuedSlashCommand } from '../utils/executionQueue';
-import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
+import { getActiveTab, getTabDisplayName, isAwaitingComeHome } from '../utils/tabHelpers';
 import {
 	applyQueuedItemDispatch,
 	applyQueuedItemEdit,
@@ -876,6 +876,9 @@ export function sendQueuedItemNow(
 
 	const { targetTabBusy, otherBusyTabs } = getQueueBusyContext(session, item);
 	if (targetTabBusy) return false;
+	// An agent coming home from a host (hosting off) may not start a turn yet: main
+	// refuses it and the prompt would be lost. It stays queued; the drain runs it home.
+	if (isAwaitingComeHome(session)) return false;
 	// A hosted agent's host item runs on its host, which applies this same rule to its own tabs.
 	const hosted = hostQueuedItemTarget(sessionId, itemId);
 	if (hosted) {

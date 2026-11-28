@@ -42,15 +42,18 @@ vi.mock('../../../shared/maestro-lib/client/ws-client', () => ({
 
 import {
 	LIFT_POINTER_TIMEOUT_MS,
+	RESTORE_ANSWER_GRACE_MS,
 	buildDesktopLiftDeps,
 	connectHostForReturn,
 	holdHostConnections,
 	liftAgentFromDesktop,
+	restoreReturnedAgentInWindow,
 	returnAgentFromDesktop,
 	setLiftPointerInWindow,
 	type DesktopLiftDeps,
 } from '../../../main/federation/lift';
 import type { PeerMirrorService } from '../../../main/federation/peer-mirror-service';
+import { RestoreUnsettledError } from '../../../shared/maestro-lib/agents/lift-return';
 import type { AgentRecord } from '../../../shared/maestro-lib/store/records';
 import type { SshRemoteConfig } from '../../../shared/types';
 
@@ -304,7 +307,7 @@ describe('returnAgentFromDesktop', () => {
 		expect(await first).toMatchObject({ ok: true });
 		expect(await second).toMatchObject({ ok: false, code: 'RETURN_NOT_HOSTED' });
 		expect(connectHost).toHaveBeenCalledTimes(1);
-		expect(client.turns.queue.list).toHaveBeenCalledTimes(2);
+		expect(client.turns.queue.list).toHaveBeenCalledTimes(3); // twice before the restore, once after it
 	});
 
 	it('borrows the running mirror and never opens a connection of its own', async () => {
@@ -436,6 +439,41 @@ describe('setLiftPointerInWindow', () => {
 		await expect(setLiftPointerInWindow(win, 'agent-1', pointer, [])).rejects.toThrow(
 			'The window sent no answer'
 		);
+	});
+});
+
+describe('restoreReturnedAgentInWindow (#2195: a restore main gave up on is never applied)', () => {
+	const win = { webContents: {} } as never;
+	const returned = { tabs: [] };
+
+	it('sends a deadline with the restore, and waits a grace past it for the answer', async () => {
+		requestFromRenderer.mockResolvedValue({ success: true });
+		await restoreReturnedAgentInWindow(win, 'agent-1', returned, () => NOW);
+		expect(requestFromRenderer).toHaveBeenCalledWith(
+			win,
+			'remote:updateSessionConfig',
+			expect.objectContaining({
+				args: ['agent-1', { returnedFromHost: returned, restoreBy: NOW + LIFT_POINTER_TIMEOUT_MS }],
+				timeoutMs: LIFT_POINTER_TIMEOUT_MS + RESTORE_ANSWER_GRACE_MS,
+			})
+		);
+	});
+
+	it('no answer at all is unsettled (the window may still save it), not a refusal', async () => {
+		requestFromRenderer.mockImplementation(async (_w, _c, options: { fallback: unknown }) => {
+			return options.fallback;
+		});
+		await expect(restoreReturnedAgentInWindow(win, 'agent-1', returned)).rejects.toBeInstanceOf(
+			RestoreUnsettledError
+		);
+	});
+
+	it('a refusal stays a plain error, so the return may release what it held', async () => {
+		requestFromRenderer.mockResolvedValue({ success: false, error: 'too late' });
+		const error = await restoreReturnedAgentInWindow(win, 'agent-1', returned).catch((e) => e);
+		expect(error).toBeInstanceOf(Error);
+		expect(error).not.toBeInstanceOf(RestoreUnsettledError);
+		expect(error.message).toBe('too late');
 	});
 });
 
