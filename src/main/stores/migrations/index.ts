@@ -14,6 +14,7 @@
 import type Store from 'electron-store';
 
 import { logger } from '../../utils/logger';
+import { captureException } from '../../utils/sentry';
 import type { MaestroSettings } from '../types';
 import { migrateAdaptiveModeDefault } from './adaptive-mode-default';
 import { migrateApiModeDefault } from './api-mode-default';
@@ -58,9 +59,12 @@ export function runSettingsMigrations(store: Store<MaestroSettings>): void {
 
 	// Federation hosting became opt-in: existing installs hold the old `true`
 	// default on disk, which cannot be told from an explicit opt-in.
+	// A failure leaves the marker unset, so the Federation gate keeps hosting off anyway; report it,
+	// because the old `true` stays on disk until a later launch writes it.
 	try {
 		migrateFederationHostingDefaultOff(store);
 	} catch (error) {
 		logger.error('Federation hosting default-off migration failed', 'Migration', error);
+		void captureException(error, { operation: 'migration:federationHostingDefaultOff' });
 	}
 }
