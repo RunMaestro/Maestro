@@ -197,6 +197,7 @@ function toQueuedTurn(item: TurnItem): QueuedTurn {
 		text: item.text,
 		paused: item.paused === true,
 		readOnly: item.readOnly === true,
+		...(item.overrides?.readOnly !== undefined ? { readOnlyChoice: 'sender' as const } : {}),
 		...(item.overrides?.saveToHistory !== undefined
 			? { saveToHistory: item.overrides.saveToHistory }
 			: {}),

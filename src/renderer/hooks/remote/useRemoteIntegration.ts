@@ -1621,6 +1621,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								item,
 								s.aiTabs?.find((tab) => tab.id === item.tabId)
 							),
+							// Only the sender's own choice may lift a tab's read-only after a Move Back.
+							...(typeof item.turnReadOnly === 'boolean'
+								? { readOnlyChoice: 'sender' as const }
+								: {}),
 							...(item.turnSaveToHistory !== undefined
 								? { saveToHistory: item.turnSaveToHistory }
 								: {}),

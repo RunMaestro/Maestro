@@ -6,6 +6,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentRecord, AITabRecord } from '../../store/records';
+import { queuedItemRunsReadOnly } from '../../../queuedTurnSettings';
 import { LiftRunError } from '../lift-run';
 import {
 	hostDraftsNotKept,
@@ -580,8 +581,6 @@ describe('runReturnFromHost', () => {
 					tabId: 'tab-1',
 					type: 'message',
 					text: 'next',
-					turnReadOnly: false,
-					readOnlyMode: false,
 				},
 				{
 					id: 'q2',
@@ -590,8 +589,6 @@ describe('runReturnFromHost', () => {
 					type: 'message',
 					text: 'later',
 					paused: true,
-					turnReadOnly: false,
-					readOnlyMode: false,
 				},
 			]);
 			// A second run finds it home and touches nothing.
@@ -1287,7 +1284,7 @@ describe('runReturnFromHost', () => {
 
 		it('a message sent read-only comes home read-only; save to History comes with it', async () => {
 			const client = hostClient({
-				queue: ok([item('q1', { readOnly: true, saveToHistory: false })]),
+				queue: ok([item('q1', { readOnly: true, readOnlyChoice: 'sender', saveToHistory: false })]),
 			});
 			const d = storedDeps(client);
 			await runReturnFromHost('agent-1', {}, d.value);
@@ -1301,6 +1298,40 @@ describe('runReturnFromHost', () => {
 				turnSaveToHistory: false,
 			});
 			expect(queued.paused).toBeUndefined();
+		});
+
+		describe('read-only: only the sender choice lifts the tab read-only (#2199)', () => {
+			const homeItem = async (from: Record<string, unknown>) => {
+				const d = storedDeps(hostClient({ queue: ok([item('q1', from)]) }));
+				await runReturnFromHost('agent-1', {}, d.value);
+				return (
+					d.store.get('agent-1') as unknown as {
+						executionQueue: Array<Parameters<typeof queuedItemRunsReadOnly>[0]>;
+					}
+				).executionQueue[0];
+			};
+			const readOnlyTab = { readOnlyMode: true };
+			const writableTab = { readOnlyMode: false };
+
+			it('a message queued while the tab was writable keeps the read-only the tab has when it runs here', async () => {
+				const queued = await homeItem({ readOnly: false });
+				expect(queued?.turnReadOnly).toBeUndefined();
+				// The tab was made read-only while the message waited: it runs read-only.
+				expect(queuedItemRunsReadOnly(queued, readOnlyTab)).toBe(true);
+				expect(queuedItemRunsReadOnly(queued, writableTab)).toBe(false);
+			});
+
+			it('a message the tab made read-only stays read-only, even on a writable tab here', async () => {
+				const queued = await homeItem({ readOnly: true });
+				expect(queued?.turnReadOnly).toBeUndefined();
+				expect(queuedItemRunsReadOnly(queued, writableTab)).toBe(true);
+			});
+
+			it('a sender who chose writable for this one message keeps that choice', async () => {
+				const queued = await homeItem({ readOnly: false, readOnlyChoice: 'sender' });
+				expect(queued?.turnReadOnly).toBe(false);
+				expect(queuedItemRunsReadOnly(queued, readOnlyTab)).toBe(false);
+			});
 		});
 
 		it('a message from a host that does not say whether it was sent read-only comes home held, and says why', async () => {

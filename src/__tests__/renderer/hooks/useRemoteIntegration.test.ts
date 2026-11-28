@@ -3276,9 +3276,16 @@ describe('useRemoteIntegration', () => {
 			)?.[1] as { queues: Array<{ items: Array<Record<string, unknown>> }> };
 			expect(answer.queues[0].items).toEqual([
 				expect.objectContaining({ id: 'q1', readOnly: true }),
-				expect.objectContaining({ id: 'q2', readOnly: false, saveToHistory: true }),
+				expect.objectContaining({
+					id: 'q2',
+					readOnly: false,
+					readOnlyChoice: 'sender',
+					saveToHistory: true,
+				}),
 			]);
 			expect(answer.queues[0].items[0]).not.toHaveProperty('saveToHistory');
+			// q1 only took the tab's read-only, so a Move Back lets the tab decide (#2199).
+			expect(answer.queues[0].items[0]).not.toHaveProperty('readOnlyChoice');
 		});
 
 		it('removes a queued item by id and acks removed:true', () => {

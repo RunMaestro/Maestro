@@ -173,6 +173,7 @@ function parseQueuedTurns(raw: unknown): QueuedTurn[] {
 			text: asString(item.text) ?? (command ? (args ? `${command} ${args}` : command) : ''),
 			paused: item.paused === true,
 			...(typeof item.readOnly === 'boolean' ? { readOnly: item.readOnly } : {}),
+			...(item.readOnlyChoice === 'sender' ? { readOnlyChoice: 'sender' as const } : {}),
 			...(typeof item.saveToHistory === 'boolean' ? { saveToHistory: item.saveToHistory } : {}),
 		};
 	});

@@ -378,6 +378,7 @@ export async function runReturnFromHost(
 					// Held by this return or by the user: `paused` is the user's own hold only.
 					paused: item.paused && !heldIds.includes(item.itemId),
 					...(item.readOnly !== undefined ? { readOnly: item.readOnly } : {}),
+					...(item.readOnlyChoice ? { readOnlyChoice: item.readOnlyChoice } : {}),
 					...(item.saveToHistory !== undefined ? { saveToHistory: item.saveToHistory } : {}),
 					...(item.kind === 'command' ? { kind: item.kind } : {}),
 				}));
