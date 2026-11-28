@@ -402,32 +402,6 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// An agent an earlier release moved onto a host is coming home (hosting off):
-			// its turns may not start here yet, because the host can still hold its
-			// provider session. Queue the prompt the way the composer does
-			// (`useInputProcessing`, `isAwaitingComeHome`); the queue drain runs it once the
-			// agent is home. Sending now would only be refused by main, and the prompt lost.
-			// `force` does not lift this: the refusal is about the session's owner, not a
-			// busy tab.
-			if (isAwaitingComeHome(session)) {
-				const queued = writeTabId
-					? enqueuePromptForTab({
-							sessionId,
-							tabId: writeTabId,
-							text: command,
-							images,
-							mentionRouting,
-						})
-					: null;
-				if (!queued) {
-					reportDelivery(false, 'command-target-unavailable');
-					return;
-				}
-				logger.info('[Remote] Agent is coming home from its host; queued the command');
-				reportDelivery(true);
-				return;
-			}
-
 			// Maestro prompt commands share the ordinary queue's argument/template
 			// expansion and admitted spawn. A native advertisement is never a prompt.
 			const commandText = command.trim();
@@ -536,6 +510,39 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				);
 				// No command arguments enter the receipt's main-process log.
 				reportDelivery(false, 'unknown-command');
+				return;
+			}
+
+			// An agent an earlier release moved onto a host is coming home (hosting off):
+			// its turns may not start here yet, because the host can still hold its
+			// provider session. Queue the prompt the way the composer does
+			// (`useInputProcessing`, `isAwaitingComeHome`); the queue drain runs it once the
+			// agent is home. Sending now would only be refused by main, and the prompt lost.
+			// `force` does not lift this: the refusal is about the session's owner, not a
+			// busy tab. Slash commands never reach here: the branch above queues them as
+			// commands, and the drain holds them the same way.
+			const comingHomeSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+			if (comingHomeSession && isAwaitingComeHome(comingHomeSession)) {
+				// The pinned tab is read again: it may have closed while capabilities were
+				// resolved above, and the queue would otherwise fall back to another tab.
+				const pinnedTab = writeTabId
+					? comingHomeSession.aiTabs.find((tab) => tab.id === writeTabId)
+					: undefined;
+				const queued = pinnedTab
+					? enqueuePromptForTab({
+							sessionId,
+							tabId: pinnedTab.id,
+							text: command,
+							images,
+							mentionRouting,
+						})
+					: null;
+				if (!queued) {
+					reportDelivery(false, 'command-target-unavailable');
+					return;
+				}
+				logger.info('[Remote] Agent is coming home from its host; queued the command');
+				reportDelivery(true);
 				return;
 			}
 
