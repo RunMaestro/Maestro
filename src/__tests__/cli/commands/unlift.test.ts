@@ -172,12 +172,13 @@ describe('maestro-cli unlift', () => {
 			() => Promise.resolve({ success: false, error: 'Renderer did not respond in time' }),
 			() => Promise.reject(new Error('socket closed')),
 		]) {
-			const { connection } = fakeConnection();
+			// The spy of the connection the CLI actually uses, not the one `depsWith` makes (#2199).
+			const { connection, remove } = fakeConnection();
 			const client = (connection as unknown as { client: { turns: { queue: unknown } } }).client;
 			const queue = hostQueue([queued]);
 			const setPaused = queue.setPaused;
 			client.turns.queue = queue;
-			const { deps, remove } = depsWith({
+			const { deps } = depsWith({
 				connect: vi.fn().mockResolvedValue(connection),
 				restoreInDesktop: vi.fn(answer),
 			});

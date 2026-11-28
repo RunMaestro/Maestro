@@ -616,6 +616,8 @@ describe('runtime turns', () => {
 					readOnly: false,
 				}),
 			]);
+			// The tab decided its read-only, not the sender: a Move Back lets the tab decide (#2199).
+			expect(value(await runtime.turns.queue.list('a1'))[0]).not.toHaveProperty('readOnlyChoice');
 
 			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: true });
 			await turn.outcome(2);
@@ -626,6 +628,26 @@ describe('runtime turns', () => {
 			expect(entries.filter((entry) => entry.source === 'user').map((entry) => entry.text)).toEqual(
 				['first', 'second']
 			);
+		});
+
+		it("marks a queued message's read-only as the sender's own only when the sender chose it (#2199)", async () => {
+			hold = true;
+			const runtime = await start();
+			const turn = watch(runtime);
+			value(await runtime.turns.send('a1', 't1', { text: 'first' }));
+			await turn.started();
+
+			value(
+				await runtime.turns.send('a1', 't1', { text: 'chosen', overrides: { readOnly: false } })
+			);
+			value(await runtime.turns.send('a1', 't1', { text: 'plain' }));
+			const [chosen, plain] = value(await runtime.turns.queue.list('a1'));
+			expect(chosen).toMatchObject({ text: 'chosen', readOnly: false, readOnlyChoice: 'sender' });
+			expect(plain).toMatchObject({ text: 'plain', readOnly: false });
+			expect(plain).not.toHaveProperty('readOnlyChoice');
+			hold = false;
+			expect(value(await runtime.turns.interrupt('a1', 't1'))).toEqual({ stopped: true });
+			await turn.outcome(3);
 		});
 
 		it('keeps the origin host on a queued message, so its History entry names the sender', async () => {

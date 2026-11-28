@@ -2179,7 +2179,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// read see the stale name. setMany merges incrementally so the next
 		// debounced flush is idempotent.
 		try {
-			await window.maestro.sessions.setMany([{ ...session, name: newName } as any], []);
+			// The record read above is the baseline, so only the name is written: a Move Back
+			// restore saved meanwhile keeps its cleared host pointer (#2199).
+			await window.maestro.sessions.setMany(
+				[{ ...session, name: newName } as any],
+				[],
+				[session as any]
+			);
 		} catch (persistErr) {
 			logger.error('[Remote] Failed to persist session rename:', undefined, persistErr);
 		}

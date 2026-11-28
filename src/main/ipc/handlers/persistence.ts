@@ -102,6 +102,38 @@ function cliActivityChanged(
 }
 
 /**
+ * The agent list with one refused `sessions:setMany` taken back out (#2199): each record that save
+ * wrote is put back as it was before it (or dropped, if the save added it), and each record it
+ * removed is put back in its old place. A record another writer changed since (a plugin action,
+ * which does not wait in the save queue) is kept as that writer left it, and so is every record
+ * the save did not touch.
+ */
+export function undoRefusedSessionsSave<T extends { id: string }>(
+	current: readonly T[],
+	previous: readonly T[],
+	written: readonly T[],
+	touchedIds: ReadonlySet<string>
+): T[] {
+	const previousById = new Map(previous.map((session) => [session.id, session]));
+	const writtenById = new Map(written.map((session) => [session.id, canonicalJson(session)]));
+	const result = current.flatMap((session) => {
+		const mine = writtenById.get(session.id);
+		if (!touchedIds.has(session.id) || mine === undefined || mine !== canonicalJson(session)) {
+			return [session];
+		}
+		const before = previousById.get(session.id);
+		return before ? [before] : [];
+	});
+	// What the save removed and no writer added back since, in its old place.
+	const present = new Set(current.map((session) => session.id));
+	previous.forEach((session, index) => {
+		if (writtenById.has(session.id) || present.has(session.id)) return;
+		result.splice(Math.min(index, result.length), 0, session);
+	});
+	return result;
+}
+
+/**
  * Tell every OTHER window that settings changed on disk.
  *
  * The settings file watcher deliberately ignores writes the app makes itself
@@ -1163,17 +1195,34 @@ export function registerPersistenceHandlers(
 					}
 				}
 
+				let storeChanged = false;
 				try {
 					await backupSessionsBeforeWipe(previousSessions, sessionsToPersist, sessionsStore.path);
 					noteQueueRemovals(sessionsStore.get('sessions', []), sessionsToPersist);
 					sessionsStore.set('sessions', sessionsToPersist);
+					storeChanged = true;
 					// Preserve the renderer acknowledgement contract: true means this
 					// revision reached disk, not merely the in-memory cache.
 					await flushSessionWrites();
 				} catch (err) {
+					// A refused save leaves the store as it was: false (or a throw) tells the
+					// caller this revision is not written, so a later save must not write it
+					// either. A Move Back whose restore was refused releases the host's held
+					// messages; the record must not reach disk home afterwards (#2199).
+					if (storeChanged) {
+						sessionsStore.set(
+							'sessions',
+							undoRefusedSessionsSave(
+								sessionsStore.get('sessions', []),
+								previousSessions,
+								sessionsToPersist,
+								touchedIds
+							)
+						);
+					}
 					const code = (err as NodeJS.ErrnoException).code;
-					// Recoverable filesystem errors - the next debounced flush will
-					// retry when conditions improve. Log warn and return false so
+					// Recoverable filesystem errors - the renderer still holds its
+					// changes and saves them again. Log warn and return false so
 					// the renderer's flush path can mark the write as unconfirmed.
 					if (code === 'ENOSPC' || code === 'ENFILE' || code === 'EMFILE') {
 						logger.warn(`Failed to persist sessions (setMany): ${code}`, 'Sessions');
